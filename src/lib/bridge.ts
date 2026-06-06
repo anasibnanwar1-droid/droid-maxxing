@@ -113,6 +113,7 @@ export const subscribeWorker = (missionId: string, workerSessionId: string) =>
 export const closeMission = (missionId: string) => bridge.send({ type: 'mission.close', missionId });
 export const openBrowser = (p: Omit<Extract<ClientCommand, { type: 'browser.open' }>, 'type'>) =>
   bridge.send({ type: 'browser.open', ...p });
+export const closeBrowser = (missionId: string) => bridge.send({ type: 'browser.close', missionId });
 export const refreshBrowser = (missionId: string) => bridge.send({ type: 'browser.refresh', missionId });
 export const resizeBrowserViewport = (p: Omit<Extract<ClientCommand, { type: 'browser.resizeViewport' }>, 'type'>) =>
   bridge.send({ type: 'browser.resizeViewport', ...p });

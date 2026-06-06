@@ -1,6 +1,5 @@
 import { createContext, useContext, useReducer, ReactNode, useEffect } from 'react';
 import { bridge } from '../lib/bridge';
-import { subscribeWorker } from '../lib/commands';
 import type {
   FactoryDefaultSettings,
   ServerEvent,
@@ -149,6 +148,7 @@ type Action =
   | { type: 'TOGGLE_BROWSER' }
   | { type: 'SET_BROWSER_OPEN'; open: boolean }
   | { type: 'BROWSER_UPDATED'; browser: BrowserState }
+  | { type: 'BROWSER_CLOSED'; missionId: string }
   | { type: 'BROWSER_ERROR'; missionId?: string; message: string }
   | { type: 'TOGGLE_DESIGN_MODE' }
   | { type: 'SET_DESIGN_MODE'; open: boolean }
@@ -632,6 +632,14 @@ function reducer(state: AppState, action: Action): AppState {
         browserOpen: state.activeMissionId === action.browser.missionId ? true : state.browserOpen,
       };
 
+    case 'BROWSER_CLOSED':
+      return {
+        ...state,
+        browsers: Object.fromEntries(Object.entries(state.browsers).filter(([id]) => id !== action.missionId)),
+        browserErrors: Object.fromEntries(Object.entries(state.browserErrors).filter(([id]) => id !== action.missionId)),
+        browserOpen: state.activeMissionId === action.missionId ? false : state.browserOpen,
+      };
+
     case 'BROWSER_ERROR':
       return action.missionId
         ? {
@@ -840,6 +848,8 @@ function adaptEvent(ev: ServerEvent): Action | null {
       return { type: 'FACTORY_DEFAULTS', defaults: ev.defaults };
     case 'browser.updated':
       return { type: 'BROWSER_UPDATED', browser: ev.state };
+    case 'browser.closed':
+      return { type: 'BROWSER_CLOSED', missionId: ev.missionId };
     case 'browser.error':
       return { type: 'BROWSER_ERROR', missionId: ev.missionId, message: ev.message };
     default:
@@ -855,10 +865,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const unsub = bridge.subscribe((ev) => {
       console.log('[bridge]', ev.type, ev);
-      // Stream a subagent's transcript as soon as it spawns so it's viewable.
-      if (ev.type === 'mission.worker' && ev.event === 'started') {
-        subscribeWorker(ev.missionId, ev.workerSessionId);
-      }
       const action = adaptEvent(ev);
       if (action) dispatch(action);
     });

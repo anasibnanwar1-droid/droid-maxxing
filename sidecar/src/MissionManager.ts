@@ -61,6 +61,8 @@ interface LiveAgent {
   role: AgentRole;
   streaming: boolean;
   pendingSends: string[];
+  lastUsedAt: number;
+  closeWhenIdle?: boolean;
   unsubscribe?: () => void;
 }
 
@@ -101,6 +103,8 @@ const STATE_TO_PHASE: Record<string, MissionPhase> = {
   failed: 'failed',
   awaiting_input: 'running',
 };
+
+const MAX_OPEN_AGENT_TRANSPORTS = boundedInt(process.env.DROID_CONTROL_MAX_OPEN_AGENTS, 4, 1, 24);
 
 let permSeq = 0;
 const nextRequestId = () => `req-${Date.now().toString(36)}-${(permSeq++).toString(36)}`;
@@ -250,6 +254,13 @@ export class MissionManager {
       case 'browser.open':
         await this.handleBrowser(cmd.missionId, () => this.browsers.open({ ...cmd, missionId: this.requireBrowserMissionId(cmd.missionId) }));
         return;
+      case 'browser.close':
+        await this.handleBrowser(cmd.missionId, async () => {
+          const missionId = this.requireBrowserMissionId(cmd.missionId);
+          await this.browsers.close(missionId);
+          this.emit({ type: 'browser.closed', missionId });
+        });
+        return;
       case 'browser.refresh':
         await this.handleBrowser(cmd.missionId, () => this.browsers.refresh(this.requireBrowserMissionId(cmd.missionId)));
         return;
@@ -266,7 +277,7 @@ export class MissionManager {
         await this.handleBrowser(cmd.missionId, () => this.browsers.keypress(this.requireBrowserMissionId(cmd.missionId), cmd.key));
         return;
       case 'browser.scroll':
-        await this.handleBrowser(cmd.missionId, () => this.browsers.scroll(this.requireBrowserMissionId(cmd.missionId), cmd.direction, cmd.pixels));
+        await this.handleBrowser(cmd.missionId, () => this.browsers.scroll(this.requireBrowserMissionId(cmd.missionId), cmd.direction, cmd.pixels, cmd.source));
         return;
       case 'browser.screenshot':
         await this.handleBrowser(cmd.missionId, async () => {
@@ -836,6 +847,7 @@ export class MissionManager {
       if (!mission.knownSubagents.has(sessionId)) return;
       this.emit({ type: 'mission.worker', missionId: appSessionId, event: 'completed', workerSessionId: sessionId });
       this.emit({ type: 'agent.updated', missionId: appSessionId, agentSessionId: sessionId, role: 'worker', status: 'completed' });
+      void this.closeAgentWhenIdle(appSessionId, sessionId);
       return;
     }
     if (mission.knownSubagents.has(sessionId)) return;
@@ -870,6 +882,7 @@ export class MissionManager {
         role: 'worker',
         status: n.worker.event === 'completed' ? 'completed' : 'running',
       });
+      if (n.worker.event === 'completed') void this.closeAgentWhenIdle(missionId, n.worker.workerSessionId);
     }
     if (n.subagent) this.applySubagent(missionId, n.subagent);
     if (n.tokens) {
@@ -1090,10 +1103,13 @@ export class MissionManager {
     if (!mission) return;
     const appSessionId = mission.summary.id;
     if (mission.agents.has(agentSessionId)) {
+      const agent = mission.agents.get(agentSessionId);
+      if (agent) agent.lastUsedAt = Date.now();
       this.emit({ type: 'agent.updated', missionId: appSessionId, agentSessionId, role, status: 'opened' });
       return;
     }
     try {
+      if (!(await this.ensureAgentCapacity(mission, agentSessionId))) return;
       const ref = { id: appSessionId };
       const session = await this.runtime.loadSession(agentSessionId, {
         permissionHandler: this.makePermissionHandler(ref),
@@ -1105,6 +1121,7 @@ export class MissionManager {
         role,
         streaming: false,
         pendingSends: [],
+        lastUsedAt: Date.now(),
       };
       agent.unsubscribe = session.onNotification((note: Record<string, unknown>) => {
         for (const n of normalizeNotification(appSessionId, agentSessionId, role, note)) this.applyNormalized(appSessionId, n);
@@ -1123,6 +1140,7 @@ export class MissionManager {
     if (!mission.agents.has(agentSessionId)) await this.openAgent(appSessionId, agentSessionId, 'worker');
     const agent = mission.agents.get(agentSessionId);
     if (!agent) return;
+    agent.lastUsedAt = Date.now();
     if (agent.streaming) {
       agent.pendingSends.push(text);
       this.emitStatus(appSessionId, `Queued subagent message ${agent.pendingSends.length}.`);
@@ -1133,6 +1151,7 @@ export class MissionManager {
 
   private async driveAgent(agent: LiveAgent, text: string): Promise<void> {
     agent.streaming = true;
+    agent.lastUsedAt = Date.now();
     this.emit({ type: 'agent.updated', missionId: agent.missionId, agentSessionId: agent.session.sessionId, role: agent.role, status: 'running' });
     this.startContextPolling(agent.session.sessionId, agent.session);
     try {
@@ -1147,6 +1166,7 @@ export class MissionManager {
       agent.streaming = false;
       const next = agent.pendingSends.shift();
       if (next !== undefined) void this.driveAgent(agent, next);
+      else if (agent.closeWhenIdle) await this.closeAgent(agent.missionId, agent.session.sessionId);
       else {
         await this.refreshContext(agent.session.sessionId, agent.session);
         this.emit({ type: 'agent.updated', missionId: agent.missionId, agentSessionId: agent.session.sessionId, role: agent.role, status: 'paused' });
@@ -1162,9 +1182,51 @@ export class MissionManager {
     const agent = mission.agents.get(agentSessionId);
     if (!agent) return;
     agent.pendingSends = [];
+    agent.lastUsedAt = Date.now();
     await agent.session.interrupt();
     agent.streaming = false;
     this.emit({ type: 'agent.updated', missionId: appSessionId, agentSessionId, role: agent.role, status: 'paused' });
+  }
+
+  private async ensureAgentCapacity(mission: Mission, requestedAgentSessionId: string): Promise<boolean> {
+    if (mission.agents.size < MAX_OPEN_AGENT_TRANSPORTS) return true;
+    const idle = [...mission.agents.entries()]
+      .filter(([sessionId, agent]) =>
+        sessionId !== requestedAgentSessionId &&
+        !agent.streaming &&
+        agent.pendingSends.length === 0)
+      .sort((a, b) => a[1].lastUsedAt - b[1].lastUsedAt)[0];
+    if (idle) {
+      await this.closeAgent(mission.summary.id, idle[0]);
+      return true;
+    }
+    this.emitError({
+      missionId: mission.summary.id,
+      message: `Open live agent transport limit reached (${MAX_OPEN_AGENT_TRANSPORTS}). Wait for one running worker view to finish before opening another live worker view.`,
+    });
+    return false;
+  }
+
+  private async closeAgent(missionId: string, agentSessionId: string): Promise<void> {
+    const mission = this.findMission(missionId);
+    const agent = mission?.agents.get(agentSessionId);
+    if (!mission || !agent) return;
+    mission.agents.delete(agentSessionId);
+    this.stopContextPolling(agent.session.sessionId);
+    agent.unsubscribe?.();
+    try {
+      await agent.session.close();
+    } catch {
+      /* ignore */
+    }
+  }
+
+  private async closeAgentWhenIdle(missionId: string, agentSessionId: string): Promise<void> {
+    const mission = this.findMission(missionId);
+    const agent = mission?.agents.get(agentSessionId);
+    if (!mission || !agent) return;
+    agent.closeWhenIdle = true;
+    if (!agent.streaming && agent.pendingSends.length === 0) await this.closeAgent(missionId, agentSessionId);
   }
 
   private async renameSession(sessionId: string, title: string): Promise<void> {
@@ -1508,6 +1570,12 @@ function stringValue(value: unknown): string | undefined {
 
 function numberValue(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+function boundedInt(value: string | undefined, fallback: number, min: number, max: number): number {
+  const parsed = value ? Number.parseInt(value, 10) : fallback;
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(max, Math.max(min, parsed));
 }
 
 function isApprovalOutcome(outcome: string): boolean {

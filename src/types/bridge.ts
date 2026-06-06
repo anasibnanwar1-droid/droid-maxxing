@@ -301,12 +301,13 @@ export type ClientCommand =
   | { type: 'mission.setAutonomy'; missionId: string; autonomy: Autonomy }
   | { type: 'mission.setInteractionMode'; missionId: string; mode: SessionInteractionMode }
   | { type: 'browser.open'; missionId: string; url: string; viewport?: BrowserViewport; viewportMode?: BrowserViewportMode }
+  | { type: 'browser.close'; missionId: string }
   | { type: 'browser.refresh'; missionId: string }
   | { type: 'browser.resizeViewport'; missionId: string; viewport: BrowserViewport; viewportMode: BrowserViewportMode }
-  | { type: 'browser.click'; missionId: string; ref?: string; x?: number; y?: number }
+  | { type: 'browser.click'; missionId: string; ref?: string; x?: number; y?: number; source?: 'agent' | 'user' }
   | { type: 'browser.type'; missionId: string; text: string }
   | { type: 'browser.keypress'; missionId: string; key: string }
-  | { type: 'browser.scroll'; missionId: string; direction: BrowserScrollDirection; pixels?: number }
+  | { type: 'browser.scroll'; missionId: string; direction: BrowserScrollDirection; pixels?: number; source?: 'agent' | 'user' }
   | { type: 'browser.screenshot'; missionId: string; fullPage?: boolean; deviceScaleFactor?: number }
   | { type: 'browser.inspectPoint'; missionId: string; x: number; y: number }
   | { type: 'browser.design.addReference'; missionId: string; reference: DesignReference }
@@ -344,4 +345,5 @@ export type ServerEvent =
   | { type: 'sessions.history'; missions: HistoryMission[] }
   | { type: 'models.list'; models: ModelInfo[] }
   | { type: 'browser.updated'; state: BrowserState }
+  | { type: 'browser.closed'; missionId: string }
   | { type: 'browser.error'; missionId?: string; message: string };

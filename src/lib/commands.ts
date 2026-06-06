@@ -91,13 +91,16 @@ export const updateAgentSettings = (p: {
 export const openBrowser = (p: { missionId: string; url: string; viewport?: BrowserViewport; viewportMode?: BrowserViewportMode }) =>
   bridge.send({ type: 'browser.open', ...p });
 
+export const closeBrowser = (missionId: string) =>
+  bridge.send({ type: 'browser.close', missionId });
+
 export const refreshBrowser = (missionId: string) =>
   bridge.send({ type: 'browser.refresh', missionId });
 
 export const resizeBrowserViewport = (p: { missionId: string; viewport: BrowserViewport; viewportMode: BrowserViewportMode }) =>
   bridge.send({ type: 'browser.resizeViewport', ...p });
 
-export const clickBrowser = (p: { missionId: string; ref?: string; x?: number; y?: number }) =>
+export const clickBrowser = (p: { missionId: string; ref?: string; x?: number; y?: number; source?: 'agent' | 'user' }) =>
   bridge.send({ type: 'browser.click', ...p });
 
 export const typeBrowser = (missionId: string, text: string) =>
@@ -106,7 +109,7 @@ export const typeBrowser = (missionId: string, text: string) =>
 export const keypressBrowser = (missionId: string, key: string) =>
   bridge.send({ type: 'browser.keypress', missionId, key });
 
-export const scrollBrowser = (p: { missionId: string; direction: BrowserScrollDirection; pixels?: number }) =>
+export const scrollBrowser = (p: { missionId: string; direction: BrowserScrollDirection; pixels?: number; source?: 'agent' | 'user' }) =>
   bridge.send({ type: 'browser.scroll', ...p });
 
 export const addDesignReference = (missionId: string, reference: DesignReference) =>
