@@ -2,8 +2,9 @@ import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { createServer } from 'node:http';
 import test from 'node:test';
-import { MacChromeCdpRuntime, type CdpLike } from './MacChromeCdpRuntime.js';
+import { createPageTarget, MacChromeCdpRuntime, type CdpLike } from './MacChromeCdpRuntime.js';
 
 class FakeCdp implements CdpLike {
   calls: { method: string; params?: Record<string, unknown> }[] = [];
@@ -91,3 +92,43 @@ test('click, type, keypress, and scroll send compact input events', async () => 
   ]);
   assert.deepEqual(cdp.calls.at(-1)?.params, { type: 'mouseWheel', x: 450, y: 350, deltaX: 0, deltaY: 250 });
 });
+
+test('createPageTarget uses Chrome PUT target endpoint', async () => {
+  let method = '';
+  const server = createServer((req, res) => {
+    method = req.method ?? '';
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ webSocketDebuggerUrl: 'ws://127.0.0.1/devtools/page/test' }));
+  });
+  const port = await listen(server);
+
+  try {
+    assert.equal(await createPageTarget(port), 'ws://127.0.0.1/devtools/page/test');
+    assert.equal(method, 'PUT');
+  } finally {
+    await close(server);
+  }
+});
+
+function listen(server: ReturnType<typeof createServer>): Promise<number> {
+  return new Promise((resolve, reject) => {
+    server.listen(0, '127.0.0.1', () => {
+      const address = server.address();
+      if (!address || typeof address === 'string') {
+        reject(new Error('Expected local test server address'));
+        return;
+      }
+      resolve(address.port);
+    });
+    server.once('error', reject);
+  });
+}
+
+function close(server: ReturnType<typeof createServer>): Promise<void> {
+  return new Promise((resolve, reject) => {
+    server.close((err) => {
+      if (err) reject(err);
+      else resolve();
+    });
+  });
+}

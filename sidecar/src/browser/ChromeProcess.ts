@@ -84,10 +84,20 @@ export async function allocateLocalPort(): Promise<number> {
 }
 
 async function readChromeVersion(port: number): Promise<ChromeVersionInfo> {
-  const payload = await httpGetJson(`http://127.0.0.1:${port}/json/version`);
-  const webSocketDebuggerUrl = stringField(payload, 'webSocketDebuggerUrl');
-  if (!webSocketDebuggerUrl) throw new Error('Chrome CDP did not return webSocketDebuggerUrl');
-  return { webSocketDebuggerUrl };
+  const deadline = Date.now() + 8_000;
+  let lastError: unknown;
+  while (Date.now() < deadline) {
+    try {
+      const payload = await httpGetJson(`http://127.0.0.1:${port}/json/version`);
+      const webSocketDebuggerUrl = stringField(payload, 'webSocketDebuggerUrl');
+      if (webSocketDebuggerUrl) return { webSocketDebuggerUrl };
+      lastError = new Error('Chrome CDP did not return webSocketDebuggerUrl');
+    } catch (err) {
+      lastError = err;
+    }
+    await sleep(100);
+  }
+  throw new Error(`Chrome CDP did not become ready: ${errMsg(lastError)}`);
 }
 
 function httpGetJson(url: string): Promise<unknown> {
@@ -126,6 +136,14 @@ function stringField(value: unknown, field: string): string | undefined {
   if (!value || typeof value !== 'object') return undefined;
   const item = (value as Record<string, unknown>)[field];
   return typeof item === 'string' ? item : undefined;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function errMsg(value: unknown): string {
+  return value instanceof Error ? value.message : String(value);
 }
 
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {

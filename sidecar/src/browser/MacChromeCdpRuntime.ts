@@ -1,5 +1,5 @@
 import { mkdir, writeFile } from 'node:fs/promises';
-import { get } from 'node:http';
+import { get, request } from 'node:http';
 import { join } from 'node:path';
 import { CdpClient } from './CdpClient.js';
 import { ChromeProcess, type ChromeProcessHandle } from './ChromeProcess.js';
@@ -162,25 +162,33 @@ export class MacChromeCdpRuntime {
   }
 }
 
-async function createPageTarget(port: number): Promise<string> {
-  const target = await httpJson<TargetInfo>(`http://127.0.0.1:${port}/json/new?about:blank`);
+export async function createPageTarget(port: number): Promise<string> {
+  const target = await httpJson<TargetInfo>(`http://127.0.0.1:${port}/json/new?about:blank`, 'PUT');
   if (!target.webSocketDebuggerUrl) throw new Error('Chrome did not create a page target with a websocket URL');
   return target.webSocketDebuggerUrl;
 }
 
-function httpJson<T>(url: string): Promise<T> {
+function httpJson<T>(url: string, method: 'GET' | 'PUT' = 'GET'): Promise<T> {
   return new Promise((resolveJson, reject) => {
-    get(url, (res) => {
+    const client = method === 'GET' ? get : request;
+    const req = client(url, { method }, (res) => {
       const chunks: Buffer[] = [];
       res.on('data', (chunk) => chunks.push(Buffer.from(chunk)));
       res.on('end', () => {
+        const body = Buffer.concat(chunks).toString('utf8');
+        if ((res.statusCode ?? 500) >= 400) {
+          reject(new Error(`Chrome HTTP ${res.statusCode}: ${body}`));
+          return;
+        }
         try {
-          resolveJson(JSON.parse(Buffer.concat(chunks).toString('utf8')) as T);
+          resolveJson(JSON.parse(body) as T);
         } catch (err) {
           reject(err);
         }
       });
-    }).on('error', reject);
+    });
+    req.on('error', reject);
+    req.end();
   });
 }
 
