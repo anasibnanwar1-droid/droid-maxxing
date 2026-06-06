@@ -41,7 +41,6 @@ import {
   viewportForMode,
   viewportFromFrame,
 } from './browserViewport';
-import { DesignPromptBar } from './DesignPromptBar';
 
 type Preset = {
   id: BrowserViewportMode;
@@ -88,15 +87,6 @@ export default function BrowserWorkspace() {
   useEffect(() => {
     setReferences([]);
   }, [browser?.sessionId, sessionId]);
-
-  useEffect(() => {
-    if (!browser || viewportMode !== 'fit') return;
-    if (sameViewport(browser.viewport, fitViewport)) return;
-    const handle = window.setTimeout(() => {
-      if (sessionId) resizeBrowserViewport({ missionId: sessionId, viewport: fitViewport, viewportMode: 'fit' });
-    }, 180);
-    return () => window.clearTimeout(handle);
-  }, [browser, fitViewport, sessionId, viewportMode]);
 
   useEffect(() => {
     if (!browser || viewportMode !== 'custom') return;
@@ -260,32 +250,30 @@ export default function BrowserWorkspace() {
           viewport={visibleViewport}
           designMode={state.designMode}
           sketchMode={state.designMode && sketchMode}
+          references={references}
           selectedIds={selectedIds}
+          instruction={instruction}
+          canSend={canSend}
+          disabledReason={!sessionId ? 'No active Droid session' : selectedIds.length === 0 ? 'Select a reference' : 'Describe the change'}
           onScaleChange={setCanvasScale}
           onClickPoint={(point: Point) => sessionId && clickBrowser({ missionId: sessionId, x: point.x, y: point.y })}
           onToggleElement={toggleElement}
           onAddRegion={addRegion}
           onScroll={(direction: BrowserScrollDirection, pixels: number) => sessionId && scrollBrowser({ missionId: sessionId, direction, pixels })}
+          onInstructionChange={setInstruction}
+          onRemoveReference={(id) => setReferences((prev) => prev.filter((ref) => ref.id !== id))}
+          onSend={sendPrompt}
         />
 
         <div className="pointer-events-none absolute bottom-3 left-1/2 flex -translate-x-1/2 items-center gap-2 rounded-md border border-droid-border bg-droid-bg/90 px-2.5 py-1.5 text-[11px] text-droid-text-muted shadow-lg">
-          <span className="font-mono text-droid-text-secondary">{visibleViewport.width}x{visibleViewport.height}</span>
+          <span className="font-mono text-droid-text-secondary">
+            {visibleViewport.width}x{visibleViewport.height}@{visibleViewport.deviceScaleFactor}x
+          </span>
           <span>{Math.round(canvasScale * 100)}%</span>
           <span>{viewportMode}</span>
         </div>
       </div>
 
-      {state.designMode && (
-        <DesignPromptBar
-          references={references}
-          instruction={instruction}
-          canSend={canSend}
-          disabledReason={!sessionId ? 'No active Droid session' : selectedIds.length === 0 ? 'Select a reference' : 'Describe the change'}
-          onInstructionChange={setInstruction}
-          onRemoveReference={(id) => setReferences((prev) => prev.filter((ref) => ref.id !== id))}
-          onSend={sendPrompt}
-        />
-      )}
     </div>
   );
 }

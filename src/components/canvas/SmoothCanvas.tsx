@@ -15,6 +15,7 @@ interface SmoothCanvasProps {
   className?: string;
   contentClassName?: string;
   children: (fit: CanvasFit) => ReactNode;
+  overlay?: (fit: CanvasFit) => ReactNode;
   onFitChange?: (fit: CanvasFit) => void;
   onContentPointerDown?: (point: Point, event: PointerEvent<HTMLDivElement>, fit: CanvasFit) => void;
   onContentPointerMove?: (point: Point, event: PointerEvent<HTMLDivElement>, fit: CanvasFit) => void;
@@ -30,6 +31,7 @@ export function SmoothCanvas({
   className = '',
   contentClassName = '',
   children,
+  overlay,
   onFitChange,
   onContentPointerDown,
   onContentPointerMove,
@@ -106,6 +108,7 @@ export function SmoothCanvas({
       >
         {children(fit)}
       </div>
+      {overlay?.(fit)}
     </div>
   );
 }

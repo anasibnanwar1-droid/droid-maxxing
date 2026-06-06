@@ -23,8 +23,8 @@ export function DesignModeOverlay({ refs, selectedIds, active, draftRegion, agen
             style={boxStyle(ref.box, isSelected ? 'rgba(238, 96, 24, 0.12)' : 'rgba(238, 96, 24, 0.04)')}
           >
             {isSelected && (
-              <span className="absolute -left-px -top-5 h-5 px-1.5 rounded-t bg-droid-accent text-[10px] font-mono leading-5 text-black">
-                {selectedIds.indexOf(ref.ref) + 1}
+              <span className="absolute -left-px -top-6 h-6 max-w-[220px] truncate rounded-t bg-droid-accent px-2 text-[11px] font-medium leading-6 text-black">
+                {labelForRef(ref)}
               </span>
             )}
           </div>
@@ -48,6 +48,11 @@ export function DesignModeOverlay({ refs, selectedIds, active, draftRegion, agen
       )}
     </div>
   );
+}
+
+function labelForRef(ref: BrowserElementRef): string {
+  const label = ref.name || ref.text || ref.role || ref.tagName;
+  return `${label} - ${ref.tagName.toLowerCase()}`;
 }
 
 function boxStyle(box: BrowserBox, backgroundColor?: string): CSSProperties {
