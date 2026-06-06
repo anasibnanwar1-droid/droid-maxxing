@@ -216,6 +216,39 @@ export interface BrowserState {
   error?: string;
 }
 
+export interface BrowserNativeSnapshot {
+  url: string;
+  title?: string;
+  scroll: { x: number; y: number };
+  refs: BrowserElementRef[];
+}
+
+export type BrowserNativeAction = 'open' | 'snapshot' | 'click' | 'type' | 'keypress' | 'scroll' | 'close';
+
+export interface BrowserNativeRequest {
+  requestId: string;
+  missionId: string;
+  sessionId: string;
+  action: BrowserNativeAction;
+  url?: string;
+  viewport?: BrowserViewport;
+  viewportMode?: BrowserViewportMode;
+  x?: number;
+  y?: number;
+  text?: string;
+  key?: string;
+  direction?: BrowserScrollDirection;
+  pixels?: number;
+}
+
+export interface BrowserNativeResult {
+  requestId: string;
+  missionId: string;
+  ok: boolean;
+  snapshot?: BrowserNativeSnapshot;
+  error?: string;
+}
+
 export interface DesignReference {
   id?: string;
   kind: 'element' | 'region' | 'stroke';
@@ -224,6 +257,8 @@ export interface DesignReference {
   points?: { x: number; y: number }[];
   note?: string;
 }
+
+export type PermissionOutcome = 'proceed_once' | 'proceed_always' | 'proceed_always_tools' | 'proceed_auto_run' | 'cancel';
 
 // ── Frontend -> Sidecar ──────────────────────────────────────────────
 export type ClientCommand =
@@ -250,12 +285,12 @@ export type ClientCommand =
   | { type: 'agent.open'; missionId: string; agentSessionId: string; role?: AgentRole }
   | { type: 'agent.send'; missionId: string; agentSessionId: string; text: string }
   | { type: 'agent.interrupt'; missionId: string; agentSessionId: string }
-  | { type: 'approval.respond'; missionId: string; requestId: string; outcome: 'proceed_once' | 'proceed_always' | 'proceed_auto_run' | 'cancel' }
+  | { type: 'approval.respond'; missionId: string; requestId: string; outcome: PermissionOutcome }
   | { type: 'question.respond'; missionId: string; requestId: string; cancelled: boolean; answers: { index: number; question: string; answer: string }[] }
   | { type: 'history.list' }
   | { type: 'history.page'; sessionId: string; cursor?: string; limit?: number }
   | { type: 'mission.send'; missionId: string; text: string }
-  | { type: 'mission.respondPermission'; missionId: string; requestId: string; outcome: 'proceed_once' | 'proceed_always' | 'proceed_auto_run' | 'cancel' }
+  | { type: 'mission.respondPermission'; missionId: string; requestId: string; outcome: PermissionOutcome }
   | { type: 'mission.respondQuestion'; missionId: string; requestId: string; cancelled: boolean; answers: { index: number; question: string; answer: string }[] }
   | { type: 'mission.interrupt'; missionId: string }
   | { type: 'mission.compact'; missionId: string; customInstructions?: string }
@@ -278,6 +313,7 @@ export type ClientCommand =
   | { type: 'browser.inspectPoint'; missionId: string; x: number; y: number }
   | { type: 'browser.design.addReference'; missionId: string; reference: DesignReference }
   | { type: 'browser.design.sendPrompt'; missionId: string; instruction: string; referenceIds: string[] }
+  | { type: 'browser.native.result'; result: BrowserNativeResult }
   | { type: 'spec.read'; missionId: string; path: string }
   | { type: 'sessions.list' }
   | { type: 'mission.resume'; sessionId: string }
@@ -314,5 +350,6 @@ export type ServerEvent =
   | { type: 'sessions.history'; missions: HistoryMission[] }
   | { type: 'models.list'; models: ModelInfo[] }
   | { type: 'browser.updated'; state: BrowserState }
+  | { type: 'browser.native.request'; request: BrowserNativeRequest }
   | { type: 'browser.closed'; missionId: string }
   | { type: 'browser.error'; missionId?: string; message: string };

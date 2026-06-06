@@ -295,7 +295,8 @@ fn main() {
             native_browser::native_browser_close,
             native_browser::native_browser_set_design_mode,
             native_browser::native_browser_set_sketch_mode,
-            native_browser::native_browser_reload
+            native_browser::native_browser_reload,
+            native_browser::native_browser_agent_action
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::Destroyed = event {

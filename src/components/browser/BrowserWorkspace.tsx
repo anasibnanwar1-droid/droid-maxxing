@@ -74,11 +74,20 @@ export default function BrowserWorkspace() {
     if (browser?.url && document.activeElement !== urlInputRef.current) {
       setUrlInput(browser.url);
     }
-  }, [browser?.url]);
+    if (browser?.url && browser.url !== activeUrl) {
+      setActiveUrl(browser.url);
+    }
+  }, [activeUrl, browser?.url]);
 
   useEffect(() => {
     if (browser?.viewportMode) setViewportMode(browser.viewportMode);
   }, [browser?.viewportMode]);
+
+  useEffect(() => {
+    if (browser?.viewport && browser.viewportMode === 'custom') {
+      setCustomViewport(browser.viewport);
+    }
+  }, [browser?.viewport, browser?.viewportMode]);
 
   useEffect(() => {
     setReferences([]);

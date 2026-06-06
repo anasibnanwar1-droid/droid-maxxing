@@ -17,6 +17,8 @@ import { homedir, tmpdir } from 'node:os';
 import type {
   AgentRole,
   Autonomy,
+  BrowserNativeRequest,
+  BrowserNativeResult,
   ClientCommand,
   ConfigurableAgent,
   ContextBreakdownSnapshot,
@@ -48,6 +50,8 @@ import { mergeModelCatalog } from './modelCatalog.js';
 import { readDroidCliModelCatalog } from './DroidCliCatalog.js';
 import { BrowserSessionManager } from './browser/BrowserSessionManager.js';
 import { createBrowserMcpServer } from './browser/browserMcpServer.js';
+import { NativeBrowserRuntime } from './browser/NativeBrowserRuntime.js';
+import { isApprovalOutcome, normalizePermissionOutcome } from './permissionOutcomes.js';
 
 type Emit = (event: ServerEvent) => void;
 
@@ -105,9 +109,18 @@ const STATE_TO_PHASE: Record<string, MissionPhase> = {
 };
 
 const MAX_OPEN_AGENT_TRANSPORTS = boundedInt(process.env.DROID_CONTROL_MAX_OPEN_AGENTS, 4, 1, 24);
+const BROWSER_NATIVE_TIMEOUT_MS = boundedInt(process.env.DROID_CONTROL_BROWSER_NATIVE_TIMEOUT_MS, 12_000, 1_000, 60_000);
 
 let permSeq = 0;
 const nextRequestId = () => `req-${Date.now().toString(36)}-${(permSeq++).toString(36)}`;
+let nativeBrowserSeq = 0;
+const nextNativeBrowserRequestId = () => `browser-native-${Date.now().toString(36)}-${(nativeBrowserSeq++).toString(36)}`;
+
+interface PendingNativeBrowserRequest {
+  resolve: (result: BrowserNativeResult) => void;
+  reject: (err: Error) => void;
+  timeout: ReturnType<typeof setTimeout>;
+}
 
 export class MissionManager {
   private ready = false;
@@ -119,12 +132,20 @@ export class MissionManager {
   private readonly usageOffsets = new Map<string, UsageOffset>();
   private readonly contextSnapshots = new Map<string, ContextStatsSnapshot>();
   private readonly contextPollers = new Map<string, ReturnType<typeof setInterval>>();
+  private readonly pendingNativeBrowserRequests = new Map<string, PendingNativeBrowserRequest>();
   private readonly browsers: BrowserSessionManager;
 
   constructor(private readonly emit: Emit, options: MissionManagerOptions = {}) {
     this.browsers = new BrowserSessionManager({
       assetUrlFor: options.assetUrlFor,
       emit: (event) => this.emit(event),
+      runtimeFactory: (sessionId, viewport, missionId) => new NativeBrowserRuntime({
+        sessionId,
+        missionId,
+        viewport,
+        request: (request) => this.requestNativeBrowser(request),
+        nextRequestId: nextNativeBrowserRequestId,
+      }),
     });
   }
 
@@ -304,6 +325,9 @@ export class MissionManager {
           const { prompt } = await this.browsers.designPrompt({ ...cmd, missionId });
           await this.send(missionId, prompt);
         });
+        return;
+      case 'browser.native.result':
+        this.resolveNativeBrowserRequest(cmd.result);
         return;
     }
   }
@@ -768,8 +792,15 @@ export class MissionManager {
     const pending = mission?.pendingPermissions.get(requestId);
     if (!mission || !pending) return;
     mission.pendingPermissions.delete(requestId);
+    let normalized: RequestPermissionHandlerResult;
+    try {
+      normalized = normalizePermissionOutcome(outcome);
+    } catch (err) {
+      this.emitError({ code: 'permission.invalid_outcome', missionId, message: errMsg(err) });
+      normalized = normalizePermissionOutcome('cancel');
+    }
     if (pending.kind === 'spec' && isApprovalOutcome(outcome)) await this.prepareSpecExitForRun(mission);
-    pending.resolve(outcome as RequestPermissionHandlerResult);
+    pending.resolve(normalized);
   }
 
   private async prepareSpecExitForRun(mission: Mission): Promise<void> {
@@ -1440,6 +1471,26 @@ export class MissionManager {
     }
   }
 
+  private requestNativeBrowser(request: BrowserNativeRequest): Promise<BrowserNativeResult> {
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        this.pendingNativeBrowserRequests.delete(request.requestId);
+        reject(new Error(`DroidMaxx browser did not respond to ${request.action} within ${BROWSER_NATIVE_TIMEOUT_MS}ms.`));
+      }, BROWSER_NATIVE_TIMEOUT_MS);
+      this.pendingNativeBrowserRequests.set(request.requestId, { resolve, reject, timeout });
+      this.emit({ type: 'browser.native.request', request });
+    });
+  }
+
+  private resolveNativeBrowserRequest(result: BrowserNativeResult): void {
+    const pending = this.pendingNativeBrowserRequests.get(result.requestId);
+    if (!pending) return;
+    clearTimeout(pending.timeout);
+    this.pendingNativeBrowserRequests.delete(result.requestId);
+    if (result.ok) pending.resolve(result);
+    else pending.reject(new Error(result.error ?? 'DroidMaxx browser action failed.'));
+  }
+
   private requireBrowserMissionId(missionId?: string): string {
     if (!missionId) {
       throw new Error('Browser sessions are scoped to a Droid chat. Select or create a chat before opening the browser.');
@@ -1576,10 +1627,6 @@ function boundedInt(value: string | undefined, fallback: number, min: number, ma
   const parsed = value ? Number.parseInt(value, 10) : fallback;
   if (!Number.isFinite(parsed)) return fallback;
   return Math.min(max, Math.max(min, parsed));
-}
-
-function isApprovalOutcome(outcome: string): boolean {
-  return outcome === 'proceed_once' || outcome === 'proceed_always' || outcome === 'proceed_auto_run';
 }
 
 function normalizeAutonomy(value: unknown): Autonomy | undefined {

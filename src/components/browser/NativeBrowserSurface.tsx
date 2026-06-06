@@ -6,13 +6,16 @@ import {
   onNativeBrowserLoaded,
   onNativeBrowserSelection,
   openNativeBrowser,
+  runNativeBrowserAgentAction,
   setNativeBrowserBounds,
   setNativeBrowserDesignMode,
   setNativeBrowserSketchMode,
+  waitForNextNativeBrowserLoad,
   type NativeBrowserBounds,
   type NativeBrowserSelection,
 } from '../../lib/nativeBrowser';
-import type { BrowserViewport, BrowserViewportMode } from '../../types/bridge';
+import { registerNativeBrowserController } from '../../lib/nativeBrowserAgent';
+import type { BrowserNativeRequest, BrowserNativeResult, BrowserViewport, BrowserViewportMode } from '../../types/bridge';
 import type { Size } from '../canvas/canvasMath';
 
 interface NativeBrowserSurfaceProps {
@@ -89,6 +92,20 @@ export function NativeBrowserSurface({
   }, [native, surface.height, surface.left, surface.top, surface.width, url]);
 
   useEffect(() => {
+    if (!native) return;
+    return registerNativeBrowserController({
+      perform: async (request) => performNativeRequest(request, {
+        currentUrl: url,
+        bounds: () => boundsFor(slotRef),
+        markOpen: (nextUrl, bounds) => {
+          lastUrl.current = nextUrl;
+          lastBounds.current = bounds;
+        },
+      }),
+    });
+  }, [native, url]);
+
+  useEffect(() => {
     return () => {
       if (native) closeNativeBrowser().catch(() => {});
     };
@@ -117,6 +134,51 @@ export function NativeBrowserSurface({
       </div>
     </div>
   );
+}
+
+async function performNativeRequest(
+  request: BrowserNativeRequest,
+  options: {
+    currentUrl: string;
+    bounds: () => NativeBrowserBounds | null;
+    markOpen: (url: string, bounds: NativeBrowserBounds) => void;
+  },
+): Promise<BrowserNativeResult> {
+  try {
+    if (request.action === 'close') {
+      await closeNativeBrowser();
+      return { requestId: request.requestId, missionId: request.missionId, ok: true };
+    }
+    const bounds = options.bounds();
+    if (!bounds) throw new Error('DroidMaxx browser pane is not laid out yet.');
+    if (request.action === 'open') {
+      const targetUrl = request.url ?? options.currentUrl;
+      const loaded = waitForNextNativeBrowserLoad().catch(() => undefined);
+      await openNativeBrowser(targetUrl, bounds);
+      options.markOpen(targetUrl, bounds);
+      await loaded;
+      const result = await runNativeBrowserAgentAction({ requestId: request.requestId, action: 'snapshot' });
+      return { requestId: request.requestId, missionId: request.missionId, ok: result.ok, snapshot: result.snapshot, error: result.error };
+    }
+    const result = await runNativeBrowserAgentAction({
+      requestId: request.requestId,
+      action: request.action,
+      x: request.x,
+      y: request.y,
+      text: request.text,
+      key: request.key,
+      direction: request.direction,
+      pixels: request.pixels,
+    });
+    return { requestId: request.requestId, missionId: request.missionId, ok: result.ok, snapshot: result.snapshot, error: result.error };
+  } catch (err) {
+    return {
+      requestId: request.requestId,
+      missionId: request.missionId,
+      ok: false,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
 }
 
 function surfaceLayout(frame: Size, viewport: BrowserViewport, mode: BrowserViewportMode) {

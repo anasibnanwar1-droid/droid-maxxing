@@ -57,7 +57,7 @@ export interface DesignReference {
   url: string;
   title?: string;
   viewport: BrowserViewport;
-  screenshotPath: string;
+  screenshotPath?: string;
   scroll: { x: number; y: number };
   element?: BrowserElementRef;
   box?: BrowserBox;

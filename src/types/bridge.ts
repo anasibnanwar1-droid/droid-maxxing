@@ -234,6 +234,39 @@ export interface BrowserState {
   error?: string;
 }
 
+export interface BrowserNativeSnapshot {
+  url: string;
+  title?: string;
+  scroll: { x: number; y: number };
+  refs: BrowserElementRef[];
+}
+
+export type BrowserNativeAction = 'open' | 'snapshot' | 'click' | 'type' | 'keypress' | 'scroll' | 'close';
+
+export interface BrowserNativeRequest {
+  requestId: string;
+  missionId: string;
+  sessionId: string;
+  action: BrowserNativeAction;
+  url?: string;
+  viewport?: BrowserViewport;
+  viewportMode?: BrowserViewportMode;
+  x?: number;
+  y?: number;
+  text?: string;
+  key?: string;
+  direction?: BrowserScrollDirection;
+  pixels?: number;
+}
+
+export interface BrowserNativeResult {
+  requestId: string;
+  missionId: string;
+  ok: boolean;
+  snapshot?: BrowserNativeSnapshot;
+  error?: string;
+}
+
 export interface DesignReference {
   id?: string;
   kind: 'element' | 'region' | 'stroke';
@@ -243,7 +276,7 @@ export interface DesignReference {
   note?: string;
 }
 
-export type PermissionOutcome = 'proceed_once' | 'proceed_always' | 'proceed_auto_run' | 'cancel';
+export type PermissionOutcome = 'proceed_once' | 'proceed_always' | 'proceed_always_tools' | 'proceed_auto_run' | 'cancel';
 
 export type ClientCommand =
   | { type: 'connect'; apiKey?: string }
@@ -312,6 +345,7 @@ export type ClientCommand =
   | { type: 'browser.inspectPoint'; missionId: string; x: number; y: number }
   | { type: 'browser.design.addReference'; missionId: string; reference: DesignReference }
   | { type: 'browser.design.sendPrompt'; missionId: string; instruction: string; referenceIds: string[] }
+  | { type: 'browser.native.result'; result: BrowserNativeResult }
   | { type: 'sessions.list' }
   | { type: 'mission.resume'; sessionId: string }
   | { type: 'models.list' };
@@ -345,5 +379,6 @@ export type ServerEvent =
   | { type: 'sessions.history'; missions: HistoryMission[] }
   | { type: 'models.list'; models: ModelInfo[] }
   | { type: 'browser.updated'; state: BrowserState }
+  | { type: 'browser.native.request'; request: BrowserNativeRequest }
   | { type: 'browser.closed'; missionId: string }
   | { type: 'browser.error'; missionId?: string; message: string };

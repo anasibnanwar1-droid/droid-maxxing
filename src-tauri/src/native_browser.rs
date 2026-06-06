@@ -8,6 +8,7 @@ use tauri::{
 
 const WEBVIEW_LABEL: &str = "droidmaxx-browser";
 const DESIGN_EVENT_PREFIX: &str = "__DROIDMAXX_DESIGN__:";
+const AGENT_EVENT_PREFIX: &str = "__DROIDMAXX_AGENT__:";
 
 #[derive(Default)]
 pub struct NativeBrowserState {
@@ -53,6 +54,20 @@ struct NativeBrowserBox {
     y: f64,
     width: f64,
     height: f64,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NativeBrowserAgentAction {
+    request_id: String,
+    action: String,
+    url: Option<String>,
+    x: Option<f64>,
+    y: Option<f64>,
+    text: Option<String>,
+    key: Option<String>,
+    direction: Option<String>,
+    pixels: Option<f64>,
 }
 
 #[tauri::command]
@@ -154,6 +169,22 @@ pub fn native_browser_reload(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+#[tauri::command]
+pub fn native_browser_agent_action(
+    app: AppHandle,
+    request: NativeBrowserAgentAction,
+) -> Result<(), String> {
+    let Some(webview) = app.get_webview(WEBVIEW_LABEL) else {
+        return Err("DroidMaxx browser is not open.".to_string());
+    };
+    webview
+        .eval(format!(
+            "window.__DROIDMAXX_AGENT_ACTION?.({});",
+            serde_json::to_string(&request).map_err(|err| err.to_string())?
+        ))
+        .map_err(|err| err.to_string())
+}
+
 impl NativeBrowserState {
     fn with_inner<T>(&self, f: impl FnOnce(&mut NativeBrowserInner) -> T) -> Result<T, String> {
         let mut inner = self.inner.lock().map_err(|_| "native browser state lock poisoned")?;
@@ -195,6 +226,8 @@ fn ensure_webview(
         .on_document_title_changed(move |_webview, title| {
             if let Some(selection) = parse_design_event(&title) {
                 let _ = app_for_title.emit("native-browser-selection", selection);
+            } else if let Some(result) = parse_agent_event(&title) {
+                let _ = app_for_title.emit("native-browser-agent-result", result);
             }
         })
         .on_page_load(move |webview, payload| {
@@ -246,6 +279,11 @@ fn parse_design_event(title: &str) -> Option<NativeBrowserSelection> {
     serde_json::from_str(payload).ok()
 }
 
+fn parse_agent_event(title: &str) -> Option<serde_json::Value> {
+    let payload = title.strip_prefix(AGENT_EVENT_PREFIX)?;
+    serde_json::from_str(payload).ok()
+}
+
 fn json_string(value: &str) -> Result<String, String> {
     serde_json::to_string(value).map_err(|err| err.to_string())
 }
@@ -259,6 +297,7 @@ const DESIGN_MODE_SCRIPT: &str = r##"
   let sketchMode = false;
   let dragStart = null;
   const prefix = "__DROIDMAXX_DESIGN__:";
+  const agentPrefix = "__DROIDMAXX_AGENT__:";
   const interactiveTags = new Set(["A", "BUTTON", "INPUT", "TEXTAREA", "SELECT", "SUMMARY"]);
   const interactiveRoles = new Set(["button", "checkbox", "combobox", "link", "menuitem", "option", "radio", "searchbox", "switch", "tab", "textbox"]);
   const textTags = new Set(["BLOCKQUOTE", "CODE", "EM", "FIGCAPTION", "H1", "H2", "H3", "H4", "H5", "H6", "LABEL", "LI", "P", "PRE", "SMALL", "SPAN", "STRONG", "TD", "TH"]);
@@ -376,6 +415,11 @@ const DESIGN_MODE_SCRIPT: &str = r##"
       box: { x: Math.round(rect.x), y: Math.round(rect.y), width: Math.round(rect.width), height: Math.round(rect.height) }
     };
   };
+  const labelFor = (el) => {
+    const tag = el.tagName.toLowerCase();
+    const label = cleanText(el.getAttribute("aria-label") || el.getAttribute("title") || el.getAttribute("placeholder") || directText(el) || el.getAttribute("data-testid") || el.id || tag).slice(0, 48);
+    return `${label || tag} · ${tag}`;
+  };
   const send = (payload) => {
     const previous = document.title;
     document.title = prefix + JSON.stringify(payload);
@@ -413,6 +457,128 @@ const DESIGN_MODE_SCRIPT: &str = r##"
     region.style.height = `${Math.round(height)}px`;
     return { x: Math.round(x), y: Math.round(y), width: Math.round(width), height: Math.round(height) };
   };
+  const attrsFor = (el) => {
+    const out = {};
+    ["id", "class", "data-testid", "aria-label", "title", "placeholder", "type", "href", "name", "value"].forEach((name) => {
+      const value = el.getAttribute?.(name);
+      if (value) out[name] = String(value).slice(0, 160);
+    });
+    return out;
+  };
+  const stylesFor = (el) => {
+    const style = getComputedStyle(el);
+    return {
+      color: style.color,
+      backgroundColor: style.backgroundColor,
+      fontFamily: style.fontFamily,
+      fontSize: style.fontSize,
+      fontWeight: style.fontWeight,
+      display: style.display
+    };
+  };
+  const refFor = (el, index) => {
+    const rect = el.getBoundingClientRect();
+    const text = cleanText(el.innerText || el.textContent);
+    const name = cleanText(el.getAttribute("aria-label") || el.getAttribute("title") || el.getAttribute("placeholder") || directText(el) || text);
+    return {
+      ref: "@b" + index,
+      selector: selectorFor(el),
+      tagName: el.tagName.toLowerCase(),
+      role: roleFor(el) || undefined,
+      name: name || undefined,
+      text: text || undefined,
+      attributes: attrsFor(el),
+      className: el.className && typeof el.className === "string" ? el.className.slice(0, 160) : undefined,
+      box: { x: Math.round(rect.x), y: Math.round(rect.y), width: Math.round(rect.width), height: Math.round(rect.height) },
+      computedStyles: stylesFor(el)
+    };
+  };
+  const collectRefs = () => {
+    const refs = [];
+    const root = document.body || document.documentElement;
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+    let node = root;
+    while (node && refs.length < 80) {
+      if (isCandidate(node)) refs.push(refFor(node, refs.length + 1));
+      node = walker.nextNode();
+    }
+    return refs;
+  };
+  const pageSnapshot = () => ({
+    url: location.href,
+    title: document.title.startsWith(prefix) || document.title.startsWith(agentPrefix) ? "" : document.title,
+    scroll: { x: Math.round(window.scrollX), y: Math.round(window.scrollY) },
+    refs: collectRefs()
+  });
+  const sendAgent = (payload) => {
+    const previous = document.title;
+    document.title = agentPrefix + JSON.stringify(payload);
+    window.setTimeout(() => {
+      if (document.title.startsWith(agentPrefix)) document.title = previous;
+    }, 0);
+  };
+  const settle = () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  const targetAt = (x, y) => {
+    const target = document.elementFromPoint(Number(x), Number(y));
+    if (!target) throw new Error(`No element at ${x},${y}`);
+    return target;
+  };
+  const typeIntoFocused = (text) => {
+    const el = document.activeElement;
+    if (!el) throw new Error("No focused element for typing.");
+    const value = String(text || "");
+    if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
+      const start = el.selectionStart ?? el.value.length;
+      const end = el.selectionEnd ?? el.value.length;
+      el.setRangeText(value, start, end, "end");
+      el.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: value }));
+      el.dispatchEvent(new Event("change", { bubbles: true }));
+      return;
+    }
+    if (el.isContentEditable) {
+      document.execCommand("insertText", false, value);
+      el.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: value }));
+      return;
+    }
+    throw new Error("Focused element is not text-editable.");
+  };
+  const pressKey = (key) => {
+    const el = document.activeElement || document.body;
+    const value = String(key || "");
+    el.dispatchEvent(new KeyboardEvent("keydown", { key: value, bubbles: true, cancelable: true }));
+    if (value === "Enter" && el instanceof HTMLInputElement && el.form) {
+      el.form.requestSubmit?.();
+    }
+    el.dispatchEvent(new KeyboardEvent("keyup", { key: value, bubbles: true, cancelable: true }));
+  };
+  window.__DROIDMAXX_AGENT_ACTION = async (request) => {
+    try {
+      const action = request?.action;
+      if (action === "click") {
+        const target = targetAt(request.x, request.y);
+        target.focus?.();
+        target.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, clientX: request.x, clientY: request.y, button: 0 }));
+        target.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true, clientX: request.x, clientY: request.y, button: 0 }));
+        target.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, clientX: request.x, clientY: request.y, button: 0 }));
+      } else if (action === "type") {
+        typeIntoFocused(request.text);
+      } else if (action === "keypress") {
+        pressKey(request.key);
+      } else if (action === "scroll") {
+        const pixels = Number(request.pixels || 500);
+        const direction = String(request.direction || "down");
+        const dx = direction === "left" ? -pixels : direction === "right" ? pixels : 0;
+        const dy = direction === "up" ? -pixels : direction === "down" ? pixels : 0;
+        window.scrollBy({ left: dx, top: dy, behavior: "auto" });
+      } else if (action !== "snapshot") {
+        throw new Error(`Unsupported browser action: ${action}`);
+      }
+      await settle();
+      sendAgent({ requestId: request.requestId, ok: true, snapshot: pageSnapshot() });
+    } catch (error) {
+      sendAgent({ requestId: request?.requestId, ok: false, error: error?.message || String(error), snapshot: pageSnapshot() });
+    }
+  };
 
   window.__DROIDMAXX_SET_DESIGN_MODE = (active) => {
     designMode = Boolean(active);
@@ -437,7 +603,7 @@ const DESIGN_MODE_SCRIPT: &str = r##"
       return;
     }
     const rect = target.getBoundingClientRect();
-    showBox(rect, `${target.tagName.toLowerCase()} · click to select`);
+    showBox(rect, labelFor(target));
   }, true);
 
   document.addEventListener("mouseleave", () => {
@@ -476,7 +642,7 @@ const DESIGN_MODE_SCRIPT: &str = r##"
     if (!target) return;
     event.preventDefault();
     event.stopPropagation();
-    showBox(target.getBoundingClientRect(), `${target.tagName.toLowerCase()} · selected`, "#ff8a2a");
+    showBox(target.getBoundingClientRect(), labelFor(target), "#ff8a2a");
     send(payloadFor(target));
   }, true);
 })();

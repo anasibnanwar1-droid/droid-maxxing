@@ -1,5 +1,4 @@
 import { randomUUID } from 'node:crypto';
-import { MacChromeCdpRuntime } from './MacChromeCdpRuntime.js';
 import { formatDesignPrompt, writeDesignPromptPack } from './designPromptPacks.js';
 import type {
   BrowserElementRef,
@@ -13,7 +12,7 @@ import type {
 
 export interface BrowserSessionManagerOptions {
   emit?: (event: { type: 'browser.updated'; state: BrowserState } | { type: 'browser.error'; missionId?: string; message: string }) => void;
-  runtimeFactory?: (sessionId: string, viewport: BrowserViewport) => BrowserRuntime;
+  runtimeFactory?: (sessionId: string, viewport: BrowserViewport, missionId: string) => BrowserRuntime;
   assetUrlFor?: (path: string) => string;
   writePack?: typeof writeDesignPromptPack;
 }
@@ -61,8 +60,16 @@ export class BrowserSessionManager {
     if (input.viewport) {
       await session.runtime.setViewport(input.viewport);
     }
+    session.state = {
+      ...session.state,
+      url: input.url,
+      refs: [],
+      viewport: input.viewport ?? session.state.viewport,
+      viewportMode: input.viewportMode ?? session.state.viewportMode,
+    };
+    this.emitUpdated(session.state);
     const snapshot = await session.runtime.open(input.url);
-    session.state = await this.stateFromSnapshot(session, snapshot);
+    session.state = this.stateFromSnapshot(session, snapshot);
     this.emitUpdated(session.state);
     return session.state;
   }
@@ -77,6 +84,7 @@ export class BrowserSessionManager {
   async resizeViewport(input: { missionId: string; viewport: BrowserViewport; viewportMode: BrowserViewportMode }): Promise<BrowserState> {
     const session = this.requireSession(input.missionId);
     session.state = { ...session.state, viewport: input.viewport, viewportMode: input.viewportMode };
+    this.emitUpdated(session.state);
     await session.runtime.setViewport(input.viewport);
     session.state = await this.captureState(session);
     this.emitUpdated(session.state);
@@ -134,7 +142,6 @@ export class BrowserSessionManager {
 
   addReference(missionId: string, reference: Omit<DesignReference, 'id' | 'url' | 'title' | 'viewport' | 'scroll' | 'screenshotPath'> & { id?: string }): DesignReference {
     const session = this.requireSession(missionId);
-    if (!session.state.screenshotPath) throw new Error('Capture a browser screenshot before adding a design reference.');
     const next: DesignReference = {
       ...reference,
       id: reference.id ?? `ref-${randomUUID()}`,
@@ -199,7 +206,10 @@ export class BrowserSessionManager {
     const initialViewport = viewport ?? DEFAULT_BROWSER_VIEWPORT;
     const initialViewportMode = viewportMode ?? 'fit';
     const id = `browser-${missionId}-${Date.now().toString(36)}`;
-    const runtime = this.options.runtimeFactory?.(id, initialViewport) ?? new MacChromeCdpRuntime({ sessionId: id, viewport: initialViewport });
+    const runtime = this.options.runtimeFactory?.(id, initialViewport, missionId);
+    if (!runtime) {
+      throw new Error('Browser runtime is not configured.');
+    }
     const session: ManagedBrowserSession = {
       id,
       missionId,
@@ -229,29 +239,21 @@ export class BrowserSessionManager {
     return this.sessions.get(keyFor(missionId));
   }
 
-  private async stateFromSnapshot(
+  private stateFromSnapshot(
     session: ManagedBrowserSession,
     snapshot: { url: string; title?: string; scroll: { x: number; y: number }; refs: BrowserElementRef[] },
-  ): Promise<BrowserState> {
-    const screenshotPath = await session.runtime.screenshot();
+  ): BrowserState {
     return {
       ...session.state,
       ...snapshot,
-      screenshotPath,
-      screenshotUrl: this.options.assetUrlFor?.(screenshotPath),
     };
   }
 
   private async captureState(session: ManagedBrowserSession): Promise<BrowserState> {
-    const [snapshot, screenshotPath] = await Promise.all([
-      session.runtime.snapshot(),
-      session.runtime.screenshot(),
-    ]);
+    const snapshot = await session.runtime.snapshot();
     return {
       ...session.state,
       ...snapshot,
-      screenshotPath,
-      screenshotUrl: this.options.assetUrlFor?.(screenshotPath),
     };
   }
 

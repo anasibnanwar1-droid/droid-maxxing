@@ -1,5 +1,5 @@
 import { bridge } from './bridge';
-import type { Autonomy, BrowserScrollDirection, BrowserViewport, BrowserViewportMode, ConfigurableAgent, DesignReference, ReasoningEffort, SessionInteractionMode } from '../types/bridge';
+import type { Autonomy, BrowserNativeResult, BrowserScrollDirection, BrowserViewport, BrowserViewportMode, ConfigurableAgent, DesignReference, PermissionOutcome, ReasoningEffort, SessionInteractionMode } from '../types/bridge';
 
 export const connect = (apiKey: string) => bridge.send({ type: 'connect', apiKey });
 
@@ -42,7 +42,7 @@ export const sendToAgent = (missionId: string, agentSessionId: string, text: str
 export const respondPermission = (
   missionId: string,
   requestId: string,
-  outcome: 'proceed_once' | 'proceed_always' | 'proceed_auto_run' | 'cancel'
+  outcome: PermissionOutcome
 ) => bridge.send({ type: 'mission.respondPermission', missionId, requestId, outcome });
 
 export const respondQuestion = (
@@ -117,3 +117,6 @@ export const addDesignReference = (missionId: string, reference: DesignReference
 
 export const sendDesignPrompt = (missionId: string, instruction: string, referenceIds: string[]) =>
   bridge.send({ type: 'browser.design.sendPrompt', missionId, instruction, referenceIds });
+
+export const sendNativeBrowserResult = (result: BrowserNativeResult) =>
+  bridge.send({ type: 'browser.native.result', result });

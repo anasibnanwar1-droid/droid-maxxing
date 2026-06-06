@@ -81,7 +81,7 @@ test('user click does not move the visible agent cursor', async () => {
   assert.equal(state.agentCursor, undefined);
 });
 
-test('addReference captures current browser context', async () => {
+test('addReference captures current browser context without forcing screenshots', async () => {
   const manager = new BrowserSessionManager({
     runtimeFactory: (_id, viewport) => new FakeRuntime(viewport),
   });
@@ -90,8 +90,20 @@ test('addReference captures current browser context', async () => {
   const reference = manager.addReference('m1', { kind: 'element', element: buttonRef() });
 
   assert.equal(reference.url, 'http://127.0.0.1:1420/');
-  assert.equal(reference.screenshotPath, '/tmp/droid/shot.png');
+  assert.equal(reference.screenshotPath, undefined);
   assert.equal(reference.viewport.width, 1200);
+});
+
+test('addReference keeps an explicitly captured screenshot', async () => {
+  const manager = new BrowserSessionManager({
+    runtimeFactory: (_id, viewport) => new FakeRuntime(viewport),
+  });
+  await manager.open({ missionId: 'm1', url: 'http://127.0.0.1:1420/' });
+  await manager.screenshot('m1');
+
+  const reference = manager.addReference('m1', { kind: 'element', element: buttonRef() });
+
+  assert.equal(reference.screenshotPath, '/tmp/droid/shot.png');
 });
 
 test('screenshot forwards high-detail capture options', async () => {
@@ -140,6 +152,21 @@ test('open preserves existing viewport when agent omits viewport', async () => {
   assert.deepEqual(runtime.viewport, { width: 820, height: 620, deviceScaleFactor: 2 });
   assert.deepEqual(state.viewport, { width: 820, height: 620, deviceScaleFactor: 2 });
   assert.equal(state.viewportMode, 'custom');
+});
+
+test('open and refresh do not force screenshot capture', async () => {
+  let runtime!: FakeRuntime;
+  const manager = new BrowserSessionManager({
+    runtimeFactory: (_id, viewport) => {
+      runtime = new FakeRuntime(viewport);
+      return runtime;
+    },
+  });
+
+  await manager.open({ missionId: 'm1', url: 'https://example.com' });
+  await manager.refresh('m1');
+
+  assert.equal(runtime.screenshots.length, 0);
 });
 
 function buttonRef(): BrowserElementRef {

@@ -3,8 +3,9 @@ import { useStore } from './hooks/useStore';
 import { AnimatePresence, motion } from 'framer-motion';
 import { Monitor, PanelLeft } from 'lucide-react';
 import { bridge } from './lib/bridge';
-import { closeBrowser, connect, listFactoryDefaults, listModels, listMissions, listSkills, loadMissionHistory, resumeMission } from './lib/commands';
+import { closeBrowser, connect, listFactoryDefaults, listModels, listMissions, listSkills, loadMissionHistory, resumeMission, sendNativeBrowserResult } from './lib/commands';
 import { getApiKey } from './lib/tauri';
+import { performNativeBrowserRequest } from './lib/nativeBrowserAgent';
 import Sidebar from './components/Sidebar';
 import ChatView from './components/ChatView';
 import MissionControl from './components/MissionControl';
@@ -53,6 +54,25 @@ export default function App() {
       listSkills();
     })();
   }, []);
+
+  useEffect(() => {
+    const unsub = bridge.subscribe((event) => {
+      if (event.type !== 'browser.native.request') return;
+      dispatch({ type: 'SET_ACTIVE_MISSION', id: event.request.missionId });
+      dispatch({ type: 'SET_BROWSER_OPEN', open: true });
+      void performNativeBrowserRequest(event.request)
+        .then(sendNativeBrowserResult)
+        .catch((err) => {
+          sendNativeBrowserResult({
+            requestId: event.request.requestId,
+            missionId: event.request.missionId,
+            ok: false,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        });
+    });
+    return () => unsub();
+  }, [dispatch]);
 
   useEffect(() => {
     if (!activeMission) return;

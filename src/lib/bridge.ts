@@ -1,5 +1,5 @@
 import { getBridgeInfo } from './tauri';
-import type { ClientCommand, ServerEvent } from '../types/bridge';
+import type { BrowserNativeResult, ClientCommand, PermissionOutcome, ServerEvent } from '../types/bridge';
 
 type Listener = (ev: ServerEvent) => void;
 
@@ -93,7 +93,7 @@ export const sendToAgent = (missionId: string, agentSessionId: string, text: str
 export const respondPermission = (
   missionId: string,
   requestId: string,
-  outcome: 'proceed_once' | 'proceed_always' | 'proceed_auto_run' | 'cancel',
+  outcome: PermissionOutcome,
 ) => bridge.send({ type: 'mission.respondPermission', missionId, requestId, outcome });
 
 export const respondQuestion = (
@@ -129,3 +129,5 @@ export const addDesignReference = (p: Omit<Extract<ClientCommand, { type: 'brows
   bridge.send({ type: 'browser.design.addReference', ...p });
 export const sendDesignPrompt = (p: Omit<Extract<ClientCommand, { type: 'browser.design.sendPrompt' }>, 'type'>) =>
   bridge.send({ type: 'browser.design.sendPrompt', ...p });
+export const sendNativeBrowserResult = (result: BrowserNativeResult) =>
+  bridge.send({ type: 'browser.native.result', result });

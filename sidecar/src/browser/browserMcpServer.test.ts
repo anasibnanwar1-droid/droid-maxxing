@@ -17,7 +17,7 @@ test('browser MCP server exposes agent-facing names and typed inputs', () => {
       'browser_type',
       'browser_keypress',
       'browser_scroll',
-      'design_mode',
+      'design-mode',
     ],
   );
   assert.ok(server.tools.find((tool) => tool.name === 'browser_open')?.inputSchema?.url);
@@ -31,7 +31,7 @@ test('browser MCP handlers return visible tool errors', async () => {
     },
   } as unknown as BrowserSessionManager;
   const server = createBrowserMcpServer(manager, () => 'm1');
-  const designMode = server.tools.find((tool) => tool.name === 'design_mode');
+  const designMode = server.tools.find((tool) => tool.name === 'design-mode');
 
   const result = await designMode?.handler({});
 
