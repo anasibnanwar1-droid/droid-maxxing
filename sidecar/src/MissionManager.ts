@@ -248,34 +248,34 @@ export class MissionManager {
         await this.setInteractionMode(cmd.missionId, cmd.mode);
         return;
       case 'browser.open':
-        await this.handleBrowser(cmd.missionId, () => this.browsers.open(cmd));
+        await this.handleBrowser(cmd.missionId, () => this.browsers.open({ ...cmd, missionId: this.requireBrowserMissionId(cmd.missionId) }));
         return;
       case 'browser.refresh':
-        await this.handleBrowser(cmd.missionId, () => this.browsers.refresh(cmd.missionId));
+        await this.handleBrowser(cmd.missionId, () => this.browsers.refresh(this.requireBrowserMissionId(cmd.missionId)));
         return;
       case 'browser.resizeViewport':
-        await this.handleBrowser(cmd.missionId, () => this.browsers.resizeViewport(cmd));
+        await this.handleBrowser(cmd.missionId, () => this.browsers.resizeViewport({ ...cmd, missionId: this.requireBrowserMissionId(cmd.missionId) }));
         return;
       case 'browser.click':
-        await this.handleBrowser(cmd.missionId, () => this.browsers.click(cmd));
+        await this.handleBrowser(cmd.missionId, () => this.browsers.click({ ...cmd, missionId: this.requireBrowserMissionId(cmd.missionId) }));
         return;
       case 'browser.type':
-        await this.handleBrowser(cmd.missionId, () => this.browsers.type(cmd.missionId, cmd.text));
+        await this.handleBrowser(cmd.missionId, () => this.browsers.type(this.requireBrowserMissionId(cmd.missionId), cmd.text));
         return;
       case 'browser.keypress':
-        await this.handleBrowser(cmd.missionId, () => this.browsers.keypress(cmd.missionId, cmd.key));
+        await this.handleBrowser(cmd.missionId, () => this.browsers.keypress(this.requireBrowserMissionId(cmd.missionId), cmd.key));
         return;
       case 'browser.scroll':
-        await this.handleBrowser(cmd.missionId, () => this.browsers.scroll(cmd.missionId, cmd.direction, cmd.pixels));
+        await this.handleBrowser(cmd.missionId, () => this.browsers.scroll(this.requireBrowserMissionId(cmd.missionId), cmd.direction, cmd.pixels));
         return;
       case 'browser.screenshot':
         await this.handleBrowser(cmd.missionId, async () => {
-          await this.browsers.screenshot(cmd.missionId, cmd.fullPage);
+          await this.browsers.screenshot(this.requireBrowserMissionId(cmd.missionId), cmd.fullPage);
         });
         return;
       case 'browser.inspectPoint':
         await this.handleBrowser(cmd.missionId, async () => {
-          const element = this.browsers.inspectPoint(cmd.missionId, cmd.x, cmd.y);
+          const element = this.browsers.inspectPoint(this.requireBrowserMissionId(cmd.missionId), cmd.x, cmd.y);
           if (!element) throw new Error('No browser element found at that point.');
         });
         return;
@@ -1366,6 +1366,13 @@ export class MissionManager {
       this.emit({ type: 'browser.error', missionId, message });
       this.emitError({ code: 'browser.error', missionId, message });
     }
+  }
+
+  private requireBrowserMissionId(missionId?: string): string {
+    if (!missionId) {
+      throw new Error('Browser sessions are scoped to a Droid chat. Select or create a chat before opening the browser.');
+    }
+    return missionId;
   }
 
   async shutdown(): Promise<void> {

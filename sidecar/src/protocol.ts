@@ -266,15 +266,15 @@ export type ClientCommand =
   | { type: 'settings.agent.update'; missionId?: string; agent: ConfigurableAgent; modelId?: string | null; reasoningEffort?: ReasoningEffort }
   | { type: 'mission.setAutonomy'; missionId: string; autonomy: Autonomy }
   | { type: 'mission.setInteractionMode'; missionId: string; mode: SessionInteractionMode }
-  | { type: 'browser.open'; missionId?: string; url: string; viewport?: BrowserViewport; viewportMode?: BrowserViewportMode }
-  | { type: 'browser.refresh'; missionId?: string }
-  | { type: 'browser.resizeViewport'; missionId?: string; viewport: BrowserViewport; viewportMode: BrowserViewportMode }
-  | { type: 'browser.click'; missionId?: string; ref?: string; x?: number; y?: number }
-  | { type: 'browser.type'; missionId?: string; text: string }
-  | { type: 'browser.keypress'; missionId?: string; key: string }
-  | { type: 'browser.scroll'; missionId?: string; direction: BrowserScrollDirection; pixels?: number }
-  | { type: 'browser.screenshot'; missionId?: string; fullPage?: boolean }
-  | { type: 'browser.inspectPoint'; missionId?: string; x: number; y: number }
+  | { type: 'browser.open'; missionId: string; url: string; viewport?: BrowserViewport; viewportMode?: BrowserViewportMode }
+  | { type: 'browser.refresh'; missionId: string }
+  | { type: 'browser.resizeViewport'; missionId: string; viewport: BrowserViewport; viewportMode: BrowserViewportMode }
+  | { type: 'browser.click'; missionId: string; ref?: string; x?: number; y?: number }
+  | { type: 'browser.type'; missionId: string; text: string }
+  | { type: 'browser.keypress'; missionId: string; key: string }
+  | { type: 'browser.scroll'; missionId: string; direction: BrowserScrollDirection; pixels?: number }
+  | { type: 'browser.screenshot'; missionId: string; fullPage?: boolean }
+  | { type: 'browser.inspectPoint'; missionId: string; x: number; y: number }
   | { type: 'browser.design.addReference'; missionId: string; reference: DesignReference }
   | { type: 'browser.design.sendPrompt'; missionId: string; instruction: string; referenceIds: string[] }
   | { type: 'spec.read'; missionId: string; path: string }

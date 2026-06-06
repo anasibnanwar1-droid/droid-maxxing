@@ -31,7 +31,7 @@ export interface BrowserRuntime {
 
 interface ManagedBrowserSession {
   id: string;
-  missionId?: string;
+  missionId: string;
   runtime: BrowserRuntime;
   state: BrowserState;
   references: Map<string, DesignReference>;
@@ -53,7 +53,7 @@ export class BrowserSessionManager {
 
   constructor(private readonly options: BrowserSessionManagerOptions = {}) {}
 
-  async open(input: { missionId?: string; url: string; viewport?: BrowserViewport; viewportMode?: BrowserViewportMode }): Promise<BrowserState> {
+  async open(input: { missionId: string; url: string; viewport?: BrowserViewport; viewportMode?: BrowserViewportMode }): Promise<BrowserState> {
     const session = this.sessionFor(input.missionId, input.viewport, input.viewportMode);
     const snapshot = await session.runtime.open(input.url);
     session.state = await this.stateFromSnapshot(session, snapshot);
@@ -61,14 +61,14 @@ export class BrowserSessionManager {
     return session.state;
   }
 
-  async refresh(missionId?: string): Promise<BrowserState> {
+  async refresh(missionId: string): Promise<BrowserState> {
     const session = this.requireSession(missionId);
     session.state = await this.stateFromSnapshot(session, await session.runtime.snapshot());
     this.emitUpdated(session.state);
     return session.state;
   }
 
-  async resizeViewport(input: { missionId?: string; viewport: BrowserViewport; viewportMode: BrowserViewportMode }): Promise<BrowserState> {
+  async resizeViewport(input: { missionId: string; viewport: BrowserViewport; viewportMode: BrowserViewportMode }): Promise<BrowserState> {
     const session = this.requireSession(input.missionId);
     session.state = { ...session.state, viewport: input.viewport, viewportMode: input.viewportMode };
     await session.runtime.setViewport(input.viewport);
@@ -77,32 +77,32 @@ export class BrowserSessionManager {
     return session.state;
   }
 
-  async click(input: { missionId?: string; ref?: string; x?: number; y?: number }): Promise<BrowserState> {
+  async click(input: { missionId: string; ref?: string; x?: number; y?: number }): Promise<BrowserState> {
     const session = this.requireSession(input.missionId);
     const point = input.ref ? centerOf(this.requireRef(session, input.ref)) : pointFrom(input);
     await session.runtime.click(point.x, point.y);
     return this.refresh(session.missionId);
   }
 
-  async type(missionId: string | undefined, text: string): Promise<BrowserState> {
+  async type(missionId: string, text: string): Promise<BrowserState> {
     const session = this.requireSession(missionId);
     await session.runtime.type(text);
     return this.refresh(session.missionId);
   }
 
-  async keypress(missionId: string | undefined, key: string): Promise<BrowserState> {
+  async keypress(missionId: string, key: string): Promise<BrowserState> {
     const session = this.requireSession(missionId);
     await session.runtime.keypress(key);
     return this.refresh(session.missionId);
   }
 
-  async scroll(missionId: string | undefined, direction: ScrollDirection, pixels?: number): Promise<BrowserState> {
+  async scroll(missionId: string, direction: ScrollDirection, pixels?: number): Promise<BrowserState> {
     const session = this.requireSession(missionId);
     await session.runtime.scroll(direction, pixels);
     return this.refresh(session.missionId);
   }
 
-  async screenshot(missionId?: string, fullPage = false): Promise<string> {
+  async screenshot(missionId: string, fullPage = false): Promise<string> {
     const session = this.requireSession(missionId);
     const screenshotPath = await session.runtime.screenshot(fullPage);
     session.state = {
@@ -114,7 +114,7 @@ export class BrowserSessionManager {
     return screenshotPath;
   }
 
-  inspectPoint(missionId: string | undefined, x: number, y: number): BrowserElementRef | undefined {
+  inspectPoint(missionId: string, x: number, y: number): BrowserElementRef | undefined {
     const session = this.requireSession(missionId);
     return session.state.refs.find((ref) =>
       x >= ref.box.x &&
@@ -153,11 +153,11 @@ export class BrowserSessionManager {
     return { path, prompt: formatDesignPrompt(path, input.instruction, references) };
   }
 
-  state(missionId?: string): BrowserState | undefined {
+  state(missionId: string): BrowserState | undefined {
     return this.resolveSession(missionId)?.state;
   }
 
-  async close(missionId?: string): Promise<void> {
+  async close(missionId: string): Promise<void> {
     const session = this.resolveSession(missionId);
     if (!session) return;
     await session.runtime.close();
@@ -169,14 +169,14 @@ export class BrowserSessionManager {
     this.sessions.clear();
   }
 
-  private sessionFor(missionId: string | undefined, viewport = DEFAULT_BROWSER_VIEWPORT, viewportMode: BrowserViewportMode = 'fit'): ManagedBrowserSession {
+  private sessionFor(missionId: string, viewport = DEFAULT_BROWSER_VIEWPORT, viewportMode: BrowserViewportMode = 'fit'): ManagedBrowserSession {
     const key = keyFor(missionId);
     const existing = this.sessions.get(key);
     if (existing) {
       existing.state = { ...existing.state, viewport, viewportMode };
       return existing;
     }
-    const id = `browser-${missionId ?? 'global'}-${Date.now().toString(36)}`;
+    const id = `browser-${missionId}-${Date.now().toString(36)}`;
     const runtime = this.options.runtimeFactory?.(id, viewport) ?? new MacChromeCdpRuntime({ sessionId: id, viewport });
     const session: ManagedBrowserSession = {
       id,
@@ -197,13 +197,13 @@ export class BrowserSessionManager {
     return session;
   }
 
-  private requireSession(missionId?: string): ManagedBrowserSession {
+  private requireSession(missionId: string): ManagedBrowserSession {
     const session = this.resolveSession(missionId);
     if (!session) throw new Error('Browser session is not open yet.');
     return session;
   }
 
-  private resolveSession(missionId?: string): ManagedBrowserSession | undefined {
+  private resolveSession(missionId: string): ManagedBrowserSession | undefined {
     return this.sessions.get(keyFor(missionId));
   }
 
@@ -231,8 +231,8 @@ export class BrowserSessionManager {
   }
 }
 
-function keyFor(missionId?: string): string {
-  return missionId ?? 'global';
+function keyFor(missionId: string): string {
+  return missionId;
 }
 
 function centerOf(ref: BrowserElementRef): { x: number; y: number } {
