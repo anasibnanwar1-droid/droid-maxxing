@@ -258,7 +258,19 @@ export interface DesignReference {
   note?: string;
 }
 
-export type PermissionOutcome = 'proceed_once' | 'proceed_always' | 'proceed_always_tools' | 'proceed_auto_run' | 'cancel';
+export type PermissionOutcome =
+  | 'proceed_once'
+  | 'proceed_always'
+  | 'proceed_auto_run'
+  | 'proceed_auto_run_low'
+  | 'proceed_auto_run_medium'
+  | 'proceed_auto_run_high'
+  | 'proceed_new_session'
+  | 'proceed_new_session_low'
+  | 'proceed_new_session_medium'
+  | 'proceed_new_session_high'
+  | 'proceed_edit'
+  | 'cancel';
 
 // ── Frontend -> Sidecar ──────────────────────────────────────────────
 export type ClientCommand =
