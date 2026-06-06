@@ -34,3 +34,36 @@ export interface BrowserSnapshot {
 }
 
 export type ScrollDirection = 'up' | 'down' | 'left' | 'right';
+
+export interface BrowserState extends BrowserSnapshot {
+  sessionId: string;
+  missionId?: string;
+  viewport: BrowserViewport;
+  viewportMode: BrowserViewportMode;
+  screenshotPath?: string;
+  screenshotUrl?: string;
+  agentCursor?: { x: number; y: number };
+  error?: string;
+}
+
+export interface DesignReference {
+  id: string;
+  kind: 'element' | 'region' | 'stroke';
+  url: string;
+  title?: string;
+  viewport: BrowserViewport;
+  screenshotPath: string;
+  scroll: { x: number; y: number };
+  element?: BrowserElementRef;
+  box?: BrowserBox;
+  points?: { x: number; y: number }[];
+  note?: string;
+}
+
+export interface DesignPromptPack {
+  missionId: string;
+  browserSessionId: string;
+  createdAt: string;
+  instruction: string;
+  references: DesignReference[];
+}
