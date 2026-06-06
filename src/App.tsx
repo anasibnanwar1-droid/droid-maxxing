@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { useStore } from './hooks/useStore';
 import { AnimatePresence, motion } from 'framer-motion';
-import { PanelLeft } from 'lucide-react';
+import { Monitor, PanelLeft } from 'lucide-react';
 import { bridge } from './lib/bridge';
 import { connect, listFactoryDefaults, listModels, listMissions, listSkills, loadMissionHistory, resumeMission } from './lib/commands';
 import { getApiKey } from './lib/tauri';
@@ -15,6 +15,7 @@ import CommandPalette from './components/CommandPalette';
 import SettingsPanel, { applyTheme } from './components/SettingsPanel';
 import AskUserModal from './components/AskUserModal';
 import PermissionModal from './components/PermissionModal';
+import BrowserWorkspace from './components/browser/BrowserWorkspace';
 
 export default function App() {
   const { state, dispatch } = useStore();
@@ -22,7 +23,8 @@ export default function App() {
   // The view is a real mission only when the active session is a mission orchestrator,
   // not merely because the global mission-compose flag is on.
   const isMissionView = !!activeMission && activeMission.kind === 'mission_orchestrator';
-  const focused = isMissionView;
+  const isBrowserView = state.browserOpen;
+  const focused = isMissionView || isBrowserView;
   const requestedHistory = useRef(new Set<string>());
   const requestedResume = useRef(new Set<string>());
 
@@ -58,6 +60,11 @@ export default function App() {
     const handler = (e: KeyboardEvent) => {
       const meta = e.metaKey || e.ctrlKey;
       if (!meta) return;
+      if (e.shiftKey && e.key.toLowerCase() === 'b') {
+        e.preventDefault();
+        dispatch({ type: 'TOGGLE_BROWSER' });
+        return;
+      }
       switch (e.key.toLowerCase()) {
         case 'k':
           e.preventDefault();
@@ -92,6 +99,18 @@ export default function App() {
         <PanelLeft className="w-3.5 h-3.5" />
       </button>
 
+      <button
+        onClick={() => dispatch({ type: 'TOGGLE_BROWSER' })}
+        className={`absolute top-[6px] left-[108px] z-40 p-1 rounded transition-colors pointer-events-auto ${
+          state.browserOpen
+            ? 'text-droid-text bg-droid-elevated/80'
+            : 'text-droid-text-muted/50 hover:text-droid-text-muted hover:bg-droid-elevated/50'
+        }`}
+        title="Toggle browser (Cmd+Shift+B)"
+      >
+        <Monitor className="w-3.5 h-3.5" />
+      </button>
+
       <div className="flex-1 flex min-h-0">
         {/* Sidebar with collapse animation */}
         <AnimatePresence initial={false}>
@@ -112,7 +131,9 @@ export default function App() {
         <main className="relative flex-1 min-w-0 flex flex-col min-h-0 overflow-hidden">
           {state.sidebarCollapsed && <div data-tauri-drag-region className="h-9 shrink-0" />}
           <div className="flex-1 min-h-0 min-w-0 overflow-hidden flex flex-col relative">
-            {isMissionView ? (
+            {isBrowserView ? (
+              <BrowserWorkspace />
+            ) : isMissionView ? (
               <motion.div
                 key="mission-control"
                 className="flex-1 min-h-0 min-w-0 flex flex-col overflow-hidden"
@@ -126,7 +147,7 @@ export default function App() {
               <ChatView />
             )}
           </div>
-          {!isMissionView && <PromptInput />}
+          {!isMissionView && !isBrowserView && <PromptInput />}
           {state.pendingQuestion && <AskUserModal />}
         </main>
 
