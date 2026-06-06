@@ -634,7 +634,11 @@ function reducer(state: AppState, action: Action): AppState {
 
     case 'BROWSER_ERROR':
       return action.missionId
-        ? { ...state, browserErrors: { ...state.browserErrors, [action.missionId]: action.message } }
+        ? {
+            ...state,
+            browserErrors: { ...state.browserErrors, [action.missionId]: action.message },
+            browserOpen: state.activeMissionId === action.missionId ? true : state.browserOpen,
+          }
         : { ...state, browserGlobalError: action.message };
 
     case 'TOGGLE_DESIGN_MODE':

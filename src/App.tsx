@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useStore } from './hooks/useStore';
 import { AnimatePresence, motion } from 'framer-motion';
 import { Monitor, PanelLeft } from 'lucide-react';
@@ -17,16 +17,21 @@ import AskUserModal from './components/AskUserModal';
 import PermissionModal from './components/PermissionModal';
 import BrowserWorkspace from './components/browser/BrowserWorkspace';
 
+const BROWSER_PANE_MIN = 360;
+const BROWSER_PANE_MAX = 920;
+const BROWSER_PANE_DEFAULT = 620;
+
 export default function App() {
   const { state, dispatch } = useStore();
   const activeMission = state.activeMissionId ? state.missions[state.activeMissionId] : null;
   // The view is a real mission only when the active session is a mission orchestrator,
   // not merely because the global mission-compose flag is on.
   const isMissionView = !!activeMission && activeMission.kind === 'mission_orchestrator';
-  const isBrowserView = state.browserOpen;
-  const focused = isMissionView || isBrowserView;
+  const showBrowserPane = state.browserOpen && !!activeMission;
+  const focused = isMissionView;
   const requestedHistory = useRef(new Set<string>());
   const requestedResume = useRef(new Set<string>());
+  const [browserPaneWidth, setBrowserPaneWidth] = useState(BROWSER_PANE_DEFAULT);
 
   useEffect(() => {
     applyTheme(state.theme);
@@ -130,28 +135,44 @@ export default function App() {
 
         <main className="relative flex-1 min-w-0 flex flex-col min-h-0 overflow-hidden">
           {state.sidebarCollapsed && <div data-tauri-drag-region className="h-9 shrink-0" />}
-          <div className="flex-1 min-h-0 min-w-0 overflow-hidden flex flex-col relative">
-            {isBrowserView ? (
-              <BrowserWorkspace />
-            ) : isMissionView ? (
-              <motion.div
-                key="mission-control"
-                className="flex-1 min-h-0 min-w-0 flex flex-col overflow-hidden"
-                initial={{ clipPath: 'inset(0 100% 0 0)', opacity: 0.4 }}
-                animate={{ clipPath: 'inset(0 0% 0 0)', opacity: 1 }}
-                transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
-              >
-                <MissionControl />
-              </motion.div>
-            ) : (
-              <ChatView />
-            )}
+          <div className="flex-1 min-h-0 min-w-0 overflow-hidden flex relative">
+            <section className="min-w-0 flex-1 flex flex-col overflow-hidden">
+              {isMissionView ? (
+                <motion.div
+                  key="mission-control"
+                  className="flex-1 min-h-0 min-w-0 flex flex-col overflow-hidden"
+                  initial={{ clipPath: 'inset(0 100% 0 0)', opacity: 0.4 }}
+                  animate={{ clipPath: 'inset(0 0% 0 0)', opacity: 1 }}
+                  transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
+                >
+                  <MissionControl />
+                </motion.div>
+              ) : (
+                <ChatView />
+              )}
+            </section>
+
+            <AnimatePresence initial={false}>
+              {showBrowserPane && (
+                <motion.aside
+                  key="browser-pane"
+                  initial={{ width: 0, opacity: 0 }}
+                  animate={{ width: browserPaneWidth, opacity: 1 }}
+                  exit={{ width: 0, opacity: 0 }}
+                  transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
+                  className="relative shrink-0 overflow-hidden border-l border-droid-border bg-droid-bg"
+                >
+                  <BrowserPaneResizeHandle width={browserPaneWidth} onResize={setBrowserPaneWidth} />
+                  <BrowserWorkspace />
+                </motion.aside>
+              )}
+            </AnimatePresence>
           </div>
-          {!isMissionView && !isBrowserView && <PromptInput />}
+          {!isMissionView && <PromptInput />}
           {state.pendingQuestion && <AskUserModal />}
         </main>
 
-        {!focused && state.rightPanelOpen && <RightPanel />}
+        {!focused && !showBrowserPane && state.rightPanelOpen && <RightPanel />}
       </div>
 
       <StatusBar />
@@ -161,4 +182,44 @@ export default function App() {
       {state.pendingPermission && <PermissionModal />}
     </div>
   );
+}
+
+function BrowserPaneResizeHandle({
+  width,
+  onResize,
+}: {
+  width: number;
+  onResize: (width: number) => void;
+}) {
+  const dragStart = useRef<{ x: number; width: number } | null>(null);
+
+  return (
+    <div
+      role="separator"
+      aria-label="Resize browser pane"
+      aria-orientation="vertical"
+      className="absolute left-0 top-0 z-20 h-full w-2 cursor-col-resize"
+      onPointerDown={(event) => {
+        dragStart.current = { x: event.clientX, width };
+        event.currentTarget.setPointerCapture(event.pointerId);
+      }}
+      onPointerMove={(event) => {
+        const start = dragStart.current;
+        if (!start) return;
+        onResize(clampBrowserPane(start.width + start.x - event.clientX));
+      }}
+      onPointerUp={(event) => {
+        dragStart.current = null;
+        if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+          event.currentTarget.releasePointerCapture(event.pointerId);
+        }
+      }}
+    >
+      <div className="absolute left-0 top-1/2 h-12 w-px -translate-y-1/2 bg-droid-border-hover" />
+    </div>
+  );
+}
+
+function clampBrowserPane(width: number): number {
+  return Math.min(BROWSER_PANE_MAX, Math.max(BROWSER_PANE_MIN, Math.round(width)));
 }

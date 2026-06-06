@@ -6,7 +6,7 @@ test('viewportFromFrame creates a clean even fit viewport inside the canvas fram
   assert.deepEqual(viewportFromFrame({ width: 1325, height: 857 }), {
     width: 1230,
     height: 746,
-    deviceScaleFactor: 1,
+    deviceScaleFactor: 2,
   });
 });
 
@@ -14,12 +14,12 @@ test('viewportFromFrame clamps tiny and very large canvas frames', () => {
   assert.deepEqual(viewportFromFrame({ width: 320, height: 300 }), {
     width: 390,
     height: 360,
-    deviceScaleFactor: 1,
+    deviceScaleFactor: 2,
   });
   assert.deepEqual(viewportFromFrame({ width: 5000, height: 3000 }), {
     width: 1440,
     height: 1000,
-    deviceScaleFactor: 1,
+    deviceScaleFactor: 2,
   });
 });
 

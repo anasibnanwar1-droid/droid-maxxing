@@ -1,13 +1,13 @@
 import type { BrowserViewport, BrowserViewportMode } from '../../types/bridge';
 import type { Size } from '../canvas/canvasMath';
 
-export const FIT_FALLBACK_VIEWPORT: BrowserViewport = { width: 1200, height: 800, deviceScaleFactor: 1 };
-export const CUSTOM_DEFAULT_VIEWPORT: BrowserViewport = { width: 1024, height: 720, deviceScaleFactor: 1 };
+export const FIT_FALLBACK_VIEWPORT: BrowserViewport = { width: 1200, height: 800, deviceScaleFactor: 2 };
+export const CUSTOM_DEFAULT_VIEWPORT: BrowserViewport = { width: 1024, height: 720, deviceScaleFactor: 2 };
 
 export const PRESET_VIEWPORTS: Partial<Record<BrowserViewportMode, BrowserViewport>> = {
-  desktop: { width: 1440, height: 900, deviceScaleFactor: 1 },
-  laptop: { width: 1280, height: 800, deviceScaleFactor: 1 },
-  tablet: { width: 820, height: 1180, deviceScaleFactor: 1 },
+  desktop: { width: 1440, height: 900, deviceScaleFactor: 2 },
+  laptop: { width: 1280, height: 800, deviceScaleFactor: 2 },
+  tablet: { width: 820, height: 1180, deviceScaleFactor: 2 },
   mobile: { width: 390, height: 844, deviceScaleFactor: 2 },
 };
 
@@ -16,7 +16,7 @@ export function viewportFromFrame(size: Size): BrowserViewport {
   return {
     width: even(clamp(size.width - 96, 390, 1440)),
     height: even(clamp(size.height - 112, 360, 1000)),
-    deviceScaleFactor: 1,
+    deviceScaleFactor: 2,
   };
 }
 
