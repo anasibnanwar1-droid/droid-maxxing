@@ -1,102 +1,185 @@
 # Browser MCP Design Mode Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> For agentic workers: REQUIRED SUB-SKILL: use `superpowers:executing-plans` or `superpowers:subagent-driven-development` to implement this plan task by task. Keep checklist status current as work lands.
 
-**Goal:** Add a lightweight in-app browser canvas that both the user and Droid agents can control, plus a Cursor-style Design Mode for selecting elements, sketching annotations, and sending precise UI-change prompts.
+## Goal
 
-**Architecture:** Use `agent-browser` as the canonical browser engine because it already provides Chrome/CDP control, screenshots, compact accessibility refs, React inspection, and streaming without adding Playwright/Puppeteer. Droid Control owns the app UI and state. Droid agents access the same browser session through a small sidecar-owned MCP server, so human actions and agent tool calls share one live browser context.
+Build a lightweight macOS-only browser canvas inside Droid Control that both the user and Droid agents can operate, plus a Design Mode for precise UI-change prompts.
 
-**Tech Stack:** Tauri 2, React 19, TypeScript, Node sidecar, `@factory/droid-sdk`, stdio MCP, `agent-browser`, existing WebSocket bridge.
+This is not a Webflow/Figma editor. It is an agent editing surface:
 
----
+- The user opens a live page in Droid Control.
+- The user or agent can navigate, click, type, scroll, capture screenshots, and inspect visible DOM context.
+- Design Mode lets the user select elements, sketch regions on a frozen screenshot, write a comment, and send a compact reference pack to the active Droid session.
+- Droid agents receive browser MCP tools over the same live browser session, so they can inspect and operate the page natively.
+
+## Core Decision
+
+Use a first-party macOS Chrome/CDP runtime in the Droid sidecar. Do not depend on `agent-browser` for the product path.
+
+Reason:
+
+- Codex Browser works as a constrained browser-session service: tabs, viewport control, screenshots, coordinate input, DOM node references, and read-only selector helpers on top of browser automation.
+- Droid needs the same shape, but inside Droid Control with shared user/agent state and Droid MCP wiring.
+- The `agent-browser` skill/runtime may be useful as a reference or benchmark, but it is not currently exposed as a Droid tool and should not be a required dependency.
+- A direct CDP runtime keeps the app lightweight: use the existing `ws` dependency, Node built-ins, and a small explicit MCP server. No Playwright or Puppeteer downloads.
+
+Canonical engine:
+
+- Google Chrome for macOS at `/Applications/Google Chrome.app/Contents/MacOS/Google Chrome`.
+- CDP over a random local port bound to `127.0.0.1`.
+- Dedicated profile directory under `~/Library/Application Support/Droid Control/browser-profiles/<sessionId>`.
+- Default viewport `1440x900`, with explicit viewport resize commands from the app.
+- Headless Chrome for the first build so the browser is truly in-app through the Droid canvas.
+
+Fail fast if Chrome is missing or CDP cannot start. Do not add WebKit, Safari, Puppeteer, Playwright, `agent-browser`, or cross-platform fallbacks in the first build.
+
+## Codex Browser Plugin Findings
+
+The bundled Codex Browser plugin is the right mental model:
+
+- It exposes browser-level capabilities such as visibility and viewport.
+- It models tabs and selected tab state.
+- It captures screenshots through CDP layout metrics and `Page.captureScreenshot`.
+- It offers coordinate computer-use actions and DOM-based visible element refs.
+- It includes selector helpers, but those are wrappers around a controlled browser session.
+- It keeps raw CDP constrained instead of giving agents unlimited browser internals.
+
+Droid should adopt the same durable contract shape, not depend on the implementation package:
+
+- A browser session service in the sidecar.
+- A screenshot-backed React canvas.
+- A small set of agent-safe MCP tools.
+- A Design Mode reference pack layered above screenshots and DOM inspection.
+
+## Factory Skill Direction
+
+The Factory `droid-control` plugin is useful as agent workflow guidance, not as Droid Control's runtime boundary.
+
+What it teaches:
+
+- Keep driver surfaces scoped instead of building one global automation surface.
+- Refresh snapshots after page changes because refs become stale.
+- Capture visual evidence, not only text.
+- Keep session names and output paths isolated.
+- Route agent attention through small purpose-specific surfaces.
+
+What not to do for this product feature:
+
+- Do not require `npx skills add ...` as part of the app runtime.
+- Do not install `.agents/skills` into this repo.
+- Do not depend on `agent-browser install`, its downloaded Chromium, or its daemon.
+- Do not hide the browser behind a CLI that the UI has to scrape.
+
+The sustainable path is to encode the useful rules in Droid Control's own sidecar modules and tests.
 
 ## Product Shape
 
-Build a browser workspace, not a Webflow clone.
+The Browser workspace should include:
 
-The browser surface is a responsive canvas in Droid Control with:
-
-- URL bar, reload, back/forward, viewport size indicator, screenshot refresh.
-- Separate user cursor and agent cursor overlays.
-- Browser interaction from the canvas: click, type, scroll, keypress.
-- Agent tools: navigate, screenshot, snapshot refs, click, type, scroll, inspect selected references.
-- Design Mode: hover/select DOM target, multi-select references, freeze current viewport, sketch circles/boxes/freehand strokes, attach a comment, send the packed context to the active Droid session.
+- URL bar, reload, back, forward, viewport indicator, screenshot refresh.
+- Screenshot canvas that scales responsively without layout shift.
+- Separate user and agent cursor overlays.
+- User interactions: click, type, keypress, scroll.
+- Agent interactions through MCP tools.
+- Design Mode toggle.
+- Element hover/selection outlines.
+- Multi-select with numbered chips.
+- Sketch mode with circles/boxes/freehand strokes on a frozen screenshot.
+- Prompt bar that sends selected/sketched references to the active Droid session.
 
 Out of scope for the first build:
 
-- Full drag-and-drop editing.
-- Persisted visual editor layout model.
+- Full drag-and-drop visual editing.
 - Voice input.
-- Pixel-perfect source mapping for every framework.
-- Browser history sync across old local app states.
+- Persisted visual layout edits.
+- General browser extension support.
+- Browser history sync for old local app states.
+- Cross-platform support.
+- Real-time video streaming. Refresh screenshots after actions first.
 
 ## Current-State Constraints
 
-- `/Users/anas/Documents/droid-control` is now the baseline git checkout, pushed to `main`.
-- Active frontend work remains in `/Users/anas/Documents/droid-control`; do not touch it for this feature.
-- Browser/MCP work happens in `/Users/anas/Documents/droid-control-browser-mcp` on `feature/browser-mcp-design-mode`.
-- `droid exec --list-tools --output-format json` currently does not expose browser-control tools.
-- `agent-browser` exists at `/Users/anas/.factory/bin/agent-browser`; its skill data exists at `/Users/anas/.factory/tools/agent-browser/skill-data`.
-- The implementation must use one canonical current-state path. If `agent-browser` is missing or unusable, Browser Mode fails fast with explicit recovery instructions.
+- `/Users/anas/Documents/droid-control` is the original checkout. The user has active frontend edits there. Do not touch it.
+- `/Users/anas/Documents/droid-control-browser-mcp` is the feature worktree.
+- Branch: `feature/browser-mcp-design-mode`.
+- Repo: `anasibnanwar1-droid/droid-maxxing`.
+- Baseline `main` has already been pushed.
+- The implementation must use one canonical current-state path. No compatibility shims for historical local states.
 
-## Target File Structure
+## Architecture
 
-- Create: `sidecar/src/browser/AgentBrowserRuntime.ts`
-  - Resolve and run `agent-browser` commands.
-  - Own session name, env, command timeout, JSON parsing, screenshot path handling.
-  - No direct React/UI knowledge.
+```mermaid
+flowchart LR
+  User["User in Droid Control"] --> Canvas["BrowserCanvas screenshot surface"]
+  Canvas --> Bridge["Tauri/WebSocket bridge"]
+  Agent["Droid agent"] --> MCP["browser MCP server"]
+  Bridge --> Manager["BrowserSessionManager"]
+  MCP --> Manager
+  Manager --> Runtime["MacChromeCdpRuntime"]
+  Runtime --> Cdp["CdpClient"]
+  Runtime --> Process["ChromeProcess"]
+  Cdp --> Chrome["Chrome headless + CDP"]
+  Process --> Chrome
+  Manager --> Pack["Design prompt packs on disk"]
+  Pack --> Mission["Active Droid mission"]
+```
 
-- Create: `sidecar/src/browser/BrowserSessionManager.ts`
-  - Keep browser sessions keyed by Droid Control mission id.
-  - Store latest URL, title, screenshot path, viewport, refs, selected design references, and last error.
-  - Convert canvas coordinates to browser viewport coordinates.
+Core pieces:
 
-- Create: `sidecar/src/browser/browserMcpServer.ts`
-  - Stdio MCP server exposing the canonical browser tools for Droid sessions.
-  - Delegates to `agent-browser` using the same session name the UI uses.
+- `ChromeProcess`: resolve Chrome, allocate a local port, launch, and stop the process.
+- `CdpClient`: own websocket transport, request ids, timeouts, and typed CDP calls.
+- `MacChromeCdpRuntime`: compose process and CDP helpers into browser actions.
+- `domSnapshot`: extract compact visible refs and point inspection data.
+- `BrowserSessionManager`: own per-mission browser sessions, latest state, coordinate scaling, selected references, and prompt packs.
+- `browserMcpServer`: expose safe browser tools to Droid sessions over stdio MCP.
+- React Browser workspace: render screenshots, forward user events, show overlays, and package Design Mode prompts.
 
-- Modify: `sidecar/src/DroidRuntime.ts`
-  - Accept optional browser MCP config in `CreateRuntimeSessionOptions`.
-  - Pass `mcpServers` into `initializeSession`.
+## Maintainability Rules
 
-- Modify: `sidecar/src/MissionManager.ts`
-  - Handle browser bridge commands.
-  - Attach browser MCP to new sessions when Browser Mode is active.
-  - Send design-reference prompt packs to the active mission.
+- No browser mega-file. Split process launch, CDP transport, DOM extraction, runtime actions, session state, prompt packing, MCP, and React UI into separate modules.
+- Keep module APIs small and explicit. Prefer plain typed functions/classes over broad abstractions.
+- Keep CDP method names and payloads close to the runtime layer. React components should never know CDP details.
+- Keep browser state serializable at the bridge boundary.
+- Store screenshots and prompt packs as files. Do not put base64 blobs into bridge events or chat messages.
+- Add tests at the lowest useful layer before wiring UI.
+- Use small commits that each build toward the feature and can be reviewed independently.
 
-- Modify: `sidecar/src/protocol.ts` and `src/types/bridge.ts`
-  - Add browser command/event types.
-  - Keep the two protocol files synchronized.
+## Target Files
 
-- Modify: `src/lib/commands.ts` and `src/lib/bridge.ts`
-  - Add typed browser command helpers.
+Create:
 
-- Modify: `src/hooks/useStore.tsx`
-  - Add browser/design-mode state and reducers.
+- `sidecar/src/browser/browserPaths.ts`
+- `sidecar/src/browser/browserPaths.test.ts`
+- `sidecar/src/browser/ChromeProcess.ts`
+- `sidecar/src/browser/ChromeProcess.test.ts`
+- `sidecar/src/browser/CdpClient.ts`
+- `sidecar/src/browser/CdpClient.test.ts`
+- `sidecar/src/browser/domSnapshot.ts`
+- `sidecar/src/browser/domSnapshot.test.ts`
+- `sidecar/src/browser/MacChromeCdpRuntime.ts`
+- `sidecar/src/browser/MacChromeCdpRuntime.test.ts`
+- `sidecar/src/browser/BrowserSessionManager.ts`
+- `sidecar/src/browser/BrowserSessionManager.test.ts`
+- `sidecar/src/browser/designPromptPacks.ts`
+- `sidecar/src/browser/designPromptPacks.test.ts`
+- `sidecar/src/browser/browserMcpServer.ts`
+- `src/components/browser/BrowserWorkspace.tsx`
+- `src/components/browser/BrowserCanvas.tsx`
+- `src/components/browser/DesignModeOverlay.tsx`
+- `src/components/browser/DesignPromptBar.tsx`
 
-- Create: `src/components/browser/BrowserWorkspace.tsx`
-  - Top-level browser workspace layout.
+Modify:
 
-- Create: `src/components/browser/BrowserCanvas.tsx`
-  - Screenshot/canvas renderer and pointer event forwarding.
-
-- Create: `src/components/browser/DesignModeOverlay.tsx`
-  - Hover boxes, selected refs, frozen screenshot overlay, drawing strokes.
-
-- Create: `src/components/browser/DesignPromptBar.tsx`
-  - Comment box for selected/sketched references.
-
-- Modify: `src/App.tsx`
-  - Add browser workspace as a center-panel mode without disturbing chat and mission views.
-
-- Create: `sidecar/src/browser/AgentBrowserRuntime.test.ts`
-  - Unit tests with a fake command runner.
-
-- Create: `sidecar/src/browser/BrowserSessionManager.test.ts`
-  - Unit tests for coordinate mapping and design-reference packing.
-
-- Modify: `sidecar/package.json`
-  - Add `test` script using existing `tsx`.
+- `sidecar/package.json`
+- `sidecar/src/DroidRuntime.ts`
+- `sidecar/src/MissionManager.ts`
+- `sidecar/src/protocol.ts`
+- `src/types/bridge.ts`
+- `src/lib/commands.ts`
+- `src/lib/bridge.ts`
+- `src/hooks/useStore.tsx`
+- `src/App.tsx`
 
 ## Data Contracts
 
@@ -107,13 +190,37 @@ export interface BrowserViewport {
   deviceScaleFactor: number;
 }
 
-export interface BrowserSnapshotRef {
+export interface BrowserBox {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface BrowserElementRef {
   ref: string;
+  selector: string;
+  tagName: string;
   role?: string;
   name?: string;
   text?: string;
-  selector?: string;
-  box?: { x: number; y: number; width: number; height: number };
+  attributes: Record<string, string>;
+  className?: string;
+  box: BrowserBox;
+  computedStyles: Record<string, string>;
+}
+
+export interface BrowserState {
+  sessionId: string;
+  missionId?: string;
+  url: string;
+  title?: string;
+  viewport: BrowserViewport;
+  screenshotPath?: string;
+  scroll: { x: number; y: number };
+  refs: BrowserElementRef[];
+  agentCursor?: { x: number; y: number };
+  error?: string;
 }
 
 export interface DesignReference {
@@ -124,8 +231,8 @@ export interface DesignReference {
   viewport: BrowserViewport;
   screenshotPath: string;
   scroll: { x: number; y: number };
-  element?: BrowserSnapshotRef;
-  box?: { x: number; y: number; width: number; height: number };
+  element?: BrowserElementRef;
+  box?: BrowserBox;
   points?: { x: number; y: number }[];
   note?: string;
 }
@@ -141,7 +248,7 @@ export interface DesignPromptPack {
 
 ## Agent-Facing MCP Tools
 
-Expose these MCP tools:
+Expose these tools:
 
 - `browser_open({ url })`
 - `browser_snapshot({ interactiveOnly?: boolean })`
@@ -152,504 +259,178 @@ Expose these MCP tools:
 - `browser_scroll({ direction, pixels? })`
 - `browser_design_context({ referenceIds?: string[] })`
 
-Tool behavior:
-
-- `browser_snapshot` returns compact refs like `@e1`, URL, title, and visible text snippets.
-- `browser_screenshot` returns a saved PNG path under `~/.factory/droid-control/browser/<session>/`.
-- `browser_design_context` returns the JSON prompt pack and screenshot paths for the selected/sketched references.
-- Every mutating tool refreshes the latest screenshot and emits a bridge event so the UI canvas updates.
-
-## Task 1: Worktree and Baseline Guard
-
-**Files:**
-- No code files.
-
-- [ ] **Step 1: Confirm the isolated worktree**
-
-Run:
-
-```bash
-git -C /Users/anas/Documents/droid-control-browser-mcp status --short --branch
-```
-
-Expected:
-
-```text
-## feature/browser-mcp-design-mode
-```
-
-- [ ] **Step 2: Confirm the active frontend checkout is not touched**
-
-Run:
-
-```bash
-git -C /Users/anas/Documents/droid-control status --short --branch
-```
-
-Expected: user frontend changes may appear, but no browser/MCP feature files should appear there.
-
-- [ ] **Step 3: Commit only inside the feature worktree**
-
-Run commits from:
-
-```bash
-/Users/anas/Documents/droid-control-browser-mcp
-```
-
-Expected: all feature commits land on `feature/browser-mcp-design-mode`.
-
-## Task 2: Browser Runtime Wrapper
-
-**Files:**
-- Create: `sidecar/src/browser/AgentBrowserRuntime.ts`
-- Create: `sidecar/src/browser/AgentBrowserRuntime.test.ts`
-- Modify: `sidecar/package.json`
-
-- [ ] **Step 1: Add the sidecar test script**
-
-In `sidecar/package.json`, add:
-
-```json
-{
-  "scripts": {
-    "test": "tsx --test src/**/*.test.ts"
-  }
-}
-```
-
-Keep the existing scripts unchanged.
-
-- [ ] **Step 2: Write runtime tests first**
-
-Create `sidecar/src/browser/AgentBrowserRuntime.test.ts` with cases for:
-
-```ts
-import test from 'node:test';
-import assert from 'node:assert/strict';
-import { AgentBrowserRuntime } from './AgentBrowserRuntime.js';
-
-test('open runs agent-browser with the configured session name', async () => {
-  const calls: { args: string[]; env: NodeJS.ProcessEnv }[] = [];
-  const runtime = new AgentBrowserRuntime({
-    binPath: '/tmp/agent-browser',
-    sessionName: 'droid-control-test',
-    runCommand: async (args, env) => {
-      calls.push({ args, env });
-      return { stdout: '', stderr: '', exitCode: 0 };
-    },
-  });
-
-  await runtime.open('http://127.0.0.1:1420/');
-
-  assert.deepEqual(calls[0].args, ['open', 'http://127.0.0.1:1420/']);
-  assert.equal(calls[0].env.AGENT_BROWSER_SESSION_NAME, 'droid-control-test');
-});
-```
-
-Add similar tests for screenshot path parsing, JSON snapshot parsing, and non-zero exit errors.
-
-- [ ] **Step 3: Implement the runtime**
-
-Create `sidecar/src/browser/AgentBrowserRuntime.ts` with:
-
-```ts
-export interface CommandResult {
-  stdout: string;
-  stderr: string;
-  exitCode: number;
-}
-
-export type RunCommand = (args: string[], env: NodeJS.ProcessEnv) => Promise<CommandResult>;
-
-export interface AgentBrowserRuntimeOptions {
-  binPath?: string;
-  sessionName: string;
-  runCommand?: RunCommand;
-}
-
-export class AgentBrowserRuntime {
-  constructor(private readonly options: AgentBrowserRuntimeOptions) {}
-
-  async open(url: string): Promise<void> {
-    await this.run(['open', url]);
-  }
-
-  async screenshot(fullPage = false): Promise<string> {
-    const result = await this.run(['screenshot', ...(fullPage ? ['--full'] : [])]);
-    return result.stdout.trim();
-  }
-
-  async snapshot(): Promise<unknown> {
-    const result = await this.run(['snapshot', '-i', '--json']);
-    return JSON.parse(result.stdout);
-  }
-
-  async clickRef(ref: string): Promise<void> {
-    await this.run(['click', ref]);
-  }
-
-  async clickPoint(x: number, y: number): Promise<void> {
-    await this.run(['mouse', 'move', String(x), String(y)]);
-    await this.run(['mouse', 'down']);
-    await this.run(['mouse', 'up']);
-  }
-
-  async type(text: string): Promise<void> {
-    await this.run(['keyboard', 'type', text]);
-  }
-
-  async keypress(key: string): Promise<void> {
-    await this.run(['press', key]);
-  }
-
-  async scroll(direction: 'up' | 'down' | 'left' | 'right', pixels = 500): Promise<void> {
-    await this.run(['scroll', direction, String(pixels)]);
-  }
-
-  private async run(args: string[]): Promise<CommandResult> {
-    const runCommand = this.options.runCommand ?? defaultRunCommand(this.binPath());
-    const env = {
-      ...process.env,
-      AGENT_BROWSER_SESSION_NAME: this.options.sessionName,
-      AGENT_BROWSER_SKILLS_DIR: process.env.AGENT_BROWSER_SKILLS_DIR ?? '/Users/anas/.factory/tools/agent-browser/skill-data',
-    };
-    const result = await runCommand(args, env);
-    if (result.exitCode !== 0) {
-      throw new Error(`agent-browser ${args[0]} failed: ${result.stderr || result.stdout}`);
-    }
-    return result;
-  }
-
-  private binPath(): string {
-    return this.options.binPath ?? process.env.AGENT_BROWSER_PATH ?? '/Users/anas/.factory/bin/agent-browser';
-  }
-}
-```
-
-Implement `defaultRunCommand` with `spawn` and no shell.
-
-- [ ] **Step 4: Run runtime tests**
-
-Run:
-
-```bash
-cd /Users/anas/Documents/droid-control-browser-mcp/sidecar
-npm run test -- AgentBrowserRuntime.test.ts
-```
-
-Expected: all runtime tests pass.
-
-## Task 3: Browser Session Manager
-
-**Files:**
-- Create: `sidecar/src/browser/BrowserSessionManager.ts`
-- Create: `sidecar/src/browser/BrowserSessionManager.test.ts`
-
-- [ ] **Step 1: Test coordinate scaling**
-
-Create a test proving screenshot coordinates map to viewport coordinates:
-
-```ts
-import test from 'node:test';
-import assert from 'node:assert/strict';
-import { scalePointToViewport } from './BrowserSessionManager.js';
-
-test('scalePointToViewport maps canvas point into browser viewport', () => {
-  assert.deepEqual(
-    scalePointToViewport(
-      { x: 360, y: 225 },
-      { width: 720, height: 450 },
-      { width: 1440, height: 900, deviceScaleFactor: 1 },
-    ),
-    { x: 720, y: 450 },
-  );
-});
-```
-
-- [ ] **Step 2: Implement manager**
-
-Implement:
-
-```ts
-export function scalePointToViewport(
-  point: { x: number; y: number },
-  canvas: { width: number; height: number },
-  viewport: BrowserViewport,
-): { x: number; y: number } {
-  return {
-    x: Math.round((point.x / canvas.width) * viewport.width),
-    y: Math.round((point.y / canvas.height) * viewport.height),
-  };
-}
-```
-
-Add `BrowserSessionManager` with `open`, `screenshot`, `snapshot`, `click`, `type`, `scroll`, `addDesignReference`, and `designContext`.
-
-- [ ] **Step 3: Run manager tests**
-
-Run:
-
-```bash
-cd /Users/anas/Documents/droid-control-browser-mcp/sidecar
-npm run test -- BrowserSessionManager.test.ts
-```
-
-Expected: all manager tests pass.
-
-## Task 4: Browser Bridge Protocol
-
-**Files:**
-- Modify: `sidecar/src/protocol.ts`
-- Modify: `src/types/bridge.ts`
-- Modify: `src/lib/commands.ts`
-
-- [ ] **Step 1: Add client commands**
-
-Add:
-
-```ts
-| { type: 'browser.open'; missionId?: string; url: string }
-| { type: 'browser.refresh'; missionId?: string }
-| { type: 'browser.click'; missionId?: string; x: number; y: number; canvasWidth: number; canvasHeight: number }
-| { type: 'browser.type'; missionId?: string; text: string }
-| { type: 'browser.keypress'; missionId?: string; key: string }
-| { type: 'browser.scroll'; missionId?: string; direction: 'up' | 'down' | 'left' | 'right'; pixels?: number }
-| { type: 'browser.design.addReference'; missionId: string; reference: DesignReference }
-| { type: 'browser.design.sendPrompt'; missionId: string; instruction: string; referenceIds: string[] }
-```
-
-- [ ] **Step 2: Add server events**
-
-Add:
-
-```ts
-| { type: 'browser.updated'; state: BrowserState }
-| { type: 'browser.error'; missionId?: string; message: string }
-```
-
-- [ ] **Step 3: Add command helpers**
-
-In `src/lib/commands.ts`, export `openBrowser`, `refreshBrowser`, `clickBrowser`, `typeBrowser`, `keypressBrowser`, `scrollBrowser`, `addDesignReference`, and `sendDesignPrompt`.
-
-- [ ] **Step 4: Run typecheck**
-
-Run:
-
-```bash
-npm run build
-```
-
-Expected: TypeScript succeeds.
-
-## Task 5: Sidecar Browser Command Handling
-
-**Files:**
-- Modify: `sidecar/src/MissionManager.ts`
-- Modify: `sidecar/src/DroidRuntime.ts`
-
-- [ ] **Step 1: Add a BrowserSessionManager field**
-
-In `MissionManager`, add:
-
-```ts
-private readonly browsers = new BrowserSessionManager((event) => this.emit(event));
-```
-
-- [ ] **Step 2: Handle browser commands in `handle`**
-
-Add cases for every `browser.*` command. Each case calls the browser manager and emits `browser.updated` or `browser.error`.
-
-- [ ] **Step 3: Add browser MCP config to Droid sessions**
-
-Pass an MCP server config when a mission/session has browser tools enabled:
-
-```ts
-mcpServers: [{
-  name: 'droid-control-browser',
-  command: process.execPath,
-  args: [browserMcpEntryPath()],
-  env: {
-    DROID_CONTROL_BROWSER_SESSION: browserSessionName,
-    AGENT_BROWSER_PATH: resolvedAgentBrowserPath,
-    AGENT_BROWSER_SKILLS_DIR: resolvedAgentBrowserSkillsDir,
-  },
-}]
-```
-
-Use explicit failure if `agent-browser` is missing:
-
-```text
-Browser tools unavailable: /Users/anas/.factory/bin/agent-browser was not found. Install or repair Factory agent-browser, then reopen Browser Mode.
-```
-
-- [ ] **Step 4: Run build**
-
-Run:
-
-```bash
-cd /Users/anas/Documents/droid-control-browser-mcp/sidecar
-npm run build
-```
-
-Expected: sidecar bundle succeeds.
-
-## Task 6: Browser MCP Server
-
-**Files:**
-- Create: `sidecar/src/browser/browserMcpServer.ts`
-- Modify: `sidecar/package.json`
-
-- [ ] **Step 1: Add explicit MCP SDK dependency**
-
-In `sidecar/package.json`, add:
-
-```json
-"@modelcontextprotocol/sdk": "^1.29.0"
-```
-
-This dependency already exists transitively through `@factory/droid-sdk`; making it explicit prevents accidental breakage.
-
-- [ ] **Step 2: Implement stdio MCP tools**
-
-Create a server that registers the tools listed in “Agent-Facing MCP Tools”. Each tool creates `AgentBrowserRuntime` with:
-
-```ts
-const sessionName = process.env.DROID_CONTROL_BROWSER_SESSION;
-if (!sessionName) throw new Error('DROID_CONTROL_BROWSER_SESSION is required');
-```
-
-Each tool returns compact text or JSON, not large base64 images. Screenshot tools return local file paths.
-
-- [ ] **Step 3: Bundle MCP server**
-
-Update sidecar build to emit both:
-
-```bash
-dist/sidecar.mjs
-dist/browser-mcp.mjs
-```
-
-- [ ] **Step 4: Verify MCP server starts**
-
-Run:
-
-```bash
-cd /Users/anas/Documents/droid-control-browser-mcp/sidecar
-npm run build
-node dist/browser-mcp.mjs
-```
-
-Expected: server waits for stdio MCP messages and does not crash on startup.
-
-## Task 7: React Store and Workspace
-
-**Files:**
-- Modify: `src/hooks/useStore.tsx`
-- Modify: `src/App.tsx`
-- Create: `src/components/browser/BrowserWorkspace.tsx`
-- Create: `src/components/browser/BrowserCanvas.tsx`
-
-- [ ] **Step 1: Add browser state**
-
-Add to `AppState`:
-
-```ts
-browserOpen: boolean;
-browser?: BrowserState;
-designMode: boolean;
-```
-
-Add actions for `BROWSER_UPDATED`, `BROWSER_ERROR`, `TOGGLE_BROWSER`, `TOGGLE_DESIGN_MODE`.
-
-- [ ] **Step 2: Add BrowserWorkspace**
-
-The workspace should be a center-panel mode:
-
-```tsx
-<BrowserWorkspace missionId={activeMission?.id} />
-```
-
-Use the existing dark Droid palette and avoid nested cards.
-
-- [ ] **Step 3: Add BrowserCanvas**
-
-Render the latest screenshot path as an image. Forward pointer events to browser commands with the rendered image size.
-
-- [ ] **Step 4: Run build**
-
-Run:
-
-```bash
-npm run build
-```
-
-Expected: frontend build succeeds.
-
-## Task 8: Design Mode Overlay
-
-**Files:**
-- Create: `src/components/browser/DesignModeOverlay.tsx`
-- Create: `src/components/browser/DesignPromptBar.tsx`
-- Modify: `src/components/browser/BrowserWorkspace.tsx`
-
-- [ ] **Step 1: Add selection mode**
-
-When Design Mode is active:
-
-- Click selects the nearest browser snapshot ref.
-- Shift-click adds another ref.
-- Escape clears pending selection.
-- Selected refs render as thin orange outlines with numbered chips.
-
-- [ ] **Step 2: Add sketch mode**
-
-Add a pencil button. When active:
-
-- Freeze the current screenshot.
-- Record pointer strokes in screenshot-relative coordinates.
-- Render strokes above the frozen screenshot.
-
-- [ ] **Step 3: Add prompt bar**
-
-The prompt bar sends:
-
-```ts
-sendDesignPrompt(missionId, instruction, selectedReferenceIds)
-```
-
-Disable send until there is an active mission, non-empty instruction, and at least one reference.
-
-- [ ] **Step 4: Verify manually in Browser**
-
-Run:
-
-```bash
-npm run dev -- --host 127.0.0.1 --port 1420
-```
-
-Open `http://127.0.0.1:1420/`, switch to Browser Mode, open a local app URL, select one element, sketch one circle, and send a design prompt.
-
-Expected: the chat receives a prompt containing element metadata plus screenshot path.
-
-## Task 9: Design Prompt Packaging
-
-**Files:**
-- Modify: `sidecar/src/browser/BrowserSessionManager.ts`
-- Modify: `sidecar/src/MissionManager.ts`
-
-- [ ] **Step 1: Save prompt packs**
-
-Write prompt packs under:
-
-```text
-~/.factory/droid-control/design-references/<missionId>/<referenceId>.json
-```
-
-Do not store base64 in chat messages.
-
-- [ ] **Step 2: Send compact instruction to Droid**
-
-Format:
+Behavior:
+
+- All tools operate on the same session shown in Droid Control.
+- Mutating tools refresh the screenshot and emit `browser.updated`.
+- `browser_snapshot` returns compact visible refs, URL, title, and text snippets.
+- `browser_screenshot` returns a local PNG path, never base64.
+- `browser_design_context` returns JSON paths and screenshot paths for selected/sketched references.
+- Invalid refs fail with clear errors.
+
+## Browser Runtime Requirements
+
+Runtime modules must split responsibility:
+
+`browserPaths`:
+
+- Resolve Chrome only at the canonical macOS path.
+- Resolve profile, screenshot, and design-reference directories.
+- Return explicit diagnostics when required paths are missing.
+
+`ChromeProcess`:
+
+- Allocate a free port on `127.0.0.1`.
+- Launch Chrome with:
+  - `--headless=new`
+  - `--remote-debugging-address=127.0.0.1`
+  - `--remote-debugging-port=<port>`
+  - `--user-data-dir=<profileDir>`
+  - `--no-first-run`
+  - `--no-default-browser-check`
+  - `--window-size=<width>,<height>`
+- Fetch `/json/version` readiness with a bounded timeout.
+- Cleanly kill the Chrome process when the session ends.
+
+`CdpClient`:
+
+- Fetch `/json/version` to get the browser websocket URL.
+- Send CDP messages through `ws` with request ids and typed responses.
+- Reject response errors with method context.
+- Time out stuck requests.
+
+`MacChromeCdpRuntime`:
+
+- Create or reuse one page target per session.
+- Enable `Page`, `Runtime`, `DOM`, and `Accessibility` domains.
+- Navigate with `Page.navigate` and wait for load or a bounded timeout.
+- Set viewport with `Emulation.setDeviceMetricsOverride`.
+- Capture screenshots with `Page.getLayoutMetrics` and `Page.captureScreenshot`.
+- Save screenshots under `~/Library/Application Support/Droid Control/browser-screenshots/<sessionId>/`.
+- Click with `Input.dispatchMouseEvent`.
+- Type with `Input.insertText`.
+- Send keys with `Input.dispatchKeyEvent`.
+- Scroll with `Input.dispatchMouseEvent` using `mouseWheel`.
+
+## DOM Snapshot Requirements
+
+Use `Runtime.evaluate` for a small visible-DOM snapshot:
+
+- Walk visible, markable elements only: buttons, links, inputs, textareas, selects, contenteditable nodes, role-bearing nodes, and nodes with useful text.
+- Limit the result count to keep MCP output compact.
+- Generate stable-enough selectors from id, test id, aria label, name, tag, class, and nth-of-type.
+- Include bounding boxes from `getBoundingClientRect`.
+- Include role/name/text/attributes/class.
+- Include a small computed style subset: color, background, font, border, border-radius, display, position, opacity, transform.
+- Provide `document.elementFromPoint(x, y)` inspection for Design Mode clicks.
+- React fiber/component/source info can be added later as best-effort metadata, but must not be required for MVP.
+
+## Implementation Tasks
+
+### Task 1: Worktree Guard
+
+- [ ] Confirm `/Users/anas/Documents/droid-control-browser-mcp` is on `feature/browser-mcp-design-mode`.
+- [ ] Confirm `/Users/anas/Documents/droid-control` only contains the user's existing frontend edits.
+- [ ] Run all commits from the feature worktree only.
+
+### Task 2: Sidecar Test Harness
+
+- [ ] Add `sidecar` test script: `tsx --test src/**/*.test.ts`.
+- [ ] Keep `npm run build` and `npm run typecheck` intact.
+- [ ] Add unit tests before runtime implementation.
+
+### Task 3: Browser Runtime Foundations
+
+- [ ] Implement `browserPaths`.
+- [ ] Implement `ChromeProcess`.
+- [ ] Implement `CdpClient`.
+- [ ] Unit test canonical path resolution and missing Chrome diagnostics.
+- [ ] Unit test Chrome launch args and readiness timeout.
+- [ ] Unit test CDP request id matching, response errors, timeout handling, and websocket cleanup with a fake transport.
+- [ ] Run `cd /Users/anas/Documents/droid-control-browser-mcp/sidecar && npm run test`.
+
+### Task 4: Browser Actions and DOM Snapshot
+
+- [ ] Implement `domSnapshot`.
+- [ ] Implement `MacChromeCdpRuntime` using `ChromeProcess`, `CdpClient`, `browserPaths`, and `domSnapshot`.
+- [ ] Unit test screenshot path writing without exposing base64 to callers.
+- [ ] Unit test click, type, keypress, and scroll payloads with a fake CDP client.
+- [ ] Unit test DOM snapshot normalization and limits.
+
+### Task 5: Browser Session Manager
+
+- [ ] Implement session creation keyed by mission id.
+- [ ] Implement viewport-to-canvas and canvas-to-viewport coordinate conversion.
+- [ ] Implement open, refresh, snapshot, click, type, keypress, scroll, and close.
+- [ ] Store latest browser state and emit compact bridge events.
+- [ ] Implement `designPromptPacks`.
+- [ ] Implement selected Design Mode references and prompt pack writing.
+- [ ] Unit test coordinate conversion, ref lookup, prompt pack shape, and session cleanup.
+
+### Task 6: Bridge Protocol
+
+- [ ] Add browser commands to `sidecar/src/protocol.ts` and `src/types/bridge.ts`.
+- [ ] Add browser events to both protocol files.
+- [ ] Add typed helpers in `src/lib/commands.ts`.
+- [ ] Wire bridge event handling in `src/lib/bridge.ts`.
+- [ ] Run root `npm run build`.
+
+Commands:
+
+- `browser.open`
+- `browser.refresh`
+- `browser.resizeViewport`
+- `browser.click`
+- `browser.type`
+- `browser.keypress`
+- `browser.scroll`
+- `browser.inspectPoint`
+- `browser.design.addReference`
+- `browser.design.sendPrompt`
+
+Events:
+
+- `browser.updated`
+- `browser.error`
+- `browser.agentCursor`
+
+### Task 7: Droid MCP Server
+
+- [ ] Add explicit `@modelcontextprotocol/sdk` dependency to `sidecar/package.json`.
+- [ ] Implement `browserMcpServer.ts` with the agent-facing tools above.
+- [ ] Use env vars for the session id and bridge endpoint.
+- [ ] Return compact JSON/text only.
+- [ ] Bundle `dist/browser-mcp.mjs` alongside `dist/sidecar.mjs`.
+- [ ] Verify the MCP server starts and waits on stdio without crashing.
+
+### Task 8: Droid Session Wiring
+
+- [ ] Extend `DroidRuntime.createSession` options to accept browser MCP config.
+- [ ] Pass `mcpServers` into the low-level Droid session creation path.
+- [ ] Attach browser MCP only when Browser Mode is active for the mission.
+- [ ] Fail fast if the browser sidecar session is not available.
+- [ ] Do not retrofit old sessions. The user can start a new mission when browser tools are needed.
+
+### Task 9: React Browser Workspace
+
+- [ ] Add browser state and actions in `src/hooks/useStore.tsx`.
+- [ ] Add Browser workspace mode in `src/App.tsx`.
+- [ ] Build `BrowserWorkspace` with URL bar, navigation controls, viewport indicator, Design Mode toggle, and prompt area.
+- [ ] Build `BrowserCanvas` as a screenshot image with stable aspect-ratio sizing and pointer forwarding.
+- [ ] Add user cursor and agent cursor overlays.
+- [ ] Ensure the UI works at `1440x900` and `390x844`.
+
+### Task 10: Design Mode
+
+- [ ] Build hover and selected element overlays from visible refs.
+- [ ] Click selects `document.elementFromPoint` context.
+- [ ] Shift-click multi-selects.
+- [ ] Escape clears pending selection.
+- [ ] Add sketch mode with frozen screenshot, box/circle/freehand strokes, and screenshot-relative coordinates.
+- [ ] Add prompt bar validation: active mission, non-empty instruction, at least one reference.
+- [ ] Send compact prompt pack paths to the active Droid chat.
+
+Prompt format:
 
 ```text
 Design Mode reference pack:
@@ -661,73 +442,80 @@ User instruction:
 <instruction>
 ```
 
-- [ ] **Step 3: Run a live smoke**
+### Task 11: Verification
 
-Start a chat, open Browser Mode, capture a reference, send “remove this dot pattern,” and verify the Droid transcript contains the reference pack paths.
+- [ ] `cd /Users/anas/Documents/droid-control-browser-mcp/sidecar && npm run test`
+- [ ] `cd /Users/anas/Documents/droid-control-browser-mcp/sidecar && npm run build`
+- [ ] `cd /Users/anas/Documents/droid-control-browser-mcp && npm run build`
+- [ ] Manual Browser smoke at `1440x900`.
+- [ ] Manual Browser smoke at `390x844`.
+- [ ] Open a local app URL.
+- [ ] Select one element in Design Mode.
+- [ ] Sketch one region.
+- [ ] Send "remove this dot pattern" to a Droid session.
+- [ ] Confirm the Droid transcript includes reference pack paths.
+- [ ] Confirm agent MCP can call `browser_snapshot`, `browser_click`, and `browser_screenshot`.
 
-## Task 10: Verification and Ship
+### Task 12: Commit and Push in Reviewable Slices
 
-**Files:**
-- All changed files.
+Use small commits:
 
-- [ ] **Step 1: Run sidecar tests**
+- [ ] `browser: add sidecar test harness`
+- [ ] `browser: add mac chrome process and cdp client`
+- [ ] `browser: add runtime actions and dom snapshots`
+- [ ] `browser: add session manager and prompt packs`
+- [ ] `browser: wire bridge protocol`
+- [ ] `browser: expose droid mcp tools`
+- [ ] `browser: add responsive browser workspace`
+- [ ] `browser: add design mode references`
 
-```bash
-cd /Users/anas/Documents/droid-control-browser-mcp/sidecar
-npm run test
-```
+Each commit should build or have a clear reason why it is an intermediate test-only commit. Do not commit generated screenshots, profiles, `.agents/skills`, `node_modules`, or local runtime artifacts.
 
-Expected: all tests pass.
+## Testing Strategy
 
-- [ ] **Step 2: Run sidecar build**
+Unit tests:
 
-```bash
-cd /Users/anas/Documents/droid-control-browser-mcp/sidecar
-npm run build
-```
+- CDP transport request/response matching.
+- Runtime launch args and fail-fast diagnostics.
+- Screenshot file writing.
+- Coordinate conversion.
+- DOM ref lookup.
+- Prompt pack serialization.
 
-Expected: sidecar and browser MCP bundles build.
+Build checks:
 
-- [ ] **Step 3: Run root build**
+- Root TypeScript/Vite build.
+- Sidecar TypeScript build.
+- MCP bundle build.
 
-```bash
-cd /Users/anas/Documents/droid-control-browser-mcp
-npm run build
-```
+Manual checks:
 
-Expected: TypeScript and Vite build succeed.
-
-- [ ] **Step 4: Browser visual smoke**
-
-Use the in-app Browser at 1440×900 and 390×844.
-
-Check:
-
-- Browser canvas scales without overlapping the prompt bar.
-- Pointer coordinates map correctly after resize.
-- Agent cursor overlay and user cursor overlay are visually distinct.
-- Design Mode selected refs remain aligned after screenshot refresh.
+- Wide viewport and narrow viewport.
+- Coordinate clicks stay aligned after resize.
+- Screenshot refresh after each mutating action.
+- Selected refs remain aligned with the screenshot they belong to.
 - Prompt bar text does not overflow.
-
-- [ ] **Step 5: Commit and push feature branch**
-
-```bash
-git add .
-git commit -m "Add browser MCP design mode foundation"
-git push -u origin feature/browser-mcp-design-mode
-```
-
-Expected: branch exists on `anasibnanwar1-droid/droid-maxxing`.
+- Agent cursor and user cursor are visually distinct.
 
 ## Caveats and Trade-Offs
 
-- Screenshot canvas over embedded webview: a canvas gives reliable agent control, screenshots, and cross-origin behavior. A true embedded webview feels more native but is harder to inspect/control consistently and breaks on frame restrictions.
-- `agent-browser` dependency: this keeps implementation lightweight and avoids Playwright/Puppeteer downloads, but it must be treated as a required local runtime with fail-fast diagnostics.
-- Source mapping: React component names/source are best-effort and mostly reliable in dev builds. Production/minified pages may only provide DOM selectors, text, styles, and screenshots.
-- Existing Droid sessions: sessions created before Browser Mode may need MCP attachment or a new session. Do not add compatibility shims for old local states.
-- Voice input: Cursor has it, but the first Droid implementation should ship text, element refs, and sketches first.
-- Streaming: continuous streaming is nice but not required for MVP. Start with screenshot refresh after actions, then add streaming only if interaction feels too slow.
+- Screenshot canvas instead of embedded webview: this gives reliable screenshots, coordinate control, and cross-origin behavior for agents. It will not feel exactly like a native webview for text selection and browser chrome.
+- Headless Chrome can behave differently from a user's normal browser. This is acceptable for MVP because the target is an agent-operable canvas, not a personal browsing session.
+- Login state is isolated per Droid browser profile. Users may need to sign in inside the Droid browser session.
+- React component/source metadata is best-effort. DOM refs, screenshots, boxes, styles, and text are the reliable core.
+- CDP is powerful. Keep the MCP surface small and safe instead of exposing raw CDP to agents.
+- Screenshot refresh is simpler than streaming. Add streaming only after the MVP proves interaction latency needs it.
+- macOS only means faster delivery. Do not add Linux/Windows branches until the product behavior is proven.
+
+## Ship Criteria
+
+- The feature branch contains no edits to the user's original checkout.
+- The sidecar can launch Chrome, navigate, screenshot, click, type, scroll, inspect, and close.
+- Droid Control renders a responsive browser canvas.
+- Droid sessions can receive browser MCP tools.
+- Design Mode sends compact, file-backed reference packs.
+- All listed tests/builds pass.
 
 ## Decision
 
-Use `agent-browser` as the canonical browser engine and expose it through Droid Control’s sidecar plus MCP. This is the smallest maintainable path to “Droid can use the browser like Codex Browser does” while preserving a good interactive canvas for the user.
+Build Droid's browser control as a controlled browser session with a screenshot canvas, DOM refs, coordinate input, and safe MCP tools. Implement it directly with macOS Chrome/CDP in the sidecar. Keep `agent-browser` out of the canonical path.
