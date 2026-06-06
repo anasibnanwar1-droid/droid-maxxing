@@ -1,32 +1,52 @@
 import type { CSSProperties } from 'react';
 import type { BrowserBox, BrowserElementRef } from '../../types/bridge';
+import { labelForBrowserRef } from './designModeTargeting';
 
 interface DesignModeOverlayProps {
   refs: BrowserElementRef[];
   selectedIds: string[];
   active: boolean;
+  hoveredRef?: BrowserElementRef | null;
   draftRegion?: BrowserBox | null;
   agentCursor?: { x: number; y: number };
 }
 
-export function DesignModeOverlay({ refs, selectedIds, active, draftRegion, agentCursor }: DesignModeOverlayProps) {
+export function DesignModeOverlay({
+  refs,
+  selectedIds,
+  active,
+  hoveredRef,
+  draftRegion,
+  agentCursor,
+}: DesignModeOverlayProps) {
   const selected = new Set(selectedIds);
+  const visibleRefs = refs.filter((ref) => selected.has(ref.ref));
+  if (active && hoveredRef && !selected.has(hoveredRef.ref)) visibleRefs.push(hoveredRef);
 
   return (
     <div className="pointer-events-none absolute inset-0">
-      {active && refs.map((ref) => {
+      {active && visibleRefs.map((ref) => {
         const isSelected = selected.has(ref.ref);
         return (
           <div
             key={ref.ref}
-            className={`absolute border ${isSelected ? 'border-droid-accent' : 'border-droid-accent/35'}`}
-            style={boxStyle(ref.box, isSelected ? 'rgba(238, 96, 24, 0.12)' : 'rgba(238, 96, 24, 0.04)')}
+            className={`absolute border ${isSelected ? 'border-droid-accent' : 'border-droid-accent/80'}`}
+            style={boxStyle(ref.box, isSelected ? 'rgba(238, 96, 24, 0.12)' : 'rgba(238, 96, 24, 0.06)')}
           >
-            {isSelected && (
-              <span className="absolute -left-px -top-6 h-6 max-w-[220px] truncate rounded-t bg-droid-accent px-2 text-[11px] font-medium leading-6 text-black">
-                {labelForRef(ref)}
-              </span>
-            )}
+            <span
+              className={`absolute -left-px -top-6 h-6 max-w-[260px] truncate rounded-t px-2 text-[11px] font-medium leading-6 ${
+                isSelected ? 'bg-droid-accent text-black' : 'bg-[#2383d9] text-white'
+              }`}
+            >
+              {isSelected ? (
+                labelForBrowserRef(ref)
+              ) : (
+                <>
+                  {labelForBrowserRef(ref)}
+                  <span className="ml-2 opacity-80">Click to select</span>
+                </>
+              )}
+            </span>
           </div>
         );
       })}
@@ -48,11 +68,6 @@ export function DesignModeOverlay({ refs, selectedIds, active, draftRegion, agen
       )}
     </div>
   );
-}
-
-function labelForRef(ref: BrowserElementRef): string {
-  const label = ref.name || ref.text || ref.role || ref.tagName;
-  return `${label} - ${ref.tagName.toLowerCase()}`;
 }
 
 function boxStyle(box: BrowserBox, backgroundColor?: string): CSSProperties {

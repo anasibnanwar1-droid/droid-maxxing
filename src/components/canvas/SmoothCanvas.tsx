@@ -20,6 +20,7 @@ interface SmoothCanvasProps {
   onContentPointerDown?: (point: Point, event: PointerEvent<HTMLDivElement>, fit: CanvasFit) => void;
   onContentPointerMove?: (point: Point, event: PointerEvent<HTMLDivElement>, fit: CanvasFit) => void;
   onContentPointerUp?: (point: Point, event: PointerEvent<HTMLDivElement>, fit: CanvasFit) => void;
+  onContentPointerLeave?: (event: PointerEvent<HTMLDivElement>, fit: CanvasFit) => void;
   onContentWheel?: (point: Point, event: WheelEvent<HTMLDivElement>, fit: CanvasFit) => void;
 }
 
@@ -36,6 +37,7 @@ export function SmoothCanvas({
   onContentPointerDown,
   onContentPointerMove,
   onContentPointerUp,
+  onContentPointerLeave,
   onContentWheel,
 }: SmoothCanvasProps) {
   const rootRef = useRef<HTMLDivElement>(null);
@@ -87,11 +89,13 @@ export function SmoothCanvas({
       onPointerMove={(event) => {
         const point = readPoint(event);
         if (point) onContentPointerMove?.(point, event, fit);
+        else onContentPointerLeave?.(event, fit);
       }}
       onPointerUp={(event) => {
         const point = readPoint(event);
         if (point) onContentPointerUp?.(point, event, fit);
       }}
+      onPointerLeave={(event) => onContentPointerLeave?.(event, fit)}
       onWheel={(event) => {
         const point = readPoint(event);
         if (point) onContentWheel?.(point, event, fit);

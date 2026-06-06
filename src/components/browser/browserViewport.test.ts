@@ -4,8 +4,8 @@ import { normalizeUrl, viewportForMode, viewportFromFrame } from './browserViewp
 
 test('viewportFromFrame creates a clean even fit viewport inside the canvas frame', () => {
   assert.deepEqual(viewportFromFrame({ width: 1325, height: 857 }), {
-    width: 1230,
-    height: 746,
+    width: 1254,
+    height: 762,
     deviceScaleFactor: 2,
   });
 });
@@ -18,7 +18,7 @@ test('viewportFromFrame clamps tiny and very large canvas frames', () => {
   });
   assert.deepEqual(viewportFromFrame({ width: 5000, height: 3000 }), {
     width: 1440,
-    height: 1000,
+    height: 1100,
     deviceScaleFactor: 2,
   });
 });

@@ -2,7 +2,7 @@ import type { BrowserElementRef, BrowserSnapshot } from './types.js';
 
 export const DOM_SNAPSHOT_SCRIPT = String.raw`
 (() => {
-  const MARKABLE_SELECTOR = [
+  const INTERACTIVE_SELECTOR = [
     'a[href]',
     'button',
     'input',
@@ -12,6 +12,31 @@ export const DOM_SNAPSHOT_SCRIPT = String.raw`
     '[role]',
     '[onclick]',
     '[tabindex]:not([tabindex="-1"])'
+  ].join(',');
+  const TEXT_SELECTOR = [
+    'h1',
+    'h2',
+    'h3',
+    'h4',
+    'h5',
+    'h6',
+    'p',
+    'li',
+    'label',
+    'summary',
+    'figcaption',
+    'blockquote',
+    'code',
+    'pre',
+    'span',
+    'strong',
+    'em',
+    'small',
+    'td',
+    'th',
+    'div',
+    'section',
+    'article'
   ].join(',');
   const STYLE_KEYS = [
     'color',
@@ -32,7 +57,20 @@ export const DOM_SNAPSHOT_SCRIPT = String.raw`
     const style = window.getComputedStyle(el);
     return style.visibility !== 'hidden' && style.display !== 'none' && Number(style.opacity || '1') > 0;
   };
+  const isInViewport = (box) => (
+    box.x < window.innerWidth &&
+    box.y < window.innerHeight &&
+    box.x + box.width > 0 &&
+    box.y + box.height > 0
+  );
   const textFor = (el) => (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 180);
+  const directTextFor = (el) => Array.from(el.childNodes)
+    .filter((node) => node.nodeType === Node.TEXT_NODE)
+    .map((node) => node.textContent || '')
+    .join(' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 180);
   const attrsFor = (el) => Object.fromEntries(attrKeys.flatMap((key) => {
     const value = el.getAttribute(key);
     return value ? [[key, value]] : [];
@@ -63,22 +101,56 @@ export const DOM_SNAPSHOT_SCRIPT = String.raw`
   };
   const roleFor = (el) => el.getAttribute('role') || ({ A: 'link', BUTTON: 'button', INPUT: 'textbox', TEXTAREA: 'textbox', SELECT: 'combobox' })[el.tagName] || undefined;
   const nameFor = (el, attrs, text) => attrs['aria-label'] || attrs.title || attrs.placeholder || attrs.name || text || undefined;
-  const elements = Array.from(document.querySelectorAll(MARKABLE_SELECTOR));
+  const isInteractive = (el) => el.matches(INTERACTIVE_SELECTOR);
+  const isSemanticText = (el) => /^(H[1-6]|P|LI|LABEL|SUMMARY|FIGCAPTION|BLOCKQUOTE|CODE|PRE|SPAN|STRONG|EM|SMALL|TD|TH)$/.test(el.tagName);
+  const shouldInclude = (el, box, attrs, text, directText) => {
+    const area = box.width * box.height;
+    const viewportArea = Math.max(1, window.innerWidth * window.innerHeight);
+    if (area > viewportArea * 0.72) return false;
+    if (isInteractive(el)) return true;
+    if (!text) return false;
+    if (isSemanticText(el)) return true;
+    if (attrs['data-testid'] || attrs['aria-label'] || attrs.title || attrs.role) return true;
+    return directText.length > 0 && area <= viewportArea * 0.35;
+  };
+  const scoreFor = (el, box, attrs, text, directText) => {
+    const area = box.width * box.height;
+    const role = roleFor(el);
+    const base = isInteractive(el)
+      ? 0
+      : /^(button|link|textbox|combobox|menuitem|tab)$/.test(role || '')
+        ? 10
+        : isSemanticText(el)
+          ? 60
+          : directText
+            ? 90
+            : (attrs['data-testid'] || attrs['aria-label'] || attrs.title)
+              ? 120
+              : 200;
+    return base + Math.min(80, area / 8000) + Math.max(0, 24 - text.length) / 10;
+  };
+  const elements = Array.from(new Set([
+    ...Array.from(document.querySelectorAll(INTERACTIVE_SELECTOR)),
+    ...Array.from(document.querySelectorAll(TEXT_SELECTOR))
+  ]));
   const refs = [];
+  const candidates = [];
   for (const el of elements) {
-    if (refs.length >= 80) break;
     const rect = el.getBoundingClientRect();
     const box = { x: Math.round(rect.x), y: Math.round(rect.y), width: Math.round(rect.width), height: Math.round(rect.height) };
+    if (!isInViewport(box)) continue;
     if (!isVisible(el, box)) continue;
     const attrs = attrsFor(el);
     const text = textFor(el);
+    const directText = directTextFor(el);
+    if (!shouldInclude(el, box, attrs, text, directText)) continue;
     const styles = window.getComputedStyle(el);
-    refs.push({
-      ref: '@e' + (refs.length + 1),
+    candidates.push({
+      score: scoreFor(el, box, attrs, text, directText),
       selector: selectorFor(el),
       tagName: el.tagName.toLowerCase(),
       role: roleFor(el),
-      name: nameFor(el, attrs, text),
+      name: nameFor(el, attrs, directText || text),
       text,
       attributes: attrs,
       className: typeof el.className === 'string' ? el.className.slice(0, 160) : '',
@@ -86,6 +158,13 @@ export const DOM_SNAPSHOT_SCRIPT = String.raw`
       computedStyles: Object.fromEntries(STYLE_KEYS.map((key) => [key, styles[key] || '']))
     });
   }
+  candidates
+    .sort((a, b) => a.score - b.score)
+    .slice(0, 180)
+    .forEach((candidate, index) => {
+      const { score, ...ref } = candidate;
+      refs.push({ ref: '@e' + (index + 1), ...ref });
+    });
   return {
     url: location.href,
     title: document.title,

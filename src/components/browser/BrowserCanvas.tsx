@@ -1,10 +1,11 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { SmoothCanvas } from '../canvas/SmoothCanvas';
 import { contentPointToCanvas } from '../canvas/canvasMath';
 import type { CanvasFit, Point, Size } from '../canvas/canvasMath';
 import type { BrowserBox, BrowserElementRef, BrowserState, BrowserViewport, DesignReference } from '../../types/bridge';
 import { DesignModeOverlay } from './DesignModeOverlay';
 import { DesignModeComposer } from './DesignModeComposer';
+import { pickDesignModeTarget } from './designModeTargeting';
 
 interface BrowserCanvasProps {
   browser?: BrowserState;
@@ -48,7 +49,12 @@ export function BrowserCanvas({
   const dragStart = useRef<Point | null>(null);
   const lastWheelAt = useRef(0);
   const [draftRegion, setDraftRegion] = useState<BrowserBox | null>(null);
+  const [hoveredRef, setHoveredRef] = useState<BrowserElementRef | null>(null);
   const contentSize = browser?.viewport ?? viewport;
+
+  useEffect(() => {
+    if (!designMode || sketchMode) setHoveredRef(null);
+  }, [designMode, sketchMode]);
 
   return (
     <SmoothCanvas
@@ -66,15 +72,20 @@ export function BrowserCanvas({
           return;
         }
         if (designMode) {
-          const ref = findSmallestRefAtPoint(browser.refs, point);
+          const ref = pickDesignModeTarget(browser.refs, point, contentSize);
           if (ref) onToggleElement(ref);
           return;
         }
         onClickPoint(point);
       }}
       onContentPointerMove={(point) => {
-        if (!dragStart.current) return;
-        setDraftRegion(normalizeBox(dragStart.current, point, contentSize.width, contentSize.height));
+        if (dragStart.current) {
+          setDraftRegion(normalizeBox(dragStart.current, point, contentSize.width, contentSize.height));
+          return;
+        }
+        if (!browser || !designMode || sketchMode) return;
+        const next = pickDesignModeTarget(browser.refs, point, contentSize) ?? null;
+        setHoveredRef((current) => current?.ref === next?.ref ? current : next);
       }}
       onContentPointerUp={(point, event) => {
         if (!dragStart.current) return;
@@ -86,17 +97,20 @@ export function BrowserCanvas({
         }
         if (box.width >= 8 && box.height >= 8) onAddRegion(box);
       }}
+      onContentPointerLeave={() => {
+        if (!dragStart.current) setHoveredRef(null);
+      }}
       onContentWheel={(_, event) => {
         if (!browser) return;
         event.preventDefault();
         const now = Date.now();
-        if (now - lastWheelAt.current < 140) return;
+        if (now - lastWheelAt.current < 260) return;
         lastWheelAt.current = now;
         const horizontal = Math.abs(event.deltaX) > Math.abs(event.deltaY);
         const direction = horizontal
           ? event.deltaX > 0 ? 'right' : 'left'
           : event.deltaY > 0 ? 'down' : 'up';
-        const pixels = Math.min(900, Math.max(120, Math.round(horizontal ? Math.abs(event.deltaX) : Math.abs(event.deltaY))));
+        const pixels = Math.min(1100, Math.max(180, Math.round(horizontal ? Math.abs(event.deltaX) : Math.abs(event.deltaY))));
         onScroll(direction, pixels);
       }}
       overlay={(fit) => {
@@ -122,6 +136,7 @@ export function BrowserCanvas({
               src={browser.screenshotUrl}
               alt={browser.title || browser.url}
               draggable={false}
+              decoding="async"
               className="h-full w-full select-none object-fill"
             />
           ) : (
@@ -133,6 +148,7 @@ export function BrowserCanvas({
             refs={browser?.refs ?? []}
             selectedIds={selectedIds}
             active={designMode}
+            hoveredRef={designMode && !sketchMode ? hoveredRef : null}
             draftRegion={draftRegion}
             agentCursor={browser?.agentCursor}
           />
@@ -191,26 +207,12 @@ function unionBoxes(boxes: BrowserBox[]): BrowserBox | undefined {
   return { x: x1, y: y1, width: x2 - x1, height: y2 - y1 };
 }
 
-function findSmallestRefAtPoint(refs: BrowserElementRef[], point: Point): BrowserElementRef | undefined {
-  return refs
-    .filter((ref) =>
-      point.x >= ref.box.x &&
-      point.y >= ref.box.y &&
-      point.x <= ref.box.x + ref.box.width &&
-      point.y <= ref.box.y + ref.box.height)
-    .sort((a, b) => area(a.box) - area(b.box))[0];
-}
-
 function normalizeBox(start: Point, end: Point, maxWidth: number, maxHeight: number): BrowserBox {
   const x1 = clamp(Math.min(start.x, end.x), 0, maxWidth);
   const y1 = clamp(Math.min(start.y, end.y), 0, maxHeight);
   const x2 = clamp(Math.max(start.x, end.x), 0, maxWidth);
   const y2 = clamp(Math.max(start.y, end.y), 0, maxHeight);
   return { x: x1, y: y1, width: x2 - x1, height: y2 - y1 };
-}
-
-function area(box: BrowserBox): number {
-  return box.width * box.height;
 }
 
 function clamp(value: number, min: number, max: number): number {

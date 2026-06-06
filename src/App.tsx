@@ -1,9 +1,9 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useStore } from './hooks/useStore';
 import { AnimatePresence, motion } from 'framer-motion';
 import { Monitor, PanelLeft } from 'lucide-react';
 import { bridge } from './lib/bridge';
-import { connect, listFactoryDefaults, listModels, listMissions, listSkills, loadMissionHistory, resumeMission } from './lib/commands';
+import { closeBrowser, connect, listFactoryDefaults, listModels, listMissions, listSkills, loadMissionHistory, resumeMission } from './lib/commands';
 import { getApiKey } from './lib/tauri';
 import Sidebar from './components/Sidebar';
 import ChatView from './components/ChatView';
@@ -17,9 +17,9 @@ import AskUserModal from './components/AskUserModal';
 import PermissionModal from './components/PermissionModal';
 import BrowserWorkspace from './components/browser/BrowserWorkspace';
 
-const BROWSER_PANE_MIN = 360;
-const BROWSER_PANE_MAX = 920;
-const BROWSER_PANE_DEFAULT = 620;
+const BROWSER_PANE_MIN = 460;
+const BROWSER_PANE_MAX = 1280;
+const BROWSER_PANE_DEFAULT = 860;
 
 export default function App() {
   const { state, dispatch } = useStore();
@@ -31,7 +31,12 @@ export default function App() {
   const focused = isMissionView;
   const requestedHistory = useRef(new Set<string>());
   const requestedResume = useRef(new Set<string>());
-  const [browserPaneWidth, setBrowserPaneWidth] = useState(BROWSER_PANE_DEFAULT);
+  const [browserPaneWidth, setBrowserPaneWidth] = useState(() => initialBrowserPaneWidth());
+
+  const toggleBrowserPane = useCallback(() => {
+    if (state.browserOpen && activeMission) closeBrowser(activeMission.id);
+    dispatch({ type: 'TOGGLE_BROWSER' });
+  }, [activeMission, dispatch, state.browserOpen]);
 
   useEffect(() => {
     applyTheme(state.theme);
@@ -67,7 +72,7 @@ export default function App() {
       if (!meta) return;
       if (e.shiftKey && e.key.toLowerCase() === 'b') {
         e.preventDefault();
-        dispatch({ type: 'TOGGLE_BROWSER' });
+        toggleBrowserPane();
         return;
       }
       switch (e.key.toLowerCase()) {
@@ -91,7 +96,7 @@ export default function App() {
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [dispatch, state.rightPanelOpen]);
+  }, [dispatch, state.rightPanelOpen, toggleBrowserPane]);
 
   return (
     <div className="h-screen w-screen flex flex-col bg-droid-bg text-droid-text overflow-hidden relative">
@@ -105,7 +110,7 @@ export default function App() {
       </button>
 
       <button
-        onClick={() => dispatch({ type: 'TOGGLE_BROWSER' })}
+        onClick={toggleBrowserPane}
         className={`absolute top-[6px] left-[108px] z-40 p-1 rounded transition-colors pointer-events-auto ${
           state.browserOpen
             ? 'text-droid-text bg-droid-elevated/80'
@@ -160,7 +165,7 @@ export default function App() {
                   animate={{ width: browserPaneWidth, opacity: 1 }}
                   exit={{ width: 0, opacity: 0 }}
                   transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
-                  className="relative shrink-0 overflow-hidden border-l border-droid-border bg-droid-bg"
+                  className="relative shrink-0 overflow-hidden border-l border-droid-border bg-droid-bg shadow-[-24px_0_60px_rgba(0,0,0,0.18)]"
                 >
                   <BrowserPaneResizeHandle width={browserPaneWidth} onResize={setBrowserPaneWidth} />
                   <BrowserWorkspace />
@@ -198,7 +203,7 @@ function BrowserPaneResizeHandle({
       role="separator"
       aria-label="Resize browser pane"
       aria-orientation="vertical"
-      className="absolute left-0 top-0 z-20 h-full w-2 cursor-col-resize"
+      className="group absolute left-0 top-0 z-20 h-full w-3 cursor-col-resize"
       onPointerDown={(event) => {
         dragStart.current = { x: event.clientX, width };
         event.currentTarget.setPointerCapture(event.pointerId);
@@ -215,11 +220,20 @@ function BrowserPaneResizeHandle({
         }
       }}
     >
-      <div className="absolute left-0 top-1/2 h-12 w-px -translate-y-1/2 bg-droid-border-hover" />
+      <div className="absolute left-0 top-0 h-full w-px bg-droid-border-hover/60 transition-colors group-hover:bg-droid-accent/70" />
+      <div className="absolute left-1 top-1/2 h-12 w-1 -translate-y-1/2 rounded-full bg-droid-border-hover/70 opacity-70 transition-colors group-hover:bg-droid-accent" />
     </div>
   );
 }
 
+function initialBrowserPaneWidth(): number {
+  if (typeof window === 'undefined') return BROWSER_PANE_DEFAULT;
+  return clampBrowserPane(Math.round(window.innerWidth * 0.44));
+}
+
 function clampBrowserPane(width: number): number {
-  return Math.min(BROWSER_PANE_MAX, Math.max(BROWSER_PANE_MIN, Math.round(width)));
+  const viewportMax = typeof window === 'undefined'
+    ? BROWSER_PANE_MAX
+    : Math.max(BROWSER_PANE_MIN, Math.min(BROWSER_PANE_MAX, Math.round(window.innerWidth - 520)));
+  return Math.min(viewportMax, Math.max(BROWSER_PANE_MIN, Math.round(width)));
 }

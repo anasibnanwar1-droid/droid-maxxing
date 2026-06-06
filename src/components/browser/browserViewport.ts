@@ -14,8 +14,8 @@ export const PRESET_VIEWPORTS: Partial<Record<BrowserViewportMode, BrowserViewpo
 export function viewportFromFrame(size: Size): BrowserViewport {
   if (size.width <= 1 || size.height <= 1) return FIT_FALLBACK_VIEWPORT;
   return {
-    width: even(clamp(size.width - 96, 390, 1440)),
-    height: even(clamp(size.height - 112, 360, 1000)),
+    width: even(clamp(size.width - 72, 390, 1440)),
+    height: even(clamp(size.height - 96, 360, 1100)),
     deviceScaleFactor: 2,
   };
 }

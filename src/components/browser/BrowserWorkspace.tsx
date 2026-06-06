@@ -16,8 +16,8 @@ import { useStore } from '../../hooks/useStore';
 import {
   addDesignReference,
   clickBrowser,
+  closeBrowser,
   openBrowser,
-  refreshBrowser,
   resizeBrowserViewport,
   scrollBrowser,
   sendDesignPrompt,
@@ -162,7 +162,7 @@ export default function BrowserWorkspace() {
           <IconButton title="Open" onClick={openCurrentUrl} disabled={!sessionId}>
             <Send className="h-4 w-4" />
           </IconButton>
-          <IconButton title="Refresh" onClick={() => sessionId && refreshBrowser(sessionId)} disabled={!browser || !sessionId}>
+          <IconButton title="Reload" onClick={openCurrentUrl} disabled={!browser || !sessionId}>
             <RefreshCw className="h-4 w-4" />
           </IconButton>
         </form>
@@ -232,7 +232,13 @@ export default function BrowserWorkspace() {
           >
             <PenLine className="h-4 w-4" />
           </IconButton>
-          <IconButton title="Close Browser" onClick={() => dispatch({ type: 'SET_BROWSER_OPEN', open: false })}>
+          <IconButton
+            title="Close Browser"
+            onClick={() => {
+              if (sessionId) closeBrowser(sessionId);
+              dispatch({ type: 'SET_BROWSER_OPEN', open: false });
+            }}
+          >
             <X className="h-4 w-4" />
           </IconButton>
         </div>
@@ -256,10 +262,10 @@ export default function BrowserWorkspace() {
           canSend={canSend}
           disabledReason={!sessionId ? 'No active Droid session' : selectedIds.length === 0 ? 'Select a reference' : 'Describe the change'}
           onScaleChange={setCanvasScale}
-          onClickPoint={(point: Point) => sessionId && clickBrowser({ missionId: sessionId, x: point.x, y: point.y })}
+          onClickPoint={(point: Point) => sessionId && clickBrowser({ missionId: sessionId, x: point.x, y: point.y, source: 'user' })}
           onToggleElement={toggleElement}
           onAddRegion={addRegion}
-          onScroll={(direction: BrowserScrollDirection, pixels: number) => sessionId && scrollBrowser({ missionId: sessionId, direction, pixels })}
+          onScroll={(direction: BrowserScrollDirection, pixels: number) => sessionId && scrollBrowser({ missionId: sessionId, direction, pixels, source: 'user' })}
           onInstructionChange={setInstruction}
           onRemoveReference={(id) => setReferences((prev) => prev.filter((ref) => ref.id !== id))}
           onSend={sendPrompt}
