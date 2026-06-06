@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ComponentType, ReactNode, RefObject } from 'react';
 import {
   Expand,
@@ -14,33 +14,28 @@ import {
 } from 'lucide-react';
 import { useStore } from '../../hooks/useStore';
 import {
-  addDesignReference,
-  clickBrowser,
   closeBrowser,
-  openBrowser,
-  resizeBrowserViewport,
-  scrollBrowser,
-  sendDesignPrompt,
+  sendToMission,
 } from '../../lib/commands';
 import type {
   BrowserBox,
   BrowserElementRef,
-  BrowserScrollDirection,
   BrowserViewport,
   BrowserViewportMode,
   DesignReference,
 } from '../../types/bridge';
-import type { Point, Size } from '../canvas/canvasMath';
-import { BrowserCanvas } from './BrowserCanvas';
+import type { Size } from '../canvas/canvasMath';
 import {
   clamp,
   CUSTOM_DEFAULT_VIEWPORT,
   normalizeUrl,
   PRESET_VIEWPORTS,
-  sameViewport,
   viewportForMode,
   viewportFromFrame,
 } from './browserViewport';
+import { NativeBrowserSurface } from './NativeBrowserSurface';
+import { reloadNativeBrowser, closeNativeBrowser } from '../../lib/nativeBrowser';
+import type { NativeBrowserSelection } from '../../lib/nativeBrowser';
 
 type Preset = {
   id: BrowserViewportMode;
@@ -67,9 +62,10 @@ export default function BrowserWorkspace() {
   const frameSize = useElementSize(frameRef);
   const fitViewport = useMemo(() => viewportFromFrame(frameSize), [frameSize]);
   const [urlInput, setUrlInput] = useState(browser?.url ?? 'http://127.0.0.1:1420/');
+  const [activeUrl, setActiveUrl] = useState(browser?.url ?? 'http://127.0.0.1:1420/');
   const [viewportMode, setViewportMode] = useState<BrowserViewportMode>(browser?.viewportMode ?? 'fit');
   const [customViewport, setCustomViewport] = useState<BrowserViewport>(CUSTOM_DEFAULT_VIEWPORT);
-  const [canvasScale, setCanvasScale] = useState(1);
+  const [actualViewport, setActualViewport] = useState<Size>({ width: 1, height: 1 });
   const [sketchMode, setSketchMode] = useState(false);
   const [instruction, setInstruction] = useState('');
   const [references, setReferences] = useState<DesignReference[]>([]);
@@ -88,59 +84,33 @@ export default function BrowserWorkspace() {
     setReferences([]);
   }, [browser?.sessionId, sessionId]);
 
-  useEffect(() => {
-    if (!browser || viewportMode !== 'custom') return;
-    if (sameViewport(browser.viewport, customViewport)) return;
-    const handle = window.setTimeout(() => {
-      if (sessionId) resizeBrowserViewport({ missionId: sessionId, viewport: customViewport, viewportMode: 'custom' });
-    }, 220);
-    return () => window.clearTimeout(handle);
-  }, [browser, customViewport, sessionId, viewportMode]);
-
   const requestedViewport = viewportForMode(viewportMode, fitViewport, customViewport);
-  const visibleViewport = browser?.viewport ?? requestedViewport;
   const selectedIds = references.map((ref) => ref.id).filter((id): id is string => Boolean(id));
   const canSend = Boolean(sessionId && selectedIds.length > 0 && instruction.trim());
 
   const openCurrentUrl = () => {
     const url = normalizeUrl(urlInput);
     setUrlInput(url);
-    if (!sessionId) return;
-    openBrowser({ missionId: sessionId, url, viewport: requestedViewport, viewportMode });
+    setActiveUrl(url);
   };
 
   const applyPreset = (mode: BrowserViewportMode) => {
     setViewportMode(mode);
-    const viewport = viewportForMode(mode, fitViewport, customViewport);
-    if (browser && sessionId) resizeBrowserViewport({ missionId: sessionId, viewport, viewportMode: mode });
-  };
-
-  const toggleElement = (element: BrowserElementRef) => {
-    const id = element.ref;
-    if (references.some((ref) => ref.id === id)) {
-      setReferences((prev) => prev.filter((ref) => ref.id !== id));
-      return;
-    }
-    const reference: DesignReference = { id, kind: 'element', element };
-    setReferences((prev) => [...prev, reference]);
-    if (sessionId) addDesignReference(sessionId, reference);
-  };
-
-  const addRegion = (box: BrowserBox) => {
-    const reference: DesignReference = {
-      id: `region-${Date.now().toString(36)}`,
-      kind: 'region',
-      box,
-    };
-    setReferences((prev) => [...prev, reference]);
-    if (sessionId) addDesignReference(sessionId, reference);
   };
 
   const sendPrompt = () => {
     if (!sessionId || !canSend) return;
-    sendDesignPrompt(sessionId, instruction.trim(), selectedIds);
+    sendToMission(sessionId, formatDesignModeMessage(instruction.trim(), references));
     setInstruction('');
   };
+
+  const handleSelection = useCallback((selection: NativeBrowserSelection) => {
+    const reference = referenceFromNativeSelection(selection);
+    setReferences((prev) => {
+      if (reference.id && prev.some((item) => item.id === reference.id)) return prev;
+      return [...prev, reference];
+    });
+  }, []);
 
   return (
     <div className="flex h-full min-h-0 min-w-0 flex-col bg-droid-bg">
@@ -162,7 +132,7 @@ export default function BrowserWorkspace() {
           <IconButton title="Open" onClick={openCurrentUrl} disabled={!sessionId}>
             <Send className="h-4 w-4" />
           </IconButton>
-          <IconButton title="Reload" onClick={openCurrentUrl} disabled={!browser || !sessionId}>
+          <IconButton title="Reload" onClick={() => reloadNativeBrowser().catch(() => openCurrentUrl())} disabled={!sessionId}>
             <RefreshCw className="h-4 w-4" />
           </IconButton>
         </form>
@@ -236,6 +206,7 @@ export default function BrowserWorkspace() {
             title="Close Browser"
             onClick={() => {
               if (sessionId) closeBrowser(sessionId);
+              closeNativeBrowser().catch(() => {});
               dispatch({ type: 'SET_BROWSER_OPEN', open: false });
             }}
           >
@@ -251,37 +222,110 @@ export default function BrowserWorkspace() {
       )}
 
       <div ref={frameRef} className="relative flex-1 min-h-0 min-w-0">
-        <BrowserCanvas
-          browser={browser}
-          viewport={visibleViewport}
+        <NativeBrowserSurface
+          url={activeUrl}
+          viewport={requestedViewport}
+          viewportMode={viewportMode}
           designMode={state.designMode}
           sketchMode={state.designMode && sketchMode}
-          references={references}
-          selectedIds={selectedIds}
-          instruction={instruction}
-          canSend={canSend}
-          disabledReason={!sessionId ? 'No active Droid session' : selectedIds.length === 0 ? 'Select a reference' : 'Describe the change'}
-          onScaleChange={setCanvasScale}
-          onClickPoint={(point: Point) => sessionId && clickBrowser({ missionId: sessionId, x: point.x, y: point.y, source: 'user' })}
-          onToggleElement={toggleElement}
-          onAddRegion={addRegion}
-          onScroll={(direction: BrowserScrollDirection, pixels: number) => sessionId && scrollBrowser({ missionId: sessionId, direction, pixels, source: 'user' })}
-          onInstructionChange={setInstruction}
-          onRemoveReference={(id) => setReferences((prev) => prev.filter((ref) => ref.id !== id))}
-          onSend={sendPrompt}
+          onLoaded={(url) => {
+            setActiveUrl(url);
+            if (document.activeElement !== urlInputRef.current) setUrlInput(url);
+          }}
+          onSelection={handleSelection}
+          onViewportSizeChange={setActualViewport}
         />
+
+        {state.designMode && references.length > 0 && (
+          <div className="absolute bottom-12 left-1/2 z-10 flex w-[min(520px,calc(100%-32px))] -translate-x-1/2 items-center gap-2 rounded-lg border border-droid-border bg-droid-bg/95 p-2 shadow-2xl">
+            <div className="flex min-w-0 flex-wrap gap-1">
+              {references.map((reference) => (
+                <button
+                  key={reference.id}
+                  className="flex max-w-[180px] items-center gap-1 rounded-md bg-droid-elevated px-2 py-1 text-[12px] text-droid-text-secondary"
+                  onClick={() => setReferences((prev) => prev.filter((item) => item.id !== reference.id))}
+                  title="Remove reference"
+                >
+                  <span className="truncate">{referenceLabel(reference)}</span>
+                  <X className="h-3 w-3 shrink-0" />
+                </button>
+              ))}
+            </div>
+            <input
+              value={instruction}
+              onChange={(event) => setInstruction(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' && !event.shiftKey) {
+                  event.preventDefault();
+                  sendPrompt();
+                }
+              }}
+              className="h-8 min-w-[160px] flex-1 rounded-md border border-droid-border bg-droid-surface px-2 text-[13px] text-droid-text placeholder:text-droid-text-muted focus:border-droid-border-hover focus:outline-none"
+              placeholder={!sessionId ? 'No active Droid session' : selectedIds.length === 0 ? 'Select a reference' : 'Describe the change'}
+            />
+            <IconButton title="Send selection" onClick={sendPrompt} disabled={!canSend}>
+              <Send className="h-4 w-4" />
+            </IconButton>
+          </div>
+        )}
 
         <div className="pointer-events-none absolute bottom-3 left-1/2 flex -translate-x-1/2 items-center gap-2 rounded-md border border-droid-border bg-droid-bg/90 px-2.5 py-1.5 text-[11px] text-droid-text-muted shadow-lg">
           <span className="font-mono text-droid-text-secondary">
-            {visibleViewport.width}x{visibleViewport.height}@{visibleViewport.deviceScaleFactor}x
+            {actualViewport.width}x{actualViewport.height}
           </span>
-          <span>{Math.round(canvasScale * 100)}%</span>
           <span>{viewportMode}</span>
         </div>
       </div>
 
     </div>
   );
+}
+
+function referenceFromNativeSelection(selection: NativeBrowserSelection): DesignReference {
+  if (selection.kind === 'region') {
+    return { id: selection.id, kind: 'region', box: selection.box as BrowserBox, note: selection.url };
+  }
+  const element: BrowserElementRef = {
+    ref: selection.id,
+    selector: selection.selector ?? '',
+    tagName: selection.tagName ?? 'element',
+    role: selection.role,
+    name: selection.name,
+    text: selection.text,
+    attributes: {},
+    box: selection.box as BrowserBox,
+    computedStyles: {},
+  };
+  return { id: selection.id, kind: 'element', element, note: selection.url };
+}
+
+function referenceLabel(reference: DesignReference): string {
+  if (reference.kind === 'region') return 'region';
+  return reference.element?.name || reference.element?.text || reference.element?.tagName || 'element';
+}
+
+function formatDesignModeMessage(instruction: string, references: DesignReference[]): string {
+  const tagged = references.map((reference, index) => {
+    if (reference.kind === 'region' && reference.box) {
+      return `${index + 1}. region url=${reference.note ?? ''} box=${formatBox(reference.box)}`;
+    }
+    const element = reference.element;
+    return [
+      `${index + 1}. element`,
+      `url=${reference.note ?? ''}`,
+      `selector=${element?.selector ?? ''}`,
+      `tag=${element?.tagName ?? ''}`,
+      element?.role ? `role=${element.role}` : '',
+      element?.name ? `name=${JSON.stringify(element.name)}` : '',
+      element?.text ? `text=${JSON.stringify(element.text)}` : '',
+      element?.box ? `box=${formatBox(element.box)}` : '',
+    ].filter(Boolean).join(' ');
+  }).join('\n');
+  return `Design Mode selection:\n${tagged}\n\nInstruction:\n${instruction}`;
+}
+
+function formatBox(box: BrowserBox): string {
+  return `${Math.round(box.x)},${Math.round(box.y)},${Math.round(box.width)},${Math.round(box.height)}`;
 }
 
 function IconButton({

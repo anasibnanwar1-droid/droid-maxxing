@@ -12,6 +12,8 @@ use tauri::{AppHandle, Manager, State};
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_notification::NotificationExt;
 
+mod native_browser;
+
 const KEYRING_SERVICE: &str = "ai.factory.droid-control";
 const KEYRING_USER: &str = "factory_api_key";
 
@@ -277,6 +279,7 @@ fn main() {
             bridge,
             sidecar: Mutex::new(sidecar),
         })
+        .manage(native_browser::NativeBrowserState::default())
         .invoke_handler(tauri::generate_handler![
             bridge_info,
             pick_directory,
@@ -286,7 +289,13 @@ fn main() {
             set_api_key,
             clear_api_key,
             list_files,
-            read_file
+            read_file,
+            native_browser::native_browser_open,
+            native_browser::native_browser_set_bounds,
+            native_browser::native_browser_close,
+            native_browser::native_browser_set_design_mode,
+            native_browser::native_browser_set_sketch_mode,
+            native_browser::native_browser_reload
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::Destroyed = event {
