@@ -29,7 +29,8 @@ Canonical engine:
 - Google Chrome for macOS at `/Applications/Google Chrome.app/Contents/MacOS/Google Chrome`.
 - CDP over a random local port bound to `127.0.0.1`.
 - Dedicated profile directory under `~/Library/Application Support/Droid Control/browser-profiles/<sessionId>`.
-- Default viewport `1440x900`, with explicit viewport resize commands from the app.
+- Default presentation mode is `fit`: the app chooses a clean preview size from the available canvas area while preserving the active browser viewport ratio.
+- The browser viewport is explicit state, independent from how large the screenshot is rendered on screen.
 - Headless Chrome for the first build so the browser is truly in-app through the Droid canvas.
 
 Fail fast if Chrome is missing or CDP cannot start. Do not add WebKit, Safari, Puppeteer, Playwright, `agent-browser`, or cross-platform fallbacks in the first build.
@@ -79,6 +80,8 @@ The Browser workspace should include:
 
 - URL bar, reload, back, forward, viewport indicator, screenshot refresh.
 - Screenshot canvas that scales responsively without layout shift.
+- Viewport controls: Fit, Desktop, Laptop, Tablet, Mobile, and Custom.
+- Clean viewport preview framing: show actual viewport dimensions, rendered scale, and enough surrounding space that narrow/mobile previews do not feel broken.
 - Separate user and agent cursor overlays.
 - User interactions: click, type, keypress, scroll.
 - Agent interactions through MCP tools.
@@ -137,6 +140,7 @@ Core pieces:
 
 ## Maintainability Rules
 
+- Build a reusable smooth canvas primitive first. Browser screenshots, Design Mode overlays, and future canvas-backed surfaces should all use the same viewport math and overlay coordinate system.
 - No browser mega-file. Split process launch, CDP transport, DOM extraction, runtime actions, session state, prompt packing, MCP, and React UI into separate modules.
 - Keep module APIs small and explicit. Prefer plain typed functions/classes over broad abstractions.
 - Keep CDP method names and payloads close to the runtime layer. React components should never know CDP details.
@@ -168,6 +172,9 @@ Create:
 - `src/components/browser/BrowserCanvas.tsx`
 - `src/components/browser/DesignModeOverlay.tsx`
 - `src/components/browser/DesignPromptBar.tsx`
+- `src/components/canvas/SmoothCanvas.tsx`
+- `src/components/canvas/canvasMath.ts`
+- `src/components/canvas/canvasMath.test.ts`
 
 Modify:
 
@@ -188,6 +195,15 @@ export interface BrowserViewport {
   width: number;
   height: number;
   deviceScaleFactor: number;
+}
+
+export type BrowserViewportMode = 'fit' | 'desktop' | 'laptop' | 'tablet' | 'mobile' | 'custom';
+
+export interface BrowserViewportPreset {
+  id: BrowserViewportMode;
+  label: string;
+  width?: number;
+  height?: number;
 }
 
 export interface BrowserBox {
@@ -216,6 +232,7 @@ export interface BrowserState {
   url: string;
   title?: string;
   viewport: BrowserViewport;
+  viewportMode: BrowserViewportMode;
   screenshotPath?: string;
   scroll: { x: number; y: number };
   refs: BrowserElementRef[];
@@ -349,7 +366,14 @@ Use `Runtime.evaluate` for a small visible-DOM snapshot:
 - [ ] Unit test CDP request id matching, response errors, timeout handling, and websocket cleanup with a fake transport.
 - [ ] Run `cd /Users/anas/Documents/droid-control-browser-mcp/sidecar && npm run test`.
 
-### Task 4: Browser Actions and DOM Snapshot
+### Task 4: Reusable Canvas Primitive
+
+- [ ] Implement `src/components/canvas/canvasMath.ts`.
+- [ ] Implement `src/components/canvas/SmoothCanvas.tsx`.
+- [ ] Unit test fit-to-container scale math, letterboxing offsets, and coordinate conversion.
+- [ ] Keep the primitive independent of browser concepts: it accepts content size, overlays, pointer handlers, and children.
+
+### Task 5: Browser Actions and DOM Snapshot
 
 - [ ] Implement `domSnapshot`.
 - [ ] Implement `MacChromeCdpRuntime` using `ChromeProcess`, `CdpClient`, `browserPaths`, and `domSnapshot`.
@@ -357,17 +381,18 @@ Use `Runtime.evaluate` for a small visible-DOM snapshot:
 - [ ] Unit test click, type, keypress, and scroll payloads with a fake CDP client.
 - [ ] Unit test DOM snapshot normalization and limits.
 
-### Task 5: Browser Session Manager
+### Task 6: Browser Session Manager
 
 - [ ] Implement session creation keyed by mission id.
 - [ ] Implement viewport-to-canvas and canvas-to-viewport coordinate conversion.
+- [ ] Implement viewport presets and `fit` mode without hardcoding one default desktop viewport.
 - [ ] Implement open, refresh, snapshot, click, type, keypress, scroll, and close.
 - [ ] Store latest browser state and emit compact bridge events.
 - [ ] Implement `designPromptPacks`.
 - [ ] Implement selected Design Mode references and prompt pack writing.
 - [ ] Unit test coordinate conversion, ref lookup, prompt pack shape, and session cleanup.
 
-### Task 6: Bridge Protocol
+### Task 7: Bridge Protocol
 
 - [ ] Add browser commands to `sidecar/src/protocol.ts` and `src/types/bridge.ts`.
 - [ ] Add browser events to both protocol files.
@@ -394,7 +419,7 @@ Events:
 - `browser.error`
 - `browser.agentCursor`
 
-### Task 7: Droid MCP Server
+### Task 8: Droid MCP Server
 
 - [ ] Add explicit `@modelcontextprotocol/sdk` dependency to `sidecar/package.json`.
 - [ ] Implement `browserMcpServer.ts` with the agent-facing tools above.
@@ -403,7 +428,7 @@ Events:
 - [ ] Bundle `dist/browser-mcp.mjs` alongside `dist/sidecar.mjs`.
 - [ ] Verify the MCP server starts and waits on stdio without crashing.
 
-### Task 8: Droid Session Wiring
+### Task 9: Droid Session Wiring
 
 - [ ] Extend `DroidRuntime.createSession` options to accept browser MCP config.
 - [ ] Pass `mcpServers` into the low-level Droid session creation path.
@@ -411,16 +436,16 @@ Events:
 - [ ] Fail fast if the browser sidecar session is not available.
 - [ ] Do not retrofit old sessions. The user can start a new mission when browser tools are needed.
 
-### Task 9: React Browser Workspace
+### Task 10: React Browser Workspace
 
 - [ ] Add browser state and actions in `src/hooks/useStore.tsx`.
 - [ ] Add Browser workspace mode in `src/App.tsx`.
-- [ ] Build `BrowserWorkspace` with URL bar, navigation controls, viewport indicator, Design Mode toggle, and prompt area.
-- [ ] Build `BrowserCanvas` as a screenshot image with stable aspect-ratio sizing and pointer forwarding.
+- [ ] Build `BrowserWorkspace` with URL bar, navigation controls, viewport presets, scale indicator, Design Mode toggle, and prompt area.
+- [ ] Build `BrowserCanvas` on top of `SmoothCanvas` as a screenshot image with stable aspect-ratio sizing and pointer forwarding.
 - [ ] Add user cursor and agent cursor overlays.
-- [ ] Ensure the UI works at `1440x900` and `390x844`.
+- [ ] Ensure the UI works at desktop, tablet, and mobile presets plus narrow app windows.
 
-### Task 10: Design Mode
+### Task 11: Design Mode
 
 - [ ] Build hover and selected element overlays from visible refs.
 - [ ] Click selects `document.elementFromPoint` context.
@@ -442,13 +467,13 @@ User instruction:
 <instruction>
 ```
 
-### Task 11: Verification
+### Task 12: Verification
 
 - [ ] `cd /Users/anas/Documents/droid-control-browser-mcp/sidecar && npm run test`
 - [ ] `cd /Users/anas/Documents/droid-control-browser-mcp/sidecar && npm run build`
 - [ ] `cd /Users/anas/Documents/droid-control-browser-mcp && npm run build`
-- [ ] Manual Browser smoke at `1440x900`.
-- [ ] Manual Browser smoke at `390x844`.
+- [ ] Manual Browser smoke in Fit mode.
+- [ ] Manual Browser smoke in Desktop, Tablet, and Mobile presets.
 - [ ] Open a local app URL.
 - [ ] Select one element in Design Mode.
 - [ ] Sketch one region.
@@ -456,12 +481,13 @@ User instruction:
 - [ ] Confirm the Droid transcript includes reference pack paths.
 - [ ] Confirm agent MCP can call `browser_snapshot`, `browser_click`, and `browser_screenshot`.
 
-### Task 12: Commit and Push in Reviewable Slices
+### Task 13: Commit and Push in Reviewable Slices
 
 Use small commits:
 
 - [ ] `browser: add sidecar test harness`
 - [ ] `browser: add mac chrome process and cdp client`
+- [ ] `canvas: add reusable smooth canvas primitives`
 - [ ] `browser: add runtime actions and dom snapshots`
 - [ ] `browser: add session manager and prompt packs`
 - [ ] `browser: wire bridge protocol`
