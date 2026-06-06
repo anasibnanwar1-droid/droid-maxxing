@@ -36,7 +36,7 @@ export function createBrowserMcpServer(manager: BrowserSessionManager, missionId
           const state = await manager.open({
             missionId: missionId(),
             url: input.url,
-            viewport: input.viewport ? { ...input.viewport, deviceScaleFactor: input.viewport.deviceScaleFactor ?? 1 } : undefined,
+            viewport: input.viewport ? { ...input.viewport, deviceScaleFactor: input.viewport.deviceScaleFactor ?? 2 } : undefined,
             viewportMode: input.viewportMode,
           });
           return jsonResult(stateForTool(state));

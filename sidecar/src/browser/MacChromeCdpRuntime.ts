@@ -54,6 +54,7 @@ export class MacChromeCdpRuntime {
     await this.setViewport(this.viewport);
     await this.cdp.send('Page.navigate', { url }, 15_000);
     await this.waitForReadyState();
+    await this.waitForPaint();
     return this.snapshot();
   }
 
@@ -102,23 +103,27 @@ export class MacChromeCdpRuntime {
     await this.cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y });
     await this.cdp.send('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', clickCount: 1 });
     await this.cdp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', clickCount: 1 });
+    await this.waitForInputSettled();
   }
 
   async type(text: string): Promise<void> {
     await this.ensureStarted();
     await this.cdp.send('Input.insertText', { text });
+    await this.waitForPaint();
   }
 
   async keypress(key: string): Promise<void> {
     await this.ensureStarted();
     await this.cdp.send('Input.dispatchKeyEvent', { type: 'rawKeyDown', key });
     await this.cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', key });
+    await this.waitForInputSettled();
   }
 
   async scroll(direction: ScrollDirection, pixels = 500): Promise<void> {
     await this.ensureStarted();
     const delta = scrollDelta(direction, pixels);
     await this.cdp.send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: Math.round(this.viewport.width / 2), y: Math.round(this.viewport.height / 2), ...delta });
+    await this.waitForPaint();
   }
 
   async close(): Promise<void> {
@@ -143,13 +148,27 @@ export class MacChromeCdpRuntime {
     this.started = true;
   }
 
-  private async waitForReadyState(): Promise<void> {
-    const deadline = Date.now() + 10_000;
+  private async waitForReadyState(timeoutMs = 10_000): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
       const readyState = await this.evaluate('document.readyState');
       if (readyState === 'interactive' || readyState === 'complete') return;
       await sleep(100);
     }
+  }
+
+  private async waitForInputSettled(): Promise<void> {
+    await sleep(80);
+    await this.waitForReadyState(2_500);
+    await this.waitForPaint();
+  }
+
+  private async waitForPaint(): Promise<void> {
+    await this.evaluate(`
+      new Promise((resolve) => {
+        requestAnimationFrame(() => requestAnimationFrame(resolve));
+      })
+    `);
   }
 
   private async evaluate(expression: string): Promise<unknown> {

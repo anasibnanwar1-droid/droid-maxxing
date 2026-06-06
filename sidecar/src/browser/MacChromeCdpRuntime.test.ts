@@ -100,7 +100,8 @@ test('click, type, keypress, and scroll send compact input events', async () => 
   await runtime.keypress('Enter');
   await runtime.scroll('down', 250);
 
-  assert.deepEqual(cdp.calls.map((call) => call.method), [
+  const inputCalls = cdp.calls.filter((call) => call.method.startsWith('Input.'));
+  assert.deepEqual(inputCalls.map((call) => call.method), [
     'Input.dispatchMouseEvent',
     'Input.dispatchMouseEvent',
     'Input.dispatchMouseEvent',
@@ -109,7 +110,8 @@ test('click, type, keypress, and scroll send compact input events', async () => 
     'Input.dispatchKeyEvent',
     'Input.dispatchMouseEvent',
   ]);
-  assert.deepEqual(cdp.calls.at(-1)?.params, { type: 'mouseWheel', x: 450, y: 350, deltaX: 0, deltaY: 250 });
+  assert.deepEqual(inputCalls.at(-1)?.params, { type: 'mouseWheel', x: 450, y: 350, deltaX: 0, deltaY: 250 });
+  assert.ok(cdp.calls.some((call) => call.method === 'Runtime.evaluate'));
 });
 
 test('createPageTarget uses Chrome PUT target endpoint', async () => {

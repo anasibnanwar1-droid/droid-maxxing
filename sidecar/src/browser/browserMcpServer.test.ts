@@ -38,3 +38,29 @@ test('browser MCP handlers return visible tool errors', async () => {
   assert.equal((result as { isError?: boolean }).isError, true);
   assert.match(JSON.stringify(result), /Browser session is not open yet/);
 });
+
+test('browser_open keeps high-detail viewport scale by default', async () => {
+  let openedViewport: { width: number; height: number; deviceScaleFactor?: number } | undefined;
+  const manager = {
+    async open(input: { viewport?: { width: number; height: number; deviceScaleFactor?: number } }) {
+      openedViewport = input.viewport;
+      return {
+        url: 'https://example.com',
+        viewport: input.viewport,
+        viewportMode: 'custom',
+        scroll: { x: 0, y: 0 },
+        refs: [],
+      };
+    },
+  } as unknown as BrowserSessionManager;
+  const server = createBrowserMcpServer(manager, () => 'm1');
+  const browserOpen = server.tools.find((tool) => tool.name === 'browser_open');
+
+  await browserOpen?.handler({
+    url: 'https://example.com',
+    viewport: { width: 1000, height: 700 },
+    viewportMode: 'custom',
+  });
+
+  assert.equal(openedViewport?.deviceScaleFactor, 2);
+});
