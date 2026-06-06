@@ -799,7 +799,7 @@ export class MissionManager {
       this.emitError({ code: 'permission.invalid_outcome', missionId, message: errMsg(err) });
       normalized = normalizePermissionOutcome('cancel');
     }
-    if (pending.kind === 'spec' && isApprovalOutcome(outcome)) await this.prepareSpecExitForRun(mission);
+    if (pending.kind === 'spec' && isApprovalOutcome(normalized)) await this.prepareSpecExitForRun(mission);
     pending.resolve(normalized);
   }
 
@@ -1475,7 +1475,7 @@ export class MissionManager {
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
         this.pendingNativeBrowserRequests.delete(request.requestId);
-        reject(new Error(`DroidMaxx browser did not respond to ${request.action} within ${BROWSER_NATIVE_TIMEOUT_MS}ms.`));
+        reject(new Error(`Droid Control browser did not respond to ${request.action} within ${BROWSER_NATIVE_TIMEOUT_MS}ms.`));
       }, BROWSER_NATIVE_TIMEOUT_MS);
       this.pendingNativeBrowserRequests.set(request.requestId, { resolve, reject, timeout });
       this.emit({ type: 'browser.native.request', request });
@@ -1488,7 +1488,7 @@ export class MissionManager {
     clearTimeout(pending.timeout);
     this.pendingNativeBrowserRequests.delete(result.requestId);
     if (result.ok) pending.resolve(result);
-    else pending.reject(new Error(result.error ?? 'DroidMaxx browser action failed.'));
+    else pending.reject(new Error(result.error ?? 'Droid Control browser action failed.'));
   }
 
   private requireBrowserMissionId(missionId?: string): string {

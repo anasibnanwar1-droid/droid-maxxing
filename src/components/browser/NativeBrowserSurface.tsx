@@ -2,6 +2,14 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { RefObject } from 'react';
 import { isTauri } from '../../lib/tauri';
 import {
+  attachIframeDesignMode,
+  clickIframe,
+  keypressIframe,
+  scrollIframe,
+  snapshotIframe,
+  typeIntoIframe,
+} from '../../lib/iframeDesignMode';
+import {
   closeNativeBrowser,
   onNativeBrowserLoaded,
   onNativeBrowserSelection,
@@ -41,6 +49,7 @@ export function NativeBrowserSurface({
 }: NativeBrowserSurfaceProps) {
   const stageRef = useRef<HTMLDivElement>(null);
   const slotRef = useRef<HTMLDivElement>(null);
+  const iframeRef = useRef<HTMLIFrameElement>(null);
   const frameSize = useElementSize(stageRef);
   const lastUrl = useRef<string | null>(null);
   const lastBounds = useRef<NativeBrowserBounds | null>(null);
@@ -74,6 +83,32 @@ export function NativeBrowserSurface({
   }, [onLoaded, onSelection]);
 
   useEffect(() => {
+    if (native) return;
+    const iframe = iframeRef.current;
+    if (!iframe) return;
+    let detachDesignMode = () => {};
+    const attach = () => {
+      detachDesignMode();
+      try {
+        detachDesignMode = attachIframeDesignMode(iframe, {
+          designMode,
+          sketchMode,
+          onSelection,
+        });
+        onLoaded(readIframeUrl(iframe) ?? url);
+      } catch {
+        detachDesignMode = () => {};
+      }
+    };
+    attach();
+    iframe.addEventListener('load', attach);
+    return () => {
+      iframe.removeEventListener('load', attach);
+      detachDesignMode();
+    };
+  }, [designMode, native, onLoaded, onSelection, sketchMode, url]);
+
+  useEffect(() => {
     if (!native) return;
     const bounds = boundsFor(slotRef);
     if (!bounds) return;
@@ -91,19 +126,22 @@ export function NativeBrowserSurface({
     }
   }, [native, surface.height, surface.left, surface.top, surface.width, url]);
 
-  useEffect(() => {
-    if (!native) return;
-    return registerNativeBrowserController({
-      perform: async (request) => performNativeRequest(request, {
+  useEffect(() => registerNativeBrowserController({
+    perform: async (request) => native
+      ? performNativeRequest(request, {
         currentUrl: url,
         bounds: () => boundsFor(slotRef),
         markOpen: (nextUrl, bounds) => {
           lastUrl.current = nextUrl;
           lastBounds.current = bounds;
         },
+      })
+      : performIframeRequest(request, {
+        currentUrl: url,
+        iframe: iframeRef,
+        onLoaded,
       }),
-    });
-  }, [native, url]);
+  }), [native, onLoaded, url]);
 
   useEffect(() => {
     return () => {
@@ -125,8 +163,9 @@ export function NativeBrowserSurface({
       >
         {!native && (
           <iframe
+            ref={iframeRef}
             src={url}
-            title="DroidMaxx browser"
+            title="Droid Control browser"
             className="h-full w-full border-0 bg-white"
             sandbox="allow-forms allow-modals allow-popups allow-popups-to-escape-sandbox allow-same-origin allow-scripts"
           />
@@ -134,6 +173,14 @@ export function NativeBrowserSurface({
       </div>
     </div>
   );
+}
+
+function readIframeUrl(iframe: HTMLIFrameElement): string | undefined {
+  try {
+    return iframe.contentWindow?.location.href;
+  } catch {
+    return undefined;
+  }
 }
 
 async function performNativeRequest(
@@ -150,7 +197,7 @@ async function performNativeRequest(
       return { requestId: request.requestId, missionId: request.missionId, ok: true };
     }
     const bounds = options.bounds();
-    if (!bounds) throw new Error('DroidMaxx browser pane is not laid out yet.');
+    if (!bounds) throw new Error('Droid Control browser pane is not laid out yet.');
     if (request.action === 'open') {
       const targetUrl = request.url ?? options.currentUrl;
       const loaded = waitForNextNativeBrowserLoad().catch(() => undefined);
@@ -179,6 +226,102 @@ async function performNativeRequest(
       error: err instanceof Error ? err.message : String(err),
     };
   }
+}
+
+async function performIframeRequest(
+  request: BrowserNativeRequest,
+  options: {
+    currentUrl: string;
+    iframe: RefObject<HTMLIFrameElement | null>;
+    onLoaded: (url: string) => void;
+  },
+): Promise<BrowserNativeResult> {
+  try {
+    const iframe = options.iframe.current;
+    if (!iframe) throw new Error('Droid Control browser pane is not mounted yet.');
+    if (request.action === 'close') {
+      iframe.src = 'about:blank';
+      options.onLoaded('about:blank');
+      return { requestId: request.requestId, missionId: request.missionId, ok: true };
+    }
+    if (request.action === 'open') {
+      const targetUrl = request.url ?? options.currentUrl;
+      await loadIframe(iframe, targetUrl);
+      options.onLoaded(readIframeUrl(iframe) ?? targetUrl);
+      return {
+        requestId: request.requestId,
+        missionId: request.missionId,
+        ok: true,
+        snapshot: safeIframeSnapshot(iframe, targetUrl),
+      };
+    }
+    if (request.action === 'click') {
+      await clickIframe(iframe, Number(request.x), Number(request.y));
+    } else if (request.action === 'type') {
+      await typeIntoIframe(iframe, request.text ?? '');
+    } else if (request.action === 'keypress') {
+      await keypressIframe(iframe, request.key ?? '');
+    } else if (request.action === 'scroll') {
+      await scrollIframe(iframe, request.direction ?? 'down', request.pixels);
+    } else if (request.action !== 'snapshot') {
+      throw new Error(`Unsupported browser action: ${request.action}`);
+    }
+    await settleFrame();
+    return {
+      requestId: request.requestId,
+      missionId: request.missionId,
+      ok: true,
+      snapshot: safeIframeSnapshot(iframe, options.currentUrl),
+    };
+  } catch (err) {
+    return {
+      requestId: request.requestId,
+      missionId: request.missionId,
+      ok: false,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+function loadIframe(iframe: HTMLIFrameElement, url: string): Promise<void> {
+  return new Promise((resolve) => {
+    const targetUrl = absolutizeUrl(url);
+    const startedAt = Date.now();
+    iframe.src = url;
+    const poll = () => {
+      const currentUrl = readIframeUrl(iframe);
+      if (currentUrl && currentUrl === targetUrl) {
+        resolve();
+        return;
+      }
+      if (Date.now() - startedAt > 5_000) {
+        resolve();
+        return;
+      }
+      window.setTimeout(poll, 50);
+    };
+    poll();
+  });
+}
+
+function absolutizeUrl(url: string): string {
+  try {
+    return new URL(url, window.location.href).href;
+  } catch {
+    return url;
+  }
+}
+
+function safeIframeSnapshot(iframe: HTMLIFrameElement, fallbackUrl: string) {
+  try {
+    return snapshotIframe(iframe, fallbackUrl);
+  } catch {
+    return { url: readIframeUrl(iframe) ?? fallbackUrl, scroll: { x: 0, y: 0 }, refs: [] };
+  }
+}
+
+function settleFrame(): Promise<void> {
+  return new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
 }
 
 function surfaceLayout(frame: Size, viewport: BrowserViewport, mode: BrowserViewportMode) {

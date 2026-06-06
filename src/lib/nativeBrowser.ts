@@ -88,7 +88,7 @@ export async function runNativeBrowserAgentAction(
       fn();
     };
     const timeout = window.setTimeout(() => {
-      finish(() => reject(new Error(`DroidMaxx browser action ${request.action} timed out.`)));
+      finish(() => reject(new Error(`Droid Control browser action ${request.action} timed out.`)));
     }, timeoutMs);
 
     void listen<NativeBrowserAgentResult>('native-browser-agent-result', (event) => {
@@ -140,7 +140,7 @@ export async function waitForNextNativeBrowserLoad(timeoutMs = 8_000): Promise<N
       unlisten?.();
       fn();
     };
-    const timeout = window.setTimeout(() => finish(() => reject(new Error('DroidMaxx browser page load timed out.'))), timeoutMs);
+    const timeout = window.setTimeout(() => finish(() => reject(new Error('Droid Control browser page load timed out.'))), timeoutMs);
     void onNativeBrowserLoaded((event) => {
       window.clearTimeout(timeout);
       finish(() => resolve(event));

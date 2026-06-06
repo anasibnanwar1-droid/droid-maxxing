@@ -26,7 +26,7 @@ export function createBrowserMcpServer(manager: BrowserSessionManager, missionId
     tools: [
       tool(
         'browser_open',
-        'Open and show a URL in the live DroidMaxx browser pane for this chat session. Use this when the user asks to open, navigate, click, inspect, or control a browser; do not substitute FetchUrl for browser work.',
+        'Open and show a URL in the live Droid Control browser pane for this chat session. Use this when the user asks to open, navigate, click, inspect, or control a browser; do not substitute FetchUrl for browser work.',
         {
           url: z.string().min(1).describe('Absolute URL to open, such as https://example.com or http://127.0.0.1:1421/.'),
           viewport: viewportSchema.optional().describe('Optional explicit browser viewport.'),
@@ -44,7 +44,7 @@ export function createBrowserMcpServer(manager: BrowserSessionManager, missionId
       ),
       tool(
         'browser_snapshot',
-        'Return compact DOM refs and visible page state from the live DroidMaxx browser without taking a screenshot.',
+        'Return compact DOM refs and visible page state from the live Droid Control browser without taking a screenshot.',
         {},
         safeTool(async () => {
           const state = await manager.refresh(missionId());
@@ -68,7 +68,7 @@ export function createBrowserMcpServer(manager: BrowserSessionManager, missionId
       ),
       tool(
         'browser_click',
-        'Move the agent cursor and click in the live DroidMaxx browser by ref or viewport coordinates.',
+        'Move the agent cursor and click in the live Droid Control browser by ref or viewport coordinates.',
         {
           ref: z.string().optional().describe('Element ref returned by browser_snapshot. Preferred when available.'),
           x: z.number().optional().describe('Viewport x coordinate when clicking by coordinate.'),
@@ -86,7 +86,7 @@ export function createBrowserMcpServer(manager: BrowserSessionManager, missionId
       ),
       tool(
         'browser_type',
-        'Type text into the currently focused element in the live DroidMaxx browser.',
+        'Type text into the currently focused element in the live Droid Control browser.',
         {
           text: z.string().describe('Text to type into the currently focused browser element.'),
         },
@@ -97,7 +97,7 @@ export function createBrowserMcpServer(manager: BrowserSessionManager, missionId
       ),
       tool(
         'browser_keypress',
-        'Press a key in the live DroidMaxx browser.',
+        'Press a key in the live Droid Control browser.',
         {
           key: z.string().min(1).describe('Key name to press, such as Enter, Escape, Tab, ArrowDown.'),
         },
@@ -108,7 +108,7 @@ export function createBrowserMcpServer(manager: BrowserSessionManager, missionId
       ),
       tool(
         'browser_scroll',
-        'Scroll the live DroidMaxx browser page.',
+        'Scroll the live Droid Control browser page.',
         {
           direction: scrollDirectionSchema.describe('Direction to scroll.'),
           pixels: z.number().positive().max(4000).optional().describe('Scroll amount in pixels.'),
@@ -120,7 +120,7 @@ export function createBrowserMcpServer(manager: BrowserSessionManager, missionId
       ),
       tool(
         'design-mode',
-        'Read the current Design Mode browser context for this chat. Use after the user selects, hovers, clicks, or sketches an area in the live DroidMaxx browser pane.',
+        'Read the current Design Mode browser context for this chat. Use after the user selects, hovers, clicks, or sketches an area in the live Droid Control browser pane.',
         {
           instruction: z.string().optional().describe('Optional user design instruction to keep alongside the returned context.'),
         },

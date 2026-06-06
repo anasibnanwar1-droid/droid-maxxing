@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { ComponentType, ReactNode, RefObject } from 'react';
+import type { ComponentType, CSSProperties, ReactNode, RefObject } from 'react';
 import {
   Expand,
   Laptop,
@@ -14,8 +14,10 @@ import {
 } from 'lucide-react';
 import { useStore } from '../../hooks/useStore';
 import {
+  addDesignReference,
   closeBrowser,
-  sendToMission,
+  openBrowser,
+  sendDesignPrompt,
 } from '../../lib/commands';
 import type {
   BrowserBox,
@@ -34,6 +36,7 @@ import {
   viewportFromFrame,
 } from './browserViewport';
 import { NativeBrowserSurface } from './NativeBrowserSurface';
+import { DesignModeComposer } from './DesignModeComposer';
 import { reloadNativeBrowser, closeNativeBrowser } from '../../lib/nativeBrowser';
 import type { NativeBrowserSelection } from '../../lib/nativeBrowser';
 
@@ -59,6 +62,7 @@ export default function BrowserWorkspace() {
   const browserError = sessionId ? state.browserErrors[sessionId] : state.browserGlobalError;
   const frameRef = useRef<HTMLDivElement>(null);
   const urlInputRef = useRef<HTMLInputElement>(null);
+  const openedFallbackSessionRef = useRef<string | null>(null);
   const frameSize = useElementSize(frameRef);
   const fitViewport = useMemo(() => viewportFromFrame(frameSize), [frameSize]);
   const [urlInput, setUrlInput] = useState(browser?.url ?? 'http://127.0.0.1:1420/');
@@ -91,16 +95,42 @@ export default function BrowserWorkspace() {
 
   useEffect(() => {
     setReferences([]);
-  }, [browser?.sessionId, sessionId]);
+    setInstruction('');
+  }, [browser?.sessionId, browser?.url, sessionId]);
 
   const requestedViewport = viewportForMode(viewportMode, fitViewport, customViewport);
   const selectedIds = references.map((ref) => ref.id).filter((id): id is string => Boolean(id));
   const canSend = Boolean(sessionId && selectedIds.length > 0 && instruction.trim());
+  const composerStyle = useMemo(
+    () => composerStyleForReferences(references, frameSize, requestedViewport, viewportMode),
+    [frameSize, references, requestedViewport, viewportMode],
+  );
+
+  useEffect(() => {
+    if (!sessionId || browser) return;
+    const key = `${sessionId}:${activeUrl}`;
+    if (openedFallbackSessionRef.current === key) return;
+    openedFallbackSessionRef.current = key;
+    openBrowser({
+      missionId: sessionId,
+      url: activeUrl,
+      viewport: requestedViewport,
+      viewportMode,
+    });
+  }, [activeUrl, browser, requestedViewport, sessionId, viewportMode]);
 
   const openCurrentUrl = () => {
     const url = normalizeUrl(urlInput);
     setUrlInput(url);
     setActiveUrl(url);
+    if (sessionId) {
+      openBrowser({
+        missionId: sessionId,
+        url,
+        viewport: requestedViewport,
+        viewportMode,
+      });
+    }
   };
 
   const applyPreset = (mode: BrowserViewportMode) => {
@@ -109,7 +139,7 @@ export default function BrowserWorkspace() {
 
   const sendPrompt = () => {
     if (!sessionId || !canSend) return;
-    sendToMission(sessionId, formatDesignModeMessage(instruction.trim(), references));
+    sendDesignPrompt(sessionId, instruction.trim(), selectedIds);
     setInstruction('');
   };
 
@@ -119,7 +149,8 @@ export default function BrowserWorkspace() {
       if (reference.id && prev.some((item) => item.id === reference.id)) return prev;
       return [...prev, reference];
     });
-  }, []);
+    if (sessionId) addDesignReference(sessionId, reference);
+  }, [sessionId]);
 
   return (
     <div className="flex h-full min-h-0 min-w-0 flex-col bg-droid-bg">
@@ -246,36 +277,16 @@ export default function BrowserWorkspace() {
         />
 
         {state.designMode && references.length > 0 && (
-          <div className="absolute bottom-12 left-1/2 z-10 flex w-[min(520px,calc(100%-32px))] -translate-x-1/2 items-center gap-2 rounded-lg border border-droid-border bg-droid-bg/95 p-2 shadow-2xl">
-            <div className="flex min-w-0 flex-wrap gap-1">
-              {references.map((reference) => (
-                <button
-                  key={reference.id}
-                  className="flex max-w-[180px] items-center gap-1 rounded-md bg-droid-elevated px-2 py-1 text-[12px] text-droid-text-secondary"
-                  onClick={() => setReferences((prev) => prev.filter((item) => item.id !== reference.id))}
-                  title="Remove reference"
-                >
-                  <span className="truncate">{referenceLabel(reference)}</span>
-                  <X className="h-3 w-3 shrink-0" />
-                </button>
-              ))}
-            </div>
-            <input
-              value={instruction}
-              onChange={(event) => setInstruction(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter' && !event.shiftKey) {
-                  event.preventDefault();
-                  sendPrompt();
-                }
-              }}
-              className="h-8 min-w-[160px] flex-1 rounded-md border border-droid-border bg-droid-surface px-2 text-[13px] text-droid-text placeholder:text-droid-text-muted focus:border-droid-border-hover focus:outline-none"
-              placeholder={!sessionId ? 'No active Droid session' : selectedIds.length === 0 ? 'Select a reference' : 'Describe the change'}
-            />
-            <IconButton title="Send selection" onClick={sendPrompt} disabled={!canSend}>
-              <Send className="h-4 w-4" />
-            </IconButton>
-          </div>
+          <DesignModeComposer
+            references={references}
+            instruction={instruction}
+            canSend={canSend}
+            disabledReason={!sessionId ? 'No active Droid session' : selectedIds.length === 0 ? 'Select a reference' : undefined}
+            style={composerStyle}
+            onInstructionChange={setInstruction}
+            onRemoveReference={(id) => setReferences((prev) => prev.filter((item) => item.id !== id))}
+            onSend={sendPrompt}
+          />
         )}
 
         <div className="pointer-events-none absolute bottom-3 left-1/2 flex -translate-x-1/2 items-center gap-2 rounded-md border border-droid-border bg-droid-bg/90 px-2.5 py-1.5 text-[11px] text-droid-text-muted shadow-lg">
@@ -306,35 +317,6 @@ function referenceFromNativeSelection(selection: NativeBrowserSelection): Design
     computedStyles: {},
   };
   return { id: selection.id, kind: 'element', element, note: selection.url };
-}
-
-function referenceLabel(reference: DesignReference): string {
-  if (reference.kind === 'region') return 'region';
-  return reference.element?.name || reference.element?.text || reference.element?.tagName || 'element';
-}
-
-function formatDesignModeMessage(instruction: string, references: DesignReference[]): string {
-  const tagged = references.map((reference, index) => {
-    if (reference.kind === 'region' && reference.box) {
-      return `${index + 1}. region url=${reference.note ?? ''} box=${formatBox(reference.box)}`;
-    }
-    const element = reference.element;
-    return [
-      `${index + 1}. element`,
-      `url=${reference.note ?? ''}`,
-      `selector=${element?.selector ?? ''}`,
-      `tag=${element?.tagName ?? ''}`,
-      element?.role ? `role=${element.role}` : '',
-      element?.name ? `name=${JSON.stringify(element.name)}` : '',
-      element?.text ? `text=${JSON.stringify(element.text)}` : '',
-      element?.box ? `box=${formatBox(element.box)}` : '',
-    ].filter(Boolean).join(' ');
-  }).join('\n');
-  return `Design Mode selection:\n${tagged}\n\nInstruction:\n${instruction}`;
-}
-
-function formatBox(box: BrowserBox): string {
-  return `${Math.round(box.x)},${Math.round(box.y)},${Math.round(box.width)},${Math.round(box.height)}`;
 }
 
 function IconButton({
@@ -398,4 +380,65 @@ function useElementSize(ref: RefObject<HTMLElement | null>): Size {
   }, [ref]);
 
   return size;
+}
+
+function composerStyleForReferences(
+  references: DesignReference[],
+  frame: Size,
+  viewport: BrowserViewport,
+  mode: BrowserViewportMode,
+): CSSProperties {
+  const surface = nativeSurfaceLayout(frame, viewport, mode);
+  const box = unionBoxes(references.map(boxForReference).filter((item): item is BrowserBox => Boolean(item))) ?? {
+    x: 0,
+    y: 0,
+    width: surface.width,
+    height: 1,
+  };
+  const composerWidth = Math.min(420, Math.max(280, frame.width - 24));
+  const composerHeight = 112;
+  const left = surface.left + box.x;
+  const belowTop = surface.top + box.y + box.height + 10;
+  const aboveTop = surface.top + box.y - composerHeight - 10;
+  const top = belowTop + composerHeight <= frame.height - 12 ? belowTop : aboveTop;
+  return {
+    left: clamp(left, 12, Math.max(12, frame.width - composerWidth - 12)),
+    top: clamp(top, 12, Math.max(12, frame.height - composerHeight - 12)),
+  };
+}
+
+function nativeSurfaceLayout(frame: Size, viewport: BrowserViewport, mode: BrowserViewportMode): Size & { left: number; top: number } {
+  const padding = 18;
+  const availableWidth = Math.max(1, frame.width - padding * 2);
+  const availableHeight = Math.max(1, frame.height - padding * 2);
+  const width = mode === 'fit' ? availableWidth : Math.min(viewport.width, availableWidth);
+  const height = mode === 'fit' ? availableHeight : Math.min(viewport.height, availableHeight);
+  return {
+    width: Math.round(width),
+    height: Math.round(height),
+    left: Math.round((frame.width - width) / 2),
+    top: Math.round((frame.height - height) / 2),
+  };
+}
+
+function boxForReference(reference: DesignReference): BrowserBox | undefined {
+  if (reference.kind === 'element') return reference.element?.box;
+  if (reference.kind === 'region') return reference.box;
+  if (reference.points?.length) {
+    const xs = reference.points.map((point) => point.x);
+    const ys = reference.points.map((point) => point.y);
+    const x = Math.min(...xs);
+    const y = Math.min(...ys);
+    return { x, y, width: Math.max(...xs) - x, height: Math.max(...ys) - y };
+  }
+  return undefined;
+}
+
+function unionBoxes(boxes: BrowserBox[]): BrowserBox | undefined {
+  if (boxes.length === 0) return undefined;
+  const x1 = Math.min(...boxes.map((box) => box.x));
+  const y1 = Math.min(...boxes.map((box) => box.y));
+  const x2 = Math.max(...boxes.map((box) => box.x + box.width));
+  const y2 = Math.max(...boxes.map((box) => box.y + box.height));
+  return { x: x1, y: y1, width: x2 - x1, height: y2 - y1 };
 }

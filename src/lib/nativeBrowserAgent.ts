@@ -26,7 +26,7 @@ function waitForController(timeoutMs: number): Promise<NativeBrowserController> 
   return new Promise((resolve, reject) => {
     const timeout = window.setTimeout(() => {
       waiters.delete(notify);
-      reject(new Error('DroidMaxx browser pane is not ready.'));
+      reject(new Error('Droid Control browser pane is not ready.'));
     }, timeoutMs);
     const notify = () => {
       if (!controller) return;

@@ -4,6 +4,7 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { Monitor, PanelLeft } from 'lucide-react';
 import { bridge } from './lib/bridge';
 import { closeBrowser, connect, listFactoryDefaults, listModels, listMissions, listSkills, loadMissionHistory, resumeMission, sendNativeBrowserResult } from './lib/commands';
+import { isEmbedded } from './lib/embed';
 import { getApiKey } from './lib/tauri';
 import { performNativeBrowserRequest } from './lib/nativeBrowserAgent';
 import Sidebar from './components/Sidebar';
@@ -24,11 +25,12 @@ const BROWSER_PANE_DEFAULT = 860;
 
 export default function App() {
   const { state, dispatch } = useStore();
+  const embedded = isEmbedded();
   const activeMission = state.activeMissionId ? state.missions[state.activeMissionId] : null;
   // The view is a real mission only when the active session is a mission orchestrator,
   // not merely because the global mission-compose flag is on.
   const isMissionView = !!activeMission && activeMission.kind === 'mission_orchestrator';
-  const showBrowserPane = state.browserOpen && !!activeMission;
+  const showBrowserPane = !embedded && state.browserOpen && !!activeMission;
   const focused = isMissionView;
   const requestedHistory = useRef(new Set<string>());
   const requestedResume = useRef(new Set<string>());
@@ -44,6 +46,7 @@ export default function App() {
   }, [state.theme]);
 
   useEffect(() => {
+    if (embedded) return;
     void (async () => {
       await bridge.start();
       const key = await getApiKey();
@@ -53,9 +56,10 @@ export default function App() {
       listMissions();
       listSkills();
     })();
-  }, []);
+  }, [embedded]);
 
   useEffect(() => {
+    if (embedded) return;
     const unsub = bridge.subscribe((event) => {
       if (event.type !== 'browser.native.request') return;
       dispatch({ type: 'SET_ACTIVE_MISSION', id: event.request.missionId });
@@ -72,9 +76,10 @@ export default function App() {
         });
     });
     return () => unsub();
-  }, [dispatch]);
+  }, [dispatch, embedded]);
 
   useEffect(() => {
+    if (embedded) return;
     if (!activeMission) return;
     if (!requestedResume.current.has(activeMission.id)) {
       requestedResume.current.add(activeMission.id);
@@ -83,7 +88,7 @@ export default function App() {
     if (state.historyLoaded[activeMission.id] || requestedHistory.current.has(activeMission.id)) return;
     requestedHistory.current.add(activeMission.id);
     loadMissionHistory(activeMission.id);
-  }, [activeMission, state.historyLoaded]);
+  }, [activeMission, embedded, state.historyLoaded]);
 
   // Keyboard shortcuts
   useEffect(() => {

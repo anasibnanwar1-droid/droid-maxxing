@@ -175,7 +175,7 @@ pub fn native_browser_agent_action(
     request: NativeBrowserAgentAction,
 ) -> Result<(), String> {
     let Some(webview) = app.get_webview(WEBVIEW_LABEL) else {
-        return Err("DroidMaxx browser is not open.".to_string());
+        return Err("Droid Control browser is not open.".to_string());
     };
     webview
         .eval(format!(
@@ -269,7 +269,7 @@ fn apply_design_state(
 ) -> Result<(), String> {
     webview
         .eval(format!(
-            "window.__DROIDMAXX_SET_DESIGN_MODE?.({design_mode});window.__DROIDMAXX_SET_SKETCH_MODE?.({sketch_mode});"
+            "window.__DROIDMAXX_DESIGN_PENDING_STATE={{designMode:{design_mode},sketchMode:{sketch_mode}}};window.__DROIDMAXX_APPLY_DESIGN_STATE?.(window.__DROIDMAXX_DESIGN_PENDING_STATE);"
         ))
         .map_err(|err| err.to_string())
 }
@@ -293,8 +293,9 @@ const DESIGN_MODE_SCRIPT: &str = r##"
   if (window.__DROIDMAXX_DESIGN_INSTALLED) return;
   window.__DROIDMAXX_DESIGN_INSTALLED = true;
 
-  let designMode = false;
-  let sketchMode = false;
+  const pendingState = window.__DROIDMAXX_DESIGN_PENDING_STATE || {};
+  let designMode = Boolean(pendingState.designMode);
+  let sketchMode = Boolean(pendingState.sketchMode);
   let dragStart = null;
   const prefix = "__DROIDMAXX_DESIGN__:";
   const agentPrefix = "__DROIDMAXX_AGENT__:";
@@ -402,12 +403,13 @@ const DESIGN_MODE_SCRIPT: &str = r##"
     const rect = el.getBoundingClientRect();
     const text = cleanText(el.innerText || el.textContent);
     const name = cleanText(el.getAttribute("aria-label") || el.getAttribute("title") || el.getAttribute("placeholder") || directText(el) || text);
+    const selector = selectorFor(el);
     return {
-      id: "@live-" + Date.now().toString(36),
+      id: "@live-" + stableHash(selector),
       kind: "element",
       url: location.href,
       title: document.title,
-      selector: selectorFor(el),
+      selector,
       tagName: el.tagName.toLowerCase(),
       role: roleFor(el) || undefined,
       name: name || undefined,
@@ -420,7 +422,15 @@ const DESIGN_MODE_SCRIPT: &str = r##"
     const label = cleanText(el.getAttribute("aria-label") || el.getAttribute("title") || el.getAttribute("placeholder") || directText(el) || el.getAttribute("data-testid") || el.id || tag).slice(0, 48);
     return `${label || tag} · ${tag}`;
   };
+  const stableHash = (value) => {
+    let hash = 0;
+    for (let index = 0; index < value.length; index += 1) {
+      hash = Math.imul(31, hash) + value.charCodeAt(index) | 0;
+    }
+    return Math.abs(hash).toString(36);
+  };
   const send = (payload) => {
+    window.dispatchEvent(new CustomEvent("droidmaxx-design-selection", { detail: payload }));
     const previous = document.title;
     document.title = prefix + JSON.stringify(payload);
     window.setTimeout(() => {
@@ -511,6 +521,7 @@ const DESIGN_MODE_SCRIPT: &str = r##"
     refs: collectRefs()
   });
   const sendAgent = (payload) => {
+    window.dispatchEvent(new CustomEvent("droidmaxx-agent-result", { detail: payload }));
     const previous = document.title;
     document.title = agentPrefix + JSON.stringify(payload);
     window.setTimeout(() => {
@@ -580,20 +591,23 @@ const DESIGN_MODE_SCRIPT: &str = r##"
     }
   };
 
-  window.__DROIDMAXX_SET_DESIGN_MODE = (active) => {
-    designMode = Boolean(active);
+  const applyState = (state) => {
+    designMode = Boolean(state?.designMode);
+    sketchMode = designMode && Boolean(state?.sketchMode);
     if (!designMode) {
-      sketchMode = false;
       dragStart = null;
       hideBox();
       region.style.display = "none";
+      return;
     }
-  };
-  window.__DROIDMAXX_SET_SKETCH_MODE = (active) => {
-    sketchMode = Boolean(active);
+    mount();
     hideBox();
     if (!sketchMode) region.style.display = "none";
   };
+  window.__DROIDMAXX_APPLY_DESIGN_STATE = applyState;
+  window.__DROIDMAXX_SET_DESIGN_MODE = (active) => applyState({ designMode: active, sketchMode });
+  window.__DROIDMAXX_SET_SKETCH_MODE = (active) => applyState({ designMode, sketchMode: active });
+  applyState({ designMode, sketchMode });
 
   document.addEventListener("mousemove", (event) => {
     if (!designMode || sketchMode || dragStart) return;

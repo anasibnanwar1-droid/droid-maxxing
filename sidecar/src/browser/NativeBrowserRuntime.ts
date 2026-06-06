@@ -26,7 +26,7 @@ export class NativeBrowserRuntime implements BrowserRuntime {
   }
 
   async screenshot(_options: BrowserScreenshotOptions = {}): Promise<string> {
-    throw new Error('The live DroidMaxx browser does not capture screenshots yet. Use browser_snapshot for DOM refs and visible state.');
+    throw new Error('The live Droid Control browser does not capture screenshots yet. Use browser_snapshot for DOM refs and visible state.');
   }
 
   async snapshot(): Promise<BrowserSnapshot> {
