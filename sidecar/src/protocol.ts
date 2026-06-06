@@ -172,6 +172,59 @@ export interface HistoryMission {
   messageCount: number;
 }
 
+export interface BrowserViewport {
+  width: number;
+  height: number;
+  deviceScaleFactor: number;
+}
+
+export type BrowserViewportMode = 'fit' | 'desktop' | 'laptop' | 'tablet' | 'mobile' | 'custom';
+export type BrowserScrollDirection = 'up' | 'down' | 'left' | 'right';
+
+export interface BrowserBox {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface BrowserElementRef {
+  ref: string;
+  selector: string;
+  tagName: string;
+  role?: string;
+  name?: string;
+  text?: string;
+  attributes: Record<string, string>;
+  className?: string;
+  box: BrowserBox;
+  computedStyles: Record<string, string>;
+}
+
+export interface BrowserState {
+  sessionId: string;
+  missionId?: string;
+  url: string;
+  title?: string;
+  viewport: BrowserViewport;
+  viewportMode: BrowserViewportMode;
+  screenshotPath?: string;
+  screenshotUrl?: string;
+  scroll: { x: number; y: number };
+  refs: BrowserElementRef[];
+  agentCursor?: { x: number; y: number };
+  error?: string;
+}
+
+export interface DesignReference {
+  id?: string;
+  kind: 'element' | 'region' | 'stroke';
+  element?: BrowserElementRef;
+  box?: BrowserBox;
+  points?: { x: number; y: number }[];
+  note?: string;
+}
+
 // ── Frontend -> Sidecar ──────────────────────────────────────────────
 export type ClientCommand =
   | { type: 'connect'; apiKey?: string }
@@ -213,6 +266,17 @@ export type ClientCommand =
   | { type: 'settings.agent.update'; missionId?: string; agent: ConfigurableAgent; modelId?: string | null; reasoningEffort?: ReasoningEffort }
   | { type: 'mission.setAutonomy'; missionId: string; autonomy: Autonomy }
   | { type: 'mission.setInteractionMode'; missionId: string; mode: SessionInteractionMode }
+  | { type: 'browser.open'; missionId?: string; url: string; viewport?: BrowserViewport; viewportMode?: BrowserViewportMode }
+  | { type: 'browser.refresh'; missionId?: string }
+  | { type: 'browser.resizeViewport'; missionId?: string; viewport: BrowserViewport; viewportMode: BrowserViewportMode }
+  | { type: 'browser.click'; missionId?: string; ref?: string; x?: number; y?: number }
+  | { type: 'browser.type'; missionId?: string; text: string }
+  | { type: 'browser.keypress'; missionId?: string; key: string }
+  | { type: 'browser.scroll'; missionId?: string; direction: BrowserScrollDirection; pixels?: number }
+  | { type: 'browser.screenshot'; missionId?: string; fullPage?: boolean }
+  | { type: 'browser.inspectPoint'; missionId?: string; x: number; y: number }
+  | { type: 'browser.design.addReference'; missionId: string; reference: DesignReference }
+  | { type: 'browser.design.sendPrompt'; missionId: string; instruction: string; referenceIds: string[] }
   | { type: 'spec.read'; missionId: string; path: string }
   | { type: 'sessions.list' }
   | { type: 'mission.resume'; sessionId: string }
@@ -247,4 +311,6 @@ export type ServerEvent =
   | { type: 'mission.list'; missions: MissionSummary[] }
   | { type: 'mission.history'; missionId: string; progress: ProgressEntry[]; transcripts: TranscriptEvent[] }
   | { type: 'sessions.history'; missions: HistoryMission[] }
-  | { type: 'models.list'; models: ModelInfo[] };
+  | { type: 'models.list'; models: ModelInfo[] }
+  | { type: 'browser.updated'; state: BrowserState }
+  | { type: 'browser.error'; missionId?: string; message: string };

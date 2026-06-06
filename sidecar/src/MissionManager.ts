@@ -7,6 +7,7 @@ import {
   type AskUserRequestParams,
   type AskUserResult,
   type DroidSession,
+  type SdkMcpServer,
   type GetContextStatsResult,
   type PermissionHandler,
   type RequestPermissionHandlerResult,
@@ -45,8 +46,14 @@ import {
 } from './history.js';
 import { mergeModelCatalog } from './modelCatalog.js';
 import { readDroidCliModelCatalog } from './DroidCliCatalog.js';
+import { BrowserSessionManager } from './browser/BrowserSessionManager.js';
+import { createBrowserMcpServer } from './browser/browserMcpServer.js';
 
 type Emit = (event: ServerEvent) => void;
+
+interface MissionManagerOptions {
+  assetUrlFor?: (path: string) => string;
+}
 
 interface LiveAgent {
   session: DroidSession;
@@ -67,6 +74,7 @@ interface Mission {
   agents: Map<string, LiveAgent>;
   knownSubagents: Set<string>;
   lastSubagentLabel?: string;
+  mcpServers: SdkMcpServer[];
 }
 
 interface PendingPermission {
@@ -107,8 +115,14 @@ export class MissionManager {
   private readonly usageOffsets = new Map<string, UsageOffset>();
   private readonly contextSnapshots = new Map<string, ContextStatsSnapshot>();
   private readonly contextPollers = new Map<string, ReturnType<typeof setInterval>>();
+  private readonly browsers: BrowserSessionManager;
 
-  constructor(private readonly emit: Emit) {}
+  constructor(private readonly emit: Emit, options: MissionManagerOptions = {}) {
+    this.browsers = new BrowserSessionManager({
+      assetUrlFor: options.assetUrlFor,
+      emit: (event) => this.emit(event),
+    });
+  }
 
   connect(apiKey?: string): void {
     this.runtime.connect(apiKey);
@@ -232,6 +246,49 @@ export class MissionManager {
         return;
       case 'mission.setInteractionMode':
         await this.setInteractionMode(cmd.missionId, cmd.mode);
+        return;
+      case 'browser.open':
+        await this.handleBrowser(cmd.missionId, () => this.browsers.open(cmd));
+        return;
+      case 'browser.refresh':
+        await this.handleBrowser(cmd.missionId, () => this.browsers.refresh(cmd.missionId));
+        return;
+      case 'browser.resizeViewport':
+        await this.handleBrowser(cmd.missionId, () => this.browsers.resizeViewport(cmd));
+        return;
+      case 'browser.click':
+        await this.handleBrowser(cmd.missionId, () => this.browsers.click(cmd));
+        return;
+      case 'browser.type':
+        await this.handleBrowser(cmd.missionId, () => this.browsers.type(cmd.missionId, cmd.text));
+        return;
+      case 'browser.keypress':
+        await this.handleBrowser(cmd.missionId, () => this.browsers.keypress(cmd.missionId, cmd.key));
+        return;
+      case 'browser.scroll':
+        await this.handleBrowser(cmd.missionId, () => this.browsers.scroll(cmd.missionId, cmd.direction, cmd.pixels));
+        return;
+      case 'browser.screenshot':
+        await this.handleBrowser(cmd.missionId, async () => {
+          await this.browsers.screenshot(cmd.missionId, cmd.fullPage);
+        });
+        return;
+      case 'browser.inspectPoint':
+        await this.handleBrowser(cmd.missionId, async () => {
+          const element = this.browsers.inspectPoint(cmd.missionId, cmd.x, cmd.y);
+          if (!element) throw new Error('No browser element found at that point.');
+        });
+        return;
+      case 'browser.design.addReference':
+        await this.handleBrowser(cmd.missionId, async () => {
+          this.browsers.addReference(cmd.missionId, cmd.reference);
+        });
+        return;
+      case 'browser.design.sendPrompt':
+        await this.handleBrowser(cmd.missionId, async () => {
+          const { prompt } = await this.browsers.designPrompt(cmd);
+          await this.send(cmd.missionId, prompt);
+        });
         return;
     }
   }
@@ -557,6 +614,7 @@ export class MissionManager {
     const appCwd = cmd.cwd ?? '';
     const runtimeCwd = appCwd || homedir();
     const ref = { id: '' };
+    let pendingBrowserMcpServer: SdkMcpServer | undefined;
     try {
       const defaults = await this.getFactoryDefaults();
       const autonomy = normalizeAutonomy(cmd.autonomy) ?? defaults.autonomy ?? 'low';
@@ -567,6 +625,9 @@ export class MissionManager {
       const workerReasoningEffort = cmd.workerReasoning ?? defaults.workerReasoningEffort;
       const validatorModelId = cmd.validatorModel ?? defaults.validatorModelId;
       const validatorReasoningEffort = cmd.validatorReasoning ?? defaults.validatorReasoningEffort;
+      const browserMcpServer = createBrowserMcpServer(this.browsers, () => ref.id);
+      pendingBrowserMcpServer = browserMcpServer;
+      const browserMcpConfig = await browserMcpServer.start();
       const session = await this.runtime.createSession({
         cwd: runtimeCwd,
         interactionMode: mode,
@@ -581,6 +642,7 @@ export class MissionManager {
         validatorModelId,
         validatorReasoningEffort,
         compactionModel,
+        mcpServers: [browserMcpConfig],
         permissionHandler: this.makePermissionHandler(ref),
         askUserHandler: this.makeAskUserHandler(ref),
       });
@@ -617,18 +679,19 @@ export class MissionManager {
         updatedAt: now,
       };
       ref.id = id;
-      const mission = this.createLiveMission(summary, session);
+      const mission = this.createLiveMission(summary, session, [browserMcpServer]);
       this.missions.set(id, mission);
       this.history.syncSummaries([summary]);
       this.emit({ type: 'mission.created', clientRef: cmd.clientRef, mission: summary });
       this.emit({ type: 'session.updated', session: summary });
       void this.drive(id, cmd.goal);
     } catch (err) {
+      await pendingBrowserMcpServer?.close().catch(() => {});
       this.emitError({ message: errMsg(err) });
     }
   }
 
-  private createLiveMission(summary: MissionSummary, session: DroidSession): Mission {
+  private createLiveMission(summary: MissionSummary, session: DroidSession, mcpServers: SdkMcpServer[] = []): Mission {
     return {
       summary,
       session,
@@ -638,6 +701,7 @@ export class MissionManager {
       pendingQuestions: new Map(),
       agents: new Map(),
       knownSubagents: new Set(),
+      mcpServers,
     };
   }
 
@@ -1265,11 +1329,15 @@ export class MissionManager {
         /* ignore */
       }
     }
+    for (const server of mission.mcpServers) {
+      await server.close().catch(() => {});
+    }
     try {
       await mission.session.close();
     } catch {
       /* ignore */
     }
+    await this.browsers.close(key).catch(() => {});
     this.missions.delete(key);
     this.usageOffsets.delete(key);
     this.emitMissionList();
@@ -1290,8 +1358,19 @@ export class MissionManager {
     this.emit({ type: 'error', ...error });
   }
 
+  private async handleBrowser(missionId: string | undefined, action: () => Promise<void | unknown>): Promise<void> {
+    try {
+      await action();
+    } catch (err) {
+      const message = errMsg(err);
+      this.emit({ type: 'browser.error', missionId, message });
+      this.emitError({ code: 'browser.error', missionId, message });
+    }
+  }
+
   async shutdown(): Promise<void> {
     for (const id of [...this.missions.keys()]) await this.closeMission(id);
+    await this.browsers.closeAll();
     this.history.close();
   }
 }

@@ -10,6 +10,7 @@ import {
   type DroidClientTransport,
   type InitializeSessionRequestParams,
   type LoadSessionRequestParams,
+  type McpServerConfig,
   type PermissionHandler,
 } from '@factory/droid-sdk';
 import { spawn } from 'node:child_process';
@@ -41,6 +42,7 @@ export interface CreateRuntimeSessionOptions extends RuntimeHandlers {
   workerReasoningEffort?: ReasoningEffort;
   validatorModelId?: string;
   validatorReasoningEffort?: ReasoningEffort;
+  mcpServers?: McpServerConfig[];
 }
 
 export interface RuntimeStatus {
@@ -82,6 +84,7 @@ export class DroidRuntime {
     if (options.autonomyLevel) params.autonomyLevel = mapAutonomy(options.autonomyLevel);
     if (options.decompSessionType) params.decompSessionType = options.decompSessionType;
     if (options.missionId) params.decompMissionId = options.missionId;
+    if (options.mcpServers?.length) params.mcpServers = options.mcpServers;
     const missionSettings = missionSettingsFor(options);
     if (missionSettings) params.missionSettings = missionSettings;
 
