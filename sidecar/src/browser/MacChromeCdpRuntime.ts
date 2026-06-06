@@ -5,7 +5,7 @@ import { CdpClient } from './CdpClient.js';
 import { ChromeProcess, type ChromeProcessHandle } from './ChromeProcess.js';
 import { browserScreenshotDir } from './browserPaths.js';
 import { DOM_SNAPSHOT_SCRIPT, normalizeSnapshot } from './domSnapshot.js';
-import type { BrowserSnapshot, BrowserViewport, ScrollDirection } from './types.js';
+import type { BrowserScreenshotOptions, BrowserSnapshot, BrowserViewport, ScrollDirection } from './types.js';
 
 interface RuntimeEvaluateResult {
   result?: {
@@ -68,15 +68,27 @@ export class MacChromeCdpRuntime {
     });
   }
 
-  async screenshot(fullPage = false): Promise<string> {
+  async screenshot(options: BrowserScreenshotOptions = {}): Promise<string> {
     await this.ensureStarted();
-    const params = fullPage ? await this.fullPageScreenshotParams() : { format: 'png', fromSurface: true };
-    const result = await this.cdp.send<CaptureScreenshotResult>('Page.captureScreenshot', params, 20_000);
-    const dir = this.options.screenshotDir ?? browserScreenshotDir(this.options.sessionId);
-    await mkdir(dir, { recursive: true });
-    const path = join(dir, `shot-${this.options.now?.() ?? Date.now()}.png`);
-    await writeFile(path, Buffer.from(result.data, 'base64'));
-    return path;
+    const originalViewport = this.viewport;
+    const captureScale = options.deviceScaleFactor ?? originalViewport.deviceScaleFactor;
+    const shouldTemporarilyScale = captureScale !== originalViewport.deviceScaleFactor;
+    if (shouldTemporarilyScale) {
+      await this.setViewport({ ...originalViewport, deviceScaleFactor: captureScale });
+    }
+    try {
+      const params = options.fullPage ? await this.fullPageScreenshotParams() : { format: 'png', fromSurface: true };
+      const result = await this.cdp.send<CaptureScreenshotResult>('Page.captureScreenshot', params, 20_000);
+      const dir = this.options.screenshotDir ?? browserScreenshotDir(this.options.sessionId);
+      await mkdir(dir, { recursive: true });
+      const path = join(dir, `shot-${this.options.now?.() ?? Date.now()}.png`);
+      await writeFile(path, Buffer.from(result.data, 'base64'));
+      return path;
+    } finally {
+      if (shouldTemporarilyScale) {
+        await this.setViewport(originalViewport);
+      }
+    }
   }
 
   async snapshot(): Promise<BrowserSnapshot> {

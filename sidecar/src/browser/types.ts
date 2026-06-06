@@ -6,6 +6,11 @@ export interface BrowserViewport {
 
 export type BrowserViewportMode = 'fit' | 'desktop' | 'laptop' | 'tablet' | 'mobile' | 'custom';
 
+export interface BrowserScreenshotOptions {
+  fullPage?: boolean;
+  deviceScaleFactor?: number;
+}
+
 export interface BrowserBox {
   x: number;
   y: number;

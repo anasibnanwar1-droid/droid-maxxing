@@ -25,6 +25,7 @@ const SESSION_INIT_TIMEOUT_MS = 20_000;
 export interface RuntimeHandlers {
   permissionHandler?: PermissionHandler;
   askUserHandler?: AskUserHandler;
+  mcpServers?: McpServerConfig[];
 }
 
 export interface CreateRuntimeSessionOptions extends RuntimeHandlers {
@@ -100,6 +101,7 @@ export class DroidRuntime {
   async loadSession(sessionId: string, handlers: RuntimeHandlers = {}): Promise<DroidSession> {
     const { client, transport } = await this.createClient(undefined, handlers);
     const params: LoadSessionRequestParams = { sessionId };
+    if (handlers.mcpServers?.length) params.mcpServers = handlers.mcpServers;
     try {
       const init = await withTimeout(client.loadSession(params), SESSION_INIT_TIMEOUT_MS, 'load_session');
       return new DroidSession(client, sessionId, init);

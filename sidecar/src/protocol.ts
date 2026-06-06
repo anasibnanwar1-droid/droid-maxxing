@@ -273,7 +273,7 @@ export type ClientCommand =
   | { type: 'browser.type'; missionId: string; text: string }
   | { type: 'browser.keypress'; missionId: string; key: string }
   | { type: 'browser.scroll'; missionId: string; direction: BrowserScrollDirection; pixels?: number }
-  | { type: 'browser.screenshot'; missionId: string; fullPage?: boolean }
+  | { type: 'browser.screenshot'; missionId: string; fullPage?: boolean; deviceScaleFactor?: number }
   | { type: 'browser.inspectPoint'; missionId: string; x: number; y: number }
   | { type: 'browser.design.addReference'; missionId: string; reference: DesignReference }
   | { type: 'browser.design.sendPrompt'; missionId: string; instruction: string; referenceIds: string[] }

@@ -270,7 +270,10 @@ export class MissionManager {
         return;
       case 'browser.screenshot':
         await this.handleBrowser(cmd.missionId, async () => {
-          await this.browsers.screenshot(this.requireBrowserMissionId(cmd.missionId), cmd.fullPage);
+          await this.browsers.screenshot(this.requireBrowserMissionId(cmd.missionId), {
+            fullPage: cmd.fullPage,
+            deviceScaleFactor: cmd.deviceScaleFactor,
+          });
         });
         return;
       case 'browser.inspectPoint':
@@ -281,13 +284,14 @@ export class MissionManager {
         return;
       case 'browser.design.addReference':
         await this.handleBrowser(cmd.missionId, async () => {
-          this.browsers.addReference(cmd.missionId, cmd.reference);
+          this.browsers.addReference(this.requireBrowserMissionId(cmd.missionId), cmd.reference);
         });
         return;
       case 'browser.design.sendPrompt':
         await this.handleBrowser(cmd.missionId, async () => {
-          const { prompt } = await this.browsers.designPrompt(cmd);
-          await this.send(cmd.missionId, prompt);
+          const missionId = this.requireBrowserMissionId(cmd.missionId);
+          const { prompt } = await this.browsers.designPrompt({ ...cmd, missionId });
+          await this.send(missionId, prompt);
         });
         return;
     }
@@ -479,10 +483,15 @@ export class MissionManager {
       return;
     }
     const ref = { id: appSessionId };
+    let pendingBrowserMcpServer: SdkMcpServer | undefined;
     try {
+      const browserMcpServer = createBrowserMcpServer(this.browsers, () => ref.id);
+      pendingBrowserMcpServer = browserMcpServer;
+      const browserMcpConfig = await browserMcpServer.start();
       const session = await this.runtime.loadSession(droidSessionId, {
         permissionHandler: this.makePermissionHandler(ref),
         askUserHandler: this.makeAskUserHandler(ref),
+        mcpServers: [browserMcpConfig],
       });
       const init = session.initResult as InitResultLike;
       const features = (init.mission?.features ?? []).map((f) => mapFeature(f as never));
@@ -527,7 +536,7 @@ export class MissionManager {
         createdAt: historical?.createdAt ?? now,
         updatedAt: now,
       });
-      const mission: Mission = this.createLiveMission(summary, session);
+      const mission: Mission = this.createLiveMission(summary, session, [browserMcpServer]);
       this.missions.set(appSessionId, mission);
       this.history.syncSummaries([summary]);
       this.emit({ type: 'mission.created', clientRef: `resume:${appSessionId}`, mission: summary });
@@ -535,6 +544,7 @@ export class MissionManager {
       if (features.length) this.emit({ type: 'mission.features', missionId: appSessionId, features });
       void this.refreshContext(appSessionId, session);
     } catch (err) {
+      await pendingBrowserMcpServer?.close().catch(() => {});
       this.emitError({ missionId: appSessionId, sessionId: droidSessionId, message: errMsg(err) });
     }
   }

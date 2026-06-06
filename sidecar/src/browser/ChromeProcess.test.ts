@@ -3,7 +3,7 @@ import test from 'node:test';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { ChromeProcess, chromeLaunchArgs } from './ChromeProcess.js';
+import { ChromeProcess, chromeLaunchArgs, type ManagedChromeProcess } from './ChromeProcess.js';
 
 test('chromeLaunchArgs uses local CDP and viewport dimensions', () => {
   assert.deepEqual(chromeLaunchArgs({
@@ -17,6 +17,7 @@ test('chromeLaunchArgs uses local CDP and viewport dimensions', () => {
     '--user-data-dir=/tmp/profile',
     '--no-first-run',
     '--no-default-browser-check',
+    '--disable-background-networking',
     '--window-size=1200,800',
     'about:blank',
   ]);
@@ -57,3 +58,42 @@ test('ChromeProcess launches with explicit path, port, and profile', async () =>
   assert.ok(calls[0].args.includes('--window-size=1000,700'));
   await rm(dir, { recursive: true, force: true });
 });
+
+test('ChromeProcess cleans up Chrome when CDP readiness fails', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'droid-chrome-fail-test-'));
+  const chromePath = join(dir, 'Chrome');
+  await writeFile(chromePath, '');
+  let killed = false;
+  const process = new ChromeProcess({
+    sessionId: 'session-fail',
+    viewport: { width: 1000, height: 700, deviceScaleFactor: 1 },
+    chromePath,
+    profileDir: join(dir, 'profile'),
+    port: 9445,
+    spawnChrome: () => fakeChromeProcess({ killed: () => killed, kill: () => { killed = true; } }),
+    readVersion: async () => {
+      throw new Error('not ready');
+    },
+    readinessTimeoutMs: 10,
+  });
+
+  await assert.rejects(() => process.launch(), /Chrome CDP readiness failed/);
+  assert.equal(killed, true);
+  await rm(dir, { recursive: true, force: true });
+});
+
+function fakeChromeProcess(input: { killed: () => boolean; kill: () => void }): ManagedChromeProcess {
+  return {
+    get killed() {
+      return input.killed();
+    },
+    kill: () => {
+      input.kill();
+      return true;
+    },
+    once: ((_event: string, listener: (...args: unknown[]) => void) => {
+      queueMicrotask(() => listener());
+      return {} as never;
+    }) as ManagedChromeProcess['once'],
+  };
+}

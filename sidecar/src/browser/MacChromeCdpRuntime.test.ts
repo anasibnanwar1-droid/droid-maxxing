@@ -68,6 +68,25 @@ test('screenshot writes a PNG file and returns its path', async () => {
   await rm(dir, { recursive: true, force: true });
 });
 
+test('screenshot can temporarily raise device scale and restores the viewport', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'droid-runtime-scale-test-'));
+  const cdp = new FakeCdp();
+  const runtime = new MacChromeCdpRuntime({
+    sessionId: 'test',
+    viewport: { width: 900, height: 700, deviceScaleFactor: 1 },
+    screenshotDir: dir,
+    cdp,
+    now: () => 456,
+  });
+
+  await runtime.screenshot({ deviceScaleFactor: 2 });
+
+  const viewportCalls = cdp.calls.filter((call) => call.method === 'Emulation.setDeviceMetricsOverride');
+  assert.deepEqual(viewportCalls.map((call) => call.params?.deviceScaleFactor), [2, 1]);
+  assert.equal(await readFile(join(dir, 'shot-456.png'), 'utf8'), 'png');
+  await rm(dir, { recursive: true, force: true });
+});
+
 test('click, type, keypress, and scroll send compact input events', async () => {
   const cdp = new FakeCdp();
   const runtime = new MacChromeCdpRuntime({

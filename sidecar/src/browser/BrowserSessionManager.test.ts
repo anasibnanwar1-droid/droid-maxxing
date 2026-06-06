@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { BrowserSessionManager, type BrowserRuntime } from './BrowserSessionManager.js';
-import type { BrowserElementRef, BrowserViewport, ScrollDirection } from './types.js';
+import type { BrowserElementRef, BrowserScreenshotOptions, BrowserViewport, ScrollDirection } from './types.js';
 
 class FakeRuntime implements BrowserRuntime {
   clicks: { x: number; y: number }[] = [];
+  screenshots: BrowserScreenshotOptions[] = [];
   viewport: BrowserViewport;
 
   constructor(viewport: BrowserViewport) {
@@ -19,7 +20,8 @@ class FakeRuntime implements BrowserRuntime {
     this.viewport = viewport;
   }
 
-  async screenshot(): Promise<string> {
+  async screenshot(options: BrowserScreenshotOptions = {}): Promise<string> {
+    this.screenshots.push(options);
     return '/tmp/droid/shot.png';
   }
 
@@ -68,6 +70,37 @@ test('addReference captures current browser context', async () => {
   assert.equal(reference.url, 'http://127.0.0.1:1420/');
   assert.equal(reference.screenshotPath, '/tmp/droid/shot.png');
   assert.equal(reference.viewport.width, 1200);
+});
+
+test('screenshot forwards high-detail capture options', async () => {
+  let runtime!: FakeRuntime;
+  const manager = new BrowserSessionManager({
+    runtimeFactory: (_id, viewport) => {
+      runtime = new FakeRuntime(viewport);
+      return runtime;
+    },
+  });
+  await manager.open({ missionId: 'm1', url: 'http://127.0.0.1:1420/' });
+
+  await manager.screenshot('m1', { fullPage: true, deviceScaleFactor: 3 });
+
+  assert.deepEqual(runtime.screenshots.at(-1), { fullPage: true, deviceScaleFactor: 3 });
+});
+
+test('open resizes an existing runtime before capture', async () => {
+  let runtime!: FakeRuntime;
+  const manager = new BrowserSessionManager({
+    runtimeFactory: (_id, viewport) => {
+      runtime = new FakeRuntime(viewport);
+      return runtime;
+    },
+  });
+  await manager.open({ missionId: 'm1', url: 'https://example.com', viewport: { width: 1200, height: 800, deviceScaleFactor: 2 } });
+
+  const state = await manager.open({ missionId: 'm1', url: 'https://example.com', viewport: { width: 524, height: 898, deviceScaleFactor: 2 }, viewportMode: 'fit' });
+
+  assert.deepEqual(runtime.viewport, { width: 524, height: 898, deviceScaleFactor: 2 });
+  assert.deepEqual(state.viewport, { width: 524, height: 898, deviceScaleFactor: 2 });
 });
 
 function buttonRef(): BrowserElementRef {

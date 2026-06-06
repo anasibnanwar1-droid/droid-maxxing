@@ -3,6 +3,7 @@ import { MacChromeCdpRuntime } from './MacChromeCdpRuntime.js';
 import { formatDesignPrompt, writeDesignPromptPack } from './designPromptPacks.js';
 import type {
   BrowserElementRef,
+  BrowserScreenshotOptions,
   BrowserState,
   BrowserViewport,
   BrowserViewportMode,
@@ -20,7 +21,7 @@ export interface BrowserSessionManagerOptions {
 export interface BrowserRuntime {
   open(url: string): Promise<{ url: string; title?: string; scroll: { x: number; y: number }; refs: BrowserElementRef[] }>;
   setViewport(viewport: BrowserViewport): Promise<void>;
-  screenshot(fullPage?: boolean): Promise<string>;
+  screenshot(options?: BrowserScreenshotOptions): Promise<string>;
   snapshot(): Promise<{ url: string; title?: string; scroll: { x: number; y: number }; refs: BrowserElementRef[] }>;
   click(x: number, y: number): Promise<void>;
   type(text: string): Promise<void>;
@@ -37,13 +38,13 @@ interface ManagedBrowserSession {
   references: Map<string, DesignReference>;
 }
 
-export const DEFAULT_BROWSER_VIEWPORT: BrowserViewport = { width: 1200, height: 800, deviceScaleFactor: 1 };
+export const DEFAULT_BROWSER_VIEWPORT: BrowserViewport = { width: 1200, height: 800, deviceScaleFactor: 2 };
 
 export const VIEWPORT_PRESETS: { id: BrowserViewportMode; label: string; viewport?: BrowserViewport }[] = [
   { id: 'fit', label: 'Fit' },
-  { id: 'desktop', label: 'Desktop', viewport: { width: 1440, height: 900, deviceScaleFactor: 1 } },
-  { id: 'laptop', label: 'Laptop', viewport: { width: 1280, height: 800, deviceScaleFactor: 1 } },
-  { id: 'tablet', label: 'Tablet', viewport: { width: 820, height: 1180, deviceScaleFactor: 1 } },
+  { id: 'desktop', label: 'Desktop', viewport: { width: 1440, height: 900, deviceScaleFactor: 2 } },
+  { id: 'laptop', label: 'Laptop', viewport: { width: 1280, height: 800, deviceScaleFactor: 2 } },
+  { id: 'tablet', label: 'Tablet', viewport: { width: 820, height: 1180, deviceScaleFactor: 2 } },
   { id: 'mobile', label: 'Mobile', viewport: { width: 390, height: 844, deviceScaleFactor: 2 } },
   { id: 'custom', label: 'Custom' },
 ];
@@ -55,6 +56,9 @@ export class BrowserSessionManager {
 
   async open(input: { missionId: string; url: string; viewport?: BrowserViewport; viewportMode?: BrowserViewportMode }): Promise<BrowserState> {
     const session = this.sessionFor(input.missionId, input.viewport, input.viewportMode);
+    if (input.viewport) {
+      await session.runtime.setViewport(input.viewport);
+    }
     const snapshot = await session.runtime.open(input.url);
     session.state = await this.stateFromSnapshot(session, snapshot);
     this.emitUpdated(session.state);
@@ -102,9 +106,9 @@ export class BrowserSessionManager {
     return this.refresh(session.missionId);
   }
 
-  async screenshot(missionId: string, fullPage = false): Promise<string> {
+  async screenshot(missionId: string, options: BrowserScreenshotOptions = {}): Promise<string> {
     const session = this.requireSession(missionId);
-    const screenshotPath = await session.runtime.screenshot(fullPage);
+    const screenshotPath = await session.runtime.screenshot(options);
     session.state = {
       ...session.state,
       screenshotPath,
@@ -155,6 +159,14 @@ export class BrowserSessionManager {
 
   state(missionId: string): BrowserState | undefined {
     return this.resolveSession(missionId)?.state;
+  }
+
+  designContext(missionId: string): { state: BrowserState; references: DesignReference[] } {
+    const session = this.requireSession(missionId);
+    return {
+      state: session.state,
+      references: [...session.references.values()],
+    };
   }
 
   async close(missionId: string): Promise<void> {
@@ -211,7 +223,7 @@ export class BrowserSessionManager {
     session: ManagedBrowserSession,
     snapshot: { url: string; title?: string; scroll: { x: number; y: number }; refs: BrowserElementRef[] },
   ): Promise<BrowserState> {
-    const screenshotPath = await session.runtime.screenshot(false);
+    const screenshotPath = await session.runtime.screenshot();
     return {
       ...session.state,
       ...snapshot,

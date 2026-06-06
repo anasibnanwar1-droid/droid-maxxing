@@ -17,7 +17,7 @@ export interface ChromeProcessHandle {
 
 export type ManagedChromeProcess = Pick<ChildProcess, 'kill' | 'killed' | 'once'>;
 export type SpawnChrome = (command: string, args: string[]) => ManagedChromeProcess;
-export type ReadChromeVersion = (port: number) => Promise<ChromeVersionInfo>;
+export type ReadChromeVersion = (port: number, timeoutMs?: number) => Promise<ChromeVersionInfo>;
 
 export interface ChromeProcessOptions {
   sessionId: string;
@@ -30,6 +30,8 @@ export interface ChromeProcessOptions {
   readinessTimeoutMs?: number;
 }
 
+const DEFAULT_READINESS_TIMEOUT_MS = 20_000;
+
 export class ChromeProcess {
   constructor(private readonly options: ChromeProcessOptions) {}
 
@@ -40,11 +42,18 @@ export class ChromeProcess {
     await mkdir(profileDir, { recursive: true });
     const args = chromeLaunchArgs({ port, profileDir, viewport: this.options.viewport });
     const child = (this.options.spawnChrome ?? defaultSpawnChrome)(chromePath, args);
-    const version = await withTimeout(
-      (this.options.readVersion ?? readChromeVersion)(port),
-      this.options.readinessTimeoutMs ?? 8_000,
-      'Chrome CDP readiness',
-    );
+    const timeoutMs = this.options.readinessTimeoutMs ?? DEFAULT_READINESS_TIMEOUT_MS;
+    let version: ChromeVersionInfo;
+    try {
+      version = await withTimeout(
+        (this.options.readVersion ?? readChromeVersion)(port, timeoutMs),
+        timeoutMs + 1_000,
+        'Chrome CDP readiness',
+      );
+    } catch (err) {
+      await closeChrome(child).catch(() => {});
+      throw new Error(`Chrome CDP readiness failed on port ${port}: ${errMsg(err)}`);
+    }
     return {
       port,
       version,
@@ -62,6 +71,7 @@ export function chromeLaunchArgs(input: { port: number; profileDir: string; view
     `--user-data-dir=${profileDir}`,
     '--no-first-run',
     '--no-default-browser-check',
+    '--disable-background-networking',
     `--window-size=${viewport.width},${viewport.height}`,
     'about:blank',
   ];
@@ -83,8 +93,8 @@ export async function allocateLocalPort(): Promise<number> {
   });
 }
 
-async function readChromeVersion(port: number): Promise<ChromeVersionInfo> {
-  const deadline = Date.now() + 8_000;
+async function readChromeVersion(port: number, timeoutMs = DEFAULT_READINESS_TIMEOUT_MS): Promise<ChromeVersionInfo> {
+  const deadline = Date.now() + timeoutMs;
   let lastError: unknown;
   while (Date.now() < deadline) {
     try {
