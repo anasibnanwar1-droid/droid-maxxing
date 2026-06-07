@@ -34,6 +34,7 @@ interface BrowserToolbarProps {
   viewportMode: BrowserViewportMode;
   customViewport: BrowserViewport;
   designMode: boolean;
+  designModeDisabled?: boolean;
   sketchMode: boolean;
   onUrlInputChange: (value: string) => void;
   onOpen: () => void;
@@ -51,6 +52,7 @@ export function BrowserToolbar({
   viewportMode,
   customViewport,
   designMode,
+  designModeDisabled,
   sketchMode,
   onUrlInputChange,
   onOpen,
@@ -137,7 +139,12 @@ export function BrowserToolbar({
       )}
 
       <div className="flex items-center gap-1">
-        <IconButton title="Design Mode" active={designMode} onClick={onToggleDesignMode}>
+        <IconButton
+          title={designModeDisabled ? 'Select a chat before using Design Mode' : 'Design Mode'}
+          active={designMode}
+          disabled={designModeDisabled}
+          onClick={onToggleDesignMode}
+        >
           <MousePointer2 className="h-4 w-4" />
         </IconButton>
         <IconButton

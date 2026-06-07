@@ -22,6 +22,10 @@ test('browser MCP server exposes agent-facing names and typed inputs', () => {
   );
   assert.ok(server.tools.find((tool) => tool.name === 'browser_open')?.inputSchema?.url);
   assert.ok(server.tools.find((tool) => tool.name === 'browser_screenshot')?.inputSchema?.deviceScaleFactor);
+  assert.match(
+    server.tools.find((tool) => tool.name === 'browser_open')?.description ?? '',
+    /Do not use Read, FetchUrl, curl, or agent-browser/,
+  );
 });
 
 test('browser MCP handlers return visible tool errors', async () => {
@@ -56,11 +60,12 @@ test('browser_open keeps high-detail viewport scale by default', async () => {
   const server = createBrowserMcpServer(manager, () => 'm1');
   const browserOpen = server.tools.find((tool) => tool.name === 'browser_open');
 
-  await browserOpen?.handler({
+  const result = await browserOpen?.handler({
     url: 'https://example.com',
     viewport: { width: 1000, height: 700 },
     viewportMode: 'custom',
   });
 
   assert.equal(openedViewport?.deviceScaleFactor, 2);
+  assert.match(String(result), /Opened the live Droid Control browser/);
 });

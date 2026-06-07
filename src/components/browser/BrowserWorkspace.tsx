@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { isDesignModeOpen } from '../../hooks/designModeState';
 import { useStore } from '../../hooks/useStore';
 import {
   addDesignReference,
@@ -35,6 +36,7 @@ export default function BrowserWorkspace() {
   const sessionId = state.activeMissionId ?? undefined;
   const browser = sessionId ? state.browsers[sessionId] : undefined;
   const browserError = sessionId ? state.browserErrors[sessionId] : state.browserGlobalError;
+  const designMode = isDesignModeOpen(state.designModes, sessionId);
   const frameRef = useRef<HTMLDivElement>(null);
   const urlInputRef = useRef<HTMLInputElement>(null);
   const openedFallbackSessionRef = useRef<string | null>(null);
@@ -71,7 +73,12 @@ export default function BrowserWorkspace() {
   useEffect(() => {
     setReferences([]);
     setInstruction('');
+    setSketchMode(false);
   }, [browser?.sessionId, browser?.url, sessionId]);
+
+  useEffect(() => {
+    if (!designMode) setSketchMode(false);
+  }, [designMode]);
 
   const requestedViewport = viewportForMode(viewportMode, fitViewport, customViewport);
   const selectedIds = references.map((ref) => ref.id).filter((id): id is string => Boolean(id));
@@ -172,14 +179,17 @@ export default function BrowserWorkspace() {
         urlInput={urlInput}
         viewportMode={viewportMode}
         customViewport={customViewport}
-        designMode={state.designMode}
+        designMode={designMode}
+        designModeDisabled={!sessionId}
         sketchMode={sketchMode}
         onUrlInputChange={setUrlInput}
         onOpen={openCurrentUrl}
         onReload={() => reloadNativeBrowser().catch(() => openCurrentUrl())}
         onViewportModeChange={applyPreset}
         onCustomViewportChange={setCustomViewport}
-        onToggleDesignMode={() => dispatch({ type: 'TOGGLE_DESIGN_MODE' })}
+        onToggleDesignMode={() => {
+          if (sessionId) dispatch({ type: 'TOGGLE_DESIGN_MODE', missionId: sessionId });
+        }}
         onToggleSketchMode={() => setSketchMode((value) => !value)}
         onClose={() => {
           if (sessionId) closeBrowser(sessionId);
@@ -199,8 +209,8 @@ export default function BrowserWorkspace() {
           url={activeUrl}
           viewport={requestedViewport}
           viewportMode={viewportMode}
-          designMode={state.designMode}
-          sketchMode={state.designMode && sketchMode}
+          designMode={designMode}
+          sketchMode={designMode && sketchMode}
           onLoaded={(url) => {
             setActiveUrl(url);
             if (document.activeElement !== urlInputRef.current) setUrlInput(url);
@@ -209,7 +219,7 @@ export default function BrowserWorkspace() {
           onViewportSizeChange={setActualViewport}
         />
 
-        {state.designMode && references.length > 0 && (
+        {designMode && references.length > 0 && (
           <DesignModeComposer
             references={references}
             instruction={instruction}
