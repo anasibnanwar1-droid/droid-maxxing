@@ -101,6 +101,12 @@ interface AppState {
   // each session's active model; otherwise a specific model id.
   compactionModel: string;
 
+  // Global default compaction token limit applied to every session. Undefined
+  // means "use the Factory/default model context window".
+  compactionTokenLimit?: number;
+  // Per-model overrides for the compaction token limit, keyed by model id.
+  compactionTokenLimitPerModel: Record<string, number>;
+
   // Per-mission model/reasoning the user picked in the selector. These are
   // authoritative: a stale server summary (e.g. an in-flight resume) must not
   // revert the user's choice back to the session default.
@@ -170,6 +176,8 @@ type Action =
   | { type: 'MISSION_SET_REASONING'; missionId: string; reasoning: ReasoningEffort }
   | { type: 'MISSION_SET_COMPACTION_MODEL'; missionId: string; compactionModel: string }
   | { type: 'SET_COMPACTION_MODEL_GLOBAL'; compactionModel: string }
+  | { type: 'SET_COMPACTION_TOKEN_LIMIT_GLOBAL'; limit?: number }
+  | { type: 'SET_COMPACTION_TOKEN_LIMIT_FOR_MODEL'; modelId: string; limit?: number }
 
   | { type: 'QUEUE_PROMPT'; missionId: string; prompt: QueuedPrompt }
   | { type: 'UPDATE_QUEUED_PROMPT'; missionId: string; id: string; text: string }
@@ -255,6 +263,8 @@ function saveAgentConfig(config: AgentConfig): AgentConfig {
 // whatever model it is currently using; otherwise a specific model id is used
 // for compaction across every session.
 const COMPACTION_MODEL_STORAGE_KEY = 'droid-compaction-model';
+const COMPACTION_TOKEN_LIMIT_STORAGE_KEY = 'droid-compaction-token-limit';
+const COMPACTION_TOKEN_LIMIT_PER_MODEL_STORAGE_KEY = 'droid-compaction-token-limit-per-model';
 const WORKSPACES_STORAGE_KEY = 'droid-workspaces';
 
 function loadCompactionModel(): string {
@@ -268,6 +278,53 @@ function loadCompactionModel(): string {
 function saveCompactionModel(value: string): string {
   try {
     localStorage.setItem(COMPACTION_MODEL_STORAGE_KEY, value);
+  } catch { /* ignore */ }
+  return value;
+}
+
+// Only positive finite integers are valid token limits; anything else is
+// treated as "unset" (fall back to the model's default context window).
+function normalizeTokenLimit(value: unknown): number | undefined {
+  const n = typeof value === 'number' ? value : Number(value);
+  if (!Number.isFinite(n) || n <= 0) return undefined;
+  return Math.floor(n);
+}
+
+function loadCompactionTokenLimit(): number | undefined {
+  try {
+    return normalizeTokenLimit(localStorage.getItem(COMPACTION_TOKEN_LIMIT_STORAGE_KEY));
+  } catch {
+    return undefined;
+  }
+}
+
+function saveCompactionTokenLimit(value?: number): number | undefined {
+  try {
+    if (value === undefined) localStorage.removeItem(COMPACTION_TOKEN_LIMIT_STORAGE_KEY);
+    else localStorage.setItem(COMPACTION_TOKEN_LIMIT_STORAGE_KEY, String(value));
+  } catch { /* ignore */ }
+  return value;
+}
+
+function loadCompactionTokenLimitPerModel(): Record<string, number> {
+  try {
+    const raw = localStorage.getItem(COMPACTION_TOKEN_LIMIT_PER_MODEL_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const out: Record<string, number> = {};
+    for (const [id, value] of Object.entries(parsed)) {
+      const n = normalizeTokenLimit(value);
+      if (id && n !== undefined) out[id] = n;
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+function saveCompactionTokenLimitPerModel(value: Record<string, number>): Record<string, number> {
+  try {
+    localStorage.setItem(COMPACTION_TOKEN_LIMIT_PER_MODEL_STORAGE_KEY, JSON.stringify(value));
   } catch { /* ignore */ }
   return value;
 }
@@ -357,6 +414,8 @@ const initialState: AppState = {
   selectedAgentSessionId: null,
   models: [],
   compactionModel: loadCompactionModel(),
+  compactionTokenLimit: loadCompactionTokenLimit(),
+  compactionTokenLimitPerModel: loadCompactionTokenLimitPerModel(),
   missionSettingOverrides: {},
   skills: [],
   agentConfig: loadAgentConfig(),
@@ -718,7 +777,28 @@ function reducer(state: AppState, action: Action): AppState {
           reasoning: state.agentConfig.validator.modelId ? state.agentConfig.validator.reasoning : action.defaults.validatorReasoningEffort ?? state.agentConfig.validator.reasoning,
         },
       }, state.models);
-      return { ...state, agentConfig: saveAgentConfig(next) };
+
+      // Seed compaction token limits from Factory defaults only when the user
+      // has not already configured them locally.
+      const compactionTokenLimit =
+        state.compactionTokenLimit ?? normalizeTokenLimit(action.defaults.compactionTokenLimit);
+      const compactionTokenLimitPerModel =
+        Object.keys(state.compactionTokenLimitPerModel).length > 0
+          ? state.compactionTokenLimitPerModel
+          : saveCompactionTokenLimitPerModel(
+              Object.fromEntries(
+                Object.entries(action.defaults.compactionTokenLimitPerModel ?? {})
+                  .map(([id, value]) => [id, normalizeTokenLimit(value)])
+                  .filter((entry): entry is [string, number] => entry[1] !== undefined),
+              ),
+            );
+
+      return {
+        ...state,
+        agentConfig: saveAgentConfig(next),
+        compactionTokenLimit: saveCompactionTokenLimit(compactionTokenLimit),
+        compactionTokenLimitPerModel,
+      };
     }
 
     case 'SET_AGENT_MODEL':
@@ -788,6 +868,21 @@ function reducer(state: AppState, action: Action): AppState {
         Object.entries(state.missions).map(([id, m]) => [id, { ...m, compactionModel: perSession }]),
       );
       return { ...state, compactionModel: value, missions };
+    }
+
+    case 'SET_COMPACTION_TOKEN_LIMIT_GLOBAL': {
+      const limit = normalizeTokenLimit(action.limit);
+      saveCompactionTokenLimit(limit);
+      return { ...state, compactionTokenLimit: limit };
+    }
+
+    case 'SET_COMPACTION_TOKEN_LIMIT_FOR_MODEL': {
+      const limit = normalizeTokenLimit(action.limit);
+      const next = { ...state.compactionTokenLimitPerModel };
+      if (limit === undefined) delete next[action.modelId];
+      else next[action.modelId] = limit;
+      saveCompactionTokenLimitPerModel(next);
+      return { ...state, compactionTokenLimitPerModel: next };
     }
 
     case 'QUEUE_PROMPT': {

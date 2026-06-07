@@ -1,6 +1,6 @@
 import { useMemo, useState, memo, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ChevronRight, Terminal, Copy, Check, FileText, Expand as ExpandIcon } from 'lucide-react';
+import { ChevronRight, Terminal, Copy, Check, FileText, Expand as ExpandIcon, FoldVertical } from 'lucide-react';
 import type { TranscriptEvent } from '../types/bridge';
 import { Markdown } from './Markdown';
 import { SpecModal } from './SpecModal';
@@ -26,6 +26,41 @@ export function StreamingCaret() {
 /* ── Working indicator — minimal shimmer label, no icons/dots/bars ── */
 export function WorkingIndicator({ label = 'Working' }: { label?: string }) {
   return <span className="shimmer-text text-[13px] font-medium tracking-tight" aria-live="polite">{label}…</span>;
+}
+
+/* ── Compaction indicator — centered, larger shimmer while compacting ── */
+export function CompactingIndicator() {
+  return (
+    <div className="flex justify-center py-3">
+      <span className="shimmer-text text-[16px] font-semibold tracking-tight" aria-live="polite">Compacting…</span>
+    </div>
+  );
+}
+
+/* ── Compaction divider — persistent marker once compaction has completed ── */
+export function CompactionDivider() {
+  return (
+    <div className="flex items-center gap-3 py-1 text-droid-text-muted">
+      <div className="h-px flex-1 bg-droid-border/70" />
+      <span className="flex items-center gap-1.5 text-[12px] whitespace-nowrap">
+        <FoldVertical className="h-3.5 w-3.5" />
+        Context automatically compacted
+      </span>
+      <div className="h-px flex-1 bg-droid-border/70" />
+    </div>
+  );
+}
+
+// A status line that signals compaction is in progress (not the completion line).
+export function isCompactingStatus(text?: string): boolean {
+  const t = text ?? '';
+  return /compact/i.test(t) && !/complete/i.test(t);
+}
+
+// A status line that signals compaction finished.
+export function isCompactionCompleteStatus(text?: string): boolean {
+  const t = text ?? '';
+  return /compact/i.test(t) && /complete/i.test(t);
 }
 
 /* ── Subtle expand affordance ── */
@@ -237,7 +272,8 @@ type FeedItem =
   | { type: 'status'; key: string; event: TranscriptEvent }
   | { type: 'error'; key: string; event: TranscriptEvent }
   | { type: 'diff'; key: string; event: TranscriptEvent; change: FileChange }
-  | { type: 'tools'; key: string; events: TranscriptEvent[] };
+  | { type: 'tools'; key: string; events: TranscriptEvent[] }
+  | { type: 'worked'; key: string; items: FeedItem[]; durationMs: number };
 
 function buildFeed(events: TranscriptEvent[]): FeedItem[] {
   const items: FeedItem[] = [];
@@ -272,6 +308,69 @@ function buildFeed(events: TranscriptEvent[]): FeedItem[] {
     i++;
   }
   return items;
+}
+
+function isUserMessage(item: FeedItem): boolean {
+  return item.type === 'message' && item.event.author === 'user';
+}
+
+// Earliest start and latest end timestamps across a set of feed items.
+function spanOf(items: FeedItem[]): { start: number; end: number } {
+  let start = Infinity;
+  let end = -Infinity;
+  const consider = (ts?: number, endTs?: number) => {
+    if (ts == null) return;
+    start = Math.min(start, ts);
+    end = Math.max(end, endTs ?? ts);
+  };
+  for (const it of items) {
+    if (it.type === 'tools') it.events.forEach((e) => consider(e.ts, e.endTs));
+    else if (it.type !== 'worked') consider(it.event.ts, it.event.endTs);
+  }
+  if (start === Infinity) return { start: 0, end: 0 };
+  return { start, end };
+}
+
+// Collapse a single completed assistant turn: everything except the concluding
+// message folds into a "Worked for …" group (compaction steps included). While
+// the turn is live it is never collapsed, so compaction stays visible then.
+function collapseRun(run: FeedItem[]): FeedItem[] {
+  if (run.length === 0) return [];
+  const lastItem = run[run.length - 1];
+  const conclusionIdx =
+    lastItem.type === 'message' && lastItem.event.author !== 'user' ? run.length - 1 : -1;
+
+  const work = conclusionIdx === -1 ? run : run.slice(0, conclusionIdx);
+  const out: FeedItem[] = [];
+  if (work.length > 0) {
+    const { start, end } = spanOf(work);
+    out.push({ type: 'worked', key: `worked-${work[0].key}`, items: work, durationMs: Math.max(0, end - start) });
+  }
+  if (conclusionIdx !== -1) out.push(run[conclusionIdx]);
+  return out;
+}
+
+// Fold completed assistant turns into "Worked for …" groups. The in-flight turn
+// (while pending) is left expanded so live thinking/tools/status keep streaming.
+function groupTurns(items: FeedItem[], pending: boolean): FeedItem[] {
+  const out: FeedItem[] = [];
+  let i = 0;
+  while (i < items.length) {
+    if (isUserMessage(items[i])) {
+      out.push(items[i]);
+      i++;
+      continue;
+    }
+    const run: FeedItem[] = [];
+    while (i < items.length && !isUserMessage(items[i])) {
+      run.push(items[i]);
+      i++;
+    }
+    const isLastRun = i >= items.length;
+    if (isLastRun && pending) out.push(...run);
+    else out.push(...collapseRun(run));
+  }
+  return out;
 }
 
 function baseName(p: string): string {
@@ -373,9 +472,10 @@ const InlineSpecCard = memo(function InlineSpecCard({ text, onOpenSpecModal }: {
   );
 });
 
-const FeedItemView = memo(function FeedItemView({ item, live, onOpenDiff, isSpec, specReady }: {
+const FeedItemView = memo(function FeedItemView({ item, live, compacting, onOpenDiff, isSpec, specReady }: {
   item: FeedItem;
   live: boolean;
+  compacting?: boolean;
   onOpenDiff?: (c: FileChange) => void;
   isSpec?: boolean;
   specReady?: boolean;
@@ -396,12 +496,16 @@ const FeedItemView = memo(function FeedItemView({ item, live, onOpenDiff, isSpec
     }
     case 'thinking':
       return <ThinkingItem text={item.event.text ?? ''} durationMs={item.durationMs} active={live} />;
-    case 'status':
+    case 'status': {
+      const text = item.event.text ?? '';
+      if (compacting) return <CompactingIndicator />;
+      if (isCompactionCompleteStatus(text)) return <CompactionDivider />;
       return live ? (
-        <span className="shimmer-text text-[13px] font-medium">{item.event.text}</span>
+        <span className="shimmer-text text-[13px] font-medium">{text}</span>
       ) : (
-        <span className="block text-[13px] text-droid-text-muted leading-relaxed [overflow-wrap:anywhere]">{item.event.text}</span>
+        <span className="block text-[13px] text-droid-text-muted leading-relaxed [overflow-wrap:anywhere]">{text}</span>
       );
+    }
     case 'error':
       return (
         <div className="text-[13px] leading-relaxed whitespace-pre-wrap [overflow-wrap:anywhere]" style={{ color: ACCENT }}>
@@ -412,8 +516,44 @@ const FeedItemView = memo(function FeedItemView({ item, live, onOpenDiff, isSpec
       return <DiffCard change={item.change} onOpen={onOpenDiff ? () => onOpenDiff(item.change) : undefined} />;
     case 'tools':
       return <ToolGroupItem events={item.events} active={live} />;
+    case 'worked':
+      return <WorkedGroup item={item} onOpenDiff={onOpenDiff} isSpec={isSpec} specReady={specReady} />;
   }
 });
+
+/* ── Worked-for group: a completed turn's steps folded into one disclosure ── */
+function WorkedGroup({ item, onOpenDiff, isSpec, specReady }: {
+  item: Extract<FeedItem, { type: 'worked' }>;
+  onOpenDiff?: (c: FileChange) => void;
+  isSpec?: boolean;
+  specReady?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div>
+      <button onClick={() => setOpen((o) => !o)} className="group flex items-center gap-1.5 text-left">
+        <span className="text-[13px] text-droid-text-muted group-hover:text-droid-text-secondary transition-colors">
+          Worked for {formatDuration(item.durationMs)}
+        </span>
+        <Caret open={open} />
+      </button>
+      <Expand open={open}>
+        <div className="mt-3 space-y-4 border-l border-droid-border/60 pl-4">
+          {item.items.map((child) => (
+            <FeedItemView
+              key={child.key}
+              item={child}
+              live={false}
+              onOpenDiff={onOpenDiff}
+              isSpec={isSpec}
+              specReady={specReady}
+            />
+          ))}
+        </div>
+      </Expand>
+    </div>
+  );
+}
 
 /* ── The activity feed (list only; parent owns the scroll container) ── */
 export function MessageFeed({ events, pending, onOpenDiff, isSpec, specContent, specReady }: {
@@ -426,10 +566,14 @@ export function MessageFeed({ events, pending, onOpenDiff, isSpec, specContent, 
 }) {
   const [specModalOpen, setSpecModalOpen] = useState(false);
   const openSpecModal = useCallback(() => setSpecModalOpen(true), []);
-  const items = useMemo(() => buildFeed(events), [events]);
+  const items = useMemo(() => groupTurns(buildFeed(events), pending), [events, pending]);
   const lastIdx = items.length - 1;
   const last = items[lastIdx];
   const showSpecCard = !!isSpec && !!specReady && (specContent?.length ?? 0) > 0;
+
+  // Compaction is in progress when the latest status line announces it and no
+  // completion line has arrived yet. Drives the centered "Compacting…" shimmer.
+  const compacting = last?.type === 'status' && isCompactingStatus(last.event.text);
 
   // The tail already animates its own shimmer/caret for these; otherwise show an explicit cue.
   const tailSelfIndicates =
@@ -452,6 +596,7 @@ export function MessageFeed({ events, pending, onOpenDiff, isSpec, specContent, 
           <FeedItemView
             item={item}
             live={pending && idx === lastIdx}
+            compacting={compacting && idx === lastIdx}
             onOpenDiff={onOpenDiff}
             isSpec={isSpec}
             specReady={specReady}

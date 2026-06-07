@@ -148,6 +148,8 @@ export interface FactoryDefaultSettings {
   modelId?: string;
   reasoningEffort?: ReasoningEffort;
   compactionModel?: string;
+  compactionTokenLimit?: number;
+  compactionTokenLimitPerModel?: Record<string, number>;
   autonomy?: Autonomy;
   specModelId?: string;
   specReasoningEffort?: ReasoningEffort;
@@ -310,17 +312,19 @@ export type ClientCommand =
       modelId?: string;
       reasoningEffort?: ReasoningEffort;
       compactionModel?: string;
+      compactionTokenLimit?: number | null;
+      compactionTokenLimitPerModel?: Record<string, number>;
       autonomy: Autonomy;
       workerModel?: string;
       workerReasoning?: ReasoningEffort;
       validatorModel?: string;
       validatorReasoning?: ReasoningEffort;
     }
-  | { type: 'session.create'; clientRef: string; cwd?: string; title: string; goal: string; interactionMode: SessionInteractionMode; modelId?: string; reasoningEffort?: ReasoningEffort; compactionModel?: string; autonomy: Autonomy }
+  | { type: 'session.create'; clientRef: string; cwd?: string; title: string; goal: string; interactionMode: SessionInteractionMode; modelId?: string; reasoningEffort?: ReasoningEffort; compactionModel?: string; compactionTokenLimit?: number; compactionTokenLimitPerModel?: Record<string, number>; autonomy: Autonomy }
   | { type: 'session.send'; sessionId: string; text: string }
   | { type: 'session.resume'; sessionId: string }
   | { type: 'session.interrupt'; sessionId: string }
-  | { type: 'session.updateSettings'; sessionId: string; modelId?: string | null; reasoningEffort?: ReasoningEffort; compactionModel?: string | null; autonomy?: Autonomy }
+  | { type: 'session.updateSettings'; sessionId: string; modelId?: string | null; reasoningEffort?: ReasoningEffort; compactionModel?: string | null; compactionTokenLimit?: number | null; compactionTokenLimitPerModel?: Record<string, number>; autonomy?: Autonomy }
   | { type: 'session.compact'; sessionId: string; customInstructions?: string }
   | { type: 'session.fork'; sessionId: string }
   | { type: 'session.rename'; sessionId: string; title: string }
