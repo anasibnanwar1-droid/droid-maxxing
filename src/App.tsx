@@ -240,7 +240,20 @@ export default function App() {
           {state.pendingQuestion && <AskUserModal />}
         </main>
 
-        {!focused && !showBrowserPane && state.rightPanelOpen && <RightPanel />}
+        <AnimatePresence initial={false}>
+          {!focused && !showBrowserPane && state.rightPanelOpen && (
+            <motion.div
+              key="right-panel"
+              initial={{ width: 0, opacity: 0 }}
+              animate={{ width: 312, opacity: 1 }}
+              exit={{ width: 0, opacity: 0 }}
+              transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+              className="shrink-0 overflow-hidden h-full"
+            >
+              <RightPanel />
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
 
       <StatusBar />
