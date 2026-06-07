@@ -106,6 +106,48 @@ test('addReference keeps an explicitly captured screenshot', async () => {
   assert.equal(reference.screenshotPath, '/tmp/droid/shot.png');
 });
 
+test('designPrompt writes selected references and trims the instruction', async () => {
+  let writtenInstruction = '';
+  let writtenReferenceCount = 0;
+  const manager = new BrowserSessionManager({
+    runtimeFactory: (_id, viewport) => new FakeRuntime(viewport),
+    writePack: async (options) => {
+      writtenInstruction = options.instruction;
+      writtenReferenceCount = options.references.length;
+      return {
+        path: '/tmp/droid/pack.json',
+        pack: {
+          missionId: options.missionId,
+          browserSessionId: options.browserSessionId,
+          createdAt: '2026-06-07T00:00:00.000Z',
+          instruction: options.instruction,
+          references: options.references,
+        },
+      };
+    },
+  });
+  await manager.open({ missionId: 'm1', url: 'http://127.0.0.1:1420/' });
+  const reference = manager.addReference('m1', { kind: 'element', element: buttonRef() });
+
+  const result = await manager.designPrompt({ missionId: 'm1', instruction: '  Make the button clearer  ', referenceIds: [reference.id] });
+
+  assert.equal(writtenInstruction, 'Make the button clearer');
+  assert.equal(writtenReferenceCount, 1);
+  assert.match(result.prompt, /Make the button clearer/);
+});
+
+test('designPrompt requires a selected or sketched reference', async () => {
+  const manager = new BrowserSessionManager({
+    runtimeFactory: (_id, viewport) => new FakeRuntime(viewport),
+  });
+  await manager.open({ missionId: 'm1', url: 'http://127.0.0.1:1420/' });
+
+  await assert.rejects(
+    () => manager.designPrompt({ missionId: 'm1', instruction: 'Make this clearer', referenceIds: [] }),
+    /Select or sketch at least one browser reference/,
+  );
+});
+
 test('screenshot forwards high-detail capture options', async () => {
   let runtime!: FakeRuntime;
   const manager = new BrowserSessionManager({
