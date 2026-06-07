@@ -48,7 +48,7 @@ function createMainWindow() {
     vibrancy: process.platform === 'darwin' ? 'under-window' : undefined,
     visualEffectState: 'active',
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
-    trafficLightPosition: { x: 14, y: 12 },
+    trafficLightPosition: { x: 16, y: 18 },
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,

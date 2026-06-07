@@ -85,9 +85,7 @@ export default function RightPanel() {
       <div className="h-full droid-card">
         {/* Header */}
         <div className="flex items-center justify-between pl-3 pr-2 h-11 shrink-0">
-          <span className="text-[13px] font-semibold text-droid-text">
-            {activeMission ? 'Mission Control' : 'Context'}
-          </span>
+          <span className="text-[13px] font-semibold text-droid-text">Context</span>
           <button
             onClick={() => dispatch({ type: 'SET_RIGHT_PANEL', open: false })}
             className="p-1.5 rounded-lg text-droid-text-muted hover:text-droid-text hover:bg-droid-elevated/60 transition-colors"

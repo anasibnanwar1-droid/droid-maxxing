@@ -184,10 +184,11 @@ export default function Sidebar() {
   );
 
   return (
-    <aside
-      className="w-[280px] h-full flex flex-col border-r border-droid-border shrink-0"
-      style={{ background: 'var(--sidebar-bg)', backdropFilter: 'var(--sidebar-blur)', WebkitBackdropFilter: 'var(--sidebar-blur)' }}
-    >
+    <aside className="w-[280px] h-full shrink-0 p-3">
+      <div
+        className="h-full droid-card"
+        style={{ background: 'var(--sidebar-bg)', backdropFilter: 'var(--sidebar-blur)', WebkitBackdropFilter: 'var(--sidebar-blur)' }}
+      >
       {/* Draggable top strip (clears macOS traffic lights) */}
       <div data-electron-drag-region className="h-9 shrink-0" />
 
@@ -320,6 +321,7 @@ export default function Sidebar() {
           </span>
           <Settings className="w-4 h-4 text-droid-text-muted shrink-0" />
         </button>
+      </div>
       </div>
     </aside>
   );
