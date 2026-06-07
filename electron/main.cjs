@@ -1,4 +1,4 @@
-const { app, BrowserView, BrowserWindow, Notification, dialog, ipcMain, safeStorage } = require('electron');
+const { app, BrowserView, BrowserWindow, Menu, Notification, dialog, ipcMain, safeStorage } = require('electron');
 const { spawn } = require('node:child_process');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
@@ -19,6 +19,7 @@ app.setName(APP_NAME);
 app.setPath('userData', path.join(app.getPath('appData'), APP_NAME));
 
 app.whenReady().then(() => {
+  installApplicationMenu();
   registerIpc();
   createMainWindow();
   ensureSidecar();
@@ -103,6 +104,80 @@ function registerIpc() {
   ipcMain.on('native-browser-agent-result', (_event, result) => {
     mainWindow?.webContents.send('native-browser-agent-result', result);
   });
+}
+
+function installApplicationMenu() {
+  const isMac = process.platform === 'darwin';
+  const reloadItem = () => ({
+    label: 'Reload Droid Control',
+    accelerator: 'CmdOrCtrl+R',
+    click: () => reloadShell(false),
+  });
+  const forceReloadItem = () => ({
+    label: 'Force Reload Droid Control',
+    accelerator: 'CmdOrCtrl+Shift+R',
+    click: () => reloadShell(true),
+  });
+  const template = [
+    ...(isMac
+      ? [{
+          label: APP_NAME,
+          submenu: [
+            { role: 'about' },
+            { type: 'separator' },
+            reloadItem(),
+            forceReloadItem(),
+            { type: 'separator' },
+            { role: 'services' },
+            { type: 'separator' },
+            { role: 'hide' },
+            { role: 'hideOthers' },
+            { role: 'unhide' },
+            { type: 'separator' },
+            { role: 'quit' },
+          ],
+        }]
+      : []),
+    {
+      label: 'File',
+      submenu: [isMac ? { role: 'close' } : { role: 'quit' }],
+    },
+    {
+      label: 'Edit',
+      submenu: [
+        { role: 'undo' },
+        { role: 'redo' },
+        { type: 'separator' },
+        { role: 'cut' },
+        { role: 'copy' },
+        { role: 'paste' },
+        { role: 'selectAll' },
+      ],
+    },
+    {
+      label: 'View',
+      submenu: [
+        reloadItem(),
+        forceReloadItem(),
+        { type: 'separator' },
+        { role: 'toggleDevTools' },
+      ],
+    },
+    {
+      label: 'Window',
+      submenu: isMac
+        ? [{ role: 'minimize' }, { role: 'zoom' }, { type: 'separator' }, { role: 'front' }]
+        : [{ role: 'minimize' }, { role: 'close' }],
+    },
+  ];
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
+
+function reloadShell(ignoreCache) {
+  closeNativeBrowser();
+  if (!isWindowUsable(mainWindow)) return;
+  if (ignoreCache) mainWindow.webContents.reloadIgnoringCache();
+  else mainWindow.webContents.reload();
 }
 
 function appRoot() {
@@ -191,7 +266,6 @@ function openNativeBrowser(url, bounds) {
   const view = ensureNativeBrowserView();
   view.setBounds(normalizeBounds(bounds));
   loadNativeBrowserUrl(view, url);
-  safeWebContents(view)?.focus();
 }
 
 function setNativeBrowserBounds(bounds) {
@@ -301,12 +375,28 @@ function isBrowserViewUsable(view) {
 
 function normalizeNativeBrowserUrl(url) {
   const value = String(url || 'about:blank');
+  if (isHostAppUrl(value)) return 'about:blank';
   if (!isChromeErrorUrl(value)) return value;
   return browserTargetUrl && !isChromeErrorUrl(browserTargetUrl) ? browserTargetUrl : 'about:blank';
 }
 
 function isChromeErrorUrl(url) {
   return String(url || '').startsWith('chrome-error://');
+}
+
+function isHostAppUrl(url) {
+  const hostOrigin = originOf(process.env.ELECTRON_START_URL || mainWindow?.webContents.getURL());
+  const targetOrigin = originOf(url);
+  return Boolean(hostOrigin && targetOrigin && hostOrigin === targetOrigin);
+}
+
+function originOf(url) {
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:' ? parsed.origin : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function validateUrl(value) {

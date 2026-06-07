@@ -222,9 +222,15 @@ function isReasoningEffort(value: unknown): value is ReasoningEffort {
   );
 }
 
+function getLocalStorage(): Storage | undefined {
+  if (typeof window !== 'undefined') return window.localStorage;
+  const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
+  return descriptor && 'value' in descriptor ? descriptor.value as Storage : undefined;
+}
+
 function loadTheme(): ThemeConfig {
   try {
-    const saved = localStorage.getItem('droid-theme');
+    const saved = getLocalStorage()?.getItem('droid-theme');
     if (saved) return { ...defaultTheme, ...JSON.parse(saved) };
   } catch { /* ignore */ }
   return defaultTheme;
@@ -232,8 +238,10 @@ function loadTheme(): ThemeConfig {
 
 function loadAgentConfig(): AgentConfig {
   try {
-    OLD_AGENT_CONFIG_STORAGE_KEYS.forEach((key) => localStorage.removeItem(key));
-    const raw = localStorage.getItem(AGENT_CONFIG_STORAGE_KEY);
+    const storage = getLocalStorage();
+    if (!storage) return defaultAgentConfig;
+    OLD_AGENT_CONFIG_STORAGE_KEYS.forEach((key) => storage.removeItem(key));
+    const raw = storage.getItem(AGENT_CONFIG_STORAGE_KEY);
     if (!raw) return defaultAgentConfig;
     const parsed = JSON.parse(raw) as Partial<Record<AgentKind, Partial<AgentModelConfig>>>;
     return {
@@ -255,7 +263,7 @@ function readAgentConfig(value: Partial<AgentModelConfig> | undefined, fallback:
 
 function saveAgentConfig(config: AgentConfig): AgentConfig {
   try {
-    localStorage.setItem(AGENT_CONFIG_STORAGE_KEY, JSON.stringify(config));
+    getLocalStorage()?.setItem(AGENT_CONFIG_STORAGE_KEY, JSON.stringify(config));
   } catch { /* ignore */ }
   return config;
 }
@@ -267,10 +275,22 @@ const COMPACTION_MODEL_STORAGE_KEY = 'droid-compaction-model';
 const COMPACTION_TOKEN_LIMIT_STORAGE_KEY = 'droid-compaction-token-limit';
 const COMPACTION_TOKEN_LIMIT_PER_MODEL_STORAGE_KEY = 'droid-compaction-token-limit-per-model';
 const WORKSPACES_STORAGE_KEY = 'droid-workspaces';
+const UI_STATE_STORAGE_KEY = 'droid-ui-state-v1';
+
+interface PersistedUiState {
+  activeMissionId: string | null;
+  rightPanelOpen: boolean;
+  sidebarCollapsed: boolean;
+  specMode: boolean;
+  missionMode: boolean;
+  browserOpen: boolean;
+  selectedFeatureId: string | null;
+  selectedAgentSessionId: string | null;
+}
 
 function loadCompactionModel(): string {
   try {
-    return localStorage.getItem(COMPACTION_MODEL_STORAGE_KEY) || 'current-model';
+    return getLocalStorage()?.getItem(COMPACTION_MODEL_STORAGE_KEY) || 'current-model';
   } catch {
     return 'current-model';
   }
@@ -278,7 +298,7 @@ function loadCompactionModel(): string {
 
 function saveCompactionModel(value: string): string {
   try {
-    localStorage.setItem(COMPACTION_MODEL_STORAGE_KEY, value);
+    getLocalStorage()?.setItem(COMPACTION_MODEL_STORAGE_KEY, value);
   } catch { /* ignore */ }
   return value;
 }
@@ -332,7 +352,7 @@ function saveCompactionTokenLimitPerModel(value: Record<string, number>): Record
 
 function loadWorkspaceCwds(): string[] {
   try {
-    const raw = localStorage.getItem(WORKSPACES_STORAGE_KEY);
+    const raw = getLocalStorage()?.getItem(WORKSPACES_STORAGE_KEY);
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
@@ -344,9 +364,45 @@ function loadWorkspaceCwds(): string[] {
 
 function saveWorkspaceCwds(cwds: string[]): string[] {
   try {
-    localStorage.setItem(WORKSPACES_STORAGE_KEY, JSON.stringify(cwds));
+    getLocalStorage()?.setItem(WORKSPACES_STORAGE_KEY, JSON.stringify(cwds));
   } catch { /* ignore */ }
   return cwds;
+}
+
+export function loadPersistedUiState(): Partial<PersistedUiState> {
+  try {
+    const raw = getLocalStorage()?.getItem(UI_STATE_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as Partial<PersistedUiState>;
+    return {
+      activeMissionId: typeof parsed.activeMissionId === 'string' ? parsed.activeMissionId : null,
+      rightPanelOpen: typeof parsed.rightPanelOpen === 'boolean' ? parsed.rightPanelOpen : undefined,
+      sidebarCollapsed: typeof parsed.sidebarCollapsed === 'boolean' ? parsed.sidebarCollapsed : undefined,
+      specMode: typeof parsed.specMode === 'boolean' ? parsed.specMode : undefined,
+      missionMode: typeof parsed.missionMode === 'boolean' ? parsed.missionMode : undefined,
+      browserOpen: typeof parsed.browserOpen === 'boolean' ? parsed.browserOpen : undefined,
+      selectedFeatureId: typeof parsed.selectedFeatureId === 'string' ? parsed.selectedFeatureId : null,
+      selectedAgentSessionId: typeof parsed.selectedAgentSessionId === 'string' ? parsed.selectedAgentSessionId : null,
+    };
+  } catch {
+    return {};
+  }
+}
+
+function savePersistedUiState(state: AppState): void {
+  const snapshot: PersistedUiState = {
+    activeMissionId: state.activeMissionId,
+    rightPanelOpen: state.rightPanelOpen,
+    sidebarCollapsed: state.sidebarCollapsed,
+    specMode: state.specMode,
+    missionMode: state.missionMode,
+    browserOpen: state.browserOpen,
+    selectedFeatureId: state.selectedFeatureId,
+    selectedAgentSessionId: state.selectedAgentSessionId,
+  };
+  try {
+    getLocalStorage()?.setItem(UI_STATE_STORAGE_KEY, JSON.stringify(snapshot));
+  } catch { /* ignore */ }
 }
 
 function sanitizeAgentConfig(config: AgentConfig, models: ModelInfo[]): AgentConfig {
@@ -384,11 +440,13 @@ function applyMissionOverride(
   return next;
 }
 
+const persistedUiState = loadPersistedUiState();
+
 const initialState: AppState = {
   connection: 'idle',
   missions: {},
   missionOrder: [],
-  activeMissionId: null,
+  activeMissionId: persistedUiState.activeMissionId ?? null,
   transcripts: {},
   progress: {},
   workers: {},
@@ -397,22 +455,22 @@ const initialState: AppState = {
   pendingQuestion: null,
   contextStats: {},
   specPlans: {},
-  rightPanelOpen: true,
-  sidebarCollapsed: false,
-  specMode: false,
+  rightPanelOpen: persistedUiState.rightPanelOpen ?? true,
+  sidebarCollapsed: persistedUiState.sidebarCollapsed ?? false,
+  specMode: persistedUiState.specMode ?? false,
   settingsOpen: false,
   commandPaletteOpen: false,
   theme: loadTheme(),
-  missionMode: false,
+  missionMode: persistedUiState.missionMode ?? false,
   draftChat: null,
   workspaceCwds: loadWorkspaceCwds(),
-  browserOpen: false,
+  browserOpen: persistedUiState.browserOpen ?? false,
   browsers: {},
   browserErrors: {},
   browserGlobalError: undefined,
   designModes: {},
-  selectedFeatureId: null,
-  selectedAgentSessionId: null,
+  selectedFeatureId: persistedUiState.selectedFeatureId ?? null,
+  selectedAgentSessionId: persistedUiState.selectedAgentSessionId ?? null,
   models: [],
   compactionModel: loadCompactionModel(),
   compactionTokenLimit: loadCompactionTokenLimit(),
@@ -752,7 +810,7 @@ function reducer(state: AppState, action: Action): AppState {
 
     case 'SET_THEME': {
       const next = { ...state.theme, ...action.theme };
-      try { localStorage.setItem('droid-theme', JSON.stringify(next)); } catch { /* ignore */ }
+      try { getLocalStorage()?.setItem('droid-theme', JSON.stringify(next)); } catch { /* ignore */ }
       return { ...state, theme: next };
     }
 
@@ -992,6 +1050,19 @@ const StoreContext = createContext<{ state: AppState; dispatch: React.Dispatch<A
 
 export function StoreProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(reducer, initialState);
+
+  useEffect(() => {
+    savePersistedUiState(state);
+  }, [
+    state.activeMissionId,
+    state.browserOpen,
+    state.missionMode,
+    state.rightPanelOpen,
+    state.selectedAgentSessionId,
+    state.selectedFeatureId,
+    state.sidebarCollapsed,
+    state.specMode,
+  ]);
 
   useEffect(() => {
     const unsub = bridge.subscribe((ev) => {

@@ -32,12 +32,15 @@ import { BrowserToolbar } from './BrowserToolbar';
 import { DesignModeComposer } from './DesignModeComposer';
 import { composerStyleForReferences } from './browserComposerPosition';
 import { browserTranscriptReferenceFromDesignReference, browserTranscriptReferencesFromDesignReferences } from './browserTranscriptReferences';
+import { safeBrowserUrl } from './browserUrlSafety';
 import { useElementSize } from './useElementSize';
 
 export default function BrowserWorkspace() {
   const { state, dispatch } = useStore();
-  const chatId = state.activeMissionId ?? undefined;
-  const droidSessionId = chatId ? state.missions[chatId]?.sessionId ?? chatId : undefined;
+  const requestedChatId = state.activeMissionId ?? undefined;
+  const activeMission = requestedChatId ? state.missions[requestedChatId] : undefined;
+  const chatId = activeMission ? requestedChatId : undefined;
+  const droidSessionId = activeMission ? activeMission.sessionId ?? chatId : undefined;
   const browser = chatId ? state.browsers[chatId] : undefined;
   const browserError = chatId ? state.browserErrors[chatId] : state.browserGlobalError;
   const designMode = isDesignModeOpen(state.designModes, droidSessionId);
@@ -45,10 +48,12 @@ export default function BrowserWorkspace() {
   const frameRef = useRef<HTMLDivElement>(null);
   const urlInputRef = useRef<HTMLInputElement>(null);
   const openedFallbackSessionRef = useRef<string | null>(null);
+  const appOrigin = typeof window === 'undefined' ? undefined : window.location.origin;
   const frameSize = useElementSize(frameRef);
   const fitViewport = useMemo(() => viewportFromFrame(frameSize), [frameSize]);
-  const [urlInput, setUrlInput] = useState(browser?.url ?? 'http://127.0.0.1:1420/');
-  const [activeUrl, setActiveUrl] = useState(browser?.url ?? 'http://127.0.0.1:1420/');
+  const initialUrl = safeBrowserUrl(browser?.url, appOrigin);
+  const [urlInput, setUrlInput] = useState(initialUrl);
+  const [activeUrl, setActiveUrl] = useState(initialUrl);
   const [viewportMode, setViewportMode] = useState<BrowserViewportMode>(browser?.viewportMode ?? 'fit');
   const [customViewport, setCustomViewport] = useState<BrowserViewport>(CUSTOM_DEFAULT_VIEWPORT);
   const [actualViewport, setActualViewport] = useState<Size>({ width: 1, height: 1 });
@@ -57,13 +62,15 @@ export default function BrowserWorkspace() {
   const [references, setReferences] = useState<DesignReference[]>([]);
 
   useEffect(() => {
-    if (browser?.url && document.activeElement !== urlInputRef.current) {
-      setUrlInput(browser.url);
+    if (!browser?.url) return;
+    const nextUrl = safeBrowserUrl(browser.url, appOrigin);
+    if (document.activeElement !== urlInputRef.current) {
+      setUrlInput(nextUrl);
     }
-    if (browser?.url && browser.url !== activeUrl) {
-      setActiveUrl(browser.url);
+    if (nextUrl !== activeUrl) {
+      setActiveUrl(nextUrl);
     }
-  }, [activeUrl, browser?.url]);
+  }, [activeUrl, appOrigin, browser?.url]);
 
   useEffect(() => {
     if (browser?.viewportMode) setViewportMode(browser.viewportMode);
@@ -131,7 +138,7 @@ export default function BrowserWorkspace() {
   ]);
 
   const openCurrentUrl = () => {
-    const url = normalizeUrl(urlInput);
+    const url = safeBrowserUrl(normalizeUrl(urlInput), appOrigin);
     setUrlInput(url);
     setActiveUrl(url);
     if (chatId) {
@@ -245,20 +252,26 @@ export default function BrowserWorkspace() {
       )}
 
       <div ref={frameRef} className="relative flex-1 min-h-0 min-w-0">
-        <NativeBrowserSurface
-          url={activeUrl}
-          viewport={requestedViewport}
-          viewportMode={viewportMode}
-          designMode={designMode}
-          sketchMode={designMode && sketchMode}
-          onLoaded={(url) => {
-            setActiveUrl(url);
-            if (document.activeElement !== urlInputRef.current) setUrlInput(url);
-          }}
-          onSelection={handleSelection}
-          onPrompt={handleNativePrompt}
-          onViewportSizeChange={setActualViewport}
-        />
+        {chatId ? (
+          <NativeBrowserSurface
+            url={activeUrl}
+            viewport={requestedViewport}
+            viewportMode={viewportMode}
+            designMode={designMode}
+            sketchMode={designMode && sketchMode}
+            onLoaded={(url) => {
+              setActiveUrl(url);
+              if (document.activeElement !== urlInputRef.current) setUrlInput(url);
+            }}
+            onSelection={handleSelection}
+            onPrompt={handleNativePrompt}
+            onViewportSizeChange={setActualViewport}
+          />
+        ) : (
+          <div className="flex h-full items-center justify-center bg-[#070707] px-6 text-sm text-droid-text-muted">
+            Select or create a Droid session.
+          </div>
+        )}
 
         {!nativeBrowser && designMode && references.length > 0 && (
           <DesignModeComposer

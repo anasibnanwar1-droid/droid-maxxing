@@ -33,6 +33,7 @@ function ContextListIcon({ className }: { className?: string }) {
 const BROWSER_PANE_MIN = 460;
 const BROWSER_PANE_MAX = 1280;
 const BROWSER_PANE_DEFAULT = 860;
+const BROWSER_PANE_WIDTH_STORAGE_KEY = 'droid-browser-pane-width';
 
 export default function App() {
   const { state, dispatch } = useStore();
@@ -52,6 +53,13 @@ export default function App() {
   const requestedHistory = useRef(new Set<string>());
   const requestedResume = useRef(new Set<string>());
   const [browserPaneWidth, setBrowserPaneWidth] = useState(() => initialBrowserPaneWidth());
+  const setStoredBrowserPaneWidth = useCallback((width: number) => {
+    const next = clampBrowserPane(width);
+    setBrowserPaneWidth(next);
+    try {
+      localStorage.setItem(BROWSER_PANE_WIDTH_STORAGE_KEY, String(next));
+    } catch { /* ignore */ }
+  }, []);
 
   const toggleBrowserPane = useCallback(() => {
     if (state.browserOpen && activeMission) closeBrowser(activeMission.id);
@@ -260,7 +268,7 @@ export default function App() {
                   transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
                   className="relative shrink-0 overflow-hidden border-l border-droid-border bg-droid-bg shadow-[-24px_0_60px_rgba(0,0,0,0.18)]"
                 >
-                  <BrowserPaneResizeHandle width={browserPaneWidth} onResize={setBrowserPaneWidth} />
+                  <BrowserPaneResizeHandle width={browserPaneWidth} onResize={setStoredBrowserPaneWidth} />
                   <BrowserWorkspace />
                 </motion.aside>
               )}
@@ -332,6 +340,10 @@ function BrowserPaneResizeHandle({
 
 function initialBrowserPaneWidth(): number {
   if (typeof window === 'undefined') return BROWSER_PANE_DEFAULT;
+  try {
+    const stored = Number(localStorage.getItem(BROWSER_PANE_WIDTH_STORAGE_KEY));
+    if (Number.isFinite(stored) && stored > 0) return clampBrowserPane(stored);
+  } catch { /* ignore */ }
   return clampBrowserPane(Math.round(window.innerWidth * 0.44));
 }
 
