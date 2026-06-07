@@ -11,4 +11,6 @@ test('normalizeBrowserUrl keeps explicit browser URLs', () => {
 test('normalizeBrowserUrl makes bare domains and localhost loadable', () => {
   assert.equal(normalizeBrowserUrl('skeina.tech'), 'https://skeina.tech');
   assert.equal(normalizeBrowserUrl('localhost:1420'), 'http://localhost:1420');
+  assert.equal(normalizeBrowserUrl('//example.com/path'), 'https://example.com/path');
+  assert.equal(normalizeBrowserUrl('::1:8080/dev'), 'http://[::1]:8080/dev');
 });

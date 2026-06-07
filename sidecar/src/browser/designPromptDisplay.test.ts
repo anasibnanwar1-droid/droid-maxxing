@@ -4,11 +4,13 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { designPromptDisplayFromText } from './designPromptDisplay.js';
+import { browserDesignReferenceDir } from './browserPaths.js';
 
 test('designPromptDisplayFromText extracts instruction and browser chips from a pack', () => {
   const dir = join(tmpdir(), `droid-display-${Date.now()}`);
-  mkdirSync(dir, { recursive: true });
-  const packPath = join(dir, 'pack.json');
+  const packDir = browserDesignReferenceDir('m1', dir);
+  mkdirSync(packDir, { recursive: true });
+  const packPath = join(packDir, 'pack.json');
   writeFileSync(packPath, JSON.stringify({
     missionId: 'm1',
     browserSessionId: 'b1',
@@ -40,7 +42,7 @@ test('designPromptDisplayFromText extracts instruction and browser chips from a 
     '',
     'User instruction:',
     'What font is this?',
-  ].join('\n')), {
+  ].join('\n'), { browserDataDir: dir }), {
     text: 'What font is this?',
     browserRefs: [{
       id: '@live-heading',
@@ -49,6 +51,32 @@ test('designPromptDisplayFromText extracts instruction and browser chips from a 
       url: 'https://example.com',
       selector: 'h1',
     }],
+  });
+});
+
+test('designPromptDisplayFromText ignores reference packs outside browser data', () => {
+  const dir = join(tmpdir(), `droid-display-${Date.now()}-guarded`);
+  mkdirSync(dir, { recursive: true });
+  const outsidePath = join(tmpdir(), `droid-display-outside-${Date.now()}.json`);
+  writeFileSync(outsidePath, JSON.stringify({
+    references: [{
+      id: '@outside',
+      kind: 'element',
+      element: { ref: '@outside', tagName: 'button', attributes: {}, computedStyles: {} },
+    }],
+  }), 'utf8');
+
+  assert.deepEqual(designPromptDisplayFromText([
+    'Design Mode reference pack:',
+    '- URL: https://example.com',
+    '- Screenshot: none',
+    `- References JSON: ${outsidePath}`,
+    '',
+    'User instruction:',
+    'What font is this?',
+  ].join('\n'), { browserDataDir: dir }), {
+    text: 'What font is this?',
+    browserRefs: undefined,
   });
 });
 

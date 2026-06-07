@@ -96,7 +96,11 @@ function onMouseDown(event) {
 
 function onMouseUp(event) {
   if (!designMode || !sketchMode || !dragStart) return;
-  if (isPromptEvent(event)) return;
+  if (isPromptEvent(event)) {
+    dragStart = null;
+    region.style.display = 'none';
+    return;
+  }
   const box = drawRegion(dragStart, point(event));
   dragStart = null;
   if (box.width >= 8 && box.height >= 8) {
