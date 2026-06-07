@@ -15,6 +15,8 @@ test('safeBrowserUrl keeps the host app out of the browser pane', () => {
 
 test('isSelfBrowserUrl compares origins instead of exact paths', () => {
   assert.equal(isSelfBrowserUrl('http://127.0.0.1:1427/settings', 'http://127.0.0.1:1427'), true);
+  assert.equal(isSelfBrowserUrl('http://localhost:1427/settings', 'http://127.0.0.1:1427'), true);
+  assert.equal(isSelfBrowserUrl('http://localhost:17777/', 'http://127.0.0.1:1427'), false);
   assert.equal(isSelfBrowserUrl('https://example.com', 'http://127.0.0.1:1427'), false);
 });
 

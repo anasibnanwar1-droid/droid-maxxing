@@ -18,6 +18,7 @@ import SettingsPanel, { applyTheme, paletteForMode } from './components/Settings
 import AskUserModal from './components/AskUserModal';
 import PermissionModal from './components/PermissionModal';
 import BrowserWorkspace from './components/browser/BrowserWorkspace';
+import { isDesktop } from './lib/desktop';
 
 function ContextListIcon({ className }: { className?: string }) {
   return (
@@ -43,6 +44,7 @@ export default function App() {
   // not merely because the global mission-compose flag is on.
   const isMissionView = !!activeMission && activeMission.kind === 'mission_orchestrator';
   const showBrowserPane = !embedded && state.browserOpen;
+  const nativeBrowserPane = showBrowserPane && isDesktop();
   const focused = isMissionView;
   // A normal/spec session only has something worth showing once a message has
   // been sent (the first transcript is seeded from the opening prompt).
@@ -104,8 +106,8 @@ export default function App() {
   }, [embedded]);
 
   useEffect(() => {
-    if (embedded || state.workspaceCwds.length === 0) return;
-    listMissions({ workspaceCwds: state.workspaceCwds, limitPerWorkspace: 5 });
+    if (embedded) return;
+    listMissions({ workspaceCwds: state.workspaceCwds, includePlainChats: true, limitPerWorkspace: 5 });
   }, [embedded, state.workspaceCwds]);
 
   useEffect(() => {
@@ -260,17 +262,11 @@ export default function App() {
 
             <AnimatePresence initial={false}>
               {showBrowserPane && (
-                <motion.aside
-                  key="browser-pane"
-                  initial={{ width: 0, opacity: 0 }}
-                  animate={{ width: browserPaneWidth, opacity: 1 }}
-                  exit={{ width: 0, opacity: 0 }}
-                  transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
-                  className="relative shrink-0 overflow-hidden border-l border-droid-border bg-droid-bg shadow-[-24px_0_60px_rgba(0,0,0,0.18)]"
-                >
-                  <BrowserPaneResizeHandle width={browserPaneWidth} onResize={setStoredBrowserPaneWidth} />
-                  <BrowserWorkspace />
-                </motion.aside>
+                <BrowserPane
+                  animated={!nativeBrowserPane}
+                  width={browserPaneWidth}
+                  onResize={setStoredBrowserPaneWidth}
+                />
               )}
             </AnimatePresence>
           </div>
@@ -298,6 +294,45 @@ export default function App() {
       {state.settingsOpen && <SettingsPanel />}
       {state.pendingPermission && <PermissionModal />}
     </div>
+  );
+}
+
+function BrowserPane({
+  animated,
+  width,
+  onResize,
+}: {
+  animated: boolean;
+  width: number;
+  onResize: (width: number) => void;
+}) {
+  const content = (
+    <>
+      <BrowserPaneResizeHandle width={width} onResize={onResize} />
+      <BrowserWorkspace />
+    </>
+  );
+
+  const className = 'relative shrink-0 overflow-hidden border-l border-droid-border bg-droid-bg shadow-[-24px_0_60px_rgba(0,0,0,0.18)]';
+  if (!animated) {
+    return (
+      <aside key="browser-pane" className={className} style={{ width }}>
+        {content}
+      </aside>
+    );
+  }
+
+  return (
+    <motion.aside
+      key="browser-pane"
+      initial={{ width: 0, opacity: 0 }}
+      animate={{ width, opacity: 1 }}
+      exit={{ width: 0, opacity: 0 }}
+      transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
+      className={className}
+    >
+      {content}
+    </motion.aside>
   );
 }
 

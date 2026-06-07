@@ -250,11 +250,17 @@ function ensureNativeBrowserView() {
     emitNativeBrowserLoaded(loadedUrl);
     applyNativeBrowserDesignState();
   });
+  contents.on('dom-ready', () => {
+    if (browserView === view) applyNativeBrowserDesignState();
+  });
   contents.on('destroyed', () => {
     if (browserView === view) resetNativeBrowser();
   });
   contents.on('did-navigate-in-page', (_event, nextUrl) => {
-    if (browserView === view) emitNativeBrowserLoaded(nextUrl);
+    if (browserView !== view) return;
+    browserTargetUrl = nextUrl;
+    emitNativeBrowserLoaded(nextUrl);
+    applyNativeBrowserDesignState();
   });
   mainWindow.setBrowserView(view);
   return view;
@@ -385,18 +391,29 @@ function isChromeErrorUrl(url) {
 }
 
 function isHostAppUrl(url) {
-  const hostOrigin = originOf(process.env.ELECTRON_START_URL || mainWindow?.webContents.getURL());
-  const targetOrigin = originOf(url);
-  return Boolean(hostOrigin && targetOrigin && hostOrigin === targetOrigin);
+  const host = localAppEndpoint(process.env.ELECTRON_START_URL || mainWindow?.webContents.getURL());
+  const target = localAppEndpoint(url);
+  if (!host || !target) return false;
+  if (host.port !== target.port) return false;
+  return host.local && target.local;
 }
 
-function originOf(url) {
+function localAppEndpoint(url) {
   try {
     const parsed = new URL(url);
-    return parsed.protocol === 'http:' || parsed.protocol === 'https:' ? parsed.origin : undefined;
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return undefined;
+    return {
+      local: isLoopbackHost(parsed.hostname),
+      port: parsed.port || (parsed.protocol === 'https:' ? '443' : '80'),
+    };
   } catch {
     return undefined;
   }
+}
+
+function isLoopbackHost(hostname) {
+  const value = String(hostname || '').toLowerCase();
+  return value === 'localhost' || value === '127.0.0.1' || value === '::1' || value === '[::1]';
 }
 
 function validateUrl(value) {

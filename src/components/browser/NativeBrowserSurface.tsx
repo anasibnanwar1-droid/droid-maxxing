@@ -57,7 +57,7 @@ export function NativeBrowserSurface({
   const slotRef = useRef<HTMLDivElement>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const frameSize = useElementSize(stageRef);
-  const lastUrl = useRef<string | null>(null);
+  const surfaceReady = frameSize.width > 8 && frameSize.height > 8;
   const lastBounds = useRef<NativeBrowserBounds | null>(null);
   const onLoadedRef = useRef(onLoaded);
   const onSelectionRef = useRef(onSelection);
@@ -137,29 +137,24 @@ export function NativeBrowserSurface({
 
   useEffect(() => {
     if (!native) return;
+    if (!surfaceReady) return;
     const bounds = boundsFor(slotRef);
     if (!bounds) return;
-    const sameUrl = lastUrl.current === url;
     const sameBounds = lastBounds.current && equalBounds(lastBounds.current, bounds);
-    if (!sameUrl) {
-      openNativeBrowser(url, bounds).catch(() => {});
-      lastUrl.current = url;
-      lastBounds.current = bounds;
-      return;
-    }
     if (!sameBounds) {
       setNativeBrowserBounds(bounds).catch(() => {});
       lastBounds.current = bounds;
     }
-  }, [native, surface.height, surface.left, surface.top, surface.width, url]);
+  }, [native, surface.height, surface.left, surface.top, surface.width, surfaceReady]);
 
   useEffect(() => registerNativeBrowserController({
     perform: async (request) => native
       ? performNativeRequest(request, {
         currentUrl: url,
+        designMode,
+        sketchMode: designMode && sketchMode,
         bounds: () => boundsFor(slotRef),
-        markOpen: (nextUrl, bounds) => {
-          lastUrl.current = nextUrl;
+        markOpen: (bounds) => {
           lastBounds.current = bounds;
         },
       })
@@ -168,7 +163,7 @@ export function NativeBrowserSurface({
         iframe: iframeRef,
         onLoaded,
       }),
-  }), [native, onLoaded, url]);
+  }), [designMode, native, onLoaded, sketchMode, url]);
 
   useEffect(() => {
     return () => {
@@ -214,8 +209,10 @@ async function performNativeRequest(
   request: BrowserNativeRequest,
   options: {
     currentUrl: string;
+    designMode: boolean;
+    sketchMode: boolean;
     bounds: () => NativeBrowserBounds | null;
-    markOpen: (url: string, bounds: NativeBrowserBounds) => void;
+    markOpen: (bounds: NativeBrowserBounds) => void;
   },
 ): Promise<BrowserNativeResult> {
   try {
@@ -225,11 +222,12 @@ async function performNativeRequest(
     }
     const bounds = options.bounds();
     if (!bounds) throw new Error('Droid Control browser pane is not laid out yet.');
+    await syncNativeDesignState(options.designMode, options.sketchMode);
     if (request.action === 'open') {
       const targetUrl = request.url ?? options.currentUrl;
       const loaded = waitForNextNativeBrowserLoad().catch(() => undefined);
       await openNativeBrowser(targetUrl, bounds);
-      options.markOpen(targetUrl, bounds);
+      options.markOpen(bounds);
       await loaded;
       const result = await runNativeBrowserAgentAction({ requestId: request.requestId, action: 'snapshot' });
       return { requestId: request.requestId, missionId: request.missionId, ok: result.ok, snapshot: result.snapshot, error: result.error };
@@ -260,6 +258,11 @@ async function performNativeRequest(
       error: err instanceof Error ? err.message : String(err),
     };
   }
+}
+
+async function syncNativeDesignState(designMode: boolean, sketchMode: boolean): Promise<void> {
+  await setNativeBrowserDesignMode(designMode);
+  await setNativeBrowserSketchMode(designMode && sketchMode);
 }
 
 async function performIframeRequest(

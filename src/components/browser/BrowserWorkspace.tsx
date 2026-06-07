@@ -31,7 +31,6 @@ import type { NativeBrowserDesignPrompt, NativeBrowserSelection } from '../../li
 import { BrowserToolbar } from './BrowserToolbar';
 import { DesignModeComposer } from './DesignModeComposer';
 import { composerStyleForReferences } from './browserComposerPosition';
-import { browserTranscriptReferenceFromDesignReference, browserTranscriptReferencesFromDesignReferences } from './browserTranscriptReferences';
 import { safeBrowserUrl } from './browserUrlSafety';
 import { useElementSize } from './useElementSize';
 
@@ -50,6 +49,7 @@ export default function BrowserWorkspace() {
   const openedFallbackSessionRef = useRef<string | null>(null);
   const appOrigin = typeof window === 'undefined' ? undefined : window.location.origin;
   const frameSize = useElementSize(frameRef);
+  const frameReady = frameSize.width > 8 && frameSize.height > 8;
   const fitViewport = useMemo(() => viewportFromFrame(frameSize), [frameSize]);
   const initialUrl = safeBrowserUrl(browser?.url, appOrigin);
   const [urlInput, setUrlInput] = useState(initialUrl);
@@ -157,22 +157,6 @@ export default function BrowserWorkspace() {
 
   const sendPrompt = () => {
     if (!chatId || !canSend) return;
-    const text = instruction.trim();
-    const browserRefs = browserTranscriptReferencesFromDesignReferences(references);
-    dispatch({
-      type: 'MISSION_TRANSCRIPT',
-      event: {
-        id: `local-browser-${Date.now()}`,
-        missionId: chatId,
-        agentSessionId: 'user',
-        role: 'orchestrator',
-        ts: Date.now(),
-        kind: 'text',
-        text,
-        author: 'user',
-        browserRefs,
-      },
-    });
     sendDesignPrompt(chatId, instruction.trim(), selectedIds);
     setInstruction('');
   };
@@ -193,28 +177,13 @@ export default function BrowserWorkspace() {
     const reference = referenceFromNativeSelection(prompt.selection);
     const referenceId = reference.id;
     if (!referenceId) return;
-    const browserRef = browserTranscriptReferenceFromDesignReference(reference);
     setReferences((prev) => {
       if (prev.some((item) => item.id === referenceId)) return prev;
       return [...prev, reference];
     });
     addDesignReference(chatId, reference);
-    dispatch({
-      type: 'MISSION_TRANSCRIPT',
-      event: {
-        id: `local-browser-${Date.now()}`,
-        missionId: chatId,
-        agentSessionId: 'user',
-        role: 'orchestrator',
-        ts: Date.now(),
-        kind: 'text',
-        text,
-        author: 'user',
-        browserRefs: browserRef ? [browserRef] : undefined,
-      },
-    });
     window.setTimeout(() => sendDesignPrompt(chatId, text, [referenceId]), 0);
-  }, [chatId, dispatch]);
+  }, [chatId]);
 
   return (
     <div className="flex h-full min-h-0 min-w-0 flex-col bg-droid-bg">
@@ -252,7 +221,7 @@ export default function BrowserWorkspace() {
       )}
 
       <div ref={frameRef} className="relative flex-1 min-h-0 min-w-0">
-        {chatId ? (
+        {chatId && frameReady ? (
           <NativeBrowserSurface
             url={activeUrl}
             viewport={requestedViewport}
@@ -269,7 +238,7 @@ export default function BrowserWorkspace() {
           />
         ) : (
           <div className="flex h-full items-center justify-center bg-[#070707] px-6 text-sm text-droid-text-muted">
-            Select or create a Droid session.
+            {chatId ? 'Preparing browser pane...' : 'Select or create a Droid session.'}
           </div>
         )}
 

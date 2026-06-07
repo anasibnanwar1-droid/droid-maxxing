@@ -327,7 +327,7 @@ export type ClientCommand =
   | { type: 'mission.compact'; missionId: string; customInstructions?: string }
   | { type: 'mission.subscribeWorker'; missionId: string; workerSessionId: string }
   | { type: 'mission.close'; missionId: string }
-  | { type: 'mission.list'; workspaceCwds?: string[]; limitPerWorkspace?: number }
+  | { type: 'mission.list'; workspaceCwds?: string[]; includePlainChats?: boolean; limitPerWorkspace?: number }
   | { type: 'mission.loadHistory'; missionId: string }
   | { type: 'settings.agent.update'; missionId?: string; agent: ConfigurableAgent; modelId?: string | null; reasoningEffort?: ReasoningEffort }
   | { type: 'mission.setAutonomy'; missionId: string; autonomy: Autonomy }

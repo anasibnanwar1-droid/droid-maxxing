@@ -5,6 +5,7 @@ let sketchMode = false;
 let dragStart = null;
 let promptBox = null;
 let promptInput = null;
+let promptTag = null;
 let promptSelection = null;
 
 const interactiveTags = new Set(['A', 'BUTTON', 'INPUT', 'TEXTAREA', 'SELECT', 'SUMMARY']);
@@ -411,6 +412,7 @@ function stableHash(value) {
 function showPrompt(selection) {
   promptSelection = selection;
   mountPrompt();
+  if (promptTag) promptTag.textContent = displayReferenceId(selection);
   promptInput.value = '';
   positionPrompt(selection.box);
   promptBox.style.display = 'block';
@@ -431,11 +433,11 @@ function mountPrompt() {
       'padding:8px', 'box-sizing:border-box',
     ]);
     const row = element('div', ['display:flex', 'align-items:center', 'gap:8px']);
-    const tag = element('div', [
+    promptTag = element('div', [
       'max-width:120px', 'overflow:hidden', 'text-overflow:ellipsis', 'white-space:nowrap',
       'color:#9ca3af', 'font:11px ui-monospace,SFMono-Regular,Menlo,monospace',
     ]);
-    tag.textContent = 'ref';
+    promptTag.textContent = '@ref';
     promptInput = element('input', [
       'flex:1', 'min-width:0', 'height:32px', 'border:0', 'outline:0', 'background:transparent',
       'color:#f4f4f5', 'font:13px -apple-system,BlinkMacSystemFont,Segoe UI,sans-serif',
@@ -453,7 +455,7 @@ function mountPrompt() {
     ]);
     close.type = 'button';
     close.textContent = 'x';
-    row.append(tag, promptInput, send, close);
+    row.append(promptTag, promptInput, send, close);
     promptBox.append(row);
     promptBox.addEventListener('submit', (event) => {
       event.preventDefault();
@@ -474,6 +476,12 @@ function mountPrompt() {
     }
   }
   if (!promptBox.isConnected) document.documentElement.appendChild(promptBox);
+}
+
+function displayReferenceId(selection) {
+  const id = cleanText(selection && selection.id);
+  if (!id) return '@ref';
+  return id.startsWith('@') ? id : `@${id}`;
 }
 
 function positionPrompt(box) {
