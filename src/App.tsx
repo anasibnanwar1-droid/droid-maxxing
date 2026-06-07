@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useStore } from './hooks/useStore';
 import { AnimatePresence, motion } from 'framer-motion';
-import { Monitor, PanelLeft, PanelRight } from 'lucide-react';
+import { Monitor, PanelLeft } from 'lucide-react';
 import { bridge } from './lib/bridge';
 import { closeBrowser, connect, listFactoryDefaults, listModels, listMissions, listSkills, loadMissionHistory, resumeMission, sendNativeBrowserResult } from './lib/commands';
 import { isEmbedded } from './lib/embed';
@@ -14,10 +14,21 @@ import PromptInput from './components/PromptInput';
 import RightPanel from './components/RightPanel';
 import StatusBar from './components/StatusBar';
 import CommandPalette from './components/CommandPalette';
-import SettingsPanel, { applyTheme } from './components/SettingsPanel';
+import SettingsPanel, { applyTheme, paletteForMode } from './components/SettingsPanel';
 import AskUserModal from './components/AskUserModal';
 import PermissionModal from './components/PermissionModal';
 import BrowserWorkspace from './components/browser/BrowserWorkspace';
+
+function ContextListIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" className={className}>
+      <circle cx="5" cy="8" r="1.6" />
+      <line x1="10" y1="8" x2="19" y2="8" />
+      <circle cx="5" cy="16" r="1.6" />
+      <line x1="10" y1="16" x2="19" y2="16" />
+    </svg>
+  );
+}
 
 const BROWSER_PANE_MIN = 460;
 const BROWSER_PANE_MAX = 1280;
@@ -44,6 +55,14 @@ export default function App() {
   useEffect(() => {
     applyTheme(state.theme);
   }, [state.theme]);
+
+  useEffect(() => {
+    if (state.theme.mode !== 'system') return;
+    const mq = window.matchMedia('(prefers-color-scheme: light)');
+    const onChange = () => dispatch({ type: 'SET_THEME', theme: paletteForMode('system') });
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, [state.theme.mode, dispatch]);
 
   useEffect(() => {
     if (embedded) return;
@@ -124,39 +143,46 @@ export default function App() {
   }, [dispatch, state.rightPanelOpen, toggleBrowserPane]);
 
   return (
-    <div className="h-screen w-screen flex flex-col bg-droid-bg text-droid-text overflow-hidden relative">
-      {/* Sidebar toggle — always at fixed position, clearing traffic lights */}
-      <button
-        onClick={() => dispatch({ type: 'TOGGLE_SIDEBAR' })}
-        className="absolute top-[6px] left-[80px] z-40 p-1 rounded text-droid-text-muted/50 hover:text-droid-text-muted hover:bg-droid-elevated/50 transition-colors pointer-events-auto"
-        title="Toggle sidebar (Cmd+B)"
-      >
-        <PanelLeft className="w-3.5 h-3.5" />
-      </button>
+    <div id="app-root" className="h-screen w-screen flex flex-col bg-droid-bg text-droid-text overflow-hidden relative">
+      {/* Left controls — inside a drag region so their no-drag holes are honored.
+          Offset clear of the native traffic-light hit area (~x88) and centered on
+          the same h-9 line as the lights for symmetry with the right control. */}
+      <div data-electron-drag-region className="absolute top-0 left-[92px] h-9 z-40 flex items-center gap-1.5">
+        <button
+          onClick={() => dispatch({ type: 'TOGGLE_SIDEBAR' })}
+          className="p-1.5 rounded-md text-droid-text-muted/70 hover:text-droid-text hover:bg-droid-elevated/60 transition-colors"
+          title="Toggle sidebar (Cmd+B)"
+        >
+          <PanelLeft className="w-4 h-4" />
+        </button>
+        <button
+          onClick={toggleBrowserPane}
+          className={`p-1.5 rounded-md transition-colors ${
+            state.browserOpen
+              ? 'text-droid-text bg-droid-elevated'
+              : 'text-droid-text-muted/70 hover:text-droid-text hover:bg-droid-elevated/60'
+          }`}
+          title="Toggle browser (Cmd+Shift+B)"
+        >
+          <Monitor className="w-4 h-4" />
+        </button>
+      </div>
 
-      <button
-        onClick={toggleBrowserPane}
-        className={`absolute top-[6px] left-[108px] z-40 p-1 rounded transition-colors pointer-events-auto ${
-          state.browserOpen
-            ? 'text-droid-text bg-droid-elevated/80'
-            : 'text-droid-text-muted/50 hover:text-droid-text-muted hover:bg-droid-elevated/50'
-        }`}
-        title="Toggle browser (Cmd+Shift+B)"
-      >
-        <Monitor className="w-3.5 h-3.5" />
-      </button>
-
-      <button
-        onClick={() => dispatch({ type: 'SET_RIGHT_PANEL', open: !state.rightPanelOpen })}
-        className={`absolute top-[6px] right-[12px] z-40 p-1 rounded transition-colors pointer-events-auto ${
-          state.rightPanelOpen
-            ? 'text-droid-text-muted bg-droid-elevated/50'
-            : 'text-droid-text-muted/50 hover:text-droid-text-muted hover:bg-droid-elevated/50'
-        }`}
-        title="Toggle panel (Cmd+\\)"
-      >
-        <PanelRight className="w-3.5 h-3.5" />
-      </button>
+      {/* Right control — context panel toggle, same drag-region treatment and
+          same h-9 line/sizing as the left controls. */}
+      <div data-electron-drag-region className="absolute top-0 right-0 h-9 z-40 flex items-center pr-3">
+        <button
+          onClick={() => dispatch({ type: 'SET_RIGHT_PANEL', open: !state.rightPanelOpen })}
+          className={`p-1.5 rounded-md transition-colors ${
+            state.rightPanelOpen
+              ? 'text-droid-text bg-droid-elevated'
+              : 'text-droid-text-muted/70 hover:text-droid-text hover:bg-droid-elevated/60'
+          }`}
+          title="Toggle panel (Cmd+\\)"
+        >
+          <ContextListIcon className="w-4 h-4" />
+        </button>
+      </div>
 
       <div className="flex-1 flex min-h-0">
         {/* Sidebar with collapse animation */}
@@ -175,7 +201,7 @@ export default function App() {
           )}
         </AnimatePresence>
 
-        <main className="relative flex-1 min-w-0 flex flex-col min-h-0 overflow-hidden">
+        <main className="relative flex-1 min-w-0 flex flex-col min-h-0 overflow-hidden bg-droid-bg">
           {state.sidebarCollapsed && <div data-electron-drag-region className="h-9 shrink-0" />}
           <div className="flex-1 min-h-0 min-w-0 overflow-hidden flex relative">
             <section className="min-w-0 flex-1 flex flex-col overflow-hidden">
@@ -214,7 +240,20 @@ export default function App() {
           {state.pendingQuestion && <AskUserModal />}
         </main>
 
-        {!focused && !showBrowserPane && state.rightPanelOpen && <RightPanel />}
+        <AnimatePresence initial={false}>
+          {!focused && !showBrowserPane && state.rightPanelOpen && (
+            <motion.div
+              key="right-panel"
+              initial={{ width: 0, opacity: 0 }}
+              animate={{ width: 312, opacity: 1 }}
+              exit={{ width: 0, opacity: 0 }}
+              transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+              className="shrink-0 overflow-hidden h-full"
+            >
+              <RightPanel />
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
 
       <StatusBar />

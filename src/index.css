@@ -15,6 +15,12 @@
     --droid-accent: #ee6018;
     --droid-green: #6a8a6a;
     --droid-orange: #b06a4a;
+    --ui-font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    --ui-font-size: 14px;
+    --ui-zoom: 1;
+    --code-font-size: 12px;
+    --sidebar-bg: var(--droid-surface);
+    --sidebar-blur: none;
   }
 
   html, body, #root {
@@ -25,13 +31,39 @@
   body {
     background-color: var(--droid-bg);
     color: var(--droid-text);
-    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    font-family: var(--ui-font-family);
+    font-size: var(--ui-font-size);
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
   }
 
+  #root {
+    zoom: var(--ui-zoom);
+  }
+
+  /* When the frosted sidebar is enabled, make the window/body transparent so
+     macOS vibrancy (the wallpaper behind the window) shows through the sidebar.
+     The main content area paints its own opaque background, so only the
+     semi-transparent sidebar reveals what's behind the window. */
+  html[data-translucent="true"],
+  html[data-translucent="true"] body,
+  html[data-translucent="true"] #root,
+  html[data-translucent="true"] #app-root {
+    background-color: transparent !important;
+  }
+
+  code, pre, .font-mono {
+    font-size: var(--code-font-size);
+  }
+
   [data-electron-drag-region] {
     -webkit-app-region: drag;
+  }
+
+  /* Floating controls that overlap a drag region must explicitly punch a
+     no-drag hole, otherwise macOS captures their clicks for window dragging. */
+  .no-drag {
+    -webkit-app-region: no-drag;
   }
 
   [data-electron-drag-region] button,
@@ -81,6 +113,20 @@
 @layer components {
   .droid-panel {
     @apply bg-droid-surface border border-droid-border;
+  }
+
+  /* Reusable floating card. Used by the right panel and can be applied to any
+     surface (e.g. the left sidebar) that should read as a rounded, elevated
+     card rather than an edge-to-edge rectangle. */
+  .droid-card {
+    @apply flex flex-col rounded-2xl border border-droid-border bg-droid-surface overflow-hidden;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.35);
+  }
+
+  /* Row inside a card: icon + label with a soft hover highlight. */
+  .droid-row {
+    @apply group w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left transition-colors;
+    @apply text-[13.5px] text-droid-text hover:bg-droid-elevated/50;
   }
 
   .droid-button {

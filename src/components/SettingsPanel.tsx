@@ -17,6 +17,29 @@ const PRESET_THEMES = {
   warm: { bg: '#1a1612', fg: '#d8d0c8', surface: '#221e18', border: '#322a22' },
 };
 
+const SYSTEM_FONT_STACK = '-apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif';
+const UI_FONTS: { id: string; label: string; stack: string }[] = [
+  { id: 'system', label: 'System', stack: SYSTEM_FONT_STACK },
+  { id: 'inter', label: 'Inter', stack: `"Inter", ${SYSTEM_FONT_STACK}` },
+  { id: 'sf', label: 'SF Pro', stack: `"SF Pro Display", "SF Pro Text", ${SYSTEM_FONT_STACK}` },
+  { id: 'geist', label: 'Geist', stack: `"Geist", ${SYSTEM_FONT_STACK}` },
+  { id: 'helvetica', label: 'Helvetica', stack: `"Helvetica Neue", Helvetica, Arial, sans-serif` },
+  { id: 'georgia', label: 'Georgia', stack: `Georgia, "Times New Roman", serif` },
+  { id: 'mono', label: 'Mono', stack: `"JetBrains Mono", "Fira Code", ui-monospace, monospace` },
+];
+
+export function uiFontStack(id: string): string {
+  return UI_FONTS.find((f) => f.id === id)?.stack ?? SYSTEM_FONT_STACK;
+}
+
+// Base palette for a theme mode. `system` follows the OS preference.
+export function paletteForMode(mode: 'dark' | 'light' | 'system') {
+  const resolved = mode === 'system'
+    ? (window.matchMedia?.('(prefers-color-scheme: light)').matches ? 'light' : 'dark')
+    : mode;
+  return resolved === 'light' ? PRESET_THEMES.light : PRESET_THEMES.dark;
+}
+
 type NavItem = { label: string };
 const NAV: { group: string; items: NavItem[] }[] = [
   {
@@ -122,9 +145,9 @@ function Toggle({ label, sub, checked, onChange }: { label: string; sub?: string
       </div>
       <button
         onClick={() => onChange(!checked)}
-        className={`w-9 h-5 rounded-full transition-colors relative shrink-0 ${checked ? 'bg-droid-accent' : 'bg-droid-border'}`}
+        className={`w-10 h-6 rounded-full transition-colors shrink-0 flex items-center p-0.5 ${checked ? 'bg-droid-accent' : 'bg-droid-border'}`}
       >
-        <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${checked ? 'translate-x-4' : 'translate-x-0.5'}`} />
+        <span className={`w-5 h-5 rounded-full bg-white shadow-sm transition-transform ${checked ? 'translate-x-4' : 'translate-x-0'}`} />
       </button>
     </div>
   );
@@ -208,9 +231,9 @@ function AppearanceSection() {
             <div className="text-[11px] text-droid-text-muted">Use light, dark, or match your system</div>
           </div>
           <div className="flex gap-1">
-            <ModeButton active={theme.mode === 'light'} onClick={() => updateTheme({ mode: 'light' })} icon={Sun} label="Light" />
-            <ModeButton active={theme.mode === 'dark'} onClick={() => updateTheme({ mode: 'dark' })} icon={Moon} label="Dark" />
-            <ModeButton active={theme.mode === 'system'} onClick={() => updateTheme({ mode: 'system' })} icon={Monitor} label="System" />
+            <ModeButton active={theme.mode === 'light'} onClick={() => updateTheme({ mode: 'light', ...paletteForMode('light') })} icon={Sun} label="Light" />
+            <ModeButton active={theme.mode === 'dark'} onClick={() => updateTheme({ mode: 'dark', ...paletteForMode('dark') })} icon={Moon} label="Dark" />
+            <ModeButton active={theme.mode === 'system'} onClick={() => updateTheme({ mode: 'system', ...paletteForMode('system') })} icon={Monitor} label="System" />
           </div>
         </div>
         <DiffPreview diffStyle={theme.diffStyle} />
@@ -234,11 +257,11 @@ function AppearanceSection() {
       {/* Colors */}
       <GroupLabel>Colors</GroupLabel>
       <div className="space-y-2.5 mb-3">
-        <ColorField label="Accent" value={theme.accent} onChange={(v) => updateTheme({ accent: v })} />
-        <ColorField label="Background" value={theme.bg} onChange={(v) => updateTheme({ bg: v })} />
-        <ColorField label="Foreground" value={theme.fg} onChange={(v) => updateTheme({ fg: v })} />
-        <ColorField label="Surface" value={theme.surface} onChange={(v) => updateTheme({ surface: v })} />
-        <ColorField label="Border" value={theme.border} onChange={(v) => updateTheme({ border: v })} />
+        <ColorField label="Accent" description="Highlights, active states, send button & design-mode controls" value={theme.accent} onChange={(v) => updateTheme({ accent: v })} />
+        <ColorField label="App background" description="The main window behind everything" value={theme.bg} onChange={(v) => updateTheme({ bg: v })} />
+        <ColorField label="Text color" description="Default color for all text" value={theme.fg} onChange={(v) => updateTheme({ fg: v })} />
+        <ColorField label="Panel background" description="Sidebar, cards and raised surfaces" value={theme.surface} onChange={(v) => updateTheme({ surface: v })} />
+        <ColorField label="Borders" description="Dividers and outlines between sections" value={theme.border} onChange={(v) => updateTheme({ border: v })} />
       </div>
       <div className="flex flex-wrap gap-1.5 mb-6">
         {PRESET_ACCENTS.map((c) => (
@@ -249,6 +272,22 @@ function AppearanceSection() {
       {/* Typography + behavior */}
       <GroupLabel>Typography & behavior</GroupLabel>
       <div>
+        <div className="flex items-center justify-between py-2.5 border-b border-droid-border/60">
+          <div>
+            <div className="text-[13px] text-droid-text">UI font</div>
+            <div className="text-[11px] text-droid-text-muted">Typeface for the whole app (defaults to your OS font)</div>
+          </div>
+          <select
+            value={theme.uiFont}
+            onChange={(e) => updateTheme({ uiFont: e.target.value })}
+            className="bg-droid-elevated border border-droid-border rounded-md px-2 py-1 text-[12px] text-droid-text focus:outline-none focus:border-droid-border-hover cursor-pointer"
+            style={{ fontFamily: uiFontStack(theme.uiFont) }}
+          >
+            {UI_FONTS.map((f) => (
+              <option key={f.id} value={f.id}>{f.label}</option>
+            ))}
+          </select>
+        </div>
         <Slider label="UI font size" sub="Base size used for the Mission Control UI" value={theme.uiFontSize} min={12} max={18} onChange={(v) => updateTheme({ uiFontSize: v })} suffix="px" />
         <Slider label="Code font size" sub="Base size for code across chats and diffs" value={theme.codeFontSize} min={10} max={16} onChange={(v) => updateTheme({ codeFontSize: v })} suffix="px" />
         <Slider label="Contrast" sub="Adjust overall UI contrast" value={theme.contrast} min={40} max={100} onChange={(v) => updateTheme({ contrast: v })} />
@@ -459,13 +498,25 @@ export function applyTheme(theme: ReturnType<typeof useStore>['state']['theme'])
   root.style.setProperty('--droid-green', adjustColor(theme.accent, -10));
   root.style.setProperty('--droid-orange', adjustColor(theme.accent, 10));
 
+  root.style.setProperty('--ui-font-family', uiFontStack(theme.uiFont));
   root.style.setProperty('--ui-font-size', `${theme.uiFontSize}px`);
+  // The UI is built with fixed px text sizes, so scale the whole app relative
+  // to the 14px baseline to make the size slider take visible effect.
+  root.style.setProperty('--ui-zoom', `${theme.uiFontSize / 14}`);
   root.style.setProperty('--code-font-size', `${theme.codeFontSize}px`);
-  root.style.setProperty('--droid-contrast', `${theme.contrast}%`);
 
-  if (theme.translucentSidebar) {
-    root.style.setProperty('--droid-surface', `${theme.surface}e6`);
-  }
+  // Dedicated sidebar surface so translucency only affects the sidebar. When
+  // enabled, the window becomes transparent (see index.css + Electron vibrancy)
+  // and the sidebar uses a semi-transparent fill so the wallpaper behind the
+  // window shows through a little — frosted, not fully clear.
+  root.setAttribute('data-translucent', theme.translucentSidebar ? 'true' : 'false');
+  root.style.setProperty('--sidebar-bg', theme.translucentSidebar ? `${theme.surface}99` : theme.surface);
+  root.style.setProperty('--sidebar-blur', theme.translucentSidebar ? 'blur(6px) saturate(150%)' : 'none');
+
+  // Apply contrast as a filter only below 100% so it never creates a stacking
+  // context that would defeat the sidebar's backdrop blur at the default value.
+  const rootEl = document.getElementById('root');
+  if (rootEl) rootEl.style.filter = theme.contrast >= 100 ? '' : `contrast(${theme.contrast}%)`;
 }
 
 /* ── tiny color utils ── */

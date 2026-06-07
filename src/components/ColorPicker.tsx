@@ -173,7 +173,7 @@ function ColorPopover({ anchor, onClose, children }: { anchor: HTMLElement | nul
 }
 
 /* ── full settings row: swatch + hex + picker popover ── */
-export function ColorField({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) {
+export function ColorField({ label, description, value, onChange }: { label: string; description?: string; value: string; onChange: (v: string) => void }) {
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState(value);
   const swatchRef = useRef<HTMLButtonElement>(null);
@@ -188,7 +188,10 @@ export function ColorField({ label, value, onChange }: { label: string; value: s
 
   return (
     <div className="flex items-center justify-between gap-2">
-      <span className="text-[11px] text-droid-text-secondary">{label}</span>
+      <div className="min-w-0">
+        <div className="text-[12px] text-droid-text">{label}</div>
+        {description && <div className="text-[10.5px] text-droid-text-muted">{description}</div>}
+      </div>
       <div className="flex items-center gap-1.5">
         <button
           ref={swatchRef}

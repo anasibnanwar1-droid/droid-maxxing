@@ -82,9 +82,9 @@ function SessionRow({
     <div>
       <button
         onClick={onClick}
-        className={`group w-full flex items-center gap-2.5 pl-3 pr-2 py-1.5 rounded-lg text-left transition-colors ${
+        className={`group w-full flex items-center gap-2.5 pl-3 pr-2 py-1.5 rounded-xl text-left transition-colors ${
           onMain
-            ? 'bg-droid-elevated shadow-[inset_2px_0_0_var(--droid-accent)]'
+            ? 'bg-droid-elevated'
             : 'hover:bg-droid-elevated/40'
         }`}
       >
@@ -184,7 +184,10 @@ export default function Sidebar() {
   );
 
   return (
-    <aside className="w-[280px] h-full flex flex-col bg-droid-surface border-r border-droid-border shrink-0">
+    <aside
+      className="w-[280px] h-full flex flex-col border-r border-droid-border shrink-0"
+      style={{ background: 'var(--sidebar-bg)', backdropFilter: 'var(--sidebar-blur)', WebkitBackdropFilter: 'var(--sidebar-blur)' }}
+    >
       {/* Draggable top strip (clears macOS traffic lights) */}
       <div data-electron-drag-region className="h-9 shrink-0" />
 
@@ -312,7 +315,7 @@ export default function Sidebar() {
             <User className="w-4 h-4" />
           </span>
           <span className="min-w-0 flex-1">
-            <span className="block text-[12px] text-droid-text leading-tight truncate">Anas</span>
+            <span className="block text-[12.5px] font-semibold text-droid-text leading-tight truncate">Anas</span>
             <span className="block text-[10.5px] text-droid-text-muted leading-tight truncate">Max Plan</span>
           </span>
           <Settings className="w-4 h-4 text-droid-text-muted shrink-0" />
