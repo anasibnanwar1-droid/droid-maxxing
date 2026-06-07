@@ -1,9 +1,10 @@
 import { useStore } from '../hooks/useStore';
 import { updateSessionSettings } from '../lib/commands';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ChevronLeft, Search, Sun, Moon, Monitor, Check } from 'lucide-react';
+import { ChevronLeft, Search, Sun, Moon, Monitor, Check, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { ColorField } from './ColorPicker';
+import { ModelIcon, providerOf } from './ModelIcon';
 
 const PRESET_ACCENTS = [
   '#ee6018', '#ef6f2e', '#d15010', '#e8a838', '#4a9e7a',
@@ -304,20 +305,104 @@ function AppearanceSection() {
   );
 }
 
+/* ── compaction token limit helpers ── */
+// Parse a user-typed limit ("200k", "1.5M", "200000") into a raw token count.
+// Returns undefined for empty/invalid input — meaning "use the model window".
+function parseTokenLimit(input: string): number | undefined {
+  const trimmed = input.trim().toLowerCase().replace(/,/g, '');
+  if (!trimmed) return undefined;
+  const m = trimmed.match(/^(\d+(?:\.\d+)?)\s*([km])?$/);
+  if (!m) return undefined;
+  const base = Number(m[1]);
+  if (!Number.isFinite(base) || base <= 0) return undefined;
+  const mult = m[2] === 'm' ? 1_000_000 : m[2] === 'k' ? 1_000 : 1;
+  const value = Math.floor(base * mult);
+  return value > 0 ? value : undefined;
+}
+
+// Format a raw token count for display: 200000 → "200K", 1500000 → "1.5M".
+function formatTokenLimit(n: number): string {
+  if (n >= 1_000_000) return `${Number((n / 1_000_000).toFixed(2))}M`;
+  if (n >= 1_000) return `${Number((n / 1_000).toFixed(2))}K`;
+  return String(n);
+}
+
+function TokenLimitInput({
+  value,
+  onCommit,
+  placeholder = 'Default',
+  width = 'w-28',
+}: {
+  value?: number;
+  onCommit: (n?: number) => void;
+  placeholder?: string;
+  width?: string;
+}) {
+  const [text, setText] = useState(value !== undefined ? formatTokenLimit(value) : '');
+
+  useEffect(() => {
+    setText(value !== undefined ? formatTokenLimit(value) : '');
+  }, [value]);
+
+  const commit = () => {
+    const parsed = parseTokenLimit(text);
+    onCommit(parsed);
+    setText(parsed !== undefined ? formatTokenLimit(parsed) : '');
+  };
+
+  return (
+    <input
+      value={text}
+      onChange={(e) => setText(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          (e.target as HTMLInputElement).blur();
+        }
+      }}
+      placeholder={placeholder}
+      className={`${width} bg-droid-bg/60 border border-droid-border rounded-md px-2.5 py-1 text-[12px] font-mono text-droid-text placeholder:text-droid-text-muted text-right focus:outline-none focus:border-droid-border-hover`}
+    />
+  );
+}
+
 /* ── general content ── */
 function GeneralSection() {
   const { state, dispatch } = useStore();
   const selected = state.compactionModel || 'current-model';
   const [query, setQuery] = useState('');
+  const [addModelId, setAddModelId] = useState('');
+
+  // Push a compaction settings patch to every loaded session so behavior stays
+  // consistent across open chats and missions.
+  const applyToLiveSessions = (patch: {
+    compactionModel?: string | null;
+    compactionTokenLimit?: number | null;
+    compactionTokenLimitPerModel?: Record<string, number>;
+  }) => {
+    for (const id of state.missionOrder) {
+      const m = state.missions[id];
+      if (m?.sessionId) updateSessionSettings({ sessionId: m.sessionId, ...patch });
+    }
+  };
 
   const setCompaction = (value: string) => {
     dispatch({ type: 'SET_COMPACTION_MODEL_GLOBAL', compactionModel: value });
-    // Apply to every loaded session so compaction behavior is consistent.
-    const perSession = value === 'current-model' ? null : value;
-    for (const id of state.missionOrder) {
-      const m = state.missions[id];
-      if (m?.sessionId) updateSessionSettings({ sessionId: m.sessionId, compactionModel: perSession });
-    }
+    applyToLiveSessions({ compactionModel: value === 'current-model' ? null : value });
+  };
+
+  const setGlobalLimit = (limit?: number) => {
+    dispatch({ type: 'SET_COMPACTION_TOKEN_LIMIT_GLOBAL', limit });
+    applyToLiveSessions({ compactionTokenLimit: limit ?? null });
+  };
+
+  const setModelLimit = (modelId: string, limit?: number) => {
+    dispatch({ type: 'SET_COMPACTION_TOKEN_LIMIT_FOR_MODEL', modelId, limit });
+    const next = { ...state.compactionTokenLimitPerModel };
+    if (limit === undefined) delete next[modelId];
+    else next[modelId] = limit;
+    applyToLiveSessions({ compactionTokenLimitPerModel: next });
   };
 
   const q = query.trim().toLowerCase();
@@ -325,17 +410,22 @@ function GeneralSection() {
     ? state.models.filter((m) => m.displayName.toLowerCase().includes(q) || m.id.toLowerCase().includes(q))
     : state.models;
 
+  const overrideEntries = Object.entries(state.compactionTokenLimitPerModel);
+  const availableForOverride = state.models.filter((m) => !(m.id in state.compactionTokenLimitPerModel));
+  const modelLabel = (id: string) => state.models.find((m) => m.id === id)?.displayName ?? id;
+
   const Row = ({ id, label, sub }: { id: string; label: string; sub?: string }) => {
     const active = selected === id;
     return (
       <button
         onClick={() => setCompaction(id)}
-        className={`flex items-center justify-between w-full px-3 py-2.5 rounded-lg border transition-colors text-left ${
+        className={`flex items-center gap-2.5 w-full px-3 py-2.5 rounded-lg border transition-colors text-left ${
           active ? 'border-transparent bg-droid-elevated' : 'border-droid-border hover:bg-droid-elevated/50'
         }`}
         style={active ? { boxShadow: 'inset 0 0 0 1px var(--droid-accent)' } : undefined}
       >
-        <div className="min-w-0">
+        {id !== 'current-model' && <ModelIcon provider={providerOf(state.models.find((m) => m.id === id), id)} size={16} />}
+        <div className="min-w-0 flex-1">
           <div className="text-[13px] text-droid-text truncate">{label}</div>
           {sub && <div className="text-[11px] text-droid-text-muted truncate">{sub}</div>}
         </div>
@@ -350,10 +440,10 @@ function GeneralSection() {
 
       <GroupLabel>Compaction model</GroupLabel>
       <p className="text-[12px] text-droid-text-muted mb-3">
-        Choose which model summarizes a conversation when it is compacted. This applies to every session.
+        Choose which model summarizes a conversation when it is compacted.
       </p>
 
-      <div className="rounded-xl border border-droid-border bg-droid-surface p-3">
+      <div className="rounded-xl border border-droid-border bg-droid-surface p-3 mb-8">
         <Row id="current-model" label="Current model" sub="Compact with whatever model the session is using" />
 
         <div className="flex items-center gap-2 px-2.5 my-2 h-8 rounded-md bg-droid-bg/60 border border-droid-border">
@@ -372,6 +462,72 @@ function GeneralSection() {
           ))}
           {models.length === 0 && (
             <div className="px-3 py-4 text-center text-[12px] text-droid-text-muted">No models match.</div>
+          )}
+        </div>
+      </div>
+
+      <GroupLabel>Compaction token limit</GroupLabel>
+      <p className="text-[12px] text-droid-text-muted mb-3">
+        Compact a conversation once it grows past this many tokens. Leave empty to use each model&apos;s
+        full context window. Accepts values like <span className="font-mono">200K</span> or <span className="font-mono">1.5M</span>.
+      </p>
+
+      <div className="rounded-xl border border-droid-border bg-droid-surface p-3">
+        {/* Global default */}
+        <div className="flex items-center justify-between gap-3 px-1 py-1.5">
+          <div className="min-w-0">
+            <div className="text-[13px] text-droid-text">Default limit</div>
+            <div className="text-[11px] text-droid-text-muted">Applies to every model without an override</div>
+          </div>
+          <TokenLimitInput value={state.compactionTokenLimit} onCommit={setGlobalLimit} placeholder="Model window" width="w-32" />
+        </div>
+
+        <div className="h-px bg-droid-border/60 my-2" />
+
+        {/* Per-model overrides */}
+        <div className="px-1">
+          <div className="text-[11px] font-medium text-droid-text-muted mb-2">Per-model overrides</div>
+
+          {overrideEntries.length === 0 && (
+            <div className="text-[12px] text-droid-text-muted py-1.5">No overrides — every model uses the default limit.</div>
+          )}
+
+          <div className="space-y-1.5">
+            {overrideEntries.map(([id, limit]) => (
+              <div key={id} className="flex items-center gap-2.5 rounded-lg border border-droid-border bg-droid-bg/40 px-2.5 py-2">
+                <ModelIcon provider={providerOf(state.models.find((m) => m.id === id), id)} size={16} />
+                <span className="text-[12px] text-droid-text truncate flex-1">{modelLabel(id)}</span>
+                <TokenLimitInput value={limit} onCommit={(n) => setModelLimit(id, n)} />
+                <button
+                  onClick={() => setModelLimit(id, undefined)}
+                  className="p-1 rounded-md text-droid-text-muted hover:text-droid-text hover:bg-droid-elevated transition-colors shrink-0"
+                  title="Remove override"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            ))}
+          </div>
+
+          {/* Add override */}
+          {availableForOverride.length > 0 && (
+            <div className="flex items-center gap-2 mt-2.5">
+              <select
+                value={addModelId}
+                onChange={(e) => {
+                  const id = e.target.value;
+                  if (!id) return;
+                  setModelLimit(id, state.compactionTokenLimit ?? 200_000);
+                  setAddModelId('');
+                }}
+                className="flex-1 bg-droid-bg/60 border border-droid-border rounded-md px-2 py-1.5 text-[12px] text-droid-text focus:outline-none focus:border-droid-border-hover cursor-pointer"
+              >
+                <option value="">Add a model override…</option>
+                {availableForOverride.map((m) => (
+                  <option key={m.id} value={m.id}>{m.displayName}</option>
+                ))}
+              </select>
+            </div>
           )}
         </div>
       </div>

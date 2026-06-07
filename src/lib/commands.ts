@@ -12,6 +12,8 @@ export const createMission = (p: {
   modelId?: string;
   reasoningEffort?: ReasoningEffort;
   compactionModel?: string;
+  compactionTokenLimit?: number | null;
+  compactionTokenLimitPerModel?: Record<string, number>;
   autonomy: Autonomy;
   workerModel?: string;
   workerReasoning?: ReasoningEffort;
@@ -26,6 +28,8 @@ export const updateSessionSettings = (p: {
   modelId?: string | null;
   reasoningEffort?: ReasoningEffort;
   compactionModel?: string | null;
+  compactionTokenLimit?: number | null;
+  compactionTokenLimitPerModel?: Record<string, number>;
   autonomy?: Autonomy;
 }) => bridge.send({ type: 'session.updateSettings', ...p });
 
