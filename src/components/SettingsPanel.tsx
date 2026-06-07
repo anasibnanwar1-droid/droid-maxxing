@@ -234,11 +234,11 @@ function AppearanceSection() {
       {/* Colors */}
       <GroupLabel>Colors</GroupLabel>
       <div className="space-y-2.5 mb-3">
-        <ColorField label="Accent" value={theme.accent} onChange={(v) => updateTheme({ accent: v })} />
-        <ColorField label="Background" value={theme.bg} onChange={(v) => updateTheme({ bg: v })} />
-        <ColorField label="Foreground" value={theme.fg} onChange={(v) => updateTheme({ fg: v })} />
-        <ColorField label="Surface" value={theme.surface} onChange={(v) => updateTheme({ surface: v })} />
-        <ColorField label="Border" value={theme.border} onChange={(v) => updateTheme({ border: v })} />
+        <ColorField label="Accent" description="Highlights, active states, send button & design-mode controls" value={theme.accent} onChange={(v) => updateTheme({ accent: v })} />
+        <ColorField label="App background" description="The main window behind everything" value={theme.bg} onChange={(v) => updateTheme({ bg: v })} />
+        <ColorField label="Text color" description="Default color for all text" value={theme.fg} onChange={(v) => updateTheme({ fg: v })} />
+        <ColorField label="Panel background" description="Sidebar, cards and raised surfaces" value={theme.surface} onChange={(v) => updateTheme({ surface: v })} />
+        <ColorField label="Borders" description="Dividers and outlines between sections" value={theme.border} onChange={(v) => updateTheme({ border: v })} />
       </div>
       <div className="flex flex-wrap gap-1.5 mb-6">
         {PRESET_ACCENTS.map((c) => (

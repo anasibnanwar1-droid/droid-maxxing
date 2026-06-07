@@ -157,15 +157,19 @@ export class BrowserSessionManager {
 
   async designPrompt(input: { missionId: string; instruction: string; referenceIds: string[] }): Promise<{ path: string; prompt: string }> {
     const session = this.requireSession(input.missionId);
-    const references = input.referenceIds.map((id) => session.references.get(id)).filter((ref): ref is DesignReference => Boolean(ref));
+    const instruction = input.instruction.trim();
+    if (!instruction) throw new Error('Browser prompt cannot be empty.');
+    const references = input.referenceIds
+      .map((id) => session.references.get(id))
+      .filter((ref): ref is DesignReference => Boolean(ref));
     if (references.length === 0) throw new Error('Select or sketch at least one browser reference before sending a Design Mode prompt.');
     const { path } = await (this.options.writePack ?? writeDesignPromptPack)({
       missionId: input.missionId,
       browserSessionId: session.id,
-      instruction: input.instruction,
+      instruction,
       references,
     });
-    return { path, prompt: formatDesignPrompt(path, input.instruction, references) };
+    return { path, prompt: formatDesignPrompt(path, instruction, references) };
   }
 
   state(missionId: string): BrowserState | undefined {

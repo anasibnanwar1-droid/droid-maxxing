@@ -82,9 +82,9 @@ function SessionRow({
     <div>
       <button
         onClick={onClick}
-        className={`group w-full flex items-center gap-2.5 pl-3 pr-2 py-1.5 rounded-lg text-left transition-colors ${
+        className={`group w-full flex items-center gap-2.5 pl-3 pr-2 py-1.5 rounded-xl text-left transition-colors ${
           onMain
-            ? 'bg-droid-elevated shadow-[inset_2px_0_0_var(--droid-accent)]'
+            ? 'bg-droid-elevated'
             : 'hover:bg-droid-elevated/40'
         }`}
       >
