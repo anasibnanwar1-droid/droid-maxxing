@@ -505,12 +505,13 @@ export function applyTheme(theme: ReturnType<typeof useStore>['state']['theme'])
   root.style.setProperty('--ui-zoom', `${theme.uiFontSize / 14}`);
   root.style.setProperty('--code-font-size', `${theme.codeFontSize}px`);
 
-  // Dedicated sidebar surface so translucency only affects the sidebar. The app
-  // window is opaque, so a dark alpha over it is invisible; instead we lighten
-  // the surface and add a semi-transparent frosted fill + blur so the toggle
-  // produces a clearly visible glassy effect.
-  root.style.setProperty('--sidebar-bg', theme.translucentSidebar ? `${adjustColor(theme.surface, 20)}cc` : theme.surface);
-  root.style.setProperty('--sidebar-blur', theme.translucentSidebar ? 'blur(24px) saturate(180%)' : 'none');
+  // Dedicated sidebar surface so translucency only affects the sidebar. When
+  // enabled, the window becomes transparent (see index.css + Electron vibrancy)
+  // and the sidebar uses a semi-transparent fill so the wallpaper behind the
+  // window shows through a little — frosted, not fully clear.
+  root.setAttribute('data-translucent', theme.translucentSidebar ? 'true' : 'false');
+  root.style.setProperty('--sidebar-bg', theme.translucentSidebar ? `${theme.surface}99` : theme.surface);
+  root.style.setProperty('--sidebar-blur', theme.translucentSidebar ? 'blur(6px) saturate(150%)' : 'none');
 
   // Apply contrast as a filter only below 100% so it never creates a stacking
   // context that would defeat the sidebar's backdrop blur at the default value.

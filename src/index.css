@@ -41,6 +41,17 @@
     zoom: var(--ui-zoom);
   }
 
+  /* When the frosted sidebar is enabled, make the window/body transparent so
+     macOS vibrancy (the wallpaper behind the window) shows through the sidebar.
+     The main content area paints its own opaque background, so only the
+     semi-transparent sidebar reveals what's behind the window. */
+  html[data-translucent="true"],
+  html[data-translucent="true"] body,
+  html[data-translucent="true"] #root,
+  html[data-translucent="true"] #app-root {
+    background-color: transparent !important;
+  }
+
   code, pre, .font-mono {
     font-size: var(--code-font-size);
   }

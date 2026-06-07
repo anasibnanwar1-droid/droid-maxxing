@@ -132,7 +132,7 @@ export default function App() {
   }, [dispatch, state.rightPanelOpen, toggleBrowserPane]);
 
   return (
-    <div className="h-screen w-screen flex flex-col bg-droid-bg text-droid-text overflow-hidden relative">
+    <div id="app-root" className="h-screen w-screen flex flex-col bg-droid-bg text-droid-text overflow-hidden relative">
       {/* Sidebar toggle — always at fixed position, clearing traffic lights */}
       <button
         onClick={() => dispatch({ type: 'TOGGLE_SIDEBAR' })}
@@ -183,7 +183,7 @@ export default function App() {
           )}
         </AnimatePresence>
 
-        <main className="relative flex-1 min-w-0 flex flex-col min-h-0 overflow-hidden">
+        <main className="relative flex-1 min-w-0 flex flex-col min-h-0 overflow-hidden bg-droid-bg">
           {state.sidebarCollapsed && <div data-electron-drag-region className="h-9 shrink-0" />}
           <div className="flex-1 min-h-0 min-w-0 overflow-hidden flex relative">
             <section className="min-w-0 flex-1 flex flex-col overflow-hidden">

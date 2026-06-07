@@ -44,7 +44,9 @@ function createMainWindow() {
     minHeight: 600,
     title: APP_NAME,
     icon: path.join(__dirname, 'assets', process.platform === 'darwin' ? 'icon.icns' : 'icon.png'),
-    backgroundColor: '#0a0a0a',
+    backgroundColor: process.platform === 'darwin' ? '#00000000' : '#0a0a0a',
+    vibrancy: process.platform === 'darwin' ? 'under-window' : undefined,
+    visualEffectState: 'active',
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     trafficLightPosition: { x: 14, y: 12 },
     webPreferences: {
