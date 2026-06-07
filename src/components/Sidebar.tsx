@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
 import { useStore } from '../hooks/useStore';
 import { pickDirectory } from '../lib/desktop';
-import { Folder, MessageSquare, FolderPlus, Plus, User, Settings, ChevronRight, CornerDownRight } from 'lucide-react';
+import { Folder, MessageSquare, FolderPlus, Plus, User, ChevronDown, ChevronRight, CornerDownRight } from 'lucide-react';
 import { subscribeWorker } from '../lib/commands';
 import type { MissionSummary } from '../types/bridge';
 import type { WorkerInfo } from '../hooks/useStore';
@@ -314,11 +314,11 @@ export default function Sidebar() {
           <span className="w-7 h-7 rounded-full flex items-center justify-center shrink-0 bg-droid-accent/15 text-droid-accent">
             <User className="w-4 h-4" />
           </span>
-          <span className="min-w-0 flex-1">
-            <span className="block text-[12px] text-droid-text leading-tight truncate">Anas</span>
-            <span className="block text-[10.5px] text-droid-text-muted leading-tight truncate">Max Plan</span>
+          <span className="min-w-0 flex-1 truncate text-[12.5px] leading-tight">
+            <span className="font-semibold text-droid-text">Anas</span>
+            <span className="text-droid-text-muted"> · Max Plan</span>
           </span>
-          <Settings className="w-4 h-4 text-droid-text-muted shrink-0" />
+          <ChevronDown className="w-4 h-4 text-droid-text-muted shrink-0" />
         </button>
       </div>
     </aside>
