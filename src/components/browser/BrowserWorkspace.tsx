@@ -32,7 +32,7 @@ import { BrowserToolbar } from './BrowserToolbar';
 import { DesignModeComposer } from './DesignModeComposer';
 import { composerStyleForReferences } from './browserComposerPosition';
 import { browserKeyForMission } from '../../lib/browserSessionIdentity';
-import { safeBrowserUrl } from './browserUrlSafety';
+import { isSelfBrowserUrl, safeBrowserUrl } from './browserUrlSafety';
 import { useElementSize } from './useElementSize';
 
 export default function BrowserWorkspace() {
@@ -124,7 +124,17 @@ export default function BrowserWorkspace() {
   ]);
 
   const openCurrentUrl = () => {
-    const url = safeBrowserUrl(normalizeUrl(urlInput), appOrigin);
+    const normalizedUrl = normalizeUrl(urlInput);
+    if (browserKey && isSelfBrowserUrl(normalizedUrl, appOrigin)) {
+      setUrlInput(normalizedUrl);
+      dispatch({
+        type: 'BROWSER_ERROR',
+        missionId: browserKey,
+        message: 'Cannot open the Droid Control shell inside its own browser pane. Use a different local app port.',
+      });
+      return;
+    }
+    const url = safeBrowserUrl(normalizedUrl, appOrigin);
     setUrlInput(url);
     setActiveUrl(url);
     if (browserKey) {

@@ -625,7 +625,9 @@ function isBrowserViewUsable(view) {
 
 function normalizeNativeBrowserUrl(entry, url) {
   const value = String(url || 'about:blank');
-  if (isHostAppUrl(value)) return 'about:blank';
+  if (isHostAppUrl(value)) {
+    throw new Error('Cannot open the Droid Control shell inside its own browser pane. Use a different local app port.');
+  }
   if (!isChromeErrorUrl(value)) return value;
   return entry?.targetUrl && !isChromeErrorUrl(entry.targetUrl) ? entry.targetUrl : 'about:blank';
 }

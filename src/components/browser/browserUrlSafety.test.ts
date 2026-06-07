@@ -11,6 +11,10 @@ test('safeBrowserUrl keeps the host app out of the browser pane', () => {
     safeBrowserUrl('127.0.0.1:3000', 'http://127.0.0.1:1427'),
     'http://127.0.0.1:3000',
   );
+  assert.equal(
+    safeBrowserUrl('localhost:3000', 'http://127.0.0.1:1427'),
+    'http://localhost:3000',
+  );
 });
 
 test('isSelfBrowserUrl compares origins instead of exact paths', () => {
