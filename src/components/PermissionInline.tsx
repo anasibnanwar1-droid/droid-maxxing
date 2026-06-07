@@ -1,5 +1,4 @@
 import { motion, AnimatePresence } from 'framer-motion';
-import { Check, X } from 'lucide-react';
 import { useStore } from '../hooks/useStore';
 import { respondPermission } from '../lib/commands';
 import type { PermissionOutcome, PermissionKind } from '../types/bridge';
@@ -33,10 +32,14 @@ export default function PermissionInline() {
   if (!req || req.kind === 'spec') return null;
 
   const detail = cleanDetail(req.detail);
-  // Prefer a meaningful backend title; fall back to a plain-language prompt so
-  // the user always knows what the permission is for.
-  const heading =
-    req.title && req.title !== 'Permission required' ? req.title : KIND_PROMPT[req.kind];
+  // Always lead with a plain-language reason so the user knows *why* Droid is
+  // asking. A meaningful backend title (e.g. "MCP tool: search") is shown as a
+  // secondary label when it adds information beyond the generic reason.
+  const reason = KIND_PROMPT[req.kind];
+  const subtitle =
+    req.title && req.title !== 'Permission required' && req.title !== reason
+      ? req.title
+      : '';
 
   const respond = (outcome: PermissionOutcome) => {
     respondPermission(req.missionId, req.requestId, outcome);
@@ -54,8 +57,13 @@ export default function PermissionInline() {
         className="mb-2.5 overflow-hidden rounded-2xl border bg-droid-elevated"
         style={{ borderColor: 'color-mix(in srgb, var(--droid-accent) 35%, var(--droid-border))' }}
       >
-        <div className="flex items-center gap-2 px-3.5 pt-3 pb-2">
-          <span className="min-w-0 flex-1 truncate text-[12.5px] font-medium text-droid-text">{heading}</span>
+        <div className="flex items-start gap-2 px-3.5 pt-3 pb-2">
+          <div className="min-w-0 flex-1">
+            <div className="text-[12.5px] font-medium leading-snug text-droid-text [overflow-wrap:anywhere]">{reason}</div>
+            {subtitle && (
+              <div className="mt-0.5 truncate text-[11px] text-droid-text-muted">{subtitle}</div>
+            )}
+          </div>
           <span className="shrink-0 text-[10px] uppercase tracking-wide text-droid-text-muted/70">Permission</span>
         </div>
 
@@ -67,12 +75,11 @@ export default function PermissionInline() {
           </div>
         )}
 
-        <div className="flex items-center justify-end gap-1.5 border-t border-droid-border/50 px-3 py-2">
+        <div className="flex flex-wrap items-center justify-end gap-1.5 border-t border-droid-border/50 px-3 py-2">
           <button
             onClick={() => respond('cancel')}
-            className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[12px] text-droid-text-secondary transition-colors hover:bg-droid-surface/70"
+            className="rounded-lg px-2.5 py-1.5 text-[12px] text-droid-text-secondary transition-colors hover:bg-droid-surface/70"
           >
-            <X className="h-3.5 w-3.5" />
             Deny
           </button>
           <button
@@ -83,10 +90,9 @@ export default function PermissionInline() {
           </button>
           <button
             onClick={() => respond('proceed_once')}
-            className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[12px] font-medium text-droid-bg transition-opacity hover:opacity-90"
+            className="rounded-lg px-3 py-1.5 text-[12px] font-medium text-droid-bg transition-opacity hover:opacity-90"
             style={{ background: ACCENT }}
           >
-            <Check className="h-3.5 w-3.5" />
             Allow once
           </button>
         </div>

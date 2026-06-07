@@ -788,11 +788,24 @@ export default function MissionControl() {
           <PromptInput />
         </section>
 
-        {/* ─── Context panel ─── */}
-        <aside className="w-[272px] shrink-0 flex flex-col border-l border-droid-border bg-droid-surface/20">
-          <PanelHeader title="Context" onExpand={() => setExpanded('context')} />
-          <ContextColumn mission={mission} roleAgents={roleAgents} progress={progress} viewedAgent={viewedAgent} activeAgentId={activeAgentId} onSelectAgent={setViewedAgent} />
-        </aside>
+        {/* ─── Context panel (collapsible via the top-bar context button) ─── */}
+        <AnimatePresence initial={false}>
+          {state.rightPanelOpen && (
+            <motion.aside
+              key="mc-context"
+              initial={{ width: 0, opacity: 0 }}
+              animate={{ width: 272, opacity: 1 }}
+              exit={{ width: 0, opacity: 0 }}
+              transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+              className="shrink-0 overflow-hidden flex flex-col border-l border-droid-border bg-droid-surface/20"
+            >
+              <div className="flex h-full w-[272px] flex-col">
+                <PanelHeader title="Context" onExpand={() => setExpanded('context')} />
+                <ContextColumn mission={mission} roleAgents={roleAgents} progress={progress} viewedAgent={viewedAgent} activeAgentId={activeAgentId} onSelectAgent={setViewedAgent} />
+              </div>
+            </motion.aside>
+          )}
+        </AnimatePresence>
       </div>
 
       {/* ─── Expand overlays ─── */}

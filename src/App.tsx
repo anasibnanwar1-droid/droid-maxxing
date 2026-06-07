@@ -43,6 +43,12 @@ export default function App() {
   const isMissionView = !!activeMission && activeMission.kind === 'mission_orchestrator';
   const showBrowserPane = !embedded && state.browserOpen && !!activeMission;
   const focused = isMissionView;
+  // A normal/spec session only has something worth showing once a message has
+  // been sent (the first transcript is seeded from the opening prompt).
+  const hasSessionContent = !!activeMission && (state.transcripts[activeMission.id]?.length ?? 0) > 0;
+  // The context toggle is meaningful in Mission Control (always) and in a normal
+  // chat only after it has content; otherwise there is nothing to open.
+  const canToggleContext = isMissionView || hasSessionContent;
   const requestedHistory = useRef(new Set<string>());
   const requestedResume = useRef(new Set<string>());
   const [browserPaneWidth, setBrowserPaneWidth] = useState(() => initialBrowserPaneWidth());
@@ -175,17 +181,19 @@ export default function App() {
       {/* Right control — context panel toggle, same drag-region treatment and
           same h-9 line/sizing as the left controls. */}
       <div data-electron-drag-region className="absolute top-0 right-0 h-9 z-40 flex items-center pr-3">
-        <button
-          onClick={() => dispatch({ type: 'SET_RIGHT_PANEL', open: !state.rightPanelOpen })}
-          className={`p-1.5 rounded-md transition-colors ${
-            state.rightPanelOpen
-              ? 'text-droid-text bg-droid-elevated'
-              : 'text-droid-text-muted/70 hover:text-droid-text hover:bg-droid-elevated/60'
-          }`}
-          title="Toggle panel (Cmd+\\)"
-        >
-          <ContextListIcon className="w-4 h-4" />
-        </button>
+        {canToggleContext && (
+          <button
+            onClick={() => dispatch({ type: 'SET_RIGHT_PANEL', open: !state.rightPanelOpen })}
+            className={`p-1.5 rounded-md transition-colors ${
+              state.rightPanelOpen
+                ? 'text-droid-text bg-droid-elevated'
+                : 'text-droid-text-muted/70 hover:text-droid-text hover:bg-droid-elevated/60'
+            }`}
+            title="Toggle panel (Cmd+\\)"
+          >
+            <ContextListIcon className="w-4 h-4" />
+          </button>
+        )}
       </div>
 
       <div className="flex-1 flex min-h-0">
@@ -208,7 +216,7 @@ export default function App() {
         <main className="relative flex-1 min-w-0 flex flex-col min-h-0 overflow-hidden bg-droid-bg">
           {state.sidebarCollapsed && <div data-electron-drag-region className="h-9 shrink-0" />}
           <div className="flex-1 min-h-0 min-w-0 overflow-hidden flex relative">
-            <section className="min-w-0 flex-1 flex flex-col overflow-hidden">
+            <section className="relative min-w-0 flex-1 flex flex-col overflow-hidden">
               {isMissionView ? (
                 <motion.div
                   key="mission-control"
@@ -220,8 +228,12 @@ export default function App() {
                   <MissionControl />
                 </motion.div>
               ) : (
-                <ChatView />
+                <>
+                  <ChatView />
+                  <PromptInput />
+                </>
               )}
+              {state.pendingQuestion && <AskUserModal />}
             </section>
 
             <AnimatePresence initial={false}>
@@ -240,12 +252,10 @@ export default function App() {
               )}
             </AnimatePresence>
           </div>
-          {!isMissionView && <PromptInput />}
-          {state.pendingQuestion && <AskUserModal />}
         </main>
 
         <AnimatePresence initial={false}>
-          {!focused && !showBrowserPane && state.rightPanelOpen && (
+          {!focused && !showBrowserPane && state.rightPanelOpen && hasSessionContent && (
             <motion.div
               key="right-panel"
               initial={{ width: 0, opacity: 0 }}
