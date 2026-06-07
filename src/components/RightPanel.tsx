@@ -3,8 +3,9 @@ import { useStore } from '../hooks/useStore';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   GitBranch, Hash, Zap, Activity, ArrowRight, Loader2, ChevronRight,
-  Server, Cpu, Bot, FolderGit, CheckCircle2, Circle
+  Cpu, Bot, FolderGit, CheckCircle2, Circle
 } from 'lucide-react';
+import { ModelIcon, providerOf } from './ModelIcon';
 
 const RUNNING_PHASES = ['running', 'initializing', 'orchestrator_turn', 'planning'];
 
@@ -108,6 +109,9 @@ export default function RightPanel() {
   features.forEach((f) => f.workerSessionIds?.forEach((id) => workerSet.add(id)));
   const workers = Array.from(workerSet);
 
+  const modelInfo = activeMission?.modelId ? state.models.find((m) => m.id === activeMission.modelId) : undefined;
+  const modelLabel = activeMission ? (modelInfo?.displayName ?? activeMission.modelId ?? 'default') : 'default';
+
   return (
     <div className="shrink-0 w-[300px] pt-11 pb-3 pr-3 h-full flex items-start">
       <div className="droid-card w-full max-h-full">
@@ -118,9 +122,22 @@ export default function RightPanel() {
         </div>
 
         <div className="flex-1 min-h-0 overflow-y-auto px-1.5 pb-2">
-          {/* Progress (collapsible) */}
+          {/* Environment */}
           {activeMission && (
             <div>
+              <SectionHeader label="Environment" />
+              <div>
+                <Row icon={<FolderGit className="w-4 h-4" />} label={activeMission.cwd.split('/').slice(-2).join('/') || 'No folder'} />
+                <Row icon={<GitBranch className="w-4 h-4" />} label="main" />
+                <Row icon={<ModelIcon provider={providerOf(modelInfo, activeMission.modelId)} size={16} />} label={modelLabel} meta={activeMission.autonomy} />
+              </div>
+            </div>
+          )}
+
+          {/* Progress (collapsible) — under Environment */}
+          {activeMission && (
+            <div>
+              <Divider />
               <button
                 onClick={() => setProgressManual(!progressOpen)}
                 className="w-full flex items-center justify-between px-3 pt-2 pb-1.5"
@@ -227,19 +244,6 @@ export default function RightPanel() {
                 {workers.map((wid, i) => (
                   <Row key={wid} icon={<AgentIcon index={i} role="worker" />} label={wid.slice(0, 16)} />
                 ))}
-              </div>
-            </div>
-          )}
-
-          {/* Environment */}
-          {activeMission && (
-            <div>
-              <Divider />
-              <SectionHeader label="Environment" />
-              <div>
-                <Row icon={<FolderGit className="w-4 h-4" />} label={activeMission.cwd.split('/').slice(-2).join('/') || 'No folder'} />
-                <Row icon={<GitBranch className="w-4 h-4" />} label="main" />
-                <Row icon={<Server className="w-4 h-4" />} label={activeMission.modelId ?? 'default'} meta={activeMission.autonomy} />
               </div>
             </div>
           )}
