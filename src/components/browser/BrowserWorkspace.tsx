@@ -31,6 +31,7 @@ import type { NativeBrowserDesignPrompt, NativeBrowserSelection } from '../../li
 import { BrowserToolbar } from './BrowserToolbar';
 import { DesignModeComposer } from './DesignModeComposer';
 import { composerStyleForReferences } from './browserComposerPosition';
+import { browserTranscriptReferenceFromDesignReference, browserTranscriptReferencesFromDesignReferences } from './browserTranscriptReferences';
 import { useElementSize } from './useElementSize';
 
 export default function BrowserWorkspace() {
@@ -150,6 +151,7 @@ export default function BrowserWorkspace() {
   const sendPrompt = () => {
     if (!chatId || !canSend) return;
     const text = instruction.trim();
+    const browserRefs = browserTranscriptReferencesFromDesignReferences(references);
     dispatch({
       type: 'MISSION_TRANSCRIPT',
       event: {
@@ -161,6 +163,7 @@ export default function BrowserWorkspace() {
         kind: 'text',
         text,
         author: 'user',
+        browserRefs,
       },
     });
     sendDesignPrompt(chatId, instruction.trim(), selectedIds);
@@ -183,6 +186,7 @@ export default function BrowserWorkspace() {
     const reference = referenceFromNativeSelection(prompt.selection);
     const referenceId = reference.id;
     if (!referenceId) return;
+    const browserRef = browserTranscriptReferenceFromDesignReference(reference);
     setReferences((prev) => {
       if (prev.some((item) => item.id === referenceId)) return prev;
       return [...prev, reference];
@@ -199,6 +203,7 @@ export default function BrowserWorkspace() {
         kind: 'text',
         text,
         author: 'user',
+        browserRefs: browserRef ? [browserRef] : undefined,
       },
     });
     window.setTimeout(() => sendDesignPrompt(chatId, text, [referenceId]), 0);

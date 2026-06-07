@@ -97,8 +97,19 @@ export interface TranscriptEvent {
   // Frontend-only: attachments shown as chips on a user message.
   skills?: string[];
   files?: string[];
+  browserRefs?: BrowserTranscriptReference[];
   // Frontend-only: this user message was queued while the model was working.
   steered?: boolean;
+}
+
+export type BrowserTranscriptReferenceKind = 'element' | 'region' | 'stroke';
+
+export interface BrowserTranscriptReference {
+  id: string;
+  label: string;
+  kind: BrowserTranscriptReferenceKind;
+  url?: string;
+  selector?: string;
 }
 
 export type PermissionKind = 'edit' | 'exec' | 'create' | 'apply_patch' | 'mcp' | 'spec' | 'other';

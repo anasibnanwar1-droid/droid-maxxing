@@ -59,11 +59,20 @@ export function NativeBrowserSurface({
   const frameSize = useElementSize(stageRef);
   const lastUrl = useRef<string | null>(null);
   const lastBounds = useRef<NativeBrowserBounds | null>(null);
+  const onLoadedRef = useRef(onLoaded);
+  const onSelectionRef = useRef(onSelection);
+  const onPromptRef = useRef(onPrompt);
   const native = isDesktop();
   const surface = useMemo(
     () => surfaceLayout(frameSize, viewport, viewportMode),
     [frameSize, viewport, viewportMode],
   );
+
+  useEffect(() => {
+    onLoadedRef.current = onLoaded;
+    onSelectionRef.current = onSelection;
+    onPromptRef.current = onPrompt;
+  }, [onLoaded, onPrompt, onSelection]);
 
   useEffect(() => {
     onViewportSizeChange({ width: Math.round(surface.width), height: Math.round(surface.height) });
@@ -78,18 +87,27 @@ export function NativeBrowserSurface({
   }, [designMode, sketchMode]);
 
   useEffect(() => {
-    let selectionUnlisten: (() => void) | undefined;
-    let promptUnlisten: (() => void) | undefined;
-    let loadedUnlisten: (() => void) | undefined;
-    void onNativeBrowserSelection(onSelection).then((unlisten) => { selectionUnlisten = unlisten; });
-    void onNativeBrowserDesignPrompt(onPrompt).then((unlisten) => { promptUnlisten = unlisten; });
-    void onNativeBrowserLoaded((event) => onLoaded(event.url)).then((unlisten) => { loadedUnlisten = unlisten; });
-    return () => {
-      selectionUnlisten?.();
-      promptUnlisten?.();
-      loadedUnlisten?.();
+    let disposed = false;
+    const unlisteners: (() => void)[] = [];
+    const track = (promise: Promise<() => void>) => {
+      void promise.then((unlisten) => {
+        if (disposed) {
+          unlisten();
+          return;
+        }
+        unlisteners.push(unlisten);
+      });
     };
-  }, [onLoaded, onPrompt, onSelection]);
+
+    track(onNativeBrowserSelection((selection) => onSelectionRef.current(selection)));
+    track(onNativeBrowserDesignPrompt((prompt) => onPromptRef.current(prompt)));
+    track(onNativeBrowserLoaded((event) => onLoadedRef.current(event.url)));
+
+    return () => {
+      disposed = true;
+      unlisteners.forEach((unlisten) => unlisten());
+    };
+  }, []);
 
   useEffect(() => {
     if (native) return;

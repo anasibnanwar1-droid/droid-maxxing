@@ -1,7 +1,7 @@
 import { useMemo, useState, memo, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ChevronRight, Terminal, Copy, Check, FileText, Expand as ExpandIcon, FoldVertical } from 'lucide-react';
-import type { TranscriptEvent } from '../types/bridge';
+import { ChevronRight, Terminal, Copy, Check, FileText, Expand as ExpandIcon, FoldVertical, MousePointer2, PenLine } from 'lucide-react';
+import type { BrowserTranscriptReference, TranscriptEvent } from '../types/bridge';
 import { Markdown } from './Markdown';
 import { SpecModal } from './SpecModal';
 import { extractFileChange, type FileChange } from '../lib/diff';
@@ -378,10 +378,24 @@ function baseName(p: string): string {
   return i >= 0 ? p.slice(i + 1) : p;
 }
 
+function BrowserReferenceChip({ reference }: { reference: BrowserTranscriptReference }) {
+  const Icon = reference.kind === 'element' ? MousePointer2 : PenLine;
+  return (
+    <span
+      title={reference.selector ? `${reference.selector}\n${reference.url ?? ''}` : reference.url ?? `Design reference: ${reference.label}`}
+      className="flex min-w-0 items-center gap-1.5 rounded-lg bg-droid-accent/15 px-2 py-1 text-[11px] font-medium text-droid-text ring-1 ring-inset ring-droid-accent/30"
+    >
+      <Icon className="h-3 w-3 shrink-0 text-droid-accent" />
+      <span className="max-w-40 truncate">@{reference.label}</span>
+    </span>
+  );
+}
+
 function UserBubble({ event }: { event: TranscriptEvent }) {
   const skills = event.skills ?? [];
   const files = event.files ?? [];
-  const hasChips = skills.length > 0 || files.length > 0;
+  const browserRefs = event.browserRefs ?? [];
+  const hasChips = skills.length > 0 || files.length > 0 || browserRefs.length > 0;
   return (
     <div className="flex flex-col items-end gap-1.5 py-1">
       {event.steered && (
@@ -394,6 +408,9 @@ function UserBubble({ event }: { event: TranscriptEvent }) {
       )}
       {hasChips && (
         <div className="flex max-w-[80%] flex-wrap justify-end gap-1.5">
+          {browserRefs.map((reference) => (
+            <BrowserReferenceChip key={`${reference.kind}:${reference.id}`} reference={reference} />
+          ))}
           {files.map((f) => (
             <span
               key={f}

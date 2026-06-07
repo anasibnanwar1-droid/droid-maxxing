@@ -16,6 +16,7 @@ import type {
   TranscriptEvent,
 } from './protocol.js';
 import { mapFeature } from './normalize.js';
+import { designPromptDisplayFromText } from './browser/designPromptDisplay.js';
 
 interface StoredMissionState {
   missionId?: string;
@@ -629,11 +630,14 @@ function parseSessionTranscript(
           isError: Boolean(block.is_error ?? block.isError),
         }));
       } else if (messageRole === 'user' && role === 'orchestrator' && type === 'text') {
-        const text = trimText(stringValue(block.text) || '');
+        const rawText = trimText(stringValue(block.text) || '');
+        const display = designPromptDisplayFromText(rawText);
+        const text = display?.text ?? rawText;
         if (text && !isSystemText(text)) {
           events.push(event(missionId, 'user', 'orchestrator', messageId, index, ts, 'text', {
             text,
             author: 'user',
+            browserRefs: display?.browserRefs,
           }));
         }
       }

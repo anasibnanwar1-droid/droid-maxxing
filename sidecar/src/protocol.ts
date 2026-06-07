@@ -87,12 +87,28 @@ export interface TranscriptEvent {
   agentSessionId: string; // orchestrator session id or a worker session id
   role: AgentRole;
   ts: number;
+  endTs?: number;
   kind: 'text' | 'thinking' | 'tool_call' | 'tool_result' | 'error' | 'status';
   text?: string;
   toolName?: string;
   toolArgs?: unknown;
   isError?: boolean;
   author?: 'user';
+  // Frontend display metadata for user-authored prompt chips.
+  skills?: string[];
+  files?: string[];
+  browserRefs?: BrowserTranscriptReference[];
+  steered?: boolean;
+}
+
+export type BrowserTranscriptReferenceKind = 'element' | 'region' | 'stroke';
+
+export interface BrowserTranscriptReference {
+  id: string;
+  label: string;
+  kind: BrowserTranscriptReferenceKind;
+  url?: string;
+  selector?: string;
 }
 
 export type PermissionKind = 'edit' | 'exec' | 'create' | 'apply_patch' | 'mcp' | 'spec' | 'other';
