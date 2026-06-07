@@ -32,6 +32,11 @@ export interface NativeBrowserLoaded {
   url: string;
 }
 
+export interface NativeBrowserDesignPrompt {
+  selection: NativeBrowserSelection;
+  instruction: string;
+}
+
 export interface NativeBrowserAgentAction {
   requestId: string;
   action: BrowserNativeAction;
@@ -116,6 +121,13 @@ export async function onNativeBrowserSelection(
 ): Promise<() => void> {
   if (!isDesktop()) return () => {};
   return window.droidControl!.onNativeBrowserSelection(handler);
+}
+
+export async function onNativeBrowserDesignPrompt(
+  handler: (prompt: NativeBrowserDesignPrompt) => void,
+): Promise<() => void> {
+  if (!isDesktop()) return () => {};
+  return window.droidControl!.onNativeBrowserDesignPrompt(handler);
 }
 
 export async function onNativeBrowserLoaded(

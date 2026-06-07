@@ -243,7 +243,7 @@ export interface BrowserNativeSnapshot {
   refs: BrowserElementRef[];
 }
 
-export type BrowserNativeAction = 'open' | 'snapshot' | 'click' | 'type' | 'keypress' | 'scroll' | 'close';
+export type BrowserNativeAction = 'open' | 'reload' | 'snapshot' | 'click' | 'type' | 'keypress' | 'scroll' | 'close';
 
 export interface BrowserNativeRequest {
   requestId: string;
@@ -351,6 +351,7 @@ export type ClientCommand =
   | { type: 'mission.setInteractionMode'; missionId: string; mode: SessionInteractionMode }
   | { type: 'browser.open'; missionId: string; url: string; viewport?: BrowserViewport; viewportMode?: BrowserViewportMode }
   | { type: 'browser.close'; missionId: string }
+  | { type: 'browser.reload'; missionId: string }
   | { type: 'browser.refresh'; missionId: string }
   | { type: 'browser.resizeViewport'; missionId: string; viewport: BrowserViewport; viewportMode: BrowserViewportMode }
   | { type: 'browser.click'; missionId: string; ref?: string; x?: number; y?: number; source?: 'agent' | 'user' }

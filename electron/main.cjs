@@ -96,6 +96,9 @@ function registerIpc() {
   ipcMain.on('native-browser-selection', (_event, selection) => {
     mainWindow?.webContents.send('native-browser-selection', selection);
   });
+  ipcMain.on('native-browser-design-prompt', (_event, payload) => {
+    mainWindow?.webContents.send('native-browser-design-prompt', payload);
+  });
   ipcMain.on('native-browser-agent-result', (_event, result) => {
     mainWindow?.webContents.send('native-browser-agent-result', result);
   });
@@ -189,7 +192,8 @@ function closeNativeBrowser() {
 }
 
 function reloadNativeBrowser() {
-  browserView?.webContents.reload();
+  if (!browserView) throw new Error('Droid Control browser is not open.');
+  browserView.webContents.reload();
 }
 
 function setNativeBrowserDesignMode(active) {

@@ -25,6 +25,7 @@ contextBridge.exposeInMainWorld('droidControl', {
   nativeBrowserAgentAction: (request) => ipcRenderer.invoke('native-browser-agent-action', { request }),
 
   onNativeBrowserSelection: (handler) => on('native-browser-selection', handler),
+  onNativeBrowserDesignPrompt: (handler) => on('native-browser-design-prompt', handler),
   onNativeBrowserLoaded: (handler) => on('native-browser-loaded', handler),
   onNativeBrowserAgentResult: (handler) => on('native-browser-agent-result', handler),
 });

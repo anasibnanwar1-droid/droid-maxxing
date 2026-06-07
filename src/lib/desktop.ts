@@ -1,4 +1,11 @@
-import type { NativeBrowserAgentAction, NativeBrowserAgentResult, NativeBrowserBounds, NativeBrowserLoaded, NativeBrowserSelection } from './nativeBrowser';
+import type {
+  NativeBrowserAgentAction,
+  NativeBrowserAgentResult,
+  NativeBrowserBounds,
+  NativeBrowserDesignPrompt,
+  NativeBrowserLoaded,
+  NativeBrowserSelection,
+} from './nativeBrowser';
 
 interface BridgeInfo {
   port: number;
@@ -22,6 +29,7 @@ interface DroidControlApi {
   nativeBrowserSetSketchMode: (active: boolean) => Promise<void>;
   nativeBrowserAgentAction: (request: NativeBrowserAgentAction) => Promise<void>;
   onNativeBrowserSelection: (handler: (selection: NativeBrowserSelection) => void) => () => void;
+  onNativeBrowserDesignPrompt: (handler: (prompt: NativeBrowserDesignPrompt) => void) => () => void;
   onNativeBrowserLoaded: (handler: (event: NativeBrowserLoaded) => void) => () => void;
   onNativeBrowserAgentResult: (handler: (result: NativeBrowserAgentResult) => void) => () => void;
 }

@@ -283,6 +283,9 @@ export class MissionManager {
           this.emit({ type: 'browser.closed', missionId });
         });
         return;
+      case 'browser.reload':
+        await this.handleBrowser(cmd.missionId, () => this.browsers.reload(this.requireBrowserMissionId(cmd.missionId)));
+        return;
       case 'browser.refresh':
         await this.handleBrowser(cmd.missionId, () => this.browsers.refresh(this.requireBrowserMissionId(cmd.missionId)));
         return;

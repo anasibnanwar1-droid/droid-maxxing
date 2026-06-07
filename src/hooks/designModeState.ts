@@ -1,19 +1,19 @@
 export type DesignModes = Record<string, boolean>;
 
-export function isDesignModeOpen(designModes: DesignModes, missionId?: string): boolean {
-  return missionId ? designModes[missionId] ?? false : false;
+export function isDesignModeOpen(designModes: DesignModes, sessionId?: string): boolean {
+  return sessionId ? designModes[sessionId] ?? false : false;
 }
 
-export function toggleDesignMode(designModes: DesignModes, missionId: string): DesignModes {
-  return { ...designModes, [missionId]: !isDesignModeOpen(designModes, missionId) };
+export function toggleDesignMode(designModes: DesignModes, sessionId: string): DesignModes {
+  return { ...designModes, [sessionId]: !isDesignModeOpen(designModes, sessionId) };
 }
 
-export function setDesignMode(designModes: DesignModes, missionId: string, open: boolean): DesignModes {
-  return { ...designModes, [missionId]: open };
+export function setDesignMode(designModes: DesignModes, sessionId: string, open: boolean): DesignModes {
+  return { ...designModes, [sessionId]: open };
 }
 
-export function clearDesignMode(designModes: DesignModes, missionId: string): DesignModes {
-  if (!(missionId in designModes)) return designModes;
-  const { [missionId]: _removed, ...next } = designModes;
+export function clearDesignMode(designModes: DesignModes, sessionId: string): DesignModes {
+  if (!(sessionId in designModes)) return designModes;
+  const { [sessionId]: _removed, ...next } = designModes;
   return next;
 }

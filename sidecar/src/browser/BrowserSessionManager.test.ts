@@ -7,13 +7,21 @@ class FakeRuntime implements BrowserRuntime {
   clicks: { x: number; y: number }[] = [];
   screenshots: BrowserScreenshotOptions[] = [];
   viewport: BrowserViewport;
+  openedUrls: string[] = [];
+  reloads = 0;
 
   constructor(viewport: BrowserViewport) {
     this.viewport = viewport;
   }
 
   async open(url: string) {
+    this.openedUrls.push(url);
     return this.snapshot(url);
+  }
+
+  async reload() {
+    this.reloads += 1;
+    return this.snapshot('https://example.com/reloaded');
   }
 
   async setViewport(viewport: BrowserViewport): Promise<void> {
@@ -194,6 +202,37 @@ test('open preserves existing viewport when agent omits viewport', async () => {
   assert.deepEqual(runtime.viewport, { width: 820, height: 620, deviceScaleFactor: 2 });
   assert.deepEqual(state.viewport, { width: 820, height: 620, deviceScaleFactor: 2 });
   assert.equal(state.viewportMode, 'custom');
+});
+
+test('open normalizes bare domains before the native runtime sees them', async () => {
+  let runtime!: FakeRuntime;
+  const manager = new BrowserSessionManager({
+    runtimeFactory: (_id, viewport) => {
+      runtime = new FakeRuntime(viewport);
+      return runtime;
+    },
+  });
+
+  const state = await manager.open({ missionId: 'm1', url: 'skeina.tech' });
+
+  assert.equal(runtime.openedUrls[0], 'https://skeina.tech');
+  assert.equal(state.url, 'https://skeina.tech');
+});
+
+test('reload updates the managed browser state from the runtime snapshot', async () => {
+  let runtime!: FakeRuntime;
+  const manager = new BrowserSessionManager({
+    runtimeFactory: (_id, viewport) => {
+      runtime = new FakeRuntime(viewport);
+      return runtime;
+    },
+  });
+  await manager.open({ missionId: 'm1', url: 'https://example.com' });
+
+  const state = await manager.reload('m1');
+
+  assert.equal(runtime.reloads, 1);
+  assert.equal(state.url, 'https://example.com/reloaded');
 });
 
 test('open and refresh do not force screenshot capture', async () => {

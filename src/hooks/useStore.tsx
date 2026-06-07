@@ -161,8 +161,8 @@ type Action =
   | { type: 'BROWSER_UPDATED'; browser: BrowserState }
   | { type: 'BROWSER_CLOSED'; missionId: string }
   | { type: 'BROWSER_ERROR'; missionId?: string; message: string }
-  | { type: 'TOGGLE_DESIGN_MODE'; missionId: string }
-  | { type: 'SET_DESIGN_MODE'; missionId: string; open: boolean }
+  | { type: 'TOGGLE_DESIGN_MODE'; sessionId: string }
+  | { type: 'SET_DESIGN_MODE'; sessionId: string; open: boolean }
   | { type: 'SET_THEME'; theme: Partial<ThemeConfig> }
   | { type: 'SELECT_FEATURE'; id: string | null }
   | { type: 'SELECT_AGENT'; id: string | null }
@@ -426,6 +426,10 @@ const initialState: AppState = {
 
 function progressKey(entry: ProgressEntry): string {
   return `${entry.timestamp}|${entry.type}|${entry.featureId ?? ''}|${entry.workerSessionId ?? ''}|${entry.title ?? ''}`;
+}
+
+function designModeSessionId(state: AppState, appMissionId: string): string {
+  return state.missions[appMissionId]?.sessionId ?? appMissionId;
 }
 
 function reducer(state: AppState, action: Action): AppState {
@@ -727,7 +731,7 @@ function reducer(state: AppState, action: Action): AppState {
         ...state,
         browsers: Object.fromEntries(Object.entries(state.browsers).filter(([id]) => id !== action.missionId)),
         browserErrors: Object.fromEntries(Object.entries(state.browserErrors).filter(([id]) => id !== action.missionId)),
-        designModes: clearDesignMode(state.designModes, action.missionId),
+        designModes: clearDesignMode(state.designModes, designModeSessionId(state, action.missionId)),
         browserOpen: state.activeMissionId === action.missionId ? false : state.browserOpen,
       };
 
@@ -741,10 +745,10 @@ function reducer(state: AppState, action: Action): AppState {
         : { ...state, browserGlobalError: action.message };
 
     case 'TOGGLE_DESIGN_MODE':
-      return { ...state, designModes: toggleDesignMode(state.designModes, action.missionId) };
+      return { ...state, designModes: toggleDesignMode(state.designModes, action.sessionId) };
 
     case 'SET_DESIGN_MODE':
-      return { ...state, designModes: setDesignMode(state.designModes, action.missionId, action.open) };
+      return { ...state, designModes: setDesignMode(state.designModes, action.sessionId, action.open) };
 
     case 'SET_THEME': {
       const next = { ...state.theme, ...action.theme };

@@ -3,6 +3,9 @@ const { contextBridge, ipcRenderer } = require('electron');
 let designMode = false;
 let sketchMode = false;
 let dragStart = null;
+let promptBox = null;
+let promptInput = null;
+let promptSelection = null;
 
 const interactiveTags = new Set(['A', 'BUTTON', 'INPUT', 'TEXTAREA', 'SELECT', 'SUMMARY']);
 const interactiveRoles = new Set(['button', 'checkbox', 'combobox', 'link', 'menuitem', 'option', 'radio', 'searchbox', 'switch', 'tab', 'textbox']);
@@ -54,6 +57,7 @@ function applyState(state) {
   dragStart = null;
   if (!designMode) {
     hideBox();
+    hidePrompt();
     region.style.display = 'none';
     return;
   }
@@ -64,6 +68,7 @@ function applyState(state) {
 
 function onMouseMove(event) {
   if (!designMode) return;
+  if (isPromptEvent(event)) return;
   if (sketchMode && dragStart) {
     drawRegion(dragStart, point(event));
     event.preventDefault();
@@ -81,6 +86,7 @@ function onMouseMove(event) {
 
 function onMouseDown(event) {
   if (!designMode || !sketchMode) return;
+  if (isPromptEvent(event)) return;
   dragStart = point(event);
   drawRegion(dragStart, dragStart);
   event.preventDefault();
@@ -89,16 +95,19 @@ function onMouseDown(event) {
 
 function onMouseUp(event) {
   if (!designMode || !sketchMode || !dragStart) return;
+  if (isPromptEvent(event)) return;
   const box = drawRegion(dragStart, point(event));
   dragStart = null;
   if (box.width >= 8 && box.height >= 8) {
-    sendSelection({
+    const selection = {
       id: `@region-${Date.now().toString(36)}`,
       kind: 'region',
       url: location.href,
       title: document.title,
       box,
-    });
+    };
+    sendSelection(selection);
+    showPrompt(selection);
   }
   event.preventDefault();
   event.stopPropagation();
@@ -106,9 +115,12 @@ function onMouseUp(event) {
 
 function onClick(event) {
   if (!designMode || sketchMode) return;
+  if (isPromptEvent(event)) return;
   const target = pickTarget(document.elementFromPoint(event.clientX, event.clientY));
   if (!target) return;
-  sendSelection(payloadFor(target));
+  const selection = payloadFor(target);
+  sendSelection(selection);
+  showPrompt(selection);
   event.preventDefault();
   event.stopPropagation();
 }
@@ -350,6 +362,10 @@ function sendSelection(payload) {
   ipcRenderer.send('native-browser-selection', payload);
 }
 
+function sendDesignPrompt(payload) {
+  ipcRenderer.send('native-browser-design-prompt', payload);
+}
+
 function sendAgent(payload) {
   ipcRenderer.send('native-browser-agent-result', payload);
 }
@@ -378,6 +394,10 @@ function cleanText(value) {
   return String(value || '').replace(/\s+/g, ' ').trim().slice(0, 180);
 }
 
+function cleanPrompt(value) {
+  return String(value || '').replace(/\s+/g, ' ').trim();
+}
+
 function cssEscape(value) {
   return window.CSS && CSS.escape ? CSS.escape(value) : String(value).replace(/["\\]/g, '\\$&');
 }
@@ -386,4 +406,91 @@ function stableHash(value) {
   let hash = 0;
   for (let index = 0; index < value.length; index += 1) hash = Math.imul(31, hash) + value.charCodeAt(index) | 0;
   return Math.abs(hash).toString(36);
+}
+
+function showPrompt(selection) {
+  promptSelection = selection;
+  mountPrompt();
+  promptInput.value = '';
+  positionPrompt(selection.box);
+  promptBox.style.display = 'block';
+  window.setTimeout(() => promptInput.focus({ preventScroll: true }), 0);
+}
+
+function hidePrompt() {
+  promptSelection = null;
+  if (promptBox) promptBox.style.display = 'none';
+}
+
+function mountPrompt() {
+  if (!promptBox) {
+    promptBox = element('form', [
+      'position:fixed', 'z-index:2147483647', 'display:none', 'width:min(420px,calc(100vw - 24px))',
+      'background:rgba(18,18,18,.96)', 'color:#f4f4f5', 'border:1px solid rgba(255,255,255,.16)',
+      'border-radius:12px', 'box-shadow:0 20px 60px rgba(0,0,0,.42)', 'font:13px -apple-system,BlinkMacSystemFont,Segoe UI,sans-serif',
+      'padding:8px', 'box-sizing:border-box',
+    ]);
+    const row = element('div', ['display:flex', 'align-items:center', 'gap:8px']);
+    const tag = element('div', [
+      'max-width:120px', 'overflow:hidden', 'text-overflow:ellipsis', 'white-space:nowrap',
+      'color:#9ca3af', 'font:11px ui-monospace,SFMono-Regular,Menlo,monospace',
+    ]);
+    tag.textContent = 'ref';
+    promptInput = element('input', [
+      'flex:1', 'min-width:0', 'height:32px', 'border:0', 'outline:0', 'background:transparent',
+      'color:#f4f4f5', 'font:13px -apple-system,BlinkMacSystemFont,Segoe UI,sans-serif',
+    ]);
+    promptInput.placeholder = 'Describe the change';
+    const send = element('button', [
+      'width:32px', 'height:32px', 'border:0', 'border-radius:999px', 'background:#f4f4f5',
+      'color:#111', 'font:15px -apple-system,BlinkMacSystemFont,Segoe UI,sans-serif', 'cursor:pointer',
+    ]);
+    send.type = 'submit';
+    send.textContent = '>';
+    const close = element('button', [
+      'width:28px', 'height:28px', 'border:0', 'border-radius:7px', 'background:transparent',
+      'color:#9ca3af', 'font:14px -apple-system,BlinkMacSystemFont,Segoe UI,sans-serif', 'cursor:pointer',
+    ]);
+    close.type = 'button';
+    close.textContent = 'x';
+    row.append(tag, promptInput, send, close);
+    promptBox.append(row);
+    promptBox.addEventListener('submit', (event) => {
+      event.preventDefault();
+      const instruction = cleanPrompt(promptInput.value);
+      if (!instruction || !promptSelection) return;
+      sendDesignPrompt({ selection: promptSelection, instruction });
+      hidePrompt();
+    });
+    promptBox.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        hidePrompt();
+      }
+    });
+    close.addEventListener('click', hidePrompt);
+    for (const type of ['mousedown', 'mouseup', 'click', 'mousemove', 'wheel']) {
+      promptBox.addEventListener(type, (event) => event.stopPropagation(), true);
+    }
+  }
+  if (!promptBox.isConnected) document.documentElement.appendChild(promptBox);
+}
+
+function positionPrompt(box) {
+  const width = Math.min(420, Math.max(280, window.innerWidth - 24));
+  const height = 50;
+  const left = clamp(box.x, 12, Math.max(12, window.innerWidth - width - 12));
+  const below = box.y + box.height + 10;
+  const above = box.y - height - 10;
+  const top = below + height <= window.innerHeight - 12 ? below : above;
+  promptBox.style.left = `${Math.round(left)}px`;
+  promptBox.style.top = `${Math.round(clamp(top, 12, Math.max(12, window.innerHeight - height - 12)))}px`;
+}
+
+function isPromptEvent(event) {
+  return Boolean(promptBox && event.target && promptBox.contains(event.target));
+}
+
+function clamp(value, min, max) {
+  return Math.min(max, Math.max(min, value));
 }

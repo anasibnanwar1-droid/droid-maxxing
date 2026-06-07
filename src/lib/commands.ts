@@ -103,6 +103,9 @@ export const openBrowser = (p: { missionId: string; url: string; viewport?: Brow
 export const closeBrowser = (missionId: string) =>
   bridge.send({ type: 'browser.close', missionId });
 
+export const reloadBrowser = (missionId: string) =>
+  bridge.send({ type: 'browser.reload', missionId });
+
 export const refreshBrowser = (missionId: string) =>
   bridge.send({ type: 'browser.refresh', missionId });
 

@@ -11,6 +11,7 @@ import {
 } from '../../lib/iframeDesignMode';
 import {
   closeNativeBrowser,
+  onNativeBrowserDesignPrompt,
   onNativeBrowserLoaded,
   onNativeBrowserSelection,
   openNativeBrowser,
@@ -20,7 +21,9 @@ import {
   setNativeBrowserSketchMode,
   waitForNextNativeBrowserLoad,
   type NativeBrowserBounds,
+  type NativeBrowserDesignPrompt,
   type NativeBrowserSelection,
+  reloadNativeBrowser,
 } from '../../lib/nativeBrowser';
 import { registerNativeBrowserController } from '../../lib/nativeBrowserAgent';
 import type { BrowserNativeRequest, BrowserNativeResult, BrowserViewport, BrowserViewportMode } from '../../types/bridge';
@@ -35,6 +38,7 @@ interface NativeBrowserSurfaceProps {
   sketchMode: boolean;
   onLoaded: (url: string) => void;
   onSelection: (selection: NativeBrowserSelection) => void;
+  onPrompt: (prompt: NativeBrowserDesignPrompt) => void;
   onViewportSizeChange: (size: Size) => void;
 }
 
@@ -46,6 +50,7 @@ export function NativeBrowserSurface({
   sketchMode,
   onLoaded,
   onSelection,
+  onPrompt,
   onViewportSizeChange,
 }: NativeBrowserSurfaceProps) {
   const stageRef = useRef<HTMLDivElement>(null);
@@ -74,14 +79,17 @@ export function NativeBrowserSurface({
 
   useEffect(() => {
     let selectionUnlisten: (() => void) | undefined;
+    let promptUnlisten: (() => void) | undefined;
     let loadedUnlisten: (() => void) | undefined;
     void onNativeBrowserSelection(onSelection).then((unlisten) => { selectionUnlisten = unlisten; });
+    void onNativeBrowserDesignPrompt(onPrompt).then((unlisten) => { promptUnlisten = unlisten; });
     void onNativeBrowserLoaded((event) => onLoaded(event.url)).then((unlisten) => { loadedUnlisten = unlisten; });
     return () => {
       selectionUnlisten?.();
+      promptUnlisten?.();
       loadedUnlisten?.();
     };
-  }, [onLoaded, onSelection]);
+  }, [onLoaded, onPrompt, onSelection]);
 
   useEffect(() => {
     if (native) return;
@@ -208,6 +216,13 @@ async function performNativeRequest(
       const result = await runNativeBrowserAgentAction({ requestId: request.requestId, action: 'snapshot' });
       return { requestId: request.requestId, missionId: request.missionId, ok: result.ok, snapshot: result.snapshot, error: result.error };
     }
+    if (request.action === 'reload') {
+      const loaded = waitForNextNativeBrowserLoad().catch(() => undefined);
+      await reloadNativeBrowser();
+      await loaded;
+      const result = await runNativeBrowserAgentAction({ requestId: request.requestId, action: 'snapshot' });
+      return { requestId: request.requestId, missionId: request.missionId, ok: result.ok, snapshot: result.snapshot, error: result.error };
+    }
     const result = await runNativeBrowserAgentAction({
       requestId: request.requestId,
       action: request.action,
@@ -254,6 +269,16 @@ async function performIframeRequest(
         missionId: request.missionId,
         ok: true,
         snapshot: safeIframeSnapshot(iframe, targetUrl),
+      };
+    }
+    if (request.action === 'reload') {
+      await loadIframe(iframe, readIframeUrl(iframe) ?? options.currentUrl);
+      options.onLoaded(readIframeUrl(iframe) ?? options.currentUrl);
+      return {
+        requestId: request.requestId,
+        missionId: request.missionId,
+        ok: true,
+        snapshot: safeIframeSnapshot(iframe, options.currentUrl),
       };
     }
     if (request.action === 'click') {

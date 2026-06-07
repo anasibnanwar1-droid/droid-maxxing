@@ -29,7 +29,9 @@ export function createBrowserMcpServer(manager: BrowserSessionManager, missionId
         [
           'Open and show a URL in the live Droid Control browser pane for this chat session.',
           'This is the browser the user can see and control in Droid Control.',
-          'When the user asks to open, navigate, click, inspect, or control a browser, call this tool first.',
+          'When the user asks to open a site, navigate, click, inspect, or control a browser, call this tool first with the site URL.',
+          'If the user names a domain without a scheme, pass it directly; Droid Control will load it as https.',
+          'Do not ask the user for a URL when they already named a site or domain.',
           'Do not use Read, FetchUrl, curl, or agent-browser as a substitute for browser work.',
         ].join(' '),
         {
@@ -56,6 +58,15 @@ export function createBrowserMcpServer(manager: BrowserSessionManager, missionId
         {},
         safeTool(async () => {
           const state = await manager.refresh(missionId());
+          return jsonResult(stateForTool(state));
+        }),
+      ),
+      tool(
+        'browser_reload',
+        'Reload the current live Droid Control browser page, then return fresh DOM refs and visible page state.',
+        {},
+        safeTool(async () => {
+          const state = await manager.reload(missionId());
           return jsonResult(stateForTool(state));
         }),
       ),

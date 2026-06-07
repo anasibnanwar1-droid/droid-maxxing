@@ -5,6 +5,7 @@ import {
   addDesignReference,
   closeBrowser,
   openBrowser,
+  reloadBrowser,
   resizeBrowserViewport,
   sendDesignPrompt,
 } from '../../lib/commands';
@@ -24,8 +25,9 @@ import {
   viewportFromFrame,
 } from './browserViewport';
 import { NativeBrowserSurface } from './NativeBrowserSurface';
-import { reloadNativeBrowser, closeNativeBrowser } from '../../lib/nativeBrowser';
-import type { NativeBrowserSelection } from '../../lib/nativeBrowser';
+import { closeNativeBrowser } from '../../lib/nativeBrowser';
+import { isDesktop } from '../../lib/desktop';
+import type { NativeBrowserDesignPrompt, NativeBrowserSelection } from '../../lib/nativeBrowser';
 import { BrowserToolbar } from './BrowserToolbar';
 import { DesignModeComposer } from './DesignModeComposer';
 import { composerStyleForReferences } from './browserComposerPosition';
@@ -33,10 +35,12 @@ import { useElementSize } from './useElementSize';
 
 export default function BrowserWorkspace() {
   const { state, dispatch } = useStore();
-  const sessionId = state.activeMissionId ?? undefined;
-  const browser = sessionId ? state.browsers[sessionId] : undefined;
-  const browserError = sessionId ? state.browserErrors[sessionId] : state.browserGlobalError;
-  const designMode = isDesignModeOpen(state.designModes, sessionId);
+  const chatId = state.activeMissionId ?? undefined;
+  const droidSessionId = chatId ? state.missions[chatId]?.sessionId ?? chatId : undefined;
+  const browser = chatId ? state.browsers[chatId] : undefined;
+  const browserError = chatId ? state.browserErrors[chatId] : state.browserGlobalError;
+  const designMode = isDesignModeOpen(state.designModes, droidSessionId);
+  const nativeBrowser = isDesktop();
   const frameRef = useRef<HTMLDivElement>(null);
   const urlInputRef = useRef<HTMLInputElement>(null);
   const openedFallbackSessionRef = useRef<string | null>(null);
@@ -74,7 +78,7 @@ export default function BrowserWorkspace() {
     setReferences([]);
     setInstruction('');
     setSketchMode(false);
-  }, [browser?.sessionId, browser?.url, sessionId]);
+  }, [browser?.sessionId, browser?.url, chatId]);
 
   useEffect(() => {
     if (!designMode) setSketchMode(false);
@@ -82,8 +86,8 @@ export default function BrowserWorkspace() {
 
   const requestedViewport = viewportForMode(viewportMode, fitViewport, customViewport);
   const selectedIds = references.map((ref) => ref.id).filter((id): id is string => Boolean(id));
-  const canSend = Boolean(sessionId && selectedIds.length > 0 && instruction.trim());
-  const disabledReason = !sessionId
+  const canSend = Boolean(chatId && selectedIds.length > 0 && instruction.trim());
+  const disabledReason = !chatId
     ? 'Select or create a Droid session'
     : selectedIds.length === 0
     ? 'Select a reference'
@@ -94,23 +98,23 @@ export default function BrowserWorkspace() {
   );
 
   useEffect(() => {
-    if (!sessionId || browser) return;
-    const key = `${sessionId}:${activeUrl}`;
+    if (!chatId || browser) return;
+    const key = `${chatId}:${activeUrl}`;
     if (openedFallbackSessionRef.current === key) return;
     openedFallbackSessionRef.current = key;
     openBrowser({
-      missionId: sessionId,
+      missionId: chatId,
       url: activeUrl,
       viewport: requestedViewport,
       viewportMode,
     });
-  }, [activeUrl, browser, requestedViewport, sessionId, viewportMode]);
+  }, [activeUrl, browser, chatId, requestedViewport, viewportMode]);
 
   useEffect(() => {
-    if (!sessionId || !browser) return;
+    if (!chatId || !browser) return;
     if (browser.viewportMode === viewportMode && sameViewport(browser.viewport, requestedViewport)) return;
     const id = window.setTimeout(() => {
-      resizeBrowserViewport({ missionId: sessionId, viewport: requestedViewport, viewportMode });
+      resizeBrowserViewport({ missionId: chatId, viewport: requestedViewport, viewportMode });
     }, 120);
     return () => window.clearTimeout(id);
   }, [
@@ -121,7 +125,7 @@ export default function BrowserWorkspace() {
     requestedViewport.deviceScaleFactor,
     requestedViewport.height,
     requestedViewport.width,
-    sessionId,
+    chatId,
     viewportMode,
   ]);
 
@@ -129,9 +133,9 @@ export default function BrowserWorkspace() {
     const url = normalizeUrl(urlInput);
     setUrlInput(url);
     setActiveUrl(url);
-    if (sessionId) {
+    if (chatId) {
       openBrowser({
-        missionId: sessionId,
+        missionId: chatId,
         url,
         viewport: requestedViewport,
         viewportMode,
@@ -144,13 +148,13 @@ export default function BrowserWorkspace() {
   };
 
   const sendPrompt = () => {
-    if (!sessionId || !canSend) return;
+    if (!chatId || !canSend) return;
     const text = instruction.trim();
     dispatch({
       type: 'MISSION_TRANSCRIPT',
       event: {
         id: `local-browser-${Date.now()}`,
-        missionId: sessionId,
+        missionId: chatId,
         agentSessionId: 'user',
         role: 'orchestrator',
         ts: Date.now(),
@@ -159,7 +163,7 @@ export default function BrowserWorkspace() {
         author: 'user',
       },
     });
-    sendDesignPrompt(sessionId, instruction.trim(), selectedIds);
+    sendDesignPrompt(chatId, instruction.trim(), selectedIds);
     setInstruction('');
   };
 
@@ -169,8 +173,36 @@ export default function BrowserWorkspace() {
       if (reference.id && prev.some((item) => item.id === reference.id)) return prev;
       return [...prev, reference];
     });
-    if (sessionId) addDesignReference(sessionId, reference);
-  }, [sessionId]);
+    if (chatId) addDesignReference(chatId, reference);
+  }, [chatId]);
+
+  const handleNativePrompt = useCallback((prompt: NativeBrowserDesignPrompt) => {
+    if (!chatId) return;
+    const text = prompt.instruction.trim();
+    if (!text) return;
+    const reference = referenceFromNativeSelection(prompt.selection);
+    const referenceId = reference.id;
+    if (!referenceId) return;
+    setReferences((prev) => {
+      if (prev.some((item) => item.id === referenceId)) return prev;
+      return [...prev, reference];
+    });
+    addDesignReference(chatId, reference);
+    dispatch({
+      type: 'MISSION_TRANSCRIPT',
+      event: {
+        id: `local-browser-${Date.now()}`,
+        missionId: chatId,
+        agentSessionId: 'user',
+        role: 'orchestrator',
+        ts: Date.now(),
+        kind: 'text',
+        text,
+        author: 'user',
+      },
+    });
+    window.setTimeout(() => sendDesignPrompt(chatId, text, [referenceId]), 0);
+  }, [chatId, dispatch]);
 
   return (
     <div className="flex h-full min-h-0 min-w-0 flex-col bg-droid-bg">
@@ -180,19 +212,22 @@ export default function BrowserWorkspace() {
         viewportMode={viewportMode}
         customViewport={customViewport}
         designMode={designMode}
-        designModeDisabled={!sessionId}
+        designModeDisabled={!droidSessionId}
         sketchMode={sketchMode}
         onUrlInputChange={setUrlInput}
         onOpen={openCurrentUrl}
-        onReload={() => reloadNativeBrowser().catch(() => openCurrentUrl())}
+        onReload={() => {
+          if (chatId && browser) reloadBrowser(chatId);
+          else openCurrentUrl();
+        }}
         onViewportModeChange={applyPreset}
         onCustomViewportChange={setCustomViewport}
         onToggleDesignMode={() => {
-          if (sessionId) dispatch({ type: 'TOGGLE_DESIGN_MODE', missionId: sessionId });
+          if (droidSessionId) dispatch({ type: 'TOGGLE_DESIGN_MODE', sessionId: droidSessionId });
         }}
         onToggleSketchMode={() => setSketchMode((value) => !value)}
         onClose={() => {
-          if (sessionId) closeBrowser(sessionId);
+          if (chatId) closeBrowser(chatId);
           closeNativeBrowser().catch(() => {});
           dispatch({ type: 'SET_BROWSER_OPEN', open: false });
         }}
@@ -216,10 +251,11 @@ export default function BrowserWorkspace() {
             if (document.activeElement !== urlInputRef.current) setUrlInput(url);
           }}
           onSelection={handleSelection}
+          onPrompt={handleNativePrompt}
           onViewportSizeChange={setActualViewport}
         />
 
-        {designMode && references.length > 0 && (
+        {!nativeBrowser && designMode && references.length > 0 && (
           <DesignModeComposer
             references={references}
             instruction={instruction}
