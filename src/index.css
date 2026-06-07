@@ -15,6 +15,10 @@
     --droid-accent: #ee6018;
     --droid-green: #6a8a6a;
     --droid-orange: #b06a4a;
+    --ui-font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    --ui-font-size: 14px;
+    --ui-zoom: 1;
+    --code-font-size: 12px;
   }
 
   html, body, #root {
@@ -25,9 +29,18 @@
   body {
     background-color: var(--droid-bg);
     color: var(--droid-text);
-    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    font-family: var(--ui-font-family);
+    font-size: var(--ui-font-size);
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+  }
+
+  #root {
+    zoom: var(--ui-zoom);
+  }
+
+  code, pre, .font-mono {
+    font-size: var(--code-font-size);
   }
 
   [data-electron-drag-region] {

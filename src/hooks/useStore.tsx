@@ -46,6 +46,7 @@ export interface ThemeConfig {
   fg: string;
   surface: string;
   border: string;
+  uiFont: string;
   uiFontSize: number;
   codeFontSize: number;
   translucentSidebar: boolean;
@@ -179,6 +180,7 @@ const defaultTheme: ThemeConfig = {
   fg: '#ededed',
   surface: '#111111',
   border: '#1f1f1f',
+  uiFont: 'system',
   uiFontSize: 14,
   codeFontSize: 12,
   translucentSidebar: false,
