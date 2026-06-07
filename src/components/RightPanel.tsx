@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useStore } from '../hooks/useStore';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-  GitBranch, Hash, Zap, Activity, ArrowRight, Loader2, ChevronRight,
+  GitBranch, Hash, Activity, Loader2, ChevronRight,
   Cpu, Bot, FolderGit, CheckCircle2, Circle
 } from 'lucide-react';
 import { ModelIcon, providerOf } from './ModelIcon';
@@ -253,12 +253,12 @@ export default function RightPanel() {
             <div>
               <Divider />
               <div className="px-3 py-2 flex items-center gap-4">
-                <div className="flex items-center gap-2">
-                  <Zap className="w-4 h-4 text-droid-text-muted" />
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[11px] text-droid-text-muted">In</span>
                   <span className="font-mono text-[12px] text-droid-text-secondary">{activeMission.tokensIn.toLocaleString()}</span>
                 </div>
-                <div className="flex items-center gap-2">
-                  <ArrowRight className="w-3.5 h-3.5 text-droid-text-muted" />
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[11px] text-droid-text-muted">Out</span>
                   <span className="font-mono text-[12px] text-droid-text-secondary">{activeMission.tokensOut.toLocaleString()}</span>
                 </div>
               </div>
