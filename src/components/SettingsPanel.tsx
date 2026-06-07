@@ -504,6 +504,11 @@ export function applyTheme(theme: ReturnType<typeof useStore>['state']['theme'])
   // to the 14px baseline to make the size slider take visible effect.
   root.style.setProperty('--ui-zoom', `${theme.uiFontSize / 14}`);
   root.style.setProperty('--code-font-size', `${theme.codeFontSize}px`);
+
+  // Apply contrast as a filter only below 100% so it never creates a stacking
+  // context that would defeat the sidebar's backdrop blur at the default value.
+  const rootEl = document.getElementById('root');
+  if (rootEl) rootEl.style.filter = theme.contrast >= 100 ? '' : `contrast(${theme.contrast}%)`;
 }
 
 /* ── tiny color utils ── */
