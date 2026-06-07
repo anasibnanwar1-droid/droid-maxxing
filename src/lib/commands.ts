@@ -1,10 +1,6 @@
 import { bridge } from './bridge';
 import type { Autonomy, BrowserNativeResult, BrowserScrollDirection, BrowserViewport, BrowserViewportMode, ConfigurableAgent, DesignReference, PermissionOutcome, ReasoningEffort, SessionInteractionMode } from '../types/bridge';
 
-let refCounter = 0;
-
-export const newClientRef = () => `c-${Date.now().toString(36)}-${refCounter++}`;
-
 export const connect = (apiKey: string) => bridge.send({ type: 'connect', apiKey });
 
 export const createMission = (p: {

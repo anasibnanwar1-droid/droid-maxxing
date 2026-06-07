@@ -30,7 +30,7 @@ export default function App() {
   // The view is a real mission only when the active session is a mission orchestrator,
   // not merely because the global mission-compose flag is on.
   const isMissionView = !!activeMission && activeMission.kind === 'mission_orchestrator';
-  const showBrowserPane = !embedded && state.browserOpen;
+  const showBrowserPane = !embedded && state.browserOpen && !!activeMission;
   const focused = isMissionView;
   const requestedHistory = useRef(new Set<string>());
   const requestedResume = useRef(new Set<string>());

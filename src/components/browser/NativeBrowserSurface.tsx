@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { RefObject } from 'react';
 import { isDesktop } from '../../lib/desktop';
 import {
@@ -25,7 +25,6 @@ import {
 import { registerNativeBrowserController } from '../../lib/nativeBrowserAgent';
 import type { BrowserNativeRequest, BrowserNativeResult, BrowserViewport, BrowserViewportMode } from '../../types/bridge';
 import type { Size } from '../canvas/canvasMath';
-import { useElementSize } from './useElementSize';
 
 interface NativeBrowserSurfaceProps {
   url: string;
@@ -359,4 +358,27 @@ function equalBounds(a: NativeBrowserBounds, b: NativeBrowserBounds): boolean {
     Math.round(a.width) === Math.round(b.width) &&
     Math.round(a.height) === Math.round(b.height)
   );
+}
+
+function useElementSize(ref: RefObject<HTMLElement | null>): Size {
+  const [size, setSize] = useState<Size>({ width: 1, height: 1 });
+
+  useEffect(() => {
+    const node = ref.current;
+    if (!node) return;
+    const update = () => {
+      const rect = node.getBoundingClientRect();
+      setSize({ width: Math.max(1, Math.round(rect.width)), height: Math.max(1, Math.round(rect.height)) });
+    };
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(node);
+    window.addEventListener('resize', update);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener('resize', update);
+    };
+  }, [ref]);
+
+  return size;
 }
