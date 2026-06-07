@@ -1,9 +1,12 @@
+import { useEffect, useRef, useState } from 'react';
 import { useStore } from '../hooks/useStore';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-  X, GitBranch, Hash, Zap, Activity, ArrowRight, Loader2,
+  GitBranch, Hash, Zap, Activity, ArrowRight, Loader2, ChevronRight,
   Server, Cpu, Bot, FolderGit, CheckCircle2, Circle
 } from 'lucide-react';
+
+const RUNNING_PHASES = ['running', 'initializing', 'orchestrator_turn', 'planning'];
 
 const AGENT_COLORS = [
   '#7a8a9a', '#9a8a7a', '#7a9a8a', '#8a7a9a', '#9a7a8a', '#7a9a9a',
@@ -53,7 +56,7 @@ function Row({
       }`}
     >
       <span className="shrink-0 text-droid-text-muted group-hover:text-droid-text-secondary transition-colors">{icon}</span>
-      <span className="min-w-0 flex-1 truncate text-[13.5px] text-droid-text">{label}</span>
+      <span className="min-w-0 flex-1 text-[13px] text-droid-text leading-snug">{label}</span>
       {meta && <span className="font-mono text-[11px] text-droid-text-muted shrink-0">{meta}</span>}
       {trailing}
     </button>
@@ -69,78 +72,110 @@ function statusIcon(status: string) {
 export default function RightPanel() {
   const { state, dispatch } = useStore();
   const activeMission = state.activeMissionId ? state.missions[state.activeMissionId] : null;
-  const progress = activeMission ? state.progress[activeMission.id] ?? [] : [];
   const features = activeMission?.features ?? [];
 
   const completed = features.filter((f) => f.status === 'completed').length;
   const total = features.length;
   const pct = total > 0 ? Math.round((completed / total) * 100) : 0;
 
+  // Detect the model working from real generation activity: streaming text grows
+  // in place, so watch the latest transcript event's length, not just phase.
+  const allTx = activeMission ? state.transcripts[activeMission.id] ?? [] : [];
+  const lastEv = allTx[allTx.length - 1];
+  const activitySig = `${allTx.length}:${lastEv?.text?.length ?? 0}`;
+  const lastChangeRef = useRef(0);
+  const sigRef = useRef<string | null>(null);
+  const [, forceTick] = useState(0);
+  useEffect(() => {
+    if (sigRef.current !== null && sigRef.current !== activitySig) lastChangeRef.current = Date.now();
+    sigRef.current = activitySig;
+  }, [activitySig]);
+  useEffect(() => {
+    const id = setInterval(() => forceTick((n) => n + 1), 500);
+    return () => clearInterval(id);
+  }, []);
+
+  const phaseLive = !!activeMission && (!!activeMission.streaming || RUNNING_PHASES.includes(activeMission.phase));
+  const inactive = !activeMission || ['paused', 'completed', 'failed'].includes(activeMission.phase);
+  const working = !inactive && (phaseLive || Date.now() - lastChangeRef.current < 1500);
+
+  // Auto-expand the step list while the model is working; otherwise collapse it
+  // (minimal). The user can still override by clicking the section header.
+  const [progressManual, setProgressManual] = useState<boolean | null>(null);
+  const progressOpen = progressManual ?? working;
+
   const workerSet = new Set<string>();
   features.forEach((f) => f.workerSessionIds?.forEach((id) => workerSet.add(id)));
   const workers = Array.from(workerSet);
 
   return (
-    <div className="shrink-0 h-full w-[300px] py-3 pr-3">
-      <div className="h-full droid-card">
-        {/* Header */}
-        <div className="flex items-center justify-between pl-3 pr-2 h-11 shrink-0">
+    <div className="shrink-0 w-[300px] py-3 pr-3 h-full flex items-start">
+      <div className="droid-card w-full max-h-full">
+        {/* Header (no close button — the top toolbar button toggles this panel) */}
+        <div className="flex items-center justify-between pl-3 pr-3 h-11 shrink-0">
           <span className="text-[13px] font-semibold text-droid-text">Context</span>
-          <button
-            onClick={() => dispatch({ type: 'SET_RIGHT_PANEL', open: false })}
-            className="p-1.5 rounded-lg text-droid-text-muted hover:text-droid-text hover:bg-droid-elevated/60 transition-colors"
-          >
-            <X className="w-4 h-4" />
-          </button>
+          {working && <Loader2 className="w-4 h-4 animate-spin text-droid-accent" />}
         </div>
 
-        <div className="flex-1 overflow-y-auto min-h-0 px-1.5 pb-2">
-          {/* Progress bar */}
-          {activeMission && total > 0 && (
-            <div className="px-3 pt-1 pb-2">
-              <div className="flex items-center justify-between mb-1.5">
-                <span className="text-[12px] text-droid-text-secondary">{completed} of {total} done</span>
-                <span className="font-mono text-[12px] text-droid-accent">{pct}%</span>
-              </div>
-              <div className="h-1.5 bg-droid-border/50 rounded-full overflow-hidden">
-                <motion.div
-                  className="h-full rounded-full bg-droid-accent"
-                  initial={{ width: 0 }}
-                  animate={{ width: `${pct}%` }}
-                  transition={{ duration: 0.6, ease: 'easeOut' }}
-                />
-              </div>
-            </div>
-          )}
-
-          {/* Features */}
+        <div className="flex-1 min-h-0 overflow-y-auto px-1.5 pb-2">
+          {/* Progress (collapsible) */}
           {activeMission && (
             <div>
-              <SectionHeader
-                label="Features"
-                trailing={total > 0 ? <span className="font-mono text-[11px] text-droid-text-muted">{completed}/{total}</span> : undefined}
-              />
-              <div>
-                {features.slice(0, 6).map((f) => (
-                  <Row
-                    key={f.id}
-                    icon={statusIcon(f.status)}
-                    label={f.description}
-                    onClick={() => dispatch({ type: 'SELECT_FEATURE', id: state.selectedFeatureId === f.id ? null : f.id })}
-                    active={state.selectedFeatureId === f.id}
-                  />
-                ))}
-                {features.length > 6 && (
-                  <div className="px-3 py-1.5 text-[12px] text-droid-text-muted">Show {features.length - 6} more</div>
+              <button
+                onClick={() => setProgressManual(!progressOpen)}
+                className="w-full flex items-center justify-between px-3 pt-2 pb-1.5"
+              >
+                <span className="flex items-center gap-1.5 text-[12.5px] font-medium text-droid-text-muted">
+                  <ChevronRight className={`w-3.5 h-3.5 transition-transform ${progressOpen ? 'rotate-90' : ''}`} />
+                  Progress
+                </span>
+                <span className="flex items-center gap-2">
+                  {working && <Loader2 className="w-3.5 h-3.5 animate-spin text-droid-accent" />}
+                  {total > 0 && <span className="font-mono text-[11px] text-droid-text-muted">{completed}/{total}</span>}
+                </span>
+              </button>
+
+              <AnimatePresence initial={false}>
+                {progressOpen && (
+                  <motion.div
+                    initial={{ height: 0, opacity: 0 }}
+                    animate={{ height: 'auto', opacity: 1 }}
+                    exit={{ height: 0, opacity: 0 }}
+                    className="overflow-hidden"
+                  >
+                    {total > 0 && (
+                      <div className="px-3 pt-1 pb-2">
+                        <div className="h-1.5 bg-droid-border/50 rounded-full overflow-hidden">
+                          <motion.div
+                            className="h-full rounded-full bg-droid-accent"
+                            initial={false}
+                            animate={{ width: `${pct}%` }}
+                            transition={{ duration: 0.5, ease: 'easeOut' }}
+                          />
+                        </div>
+                      </div>
+                    )}
+                    {features.map((f) => (
+                      <Row
+                        key={f.id}
+                        icon={statusIcon(f.status)}
+                        label={f.description}
+                        onClick={() => dispatch({ type: 'SELECT_FEATURE', id: state.selectedFeatureId === f.id ? null : f.id })}
+                        active={state.selectedFeatureId === f.id}
+                      />
+                    ))}
+                    {total === 0 && (
+                      <div className="px-3 py-1.5 text-[12px] text-droid-text-muted">
+                        {working ? 'Working…' : 'No steps yet'}
+                      </div>
+                    )}
+                  </motion.div>
                 )}
-                {features.length === 0 && (
-                  <div className="px-3 py-1.5 text-[12px] text-droid-text-muted">No features yet</div>
-                )}
-              </div>
+              </AnimatePresence>
             </div>
           )}
 
-          {/* Selected feature detail */}
+          {/* Selected step detail */}
           <AnimatePresence>
             {activeMission && state.selectedFeatureId && (() => {
               const f = activeMission.features.find((x) => x.id === state.selectedFeatureId);
@@ -196,33 +231,13 @@ export default function RightPanel() {
             </div>
           )}
 
-          {/* Progress log */}
-          {progress.length > 0 && (
-            <div>
-              <Divider />
-              <SectionHeader label="Progress" />
-              <div className="px-3 pb-2 space-y-2">
-                {progress.slice(-5).map((entry, i) => (
-                  <div key={i} className="flex items-start gap-2.5">
-                    <span className="font-mono text-[10px] text-droid-text-muted shrink-0 pt-0.5">
-                      {new Date(entry.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                    </span>
-                    <span className="text-[12.5px] text-droid-text-secondary leading-snug">
-                      {entry.title ?? entry.type}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
           {/* Environment */}
           {activeMission && (
             <div>
               <Divider />
               <SectionHeader label="Environment" />
               <div>
-                <Row icon={<FolderGit className="w-4 h-4" />} label={activeMission.cwd.split('/').slice(-2).join('/')} />
+                <Row icon={<FolderGit className="w-4 h-4" />} label={activeMission.cwd.split('/').slice(-2).join('/') || 'No folder'} />
                 <Row icon={<GitBranch className="w-4 h-4" />} label="main" />
                 <Row icon={<Server className="w-4 h-4" />} label={activeMission.modelId ?? 'default'} meta={activeMission.autonomy} />
               </div>
