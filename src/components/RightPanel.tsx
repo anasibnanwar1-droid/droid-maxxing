@@ -109,7 +109,7 @@ export default function RightPanel() {
   const workers = Array.from(workerSet);
 
   return (
-    <div className="shrink-0 w-[300px] py-3 pr-3 h-full flex items-start">
+    <div className="shrink-0 w-[300px] pt-11 pb-3 pr-3 h-full flex items-start">
       <div className="droid-card w-full max-h-full">
         {/* Header (no close button — the top toolbar button toggles this panel) */}
         <div className="flex items-center justify-between pl-3 pr-3 h-11 shrink-0">
