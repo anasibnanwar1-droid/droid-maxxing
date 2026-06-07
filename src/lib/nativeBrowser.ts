@@ -1,6 +1,4 @@
-import { listen } from '@tauri-apps/api/event';
-import { invoke } from '@tauri-apps/api/core';
-import { isTauri } from './tauri';
+import { isDesktop } from './desktop';
 import type { BrowserNativeAction, BrowserNativeSnapshot, BrowserScrollDirection } from '../types/bridge';
 
 export interface NativeBrowserBounds {
@@ -54,30 +52,30 @@ export interface NativeBrowserAgentResult {
 }
 
 export async function openNativeBrowser(url: string, bounds: NativeBrowserBounds): Promise<void> {
-  if (!isTauri()) return;
-  await invoke('native_browser_open', { url, bounds: normalizeBounds(bounds) });
+  if (!isDesktop()) return;
+  await window.droidControl!.nativeBrowserOpen(url, normalizeBounds(bounds));
 }
 
 export async function setNativeBrowserBounds(bounds: NativeBrowserBounds): Promise<void> {
-  if (!isTauri()) return;
-  await invoke('native_browser_set_bounds', { bounds: normalizeBounds(bounds) });
+  if (!isDesktop()) return;
+  await window.droidControl!.nativeBrowserSetBounds(normalizeBounds(bounds));
 }
 
 export async function closeNativeBrowser(): Promise<void> {
-  if (!isTauri()) return;
-  await invoke('native_browser_close');
+  if (!isDesktop()) return;
+  await window.droidControl!.nativeBrowserClose();
 }
 
 export async function reloadNativeBrowser(): Promise<void> {
-  if (!isTauri()) return;
-  await invoke('native_browser_reload');
+  if (!isDesktop()) return;
+  await window.droidControl!.nativeBrowserReload();
 }
 
 export async function runNativeBrowserAgentAction(
   request: NativeBrowserAgentAction,
   timeoutMs = 10_000,
 ): Promise<NativeBrowserAgentResult> {
-  if (!isTauri()) throw new Error('DroidMaxx native browser is only available in the macOS app.');
+  if (!isDesktop()) throw new Error('DroidMaxx native browser is only available in the desktop app.');
   return new Promise((resolve, reject) => {
     let settled = false;
     let unlisten: (() => void) | undefined;
@@ -91,14 +89,12 @@ export async function runNativeBrowserAgentAction(
       finish(() => reject(new Error(`Droid Control browser action ${request.action} timed out.`)));
     }, timeoutMs);
 
-    void listen<NativeBrowserAgentResult>('native-browser-agent-result', (event) => {
-      if (event.payload.requestId !== request.requestId) return;
+    unlisten = window.droidControl!.onNativeBrowserAgentResult((result) => {
+      if (result.requestId !== request.requestId) return;
       window.clearTimeout(timeout);
-      finish(() => resolve(event.payload));
-    }).then((nextUnlisten) => {
-      unlisten = nextUnlisten;
-      return invoke('native_browser_agent_action', { request });
-    }).catch((err) => {
+      finish(() => resolve(result));
+    });
+    window.droidControl!.nativeBrowserAgentAction(request).catch((err) => {
       window.clearTimeout(timeout);
       finish(() => reject(err));
     });
@@ -106,31 +102,31 @@ export async function runNativeBrowserAgentAction(
 }
 
 export async function setNativeBrowserDesignMode(active: boolean): Promise<void> {
-  if (!isTauri()) return;
-  await invoke('native_browser_set_design_mode', { active });
+  if (!isDesktop()) return;
+  await window.droidControl!.nativeBrowserSetDesignMode(active);
 }
 
 export async function setNativeBrowserSketchMode(active: boolean): Promise<void> {
-  if (!isTauri()) return;
-  await invoke('native_browser_set_sketch_mode', { active });
+  if (!isDesktop()) return;
+  await window.droidControl!.nativeBrowserSetSketchMode(active);
 }
 
 export async function onNativeBrowserSelection(
   handler: (selection: NativeBrowserSelection) => void,
 ): Promise<() => void> {
-  if (!isTauri()) return () => {};
-  return listen<NativeBrowserSelection>('native-browser-selection', (event) => handler(event.payload));
+  if (!isDesktop()) return () => {};
+  return window.droidControl!.onNativeBrowserSelection(handler);
 }
 
 export async function onNativeBrowserLoaded(
   handler: (event: NativeBrowserLoaded) => void,
 ): Promise<() => void> {
-  if (!isTauri()) return () => {};
-  return listen<NativeBrowserLoaded>('native-browser-loaded', (event) => handler(event.payload));
+  if (!isDesktop()) return () => {};
+  return window.droidControl!.onNativeBrowserLoaded(handler);
 }
 
 export async function waitForNextNativeBrowserLoad(timeoutMs = 8_000): Promise<NativeBrowserLoaded> {
-  if (!isTauri()) throw new Error('DroidMaxx native browser is only available in the macOS app.');
+  if (!isDesktop()) throw new Error('DroidMaxx native browser is only available in the desktop app.');
   return new Promise((resolve, reject) => {
     let settled = false;
     let unlisten: (() => void) | undefined;

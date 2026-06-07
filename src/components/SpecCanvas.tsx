@@ -11,7 +11,7 @@ const EASE = [0.16, 1, 0.3, 1] as const;
 function ChatHeader({ title, live }: { title: string; live: boolean }) {
   return (
     <div
-      data-tauri-drag-region
+      data-electron-drag-region
       className="shrink-0 flex items-center h-11 pr-4 pl-4"
     >
       <div className="flex min-w-0 items-center gap-2 rounded-xl bg-droid-elevated/60 pl-2 pr-3 py-1.5">

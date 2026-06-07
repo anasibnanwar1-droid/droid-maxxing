@@ -1,4 +1,4 @@
-import { getBridgeInfo } from './tauri';
+import { getBridgeInfo } from './desktop';
 import type { BrowserNativeResult, ClientCommand, PermissionOutcome, ServerEvent } from '../types/bridge';
 
 type Listener = (ev: ServerEvent) => void;

@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "Node sidecar bridging the Tauri frontend to the Factory droid daemon via @factory/droid-sdk",
+  "description": "Node sidecar bridging the Electron frontend to the Factory droid daemon via @factory/droid-sdk",
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "start": "tsx src/index.ts",

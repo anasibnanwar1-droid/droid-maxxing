@@ -305,7 +305,7 @@ export default function SettingsPanel() {
           {/* Left nav */}
           <aside className="w-60 shrink-0 border-r border-droid-border flex flex-col bg-droid-surface/40">
             {/* Traffic-light clearance */}
-            <div data-tauri-drag-region className="h-9 shrink-0" />
+            <div data-electron-drag-region className="h-9 shrink-0" />
             <button
               onClick={close}
               className="flex items-center gap-1.5 px-4 h-10 text-[12px] text-droid-text-secondary hover:text-droid-text transition-colors shrink-0"

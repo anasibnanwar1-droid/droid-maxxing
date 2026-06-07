@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { RefObject } from 'react';
-import { isTauri } from '../../lib/tauri';
+import { isDesktop } from '../../lib/desktop';
 import {
   attachIframeDesignMode,
   clickIframe,
@@ -53,7 +53,7 @@ export function NativeBrowserSurface({
   const frameSize = useElementSize(stageRef);
   const lastUrl = useRef<string | null>(null);
   const lastBounds = useRef<NativeBrowserBounds | null>(null);
-  const native = isTauri();
+  const native = isDesktop();
   const surface = useMemo(
     () => surfaceLayout(frameSize, viewport, viewportMode),
     [frameSize, viewport, viewportMode],

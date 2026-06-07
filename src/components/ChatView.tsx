@@ -3,7 +3,7 @@ import { GripVertical, CornerDownRight, X } from 'lucide-react';
 import { useStore } from '../hooks/useStore';
 import { useMissionLive } from '../hooks/useMissionLive';
 import { MessageFeed } from './chat';
-import { readFile } from '../lib/tauri';
+import { readFile } from '../lib/desktop';
 
 function DroidWordmark() {
   return (
@@ -53,7 +53,7 @@ function FolderIcon() {
 function ChatHeader({ title, live }: { title: string; live: boolean }) {
   return (
     <div
-      data-tauri-drag-region
+      data-electron-drag-region
       className="shrink-0 flex items-center h-11 pr-4 pl-4"
     >
       <div className="flex min-w-0 items-center gap-2 rounded-xl bg-droid-elevated/60 pl-2 pr-3 py-1.5">

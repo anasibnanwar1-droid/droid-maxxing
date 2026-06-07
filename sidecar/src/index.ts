@@ -38,7 +38,7 @@ const server = createServer((req, res) => {
 const wss = new WebSocketServer({ server });
 
 server.listen(PORT, HOST, () => {
-  // Stdout line consumed by the Tauri supervisor to confirm readiness.
+  // Stdout line consumed by the desktop supervisor to confirm readiness.
   process.stdout.write(`SIDECAR_READY ${PORT}\n`);
 });
 
