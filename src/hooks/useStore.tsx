@@ -15,6 +15,7 @@ import type {
   SessionKind,
   BrowserState,
 } from '../types/bridge';
+import { addWorkspaceCwd } from '../lib/workspaces';
 
 export type AgentKind = 'orchestrator' | 'worker' | 'validator';
 
@@ -81,6 +82,7 @@ interface AppState {
   theme: ThemeConfig;
   missionMode: boolean;
   draftChat: { cwd: string } | null;
+  workspaceCwds: string[];
   browserOpen: boolean;
   browsers: Record<string, BrowserState>;
   browserErrors: Record<string, string>;
@@ -146,6 +148,7 @@ type Action =
   | { type: 'TOGGLE_SETTINGS' }
   | { type: 'TOGGLE_MISSION_MODE' }
   | { type: 'START_CHAT'; cwd: string }
+  | { type: 'ADD_WORKSPACE'; cwd: string }
   | { type: 'TOGGLE_BROWSER' }
   | { type: 'SET_BROWSER_OPEN'; open: boolean }
   | { type: 'BROWSER_UPDATED'; browser: BrowserState }
@@ -252,6 +255,7 @@ function saveAgentConfig(config: AgentConfig): AgentConfig {
 // whatever model it is currently using; otherwise a specific model id is used
 // for compaction across every session.
 const COMPACTION_MODEL_STORAGE_KEY = 'droid-compaction-model';
+const WORKSPACES_STORAGE_KEY = 'droid-workspaces';
 
 function loadCompactionModel(): string {
   try {
@@ -266,6 +270,25 @@ function saveCompactionModel(value: string): string {
     localStorage.setItem(COMPACTION_MODEL_STORAGE_KEY, value);
   } catch { /* ignore */ }
   return value;
+}
+
+function loadWorkspaceCwds(): string[] {
+  try {
+    const raw = localStorage.getItem(WORKSPACES_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((item): item is string => typeof item === 'string' && item.length > 0);
+  } catch {
+    return [];
+  }
+}
+
+function saveWorkspaceCwds(cwds: string[]): string[] {
+  try {
+    localStorage.setItem(WORKSPACES_STORAGE_KEY, JSON.stringify(cwds));
+  } catch { /* ignore */ }
+  return cwds;
 }
 
 function sanitizeAgentConfig(config: AgentConfig, models: ModelInfo[]): AgentConfig {
@@ -324,6 +347,7 @@ const initialState: AppState = {
   theme: loadTheme(),
   missionMode: false,
   draftChat: null,
+  workspaceCwds: loadWorkspaceCwds(),
   browserOpen: false,
   browsers: {},
   browserErrors: {},
@@ -546,17 +570,18 @@ function reducer(state: AppState, action: Action): AppState {
     }
 
     case 'MISSION_LIST': {
-      const map: Record<string, MissionSummary> = {};
-      const order: string[] = [];
+      const map: Record<string, MissionSummary> = { ...state.missions };
       for (const m of action.missions) {
         map[m.id] = applyMissionOverride(m, state.missionSettingOverrides[m.id]);
-        order.push(m.id);
       }
+      const order = [...new Set([...action.missions.map((m) => m.id), ...state.missionOrder])]
+        .filter((id) => map[id])
+        .sort((a, b) => map[b].updatedAt - map[a].updatedAt);
       return {
         ...state,
         missions: map,
         missionOrder: order,
-        activeMissionId: state.activeMissionId && map[state.activeMissionId] ? state.activeMissionId : order[0] ?? null,
+        activeMissionId: state.activeMissionId && map[state.activeMissionId] ? state.activeMissionId : state.activeMissionId,
       };
     }
 
@@ -618,6 +643,9 @@ function reducer(state: AppState, action: Action): AppState {
 
     case 'START_CHAT':
       return { ...state, draftChat: { cwd: action.cwd }, activeMissionId: null, missionMode: false };
+
+    case 'ADD_WORKSPACE':
+      return { ...state, workspaceCwds: saveWorkspaceCwds(addWorkspaceCwd(state.workspaceCwds, action.cwd)) };
 
     case 'TOGGLE_BROWSER':
       return { ...state, browserOpen: !state.browserOpen };

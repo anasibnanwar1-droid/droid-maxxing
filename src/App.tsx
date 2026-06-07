@@ -72,10 +72,14 @@ export default function App() {
       connect(key ?? '');
       listModels();
       listFactoryDefaults();
-      listMissions();
       listSkills();
     })();
   }, [embedded]);
+
+  useEffect(() => {
+    if (embedded || state.workspaceCwds.length === 0) return;
+    listMissions({ workspaceCwds: state.workspaceCwds, limitPerWorkspace: 5 });
+  }, [embedded, state.workspaceCwds]);
 
   useEffect(() => {
     if (embedded) return;

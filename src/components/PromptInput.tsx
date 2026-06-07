@@ -293,14 +293,14 @@ export default function PromptInput() {
       return;
     }
 
-    // Draft chat: first message creates the session.
-    if (state.draftChat && !activeMission) {
+    // Draft/default chat: first message creates the session. No workspace is required.
+    if (!activeMission) {
       const { orchestrator, worker, validator } = state.agentConfig;
       const clientRef = newClientRef();
       registerPending(clientRef);
       createMission({
         clientRef,
-        cwd: state.draftChat.cwd,
+        cwd: state.draftChat?.cwd ?? '',
         title: (text || activeSkills[0]?.name || 'Chat').slice(0, 48),
         goal: composed,
         interactionMode: isSpecMode ? 'spec' : 'auto',

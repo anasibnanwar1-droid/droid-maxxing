@@ -73,7 +73,8 @@ export const subscribeWorker = (missionId: string, workerSessionId: string) =>
 export const closeMission = (missionId: string) =>
   bridge.send({ type: 'mission.close', missionId });
 
-export const listMissions = () => bridge.send({ type: 'mission.list' });
+export const listMissions = (options?: { workspaceCwds?: string[]; limitPerWorkspace?: number }) =>
+  bridge.send({ type: 'mission.list', ...options });
 
 export const loadMissionHistory = (missionId: string) =>
   bridge.send({ type: 'mission.loadHistory', missionId });

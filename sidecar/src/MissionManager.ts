@@ -52,6 +52,7 @@ import { BrowserSessionManager } from './browser/BrowserSessionManager.js';
 import { createBrowserMcpServer } from './browser/browserMcpServer.js';
 import { NativeBrowserRuntime } from './browser/NativeBrowserRuntime.js';
 import { isApprovalOutcome, normalizePermissionOutcome } from './permissionOutcomes.js';
+import { filterMissionListSummaries, type MissionListFilterOptions } from './missionListFilter.js';
 
 type Emit = (event: ServerEvent) => void;
 
@@ -251,7 +252,7 @@ export class MissionManager {
         await this.closeMission(cmd.missionId);
         return;
       case 'mission.list':
-        this.emitMissionList();
+        this.emitMissionList(cmd);
         return;
       case 'history.list':
       case 'sessions.list':
@@ -588,26 +589,26 @@ export class MissionManager {
     return [...this.missions.values()].map((m) => m.summary);
   }
 
-  private listAllSummaries(): MissionSummary[] {
+  private listAllSummaries(options?: MissionListFilterOptions): MissionSummary[] {
     const map = new Map<string, MissionSummary>();
     const cached = this.history.summaryPatches();
     const hiddenDroidSessionIds = this.history.hiddenDroidSessionIds();
-    for (const historical of loadHistoricalSessions()) {
+    for (const historical of loadHistoricalSessions(options)) {
       if (hiddenDroidSessionIds.has(historical.summary.sessionId ?? historical.summary.id)) continue;
       const summary = this.applyPendingSettingsToSummary(applyCachedSummary(historical.summary, cached));
       map.set(summary.id, summary);
     }
-    for (const historical of loadHistoricalMissions()) {
+    for (const historical of loadHistoricalMissions(options)) {
       if (hiddenDroidSessionIds.has(historical.summary.sessionId ?? historical.summary.id)) continue;
       const summary = this.applyPendingSettingsToSummary(applyCachedSummary(historical.summary, cached));
       map.set(summary.id, summary);
     }
     for (const live of this.listSummaries()) map.set(live.id, this.applyPendingSettingsToSummary(live));
-    return [...map.values()].sort((a, b) => b.updatedAt - a.updatedAt);
+    return filterMissionListSummaries([...map.values()].sort((a, b) => b.updatedAt - a.updatedAt), options);
   }
 
-  private emitMissionList(): void {
-    this.emit({ type: 'mission.list', missions: this.listAllSummaries() });
+  private emitMissionList(options?: MissionListFilterOptions): void {
+    this.emit({ type: 'mission.list', missions: this.listAllSummaries(options) });
   }
 
   private loadMissionHistory(missionId: string): void {

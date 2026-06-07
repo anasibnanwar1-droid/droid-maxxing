@@ -4,6 +4,7 @@ import { useStore } from '../hooks/useStore';
 import { pickDirectory } from '../lib/desktop';
 import { Folder, MessageSquare, FolderPlus, Plus, User, Settings, ChevronRight, CornerDownRight } from 'lucide-react';
 import { subscribeWorker } from '../lib/commands';
+import { buildWorkspaceSections } from '../lib/workspaces';
 import type { MissionSummary } from '../types/bridge';
 import type { WorkerInfo } from '../hooks/useStore';
 
@@ -28,19 +29,6 @@ function RunningGrid() {
       ))}
     </span>
   );
-}
-
-function workspaceName(cwd?: string): string {
-  if (!cwd) return 'Home';
-  const base = cwd.split('/').filter(Boolean).pop();
-  return base || 'Home';
-}
-
-interface Workspace {
-  key: string;
-  name: string;
-  isHome: boolean;
-  missions: MissionSummary[];
 }
 
 function SubAgentRow({ label, running, selected, onClick }: { label: string; running: boolean; selected: boolean; onClick: () => void }) {
@@ -128,13 +116,15 @@ export default function Sidebar() {
 
   const pickAndChat = async () => {
     const dir = await pickDirectory();
-    if (dir) startChat(dir);
+    if (!dir) return;
+    dispatch({ type: 'ADD_WORKSPACE', cwd: dir });
+    startChat(dir);
   };
 
   // New chat respects context: if the user is currently in a workspace session,
   // start another chat in that workspace; otherwise start a plain no-folder chat.
   const newChat = () => {
-    const cwd = activeMission?.cwd ?? '';
+    const cwd = activeMission?.cwd ?? state.draftChat?.cwd ?? '';
     startChat(cwd);
   };
 
@@ -145,24 +135,10 @@ export default function Sidebar() {
       .sort((a, b) => b.updatedAt - a.updatedAt);
   }, [state.missionOrder, state.missions]);
 
-  // Folder-scoped workspaces (where missions run).
-  const workspaces = useMemo<Workspace[]>(() => {
+  const workspaces = useMemo(() => {
     const missions = state.missionOrder.map((id) => state.missions[id]).filter(Boolean) as MissionSummary[];
-    const map = new Map<string, Workspace>();
-    for (const m of missions) {
-      if (!m.cwd) continue; // plain chats belong to the Chats section
-      const key = m.cwd;
-      if (!map.has(key)) map.set(key, { key, name: workspaceName(m.cwd), isHome: false, missions: [] });
-      map.get(key)!.missions.push(m);
-    }
-    const list = Array.from(map.values());
-    list.forEach((w) => w.missions.sort((a, b) => b.updatedAt - a.updatedAt));
-    return list.sort((a, b) => {
-      const am = Math.max(...a.missions.map((m) => m.updatedAt));
-      const bm = Math.max(...b.missions.map((m) => m.updatedAt));
-      return bm - am;
-    });
-  }, [state.missionOrder, state.missions]);
+    return buildWorkspaceSections(state.workspaceCwds, missions);
+  }, [state.missionOrder, state.missions, state.workspaceCwds]);
 
   const renderRow = (m: MissionSummary) => (
     <SessionRow
@@ -227,12 +203,12 @@ export default function Sidebar() {
               {open && (
                 <div className="space-y-2.5">
                   {workspaces.map((ws) => {
-                    const wsOpen = !collapsed.has(ws.key);
+                    const wsOpen = !collapsed.has(ws.cwd);
                     return (
-                      <div key={ws.key}>
+                      <div key={ws.cwd}>
                         <div className="group flex items-center gap-1 px-1 py-1">
                           <button
-                            onClick={() => toggleCollapse(ws.key)}
+                            onClick={() => toggleCollapse(ws.cwd)}
                             className="flex items-center gap-2 min-w-0 flex-1 text-left rounded-lg px-1 py-0.5 hover:bg-droid-elevated/40 transition-colors"
                           >
                             <ChevronRight className={`w-3 h-3 text-droid-text-muted/70 shrink-0 transition-transform ${wsOpen ? 'rotate-90' : ''}`} />
@@ -240,14 +216,14 @@ export default function Sidebar() {
                             <span className="min-w-0 flex-1 truncate text-[13.5px] text-droid-text">{ws.name}</span>
                           </button>
                           <button
-                            onClick={() => startChat(ws.key)}
+                            onClick={() => startChat(ws.cwd)}
                             title="New chat here"
                             className="p-0.5 rounded-md text-droid-text-muted/0 group-hover:text-droid-text-muted hover:text-droid-text hover:bg-droid-elevated/60 transition-colors shrink-0"
                           >
                             <Plus className="w-3.5 h-3.5" />
                           </button>
                         </div>
-                        {wsOpen && <div className="mt-0.5 space-y-0.5">{ws.missions.map(renderRow)}</div>}
+                        {wsOpen && <div className="mt-0.5 space-y-0.5">{ws.sessions.map(renderRow)}</div>}
                       </div>
                     );
                   })}

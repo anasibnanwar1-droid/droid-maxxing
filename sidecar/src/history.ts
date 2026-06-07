@@ -69,6 +69,11 @@ export interface HistoricalMission {
   progress: ProgressEntry[];
 }
 
+export interface HistoricalSummaryFilter {
+  workspaceCwds?: string[];
+  limitPerWorkspace?: number;
+}
+
 export interface HydratedMissionHistory {
   progress: ProgressEntry[];
   transcripts: TranscriptEvent[];
@@ -96,16 +101,27 @@ const MAX_EVENTS_PER_MISSION = 3_000;
 const MAX_SESSION_BYTES = 5_000_000;
 const SESSION_START_BYTES = 256_000;
 
-export function loadHistoricalMissions(): HistoricalMission[] {
-  return missionDirs()
+export function loadHistoricalMissions(options: HistoricalSummaryFilter = {}): HistoricalMission[] {
+  const workspaceCwds = options.workspaceCwds ? new Set(options.workspaceCwds.filter(Boolean)) : null;
+  if (workspaceCwds && workspaceCwds.size === 0) return [];
+  const rows = missionDirs()
+    .filter((dir) => {
+      if (!workspaceCwds) return true;
+      const state = readJson<StoredMissionState>(join(dir, 'state.json'));
+      return workspaceCwds.has(state.workingDirectory || state.cwd || '');
+    })
     .map((dir) => loadHistoricalMission(dir))
     .sort((a, b) => b.summary.updatedAt - a.summary.updatedAt);
+  return limitHistoricalRows(rows, workspaceCwds, options.limitPerWorkspace);
 }
 
-export function loadHistoricalSessions(): HistoricalMission[] {
+export function loadHistoricalSessions(options: HistoricalSummaryFilter = {}): HistoricalMission[] {
   const rows: HistoricalMission[] = [];
+  const workspaceCwds = options.workspaceCwds ? new Set(options.workspaceCwds.filter(Boolean)) : null;
+  if (workspaceCwds && workspaceCwds.size === 0) return [];
   for (const [sessionId, path] of buildSessionIndex()) {
     const start = readSessionStart(path);
+    if (workspaceCwds && !workspaceCwds.has(start.cwd ?? '')) continue;
     const classification = classifyStoredSession(start);
     if (!classification) continue;
     const stat = statSync(path);
@@ -138,7 +154,7 @@ export function loadHistoricalSessions(): HistoricalMission[] {
       progress: [],
     });
   }
-  return rows.sort((a, b) => b.summary.updatedAt - a.summary.updatedAt);
+  return limitHistoricalRows(rows.sort((a, b) => b.summary.updatedAt - a.summary.updatedAt), workspaceCwds, options.limitPerWorkspace);
 }
 
 export function loadSessionHistory(): HistoryMission[] {
@@ -708,6 +724,20 @@ function resolveMissionDir(missionId: string): string | null {
     if (basename(dir) === missionId || state.baseSessionId === missionId || state.missionId === missionId) return dir;
   }
   return null;
+}
+
+function limitHistoricalRows(
+  rows: HistoricalMission[],
+  workspaceCwds: Set<string> | null,
+  limitPerWorkspace?: number,
+): HistoricalMission[] {
+  if (!workspaceCwds) return rows;
+  const limit = Math.max(1, Math.min(limitPerWorkspace ?? 5, 50));
+  const limited: HistoricalMission[] = [];
+  for (const cwd of workspaceCwds) {
+    limited.push(...rows.filter((row) => row.summary.cwd === cwd).slice(0, limit));
+  }
+  return limited.sort((a, b) => b.summary.updatedAt - a.summary.updatedAt);
 }
 
 function buildSessionIndex(): Map<string, string> {
