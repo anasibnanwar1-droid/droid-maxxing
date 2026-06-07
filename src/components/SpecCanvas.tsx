@@ -12,7 +12,7 @@ function ChatHeader({ title, live }: { title: string; live: boolean }) {
   return (
     <div
       data-electron-drag-region
-      className="shrink-0 flex items-center h-11 pr-4 pl-4"
+      className="shrink-0 flex items-center h-9 pr-4 pl-4"
     >
       <div className="flex min-w-0 items-center gap-2 rounded-xl bg-droid-elevated/60 pl-2 pr-3 py-1.5">
         <GripVertical className="w-3.5 h-3.5 shrink-0 text-droid-text-muted/40" />
