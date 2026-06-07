@@ -1,30 +1,13 @@
-import { useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 import { useStore } from '../hooks/useStore';
+import { useMissionLive } from '../hooks/useMissionLive';
+import { subscribeWorker } from '../lib/commands';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-  GitBranch, Hash, Activity, Loader2, ChevronRight,
-  Cpu, Bot, FolderGit, CheckCircle2, Circle
+  GitBranch, Hash, Activity, Loader2, ChevronRight, CornerDownRight,
+  FolderGit, CheckCircle2, Circle
 } from 'lucide-react';
 import { ModelIcon, providerOf } from './ModelIcon';
-
-const RUNNING_PHASES = ['running', 'initializing', 'orchestrator_turn', 'planning'];
-
-const AGENT_COLORS = [
-  '#7a8a9a', '#9a8a7a', '#7a9a8a', '#8a7a9a', '#9a7a8a', '#7a9a9a',
-];
-
-function AgentIcon({ index, role }: { index: number; role: string }) {
-  const color = AGENT_COLORS[index % AGENT_COLORS.length];
-  const Icon = role === 'orchestrator' ? Cpu : Bot;
-  return (
-    <span
-      className="inline-flex items-center justify-center w-5 h-5 rounded-md"
-      style={{ backgroundColor: `${color}1f`, color }}
-    >
-      <Icon className="w-3 h-3" />
-    </span>
-  );
-}
 
 function SectionHeader({ label, trailing }: { label: string; trailing?: React.ReactNode }) {
   return (
@@ -37,6 +20,16 @@ function SectionHeader({ label, trailing }: { label: string; trailing?: React.Re
 
 function Divider() {
   return <div className="mx-3 my-1.5 h-px bg-droid-border/70" />;
+}
+
+function RunningDot() {
+  return (
+    <motion.span
+      className="w-1.5 h-1.5 rounded-full bg-droid-accent shrink-0"
+      animate={{ opacity: [0.3, 1, 0.3] }}
+      transition={{ duration: 1.2, repeat: Infinity, ease: 'easeInOut' }}
+    />
+  );
 }
 
 function Row({
@@ -64,6 +57,27 @@ function Row({
   );
 }
 
+// Mirrors the sub-agent row design used in the left sidebar.
+function AgentRow({ label, running, selected, depth, onClick }: {
+  label: string; running: boolean; selected: boolean; depth: number; onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={`group w-full flex items-center gap-1.5 pr-3 py-1.5 rounded-lg text-left transition-colors ${
+        selected ? 'bg-droid-elevated/70' : 'hover:bg-droid-elevated/40'
+      }`}
+      style={{ paddingLeft: 16 + depth * 14 }}
+    >
+      <CornerDownRight className={`w-3 h-3 shrink-0 ${selected ? 'text-droid-accent' : 'text-droid-text-muted/60'}`} />
+      <span className={`min-w-0 flex-1 truncate text-[12px] ${selected ? 'text-droid-text' : 'text-droid-text-muted group-hover:text-droid-text-secondary'}`}>
+        {label}
+      </span>
+      {running && <RunningDot />}
+    </button>
+  );
+}
+
 function statusIcon(status: string) {
   if (status === 'completed') return <CheckCircle2 className="w-4 h-4" style={{ color: '#6f8f6f' }} />;
   if (status === 'in_progress') return <Loader2 className="w-4 h-4 animate-spin" style={{ color: '#b0985f' }} />;
@@ -79,35 +93,18 @@ export default function RightPanel() {
   const total = features.length;
   const pct = total > 0 ? Math.round((completed / total) * 100) : 0;
 
-  // Detect the model working from real generation activity: streaming text grows
-  // in place, so watch the latest transcript event's length, not just phase.
-  const allTx = activeMission ? state.transcripts[activeMission.id] ?? [] : [];
-  const lastEv = allTx[allTx.length - 1];
-  const activitySig = `${allTx.length}:${lastEv?.text?.length ?? 0}`;
-  const lastChangeRef = useRef(0);
-  const sigRef = useRef<string | null>(null);
-  const [, forceTick] = useState(0);
-  useEffect(() => {
-    if (sigRef.current !== null && sigRef.current !== activitySig) lastChangeRef.current = Date.now();
-    sigRef.current = activitySig;
-  }, [activitySig]);
-  useEffect(() => {
-    const id = setInterval(() => forceTick((n) => n + 1), 500);
-    return () => clearInterval(id);
-  }, []);
+  // Authoritative "is the model generating right now" signal — respects the
+  // backend `streaming` flag and terminal phases, so the spinner stops on reply.
+  const working = useMissionLive(activeMission?.id ?? null);
 
-  const phaseLive = !!activeMission && (!!activeMission.streaming || RUNNING_PHASES.includes(activeMission.phase));
-  const inactive = !activeMission || ['paused', 'completed', 'failed'].includes(activeMission.phase);
-  const working = !inactive && (phaseLive || Date.now() - lastChangeRef.current < 1500);
-
-  // Auto-expand the step list while the model is working; otherwise collapse it
-  // (minimal). The user can still override by clicking the section header.
+  // Auto-expand the step list while the model is working; otherwise collapse it.
   const [progressManual, setProgressManual] = useState<boolean | null>(null);
   const progressOpen = progressManual ?? working;
 
-  const workerSet = new Set<string>();
-  features.forEach((f) => f.workerSessionIds?.forEach((id) => workerSet.add(id)));
-  const workers = Array.from(workerSet);
+  // Sub-agents spawned in this session (same source the sidebar uses).
+  const workers = activeMission ? state.workers[activeMission.id] ?? [] : [];
+  const agentsRunning = workers.some((w) => w.status === 'running');
+  const [agentsOpen, setAgentsOpen] = useState(true);
 
   const modelInfo = activeMission?.modelId ? state.models.find((m) => m.id === activeMission.modelId) : undefined;
   const modelLabel = activeMission ? (modelInfo?.displayName ?? activeMission.modelId ?? 'default') : 'default';
@@ -130,6 +127,46 @@ export default function RightPanel() {
                 <Row icon={<FolderGit className="w-4 h-4" />} label={activeMission.cwd.split('/').slice(-2).join('/') || 'No folder'} />
                 <Row icon={<GitBranch className="w-4 h-4" />} label="main" />
                 <Row icon={<ModelIcon provider={providerOf(modelInfo, activeMission.modelId)} size={16} />} label={modelLabel} meta={activeMission.autonomy} />
+
+                {/* Agents — collapsible, nested under the model */}
+                {workers.length > 0 && (
+                  <div>
+                    <button
+                      onClick={() => setAgentsOpen((v) => !v)}
+                      className="w-full flex items-center gap-1.5 px-3 py-1.5 text-left"
+                    >
+                      <ChevronRight className={`w-3.5 h-3.5 text-droid-text-muted transition-transform ${agentsOpen ? 'rotate-90' : ''}`} />
+                      <span className="text-[12px] font-medium text-droid-text-muted">Agents</span>
+                      <span className="font-mono text-[11px] text-droid-text-muted/70">{workers.length}</span>
+                      {agentsRunning && <span className="ml-auto"><RunningDot /></span>}
+                    </button>
+                    <AnimatePresence initial={false}>
+                      {agentsOpen && (
+                        <motion.div
+                          initial={{ height: 0, opacity: 0 }}
+                          animate={{ height: 'auto', opacity: 1 }}
+                          exit={{ height: 0, opacity: 0 }}
+                          className="overflow-hidden"
+                        >
+                          {workers.map((w, i) => (
+                            <AgentRow
+                              key={w.sessionId}
+                              label={w.label ?? `Sub-agent ${i + 1}`}
+                              running={w.status === 'running'}
+                              depth={0}
+                              selected={state.selectedAgentSessionId === w.sessionId}
+                              onClick={() => {
+                                const next = state.selectedAgentSessionId === w.sessionId ? null : w.sessionId;
+                                dispatch({ type: 'SELECT_AGENT', id: next });
+                                if (next) subscribeWorker(activeMission.id, w.sessionId);
+                              }}
+                            />
+                          ))}
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -231,23 +268,6 @@ export default function RightPanel() {
               );
             })()}
           </AnimatePresence>
-
-          {/* Subagents */}
-          {activeMission && workers.length > 0 && (
-            <div>
-              <Divider />
-              <SectionHeader
-                label="Subagents"
-                trailing={<span className="font-mono text-[11px] text-droid-text-muted">{workers.length}</span>}
-              />
-              <div>
-                {workers.map((wid, i) => (
-                  <Row key={wid} icon={<AgentIcon index={i} role="worker" />} label={wid.slice(0, 16)} />
-                ))}
-              </div>
-            </div>
-          )}
-
         </div>
       </div>
     </div>

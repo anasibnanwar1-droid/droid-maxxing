@@ -2,11 +2,9 @@ import { useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
 import { useStore } from '../hooks/useStore';
 import { pickDirectory } from '../lib/desktop';
-import { Folder, MessageSquare, FolderPlus, Plus, User, Settings, ChevronRight, CornerDownRight } from 'lucide-react';
-import { subscribeWorker } from '../lib/commands';
+import { Folder, MessageSquare, FolderPlus, Plus, User, Settings, ChevronRight } from 'lucide-react';
 import { buildWorkspaceSections } from '../lib/workspaces';
 import type { MissionSummary } from '../types/bridge';
-import type { WorkerInfo } from '../hooks/useStore';
 
 const RUNNING_PHASES = ['running', 'initializing', 'orchestrator_turn'];
 
@@ -31,47 +29,20 @@ function RunningGrid() {
   );
 }
 
-function SubAgentRow({ label, running, selected, onClick }: { label: string; running: boolean; selected: boolean; onClick: () => void }) {
-  return (
-    <button
-      onClick={onClick}
-      className={`group w-full flex items-center gap-1.5 pl-6 pr-2 py-1 rounded-lg text-left transition-colors ${
-        selected ? 'bg-droid-elevated/70' : 'hover:bg-droid-elevated/30'
-      }`}
-    >
-      <CornerDownRight className={`w-3 h-3 shrink-0 ${selected ? 'text-droid-accent' : 'text-droid-text-muted/60'}`} />
-      <span className={`min-w-0 flex-1 truncate text-[12px] ${selected ? 'text-droid-text' : 'text-droid-text-muted group-hover:text-droid-text-secondary'}`}>
-        {label}
-      </span>
-      {running && (
-        <motion.span
-          className="w-1.5 h-1.5 rounded-full bg-droid-accent shrink-0"
-          animate={{ opacity: [0.3, 1, 0.3] }}
-          transition={{ duration: 1.2, repeat: Infinity, ease: 'easeInOut' }}
-        />
-      )}
-    </button>
-  );
-}
-
 function SessionRow({
-  mission, active, workers, selectedAgentId, onClick, onSelectAgent,
+  mission, active, onClick,
 }: {
   mission: MissionSummary;
   active: boolean;
-  workers: WorkerInfo[];
-  selectedAgentId: string | null;
   onClick: () => void;
-  onSelectAgent: (sessionId: string) => void;
 }) {
   const running = Boolean(mission.streaming) || RUNNING_PHASES.includes(mission.phase);
-  const onMain = active && !selectedAgentId;
   return (
     <div>
       <button
         onClick={onClick}
         className={`group w-full flex items-center gap-2.5 pl-3 pr-2 py-1.5 rounded-xl text-left transition-colors ${
-          onMain
+          active
             ? 'bg-droid-elevated'
             : 'hover:bg-droid-elevated/40'
         }`}
@@ -83,19 +54,6 @@ function SessionRow({
           {mission.title}
         </span>
       </button>
-      {workers.length > 0 && (
-        <div className="mt-0.5 space-y-0.5">
-          {workers.map((w, i) => (
-            <SubAgentRow
-              key={w.sessionId}
-              label={w.label ?? `Sub-agent ${i + 1}`}
-              running={w.status === 'running'}
-              selected={active && selectedAgentId === w.sessionId}
-              onClick={() => onSelectAgent(w.sessionId)}
-            />
-          ))}
-        </div>
-      )}
     </div>
   );
 }
@@ -145,16 +103,9 @@ export default function Sidebar() {
       key={m.id}
       mission={m}
       active={state.activeMissionId === m.id}
-      workers={state.workers[m.id] ?? []}
-      selectedAgentId={state.activeMissionId === m.id ? state.selectedAgentSessionId : null}
       onClick={() => {
         dispatch({ type: 'SET_ACTIVE_MISSION', id: m.id });
         dispatch({ type: 'SELECT_AGENT', id: null });
-      }}
-      onSelectAgent={(sessionId) => {
-        dispatch({ type: 'SET_ACTIVE_MISSION', id: m.id });
-        dispatch({ type: 'SELECT_AGENT', id: sessionId });
-        subscribeWorker(m.id, sessionId);
       }}
     />
   );
