@@ -307,6 +307,7 @@ function ensureNativeBrowserView(sessionId) {
 
 async function openNativeBrowser(sessionId, url, bounds, viewport) {
   const entry = ensureNativeBrowserView(sessionId);
+  rejectHostAppUrl(url);
   url = normalizeNativeBrowserUrl(entry, url);
   validateUrl(url);
   if (bounds) await attachNativeBrowser(entry.sessionId, bounds, { restore: false });
@@ -336,6 +337,7 @@ async function attachNativeBrowser(sessionId, bounds, options = {}) {
     const targetUrl = restorableUrlForEntry(entry, entry.targetUrl) ?? restorableUrlForEntry(entry, options.restoreUrl);
     const currentUrl = safeWebContents(view)?.getURL() ?? '';
     if (targetUrl && (!currentUrl || currentUrl === 'about:blank' || isChromeErrorUrl(currentUrl))) {
+      rejectHostAppUrl(targetUrl);
       validateUrl(targetUrl);
       await loadNativeBrowserUrl(entry, targetUrl, { force: true });
     }
@@ -625,11 +627,15 @@ function isBrowserViewUsable(view) {
 
 function normalizeNativeBrowserUrl(entry, url) {
   const value = String(url || 'about:blank');
-  if (isHostAppUrl(value)) {
-    throw new Error('Cannot open the Droid Control shell inside its own browser pane. Use a different local app port.');
-  }
+  if (isHostAppUrl(value)) return 'about:blank';
   if (!isChromeErrorUrl(value)) return value;
   return entry?.targetUrl && !isChromeErrorUrl(entry.targetUrl) ? entry.targetUrl : 'about:blank';
+}
+
+function rejectHostAppUrl(url) {
+  if (isHostAppUrl(url)) {
+    throw new Error('Cannot open the Droid Control shell inside its own browser pane. Use a different local app port.');
+  }
 }
 
 function isChromeErrorUrl(url) {
