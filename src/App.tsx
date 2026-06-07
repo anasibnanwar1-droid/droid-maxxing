@@ -144,38 +144,43 @@ export default function App() {
 
   return (
     <div id="app-root" className="h-screen w-screen flex flex-col bg-droid-bg text-droid-text overflow-hidden relative">
-      {/* Sidebar toggle — always at fixed position, clearing traffic lights */}
-      <button
-        onClick={() => dispatch({ type: 'TOGGLE_SIDEBAR' })}
-        className="no-drag absolute top-[6px] left-[80px] z-40 p-1 rounded text-droid-text-muted/50 hover:text-droid-text-muted hover:bg-droid-elevated/50 transition-colors pointer-events-auto"
-        title="Toggle sidebar (Cmd+B)"
-      >
-        <PanelLeft className="w-3.5 h-3.5" />
-      </button>
+      {/* Left controls — inside a drag region so their no-drag holes are honored,
+          vertically centered (h-9) to sit on the traffic-light line. */}
+      <div data-electron-drag-region className="absolute top-0 left-[78px] h-9 z-40 flex items-center gap-1">
+        <button
+          onClick={() => dispatch({ type: 'TOGGLE_SIDEBAR' })}
+          className="p-1 rounded text-droid-text-muted/60 hover:text-droid-text hover:bg-droid-elevated/60 transition-colors"
+          title="Toggle sidebar (Cmd+B)"
+        >
+          <PanelLeft className="w-3.5 h-3.5" />
+        </button>
+        <button
+          onClick={toggleBrowserPane}
+          className={`p-1 rounded transition-colors ${
+            state.browserOpen
+              ? 'text-droid-text bg-droid-elevated/80'
+              : 'text-droid-text-muted/60 hover:text-droid-text hover:bg-droid-elevated/60'
+          }`}
+          title="Toggle browser (Cmd+Shift+B)"
+        >
+          <Monitor className="w-3.5 h-3.5" />
+        </button>
+      </div>
 
-      <button
-        onClick={toggleBrowserPane}
-        className={`no-drag absolute top-[6px] left-[108px] z-40 p-1 rounded transition-colors pointer-events-auto ${
-          state.browserOpen
-            ? 'text-droid-text bg-droid-elevated/80'
-            : 'text-droid-text-muted/50 hover:text-droid-text-muted hover:bg-droid-elevated/50'
-        }`}
-        title="Toggle browser (Cmd+Shift+B)"
-      >
-        <Monitor className="w-3.5 h-3.5" />
-      </button>
-
-      <button
-        onClick={() => dispatch({ type: 'SET_RIGHT_PANEL', open: !state.rightPanelOpen })}
-        className={`no-drag absolute top-[6px] right-[12px] z-40 p-1.5 rounded-lg transition-colors pointer-events-auto ${
-          state.rightPanelOpen
-            ? 'text-droid-text bg-droid-elevated'
-            : 'text-droid-text-muted hover:text-droid-text hover:bg-droid-elevated/60'
-        }`}
-        title="Toggle panel (Cmd+\\)"
-      >
-        <ContextListIcon className="w-4 h-4" />
-      </button>
+      {/* Right control — context panel toggle, same drag-region treatment. */}
+      <div data-electron-drag-region className="absolute top-0 right-0 h-9 z-40 flex items-center pr-3">
+        <button
+          onClick={() => dispatch({ type: 'SET_RIGHT_PANEL', open: !state.rightPanelOpen })}
+          className={`p-1.5 rounded-lg transition-colors ${
+            state.rightPanelOpen
+              ? 'text-droid-text bg-droid-elevated'
+              : 'text-droid-text-muted hover:text-droid-text hover:bg-droid-elevated/60'
+          }`}
+          title="Toggle panel (Cmd+\\)"
+        >
+          <ContextListIcon className="w-4 h-4" />
+        </button>
+      </div>
 
       <div className="flex-1 flex min-h-0">
         {/* Sidebar with collapse animation */}
