@@ -145,9 +145,9 @@ function Toggle({ label, sub, checked, onChange }: { label: string; sub?: string
       </div>
       <button
         onClick={() => onChange(!checked)}
-        className={`w-9 h-5 rounded-full transition-colors relative shrink-0 ${checked ? 'bg-droid-accent' : 'bg-droid-border'}`}
+        className={`w-10 h-6 rounded-full transition-colors shrink-0 flex items-center p-0.5 ${checked ? 'bg-droid-accent' : 'bg-droid-border'}`}
       >
-        <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${checked ? 'translate-x-4' : 'translate-x-0.5'}`} />
+        <span className={`w-5 h-5 rounded-full bg-white shadow-sm transition-transform ${checked ? 'translate-x-4' : 'translate-x-0'}`} />
       </button>
     </div>
   );
@@ -505,9 +505,12 @@ export function applyTheme(theme: ReturnType<typeof useStore>['state']['theme'])
   root.style.setProperty('--ui-zoom', `${theme.uiFontSize / 14}`);
   root.style.setProperty('--code-font-size', `${theme.codeFontSize}px`);
 
-  // Dedicated sidebar surface so translucency only affects the sidebar.
-  root.style.setProperty('--sidebar-bg', theme.translucentSidebar ? `${theme.surface}b8` : theme.surface);
-  root.style.setProperty('--sidebar-blur', theme.translucentSidebar ? 'blur(20px) saturate(160%)' : 'none');
+  // Dedicated sidebar surface so translucency only affects the sidebar. The app
+  // window is opaque, so a dark alpha over it is invisible; instead we lighten
+  // the surface and add a semi-transparent frosted fill + blur so the toggle
+  // produces a clearly visible glassy effect.
+  root.style.setProperty('--sidebar-bg', theme.translucentSidebar ? `${adjustColor(theme.surface, 20)}cc` : theme.surface);
+  root.style.setProperty('--sidebar-blur', theme.translucentSidebar ? 'blur(24px) saturate(180%)' : 'none');
 
   // Apply contrast as a filter only below 100% so it never creates a stacking
   // context that would defeat the sidebar's backdrop blur at the default value.
