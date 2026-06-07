@@ -456,13 +456,21 @@ export function readFactoryDefaults(): FactoryDefaults {
     reasoningEffort: mapReasoning(stringValue(session.reasoningEffort)),
     compactionModel: stringValue(settings.compactionModel) || stringValue(session.compactionModel),
     autonomy: mapAutonomy(stringValue(session.autonomyLevel)),
+    interactionMode: mapInteractionMode(stringValue(session.interactionMode)),
     specModelId: stringValue(session.specModeModel),
     specReasoningEffort: mapReasoning(stringValue(session.specModeReasoningEffort)),
+    missionOrchestratorModelId: stringValue(settings.missionOrchestratorModel),
+    missionOrchestratorReasoningEffort: mapReasoning(stringValue(settings.missionOrchestratorReasoningEffort)),
     workerModelId: stringValue(mission.workerModel),
     workerReasoningEffort: mapReasoning(stringValue(mission.workerReasoningEffort)),
     validatorModelId: stringValue(mission.validationWorkerModel),
     validatorReasoningEffort: mapReasoning(stringValue(mission.validationWorkerReasoningEffort)),
   };
+}
+
+function mapInteractionMode(value?: string): FactoryDefaults['interactionMode'] {
+  if (value === 'auto' || value === 'spec' || value === 'agi') return value;
+  return undefined;
 }
 
 function loadHistoricalMission(dir: string): HistoricalMission & {

@@ -131,8 +131,11 @@ export interface FactoryDefaultSettings {
   reasoningEffort?: ReasoningEffort;
   compactionModel?: string;
   autonomy?: Autonomy;
+  interactionMode?: SessionInteractionMode;
   specModelId?: string;
   specReasoningEffort?: ReasoningEffort;
+  missionOrchestratorModelId?: string;
+  missionOrchestratorReasoningEffort?: ReasoningEffort;
   workerModelId?: string;
   workerReasoningEffort?: ReasoningEffort;
   validatorModelId?: string;
@@ -283,8 +286,8 @@ export type ClientCommand =
   | { type: 'catalog.skills'; sessionId?: string }
   | { type: 'catalog.mcp'; sessionId?: string }
   | { type: 'settings.defaults' }
-  | { type: 'mission.create'; clientRef: string; cwd?: string; title: string; goal: string; interactionMode?: SessionInteractionMode; modelId?: string; reasoningEffort?: ReasoningEffort; compactionModel?: string; autonomy: Autonomy; workerModel?: string; workerReasoning?: ReasoningEffort; validatorModel?: string; validatorReasoning?: ReasoningEffort }
-  | { type: 'session.create'; clientRef: string; cwd?: string; title: string; goal: string; interactionMode: SessionInteractionMode; modelId?: string; reasoningEffort?: ReasoningEffort; compactionModel?: string; autonomy: Autonomy }
+  | { type: 'mission.create'; clientRef: string; cwd?: string; title: string; goal: string; interactionMode?: SessionInteractionMode; modelId?: string; reasoningEffort?: ReasoningEffort; compactionModel?: string; autonomy?: Autonomy; workerModel?: string; workerReasoning?: ReasoningEffort; validatorModel?: string; validatorReasoning?: ReasoningEffort }
+  | { type: 'session.create'; clientRef: string; cwd?: string; title: string; goal: string; interactionMode?: SessionInteractionMode; modelId?: string; reasoningEffort?: ReasoningEffort; compactionModel?: string; autonomy?: Autonomy }
   | { type: 'session.send'; sessionId: string; text: string }
   | { type: 'session.resume'; sessionId: string }
   | { type: 'session.interrupt'; sessionId: string }

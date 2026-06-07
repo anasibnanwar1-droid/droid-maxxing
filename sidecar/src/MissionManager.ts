@@ -656,16 +656,15 @@ export class MissionManager {
 
   private async createMission(cmd: Extract<ClientCommand, { type: 'mission.create' }>): Promise<void> {
     if (!this.ready) this.connect();
-    const mode = cmd.interactionMode ?? 'agi';
     const appCwd = cmd.cwd ?? '';
     const runtimeCwd = appCwd || homedir();
     const ref = { id: '' };
     let pendingBrowserMcpServer: SdkMcpServer | undefined;
     try {
       const defaults = await this.getFactoryDefaults();
-      const autonomy = normalizeAutonomy(cmd.autonomy) ?? defaults.autonomy ?? 'low';
-      const orchestratorModelId = cmd.modelId ?? (mode === 'spec' ? defaults.specModelId : defaults.modelId);
-      const orchestratorReasoning = cmd.reasoningEffort ?? (mode === 'spec' ? defaults.specReasoningEffort : defaults.reasoningEffort);
+      const mode = cmd.interactionMode ?? defaults.interactionMode ?? 'agi';
+      const autonomy = createAutonomyForCommand(cmd, defaults);
+      const { modelId: orchestratorModelId, reasoningEffort: orchestratorReasoning } = createModelDefaultsForMode(mode, cmd, defaults);
       const compactionModel = cmd.compactionModel ?? defaults.compactionModel ?? 'current-model';
       const workerModelId = cmd.workerModel ?? defaults.workerModelId;
       const workerReasoningEffort = cmd.workerReasoning ?? defaults.workerReasoningEffort;
@@ -1634,6 +1633,51 @@ function normalizeAutonomy(value: unknown): Autonomy | undefined {
   if (value === 'none') return 'off';
   if (value === 'off' || value === 'low' || value === 'medium' || value === 'high') return value;
   return undefined;
+}
+
+export function createAutonomyForCommand(
+  cmd: { autonomy?: Autonomy | 'none' },
+  defaults: Pick<FactoryDefaultSettings, 'autonomy'>,
+): Autonomy {
+  return normalizeAutonomy(cmd.autonomy) ?? defaults.autonomy ?? 'low';
+}
+
+export function createModelDefaultsForMode(
+  mode: SessionInteractionMode,
+  cmd: { modelId?: string; reasoningEffort?: ReasoningEffort },
+  defaults: Pick<
+    FactoryDefaultSettings,
+    'modelId' | 'reasoningEffort' | 'specModelId' | 'specReasoningEffort' | 'missionOrchestratorModelId' | 'missionOrchestratorReasoningEffort'
+  >,
+): { modelId?: string; reasoningEffort?: ReasoningEffort } {
+  if (cmd.modelId || cmd.reasoningEffort) {
+    return {
+      modelId: cmd.modelId ?? modelDefaultForMode(mode, defaults),
+      reasoningEffort: cmd.reasoningEffort ?? reasoningDefaultForMode(mode, defaults),
+    };
+  }
+  return {
+    modelId: modelDefaultForMode(mode, defaults),
+    reasoningEffort: reasoningDefaultForMode(mode, defaults),
+  };
+}
+
+function modelDefaultForMode(
+  mode: SessionInteractionMode,
+  defaults: Pick<FactoryDefaultSettings, 'modelId' | 'specModelId' | 'missionOrchestratorModelId'>,
+): string | undefined {
+  if (mode === 'spec') return defaults.specModelId ?? defaults.modelId;
+  if (mode === 'agi') return defaults.missionOrchestratorModelId ?? defaults.modelId;
+  return defaults.modelId;
+}
+
+function reasoningDefaultForMode(
+  mode: SessionInteractionMode,
+  defaults: Pick<FactoryDefaultSettings, 'reasoningEffort' | 'specReasoningEffort' | 'missionOrchestratorReasoningEffort'>,
+): ReasoningEffort | undefined {
+  if (mode === 'spec') return defaults.specReasoningEffort ?? defaults.reasoningEffort;
+  if (mode === 'agi') return defaults.missionOrchestratorReasoningEffort ?? defaults.reasoningEffort;
+  return defaults.reasoningEffort;
 }
 
 function uniqueStrings(values: Array<string | undefined>): string[] {
