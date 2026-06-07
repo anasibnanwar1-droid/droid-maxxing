@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useStore } from './hooks/useStore';
 import { AnimatePresence, motion } from 'framer-motion';
-import { Monitor, PanelLeft, PanelRight } from 'lucide-react';
+import { Monitor, PanelLeft } from 'lucide-react';
 import { bridge } from './lib/bridge';
 import { closeBrowser, connect, listFactoryDefaults, listModels, listMissions, listSkills, loadMissionHistory, resumeMission, sendNativeBrowserResult } from './lib/commands';
 import { isEmbedded } from './lib/embed';
@@ -18,6 +18,17 @@ import SettingsPanel, { applyTheme, paletteForMode } from './components/Settings
 import AskUserModal from './components/AskUserModal';
 import PermissionModal from './components/PermissionModal';
 import BrowserWorkspace from './components/browser/BrowserWorkspace';
+
+function ContextListIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" className={className}>
+      <circle cx="5" cy="8" r="1.6" />
+      <line x1="10" y1="8" x2="19" y2="8" />
+      <circle cx="5" cy="16" r="1.6" />
+      <line x1="10" y1="16" x2="19" y2="16" />
+    </svg>
+  );
+}
 
 const BROWSER_PANE_MIN = 460;
 const BROWSER_PANE_MAX = 1280;
@@ -136,7 +147,7 @@ export default function App() {
       {/* Sidebar toggle — always at fixed position, clearing traffic lights */}
       <button
         onClick={() => dispatch({ type: 'TOGGLE_SIDEBAR' })}
-        className="absolute top-[6px] left-[80px] z-40 p-1 rounded text-droid-text-muted/50 hover:text-droid-text-muted hover:bg-droid-elevated/50 transition-colors pointer-events-auto"
+        className="no-drag absolute top-[6px] left-[80px] z-40 p-1 rounded text-droid-text-muted/50 hover:text-droid-text-muted hover:bg-droid-elevated/50 transition-colors pointer-events-auto"
         title="Toggle sidebar (Cmd+B)"
       >
         <PanelLeft className="w-3.5 h-3.5" />
@@ -144,7 +155,7 @@ export default function App() {
 
       <button
         onClick={toggleBrowserPane}
-        className={`absolute top-[6px] left-[108px] z-40 p-1 rounded transition-colors pointer-events-auto ${
+        className={`no-drag absolute top-[6px] left-[108px] z-40 p-1 rounded transition-colors pointer-events-auto ${
           state.browserOpen
             ? 'text-droid-text bg-droid-elevated/80'
             : 'text-droid-text-muted/50 hover:text-droid-text-muted hover:bg-droid-elevated/50'
@@ -156,14 +167,14 @@ export default function App() {
 
       <button
         onClick={() => dispatch({ type: 'SET_RIGHT_PANEL', open: !state.rightPanelOpen })}
-        className={`absolute top-[6px] right-[12px] z-40 p-1 rounded transition-colors pointer-events-auto ${
+        className={`no-drag absolute top-[6px] right-[12px] z-40 p-1.5 rounded-lg transition-colors pointer-events-auto ${
           state.rightPanelOpen
-            ? 'text-droid-text-muted bg-droid-elevated/50'
-            : 'text-droid-text-muted/50 hover:text-droid-text-muted hover:bg-droid-elevated/50'
+            ? 'text-droid-text bg-droid-elevated'
+            : 'text-droid-text-muted hover:text-droid-text hover:bg-droid-elevated/60'
         }`}
         title="Toggle panel (Cmd+\\)"
       >
-        <PanelRight className="w-3.5 h-3.5" />
+        <ContextListIcon className="w-4 h-4" />
       </button>
 
       <div className="flex-1 flex min-h-0">

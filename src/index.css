@@ -60,6 +60,12 @@
     -webkit-app-region: drag;
   }
 
+  /* Floating controls that overlap a drag region must explicitly punch a
+     no-drag hole, otherwise macOS captures their clicks for window dragging. */
+  .no-drag {
+    -webkit-app-region: no-drag;
+  }
+
   [data-electron-drag-region] button,
   [data-electron-drag-region] input,
   [data-electron-drag-region] textarea,
