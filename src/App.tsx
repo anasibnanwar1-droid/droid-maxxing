@@ -144,37 +144,39 @@ export default function App() {
 
   return (
     <div id="app-root" className="h-screen w-screen flex flex-col bg-droid-bg text-droid-text overflow-hidden relative">
-      {/* Left controls — inside a drag region so their no-drag holes are honored,
-          vertically centered (h-9) to sit on the traffic-light line. */}
-      <div data-electron-drag-region className="absolute top-0 left-[78px] h-9 z-40 flex items-center gap-1">
+      {/* Left controls — inside a drag region so their no-drag holes are honored.
+          Offset clear of the native traffic-light hit area (~x88) and centered on
+          the same h-9 line as the lights for symmetry with the right control. */}
+      <div data-electron-drag-region className="absolute top-0 left-[92px] h-9 z-40 flex items-center gap-1.5">
         <button
           onClick={() => dispatch({ type: 'TOGGLE_SIDEBAR' })}
-          className="p-1 rounded text-droid-text-muted/60 hover:text-droid-text hover:bg-droid-elevated/60 transition-colors"
+          className="p-1.5 rounded-md text-droid-text-muted/70 hover:text-droid-text hover:bg-droid-elevated/60 transition-colors"
           title="Toggle sidebar (Cmd+B)"
         >
-          <PanelLeft className="w-3.5 h-3.5" />
+          <PanelLeft className="w-4 h-4" />
         </button>
         <button
           onClick={toggleBrowserPane}
-          className={`p-1 rounded transition-colors ${
+          className={`p-1.5 rounded-md transition-colors ${
             state.browserOpen
-              ? 'text-droid-text bg-droid-elevated/80'
-              : 'text-droid-text-muted/60 hover:text-droid-text hover:bg-droid-elevated/60'
+              ? 'text-droid-text bg-droid-elevated'
+              : 'text-droid-text-muted/70 hover:text-droid-text hover:bg-droid-elevated/60'
           }`}
           title="Toggle browser (Cmd+Shift+B)"
         >
-          <Monitor className="w-3.5 h-3.5" />
+          <Monitor className="w-4 h-4" />
         </button>
       </div>
 
-      {/* Right control — context panel toggle, same drag-region treatment. */}
+      {/* Right control — context panel toggle, same drag-region treatment and
+          same h-9 line/sizing as the left controls. */}
       <div data-electron-drag-region className="absolute top-0 right-0 h-9 z-40 flex items-center pr-3">
         <button
           onClick={() => dispatch({ type: 'SET_RIGHT_PANEL', open: !state.rightPanelOpen })}
-          className={`p-1.5 rounded-lg transition-colors ${
+          className={`p-1.5 rounded-md transition-colors ${
             state.rightPanelOpen
               ? 'text-droid-text bg-droid-elevated'
-              : 'text-droid-text-muted hover:text-droid-text hover:bg-droid-elevated/60'
+              : 'text-droid-text-muted/70 hover:text-droid-text hover:bg-droid-elevated/60'
           }`}
           title="Toggle panel (Cmd+\\)"
         >
