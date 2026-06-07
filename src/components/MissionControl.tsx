@@ -790,7 +790,7 @@ export default function MissionControl() {
 
         {/* ─── Context panel (collapsible via the top-bar context button) ─── */}
         <AnimatePresence initial={false}>
-          {state.rightPanelOpen && (
+          {state.rightPanelOpen && !state.browserOpen && (
             <motion.aside
               key="mc-context"
               initial={{ width: 0, opacity: 0 }}

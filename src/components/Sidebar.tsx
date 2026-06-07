@@ -4,14 +4,13 @@ import { useStore } from '../hooks/useStore';
 import { pickDirectory } from '../lib/desktop';
 import { Folder, MessageSquare, FolderPlus, Plus, User, Settings, ChevronRight } from 'lucide-react';
 import { buildWorkspaceSections } from '../lib/workspaces';
+import { useMissionLive } from '../hooks/useMissionLive';
 import type { MissionSummary } from '../types/bridge';
-
-const RUNNING_PHASES = ['running', 'initializing', 'orchestrator_turn'];
 
 function RunningGrid() {
   return (
-    <span className="grid grid-cols-3 gap-[2px] shrink-0" style={{ width: 12, height: 12 }} aria-label="running">
-      {Array.from({ length: 9 }).map((_, i) => (
+    <span className="grid grid-cols-3 gap-[2px] shrink-0" style={{ width: 12, height: 8 }} aria-label="running">
+      {Array.from({ length: 6 }).map((_, i) => (
         <motion.span
           key={i}
           className="rounded-[1px]"
@@ -36,7 +35,7 @@ function SessionRow({
   active: boolean;
   onClick: () => void;
 }) {
-  const running = Boolean(mission.streaming) || RUNNING_PHASES.includes(mission.phase);
+  const running = useMissionLive(mission.id);
   return (
     <div>
       <button

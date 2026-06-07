@@ -55,8 +55,21 @@ export default function App() {
 
   const toggleBrowserPane = useCallback(() => {
     if (state.browserOpen && activeMission) closeBrowser(activeMission.id);
+    // Browser and the context panel are mutually exclusive — opening the browser
+    // collapses the right panel so they never fight for horizontal space.
+    if (!state.browserOpen) dispatch({ type: 'SET_RIGHT_PANEL', open: false });
     dispatch({ type: 'TOGGLE_BROWSER' });
   }, [activeMission, dispatch, state.browserOpen]);
+
+  const toggleRightPanel = useCallback(() => {
+    const open = !state.rightPanelOpen;
+    // Opening the context panel closes the browser pane (and vice versa).
+    if (open && state.browserOpen) {
+      if (activeMission) closeBrowser(activeMission.id);
+      dispatch({ type: 'SET_BROWSER_OPEN', open: false });
+    }
+    dispatch({ type: 'SET_RIGHT_PANEL', open });
+  }, [activeMission, dispatch, state.browserOpen, state.rightPanelOpen]);
 
   useEffect(() => {
     applyTheme(state.theme);
@@ -92,6 +105,7 @@ export default function App() {
     const unsub = bridge.subscribe((event) => {
       if (event.type !== 'browser.native.request') return;
       dispatch({ type: 'SET_ACTIVE_MISSION', id: event.request.missionId });
+      dispatch({ type: 'SET_RIGHT_PANEL', open: false });
       dispatch({ type: 'SET_BROWSER_OPEN', open: true });
       void performNativeBrowserRequest(event.request)
         .then(sendNativeBrowserResult)
@@ -140,7 +154,7 @@ export default function App() {
           break;
         case '\\':
           e.preventDefault();
-          dispatch({ type: 'SET_RIGHT_PANEL', open: !state.rightPanelOpen });
+          toggleRightPanel();
           break;
         case ',':
           e.preventDefault();
@@ -150,7 +164,7 @@ export default function App() {
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [dispatch, state.rightPanelOpen, toggleBrowserPane]);
+  }, [dispatch, toggleBrowserPane, toggleRightPanel]);
 
   return (
     <div id="app-root" className="h-screen w-screen flex flex-col bg-droid-bg text-droid-text overflow-hidden relative">
@@ -183,7 +197,7 @@ export default function App() {
       <div data-electron-drag-region className="absolute top-0 right-0 h-9 z-40 flex items-center pr-3">
         {canToggleContext && (
           <button
-            onClick={() => dispatch({ type: 'SET_RIGHT_PANEL', open: !state.rightPanelOpen })}
+            onClick={toggleRightPanel}
             className={`p-1.5 rounded-md transition-colors ${
               state.rightPanelOpen
                 ? 'text-droid-text bg-droid-elevated'

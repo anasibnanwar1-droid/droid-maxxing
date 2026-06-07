@@ -22,16 +22,6 @@ function Divider() {
   return <div className="mx-3 my-1.5 h-px bg-droid-border/70" />;
 }
 
-function RunningDot() {
-  return (
-    <motion.span
-      className="w-1.5 h-1.5 rounded-full bg-droid-accent shrink-0"
-      animate={{ opacity: [0.3, 1, 0.3] }}
-      transition={{ duration: 1.2, repeat: Infinity, ease: 'easeInOut' }}
-    />
-  );
-}
-
 function Row({
   icon, label, meta, onClick, active, trailing,
 }: {
@@ -73,7 +63,7 @@ function AgentRow({ label, running, selected, depth, onClick }: {
       <span className={`min-w-0 flex-1 truncate text-[12px] ${selected ? 'text-droid-text' : 'text-droid-text-muted group-hover:text-droid-text-secondary'}`}>
         {label}
       </span>
-      {running && <RunningDot />}
+      {running && <Loader2 className="w-3 h-3 shrink-0 animate-spin text-droid-accent" />}
     </button>
   );
 }
@@ -138,7 +128,7 @@ export default function RightPanel() {
                       <ChevronRight className={`w-3.5 h-3.5 text-droid-text-muted transition-transform ${agentsOpen ? 'rotate-90' : ''}`} />
                       <span className="text-[12px] font-medium text-droid-text-muted">Agents</span>
                       <span className="font-mono text-[11px] text-droid-text-muted/70">{workers.length}</span>
-                      {agentsRunning && <span className="ml-auto"><RunningDot /></span>}
+                      {agentsRunning && <Loader2 className="ml-auto w-3 h-3 shrink-0 animate-spin text-droid-accent" />}
                     </button>
                     <AnimatePresence initial={false}>
                       {agentsOpen && (
