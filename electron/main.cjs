@@ -12,6 +12,7 @@ const bridge = { port: BRIDGE_PORT, token: crypto.randomBytes(16).toString('hex'
 let mainWindow = null;
 let sidecar = null;
 let browserView = null;
+let browserTargetUrl = null;
 let browserState = { designMode: false, sketchMode: false };
 
 app.setName(APP_NAME);
@@ -62,7 +63,7 @@ function createMainWindow() {
   else mainWindow.loadFile(path.join(appRoot(), 'dist/index.html'));
 
   mainWindow.on('closed', () => {
-    closeNativeBrowser();
+    resetNativeBrowser();
     mainWindow = null;
   });
 }
@@ -145,7 +146,9 @@ function stopSidecar() {
 }
 
 function ensureNativeBrowserView() {
-  if (browserView) return browserView;
+  if (isBrowserViewUsable(browserView)) return browserView;
+  resetNativeBrowser();
+  if (!isWindowUsable(mainWindow)) throw new Error('Droid Control window is not available.');
   browserView = new BrowserView({
     webPreferences: {
       preload: path.join(__dirname, 'nativeBrowserPreload.cjs'),
@@ -155,16 +158,27 @@ function ensureNativeBrowserView() {
     },
   });
   const view = browserView;
-  view.webContents.setWindowOpenHandler(({ url: nextUrl }) => {
-    if (browserView === view) view.webContents.loadURL(nextUrl);
+  const contents = view.webContents;
+  contents.setWindowOpenHandler(({ url: nextUrl }) => {
+    if (browserView === view) loadNativeBrowserUrl(view, nextUrl);
     return { action: 'deny' };
   });
-  view.webContents.on('did-finish-load', () => {
-    if (browserView !== view) return;
-    emitNativeBrowserLoaded(view.webContents.getURL());
+  contents.on('did-finish-load', () => {
+    const current = safeWebContents(view);
+    if (browserView !== view || !current) return;
+    const loadedUrl = current.getURL();
+    if (isChromeErrorUrl(loadedUrl)) {
+      if (browserTargetUrl && !isChromeErrorUrl(browserTargetUrl)) emitNativeBrowserLoaded(browserTargetUrl);
+      return;
+    }
+    browserTargetUrl = loadedUrl;
+    emitNativeBrowserLoaded(loadedUrl);
     applyNativeBrowserDesignState();
   });
-  view.webContents.on('did-navigate-in-page', (_event, nextUrl) => {
+  contents.on('destroyed', () => {
+    if (browserView === view) resetNativeBrowser();
+  });
+  contents.on('did-navigate-in-page', (_event, nextUrl) => {
     if (browserView === view) emitNativeBrowserLoaded(nextUrl);
   });
   mainWindow.setBrowserView(view);
@@ -172,28 +186,46 @@ function ensureNativeBrowserView() {
 }
 
 function openNativeBrowser(url, bounds) {
+  url = normalizeNativeBrowserUrl(url);
   validateUrl(url);
   const view = ensureNativeBrowserView();
   view.setBounds(normalizeBounds(bounds));
-  if (view.webContents.getURL() !== url) view.webContents.loadURL(url);
-  view.webContents.focus();
+  loadNativeBrowserUrl(view, url);
+  safeWebContents(view)?.focus();
 }
 
 function setNativeBrowserBounds(bounds) {
-  browserView?.setBounds(normalizeBounds(bounds));
+  if (!isBrowserViewUsable(browserView)) return;
+  browserView.setBounds(normalizeBounds(bounds));
 }
 
 function closeNativeBrowser() {
   browserState = { designMode: false, sketchMode: false };
-  if (!browserView) return;
-  mainWindow?.removeBrowserView(browserView);
-  browserView.webContents.close({ waitForBeforeUnload: false });
+  browserTargetUrl = null;
+  const view = browserView;
   browserView = null;
+  if (!view) return;
+  if (isWindowUsable(mainWindow)) {
+    try {
+      mainWindow.removeBrowserView(view);
+    } catch {
+      // The window may already be tearing down; Electron destroys attached views with it.
+    }
+  }
+  const contents = safeWebContents(view);
+  if (!contents) return;
+  try {
+    contents.close({ waitForBeforeUnload: false });
+  } catch {
+    // Already destroyed by Electron window teardown.
+  }
 }
 
 function reloadNativeBrowser() {
-  if (!browserView) throw new Error('Droid Control browser is not open.');
-  browserView.webContents.reload();
+  const contents = safeWebContents(browserView);
+  if (!contents) throw new Error('Droid Control browser is not open.');
+  browserTargetUrl = contents.getURL();
+  contents.reload();
 }
 
 function setNativeBrowserDesignMode(active) {
@@ -208,23 +240,73 @@ function setNativeBrowserSketchMode(active) {
 }
 
 function runNativeBrowserAgentAction(request) {
-  if (!browserView) throw new Error('Droid Control browser is not open.');
-  return browserView.webContents.executeJavaScript(
+  const contents = safeWebContents(browserView);
+  if (!contents) throw new Error('Droid Control browser is not open.');
+  return contents.executeJavaScript(
     `window.__DROIDMAXX_AGENT_ACTION?.(${JSON.stringify(request)});`,
     true,
   );
 }
 
 function applyNativeBrowserDesignState() {
-  if (!browserView) return undefined;
-  return browserView.webContents.executeJavaScript(
+  const contents = safeWebContents(browserView);
+  if (!contents) return undefined;
+  return contents.executeJavaScript(
     `window.__DROIDMAXX_APPLY_DESIGN_STATE?.(${JSON.stringify(browserState)});`,
     true,
   ).catch((err) => console.error(`failed to apply browser design state: ${err.message}`));
 }
 
 function emitNativeBrowserLoaded(url) {
-  mainWindow?.webContents.send('native-browser-loaded', { url });
+  if (!isWindowUsable(mainWindow)) return;
+  mainWindow.webContents.send('native-browser-loaded', { url });
+}
+
+function loadNativeBrowserUrl(view, url) {
+  url = normalizeNativeBrowserUrl(url);
+  const contents = safeWebContents(view);
+  if (!contents) return;
+  if (contents.getURL() === url || browserTargetUrl === url) return;
+  browserTargetUrl = url;
+  contents.loadURL(url).catch((err) => {
+    if (browserTargetUrl === url) browserTargetUrl = null;
+    if (!contents.isDestroyed()) console.error(`failed to load native browser URL: ${err.message}`);
+  });
+}
+
+function resetNativeBrowser() {
+  browserView = null;
+  browserTargetUrl = null;
+  browserState = { designMode: false, sketchMode: false };
+}
+
+function isWindowUsable(window) {
+  return Boolean(window && !window.isDestroyed());
+}
+
+function safeWebContents(view) {
+  try {
+    if (!view) return null;
+    const contents = view.webContents;
+    if (!contents || contents.isDestroyed()) return null;
+    return contents;
+  } catch {
+    return null;
+  }
+}
+
+function isBrowserViewUsable(view) {
+  return Boolean(view && safeWebContents(view));
+}
+
+function normalizeNativeBrowserUrl(url) {
+  const value = String(url || 'about:blank');
+  if (!isChromeErrorUrl(value)) return value;
+  return browserTargetUrl && !isChromeErrorUrl(browserTargetUrl) ? browserTargetUrl : 'about:blank';
+}
+
+function isChromeErrorUrl(url) {
+  return String(url || '').startsWith('chrome-error://');
 }
 
 function validateUrl(value) {
