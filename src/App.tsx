@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { useStore } from './hooks/useStore';
 import { AnimatePresence, motion } from 'framer-motion';
-import { PanelLeft } from 'lucide-react';
+import { PanelLeft, PanelRight } from 'lucide-react';
 import { bridge } from './lib/bridge';
 import { connect, listFactoryDefaults, listModels, listMissions, listSkills, loadMissionHistory, resumeMission } from './lib/commands';
 import { getApiKey } from './lib/tauri';
@@ -90,6 +90,19 @@ export default function App() {
         title="Toggle sidebar (Cmd+B)"
       >
         <PanelLeft className="w-3.5 h-3.5" />
+      </button>
+
+      {/* Right panel toggle — fixed top-right */}
+      <button
+        onClick={() => dispatch({ type: 'SET_RIGHT_PANEL', open: !state.rightPanelOpen })}
+        className={`absolute top-[6px] right-[12px] z-40 p-1 rounded transition-colors pointer-events-auto ${
+          state.rightPanelOpen
+            ? 'text-droid-text-muted bg-droid-elevated/50'
+            : 'text-droid-text-muted/50 hover:text-droid-text-muted hover:bg-droid-elevated/50'
+        }`}
+        title="Toggle panel (Cmd+\\)"
+      >
+        <PanelRight className="w-3.5 h-3.5" />
       </button>
 
       <div className="flex-1 flex min-h-0">

@@ -1,4 +1,5 @@
 import { useStore } from '../hooks/useStore';
+import { updateSessionSettings } from '../lib/commands';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ChevronLeft, Search, Sun, Moon, Monitor, Check } from 'lucide-react';
 import { useEffect, useState } from 'react';
@@ -264,6 +265,81 @@ function AppearanceSection() {
   );
 }
 
+/* ── general content ── */
+function GeneralSection() {
+  const { state, dispatch } = useStore();
+  const selected = state.compactionModel || 'current-model';
+  const [query, setQuery] = useState('');
+
+  const setCompaction = (value: string) => {
+    dispatch({ type: 'SET_COMPACTION_MODEL_GLOBAL', compactionModel: value });
+    // Apply to every loaded session so compaction behavior is consistent.
+    const perSession = value === 'current-model' ? null : value;
+    for (const id of state.missionOrder) {
+      const m = state.missions[id];
+      if (m?.sessionId) updateSessionSettings({ sessionId: m.sessionId, compactionModel: perSession });
+    }
+  };
+
+  const q = query.trim().toLowerCase();
+  const models = q
+    ? state.models.filter((m) => m.displayName.toLowerCase().includes(q) || m.id.toLowerCase().includes(q))
+    : state.models;
+
+  const Row = ({ id, label, sub }: { id: string; label: string; sub?: string }) => {
+    const active = selected === id;
+    return (
+      <button
+        onClick={() => setCompaction(id)}
+        className={`flex items-center justify-between w-full px-3 py-2.5 rounded-lg border transition-colors text-left ${
+          active ? 'border-transparent bg-droid-elevated' : 'border-droid-border hover:bg-droid-elevated/50'
+        }`}
+        style={active ? { boxShadow: 'inset 0 0 0 1px var(--droid-accent)' } : undefined}
+      >
+        <div className="min-w-0">
+          <div className="text-[13px] text-droid-text truncate">{label}</div>
+          {sub && <div className="text-[11px] text-droid-text-muted truncate">{sub}</div>}
+        </div>
+        {active && <Check className="w-4 h-4 shrink-0" style={{ color: 'var(--droid-accent)' }} />}
+      </button>
+    );
+  };
+
+  return (
+    <div className="max-w-2xl">
+      <SectionTitle title="General" sub="Defaults that apply across all chats and missions." />
+
+      <GroupLabel>Compaction model</GroupLabel>
+      <p className="text-[12px] text-droid-text-muted mb-3">
+        Choose which model summarizes a conversation when it is compacted. This applies to every session.
+      </p>
+
+      <div className="rounded-xl border border-droid-border bg-droid-surface p-3">
+        <Row id="current-model" label="Current model" sub="Compact with whatever model the session is using" />
+
+        <div className="flex items-center gap-2 px-2.5 my-2 h-8 rounded-md bg-droid-bg/60 border border-droid-border">
+          <Search className="w-3.5 h-3.5 text-droid-text-muted" />
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search models..."
+            className="bg-transparent text-[12px] text-droid-text placeholder:text-droid-text-muted focus:outline-none w-full"
+          />
+        </div>
+
+        <div className="max-h-72 overflow-y-auto space-y-1.5">
+          {models.map((m) => (
+            <Row key={m.id} id={m.id} label={m.displayName} sub={m.provider} />
+          ))}
+          {models.length === 0 && (
+            <div className="px-3 py-4 text-center text-[12px] text-droid-text-muted">No models match.</div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function PlaceholderSection({ title }: { title: string }) {
   return (
     <div className="max-w-2xl">
@@ -350,7 +426,13 @@ export default function SettingsPanel() {
           {/* Content */}
           <div className="flex-1 overflow-y-auto">
             <div className="px-10 py-8">
-              {active === 'Appearance' ? <AppearanceSection /> : <PlaceholderSection title={active} />}
+              {active === 'Appearance' ? (
+                <AppearanceSection />
+              ) : active === 'General' ? (
+                <GeneralSection />
+              ) : (
+                <PlaceholderSection title={active} />
+              )}
             </div>
           </div>
         </motion.div>

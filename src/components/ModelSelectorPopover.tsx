@@ -5,7 +5,7 @@ import { useStore } from '../hooks/useStore';
 import type { AgentKind } from '../hooks/useStore';
 import type { ReasoningEffort, ModelInfo } from '../types/bridge';
 import { ModelIcon, providerOf } from './ModelIcon';
-import { updateAgentSettings, updateSessionSettings, listModels } from '../lib/commands';
+import { updateAgentSettings, listModels } from '../lib/commands';
 
 const ACCENT = 'var(--droid-accent)';
 const accentMix = (pct: number) => `color-mix(in srgb, var(--droid-accent) ${pct}%, transparent)`;
@@ -116,19 +116,10 @@ export default function ModelSelectorPopover({ onClose, singleAgent = false }: {
       : [selectedConfigModel.defaultReasoningEffort ?? effReasoning]
     : BASE_REASONING;
 
-  const effCompactionModel = missionScoped ? activeMission!.compactionModel ?? 'current-model' : 'current-model';
-
   const updateReasoning = (reasoning: ReasoningEffort) => {
     if (missionScoped) dispatch({ type: 'MISSION_SET_REASONING', missionId: activeMission!.id, reasoning });
     else dispatch({ type: 'SET_AGENT_REASONING', agent, reasoning });
     updateAgentSettings({ missionId: state.activeMissionId ?? undefined, agent, reasoningEffort: reasoning });
-  };
-
-  const updateCompactionModel = (compactionModel: string) => {
-    if (!missionScoped || !activeMission) return;
-    const val = compactionModel === 'current-model' ? 'current-model' : compactionModel;
-    dispatch({ type: 'MISSION_SET_COMPACTION_MODEL', missionId: activeMission.id, compactionModel: val });
-    updateSessionSettings({ sessionId: activeMission.sessionId ?? activeMission.id, compactionModel: val === 'current-model' ? null : val });
   };
 
   const updateModel = (modelId?: string) => {
@@ -228,55 +219,6 @@ export default function ModelSelectorPopover({ onClose, singleAgent = false }: {
             })}
           </div>
         </div>
-
-        {/* Compaction model — only relevant for an existing chat session */}
-        {missionScoped && (
-          <div className="px-4 pt-2 pb-1">
-            <div className="flex items-center justify-between mb-1.5">
-              <span className="text-[10px] text-droid-text-muted uppercase tracking-wider">Compaction model</span>
-              <span className="text-[10px] font-mono" style={{ color: ACCENT }}>
-                {effCompactionModel === 'current-model' ? 'Current model' : (source.find((x) => x.id === effCompactionModel)?.displayName ?? effCompactionModel)}
-              </span>
-            </div>
-            <div className="relative flex flex-wrap gap-1 p-0.5 rounded-lg bg-droid-bg/60 border border-droid-border/60">
-              <button
-                onClick={() => updateCompactionModel('current-model')}
-                className={`relative flex-1 py-1.5 rounded-md text-[10px] transition-colors ${
-                  effCompactionModel === 'current-model' ? 'text-droid-text' : 'text-droid-text-muted hover:text-droid-text-secondary'
-                }`}
-              >
-                {effCompactionModel === 'current-model' && (
-                  <motion.span
-                    layoutId="compaction-pill"
-                    className="absolute inset-0 rounded-md"
-                    style={{ backgroundColor: accentMix(13), boxShadow: `inset 0 0 0 1px ${accentMix(33)}` }}
-                    transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
-                  />
-                )}
-                <span className="relative">Current model</span>
-              </button>
-              {source.map((m) => (
-                <button
-                  key={m.id}
-                  onClick={() => updateCompactionModel(m.id)}
-                  className={`relative flex-1 py-1.5 rounded-md text-[10px] transition-colors truncate ${
-                    effCompactionModel === m.id ? 'text-droid-text' : 'text-droid-text-muted hover:text-droid-text-secondary'
-                  }`}
-                >
-                  {effCompactionModel === m.id && (
-                    <motion.span
-                      layoutId="compaction-pill"
-                      className="absolute inset-0 rounded-md"
-                      style={{ backgroundColor: accentMix(13), boxShadow: `inset 0 0 0 1px ${accentMix(33)}` }}
-                      transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
-                    />
-                  )}
-                  <span className="relative">{m.displayName}</span>
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
 
         {/* Model search + list */}
         <div className="px-4 pt-3 pb-3">

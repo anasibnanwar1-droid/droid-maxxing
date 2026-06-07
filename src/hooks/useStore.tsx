@@ -302,7 +302,7 @@ const initialState: AppState = {
   pendingQuestion: null,
   contextStats: {},
   specPlans: {},
-  rightPanelOpen: false,
+  rightPanelOpen: true,
   sidebarCollapsed: false,
   specMode: false,
   settingsOpen: false,
