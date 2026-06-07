@@ -3,10 +3,11 @@ import { useStore } from './hooks/useStore';
 import { AnimatePresence, motion } from 'framer-motion';
 import { Monitor, PanelLeft } from 'lucide-react';
 import { bridge } from './lib/bridge';
-import { closeBrowser, connect, listFactoryDefaults, listModels, listMissions, listSkills, loadMissionHistory, resumeMission, sendNativeBrowserResult } from './lib/commands';
+import { connect, listFactoryDefaults, listModels, listMissions, listSkills, loadMissionHistory, resumeMission, sendNativeBrowserResult } from './lib/commands';
 import { isEmbedded } from './lib/embed';
 import { getApiKey } from './lib/desktop';
 import { performNativeBrowserRequest } from './lib/nativeBrowserAgent';
+import { activeMissionAfterNativeBrowserRequest, browserKeyForMission } from './lib/browserSessionIdentity';
 import Sidebar from './components/Sidebar';
 import ChatView from './components/ChatView';
 import MissionControl from './components/MissionControl';
@@ -64,22 +65,21 @@ export default function App() {
   }, []);
 
   const toggleBrowserPane = useCallback(() => {
-    if (state.browserOpen && activeMission) closeBrowser(activeMission.id);
     // Browser and the context panel are mutually exclusive — opening the browser
     // collapses the right panel so they never fight for horizontal space.
     if (!state.browserOpen) dispatch({ type: 'SET_RIGHT_PANEL', open: false });
     dispatch({ type: 'TOGGLE_BROWSER' });
-  }, [activeMission, dispatch, state.browserOpen]);
+  }, [dispatch, state.browserOpen]);
 
   const toggleRightPanel = useCallback(() => {
     const open = !state.rightPanelOpen;
-    // Opening the context panel closes the browser pane (and vice versa).
+    // Opening the context panel hides the browser pane while preserving the
+    // chat-scoped native browser session.
     if (open && state.browserOpen) {
-      if (activeMission) closeBrowser(activeMission.id);
       dispatch({ type: 'SET_BROWSER_OPEN', open: false });
     }
     dispatch({ type: 'SET_RIGHT_PANEL', open });
-  }, [activeMission, dispatch, state.browserOpen, state.rightPanelOpen]);
+  }, [dispatch, state.browserOpen, state.rightPanelOpen]);
 
   useEffect(() => {
     applyTheme(state.theme);
@@ -114,9 +114,16 @@ export default function App() {
     if (embedded) return;
     const unsub = bridge.subscribe((event) => {
       if (event.type !== 'browser.native.request') return;
-      dispatch({ type: 'SET_ACTIVE_MISSION', id: event.request.missionId });
-      dispatch({ type: 'SET_RIGHT_PANEL', open: false });
-      dispatch({ type: 'SET_BROWSER_OPEN', open: true });
+      const activeBrowserKey = browserKeyForMission(state.activeMissionId ? state.missions[state.activeMissionId] : undefined);
+      const requestIsForActiveChat = activeBrowserKey === event.request.missionId;
+      const nextActiveMissionId = activeMissionAfterNativeBrowserRequest(state.activeMissionId, event.request, state.missions);
+      if (nextActiveMissionId !== state.activeMissionId) {
+        dispatch({ type: 'SET_ACTIVE_MISSION', id: nextActiveMissionId });
+      }
+      if (!state.activeMissionId || requestIsForActiveChat) {
+        dispatch({ type: 'SET_RIGHT_PANEL', open: false });
+        dispatch({ type: 'SET_BROWSER_OPEN', open: true });
+      }
       void performNativeBrowserRequest(event.request)
         .then(sendNativeBrowserResult)
         .catch((err) => {
@@ -129,7 +136,7 @@ export default function App() {
         });
     });
     return () => unsub();
-  }, [dispatch, embedded]);
+  }, [dispatch, embedded, state.activeMissionId, state.missions]);
 
   useEffect(() => {
     if (embedded) return;

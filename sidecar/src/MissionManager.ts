@@ -521,7 +521,7 @@ export class MissionManager {
       void this.refreshContext(existing.summary.id, existing.session);
       return;
     }
-    const ref = { id: appSessionId };
+    const ref = { id: droidSessionId };
     let pendingBrowserMcpServer: SdkMcpServer | undefined;
     try {
       const browserMcpServer = createBrowserMcpServer(this.browsers, () => ref.id);
@@ -1443,7 +1443,7 @@ export class MissionManager {
     } catch {
       /* ignore */
     }
-    await this.browsers.close(key).catch(() => {});
+    await this.browsers.close(mission.summary.sessionId ?? key).catch(() => {});
     this.missions.delete(key);
     this.usageOffsets.delete(key);
     this.emitMissionList();

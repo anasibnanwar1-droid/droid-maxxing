@@ -63,7 +63,7 @@ export function createBrowserMcpServer(manager: BrowserSessionManager, missionId
       ),
       tool(
         'browser_reload',
-        'Reload the current live Droid Control browser page, then return fresh DOM refs and visible page state.',
+        'Reload the current live Droid Control browser page. Use browser_snapshot after reload when fresh refs are needed.',
         {},
         safeTool(async () => {
           const state = await manager.reload(missionId());

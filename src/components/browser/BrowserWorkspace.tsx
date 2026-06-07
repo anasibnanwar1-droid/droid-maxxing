@@ -31,6 +31,7 @@ import type { NativeBrowserDesignPrompt, NativeBrowserSelection } from '../../li
 import { BrowserToolbar } from './BrowserToolbar';
 import { DesignModeComposer } from './DesignModeComposer';
 import { composerStyleForReferences } from './browserComposerPosition';
+import { browserKeyForMission } from '../../lib/browserSessionIdentity';
 import { safeBrowserUrl } from './browserUrlSafety';
 import { useElementSize } from './useElementSize';
 
@@ -38,15 +39,13 @@ export default function BrowserWorkspace() {
   const { state, dispatch } = useStore();
   const requestedChatId = state.activeMissionId ?? undefined;
   const activeMission = requestedChatId ? state.missions[requestedChatId] : undefined;
-  const chatId = activeMission ? requestedChatId : undefined;
-  const droidSessionId = activeMission ? activeMission.sessionId ?? chatId : undefined;
-  const browser = chatId ? state.browsers[chatId] : undefined;
-  const browserError = chatId ? state.browserErrors[chatId] : state.browserGlobalError;
-  const designMode = isDesignModeOpen(state.designModes, droidSessionId);
+  const browserKey = browserKeyForMission(activeMission);
+  const browser = browserKey ? state.browsers[browserKey] : undefined;
+  const browserError = browserKey ? state.browserErrors[browserKey] : state.browserGlobalError;
+  const designMode = isDesignModeOpen(state.designModes, browserKey);
   const nativeBrowser = isDesktop();
   const frameRef = useRef<HTMLDivElement>(null);
   const urlInputRef = useRef<HTMLInputElement>(null);
-  const openedFallbackSessionRef = useRef<string | null>(null);
   const appOrigin = typeof window === 'undefined' ? undefined : window.location.origin;
   const frameSize = useElementSize(frameRef);
   const frameReady = frameSize.width > 8 && frameSize.height > 8;
@@ -86,7 +85,7 @@ export default function BrowserWorkspace() {
     setReferences([]);
     setInstruction('');
     setSketchMode(false);
-  }, [browser?.sessionId, browser?.url, chatId]);
+  }, [browser?.sessionId, browser?.url, browserKey]);
 
   useEffect(() => {
     if (!designMode) setSketchMode(false);
@@ -94,8 +93,8 @@ export default function BrowserWorkspace() {
 
   const requestedViewport = viewportForMode(viewportMode, fitViewport, customViewport);
   const selectedIds = references.map((ref) => ref.id).filter((id): id is string => Boolean(id));
-  const canSend = Boolean(chatId && selectedIds.length > 0 && instruction.trim());
-  const disabledReason = !chatId
+  const canSend = Boolean(browserKey && selectedIds.length > 0 && instruction.trim());
+  const disabledReason = !browserKey
     ? 'Select or create a Droid session'
     : selectedIds.length === 0
     ? 'Select a reference'
@@ -106,23 +105,10 @@ export default function BrowserWorkspace() {
   );
 
   useEffect(() => {
-    if (!chatId || browser) return;
-    const key = `${chatId}:${activeUrl}`;
-    if (openedFallbackSessionRef.current === key) return;
-    openedFallbackSessionRef.current = key;
-    openBrowser({
-      missionId: chatId,
-      url: activeUrl,
-      viewport: requestedViewport,
-      viewportMode,
-    });
-  }, [activeUrl, browser, chatId, requestedViewport, viewportMode]);
-
-  useEffect(() => {
-    if (!chatId || !browser) return;
+    if (!browserKey || !browser) return;
     if (browser.viewportMode === viewportMode && sameViewport(browser.viewport, requestedViewport)) return;
     const id = window.setTimeout(() => {
-      resizeBrowserViewport({ missionId: chatId, viewport: requestedViewport, viewportMode });
+      resizeBrowserViewport({ missionId: browserKey, viewport: requestedViewport, viewportMode });
     }, 120);
     return () => window.clearTimeout(id);
   }, [
@@ -133,7 +119,7 @@ export default function BrowserWorkspace() {
     requestedViewport.deviceScaleFactor,
     requestedViewport.height,
     requestedViewport.width,
-    chatId,
+    browserKey,
     viewportMode,
   ]);
 
@@ -141,9 +127,9 @@ export default function BrowserWorkspace() {
     const url = safeBrowserUrl(normalizeUrl(urlInput), appOrigin);
     setUrlInput(url);
     setActiveUrl(url);
-    if (chatId) {
+    if (browserKey) {
       openBrowser({
-        missionId: chatId,
+        missionId: browserKey,
         url,
         viewport: requestedViewport,
         viewportMode,
@@ -156,8 +142,8 @@ export default function BrowserWorkspace() {
   };
 
   const sendPrompt = () => {
-    if (!chatId || !canSend) return;
-    sendDesignPrompt(chatId, instruction.trim(), selectedIds);
+    if (!browserKey || !canSend) return;
+    sendDesignPrompt(browserKey, instruction.trim(), selectedIds);
     setInstruction('');
   };
 
@@ -167,11 +153,11 @@ export default function BrowserWorkspace() {
       if (reference.id && prev.some((item) => item.id === reference.id)) return prev;
       return [...prev, reference];
     });
-    if (chatId) addDesignReference(chatId, reference);
-  }, [chatId]);
+    if (browserKey) addDesignReference(browserKey, reference);
+  }, [browserKey]);
 
   const handleNativePrompt = useCallback((prompt: NativeBrowserDesignPrompt) => {
-    if (!chatId) return;
+    if (!browserKey) return;
     const text = prompt.instruction.trim();
     if (!text) return;
     const reference = referenceFromNativeSelection(prompt.selection);
@@ -181,9 +167,9 @@ export default function BrowserWorkspace() {
       if (prev.some((item) => item.id === referenceId)) return prev;
       return [...prev, reference];
     });
-    addDesignReference(chatId, reference);
-    window.setTimeout(() => sendDesignPrompt(chatId, text, [referenceId]), 0);
-  }, [chatId]);
+    addDesignReference(browserKey, reference);
+    window.setTimeout(() => sendDesignPrompt(browserKey, text, [referenceId]), 0);
+  }, [browserKey]);
 
   return (
     <div className="flex h-full min-h-0 min-w-0 flex-col bg-droid-bg">
@@ -193,23 +179,23 @@ export default function BrowserWorkspace() {
         viewportMode={viewportMode}
         customViewport={customViewport}
         designMode={designMode}
-        designModeDisabled={!droidSessionId}
+        designModeDisabled={!browserKey}
         sketchMode={sketchMode}
         onUrlInputChange={setUrlInput}
         onOpen={openCurrentUrl}
         onReload={() => {
-          if (chatId && browser) reloadBrowser(chatId);
+          if (browserKey && browser) reloadBrowser(browserKey);
           else openCurrentUrl();
         }}
         onViewportModeChange={applyPreset}
         onCustomViewportChange={setCustomViewport}
         onToggleDesignMode={() => {
-          if (droidSessionId) dispatch({ type: 'TOGGLE_DESIGN_MODE', sessionId: droidSessionId });
+          if (browserKey) dispatch({ type: 'TOGGLE_DESIGN_MODE', sessionId: browserKey });
         }}
         onToggleSketchMode={() => setSketchMode((value) => !value)}
         onClose={() => {
-          if (chatId) closeBrowser(chatId);
-          closeNativeBrowser().catch(() => {});
+          if (browserKey) closeBrowser(browserKey);
+          if (browser?.sessionId) closeNativeBrowser(browser.sessionId).catch(() => {});
           dispatch({ type: 'SET_BROWSER_OPEN', open: false });
         }}
       />
@@ -221,8 +207,10 @@ export default function BrowserWorkspace() {
       )}
 
       <div ref={frameRef} className="relative flex-1 min-h-0 min-w-0">
-        {chatId && frameReady ? (
+        {browserKey && frameReady ? (
           <NativeBrowserSurface
+            browserKey={browserKey}
+            visibleSessionId={browser?.sessionId}
             url={activeUrl}
             viewport={requestedViewport}
             viewportMode={viewportMode}
@@ -238,7 +226,13 @@ export default function BrowserWorkspace() {
           />
         ) : (
           <div className="flex h-full items-center justify-center bg-[#070707] px-6 text-sm text-droid-text-muted">
-            {chatId ? 'Preparing browser pane...' : 'Select or create a Droid session.'}
+            {browserKey ? 'Preparing browser pane...' : 'Select or create a Droid session.'}
+          </div>
+        )}
+
+        {browserKey && !browser && frameReady && (
+          <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-[#070707] px-6 text-sm text-droid-text-muted">
+            Open a URL to start this chat's browser.
           </div>
         )}
 

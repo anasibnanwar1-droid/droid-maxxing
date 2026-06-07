@@ -10,7 +10,9 @@ import {
   typeIntoIframe,
 } from '../../lib/iframeDesignMode';
 import {
+  attachNativeBrowser,
   closeNativeBrowser,
+  detachNativeBrowser,
   onNativeBrowserDesignPrompt,
   onNativeBrowserLoaded,
   onNativeBrowserSelection,
@@ -26,11 +28,14 @@ import {
   reloadNativeBrowser,
 } from '../../lib/nativeBrowser';
 import { registerNativeBrowserController } from '../../lib/nativeBrowserAgent';
+import { nativeBrowserRequestTargetsVisibleSurface } from '../../lib/browserSessionIdentity';
 import type { BrowserNativeRequest, BrowserNativeResult, BrowserViewport, BrowserViewportMode } from '../../types/bridge';
 import type { Size } from '../canvas/canvasMath';
 import { useElementSize } from './useElementSize';
 
 interface NativeBrowserSurfaceProps {
+  browserKey: string;
+  visibleSessionId?: string;
   url: string;
   viewport: BrowserViewport;
   viewportMode: BrowserViewportMode;
@@ -43,6 +48,8 @@ interface NativeBrowserSurfaceProps {
 }
 
 export function NativeBrowserSurface({
+  browserKey,
+  visibleSessionId,
   url,
   viewport,
   viewportMode,
@@ -79,12 +86,12 @@ export function NativeBrowserSurface({
   }, [onViewportSizeChange, surface.height, surface.width]);
 
   useEffect(() => {
-    setNativeBrowserDesignMode(designMode).catch(() => {});
-  }, [designMode]);
+    if (visibleSessionId) setNativeBrowserDesignMode(visibleSessionId, designMode).catch(() => {});
+  }, [designMode, visibleSessionId]);
 
   useEffect(() => {
-    setNativeBrowserSketchMode(designMode && sketchMode).catch(() => {});
-  }, [designMode, sketchMode]);
+    if (visibleSessionId) setNativeBrowserSketchMode(visibleSessionId, designMode && sketchMode).catch(() => {});
+  }, [designMode, sketchMode, visibleSessionId]);
 
   useEffect(() => {
     let disposed = false;
@@ -99,15 +106,24 @@ export function NativeBrowserSurface({
       });
     };
 
-    track(onNativeBrowserSelection((selection) => onSelectionRef.current(selection)));
-    track(onNativeBrowserDesignPrompt((prompt) => onPromptRef.current(prompt)));
-    track(onNativeBrowserLoaded((event) => onLoadedRef.current(event.url)));
+    track(onNativeBrowserSelection((selection) => {
+      if (selection.sessionId && selection.sessionId !== visibleSessionId) return;
+      onSelectionRef.current(selection);
+    }));
+    track(onNativeBrowserDesignPrompt((prompt) => {
+      if (prompt.selection.sessionId && prompt.selection.sessionId !== visibleSessionId) return;
+      onPromptRef.current(prompt);
+    }));
+    track(onNativeBrowserLoaded((event) => {
+      if (event.sessionId && event.sessionId !== visibleSessionId) return;
+      onLoadedRef.current(event.url);
+    }));
 
     return () => {
       disposed = true;
       unlisteners.forEach((unlisten) => unlisten());
     };
-  }, []);
+  }, [visibleSessionId]);
 
   useEffect(() => {
     if (native) return;
@@ -140,17 +156,24 @@ export function NativeBrowserSurface({
     if (!surfaceReady) return;
     const bounds = boundsFor(slotRef);
     if (!bounds) return;
+    if (visibleSessionId) {
+      attachNativeBrowser(visibleSessionId, bounds, url).catch(() => {});
+    } else {
+      detachNativeBrowser().catch(() => {});
+    }
     const sameBounds = lastBounds.current && equalBounds(lastBounds.current, bounds);
-    if (!sameBounds) {
-      setNativeBrowserBounds(bounds).catch(() => {});
+    if (visibleSessionId && !sameBounds) {
+      setNativeBrowserBounds(visibleSessionId, bounds).catch(() => {});
       lastBounds.current = bounds;
     }
-  }, [native, surface.height, surface.left, surface.top, surface.width, surfaceReady]);
+  }, [native, surface.height, surface.left, surface.top, surface.width, surfaceReady, url, visibleSessionId]);
 
   useEffect(() => registerNativeBrowserController({
     perform: async (request) => native
       ? performNativeRequest(request, {
         currentUrl: url,
+        browserKey,
+        visibleSessionId,
         designMode,
         sketchMode: designMode && sketchMode,
         bounds: () => boundsFor(slotRef),
@@ -163,13 +186,13 @@ export function NativeBrowserSurface({
         iframe: iframeRef,
         onLoaded,
       }),
-  }), [designMode, native, onLoaded, sketchMode, url]);
+  }), [browserKey, designMode, native, onLoaded, sketchMode, url, visibleSessionId]);
 
   useEffect(() => {
     return () => {
-      if (native) closeNativeBrowser().catch(() => {});
+      if (native) detachNativeBrowser(visibleSessionId).catch(() => {});
     };
-  }, [native]);
+  }, [native, visibleSessionId]);
 
   return (
     <div ref={stageRef} className="relative h-full min-h-0 w-full overflow-hidden bg-[#070707]">
@@ -209,6 +232,8 @@ async function performNativeRequest(
   request: BrowserNativeRequest,
   options: {
     currentUrl: string;
+    browserKey: string;
+    visibleSessionId?: string;
     designMode: boolean;
     sketchMode: boolean;
     bounds: () => NativeBrowserBounds | null;
@@ -217,30 +242,35 @@ async function performNativeRequest(
 ): Promise<BrowserNativeResult> {
   try {
     if (request.action === 'close') {
-      await closeNativeBrowser();
+      await closeNativeBrowser(request.sessionId);
       return { requestId: request.requestId, missionId: request.missionId, ok: true };
     }
     const bounds = options.bounds();
-    if (!bounds) throw new Error('Droid Control browser pane is not laid out yet.');
-    await syncNativeDesignState(options.designMode, options.sketchMode);
+    const visible = nativeBrowserRequestTargetsVisibleSurface({
+      browserKey: options.browserKey,
+      visibleSessionId: options.visibleSessionId,
+      requestMissionId: request.missionId,
+      requestSessionId: request.sessionId,
+    });
+    const visibleBounds = visible ? requireNativeBrowserBounds(bounds) : undefined;
+    await syncNativeDesignState(request.sessionId, visible ? options.designMode : false, visible ? options.sketchMode : false);
     if (request.action === 'open') {
       const targetUrl = request.url ?? options.currentUrl;
-      const loaded = waitForNextNativeBrowserLoad().catch(() => undefined);
-      await openNativeBrowser(targetUrl, bounds);
-      options.markOpen(bounds);
-      await loaded;
-      const result = await runNativeBrowserAgentAction({ requestId: request.requestId, action: 'snapshot' });
-      return { requestId: request.requestId, missionId: request.missionId, ok: result.ok, snapshot: result.snapshot, error: result.error };
+      const loaded = waitForNextNativeBrowserLoad(request.sessionId).catch(() => undefined);
+      await openNativeBrowser(request.sessionId, targetUrl, visibleBounds, request.viewport);
+      if (visibleBounds) options.markOpen(visibleBounds);
+      const loadedEvent = await loaded;
+      return { requestId: request.requestId, missionId: request.missionId, ok: true, snapshot: navigationSnapshot(loadedEvent?.url ?? targetUrl) };
     }
     if (request.action === 'reload') {
-      const loaded = waitForNextNativeBrowserLoad().catch(() => undefined);
-      await reloadNativeBrowser();
-      await loaded;
-      const result = await runNativeBrowserAgentAction({ requestId: request.requestId, action: 'snapshot' });
-      return { requestId: request.requestId, missionId: request.missionId, ok: result.ok, snapshot: result.snapshot, error: result.error };
+      const loaded = waitForNextNativeBrowserLoad(request.sessionId).catch(() => undefined);
+      await reloadNativeBrowser(request.sessionId);
+      const loadedEvent = await loaded;
+      return { requestId: request.requestId, missionId: request.missionId, ok: true, snapshot: navigationSnapshot(loadedEvent?.url ?? options.currentUrl) };
     }
     const result = await runNativeBrowserAgentAction({
       requestId: request.requestId,
+      sessionId: request.sessionId,
       action: request.action,
       x: request.x,
       y: request.y,
@@ -260,9 +290,14 @@ async function performNativeRequest(
   }
 }
 
-async function syncNativeDesignState(designMode: boolean, sketchMode: boolean): Promise<void> {
-  await setNativeBrowserDesignMode(designMode);
-  await setNativeBrowserSketchMode(designMode && sketchMode);
+function requireNativeBrowserBounds(bounds: NativeBrowserBounds | null): NativeBrowserBounds {
+  if (!bounds) throw new Error('Droid Control browser pane is not laid out yet.');
+  return bounds;
+}
+
+async function syncNativeDesignState(sessionId: string, designMode: boolean, sketchMode: boolean): Promise<void> {
+  await setNativeBrowserDesignMode(sessionId, designMode);
+  await setNativeBrowserSketchMode(sessionId, designMode && sketchMode);
 }
 
 async function performIframeRequest(
@@ -365,6 +400,10 @@ function safeIframeSnapshot(iframe: HTMLIFrameElement, fallbackUrl: string) {
   } catch {
     return { url: readIframeUrl(iframe) ?? fallbackUrl, scroll: { x: 0, y: 0 }, refs: [] };
   }
+}
+
+function navigationSnapshot(url: string) {
+  return { url, scroll: { x: 0, y: 0 }, refs: [] };
 }
 
 function settleFrame(): Promise<void> {

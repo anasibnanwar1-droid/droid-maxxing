@@ -15,6 +15,7 @@ import type {
   ContextStatsSnapshot,
   SessionKind,
   BrowserState,
+  BrowserViewportMode,
 } from '../types/bridge';
 import { addWorkspaceCwd } from '../lib/workspaces';
 
@@ -276,6 +277,7 @@ const COMPACTION_TOKEN_LIMIT_STORAGE_KEY = 'droid-compaction-token-limit';
 const COMPACTION_TOKEN_LIMIT_PER_MODEL_STORAGE_KEY = 'droid-compaction-token-limit-per-model';
 const WORKSPACES_STORAGE_KEY = 'droid-workspaces';
 const UI_STATE_STORAGE_KEY = 'droid-ui-state-v1';
+const BROWSER_VIEWPORT_MODES = new Set<BrowserViewportMode>(['fit', 'desktop', 'laptop', 'tablet', 'mobile', 'custom']);
 
 interface PersistedUiState {
   activeMissionId: string | null;
@@ -284,6 +286,7 @@ interface PersistedUiState {
   specMode: boolean;
   missionMode: boolean;
   browserOpen: boolean;
+  browsers: Record<string, BrowserState>;
   selectedFeatureId: string | null;
   selectedAgentSessionId: string | null;
 }
@@ -381,6 +384,7 @@ export function loadPersistedUiState(): Partial<PersistedUiState> {
       specMode: typeof parsed.specMode === 'boolean' ? parsed.specMode : undefined,
       missionMode: typeof parsed.missionMode === 'boolean' ? parsed.missionMode : undefined,
       browserOpen: typeof parsed.browserOpen === 'boolean' ? parsed.browserOpen : undefined,
+      browsers: loadPersistedBrowsers(parsed.browsers),
       selectedFeatureId: typeof parsed.selectedFeatureId === 'string' ? parsed.selectedFeatureId : null,
       selectedAgentSessionId: typeof parsed.selectedAgentSessionId === 'string' ? parsed.selectedAgentSessionId : null,
     };
@@ -397,6 +401,7 @@ function savePersistedUiState(state: AppState): void {
     specMode: state.specMode,
     missionMode: state.missionMode,
     browserOpen: state.browserOpen,
+    browsers: persistBrowsers(state.browsers),
     selectedFeatureId: state.selectedFeatureId,
     selectedAgentSessionId: state.selectedAgentSessionId,
   };
@@ -465,7 +470,7 @@ const initialState: AppState = {
   draftChat: null,
   workspaceCwds: loadWorkspaceCwds(),
   browserOpen: persistedUiState.browserOpen ?? false,
-  browsers: {},
+  browsers: persistedUiState.browsers ?? {},
   browserErrors: {},
   browserGlobalError: undefined,
   designModes: {},
@@ -488,6 +493,10 @@ function progressKey(entry: ProgressEntry): string {
 
 function designModeSessionId(state: AppState, appMissionId: string): string {
   return state.missions[appMissionId]?.sessionId ?? appMissionId;
+}
+
+function activeBrowserKey(state: AppState): string | undefined {
+  return state.activeMissionId ? designModeSessionId(state, state.activeMissionId) : undefined;
 }
 
 function reducer(state: AppState, action: Action): AppState {
@@ -781,7 +790,7 @@ function reducer(state: AppState, action: Action): AppState {
         ...state,
         browsers: { ...state.browsers, [action.browser.missionId]: action.browser },
         browserErrors: Object.fromEntries(Object.entries(state.browserErrors).filter(([id]) => id !== action.browser.missionId)),
-        browserOpen: state.activeMissionId === action.browser.missionId ? true : state.browserOpen,
+        browserOpen: activeBrowserKey(state) === action.browser.missionId ? true : state.browserOpen,
       };
 
     case 'BROWSER_CLOSED':
@@ -789,8 +798,8 @@ function reducer(state: AppState, action: Action): AppState {
         ...state,
         browsers: Object.fromEntries(Object.entries(state.browsers).filter(([id]) => id !== action.missionId)),
         browserErrors: Object.fromEntries(Object.entries(state.browserErrors).filter(([id]) => id !== action.missionId)),
-        designModes: clearDesignMode(state.designModes, designModeSessionId(state, action.missionId)),
-        browserOpen: state.activeMissionId === action.missionId ? false : state.browserOpen,
+        designModes: clearDesignMode(state.designModes, action.missionId),
+        browserOpen: activeBrowserKey(state) === action.missionId ? false : state.browserOpen,
       };
 
     case 'BROWSER_ERROR':
@@ -798,7 +807,7 @@ function reducer(state: AppState, action: Action): AppState {
         ? {
             ...state,
             browserErrors: { ...state.browserErrors, [action.missionId]: action.message },
-            browserOpen: state.activeMissionId === action.missionId ? true : state.browserOpen,
+            browserOpen: activeBrowserKey(state) === action.missionId ? true : state.browserOpen,
           }
         : { ...state, browserGlobalError: action.message };
 
@@ -992,6 +1001,77 @@ function reducer(state: AppState, action: Action): AppState {
   }
 }
 
+function loadPersistedBrowsers(value: unknown): Record<string, BrowserState> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const entries = Object.entries(value as Record<string, unknown>)
+    .map(([key, browser]) => [key, sanitizePersistedBrowser(key, browser)] as const)
+    .filter((entry): entry is readonly [string, BrowserState] => Boolean(entry[1]));
+  return Object.fromEntries(entries);
+}
+
+function sanitizePersistedBrowser(key: string, value: unknown): BrowserState | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const browser = value as Partial<BrowserState>;
+  if (typeof browser.sessionId !== 'string' || !browser.sessionId) return undefined;
+  if (typeof browser.url !== 'string' || !browser.url) return undefined;
+  const viewport = sanitizeBrowserViewport(browser.viewport);
+  if (!viewport) return undefined;
+  return {
+    sessionId: browser.sessionId,
+    missionId: typeof browser.missionId === 'string' && browser.missionId ? browser.missionId : key,
+    url: browser.url,
+    title: typeof browser.title === 'string' ? browser.title : undefined,
+    viewport,
+    viewportMode: sanitizeBrowserViewportMode(browser.viewportMode),
+    scroll: sanitizeBrowserScroll(browser.scroll),
+    refs: [],
+  };
+}
+
+function sanitizeBrowserViewport(value: unknown): BrowserState['viewport'] | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const viewport = value as Partial<BrowserState['viewport']>;
+  const width = finitePositiveNumber(viewport.width);
+  const height = finitePositiveNumber(viewport.height);
+  const deviceScaleFactor = finitePositiveNumber(viewport.deviceScaleFactor);
+  if (!width || !height || !deviceScaleFactor) return undefined;
+  return { width, height, deviceScaleFactor };
+}
+
+function sanitizeBrowserViewportMode(value: unknown): BrowserViewportMode {
+  return BROWSER_VIEWPORT_MODES.has(value as BrowserViewportMode) ? value as BrowserViewportMode : 'fit';
+}
+
+function sanitizeBrowserScroll(value: unknown): BrowserState['scroll'] {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return { x: 0, y: 0 };
+  const scroll = value as Partial<BrowserState['scroll']>;
+  return { x: finiteNumber(scroll.x) ?? 0, y: finiteNumber(scroll.y) ?? 0 };
+}
+
+function persistBrowsers(browsers: Record<string, BrowserState>): Record<string, BrowserState> {
+  return Object.fromEntries(
+    Object.entries(browsers).map(([key, browser]) => [
+      key,
+      {
+        ...browser,
+        refs: [],
+        agentCursor: undefined,
+        screenshotPath: undefined,
+        screenshotUrl: undefined,
+      },
+    ]),
+  );
+}
+
+function finitePositiveNumber(value: unknown): number | undefined {
+  const number = finiteNumber(value);
+  return number && number > 0 ? number : undefined;
+}
+
+function finiteNumber(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
 /* ── Bridge event adapter ── */
 function adaptEvent(ev: ServerEvent): Action | null {
   switch (ev.type) {
@@ -1056,6 +1136,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   }, [
     state.activeMissionId,
     state.browserOpen,
+    state.browsers,
     state.missionMode,
     state.rightPanelOpen,
     state.selectedAgentSessionId,
