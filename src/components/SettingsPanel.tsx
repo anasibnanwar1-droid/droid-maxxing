@@ -17,6 +17,14 @@ const PRESET_THEMES = {
   warm: { bg: '#1a1612', fg: '#d8d0c8', surface: '#221e18', border: '#322a22' },
 };
 
+// Base palette for a theme mode. `system` follows the OS preference.
+export function paletteForMode(mode: 'dark' | 'light' | 'system') {
+  const resolved = mode === 'system'
+    ? (window.matchMedia?.('(prefers-color-scheme: light)').matches ? 'light' : 'dark')
+    : mode;
+  return resolved === 'light' ? PRESET_THEMES.light : PRESET_THEMES.dark;
+}
+
 type NavItem = { label: string };
 const NAV: { group: string; items: NavItem[] }[] = [
   {
@@ -208,9 +216,9 @@ function AppearanceSection() {
             <div className="text-[11px] text-droid-text-muted">Use light, dark, or match your system</div>
           </div>
           <div className="flex gap-1">
-            <ModeButton active={theme.mode === 'light'} onClick={() => updateTheme({ mode: 'light' })} icon={Sun} label="Light" />
-            <ModeButton active={theme.mode === 'dark'} onClick={() => updateTheme({ mode: 'dark' })} icon={Moon} label="Dark" />
-            <ModeButton active={theme.mode === 'system'} onClick={() => updateTheme({ mode: 'system' })} icon={Monitor} label="System" />
+            <ModeButton active={theme.mode === 'light'} onClick={() => updateTheme({ mode: 'light', ...paletteForMode('light') })} icon={Sun} label="Light" />
+            <ModeButton active={theme.mode === 'dark'} onClick={() => updateTheme({ mode: 'dark', ...paletteForMode('dark') })} icon={Moon} label="Dark" />
+            <ModeButton active={theme.mode === 'system'} onClick={() => updateTheme({ mode: 'system', ...paletteForMode('system') })} icon={Monitor} label="System" />
           </div>
         </div>
         <DiffPreview diffStyle={theme.diffStyle} />

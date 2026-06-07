@@ -14,7 +14,7 @@ import PromptInput from './components/PromptInput';
 import RightPanel from './components/RightPanel';
 import StatusBar from './components/StatusBar';
 import CommandPalette from './components/CommandPalette';
-import SettingsPanel, { applyTheme } from './components/SettingsPanel';
+import SettingsPanel, { applyTheme, paletteForMode } from './components/SettingsPanel';
 import AskUserModal from './components/AskUserModal';
 import PermissionModal from './components/PermissionModal';
 import BrowserWorkspace from './components/browser/BrowserWorkspace';
@@ -44,6 +44,14 @@ export default function App() {
   useEffect(() => {
     applyTheme(state.theme);
   }, [state.theme]);
+
+  useEffect(() => {
+    if (state.theme.mode !== 'system') return;
+    const mq = window.matchMedia('(prefers-color-scheme: light)');
+    const onChange = () => dispatch({ type: 'SET_THEME', theme: paletteForMode('system') });
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, [state.theme.mode, dispatch]);
 
   useEffect(() => {
     if (embedded) return;
