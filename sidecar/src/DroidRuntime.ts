@@ -10,6 +10,7 @@ import {
   type DroidClientTransport,
   type InitializeSessionRequestParams,
   type LoadSessionRequestParams,
+  type McpServerConfig,
   type PermissionHandler,
 } from '@factory/droid-sdk';
 import { spawn } from 'node:child_process';
@@ -24,6 +25,7 @@ const SESSION_INIT_TIMEOUT_MS = 20_000;
 export interface RuntimeHandlers {
   permissionHandler?: PermissionHandler;
   askUserHandler?: AskUserHandler;
+  mcpServers?: McpServerConfig[];
 }
 
 export interface CreateRuntimeSessionOptions extends RuntimeHandlers {
@@ -41,6 +43,7 @@ export interface CreateRuntimeSessionOptions extends RuntimeHandlers {
   workerReasoningEffort?: ReasoningEffort;
   validatorModelId?: string;
   validatorReasoningEffort?: ReasoningEffort;
+  mcpServers?: McpServerConfig[];
 }
 
 export interface RuntimeStatus {
@@ -82,6 +85,7 @@ export class DroidRuntime {
     if (options.autonomyLevel) params.autonomyLevel = mapAutonomy(options.autonomyLevel);
     if (options.decompSessionType) params.decompSessionType = options.decompSessionType;
     if (options.missionId) params.decompMissionId = options.missionId;
+    if (options.mcpServers?.length) params.mcpServers = options.mcpServers;
     const missionSettings = missionSettingsFor(options);
     if (missionSettings) params.missionSettings = missionSettings;
 
@@ -97,6 +101,7 @@ export class DroidRuntime {
   async loadSession(sessionId: string, handlers: RuntimeHandlers = {}): Promise<DroidSession> {
     const { client, transport } = await this.createClient(undefined, handlers);
     const params: LoadSessionRequestParams = { sessionId };
+    if (handlers.mcpServers?.length) params.mcpServers = handlers.mcpServers;
     try {
       const init = await withTimeout(client.loadSession(params), SESSION_INIT_TIMEOUT_MS, 'load_session');
       return new DroidSession(client, sessionId, init);

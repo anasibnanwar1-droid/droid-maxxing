@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
 import { useStore } from '../hooks/useStore';
-import { pickDirectory } from '../lib/tauri';
+import { pickDirectory } from '../lib/desktop';
 import { Folder, MessageSquare, FolderPlus, Plus, User, Settings, ChevronRight, CornerDownRight } from 'lucide-react';
 import { subscribeWorker } from '../lib/commands';
 import type { MissionSummary } from '../types/bridge';
@@ -186,7 +186,7 @@ export default function Sidebar() {
   return (
     <aside className="w-[280px] h-full flex flex-col bg-droid-surface border-r border-droid-border shrink-0">
       {/* Draggable top strip (clears macOS traffic lights) */}
-      <div data-tauri-drag-region className="h-9 shrink-0" />
+      <div data-electron-drag-region className="h-9 shrink-0" />
 
       <div className="px-2 pb-2">
         <button

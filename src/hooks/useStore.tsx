@@ -1,6 +1,5 @@
 import { createContext, useContext, useReducer, ReactNode, useEffect } from 'react';
 import { bridge } from '../lib/bridge';
-import { subscribeWorker } from '../lib/commands';
 import type {
   FactoryDefaultSettings,
   ServerEvent,
@@ -14,6 +13,7 @@ import type {
   ReasoningEffort,
   ContextStatsSnapshot,
   SessionKind,
+  BrowserState,
 } from '../types/bridge';
 
 export type AgentKind = 'orchestrator' | 'worker' | 'validator';
@@ -80,6 +80,11 @@ interface AppState {
   theme: ThemeConfig;
   missionMode: boolean;
   draftChat: { cwd: string } | null;
+  browserOpen: boolean;
+  browsers: Record<string, BrowserState>;
+  browserErrors: Record<string, string>;
+  browserGlobalError?: string;
+  designMode: boolean;
 
   // Mission Control view
   selectedFeatureId: string | null;
@@ -140,6 +145,13 @@ type Action =
   | { type: 'TOGGLE_SETTINGS' }
   | { type: 'TOGGLE_MISSION_MODE' }
   | { type: 'START_CHAT'; cwd: string }
+  | { type: 'TOGGLE_BROWSER' }
+  | { type: 'SET_BROWSER_OPEN'; open: boolean }
+  | { type: 'BROWSER_UPDATED'; browser: BrowserState }
+  | { type: 'BROWSER_CLOSED'; missionId: string }
+  | { type: 'BROWSER_ERROR'; missionId?: string; message: string }
+  | { type: 'TOGGLE_DESIGN_MODE' }
+  | { type: 'SET_DESIGN_MODE'; open: boolean }
   | { type: 'SET_THEME'; theme: Partial<ThemeConfig> }
   | { type: 'SELECT_FEATURE'; id: string | null }
   | { type: 'SELECT_AGENT'; id: string | null }
@@ -310,6 +322,11 @@ const initialState: AppState = {
   theme: loadTheme(),
   missionMode: false,
   draftChat: null,
+  browserOpen: false,
+  browsers: {},
+  browserErrors: {},
+  browserGlobalError: undefined,
+  designMode: false,
   selectedFeatureId: null,
   selectedAgentSessionId: null,
   models: [],
@@ -600,6 +617,44 @@ function reducer(state: AppState, action: Action): AppState {
     case 'START_CHAT':
       return { ...state, draftChat: { cwd: action.cwd }, activeMissionId: null, missionMode: false };
 
+    case 'TOGGLE_BROWSER':
+      return { ...state, browserOpen: !state.browserOpen };
+
+    case 'SET_BROWSER_OPEN':
+      return { ...state, browserOpen: action.open };
+
+    case 'BROWSER_UPDATED':
+      if (!action.browser.missionId) return state;
+      return {
+        ...state,
+        browsers: { ...state.browsers, [action.browser.missionId]: action.browser },
+        browserErrors: Object.fromEntries(Object.entries(state.browserErrors).filter(([id]) => id !== action.browser.missionId)),
+        browserOpen: state.activeMissionId === action.browser.missionId ? true : state.browserOpen,
+      };
+
+    case 'BROWSER_CLOSED':
+      return {
+        ...state,
+        browsers: Object.fromEntries(Object.entries(state.browsers).filter(([id]) => id !== action.missionId)),
+        browserErrors: Object.fromEntries(Object.entries(state.browserErrors).filter(([id]) => id !== action.missionId)),
+        browserOpen: state.activeMissionId === action.missionId ? false : state.browserOpen,
+      };
+
+    case 'BROWSER_ERROR':
+      return action.missionId
+        ? {
+            ...state,
+            browserErrors: { ...state.browserErrors, [action.missionId]: action.message },
+            browserOpen: state.activeMissionId === action.missionId ? true : state.browserOpen,
+          }
+        : { ...state, browserGlobalError: action.message };
+
+    case 'TOGGLE_DESIGN_MODE':
+      return { ...state, designMode: !state.designMode };
+
+    case 'SET_DESIGN_MODE':
+      return { ...state, designMode: action.open };
+
     case 'SET_THEME': {
       const next = { ...state.theme, ...action.theme };
       try { localStorage.setItem('droid-theme', JSON.stringify(next)); } catch { /* ignore */ }
@@ -791,6 +846,12 @@ function adaptEvent(ev: ServerEvent): Action | null {
       return null;
     case 'settings.defaults':
       return { type: 'FACTORY_DEFAULTS', defaults: ev.defaults };
+    case 'browser.updated':
+      return { type: 'BROWSER_UPDATED', browser: ev.state };
+    case 'browser.closed':
+      return { type: 'BROWSER_CLOSED', missionId: ev.missionId };
+    case 'browser.error':
+      return { type: 'BROWSER_ERROR', missionId: ev.missionId, message: ev.message };
     default:
       return null;
   }
@@ -804,10 +865,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const unsub = bridge.subscribe((ev) => {
       console.log('[bridge]', ev.type, ev);
-      // Stream a subagent's transcript as soon as it spawns so it's viewable.
-      if (ev.type === 'mission.worker' && ev.event === 'started') {
-        subscribeWorker(ev.missionId, ev.workerSessionId);
-      }
       const action = adaptEvent(ev);
       if (action) dispatch(action);
     });

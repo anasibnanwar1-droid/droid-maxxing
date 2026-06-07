@@ -1,5 +1,5 @@
-import { getBridgeInfo } from './tauri';
-import type { ClientCommand, ServerEvent } from '../types/bridge';
+import { getBridgeInfo } from './desktop';
+import type { BrowserNativeResult, ClientCommand, PermissionOutcome, ServerEvent } from '../types/bridge';
 
 type Listener = (ev: ServerEvent) => void;
 
@@ -93,7 +93,7 @@ export const sendToAgent = (missionId: string, agentSessionId: string, text: str
 export const respondPermission = (
   missionId: string,
   requestId: string,
-  outcome: 'proceed_once' | 'proceed_always' | 'proceed_auto_run' | 'cancel',
+  outcome: PermissionOutcome,
 ) => bridge.send({ type: 'mission.respondPermission', missionId, requestId, outcome });
 
 export const respondQuestion = (
@@ -111,3 +111,23 @@ export const interruptAgent = (missionId: string, agentSessionId: string) =>
 export const subscribeWorker = (missionId: string, workerSessionId: string) =>
   bridge.send({ type: 'mission.subscribeWorker', missionId, workerSessionId });
 export const closeMission = (missionId: string) => bridge.send({ type: 'mission.close', missionId });
+export const openBrowser = (p: Omit<Extract<ClientCommand, { type: 'browser.open' }>, 'type'>) =>
+  bridge.send({ type: 'browser.open', ...p });
+export const closeBrowser = (missionId: string) => bridge.send({ type: 'browser.close', missionId });
+export const refreshBrowser = (missionId: string) => bridge.send({ type: 'browser.refresh', missionId });
+export const resizeBrowserViewport = (p: Omit<Extract<ClientCommand, { type: 'browser.resizeViewport' }>, 'type'>) =>
+  bridge.send({ type: 'browser.resizeViewport', ...p });
+export const clickBrowser = (p: Omit<Extract<ClientCommand, { type: 'browser.click' }>, 'type'>) =>
+  bridge.send({ type: 'browser.click', ...p });
+export const typeBrowser = (missionId: string, text: string) =>
+  bridge.send({ type: 'browser.type', missionId, text });
+export const keypressBrowser = (missionId: string, key: string) =>
+  bridge.send({ type: 'browser.keypress', missionId, key });
+export const scrollBrowser = (p: Omit<Extract<ClientCommand, { type: 'browser.scroll' }>, 'type'>) =>
+  bridge.send({ type: 'browser.scroll', ...p });
+export const addDesignReference = (p: Omit<Extract<ClientCommand, { type: 'browser.design.addReference' }>, 'type'>) =>
+  bridge.send({ type: 'browser.design.addReference', ...p });
+export const sendDesignPrompt = (p: Omit<Extract<ClientCommand, { type: 'browser.design.sendPrompt' }>, 'type'>) =>
+  bridge.send({ type: 'browser.design.sendPrompt', ...p });
+export const sendNativeBrowserResult = (result: BrowserNativeResult) =>
+  bridge.send({ type: 'browser.native.result', result });

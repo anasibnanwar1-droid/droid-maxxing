@@ -30,6 +30,17 @@
     -moz-osx-font-smoothing: grayscale;
   }
 
+  [data-electron-drag-region] {
+    -webkit-app-region: drag;
+  }
+
+  [data-electron-drag-region] button,
+  [data-electron-drag-region] input,
+  [data-electron-drag-region] textarea,
+  [data-electron-drag-region] select {
+    -webkit-app-region: no-drag;
+  }
+
   ::-webkit-scrollbar {
     width: 6px;
     height: 6px;

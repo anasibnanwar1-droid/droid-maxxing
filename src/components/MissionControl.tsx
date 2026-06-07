@@ -460,7 +460,7 @@ function ExpandModal({ title, onClose, children, headerExtra }: { title: string;
 
 function PanelHeader({ title, count, onExpand, onCollapse }: { title: string; count?: string; onExpand: () => void; onCollapse?: () => void }) {
   return (
-    <div data-tauri-drag-region className="flex items-center justify-between px-4 h-11 shrink-0 border-b border-droid-border/50">
+    <div data-electron-drag-region className="flex items-center justify-between px-4 h-11 shrink-0 border-b border-droid-border/50">
       <span className="flex items-center gap-2">
         <span className="text-[11px] font-medium tracking-[0.09em] text-droid-text-secondary uppercase">{title}</span>
         {count && <span className="font-mono text-[10px] text-droid-text-muted">{count}</span>}
@@ -758,7 +758,7 @@ export default function MissionControl() {
 
         {/* ─── Center chat ─── */}
         <section className="flex-1 flex flex-col min-h-0 min-w-0 overflow-hidden">
-          <div data-tauri-drag-region className="shrink-0 flex items-center justify-between gap-3 pr-6 pl-6 h-12 border-b border-droid-border">
+          <div data-electron-drag-region className="shrink-0 flex items-center justify-between gap-3 pr-6 pl-6 h-12 border-b border-droid-border">
             <h1 className="text-[14px] font-medium text-droid-text truncate">{mission.title}</h1>
             <div className="flex items-center gap-2 shrink-0">
               {isLive ? (
