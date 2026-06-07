@@ -248,22 +248,6 @@ export default function RightPanel() {
             </div>
           )}
 
-          {/* Tokens */}
-          {activeMission && (
-            <div>
-              <Divider />
-              <div className="px-3 py-2 flex items-center gap-4">
-                <div className="flex items-center gap-1.5">
-                  <span className="text-[11px] text-droid-text-muted">In</span>
-                  <span className="font-mono text-[12px] text-droid-text-secondary">{activeMission.tokensIn.toLocaleString()}</span>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <span className="text-[11px] text-droid-text-muted">Out</span>
-                  <span className="font-mono text-[12px] text-droid-text-secondary">{activeMission.tokensOut.toLocaleString()}</span>
-                </div>
-              </div>
-            </div>
-          )}
         </div>
       </div>
     </div>
