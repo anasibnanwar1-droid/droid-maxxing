@@ -505,6 +505,10 @@ export function applyTheme(theme: ReturnType<typeof useStore>['state']['theme'])
   root.style.setProperty('--ui-zoom', `${theme.uiFontSize / 14}`);
   root.style.setProperty('--code-font-size', `${theme.codeFontSize}px`);
 
+  // Dedicated sidebar surface so translucency only affects the sidebar.
+  root.style.setProperty('--sidebar-bg', theme.translucentSidebar ? `${theme.surface}b8` : theme.surface);
+  root.style.setProperty('--sidebar-blur', theme.translucentSidebar ? 'blur(20px) saturate(160%)' : 'none');
+
   // Apply contrast as a filter only below 100% so it never creates a stacking
   // context that would defeat the sidebar's backdrop blur at the default value.
   const rootEl = document.getElementById('root');

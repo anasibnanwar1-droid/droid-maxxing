@@ -19,6 +19,8 @@
     --ui-font-size: 14px;
     --ui-zoom: 1;
     --code-font-size: 12px;
+    --sidebar-bg: var(--droid-surface);
+    --sidebar-blur: none;
   }
 
   html, body, #root {
