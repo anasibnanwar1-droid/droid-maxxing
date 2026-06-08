@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { z } from 'zod';
 import type { BrowserSessionManager } from './BrowserSessionManager.js';
 import type { BrowserState, DesignReference } from './types.js';
+import { jsonResult, safeTool, type ToolHandlerResult } from '../mcpToolUtils.js';
 
 const viewportSchema = z.object({
   width: z.number().int().min(240).max(4096),
@@ -198,22 +199,6 @@ function stateForTool(state: BrowserState, designReferences: DesignReference[] =
   };
 }
 
-type ToolContent = { type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string };
-type ToolHandlerResult = string | { content: ToolContent[]; isError?: boolean };
-
-function safeTool<T>(handler: (input: T) => Promise<ToolHandlerResult> | ToolHandlerResult): (input: T) => Promise<ToolHandlerResult> {
-  return async (input: T) => {
-    try {
-      return await handler(input);
-    } catch (err) {
-      return {
-        isError: true,
-        content: [{ type: 'text', text: jsonResult({ ok: false, error: errMsg(err) }) }],
-      };
-    }
-  };
-}
-
 async function imageToolResult(path: string, metadata: unknown): Promise<ToolHandlerResult> {
   return {
     content: [
@@ -221,12 +206,4 @@ async function imageToolResult(path: string, metadata: unknown): Promise<ToolHan
       { type: 'image', data: await readFile(path, 'base64'), mimeType: 'image/png' },
     ],
   };
-}
-
-function jsonResult(value: unknown): string {
-  return JSON.stringify(value, null, 2);
-}
-
-function errMsg(value: unknown): string {
-  return value instanceof Error ? value.message : String(value);
 }
