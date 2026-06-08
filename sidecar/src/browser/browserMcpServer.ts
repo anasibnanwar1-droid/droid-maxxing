@@ -26,7 +26,14 @@ export function createBrowserMcpServer(manager: BrowserSessionManager, missionId
     tools: [
       tool(
         'browser_open',
-        'Open and show a URL in the live Droid Control browser pane for this chat session. Use this when the user asks to open, navigate, click, inspect, or control a browser; do not substitute FetchUrl for browser work.',
+        [
+          'Open and show a URL in the live Droid Control browser pane for this chat session.',
+          'This is the browser the user can see and control in Droid Control.',
+          'When the user asks to open a site, navigate, click, inspect, or control a browser, call this tool first with the site URL.',
+          'If the user names a domain without a scheme, pass it directly; Droid Control will load it as https.',
+          'Do not ask the user for a URL when they already named a site or domain.',
+          'Do not use Read, FetchUrl, curl, or agent-browser as a substitute for browser work.',
+        ].join(' '),
         {
           url: z.string().min(1).describe('Absolute URL to open, such as https://example.com or http://127.0.0.1:1421/.'),
           viewport: viewportSchema.optional().describe('Optional explicit browser viewport.'),
@@ -39,12 +46,15 @@ export function createBrowserMcpServer(manager: BrowserSessionManager, missionId
             viewport: input.viewport ? { ...input.viewport, deviceScaleFactor: input.viewport.deviceScaleFactor ?? 2 } : undefined,
             viewportMode: input.viewportMode ?? (input.viewport ? 'custom' : undefined),
           });
-          return jsonResult(stateForTool(state));
+          return jsonResult({
+            message: 'Opened the live Droid Control browser. Use browser_snapshot next for refs, then browser_click/browser_type/browser_scroll for interaction.',
+            ...stateForTool(state),
+          });
         }),
       ),
       tool(
         'browser_snapshot',
-        'Return compact DOM refs and visible page state from the live Droid Control browser without taking a screenshot.',
+        'Return compact DOM refs and visible page state from the live Droid Control browser. Use this after browser_open and after each navigation or interaction.',
         {},
         safeTool(async () => {
           const state = await manager.refresh(missionId());
@@ -52,8 +62,17 @@ export function createBrowserMcpServer(manager: BrowserSessionManager, missionId
         }),
       ),
       tool(
+        'browser_reload',
+        'Reload the current live Droid Control browser page. Use browser_snapshot after reload when fresh refs are needed.',
+        {},
+        safeTool(async () => {
+          const state = await manager.reload(missionId());
+          return jsonResult(stateForTool(state));
+        }),
+      ),
+      tool(
         'browser_screenshot',
-        'Explicitly capture the current browser viewport as a high-detail PNG image for visual inspection. Normal navigation and clicks should use browser_snapshot instead.',
+        'Capture the current live Droid Control browser viewport as a high-detail PNG image for visual inspection. Use browser_snapshot for normal navigation refs.',
         {
           fullPage: z.boolean().optional().describe('Capture the full page instead of only the visible viewport.'),
           deviceScaleFactor: z.number().positive().max(4).optional().describe('Temporary screenshot scale. Defaults to the current high-detail viewport scale.'),
@@ -68,7 +87,7 @@ export function createBrowserMcpServer(manager: BrowserSessionManager, missionId
       ),
       tool(
         'browser_click',
-        'Move the agent cursor and click in the live Droid Control browser by ref or viewport coordinates.',
+        'Move the agent cursor and click in the live Droid Control browser by ref or viewport coordinates. Prefer refs returned by browser_snapshot.',
         {
           ref: z.string().optional().describe('Element ref returned by browser_snapshot. Preferred when available.'),
           x: z.number().optional().describe('Viewport x coordinate when clicking by coordinate.'),
@@ -86,7 +105,7 @@ export function createBrowserMcpServer(manager: BrowserSessionManager, missionId
       ),
       tool(
         'browser_type',
-        'Type text into the currently focused element in the live Droid Control browser.',
+        'Type text into the currently focused element in the live Droid Control browser. Click or focus an input first.',
         {
           text: z.string().describe('Text to type into the currently focused browser element.'),
         },
@@ -108,7 +127,7 @@ export function createBrowserMcpServer(manager: BrowserSessionManager, missionId
       ),
       tool(
         'browser_scroll',
-        'Scroll the live Droid Control browser page.',
+        'Scroll the live Droid Control browser page, then call browser_snapshot to refresh refs.',
         {
           direction: scrollDirectionSchema.describe('Direction to scroll.'),
           pixels: z.number().positive().max(4000).optional().describe('Scroll amount in pixels.'),
@@ -120,7 +139,7 @@ export function createBrowserMcpServer(manager: BrowserSessionManager, missionId
       ),
       tool(
         'design-mode',
-        'Read the current Design Mode browser context for this chat. Use after the user selects, hovers, clicks, or sketches an area in the live Droid Control browser pane.',
+        'Read the current Design Mode browser context for this chat only. Use after the user selects, hovers, clicks, or sketches an area in the live Droid Control browser pane.',
         {
           instruction: z.string().optional().describe('Optional user design instruction to keep alongside the returned context.'),
         },

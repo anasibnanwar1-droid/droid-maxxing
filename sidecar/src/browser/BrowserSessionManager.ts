@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { normalizeBrowserUrl } from './browserUrl.js';
 import { formatDesignPrompt, writeDesignPromptPack } from './designPromptPacks.js';
 import type {
   BrowserElementRef,
@@ -19,6 +20,7 @@ export interface BrowserSessionManagerOptions {
 
 export interface BrowserRuntime {
   open(url: string): Promise<{ url: string; title?: string; scroll: { x: number; y: number }; refs: BrowserElementRef[] }>;
+  reload(): Promise<{ url: string; title?: string; scroll: { x: number; y: number }; refs: BrowserElementRef[] }>;
   setViewport(viewport: BrowserViewport): Promise<void>;
   screenshot(options?: BrowserScreenshotOptions): Promise<string>;
   snapshot(): Promise<{ url: string; title?: string; scroll: { x: number; y: number }; refs: BrowserElementRef[] }>;
@@ -57,18 +59,27 @@ export class BrowserSessionManager {
 
   async open(input: { missionId: string; url: string; viewport?: BrowserViewport; viewportMode?: BrowserViewportMode }): Promise<BrowserState> {
     const session = this.sessionFor(input.missionId, input.viewport, input.viewportMode);
+    const url = normalizeBrowserUrl(input.url);
     if (input.viewport) {
       await session.runtime.setViewport(input.viewport);
     }
     session.state = {
       ...session.state,
-      url: input.url,
+      url,
       refs: [],
       viewport: input.viewport ?? session.state.viewport,
       viewportMode: input.viewportMode ?? session.state.viewportMode,
     };
     this.emitUpdated(session.state);
-    const snapshot = await session.runtime.open(input.url);
+    const snapshot = await session.runtime.open(url);
+    session.state = this.stateFromSnapshot(session, snapshot);
+    this.emitUpdated(session.state);
+    return session.state;
+  }
+
+  async reload(missionId: string): Promise<BrowserState> {
+    const session = this.requireSession(missionId);
+    const snapshot = await session.runtime.reload();
     session.state = this.stateFromSnapshot(session, snapshot);
     this.emitUpdated(session.state);
     return session.state;
@@ -157,15 +168,19 @@ export class BrowserSessionManager {
 
   async designPrompt(input: { missionId: string; instruction: string; referenceIds: string[] }): Promise<{ path: string; prompt: string }> {
     const session = this.requireSession(input.missionId);
-    const references = input.referenceIds.map((id) => session.references.get(id)).filter((ref): ref is DesignReference => Boolean(ref));
+    const instruction = input.instruction.trim();
+    if (!instruction) throw new Error('Browser prompt cannot be empty.');
+    const references = input.referenceIds
+      .map((id) => session.references.get(id))
+      .filter((ref): ref is DesignReference => Boolean(ref));
     if (references.length === 0) throw new Error('Select or sketch at least one browser reference before sending a Design Mode prompt.');
     const { path } = await (this.options.writePack ?? writeDesignPromptPack)({
       missionId: input.missionId,
       browserSessionId: session.id,
-      instruction: input.instruction,
+      instruction,
       references,
     });
-    return { path, prompt: formatDesignPrompt(path, input.instruction, references) };
+    return { path, prompt: formatDesignPrompt(path, instruction, references) };
   }
 
   state(missionId: string): BrowserState | undefined {

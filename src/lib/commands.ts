@@ -1,6 +1,10 @@
 import { bridge } from './bridge';
 import type { Autonomy, BrowserNativeResult, BrowserScrollDirection, BrowserViewport, BrowserViewportMode, ConfigurableAgent, DesignReference, PermissionOutcome, ReasoningEffort, SessionInteractionMode } from '../types/bridge';
 
+let refCounter = 0;
+
+export const newClientRef = () => `c-${Date.now().toString(36)}-${refCounter++}`;
+
 export const connect = (apiKey: string) => bridge.send({ type: 'connect', apiKey });
 
 export const createMission = (p: {
@@ -77,7 +81,7 @@ export const subscribeWorker = (missionId: string, workerSessionId: string) =>
 export const closeMission = (missionId: string) =>
   bridge.send({ type: 'mission.close', missionId });
 
-export const listMissions = (options?: { workspaceCwds?: string[]; limitPerWorkspace?: number }) =>
+export const listMissions = (options?: { workspaceCwds?: string[]; includePlainChats?: boolean; limitPerWorkspace?: number }) =>
   bridge.send({ type: 'mission.list', ...options });
 
 export const loadMissionHistory = (missionId: string) =>
@@ -98,6 +102,9 @@ export const openBrowser = (p: { missionId: string; url: string; viewport?: Brow
 
 export const closeBrowser = (missionId: string) =>
   bridge.send({ type: 'browser.close', missionId });
+
+export const reloadBrowser = (missionId: string) =>
+  bridge.send({ type: 'browser.reload', missionId });
 
 export const refreshBrowser = (missionId: string) =>
   bridge.send({ type: 'browser.refresh', missionId });

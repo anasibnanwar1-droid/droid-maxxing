@@ -16,6 +16,7 @@ import type {
   TranscriptEvent,
 } from './protocol.js';
 import { mapFeature } from './normalize.js';
+import { designPromptDisplayFromText } from './browser/designPromptDisplay.js';
 
 interface StoredMissionState {
   missionId?: string;
@@ -71,6 +72,7 @@ export interface HistoricalMission {
 
 export interface HistoricalSummaryFilter {
   workspaceCwds?: string[];
+  includePlainChats?: boolean;
   limitPerWorkspace?: number;
 }
 
@@ -103,25 +105,25 @@ const SESSION_START_BYTES = 256_000;
 
 export function loadHistoricalMissions(options: HistoricalSummaryFilter = {}): HistoricalMission[] {
   const workspaceCwds = options.workspaceCwds ? new Set(options.workspaceCwds.filter(Boolean)) : null;
-  if (workspaceCwds && workspaceCwds.size === 0) return [];
+  if (workspaceCwds && workspaceCwds.size === 0 && !options.includePlainChats) return [];
   const rows = missionDirs()
     .filter((dir) => {
-      if (!workspaceCwds) return true;
+      if (!workspaceCwds && !options.includePlainChats) return true;
       const state = readJson<StoredMissionState>(join(dir, 'state.json'));
-      return workspaceCwds.has(state.workingDirectory || state.cwd || '');
+      return shouldIncludeCwd(state.workingDirectory || state.cwd || '', workspaceCwds, options.includePlainChats);
     })
     .map((dir) => loadHistoricalMission(dir))
     .sort((a, b) => b.summary.updatedAt - a.summary.updatedAt);
-  return limitHistoricalRows(rows, workspaceCwds, options.limitPerWorkspace);
+  return limitHistoricalRows(rows, workspaceCwds, options.limitPerWorkspace, options.includePlainChats);
 }
 
 export function loadHistoricalSessions(options: HistoricalSummaryFilter = {}): HistoricalMission[] {
   const rows: HistoricalMission[] = [];
   const workspaceCwds = options.workspaceCwds ? new Set(options.workspaceCwds.filter(Boolean)) : null;
-  if (workspaceCwds && workspaceCwds.size === 0) return [];
+  if (workspaceCwds && workspaceCwds.size === 0 && !options.includePlainChats) return [];
   for (const [sessionId, path] of buildSessionIndex()) {
     const start = readSessionStart(path);
-    if (workspaceCwds && !workspaceCwds.has(start.cwd ?? '')) continue;
+    if ((workspaceCwds || options.includePlainChats) && !shouldIncludeCwd(start.cwd ?? '', workspaceCwds, options.includePlainChats)) continue;
     const classification = classifyStoredSession(start);
     if (!classification) continue;
     const stat = statSync(path);
@@ -154,7 +156,7 @@ export function loadHistoricalSessions(options: HistoricalSummaryFilter = {}): H
       progress: [],
     });
   }
-  return limitHistoricalRows(rows.sort((a, b) => b.summary.updatedAt - a.summary.updatedAt), workspaceCwds, options.limitPerWorkspace);
+  return limitHistoricalRows(rows.sort((a, b) => b.summary.updatedAt - a.summary.updatedAt), workspaceCwds, options.limitPerWorkspace, options.includePlainChats);
 }
 
 export function loadSessionHistory(): HistoryMission[] {
@@ -629,11 +631,14 @@ function parseSessionTranscript(
           isError: Boolean(block.is_error ?? block.isError),
         }));
       } else if (messageRole === 'user' && role === 'orchestrator' && type === 'text') {
-        const text = trimText(stringValue(block.text) || '');
+        const rawText = trimText(stringValue(block.text) || '');
+        const display = designPromptDisplayFromText(rawText);
+        const text = display?.text ?? rawText;
         if (text && !isSystemText(text)) {
           events.push(event(missionId, 'user', 'orchestrator', messageId, index, ts, 'text', {
             text,
             author: 'user',
+            browserRefs: display?.browserRefs,
           }));
         }
       }
@@ -738,14 +743,24 @@ function limitHistoricalRows(
   rows: HistoricalMission[],
   workspaceCwds: Set<string> | null,
   limitPerWorkspace?: number,
+  includePlainChats?: boolean,
 ): HistoricalMission[] {
-  if (!workspaceCwds) return rows;
+  if (!workspaceCwds && !includePlainChats) return rows;
   const limit = Math.max(1, Math.min(limitPerWorkspace ?? 5, 50));
   const limited: HistoricalMission[] = [];
-  for (const cwd of workspaceCwds) {
+  if (includePlainChats) {
+    limited.push(...rows.filter((row) => !row.summary.cwd).slice(0, limit));
+  }
+  for (const cwd of workspaceCwds ?? []) {
     limited.push(...rows.filter((row) => row.summary.cwd === cwd).slice(0, limit));
   }
   return limited.sort((a, b) => b.summary.updatedAt - a.summary.updatedAt);
+}
+
+function shouldIncludeCwd(cwd: string, workspaceCwds: Set<string> | null, includePlainChats?: boolean): boolean {
+  if (!cwd) return Boolean(includePlainChats);
+  if (!workspaceCwds) return false;
+  return workspaceCwds.has(cwd);
 }
 
 function buildSessionIndex(): Map<string, string> {

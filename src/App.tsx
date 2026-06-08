@@ -3,10 +3,11 @@ import { useStore } from './hooks/useStore';
 import { AnimatePresence, motion } from 'framer-motion';
 import { Monitor, PanelLeft } from 'lucide-react';
 import { bridge } from './lib/bridge';
-import { closeBrowser, connect, listFactoryDefaults, listModels, listMissions, listSkills, loadMissionHistory, resumeMission, sendNativeBrowserResult } from './lib/commands';
+import { connect, listFactoryDefaults, listModels, listMissions, listSkills, loadMissionHistory, resumeMission, sendNativeBrowserResult } from './lib/commands';
 import { isEmbedded } from './lib/embed';
 import { getApiKey } from './lib/desktop';
 import { performNativeBrowserRequest } from './lib/nativeBrowserAgent';
+import { activeMissionAfterNativeBrowserRequest, browserKeyForMission } from './lib/browserSessionIdentity';
 import Sidebar from './components/Sidebar';
 import ChatView from './components/ChatView';
 import MissionControl from './components/MissionControl';
@@ -18,6 +19,7 @@ import SettingsPanel, { applyTheme, paletteForMode } from './components/Settings
 import AskUserModal from './components/AskUserModal';
 import PermissionModal from './components/PermissionModal';
 import BrowserWorkspace from './components/browser/BrowserWorkspace';
+import { isDesktop } from './lib/desktop';
 
 function ContextListIcon({ className }: { className?: string }) {
   return (
@@ -33,6 +35,7 @@ function ContextListIcon({ className }: { className?: string }) {
 const BROWSER_PANE_MIN = 460;
 const BROWSER_PANE_MAX = 1280;
 const BROWSER_PANE_DEFAULT = 860;
+const BROWSER_PANE_WIDTH_STORAGE_KEY = 'droid-browser-pane-width';
 
 export default function App() {
   const { state, dispatch } = useStore();
@@ -41,7 +44,8 @@ export default function App() {
   // The view is a real mission only when the active session is a mission orchestrator,
   // not merely because the global mission-compose flag is on.
   const isMissionView = !!activeMission && activeMission.kind === 'mission_orchestrator';
-  const showBrowserPane = !embedded && state.browserOpen && !!activeMission;
+  const showBrowserPane = !embedded && state.browserOpen;
+  const nativeBrowserPane = showBrowserPane && isDesktop();
   const focused = isMissionView;
   // A normal/spec session only has something worth showing once a message has
   // been sent (the first transcript is seeded from the opening prompt).
@@ -52,24 +56,30 @@ export default function App() {
   const requestedHistory = useRef(new Set<string>());
   const requestedResume = useRef(new Set<string>());
   const [browserPaneWidth, setBrowserPaneWidth] = useState(() => initialBrowserPaneWidth());
+  const setStoredBrowserPaneWidth = useCallback((width: number) => {
+    const next = clampBrowserPane(width);
+    setBrowserPaneWidth(next);
+    try {
+      localStorage.setItem(BROWSER_PANE_WIDTH_STORAGE_KEY, String(next));
+    } catch { /* ignore */ }
+  }, []);
 
   const toggleBrowserPane = useCallback(() => {
-    if (state.browserOpen && activeMission) closeBrowser(activeMission.id);
     // Browser and the context panel are mutually exclusive — opening the browser
     // collapses the right panel so they never fight for horizontal space.
     if (!state.browserOpen) dispatch({ type: 'SET_RIGHT_PANEL', open: false });
     dispatch({ type: 'TOGGLE_BROWSER' });
-  }, [activeMission, dispatch, state.browserOpen]);
+  }, [dispatch, state.browserOpen]);
 
   const toggleRightPanel = useCallback(() => {
     const open = !state.rightPanelOpen;
-    // Opening the context panel closes the browser pane (and vice versa).
+    // Opening the context panel hides the browser pane while preserving the
+    // chat-scoped native browser session.
     if (open && state.browserOpen) {
-      if (activeMission) closeBrowser(activeMission.id);
       dispatch({ type: 'SET_BROWSER_OPEN', open: false });
     }
     dispatch({ type: 'SET_RIGHT_PANEL', open });
-  }, [activeMission, dispatch, state.browserOpen, state.rightPanelOpen]);
+  }, [dispatch, state.browserOpen, state.rightPanelOpen]);
 
   useEffect(() => {
     applyTheme(state.theme);
@@ -96,17 +106,24 @@ export default function App() {
   }, [embedded]);
 
   useEffect(() => {
-    if (embedded || state.workspaceCwds.length === 0) return;
-    listMissions({ workspaceCwds: state.workspaceCwds, limitPerWorkspace: 5 });
+    if (embedded) return;
+    listMissions({ workspaceCwds: state.workspaceCwds, includePlainChats: true, limitPerWorkspace: 5 });
   }, [embedded, state.workspaceCwds]);
 
   useEffect(() => {
     if (embedded) return;
     const unsub = bridge.subscribe((event) => {
       if (event.type !== 'browser.native.request') return;
-      dispatch({ type: 'SET_ACTIVE_MISSION', id: event.request.missionId });
-      dispatch({ type: 'SET_RIGHT_PANEL', open: false });
-      dispatch({ type: 'SET_BROWSER_OPEN', open: true });
+      const activeBrowserKey = browserKeyForMission(state.activeMissionId ? state.missions[state.activeMissionId] : undefined);
+      const requestIsForActiveChat = activeBrowserKey === event.request.missionId;
+      const nextActiveMissionId = activeMissionAfterNativeBrowserRequest(state.activeMissionId, event.request, state.missions);
+      if (nextActiveMissionId !== state.activeMissionId) {
+        dispatch({ type: 'SET_ACTIVE_MISSION', id: nextActiveMissionId });
+      }
+      if (!state.activeMissionId || requestIsForActiveChat) {
+        dispatch({ type: 'SET_RIGHT_PANEL', open: false });
+        dispatch({ type: 'SET_BROWSER_OPEN', open: true });
+      }
       void performNativeBrowserRequest(event.request)
         .then(sendNativeBrowserResult)
         .catch((err) => {
@@ -119,7 +136,7 @@ export default function App() {
         });
     });
     return () => unsub();
-  }, [dispatch, embedded]);
+  }, [dispatch, embedded, state.activeMissionId, state.missions]);
 
   useEffect(() => {
     if (embedded) return;
@@ -252,17 +269,11 @@ export default function App() {
 
             <AnimatePresence initial={false}>
               {showBrowserPane && (
-                <motion.aside
-                  key="browser-pane"
-                  initial={{ width: 0, opacity: 0 }}
-                  animate={{ width: browserPaneWidth, opacity: 1 }}
-                  exit={{ width: 0, opacity: 0 }}
-                  transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
-                  className="relative shrink-0 overflow-hidden border-l border-droid-border bg-droid-bg shadow-[-24px_0_60px_rgba(0,0,0,0.18)]"
-                >
-                  <BrowserPaneResizeHandle width={browserPaneWidth} onResize={setBrowserPaneWidth} />
-                  <BrowserWorkspace />
-                </motion.aside>
+                <BrowserPane
+                  animated={!nativeBrowserPane}
+                  width={browserPaneWidth}
+                  onResize={setStoredBrowserPaneWidth}
+                />
               )}
             </AnimatePresence>
           </div>
@@ -290,6 +301,45 @@ export default function App() {
       {state.settingsOpen && <SettingsPanel />}
       {state.pendingPermission && <PermissionModal />}
     </div>
+  );
+}
+
+function BrowserPane({
+  animated,
+  width,
+  onResize,
+}: {
+  animated: boolean;
+  width: number;
+  onResize: (width: number) => void;
+}) {
+  const content = (
+    <>
+      <BrowserPaneResizeHandle width={width} onResize={onResize} />
+      <BrowserWorkspace />
+    </>
+  );
+
+  const className = 'relative shrink-0 overflow-hidden border-l border-droid-border bg-droid-bg shadow-[-24px_0_60px_rgba(0,0,0,0.18)]';
+  if (!animated) {
+    return (
+      <aside key="browser-pane" className={className} style={{ width }}>
+        {content}
+      </aside>
+    );
+  }
+
+  return (
+    <motion.aside
+      key="browser-pane"
+      initial={{ width: 0, opacity: 0 }}
+      animate={{ width, opacity: 1 }}
+      exit={{ width: 0, opacity: 0 }}
+      transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
+      className={className}
+    >
+      {content}
+    </motion.aside>
   );
 }
 
@@ -332,6 +382,10 @@ function BrowserPaneResizeHandle({
 
 function initialBrowserPaneWidth(): number {
   if (typeof window === 'undefined') return BROWSER_PANE_DEFAULT;
+  try {
+    const stored = Number(localStorage.getItem(BROWSER_PANE_WIDTH_STORAGE_KEY));
+    if (Number.isFinite(stored) && stored > 0) return clampBrowserPane(stored);
+  } catch { /* ignore */ }
   return clampBrowserPane(Math.round(window.innerWidth * 0.44));
 }
 

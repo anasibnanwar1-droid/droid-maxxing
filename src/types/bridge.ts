@@ -97,8 +97,19 @@ export interface TranscriptEvent {
   // Frontend-only: attachments shown as chips on a user message.
   skills?: string[];
   files?: string[];
+  browserRefs?: BrowserTranscriptReference[];
   // Frontend-only: this user message was queued while the model was working.
   steered?: boolean;
+}
+
+export type BrowserTranscriptReferenceKind = 'element' | 'region' | 'stroke';
+
+export interface BrowserTranscriptReference {
+  id: string;
+  label: string;
+  kind: BrowserTranscriptReferenceKind;
+  url?: string;
+  selector?: string;
 }
 
 export type PermissionKind = 'edit' | 'exec' | 'create' | 'apply_patch' | 'mcp' | 'spec' | 'other';
@@ -243,7 +254,7 @@ export interface BrowserNativeSnapshot {
   refs: BrowserElementRef[];
 }
 
-export type BrowserNativeAction = 'open' | 'snapshot' | 'click' | 'type' | 'keypress' | 'scroll' | 'close';
+export type BrowserNativeAction = 'open' | 'reload' | 'snapshot' | 'click' | 'type' | 'keypress' | 'scroll' | 'close';
 
 export interface BrowserNativeRequest {
   requestId: string;
@@ -344,13 +355,14 @@ export type ClientCommand =
   | { type: 'mission.compact'; missionId: string; customInstructions?: string }
   | { type: 'mission.subscribeWorker'; missionId: string; workerSessionId: string }
   | { type: 'mission.close'; missionId: string }
-  | { type: 'mission.list'; workspaceCwds?: string[]; limitPerWorkspace?: number }
+  | { type: 'mission.list'; workspaceCwds?: string[]; includePlainChats?: boolean; limitPerWorkspace?: number }
   | { type: 'mission.loadHistory'; missionId: string }
   | { type: 'settings.agent.update'; missionId?: string; agent: ConfigurableAgent; modelId?: string | null; reasoningEffort?: ReasoningEffort }
   | { type: 'mission.setAutonomy'; missionId: string; autonomy: Autonomy }
   | { type: 'mission.setInteractionMode'; missionId: string; mode: SessionInteractionMode }
   | { type: 'browser.open'; missionId: string; url: string; viewport?: BrowserViewport; viewportMode?: BrowserViewportMode }
   | { type: 'browser.close'; missionId: string }
+  | { type: 'browser.reload'; missionId: string }
   | { type: 'browser.refresh'; missionId: string }
   | { type: 'browser.resizeViewport'; missionId: string; viewport: BrowserViewport; viewportMode: BrowserViewportMode }
   | { type: 'browser.click'; missionId: string; ref?: string; x?: number; y?: number; source?: 'agent' | 'user' }

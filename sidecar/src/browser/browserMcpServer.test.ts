@@ -12,6 +12,7 @@ test('browser MCP server exposes agent-facing names and typed inputs', () => {
     [
       'browser_open',
       'browser_snapshot',
+      'browser_reload',
       'browser_screenshot',
       'browser_click',
       'browser_type',
@@ -22,6 +23,10 @@ test('browser MCP server exposes agent-facing names and typed inputs', () => {
   );
   assert.ok(server.tools.find((tool) => tool.name === 'browser_open')?.inputSchema?.url);
   assert.ok(server.tools.find((tool) => tool.name === 'browser_screenshot')?.inputSchema?.deviceScaleFactor);
+  assert.match(
+    server.tools.find((tool) => tool.name === 'browser_open')?.description ?? '',
+    /Do not ask the user for a URL/,
+  );
 });
 
 test('browser MCP handlers return visible tool errors', async () => {
@@ -56,11 +61,32 @@ test('browser_open keeps high-detail viewport scale by default', async () => {
   const server = createBrowserMcpServer(manager, () => 'm1');
   const browserOpen = server.tools.find((tool) => tool.name === 'browser_open');
 
-  await browserOpen?.handler({
+  const result = await browserOpen?.handler({
     url: 'https://example.com',
     viewport: { width: 1000, height: 700 },
     viewportMode: 'custom',
   });
 
   assert.equal(openedViewport?.deviceScaleFactor, 2);
+  assert.match(String(result), /Opened the live Droid Control browser/);
+});
+
+test('browser_reload returns a fresh browser state', async () => {
+  const manager = {
+    async reload() {
+      return {
+        url: 'https://example.com',
+        viewport: { width: 1200, height: 800, deviceScaleFactor: 2 },
+        viewportMode: 'fit',
+        scroll: { x: 0, y: 0 },
+        refs: [],
+      };
+    },
+  } as unknown as BrowserSessionManager;
+  const server = createBrowserMcpServer(manager, () => 'm1');
+  const browserReload = server.tools.find((tool) => tool.name === 'browser_reload');
+
+  const result = await browserReload?.handler({});
+
+  assert.match(String(result), /https:\/\/example.com/);
 });

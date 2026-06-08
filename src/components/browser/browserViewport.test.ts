@@ -37,6 +37,8 @@ test('viewportForMode keeps custom viewport and mobile device scale', () => {
 test('normalizeUrl preserves local browser targets', () => {
   assert.equal(normalizeUrl('127.0.0.1:1420'), 'http://127.0.0.1:1420');
   assert.equal(normalizeUrl('localhost:3000/app'), 'http://localhost:3000/app');
+  assert.equal(normalizeUrl('//example.com/path'), 'https://example.com/path');
+  assert.equal(normalizeUrl('::1:8080/dev'), 'http://[::1]:8080/dev');
   assert.equal(normalizeUrl('example.com'), 'https://example.com');
   assert.equal(normalizeUrl('about:blank'), 'about:blank');
 });

@@ -1,4 +1,11 @@
-import type { NativeBrowserAgentAction, NativeBrowserAgentResult, NativeBrowserBounds, NativeBrowserLoaded, NativeBrowserSelection } from './nativeBrowser';
+import type {
+  NativeBrowserAgentAction,
+  NativeBrowserAgentResult,
+  NativeBrowserBounds,
+  NativeBrowserDesignPrompt,
+  NativeBrowserLoaded,
+  NativeBrowserSelection,
+} from './nativeBrowser';
 
 interface BridgeInfo {
   port: number;
@@ -14,14 +21,17 @@ interface DroidControlApi {
   clearApiKey: () => Promise<void>;
   listFiles: (dir: string) => Promise<string[]>;
   readFile: (path: string) => Promise<string>;
-  nativeBrowserOpen: (url: string, bounds: NativeBrowserBounds) => Promise<void>;
-  nativeBrowserSetBounds: (bounds: NativeBrowserBounds) => Promise<void>;
-  nativeBrowserClose: () => Promise<void>;
-  nativeBrowserReload: () => Promise<void>;
-  nativeBrowserSetDesignMode: (active: boolean) => Promise<void>;
-  nativeBrowserSetSketchMode: (active: boolean) => Promise<void>;
-  nativeBrowserAgentAction: (request: NativeBrowserAgentAction) => Promise<void>;
+  nativeBrowserOpen: (sessionId: string, url: string, bounds?: NativeBrowserBounds, viewport?: { width: number; height: number; deviceScaleFactor: number }) => Promise<void>;
+  nativeBrowserAttach: (sessionId: string, bounds: NativeBrowserBounds, url?: string) => Promise<void>;
+  nativeBrowserDetach: (sessionId?: string) => Promise<void>;
+  nativeBrowserSetBounds: (sessionId: string, bounds: NativeBrowserBounds) => Promise<void>;
+  nativeBrowserClose: (sessionId: string) => Promise<void>;
+  nativeBrowserReload: (sessionId: string) => Promise<void>;
+  nativeBrowserSetDesignMode: (sessionId: string, active: boolean) => Promise<void>;
+  nativeBrowserSetSketchMode: (sessionId: string, active: boolean) => Promise<void>;
+  nativeBrowserAgentAction: (request: NativeBrowserAgentAction) => Promise<NativeBrowserAgentResult | undefined>;
   onNativeBrowserSelection: (handler: (selection: NativeBrowserSelection) => void) => () => void;
+  onNativeBrowserDesignPrompt: (handler: (prompt: NativeBrowserDesignPrompt) => void) => () => void;
   onNativeBrowserLoaded: (handler: (event: NativeBrowserLoaded) => void) => () => void;
   onNativeBrowserAgentResult: (handler: (result: NativeBrowserAgentResult) => void) => () => void;
 }

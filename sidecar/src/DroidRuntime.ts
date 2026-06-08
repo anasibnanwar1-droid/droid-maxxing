@@ -4,7 +4,6 @@ import {
   DroidClient,
   DroidInteractionMode,
   DroidSession,
-  ProcessTransport,
   ReasoningEffort as SdkReasoningEffort,
   type AskUserHandler,
   type DroidClientTransport,
@@ -17,6 +16,7 @@ import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { createDroidTransport } from './DroidTransport.js';
 import type { Autonomy, ReasoningEffort, SessionInteractionMode } from './protocol.js';
 
 const EXEC_ARGS = ['exec', '--input-format', 'stream-jsonrpc', '--output-format', 'stream-jsonrpc'];
@@ -121,7 +121,7 @@ export class DroidRuntime {
   }
 
   private async createClient(cwd?: string, handlers: RuntimeHandlers = {}): Promise<{ client: DroidClient; transport: DroidClientTransport }> {
-    const transport = new ProcessTransport({
+    const transport = createDroidTransport({
       execPath: this.resolveDroidPath(),
       execArgs: EXEC_ARGS,
       cwd,

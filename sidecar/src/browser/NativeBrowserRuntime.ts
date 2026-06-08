@@ -21,6 +21,10 @@ export class NativeBrowserRuntime implements BrowserRuntime {
     return this.snapshotFrom(await this.send({ action: 'open', url }));
   }
 
+  async reload(): Promise<BrowserSnapshot> {
+    return this.snapshotFrom(await this.send({ action: 'reload' }));
+  }
+
   async setViewport(viewport: BrowserViewport): Promise<void> {
     this.viewport = viewport;
   }

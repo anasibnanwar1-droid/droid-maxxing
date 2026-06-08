@@ -1,5 +1,6 @@
 import { createContext, useContext, useReducer, ReactNode, useEffect } from 'react';
 import { bridge } from '../lib/bridge';
+import { clearDesignMode, setDesignMode, toggleDesignMode, type DesignModes } from './designModeState';
 import type {
   FactoryDefaultSettings,
   ServerEvent,
@@ -14,6 +15,7 @@ import type {
   ContextStatsSnapshot,
   SessionKind,
   BrowserState,
+  BrowserViewportMode,
 } from '../types/bridge';
 import { addWorkspaceCwd } from '../lib/workspaces';
 
@@ -87,7 +89,7 @@ interface AppState {
   browsers: Record<string, BrowserState>;
   browserErrors: Record<string, string>;
   browserGlobalError?: string;
-  designMode: boolean;
+  designModes: DesignModes;
 
   // Mission Control view
   selectedFeatureId: string | null;
@@ -160,8 +162,8 @@ type Action =
   | { type: 'BROWSER_UPDATED'; browser: BrowserState }
   | { type: 'BROWSER_CLOSED'; missionId: string }
   | { type: 'BROWSER_ERROR'; missionId?: string; message: string }
-  | { type: 'TOGGLE_DESIGN_MODE' }
-  | { type: 'SET_DESIGN_MODE'; open: boolean }
+  | { type: 'TOGGLE_DESIGN_MODE'; sessionId: string }
+  | { type: 'SET_DESIGN_MODE'; sessionId: string; open: boolean }
   | { type: 'SET_THEME'; theme: Partial<ThemeConfig> }
   | { type: 'SELECT_FEATURE'; id: string | null }
   | { type: 'SELECT_AGENT'; id: string | null }
@@ -221,9 +223,15 @@ function isReasoningEffort(value: unknown): value is ReasoningEffort {
   );
 }
 
+function getLocalStorage(): Storage | undefined {
+  if (typeof window !== 'undefined') return window.localStorage;
+  const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
+  return descriptor && 'value' in descriptor ? descriptor.value as Storage : undefined;
+}
+
 function loadTheme(): ThemeConfig {
   try {
-    const saved = localStorage.getItem('droid-theme');
+    const saved = getLocalStorage()?.getItem('droid-theme');
     if (saved) return { ...defaultTheme, ...JSON.parse(saved) };
   } catch { /* ignore */ }
   return defaultTheme;
@@ -231,8 +239,10 @@ function loadTheme(): ThemeConfig {
 
 function loadAgentConfig(): AgentConfig {
   try {
-    OLD_AGENT_CONFIG_STORAGE_KEYS.forEach((key) => localStorage.removeItem(key));
-    const raw = localStorage.getItem(AGENT_CONFIG_STORAGE_KEY);
+    const storage = getLocalStorage();
+    if (!storage) return defaultAgentConfig;
+    OLD_AGENT_CONFIG_STORAGE_KEYS.forEach((key) => storage.removeItem(key));
+    const raw = storage.getItem(AGENT_CONFIG_STORAGE_KEY);
     if (!raw) return defaultAgentConfig;
     const parsed = JSON.parse(raw) as Partial<Record<AgentKind, Partial<AgentModelConfig>>>;
     return {
@@ -254,7 +264,7 @@ function readAgentConfig(value: Partial<AgentModelConfig> | undefined, fallback:
 
 function saveAgentConfig(config: AgentConfig): AgentConfig {
   try {
-    localStorage.setItem(AGENT_CONFIG_STORAGE_KEY, JSON.stringify(config));
+    getLocalStorage()?.setItem(AGENT_CONFIG_STORAGE_KEY, JSON.stringify(config));
   } catch { /* ignore */ }
   return config;
 }
@@ -266,10 +276,24 @@ const COMPACTION_MODEL_STORAGE_KEY = 'droid-compaction-model';
 const COMPACTION_TOKEN_LIMIT_STORAGE_KEY = 'droid-compaction-token-limit';
 const COMPACTION_TOKEN_LIMIT_PER_MODEL_STORAGE_KEY = 'droid-compaction-token-limit-per-model';
 const WORKSPACES_STORAGE_KEY = 'droid-workspaces';
+const UI_STATE_STORAGE_KEY = 'droid-ui-state-v1';
+const BROWSER_VIEWPORT_MODES = new Set<BrowserViewportMode>(['fit', 'desktop', 'laptop', 'tablet', 'mobile', 'custom']);
+
+interface PersistedUiState {
+  activeMissionId: string | null;
+  rightPanelOpen: boolean;
+  sidebarCollapsed: boolean;
+  specMode: boolean;
+  missionMode: boolean;
+  browserOpen: boolean;
+  browsers: Record<string, BrowserState>;
+  selectedFeatureId: string | null;
+  selectedAgentSessionId: string | null;
+}
 
 function loadCompactionModel(): string {
   try {
-    return localStorage.getItem(COMPACTION_MODEL_STORAGE_KEY) || 'current-model';
+    return getLocalStorage()?.getItem(COMPACTION_MODEL_STORAGE_KEY) || 'current-model';
   } catch {
     return 'current-model';
   }
@@ -277,7 +301,7 @@ function loadCompactionModel(): string {
 
 function saveCompactionModel(value: string): string {
   try {
-    localStorage.setItem(COMPACTION_MODEL_STORAGE_KEY, value);
+    getLocalStorage()?.setItem(COMPACTION_MODEL_STORAGE_KEY, value);
   } catch { /* ignore */ }
   return value;
 }
@@ -331,7 +355,7 @@ function saveCompactionTokenLimitPerModel(value: Record<string, number>): Record
 
 function loadWorkspaceCwds(): string[] {
   try {
-    const raw = localStorage.getItem(WORKSPACES_STORAGE_KEY);
+    const raw = getLocalStorage()?.getItem(WORKSPACES_STORAGE_KEY);
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
@@ -343,9 +367,47 @@ function loadWorkspaceCwds(): string[] {
 
 function saveWorkspaceCwds(cwds: string[]): string[] {
   try {
-    localStorage.setItem(WORKSPACES_STORAGE_KEY, JSON.stringify(cwds));
+    getLocalStorage()?.setItem(WORKSPACES_STORAGE_KEY, JSON.stringify(cwds));
   } catch { /* ignore */ }
   return cwds;
+}
+
+export function loadPersistedUiState(): Partial<PersistedUiState> {
+  try {
+    const raw = getLocalStorage()?.getItem(UI_STATE_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as Partial<PersistedUiState>;
+    return {
+      activeMissionId: typeof parsed.activeMissionId === 'string' ? parsed.activeMissionId : null,
+      rightPanelOpen: typeof parsed.rightPanelOpen === 'boolean' ? parsed.rightPanelOpen : undefined,
+      sidebarCollapsed: typeof parsed.sidebarCollapsed === 'boolean' ? parsed.sidebarCollapsed : undefined,
+      specMode: typeof parsed.specMode === 'boolean' ? parsed.specMode : undefined,
+      missionMode: typeof parsed.missionMode === 'boolean' ? parsed.missionMode : undefined,
+      browserOpen: typeof parsed.browserOpen === 'boolean' ? parsed.browserOpen : undefined,
+      browsers: loadPersistedBrowsers(parsed.browsers),
+      selectedFeatureId: typeof parsed.selectedFeatureId === 'string' ? parsed.selectedFeatureId : null,
+      selectedAgentSessionId: typeof parsed.selectedAgentSessionId === 'string' ? parsed.selectedAgentSessionId : null,
+    };
+  } catch {
+    return {};
+  }
+}
+
+function savePersistedUiState(state: AppState): void {
+  const snapshot: PersistedUiState = {
+    activeMissionId: state.activeMissionId,
+    rightPanelOpen: state.rightPanelOpen,
+    sidebarCollapsed: state.sidebarCollapsed,
+    specMode: state.specMode,
+    missionMode: state.missionMode,
+    browserOpen: state.browserOpen,
+    browsers: persistBrowsers(state.browsers),
+    selectedFeatureId: state.selectedFeatureId,
+    selectedAgentSessionId: state.selectedAgentSessionId,
+  };
+  try {
+    getLocalStorage()?.setItem(UI_STATE_STORAGE_KEY, JSON.stringify(snapshot));
+  } catch { /* ignore */ }
 }
 
 function sanitizeAgentConfig(config: AgentConfig, models: ModelInfo[]): AgentConfig {
@@ -383,11 +445,13 @@ function applyMissionOverride(
   return next;
 }
 
+const persistedUiState = loadPersistedUiState();
+
 const initialState: AppState = {
   connection: 'idle',
   missions: {},
   missionOrder: [],
-  activeMissionId: null,
+  activeMissionId: persistedUiState.activeMissionId ?? null,
   transcripts: {},
   progress: {},
   workers: {},
@@ -396,22 +460,22 @@ const initialState: AppState = {
   pendingQuestion: null,
   contextStats: {},
   specPlans: {},
-  rightPanelOpen: true,
-  sidebarCollapsed: false,
-  specMode: false,
+  rightPanelOpen: persistedUiState.rightPanelOpen ?? true,
+  sidebarCollapsed: persistedUiState.sidebarCollapsed ?? false,
+  specMode: persistedUiState.specMode ?? false,
   settingsOpen: false,
   commandPaletteOpen: false,
   theme: loadTheme(),
-  missionMode: false,
+  missionMode: persistedUiState.missionMode ?? false,
   draftChat: null,
   workspaceCwds: loadWorkspaceCwds(),
-  browserOpen: false,
-  browsers: {},
+  browserOpen: persistedUiState.browserOpen ?? false,
+  browsers: persistedUiState.browsers ?? {},
   browserErrors: {},
   browserGlobalError: undefined,
-  designMode: false,
-  selectedFeatureId: null,
-  selectedAgentSessionId: null,
+  designModes: {},
+  selectedFeatureId: persistedUiState.selectedFeatureId ?? null,
+  selectedAgentSessionId: persistedUiState.selectedAgentSessionId ?? null,
   models: [],
   compactionModel: loadCompactionModel(),
   compactionTokenLimit: loadCompactionTokenLimit(),
@@ -425,6 +489,14 @@ const initialState: AppState = {
 
 function progressKey(entry: ProgressEntry): string {
   return `${entry.timestamp}|${entry.type}|${entry.featureId ?? ''}|${entry.workerSessionId ?? ''}|${entry.title ?? ''}`;
+}
+
+function designModeSessionId(state: AppState, appMissionId: string): string {
+  return state.missions[appMissionId]?.sessionId ?? appMissionId;
+}
+
+function activeBrowserKey(state: AppState): string | undefined {
+  return state.activeMissionId ? designModeSessionId(state, state.activeMissionId) : undefined;
 }
 
 function reducer(state: AppState, action: Action): AppState {
@@ -718,7 +790,7 @@ function reducer(state: AppState, action: Action): AppState {
         ...state,
         browsers: { ...state.browsers, [action.browser.missionId]: action.browser },
         browserErrors: Object.fromEntries(Object.entries(state.browserErrors).filter(([id]) => id !== action.browser.missionId)),
-        browserOpen: state.activeMissionId === action.browser.missionId ? true : state.browserOpen,
+        browserOpen: activeBrowserKey(state) === action.browser.missionId ? true : state.browserOpen,
       };
 
     case 'BROWSER_CLOSED':
@@ -726,7 +798,8 @@ function reducer(state: AppState, action: Action): AppState {
         ...state,
         browsers: Object.fromEntries(Object.entries(state.browsers).filter(([id]) => id !== action.missionId)),
         browserErrors: Object.fromEntries(Object.entries(state.browserErrors).filter(([id]) => id !== action.missionId)),
-        browserOpen: state.activeMissionId === action.missionId ? false : state.browserOpen,
+        designModes: clearDesignMode(state.designModes, action.missionId),
+        browserOpen: activeBrowserKey(state) === action.missionId ? false : state.browserOpen,
       };
 
     case 'BROWSER_ERROR':
@@ -734,19 +807,19 @@ function reducer(state: AppState, action: Action): AppState {
         ? {
             ...state,
             browserErrors: { ...state.browserErrors, [action.missionId]: action.message },
-            browserOpen: state.activeMissionId === action.missionId ? true : state.browserOpen,
+            browserOpen: activeBrowserKey(state) === action.missionId ? true : state.browserOpen,
           }
         : { ...state, browserGlobalError: action.message };
 
     case 'TOGGLE_DESIGN_MODE':
-      return { ...state, designMode: !state.designMode };
+      return { ...state, designModes: toggleDesignMode(state.designModes, action.sessionId) };
 
     case 'SET_DESIGN_MODE':
-      return { ...state, designMode: action.open };
+      return { ...state, designModes: setDesignMode(state.designModes, action.sessionId, action.open) };
 
     case 'SET_THEME': {
       const next = { ...state.theme, ...action.theme };
-      try { localStorage.setItem('droid-theme', JSON.stringify(next)); } catch { /* ignore */ }
+      try { getLocalStorage()?.setItem('droid-theme', JSON.stringify(next)); } catch { /* ignore */ }
       return { ...state, theme: next };
     }
 
@@ -928,6 +1001,77 @@ function reducer(state: AppState, action: Action): AppState {
   }
 }
 
+function loadPersistedBrowsers(value: unknown): Record<string, BrowserState> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const entries = Object.entries(value as Record<string, unknown>)
+    .map(([key, browser]) => [key, sanitizePersistedBrowser(key, browser)] as const)
+    .filter((entry): entry is readonly [string, BrowserState] => Boolean(entry[1]));
+  return Object.fromEntries(entries);
+}
+
+function sanitizePersistedBrowser(key: string, value: unknown): BrowserState | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const browser = value as Partial<BrowserState>;
+  if (typeof browser.sessionId !== 'string' || !browser.sessionId) return undefined;
+  if (typeof browser.url !== 'string' || !browser.url) return undefined;
+  const viewport = sanitizeBrowserViewport(browser.viewport);
+  if (!viewport) return undefined;
+  return {
+    sessionId: browser.sessionId,
+    missionId: typeof browser.missionId === 'string' && browser.missionId ? browser.missionId : key,
+    url: browser.url,
+    title: typeof browser.title === 'string' ? browser.title : undefined,
+    viewport,
+    viewportMode: sanitizeBrowserViewportMode(browser.viewportMode),
+    scroll: sanitizeBrowserScroll(browser.scroll),
+    refs: [],
+  };
+}
+
+function sanitizeBrowserViewport(value: unknown): BrowserState['viewport'] | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const viewport = value as Partial<BrowserState['viewport']>;
+  const width = finitePositiveNumber(viewport.width);
+  const height = finitePositiveNumber(viewport.height);
+  const deviceScaleFactor = finitePositiveNumber(viewport.deviceScaleFactor);
+  if (!width || !height || !deviceScaleFactor) return undefined;
+  return { width, height, deviceScaleFactor };
+}
+
+function sanitizeBrowserViewportMode(value: unknown): BrowserViewportMode {
+  return BROWSER_VIEWPORT_MODES.has(value as BrowserViewportMode) ? value as BrowserViewportMode : 'fit';
+}
+
+function sanitizeBrowserScroll(value: unknown): BrowserState['scroll'] {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return { x: 0, y: 0 };
+  const scroll = value as Partial<BrowserState['scroll']>;
+  return { x: finiteNumber(scroll.x) ?? 0, y: finiteNumber(scroll.y) ?? 0 };
+}
+
+function persistBrowsers(browsers: Record<string, BrowserState>): Record<string, BrowserState> {
+  return Object.fromEntries(
+    Object.entries(browsers).map(([key, browser]) => [
+      key,
+      {
+        ...browser,
+        refs: [],
+        agentCursor: undefined,
+        screenshotPath: undefined,
+        screenshotUrl: undefined,
+      },
+    ]),
+  );
+}
+
+function finitePositiveNumber(value: unknown): number | undefined {
+  const number = finiteNumber(value);
+  return number && number > 0 ? number : undefined;
+}
+
+function finiteNumber(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
 /* ── Bridge event adapter ── */
 function adaptEvent(ev: ServerEvent): Action | null {
   switch (ev.type) {
@@ -986,6 +1130,20 @@ const StoreContext = createContext<{ state: AppState; dispatch: React.Dispatch<A
 
 export function StoreProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(reducer, initialState);
+
+  useEffect(() => {
+    savePersistedUiState(state);
+  }, [
+    state.activeMissionId,
+    state.browserOpen,
+    state.browsers,
+    state.missionMode,
+    state.rightPanelOpen,
+    state.selectedAgentSessionId,
+    state.selectedFeatureId,
+    state.sidebarCollapsed,
+    state.specMode,
+  ]);
 
   useEffect(() => {
     const unsub = bridge.subscribe((ev) => {

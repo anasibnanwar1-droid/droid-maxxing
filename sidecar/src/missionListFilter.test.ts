@@ -46,3 +46,26 @@ test('filterMissionListSummaries returns only five latest summaries per requeste
     'app-2',
   ]);
 });
+
+test('filterMissionListSummaries keeps latest plain chats when workspace loading is limited', () => {
+  const summaries = [
+    ...Array.from({ length: 7 }, (_, i) => summary(`plain-${i}`, '', i + 1)),
+    ...Array.from({ length: 7 }, (_, i) => summary(`app-${i}`, '/repo/app', i + 20)),
+    summary('other-workspace', '/repo/other', 100),
+  ];
+
+  const filtered = filterMissionListSummaries(summaries, {
+    workspaceCwds: ['/repo/app'],
+    includePlainChats: true,
+    limitPerWorkspace: 3,
+  });
+
+  assert.deepEqual(filtered.map((m) => m.id), [
+    'app-6',
+    'app-5',
+    'app-4',
+    'plain-6',
+    'plain-5',
+    'plain-4',
+  ]);
+});

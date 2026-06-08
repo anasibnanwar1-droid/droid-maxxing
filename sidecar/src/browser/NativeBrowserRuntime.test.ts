@@ -27,12 +27,13 @@ test('NativeBrowserRuntime sends live browser requests with mission and session 
   });
 
   const snapshot = await runtime.open('https://example.com/');
+  await runtime.reload();
   await runtime.click(12, 34);
 
   assert.equal(snapshot.url, 'https://example.com/');
-  assert.deepEqual(requests.map((request) => request.action), ['open', 'click']);
+  assert.deepEqual(requests.map((request) => request.action), ['open', 'reload', 'click']);
   assert.equal(requests[0].missionId, 'mission-one');
   assert.equal(requests[0].sessionId, 'browser-one');
   assert.deepEqual(requests[0].viewport, { width: 900, height: 700, deviceScaleFactor: 2 });
-  assert.deepEqual({ x: requests[1].x, y: requests[1].y }, { x: 12, y: 34 });
+  assert.deepEqual({ x: requests[2].x, y: requests[2].y }, { x: 12, y: 34 });
 });

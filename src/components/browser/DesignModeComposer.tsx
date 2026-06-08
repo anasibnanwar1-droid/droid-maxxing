@@ -40,7 +40,7 @@ export function DesignModeComposer({
             className="group flex h-6 max-w-[180px] items-center gap-1.5 rounded-md bg-droid-elevated px-2 text-[11px] text-droid-text-secondary hover:text-droid-text"
             title="Remove reference"
           >
-            <span className="font-mono text-droid-accent">ref</span>
+            <span className="max-w-[74px] truncate font-mono text-droid-accent">{displayReferenceId(ref)}</span>
             <span className="truncate">{labelFor(ref)}</span>
             <X className="h-3 w-3 shrink-0 text-droid-text-muted group-hover:text-droid-text" />
           </button>
@@ -71,6 +71,12 @@ export function DesignModeComposer({
       </div>
     </div>
   );
+}
+
+function displayReferenceId(ref: DesignReference): string {
+  const id = ref.id?.trim();
+  if (!id) return '@ref';
+  return id.startsWith('@') ? id : `@${id}`;
 }
 
 function labelFor(ref: DesignReference): string {
