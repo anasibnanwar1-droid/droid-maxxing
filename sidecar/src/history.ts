@@ -392,7 +392,12 @@ export class HistoryIndex {
 function readStoredSummaryPatches(): Map<string, Partial<MissionSummary>> {
   const path = join(homedir(), '.factory', 'droid-control', 'index.sqlite');
   if (!existsSync(path)) return new Map();
-  const db = new DatabaseSync(path);
+  let db: DatabaseSync;
+  try {
+    db = new DatabaseSync(path);
+  } catch {
+    return new Map();
+  }
   try {
     const rows = db.prepare('SELECT * FROM app_sessions').all() as Record<string, unknown>[];
     return summaryPatchesFromRows(rows);
