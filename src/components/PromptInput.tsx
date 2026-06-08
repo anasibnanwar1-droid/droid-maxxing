@@ -79,6 +79,8 @@ export default function PromptInput() {
       : null;
 
   const cwd = activeMission?.cwd ?? state.draftChat?.cwd ?? null;
+  const skillsSessionId = activeMission?.id ?? null;
+  const requestedSkillsSessionId = useRef<string | null | undefined>(undefined);
 
   // Toggle spec mode. When a live chat session exists, switch its interaction
   // mode for real (not just the compose flag used for brand-new chats).
@@ -108,13 +110,19 @@ export default function PromptInput() {
   const trigger = useMemo(() => getTrigger(input, caret), [input, caret]);
 
   const invocableSkills = useMemo(
-    () => state.skills.filter((s) => s.userInvocable !== false && s.enabled !== false),
-    [state.skills]
+    () => state.skillsSessionId === skillsSessionId
+      ? state.skills.filter((s) => s.userInvocable !== false && s.enabled !== false)
+      : [],
+    [skillsSessionId, state.skills, state.skillsSessionId]
   );
 
   useEffect(() => {
-    if (trigger?.kind === 'slash' && state.skills.length === 0) listSkills(activeMission?.id);
-  }, [activeMission?.id, state.skills.length, trigger?.kind]);
+    if (trigger?.kind !== 'slash') return;
+    if (state.skillsSessionId === skillsSessionId) return;
+    if (requestedSkillsSessionId.current === skillsSessionId) return;
+    requestedSkillsSessionId.current = skillsSessionId;
+    listSkills(activeMission?.id);
+  }, [activeMission?.id, skillsSessionId, state.skillsSessionId, trigger?.kind]);
 
   const menuItems = useMemo<MenuItem[]>(() => {
     if (!trigger) return [];

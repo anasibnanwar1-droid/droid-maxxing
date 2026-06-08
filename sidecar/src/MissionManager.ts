@@ -380,43 +380,15 @@ export class MissionManager {
   private async getFactoryDefaults(): Promise<FactoryDefaultSettings> {
     const defaults = readFactoryDefaults();
     const models = await this.getModels();
-    if (models.length === 0) return defaults;
-    const cliDefault = models.find((model) => model.isDefault && !model.isCustom) ?? models.find((model) => !model.isCustom) ?? models[0];
-    return {
-      ...defaults,
-      modelId: this.validModelId(defaults.modelId, models) ?? cliDefault?.id,
-      reasoningEffort: this.validReasoning(defaults.modelId, defaults.reasoningEffort, models) ?? cliDefault?.defaultReasoningEffort,
-      compactionModel: this.validCompactionModel(defaults.compactionModel, models),
-      compactionTokenLimit: normalizeCompactionTokenLimit(defaults.compactionTokenLimit),
-      compactionTokenLimitPerModel: validCompactionTokenLimitPerModel(defaults.compactionTokenLimitPerModel, models),
-      specModelId: this.validModelId(defaults.specModelId, models) ?? this.validModelId(defaults.modelId, models) ?? cliDefault?.id,
-      specReasoningEffort: this.validReasoning(defaults.specModelId, defaults.specReasoningEffort, models),
-      workerModelId: this.validModelId(defaults.workerModelId, models) ?? cliDefault?.id,
-      workerReasoningEffort: this.validReasoning(defaults.workerModelId, defaults.workerReasoningEffort, models),
-      validatorModelId: this.validModelId(defaults.validatorModelId, models) ?? cliDefault?.id,
-      validatorReasoningEffort: this.validReasoning(defaults.validatorModelId, defaults.validatorReasoningEffort, models),
-    };
-  }
-
-  private validModelId(modelId: string | undefined, models: ModelInfo[]): string | undefined {
-    return modelId && models.some((model) => model.id === modelId) ? modelId : undefined;
-  }
-
-  private validReasoning(modelId: string | undefined, reasoning: ReasoningEffort | undefined, models: ModelInfo[]): ReasoningEffort | undefined {
-    const model = modelId ? models.find((item) => item.id === modelId) : undefined;
-    if (!model) return undefined;
-    const supported = model.supportedReasoningEfforts;
-    if (reasoning && (!supported || supported.includes(reasoning))) return reasoning;
-    return model.defaultReasoningEffort ?? supported?.[0];
-  }
-
-  private validCompactionModel(modelId: string | undefined, models: ModelInfo[]): string {
-    if (!modelId || modelId === 'current-model') return 'current-model';
-    return this.validModelId(modelId, models) ?? 'current-model';
+    return validateFactoryDefaults(defaults, models);
   }
 
   private async emitFactoryDefaults(): Promise<void> {
-    this.emit({ type: 'settings.defaults', defaults: readFactoryDefaults() });
+    const defaults = readFactoryDefaults();
+    const droidPath = this.runtime.status().droidPath;
+    const models = this.cachedModels ?? mergeModelCatalog(readDroidCliModelCatalogCache(droidPath));
+    if (!this.cachedModels && models.length > 0) this.cachedModels = models;
+    this.emit({ type: 'settings.defaults', defaults: startupFactoryDefaults(defaults, models) });
   }
 
   private maxContextTokensForSummary(summary: MissionSummary): number | undefined {
@@ -1358,7 +1330,7 @@ export class MissionManager {
     const { session, close } = await this.catalogSession(sessionId);
     try {
       const result = await session.listSkills();
-      this.emit({ type: 'catalog.updated', catalog: 'skills', items: arrayItems(result, 'skills') });
+      this.emit({ type: 'catalog.updated', catalog: 'skills', items: arrayItems(result, 'skills'), sessionId: sessionId ?? null });
     } finally {
       await close();
     }
@@ -1783,6 +1755,62 @@ function hasCompactionTokenLimitPatch(settings: CompactionTokenLimitPatch): bool
 function normalizeCompactionTokenLimit(value: unknown): number | undefined {
   if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return undefined;
   return Math.trunc(value);
+}
+
+export function startupFactoryDefaults(defaults: FactoryDefaultSettings, models: ModelInfo[]): FactoryDefaultSettings {
+  if (models.length > 0) return validateFactoryDefaults(defaults, models);
+  const safe: FactoryDefaultSettings = {
+    autonomy: defaults.autonomy,
+    interactionMode: defaults.interactionMode,
+    compactionTokenLimit: normalizeCompactionTokenLimit(defaults.compactionTokenLimit),
+    compactionTokenLimitPerModel: validCompactionTokenLimitRecord(defaults.compactionTokenLimitPerModel),
+  };
+  if (defaults.compactionModel === 'current-model') safe.compactionModel = 'current-model';
+  return safe;
+}
+
+export function validateFactoryDefaults(defaults: FactoryDefaultSettings, models: ModelInfo[]): FactoryDefaultSettings {
+  if (models.length === 0) return startupFactoryDefaults(defaults, models);
+  const cliDefault = models.find((model) => model.isDefault && !model.isCustom) ?? models.find((model) => !model.isCustom) ?? models[0];
+  return {
+    ...defaults,
+    modelId: validModelId(defaults.modelId, models) ?? cliDefault?.id,
+    reasoningEffort: validReasoning(defaults.modelId, defaults.reasoningEffort, models) ?? cliDefault?.defaultReasoningEffort,
+    compactionModel: validCompactionModel(defaults.compactionModel, models),
+    compactionTokenLimit: normalizeCompactionTokenLimit(defaults.compactionTokenLimit),
+    compactionTokenLimitPerModel: validCompactionTokenLimitPerModel(defaults.compactionTokenLimitPerModel, models),
+    specModelId: validModelId(defaults.specModelId, models) ?? validModelId(defaults.modelId, models) ?? cliDefault?.id,
+    specReasoningEffort: validReasoning(defaults.specModelId, defaults.specReasoningEffort, models),
+    workerModelId: validModelId(defaults.workerModelId, models) ?? cliDefault?.id,
+    workerReasoningEffort: validReasoning(defaults.workerModelId, defaults.workerReasoningEffort, models),
+    validatorModelId: validModelId(defaults.validatorModelId, models) ?? cliDefault?.id,
+    validatorReasoningEffort: validReasoning(defaults.validatorModelId, defaults.validatorReasoningEffort, models),
+  };
+}
+
+function validModelId(modelId: string | undefined, models: ModelInfo[]): string | undefined {
+  return modelId && models.some((model) => model.id === modelId) ? modelId : undefined;
+}
+
+function validReasoning(modelId: string | undefined, reasoning: ReasoningEffort | undefined, models: ModelInfo[]): ReasoningEffort | undefined {
+  const model = modelId ? models.find((item) => item.id === modelId) : undefined;
+  if (!model) return undefined;
+  const supported = model.supportedReasoningEfforts;
+  if (reasoning && (!supported || supported.includes(reasoning))) return reasoning;
+  return model.defaultReasoningEffort ?? supported?.[0];
+}
+
+function validCompactionModel(modelId: string | undefined, models: ModelInfo[]): string {
+  if (!modelId || modelId === 'current-model') return 'current-model';
+  return validModelId(modelId, models) ?? 'current-model';
+}
+
+function validCompactionTokenLimitRecord(limits: Record<string, number> | undefined): Record<string, number> | undefined {
+  if (!limits) return undefined;
+  const entries = Object.entries(limits)
+    .map(([modelId, limit]) => [modelId, normalizeCompactionTokenLimit(limit)] as const)
+    .filter((entry): entry is [string, number] => Boolean(entry[0]) && entry[1] !== undefined);
+  return entries.length > 0 ? Object.fromEntries(entries) : undefined;
 }
 
 function validCompactionTokenLimitPerModel(limits: Record<string, number> | undefined, models: ModelInfo[]): Record<string, number> | undefined {

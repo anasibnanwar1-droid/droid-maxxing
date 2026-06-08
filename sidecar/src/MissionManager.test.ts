@@ -6,7 +6,10 @@ import {
   createCompactionSettingsForModel,
   createModelDefaultsForMode,
   createSessionSettingsForAgent,
+  startupFactoryDefaults,
+  validateFactoryDefaults,
 } from './MissionManager.js';
+import type { ModelInfo } from './protocol.js';
 
 test('uses Factory default autonomy when create command omits autonomy', () => {
   assert.equal(createAutonomyForCommand({}, { autonomy: 'high' }), 'high');
@@ -105,6 +108,75 @@ test('maps orchestrator model changes with current compaction limits', () => {
       modelId: 'model-b',
       compactionTokenLimit: 150_000,
       compactionThresholdCheckEnabled: true,
+    },
+  );
+});
+
+const models: ModelInfo[] = [
+  {
+    id: 'model-a',
+    displayName: 'Model A',
+    isDefault: true,
+    isCustom: false,
+    supportedReasoningEfforts: ['low', 'medium'],
+    defaultReasoningEffort: 'medium',
+  },
+  {
+    id: 'model-b',
+    displayName: 'Model B',
+    isCustom: false,
+    supportedReasoningEfforts: ['high'],
+    defaultReasoningEffort: 'high',
+  },
+];
+
+test('startup defaults do not seed unvalidated model ids when no catalog is cached', () => {
+  assert.deepEqual(
+    startupFactoryDefaults({
+      modelId: 'missing-model',
+      reasoningEffort: 'high',
+      compactionModel: 'missing-model',
+      compactionTokenLimit: 200_000,
+      compactionTokenLimitPerModel: { 'missing-model': 150_000 },
+      autonomy: 'high',
+      interactionMode: 'auto',
+      workerModelId: 'missing-worker',
+    }, []),
+    {
+      autonomy: 'high',
+      interactionMode: 'auto',
+      compactionTokenLimit: 200_000,
+      compactionTokenLimitPerModel: { 'missing-model': 150_000 },
+    },
+  );
+});
+
+test('validates Factory defaults against the model catalog', () => {
+  assert.deepEqual(
+    validateFactoryDefaults({
+      modelId: 'missing-model',
+      reasoningEffort: 'high',
+      compactionModel: 'missing-model',
+      compactionTokenLimit: 200_000,
+      compactionTokenLimitPerModel: { 'model-b': 150_000, missing: 90_000 },
+      specModelId: 'model-b',
+      specReasoningEffort: 'low',
+      workerModelId: 'model-b',
+      workerReasoningEffort: 'medium',
+      validatorModelId: 'missing-validator',
+    }, models),
+    {
+      modelId: 'model-a',
+      reasoningEffort: 'medium',
+      compactionModel: 'current-model',
+      compactionTokenLimit: 200_000,
+      compactionTokenLimitPerModel: { 'model-b': 150_000 },
+      specModelId: 'model-b',
+      specReasoningEffort: 'high',
+      workerModelId: 'model-b',
+      workerReasoningEffort: 'high',
+      validatorModelId: 'model-a',
+      validatorReasoningEffort: undefined,
     },
   );
 });

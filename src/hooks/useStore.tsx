@@ -116,6 +116,7 @@ interface AppState {
 
   // Skills catalog (for / invocation)
   skills: SkillInfo[];
+  skillsSessionId?: string | null;
 
   // Attachments for the first message of a not-yet-created mission, keyed by clientRef.
   pendingCompose: Record<string, { text: string; skills: string[]; files: string[] }>;
@@ -170,7 +171,7 @@ type Action =
 
   // Models / per-agent config
   | { type: 'MODELS_LIST'; models: ModelInfo[] }
-  | { type: 'SKILLS_LIST'; skills: SkillInfo[] }
+  | { type: 'SKILLS_LIST'; skills: SkillInfo[]; sessionId: string | null }
   | { type: 'FACTORY_DEFAULTS'; defaults: FactoryDefaultSettings }
   | { type: 'SET_AGENT_MODEL'; agent: AgentKind; modelId?: string }
   | { type: 'SET_AGENT_REASONING'; agent: AgentKind; reasoning: ReasoningEffort }
@@ -482,6 +483,7 @@ const initialState: AppState = {
   compactionTokenLimitPerModel: loadCompactionTokenLimitPerModel(),
   missionSettingOverrides: {},
   skills: [],
+  skillsSessionId: undefined,
   agentConfig: loadAgentConfig(),
   pendingCompose: {},
   promptQueue: {},
@@ -833,7 +835,7 @@ function reducer(state: AppState, action: Action): AppState {
       return { ...state, models: action.models, agentConfig: saveAgentConfig(sanitizeAgentConfig(state.agentConfig, action.models)) };
 
     case 'SKILLS_LIST':
-      return { ...state, skills: action.skills };
+      return { ...state, skills: action.skills, skillsSessionId: action.sessionId };
 
     case 'FACTORY_DEFAULTS': {
       const next = sanitizeAgentConfig({
@@ -1110,7 +1112,7 @@ function adaptEvent(ev: ServerEvent): Action | null {
         const skills = (ev.items as SkillInfo[]).filter(
           (s) => s && typeof s.name === 'string' && s.name.length > 0
         );
-        return { type: 'SKILLS_LIST', skills };
+        return { type: 'SKILLS_LIST', skills, sessionId: ev.sessionId ?? null };
       }
       return null;
     case 'settings.defaults':

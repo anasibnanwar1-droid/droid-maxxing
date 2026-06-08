@@ -364,7 +364,7 @@ export type ServerEvent =
   | { type: 'question.requested'; question: MissionQuestion }
   | { type: 'context.updated'; sessionId: string; stats: ContextStatsSnapshot; breakdown?: unknown }
   | { type: 'mcp.authRequested'; sessionId: string; serverName?: string; authUrl?: string; message?: string }
-  | { type: 'catalog.updated'; catalog: 'models' | 'tools' | 'skills' | 'mcp'; items: unknown[] }
+  | { type: 'catalog.updated'; catalog: 'models' | 'tools' | 'skills' | 'mcp'; items: unknown[]; sessionId?: string | null }
   | { type: 'settings.defaults'; defaults: FactoryDefaultSettings }
   | { type: 'error'; code?: string; sessionId?: string; missionId?: string; message: string }
   | { type: 'agent.not_steerable'; missionId: string; agentSessionId: string; message: string }
