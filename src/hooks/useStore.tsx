@@ -21,16 +21,10 @@ import type {
 import { addWorkspaceCwd } from '../lib/workspaces';
 
 export type AgentKind = 'orchestrator' | 'worker' | 'validator';
+export type LiveEnterBehavior = 'queue' | 'interrupt';
 
 export interface WorkerInfo extends WorkerSummary {
   startedAt: number;
-}
-
-export interface QueuedPrompt {
-  id: string;
-  text: string;
-  skills: string[];
-  files: string[];
 }
 
 export interface AgentModelConfig {
@@ -112,11 +106,12 @@ interface AppState {
   compactionTokenLimit?: number;
   // Per-model overrides for the compaction token limit, keyed by model id.
   compactionTokenLimitPerModel: Record<string, number>;
+  liveEnterBehavior: LiveEnterBehavior;
 
   // Per-mission model/reasoning the user picked in the selector. These are
   // authoritative: a stale server summary (e.g. an in-flight resume) must not
   // revert the user's choice back to the session default.
-  missionSettingOverrides: Record<string, { modelId?: string; reasoningEffort?: ReasoningEffort; compactionModel?: string }>;
+  missionSettingOverrides: Record<string, { modelId?: string; reasoningEffort?: ReasoningEffort }>;
 
   // Skills catalog (for / invocation)
   skills: SkillInfo[];
@@ -124,8 +119,6 @@ interface AppState {
 
   // Attachments for the first message of a not-yet-created mission, keyed by clientRef.
   pendingCompose: Record<string, { text: string; skills: string[]; files: string[] }>;
-
-  promptQueue: Record<string, QueuedPrompt[]>;
 }
 
 type Action =
@@ -182,15 +175,10 @@ type Action =
   | { type: 'SET_AGENT_REASONING'; agent: AgentKind; reasoning: ReasoningEffort }
   | { type: 'MISSION_SET_MODEL'; missionId: string; modelId?: string }
   | { type: 'MISSION_SET_REASONING'; missionId: string; reasoning: ReasoningEffort }
-  | { type: 'MISSION_SET_COMPACTION_MODEL'; missionId: string; compactionModel: string }
   | { type: 'SET_COMPACTION_MODEL_GLOBAL'; compactionModel: string }
   | { type: 'SET_COMPACTION_TOKEN_LIMIT_GLOBAL'; limit?: number }
   | { type: 'SET_COMPACTION_TOKEN_LIMIT_FOR_MODEL'; modelId: string; limit?: number }
-
-  | { type: 'QUEUE_PROMPT'; missionId: string; prompt: QueuedPrompt }
-  | { type: 'UPDATE_QUEUED_PROMPT'; missionId: string; id: string; text: string }
-  | { type: 'REMOVE_QUEUED_PROMPT'; missionId: string; id: string }
-  | { type: 'REORDER_QUEUE'; missionId: string; from: number; to: number };
+  | { type: 'SET_LIVE_ENTER_BEHAVIOR'; behavior: LiveEnterBehavior };
 
 const defaultTheme: ThemeConfig = {
   mode: 'dark',
@@ -281,6 +269,7 @@ function saveAgentConfig(config: AgentConfig): AgentConfig {
 const COMPACTION_MODEL_STORAGE_KEY = 'droid-compaction-model';
 const COMPACTION_TOKEN_LIMIT_STORAGE_KEY = 'droid-compaction-token-limit';
 const COMPACTION_TOKEN_LIMIT_PER_MODEL_STORAGE_KEY = 'droid-compaction-token-limit-per-model';
+const LIVE_ENTER_BEHAVIOR_STORAGE_KEY = 'droid-live-enter-behavior';
 const WORKSPACES_STORAGE_KEY = 'droid-workspaces';
 const UI_STATE_STORAGE_KEY = 'droid-ui-state-v1';
 const BROWSER_VIEWPORT_MODES = new Set<BrowserViewportMode>(['fit', 'desktop', 'laptop', 'tablet', 'mobile', 'custom']);
@@ -357,6 +346,26 @@ function saveCompactionTokenLimitPerModel(value: Record<string, number>): Record
     localStorage.setItem(COMPACTION_TOKEN_LIMIT_PER_MODEL_STORAGE_KEY, JSON.stringify(value));
   } catch { /* ignore */ }
   return value;
+}
+
+function normalizeLiveEnterBehavior(value: unknown): LiveEnterBehavior {
+  return value === 'interrupt' ? 'interrupt' : 'queue';
+}
+
+function loadLiveEnterBehavior(): LiveEnterBehavior {
+  try {
+    return normalizeLiveEnterBehavior(getLocalStorage()?.getItem(LIVE_ENTER_BEHAVIOR_STORAGE_KEY));
+  } catch {
+    return 'queue';
+  }
+}
+
+function saveLiveEnterBehavior(value: LiveEnterBehavior): LiveEnterBehavior {
+  const behavior = normalizeLiveEnterBehavior(value);
+  try {
+    getLocalStorage()?.setItem(LIVE_ENTER_BEHAVIOR_STORAGE_KEY, behavior);
+  } catch { /* ignore */ }
+  return behavior;
 }
 
 function loadWorkspaceCwds(): string[] {
@@ -441,13 +450,12 @@ function sanitizeAgent(config: AgentModelConfig, models: ModelInfo[]): AgentMode
 
 function applyMissionOverride(
   summary: MissionSummary,
-  override?: { modelId?: string; reasoningEffort?: ReasoningEffort; compactionModel?: string },
+  override?: { modelId?: string; reasoningEffort?: ReasoningEffort },
 ): MissionSummary {
   if (!override) return summary;
   const next = { ...summary };
   if ('modelId' in override) next.modelId = override.modelId;
   if (override.reasoningEffort !== undefined) next.reasoningEffort = override.reasoningEffort;
-  if (override.compactionModel !== undefined) next.compactionModel = override.compactionModel;
   return next;
 }
 
@@ -487,12 +495,12 @@ const initialState: AppState = {
   compactionModel: loadCompactionModel(),
   compactionTokenLimit: loadCompactionTokenLimit(),
   compactionTokenLimitPerModel: loadCompactionTokenLimitPerModel(),
+  liveEnterBehavior: loadLiveEnterBehavior(),
   missionSettingOverrides: {},
   skills: [],
   skillsSessionId: undefined,
   agentConfig: loadAgentConfig(),
   pendingCompose: {},
-  promptQueue: {},
 };
 
 function progressKey(entry: ProgressEntry): string {
@@ -994,27 +1002,9 @@ function baseReducer(state: AppState, action: Action): AppState {
       };
     }
 
-    case 'MISSION_SET_COMPACTION_MODEL': {
-      const m = state.missions[action.missionId];
-      if (!m) return state;
-      const prevOverride = state.missionSettingOverrides[action.missionId] ?? {};
-      return {
-        ...state,
-        missions: { ...state.missions, [action.missionId]: { ...m, compactionModel: action.compactionModel } },
-        missionSettingOverrides: {
-          ...state.missionSettingOverrides,
-          [action.missionId]: { ...prevOverride, compactionModel: action.compactionModel },
-        },
-      };
-    }
-
     case 'SET_COMPACTION_MODEL_GLOBAL': {
       const value = saveCompactionModel(action.compactionModel);
-      const perSession = value === 'current-model' ? undefined : value;
-      const missions = Object.fromEntries(
-        Object.entries(state.missions).map(([id, m]) => [id, { ...m, compactionModel: perSession }]),
-      );
-      return { ...state, compactionModel: value, missions };
+      return { ...state, compactionModel: value };
     }
 
     case 'SET_COMPACTION_TOKEN_LIMIT_GLOBAL': {
@@ -1032,42 +1022,9 @@ function baseReducer(state: AppState, action: Action): AppState {
       return { ...state, compactionTokenLimitPerModel: next };
     }
 
-    case 'QUEUE_PROMPT': {
-      const prev = state.promptQueue[action.missionId] ?? [];
-      return {
-        ...state,
-        promptQueue: { ...state.promptQueue, [action.missionId]: [...prev, action.prompt] },
-      };
-    }
-
-    case 'UPDATE_QUEUED_PROMPT': {
-      const prev = state.promptQueue[action.missionId] ?? [];
-      return {
-        ...state,
-        promptQueue: {
-          ...state.promptQueue,
-          [action.missionId]: prev.map((p) => (p.id === action.id ? { ...p, text: action.text } : p)),
-        },
-      };
-    }
-
-    case 'REMOVE_QUEUED_PROMPT': {
-      const prev = state.promptQueue[action.missionId] ?? [];
-      return {
-        ...state,
-        promptQueue: { ...state.promptQueue, [action.missionId]: prev.filter((p) => p.id !== action.id) },
-      };
-    }
-
-    case 'REORDER_QUEUE': {
-      const prev = state.promptQueue[action.missionId] ?? [];
-      if (action.from === action.to || action.from < 0 || action.to < 0 || action.from >= prev.length || action.to >= prev.length) {
-        return state;
-      }
-      const next = [...prev];
-      const [moved] = next.splice(action.from, 1);
-      next.splice(action.to, 0, moved);
-      return { ...state, promptQueue: { ...state.promptQueue, [action.missionId]: next } };
+    case 'SET_LIVE_ENTER_BEHAVIOR': {
+      const behavior = saveLiveEnterBehavior(action.behavior);
+      return { ...state, liveEnterBehavior: behavior };
     }
 
     default:

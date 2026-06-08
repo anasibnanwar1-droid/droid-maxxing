@@ -129,8 +129,6 @@ export default function ModelSelectorPopover({ onClose, singleAgent = false }: {
       missionId: state.activeMissionId ?? undefined,
       agent,
       modelId: modelId ?? null,
-      compactionTokenLimit: state.compactionTokenLimit ?? null,
-      compactionTokenLimitPerModel: state.compactionTokenLimitPerModel,
     });
 
     // Snap reasoning to a value the new model actually supports.

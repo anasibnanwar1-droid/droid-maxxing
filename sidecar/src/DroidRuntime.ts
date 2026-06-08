@@ -34,6 +34,7 @@ export interface CreateRuntimeSessionOptions extends RuntimeHandlers {
   modelId?: string;
   reasoningEffort?: ReasoningEffort;
   compactionModel?: string;
+  compactionTokenLimit?: number;
   specModeModelId?: string;
   specModeReasoningEffort?: ReasoningEffort;
   autonomyLevel?: Autonomy;
@@ -69,25 +70,7 @@ export class DroidRuntime {
 
   async createSession(options: CreateRuntimeSessionOptions): Promise<DroidSession> {
     const { client, transport } = await this.createClient(options.cwd, options);
-    const params: InitializeSessionRequestParams & Record<string, unknown> = {
-      machineId: 'default',
-      cwd: options.cwd,
-      interactionMode: mapInteractionMode(options.interactionMode),
-      sessionLocation: 'droid-control',
-      tags: tagsFor(options),
-    };
-
-    if (options.modelId) params.modelId = options.modelId;
-    if (options.reasoningEffort) params.reasoningEffort = mapReasoning(options.reasoningEffort);
-    if (options.compactionModel && options.compactionModel !== 'current-model') params.compactionModel = options.compactionModel;
-    if (options.specModeModelId) params.specModeModelId = options.specModeModelId;
-    if (options.specModeReasoningEffort) params.specModeReasoningEffort = mapReasoning(options.specModeReasoningEffort);
-    if (options.autonomyLevel) params.autonomyLevel = mapAutonomy(options.autonomyLevel);
-    if (options.decompSessionType) params.decompSessionType = options.decompSessionType;
-    if (options.missionId) params.decompMissionId = options.missionId;
-    if (options.mcpServers?.length) params.mcpServers = options.mcpServers;
-    const missionSettings = missionSettingsFor(options);
-    if (missionSettings) params.missionSettings = missionSettings;
+    const params = createInitializeSessionParams(options);
 
     try {
       const init = await withTimeout(client.initializeSession(params), SESSION_INIT_TIMEOUT_MS, 'initialize_session');
@@ -154,6 +137,31 @@ export class DroidRuntime {
     if (existsSync('/usr/local/bin/droid')) return '/usr/local/bin/droid';
     return 'droid';
   }
+}
+
+export function createInitializeSessionParams(options: CreateRuntimeSessionOptions): InitializeSessionRequestParams & Record<string, unknown> {
+  const params: InitializeSessionRequestParams & Record<string, unknown> = {
+    machineId: 'default',
+    cwd: options.cwd,
+    interactionMode: mapInteractionMode(options.interactionMode),
+    sessionLocation: 'droid-control',
+    tags: tagsFor(options),
+  };
+
+  if (options.modelId) params.modelId = options.modelId;
+  if (options.reasoningEffort) params.reasoningEffort = mapReasoning(options.reasoningEffort);
+  if (options.compactionModel) params.compactionModel = options.compactionModel;
+  if (options.compactionTokenLimit !== undefined) params.compactionTokenLimit = options.compactionTokenLimit;
+  if (options.specModeModelId) params.specModeModelId = options.specModeModelId;
+  if (options.specModeReasoningEffort) params.specModeReasoningEffort = mapReasoning(options.specModeReasoningEffort);
+  if (options.autonomyLevel) params.autonomyLevel = mapAutonomy(options.autonomyLevel);
+  if (options.decompSessionType) params.decompSessionType = options.decompSessionType;
+  if (options.missionId) params.decompMissionId = options.missionId;
+  if (options.mcpServers?.length) params.mcpServers = options.mcpServers;
+  const missionSettings = missionSettingsFor(options);
+  if (missionSettings) params.missionSettings = missionSettings;
+
+  return params;
 }
 
 function mapInteractionMode(mode: SessionInteractionMode): DroidInteractionMode {

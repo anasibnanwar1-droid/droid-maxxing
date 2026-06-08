@@ -84,9 +84,9 @@ export default function ContextMeter({ mission, stats }: { mission: MissionSumma
   const statLimit = measured?.limit && measured.limit > 0 ? measured.limit : modelWindow;
 
   // The conversation compacts once it passes the configured token limit, so the
-  // meter measures usage against that threshold (per-model override → global
-  // default), capped to the model window. Falls back to the model window when
-  // no compaction limit is set.
+  // meter measures usage against that threshold (per-model override -> global
+  // default), capped to the model window. Falls back to observed/model context
+  // size when the app lets Factory use its model-dependent default.
   const compactionLimit =
     mission.modelId && state.compactionTokenLimitPerModel[mission.modelId] !== undefined
       ? state.compactionTokenLimitPerModel[mission.modelId]

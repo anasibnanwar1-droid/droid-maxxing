@@ -25,15 +25,11 @@ export const createMission = (p: {
   validatorReasoning?: ReasoningEffort;
 }) => bridge.send({ type: 'mission.create', ...p });
 
-// Update model/reasoning/compaction for an existing Droid session. A null/
-// 'current-model' compactionModel means "follow the current session model".
+// Update live model/reasoning/autonomy for an existing Droid session.
 export const updateSessionSettings = (p: {
   sessionId: string;
   modelId?: string | null;
   reasoningEffort?: ReasoningEffort;
-  compactionModel?: string | null;
-  compactionTokenLimit?: number | null;
-  compactionTokenLimitPerModel?: Record<string, number>;
   autonomy?: Autonomy;
 }) => bridge.send({ type: 'session.updateSettings', ...p });
 
@@ -44,8 +40,14 @@ export const listFactoryDefaults = () => bridge.send({ type: 'settings.defaults'
 export const sendToMission = (missionId: string, text: string) =>
   bridge.send({ type: 'mission.send', missionId, text });
 
+export const sendToMissionNow = (missionId: string, text: string) =>
+  bridge.send({ type: 'mission.sendNow', missionId, text });
+
 export const sendToAgent = (missionId: string, agentSessionId: string, text: string) =>
   bridge.send({ type: 'agent.send', missionId, agentSessionId, text });
+
+export const sendToAgentNow = (missionId: string, agentSessionId: string, text: string) =>
+  bridge.send({ type: 'agent.sendNow', missionId, agentSessionId, text });
 
 export const respondPermission = (
   missionId: string,
@@ -95,8 +97,6 @@ export const updateAgentSettings = (p: {
   agent: ConfigurableAgent;
   modelId?: string | null;
   reasoningEffort?: ReasoningEffort;
-  compactionTokenLimit?: number | null;
-  compactionTokenLimitPerModel?: Record<string, number>;
 }) => bridge.send({ type: 'settings.agent.update', ...p });
 
 export const openBrowser = (p: { missionId: string; url: string; viewport?: BrowserViewport; viewportMode?: BrowserViewportMode }) =>

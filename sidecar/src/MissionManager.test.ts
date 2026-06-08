@@ -1,15 +1,77 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  clampCompactionTokenLimit,
   compactionTokenLimitForModel,
   createAutonomyForCommand,
   createCompactionSettingsForModel,
+  createMissionAgentDefaultsForMode,
   createModelDefaultsForMode,
   createSessionSettingsForAgent,
+  MissionManager,
   startupFactoryDefaults,
   validateFactoryDefaults,
 } from './MissionManager.js';
-import type { ModelInfo } from './protocol.js';
+import type { MissionSummary, ModelInfo, ServerEvent } from './protocol.js';
+
+class FakeSession {
+  prompts: string[] = [];
+  interrupts = 0;
+  private releaseFirstTurn?: () => void;
+
+  constructor(readonly sessionId: string) {}
+
+  async *stream(prompt: string): AsyncGenerator<never, void, undefined> {
+    this.prompts.push(prompt);
+    if (prompt !== 'first') return;
+    await new Promise<void>((resolve) => {
+      this.releaseFirstTurn = resolve;
+    });
+    throw new Error('interrupted');
+  }
+
+  async interrupt(): Promise<void> {
+    this.interrupts += 1;
+    this.releaseFirstTurn?.();
+  }
+
+  async getContextStats(): Promise<{ used: number; remaining: number; limit: number; accuracy: 'exact'; updatedAt: string }> {
+    return { used: 0, remaining: 100_000, limit: 100_000, accuracy: 'exact', updatedAt: new Date().toISOString() };
+  }
+}
+
+function testSummary(id: string, sessionId: string): MissionSummary {
+  const now = Date.now();
+  return {
+    id,
+    sessionId,
+    kind: 'chat',
+    role: 'orchestrator',
+    title: 'Test session',
+    goal: 'Test goal',
+    cwd: '',
+    workspaceKind: 'none',
+    autonomy: 'medium',
+    phase: 'paused',
+    streaming: false,
+    queuedSends: 0,
+    features: [],
+    tokensIn: 0,
+    tokensOut: 0,
+    contextTokens: 0,
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+async function waitFor(predicate: () => boolean, timeoutMs = 500): Promise<void> {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    if (predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  assert.fail('Timed out waiting for condition');
+}
 
 test('uses Factory default autonomy when create command omits autonomy', () => {
   assert.equal(createAutonomyForCommand({}, { autonomy: 'high' }), 'high');
@@ -43,6 +105,30 @@ test('uses regular session defaults for normal chat', () => {
   );
 });
 
+test('uses worker and validator defaults only for Mission Control sessions', () => {
+  const defaults = {
+    workerModelId: 'worker-default',
+    workerReasoningEffort: 'medium' as const,
+    validatorModelId: 'validator-default',
+    validatorReasoningEffort: 'high' as const,
+  };
+
+  assert.deepEqual(
+    createMissionAgentDefaultsForMode('agi', {
+      workerModel: 'worker-custom',
+      workerReasoning: 'low',
+    }, defaults),
+    {
+      workerModelId: 'worker-custom',
+      workerReasoningEffort: 'low',
+      validatorModelId: 'validator-default',
+      validatorReasoningEffort: 'high',
+    },
+  );
+  assert.deepEqual(createMissionAgentDefaultsForMode('auto', {}, defaults), {});
+  assert.deepEqual(createMissionAgentDefaultsForMode('spec', {}, defaults), {});
+});
+
 test('uses per-model compaction limit ahead of global limits', () => {
   assert.equal(
     compactionTokenLimitForModel(
@@ -61,7 +147,7 @@ test('uses Factory compaction defaults when command omits them', () => {
   );
 });
 
-test('builds Droid compaction update payloads', () => {
+test('builds Droid compaction init payloads', () => {
   assert.deepEqual(
     createCompactionSettingsForModel('model-a', {
       compactionTokenLimit: 200_000,
@@ -69,15 +155,79 @@ test('builds Droid compaction update payloads', () => {
     }),
     {
       compactionTokenLimit: 150_000,
-      compactionThresholdCheckEnabled: true,
     },
   );
 });
 
-test('disables threshold checks when a live compaction limit is cleared', () => {
+test('caps Droid compaction limits to the selected model context window', () => {
+  assert.equal(clampCompactionTokenLimit(200_000, 100_000), 100_000);
+  assert.equal(clampCompactionTokenLimit(80_000, 100_000), 80_000);
+  assert.equal(clampCompactionTokenLimit(200_000), 200_000);
   assert.deepEqual(
-    createCompactionSettingsForModel('model-a', { compactionTokenLimit: null, compactionTokenLimitPerModel: {} }, {}, true),
-    { compactionThresholdCheckEnabled: false },
+    createCompactionSettingsForModel(
+      'model-a',
+      { compactionTokenLimit: 200_000, compactionTokenLimitPerModel: { 'model-a': 150_000 } },
+      {},
+      100_000,
+    ),
+    {
+      compactionTokenLimit: 100_000,
+    },
+  );
+});
+
+test('leaves unset compaction limits to Factory session defaults', () => {
+  assert.deepEqual(
+    createCompactionSettingsForModel('model-a', { compactionTokenLimit: null, compactionTokenLimitPerModel: {} }, {}, 100_000),
+    {},
+  );
+});
+
+test('sendNow interrupts the live turn and prioritizes the steering prompt', async () => {
+  const events: ServerEvent[] = [];
+  const manager = new MissionManager((event) => events.push(event));
+  const session = new FakeSession('droid-1');
+  const mission = {
+    summary: testSummary('app-1', session.sessionId),
+    session,
+    streaming: false,
+    pendingSends: [],
+    pendingPermissions: new Map(),
+    pendingQuestions: new Map(),
+    agents: new Map(),
+    knownSubagents: new Set(),
+    completedSubagents: new Set(),
+    subagentToolUseIds: new Map(),
+    subagentSettings: new Map(),
+    pendingSubagents: [],
+    mcpServers: [],
+  };
+  const internals = manager as unknown as {
+    history: { recordEvent: () => void; syncSummaries: () => void };
+    missions: Map<string, typeof mission>;
+  };
+  internals.history = { recordEvent: () => {}, syncSummaries: () => {} };
+  internals.missions.set(mission.summary.id, mission);
+
+  const firstTurn = manager.handle({ type: 'mission.send', missionId: mission.summary.id, text: 'first' });
+  await waitFor(() => session.prompts.includes('first'));
+
+  await manager.handle({ type: 'mission.send', missionId: mission.summary.id, text: 'queued' });
+  await manager.handle({ type: 'mission.sendNow', missionId: mission.summary.id, text: 'now' });
+
+  await waitFor(() => session.prompts.length >= 3);
+  await firstTurn;
+
+  assert.equal(session.interrupts, 1);
+  assert.deepEqual(session.prompts, ['first', 'now', 'queued']);
+  assert.equal(mission.pendingSends.length, 0);
+  assert.equal(events.some((event) => event.type === 'mission.error' || event.type === 'error'), false);
+});
+
+test('does not emit live compaction disable payloads', () => {
+  assert.deepEqual(
+    createCompactionSettingsForModel('model-a', { compactionTokenLimit: null, compactionTokenLimitPerModel: {} }),
+    {},
   );
 });
 
@@ -99,15 +249,10 @@ test('maps orchestrator model changes with current compaction limits', () => {
       'orchestrator',
       {
         modelId: 'model-b',
-        compactionTokenLimit: 200_000,
-        compactionTokenLimitPerModel: { 'model-b': 150_000 },
       },
-      'model-a',
     ),
     {
       modelId: 'model-b',
-      compactionTokenLimit: 150_000,
-      compactionThresholdCheckEnabled: true,
     },
   );
 });

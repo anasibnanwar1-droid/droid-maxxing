@@ -1,5 +1,4 @@
-import { useStore } from '../hooks/useStore';
-import { updateSessionSettings } from '../lib/commands';
+import { useStore, type LiveEnterBehavior } from '../hooks/useStore';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ChevronLeft, ChevronDown, Search, Sun, Moon, Monitor, Check, X, Plus } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
@@ -283,8 +282,8 @@ const TOKEN_PRESETS = [
 ];
 const RECOMMENDED_LIMIT = 250_000;
 
-// Themed preset picker for compaction token limits. Empty/"Model window" means
-// fall back to each model's full context window.
+// Themed preset picker for compaction token limits. Empty/"Factory default"
+// lets Droid use its model-dependent compaction threshold.
 function TokenLimitSelect({
   value,
   onSelect,
@@ -311,7 +310,7 @@ function TokenLimitSelect({
     };
   }, [open]);
 
-  const label = value === undefined ? 'Model window' : formatTokenLimit(value);
+  const label = value === undefined ? 'Factory default' : formatTokenLimit(value);
 
   const choose = (n?: number) => { onSelect(n); setOpen(false); };
 
@@ -346,13 +345,13 @@ function TokenLimitSelect({
       {open && (
         <div className="absolute right-0 top-full z-50 mt-1.5 w-64 rounded-xl border border-droid-border bg-droid-surface p-2 shadow-2xl shadow-black/50">
           <div className="max-h-72 overflow-y-auto space-y-0.5">
-            <Row l="Model window" sub="full context" />
+            <Row l="Factory default" sub="model-dependent" />
             {TOKEN_PRESETS.map((n) => (
               <Row key={n} n={n} l={formatTokenLimit(n)} sub={n === RECOMMENDED_LIMIT ? 'recommended' : undefined} />
             ))}
           </div>
           <p className="mt-2 border-t border-droid-border px-1.5 pt-2 text-[10.5px] leading-[1.5] text-droid-text-muted">
-            If a model's context limit is lower than the selected value, compaction will occur at the model's limit.
+            If a model's context window is lower than the selected value, the session starts with the lower effective limit.
           </p>
         </div>
       )}
@@ -559,41 +558,16 @@ function GeneralSection() {
   const { state, dispatch } = useStore();
   const selected = state.compactionModel || 'current-model';
 
-  // Push a compaction settings patch to every loaded session so behavior stays
-  // consistent across open chats and missions.
-  const applyToLiveSessions = (patch: {
-    compactionModel?: string | null;
-    compactionTokenLimit?: number | null;
-    compactionTokenLimitPerModel?: Record<string, number>;
-  }) => {
-    for (const id of state.missionOrder) {
-      const m = state.missions[id];
-      if (m?.sessionId) updateSessionSettings({ sessionId: m.sessionId, ...patch });
-    }
-  };
-
   const setCompaction = (value: string) => {
     dispatch({ type: 'SET_COMPACTION_MODEL_GLOBAL', compactionModel: value });
-    applyToLiveSessions({ compactionModel: value === 'current-model' ? null : value });
   };
 
   const setGlobalLimit = (limit?: number) => {
     dispatch({ type: 'SET_COMPACTION_TOKEN_LIMIT_GLOBAL', limit });
-    applyToLiveSessions({
-      compactionTokenLimit: limit ?? null,
-      compactionTokenLimitPerModel: state.compactionTokenLimitPerModel,
-    });
   };
 
   const setModelLimit = (modelId: string, limit?: number) => {
     dispatch({ type: 'SET_COMPACTION_TOKEN_LIMIT_FOR_MODEL', modelId, limit });
-    const next = { ...state.compactionTokenLimitPerModel };
-    if (limit === undefined) delete next[modelId];
-    else next[modelId] = limit;
-    applyToLiveSessions({
-      compactionTokenLimit: state.compactionTokenLimit ?? null,
-      compactionTokenLimitPerModel: next,
-    });
   };
 
   const overrideEntries = Object.entries(state.compactionTokenLimitPerModel);
@@ -604,6 +578,26 @@ function GeneralSection() {
     <div className="max-w-2xl mx-auto">
       <SectionTitle title="General" sub="Defaults that apply across all chats and missions." />
 
+      <GroupLabel>Composer</GroupLabel>
+      <div className="rounded-xl border border-droid-border bg-droid-surface divide-y divide-droid-border mb-8">
+        <SettingRow
+          label="Enter while working"
+          description="Choose what plain Enter does during an active model turn. Cmd/Ctrl+Enter does the opposite."
+        >
+          <Dropdown
+            value={state.liveEnterBehavior}
+            width="w-44"
+            options={[
+              { value: 'queue', label: 'Queue message' },
+              { value: 'interrupt', label: 'Send now' },
+            ]}
+            onChange={(behavior) =>
+              dispatch({ type: 'SET_LIVE_ENTER_BEHAVIOR', behavior: behavior as LiveEnterBehavior })
+            }
+          />
+        </SettingRow>
+      </div>
+
       {/* Compaction */}
       <GroupLabel>Compaction</GroupLabel>
       <div className="rounded-xl border border-droid-border bg-droid-surface divide-y divide-droid-border mb-8">
@@ -612,7 +606,7 @@ function GeneralSection() {
         </SettingRow>
         <SettingRow
           label="Token limit"
-          description="Compact once a conversation passes this size. Empty uses each model's full window. e.g. 200K, 1.5M."
+          description="Compact once a conversation passes this size. Empty uses Factory's model-dependent default."
         >
           <TokenLimitSelect value={state.compactionTokenLimit} onSelect={setGlobalLimit} />
         </SettingRow>

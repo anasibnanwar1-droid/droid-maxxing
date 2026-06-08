@@ -67,6 +67,7 @@ interface LiveAgent {
   role: AgentRole;
   streaming: boolean;
   pendingSends: string[];
+  interruptingForSteer?: boolean;
   lastUsedAt: number;
   closeWhenIdle?: boolean;
   unsubscribe?: () => void;
@@ -77,6 +78,7 @@ interface Mission {
   session: DroidSession;
   streaming: boolean;
   pendingSends: string[];
+  interruptingForSteer?: boolean;
   pendingPermissions: Map<string, PendingPermission>;
   pendingQuestions: Map<string, (r: AskUserResult) => void>;
   agents: Map<string, LiveAgent>;
@@ -109,8 +111,6 @@ interface SubagentSettings {
 export interface AgentSettingPatch {
   modelId?: string | null;
   reasoningEffort?: ReasoningEffort;
-  compactionTokenLimit?: number | null;
-  compactionTokenLimitPerModel?: Record<string, number>;
 }
 
 export interface CompactionTokenLimitPatch {
@@ -225,6 +225,10 @@ export class MissionManager {
       case 'mission.send':
         await this.send('sessionId' in cmd ? cmd.sessionId : cmd.missionId, cmd.text);
         return;
+      case 'session.sendNow':
+      case 'mission.sendNow':
+        await this.sendNow('sessionId' in cmd ? cmd.sessionId : cmd.missionId, cmd.text);
+        return;
       case 'approval.respond':
       case 'mission.respondPermission':
         await this.resolvePermission(cmd.missionId, cmd.requestId, cmd.outcome);
@@ -245,6 +249,9 @@ export class MissionManager {
         return;
       case 'agent.send':
         await this.sendAgent(cmd.missionId, cmd.agentSessionId, cmd.text);
+        return;
+      case 'agent.sendNow':
+        await this.sendAgentNow(cmd.missionId, cmd.agentSessionId, cmd.text);
         return;
       case 'agent.interrupt':
         await this.interruptAgent(cmd.missionId, cmd.agentSessionId);
@@ -439,15 +446,22 @@ export class MissionManager {
 
   private async updateAgentSettings(cmd: Extract<ClientCommand, { type: 'settings.agent.update' }>): Promise<void> {
     try {
-      if (cmd.missionId) this.rememberPendingAgentSettings(cmd);
       const mission = cmd.missionId ? this.findMission(cmd.missionId) : undefined;
+      const summary = mission?.summary ?? (cmd.missionId ? this.resolveSummary(cmd.missionId) : undefined);
+      if (cmd.missionId && cmd.agent !== 'orchestrator' && summary && summary.kind !== 'mission_orchestrator') {
+        this.emitError({
+          code: 'agent.settings_unsupported',
+          missionId: summary.id,
+          message: 'Worker and validator model settings only apply to Mission Control sessions.',
+        });
+        return;
+      }
+      if (cmd.missionId) this.rememberPendingAgentSettings(cmd);
       const missionId = mission?.summary.id ?? cmd.missionId;
       if (mission) {
         const settings = await this.runtimeAgentSettings(mission, cmd.agent, {
           modelId: cmd.modelId,
           reasoningEffort: cmd.reasoningEffort,
-          compactionTokenLimit: cmd.compactionTokenLimit,
-          compactionTokenLimitPerModel: cmd.compactionTokenLimitPerModel,
         });
         await this.applyAgentSessionSettings(mission, cmd.agent, settings);
       }
@@ -472,8 +486,6 @@ export class MissionManager {
     const agent = { ...(existing[cmd.agent] ?? {}) };
     if (cmd.modelId !== undefined) agent.modelId = cmd.modelId;
     if (cmd.reasoningEffort !== undefined) agent.reasoningEffort = cmd.reasoningEffort;
-    if (cmd.compactionTokenLimit !== undefined) agent.compactionTokenLimit = cmd.compactionTokenLimit;
-    if (cmd.compactionTokenLimitPerModel !== undefined) agent.compactionTokenLimitPerModel = cmd.compactionTokenLimitPerModel;
     this.pendingAgentSettings.set(missionId, { ...existing, [cmd.agent]: agent });
   }
 
@@ -505,7 +517,7 @@ export class MissionManager {
   }
 
   private async applyAgentSessionSettings(mission: Mission, agent: ConfigurableAgent, settings: AgentSettingPatch): Promise<void> {
-    const next = createSessionSettingsForAgent(agent, settings, mission.summary.modelId);
+    const next = createSessionSettingsForAgent(agent, settings);
     if (Object.keys(next).length > 0) await mission.session.updateSettings(next as never);
   }
 
@@ -724,11 +736,18 @@ export class MissionManager {
       const autonomy = createAutonomyForCommand(cmd, defaults);
       const { modelId: orchestratorModelId, reasoningEffort: orchestratorReasoning } = createModelDefaultsForMode(mode, cmd, defaults);
       const compactionModel = cmd.compactionModel ?? defaults.compactionModel ?? 'current-model';
-      const compactionSettings = createCompactionSettingsForModel(orchestratorModelId, cmd, defaults);
-      const workerModelId = cmd.workerModel ?? defaults.workerModelId;
-      const workerReasoningEffort = cmd.workerReasoning ?? defaults.workerReasoningEffort;
-      const validatorModelId = cmd.validatorModel ?? defaults.validatorModelId;
-      const validatorReasoningEffort = cmd.validatorReasoning ?? defaults.validatorReasoningEffort;
+      const compactionSettings = createCompactionSettingsForModel(
+        orchestratorModelId,
+        cmd,
+        defaults,
+        this.maxContextTokensForModel(orchestratorModelId),
+      );
+      const {
+        workerModelId,
+        workerReasoningEffort,
+        validatorModelId,
+        validatorReasoningEffort,
+      } = createMissionAgentDefaultsForMode(mode, cmd, defaults);
       const mcp = await this.startLocalMcpServers(ref);
       pendingMcpServers = mcp.servers;
       const session = await this.runtime.createSession({
@@ -745,11 +764,11 @@ export class MissionManager {
         validatorModelId,
         validatorReasoningEffort,
         compactionModel,
+        compactionTokenLimit: compactionSettings.compactionTokenLimit,
         mcpServers: mcp.configs,
         permissionHandler: this.makePermissionHandler(ref),
         askUserHandler: this.makeAskUserHandler(ref),
       });
-      if (Object.keys(compactionSettings).length > 0) await session.updateSettings(compactionSettings as never);
 
       const id = session.sessionId;
       const now = Date.now();
@@ -913,11 +932,15 @@ export class MissionManager {
       const stream = mission.session.stream(prompt, { includePartialMessages: true });
       for await (const ev of stream) this.applyEvent(appSessionId, appSessionId, 'orchestrator', ev);
     } catch (err) {
-      this.emitError({ missionId: appSessionId, message: errMsg(err) });
-      this.patch(appSessionId, { phase: 'failed' });
+      if (mission.interruptingForSteer) this.emitStatus(appSessionId, 'Current turn interrupted for steering.');
+      else {
+        this.emitError({ missionId: appSessionId, message: errMsg(err) });
+        this.patch(appSessionId, { phase: 'failed' });
+      }
     } finally {
       this.stopContextPolling(appSessionId);
       mission.streaming = false;
+      mission.interruptingForSteer = false;
       const next = mission.pendingSends.shift();
       this.patch(appSessionId, { queuedSends: mission.pendingSends.length });
       if (next !== undefined) void this.drive(appSessionId, next);
@@ -1177,6 +1200,38 @@ export class MissionManager {
     await this.drive(appSessionId, text);
   }
 
+  private async sendNow(missionId: string, text: string): Promise<void> {
+    let mission = this.findMission(missionId);
+    if (!mission) {
+      await this.resumeMission(missionId);
+      mission = this.findMission(missionId);
+    }
+    if (!mission) {
+      this.emitError({ missionId, message: `Session ${missionId} is not resumable` });
+      return;
+    }
+    const appSessionId = mission.summary.id;
+    if (!(await this.applyPendingSessionSettings(appSessionId))) return;
+    if (!mission.streaming) {
+      await this.drive(appSessionId, text);
+      return;
+    }
+    mission.pendingSends.unshift(text);
+    mission.interruptingForSteer = true;
+    this.patch(appSessionId, { queuedSends: mission.pendingSends.length });
+    this.emitStatus(appSessionId, 'Steering now...');
+    try {
+      await mission.session.interrupt();
+    } catch (err) {
+      mission.interruptingForSteer = false;
+      this.emitError({
+        code: 'session.send_now_failed',
+        missionId: appSessionId,
+        message: `Could not interrupt session for steering: ${errMsg(err)}`,
+      });
+    }
+  }
+
   private async setAutonomy(missionId: string, autonomy: Autonomy | 'none'): Promise<void> {
     const mission = this.findMission(missionId);
     if (!mission) {
@@ -1218,16 +1273,13 @@ export class MissionManager {
 
   private async updateSessionSettings(
     sessionId: string,
-    settings: { modelId?: string | null; reasoningEffort?: ReasoningEffort; compactionModel?: string | null; autonomy?: Autonomy | 'none' } & CompactionTokenLimitPatch,
+    settings: { modelId?: string | null; reasoningEffort?: ReasoningEffort; autonomy?: Autonomy | 'none' },
   ): Promise<void> {
     const mission = this.findMission(sessionId);
     const historical = this.resolveSummary(sessionId);
     const appSessionId = mission?.summary.id ?? historical?.id ?? sessionId;
     const patch: Partial<MissionSummary> = {};
     const next: Record<string, unknown> = {};
-    const selectedModelId = settings.modelId === null
-      ? undefined
-      : settings.modelId ?? mission?.summary.modelId ?? historical?.modelId;
     if (settings.modelId !== undefined) {
       if (settings.modelId) next.modelId = settings.modelId;
       patch.modelId = settings.modelId ?? undefined;
@@ -1237,17 +1289,13 @@ export class MissionManager {
       next.reasoningEffort = settings.reasoningEffort;
       patch.reasoningEffort = settings.reasoningEffort;
     }
-    if (settings.compactionModel !== undefined) {
-      next.compactionModel = settings.compactionModel ?? 'current-model';
-      patch.compactionModel = settings.compactionModel ?? 'current-model';
-    }
     if (settings.autonomy) {
       const nextAutonomy = normalizeAutonomy(settings.autonomy);
       if (!nextAutonomy) throw new Error(`Unsupported autonomy level: ${settings.autonomy}`);
       next.autonomyLevel = nextAutonomy;
       patch.autonomy = nextAutonomy;
     }
-    Object.assign(next, createCompactionSettingsForModel(selectedModelId, settings, undefined, true));
+    if (Object.keys(next).length === 0) return;
     const session = await this.withSession(appSessionId, async (activeSession) => {
       await activeSession.updateSettings(next as never);
       return activeSession;
@@ -1348,12 +1396,16 @@ export class MissionManager {
       const stream = agent.session.stream(text, { includePartialMessages: true });
       for await (const ev of stream) this.applyEvent(agent.missionId, agent.session.sessionId, agent.role, ev);
     } catch (err) {
-      const message = errMsg(err);
-      this.emit({ type: 'agent.not_steerable', missionId: agent.missionId, agentSessionId: agent.session.sessionId, message });
-      this.emit({ type: 'error', code: 'agent.not_steerable', missionId: agent.missionId, sessionId: agent.session.sessionId, message });
+      if (agent.interruptingForSteer) this.emitStatus(agent.missionId, 'Subagent turn interrupted for steering.');
+      else {
+        const message = errMsg(err);
+        this.emit({ type: 'agent.not_steerable', missionId: agent.missionId, agentSessionId: agent.session.sessionId, message });
+        this.emit({ type: 'error', code: 'agent.not_steerable', missionId: agent.missionId, sessionId: agent.session.sessionId, message });
+      }
     } finally {
       this.stopContextPolling(agent.session.sessionId);
       agent.streaming = false;
+      agent.interruptingForSteer = false;
       const next = agent.pendingSends.shift();
       if (next !== undefined) void this.driveAgent(agent, next);
       else if (agent.closeWhenIdle) await this.closeAgent(agent.missionId, agent.session.sessionId);
@@ -1361,6 +1413,36 @@ export class MissionManager {
         await this.refreshContext(agent.session.sessionId, agent.session);
         this.emit({ type: 'agent.updated', missionId: agent.missionId, agentSessionId: agent.session.sessionId, role: agent.role, status: 'paused' });
       }
+    }
+  }
+
+  private async sendAgentNow(missionId: string, agentSessionId: string, text: string): Promise<void> {
+    const mission = this.findMission(missionId);
+    if (!mission) return;
+    const appSessionId = mission.summary.id;
+    if (!this.agentBelongsToMission(mission, agentSessionId)) return;
+    if (!mission.agents.has(agentSessionId)) await this.openAgent(appSessionId, agentSessionId, 'worker');
+    const agent = mission.agents.get(agentSessionId);
+    if (!agent) return;
+    agent.lastUsedAt = Date.now();
+    if (!agent.streaming) {
+      await this.driveAgent(agent, text);
+      return;
+    }
+    agent.pendingSends.unshift(text);
+    agent.interruptingForSteer = true;
+    this.emitStatus(appSessionId, 'Steering subagent now...');
+    try {
+      await agent.session.interrupt();
+    } catch (err) {
+      agent.interruptingForSteer = false;
+      this.emit({
+        type: 'error',
+        code: 'agent.send_now_failed',
+        missionId: appSessionId,
+        sessionId: agentSessionId,
+        message: `Could not interrupt subagent for steering: ${errMsg(err)}`,
+      });
     }
   }
 
@@ -1838,13 +1920,31 @@ export function createModelDefaultsForMode(
   };
 }
 
-export function createSessionSettingsForAgent(agent: ConfigurableAgent, settings: AgentSettingPatch, currentModelId?: string): Record<string, unknown> {
+export function createMissionAgentDefaultsForMode(
+  mode: SessionInteractionMode,
+  cmd: { workerModel?: string; workerReasoning?: ReasoningEffort; validatorModel?: string; validatorReasoning?: ReasoningEffort },
+  defaults: Pick<
+    FactoryDefaultSettings,
+    'workerModelId' | 'workerReasoningEffort' | 'validatorModelId' | 'validatorReasoningEffort'
+  >,
+): Pick<MissionSummary, 'workerModelId' | 'workerReasoningEffort' | 'validatorModelId' | 'validatorReasoningEffort'> {
+  if (mode !== 'agi') return {};
+  return {
+    workerModelId: cmd.workerModel ?? defaults.workerModelId,
+    workerReasoningEffort: cmd.workerReasoning ?? defaults.workerReasoningEffort,
+    validatorModelId: cmd.validatorModel ?? defaults.validatorModelId,
+    validatorReasoningEffort: cmd.validatorReasoning ?? defaults.validatorReasoningEffort,
+  };
+}
+
+export function createSessionSettingsForAgent(
+  agent: ConfigurableAgent,
+  settings: AgentSettingPatch,
+): Record<string, unknown> {
   const next: Record<string, unknown> = {};
   if (agent === 'orchestrator') {
     if (settings.modelId) next.modelId = settings.modelId;
     if (settings.reasoningEffort !== undefined) next.reasoningEffort = settings.reasoningEffort;
-    const modelId = settings.modelId === null ? undefined : settings.modelId ?? currentModelId;
-    Object.assign(next, createCompactionSettingsForModel(modelId, settings, undefined, true));
     return next;
   }
 
@@ -1865,16 +1965,15 @@ export function createCompactionSettingsForModel(
   modelId: string | undefined,
   settings: CompactionTokenLimitPatch,
   defaults: Pick<FactoryDefaultSettings, 'compactionTokenLimit' | 'compactionTokenLimitPerModel'> = {},
-  disableWhenUnset = false,
-): Record<string, number | boolean> {
-  const limit = compactionTokenLimitForModel(modelId, settings, defaults);
+  maxContextTokens?: number,
+): Record<string, number> {
+  const configuredLimit = compactionTokenLimitForModel(modelId, settings, defaults);
+  const limit = clampCompactionTokenLimit(configuredLimit, maxContextTokens);
   if (limit !== undefined) {
     return {
       compactionTokenLimit: limit,
-      compactionThresholdCheckEnabled: true,
     };
   }
-  if (disableWhenUnset && hasCompactionTokenLimitPatch(settings)) return { compactionThresholdCheckEnabled: false };
   return {};
 }
 
@@ -1895,8 +1994,10 @@ export function compactionTokenLimitForModel(
   return globalLimit === null ? undefined : normalizeCompactionTokenLimit(globalLimit);
 }
 
-function hasCompactionTokenLimitPatch(settings: CompactionTokenLimitPatch): boolean {
-  return settings.compactionTokenLimit !== undefined || settings.compactionTokenLimitPerModel !== undefined;
+export function clampCompactionTokenLimit(limit: number | undefined, maxContextTokens?: number): number | undefined {
+  if (limit === undefined) return undefined;
+  const max = normalizeCompactionTokenLimit(maxContextTokens);
+  return max === undefined ? limit : Math.min(limit, max);
 }
 
 function normalizeCompactionTokenLimit(value: unknown): number | undefined {
