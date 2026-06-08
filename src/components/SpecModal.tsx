@@ -83,7 +83,7 @@ export function SpecModal({ content, title, open, onClose }: {
             className="w-full max-w-[1120px] h-[88vh] flex flex-col rounded-2xl border border-droid-border bg-droid-surface shadow-2xl shadow-black/60 overflow-hidden"
           >
             {/* Header */}
-            <div className="shrink-0 flex items-center justify-between px-5 h-12 border-b border-droid-border/40">
+            <div className="shrink-0 flex items-center justify-between px-5 h-12 border-b border-droid-border">
               <div className="flex items-center gap-2.5 min-w-0">
                 <FileText className="w-4 h-4 shrink-0 text-droid-text-muted" />
                 <span className="text-[13px] font-medium text-droid-text truncate">

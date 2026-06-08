@@ -89,6 +89,7 @@ function registerIpc() {
   ipcMain.handle('list-files', (_event, { dir }) => listFiles(dir));
   ipcMain.handle('read-file', (_event, { path: filePath }) => readFile(filePath));
   ipcMain.handle('repo-status', (_event, { dir }) => repoStatus(dir));
+  ipcMain.handle('list-editors', () => listEditors());
   ipcMain.handle('open-project', (_event, { dir, editor, target }) => openProject(dir, editor, target));
 
   ipcMain.handle('native-browser-open', (_event, { sessionId, url, bounds, viewport }) => openNativeBrowser(sessionId, url, bounds, viewport));
@@ -837,6 +838,39 @@ async function openPathOrThrow(targetPath) {
 
 function normalizeEditor(value) {
   return ['vscode', 'cursor', 'finder', 'terminal', 'xcode'].includes(value) ? value : 'vscode';
+}
+
+// Report which launch targets are actually installed on this machine so the UI
+// only offers editors the user can really open.
+function listEditors() {
+  if (process.platform === 'darwin') {
+    const editors = [];
+    if (appBundleExists(['Visual Studio Code.app', 'VSCodium.app'])) editors.push('vscode');
+    if (appBundleExists(['Cursor.app'])) editors.push('cursor');
+    editors.push('finder', 'terminal');
+    if (appBundleExists(['Xcode.app'])) editors.push('xcode');
+    return editors;
+  }
+  const editors = [];
+  if (commandOnPath('code')) editors.push('vscode');
+  if (commandOnPath('cursor')) editors.push('cursor');
+  editors.push('finder', 'terminal');
+  return editors;
+}
+
+function appBundleExists(bundleNames) {
+  const dirs = ['/Applications', path.join(os.homedir(), 'Applications')];
+  return bundleNames.some((name) => dirs.some((dir) => fs.existsSync(path.join(dir, name))));
+}
+
+function commandOnPath(command) {
+  const probe = process.platform === 'win32' ? 'where' : 'which';
+  try {
+    require('node:child_process').execFileSync(probe, [command], { stdio: 'ignore' });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function openApp(macAppName, command, targetPath) {

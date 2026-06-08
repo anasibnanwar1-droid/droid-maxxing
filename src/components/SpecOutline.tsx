@@ -96,10 +96,10 @@ export function SpecOutline({
   };
 
   return (
-    <aside className="w-60 shrink-0 flex flex-col border-l border-droid-border/40 bg-droid-surface/20 select-none">
+    <aside className="w-60 shrink-0 flex flex-col border-l border-droid-border bg-droid-surface/20 select-none">
       {/* Search */}
-      <div className="shrink-0 px-3 py-2.5 border-b border-droid-border/30">
-        <div className="flex items-center gap-2 h-8 px-2.5 rounded-lg bg-droid-bg/50 border border-droid-border/40 focus-within:border-droid-border-hover transition-colors">
+      <div className="shrink-0 px-3 py-2.5 border-b border-droid-border">
+        <div className="flex items-center gap-2 h-8 px-2.5 rounded-lg bg-droid-bg/50 border border-droid-border focus-within:border-droid-border-hover transition-colors">
           <Search className="w-3.5 h-3.5 shrink-0 text-droid-text-muted/60" />
           <input
             ref={searchRef}
@@ -156,7 +156,7 @@ export function SpecOutline({
       </nav>
 
       {/* Footer count */}
-      <div className="shrink-0 h-8 border-t border-droid-border/30 flex items-center justify-center">
+      <div className="shrink-0 h-8 border-t border-droid-border flex items-center justify-center">
         <span className="text-[10px] font-mono text-droid-text-muted/50">
           {q ? `${filtered.length}/${headings.length}` : `${headings.length} sections`}
         </span>

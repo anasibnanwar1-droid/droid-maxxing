@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { ChevronDown, FolderOpen, FileDiff, Check } from 'lucide-react';
-import { notify, openProject } from '../lib/desktop';
+import { listEditors, notify, openProject } from '../lib/desktop';
 import { toast } from '../lib/toast';
 import { EditorIcon } from './EditorIcon';
 import { EDITOR_OPTIONS, editorLabel, getDefaultEditor, setDefaultEditor, type EditorId, type EditorTarget } from '../lib/editorOpen';
@@ -39,8 +39,28 @@ export default function EditorOpenMenu({
 }) {
   const [open, setOpen] = useState(false);
   const [selected, setSelected] = useState<EditorId>(() => getDefaultEditor());
+  const [installed, setInstalled] = useState<EditorId[]>([]);
   const ref = useRef<HTMLDivElement>(null);
   const hasCwd = Boolean(cwd);
+
+  // Only offer editors that are actually present on this machine. If detection
+  // returns nothing (e.g. running in a browser), fall back to the full list.
+  const options = installed.length > 0 ? EDITOR_OPTIONS.filter((o) => installed.includes(o.id)) : EDITOR_OPTIONS;
+
+  useEffect(() => {
+    let cancelled = false;
+    listEditors().then((found) => {
+      if (cancelled || found.length === 0) return;
+      setInstalled(found);
+      // If the saved default isn't installed, fall back to the first available
+      // one so the main button always opens something that exists.
+      if (!found.includes(getDefaultEditor())) {
+        setDefaultEditor(found[0]);
+        setSelected(found[0]);
+      }
+    });
+    return () => { cancelled = true; };
+  }, []);
 
   useEffect(() => {
     if (!open) return;
@@ -119,7 +139,7 @@ export default function EditorOpenMenu({
           <div className="my-1.5 h-px bg-droid-border/70" />
           <div className="px-2 pb-1 text-[10px] font-medium uppercase tracking-wider text-droid-text-muted">Default editor</div>
 
-          {EDITOR_OPTIONS.map((option) => (
+          {options.map((option) => (
             <button
               key={option.id}
               onClick={() => chooseDefault(option.id)}

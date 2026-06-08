@@ -327,7 +327,7 @@ function RoleBlock({
       />
 
       {role.subAgents.length > 0 && (
-        <div className="ml-[19px] pl-2 border-l border-droid-border/60">
+        <div className="ml-[19px] pl-2 border-l border-droid-border">
           <button
             onClick={() => setOpen((o) => !o)}
             className="w-full flex items-center gap-2 px-2 py-1 rounded-lg text-droid-text-muted hover:text-droid-text hover:bg-droid-elevated/50 transition-colors"
@@ -480,7 +480,7 @@ function ExpandModal({ title, onClose, children, headerExtra }: { title: string;
 
 function PanelHeader({ title, count, onExpand, onCollapse }: { title: string; count?: string; onExpand: () => void; onCollapse?: () => void }) {
   return (
-    <div data-electron-drag-region className="flex items-center justify-between px-4 h-11 shrink-0 border-b border-droid-border/50">
+    <div data-electron-drag-region className="flex items-center justify-between px-4 h-11 shrink-0 border-b border-droid-border">
       <span className="flex items-center gap-2">
         <span className="text-[11px] font-medium tracking-[0.09em] text-droid-text-secondary uppercase">{title}</span>
         {count && <span className="font-mono text-[10px] text-droid-text-muted">{count}</span>}

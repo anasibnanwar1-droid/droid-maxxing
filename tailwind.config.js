@@ -1,21 +1,26 @@
 /** @type {import('tailwindcss').Config} */
+// Wrap each themed CSS variable so Tailwind's `/opacity` modifiers resolve to a
+// valid color. Without this, `border-droid-border/40` emits an invalid value and
+// border-color falls back to currentColor (producing bright/white borders).
+const v = (name) => `color-mix(in srgb, var(${name}) calc(<alpha-value> * 100%), transparent)`;
+
 export default {
   content: ["./index.html", "./src/**/*.{js,ts,jsx,tsx}"],
   theme: {
     extend: {
       colors: {
         droid: {
-          bg: 'var(--droid-bg)',
-          surface: 'var(--droid-surface)',
-          elevated: 'var(--droid-elevated)',
-          border: 'var(--droid-border)',
-          'border-hover': 'var(--droid-border-hover)',
-          text: 'var(--droid-text)',
-          'text-secondary': 'var(--droid-text-secondary)',
-          'text-muted': 'var(--droid-text-muted)',
-          accent: 'var(--droid-accent)',
-          green: 'var(--droid-green)',
-          orange: 'var(--droid-orange)',
+          bg: v('--droid-bg'),
+          surface: v('--droid-surface'),
+          elevated: v('--droid-elevated'),
+          border: v('--droid-border'),
+          'border-hover': v('--droid-border-hover'),
+          text: v('--droid-text'),
+          'text-secondary': v('--droid-text-secondary'),
+          'text-muted': v('--droid-text-muted'),
+          accent: v('--droid-accent'),
+          green: v('--droid-green'),
+          orange: v('--droid-orange'),
         }
       },
       fontFamily: {

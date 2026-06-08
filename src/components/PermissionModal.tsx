@@ -56,7 +56,7 @@ export default function PermissionModal() {
           className="w-full max-w-[760px] h-[85vh] flex flex-col rounded-2xl border border-droid-border bg-droid-surface shadow-2xl shadow-black/60 overflow-hidden"
         >
           {/* Header */}
-          <div className="shrink-0 flex items-center justify-between px-5 h-12 border-b border-droid-border/50">
+          <div className="shrink-0 flex items-center justify-between px-5 h-12 border-b border-droid-border">
             <div className="flex items-center gap-2.5 min-w-0">
               <ClipboardCheck className="w-4 h-4 shrink-0" style={{ color: ACCENT }} />
               <span className="text-[13px] font-medium text-droid-text truncate">{req.title || 'Review specification'}</span>
@@ -78,7 +78,7 @@ export default function PermissionModal() {
           </div>
 
           {/* Autonomy picker — how much freedom the model gets while implementing */}
-          <div className="shrink-0 px-5 pt-3 pb-2 border-t border-droid-border/50">
+          <div className="shrink-0 px-5 pt-3 pb-2 border-t border-droid-border">
             <div className="text-[11px] font-medium uppercase tracking-wide text-droid-text-muted mb-2">
               Implementation autonomy
             </div>
@@ -105,7 +105,7 @@ export default function PermissionModal() {
           </div>
 
           {/* Footer */}
-          <div className="shrink-0 flex items-center justify-end gap-2 px-5 h-14 border-t border-droid-border/50">
+          <div className="shrink-0 flex items-center justify-end gap-2 px-5 h-14 border-t border-droid-border">
             <button
               onClick={() => respond('cancel')}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12.5px] text-droid-text-secondary hover:bg-droid-elevated/60 transition-colors"

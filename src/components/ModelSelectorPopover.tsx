@@ -168,7 +168,7 @@ export default function ModelSelectorPopover({ onClose, singleAgent = false }: {
         {/* Agent tabs */}
         {!singleAgent && (
           <div className="px-3">
-            <div className="flex gap-1 p-0.5 rounded-xl bg-droid-bg/60 border border-droid-border/60">
+            <div className="flex gap-1 p-0.5 rounded-xl bg-droid-bg/60 border border-droid-border">
               {AGENTS.map((a) => {
                 const on = a.kind === agent;
                 return (
@@ -194,7 +194,7 @@ export default function ModelSelectorPopover({ onClose, singleAgent = false }: {
             <span className="text-[10px] text-droid-text-muted uppercase tracking-wider">Reasoning</span>
             <span className="text-[10px] font-mono capitalize" style={{ color: ACCENT }}>{effReasoning}</span>
           </div>
-          <div className="relative flex p-0.5 rounded-lg bg-droid-bg/60 border border-droid-border/60">
+          <div className="relative flex p-0.5 rounded-lg bg-droid-bg/60 border border-droid-border">
             {reasoningOptions.map((r) => {
               const on = effReasoning === r;
               return (

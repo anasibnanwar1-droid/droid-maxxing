@@ -75,7 +75,7 @@ export default function PermissionInline() {
           </div>
         )}
 
-        <div className="flex flex-wrap items-center justify-end gap-1.5 border-t border-droid-border/50 px-3 py-2">
+        <div className="flex flex-wrap items-center justify-end gap-1.5 border-t border-droid-border px-3 py-2">
           <button
             onClick={() => respond('cancel')}
             className="rounded-lg px-2.5 py-1.5 text-[12px] text-droid-text-secondary transition-colors hover:bg-droid-surface/70"

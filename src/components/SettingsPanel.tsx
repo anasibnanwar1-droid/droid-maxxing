@@ -1,7 +1,7 @@
 import { useStore } from '../hooks/useStore';
 import { updateSessionSettings } from '../lib/commands';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ChevronLeft, ChevronDown, Search, Sun, Moon, Monitor, Check, X, Sparkles } from 'lucide-react';
+import { ChevronLeft, ChevronDown, Search, Sun, Moon, Monitor, Check, X, Plus } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { ColorField } from './ColorPicker';
 import { ModelIcon, providerOf } from './ModelIcon';
@@ -117,7 +117,7 @@ function Slider({ label, sub, value, min, max, onChange, suffix = '' }: {
   label: string; sub?: string; value: number; min: number; max: number; onChange: (v: number) => void; suffix?: string;
 }) {
   return (
-    <div className="flex items-center justify-between gap-3 py-2.5 border-b border-droid-border/60">
+    <div className="flex items-center justify-between gap-3 py-2.5 border-b border-droid-border">
       <div>
         <div className="text-[13px] text-droid-text">{label}</div>
         {sub && <div className="text-[11px] text-droid-text-muted">{sub}</div>}
@@ -140,7 +140,7 @@ function Slider({ label, sub, value, min, max, onChange, suffix = '' }: {
 
 function Toggle({ label, sub, checked, onChange }: { label: string; sub?: string; checked: boolean; onChange: (v: boolean) => void }) {
   return (
-    <div className="flex items-center justify-between py-2.5 border-b border-droid-border/60">
+    <div className="flex items-center justify-between py-2.5 border-b border-droid-border">
       <div>
         <div className="text-[13px] text-droid-text">{label}</div>
         {sub && <div className="text-[11px] text-droid-text-muted">{sub}</div>}
@@ -155,45 +155,15 @@ function Toggle({ label, sub, checked, onChange }: { label: string; sub?: string
   );
 }
 
-function SegmentRow({ label, sub, options, value, onChange }: {
-  label: string; sub?: string; options: { v: string; t: string }[]; value: string; onChange: (v: string) => void;
-}) {
-  return (
-    <div className="flex items-center justify-between py-2.5 border-b border-droid-border/60">
-      <div>
-        <div className="text-[13px] text-droid-text">{label}</div>
-        {sub && <div className="text-[11px] text-droid-text-muted">{sub}</div>}
-      </div>
-      <div className="flex gap-1">
-        {options.map((o) => (
-          <button
-            key={o.v}
-            onClick={() => onChange(o.v)}
-            className={`px-2.5 py-1 rounded-md text-[11px] transition-colors ${
-              value === o.v ? 'bg-droid-elevated text-droid-text border border-droid-border' : 'text-droid-text-muted hover:text-droid-text'
-            }`}
-          >
-            {o.t}
-          </button>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function DiffPreview({ diffStyle }: { diffStyle: 'color' | 'symbol' }) {
-  const addBg = diffStyle === 'color' ? 'rgba(106,138,106,0.12)' : 'transparent';
-  const delBg = diffStyle === 'color' ? 'rgba(176,106,74,0.12)' : 'transparent';
-  const addPrefix = diffStyle === 'symbol' ? '+' : '';
-  const delPrefix = diffStyle === 'symbol' ? '-' : '';
+function DiffPreview() {
   return (
     <div className="rounded-lg border border-droid-border overflow-hidden font-mono text-[11px] leading-5">
       <div className="px-3 py-1.5 bg-droid-elevated border-b border-droid-border text-droid-text-muted">themePreview.ts</div>
       <div className="px-3 py-1.5">
-        <div style={{ backgroundColor: delBg, color: 'var(--droid-orange)' }}>{delPrefix}  accent: "#ff5d2e",</div>
-        <div style={{ backgroundColor: addBg, color: 'var(--droid-green)' }}>{addPrefix}  accent: "#ee6018",</div>
-        <div style={{ backgroundColor: delBg, color: 'var(--droid-orange)' }}>{delPrefix}  surface: "#181818",</div>
-        <div style={{ backgroundColor: addBg, color: 'var(--droid-green)' }}>{addPrefix}  surface: "#111111",</div>
+        <div style={{ backgroundColor: 'rgba(176,106,74,0.12)', color: 'var(--droid-orange)' }}>−  accent: "#ff5d2e",</div>
+        <div style={{ backgroundColor: 'rgba(106,138,106,0.12)', color: 'var(--droid-green)' }}>+  accent: "#ee6018",</div>
+        <div style={{ backgroundColor: 'rgba(176,106,74,0.12)', color: 'var(--droid-orange)' }}>−  surface: "#181818",</div>
+        <div style={{ backgroundColor: 'rgba(106,138,106,0.12)', color: 'var(--droid-green)' }}>+  surface: "#111111",</div>
       </div>
     </div>
   );
@@ -222,7 +192,7 @@ function AppearanceSection() {
   };
 
   return (
-    <div className="max-w-2xl">
+    <div className="max-w-2xl mx-auto">
       <SectionTitle title="Appearance" sub="Tune the look and feel of Mission Control." />
 
       {/* Theme mode + preview */}
@@ -238,7 +208,7 @@ function AppearanceSection() {
             <ModeButton active={theme.mode === 'system'} onClick={() => updateTheme({ mode: 'system', ...paletteForMode('system') })} icon={Monitor} label="System" />
           </div>
         </div>
-        <DiffPreview diffStyle={theme.diffStyle} />
+        <DiffPreview />
       </div>
 
       {/* Presets */}
@@ -266,7 +236,7 @@ function AppearanceSection() {
           <ColorField label="Panel background" description="Sidebar, cards and raised surfaces" value={theme.surface} onChange={(v) => updateTheme({ surface: v })} />
           <ColorField label="Borders" description="Dividers and outlines between sections" value={theme.border} onChange={(v) => updateTheme({ border: v })} />
         </div>
-        <div className="mt-3.5 pt-3.5 border-t border-droid-border/60">
+        <div className="mt-3.5 pt-3.5 border-t border-droid-border">
           <div className="text-[10.5px] text-droid-text-muted mb-2">Quick accents</div>
           <div className="flex flex-wrap gap-1.5">
             {PRESET_ACCENTS.map((c) => (
@@ -279,53 +249,28 @@ function AppearanceSection() {
       {/* Typography + behavior */}
       <GroupLabel>Typography & behavior</GroupLabel>
       <div className="rounded-xl border border-droid-border bg-droid-surface px-4 [&>*:last-child]:border-b-0">
-        <div className="flex items-center justify-between py-2.5 border-b border-droid-border/60">
+        <div className="flex items-center justify-between py-2.5 border-b border-droid-border">
           <div>
             <div className="text-[13px] text-droid-text">UI font</div>
             <div className="text-[11px] text-droid-text-muted">Typeface for the whole app (defaults to your OS font)</div>
           </div>
-          <select
+          <Dropdown
             value={theme.uiFont}
-            onChange={(e) => updateTheme({ uiFont: e.target.value })}
-            className="bg-droid-elevated border border-droid-border rounded-md px-2 py-1 text-[12px] text-droid-text focus:outline-none focus:border-droid-border-hover cursor-pointer"
-            style={{ fontFamily: uiFontStack(theme.uiFont) }}
-          >
-            {UI_FONTS.map((f) => (
-              <option key={f.id} value={f.id}>{f.label}</option>
-            ))}
-          </select>
+            width="w-44"
+            options={UI_FONTS.map((f) => ({ value: f.id, label: f.label }))}
+            onChange={(v) => updateTheme({ uiFont: v })}
+          />
         </div>
         <Slider label="UI font size" sub="Base size used for the Mission Control UI" value={theme.uiFontSize} min={12} max={18} onChange={(v) => updateTheme({ uiFontSize: v })} suffix="px" />
         <Slider label="Code font size" sub="Base size for code across chats and diffs" value={theme.codeFontSize} min={10} max={16} onChange={(v) => updateTheme({ codeFontSize: v })} suffix="px" />
         <Slider label="Contrast" sub="Adjust overall UI contrast" value={theme.contrast} min={40} max={100} onChange={(v) => updateTheme({ contrast: v })} />
         <Toggle label="Translucent sidebar" sub="Blur and lighten the sidebar surface" checked={theme.translucentSidebar} onChange={(v) => updateTheme({ translucentSidebar: v })} />
-        <SegmentRow
-          label="Diff markers"
-          sub="Colored bars or +/- symbols on each changed line"
-          options={[{ v: 'color', t: 'Color' }, { v: 'symbol', t: '+/-' }]}
-          value={theme.diffStyle}
-          onChange={(v) => updateTheme({ diffStyle: v as 'color' | 'symbol' })}
-        />
       </div>
     </div>
   );
 }
 
 /* ── compaction token limit helpers ── */
-// Parse a user-typed limit ("200k", "1.5M", "200000") into a raw token count.
-// Returns undefined for empty/invalid input — meaning "use the model window".
-function parseTokenLimit(input: string): number | undefined {
-  const trimmed = input.trim().toLowerCase().replace(/,/g, '');
-  if (!trimmed) return undefined;
-  const m = trimmed.match(/^(\d+(?:\.\d+)?)\s*([km])?$/);
-  if (!m) return undefined;
-  const base = Number(m[1]);
-  if (!Number.isFinite(base) || base <= 0) return undefined;
-  const mult = m[2] === 'm' ? 1_000_000 : m[2] === 'k' ? 1_000 : 1;
-  const value = Math.floor(base * mult);
-  return value > 0 ? value : undefined;
-}
-
 // Format a raw token count for display: 200000 → "200K", 1500000 → "1.5M".
 function formatTokenLimit(n: number): string {
   if (n >= 1_000_000) return `${Number((n / 1_000_000).toFixed(2))}M`;
@@ -333,43 +278,164 @@ function formatTokenLimit(n: number): string {
   return String(n);
 }
 
-function TokenLimitInput({
+const TOKEN_PRESETS = [
+  100_000, 200_000, 250_000, 300_000, 400_000, 500_000, 600_000, 700_000, 800_000, 900_000, 1_000_000,
+];
+const RECOMMENDED_LIMIT = 250_000;
+
+// Themed preset picker for compaction token limits. Empty/"Model window" means
+// fall back to each model's full context window.
+function TokenLimitSelect({
   value,
-  onCommit,
-  placeholder = 'Default',
-  width = 'w-28',
+  onSelect,
+  width = 'w-40',
 }: {
   value?: number;
-  onCommit: (n?: number) => void;
-  placeholder?: string;
+  onSelect: (n?: number) => void;
   width?: string;
 }) {
-  const [text, setText] = useState(value !== undefined ? formatTokenLimit(value) : '');
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    setText(value !== undefined ? formatTokenLimit(value) : '');
-  }, [value]);
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
+    window.addEventListener('mousedown', onDown);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('mousedown', onDown);
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
 
-  const commit = () => {
-    const parsed = parseTokenLimit(text);
-    onCommit(parsed);
-    setText(parsed !== undefined ? formatTokenLimit(parsed) : '');
+  const label = value === undefined ? 'Model window' : formatTokenLimit(value);
+
+  const choose = (n?: number) => { onSelect(n); setOpen(false); };
+
+  const Row = ({ n, l, sub }: { n?: number; l: string; sub?: string }) => {
+    const active = value === n;
+    return (
+      <button
+        onClick={() => choose(n)}
+        className={`flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left transition-colors ${
+          active ? 'bg-droid-elevated' : 'hover:bg-droid-elevated/50'
+        }`}
+      >
+        <span className="flex-1 font-mono text-[12.5px] text-droid-text">{l}</span>
+        {sub && <span className="text-[10.5px] text-droid-text-muted">{sub}</span>}
+        {active && <Check className="w-3.5 h-3.5 shrink-0" style={{ color: 'var(--droid-accent)' }} strokeWidth={3} />}
+      </button>
+    );
   };
 
   return (
-    <input
-      value={text}
-      onChange={(e) => setText(e.target.value)}
-      onBlur={commit}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter') {
-          e.preventDefault();
-          (e.target as HTMLInputElement).blur();
-        }
-      }}
-      placeholder={placeholder}
-      className={`${width} bg-droid-bg/60 border border-droid-border rounded-md px-2.5 py-1 text-[12px] font-mono text-droid-text placeholder:text-droid-text-muted text-right focus:outline-none focus:border-droid-border-hover`}
-    />
+    <div className="relative shrink-0" ref={ref}>
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className={`${width} flex items-center justify-between gap-2 rounded-lg border px-2.5 py-1.5 text-[12px] transition-colors ${
+          open ? 'border-droid-border-hover bg-droid-elevated text-droid-text' : 'border-droid-border bg-droid-bg/60 text-droid-text hover:border-droid-border-hover'
+        }`}
+      >
+        <span className="truncate font-mono">{label}</span>
+        <ChevronDown className={`w-3.5 h-3.5 text-droid-text-muted transition-transform ${open ? 'rotate-180' : ''}`} />
+      </button>
+
+      {open && (
+        <div className="absolute right-0 top-full z-50 mt-1.5 w-64 rounded-xl border border-droid-border bg-droid-surface p-2 shadow-2xl shadow-black/50">
+          <div className="max-h-72 overflow-y-auto space-y-0.5">
+            <Row l="Model window" sub="full context" />
+            {TOKEN_PRESETS.map((n) => (
+              <Row key={n} n={n} l={formatTokenLimit(n)} sub={n === RECOMMENDED_LIMIT ? 'recommended' : undefined} />
+            ))}
+          </div>
+          <p className="mt-2 border-t border-droid-border px-1.5 pt-2 text-[10.5px] leading-[1.5] text-droid-text-muted">
+            If a model's context limit is lower than the selected value, compaction will occur at the model's limit.
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ── generic in-app dropdown (replaces native <select>) ── */
+type DropdownOption = { value: string; label: string; icon?: React.ReactNode };
+function Dropdown({
+  value,
+  options,
+  onChange,
+  placeholder = 'Select…',
+  triggerIcon,
+  width = 'w-44',
+  align = 'right',
+}: {
+  value: string;
+  options: DropdownOption[];
+  onChange: (v: string) => void;
+  placeholder?: string;
+  triggerIcon?: React.ReactNode;
+  width?: string;
+  align?: 'left' | 'right';
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
+    window.addEventListener('mousedown', onDown);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('mousedown', onDown);
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  const sel = options.find((o) => o.value === value);
+
+  return (
+    <div className={`relative ${width === 'w-full' ? 'w-full' : 'shrink-0'}`} ref={ref}>
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className={`${width} flex items-center justify-between gap-2 rounded-lg border px-2.5 py-1.5 text-[12px] transition-colors ${
+          open ? 'border-droid-border-hover bg-droid-elevated text-droid-text' : 'border-droid-border bg-droid-bg/60 text-droid-text hover:border-droid-border-hover'
+        }`}
+      >
+        <span className="flex min-w-0 items-center gap-2">
+          {triggerIcon ?? sel?.icon}
+          <span className="truncate">{sel?.label ?? placeholder}</span>
+        </span>
+        <ChevronDown className={`w-3.5 h-3.5 shrink-0 text-droid-text-muted transition-transform ${open ? 'rotate-180' : ''}`} />
+      </button>
+
+      {open && (
+        <div className={`absolute ${align === 'right' ? 'right-0' : 'left-0'} top-full z-50 mt-1.5 min-w-full rounded-xl border border-droid-border bg-droid-surface p-2 shadow-2xl shadow-black/50`}>
+          <div className="max-h-72 overflow-y-auto space-y-0.5">
+            {options.map((o) => {
+              const active = o.value === value;
+              return (
+                <button
+                  key={o.value}
+                  onClick={() => { onChange(o.value); setOpen(false); }}
+                  className={`flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left transition-colors ${
+                    active ? 'bg-droid-elevated' : 'hover:bg-droid-elevated/50'
+                  }`}
+                >
+                  {o.icon}
+                  <span className="min-w-0 flex-1 truncate text-[12.5px] text-droid-text">{o.label}</span>
+                  {active && <Check className="w-3.5 h-3.5 shrink-0" style={{ color: 'var(--droid-accent)' }} strokeWidth={3} />}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -425,7 +491,7 @@ function CompactionModelPicker({
           active ? 'bg-droid-elevated' : 'hover:bg-droid-elevated/50'
         }`}
       >
-        {current ? <Sparkles className="w-4 h-4 text-droid-text-muted shrink-0" /> : <ModelIcon provider={providerOf(models.find((m) => m.id === id), id)} size={16} />}
+        {!current && <ModelIcon provider={providerOf(models.find((m) => m.id === id), id)} size={16} />}
         <div className="min-w-0 flex-1">
           <div className="text-[12.5px] text-droid-text truncate">{l}</div>
           {sub && <div className="text-[10.5px] text-droid-text-muted truncate">{sub}</div>}
@@ -443,7 +509,7 @@ function CompactionModelPicker({
           open ? 'border-droid-border-hover bg-droid-elevated text-droid-text' : 'border-droid-border bg-droid-bg/60 text-droid-text hover:border-droid-border-hover'
         }`}
       >
-        {isCurrent ? <Sparkles className="w-3.5 h-3.5 text-droid-text-muted" /> : <ModelIcon provider={providerOf(selModel, selected)} size={14} />}
+        {!isCurrent && <ModelIcon provider={providerOf(selModel, selected)} size={14} />}
         <span className="max-w-[160px] truncate">{label}</span>
         <ChevronDown className={`w-3.5 h-3.5 text-droid-text-muted transition-transform ${open ? 'rotate-180' : ''}`} />
       </button>
@@ -492,7 +558,6 @@ function SettingRow({ label, description, children }: { label: string; descripti
 function GeneralSection() {
   const { state, dispatch } = useStore();
   const selected = state.compactionModel || 'current-model';
-  const [addModelId, setAddModelId] = useState('');
 
   // Push a compaction settings patch to every loaded session so behavior stays
   // consistent across open chats and missions.
@@ -530,12 +595,12 @@ function GeneralSection() {
   const modelLabel = (id: string) => state.models.find((m) => m.id === id)?.displayName ?? id;
 
   return (
-    <div className="max-w-2xl">
+    <div className="max-w-2xl mx-auto">
       <SectionTitle title="General" sub="Defaults that apply across all chats and missions." />
 
       {/* Compaction */}
       <GroupLabel>Compaction</GroupLabel>
-      <div className="rounded-xl border border-droid-border bg-droid-surface divide-y divide-droid-border/60 mb-8">
+      <div className="rounded-xl border border-droid-border bg-droid-surface divide-y divide-droid-border mb-8">
         <SettingRow label="Compaction model" description="Model that summarizes a conversation when it is compacted.">
           <CompactionModelPicker selected={selected} models={state.models} onSelect={setCompaction} />
         </SettingRow>
@@ -543,7 +608,7 @@ function GeneralSection() {
           label="Token limit"
           description="Compact once a conversation passes this size. Empty uses each model's full window. e.g. 200K, 1.5M."
         >
-          <TokenLimitInput value={state.compactionTokenLimit} onCommit={setGlobalLimit} placeholder="Model window" width="w-32" />
+          <TokenLimitSelect value={state.compactionTokenLimit} onSelect={setGlobalLimit} />
         </SettingRow>
       </div>
 
@@ -562,7 +627,7 @@ function GeneralSection() {
             <div key={id} className="flex items-center gap-2.5 rounded-lg border border-droid-border bg-droid-bg/40 px-2.5 py-2">
               <ModelIcon provider={providerOf(state.models.find((m) => m.id === id), id)} size={16} />
               <span className="text-[12px] text-droid-text truncate flex-1">{modelLabel(id)}</span>
-              <TokenLimitInput value={limit} onCommit={(n) => setModelLimit(id, n)} />
+              <TokenLimitSelect value={limit} onSelect={(n) => setModelLimit(id, n)} width="w-32" />
               <button
                 onClick={() => setModelLimit(id, undefined)}
                 className="p-1 rounded-md text-droid-text-muted hover:text-droid-text hover:bg-droid-elevated transition-colors shrink-0"
@@ -575,22 +640,20 @@ function GeneralSection() {
         </div>
 
         {availableForOverride.length > 0 && (
-          <div className="flex items-center gap-2 mt-2.5">
-            <select
-              value={addModelId}
-              onChange={(e) => {
-                const id = e.target.value;
-                if (!id) return;
-                setModelLimit(id, state.compactionTokenLimit ?? 200_000);
-                setAddModelId('');
-              }}
-              className="flex-1 bg-droid-bg/60 border border-droid-border rounded-md px-2 py-1.5 text-[12px] text-droid-text focus:outline-none focus:border-droid-border-hover cursor-pointer"
-            >
-              <option value="">Add a model override…</option>
-              {availableForOverride.map((m) => (
-                <option key={m.id} value={m.id}>{m.displayName}</option>
-              ))}
-            </select>
+          <div className="mt-2.5">
+            <Dropdown
+              value=""
+              placeholder="Add a model override…"
+              triggerIcon={<Plus className="w-3.5 h-3.5 text-droid-text-muted" />}
+              width="w-full"
+              align="left"
+              options={availableForOverride.map((m) => ({
+                value: m.id,
+                label: m.displayName,
+                icon: <ModelIcon provider={providerOf(m, m.id)} size={16} />,
+              }))}
+              onChange={(id) => setModelLimit(id, state.compactionTokenLimit ?? 200_000)}
+            />
           </div>
         )}
       </div>
@@ -600,7 +663,7 @@ function GeneralSection() {
 
 function PlaceholderSection({ title }: { title: string }) {
   return (
-    <div className="max-w-2xl">
+    <div className="max-w-2xl mx-auto">
       <SectionTitle title={title} />
       <div className="rounded-xl border border-dashed border-droid-border bg-droid-surface/40 p-10 text-center">
         <p className="text-[13px] text-droid-text-secondary">{title} settings are coming soon.</p>
@@ -706,10 +769,12 @@ export function applyTheme(theme: ReturnType<typeof useStore>['state']['theme'])
   root.style.setProperty('--droid-surface', theme.surface);
   root.style.setProperty('--droid-elevated', adjustColor(theme.surface, 6));
   // Soften resting borders by blending toward the background so panel/section
-  // separators read as gentle hairlines rather than hard lines. Keep the original
-  // border value for hover so interactive elements still gain definition.
-  root.style.setProperty('--droid-border', mixHex(theme.border, theme.bg, 0.5));
-  root.style.setProperty('--droid-border-hover', theme.border);
+  // separators read as gentle hairlines rather than hard lines. Dark themes need
+  // a stronger blend: at low luminance the same edge reads as a harsh outline, so
+  // we push it closer to the background to keep the subtle look light mode has.
+  const bgIsDark = colorLuminance(theme.bg) < 0.4;
+  root.style.setProperty('--droid-border', mixHex(theme.border, theme.bg, bgIsDark ? 0.72 : 0.6));
+  root.style.setProperty('--droid-border-hover', mixHex(theme.border, theme.bg, bgIsDark ? 0.4 : 0.2));
   root.style.setProperty('--droid-text', theme.fg);
   root.style.setProperty('--droid-text-secondary', adjustColor(theme.fg, -30));
   root.style.setProperty('--droid-text-muted', adjustColor(theme.fg, -50));
@@ -739,6 +804,14 @@ export function applyTheme(theme: ReturnType<typeof useStore>['state']['theme'])
 }
 
 /* ── tiny color utils ── */
+// Relative luminance (0 = black, 1 = white) used to tell dark themes from light.
+function colorLuminance(hex: string): number {
+  const r = parseInt(hex.slice(1, 3), 16) / 255;
+  const g = parseInt(hex.slice(3, 5), 16) / 255;
+  const b = parseInt(hex.slice(5, 7), 16) / 255;
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+
 function adjustColor(hex: string, lighten: number): string {
   const r = parseInt(hex.slice(1, 3), 16);
   const g = parseInt(hex.slice(3, 5), 16);

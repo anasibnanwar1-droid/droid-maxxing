@@ -104,8 +104,8 @@ const MermaidBlock = memo(function MermaidBlock({ code }: { code: string }) {
 
   if (error) {
     return (
-      <div className="rounded-2xl border border-droid-border/40 bg-droid-elevated/20 overflow-hidden my-5">
-        <div className="flex items-center justify-between px-3.5 h-7 bg-droid-surface/30 border-b border-droid-border/25">
+      <div className="rounded-2xl border border-droid-border bg-droid-elevated/20 overflow-hidden my-5">
+        <div className="flex items-center justify-between px-3.5 h-7 bg-droid-surface/30 border-b border-droid-border">
           <span className="text-[10px] font-medium tracking-widest uppercase text-droid-text-muted/60">Diagram source</span>
           <span className="text-[10px] font-mono text-droid-text-muted/40">Mermaid</span>
         </div>
@@ -117,8 +117,8 @@ const MermaidBlock = memo(function MermaidBlock({ code }: { code: string }) {
   }
 
   return (
-    <div className="rounded-2xl border border-droid-border/40 bg-droid-elevated/20 overflow-hidden my-5">
-      <div className="flex items-center justify-between px-3.5 h-7 bg-droid-surface/30 border-b border-droid-border/25">
+    <div className="rounded-2xl border border-droid-border bg-droid-elevated/20 overflow-hidden my-5">
+      <div className="flex items-center justify-between px-3.5 h-7 bg-droid-surface/30 border-b border-droid-border">
         <span className="text-[10px] font-medium tracking-widest uppercase text-droid-text-muted/60">Diagram</span>
         <span className="text-[10px] font-mono text-droid-text-muted/40">Mermaid</span>
       </div>
@@ -165,8 +165,8 @@ function SvgCodeBlock({ content }: { content: string }) {
   }, [content]);
 
   return (
-    <div className="rounded-2xl border border-droid-border/50 bg-droid-elevated/30 overflow-hidden my-4">
-      <div className="flex items-center justify-between px-3.5 h-7 bg-droid-surface/30 border-b border-droid-border/30">
+    <div className="rounded-2xl border border-droid-border bg-droid-elevated/30 overflow-hidden my-4">
+      <div className="flex items-center justify-between px-3.5 h-7 bg-droid-surface/30 border-b border-droid-border">
         <span className="text-[10px] font-medium tracking-widest uppercase text-droid-text-muted/60">Diagram</span>
         <span className="text-[10px] font-mono text-droid-text-muted/40">SVG</span>
       </div>
@@ -229,7 +229,7 @@ function MarkdownImpl({ children, specMode }: { children: string; specMode?: boo
             <a href={href} target="_blank" rel="noreferrer" className="underline underline-offset-2 hover:opacity-80 transition-opacity" style={{ color: 'var(--droid-accent)' }}>{children}</a>
           ),
           blockquote: ({ children }) => (
-            <blockquote className={`italic text-droid-text-secondary ${specMode ? 'border-l border-droid-border/50 pl-4 py-0.5 my-4' : 'border-l-2 border-droid-border-hover pl-3.5'}`}>{children}</blockquote>
+            <blockquote className={`italic text-droid-text-secondary ${specMode ? 'border-l border-droid-border pl-4 py-0.5 my-4' : 'border-l-2 border-droid-border-hover pl-3.5'}`}>{children}</blockquote>
           ),
           hr: () => <hr className={`border-0 h-px bg-droid-border/25 ${specMode ? 'my-8' : 'my-4'}`} />,
           code: ({ className, children }) => {
@@ -264,11 +264,11 @@ function MarkdownImpl({ children, specMode }: { children: string; specMode?: boo
             );
           },
           table: ({ children }) => (
-            <div className={`overflow-x-auto rounded-xl border border-droid-border/40 ${specMode ? 'my-6' : 'my-2.5'}`}><table className={`w-full border-collapse ${specMode ? 'text-[13.5px]' : 'text-[12.5px]'}`}>{children}</table></div>
+            <div className={`overflow-x-auto rounded-xl border border-droid-border ${specMode ? 'my-6' : 'my-2.5'}`}><table className={`w-full border-collapse ${specMode ? 'text-[13.5px]' : 'text-[12.5px]'}`}>{children}</table></div>
           ),
           thead: ({ children }) => <thead className="bg-droid-elevated/25">{children}</thead>,
-          th: ({ children }) => <th className={`border-b border-droid-border/40 text-left font-medium text-droid-text ${specMode ? 'px-3.5 py-2.5' : 'px-2.5 py-1.5'}`}>{children}</th>,
-          td: ({ children }) => <td className={`border-t border-droid-border/25 text-droid-text-secondary ${specMode ? 'px-3.5 py-2.5' : 'px-2.5 py-1.5'}`}>{children}</td>,
+          th: ({ children }) => <th className={`border-b border-droid-border text-left font-medium text-droid-text ${specMode ? 'px-3.5 py-2.5' : 'px-2.5 py-1.5'}`}>{children}</th>,
+          td: ({ children }) => <td className={`border-t border-droid-border text-droid-text-secondary ${specMode ? 'px-3.5 py-2.5' : 'px-2.5 py-1.5'}`}>{children}</td>,
         }}
       >
         {children}

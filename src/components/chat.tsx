@@ -106,7 +106,7 @@ function ThinkingItem({ text, durationMs, active }: { text: string; durationMs?:
         )}
       </button>
       <Expand open={active ? true : open}>
-        <div className="mt-2 pl-[18px] text-[12.5px] text-droid-text-muted/90 leading-[1.7] whitespace-pre-wrap [overflow-wrap:anywhere]">
+        <div className="mt-2 pl-[18px] text-[12.5px] text-droid-text-muted/55 leading-[1.7] whitespace-pre-wrap [overflow-wrap:anywhere]">
           {text}
           {active && <StreamingCaret />}
         </div>
@@ -176,7 +176,7 @@ function CopyButton({ text }: { text: string }) {
 function CommandCard({ command, output, title }: { command: string; output?: string; title?: string }) {
   const out = output ? stripAnsi(output).trimEnd() : '';
   return (
-    <div className="rounded-xl bg-droid-bg/60 overflow-hidden ring-1 ring-droid-border/60">
+    <div className="rounded-xl bg-droid-bg/60 overflow-hidden ring-1 ring-droid-border">
       <div className="flex items-center gap-2 h-8 px-3 bg-droid-elevated/30">
         <Terminal className="w-3.5 h-3.5 text-droid-text-muted shrink-0" />
         <span className="min-w-0 flex-1 truncate text-[11.5px] text-droid-text-secondary">{title || 'Command'}</span>
@@ -448,7 +448,7 @@ const InlineSpecCard = memo(function InlineSpecCard({ text, onOpenSpecModal }: {
   const sections = useMemo(() => (text.match(/^#{1,3}\s+/gm) ?? []).length, [text]);
 
   return (
-    <div className="rounded-xl border border-droid-border/50 bg-droid-elevated/20 overflow-hidden">
+    <div className="rounded-xl border border-droid-border bg-droid-elevated/20 overflow-hidden">
       <div className="flex items-center gap-2 px-3 py-2.5">
         <button
           onClick={() => setExpanded((e) => !e)}
@@ -464,7 +464,7 @@ const InlineSpecCard = memo(function InlineSpecCard({ text, onOpenSpecModal }: {
         {onOpenSpecModal && (
           <button
             onClick={onOpenSpecModal}
-            className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-medium text-droid-text-secondary bg-droid-elevated/50 border border-droid-border/50 hover:bg-droid-elevated/80 hover:text-droid-text transition-colors"
+            className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-medium text-droid-text-secondary bg-droid-elevated/50 border border-droid-border hover:bg-droid-elevated/80 hover:text-droid-text transition-colors"
           >
             <ExpandIcon className="w-3.5 h-3.5" />
             View Spec
@@ -479,7 +479,7 @@ const InlineSpecCard = memo(function InlineSpecCard({ text, onOpenSpecModal }: {
             exit={{ opacity: 0 }}
             transition={{ duration: 0.12, ease: 'linear' }}
           >
-            <div className="px-4 pb-4 pt-2 border-t border-droid-border/30">
+            <div className="px-4 pb-4 pt-2 border-t border-droid-border">
               <Markdown specMode>{text}</Markdown>
             </div>
           </motion.div>
@@ -506,7 +506,7 @@ const FeedItemView = memo(function FeedItemView({ item, live, compacting, onOpen
       if (isSpec && specReady) return null;
       return (
         <div>
-          <Markdown specMode={isSpec}>{text}</Markdown>
+          <Markdown>{text}</Markdown>
           {live && <StreamingCaret />}
         </div>
       );
@@ -555,7 +555,7 @@ function WorkedGroup({ item, onOpenDiff, isSpec, specReady }: {
         <Caret open={open} />
       </button>
       <Expand open={open}>
-        <div className="mt-3 space-y-4 border-l border-droid-border/60 pl-4">
+        <div className="mt-3 space-y-4 border-l border-droid-border pl-4">
           {item.items.map((child) => (
             <FeedItemView
               key={child.key}

@@ -9,7 +9,7 @@ import {
   GitBranch, Hash, Activity, Loader2, ChevronRight, CornerDownRight, FileDiff,
   FolderGit, CheckCircle2, Circle
 } from 'lucide-react';
-import EditorOpenMenu, { openCodebase, openCurrentDiff } from './EditorOpenMenu';
+import { openCodebase, openCurrentDiff } from './EditorOpenMenu';
 import { ModelIcon, providerOf } from './ModelIcon';
 
 function SectionHeader({ label, trailing }: { label: string; trailing?: React.ReactNode }) {
@@ -119,7 +119,7 @@ export default function RightPanel() {
           {/* Environment */}
           {activeMission && (
             <div>
-              <SectionHeader label="Environment" trailing={<EditorOpenMenu cwd={activeMission.cwd} hasRepo={!!repoStatus} />} />
+              <SectionHeader label="Environment" />
               <div>
                 <Row
                   icon={<FolderGit className="w-4 h-4" />}
