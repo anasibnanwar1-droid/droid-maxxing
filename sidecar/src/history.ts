@@ -766,19 +766,15 @@ function limitHistoricalRows(
   includePlainChats?: boolean,
 ): HistoricalMission[] {
   if (!workspaceCwds && !includePlainChats) return rows;
-  const limit = limitPerWorkspace === undefined ? undefined : Math.max(1, Math.min(limitPerWorkspace, 50));
+  const limit = Math.max(1, Math.min(limitPerWorkspace ?? 5, 50));
   const limited: HistoricalMission[] = [];
   if (includePlainChats) {
-    limited.push(...limitRows(rows.filter((row) => !row.summary.cwd), limit));
+    limited.push(...rows.filter((row) => !row.summary.cwd).slice(0, limit));
   }
   for (const cwd of workspaceCwds ?? []) {
-    limited.push(...limitRows(rows.filter((row) => row.summary.cwd === cwd), limit));
+    limited.push(...rows.filter((row) => row.summary.cwd === cwd).slice(0, limit));
   }
   return limited.sort((a, b) => b.summary.updatedAt - a.summary.updatedAt);
-}
-
-function limitRows<T>(rows: T[], limit?: number): T[] {
-  return limit === undefined ? rows : rows.slice(0, limit);
 }
 
 function shouldIncludeCwd(cwd: string, workspaceCwds: Set<string> | null, includePlainChats?: boolean): boolean {

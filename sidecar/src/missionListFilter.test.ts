@@ -22,7 +22,7 @@ const summary = (id: string, cwd: string, updatedAt: number): MissionSummary => 
   updatedAt,
 });
 
-test('filterMissionListSummaries returns all summaries for requested workspaces by default', () => {
+test('filterMissionListSummaries returns only five latest summaries per requested workspace', () => {
   const summaries = [
     summary('plain-chat', '', 100),
     summary('other-workspace', '/repo/other', 200),
@@ -32,6 +32,7 @@ test('filterMissionListSummaries returns all summaries for requested workspaces 
 
   const filtered = filterMissionListSummaries(summaries, {
     workspaceCwds: ['/repo/app', '/repo/api'],
+    limitPerWorkspace: 5,
   });
 
   assert.deepEqual(filtered.map((m) => m.id), [
@@ -43,45 +44,14 @@ test('filterMissionListSummaries returns all summaries for requested workspaces 
     'app-4',
     'app-3',
     'app-2',
-    'app-1',
-    'app-0',
   ]);
 });
 
-test('filterMissionListSummaries keeps all plain chats by default', () => {
+test('filterMissionListSummaries keeps latest plain chats when workspace loading is limited', () => {
   const summaries = [
     ...Array.from({ length: 7 }, (_, i) => summary(`plain-${i}`, '', i + 1)),
     ...Array.from({ length: 7 }, (_, i) => summary(`app-${i}`, '/repo/app', i + 20)),
     summary('other-workspace', '/repo/other', 100),
-  ];
-
-  const filtered = filterMissionListSummaries(summaries, {
-    workspaceCwds: ['/repo/app'],
-    includePlainChats: true,
-  });
-
-  assert.deepEqual(filtered.map((m) => m.id), [
-    'app-6',
-    'app-5',
-    'app-4',
-    'app-3',
-    'app-2',
-    'app-1',
-    'app-0',
-    'plain-6',
-    'plain-5',
-    'plain-4',
-    'plain-3',
-    'plain-2',
-    'plain-1',
-    'plain-0',
-  ]);
-});
-
-test('filterMissionListSummaries honors an explicit per-workspace limit', () => {
-  const summaries = [
-    ...Array.from({ length: 7 }, (_, i) => summary(`plain-${i}`, '', i + 1)),
-    ...Array.from({ length: 7 }, (_, i) => summary(`app-${i}`, '/repo/app', i + 20)),
   ];
 
   const filtered = filterMissionListSummaries(summaries, {

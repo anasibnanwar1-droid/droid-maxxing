@@ -1,5 +1,7 @@
 import type { MissionSummary } from './protocol.js';
 
+const DEFAULT_LIMIT_PER_WORKSPACE = 5;
+
 export interface MissionListFilterOptions {
   workspaceCwds?: string[];
   includePlainChats?: boolean;
@@ -15,9 +17,7 @@ export function filterMissionListSummaries(
   const workspaceCwds = [...new Set((options.workspaceCwds ?? []).filter(Boolean))];
   if (workspaceCwds.length === 0 && !options.includePlainChats) return [];
 
-  const limit = options.limitPerWorkspace === undefined
-    ? undefined
-    : Math.max(1, Math.min(options.limitPerWorkspace, 50));
+  const limit = Math.max(1, Math.min(options.limitPerWorkspace ?? DEFAULT_LIMIT_PER_WORKSPACE, 50));
   const requested = new Set(workspaceCwds);
   const grouped = new Map<string, MissionSummary[]>();
   const plain: MissionSummary[] = [];
@@ -34,13 +34,9 @@ export function filterMissionListSummaries(
   }
 
   return [
-    ...limitRows(plain.sort((a, b) => b.updatedAt - a.updatedAt), limit),
+    ...plain.sort((a, b) => b.updatedAt - a.updatedAt).slice(0, limit),
     ...workspaceCwds
-      .flatMap((cwd) => limitRows((grouped.get(cwd) ?? []).sort((a, b) => b.updatedAt - a.updatedAt), limit)),
+      .flatMap((cwd) => (grouped.get(cwd) ?? []).sort((a, b) => b.updatedAt - a.updatedAt).slice(0, limit)),
   ]
     .sort((a, b) => b.updatedAt - a.updatedAt);
-}
-
-function limitRows<T>(rows: T[], limit?: number): T[] {
-  return limit === undefined ? rows : rows.slice(0, limit);
 }
