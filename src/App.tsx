@@ -112,7 +112,7 @@ export default function App() {
 
   useEffect(() => {
     if (embedded) return;
-    listMissions({ workspaceCwds: state.workspaceCwds, includePlainChats: true, limitPerWorkspace: 5 });
+    listMissions({ workspaceCwds: state.workspaceCwds, includePlainChats: true });
   }, [embedded, state.workspaceCwds]);
 
   useEffect(() => {
