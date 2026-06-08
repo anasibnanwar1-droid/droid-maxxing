@@ -505,9 +505,17 @@ const FeedItemView = memo(function FeedItemView({ item, live, compacting, onOpen
       // MessageFeed; collapse the draft prose so it isn't duplicated.
       if (isSpec && specReady) return null;
       return (
-        <div>
+        <div className="group/msg">
           <Markdown>{text}</Markdown>
-          {live && <StreamingCaret />}
+          {live ? (
+            <StreamingCaret />
+          ) : (
+            text.trim() && (
+              <div className="mt-1.5 -ml-1 opacity-0 group-hover/msg:opacity-100 focus-within:opacity-100 transition-opacity">
+                <CopyButton text={text} />
+              </div>
+            )
+          )}
         </div>
       );
     }
