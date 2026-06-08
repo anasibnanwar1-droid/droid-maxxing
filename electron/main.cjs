@@ -1,8 +1,9 @@
-const { app, BrowserView, BrowserWindow, Menu, Notification, dialog, ipcMain, safeStorage } = require('electron');
-const { spawn } = require('node:child_process');
+const { app, BrowserView, BrowserWindow, Menu, Notification, dialog, ipcMain, safeStorage, shell } = require('electron');
+const { execFile, spawn } = require('node:child_process');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const fsp = require('node:fs/promises');
+const os = require('node:os');
 const path = require('node:path');
 
 const APP_NAME = 'Droid Control';
@@ -87,6 +88,8 @@ function registerIpc() {
   ipcMain.handle('clear-api-key', clearApiKey);
   ipcMain.handle('list-files', (_event, { dir }) => listFiles(dir));
   ipcMain.handle('read-file', (_event, { path: filePath }) => readFile(filePath));
+  ipcMain.handle('repo-status', (_event, { dir }) => repoStatus(dir));
+  ipcMain.handle('open-project', (_event, { dir, editor, target }) => openProject(dir, editor, target));
 
   ipcMain.handle('native-browser-open', (_event, { sessionId, url, bounds, viewport }) => openNativeBrowser(sessionId, url, bounds, viewport));
   ipcMain.handle('native-browser-attach', (_event, { sessionId, bounds, url }) => attachNativeBrowser(sessionId, bounds, { restoreUrl: url }));
@@ -744,6 +747,170 @@ async function listFiles(dir) {
 
 function readFile(filePath) {
   return fsp.readFile(expandHome(filePath), 'utf8');
+}
+
+async function repoStatus(dir) {
+  const root = expandHome(String(dir || ''));
+  if (!root) return null;
+  try {
+    const rootStat = await fsp.stat(root);
+    if (!rootStat.isDirectory()) return null;
+    const [repoRoot, status] = await Promise.all([
+      git(root, ['rev-parse', '--show-toplevel']),
+      git(root, ['status', '--porcelain=v1', '--branch', '--untracked-files=all']),
+    ]);
+    return { repoRoot: repoRoot.trim() || null, ...parseGitStatus(status) };
+  } catch {
+    return null;
+  }
+}
+
+async function openProject(dir, editor, target) {
+  const root = await projectRoot(dir);
+  const pathToOpen = target === 'diff' ? await writeDiffFile(root) : root;
+  await launchProjectTarget(editor, pathToOpen, root, target);
+}
+
+async function projectRoot(dir) {
+  const root = expandHome(String(dir || ''));
+  if (!root) throw new Error('No project folder selected.');
+  const rootStat = await fsp.stat(root);
+  if (!rootStat.isDirectory()) throw new Error('Project path is not a directory.');
+  try {
+    return (await git(root, ['rev-parse', '--show-toplevel'])).trim() || root;
+  } catch {
+    return root;
+  }
+}
+
+async function writeDiffFile(root) {
+  let diff;
+  try {
+    diff = await currentGitDiff(root);
+  } catch (err) {
+    diff = `Unable to read git diff: ${err.message}\n`;
+  }
+  const dir = path.join(app.getPath('temp'), 'droid-control-diffs');
+  await fsp.mkdir(dir, { recursive: true });
+  const name = (path.basename(root) || 'repo').replace(/[^\w.-]+/g, '-');
+  const filePath = path.join(dir, `${name}-${Date.now()}.diff`);
+  await fsp.writeFile(filePath, diff || 'No changes.\n', 'utf8');
+  return filePath;
+}
+
+async function currentGitDiff(root) {
+  const parts = [await git(root, ['diff', 'HEAD', '--'])];
+  const untracked = (await git(root, ['ls-files', '--others', '--exclude-standard']))
+    .split(/\r?\n/)
+    .filter(Boolean);
+  for (const file of untracked) {
+    const diff = await gitDiff(root, ['diff', '--no-index', '--', os.devNull, file]);
+    if (diff) parts.push(diff);
+  }
+  return parts.filter(Boolean).join('\n');
+}
+
+async function launchProjectTarget(editor, pathToOpen, root, target) {
+  const id = normalizeEditor(editor);
+  if (id === 'finder') {
+    if (target === 'diff') shell.showItemInFolder(pathToOpen);
+    else await openPathOrThrow(pathToOpen);
+    return;
+  }
+  if (id === 'terminal') {
+    if (target === 'diff') {
+      await openPathOrThrow(pathToOpen);
+      return;
+    }
+    await openTerminal(root);
+    return;
+  }
+  if (id === 'vscode') return openApp('Visual Studio Code', 'code', pathToOpen);
+  if (id === 'cursor') return openApp('Cursor', 'cursor', pathToOpen);
+  if (id === 'xcode') return openApp('Xcode', 'xed', pathToOpen);
+}
+
+async function openPathOrThrow(targetPath) {
+  const error = await shell.openPath(targetPath);
+  if (error) throw new Error(error);
+}
+
+function normalizeEditor(value) {
+  return ['vscode', 'cursor', 'finder', 'terminal', 'xcode'].includes(value) ? value : 'vscode';
+}
+
+function openApp(macAppName, command, targetPath) {
+  if (process.platform === 'darwin') return spawnDetached('open', ['-a', macAppName, targetPath]);
+  return spawnDetached(command, [targetPath]);
+}
+
+function openTerminal(root) {
+  if (process.platform === 'darwin') return spawnDetached('open', ['-a', 'Terminal', root]);
+  if (process.platform === 'win32') return spawnDetached('cmd.exe', ['/k'], { cwd: root });
+  return spawnDetached('x-terminal-emulator', ['--working-directory', root]);
+}
+
+function spawnDetached(command, args, options = {}) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, { detached: true, stdio: 'ignore', cwd: options.cwd });
+    child.once('error', reject);
+    child.once('spawn', () => {
+      child.unref();
+      resolve();
+    });
+  });
+}
+
+function git(cwd, args) {
+  return new Promise((resolve, reject) => {
+    execFile('git', ['-C', cwd, ...args], { timeout: 5000, maxBuffer: 1024 * 1024 }, (err, stdout) => {
+      if (err) reject(err);
+      else resolve(String(stdout));
+    });
+  });
+}
+
+function gitDiff(cwd, args) {
+  return new Promise((resolve, reject) => {
+    execFile('git', ['-C', cwd, ...args], { timeout: 5000, maxBuffer: 1024 * 1024 }, (err, stdout) => {
+      if (err && err.code !== 1) reject(err);
+      else resolve(String(stdout));
+    });
+  });
+}
+
+function parseGitStatus(stdout) {
+  let branch = null;
+  let changed = 0;
+  let staged = 0;
+  let unstaged = 0;
+  let untracked = 0;
+  for (const line of String(stdout).split(/\r?\n/)) {
+    if (!line) continue;
+    if (line.startsWith('## ')) {
+      branch = parseGitBranch(line.slice(3));
+      continue;
+    }
+    const x = line[0];
+    const y = line[1];
+    if (x === '!' && y === '!') continue;
+    changed++;
+    if (x === '?' && y === '?') {
+      untracked++;
+      continue;
+    }
+    if (x !== ' ' && x !== '?') staged++;
+    if (y !== ' ' && y !== '?') unstaged++;
+  }
+  return { branch, changed, staged, unstaged, untracked };
+}
+
+function parseGitBranch(value) {
+  const text = String(value || '').trim();
+  if (text.startsWith('No commits yet on ')) return text.slice('No commits yet on '.length).trim() || null;
+  const branch = text.split('...')[0].trim();
+  if (!branch || branch === 'HEAD' || branch.startsWith('HEAD ')) return null;
+  return branch;
 }
 
 function expandHome(value) {

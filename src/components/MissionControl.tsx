@@ -1,9 +1,10 @@
 import { useRef, useEffect, useMemo, useState } from 'react';
 import { useStore } from '../hooks/useStore';
+import { useRepoStatus } from '../hooks/useRepoStatus';
 import { interruptMission, setMissionAutonomy } from '../lib/commands';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-  Settings, FileDiff, Monitor, GitBranch, GitCommitHorizontal, ChevronDown, ChevronRight,
+  FileDiff, Monitor, GitBranch, GitCommitHorizontal, ChevronDown, ChevronRight,
   Maximize2, X, PanelLeftClose, PanelLeft, Boxes, Globe, Loader2,
   ArrowLeft, CheckCircle2, Check,
 } from 'lucide-react';
@@ -22,10 +23,12 @@ interface RoleAgent {
 }
 import type { TranscriptEvent, BridgeFeature, MissionSummary, AgentRole, ProgressEntry, ModelInfo, Autonomy } from '../types/bridge';
 import { extractFileChange, type FileChange } from '../lib/diff';
+import { environmentLabels } from '../lib/repoEnvironment';
 import { DiffFull } from './DiffView';
 import { ModelIcon, providerOf } from './ModelIcon';
 import { CAT_ICON, CAT_LABEL, toolMeta } from '../lib/tools';
 import { MessageFeed } from './chat';
+import EditorOpenMenu, { openCodebase, openCurrentDiff } from './EditorOpenMenu';
 import PromptInput from './PromptInput';
 
 const ACCENT = 'var(--droid-accent)';
@@ -172,6 +175,8 @@ function ContextColumn({
   big?: boolean;
 }) {
   const skills = Array.from(new Set(mission.features.map((f) => f.skillName).filter(Boolean)));
+  const repoStatus = useRepoStatus(mission.cwd);
+  const env = environmentLabels(mission.cwd, repoStatus);
 
   return (
     <div className="flex-1 min-h-0 overflow-y-auto px-3 py-3 space-y-5">
@@ -179,13 +184,11 @@ function ContextColumn({
       <section>
         <div className="flex items-center justify-between px-2 mb-1">
           <SectionLabel>Environment</SectionLabel>
-          <button className="p-1 rounded-md text-droid-text-muted/60 hover:text-droid-text hover:bg-droid-elevated/60 transition-colors">
-            <Settings className="w-3.5 h-3.5" />
-          </button>
+          <EditorOpenMenu cwd={mission.cwd} />
         </div>
-        <EnvRow icon={<FileDiff className="w-4 h-4" />} label="Changes" />
-        <EnvRow icon={<Monitor className="w-4 h-4" />} label="Local" chevron />
-        <EnvRow icon={<GitBranch className="w-4 h-4" />} label="main" chevron />
+        <EnvRow icon={<FileDiff className="w-4 h-4" />} label={env.changes} onClick={() => openCurrentDiff(mission.cwd)} />
+        <EnvRow icon={<Monitor className="w-4 h-4" />} label={env.location} chevron onClick={() => openCodebase(mission.cwd)} />
+        <EnvRow icon={<GitBranch className="w-4 h-4" />} label={env.branch} chevron />
         <EnvRow icon={<GitCommitHorizontal className="w-4 h-4" />} label="Commit or push" />
       </section>
 
