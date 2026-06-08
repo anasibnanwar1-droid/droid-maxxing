@@ -45,6 +45,15 @@ export interface ProgressEntry {
   workerSessionId?: string;
 }
 
+export interface WorkerSummary {
+  sessionId: string;
+  status: 'running' | 'paused' | 'completed';
+  label?: string;
+  prompt?: string;
+  modelId?: string;
+  reasoningEffort?: ReasoningEffort;
+}
+
 export interface MissionSummary {
   id: string;            // stable app conversation id
   sessionId?: string;    // active Droid session id
@@ -372,7 +381,7 @@ export type ServerEvent =
   | { type: 'mission.updated'; mission: MissionSummary }
   | { type: 'mission.features'; missionId: string; features: BridgeFeature[] }
   | { type: 'mission.progress'; missionId: string; entries: ProgressEntry[] }
-  | { type: 'mission.worker'; missionId: string; event: 'started' | 'completed'; workerSessionId: string; exitCode?: number; label?: string }
+  | { type: 'mission.worker'; missionId: string; event: 'started' | 'updated' | 'completed'; workerSessionId: string; exitCode?: number; label?: string; prompt?: string; modelId?: string; reasoningEffort?: ReasoningEffort }
   | { type: 'mission.tokens'; missionId: string; tokensIn: number; tokensOut: number; contextTokens: number; maxContextTokens?: number }
   | { type: 'mission.transcript'; event: TranscriptEvent }
   | { type: 'mission.permission'; request: PermissionRequest }

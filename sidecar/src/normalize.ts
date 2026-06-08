@@ -71,7 +71,7 @@ export interface NormalizedEvent {
   progress?: ProgressEntry[];
   missionState?: string;
   worker?: { event: 'started' | 'completed'; workerSessionId: string; exitCode?: number };
-  subagent?: { sessionId?: string; label?: string; done?: boolean };
+  subagent?: { sessionId?: string; toolUseId?: string; label?: string; prompt?: string; done?: boolean };
   tokens?: { tokensIn: number; tokensOut: number; contextTokens: number };
   done?: boolean;
 }
@@ -80,12 +80,29 @@ function str(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value.trim() : undefined;
 }
 
+function taskPrompt(input: Record<string, unknown>): string | undefined {
+  for (const key of ['prompt', 'task', 'instructions', 'message', 'description', 'input']) {
+    const value = str(input[key]);
+    if (value) return value;
+  }
+  return undefined;
+}
+
+function toolUseIdFrom(...values: unknown[]): string | undefined {
+  for (const value of values) {
+    const id = str(value);
+    if (id) return id;
+  }
+  return undefined;
+}
+
 // A chat (non-mission) session spawns subagents via the Task tool; those surface
 // as ToolProgress events carrying `subagentSessionId` plus a Task tool name/input.
 function detectSubagent(
   toolName: unknown,
   input: Record<string, unknown>,
   sessionId: string | undefined,
+  toolUseId: string | undefined,
 ): NormalizedEvent['subagent'] | undefined {
   const isTask =
     (typeof toolName === 'string' && /task/i.test(toolName)) ||
@@ -97,7 +114,7 @@ function detectSubagent(
     str(input.subagentType) ??
     str(input.description) ??
     (typeof toolName === 'string' ? toolName : undefined);
-  return { sessionId, label };
+  return { sessionId, toolUseId, label, prompt: taskPrompt(input) };
 }
 
 // Translate a single SDK stream event into zero-or-one normalized bridge updates.
@@ -126,14 +143,16 @@ export function normalizeStreamEvent(
   // ToolProgress events nest the spawned subagent's session id under `update`.
   const update = raw.update && typeof raw.update === 'object' ? (raw.update as Record<string, unknown>) : undefined;
   const subagentSessionId = str(raw.subagentSessionId) ?? str(update?.subagentSessionId);
+  const eventToolUseId = toolUseIdFrom(raw.toolUseId, update?.toolUseId);
 
   if (ev.type === 'tool_progress' || raw.type === 'tool_progress') {
     // The session id arrives here; the label was captured earlier on the Task tool_call,
     // so only forward a label if these params actually carry a specific subagent name.
     const params = update?.parameters && typeof update.parameters === 'object' ? (update.parameters as Record<string, unknown>) : {};
     const label = str(params.subagent_type) ?? str(params.subagentType);
-    if (!subagentSessionId && !label) return null;
-    return { subagent: { sessionId: subagentSessionId, label } };
+    const prompt = taskPrompt(params);
+    if (!subagentSessionId && !label && !prompt) return null;
+    return { subagent: { sessionId: subagentSessionId, toolUseId: eventToolUseId, label, prompt } };
   }
 
   switch (ev.type) {
@@ -145,8 +164,9 @@ export function normalizeStreamEvent(
       };
     case 'tool_call':
     case 'tool_call_delta': {
-      const toolUse = (ev as { toolUse?: { name?: string; input?: Record<string, unknown> } }).toolUse ?? {};
-      const subagent = detectSubagent(toolUse.name, toolUse.input ?? {}, subagentSessionId);
+      const toolUse = (ev as { toolUse?: { id?: string; name?: string; input?: Record<string, unknown> } }).toolUse ?? {};
+      const toolUseId = toolUseIdFrom(toolUse.id, eventToolUseId);
+      const subagent = detectSubagent(toolUse.name, toolUse.input ?? {}, subagentSessionId, toolUseId);
       return {
         transcript: transcript(missionId, agentSessionId, role, 'tool_call', {
           toolName: toolUse.name,
@@ -157,13 +177,14 @@ export function normalizeStreamEvent(
     }
     case 'tool_result': {
       const isTask = typeof ev.toolName === 'string' && /task/i.test(ev.toolName);
+      const toolUseId = toolUseIdFrom((ev as { toolUseId?: string }).toolUseId, eventToolUseId);
       return {
         transcript: transcript(missionId, agentSessionId, role, 'tool_result', {
           toolName: ev.toolName,
           text: typeof ev.content === 'string' ? ev.content : JSON.stringify(ev.content),
           isError: ev.isError,
         }),
-        ...(subagentSessionId || isTask ? { subagent: { sessionId: subagentSessionId, done: true } } : {}),
+        ...(subagentSessionId || isTask ? { subagent: { sessionId: subagentSessionId, toolUseId, done: true } } : {}),
       };
     }
     case 'error':
@@ -192,7 +213,7 @@ export function normalizeStreamEvent(
     case 'result':
       return { done: true };
     default:
-      if (subagentSessionId) return { subagent: { sessionId: subagentSessionId } };
+      if (subagentSessionId) return { subagent: { sessionId: subagentSessionId, toolUseId: eventToolUseId } };
       return null;
   }
 }

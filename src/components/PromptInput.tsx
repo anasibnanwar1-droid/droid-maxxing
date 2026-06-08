@@ -74,7 +74,7 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
       ? activeMission.kind === 'spec'
       : state.specMode;
   const targetAgentSessionId =
-    state.selectedAgentSessionId && state.selectedAgentSessionId !== 'orchestrator'
+    activeMission?.kind !== 'mission_orchestrator' && state.selectedAgentSessionId && state.selectedAgentSessionId !== 'orchestrator'
       ? state.selectedAgentSessionId
       : null;
 

@@ -10,6 +10,7 @@ import type {
   PermissionRequest,
   MissionQuestion,
   ModelInfo,
+  WorkerSummary,
   SkillInfo,
   ReasoningEffort,
   ContextStatsSnapshot,
@@ -21,11 +22,8 @@ import { addWorkspaceCwd } from '../lib/workspaces';
 
 export type AgentKind = 'orchestrator' | 'worker' | 'validator';
 
-export interface WorkerInfo {
-  sessionId: string;
-  status: 'running' | 'completed';
+export interface WorkerInfo extends WorkerSummary {
   startedAt: number;
-  label?: string;
 }
 
 export interface QueuedPrompt {
@@ -134,7 +132,8 @@ type Action =
   | { type: 'MISSION_UPDATED'; mission: MissionSummary }
   | { type: 'MISSION_FEATURES'; missionId: string; features: MissionSummary['features'] }
   | { type: 'MISSION_PROGRESS'; missionId: string; entries: ProgressEntry[] }
-  | { type: 'MISSION_WORKER'; missionId: string; event: 'started' | 'completed'; workerSessionId: string; label?: string }
+  | { type: 'MISSION_WORKER'; missionId: string; event: 'started' | 'updated' | 'completed'; workerSessionId: string; label?: string; prompt?: string; modelId?: string; reasoningEffort?: ReasoningEffort }
+  | { type: 'AGENT_UPDATED'; missionId: string; agentSessionId: string; role: AgentKind; status: 'opened' | 'running' | 'paused' | 'completed' }
   | { type: 'MISSION_TOKENS'; missionId: string; tokensIn: number; tokensOut: number; contextTokens: number; maxContextTokens?: number }
   | { type: 'CONTEXT_UPDATED'; sessionId: string; stats: ContextStatsSnapshot }
   | { type: 'MISSION_TRANSCRIPT'; event: TranscriptEvent }
@@ -601,13 +600,35 @@ function reducer(state: AppState, action: Action): AppState {
         next = [...prev];
         next[idx] = {
           ...next[idx],
-          status: action.event === 'completed' ? 'completed' : next[idx].status,
+          status: action.event === 'completed' ? 'completed' : action.event === 'updated' ? next[idx].status : 'running',
           label: action.label ?? next[idx].label,
+          prompt: action.prompt ?? next[idx].prompt,
+          modelId: action.modelId ?? next[idx].modelId,
+          reasoningEffort: action.reasoningEffort ?? next[idx].reasoningEffort,
         };
       } else {
-        next = [...prev, { sessionId: action.workerSessionId, status: action.event === 'completed' ? 'completed' : 'running', startedAt: Date.now(), label: action.label }];
+        if (action.event === 'updated') return state;
+        next = [...prev, {
+          sessionId: action.workerSessionId,
+          status: action.event === 'completed' ? 'completed' : 'running',
+          startedAt: Date.now(),
+          label: action.label,
+          prompt: action.prompt,
+          modelId: action.modelId,
+          reasoningEffort: action.reasoningEffort,
+        }];
       }
       return { ...state, workers: { ...state.workers, [mid]: next } };
+    }
+
+    case 'AGENT_UPDATED': {
+      if (action.role !== 'worker' || action.status === 'opened') return state;
+      const prev = state.workers[action.missionId] ?? [];
+      const idx = prev.findIndex((w) => w.sessionId === action.agentSessionId);
+      if (idx < 0) return state;
+      const next = [...prev];
+      next[idx] = { ...next[idx], status: action.status };
+      return { ...state, workers: { ...state.workers, [action.missionId]: next } };
     }
 
     case 'MISSION_TOKENS': {
@@ -654,6 +675,7 @@ function reducer(state: AppState, action: Action): AppState {
       const ev = action.event;
       const mid = ev.missionId;
       const prev = state.transcripts[mid] ?? [];
+      if (prev.some((event) => event.id === ev.id)) return state;
 
       // Delta merging: if last event has same kind + agentSessionId, append text
       // Only merge backend streaming deltas (author is absent); do NOT merge explicit user echoes
@@ -1088,7 +1110,24 @@ function adaptEvent(ev: ServerEvent): Action | null {
     case 'mission.progress':
       return { type: 'MISSION_PROGRESS', missionId: ev.missionId, entries: ev.entries };
     case 'mission.worker':
-      return { type: 'MISSION_WORKER', missionId: ev.missionId, event: ev.event, workerSessionId: ev.workerSessionId, label: ev.label };
+      return {
+        type: 'MISSION_WORKER',
+        missionId: ev.missionId,
+        event: ev.event,
+        workerSessionId: ev.workerSessionId,
+        label: ev.label,
+        prompt: ev.prompt,
+        modelId: ev.modelId,
+        reasoningEffort: ev.reasoningEffort,
+      };
+    case 'agent.updated':
+      return {
+        type: 'AGENT_UPDATED',
+        missionId: ev.missionId,
+        agentSessionId: ev.agentSessionId,
+        role: ev.role,
+        status: ev.status,
+      };
     case 'mission.tokens':
       return { type: 'MISSION_TOKENS', missionId: ev.missionId, tokensIn: ev.tokensIn, tokensOut: ev.tokensOut, contextTokens: ev.contextTokens, maxContextTokens: ev.maxContextTokens };
     case 'mission.transcript':

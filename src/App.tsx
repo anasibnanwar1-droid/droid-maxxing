@@ -3,7 +3,7 @@ import { useStore } from './hooks/useStore';
 import { AnimatePresence, motion } from 'framer-motion';
 import { Monitor, PanelLeft } from 'lucide-react';
 import { bridge } from './lib/bridge';
-import { connect, listFactoryDefaults, listMissions, loadMissionHistory, sendNativeBrowserResult } from './lib/commands';
+import { connect, listFactoryDefaults, listMissions, loadMissionHistory, sendNativeBrowserResult, subscribeWorker } from './lib/commands';
 import { isEmbedded } from './lib/embed';
 import { getApiKey } from './lib/desktop';
 import { performNativeBrowserRequest } from './lib/nativeBrowserAgent';
@@ -150,6 +150,14 @@ export default function App() {
     requestedHistory.current.add(activeMission.id);
     loadMissionHistory(activeMission.id);
   }, [activeMission, embedded, state.historyLoaded]);
+
+  useEffect(() => {
+    if (embedded || !activeMission) return;
+    if (activeMission.kind === 'mission_orchestrator') return;
+    const agentSessionId = state.selectedAgentSessionId;
+    if (!agentSessionId || agentSessionId === 'orchestrator') return;
+    subscribeWorker(activeMission.id, agentSessionId);
+  }, [activeMission?.id, embedded, state.selectedAgentSessionId]);
 
   // Keyboard shortcuts
   useEffect(() => {
