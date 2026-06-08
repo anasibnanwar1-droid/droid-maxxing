@@ -1,6 +1,7 @@
 import { createSdkMcpServer, tool } from '@factory/droid-sdk';
 import { z } from 'zod';
 import type { ReasoningEffort } from './protocol.js';
+import { jsonResult, safeTool } from './mcpToolUtils.js';
 
 const reasoningSchema = z.enum(['off', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'dynamic']);
 
@@ -52,27 +53,4 @@ export function createControlMcpServer(options: ControlMcpServerOptions) {
       ),
     ],
   });
-}
-
-type ToolHandlerResult = string | { content: { type: 'text'; text: string }[]; isError?: boolean };
-
-function safeTool<T>(handler: (input: T) => Promise<ToolHandlerResult> | ToolHandlerResult): (input: T) => Promise<ToolHandlerResult> {
-  return async (input: T) => {
-    try {
-      return await handler(input);
-    } catch (err) {
-      return {
-        isError: true,
-        content: [{ type: 'text', text: jsonResult({ ok: false, error: errMsg(err) }) }],
-      };
-    }
-  };
-}
-
-function jsonResult(value: unknown): string {
-  return JSON.stringify(value, null, 2);
-}
-
-function errMsg(value: unknown): string {
-  return value instanceof Error ? value.message : String(value);
 }

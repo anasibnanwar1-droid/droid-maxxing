@@ -1018,10 +1018,8 @@ export class MissionManager {
     const toolUseId = sub.toolUseId ?? pending?.toolUseId;
     const label = sub.label ?? pending?.label;
     const prompt = sub.prompt ?? pending?.prompt;
-    const settings = mission.nextSubagentModelOverride?.requested ?? {};
     mission.knownSubagents.add(sessionId);
     mission.completedSubagents.delete(sessionId);
-    mission.subagentSettings.set(sessionId, settings);
     if (toolUseId) mission.subagentToolUseIds.set(toolUseId, sessionId);
     if (mission.nextSubagentModelOverride) void this.restoreSubagentModelOverride(appSessionId, 'spawned');
     this.emit({
@@ -1031,7 +1029,6 @@ export class MissionManager {
       workerSessionId: sessionId,
       label,
       prompt,
-      ...settings,
     });
     if (prompt) {
       this.emitTranscript({
