@@ -125,7 +125,13 @@ export default function ModelSelectorPopover({ onClose, singleAgent = false }: {
   const updateModel = (modelId?: string) => {
     if (missionScoped) dispatch({ type: 'MISSION_SET_MODEL', missionId: activeMission!.id, modelId });
     else dispatch({ type: 'SET_AGENT_MODEL', agent, modelId });
-    updateAgentSettings({ missionId: state.activeMissionId ?? undefined, agent, modelId: modelId ?? null });
+    updateAgentSettings({
+      missionId: state.activeMissionId ?? undefined,
+      agent,
+      modelId: modelId ?? null,
+      compactionTokenLimit: state.compactionTokenLimit ?? null,
+      compactionTokenLimitPerModel: state.compactionTokenLimitPerModel,
+    });
 
     // Snap reasoning to a value the new model actually supports.
     const next = modelId ? source.find((x) => x.id === modelId) : undefined;
@@ -313,7 +319,7 @@ export default function ModelSelectorPopover({ onClose, singleAgent = false }: {
               </>
             ) : (
               <div className="px-2 py-3 text-[10px] text-droid-text-muted text-center">
-                Loading models from the daemon…
+                Loading models…
               </div>
             )}
           </div>

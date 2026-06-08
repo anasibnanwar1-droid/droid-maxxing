@@ -58,6 +58,8 @@ interface StoredModelSettings {
   modelId?: string;
   reasoningEffort?: string;
   compactionModel?: string;
+  compactionTokenLimit?: number;
+  compactionTokenLimitPerModel?: Record<string, number>;
   autonomyLevel?: string;
   workerModel?: string;
   workerReasoningEffort?: string;
@@ -457,6 +459,8 @@ export function readFactoryDefaults(): FactoryDefaults {
     modelId: stringValue(session.model) || stringValue(session.modelId),
     reasoningEffort: mapReasoning(stringValue(session.reasoningEffort)),
     compactionModel: stringValue(settings.compactionModel) || stringValue(session.compactionModel),
+    compactionTokenLimit: tokenLimitValue(settings.compactionTokenLimit),
+    compactionTokenLimitPerModel: tokenLimitRecordValue(settings.compactionTokenLimitPerModel),
     autonomy: mapAutonomy(stringValue(session.autonomyLevel)),
     interactionMode: mapInteractionMode(stringValue(session.interactionMode)),
     specModelId: stringValue(session.specModeModel),
@@ -473,6 +477,20 @@ export function readFactoryDefaults(): FactoryDefaults {
 function mapInteractionMode(value?: string): FactoryDefaults['interactionMode'] {
   if (value === 'auto' || value === 'spec' || value === 'agi') return value;
   return undefined;
+}
+
+function tokenLimitValue(value: unknown): number | undefined {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return undefined;
+  return Math.trunc(value);
+}
+
+function tokenLimitRecordValue(value: unknown): Record<string, number> | undefined {
+  const record = objectValue(value);
+  if (!record) return undefined;
+  const entries = Object.entries(record)
+    .map(([modelId, limit]) => [modelId, tokenLimitValue(limit)] as const)
+    .filter((entry): entry is [string, number] => entry[1] !== undefined);
+  return entries.length > 0 ? Object.fromEntries(entries) : undefined;
 }
 
 function loadHistoricalMission(dir: string): HistoricalMission & {
@@ -526,6 +544,8 @@ function readMissionModelSettings(dir: string): FactoryDefaults {
     modelId: settings.model || settings.modelId,
     reasoningEffort: mapReasoning(settings.reasoningEffort),
     compactionModel: settings.compactionModel,
+    compactionTokenLimit: tokenLimitValue(settings.compactionTokenLimit),
+    compactionTokenLimitPerModel: tokenLimitRecordValue(settings.compactionTokenLimitPerModel),
     workerModelId: settings.workerModel,
     workerReasoningEffort: mapReasoning(settings.workerReasoningEffort),
     validatorModelId: settings.validationWorkerModel,
@@ -868,6 +888,14 @@ function readSessionModelSettings(start: StoredSessionStart, sessionPath: string
       stringValue(sidecarSettings.compactionModel) ||
       stringValue(settings.compactionModel) ||
       stringValue(raw.compactionModel),
+    compactionTokenLimit:
+      tokenLimitValue(sidecarSettings.compactionTokenLimit) ??
+      tokenLimitValue(settings.compactionTokenLimit) ??
+      tokenLimitValue(raw.compactionTokenLimit),
+    compactionTokenLimitPerModel:
+      tokenLimitRecordValue(sidecarSettings.compactionTokenLimitPerModel) ??
+      tokenLimitRecordValue(settings.compactionTokenLimitPerModel) ??
+      tokenLimitRecordValue(raw.compactionTokenLimitPerModel),
     autonomy: mapAutonomy(
       stringValue(sidecarSettings.autonomyLevel) ||
         stringValue(settings.autonomyLevel) ||

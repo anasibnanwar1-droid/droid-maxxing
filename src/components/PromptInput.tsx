@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useMemo } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { useStore } from '../hooks/useStore';
 import { useMissionLive } from '../hooks/useMissionLive';
-import { sendToMission, sendToAgent, createMission, interruptMission, interruptAgent, compactSession, setInteractionMode, newClientRef } from '../lib/commands';
+import { sendToMission, sendToAgent, createMission, interruptMission, interruptAgent, compactSession, setInteractionMode, newClientRef, listSkills } from '../lib/commands';
 import { pickDirectory, listFiles } from '../lib/desktop';
 import { ArrowUp, ChevronDown, SlidersHorizontal, Square, FileText, X, Folder, User, Box, GripVertical, Pencil, Check, ListPlus } from 'lucide-react';
 import ModelSelectorPopover from './ModelSelectorPopover';
@@ -111,6 +111,10 @@ export default function PromptInput() {
     () => state.skills.filter((s) => s.userInvocable !== false && s.enabled !== false),
     [state.skills]
   );
+
+  useEffect(() => {
+    if (trigger?.kind === 'slash' && state.skills.length === 0) listSkills(activeMission?.id);
+  }, [activeMission?.id, state.skills.length, trigger?.kind]);
 
   const menuItems = useMemo<MenuItem[]>(() => {
     if (!trigger) return [];

@@ -357,7 +357,7 @@ export type ClientCommand =
   | { type: 'mission.close'; missionId: string }
   | { type: 'mission.list'; workspaceCwds?: string[]; includePlainChats?: boolean; limitPerWorkspace?: number }
   | { type: 'mission.loadHistory'; missionId: string }
-  | { type: 'settings.agent.update'; missionId?: string; agent: ConfigurableAgent; modelId?: string | null; reasoningEffort?: ReasoningEffort }
+  | { type: 'settings.agent.update'; missionId?: string; agent: ConfigurableAgent; modelId?: string | null; reasoningEffort?: ReasoningEffort; compactionTokenLimit?: number | null; compactionTokenLimitPerModel?: Record<string, number> }
   | { type: 'mission.setAutonomy'; missionId: string; autonomy: Autonomy }
   | { type: 'mission.setInteractionMode'; missionId: string; mode: SessionInteractionMode }
   | { type: 'browser.open'; missionId: string; url: string; viewport?: BrowserViewport; viewportMode?: BrowserViewportMode }

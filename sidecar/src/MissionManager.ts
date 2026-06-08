@@ -47,7 +47,7 @@ import {
   readFactoryDefaults,
 } from './history.js';
 import { mergeModelCatalog } from './modelCatalog.js';
-import { readDroidCliModelCatalog } from './DroidCliCatalog.js';
+import { readDroidCliModelCatalog, readDroidCliModelCatalogCache } from './DroidCliCatalog.js';
 import { BrowserSessionManager } from './browser/BrowserSessionManager.js';
 import { createBrowserMcpServer } from './browser/browserMcpServer.js';
 import { NativeBrowserRuntime } from './browser/NativeBrowserRuntime.js';
@@ -89,9 +89,16 @@ interface PendingPermission {
   kind: PermissionKind;
 }
 
-interface AgentSettingPatch {
+export interface AgentSettingPatch {
   modelId?: string | null;
   reasoningEffort?: ReasoningEffort;
+  compactionTokenLimit?: number | null;
+  compactionTokenLimitPerModel?: Record<string, number>;
+}
+
+export interface CompactionTokenLimitPatch {
+  compactionTokenLimit?: number | null;
+  compactionTokenLimitPerModel?: Record<string, number>;
 }
 
 interface UsageOffset {
@@ -126,6 +133,7 @@ interface PendingNativeBrowserRequest {
 export class MissionManager {
   private ready = false;
   private cachedModels: ModelInfo[] | null = null;
+  private modelRefresh: Promise<ModelInfo[] | null> | null = null;
   private readonly runtime = new DroidRuntime();
   private readonly history = new HistoryIndex();
   private readonly missions = new Map<string, Mission>();
@@ -175,6 +183,7 @@ export class MissionManager {
         const models = await this.getModels();
         this.emit({ type: 'models.list', models });
         this.emit({ type: 'catalog.updated', catalog: 'models', items: models });
+        void this.refreshModelCatalog(true);
         return;
       }
       case 'catalog.tools':
@@ -338,14 +347,34 @@ export class MissionManager {
 
   private async getModels(): Promise<ModelInfo[]> {
     if (this.cachedModels) return this.cachedModels;
-    try {
-      const models = mergeModelCatalog(await readDroidCliModelCatalog(this.runtime.status().droidPath));
-      this.cachedModels = models;
-      return models;
-    } catch (err) {
-      this.emitError({ message: `models.list failed: ${errMsg(err)}` });
-      return [];
+    const droidPath = this.runtime.status().droidPath;
+    const cached = readDroidCliModelCatalogCache(droidPath);
+    if (cached.length > 0) {
+      this.cachedModels = mergeModelCatalog(cached);
+      return this.cachedModels;
     }
+    return (await this.refreshModelCatalog(false)) ?? [];
+  }
+
+  private refreshModelCatalog(emit: boolean): Promise<ModelInfo[] | null> {
+    if (this.modelRefresh) return this.modelRefresh;
+    this.modelRefresh = (async () => {
+      try {
+        const models = mergeModelCatalog(await readDroidCliModelCatalog(this.runtime.status().droidPath));
+        this.cachedModels = models;
+        if (emit) {
+          this.emit({ type: 'models.list', models });
+          this.emit({ type: 'catalog.updated', catalog: 'models', items: models });
+        }
+        return models;
+      } catch (err) {
+        this.emitError({ message: `models.list failed: ${errMsg(err)}` });
+        return null;
+      } finally {
+        this.modelRefresh = null;
+      }
+    })();
+    return this.modelRefresh;
   }
 
   private async getFactoryDefaults(): Promise<FactoryDefaultSettings> {
@@ -358,6 +387,8 @@ export class MissionManager {
       modelId: this.validModelId(defaults.modelId, models) ?? cliDefault?.id,
       reasoningEffort: this.validReasoning(defaults.modelId, defaults.reasoningEffort, models) ?? cliDefault?.defaultReasoningEffort,
       compactionModel: this.validCompactionModel(defaults.compactionModel, models),
+      compactionTokenLimit: normalizeCompactionTokenLimit(defaults.compactionTokenLimit),
+      compactionTokenLimitPerModel: validCompactionTokenLimitPerModel(defaults.compactionTokenLimitPerModel, models),
       specModelId: this.validModelId(defaults.specModelId, models) ?? this.validModelId(defaults.modelId, models) ?? cliDefault?.id,
       specReasoningEffort: this.validReasoning(defaults.specModelId, defaults.specReasoningEffort, models),
       workerModelId: this.validModelId(defaults.workerModelId, models) ?? cliDefault?.id,
@@ -385,7 +416,7 @@ export class MissionManager {
   }
 
   private async emitFactoryDefaults(): Promise<void> {
-    this.emit({ type: 'settings.defaults', defaults: await this.getFactoryDefaults() });
+    this.emit({ type: 'settings.defaults', defaults: readFactoryDefaults() });
   }
 
   private maxContextTokensForSummary(summary: MissionSummary): number | undefined {
@@ -402,11 +433,14 @@ export class MissionManager {
       if (cmd.missionId) this.rememberPendingAgentSettings(cmd);
       const mission = cmd.missionId ? this.findMission(cmd.missionId) : undefined;
       const missionId = mission?.summary.id ?? cmd.missionId;
-      if (mission && cmd.agent === 'orchestrator') {
-        await this.applyOrchestratorSessionSettings(mission, {
+      if (mission) {
+        const settings = await this.runtimeAgentSettings(mission, cmd.agent, {
           modelId: cmd.modelId,
           reasoningEffort: cmd.reasoningEffort,
+          compactionTokenLimit: cmd.compactionTokenLimit,
+          compactionTokenLimitPerModel: cmd.compactionTokenLimitPerModel,
         });
+        await this.applyAgentSessionSettings(mission, cmd.agent, settings);
       }
       if (cmd.missionId) {
         const patch = this.summaryPatchForAgent(cmd.agent, cmd);
@@ -429,6 +463,8 @@ export class MissionManager {
     const agent = { ...(existing[cmd.agent] ?? {}) };
     if (cmd.modelId !== undefined) agent.modelId = cmd.modelId;
     if (cmd.reasoningEffort !== undefined) agent.reasoningEffort = cmd.reasoningEffort;
+    if (cmd.compactionTokenLimit !== undefined) agent.compactionTokenLimit = cmd.compactionTokenLimit;
+    if (cmd.compactionTokenLimitPerModel !== undefined) agent.compactionTokenLimitPerModel = cmd.compactionTokenLimitPerModel;
     this.pendingAgentSettings.set(missionId, { ...existing, [cmd.agent]: agent });
   }
 
@@ -459,21 +495,32 @@ export class MissionManager {
     );
   }
 
-  private async applyOrchestratorSessionSettings(mission: Mission, settings: AgentSettingPatch): Promise<void> {
-    const next: { modelId?: string; reasoningEffort?: ReasoningEffort } = {};
-    if (settings.modelId) next.modelId = settings.modelId;
-    if (settings.reasoningEffort !== undefined) next.reasoningEffort = settings.reasoningEffort;
+  private async applyAgentSessionSettings(mission: Mission, agent: ConfigurableAgent, settings: AgentSettingPatch): Promise<void> {
+    const next = createSessionSettingsForAgent(agent, settings, mission.summary.modelId);
     if (Object.keys(next).length > 0) await mission.session.updateSettings(next as never);
+  }
+
+  private async runtimeAgentSettings(mission: Mission, agent: ConfigurableAgent, settings: AgentSettingPatch): Promise<AgentSettingPatch> {
+    if (settings.modelId !== null) return settings;
+    const defaults = await this.getFactoryDefaults();
+    return {
+      ...settings,
+      modelId: defaultModelForAgent(agent, modeForSummary(mission.summary), defaults),
+    };
   }
 
   private async applyPendingSessionSettings(missionId: string): Promise<boolean> {
     const mission = this.findMission(missionId);
     const appSessionId = mission?.summary.id ?? missionId;
-    const orchestrator = this.pendingAgentSettings.get(appSessionId)?.orchestrator;
-    if (!mission || !orchestrator) return true;
+    const pending = this.pendingAgentSettings.get(appSessionId);
+    if (!mission || !pending) return true;
     try {
-      await this.applyOrchestratorSessionSettings(mission, orchestrator);
-      this.patch(appSessionId, this.summaryPatchForAgent('orchestrator', orchestrator));
+      let patch: Partial<MissionSummary> = {};
+      for (const [agent, settings] of Object.entries(pending) as [ConfigurableAgent, AgentSettingPatch][]) {
+        await this.applyAgentSessionSettings(mission, agent, await this.runtimeAgentSettings(mission, agent, settings));
+        patch = { ...patch, ...this.summaryPatchForAgent(agent, settings) };
+      }
+      this.patch(appSessionId, patch);
       return true;
     } catch (err) {
       this.emitError({ missionId: appSessionId, message: `Could not apply selected model before send: ${errMsg(err)}` });
@@ -669,6 +716,7 @@ export class MissionManager {
       const autonomy = createAutonomyForCommand(cmd, defaults);
       const { modelId: orchestratorModelId, reasoningEffort: orchestratorReasoning } = createModelDefaultsForMode(mode, cmd, defaults);
       const compactionModel = cmd.compactionModel ?? defaults.compactionModel ?? 'current-model';
+      const compactionSettings = createCompactionSettingsForModel(orchestratorModelId, cmd, defaults);
       const workerModelId = cmd.workerModel ?? defaults.workerModelId;
       const workerReasoningEffort = cmd.workerReasoning ?? defaults.workerReasoningEffort;
       const validatorModelId = cmd.validatorModel ?? defaults.validatorModelId;
@@ -694,6 +742,7 @@ export class MissionManager {
         permissionHandler: this.makePermissionHandler(ref),
         askUserHandler: this.makeAskUserHandler(ref),
       });
+      if (Object.keys(compactionSettings).length > 0) await session.updateSettings(compactionSettings as never);
 
       const id = session.sessionId;
       const now = Date.now();
@@ -1090,12 +1139,16 @@ export class MissionManager {
 
   private async updateSessionSettings(
     sessionId: string,
-    settings: { modelId?: string | null; reasoningEffort?: ReasoningEffort; compactionModel?: string | null; autonomy?: Autonomy | 'none' },
+    settings: { modelId?: string | null; reasoningEffort?: ReasoningEffort; compactionModel?: string | null; autonomy?: Autonomy | 'none' } & CompactionTokenLimitPatch,
   ): Promise<void> {
     const mission = this.findMission(sessionId);
-    const appSessionId = mission?.summary.id ?? this.resolveSummary(sessionId)?.id ?? sessionId;
+    const historical = this.resolveSummary(sessionId);
+    const appSessionId = mission?.summary.id ?? historical?.id ?? sessionId;
     const patch: Partial<MissionSummary> = {};
     const next: Record<string, unknown> = {};
+    const selectedModelId = settings.modelId === null
+      ? undefined
+      : settings.modelId ?? mission?.summary.modelId ?? historical?.modelId;
     if (settings.modelId !== undefined) {
       if (settings.modelId) next.modelId = settings.modelId;
       patch.modelId = settings.modelId ?? undefined;
@@ -1115,6 +1168,7 @@ export class MissionManager {
       next.autonomyLevel = nextAutonomy;
       patch.autonomy = nextAutonomy;
     }
+    Object.assign(next, createCompactionSettingsForModel(selectedModelId, settings, undefined, true));
     const session = await this.withSession(appSessionId, async (activeSession) => {
       await activeSession.updateSettings(next as never);
       return activeSession;
@@ -1665,6 +1719,81 @@ export function createModelDefaultsForMode(
   };
 }
 
+export function createSessionSettingsForAgent(agent: ConfigurableAgent, settings: AgentSettingPatch, currentModelId?: string): Record<string, unknown> {
+  const next: Record<string, unknown> = {};
+  if (agent === 'orchestrator') {
+    if (settings.modelId) next.modelId = settings.modelId;
+    if (settings.reasoningEffort !== undefined) next.reasoningEffort = settings.reasoningEffort;
+    const modelId = settings.modelId === null ? undefined : settings.modelId ?? currentModelId;
+    Object.assign(next, createCompactionSettingsForModel(modelId, settings, undefined, true));
+    return next;
+  }
+
+  const missionSettings: Record<string, unknown> = {};
+  if (agent === 'worker') {
+    if (settings.modelId) missionSettings.workerModel = settings.modelId;
+    if (settings.reasoningEffort !== undefined) missionSettings.workerReasoningEffort = settings.reasoningEffort;
+  } else {
+    if (settings.modelId) missionSettings.validationWorkerModel = settings.modelId;
+    if (settings.reasoningEffort !== undefined) missionSettings.validationWorkerReasoningEffort = settings.reasoningEffort;
+  }
+
+  if (Object.keys(missionSettings).length > 0) next.missionSettings = missionSettings;
+  return next;
+}
+
+export function createCompactionSettingsForModel(
+  modelId: string | undefined,
+  settings: CompactionTokenLimitPatch,
+  defaults: Pick<FactoryDefaultSettings, 'compactionTokenLimit' | 'compactionTokenLimitPerModel'> = {},
+  disableWhenUnset = false,
+): Record<string, number | boolean> {
+  const limit = compactionTokenLimitForModel(modelId, settings, defaults);
+  if (limit !== undefined) {
+    return {
+      compactionTokenLimit: limit,
+      compactionThresholdCheckEnabled: true,
+    };
+  }
+  if (disableWhenUnset && hasCompactionTokenLimitPatch(settings)) return { compactionThresholdCheckEnabled: false };
+  return {};
+}
+
+export function compactionTokenLimitForModel(
+  modelId: string | undefined,
+  settings: CompactionTokenLimitPatch,
+  defaults: Pick<FactoryDefaultSettings, 'compactionTokenLimit' | 'compactionTokenLimitPerModel'> = {},
+): number | undefined {
+  const perModel = settings.compactionTokenLimitPerModel !== undefined
+    ? settings.compactionTokenLimitPerModel
+    : defaults.compactionTokenLimitPerModel;
+  const modelLimit = modelId ? normalizeCompactionTokenLimit(perModel?.[modelId]) : undefined;
+  if (modelLimit !== undefined) return modelLimit;
+
+  const globalLimit = settings.compactionTokenLimit !== undefined
+    ? settings.compactionTokenLimit
+    : defaults.compactionTokenLimit;
+  return globalLimit === null ? undefined : normalizeCompactionTokenLimit(globalLimit);
+}
+
+function hasCompactionTokenLimitPatch(settings: CompactionTokenLimitPatch): boolean {
+  return settings.compactionTokenLimit !== undefined || settings.compactionTokenLimitPerModel !== undefined;
+}
+
+function normalizeCompactionTokenLimit(value: unknown): number | undefined {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return undefined;
+  return Math.trunc(value);
+}
+
+function validCompactionTokenLimitPerModel(limits: Record<string, number> | undefined, models: ModelInfo[]): Record<string, number> | undefined {
+  if (!limits) return undefined;
+  const modelIds = new Set(models.map((model) => model.id));
+  const entries = Object.entries(limits)
+    .map(([modelId, limit]) => [modelId, normalizeCompactionTokenLimit(limit)] as const)
+    .filter((entry): entry is [string, number] => modelIds.has(entry[0]) && entry[1] !== undefined);
+  return entries.length > 0 ? Object.fromEntries(entries) : undefined;
+}
+
 function modelDefaultForMode(
   mode: SessionInteractionMode,
   defaults: Pick<FactoryDefaultSettings, 'modelId' | 'specModelId' | 'missionOrchestratorModelId'>,
@@ -1672,6 +1801,18 @@ function modelDefaultForMode(
   if (mode === 'spec') return defaults.specModelId ?? defaults.modelId;
   if (mode === 'agi') return defaults.missionOrchestratorModelId ?? defaults.modelId;
   return defaults.modelId;
+}
+
+function defaultModelForAgent(agent: ConfigurableAgent, mode: SessionInteractionMode, defaults: FactoryDefaultSettings): string | undefined {
+  if (agent === 'worker') return defaults.workerModelId;
+  if (agent === 'validator') return defaults.validatorModelId;
+  return modelDefaultForMode(mode, defaults);
+}
+
+function modeForSummary(summary: MissionSummary): SessionInteractionMode {
+  if (summary.kind === 'spec') return 'spec';
+  if (summary.kind === 'mission_orchestrator') return 'agi';
+  return 'auto';
 }
 
 function reasoningDefaultForMode(

@@ -3,7 +3,7 @@ import { useStore } from './hooks/useStore';
 import { AnimatePresence, motion } from 'framer-motion';
 import { Monitor, PanelLeft } from 'lucide-react';
 import { bridge } from './lib/bridge';
-import { connect, listFactoryDefaults, listModels, listMissions, listSkills, loadMissionHistory, resumeMission, sendNativeBrowserResult } from './lib/commands';
+import { connect, listFactoryDefaults, listMissions, loadMissionHistory, sendNativeBrowserResult } from './lib/commands';
 import { isEmbedded } from './lib/embed';
 import { getApiKey } from './lib/desktop';
 import { performNativeBrowserRequest } from './lib/nativeBrowserAgent';
@@ -54,7 +54,6 @@ export default function App() {
   // chat only after it has content; otherwise there is nothing to open.
   const canToggleContext = isMissionView || hasSessionContent;
   const requestedHistory = useRef(new Set<string>());
-  const requestedResume = useRef(new Set<string>());
   const [browserPaneWidth, setBrowserPaneWidth] = useState(() => initialBrowserPaneWidth());
   const setStoredBrowserPaneWidth = useCallback((width: number) => {
     const next = clampBrowserPane(width);
@@ -99,9 +98,7 @@ export default function App() {
       await bridge.start();
       const key = await getApiKey();
       connect(key ?? '');
-      listModels();
       listFactoryDefaults();
-      listSkills();
     })();
   }, [embedded]);
 
@@ -141,10 +138,6 @@ export default function App() {
   useEffect(() => {
     if (embedded) return;
     if (!activeMission) return;
-    if (!requestedResume.current.has(activeMission.id)) {
-      requestedResume.current.add(activeMission.id);
-      resumeMission(activeMission.id);
-    }
     if (state.historyLoaded[activeMission.id] || requestedHistory.current.has(activeMission.id)) return;
     requestedHistory.current.add(activeMission.id);
     loadMissionHistory(activeMission.id);
