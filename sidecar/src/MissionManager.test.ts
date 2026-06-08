@@ -180,3 +180,28 @@ test('validates Factory defaults against the model catalog', () => {
     },
   );
 });
+
+test('runtime defaults preserve saved model settings when the catalog is unavailable', () => {
+  assert.deepEqual(
+    validateFactoryDefaults({
+      modelId: 'saved-model',
+      reasoningEffort: 'high',
+      specModelId: 'saved-spec-model',
+      workerModelId: 'saved-worker',
+      validatorModelId: 'saved-validator',
+      compactionModel: 'saved-compaction-model',
+      compactionTokenLimit: 200_000.9,
+      compactionTokenLimitPerModel: { 'saved-model': 150_000.5 },
+    }, []),
+    {
+      modelId: 'saved-model',
+      reasoningEffort: 'high',
+      specModelId: 'saved-spec-model',
+      workerModelId: 'saved-worker',
+      validatorModelId: 'saved-validator',
+      compactionModel: 'saved-compaction-model',
+      compactionTokenLimit: 200_000,
+      compactionTokenLimitPerModel: { 'saved-model': 150_000 },
+    },
+  );
+});

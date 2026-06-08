@@ -1770,7 +1770,7 @@ export function startupFactoryDefaults(defaults: FactoryDefaultSettings, models:
 }
 
 export function validateFactoryDefaults(defaults: FactoryDefaultSettings, models: ModelInfo[]): FactoryDefaultSettings {
-  if (models.length === 0) return startupFactoryDefaults(defaults, models);
+  if (models.length === 0) return runtimeFactoryDefaultsWithoutCatalog(defaults);
   const cliDefault = models.find((model) => model.isDefault && !model.isCustom) ?? models.find((model) => !model.isCustom) ?? models[0];
   return {
     ...defaults,
@@ -1785,6 +1785,14 @@ export function validateFactoryDefaults(defaults: FactoryDefaultSettings, models
     workerReasoningEffort: validReasoning(defaults.workerModelId, defaults.workerReasoningEffort, models),
     validatorModelId: validModelId(defaults.validatorModelId, models) ?? cliDefault?.id,
     validatorReasoningEffort: validReasoning(defaults.validatorModelId, defaults.validatorReasoningEffort, models),
+  };
+}
+
+function runtimeFactoryDefaultsWithoutCatalog(defaults: FactoryDefaultSettings): FactoryDefaultSettings {
+  return {
+    ...defaults,
+    compactionTokenLimit: normalizeCompactionTokenLimit(defaults.compactionTokenLimit),
+    compactionTokenLimitPerModel: validCompactionTokenLimitRecord(defaults.compactionTokenLimitPerModel),
   };
 }
 

@@ -80,7 +80,7 @@ export default function PromptInput() {
 
   const cwd = activeMission?.cwd ?? state.draftChat?.cwd ?? null;
   const skillsSessionId = activeMission?.id ?? null;
-  const requestedSkillsSessionId = useRef<string | null | undefined>(undefined);
+  const requestedSkillsAt = useRef<Record<string, number>>({});
 
   // Toggle spec mode. When a live chat session exists, switch its interaction
   // mode for real (not just the compose flag used for brand-new chats).
@@ -119,8 +119,10 @@ export default function PromptInput() {
   useEffect(() => {
     if (trigger?.kind !== 'slash') return;
     if (state.skillsSessionId === skillsSessionId) return;
-    if (requestedSkillsSessionId.current === skillsSessionId) return;
-    requestedSkillsSessionId.current = skillsSessionId;
+    const requestKey = skillsSessionId ?? '__draft__';
+    const now = Date.now();
+    if (now - (requestedSkillsAt.current[requestKey] ?? 0) < 2_000) return;
+    requestedSkillsAt.current[requestKey] = now;
     listSkills(activeMission?.id);
   }, [activeMission?.id, skillsSessionId, state.skillsSessionId, trigger?.kind]);
 
