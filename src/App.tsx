@@ -13,6 +13,9 @@ import ChatView from './components/ChatView';
 import MissionControl from './components/MissionControl';
 import PromptInput from './components/PromptInput';
 import RightPanel from './components/RightPanel';
+import EditorOpenMenu from './components/EditorOpenMenu';
+import Toaster from './components/Toaster';
+import { useRepoStatus } from './hooks/useRepoStatus';
 import StatusBar from './components/StatusBar';
 import CommandPalette from './components/CommandPalette';
 import SettingsPanel, { applyTheme, paletteForMode } from './components/SettingsPanel';
@@ -41,6 +44,7 @@ export default function App() {
   const { state, dispatch } = useStore();
   const embedded = isEmbedded();
   const activeMission = state.activeMissionId ? state.missions[state.activeMissionId] : null;
+  const repoStatus = useRepoStatus(activeMission?.cwd ?? '');
   // The view is a real mission only when the active session is a mission orchestrator,
   // not merely because the global mission-compose flag is on.
   const isMissionView = !!activeMission && activeMission.kind === 'mission_orchestrator';
@@ -211,7 +215,10 @@ export default function App() {
 
       {/* Right control — context panel toggle, same drag-region treatment and
           same h-9 line/sizing as the left controls. */}
-      <div data-electron-drag-region className="absolute top-0 right-0 h-9 z-40 flex items-center pr-3">
+      <div data-electron-drag-region className="absolute top-0 right-0 h-9 z-40 flex items-center gap-1 pr-3">
+        {activeMission?.cwd && (
+          <EditorOpenMenu cwd={activeMission.cwd} hasRepo={!!repoStatus} variant="toolbar" />
+        )}
         {canToggleContext && (
           <button
             onClick={toggleRightPanel}
@@ -300,6 +307,7 @@ export default function App() {
       {state.commandPaletteOpen && <CommandPalette />}
       {state.settingsOpen && <SettingsPanel />}
       {state.pendingPermission && <PermissionModal />}
+      <Toaster />
     </div>
   );
 }

@@ -150,10 +150,11 @@ function FeaturesColumn({
 
 /* ════════════════════════ right: environment / subagents / sources ════════════════════════ */
 
-function EnvRow({ icon, label, chevron, onClick }: { icon: React.ReactNode; label: string; chevron?: boolean; onClick?: () => void }) {
+function EnvRow({ icon, label, chevron, onClick, title }: { icon: React.ReactNode; label: string; chevron?: boolean; onClick?: () => void; title?: string }) {
   return (
     <button
       onClick={onClick}
+      title={title}
       className="w-full flex items-center gap-3 px-2 py-2 rounded-lg text-droid-text-secondary hover:text-droid-text hover:bg-droid-elevated/60 transition-colors"
     >
       <span className="text-droid-text-muted shrink-0">{icon}</span>
@@ -184,11 +185,27 @@ function ContextColumn({
       <section>
         <div className="flex items-center justify-between px-2 mb-1">
           <SectionLabel>Environment</SectionLabel>
-          <EditorOpenMenu cwd={mission.cwd} />
+          <EditorOpenMenu cwd={mission.cwd} hasRepo={!!repoStatus} />
         </div>
-        <EnvRow icon={<FileDiff className="w-4 h-4" />} label={env.changes} onClick={() => openCurrentDiff(mission.cwd)} />
-        <EnvRow icon={<Monitor className="w-4 h-4" />} label={env.location} chevron onClick={() => openCodebase(mission.cwd)} />
-        <EnvRow icon={<GitBranch className="w-4 h-4" />} label={env.branch} chevron />
+        <EnvRow
+          icon={<FileDiff className="w-4 h-4" />}
+          label={env.changes}
+          title={repoStatus ? 'Open a diff of uncommitted changes in your editor' : 'No git repository here'}
+          onClick={() => openCurrentDiff(mission.cwd)}
+        />
+        <EnvRow
+          icon={<Monitor className="w-4 h-4" />}
+          label={env.location}
+          title={repoStatus?.repoRoot ?? mission.cwd}
+          chevron
+          onClick={() => openCodebase(mission.cwd)}
+        />
+        <EnvRow
+          icon={<GitBranch className="w-4 h-4" />}
+          label={env.branch}
+          title={repoStatus?.repoRoot ? `${env.branch} · ${repoStatus.repoRoot}` : env.branch}
+          chevron
+        />
         <EnvRow icon={<GitCommitHorizontal className="w-4 h-4" />} label="Commit or push" />
       </section>
 

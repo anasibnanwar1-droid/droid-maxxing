@@ -1,10 +1,11 @@
 import { useStore } from '../hooks/useStore';
 import { updateSessionSettings } from '../lib/commands';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ChevronLeft, Search, Sun, Moon, Monitor, Check, X } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { ChevronLeft, ChevronDown, Search, Sun, Moon, Monitor, Check, X, Sparkles } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
 import { ColorField } from './ColorPicker';
 import { ModelIcon, providerOf } from './ModelIcon';
+import type { ModelInfo } from '../types/bridge';
 
 const PRESET_ACCENTS = [
   '#ee6018', '#ef6f2e', '#d15010', '#e8a838', '#4a9e7a',
@@ -257,22 +258,27 @@ function AppearanceSection() {
 
       {/* Colors */}
       <GroupLabel>Colors</GroupLabel>
-      <div className="space-y-2.5 mb-3">
-        <ColorField label="Accent" description="Highlights, active states, send button & design-mode controls" value={theme.accent} onChange={(v) => updateTheme({ accent: v })} />
-        <ColorField label="App background" description="The main window behind everything" value={theme.bg} onChange={(v) => updateTheme({ bg: v })} />
-        <ColorField label="Text color" description="Default color for all text" value={theme.fg} onChange={(v) => updateTheme({ fg: v })} />
-        <ColorField label="Panel background" description="Sidebar, cards and raised surfaces" value={theme.surface} onChange={(v) => updateTheme({ surface: v })} />
-        <ColorField label="Borders" description="Dividers and outlines between sections" value={theme.border} onChange={(v) => updateTheme({ border: v })} />
-      </div>
-      <div className="flex flex-wrap gap-1.5 mb-6">
-        {PRESET_ACCENTS.map((c) => (
-          <ColorSwatch key={c} color={c} active={theme.accent.toLowerCase() === c.toLowerCase()} onClick={() => updateTheme({ accent: c })} />
-        ))}
+      <div className="rounded-xl border border-droid-border bg-droid-surface p-4 mb-6">
+        <div className="space-y-3">
+          <ColorField label="Accent" description="Highlights, active states, send button & design-mode controls" value={theme.accent} onChange={(v) => updateTheme({ accent: v })} />
+          <ColorField label="App background" description="The main window behind everything" value={theme.bg} onChange={(v) => updateTheme({ bg: v })} />
+          <ColorField label="Text color" description="Default color for all text" value={theme.fg} onChange={(v) => updateTheme({ fg: v })} />
+          <ColorField label="Panel background" description="Sidebar, cards and raised surfaces" value={theme.surface} onChange={(v) => updateTheme({ surface: v })} />
+          <ColorField label="Borders" description="Dividers and outlines between sections" value={theme.border} onChange={(v) => updateTheme({ border: v })} />
+        </div>
+        <div className="mt-3.5 pt-3.5 border-t border-droid-border/60">
+          <div className="text-[10.5px] text-droid-text-muted mb-2">Quick accents</div>
+          <div className="flex flex-wrap gap-1.5">
+            {PRESET_ACCENTS.map((c) => (
+              <ColorSwatch key={c} color={c} active={theme.accent.toLowerCase() === c.toLowerCase()} onClick={() => updateTheme({ accent: c })} />
+            ))}
+          </div>
+        </div>
       </div>
 
       {/* Typography + behavior */}
       <GroupLabel>Typography & behavior</GroupLabel>
-      <div>
+      <div className="rounded-xl border border-droid-border bg-droid-surface px-4 [&>*:last-child]:border-b-0">
         <div className="flex items-center justify-between py-2.5 border-b border-droid-border/60">
           <div>
             <div className="text-[13px] text-droid-text">UI font</div>
@@ -367,11 +373,125 @@ function TokenLimitInput({
   );
 }
 
+/* ── compaction model picker (collapsed trigger + searchable popover) ── */
+function CompactionModelPicker({
+  selected,
+  models,
+  onSelect,
+}: {
+  selected: string;
+  models: ModelInfo[];
+  onSelect: (id: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
+    window.addEventListener('mousedown', onDown);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('mousedown', onDown);
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  const isCurrent = selected === 'current-model';
+  const selModel = isCurrent ? undefined : models.find((m) => m.id === selected);
+  const label = isCurrent ? 'Current model' : (selModel?.displayName ?? selected);
+
+  const q = query.trim().toLowerCase();
+  const filtered = q
+    ? models.filter((m) => m.displayName.toLowerCase().includes(q) || m.id.toLowerCase().includes(q))
+    : models;
+
+  const choose = (id: string) => {
+    onSelect(id);
+    setOpen(false);
+    setQuery('');
+  };
+
+  const Option = ({ id, label: l, sub, current }: { id: string; label: string; sub?: string; current?: boolean }) => {
+    const active = selected === id;
+    return (
+      <button
+        onClick={() => choose(id)}
+        className={`flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left transition-colors ${
+          active ? 'bg-droid-elevated' : 'hover:bg-droid-elevated/50'
+        }`}
+      >
+        {current ? <Sparkles className="w-4 h-4 text-droid-text-muted shrink-0" /> : <ModelIcon provider={providerOf(models.find((m) => m.id === id), id)} size={16} />}
+        <div className="min-w-0 flex-1">
+          <div className="text-[12.5px] text-droid-text truncate">{l}</div>
+          {sub && <div className="text-[10.5px] text-droid-text-muted truncate">{sub}</div>}
+        </div>
+        {active && <Check className="w-3.5 h-3.5 shrink-0" style={{ color: 'var(--droid-accent)' }} strokeWidth={3} />}
+      </button>
+    );
+  };
+
+  return (
+    <div className="relative shrink-0" ref={ref}>
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className={`flex items-center gap-2 rounded-lg border px-2.5 py-1.5 text-[12px] transition-colors ${
+          open ? 'border-droid-border-hover bg-droid-elevated text-droid-text' : 'border-droid-border bg-droid-bg/60 text-droid-text hover:border-droid-border-hover'
+        }`}
+      >
+        {isCurrent ? <Sparkles className="w-3.5 h-3.5 text-droid-text-muted" /> : <ModelIcon provider={providerOf(selModel, selected)} size={14} />}
+        <span className="max-w-[160px] truncate">{label}</span>
+        <ChevronDown className={`w-3.5 h-3.5 text-droid-text-muted transition-transform ${open ? 'rotate-180' : ''}`} />
+      </button>
+
+      {open && (
+        <div className="absolute right-0 top-full z-50 mt-1.5 w-72 rounded-xl border border-droid-border bg-droid-surface p-2 shadow-2xl shadow-black/50">
+          <div className="mb-2 flex items-center gap-2 h-8 rounded-md bg-droid-bg/60 border border-droid-border px-2.5">
+            <Search className="w-3.5 h-3.5 text-droid-text-muted" />
+            <input
+              autoFocus
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search models…"
+              className="w-full bg-transparent text-[12px] text-droid-text placeholder:text-droid-text-muted focus:outline-none"
+            />
+          </div>
+          <div className="max-h-64 overflow-y-auto space-y-0.5">
+            <Option id="current-model" label="Current model" sub="Use whatever model the session runs" current />
+            {filtered.map((m) => (
+              <Option key={m.id} id={m.id} label={m.displayName} sub={m.provider} />
+            ))}
+            {filtered.length === 0 && (
+              <div className="px-2.5 py-4 text-center text-[12px] text-droid-text-muted">No models match.</div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ── settings row: label + description on the left, control on the right ── */
+function SettingRow({ label, description, children }: { label: string; description?: string; children: React.ReactNode }) {
+  return (
+    <div className="flex items-center justify-between gap-4 px-4 py-3">
+      <div className="min-w-0">
+        <div className="text-[13px] text-droid-text">{label}</div>
+        {description && <div className="text-[11px] text-droid-text-muted mt-0.5">{description}</div>}
+      </div>
+      {children}
+    </div>
+  );
+}
+
 /* ── general content ── */
 function GeneralSection() {
   const { state, dispatch } = useStore();
   const selected = state.compactionModel || 'current-model';
-  const [query, setQuery] = useState('');
   const [addModelId, setAddModelId] = useState('');
 
   // Push a compaction settings patch to every loaded session so behavior stays
@@ -405,131 +525,74 @@ function GeneralSection() {
     applyToLiveSessions({ compactionTokenLimitPerModel: next });
   };
 
-  const q = query.trim().toLowerCase();
-  const models = q
-    ? state.models.filter((m) => m.displayName.toLowerCase().includes(q) || m.id.toLowerCase().includes(q))
-    : state.models;
-
   const overrideEntries = Object.entries(state.compactionTokenLimitPerModel);
   const availableForOverride = state.models.filter((m) => !(m.id in state.compactionTokenLimitPerModel));
   const modelLabel = (id: string) => state.models.find((m) => m.id === id)?.displayName ?? id;
-
-  const Row = ({ id, label, sub }: { id: string; label: string; sub?: string }) => {
-    const active = selected === id;
-    return (
-      <button
-        onClick={() => setCompaction(id)}
-        className={`flex items-center gap-2.5 w-full px-3 py-2.5 rounded-lg border transition-colors text-left ${
-          active ? 'border-transparent bg-droid-elevated' : 'border-droid-border hover:bg-droid-elevated/50'
-        }`}
-        style={active ? { boxShadow: 'inset 0 0 0 1px var(--droid-accent)' } : undefined}
-      >
-        {id !== 'current-model' && <ModelIcon provider={providerOf(state.models.find((m) => m.id === id), id)} size={16} />}
-        <div className="min-w-0 flex-1">
-          <div className="text-[13px] text-droid-text truncate">{label}</div>
-          {sub && <div className="text-[11px] text-droid-text-muted truncate">{sub}</div>}
-        </div>
-        {active && <Check className="w-4 h-4 shrink-0" style={{ color: 'var(--droid-accent)' }} />}
-      </button>
-    );
-  };
 
   return (
     <div className="max-w-2xl">
       <SectionTitle title="General" sub="Defaults that apply across all chats and missions." />
 
-      <GroupLabel>Compaction model</GroupLabel>
-      <p className="text-[12px] text-droid-text-muted mb-3">
-        Choose which model summarizes a conversation when it is compacted.
-      </p>
-
-      <div className="rounded-xl border border-droid-border bg-droid-surface p-3 mb-8">
-        <Row id="current-model" label="Current model" sub="Compact with whatever model the session is using" />
-
-        <div className="flex items-center gap-2 px-2.5 my-2 h-8 rounded-md bg-droid-bg/60 border border-droid-border">
-          <Search className="w-3.5 h-3.5 text-droid-text-muted" />
-          <input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search models..."
-            className="bg-transparent text-[12px] text-droid-text placeholder:text-droid-text-muted focus:outline-none w-full"
-          />
-        </div>
-
-        <div className="max-h-72 overflow-y-auto space-y-1.5">
-          {models.map((m) => (
-            <Row key={m.id} id={m.id} label={m.displayName} sub={m.provider} />
-          ))}
-          {models.length === 0 && (
-            <div className="px-3 py-4 text-center text-[12px] text-droid-text-muted">No models match.</div>
-          )}
-        </div>
+      {/* Compaction */}
+      <GroupLabel>Compaction</GroupLabel>
+      <div className="rounded-xl border border-droid-border bg-droid-surface divide-y divide-droid-border/60 mb-8">
+        <SettingRow label="Compaction model" description="Model that summarizes a conversation when it is compacted.">
+          <CompactionModelPicker selected={selected} models={state.models} onSelect={setCompaction} />
+        </SettingRow>
+        <SettingRow
+          label="Token limit"
+          description="Compact once a conversation passes this size. Empty uses each model's full window. e.g. 200K, 1.5M."
+        >
+          <TokenLimitInput value={state.compactionTokenLimit} onCommit={setGlobalLimit} placeholder="Model window" width="w-32" />
+        </SettingRow>
       </div>
 
-      <GroupLabel>Compaction token limit</GroupLabel>
+      {/* Per-model token limits */}
+      <GroupLabel>Per-model token limits</GroupLabel>
       <p className="text-[12px] text-droid-text-muted mb-3">
-        Compact a conversation once it grows past this many tokens. Leave empty to use each model&apos;s
-        full context window. Accepts values like <span className="font-mono">200K</span> or <span className="font-mono">1.5M</span>.
+        Override the default compaction limit for specific models.
       </p>
-
       <div className="rounded-xl border border-droid-border bg-droid-surface p-3">
-        {/* Global default */}
-        <div className="flex items-center justify-between gap-3 px-1 py-1.5">
-          <div className="min-w-0">
-            <div className="text-[13px] text-droid-text">Default limit</div>
-            <div className="text-[11px] text-droid-text-muted">Applies to every model without an override</div>
-          </div>
-          <TokenLimitInput value={state.compactionTokenLimit} onCommit={setGlobalLimit} placeholder="Model window" width="w-32" />
-        </div>
+        {overrideEntries.length === 0 && (
+          <div className="text-[12px] text-droid-text-muted px-1 py-1.5">No overrides — every model uses the default limit.</div>
+        )}
 
-        <div className="h-px bg-droid-border/60 my-2" />
-
-        {/* Per-model overrides */}
-        <div className="px-1">
-          <div className="text-[11px] font-medium text-droid-text-muted mb-2">Per-model overrides</div>
-
-          {overrideEntries.length === 0 && (
-            <div className="text-[12px] text-droid-text-muted py-1.5">No overrides — every model uses the default limit.</div>
-          )}
-
-          <div className="space-y-1.5">
-            {overrideEntries.map(([id, limit]) => (
-              <div key={id} className="flex items-center gap-2.5 rounded-lg border border-droid-border bg-droid-bg/40 px-2.5 py-2">
-                <ModelIcon provider={providerOf(state.models.find((m) => m.id === id), id)} size={16} />
-                <span className="text-[12px] text-droid-text truncate flex-1">{modelLabel(id)}</span>
-                <TokenLimitInput value={limit} onCommit={(n) => setModelLimit(id, n)} />
-                <button
-                  onClick={() => setModelLimit(id, undefined)}
-                  className="p-1 rounded-md text-droid-text-muted hover:text-droid-text hover:bg-droid-elevated transition-colors shrink-0"
-                  title="Remove override"
-                >
-                  <X className="w-3.5 h-3.5" />
-                </button>
-              </div>
-            ))}
-          </div>
-
-          {/* Add override */}
-          {availableForOverride.length > 0 && (
-            <div className="flex items-center gap-2 mt-2.5">
-              <select
-                value={addModelId}
-                onChange={(e) => {
-                  const id = e.target.value;
-                  if (!id) return;
-                  setModelLimit(id, state.compactionTokenLimit ?? 200_000);
-                  setAddModelId('');
-                }}
-                className="flex-1 bg-droid-bg/60 border border-droid-border rounded-md px-2 py-1.5 text-[12px] text-droid-text focus:outline-none focus:border-droid-border-hover cursor-pointer"
+        <div className="space-y-1.5">
+          {overrideEntries.map(([id, limit]) => (
+            <div key={id} className="flex items-center gap-2.5 rounded-lg border border-droid-border bg-droid-bg/40 px-2.5 py-2">
+              <ModelIcon provider={providerOf(state.models.find((m) => m.id === id), id)} size={16} />
+              <span className="text-[12px] text-droid-text truncate flex-1">{modelLabel(id)}</span>
+              <TokenLimitInput value={limit} onCommit={(n) => setModelLimit(id, n)} />
+              <button
+                onClick={() => setModelLimit(id, undefined)}
+                className="p-1 rounded-md text-droid-text-muted hover:text-droid-text hover:bg-droid-elevated transition-colors shrink-0"
+                title="Remove override"
               >
-                <option value="">Add a model override…</option>
-                {availableForOverride.map((m) => (
-                  <option key={m.id} value={m.id}>{m.displayName}</option>
-                ))}
-              </select>
+                <X className="w-3.5 h-3.5" />
+              </button>
             </div>
-          )}
+          ))}
         </div>
+
+        {availableForOverride.length > 0 && (
+          <div className="flex items-center gap-2 mt-2.5">
+            <select
+              value={addModelId}
+              onChange={(e) => {
+                const id = e.target.value;
+                if (!id) return;
+                setModelLimit(id, state.compactionTokenLimit ?? 200_000);
+                setAddModelId('');
+              }}
+              className="flex-1 bg-droid-bg/60 border border-droid-border rounded-md px-2 py-1.5 text-[12px] text-droid-text focus:outline-none focus:border-droid-border-hover cursor-pointer"
+            >
+              <option value="">Add a model override…</option>
+              {availableForOverride.map((m) => (
+                <option key={m.id} value={m.id}>{m.displayName}</option>
+              ))}
+            </select>
+          </div>
+        )}
       </div>
     </div>
   );

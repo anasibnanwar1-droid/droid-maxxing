@@ -26,7 +26,7 @@ function Divider() {
 }
 
 function Row({
-  icon, label, meta, onClick, active, trailing,
+  icon, label, meta, onClick, active, trailing, title,
 }: {
   icon: React.ReactNode;
   label: string;
@@ -34,10 +34,12 @@ function Row({
   onClick?: () => void;
   active?: boolean;
   trailing?: React.ReactNode;
+  title?: string;
 }) {
   return (
     <button
       onClick={onClick}
+      title={title}
       className={`group w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left transition-colors ${
         active ? 'bg-droid-elevated' : 'hover:bg-droid-elevated/50'
       }`}
@@ -117,11 +119,25 @@ export default function RightPanel() {
           {/* Environment */}
           {activeMission && (
             <div>
-              <SectionHeader label="Environment" trailing={<EditorOpenMenu cwd={activeMission.cwd} />} />
+              <SectionHeader label="Environment" trailing={<EditorOpenMenu cwd={activeMission.cwd} hasRepo={!!repoStatus} />} />
               <div>
-                <Row icon={<FolderGit className="w-4 h-4" />} label={env.location} onClick={() => openCodebase(activeMission.cwd)} />
-                <Row icon={<GitBranch className="w-4 h-4" />} label={env.branch} />
-                <Row icon={<FileDiff className="w-4 h-4" />} label={env.changes} onClick={() => openCurrentDiff(activeMission.cwd)} />
+                <Row
+                  icon={<FolderGit className="w-4 h-4" />}
+                  label={env.location}
+                  title={repoStatus?.repoRoot ?? activeMission.cwd}
+                  onClick={() => openCodebase(activeMission.cwd)}
+                />
+                <Row
+                  icon={<GitBranch className="w-4 h-4" />}
+                  label={env.branch}
+                  title={repoStatus?.repoRoot ? `${env.branch} · ${repoStatus.repoRoot}` : env.branch}
+                />
+                <Row
+                  icon={<FileDiff className="w-4 h-4" />}
+                  label={env.changes}
+                  title={repoStatus ? 'Open a diff of uncommitted changes in your editor' : 'No git repository here'}
+                  onClick={() => openCurrentDiff(activeMission.cwd)}
+                />
                 <Row icon={<ModelIcon provider={providerOf(modelInfo, activeMission.modelId)} size={16} />} label={modelLabel} meta={activeMission.autonomy} />
 
                 {/* Agents — collapsible, nested under the model */}
