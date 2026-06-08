@@ -1,6 +1,46 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { normalizeStreamEvent } from './normalize.js';
+import { classifyPermission, confirmationType, permissionSignature, normalizeStreamEvent } from './normalize.js';
+
+test('classifyPermission reads the SDK toolUses shape for MCP tools', () => {
+  const params = {
+    options: [{ value: 'proceed_once', label: 'Allow once' }],
+    toolUses: [
+      {
+        confirmationType: 'mcp_tool',
+        details: { type: 'mcp_tool', toolName: 'droidmaxx-browser___design_reference', impactLevel: 'low' },
+        toolUse: { type: 'tool_use', id: 't1', name: 'droidmaxx-browser___design_reference', input: { url: 'https://skeina.app' } },
+      },
+    ],
+  } as never;
+
+  assert.equal(confirmationType(params), 'mcp_tool');
+  const req = classifyPermission('m1', 'r1', params);
+  assert.equal(req.kind, 'mcp');
+  assert.equal(req.title, 'droidmaxx-browser · design_reference');
+  assert.match(req.detail, /url: https:\/\/skeina\.app/);
+  assert.match(req.detail, /Impact: low/);
+  assert.equal(permissionSignature(params), 'mcp::::droidmaxx-browser___design_reference');
+});
+
+test('classifyPermission reads the SDK toolUses shape for exec', () => {
+  const params = {
+    options: [],
+    toolUses: [
+      {
+        confirmationType: 'exec',
+        details: { type: 'exec', command: 'rm -rf build', fullCommand: 'rm -rf build' },
+        toolUse: { type: 'tool_use', id: 't2', name: 'Execute', input: { command: 'rm -rf build' } },
+      },
+    ],
+  } as never;
+
+  const req = classifyPermission('m1', 'r2', params);
+  assert.equal(req.kind, 'exec');
+  assert.equal(req.title, 'Run command');
+  assert.equal(req.detail, 'rm -rf build');
+  assert.equal(permissionSignature(params), 'exec::rm -rf build');
+});
 
 test('captures Task prompt metadata before the subagent session id exists', () => {
   const normalized = normalizeStreamEvent('mission-1', 'mission-1', 'orchestrator', {

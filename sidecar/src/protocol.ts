@@ -110,7 +110,7 @@ export interface TranscriptEvent {
   steered?: boolean;
 }
 
-export type BrowserTranscriptReferenceKind = 'element' | 'region' | 'stroke';
+export type BrowserTranscriptReferenceKind = 'element' | 'region';
 
 export interface BrowserTranscriptReference {
   id: string;
@@ -225,10 +225,10 @@ export interface BrowserElementRef {
   role?: string;
   name?: string;
   text?: string;
-  attributes: Record<string, string>;
+  attributes?: Record<string, string>;
   className?: string;
   box: BrowserBox;
-  computedStyles: Record<string, string>;
+  computedStyles?: Record<string, string>;
 }
 
 export interface BrowserState {
@@ -253,7 +253,7 @@ export interface BrowserNativeSnapshot {
   refs: BrowserElementRef[];
 }
 
-export type BrowserNativeAction = 'open' | 'reload' | 'snapshot' | 'click' | 'type' | 'keypress' | 'scroll' | 'close';
+export type BrowserNativeAction = 'open' | 'reload' | 'snapshot' | 'click' | 'type' | 'keypress' | 'scroll' | 'capture' | 'close';
 
 export interface BrowserNativeRequest {
   requestId: string;
@@ -269,6 +269,7 @@ export interface BrowserNativeRequest {
   key?: string;
   direction?: BrowserScrollDirection;
   pixels?: number;
+  box?: BrowserBox;
 }
 
 export interface BrowserNativeResult {
@@ -276,16 +277,58 @@ export interface BrowserNativeResult {
   missionId: string;
   ok: boolean;
   snapshot?: BrowserNativeSnapshot;
+  image?: string;
   error?: string;
 }
 
+export interface ElementSource {
+  framework?: 'react' | 'vue' | 'svelte' | 'unknown';
+  component?: string;
+  componentChain?: string[];
+  file?: string;
+  line?: number;
+  column?: number;
+  confidence: 'exact' | 'attribute' | 'heuristic' | 'none';
+}
+
+export interface DesignAnchorAncestor {
+  tag: string;
+  component?: string;
+  selector?: string;
+}
+
+export interface DesignAnchor {
+  id: string;
+  kind: 'element' | 'region';
+  label: string;
+  tag?: string;
+  role?: string;
+  name?: string;
+  text?: string;
+  box: BrowserBox;
+  source?: ElementSource;
+  screenshotPath?: string;
+}
+
+export interface DesignAnchorDetail {
+  id: string;
+  selector: string;
+  selectorVerified: boolean;
+  attributes: Record<string, string>;
+  styles: Record<string, string>;
+  ancestors: DesignAnchorAncestor[];
+  html?: string;
+}
+
 export interface DesignReference {
-  id?: string;
-  kind: 'element' | 'region' | 'stroke';
-  element?: BrowserElementRef;
-  box?: BrowserBox;
-  points?: { x: number; y: number }[];
-  note?: string;
+  id: string;
+  anchor: DesignAnchor;
+  detail?: DesignAnchorDetail;
+  url: string;
+  title?: string;
+  viewport?: BrowserViewport;
+  scroll?: { x: number; y: number };
+  createdAt?: string;
 }
 
 export type PermissionOutcome =

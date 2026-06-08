@@ -15,17 +15,26 @@ test('normalizeBrowserReferenceLabel creates compact mention labels', () => {
 test('browserTranscriptReferenceFromDesignReference prefers element names for labels', () => {
   const reference: DesignReference = {
     id: '@live-hero',
-    kind: 'element',
-    note: 'https://example.com',
-    element: {
-      ref: '@live-hero',
-      selector: '#hero',
-      tagName: 'h1',
+    anchor: {
+      id: '@live-hero',
+      kind: 'element',
+      label: 'Main heading',
+      tag: 'h1',
       name: 'Main heading',
-      attributes: {},
       box: { x: 0, y: 0, width: 100, height: 24 },
-      computedStyles: {},
     },
+    detail: {
+      id: '@live-hero',
+      selector: '#hero',
+      selectorVerified: true,
+      attributes: {},
+      styles: {},
+      ancestors: [],
+    },
+    url: 'https://example.com',
+    viewport: { width: 1000, height: 800, deviceScaleFactor: 2 },
+    scroll: { x: 0, y: 0 },
+    createdAt: '2026-06-06T12:00:00.000Z',
   };
 
   assert.deepEqual(browserTranscriptReferenceFromDesignReference(reference), {
@@ -40,9 +49,16 @@ test('browserTranscriptReferenceFromDesignReference prefers element names for la
 test('browserTranscriptReferenceFromDesignReference labels sketched regions', () => {
   assert.deepEqual(browserTranscriptReferenceFromDesignReference({
     id: '@region-1',
-    kind: 'region',
-    note: 'https://example.com',
-    box: { x: 10, y: 20, width: 30, height: 40 },
+    anchor: {
+      id: '@region-1',
+      kind: 'region',
+      label: 'region',
+      box: { x: 10, y: 20, width: 30, height: 40 },
+    },
+    url: 'https://example.com',
+    viewport: { width: 1000, height: 800, deviceScaleFactor: 2 },
+    scroll: { x: 0, y: 0 },
+    createdAt: '2026-06-06T12:00:00.000Z',
   }), {
     id: '@region-1',
     kind: 'region',

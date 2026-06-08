@@ -1,6 +1,6 @@
 import type { BrowserNativeRequest, BrowserNativeResult } from '../protocol.js';
 import type { BrowserRuntime } from './BrowserSessionManager.js';
-import type { BrowserScreenshotOptions, BrowserSnapshot, BrowserViewport, ScrollDirection } from './types.js';
+import type { BrowserBox, BrowserScreenshotOptions, BrowserSnapshot, BrowserViewport, ScrollDirection } from './types.js';
 
 export interface NativeBrowserRuntimeOptions {
   sessionId: string;
@@ -30,7 +30,13 @@ export class NativeBrowserRuntime implements BrowserRuntime {
   }
 
   async screenshot(_options: BrowserScreenshotOptions = {}): Promise<string> {
-    throw new Error('The live Droid Control browser does not capture screenshots yet. Use browser_snapshot for DOM refs and visible state.');
+    return this.capture();
+  }
+
+  async capture(box?: BrowserBox): Promise<string> {
+    const result = await this.send({ action: 'capture', box });
+    if (!result.image) throw new Error('Native browser did not return a captured image.');
+    return result.image;
   }
 
   async snapshot(): Promise<BrowserSnapshot> {

@@ -93,11 +93,15 @@ export function attachIframeDesignMode(
     dragStart = null;
     if (box.width >= 8 && box.height >= 8) {
       options.onSelection({
-        id: `@region-${Date.now().toString(36)}`,
-        kind: 'region',
+        anchor: {
+          id: `@region-${Date.now().toString(36)}`,
+          kind: 'region',
+          label: 'region',
+          box,
+        },
         url: win.location.href,
         title: doc.title,
-        box,
+        scroll: { x: Math.round(win.scrollX), y: Math.round(win.scrollY) },
       });
     }
   };
@@ -305,23 +309,54 @@ function selectionFor(win: Window, doc: Document, el: Element): NativeBrowserSel
   const selector = selectorFor(el);
   const text = cleanText((el as HTMLElement).innerText || el.textContent);
   const name = cleanText(el.getAttribute('aria-label') || el.getAttribute('title') || el.getAttribute('placeholder') || directText(el) || text);
+  const tag = el.tagName.toLowerCase();
+  const role = roleFor(el) || undefined;
+  const box = {
+    x: Math.round(rect.x),
+    y: Math.round(rect.y),
+    width: Math.round(rect.width),
+    height: Math.round(rect.height),
+  };
+  const id = stableId(selector);
+  let selectorVerified = false;
+  try {
+    selectorVerified = doc.querySelector(selector) === el;
+  } catch {
+    selectorVerified = false;
+  }
   return {
-    id: stableId(selector),
-    kind: 'element',
+    anchor: {
+      id,
+      kind: 'element',
+      label: labelFor(el),
+      tag,
+      role,
+      name: name || undefined,
+      text: text || undefined,
+      box,
+    },
+    detail: {
+      id,
+      selector,
+      selectorVerified,
+      attributes: attrsFor(el),
+      styles: stylesFor(el),
+      ancestors: ancestorsFor(el),
+    },
     url: win.location.href,
     title: doc.title,
-    selector,
-    tagName: el.tagName.toLowerCase(),
-    role: roleFor(el) || undefined,
-    name: name || undefined,
-    text: text || undefined,
-    box: {
-      x: Math.round(rect.x),
-      y: Math.round(rect.y),
-      width: Math.round(rect.width),
-      height: Math.round(rect.height),
-    },
+    scroll: { x: Math.round(win.scrollX), y: Math.round(win.scrollY) },
   };
+}
+
+function ancestorsFor(el: Element): { tag: string; selector?: string }[] {
+  const chain: { tag: string; selector?: string }[] = [];
+  let node: Element | null = el.parentElement;
+  while (node && node !== el.ownerDocument.documentElement && chain.length < 4) {
+    chain.push({ tag: node.tagName.toLowerCase(), selector: node.id ? `#${cssEscape(node.id)}` : undefined });
+    node = node.parentElement;
+  }
+  return chain;
 }
 
 function labelFor(el: Element): string {

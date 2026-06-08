@@ -15,12 +15,17 @@ test('writeDesignPromptPack stores compact JSON on disk', async () => {
     now: () => new Date('2026-06-06T12:00:00.000Z'),
     references: [{
       id: 'ref-one',
-      kind: 'region',
+      anchor: {
+        id: 'ref-one',
+        kind: 'region',
+        label: 'region',
+        box: { x: 10, y: 10, width: 40, height: 40 },
+        screenshotPath: '/tmp/shot.png',
+      },
       url: 'http://127.0.0.1:1420/',
       viewport: { width: 900, height: 700, deviceScaleFactor: 1 },
-      screenshotPath: '/tmp/shot.png',
       scroll: { x: 0, y: 0 },
-      box: { x: 10, y: 10, width: 40, height: 40 },
+      createdAt: '2026-06-06T12:00:00.000Z',
     }],
   });
 
@@ -34,11 +39,17 @@ test('writeDesignPromptPack stores compact JSON on disk', async () => {
 test('formatDesignPrompt returns path-backed context', () => {
   const text = formatDesignPrompt('/tmp/pack.json', 'Make this cleaner', [{
     id: 'ref-one',
-    kind: 'region',
+    anchor: {
+      id: 'ref-one',
+      kind: 'region',
+      label: 'region',
+      box: { x: 10, y: 10, width: 40, height: 40 },
+      screenshotPath: '/tmp/shot.png',
+    },
     url: 'http://127.0.0.1:1420/',
     viewport: { width: 900, height: 700, deviceScaleFactor: 1 },
-    screenshotPath: '/tmp/shot.png',
     scroll: { x: 0, y: 0 },
+    createdAt: '2026-06-06T12:00:00.000Z',
   }]);
 
   assert.match(text, /References JSON: \/tmp\/pack\.json/);

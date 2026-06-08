@@ -15,7 +15,7 @@ test('loadPersistedUiState sanitizes persisted shell fields', () => {
     sidebarCollapsed: true,
     specMode: true,
     missionMode: false,
-    browserOpen: true,
+    browserOpenKeys: { 'chat-1': true, 'chat-2': false, '': true },
     browsers: {
       'chat-1': {
         sessionId: 'browser-chat-1',
@@ -41,7 +41,7 @@ test('loadPersistedUiState sanitizes persisted shell fields', () => {
       sidebarCollapsed: true,
       specMode: true,
       missionMode: false,
-      browserOpen: true,
+      browserOpenKeys: { 'chat-1': true },
       browsers: {
         'chat-1': {
           sessionId: 'browser-chat-1',

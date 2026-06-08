@@ -1,26 +1,27 @@
 import type { BrowserTranscriptReference, DesignReference } from '../../types/bridge';
 
 export function browserTranscriptReferenceFromDesignReference(reference: DesignReference): BrowserTranscriptReference | null {
-  const id = reference.id ?? reference.element?.ref;
-  if (!id) return null;
+  const anchor = reference.anchor;
+  const id = reference.id ?? anchor?.id;
+  if (!id || !anchor) return null;
 
-  const element = reference.element;
+  const attributes = reference.detail?.attributes;
   const label = normalizeBrowserReferenceLabel(
-    element?.name ??
-      element?.attributes['data-testid'] ??
-      element?.attributes.id ??
-      element?.text ??
-      element?.role ??
-      element?.tagName,
-    reference.kind === 'element' ? element?.tagName ?? 'element' : reference.kind,
+    anchor.name ??
+      attributes?.['data-testid'] ??
+      attributes?.id ??
+      anchor.text ??
+      anchor.role ??
+      anchor.tag,
+    anchor.kind === 'element' ? anchor.tag ?? 'element' : anchor.kind,
   );
 
   return {
     id,
-    kind: reference.kind,
+    kind: anchor.kind,
     label,
-    url: reference.note,
-    selector: element?.selector,
+    url: reference.url,
+    selector: reference.detail?.selector,
   };
 }
 

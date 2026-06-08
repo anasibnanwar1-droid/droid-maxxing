@@ -184,18 +184,7 @@ function composerStyle(
 }
 
 function boxForReference(reference: DesignReference, refs: BrowserElementRef[]): BrowserBox | undefined {
-  if (reference.kind === 'element') {
-    return reference.element?.box ?? refs.find((ref) => ref.ref === reference.id)?.box;
-  }
-  if (reference.kind === 'region') return reference.box;
-  if (reference.points?.length) {
-    const xs = reference.points.map((point) => point.x);
-    const ys = reference.points.map((point) => point.y);
-    const x = Math.min(...xs);
-    const y = Math.min(...ys);
-    return { x, y, width: Math.max(...xs) - x, height: Math.max(...ys) - y };
-  }
-  return undefined;
+  return reference.anchor?.box ?? refs.find((ref) => ref.ref === reference.id)?.box;
 }
 
 function unionBoxes(boxes: BrowserBox[]): BrowserBox | undefined {

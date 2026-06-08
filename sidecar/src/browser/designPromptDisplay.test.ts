@@ -18,19 +18,26 @@ test('designPromptDisplayFromText extracts instruction and browser chips from a 
     instruction: 'What font is this?',
     references: [{
       id: '@live-heading',
-      kind: 'element',
+      anchor: {
+        id: '@live-heading',
+        kind: 'element',
+        label: 'Hero heading',
+        tag: 'h1',
+        name: 'Hero heading',
+        box: { x: 10, y: 20, width: 200, height: 48 },
+      },
+      detail: {
+        id: '@live-heading',
+        selector: 'h1',
+        selectorVerified: true,
+        attributes: {},
+        styles: {},
+        ancestors: [],
+      },
       url: 'https://example.com',
       viewport: { width: 1000, height: 800, deviceScaleFactor: 2 },
       scroll: { x: 0, y: 0 },
-      element: {
-        ref: '@live-heading',
-        selector: 'h1',
-        tagName: 'h1',
-        name: 'Hero heading',
-        attributes: {},
-        box: { x: 10, y: 20, width: 200, height: 48 },
-        computedStyles: {},
-      },
+      createdAt: new Date().toISOString(),
     }],
   }), 'utf8');
 

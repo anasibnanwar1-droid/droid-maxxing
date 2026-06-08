@@ -5,6 +5,7 @@ import {
   MousePointer2,
   Monitor,
   PenLine,
+  Power,
   RefreshCw,
   Send,
   Smartphone,
@@ -44,6 +45,7 @@ interface BrowserToolbarProps {
   onToggleDesignMode: () => void;
   onToggleSketchMode: () => void;
   onClose: () => void;
+  onFullyClose: () => void;
 }
 
 export function BrowserToolbar({
@@ -62,6 +64,7 @@ export function BrowserToolbar({
   onToggleDesignMode,
   onToggleSketchMode,
   onClose,
+  onFullyClose,
 }: BrowserToolbarProps) {
   return (
     <header className="flex shrink-0 flex-wrap items-center gap-2 border-b border-droid-border bg-droid-bg/95 px-3 py-2">
@@ -155,7 +158,10 @@ export function BrowserToolbar({
         >
           <PenLine className="h-4 w-4" />
         </IconButton>
-        <IconButton title="Close Browser" onClick={onClose}>
+        <IconButton title="End browser session (reset)" onClick={onFullyClose}>
+          <Power className="h-4 w-4" />
+        </IconButton>
+        <IconButton title="Hide browser (keep session)" onClick={onClose}>
           <X className="h-4 w-4" />
         </IconButton>
       </div>

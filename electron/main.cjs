@@ -101,6 +101,7 @@ function registerIpc() {
   ipcMain.handle('native-browser-set-design-mode', (_event, { sessionId, active }) => setNativeBrowserDesignMode(sessionId, active));
   ipcMain.handle('native-browser-set-sketch-mode', (_event, { sessionId, active }) => setNativeBrowserSketchMode(sessionId, active));
   ipcMain.handle('native-browser-agent-action', (_event, { request }) => runNativeBrowserAgentAction(request));
+  ipcMain.handle('native-browser-capture', (_event, { sessionId, box }) => captureNativeBrowser(sessionId, box));
 
   ipcMain.on('native-browser-selection', (event, selection) => {
     mainWindow?.webContents.send('native-browser-selection', withNativeBrowserSession(event, selection));
@@ -406,6 +407,32 @@ async function runNativeBrowserAgentAction(request) {
   }
 }
 
+async function captureNativeBrowser(sessionId, box) {
+  const entry = await restoreNativeBrowserForAction(sessionId);
+  const contents = safeWebContents(entry.view);
+  if (!contents) throw new Error('Droid Control browser is not open.');
+  try {
+    const rect = normalizeCaptureRect(entry, box);
+    const image = rect ? await contents.capturePage(rect) : await contents.capturePage();
+    return image.isEmpty() ? undefined : image.toPNG().toString('base64');
+  } finally {
+    scheduleNativeBrowserIdleClose(entry);
+  }
+}
+
+function normalizeCaptureRect(entry, box) {
+  if (!box) return undefined;
+  const bounds = entry.view?.getBounds?.() ?? { width: 0, height: 0 };
+  const maxWidth = bounds.width || Number.MAX_SAFE_INTEGER;
+  const maxHeight = bounds.height || Number.MAX_SAFE_INTEGER;
+  const x = Math.max(0, Math.round(box.x));
+  const y = Math.max(0, Math.round(box.y));
+  const width = Math.max(1, Math.min(Math.round(box.width), maxWidth - x));
+  const height = Math.max(1, Math.min(Math.round(box.height), maxHeight - y));
+  if (width <= 0 || height <= 0) return undefined;
+  return { x, y, width, height };
+}
+
 function applyNativeBrowserDesignState(entry) {
   const contents = safeWebContents(entry?.view);
   if (!contents) return undefined;
@@ -454,6 +481,10 @@ async function restoreNativeBrowserForAction(sessionId) {
 
 function attachNativeBrowserViewToMainWindow(entry) {
   if (!entry.view || !isWindowUsable(mainWindow)) return;
+  if (entry.windowAttached && entry.hostWindow === mainWindow) {
+    if (typeof mainWindow.setTopBrowserView === 'function') mainWindow.setTopBrowserView(entry.view);
+    return;
+  }
   if (entry.windowAttached) removeNativeBrowserViewFromWindow(entry, entry.view);
   mainWindow.setBrowserView(entry.view);
   entry.windowAttached = true;
