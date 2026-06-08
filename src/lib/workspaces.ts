@@ -1,6 +1,6 @@
 import type { MissionSummary } from '../types/bridge';
 
-export const WORKSPACE_SESSION_LIMIT = 5;
+export const WORKSPACE_BOOTSTRAP_SESSION_LIMIT = 5;
 
 export interface WorkspaceSection {
   cwd: string;
@@ -22,7 +22,7 @@ export function addWorkspaceCwd(existing: string[], cwd: string): string[] {
 export function buildWorkspaceSections(
   workspaceCwds: string[],
   missions: MissionSummary[],
-  limit = WORKSPACE_SESSION_LIMIT,
+  limit?: number,
 ): WorkspaceSection[] {
   const seen = new Set<string>();
   return workspaceCwds
@@ -34,9 +34,12 @@ export function buildWorkspaceSections(
     .map((cwd) => ({
       cwd,
       name: workspaceName(cwd),
-      sessions: missions
+      sessions: maybeLimit(missions
         .filter((mission) => mission.cwd === cwd)
-        .sort((a, b) => b.updatedAt - a.updatedAt)
-        .slice(0, limit),
+        .sort((a, b) => b.updatedAt - a.updatedAt), limit),
     }));
+}
+
+function maybeLimit<T>(items: T[], limit?: number): T[] {
+  return limit === undefined ? items : items.slice(0, Math.max(0, limit));
 }

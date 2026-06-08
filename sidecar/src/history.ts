@@ -121,40 +121,42 @@ export function loadHistoricalMissions(options: HistoricalSummaryFilter = {}): H
 
 export function loadHistoricalSessions(options: HistoricalSummaryFilter = {}): HistoricalMission[] {
   const rows: HistoricalMission[] = [];
+  const cached = readStoredSummaryPatches();
   const workspaceCwds = options.workspaceCwds ? new Set(options.workspaceCwds.filter(Boolean)) : null;
   if (workspaceCwds && workspaceCwds.size === 0 && !options.includePlainChats) return [];
   for (const [sessionId, path] of buildSessionIndex()) {
     const start = readSessionStart(path);
-    if ((workspaceCwds || options.includePlainChats) && !shouldIncludeCwd(start.cwd ?? '', workspaceCwds, options.includePlainChats)) continue;
     const classification = classifyStoredSession(start);
     if (!classification) continue;
     const stat = statSync(path);
     const title = start.sessionTitle || start.title || `Session ${sessionId.slice(0, 8)}`;
     const settings = readSessionModelSettings(start, path);
+    const summary = applyCachedSummary({
+      id: sessionId,
+      sessionId,
+      missionId: classification.missionId,
+      parentSessionId: classification.parentSessionId,
+      kind: classification.kind,
+      role: classification.role,
+      title,
+      goal: title,
+      cwd: start.cwd ?? '',
+      workspaceKind: start.cwd ? 'folder' : 'none',
+      ...settings,
+      autonomy: settings.autonomy ?? 'low',
+      phase: 'paused',
+      streaming: false,
+      queuedSends: 0,
+      features: [],
+      tokensIn: 0,
+      tokensOut: 0,
+      contextTokens: 0,
+      createdAt: stat.birthtimeMs,
+      updatedAt: stat.mtimeMs,
+    }, cached);
+    if ((workspaceCwds || options.includePlainChats) && !shouldIncludeCwd(summary.cwd ?? '', workspaceCwds, options.includePlainChats)) continue;
     rows.push({
-      summary: {
-        id: sessionId,
-        sessionId,
-        missionId: classification.missionId,
-        parentSessionId: classification.parentSessionId,
-        kind: classification.kind,
-        role: classification.role,
-        title,
-        goal: title,
-        cwd: start.cwd ?? '',
-        workspaceKind: start.cwd ? 'folder' : 'none',
-        ...settings,
-        autonomy: settings.autonomy ?? 'low',
-        phase: 'paused',
-        streaming: false,
-        queuedSends: 0,
-        features: [],
-        tokensIn: 0,
-        tokensOut: 0,
-        contextTokens: 0,
-        createdAt: stat.birthtimeMs,
-        updatedAt: stat.mtimeMs,
-      },
+      summary,
       progress: [],
     });
   }
@@ -360,40 +362,7 @@ export class HistoryIndex {
 
   summaryPatches(): Map<string, Partial<MissionSummary>> {
     const rows = this.db.prepare('SELECT * FROM app_sessions').all() as Record<string, unknown>[];
-    const patches = new Map<string, Partial<MissionSummary>>();
-    for (const row of rows) {
-      const appSessionId = stringValue(row.app_session_id);
-      const droidSessionId = stringValue(row.droid_session_id);
-      if (!appSessionId || !droidSessionId) continue;
-      const patch: Partial<MissionSummary> = {
-        id: appSessionId,
-        sessionId: droidSessionId,
-        compactedFromSessionIds: jsonStringArray(row.previous_droid_session_ids),
-        kind: sessionKind(stringValue(row.kind)),
-        title: stringValue(row.title),
-        cwd: stringValue(row.cwd),
-        workspaceKind: workspaceKind(stringValue(row.workspace_kind)),
-        modelId: stringValue(row.model_id),
-        reasoningEffort: mapReasoning(stringValue(row.reasoning_effort)),
-        compactionModel: stringValue(row.compaction_model),
-        workerModelId: stringValue(row.worker_model_id),
-        workerReasoningEffort: mapReasoning(stringValue(row.worker_reasoning_effort)),
-        validatorModelId: stringValue(row.validator_model_id),
-        validatorReasoningEffort: mapReasoning(stringValue(row.validator_reasoning_effort)),
-        autonomy: mapAutonomy(stringValue(row.autonomy)),
-        tokensIn: numberValue(row.tokens_in),
-        tokensOut: numberValue(row.tokens_out),
-        contextTokens: numberValue(row.context_tokens),
-        contextRemainingTokens: numberValue(row.context_remaining_tokens),
-        contextAccuracy: contextAccuracy(row.context_accuracy),
-        contextUpdatedAt: stringValue(row.context_updated_at),
-        maxContextTokens: numberValue(row.max_context_tokens),
-        updatedAt: numberValue(row.updated_at),
-      };
-      patches.set(appSessionId, patch);
-      patches.set(droidSessionId, patch);
-    }
-    return patches;
+    return summaryPatchesFromRows(rows);
   }
 
   hiddenDroidSessionIds(): Set<string> {
@@ -418,6 +387,77 @@ export class HistoryIndex {
   close(): void {
     this.db.close();
   }
+}
+
+function readStoredSummaryPatches(): Map<string, Partial<MissionSummary>> {
+  const path = join(homedir(), '.factory', 'droid-control', 'index.sqlite');
+  if (!existsSync(path)) return new Map();
+  const db = new DatabaseSync(path);
+  try {
+    const rows = db.prepare('SELECT * FROM app_sessions').all() as Record<string, unknown>[];
+    return summaryPatchesFromRows(rows);
+  } catch {
+    return new Map();
+  } finally {
+    db.close();
+  }
+}
+
+function summaryPatchesFromRows(rows: Record<string, unknown>[]): Map<string, Partial<MissionSummary>> {
+  const patches = new Map<string, Partial<MissionSummary>>();
+  for (const row of rows) {
+    const appSessionId = stringValue(row.app_session_id);
+    const droidSessionId = stringValue(row.droid_session_id);
+    if (!appSessionId || !droidSessionId) continue;
+    const patch: Partial<MissionSummary> = {
+      id: appSessionId,
+      sessionId: droidSessionId,
+      compactedFromSessionIds: jsonStringArray(row.previous_droid_session_ids),
+      kind: sessionKind(stringValue(row.kind)),
+      title: stringValue(row.title),
+      cwd: stringValue(row.cwd),
+      workspaceKind: workspaceKind(stringValue(row.workspace_kind)),
+      modelId: stringValue(row.model_id),
+      reasoningEffort: mapReasoning(stringValue(row.reasoning_effort)),
+      compactionModel: stringValue(row.compaction_model),
+      workerModelId: stringValue(row.worker_model_id),
+      workerReasoningEffort: mapReasoning(stringValue(row.worker_reasoning_effort)),
+      validatorModelId: stringValue(row.validator_model_id),
+      validatorReasoningEffort: mapReasoning(stringValue(row.validator_reasoning_effort)),
+      autonomy: mapAutonomy(stringValue(row.autonomy)),
+      tokensIn: numberValue(row.tokens_in),
+      tokensOut: numberValue(row.tokens_out),
+      contextTokens: numberValue(row.context_tokens),
+      contextRemainingTokens: numberValue(row.context_remaining_tokens),
+      contextAccuracy: contextAccuracy(row.context_accuracy),
+      contextUpdatedAt: stringValue(row.context_updated_at),
+      maxContextTokens: numberValue(row.max_context_tokens),
+      updatedAt: numberValue(row.updated_at),
+    };
+    patches.set(appSessionId, patch);
+    patches.set(droidSessionId, patch);
+  }
+  return patches;
+}
+
+export function applyCachedSummary(summary: MissionSummary, cached: Map<string, Partial<MissionSummary>>): MissionSummary {
+  const patch = cached.get(summary.sessionId ?? summary.id) ?? cached.get(summary.id);
+  if (!patch) return summary;
+  const defined = definedPatch(patch);
+  return {
+    ...summary,
+    ...defined,
+    id: defined.id ?? summary.id,
+    sessionId: defined.sessionId ?? summary.sessionId,
+    missionId: defined.missionId ?? summary.missionId,
+    parentSessionId: defined.parentSessionId ?? summary.parentSessionId,
+    kind: defined.kind ?? summary.kind,
+    role: defined.role ?? summary.role,
+  };
+}
+
+function definedPatch(patch: Partial<MissionSummary>): Partial<MissionSummary> {
+  return Object.fromEntries(Object.entries(patch).filter(([, value]) => value !== undefined)) as Partial<MissionSummary>;
 }
 
 export function hydrateHistoricalMission(missionId: string): HydratedMissionHistory {
