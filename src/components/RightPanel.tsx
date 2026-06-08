@@ -2,12 +2,12 @@ import { useState } from 'react';
 import { useStore } from '../hooks/useStore';
 import { useMissionLive } from '../hooks/useMissionLive';
 import { useRepoStatus } from '../hooks/useRepoStatus';
-import { subscribeWorker } from '../lib/commands';
 import { environmentLabels } from '../lib/repoEnvironment';
+import { interruptAgent } from '../lib/commands';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   GitBranch, Hash, Activity, Loader2, ChevronRight, CornerDownRight, FileDiff,
-  FolderGit, CheckCircle2, Circle
+  FolderGit, CheckCircle2, Circle, Square
 } from 'lucide-react';
 import { openCodebase, openCurrentDiff } from './EditorOpenMenu';
 import { ModelIcon, providerOf } from './ModelIcon';
@@ -53,23 +53,38 @@ function Row({
 }
 
 // Mirrors the sub-agent row design used in the left sidebar.
-function AgentRow({ label, running, selected, depth, onClick }: {
-  label: string; running: boolean; selected: boolean; depth: number; onClick: () => void;
+function AgentRow({ label, meta, prompt, running, selected, depth, onClick, onStop }: {
+  label: string; meta?: string; prompt?: string; running: boolean; selected: boolean; depth: number; onClick: () => void; onStop?: () => void;
 }) {
   return (
-    <button
-      onClick={onClick}
-      className={`group w-full flex items-center gap-1.5 pr-3 py-1.5 rounded-lg text-left transition-colors ${
+    <div
+      className={`group w-full flex items-center gap-1.5 pr-2 py-1.5 rounded-lg transition-colors ${
         selected ? 'bg-droid-elevated/70' : 'hover:bg-droid-elevated/40'
       }`}
       style={{ paddingLeft: 16 + depth * 14 }}
     >
-      <CornerDownRight className={`w-3 h-3 shrink-0 ${selected ? 'text-droid-accent' : 'text-droid-text-muted/60'}`} />
-      <span className={`min-w-0 flex-1 truncate text-[12px] ${selected ? 'text-droid-text' : 'text-droid-text-muted group-hover:text-droid-text-secondary'}`}>
-        {label}
-      </span>
+      <button onClick={onClick} className="flex min-w-0 flex-1 items-start gap-1.5 text-left">
+        <CornerDownRight className={`mt-0.5 w-3 h-3 shrink-0 ${selected ? 'text-droid-accent' : 'text-droid-text-muted/60'}`} />
+        <span className="min-w-0 flex-1">
+          <span className={`block truncate text-[12px] ${selected ? 'text-droid-text' : 'text-droid-text-muted group-hover:text-droid-text-secondary'}`}>
+            {label}
+          </span>
+          {meta && <span className="mt-0.5 block truncate font-mono text-[10px] text-droid-text-muted/70">{meta}</span>}
+          {prompt && <span className="mt-0.5 block truncate text-[10.5px] text-droid-text-muted/80">{prompt}</span>}
+        </span>
+      </button>
       {running && <Loader2 className="w-3 h-3 shrink-0 animate-spin text-droid-accent" />}
-    </button>
+      {running && onStop && (
+        <button
+          type="button"
+          title="Stop subagent"
+          onClick={onStop}
+          className="shrink-0 rounded p-1 text-droid-text-muted transition-colors hover:bg-droid-elevated hover:text-droid-text"
+        >
+          <Square className="h-3 w-3" />
+        </button>
+      )}
+    </div>
   );
 }
 
@@ -164,14 +179,16 @@ export default function RightPanel() {
                             <AgentRow
                               key={w.sessionId}
                               label={w.label ?? `Sub-agent ${i + 1}`}
+                              meta={[w.modelId ? state.models.find((m) => m.id === w.modelId)?.displayName ?? w.modelId : undefined, w.reasoningEffort].filter(Boolean).join(' · ') || undefined}
+                              prompt={w.prompt}
                               running={w.status === 'running'}
                               depth={0}
                               selected={state.selectedAgentSessionId === w.sessionId}
                               onClick={() => {
                                 const next = state.selectedAgentSessionId === w.sessionId ? null : w.sessionId;
                                 dispatch({ type: 'SELECT_AGENT', id: next });
-                                if (next) subscribeWorker(activeMission.id, w.sessionId);
                               }}
+                              onStop={() => activeMission && interruptAgent(activeMission.id, w.sessionId)}
                             />
                           ))}
                         </motion.div>

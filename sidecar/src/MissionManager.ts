@@ -50,6 +50,7 @@ import { mergeModelCatalog } from './modelCatalog.js';
 import { readDroidCliModelCatalog, readDroidCliModelCatalogCache } from './DroidCliCatalog.js';
 import { BrowserSessionManager } from './browser/BrowserSessionManager.js';
 import { createBrowserMcpServer } from './browser/browserMcpServer.js';
+import { createControlMcpServer } from './controlMcpServer.js';
 import { NativeBrowserRuntime } from './browser/NativeBrowserRuntime.js';
 import { isApprovalOutcome, normalizePermissionOutcome } from './permissionOutcomes.js';
 import { filterMissionListSummaries, type MissionListFilterOptions } from './missionListFilter.js';
@@ -80,13 +81,34 @@ interface Mission {
   pendingQuestions: Map<string, (r: AskUserResult) => void>;
   agents: Map<string, LiveAgent>;
   knownSubagents: Set<string>;
-  lastSubagentLabel?: string;
+  completedSubagents: Set<string>;
+  subagentToolUseIds: Map<string, string>;
+  subagentSettings: Map<string, SubagentSettings>;
+  nextSubagentModelOverride?: NextSubagentModelOverride;
+  pendingSubagents: PendingSubagent[];
   mcpServers: SdkMcpServer[];
 }
 
 interface PendingPermission {
   resolve: (r: RequestPermissionHandlerResult) => void;
   kind: PermissionKind;
+}
+
+interface PendingSubagent {
+  toolUseId?: string;
+  label?: string;
+  prompt?: string;
+}
+
+interface SubagentSettings {
+  modelId?: string;
+  reasoningEffort?: ReasoningEffort;
+}
+
+interface NextSubagentModelOverride {
+  previous: SubagentSettings;
+  requested: SubagentSettings;
+  restoreTimer: ReturnType<typeof setTimeout>;
 }
 
 export interface AgentSettingPatch {
@@ -391,6 +413,30 @@ export class MissionManager {
     this.emit({ type: 'settings.defaults', defaults: startupFactoryDefaults(defaults, models) });
   }
 
+  private async startLocalMcpServers(
+    ref: { id: string },
+    options: { includeSubagentControl?: boolean } = {},
+  ): Promise<{ servers: SdkMcpServer[]; configs: Awaited<ReturnType<SdkMcpServer['start']>>[] }> {
+    const servers = [
+      createBrowserMcpServer(this.browsers, () => ref.id),
+    ];
+    if (options.includeSubagentControl) {
+      servers.push(createControlMcpServer({
+        missionIdForTool: () => ref.id,
+        configureNextSubagentModel: (missionId, settings) =>
+          this.configureNextSubagentModel(missionId, settings),
+      }));
+    }
+    const configs: Awaited<ReturnType<SdkMcpServer['start']>>[] = [];
+    try {
+      for (const server of servers) configs.push(await server.start());
+      return { servers, configs };
+    } catch (err) {
+      await Promise.all(servers.map((server) => server.close().catch(() => {})));
+      throw err;
+    }
+  }
+
   private maxContextTokensForSummary(summary: MissionSummary): number | undefined {
     return this.maxContextTokensForModel(summary.modelId);
   }
@@ -425,6 +471,58 @@ export class MissionManager {
       }
     } catch (err) {
       this.emitError({ missionId: cmd.missionId, message: `Could not update agent settings: ${errMsg(err)}` });
+    }
+  }
+
+  private async configureNextSubagentModel(
+    missionId: string,
+    settings: { modelId?: string; reasoningEffort?: ReasoningEffort },
+  ): Promise<{ modelId?: string; reasoningEffort?: ReasoningEffort }> {
+    const mission = this.findMission(missionId);
+    if (!mission) throw new Error(`Session ${missionId} is not live.`);
+    if (mission.summary.kind === 'mission_orchestrator') {
+      throw new Error('next_subagent_model is for normal chat/spec Task subagents, not Mission Control.');
+    }
+    const previous = mission.nextSubagentModelOverride?.previous ?? {
+      modelId: mission.summary.modelId,
+      reasoningEffort: mission.summary.reasoningEffort,
+    };
+    if (mission.nextSubagentModelOverride) clearTimeout(mission.nextSubagentModelOverride.restoreTimer);
+    const requested = {
+      modelId: settings.modelId,
+      reasoningEffort: settings.reasoningEffort,
+    };
+    await mission.session.updateSettings(settings as never);
+    mission.nextSubagentModelOverride = {
+      previous,
+      requested,
+      restoreTimer: setTimeout(() => {
+        void this.restoreSubagentModelOverride(mission.summary.id, 'timeout');
+      }, 60_000),
+    };
+    return requested;
+  }
+
+  private async restoreSubagentModelOverride(missionId: string, reason: 'spawned' | 'timeout'): Promise<void> {
+    const mission = this.findMission(missionId);
+    const override = mission?.nextSubagentModelOverride;
+    if (!mission || !override) return;
+    clearTimeout(override.restoreTimer);
+    mission.nextSubagentModelOverride = undefined;
+
+    const restore: Record<string, unknown> = {};
+    if (override.previous.modelId) restore.modelId = override.previous.modelId;
+    if (override.previous.reasoningEffort) restore.reasoningEffort = override.previous.reasoningEffort;
+    if (Object.keys(restore).length === 0) return;
+
+    try {
+      await mission.session.updateSettings(restore as never);
+    } catch (err) {
+      this.emitError({
+        code: 'subagent_model_restore_failed',
+        missionId: mission.summary.id,
+        message: `Could not restore parent session model after subagent override ${reason}: ${errMsg(err)}`,
+      });
     }
   }
 
@@ -541,15 +639,16 @@ export class MissionManager {
       return;
     }
     const ref = { id: droidSessionId };
-    let pendingBrowserMcpServer: SdkMcpServer | undefined;
+    let pendingMcpServers: SdkMcpServer[] = [];
     try {
-      const browserMcpServer = createBrowserMcpServer(this.browsers, () => ref.id);
-      pendingBrowserMcpServer = browserMcpServer;
-      const browserMcpConfig = await browserMcpServer.start();
+      const mcp = await this.startLocalMcpServers(ref, {
+        includeSubagentControl: historical?.kind === 'chat' || historical?.kind === 'spec',
+      });
+      pendingMcpServers = mcp.servers;
       const session = await this.runtime.loadSession(droidSessionId, {
         permissionHandler: this.makePermissionHandler(ref),
         askUserHandler: this.makeAskUserHandler(ref),
-        mcpServers: [browserMcpConfig],
+        mcpServers: mcp.configs,
       });
       const init = session.initResult as InitResultLike;
       const features = (init.mission?.features ?? []).map((f) => mapFeature(f as never));
@@ -594,7 +693,7 @@ export class MissionManager {
         createdAt: historical?.createdAt ?? now,
         updatedAt: now,
       });
-      const mission: Mission = this.createLiveMission(summary, session, [browserMcpServer]);
+      const mission: Mission = this.createLiveMission(summary, session, mcp.servers);
       this.missions.set(appSessionId, mission);
       this.history.syncSummaries([summary]);
       this.emit({ type: 'mission.created', clientRef: `resume:${appSessionId}`, mission: summary });
@@ -602,7 +701,7 @@ export class MissionManager {
       if (features.length) this.emit({ type: 'mission.features', missionId: appSessionId, features });
       void this.refreshContext(appSessionId, session);
     } catch (err) {
-      await pendingBrowserMcpServer?.close().catch(() => {});
+      await Promise.all(pendingMcpServers.map((server) => server.close().catch(() => {})));
       this.emitError({ missionId: appSessionId, sessionId: droidSessionId, message: errMsg(err) });
     }
   }
@@ -681,7 +780,7 @@ export class MissionManager {
     const appCwd = cmd.cwd ?? '';
     const runtimeCwd = appCwd || homedir();
     const ref = { id: '' };
-    let pendingBrowserMcpServer: SdkMcpServer | undefined;
+    let pendingMcpServers: SdkMcpServer[] = [];
     try {
       const defaults = await this.getFactoryDefaults();
       const mode = cmd.interactionMode ?? defaults.interactionMode ?? 'agi';
@@ -693,9 +792,8 @@ export class MissionManager {
       const workerReasoningEffort = cmd.workerReasoning ?? defaults.workerReasoningEffort;
       const validatorModelId = cmd.validatorModel ?? defaults.validatorModelId;
       const validatorReasoningEffort = cmd.validatorReasoning ?? defaults.validatorReasoningEffort;
-      const browserMcpServer = createBrowserMcpServer(this.browsers, () => ref.id);
-      pendingBrowserMcpServer = browserMcpServer;
-      const browserMcpConfig = await browserMcpServer.start();
+      const mcp = await this.startLocalMcpServers(ref, { includeSubagentControl: mode !== 'agi' });
+      pendingMcpServers = mcp.servers;
       const session = await this.runtime.createSession({
         cwd: runtimeCwd,
         interactionMode: mode,
@@ -710,7 +808,7 @@ export class MissionManager {
         validatorModelId,
         validatorReasoningEffort,
         compactionModel,
-        mcpServers: [browserMcpConfig],
+        mcpServers: mcp.configs,
         permissionHandler: this.makePermissionHandler(ref),
         askUserHandler: this.makeAskUserHandler(ref),
       });
@@ -748,14 +846,14 @@ export class MissionManager {
         updatedAt: now,
       };
       ref.id = id;
-      const mission = this.createLiveMission(summary, session, [browserMcpServer]);
+      const mission = this.createLiveMission(summary, session, mcp.servers);
       this.missions.set(id, mission);
       this.history.syncSummaries([summary]);
       this.emit({ type: 'mission.created', clientRef: cmd.clientRef, mission: summary });
       this.emit({ type: 'session.updated', session: summary });
       void this.drive(id, cmd.goal);
     } catch (err) {
-      await pendingBrowserMcpServer?.close().catch(() => {});
+      await Promise.all(pendingMcpServers.map((server) => server.close().catch(() => {})));
       this.emitError({ message: errMsg(err) });
     }
   }
@@ -770,6 +868,10 @@ export class MissionManager {
       pendingQuestions: new Map(),
       agents: new Map(),
       knownSubagents: new Set(),
+      completedSubagents: new Set(),
+      subagentToolUseIds: new Map(),
+      subagentSettings: new Map(),
+      pendingSubagents: [],
       mcpServers,
     };
   }
@@ -891,24 +993,87 @@ export class MissionManager {
     this.applyNormalized(missionId, n);
   }
 
-  private applySubagent(missionId: string, sub: { sessionId?: string; label?: string; done?: boolean }): void {
+  private applySubagent(
+    missionId: string,
+    sub: { sessionId?: string; toolUseId?: string; label?: string; prompt?: string; done?: boolean },
+  ): void {
     const mission = this.findMission(missionId);
     if (!mission) return;
     const appSessionId = mission.summary.id;
-    if (sub.label) mission.lastSubagentLabel = sub.label;
     const sessionId = sub.sessionId;
-    if (!sessionId) return;
+    if (!sessionId) {
+      if (sub.done) {
+        if (sub.toolUseId) this.completeSubagentForToolUse(mission, sub.toolUseId);
+      } else if (sub.toolUseId || sub.label || sub.prompt) {
+        mission.pendingSubagents.push({ toolUseId: sub.toolUseId, label: sub.label, prompt: sub.prompt });
+      }
+      return;
+    }
     if (sub.done) {
-      if (!mission.knownSubagents.has(sessionId)) return;
-      this.emit({ type: 'mission.worker', missionId: appSessionId, event: 'completed', workerSessionId: sessionId });
-      this.emit({ type: 'agent.updated', missionId: appSessionId, agentSessionId: sessionId, role: 'worker', status: 'completed' });
-      void this.closeAgentWhenIdle(appSessionId, sessionId);
+      this.completeSubagent(mission, sessionId);
       return;
     }
     if (mission.knownSubagents.has(sessionId)) return;
+    const pending = this.takePendingSubagent(mission, sub);
+    const toolUseId = sub.toolUseId ?? pending?.toolUseId;
+    const label = sub.label ?? pending?.label;
+    const prompt = sub.prompt ?? pending?.prompt;
+    const settings = mission.nextSubagentModelOverride?.requested ?? {};
     mission.knownSubagents.add(sessionId);
-    this.emit({ type: 'mission.worker', missionId: appSessionId, event: 'started', workerSessionId: sessionId, label: mission.lastSubagentLabel });
+    mission.completedSubagents.delete(sessionId);
+    mission.subagentSettings.set(sessionId, settings);
+    if (toolUseId) mission.subagentToolUseIds.set(toolUseId, sessionId);
+    if (mission.nextSubagentModelOverride) void this.restoreSubagentModelOverride(appSessionId, 'spawned');
+    this.emit({
+      type: 'mission.worker',
+      missionId: appSessionId,
+      event: 'started',
+      workerSessionId: sessionId,
+      label,
+      prompt,
+      ...settings,
+    });
+    if (prompt) {
+      this.emitTranscript({
+        id: `subagent-task-${sessionId}`,
+        missionId: appSessionId,
+        agentSessionId: sessionId,
+        role: 'worker',
+        ts: Date.now(),
+        kind: 'status',
+        text: `Task prompt\n\n${prompt}`,
+      });
+    }
     this.emit({ type: 'agent.updated', missionId: appSessionId, agentSessionId: sessionId, role: 'worker', status: 'running' });
+  }
+
+  private takePendingSubagent(mission: Mission, sub: PendingSubagent): PendingSubagent | undefined {
+    if (mission.pendingSubagents.length === 0) return undefined;
+    if (sub.toolUseId) {
+      const index = mission.pendingSubagents.findIndex((pending) => pending.toolUseId === sub.toolUseId);
+      if (index >= 0) return mission.pendingSubagents.splice(index, 1)[0];
+    }
+    const label = sub.label?.toLowerCase();
+    if (label) {
+      const index = mission.pendingSubagents.findIndex((pending) => pending.label?.toLowerCase() === label);
+      if (index >= 0) return mission.pendingSubagents.splice(index, 1)[0];
+    }
+    return mission.pendingSubagents.shift();
+  }
+
+  private completeSubagentForToolUse(mission: Mission, toolUseId: string): void {
+    const sessionId = mission.subagentToolUseIds.get(toolUseId);
+    if (sessionId) this.completeSubagent(mission, sessionId);
+  }
+
+  private completeSubagent(mission: Mission, sessionId: string): void {
+    if (!mission.knownSubagents.has(sessionId) || mission.completedSubagents.has(sessionId)) return;
+    const appSessionId = mission.summary.id;
+    mission.completedSubagents.add(sessionId);
+    const settings = mission.subagentSettings.get(sessionId) ?? {};
+    this.emit({ type: 'mission.worker', missionId: appSessionId, event: 'completed', workerSessionId: sessionId, ...settings });
+    this.emit({ type: 'agent.updated', missionId: appSessionId, agentSessionId: sessionId, role: 'worker', status: 'completed' });
+    void this.closeAgentWhenIdle(appSessionId, sessionId);
   }
 
   private applyNormalized(missionId: string, n: NonNullable<ReturnType<typeof normalizeStreamEvent>>): void {
@@ -1162,6 +1327,7 @@ export class MissionManager {
     const mission = this.findMission(missionId);
     if (!mission) return;
     const appSessionId = mission.summary.id;
+    if (!this.agentBelongsToMission(mission, agentSessionId)) return;
     if (mission.agents.has(agentSessionId)) {
       const agent = mission.agents.get(agentSessionId);
       if (agent) agent.lastUsedAt = Date.now();
@@ -1175,6 +1341,17 @@ export class MissionManager {
         permissionHandler: this.makePermissionHandler(ref),
         askUserHandler: this.makeAskUserHandler(ref),
       });
+      const actualSettings = subagentSettingsFromInit(session.initResult as InitResultLike);
+      if (actualSettings.modelId || actualSettings.reasoningEffort) {
+        mission.subagentSettings.set(agentSessionId, actualSettings);
+        this.emit({
+          type: 'mission.worker',
+          missionId: appSessionId,
+          event: 'updated',
+          workerSessionId: agentSessionId,
+          ...actualSettings,
+        });
+      }
       const agent: LiveAgent = {
         session,
         missionId: appSessionId,
@@ -1187,9 +1364,19 @@ export class MissionManager {
         for (const n of normalizeNotification(appSessionId, agentSessionId, role, note)) this.applyNormalized(appSessionId, n);
       });
       mission.agents.set(agentSessionId, agent);
+      this.emitAgentHistory(appSessionId, agentSessionId);
       this.emit({ type: 'agent.updated', missionId: appSessionId, agentSessionId, role, status: 'opened' });
     } catch (err) {
       this.emit({ type: 'error', code: 'agent.open_failed', missionId: appSessionId, sessionId: agentSessionId, message: errMsg(err) });
+    }
+  }
+
+  private emitAgentHistory(appSessionId: string, agentSessionId: string): void {
+    try {
+      const page = loadSessionPage(agentSessionId, undefined, 200, appSessionId);
+      for (const event of page.events) this.emitTranscript(event);
+    } catch {
+      /* Some live subagents have not flushed local history yet. Live notifications still stream after open. */
     }
   }
 
@@ -1197,6 +1384,7 @@ export class MissionManager {
     const mission = this.findMission(missionId);
     if (!mission) return;
     const appSessionId = mission.summary.id;
+    if (!this.agentBelongsToMission(mission, agentSessionId)) return;
     if (!mission.agents.has(agentSessionId)) await this.openAgent(appSessionId, agentSessionId, 'worker');
     const agent = mission.agents.get(agentSessionId);
     if (!agent) return;
@@ -1238,6 +1426,7 @@ export class MissionManager {
     const mission = this.findMission(missionId);
     if (!mission) return;
     const appSessionId = mission.summary.id;
+    if (!this.agentBelongsToMission(mission, agentSessionId)) return;
     if (!mission.agents.has(agentSessionId)) await this.openAgent(appSessionId, agentSessionId, 'worker');
     const agent = mission.agents.get(agentSessionId);
     if (!agent) return;
@@ -1246,6 +1435,20 @@ export class MissionManager {
     await agent.session.interrupt();
     agent.streaming = false;
     this.emit({ type: 'agent.updated', missionId: appSessionId, agentSessionId, role: agent.role, status: 'paused' });
+  }
+
+  private agentBelongsToMission(mission: Mission, agentSessionId: string): boolean {
+    if (mission.summary.kind === 'mission_orchestrator') return true;
+    if (mission.knownSubagents.has(agentSessionId)) return true;
+    const appSessionId = mission.summary.id;
+    this.emit({
+      type: 'error',
+      code: 'agent.not_in_session',
+      missionId: appSessionId,
+      sessionId: agentSessionId,
+      message: `Subagent ${agentSessionId} is not tied to session ${appSessionId}.`,
+    });
+    return false;
   }
 
   private async ensureAgentCapacity(mission: Mission, requestedAgentSessionId: string): Promise<boolean> {
@@ -1452,6 +1655,7 @@ export class MissionManager {
     if (!mission) return;
     this.stopContextPolling(key);
     if (mission.summary.sessionId) this.stopContextPolling(mission.summary.sessionId);
+    if (mission.nextSubagentModelOverride) clearTimeout(mission.nextSubagentModelOverride.restoreTimer);
     for (const agent of mission.agents.values()) {
       this.stopContextPolling(agent.session.sessionId);
       agent.unsubscribe?.();
@@ -1545,6 +1749,28 @@ interface InitResultLike {
     autonomyLevel?: string;
   };
   mission?: { state?: string; features?: unknown[] };
+}
+
+function subagentSettingsFromInit(init: InitResultLike): SubagentSettings {
+  return {
+    modelId: init.settings?.modelId,
+    reasoningEffort: reasoningValue(init.settings?.reasoningEffort),
+  };
+}
+
+function reasoningValue(value?: string): ReasoningEffort | undefined {
+  if (
+    value === 'off' ||
+    value === 'none' ||
+    value === 'minimal' ||
+    value === 'low' ||
+    value === 'medium' ||
+    value === 'high' ||
+    value === 'xhigh' ||
+    value === 'max' ||
+    value === 'dynamic'
+  ) return value;
+  return undefined;
 }
 
 function classifySession(init: InitResultLike, historical?: MissionSummary): Pick<MissionSummary, 'kind' | 'role' | 'missionId' | 'parentSessionId'> {

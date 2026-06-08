@@ -1,9 +1,10 @@
 import { useRef, useEffect, useMemo, useState } from 'react';
-import { GripVertical, CornerDownRight, X } from 'lucide-react';
+import { GripVertical, CornerDownRight, Square, X } from 'lucide-react';
 import { useStore } from '../hooks/useStore';
 import { useMissionLive } from '../hooks/useMissionLive';
 import { MessageFeed } from './chat';
 import { readFile } from '../lib/desktop';
+import { interruptAgent } from '../lib/commands';
 
 function DroidWordmark() {
   return (
@@ -64,20 +65,43 @@ function ChatHeader({ title, live }: { title: string; live: boolean }) {
   );
 }
 
-function SubAgentBanner({ label, onBack }: { label: string; onBack: () => void }) {
+function SubAgentBanner({ label, meta, prompt, onBack, onStop }: {
+  label: string;
+  meta?: string;
+  prompt?: string;
+  onBack: () => void;
+  onStop?: () => void;
+}) {
   return (
     <div className="shrink-0 mx-auto mt-2 flex w-full max-w-2xl items-center justify-between px-6">
-      <span className="flex items-center gap-2 rounded-lg bg-droid-accent/10 px-2.5 py-1 text-[12px] text-droid-accent">
-        <CornerDownRight className="h-3.5 w-3.5" />
-        Viewing {label}
+      <span className="flex min-w-0 items-center gap-2 rounded-lg bg-droid-accent/10 px-2.5 py-1 text-[12px] text-droid-accent">
+        <CornerDownRight className="h-3.5 w-3.5 shrink-0" />
+        <span className="min-w-0">
+          <span className="block truncate">Viewing {label}</span>
+          {prompt && <span className="block max-w-[360px] truncate text-[10.5px] text-droid-accent/75">{prompt}</span>}
+        </span>
+        {meta && <span className="shrink-0 font-mono text-[10px] text-droid-accent/75">{meta}</span>}
       </span>
-      <button
-        onClick={onBack}
-        className="flex items-center gap-1 rounded-md px-2 py-1 text-[11px] text-droid-text-muted transition-colors hover:bg-droid-elevated/60 hover:text-droid-text"
-      >
-        <X className="h-3 w-3" />
-        Back to chat
-      </button>
+      <span className="flex shrink-0 items-center gap-1">
+        {onStop && (
+          <button
+            type="button"
+            title="Stop subagent"
+            onClick={onStop}
+            className="flex items-center gap-1 rounded-md px-2 py-1 text-[11px] text-droid-text-muted transition-colors hover:bg-droid-elevated/60 hover:text-droid-text"
+          >
+            <Square className="h-3 w-3" />
+            Stop
+          </button>
+        )}
+        <button
+          onClick={onBack}
+          className="flex items-center gap-1 rounded-md px-2 py-1 text-[11px] text-droid-text-muted transition-colors hover:bg-droid-elevated/60 hover:text-droid-text"
+        >
+          <X className="h-3 w-3" />
+          Back to chat
+        </button>
+      </span>
     </div>
   );
 }
@@ -93,7 +117,12 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
 
   const missionWorkers = activeMission ? state.workers[activeMission.id] ?? [] : [];
   const workerIndex = missionWorkers.findIndex((w) => w.sessionId === selectedAgent);
-  const subLabel = workerIndex >= 0 ? missionWorkers[workerIndex].label ?? `Sub-agent ${workerIndex + 1}` : 'Sub-agent';
+  const selectedWorker = workerIndex >= 0 ? missionWorkers[workerIndex] : undefined;
+  const subLabel = selectedWorker ? selectedWorker.label ?? `Sub-agent ${workerIndex + 1}` : 'Sub-agent';
+  const subModel = selectedWorker?.modelId
+    ? state.models.find((m) => m.id === selectedWorker.modelId)?.displayName ?? selectedWorker.modelId
+    : undefined;
+  const subMeta = [subModel, selectedWorker?.reasoningEffort].filter(Boolean).join(' · ');
 
   const transcript = useMemo(() => {
     if (viewingSub) return allTranscript.filter((t) => t.agentSessionId === selectedAgent);
@@ -172,7 +201,17 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
       {activeMission && (
         <ChatHeader title={activeMission.title} live={live} />
       )}
-      {viewingSub && <SubAgentBanner label={subLabel} onBack={() => dispatch({ type: 'SELECT_AGENT', id: null })} />}
+      {viewingSub && (
+        <SubAgentBanner
+          label={subLabel}
+          meta={subMeta || undefined}
+          prompt={selectedWorker?.prompt}
+          onBack={() => dispatch({ type: 'SELECT_AGENT', id: null })}
+          onStop={activeMission && selectedAgent && selectedWorker?.status === 'running'
+            ? () => interruptAgent(activeMission.id, selectedAgent)
+            : undefined}
+        />
+      )}
       <div
         ref={scrollRef}
         onScroll={onScroll}
