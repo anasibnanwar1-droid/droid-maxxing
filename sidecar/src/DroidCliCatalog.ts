@@ -1,11 +1,12 @@
 import { execFile } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
 import type { ModelInfo, ReasoningEffort } from './protocol.js';
 
 const execFileAsync = promisify(execFile);
+const CACHE_PATH = join(homedir(), '.factory', 'droid-control', 'model-catalog.json');
 
 type Section = 'available' | 'custom' | 'details' | null;
 
@@ -14,7 +15,29 @@ export async function readDroidCliModelCatalog(droidPath: string): Promise<Model
     maxBuffer: 1024 * 1024,
     env: process.env,
   });
-  return parseDroidExecHelp(stdout);
+  const models = parseDroidExecHelp(stdout);
+  writeDroidCliModelCatalogCache(droidPath, models);
+  return models;
+}
+
+export function readDroidCliModelCatalogCache(droidPath: string): ModelInfo[] {
+  try {
+    if (!existsSync(CACHE_PATH)) return [];
+    const raw = JSON.parse(readFileSync(CACHE_PATH, 'utf8')) as Record<string, unknown>;
+    if (raw.version !== 1 || raw.droidPath !== droidPath || !Array.isArray(raw.models)) return [];
+    return raw.models.map(modelInfoValue).filter((model): model is ModelInfo => Boolean(model));
+  } catch {
+    return [];
+  }
+}
+
+function writeDroidCliModelCatalogCache(droidPath: string, models: ModelInfo[]): void {
+  try {
+    mkdirSync(dirname(CACHE_PATH), { recursive: true });
+    writeFileSync(CACHE_PATH, JSON.stringify({ version: 1, droidPath, updatedAt: Date.now(), models }), 'utf8');
+  } catch {
+    /* cache is best-effort */
+  }
 }
 
 export function parseDroidExecHelp(help: string): ModelInfo[] {
@@ -115,6 +138,35 @@ function parseReasoning(value: string): ReasoningEffort | undefined {
     return value;
   }
   return undefined;
+}
+
+function modelInfoValue(value: unknown): ModelInfo | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const raw = value as Record<string, unknown>;
+  const id = stringValue(raw.id);
+  const displayName = stringValue(raw.displayName);
+  if (!id || !displayName) return undefined;
+  const supportedReasoningEfforts = Array.isArray(raw.supportedReasoningEfforts)
+    ? raw.supportedReasoningEfforts.map((item) => parseReasoning(String(item))).filter((item): item is ReasoningEffort => Boolean(item))
+    : undefined;
+  return {
+    id,
+    displayName,
+    provider: stringValue(raw.provider),
+    isCustom: raw.isCustom === true,
+    isDefault: raw.isDefault === true,
+    maxContextTokens: numberValue(raw.maxContextTokens),
+    supportedReasoningEfforts: supportedReasoningEfforts?.length ? supportedReasoningEfforts : undefined,
+    defaultReasoningEffort: raw.defaultReasoningEffort ? parseReasoning(String(raw.defaultReasoningEffort)) : undefined,
+  };
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() ? value : undefined;
+}
+
+function numberValue(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : undefined;
 }
 
 function providerFor(id: string, displayName: string, isCustom: boolean): string {

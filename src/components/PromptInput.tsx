@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useMemo } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { useStore } from '../hooks/useStore';
 import { useMissionLive } from '../hooks/useMissionLive';
-import { sendToMission, sendToAgent, createMission, interruptMission, interruptAgent, compactSession, setInteractionMode, newClientRef } from '../lib/commands';
+import { sendToMission, sendToAgent, createMission, interruptMission, interruptAgent, compactSession, setInteractionMode, newClientRef, listSkills } from '../lib/commands';
 import { pickDirectory, listFiles } from '../lib/desktop';
 import { ArrowUp, ChevronDown, SlidersHorizontal, Square, FileText, X, Folder, User, Box, GripVertical, Pencil, Check, ListPlus } from 'lucide-react';
 import ModelSelectorPopover from './ModelSelectorPopover';
@@ -79,6 +79,8 @@ export default function PromptInput() {
       : null;
 
   const cwd = activeMission?.cwd ?? state.draftChat?.cwd ?? null;
+  const skillsSessionId = activeMission?.id ?? null;
+  const pendingSkillsRequest = useRef<{ sessionId: string | null; requestedAt: number } | null>(null);
 
   // Toggle spec mode. When a live chat session exists, switch its interaction
   // mode for real (not just the compose flag used for brand-new chats).
@@ -108,9 +110,27 @@ export default function PromptInput() {
   const trigger = useMemo(() => getTrigger(input, caret), [input, caret]);
 
   const invocableSkills = useMemo(
-    () => state.skills.filter((s) => s.userInvocable !== false && s.enabled !== false),
-    [state.skills]
+    () => state.skillsSessionId === skillsSessionId
+      ? state.skills.filter((s) => s.userInvocable !== false && s.enabled !== false)
+      : [],
+    [skillsSessionId, state.skills, state.skillsSessionId]
   );
+
+  useEffect(() => {
+    if (trigger?.kind !== 'slash') {
+      pendingSkillsRequest.current = null;
+      return;
+    }
+    if (state.skillsSessionId === skillsSessionId) {
+      pendingSkillsRequest.current = null;
+      return;
+    }
+    const pending = pendingSkillsRequest.current;
+    const now = Date.now();
+    if (pending?.sessionId === skillsSessionId && now - pending.requestedAt < 2_000) return;
+    pendingSkillsRequest.current = { sessionId: skillsSessionId, requestedAt: now };
+    listSkills(activeMission?.id);
+  }, [activeMission?.id, skillsSessionId, state.skillsSessionId, trigger?.kind, trigger?.query, trigger?.start]);
 
   const menuItems = useMemo<MenuItem[]>(() => {
     if (!trigger) return [];

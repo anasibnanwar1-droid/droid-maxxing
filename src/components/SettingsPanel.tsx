@@ -394,7 +394,10 @@ function GeneralSection() {
 
   const setGlobalLimit = (limit?: number) => {
     dispatch({ type: 'SET_COMPACTION_TOKEN_LIMIT_GLOBAL', limit });
-    applyToLiveSessions({ compactionTokenLimit: limit ?? null });
+    applyToLiveSessions({
+      compactionTokenLimit: limit ?? null,
+      compactionTokenLimitPerModel: state.compactionTokenLimitPerModel,
+    });
   };
 
   const setModelLimit = (modelId: string, limit?: number) => {
@@ -402,7 +405,10 @@ function GeneralSection() {
     const next = { ...state.compactionTokenLimitPerModel };
     if (limit === undefined) delete next[modelId];
     else next[modelId] = limit;
-    applyToLiveSessions({ compactionTokenLimitPerModel: next });
+    applyToLiveSessions({
+      compactionTokenLimit: state.compactionTokenLimit ?? null,
+      compactionTokenLimitPerModel: next,
+    });
   };
 
   const q = query.trim().toLowerCase();

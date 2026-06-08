@@ -95,6 +95,8 @@ export const updateAgentSettings = (p: {
   agent: ConfigurableAgent;
   modelId?: string | null;
   reasoningEffort?: ReasoningEffort;
+  compactionTokenLimit?: number | null;
+  compactionTokenLimitPerModel?: Record<string, number>;
 }) => bridge.send({ type: 'settings.agent.update', ...p });
 
 export const openBrowser = (p: { missionId: string; url: string; viewport?: BrowserViewport; viewportMode?: BrowserViewportMode }) =>

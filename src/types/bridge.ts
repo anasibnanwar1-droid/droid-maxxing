@@ -331,7 +331,7 @@ export type ClientCommand =
       validatorModel?: string;
       validatorReasoning?: ReasoningEffort;
     }
-  | { type: 'session.create'; clientRef: string; cwd?: string; title: string; goal: string; interactionMode: SessionInteractionMode; modelId?: string; reasoningEffort?: ReasoningEffort; compactionModel?: string; compactionTokenLimit?: number; compactionTokenLimitPerModel?: Record<string, number>; autonomy: Autonomy }
+  | { type: 'session.create'; clientRef: string; cwd?: string; title: string; goal: string; interactionMode: SessionInteractionMode; modelId?: string; reasoningEffort?: ReasoningEffort; compactionModel?: string; compactionTokenLimit?: number | null; compactionTokenLimitPerModel?: Record<string, number>; autonomy: Autonomy }
   | { type: 'session.send'; sessionId: string; text: string }
   | { type: 'session.resume'; sessionId: string }
   | { type: 'session.interrupt'; sessionId: string }
@@ -357,7 +357,7 @@ export type ClientCommand =
   | { type: 'mission.close'; missionId: string }
   | { type: 'mission.list'; workspaceCwds?: string[]; includePlainChats?: boolean; limitPerWorkspace?: number }
   | { type: 'mission.loadHistory'; missionId: string }
-  | { type: 'settings.agent.update'; missionId?: string; agent: ConfigurableAgent; modelId?: string | null; reasoningEffort?: ReasoningEffort }
+  | { type: 'settings.agent.update'; missionId?: string; agent: ConfigurableAgent; modelId?: string | null; reasoningEffort?: ReasoningEffort; compactionTokenLimit?: number | null; compactionTokenLimitPerModel?: Record<string, number> }
   | { type: 'mission.setAutonomy'; missionId: string; autonomy: Autonomy }
   | { type: 'mission.setInteractionMode'; missionId: string; mode: SessionInteractionMode }
   | { type: 'browser.open'; missionId: string; url: string; viewport?: BrowserViewport; viewportMode?: BrowserViewportMode }
@@ -388,7 +388,7 @@ export type ServerEvent =
   | { type: 'question.requested'; question: MissionQuestion }
   | { type: 'context.updated'; sessionId: string; stats: ContextStatsSnapshot; breakdown?: unknown }
   | { type: 'mcp.authRequested'; sessionId: string; serverName?: string; authUrl?: string; message?: string }
-  | { type: 'catalog.updated'; catalog: 'models' | 'tools' | 'skills' | 'mcp'; items: unknown[] }
+  | { type: 'catalog.updated'; catalog: 'models' | 'tools' | 'skills' | 'mcp'; items: unknown[]; sessionId?: string | null }
   | { type: 'settings.defaults'; defaults: FactoryDefaultSettings }
   | { type: 'error'; code?: string; sessionId?: string; missionId?: string; message: string }
   | { type: 'agent.not_steerable'; missionId: string; agentSessionId: string; message: string }
