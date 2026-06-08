@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { Pipette } from 'lucide-react';
 
 /* ── color math ── */
 interface HSV { h: number; s: number; v: number }
@@ -69,10 +70,31 @@ const HUE_GRADIENT =
   'linear-gradient(to right, #f00 0%, #ff0 17%, #0f0 33%, #0ff 50%, #00f 67%, #f0f 83%, #f00 100%)';
 
 /* ── the picker surface ── */
+const hasEyeDropper = typeof window !== 'undefined' && 'EyeDropper' in window;
+
 export function ColorPicker({ value, onChange }: { value: string; onChange: (hex: string) => void }) {
   const { h, s, v } = hexToHsv(value);
   const satRef = useRef<HTMLDivElement>(null);
   const hueRef = useRef<HTMLDivElement>(null);
+  const [hexDraft, setHexDraft] = useState(value);
+
+  useEffect(() => { setHexDraft(value); }, [value]);
+
+  const commitHex = (raw: string) => {
+    setHexDraft(raw);
+    const norm = normalizeHex(raw);
+    if (norm) onChange(norm);
+  };
+
+  const pickFromScreen = async () => {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const result = await new (window as any).EyeDropper().open();
+      if (result?.sRGBHex) onChange(result.sRGBHex);
+    } catch {
+      /* user cancelled */
+    }
+  };
 
   const updateSat = (clientX: number, clientY: number) => {
     const r = satRef.current?.getBoundingClientRect();
@@ -101,11 +123,11 @@ export function ColorPicker({ value, onChange }: { value: string; onChange: (hex
   };
 
   return (
-    <div className="w-[220px] select-none touch-none">
+    <div className="w-[236px] select-none touch-none">
       <div
         ref={satRef}
         onPointerDown={drag((x, y) => updateSat(x, y))}
-        className="relative h-[140px] rounded-md cursor-crosshair overflow-hidden"
+        className="relative h-[150px] rounded-lg cursor-crosshair overflow-hidden"
         style={{ background: `hsl(${h}, 100%, 50%)` }}
       >
         <div className="absolute inset-0" style={{ background: 'linear-gradient(to right, #fff, rgba(255,255,255,0))' }} />
@@ -118,13 +140,32 @@ export function ColorPicker({ value, onChange }: { value: string; onChange: (hex
       <div
         ref={hueRef}
         onPointerDown={drag((x) => updateHue(x))}
-        className="relative h-3 mt-3 rounded-full cursor-pointer"
+        className="relative h-3.5 mt-3 rounded-full cursor-pointer"
         style={{ background: HUE_GRADIENT }}
       >
         <span
-          className="absolute top-1/2 -translate-y-1/2 w-3.5 h-3.5 -ml-[7px] rounded-full border-2 border-white pointer-events-none"
+          className="absolute top-1/2 -translate-y-1/2 w-4 h-4 -ml-2 rounded-full border-2 border-white pointer-events-none"
           style={{ left: `${(h / 360) * 100}%`, boxShadow: '0 0 0 1px rgba(0,0,0,0.5)' }}
         />
+      </div>
+
+      <div className="mt-3 flex items-center gap-1.5">
+        <span className="h-7 w-7 shrink-0 rounded-md border border-droid-border" style={{ backgroundColor: value }} />
+        <input
+          value={hexDraft}
+          onChange={(e) => commitHex(e.target.value)}
+          spellCheck={false}
+          className="h-7 min-w-0 flex-1 rounded-md border border-droid-border bg-droid-bg/60 px-2 font-mono text-[11px] uppercase text-droid-text focus:border-droid-border-hover focus:outline-none"
+        />
+        {hasEyeDropper && (
+          <button
+            onClick={pickFromScreen}
+            title="Pick color from screen"
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-droid-border text-droid-text-muted transition-colors hover:border-droid-border-hover hover:text-droid-text"
+          >
+            <Pipette className="h-3.5 w-3.5" />
+          </button>
+        )}
       </div>
     </div>
   );
@@ -138,8 +179,8 @@ function ColorPopover({ anchor, onClose, children }: { anchor: HTMLElement | nul
   useLayoutEffect(() => {
     const r = anchor?.getBoundingClientRect();
     if (!r) return;
-    const width = 244;
-    const height = 210;
+    const width = 260;
+    const height = 268;
     let left = r.right - width;
     let top = r.bottom + 8;
     if (top + height > window.innerHeight) top = r.top - height - 8;
@@ -209,10 +250,6 @@ export function ColorField({ label, description, value, onChange }: { label: str
         {open && (
           <ColorPopover anchor={swatchRef.current} onClose={() => setOpen(false)}>
             <ColorPicker value={value} onChange={onChange} />
-            <div className="mt-3 flex items-center gap-2">
-              <span className="w-5 h-5 rounded border border-droid-border" style={{ backgroundColor: value }} />
-              <span className="font-mono text-[11px] text-droid-text-secondary uppercase">{value}</span>
-            </div>
           </ColorPopover>
         )}
       </div>

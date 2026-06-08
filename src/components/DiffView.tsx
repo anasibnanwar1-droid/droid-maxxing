@@ -34,7 +34,7 @@ const VERB_LABEL: Record<FileChange['verb'], string> = { edit: 'Edit', create: '
 
 function DiffHeader({ change }: { change: FileChange }) {
   return (
-    <div className="flex items-center gap-2 px-3 h-9 border-b border-droid-border/50 bg-droid-bg/40 shrink-0">
+    <div className="flex items-center gap-2 px-3 h-9 border-b border-droid-border bg-droid-bg/40 shrink-0">
       <span className="text-[12px] font-medium text-droid-text-secondary shrink-0">{VERB_LABEL[change.verb]}</span>
       <span className="text-[12px] font-mono text-droid-text-muted truncate flex-1">{change.path}</span>
       <span className="text-[11px] font-mono" style={{ color: ADD_FG }}>+{change.added}</span>

@@ -46,7 +46,7 @@ const LOCATION_ICON: Record<SkillLocation, typeof User> = {
 
 const COMPACT_COMMANDS = new Set(['/compact', '/compaction', '/compression']);
 
-export default function PromptInput() {
+export default function PromptInput({ rightInset = false }: { rightInset?: boolean }) {
   const { state, dispatch } = useStore();
   const [input, setInput] = useState('');
   const [caret, setCaret] = useState(0);
@@ -481,7 +481,10 @@ export default function PromptInput() {
   const hasChips = activeSkills.length > 0 || attachedFiles.length > 0;
 
   return (
-    <div className="shrink-0 w-full min-w-0 px-6 pb-5 pt-2">
+    <div
+      className="shrink-0 w-full min-w-0 px-6 pb-5 pt-2"
+      style={{ paddingRight: rightInset ? 312 : undefined, transition: 'padding-right 0.2s ease' }}
+    >
       <div className="max-w-3xl min-w-0 mx-auto relative">
         <AnimatePresence>
           {menuOpen && (
@@ -723,7 +726,7 @@ export default function PromptInput() {
           />
 
           {/* Toolbar */}
-          <div className="flex items-center gap-2 px-3 py-2.5 border-t border-droid-border/40">
+          <div className="flex items-center gap-2 px-3 py-2.5 border-t border-droid-border">
             <div className="relative shrink-0">
               <button
                 onClick={() => setModelsOpen((v) => !v)}

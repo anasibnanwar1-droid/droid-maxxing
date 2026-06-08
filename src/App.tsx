@@ -13,6 +13,9 @@ import ChatView from './components/ChatView';
 import MissionControl from './components/MissionControl';
 import PromptInput from './components/PromptInput';
 import RightPanel from './components/RightPanel';
+import EditorOpenMenu from './components/EditorOpenMenu';
+import Toaster from './components/Toaster';
+import { useRepoStatus } from './hooks/useRepoStatus';
 import StatusBar from './components/StatusBar';
 import CommandPalette from './components/CommandPalette';
 import SettingsPanel, { applyTheme, paletteForMode } from './components/SettingsPanel';
@@ -41,6 +44,7 @@ export default function App() {
   const { state, dispatch } = useStore();
   const embedded = isEmbedded();
   const activeMission = state.activeMissionId ? state.missions[state.activeMissionId] : null;
+  const repoStatus = useRepoStatus(activeMission?.cwd ?? '');
   // The view is a real mission only when the active session is a mission orchestrator,
   // not merely because the global mission-compose flag is on.
   const isMissionView = !!activeMission && activeMission.kind === 'mission_orchestrator';
@@ -53,6 +57,10 @@ export default function App() {
   // The context toggle is meaningful in Mission Control (always) and in a normal
   // chat only after it has content; otherwise there is nothing to open.
   const canToggleContext = isMissionView || hasSessionContent;
+  // The context panel floats *over* the chat as an overlay (it does not shrink
+  // the main scroll area), so the page scrollbar stays pinned to the window's
+  // right edge instead of sliding inward and looking like a divider.
+  const rightPanelVisible = !focused && !showBrowserPane && state.rightPanelOpen && hasSessionContent;
   const requestedHistory = useRef(new Set<string>());
   const [browserPaneWidth, setBrowserPaneWidth] = useState(() => initialBrowserPaneWidth());
   const setStoredBrowserPaneWidth = useCallback((width: number) => {
@@ -178,49 +186,7 @@ export default function App() {
 
   return (
     <div id="app-root" className="h-screen w-screen flex flex-col bg-droid-bg text-droid-text overflow-hidden relative">
-      {/* Left controls — inside a drag region so their no-drag holes are honored.
-          Offset clear of the native traffic-light hit area (~x88) and centered on
-          the same h-9 line as the lights for symmetry with the right control. */}
-      <div data-electron-drag-region className="absolute top-0 left-[92px] h-9 z-40 flex items-center gap-1.5">
-        <button
-          onClick={() => dispatch({ type: 'TOGGLE_SIDEBAR' })}
-          className="p-1.5 rounded-md text-droid-text-muted/70 hover:text-droid-text hover:bg-droid-elevated/60 transition-colors"
-          title="Toggle sidebar (Cmd+B)"
-        >
-          <PanelLeft className="w-4 h-4" />
-        </button>
-        <button
-          onClick={toggleBrowserPane}
-          className={`p-1.5 rounded-md transition-colors ${
-            state.browserOpen
-              ? 'text-droid-text bg-droid-elevated'
-              : 'text-droid-text-muted/70 hover:text-droid-text hover:bg-droid-elevated/60'
-          }`}
-          title="Toggle browser (Cmd+Shift+B)"
-        >
-          <Monitor className="w-4 h-4" />
-        </button>
-      </div>
-
-      {/* Right control — context panel toggle, same drag-region treatment and
-          same h-9 line/sizing as the left controls. */}
-      <div data-electron-drag-region className="absolute top-0 right-0 h-9 z-40 flex items-center pr-3">
-        {canToggleContext && (
-          <button
-            onClick={toggleRightPanel}
-            className={`p-1.5 rounded-md transition-colors ${
-              state.rightPanelOpen
-                ? 'text-droid-text bg-droid-elevated'
-                : 'text-droid-text-muted/70 hover:text-droid-text hover:bg-droid-elevated/60'
-            }`}
-            title="Toggle panel (Cmd+\\)"
-          >
-            <ContextListIcon className="w-4 h-4" />
-          </button>
-        )}
-      </div>
-
-      <div className="flex-1 flex min-h-0">
+      <div className="flex-1 flex min-h-0 relative">
         {/* Sidebar with collapse animation */}
         <AnimatePresence initial={false}>
           {!state.sidebarCollapsed && (
@@ -253,8 +219,8 @@ export default function App() {
                 </motion.div>
               ) : (
                 <>
-                  <ChatView />
-                  <PromptInput />
+                  <ChatView rightInset={rightPanelVisible} />
+                  <PromptInput rightInset={rightPanelVisible} />
                 </>
               )}
               {state.pendingQuestion && <AskUserModal />}
@@ -272,15 +238,17 @@ export default function App() {
           </div>
         </main>
 
+        {/* Floating overlay — does not take flex space, so `main` keeps full
+            width and its scrollbar stays at the window's right edge. */}
         <AnimatePresence initial={false}>
-          {!focused && !showBrowserPane && state.rightPanelOpen && hasSessionContent && (
+          {rightPanelVisible && (
             <motion.div
               key="right-panel"
-              initial={{ width: 0, opacity: 0 }}
-              animate={{ width: 312, opacity: 1 }}
-              exit={{ width: 0, opacity: 0 }}
+              initial={{ opacity: 0, x: 12 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: 12 }}
               transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
-              className="shrink-0 overflow-hidden h-full"
+              className="absolute top-0 right-0 h-full w-[312px] z-30"
             >
               <RightPanel />
             </motion.div>
@@ -290,9 +258,56 @@ export default function App() {
 
       <StatusBar />
 
+      {/* Floating window controls — rendered LAST so their `no-drag` regions are
+          accumulated after the full-width header drag regions (sidebar/chat/
+          mission headers). Earlier in the DOM, those overlapping drag regions
+          would re-assert `drag` over these buttons and swallow their clicks
+          (Electron #27149). They stay absolutely positioned, so paint order and
+          layout are unchanged. */}
+      <div data-electron-drag-region className="absolute top-0 left-[92px] h-9 z-40 flex items-center gap-1.5">
+        <button
+          onClick={() => dispatch({ type: 'TOGGLE_SIDEBAR' })}
+          className="p-1.5 rounded-md text-droid-text-muted/70 hover:text-droid-text hover:bg-droid-elevated/60 transition-colors"
+          title="Toggle sidebar (Cmd+B)"
+        >
+          <PanelLeft className="w-4 h-4" />
+        </button>
+        <button
+          onClick={toggleBrowserPane}
+          className={`p-1.5 rounded-md transition-colors ${
+            state.browserOpen
+              ? 'text-droid-text bg-droid-elevated'
+              : 'text-droid-text-muted/70 hover:text-droid-text hover:bg-droid-elevated/60'
+          }`}
+          title="Toggle browser (Cmd+Shift+B)"
+        >
+          <Monitor className="w-4 h-4" />
+        </button>
+      </div>
+
+      <div data-electron-drag-region className="absolute top-0 right-0 h-9 z-40 flex items-center gap-1 pr-3">
+        {activeMission?.cwd && (
+          <EditorOpenMenu cwd={activeMission.cwd} hasRepo={!!repoStatus} variant="toolbar" />
+        )}
+        {canToggleContext && (
+          <button
+            onClick={toggleRightPanel}
+            className={`p-1.5 rounded-md transition-colors ${
+              state.rightPanelOpen
+                ? 'text-droid-text bg-droid-elevated'
+                : 'text-droid-text-muted/70 hover:text-droid-text hover:bg-droid-elevated/60'
+            }`}
+            title="Toggle panel (Cmd+\\)"
+          >
+            <ContextListIcon className="w-4 h-4" />
+          </button>
+        )}
+      </div>
+
       {state.commandPaletteOpen && <CommandPalette />}
       {state.settingsOpen && <SettingsPanel />}
       {state.pendingPermission && <PermissionModal />}
+      <Toaster />
     </div>
   );
 }

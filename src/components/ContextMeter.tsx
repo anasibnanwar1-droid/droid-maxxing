@@ -175,7 +175,7 @@ export default function ContextMeter({ mission, stats }: { mission: MissionSumma
                 </div>
               </>
             ) : (
-              <div className="rounded-lg border border-droid-border/50 bg-droid-bg/40 px-3 py-2 text-[12px] text-droid-text-muted">
+              <div className="rounded-lg border border-droid-border bg-droid-bg/40 px-3 py-2 text-[12px] text-droid-text-muted">
                 Waiting for Droid context stats
               </div>
             )}
@@ -190,7 +190,7 @@ export default function ContextMeter({ mission, stats }: { mission: MissionSumma
             </div>
 
             {categories.length > 0 && (
-              <div className="mt-3 border-t border-droid-border/40 pt-3">
+              <div className="mt-3 border-t border-droid-border pt-3">
                 <div className="mb-2 text-[10px] uppercase tracking-wide text-droid-text-muted">Breakdown</div>
                 <div className="flex flex-col gap-2">
                   {categories.slice(0, 8).map((cat) => (
@@ -201,7 +201,7 @@ export default function ContextMeter({ mission, stats }: { mission: MissionSumma
             )}
 
             {accuracy && (
-              <div className="mt-3 border-t border-droid-border/40 pt-2 text-[10px] capitalize text-droid-text-muted">
+              <div className="mt-3 border-t border-droid-border pt-2 text-[10px] capitalize text-droid-text-muted">
                 {accuracy} context stats
               </div>
             )}

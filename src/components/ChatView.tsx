@@ -82,7 +82,7 @@ function SubAgentBanner({ label, onBack }: { label: string; onBack: () => void }
   );
 }
 
-export default function ChatView() {
+export default function ChatView({ rightInset = false }: { rightInset?: boolean }) {
   const { state, dispatch } = useStore();
   const scrollRef = useRef<HTMLDivElement>(null);
   const activeMission = state.activeMissionId ? state.missions[state.activeMissionId] : null;
@@ -173,9 +173,14 @@ export default function ChatView() {
         <ChatHeader title={activeMission.title} live={live} />
       )}
       {viewingSub && <SubAgentBanner label={subLabel} onBack={() => dispatch({ type: 'SELECT_AGENT', id: null })} />}
-      <div ref={scrollRef} onScroll={onScroll} className="flex-1 min-h-0 min-w-0 overflow-y-auto overflow-x-hidden">
+      <div
+        ref={scrollRef}
+        onScroll={onScroll}
+        className="flex-1 min-h-0 min-w-0 overflow-y-auto overflow-x-hidden"
+        style={{ paddingRight: rightInset ? 312 : undefined, transition: 'padding-right 0.2s ease' }}
+      >
         {activeMission && transcript.length > 0 ? (
-          <div className={`mx-auto min-w-0 px-6 py-6 ${isSpec ? 'max-w-4xl' : 'max-w-2xl'}`}>
+          <div className="mx-auto min-w-0 px-6 py-6 max-w-2xl">
             <MessageFeed
               events={transcript}
               pending={live}

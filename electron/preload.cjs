@@ -16,6 +16,7 @@ contextBridge.exposeInMainWorld('droidControl', {
   listFiles: (dir) => ipcRenderer.invoke('list-files', { dir }),
   readFile: (path) => ipcRenderer.invoke('read-file', { path }),
   repoStatus: (dir) => ipcRenderer.invoke('repo-status', { dir }),
+  listEditors: () => ipcRenderer.invoke('list-editors'),
   openProject: (dir, editor, target) => ipcRenderer.invoke('open-project', { dir, editor, target }),
 
   nativeBrowserOpen: (sessionId, url, bounds, viewport) => ipcRenderer.invoke('native-browser-open', { sessionId, url, bounds, viewport }),

@@ -90,7 +90,7 @@ export default function SpecCanvas() {
       {activeMission && <ChatHeader title={activeMission.title} live={live} />}
 
       {/* Spec mode badge */}
-      <div className="shrink-0 flex items-center justify-between px-8 py-2 border-b border-droid-border/30">
+      <div className="shrink-0 flex items-center justify-between px-8 py-2 border-b border-droid-border">
         <div className="flex items-center gap-2">
           <span className="text-[10px] font-medium tracking-widest uppercase text-droid-orange">Spec Mode</span>
           {live && <span className="shimmer-text text-[10px] font-medium">Generating…</span>}
@@ -116,7 +116,7 @@ export default function SpecCanvas() {
               </motion.div>
             ) : (
               <div className="flex flex-col items-center justify-center h-full text-center gap-3">
-                <div className="w-12 h-12 rounded-2xl bg-droid-elevated/50 border border-droid-border/40 flex items-center justify-center">
+                <div className="w-12 h-12 rounded-2xl bg-droid-elevated/50 border border-droid-border flex items-center justify-center">
                   <Search className="w-5 h-5 text-droid-text-muted" />
                 </div>
                 <p className="text-[13px] text-droid-text-muted">
