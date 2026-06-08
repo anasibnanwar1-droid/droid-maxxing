@@ -814,12 +814,12 @@ async function launchProjectTarget(editor, pathToOpen, root, target) {
   const id = normalizeEditor(editor);
   if (id === 'finder') {
     if (target === 'diff') shell.showItemInFolder(pathToOpen);
-    else await shell.openPath(pathToOpen);
+    else await openPathOrThrow(pathToOpen);
     return;
   }
   if (id === 'terminal') {
     if (target === 'diff') {
-      await shell.openPath(pathToOpen);
+      await openPathOrThrow(pathToOpen);
       return;
     }
     await openTerminal(root);
@@ -828,6 +828,11 @@ async function launchProjectTarget(editor, pathToOpen, root, target) {
   if (id === 'vscode') return openApp('Visual Studio Code', 'code', pathToOpen);
   if (id === 'cursor') return openApp('Cursor', 'cursor', pathToOpen);
   if (id === 'xcode') return openApp('Xcode', 'xed', pathToOpen);
+}
+
+async function openPathOrThrow(targetPath) {
+  const error = await shell.openPath(targetPath);
+  if (error) throw new Error(error);
 }
 
 function normalizeEditor(value) {
