@@ -6,6 +6,8 @@ import type {
   NativeBrowserLoaded,
   NativeBrowserSelection,
 } from './nativeBrowser';
+import type { EditorId, EditorTarget } from './editorOpen';
+import type { RepoStatus } from './repoEnvironment';
 
 interface BridgeInfo {
   port: number;
@@ -21,6 +23,8 @@ interface DroidControlApi {
   clearApiKey: () => Promise<void>;
   listFiles: (dir: string) => Promise<string[]>;
   readFile: (path: string) => Promise<string>;
+  repoStatus: (dir: string) => Promise<RepoStatus | null>;
+  openProject: (dir: string, editor: EditorId, target: EditorTarget) => Promise<void>;
   nativeBrowserOpen: (sessionId: string, url: string, bounds?: NativeBrowserBounds, viewport?: { width: number; height: number; deviceScaleFactor: number }) => Promise<void>;
   nativeBrowserAttach: (sessionId: string, bounds: NativeBrowserBounds, url?: string) => Promise<void>;
   nativeBrowserDetach: (sessionId?: string) => Promise<void>;
@@ -90,4 +94,18 @@ export async function readFile(path: string): Promise<string | null> {
   } catch {
     return null;
   }
+}
+
+export async function getRepoStatus(dir: string): Promise<RepoStatus | null> {
+  if (!isDesktop()) return null;
+  try {
+    return await window.droidControl!.repoStatus(dir);
+  } catch {
+    return null;
+  }
+}
+
+export async function openProject(dir: string, editor: EditorId, target: EditorTarget): Promise<void> {
+  if (!isDesktop()) return;
+  await window.droidControl!.openProject(dir, editor, target);
 }

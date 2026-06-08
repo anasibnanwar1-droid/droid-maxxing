@@ -1,12 +1,15 @@
 import { useState } from 'react';
 import { useStore } from '../hooks/useStore';
 import { useMissionLive } from '../hooks/useMissionLive';
+import { useRepoStatus } from '../hooks/useRepoStatus';
 import { subscribeWorker } from '../lib/commands';
+import { environmentLabels } from '../lib/repoEnvironment';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-  GitBranch, Hash, Activity, Loader2, ChevronRight, CornerDownRight,
+  GitBranch, Hash, Activity, Loader2, ChevronRight, CornerDownRight, FileDiff,
   FolderGit, CheckCircle2, Circle
 } from 'lucide-react';
+import EditorOpenMenu, { openCodebase, openCurrentDiff } from './EditorOpenMenu';
 import { ModelIcon, providerOf } from './ModelIcon';
 
 function SectionHeader({ label, trailing }: { label: string; trailing?: React.ReactNode }) {
@@ -78,6 +81,8 @@ export default function RightPanel() {
   const { state, dispatch } = useStore();
   const activeMission = state.activeMissionId ? state.missions[state.activeMissionId] : null;
   const features = activeMission?.features ?? [];
+  const repoStatus = useRepoStatus(activeMission?.cwd ?? '');
+  const env = environmentLabels(activeMission?.cwd ?? '', repoStatus);
 
   const completed = features.filter((f) => f.status === 'completed').length;
   const total = features.length;
@@ -112,10 +117,11 @@ export default function RightPanel() {
           {/* Environment */}
           {activeMission && (
             <div>
-              <SectionHeader label="Environment" />
+              <SectionHeader label="Environment" trailing={<EditorOpenMenu cwd={activeMission.cwd} />} />
               <div>
-                <Row icon={<FolderGit className="w-4 h-4" />} label={activeMission.cwd.split('/').slice(-2).join('/') || 'No folder'} />
-                <Row icon={<GitBranch className="w-4 h-4" />} label="main" />
+                <Row icon={<FolderGit className="w-4 h-4" />} label={env.location} onClick={() => openCodebase(activeMission.cwd)} />
+                <Row icon={<GitBranch className="w-4 h-4" />} label={env.branch} />
+                <Row icon={<FileDiff className="w-4 h-4" />} label={env.changes} onClick={() => openCurrentDiff(activeMission.cwd)} />
                 <Row icon={<ModelIcon provider={providerOf(modelInfo, activeMission.modelId)} size={16} />} label={modelLabel} meta={activeMission.autonomy} />
 
                 {/* Agents — collapsible, nested under the model */}

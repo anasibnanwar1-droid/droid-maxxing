@@ -15,6 +15,8 @@ contextBridge.exposeInMainWorld('droidControl', {
   clearApiKey: () => ipcRenderer.invoke('clear-api-key'),
   listFiles: (dir) => ipcRenderer.invoke('list-files', { dir }),
   readFile: (path) => ipcRenderer.invoke('read-file', { path }),
+  repoStatus: (dir) => ipcRenderer.invoke('repo-status', { dir }),
+  openProject: (dir, editor, target) => ipcRenderer.invoke('open-project', { dir, editor, target }),
 
   nativeBrowserOpen: (sessionId, url, bounds, viewport) => ipcRenderer.invoke('native-browser-open', { sessionId, url, bounds, viewport }),
   nativeBrowserAttach: (sessionId, bounds, url) => ipcRenderer.invoke('native-browser-attach', { sessionId, bounds, url }),
