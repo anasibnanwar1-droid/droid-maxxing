@@ -38,6 +38,7 @@ import type {
 import { DroidRuntime } from './DroidRuntime.js';
 import { classifyPermission, confirmationType, mapFeature, normalizeNotification, normalizeStreamEvent } from './normalize.js';
 import {
+  applyCachedSummary,
   HistoryIndex,
   hydrateHistoricalMission,
   loadHistoricalMissions,
@@ -1799,26 +1800,6 @@ function kindForMode(mode: SessionInteractionMode): SessionKind {
   if (mode === 'agi') return 'mission_orchestrator';
   if (mode === 'spec') return 'spec';
   return 'chat';
-}
-
-function applyCachedSummary(summary: MissionSummary, cached: Map<string, Partial<MissionSummary>>): MissionSummary {
-  const patch = cached.get(summary.sessionId ?? summary.id) ?? cached.get(summary.id);
-  if (!patch) return summary;
-  const defined = definedPatch(patch);
-  return {
-    ...summary,
-    ...defined,
-    id: defined.id ?? summary.id,
-    sessionId: defined.sessionId ?? summary.sessionId,
-    missionId: defined.missionId ?? summary.missionId,
-    parentSessionId: defined.parentSessionId ?? summary.parentSessionId,
-    kind: defined.kind ?? summary.kind,
-    role: defined.role ?? summary.role,
-  };
-}
-
-function definedPatch(patch: Partial<MissionSummary>): Partial<MissionSummary> {
-  return Object.fromEntries(Object.entries(patch).filter(([, value]) => value !== undefined)) as Partial<MissionSummary>;
 }
 
 function arrayItems(result: unknown, key: string): unknown[] {

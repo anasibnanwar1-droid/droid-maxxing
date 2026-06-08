@@ -8,6 +8,7 @@ import { isEmbedded } from './lib/embed';
 import { getApiKey } from './lib/desktop';
 import { performNativeBrowserRequest } from './lib/nativeBrowserAgent';
 import { activeMissionAfterNativeBrowserRequest, browserKeyForMission } from './lib/browserSessionIdentity';
+import { WORKSPACE_BOOTSTRAP_SESSION_LIMIT } from './lib/workspaces';
 import Sidebar from './components/Sidebar';
 import ChatView from './components/ChatView';
 import MissionControl from './components/MissionControl';
@@ -112,7 +113,7 @@ export default function App() {
 
   useEffect(() => {
     if (embedded) return;
-    listMissions({ workspaceCwds: state.workspaceCwds, includePlainChats: true, limitPerWorkspace: 5 });
+    listMissions({ workspaceCwds: state.workspaceCwds, includePlainChats: true, limitPerWorkspace: WORKSPACE_BOOTSTRAP_SESSION_LIMIT });
   }, [embedded, state.workspaceCwds]);
 
   useEffect(() => {
