@@ -64,7 +64,7 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
   const [sendHover, setSendHover] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const pendingCaret = useRef<number | null>(null);
-  const prevLive = useRef(false);
+  const prevLive = useRef<{ missionId: string | null; live: boolean }>({ missionId: null, live: false });
 
   const activeMission = state.activeMissionId ? state.missions[state.activeMissionId] : null;
   const isLive = useMissionLive(state.activeMissionId);
@@ -419,13 +419,16 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
   // When the current turn finishes, deliver the next staged prompt. Delivering
   // it restarts the turn, so the effect drains the queue one prompt at a time.
   useEffect(() => {
-    if (prevLive.current && !isLive && activeMission) {
+    const prev = prevLive.current;
+    // Only deliver when the *same* mission transitioned live -> idle. Switching
+    // missions mid-turn must not drain a different mission's queue.
+    if (prev.live && !isLive && activeMission && prev.missionId === activeMission.id) {
       const next = (state.promptQueue[activeMission.id] ?? [])[0];
       if (next) deliverPrompt(next);
     }
-    prevLive.current = isLive;
+    prevLive.current = { missionId: activeMission?.id ?? null, live: isLive };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isLive]);
+  }, [isLive, activeMission?.id]);
 
   const editQueuedInComposer = (p: QueuedPrompt) => {
     if (!activeMission) return;
