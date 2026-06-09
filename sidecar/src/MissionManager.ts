@@ -85,7 +85,6 @@ interface Mission {
   completedSubagents: Set<string>;
   subagentToolUseIds: Map<string, string>;
   subagentSettings: Map<string, SubagentSettings>;
-  nextSubagentModelOverride?: NextSubagentModelOverride;
   pendingSubagents: PendingSubagent[];
   mcpServers: SdkMcpServer[];
 }
@@ -104,12 +103,6 @@ interface PendingSubagent {
 interface SubagentSettings {
   modelId?: string;
   reasoningEffort?: ReasoningEffort;
-}
-
-interface NextSubagentModelOverride {
-  previous: SubagentSettings;
-  requested: SubagentSettings;
-  restoreTimer: ReturnType<typeof setTimeout>;
 }
 
 export interface AgentSettingPatch {
@@ -424,8 +417,6 @@ export class MissionManager {
     if (options.includeSubagentControl) {
       servers.push(createControlMcpServer({
         missionIdForTool: () => ref.id,
-        configureNextSubagentModel: (missionId, settings) =>
-          this.configureNextSubagentModel(missionId, settings),
       }));
     }
     const configs: Awaited<ReturnType<SdkMcpServer['start']>>[] = [];
@@ -472,58 +463,6 @@ export class MissionManager {
       }
     } catch (err) {
       this.emitError({ missionId: cmd.missionId, message: `Could not update agent settings: ${errMsg(err)}` });
-    }
-  }
-
-  private async configureNextSubagentModel(
-    missionId: string,
-    settings: { modelId?: string; reasoningEffort?: ReasoningEffort },
-  ): Promise<{ modelId?: string; reasoningEffort?: ReasoningEffort }> {
-    const mission = this.findMission(missionId);
-    if (!mission) throw new Error(`Session ${missionId} is not live.`);
-    if (mission.summary.kind === 'mission_orchestrator') {
-      throw new Error('next_subagent_model is for normal chat/spec Task subagents, not Mission Control.');
-    }
-    const previous = mission.nextSubagentModelOverride?.previous ?? {
-      modelId: mission.summary.modelId,
-      reasoningEffort: mission.summary.reasoningEffort,
-    };
-    if (mission.nextSubagentModelOverride) clearTimeout(mission.nextSubagentModelOverride.restoreTimer);
-    const requested = {
-      modelId: settings.modelId,
-      reasoningEffort: settings.reasoningEffort,
-    };
-    await mission.session.updateSettings(settings as never);
-    mission.nextSubagentModelOverride = {
-      previous,
-      requested,
-      restoreTimer: setTimeout(() => {
-        void this.restoreSubagentModelOverride(mission.summary.id, 'timeout');
-      }, 60_000),
-    };
-    return requested;
-  }
-
-  private async restoreSubagentModelOverride(missionId: string, reason: 'spawned' | 'timeout'): Promise<void> {
-    const mission = this.findMission(missionId);
-    const override = mission?.nextSubagentModelOverride;
-    if (!mission || !override) return;
-    clearTimeout(override.restoreTimer);
-    mission.nextSubagentModelOverride = undefined;
-
-    const restore: Record<string, unknown> = {};
-    if (override.previous.modelId) restore.modelId = override.previous.modelId;
-    if (override.previous.reasoningEffort) restore.reasoningEffort = override.previous.reasoningEffort;
-    if (Object.keys(restore).length === 0) return;
-
-    try {
-      await mission.session.updateSettings(restore as never);
-    } catch (err) {
-      this.emitError({
-        code: 'subagent_model_restore_failed',
-        missionId: mission.summary.id,
-        message: `Could not restore parent session model after subagent override ${reason}: ${errMsg(err)}`,
-      });
     }
   }
 
@@ -1022,7 +961,6 @@ export class MissionManager {
     mission.knownSubagents.add(sessionId);
     mission.completedSubagents.delete(sessionId);
     if (toolUseId) mission.subagentToolUseIds.set(toolUseId, sessionId);
-    if (mission.nextSubagentModelOverride) void this.restoreSubagentModelOverride(appSessionId, 'spawned');
     this.emit({
       type: 'mission.worker',
       missionId: appSessionId,
@@ -1653,7 +1591,6 @@ export class MissionManager {
     if (!mission) return;
     this.stopContextPolling(key);
     if (mission.summary.sessionId) this.stopContextPolling(mission.summary.sessionId);
-    if (mission.nextSubagentModelOverride) clearTimeout(mission.nextSubagentModelOverride.restoreTimer);
     for (const agent of mission.agents.values()) {
       this.stopContextPolling(agent.session.sessionId);
       agent.unsubscribe?.();

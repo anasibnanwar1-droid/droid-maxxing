@@ -1,16 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createControlMcpServer } from './controlMcpServer.js';
+import { createControlMcpServer, SUBAGENT_MODEL_OVERRIDE_UNSUPPORTED } from './controlMcpServer.js';
 
-test('control MCP exposes next subagent model tool', async () => {
+test('control MCP rejects unsupported per-subagent model override', async () => {
   const server = createControlMcpServer({
     missionIdForTool: () => 'session-1',
-    async configureNextSubagentModel(missionId, settings) {
-      assert.equal(missionId, 'session-1');
-      assert.equal(settings.modelId, 'gpt-5.4');
-      assert.equal(settings.reasoningEffort, 'xhigh');
-      return settings;
-    },
   });
 
   assert.equal(server.name, 'droidmaxx-control');
@@ -19,5 +13,9 @@ test('control MCP exposes next subagent model tool', async () => {
   assert.ok(nextModel?.inputSchema?.reasoningEffort);
 
   const result = await nextModel.handler({ modelId: 'gpt-5.4', reasoningEffort: 'xhigh' });
-  assert.match(String(result), /next inherited-model custom droid/);
+  assert.notEqual(typeof result, 'string');
+  const structured = result as Exclude<typeof result, string>;
+  assert.equal(structured.isError, true);
+  const payload = JSON.parse(structured.content[0]?.type === 'text' ? structured.content[0].text : '{}') as { error?: string };
+  assert.equal(payload.error, SUBAGENT_MODEL_OVERRIDE_UNSUPPORTED);
 });
