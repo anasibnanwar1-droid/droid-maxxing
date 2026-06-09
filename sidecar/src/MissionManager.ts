@@ -51,7 +51,6 @@ import { mergeModelCatalog } from './modelCatalog.js';
 import { readDroidCliModelCatalog, readDroidCliModelCatalogCache } from './DroidCliCatalog.js';
 import { BrowserSessionManager } from './browser/BrowserSessionManager.js';
 import { createBrowserMcpServer } from './browser/browserMcpServer.js';
-import { createControlMcpServer } from './controlMcpServer.js';
 import { NativeBrowserRuntime } from './browser/NativeBrowserRuntime.js';
 import { isApprovalOutcome, normalizePermissionOutcome } from './permissionOutcomes.js';
 import { filterMissionListSummaries, type MissionListFilterOptions } from './missionListFilter.js';
@@ -409,16 +408,10 @@ export class MissionManager {
 
   private async startLocalMcpServers(
     ref: { id: string },
-    options: { includeSubagentControl?: boolean } = {},
   ): Promise<{ servers: SdkMcpServer[]; configs: Awaited<ReturnType<SdkMcpServer['start']>>[] }> {
     const servers = [
       createBrowserMcpServer(this.browsers, () => ref.id),
     ];
-    if (options.includeSubagentControl) {
-      servers.push(createControlMcpServer({
-        missionIdForTool: () => ref.id,
-      }));
-    }
     const configs: Awaited<ReturnType<SdkMcpServer['start']>>[] = [];
     try {
       for (const server of servers) configs.push(await server.start());
@@ -581,9 +574,7 @@ export class MissionManager {
     const ref = { id: droidSessionId };
     let pendingMcpServers: SdkMcpServer[] = [];
     try {
-      const mcp = await this.startLocalMcpServers(ref, {
-        includeSubagentControl: historical?.kind === 'chat' || historical?.kind === 'spec',
-      });
+      const mcp = await this.startLocalMcpServers(ref);
       pendingMcpServers = mcp.servers;
       const session = await this.runtime.loadSession(droidSessionId, {
         permissionHandler: this.makePermissionHandler(ref),
@@ -732,7 +723,7 @@ export class MissionManager {
       const workerReasoningEffort = cmd.workerReasoning ?? defaults.workerReasoningEffort;
       const validatorModelId = cmd.validatorModel ?? defaults.validatorModelId;
       const validatorReasoningEffort = cmd.validatorReasoning ?? defaults.validatorReasoningEffort;
-      const mcp = await this.startLocalMcpServers(ref, { includeSubagentControl: mode !== 'agi' });
+      const mcp = await this.startLocalMcpServers(ref);
       pendingMcpServers = mcp.servers;
       const session = await this.runtime.createSession({
         cwd: runtimeCwd,
