@@ -309,7 +309,14 @@ function buildFeed(events: TranscriptEvent[], subagentCards = false): FeedItem[]
     if (ev.kind === 'tool_call') {
       const change = extractFileChange(ev.toolName, ev.toolArgs);
       if (change) { items.push({ type: 'diff', key: ev.id, event: ev, change }); i++; continue; }
-      if (subagentCards && isSubagentTool(ev.toolName, ev.toolArgs)) { items.push({ type: 'subagent', key: ev.id, event: ev }); i++; continue; }
+      if (subagentCards && isSubagentTool(ev.toolName, ev.toolArgs)) {
+        items.push({ type: 'subagent', key: ev.id, event: ev });
+        i++;
+        // Skip the subagent's completion tool_result so it doesn't become an
+        // orphaned "Tool result" entry in the grouping block below.
+        if (i < events.length && events[i].kind === 'tool_result' && events[i].toolName === ev.toolName) i++;
+        continue;
+      }
     }
     if (ev.kind === 'tool_call' || ev.kind === 'tool_result') {
       const group: TranscriptEvent[] = [];

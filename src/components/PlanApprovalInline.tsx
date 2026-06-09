@@ -90,7 +90,9 @@ export default function PlanApprovalInline() {
             value={comment}
             onChange={(e) => setComment(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey) {
+              // During IME composition Enter confirms the composed text;
+              // only trigger implement once composition has ended.
+              if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
                 e.preventDefault();
                 implement();
               }

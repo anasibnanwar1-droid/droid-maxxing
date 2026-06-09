@@ -256,7 +256,7 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
               </div>
             )}
             {selectedWorker?.status === 'running' ? (
-              <WorkingIndicator label={`${subLabel} is working`} />
+              <WorkingIndicator label={`${subLabel} is working`} startTs={selectedWorker.startedAt} />
             ) : (
               <span className="text-[13px] text-droid-text-muted">No activity captured for {subLabel}.</span>
             )}

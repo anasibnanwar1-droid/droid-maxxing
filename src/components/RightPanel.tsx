@@ -106,8 +106,8 @@ export default function RightPanel() {
   // we always prefer the model's own TodoWrite list as the source of truth.
   const transcript = activeMission ? state.transcripts[activeMission.id] ?? [] : [];
   const selectedAgent = state.selectedAgentSessionId;
-  const todos = useMemo<TodoItem[]>(() => {
-    if (!activeMission || activeMission.kind === 'mission_orchestrator') return [];
+  const todoResult = useMemo(() => {
+    if (!activeMission || activeMission.kind === 'mission_orchestrator') return { todos: [] as TodoItem[], foundPayload: false };
     const scoped =
       selectedAgent && selectedAgent !== 'orchestrator'
         ? transcript.filter((t) => t.agentSessionId === selectedAgent)
@@ -117,12 +117,13 @@ export default function RightPanel() {
     for (let i = scoped.length - 1; i >= 0; i--) {
       const e = scoped[i];
       if (e.kind === 'tool_call' && isTodoTool(e.toolName) && hasTodoPayload(e.toolArgs)) {
-        return parseTodos(e.toolArgs);
+        return { todos: parseTodos(e.toolArgs), foundPayload: true };
       }
     }
-    return [];
+    return { todos: [] as TodoItem[], foundPayload: false };
   }, [activeMission, transcript, selectedAgent]);
-  const useTodos = todos.length > 0;
+  const todos = todoResult.todos;
+  const useTodos = todoResult.foundPayload;
 
   const completed = useTodos
     ? todos.filter((t) => t.status === 'completed').length
