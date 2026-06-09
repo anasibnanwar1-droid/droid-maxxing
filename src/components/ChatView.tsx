@@ -210,8 +210,11 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
   useEffect(() => {
     if (!missionId || !specContent) return;
     const title = specContent.match(/^#{1,3}\s+(.+)$/m)?.[1]?.trim() ?? 'Specification';
-    dispatch({ type: 'SPEC_SET', missionId, path: hasFileSpec ? fileSpec!.path : undefined, title, content: specContent });
-  }, [missionId, specContent, hasFileSpec, fileSpec, dispatch]);
+    // Preserve the existing file path when the current source is not file-backed
+    // (e.g. a captured plan), so the store never loses a known path on refresh.
+    const path = hasFileSpec ? fileSpec!.path : storedSpec?.path;
+    dispatch({ type: 'SPEC_SET', missionId, path, title, content: specContent });
+  }, [missionId, specContent, hasFileSpec, fileSpec, storedSpec?.path, dispatch]);
 
   return (
     <div className="flex-1 min-h-0 min-w-0 flex flex-col overflow-hidden">
