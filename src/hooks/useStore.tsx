@@ -1085,9 +1085,12 @@ function loadPersistedBrowsers(value: unknown): Record<string, BrowserState> {
 
 function loadPersistedBrowserOpenKeys(value: unknown): Record<string, boolean> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  // Preserve both true (open) and false (explicitly hidden) so the "hidden"
+  // decision survives a restart; a dropped `false` would let later updates
+  // re-open a pane the user deliberately hid.
   const entries = Object.entries(value as Record<string, unknown>)
-    .filter(([key, open]) => typeof key === 'string' && key.length > 0 && open === true)
-    .map(([key]) => [key, true] as const);
+    .filter((entry): entry is [string, boolean] =>
+      typeof entry[0] === 'string' && entry[0].length > 0 && typeof entry[1] === 'boolean');
   return Object.fromEntries(entries);
 }
 

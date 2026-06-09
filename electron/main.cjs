@@ -424,6 +424,9 @@ async function captureNativeBrowser(sessionId, box, options = {}) {
       if (data) return data;
     }
     const rect = normalizeCaptureRect(entry, box);
+    // A supplied box that normalizes away is an empty/out-of-bounds crop; fail
+    // rather than silently returning the full viewport (unintended content).
+    if (box && !rect) throw new Error('Requested capture region is empty or out of bounds.');
     const image = rect ? await contents.capturePage(rect) : await contents.capturePage();
     return image.isEmpty() ? undefined : image.toPNG().toString('base64');
   } finally {

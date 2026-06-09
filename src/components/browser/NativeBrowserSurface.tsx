@@ -184,6 +184,9 @@ export function NativeBrowserSurface({
       attachingSessionRef.current = target;
       attachNativeBrowser(target, bounds, url)
         .then(() => {
+          // A newer session may have started attaching while this was in
+          // flight; only commit state if `target` is still the intended one.
+          if (attachingSessionRef.current !== target) return;
           attachedSessionRef.current = target;
           lastBounds.current = bounds;
         })
