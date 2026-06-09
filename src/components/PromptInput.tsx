@@ -408,7 +408,9 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
     try {
       sendToMission(activeMission.id, composed);
     } catch (err) {
+      // Keep the prompt staged so a send failure doesn't lose queued input.
       console.error('[PromptInput] queued send failed:', err);
+      return;
     }
     dispatch({ type: 'REMOVE_QUEUED_PROMPT', missionId: activeMission.id, id: p.id });
   };
