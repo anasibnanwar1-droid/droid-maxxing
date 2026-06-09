@@ -120,7 +120,7 @@ export interface BrowserTranscriptReference {
   selector?: string;
 }
 
-export type PermissionKind = 'edit' | 'exec' | 'create' | 'apply_patch' | 'mcp' | 'spec' | 'other';
+export type PermissionKind = 'edit' | 'exec' | 'create' | 'apply_patch' | 'mcp' | 'spec' | 'mission_plan' | 'other';
 export type ConfigurableAgent = 'orchestrator' | 'worker' | 'validator';
 
 export interface PermissionRequest {

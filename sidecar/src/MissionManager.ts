@@ -1332,14 +1332,25 @@ export class MissionManager {
         askUserHandler: this.makeAskUserHandler(ref),
       });
       const actualSettings = subagentSettingsFromInit(session.initResult as InitResultLike);
-      if (actualSettings.modelId || actualSettings.reasoningEffort) {
-        mission.subagentSettings.set(agentSessionId, actualSettings);
+      // For a chat/spec subagent, fall back to the session's model when the
+      // droid inherits it. Mission Control workers/validators keep their own
+      // configured model selection untouched.
+      const inheritsSessionModel = mission.summary.kind === 'chat' || mission.summary.kind === 'spec';
+      const resolvedSettings: SubagentSettings =
+        inheritsSessionModel
+          ? {
+              modelId: actualSettings.modelId ?? mission.summary.modelId,
+              reasoningEffort: actualSettings.reasoningEffort ?? mission.summary.reasoningEffort,
+            }
+          : actualSettings;
+      if (resolvedSettings.modelId || resolvedSettings.reasoningEffort) {
+        mission.subagentSettings.set(agentSessionId, resolvedSettings);
         this.emit({
           type: 'mission.worker',
           missionId: appSessionId,
           event: 'updated',
           workerSessionId: agentSessionId,
-          ...actualSettings,
+          ...resolvedSettings,
         });
       }
       const agent: LiveAgent = {

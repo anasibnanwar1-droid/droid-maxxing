@@ -117,6 +117,17 @@ function detectSubagent(
   return { sessionId, toolUseId, label, prompt: taskPrompt(input) };
 }
 
+// The orchestrator's Task tool_call carries the entire subagent prompt in its
+// input. That prompt belongs in the subagent's own pane, not the main feed, so
+// we keep only the lightweight label fields on the transcript copy.
+function slimSubagentArgs(input: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const key of ['subagent_type', 'subagentType', 'description']) {
+    if (typeof input[key] === 'string') out[key] = input[key];
+  }
+  return out;
+}
+
 // Translate a single SDK stream event into zero-or-one normalized bridge updates.
 export function normalizeStreamEvent(
   missionId: string,
@@ -170,7 +181,7 @@ export function normalizeStreamEvent(
       return {
         transcript: transcript(missionId, agentSessionId, role, 'tool_call', {
           toolName: toolUse.name,
-          toolArgs: toolUse.input,
+          toolArgs: subagent ? slimSubagentArgs(toolUse.input ?? {}) : toolUse.input,
         }),
         ...(subagent ? { subagent } : {}),
       };
@@ -178,13 +189,17 @@ export function normalizeStreamEvent(
     case 'tool_result': {
       const isTask = typeof ev.toolName === 'string' && /task/i.test(ev.toolName);
       const toolUseId = toolUseIdFrom((ev as { toolUseId?: string }).toolUseId, eventToolUseId);
+      // A subagent's Task result is the subagent's output; surface it only as a
+      // completion signal so it never leaks into the orchestrator's main feed.
+      if (subagentSessionId || isTask) {
+        return { subagent: { sessionId: subagentSessionId, toolUseId, done: true } };
+      }
       return {
         transcript: transcript(missionId, agentSessionId, role, 'tool_result', {
           toolName: ev.toolName,
           text: typeof ev.content === 'string' ? ev.content : JSON.stringify(ev.content),
           isError: ev.isError,
         }),
-        ...(subagentSessionId || isTask ? { subagent: { sessionId: subagentSessionId, toolUseId, done: true } } : {}),
       };
     }
     case 'error':
@@ -323,8 +338,9 @@ export function classifyPermission(
       break;
     case 'propose_mission':
       title = (c.title as string) ?? 'Mission plan proposed';
-      detail = (c.proposal as string) ?? '';
-      kind = 'other';
+      plan = (c.proposal as string) ?? '';
+      detail = plan;
+      kind = 'mission_plan';
       break;
     case 'start_mission_run':
       title = 'Start mission run';
