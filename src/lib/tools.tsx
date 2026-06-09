@@ -73,6 +73,14 @@ export function isTodoTool(name?: string): boolean {
   return /todo/i.test(name ?? '');
 }
 
+// A real TodoWrite update carries the full list in its `todos` string (even when
+// that list is empty); a partial/streaming tool_call lacks the field entirely.
+// Lets callers honor an emptied list instead of falling back to a stale one.
+export function hasTodoPayload(args: unknown): boolean {
+  const a = args && typeof args === 'object' ? (args as Record<string, unknown>) : {};
+  return typeof a.todos === 'string';
+}
+
 // A Task/subagent spawn is identified by the tool name or a `subagent_type` arg.
 export function isSubagentTool(name?: string, args?: unknown): boolean {
   // Whole-word match so unrelated tools (e.g. `create_task`) aren't mistaken

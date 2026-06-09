@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useStore } from '../hooks/useStore';
-import { parseTodos, isTodoTool, type TodoItem } from '../lib/tools';
+import { parseTodos, isTodoTool, hasTodoPayload, type TodoItem } from '../lib/tools';
 import { useMissionLive } from '../hooks/useMissionLive';
 import { useRepoStatus } from '../hooks/useRepoStatus';
 import { environmentLabels } from '../lib/repoEnvironment';
@@ -112,11 +112,12 @@ export default function RightPanel() {
       selectedAgent && selectedAgent !== 'orchestrator'
         ? transcript.filter((t) => t.agentSessionId === selectedAgent)
         : transcript.filter((t) => t.role === 'orchestrator');
+    // The latest real Todo update wins, even if it emptied the list; skip only
+    // partial/streaming calls that haven't received the `todos` payload yet.
     for (let i = scoped.length - 1; i >= 0; i--) {
       const e = scoped[i];
-      if (e.kind === 'tool_call' && isTodoTool(e.toolName)) {
-        const parsed = parseTodos(e.toolArgs);
-        if (parsed.length) return parsed;
+      if (e.kind === 'tool_call' && isTodoTool(e.toolName) && hasTodoPayload(e.toolArgs)) {
+        return parseTodos(e.toolArgs);
       }
     }
     return [];

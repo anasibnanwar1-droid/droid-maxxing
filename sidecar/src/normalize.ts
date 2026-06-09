@@ -195,10 +195,20 @@ export function normalizeStreamEvent(
     case 'tool_result': {
       const isTask = isTaskToolName(ev.toolName);
       const toolUseId = toolUseIdFrom((ev as { toolUseId?: string }).toolUseId, eventToolUseId);
-      // A subagent's Task result is the subagent's output; surface it only as a
-      // completion signal so it never leaks into the orchestrator's main feed.
+      // A successful subagent Task result is just the subagent's output, so it
+      // surfaces only as a completion signal and never leaks into the main feed.
+      // A *failed* spawn must stay visible, so keep its error transcript.
       if (subagentSessionId || isTask) {
-        return { subagent: { sessionId: subagentSessionId, toolUseId, done: true } };
+        const done = { subagent: { sessionId: subagentSessionId, toolUseId, done: true } };
+        if (!ev.isError) return done;
+        return {
+          ...done,
+          transcript: transcript(missionId, agentSessionId, role, 'tool_result', {
+            toolName: ev.toolName,
+            text: typeof ev.content === 'string' ? ev.content : JSON.stringify(ev.content),
+            isError: true,
+          }),
+        };
       }
       return {
         transcript: transcript(missionId, agentSessionId, role, 'tool_result', {

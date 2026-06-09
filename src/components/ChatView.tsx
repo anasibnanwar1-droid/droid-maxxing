@@ -172,6 +172,8 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
   }, [hadSpec, allTranscript]);
 
   const [fileSpec, setFileSpec] = useState<{ path: string; content: string } | null>(null);
+  // Re-read on `capturedPlan` changes too: a revised spec rewrites the same file
+  // path, so the path alone wouldn't trigger a reload and the card would go stale.
   useEffect(() => {
     if (!specPath) return;
     let cancelled = false;
@@ -181,7 +183,7 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
     return () => {
       cancelled = true;
     };
-  }, [specPath]);
+  }, [specPath, capturedPlan]);
 
   const hasFileSpec = !!fileSpec && fileSpec.path === specPath;
 
