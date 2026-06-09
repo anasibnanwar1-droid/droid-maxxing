@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { loadPersistedUiState } from './useStore';
+import { applyFactoryCompactionDefaults, loadPersistedUiState } from './useStore';
 
 test('loadPersistedUiState returns an empty snapshot when storage is empty', () => {
   withLocalStorage(null, () => {
@@ -60,15 +60,59 @@ test('loadPersistedUiState sanitizes persisted shell fields', () => {
   });
 });
 
+test('factory defaults do not restore a cleared per-model compaction override', () => {
+  withLocalStorageMap({ 'droid-compaction-token-limit-per-model': '{}' }, () => {
+    assert.deepEqual(
+      applyFactoryCompactionDefaults(
+        { compactionTokenLimit: undefined, compactionTokenLimitPerModel: {} },
+        { compactionTokenLimitPerModel: { 'model-a': 100_000 } },
+      ),
+      { compactionTokenLimit: undefined, compactionTokenLimitPerModel: {} },
+    );
+  });
+});
+
+test('factory defaults do not restore a cleared global compaction token limit', () => {
+  withLocalStorageMap({ 'droid-compaction-token-limit-configured': '1' }, () => {
+    assert.deepEqual(
+      applyFactoryCompactionDefaults(
+        { compactionTokenLimit: undefined, compactionTokenLimitPerModel: {} },
+        { compactionTokenLimit: 100_000 },
+      ),
+      { compactionTokenLimit: undefined, compactionTokenLimitPerModel: {} },
+    );
+  });
+});
+
+test('factory defaults seed compaction token limits before local settings exist', () => {
+  const storage = new Map<string, string>();
+  withLocalStorageMap(storage, () => {
+    assert.deepEqual(
+      applyFactoryCompactionDefaults(
+        { compactionTokenLimit: undefined, compactionTokenLimitPerModel: {} },
+        { compactionTokenLimit: 200_000, compactionTokenLimitPerModel: { 'model-a': 100_000 } },
+      ),
+      { compactionTokenLimit: 200_000, compactionTokenLimitPerModel: { 'model-a': 100_000 } },
+    );
+    assert.equal(storage.get('droid-compaction-token-limit'), '200000');
+    assert.equal(storage.get('droid-compaction-token-limit-per-model'), '{"model-a":100000}');
+  });
+});
+
 function withLocalStorage(value: string | null, fn: () => void): void {
+  withLocalStorageMap(value === null ? {} : { 'droid-ui-state-v1': value }, fn);
+}
+
+function withLocalStorageMap(seed: Record<string, string> | Map<string, string>, fn: () => void): void {
   const previous = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
+  const values = seed instanceof Map ? seed : new Map(Object.entries(seed));
   const mock: Storage = {
-    getItem: () => value,
-    setItem: () => undefined,
-    removeItem: () => undefined,
-    clear: () => undefined,
-    key: () => null,
-    length: value ? 1 : 0,
+    getItem: (key) => values.get(key) ?? null,
+    setItem: (key, next) => { values.set(key, next); },
+    removeItem: (key) => { values.delete(key); },
+    clear: () => { values.clear(); },
+    key: (index) => Array.from(values.keys())[index] ?? null,
+    get length() { return values.size; },
   };
   Object.defineProperty(globalThis, 'localStorage', {
     configurable: true,

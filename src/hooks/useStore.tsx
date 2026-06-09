@@ -27,6 +27,13 @@ export interface WorkerInfo extends WorkerSummary {
   startedAt: number;
 }
 
+export interface QueuedPrompt {
+  id: string;
+  text: string;
+  skills: string[];
+  files: string[];
+}
+
 export interface AgentModelConfig {
   modelId?: string;
   reasoning: ReasoningEffort;
@@ -71,6 +78,8 @@ interface AppState {
   missionSpecs: Record<string, { path?: string; title: string; content: string }>;
   // Which mission's spec is open in the full wiki reader (null = closed).
   specWikiMissionId: string | null;
+  // Held locally until the current turn finishes, then delivered one at a time.
+  promptQueue: Record<string, QueuedPrompt[]>;
 
   // UI flags
   rightPanelOpen: boolean;
@@ -141,6 +150,9 @@ type Action =
   | { type: 'MISSION_TOKENS'; missionId: string; tokensIn: number; tokensOut: number; contextTokens: number; maxContextTokens?: number }
   | { type: 'CONTEXT_UPDATED'; sessionId: string; stats: ContextStatsSnapshot }
   | { type: 'MISSION_TRANSCRIPT'; event: TranscriptEvent }
+  | { type: 'QUEUE_PROMPT'; missionId: string; prompt: QueuedPrompt }
+  | { type: 'REMOVE_QUEUED_PROMPT'; missionId: string; id: string }
+  | { type: 'REORDER_QUEUE'; missionId: string; from: number; to: number }
   | { type: 'SPEC_SET'; missionId: string; path?: string; title: string; content: string }
   | { type: 'SPEC_OPEN_WIKI'; missionId: string }
   | { type: 'SPEC_CLOSE_WIKI' }
@@ -276,6 +288,7 @@ function saveAgentConfig(config: AgentConfig): AgentConfig {
 // for compaction across every session.
 const COMPACTION_MODEL_STORAGE_KEY = 'droid-compaction-model';
 const COMPACTION_TOKEN_LIMIT_STORAGE_KEY = 'droid-compaction-token-limit';
+const COMPACTION_TOKEN_LIMIT_CONFIGURED_STORAGE_KEY = 'droid-compaction-token-limit-configured';
 const COMPACTION_TOKEN_LIMIT_PER_MODEL_STORAGE_KEY = 'droid-compaction-token-limit-per-model';
 const LIVE_ENTER_BEHAVIOR_STORAGE_KEY = 'droid-live-enter-behavior';
 const WORKSPACES_STORAGE_KEY = 'droid-workspaces';
@@ -319,23 +332,37 @@ function normalizeTokenLimit(value: unknown): number | undefined {
 
 function loadCompactionTokenLimit(): number | undefined {
   try {
-    return normalizeTokenLimit(localStorage.getItem(COMPACTION_TOKEN_LIMIT_STORAGE_KEY));
+    return normalizeTokenLimit(getLocalStorage()?.getItem(COMPACTION_TOKEN_LIMIT_STORAGE_KEY));
   } catch {
     return undefined;
   }
 }
 
-function saveCompactionTokenLimit(value?: number): number | undefined {
+function hasStoredCompactionTokenLimit(): boolean {
   try {
-    if (value === undefined) localStorage.removeItem(COMPACTION_TOKEN_LIMIT_STORAGE_KEY);
-    else localStorage.setItem(COMPACTION_TOKEN_LIMIT_STORAGE_KEY, String(value));
+    const storage = getLocalStorage();
+    return (
+      storage?.getItem(COMPACTION_TOKEN_LIMIT_STORAGE_KEY) !== null ||
+      storage?.getItem(COMPACTION_TOKEN_LIMIT_CONFIGURED_STORAGE_KEY) === '1'
+    );
+  } catch {
+    return false;
+  }
+}
+
+function saveCompactionTokenLimit(value?: number, options: { userConfigured?: boolean } = {}): number | undefined {
+  try {
+    const storage = getLocalStorage();
+    if (value === undefined) storage?.removeItem(COMPACTION_TOKEN_LIMIT_STORAGE_KEY);
+    else storage?.setItem(COMPACTION_TOKEN_LIMIT_STORAGE_KEY, String(value));
+    if (options.userConfigured ?? true) storage?.setItem(COMPACTION_TOKEN_LIMIT_CONFIGURED_STORAGE_KEY, '1');
   } catch { /* ignore */ }
   return value;
 }
 
 function loadCompactionTokenLimitPerModel(): Record<string, number> {
   try {
-    const raw = localStorage.getItem(COMPACTION_TOKEN_LIMIT_PER_MODEL_STORAGE_KEY);
+    const raw = getLocalStorage()?.getItem(COMPACTION_TOKEN_LIMIT_PER_MODEL_STORAGE_KEY);
     if (!raw) return {};
     const parsed = JSON.parse(raw) as Record<string, unknown>;
     const out: Record<string, number> = {};
@@ -349,11 +376,49 @@ function loadCompactionTokenLimitPerModel(): Record<string, number> {
   }
 }
 
+function hasStoredCompactionTokenLimitPerModel(): boolean {
+  try {
+    return getLocalStorage()?.getItem(COMPACTION_TOKEN_LIMIT_PER_MODEL_STORAGE_KEY) !== null;
+  } catch {
+    return false;
+  }
+}
+
 function saveCompactionTokenLimitPerModel(value: Record<string, number>): Record<string, number> {
   try {
-    localStorage.setItem(COMPACTION_TOKEN_LIMIT_PER_MODEL_STORAGE_KEY, JSON.stringify(value));
+    getLocalStorage()?.setItem(COMPACTION_TOKEN_LIMIT_PER_MODEL_STORAGE_KEY, JSON.stringify(value));
   } catch { /* ignore */ }
   return value;
+}
+
+function normalizeTokenLimitRecord(value: Record<string, number> | undefined): Record<string, number> {
+  return Object.fromEntries(
+    Object.entries(value ?? {})
+      .map(([id, limit]) => [id, normalizeTokenLimit(limit)])
+      .filter((entry): entry is [string, number] => entry[1] !== undefined),
+  );
+}
+
+export function applyFactoryCompactionDefaults(
+  state: Pick<AppState, 'compactionTokenLimit' | 'compactionTokenLimitPerModel'>,
+  defaults: Pick<FactoryDefaultSettings, 'compactionTokenLimit' | 'compactionTokenLimitPerModel'>,
+): Pick<AppState, 'compactionTokenLimit' | 'compactionTokenLimitPerModel'> {
+  const hasLocalLimit = hasStoredCompactionTokenLimit();
+  const hasLocalPerModel = hasStoredCompactionTokenLimitPerModel();
+  const defaultLimit = normalizeTokenLimit(defaults.compactionTokenLimit);
+  const defaultPerModel = normalizeTokenLimitRecord(defaults.compactionTokenLimitPerModel);
+
+  const compactionTokenLimit = hasLocalLimit ? state.compactionTokenLimit : defaultLimit;
+  const compactionTokenLimitPerModel = hasLocalPerModel ? state.compactionTokenLimitPerModel : defaultPerModel;
+
+  if (!hasLocalLimit && compactionTokenLimit !== undefined) {
+    saveCompactionTokenLimit(compactionTokenLimit, { userConfigured: false });
+  }
+  if (!hasLocalPerModel && Object.keys(defaultPerModel).length > 0) {
+    saveCompactionTokenLimitPerModel(defaultPerModel);
+  }
+
+  return { compactionTokenLimit, compactionTokenLimitPerModel };
 }
 
 function normalizeLiveEnterBehavior(value: unknown): LiveEnterBehavior {
@@ -484,6 +549,7 @@ const initialState: AppState = {
   specPlans: {},
   missionSpecs: {},
   specWikiMissionId: null,
+  promptQueue: {},
   rightPanelOpen: persistedUiState.rightPanelOpen ?? true,
   sidebarCollapsed: persistedUiState.sidebarCollapsed ?? false,
   specMode: persistedUiState.specMode ?? false,
@@ -755,6 +821,33 @@ function baseReducer(state: AppState, action: Action): AppState {
       };
     }
 
+    case 'QUEUE_PROMPT': {
+      const prev = state.promptQueue[action.missionId] ?? [];
+      return {
+        ...state,
+        promptQueue: { ...state.promptQueue, [action.missionId]: [...prev, action.prompt] },
+      };
+    }
+
+    case 'REMOVE_QUEUED_PROMPT': {
+      const prev = state.promptQueue[action.missionId] ?? [];
+      return {
+        ...state,
+        promptQueue: { ...state.promptQueue, [action.missionId]: prev.filter((p) => p.id !== action.id) },
+      };
+    }
+
+    case 'REORDER_QUEUE': {
+      const prev = state.promptQueue[action.missionId] ?? [];
+      if (action.from === action.to || action.from < 0 || action.to < 0 || action.from >= prev.length || action.to >= prev.length) {
+        return state;
+      }
+      const next = [...prev];
+      const [moved] = next.splice(action.from, 1);
+      next.splice(action.to, 0, moved);
+      return { ...state, promptQueue: { ...state.promptQueue, [action.missionId]: next } };
+    }
+
     case 'SPEC_SET': {
       const prev = state.missionSpecs[action.missionId];
       if (prev && prev.content === action.content && prev.path === action.path && prev.title === action.title) {
@@ -973,26 +1066,15 @@ function baseReducer(state: AppState, action: Action): AppState {
         },
       }, state.models);
 
-      // Seed compaction token limits from Factory defaults only when the user
-      // has not already configured them locally.
-      const compactionTokenLimit =
-        state.compactionTokenLimit ?? normalizeTokenLimit(action.defaults.compactionTokenLimit);
-      const compactionTokenLimitPerModel =
-        Object.keys(state.compactionTokenLimitPerModel).length > 0
-          ? state.compactionTokenLimitPerModel
-          : saveCompactionTokenLimitPerModel(
-              Object.fromEntries(
-                Object.entries(action.defaults.compactionTokenLimitPerModel ?? {})
-                  .map(([id, value]) => [id, normalizeTokenLimit(value)])
-                  .filter((entry): entry is [string, number] => entry[1] !== undefined),
-              ),
-            );
+      // Seed Factory defaults only before local compaction settings exist. An
+      // explicit clear stores an empty local value and must not resurrect
+      // Factory's old per-model/default threshold on the next defaults event.
+      const compactionDefaults = applyFactoryCompactionDefaults(state, action.defaults);
 
       return {
         ...state,
         agentConfig: saveAgentConfig(next),
-        compactionTokenLimit: saveCompactionTokenLimit(compactionTokenLimit),
-        compactionTokenLimitPerModel,
+        ...compactionDefaults,
       };
     }
 

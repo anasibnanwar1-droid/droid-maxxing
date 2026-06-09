@@ -1,10 +1,11 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { useStore } from '../hooks/useStore';
+import type { QueuedPrompt } from '../hooks/useStore';
 import { useMissionLive } from '../hooks/useMissionLive';
 import { sendToMission, sendToMissionNow, sendToAgent, sendToAgentNow, createMission, interruptMission, interruptAgent, compactSession, setInteractionMode, newClientRef, listSkills } from '../lib/commands';
 import { pickDirectory, listFiles } from '../lib/desktop';
-import { ArrowUp, ChevronDown, SlidersHorizontal, Square, FileText, X, Folder, User, Box, Zap } from 'lucide-react';
+import { ArrowUp, ChevronDown, SlidersHorizontal, Square, FileText, X, Folder, User, Box, ListPlus, GripVertical, Pencil } from 'lucide-react';
 import ModelSelectorPopover from './ModelSelectorPopover';
 import PermissionInline from './PermissionInline';
 import PlanApprovalInline from './PlanApprovalInline';
@@ -15,6 +16,7 @@ const ACCENT = 'var(--droid-accent)';
 const accentMix = (pct: number) => `color-mix(in srgb, var(--droid-accent) ${pct}%, transparent)`;
 type SubmitMode = 'queue' | 'now';
 const oppositeSubmitMode = (mode: SubmitMode): SubmitMode => mode === 'queue' ? 'now' : 'queue';
+const newQueueId = () => `q-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 
 type SlashCommand = { cmd: string; desc: string; run: () => void };
 
@@ -57,8 +59,12 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
   const [filesCwd, setFilesCwd] = useState<string | null>(null);
   const [attachedFiles, setAttachedFiles] = useState<string[]>([]);
   const [activeSkills, setActiveSkills] = useState<SkillInfo[]>([]);
+  const [dragIndex, setDragIndex] = useState<number | null>(null);
+  const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
+  const [sendHover, setSendHover] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const pendingCaret = useRef<number | null>(null);
+  const prevLive = useRef(false);
 
   const activeMission = state.activeMissionId ? state.missions[state.activeMissionId] : null;
   const isLive = useMissionLive(state.activeMissionId);
@@ -335,6 +341,19 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
 
     if (!activeMission) return;
 
+    // Model is working and the user chose to queue: stage the prompt locally.
+    // It is held client-side and delivered automatically when the turn finishes.
+    if (isLive && mode === 'queue' && !targetAgentSessionId) {
+      dispatch({
+        type: 'QUEUE_PROMPT',
+        missionId: activeMission.id,
+        prompt: { id: newQueueId(), text, skills: skillNames, files: [...attachedFiles] },
+      });
+      setInput('');
+      resetAttachments();
+      return;
+    }
+
     dispatch({
       type: 'MISSION_TRANSCRIPT',
       event: {
@@ -348,7 +367,7 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
         author: 'user',
         skills: activeSkills.map((s) => s.name),
         files: [...attachedFiles],
-        steered: isLive || mode === 'now',
+        steered: isLive && mode === 'now',
       },
     });
 
@@ -364,6 +383,62 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
 
     setInput('');
     resetAttachments();
+  };
+
+  const queue: QueuedPrompt[] = activeMission ? state.promptQueue[activeMission.id] ?? [] : [];
+
+  const deliverPrompt = (p: QueuedPrompt) => {
+    if (!activeMission) return;
+    const composed = composeFrom(p.text, p.skills, p.files);
+    dispatch({
+      type: 'MISSION_TRANSCRIPT',
+      event: {
+        id: `local-${Date.now()}`,
+        missionId: activeMission.id,
+        agentSessionId: 'user',
+        role: 'orchestrator',
+        ts: Date.now(),
+        kind: 'text',
+        text: p.text,
+        author: 'user',
+        skills: p.skills,
+        files: p.files,
+      },
+    });
+    try {
+      sendToMission(activeMission.id, composed);
+    } catch (err) {
+      console.error('[PromptInput] queued send failed:', err);
+    }
+    dispatch({ type: 'REMOVE_QUEUED_PROMPT', missionId: activeMission.id, id: p.id });
+  };
+
+  // When the current turn finishes, deliver the next staged prompt. Delivering
+  // it restarts the turn, so the effect drains the queue one prompt at a time.
+  useEffect(() => {
+    if (prevLive.current && !isLive && activeMission) {
+      const next = (state.promptQueue[activeMission.id] ?? [])[0];
+      if (next) deliverPrompt(next);
+    }
+    prevLive.current = isLive;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isLive]);
+
+  const editQueuedInComposer = (p: QueuedPrompt) => {
+    if (!activeMission) return;
+    setInput(p.text);
+    setAttachedFiles(p.files);
+    setActiveSkills(invocableSkills.filter((s) => p.skills.includes(s.name)));
+    dispatch({ type: 'REMOVE_QUEUED_PROMPT', missionId: activeMission.id, id: p.id });
+    requestAnimationFrame(() => textareaRef.current?.focus());
+  };
+
+  const handleQueueDrop = (to: number) => {
+    if (activeMission && dragIndex !== null && dragIndex !== to) {
+      dispatch({ type: 'REORDER_QUEUE', missionId: activeMission.id, from: dragIndex, to });
+    }
+    setDragIndex(null);
+    setDragOverIndex(null);
   };
 
   const syncCaret = (el: HTMLTextAreaElement) => setCaret(el.selectionStart ?? 0);
@@ -408,6 +483,9 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
     : 'border-droid-border focus-within:border-droid-border-hover';
 
   const hasChips = activeSkills.length > 0 || attachedFiles.length > 0;
+  const enterSteers = state.liveEnterBehavior === 'interrupt';
+  const idleSendTooltip = 'Enter: send\nShift+Enter: newline';
+  const hasContent = input.trim().length > 0 || activeSkills.length > 0 || attachedFiles.length > 0;
 
   return (
     <div
@@ -505,6 +583,55 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
             SPEC MODE
           </div>
         ) : null}
+
+        {queue.length > 0 && (
+          <div className="mb-2 flex flex-col gap-1.5">
+            <div className="flex items-center gap-1.5 px-1 text-[10px] font-medium tracking-wide text-droid-text-muted">
+              <ListPlus className="w-3 h-3" />
+              Queued · sends after the current turn
+            </div>
+            {queue.map((p, i) => (
+              <div
+                key={p.id}
+                draggable
+                onDragStart={() => setDragIndex(i)}
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  setDragOverIndex(i);
+                }}
+                onDrop={() => handleQueueDrop(i)}
+                onDragEnd={() => {
+                  setDragIndex(null);
+                  setDragOverIndex(null);
+                }}
+                className={`group flex items-start gap-2 rounded-xl border bg-droid-elevated px-2 py-1.5 transition-colors ${
+                  dragOverIndex === i && dragIndex !== null && dragIndex !== i ? 'border-droid-orange' : 'border-droid-border'
+                }`}
+              >
+                <span className="mt-0.5 cursor-grab text-droid-text-muted/60 active:cursor-grabbing" title="Drag to reorder">
+                  <GripVertical className="w-3.5 h-3.5" />
+                </span>
+                <span className="flex-1 whitespace-pre-wrap break-words text-[12px] text-droid-text-secondary">{p.text || '(empty)'}</span>
+                <div className="flex shrink-0 items-center gap-0.5">
+                  <button
+                    onClick={() => editQueuedInComposer(p)}
+                    className="rounded p-1 text-droid-text-muted hover:text-droid-text hover:bg-black/20"
+                    title="Edit in composer"
+                  >
+                    <Pencil className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    onClick={() => activeMission && dispatch({ type: 'REMOVE_QUEUED_PROMPT', missionId: activeMission.id, id: p.id })}
+                    className="rounded p-1 text-droid-text-muted hover:text-droid-orange hover:bg-black/20"
+                    title="Delete"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
 
         <div
           className={`relative bg-droid-elevated border rounded-2xl transition-colors ${missionPreview ? '' : boxBorder}`}
@@ -632,29 +759,58 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
 
             <div className="flex-1 min-w-0" />
 
-            {isLive ? (
-              <>
+            {isLive && !hasContent ? (
+              <button
+                onClick={() => activeMission && (targetAgentSessionId ? interruptAgent(activeMission.id, targetAgentSessionId) : interruptMission(activeMission.id))}
+                title="Working — click to stop"
+                className="p-2 rounded-xl text-droid-bg shrink-0 transition-colors"
+                style={{ background: ACCENT }}
+              >
+                <Square className="w-3.5 h-3.5" fill="currentColor" strokeWidth={0} />
+              </button>
+            ) : isLive ? (
+              <div
+                className="relative shrink-0"
+                onMouseEnter={() => setSendHover(true)}
+                onMouseLeave={() => setSendHover(false)}
+              >
+                <AnimatePresence>
+                  {sendHover && (
+                    <motion.div
+                      initial={{ opacity: 0, y: 4 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: 4 }}
+                      transition={{ duration: 0.12, ease: [0.16, 1, 0.3, 1] }}
+                      className="absolute bottom-full right-0 mb-2 z-50 flex flex-col gap-0.5 rounded-xl border border-droid-border bg-droid-elevated p-1.5 shadow-2xl shadow-black/40"
+                    >
+                      {[
+                        { label: enterSteers ? 'Steer' : 'Queue', keys: ['⏎'] },
+                        { label: enterSteers ? 'Queue' : 'Steer', keys: ['⌘', '⏎'] },
+                      ].map((row) => (
+                        <div key={row.label} className="flex items-center justify-between gap-3 rounded-lg px-2 py-1 text-[12px] text-droid-text">
+                          <span>{row.label}</span>
+                          <span className="flex items-center gap-0.5 rounded-md bg-droid-bg/70 px-1.5 py-0.5 text-[11px] text-droid-text-secondary">
+                            {row.keys.map((k) => (
+                              <kbd key={k} className="font-sans leading-none">{k}</kbd>
+                            ))}
+                          </span>
+                        </div>
+                      ))}
+                    </motion.div>
+                  )}
+                </AnimatePresence>
                 <button
-                  onClick={() => void handleSubmit('now')}
-                  disabled={!input.trim() && activeSkills.length === 0 && attachedFiles.length === 0}
-                  title="Send now"
-                  className="p-2 rounded-xl border border-droid-border text-droid-text-secondary disabled:opacity-20 disabled:cursor-not-allowed hover:text-droid-text hover:bg-droid-bg/40 transition-colors shrink-0"
+                  onClick={() => void handleSubmit(enterSteers ? 'now' : 'queue')}
+                  className="p-2 rounded-xl bg-droid-text text-droid-bg hover:bg-droid-text-secondary transition-colors"
                 >
-                  <Zap className="w-3.5 h-3.5" />
+                  <ArrowUp className="w-3.5 h-3.5" />
                 </button>
-                <button
-                  onClick={() => activeMission && (targetAgentSessionId ? interruptAgent(activeMission.id, targetAgentSessionId) : interruptMission(activeMission.id))}
-                  title="Working — click to stop"
-                  className="p-2 rounded-xl text-droid-bg shrink-0 transition-colors"
-                  style={{ background: ACCENT }}
-                >
-                  <Square className="w-3.5 h-3.5" fill="currentColor" strokeWidth={0} />
-                </button>
-              </>
+              </div>
             ) : (
               <button
                 onClick={() => void handleSubmit()}
-                disabled={!input.trim() && activeSkills.length === 0 && attachedFiles.length === 0}
+                disabled={!hasContent}
+                title={idleSendTooltip}
                 className="p-2 rounded-xl bg-droid-text text-droid-bg disabled:opacity-20 disabled:cursor-not-allowed hover:bg-droid-text-secondary transition-colors shrink-0"
               >
                 <ArrowUp className="w-3.5 h-3.5" />
