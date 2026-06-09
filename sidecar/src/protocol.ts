@@ -361,9 +361,10 @@ export type ClientCommand =
   | { type: 'mission.create'; clientRef: string; cwd?: string; title: string; goal: string; interactionMode?: SessionInteractionMode; modelId?: string; reasoningEffort?: ReasoningEffort; compactionModel?: string; compactionTokenLimit?: number | null; compactionTokenLimitPerModel?: Record<string, number>; autonomy?: Autonomy; workerModel?: string; workerReasoning?: ReasoningEffort; validatorModel?: string; validatorReasoning?: ReasoningEffort }
   | { type: 'session.create'; clientRef: string; cwd?: string; title: string; goal: string; interactionMode?: SessionInteractionMode; modelId?: string; reasoningEffort?: ReasoningEffort; compactionModel?: string; compactionTokenLimit?: number | null; compactionTokenLimitPerModel?: Record<string, number>; autonomy?: Autonomy }
   | { type: 'session.send'; sessionId: string; text: string }
+  | { type: 'session.sendNow'; sessionId: string; text: string }
   | { type: 'session.resume'; sessionId: string }
   | { type: 'session.interrupt'; sessionId: string }
-  | { type: 'session.updateSettings'; sessionId: string; modelId?: string | null; reasoningEffort?: ReasoningEffort; compactionModel?: string | null; compactionTokenLimit?: number | null; compactionTokenLimitPerModel?: Record<string, number>; autonomy?: Autonomy }
+  | { type: 'session.updateSettings'; sessionId: string; modelId?: string | null; reasoningEffort?: ReasoningEffort; autonomy?: Autonomy }
   | { type: 'session.compact'; sessionId: string; customInstructions?: string }
   | { type: 'session.fork'; sessionId: string }
   | { type: 'session.rename'; sessionId: string; title: string }
@@ -371,12 +372,14 @@ export type ClientCommand =
   | { type: 'session.rewind'; sessionId: string; rewindId?: string }
   | { type: 'agent.open'; missionId: string; agentSessionId: string; role?: AgentRole }
   | { type: 'agent.send'; missionId: string; agentSessionId: string; text: string }
+  | { type: 'agent.sendNow'; missionId: string; agentSessionId: string; text: string }
   | { type: 'agent.interrupt'; missionId: string; agentSessionId: string }
   | { type: 'approval.respond'; missionId: string; requestId: string; outcome: PermissionOutcome }
   | { type: 'question.respond'; missionId: string; requestId: string; cancelled: boolean; answers: { index: number; question: string; answer: string }[] }
   | { type: 'history.list' }
   | { type: 'history.page'; sessionId: string; cursor?: string; limit?: number }
   | { type: 'mission.send'; missionId: string; text: string }
+  | { type: 'mission.sendNow'; missionId: string; text: string }
   | { type: 'mission.respondPermission'; missionId: string; requestId: string; outcome: PermissionOutcome }
   | { type: 'mission.respondQuestion'; missionId: string; requestId: string; cancelled: boolean; answers: { index: number; question: string; answer: string }[] }
   | { type: 'mission.interrupt'; missionId: string }
@@ -385,7 +388,7 @@ export type ClientCommand =
   | { type: 'mission.close'; missionId: string }
   | { type: 'mission.list'; workspaceCwds?: string[]; includePlainChats?: boolean; limitPerWorkspace?: number }
   | { type: 'mission.loadHistory'; missionId: string }
-  | { type: 'settings.agent.update'; missionId?: string; agent: ConfigurableAgent; modelId?: string | null; reasoningEffort?: ReasoningEffort; compactionTokenLimit?: number | null; compactionTokenLimitPerModel?: Record<string, number> }
+  | { type: 'settings.agent.update'; missionId?: string; agent: ConfigurableAgent; modelId?: string | null; reasoningEffort?: ReasoningEffort }
   | { type: 'mission.setAutonomy'; missionId: string; autonomy: Autonomy }
   | { type: 'mission.setInteractionMode'; missionId: string; mode: SessionInteractionMode }
   | { type: 'browser.open'; missionId: string; url: string; viewport?: BrowserViewport; viewportMode?: BrowserViewportMode }
