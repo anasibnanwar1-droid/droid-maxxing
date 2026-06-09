@@ -96,6 +96,12 @@ function toolUseIdFrom(...values: unknown[]): string | undefined {
   return undefined;
 }
 
+// The SDK subagent spawn is the `Task` tool. Match it as a whole word so
+// unrelated tools whose names merely contain "task" (e.g. `create_task`) are
+// never mistaken for a subagent.
+const isTaskToolName = (name: unknown): boolean =>
+  typeof name === 'string' && /\btask\b/i.test(name);
+
 // A chat (non-mission) session spawns subagents via the Task tool; those surface
 // as ToolProgress events carrying `subagentSessionId` plus a Task tool name/input.
 function detectSubagent(
@@ -105,7 +111,7 @@ function detectSubagent(
   toolUseId: string | undefined,
 ): NormalizedEvent['subagent'] | undefined {
   const isTask =
-    (typeof toolName === 'string' && /task/i.test(toolName)) ||
+    isTaskToolName(toolName) ||
     typeof input.subagent_type === 'string' ||
     typeof input.subagentType === 'string';
   if (!isTask && !sessionId) return undefined;
@@ -187,7 +193,7 @@ export function normalizeStreamEvent(
       };
     }
     case 'tool_result': {
-      const isTask = typeof ev.toolName === 'string' && /task/i.test(ev.toolName);
+      const isTask = isTaskToolName(ev.toolName);
       const toolUseId = toolUseIdFrom((ev as { toolUseId?: string }).toolUseId, eventToolUseId);
       // A subagent's Task result is the subagent's output; surface it only as a
       // completion signal so it never leaks into the orchestrator's main feed.

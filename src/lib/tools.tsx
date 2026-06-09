@@ -75,7 +75,9 @@ export function isTodoTool(name?: string): boolean {
 
 // A Task/subagent spawn is identified by the tool name or a `subagent_type` arg.
 export function isSubagentTool(name?: string, args?: unknown): boolean {
-  if (/task|subagent|delegate/i.test(name ?? '')) return true;
+  // Whole-word match so unrelated tools (e.g. `create_task`) aren't mistaken
+  // for a subagent spawn; the strong signal is the `subagent_type` arg.
+  if (/\b(task|subagent|delegate)\b/i.test(name ?? '')) return true;
   const a = args && typeof args === 'object' ? (args as Record<string, unknown>) : {};
   return typeof a.subagent_type === 'string' || typeof a.subagentType === 'string';
 }

@@ -316,6 +316,9 @@ function buildFeed(events: TranscriptEvent[], subagentCards = false): FeedItem[]
       while (i < events.length) {
         const t = events[i];
         if (t.kind === 'tool_result') { group.push(t); i++; continue; }
+        // A subagent spawn must break the group so the outer loop can render it
+        // as its own card instead of folding it into the generic tools group.
+        if (subagentCards && t.kind === 'tool_call' && isSubagentTool(t.toolName, t.toolArgs)) break;
         if (t.kind === 'tool_call' && !extractFileChange(t.toolName, t.toolArgs)) { group.push(t); i++; continue; }
         break;
       }

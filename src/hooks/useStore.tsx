@@ -783,9 +783,13 @@ function baseReducer(state: AppState, action: Action): AppState {
           : state.specPlans;
       // Seed the persistent spec/plan so the inline card and wiki reader work
       // immediately (a richer spec file, if any, overrides this via SPEC_SET).
+      // Seed/refresh the persistent spec so revised plans update the wiki, but
+      // never downgrade a file-backed spec (richer, owned by ChatView via
+      // SPEC_SET) — that one is refreshed from disk instead.
+      const existingSpec = state.missionSpecs[r.missionId];
       const missionSpecs =
-        (r.kind === 'spec' || r.kind === 'mission_plan') && r.plan && !state.missionSpecs[r.missionId]
-          ? { ...state.missionSpecs, [r.missionId]: { title: r.title, content: r.plan } }
+        (r.kind === 'spec' || r.kind === 'mission_plan') && r.plan && !existingSpec?.path && existingSpec?.content !== r.plan
+          ? { ...state.missionSpecs, [r.missionId]: { path: existingSpec?.path, title: r.title, content: r.plan } }
           : state.missionSpecs;
       return { ...state, pendingPermission: r, specPlans, missionSpecs };
     }
