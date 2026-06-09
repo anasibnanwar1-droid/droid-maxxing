@@ -21,7 +21,7 @@ import StatusBar from './components/StatusBar';
 import CommandPalette from './components/CommandPalette';
 import SettingsPanel, { applyTheme, paletteForMode } from './components/SettingsPanel';
 import AskUserModal from './components/AskUserModal';
-import PermissionModal from './components/PermissionModal';
+import SpecWikiModal from './components/SpecWikiModal';
 import BrowserWorkspace from './components/browser/BrowserWorkspace';
 import { isDesktop } from './lib/desktop';
 
@@ -315,7 +315,7 @@ export default function App() {
 
       {state.commandPaletteOpen && <CommandPalette />}
       {state.settingsOpen && <SettingsPanel />}
-      {state.pendingPermission && <PermissionModal />}
+      <SpecWikiModal />
       <Toaster />
     </div>
   );

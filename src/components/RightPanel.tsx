@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useStore } from '../hooks/useStore';
+import { parseTodos, isTodoTool, hasTodoPayload, type TodoItem } from '../lib/tools';
 import { useMissionLive } from '../hooks/useMissionLive';
 import { useRepoStatus } from '../hooks/useRepoStatus';
 import { environmentLabels } from '../lib/repoEnvironment';
@@ -7,7 +8,7 @@ import { interruptAgent } from '../lib/commands';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   GitBranch, Hash, Activity, Loader2, ChevronRight, CornerDownRight, FileDiff,
-  FolderGit, CheckCircle2, Circle, Square
+  FolderGit, CheckCircle2, Circle, Square, FileText
 } from 'lucide-react';
 import { openCodebase, openCurrentDiff } from './EditorOpenMenu';
 import { ModelIcon, providerOf } from './ModelIcon';
@@ -101,8 +102,33 @@ export default function RightPanel() {
   const repoStatus = useRepoStatus(activeMission?.cwd ?? '');
   const env = environmentLabels(activeMission?.cwd ?? '', repoStatus);
 
-  const completed = features.filter((f) => f.status === 'completed').length;
-  const total = features.length;
+  // Mission control owns its own feature-based progress; for chat/spec sessions
+  // we always prefer the model's own TodoWrite list as the source of truth.
+  const transcript = activeMission ? state.transcripts[activeMission.id] ?? [] : [];
+  const selectedAgent = state.selectedAgentSessionId;
+  const todoResult = useMemo(() => {
+    if (!activeMission || activeMission.kind === 'mission_orchestrator') return { todos: [] as TodoItem[], foundPayload: false };
+    const scoped =
+      selectedAgent && selectedAgent !== 'orchestrator'
+        ? transcript.filter((t) => t.agentSessionId === selectedAgent)
+        : transcript.filter((t) => t.role === 'orchestrator');
+    // The latest real Todo update wins, even if it emptied the list; skip only
+    // partial/streaming calls that haven't received the `todos` payload yet.
+    for (let i = scoped.length - 1; i >= 0; i--) {
+      const e = scoped[i];
+      if (e.kind === 'tool_call' && isTodoTool(e.toolName) && hasTodoPayload(e.toolArgs)) {
+        return { todos: parseTodos(e.toolArgs), foundPayload: true };
+      }
+    }
+    return { todos: [] as TodoItem[], foundPayload: false };
+  }, [activeMission, transcript, selectedAgent]);
+  const todos = todoResult.todos;
+  const useTodos = todoResult.foundPayload;
+
+  const completed = useTodos
+    ? todos.filter((t) => t.status === 'completed').length
+    : features.filter((f) => f.status === 'completed').length;
+  const total = useTodos ? todos.length : features.length;
   const pct = total > 0 ? Math.round((completed / total) * 100) : 0;
 
   // Authoritative "is the model generating right now" signal — respects the
@@ -200,6 +226,21 @@ export default function RightPanel() {
             </div>
           )}
 
+          {/* Spec — opens the full wiki reader for missions that produced one */}
+          {activeMission && state.missionSpecs[activeMission.id] && (
+            <div>
+              <Divider />
+              <button
+                onClick={() => dispatch({ type: 'SPEC_OPEN_WIKI', missionId: activeMission.id })}
+                className="w-full flex items-center gap-1.5 px-3 pt-2 pb-1.5 text-[12.5px] font-medium text-droid-text-muted hover:text-droid-text transition-colors"
+              >
+                <FileText className="w-3.5 h-3.5" />
+                Spec
+                <ChevronRight className="w-3.5 h-3.5 ml-auto" />
+              </button>
+            </div>
+          )}
+
           {/* Progress (collapsible) — under Environment */}
           {activeMission && (
             <div>
@@ -238,15 +279,32 @@ export default function RightPanel() {
                         </div>
                       </div>
                     )}
-                    {features.map((f) => (
-                      <Row
-                        key={f.id}
-                        icon={statusIcon(f.status)}
-                        label={f.description}
-                        onClick={() => dispatch({ type: 'SELECT_FEATURE', id: state.selectedFeatureId === f.id ? null : f.id })}
-                        active={state.selectedFeatureId === f.id}
-                      />
-                    ))}
+                    {useTodos
+                      ? todos.map((t, i) => (
+                          <div key={i} className="flex items-start gap-2.5 px-3 py-1.5">
+                            <span className="mt-0.5 shrink-0">{statusIcon(t.status)}</span>
+                            <span
+                              className={`text-[12.5px] leading-snug ${
+                                t.status === 'completed'
+                                  ? 'text-droid-text-muted line-through'
+                                  : t.status === 'in_progress'
+                                    ? 'text-droid-text'
+                                    : 'text-droid-text-secondary'
+                              }`}
+                            >
+                              {t.text}
+                            </span>
+                          </div>
+                        ))
+                      : features.map((f) => (
+                          <Row
+                            key={f.id}
+                            icon={statusIcon(f.status)}
+                            label={f.description}
+                            onClick={() => dispatch({ type: 'SELECT_FEATURE', id: state.selectedFeatureId === f.id ? null : f.id })}
+                            active={state.selectedFeatureId === f.id}
+                          />
+                        ))}
                     {total === 0 && (
                       <div className="px-3 py-1.5 text-[12px] text-droid-text-muted">
                         {working ? 'Working…' : 'No steps yet'}

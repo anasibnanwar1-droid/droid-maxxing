@@ -96,6 +96,12 @@ function toolUseIdFrom(...values: unknown[]): string | undefined {
   return undefined;
 }
 
+// The SDK subagent spawn is the `Task` tool. Match it as a whole word so
+// unrelated tools whose names merely contain "task" (e.g. `create_task`) are
+// never mistaken for a subagent.
+const isTaskToolName = (name: unknown): boolean =>
+  typeof name === 'string' && /\btask\b/i.test(name);
+
 // A chat (non-mission) session spawns subagents via the Task tool; those surface
 // as ToolProgress events carrying `subagentSessionId` plus a Task tool name/input.
 function detectSubagent(
@@ -105,7 +111,7 @@ function detectSubagent(
   toolUseId: string | undefined,
 ): NormalizedEvent['subagent'] | undefined {
   const isTask =
-    (typeof toolName === 'string' && /task/i.test(toolName)) ||
+    isTaskToolName(toolName) ||
     typeof input.subagent_type === 'string' ||
     typeof input.subagentType === 'string';
   if (!isTask && !sessionId) return undefined;
@@ -115,6 +121,17 @@ function detectSubagent(
     str(input.description) ??
     (typeof toolName === 'string' ? toolName : undefined);
   return { sessionId, toolUseId, label, prompt: taskPrompt(input) };
+}
+
+// The orchestrator's Task tool_call carries the entire subagent prompt in its
+// input. That prompt belongs in the subagent's own pane, not the main feed, so
+// we keep only the lightweight label fields on the transcript copy.
+function slimSubagentArgs(input: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const key of ['subagent_type', 'subagentType', 'description']) {
+    if (typeof input[key] === 'string') out[key] = input[key];
+  }
+  return out;
 }
 
 // Translate a single SDK stream event into zero-or-one normalized bridge updates.
@@ -170,21 +187,35 @@ export function normalizeStreamEvent(
       return {
         transcript: transcript(missionId, agentSessionId, role, 'tool_call', {
           toolName: toolUse.name,
-          toolArgs: toolUse.input,
+          toolArgs: subagent ? slimSubagentArgs(toolUse.input ?? {}) : toolUse.input,
         }),
         ...(subagent ? { subagent } : {}),
       };
     }
     case 'tool_result': {
-      const isTask = typeof ev.toolName === 'string' && /task/i.test(ev.toolName);
+      const isTask = isTaskToolName(ev.toolName);
       const toolUseId = toolUseIdFrom((ev as { toolUseId?: string }).toolUseId, eventToolUseId);
+      // A successful subagent Task result is just the subagent's output, so it
+      // surfaces only as a completion signal and never leaks into the main feed.
+      // A *failed* spawn must stay visible, so keep its error transcript.
+      if (subagentSessionId || isTask) {
+        const done = { subagent: { sessionId: subagentSessionId, toolUseId, done: true } };
+        if (!ev.isError) return done;
+        return {
+          ...done,
+          transcript: transcript(missionId, agentSessionId, role, 'tool_result', {
+            toolName: ev.toolName,
+            text: typeof ev.content === 'string' ? ev.content : JSON.stringify(ev.content),
+            isError: true,
+          }),
+        };
+      }
       return {
         transcript: transcript(missionId, agentSessionId, role, 'tool_result', {
           toolName: ev.toolName,
           text: typeof ev.content === 'string' ? ev.content : JSON.stringify(ev.content),
           isError: ev.isError,
         }),
-        ...(subagentSessionId || isTask ? { subagent: { sessionId: subagentSessionId, toolUseId, done: true } } : {}),
       };
     }
     case 'error':
@@ -323,8 +354,9 @@ export function classifyPermission(
       break;
     case 'propose_mission':
       title = (c.title as string) ?? 'Mission plan proposed';
-      detail = (c.proposal as string) ?? '';
-      kind = 'other';
+      plan = (c.proposal as string) ?? '';
+      detail = plan;
+      kind = 'mission_plan';
       break;
     case 'start_mission_run':
       title = 'Start mission run';

@@ -7,6 +7,7 @@ import { pickDirectory, listFiles } from '../lib/desktop';
 import { ArrowUp, ChevronDown, SlidersHorizontal, Square, FileText, X, Folder, User, Box, Zap } from 'lucide-react';
 import ModelSelectorPopover from './ModelSelectorPopover';
 import PermissionInline from './PermissionInline';
+import PlanApprovalInline from './PlanApprovalInline';
 import { ModelIcon, providerOf } from './ModelIcon';
 import type { SkillInfo, SkillLocation } from '../types/bridge';
 
@@ -491,6 +492,7 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
           )}
         </AnimatePresence>
 
+        <PlanApprovalInline />
         <PermissionInline />
 
         {missionPreview ? (

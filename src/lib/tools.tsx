@@ -50,6 +50,53 @@ export function toolMeta(name?: string, args?: unknown): { cat: ToolCat; detail:
   return { cat, detail: file ?? cmd ?? pattern ?? url ?? subagent ?? skill ?? '' };
 }
 
+export type TodoStatus = 'completed' | 'in_progress' | 'pending';
+export type TodoItem = { text: string; status: TodoStatus };
+
+// Parse the model's TodoWrite payload. The `todos` field is a numbered,
+// multi-line string where each line carries a status marker, e.g.
+//   "1. [in_progress] Wire up the parser".
+export function parseTodos(args: unknown): TodoItem[] {
+  const a = args && typeof args === 'object' ? (args as Record<string, unknown>) : {};
+  const raw = typeof a.todos === 'string' ? a.todos : undefined;
+  if (!raw) return [];
+  const items: TodoItem[] = [];
+  for (const line of raw.split('\n')) {
+    const m = line.match(/\[(completed|in_progress|pending)\]\s*(.+?)\s*$/i);
+    if (!m) continue;
+    items.push({ status: m[1].toLowerCase() as TodoStatus, text: m[2].trim() });
+  }
+  return items;
+}
+
+export function isTodoTool(name?: string): boolean {
+  return /todo/i.test(name ?? '');
+}
+
+// A real TodoWrite update carries the full list in its `todos` string (even when
+// that list is empty); a partial/streaming tool_call lacks the field entirely.
+// Lets callers honor an emptied list instead of falling back to a stale one.
+export function hasTodoPayload(args: unknown): boolean {
+  const a = args && typeof args === 'object' ? (args as Record<string, unknown>) : {};
+  return typeof a.todos === 'string';
+}
+
+// A Task/subagent spawn is identified by the tool name or a `subagent_type` arg.
+export function isSubagentTool(name?: string, args?: unknown): boolean {
+  // Whole-word match so unrelated tools (e.g. `create_task`) aren't mistaken
+  // for a subagent spawn; the strong signal is the `subagent_type` arg.
+  if (/\b(task|subagent|delegate)\b/i.test(name ?? '')) return true;
+  const a = args && typeof args === 'object' ? (args as Record<string, unknown>) : {};
+  return typeof a.subagent_type === 'string' || typeof a.subagentType === 'string';
+}
+
+// The droid name and short description carried by a Task spawn's arguments.
+export function subagentInfo(args: unknown): { label?: string; description?: string } {
+  const a = args && typeof args === 'object' ? (args as Record<string, unknown>) : {};
+  const s = (k: string) => (typeof a[k] === 'string' ? (a[k] as string).trim() || undefined : undefined);
+  return { label: s('subagent_type') ?? s('subagentType'), description: s('description') };
+}
+
 // Remove terminal ANSI/VT escape sequences from captured command output.
 const ANSI_PATTERN =
   // eslint-disable-next-line no-control-regex

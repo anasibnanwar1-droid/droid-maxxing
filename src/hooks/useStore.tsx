@@ -66,6 +66,11 @@ interface AppState {
   pendingQuestion: MissionQuestion | null;
   contextStats: Record<string, ContextStatsSnapshot>;
   specPlans: Record<string, string>;   // latest ExitSpecMode plan per session
+  // Persisted spec per mission (file path + rendered content). Survives exiting
+  // spec mode so the inline card, mermaid, and the wiki reader stay available.
+  missionSpecs: Record<string, { path?: string; title: string; content: string }>;
+  // Which mission's spec is open in the full wiki reader (null = closed).
+  specWikiMissionId: string | null;
 
   // UI flags
   rightPanelOpen: boolean;
@@ -136,6 +141,9 @@ type Action =
   | { type: 'MISSION_TOKENS'; missionId: string; tokensIn: number; tokensOut: number; contextTokens: number; maxContextTokens?: number }
   | { type: 'CONTEXT_UPDATED'; sessionId: string; stats: ContextStatsSnapshot }
   | { type: 'MISSION_TRANSCRIPT'; event: TranscriptEvent }
+  | { type: 'SPEC_SET'; missionId: string; path?: string; title: string; content: string }
+  | { type: 'SPEC_OPEN_WIKI'; missionId: string }
+  | { type: 'SPEC_CLOSE_WIKI' }
   | { type: 'MISSION_PERMISSION'; request: PermissionRequest }
   | { type: 'MISSION_QUESTION'; question: MissionQuestion }
   | { type: 'MISSION_ERROR'; missionId?: string; message: string }
@@ -474,6 +482,8 @@ const initialState: AppState = {
   pendingQuestion: null,
   contextStats: {},
   specPlans: {},
+  missionSpecs: {},
+  specWikiMissionId: null,
   rightPanelOpen: persistedUiState.rightPanelOpen ?? true,
   sidebarCollapsed: persistedUiState.sidebarCollapsed ?? false,
   specMode: persistedUiState.specMode ?? false,
@@ -745,13 +755,43 @@ function baseReducer(state: AppState, action: Action): AppState {
       };
     }
 
+    case 'SPEC_SET': {
+      const prev = state.missionSpecs[action.missionId];
+      if (prev && prev.content === action.content && prev.path === action.path && prev.title === action.title) {
+        return state;
+      }
+      return {
+        ...state,
+        missionSpecs: {
+          ...state.missionSpecs,
+          [action.missionId]: { path: action.path, title: action.title, content: action.content },
+        },
+      };
+    }
+
+    case 'SPEC_OPEN_WIKI':
+      return { ...state, specWikiMissionId: action.missionId };
+
+    case 'SPEC_CLOSE_WIKI':
+      return { ...state, specWikiMissionId: null };
+
     case 'MISSION_PERMISSION': {
       const r = action.request;
       const specPlans =
         r.kind === 'spec' && r.plan
           ? { ...state.specPlans, [r.missionId]: r.plan }
           : state.specPlans;
-      return { ...state, pendingPermission: r, specPlans };
+      // Seed the persistent spec/plan so the inline card and wiki reader work
+      // immediately (a richer spec file, if any, overrides this via SPEC_SET).
+      // Seed/refresh the persistent spec whenever a (revised) plan arrives so the
+      // card/wiki never go stale. The path is preserved; ChatView reloads the
+      // file on revision and overrides with the richer on-disk content.
+      const existingSpec = state.missionSpecs[r.missionId];
+      const missionSpecs =
+        (r.kind === 'spec' || r.kind === 'mission_plan') && r.plan && existingSpec?.content !== r.plan
+          ? { ...state.missionSpecs, [r.missionId]: { path: existingSpec?.path, title: r.title, content: r.plan } }
+          : state.missionSpecs;
+      return { ...state, pendingPermission: r, specPlans, missionSpecs };
     }
 
     case 'MISSION_QUESTION':

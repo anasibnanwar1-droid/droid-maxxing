@@ -1,15 +1,26 @@
-import { useMemo, useState, memo, useCallback } from 'react';
+import { useMemo, useState, memo, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ChevronRight, Terminal, Copy, Check, FileText, Expand as ExpandIcon, FoldVertical, MousePointer2, PenLine } from 'lucide-react';
+import { ChevronRight, Terminal, Copy, Check, FileText, Expand as ExpandIcon, FoldVertical, MousePointer2, PenLine, Bot } from 'lucide-react';
 import type { BrowserTranscriptReference, TranscriptEvent } from '../types/bridge';
 import { Markdown } from './Markdown';
-import { SpecModal } from './SpecModal';
 import { extractFileChange, type FileChange } from '../lib/diff';
 import { DiffCard } from './DiffView';
-import { CAT_LABEL, toolMeta, safeJson, stripAnsi, formatDuration } from '../lib/tools';
+import { CAT_LABEL, toolMeta, safeJson, stripAnsi, formatDuration, isSubagentTool, subagentInfo } from '../lib/tools';
 
 const ACCENT = 'var(--droid-accent)';
 const EASE = [0.16, 1, 0.3, 1] as const;
+
+/* ── Live elapsed-time hook: ticks once per second while `active`. ── */
+function useElapsed(startTs: number | undefined, active: boolean): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!active) return;
+    setNow(Date.now());
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [active]);
+  return startTs != null ? Math.max(0, now - startTs) : 0;
+}
 
 /* ── Streaming caret (text being written) ── */
 export function StreamingCaret() {
@@ -24,8 +35,10 @@ export function StreamingCaret() {
 }
 
 /* ── Working indicator — minimal shimmer label, no icons/dots/bars ── */
-export function WorkingIndicator({ label = 'Working' }: { label?: string }) {
-  return <span className="shimmer-text text-[13px] font-medium tracking-tight" aria-live="polite">{label}…</span>;
+export function WorkingIndicator({ label = 'Working', startTs }: { label?: string; startTs?: number }) {
+  const elapsed = useElapsed(startTs, true);
+  const suffix = startTs != null && elapsed >= 1000 ? ` ${formatDuration(elapsed)}` : '';
+  return <span className="shimmer-text text-[13px] font-medium tracking-tight" aria-live="polite">{label}{suffix}…</span>;
 }
 
 /* ── Compaction indicator — centered, larger shimmer while compacting ── */
@@ -92,9 +105,12 @@ function Expand({ open, children }: { open: boolean; children: React.ReactNode }
 }
 
 /* ── Thinking / Thought ── */
-function ThinkingItem({ text, durationMs, active }: { text: string; durationMs?: number; active?: boolean }) {
+function ThinkingItem({ text, durationMs, active, startTs }: { text: string; durationMs?: number; active?: boolean; startTs?: number }) {
   const [open, setOpen] = useState(false);
-  const label = active ? 'Thinking' : durationMs != null && durationMs >= 1000 ? `Thought for ${formatDuration(durationMs)}` : 'Thought';
+  const elapsed = useElapsed(startTs, !!active);
+  const label = active
+    ? elapsed >= 1000 ? `Thinking ${formatDuration(elapsed)}` : 'Thinking'
+    : durationMs != null && durationMs >= 1000 ? `Thought for ${formatDuration(durationMs)}` : 'Thought';
   return (
     <div>
       <button onClick={() => setOpen((o) => !o)} className="group flex items-center gap-1.5 text-left">
@@ -272,10 +288,11 @@ type FeedItem =
   | { type: 'status'; key: string; event: TranscriptEvent }
   | { type: 'error'; key: string; event: TranscriptEvent }
   | { type: 'diff'; key: string; event: TranscriptEvent; change: FileChange }
+  | { type: 'subagent'; key: string; event: TranscriptEvent }
   | { type: 'tools'; key: string; events: TranscriptEvent[] }
   | { type: 'worked'; key: string; items: FeedItem[]; durationMs: number };
 
-function buildFeed(events: TranscriptEvent[]): FeedItem[] {
+function buildFeed(events: TranscriptEvent[], subagentCards = false): FeedItem[] {
   const items: FeedItem[] = [];
   let i = 0;
   while (i < events.length) {
@@ -292,12 +309,23 @@ function buildFeed(events: TranscriptEvent[]): FeedItem[] {
     if (ev.kind === 'tool_call') {
       const change = extractFileChange(ev.toolName, ev.toolArgs);
       if (change) { items.push({ type: 'diff', key: ev.id, event: ev, change }); i++; continue; }
+      if (subagentCards && isSubagentTool(ev.toolName, ev.toolArgs)) {
+        items.push({ type: 'subagent', key: ev.id, event: ev });
+        i++;
+        // Skip the subagent's completion tool_result so it doesn't become an
+        // orphaned "Tool result" entry in the grouping block below.
+        if (i < events.length && events[i].kind === 'tool_result' && events[i].toolName === ev.toolName) i++;
+        continue;
+      }
     }
     if (ev.kind === 'tool_call' || ev.kind === 'tool_result') {
       const group: TranscriptEvent[] = [];
       while (i < events.length) {
         const t = events[i];
         if (t.kind === 'tool_result') { group.push(t); i++; continue; }
+        // A subagent spawn must break the group so the outer loop can render it
+        // as its own card instead of folding it into the generic tools group.
+        if (subagentCards && t.kind === 'tool_call' && isSubagentTool(t.toolName, t.toolArgs)) break;
         if (t.kind === 'tool_call' && !extractFileChange(t.toolName, t.toolArgs)) { group.push(t); i++; continue; }
         break;
       }
@@ -312,6 +340,14 @@ function buildFeed(events: TranscriptEvent[]): FeedItem[] {
 
 function isUserMessage(item: FeedItem): boolean {
   return item.type === 'message' && item.event.author === 'user';
+}
+
+// Best-effort end timestamp of a feed item, used to time the live working cue.
+function tailTimestamp(item?: FeedItem): number | undefined {
+  if (!item) return undefined;
+  if (item.type === 'worked') return undefined;
+  if (item.type === 'tools') { const e = item.events[item.events.length - 1]; return e?.endTs ?? e?.ts; }
+  return item.event.endTs ?? item.event.ts;
 }
 
 // Earliest start and latest end timestamps across a set of feed items.
@@ -342,10 +378,20 @@ function collapseRun(run: FeedItem[]): FeedItem[] {
 
   const work = conclusionIdx === -1 ? run : run.slice(0, conclusionIdx);
   const out: FeedItem[] = [];
-  if (work.length > 0) {
-    const { start, end } = spanOf(work);
-    out.push({ type: 'worked', key: `worked-${work[0].key}`, items: work, durationMs: Math.max(0, end - start) });
+  // Fold contiguous work into "Worked for …" groups, but keep subagent spawn
+  // cards at the top level so they stay visible (and navigable) after a turn.
+  let buf: FeedItem[] = [];
+  const flush = () => {
+    if (buf.length === 0) return;
+    const { start, end } = spanOf(buf);
+    out.push({ type: 'worked', key: `worked-${buf[0].key}`, items: buf, durationMs: Math.max(0, end - start) });
+    buf = [];
+  };
+  for (const it of work) {
+    if (it.type === 'subagent') { flush(); out.push(it); }
+    else buf.push(it);
   }
+  flush();
   if (conclusionIdx !== -1) out.push(run[conclusionIdx]);
   return out;
 }
@@ -442,10 +488,10 @@ function UserBubble({ event }: { event: TranscriptEvent }) {
 }
 
 /* ── Collapsed spec card shown inline in chat (chevron to expand) ── */
-const InlineSpecCard = memo(function InlineSpecCard({ text, onOpenSpecModal }: { text: string; onOpenSpecModal?: () => void }) {
+const InlineSpecCard = memo(function InlineSpecCard({ content, onOpenWiki }: { content: string; onOpenWiki?: () => void }) {
   const [expanded, setExpanded] = useState(false);
-  const title = useMemo(() => text.match(/^#{1,3}\s+(.+)$/m)?.[1]?.trim() ?? 'Specification', [text]);
-  const sections = useMemo(() => (text.match(/^#{1,3}\s+/gm) ?? []).length, [text]);
+  const title = useMemo(() => content.match(/^#{1,3}\s+(.+)$/m)?.[1]?.trim() ?? 'Specification', [content]);
+  const sections = useMemo(() => (content.match(/^#{1,3}\s+/gm) ?? []).length, [content]);
 
   return (
     <div className="rounded-xl border border-droid-border bg-droid-elevated/20 overflow-hidden">
@@ -461,13 +507,13 @@ const InlineSpecCard = memo(function InlineSpecCard({ text, onOpenSpecModal }: {
             <span className="shrink-0 text-[11px] font-mono text-droid-text-muted/70">{sections} sections</span>
           )}
         </button>
-        {onOpenSpecModal && (
+        {onOpenWiki && (
           <button
-            onClick={onOpenSpecModal}
+            onClick={onOpenWiki}
             className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-medium text-droid-text-secondary bg-droid-elevated/50 border border-droid-border hover:bg-droid-elevated/80 hover:text-droid-text transition-colors"
           >
             <ExpandIcon className="w-3.5 h-3.5" />
-            View Spec
+            Read spec
           </button>
         )}
       </div>
@@ -480,7 +526,7 @@ const InlineSpecCard = memo(function InlineSpecCard({ text, onOpenSpecModal }: {
             transition={{ duration: 0.12, ease: 'linear' }}
           >
             <div className="px-4 pb-4 pt-2 border-t border-droid-border">
-              <Markdown specMode>{text}</Markdown>
+              <Markdown specMode>{content}</Markdown>
             </div>
           </motion.div>
         )}
@@ -489,21 +535,26 @@ const InlineSpecCard = memo(function InlineSpecCard({ text, onOpenSpecModal }: {
   );
 });
 
-const FeedItemView = memo(function FeedItemView({ item, live, compacting, onOpenDiff, isSpec, specReady }: {
+const FeedItemView = memo(function FeedItemView({ item, live, compacting, onOpenDiff, onOpenSubagent, liveTiming, specDraft, specContent }: {
   item: FeedItem;
   live: boolean;
   compacting?: boolean;
   onOpenDiff?: (c: FileChange) => void;
-  isSpec?: boolean;
-  specReady?: boolean;
+  onOpenSubagent?: (label?: string) => void;
+  liveTiming?: boolean;
+  specDraft?: boolean;
+  specContent?: string;
 }) {
   switch (item.type) {
     case 'message': {
       if (item.event.author === 'user') return <UserBubble event={item.event} />;
       const text = item.event.text ?? '';
-      // Once the spec is ready it's rendered as a single standalone card by
-      // MessageFeed; collapse the draft prose so it isn't duplicated.
-      if (isSpec && specReady) return null;
+      // The spec lives in the pinned card, so hide its prose: while drafting we
+      // suppress all assistant prose; afterwards only the exact spec block.
+      if (specContent) {
+        if (specDraft) return null;
+        if (text.trim() && text.trim() === specContent.trim()) return null;
+      }
       return (
         <div className="group/msg">
           <Markdown>{text}</Markdown>
@@ -520,7 +571,9 @@ const FeedItemView = memo(function FeedItemView({ item, live, compacting, onOpen
       );
     }
     case 'thinking':
-      return <ThinkingItem text={item.event.text ?? ''} durationMs={item.durationMs} active={live} />;
+      return <ThinkingItem text={item.event.text ?? ''} durationMs={item.durationMs} active={live} startTs={liveTiming ? item.event.ts : undefined} />;
+    case 'subagent':
+      return <SubagentSpawnCard event={item.event} active={live} onOpen={onOpenSubagent} />;
     case 'status': {
       const text = item.event.text ?? '';
       if (compacting) return <CompactingIndicator />;
@@ -542,16 +595,16 @@ const FeedItemView = memo(function FeedItemView({ item, live, compacting, onOpen
     case 'tools':
       return <ToolGroupItem events={item.events} active={live} />;
     case 'worked':
-      return <WorkedGroup item={item} onOpenDiff={onOpenDiff} isSpec={isSpec} specReady={specReady} />;
+      return <WorkedGroup item={item} onOpenDiff={onOpenDiff} specDraft={specDraft} specContent={specContent} />;
   }
 });
 
 /* ── Worked-for group: a completed turn's steps folded into one disclosure ── */
-function WorkedGroup({ item, onOpenDiff, isSpec, specReady }: {
+function WorkedGroup({ item, onOpenDiff, specDraft, specContent }: {
   item: Extract<FeedItem, { type: 'worked' }>;
   onOpenDiff?: (c: FileChange) => void;
-  isSpec?: boolean;
-  specReady?: boolean;
+  specDraft?: boolean;
+  specContent?: string;
 }) {
   const [open, setOpen] = useState(false);
   return (
@@ -570,8 +623,8 @@ function WorkedGroup({ item, onOpenDiff, isSpec, specReady }: {
               item={child}
               live={false}
               onOpenDiff={onOpenDiff}
-              isSpec={isSpec}
-              specReady={specReady}
+              specDraft={specDraft}
+              specContent={specContent}
             />
           ))}
         </div>
@@ -580,21 +633,52 @@ function WorkedGroup({ item, onOpenDiff, isSpec, specReady }: {
   );
 }
 
+/* ── In-chat spawned-subagent card: visible affordance + click to navigate ── */
+function SubagentSpawnCard({ event, active, onOpen }: {
+  event: TranscriptEvent;
+  active?: boolean;
+  onOpen?: (label?: string) => void;
+}) {
+  const { label, description } = subagentInfo(event.toolArgs);
+  const name = label ?? 'subagent';
+  return (
+    <button
+      type="button"
+      onClick={() => onOpen?.(label)}
+      className="group flex w-full items-center gap-2.5 rounded-xl border border-droid-border/70 bg-droid-elevated/40 px-3 py-2.5 text-left transition-colors hover:border-droid-accent/40 hover:bg-droid-elevated/70"
+    >
+      <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-droid-accent/10 text-droid-accent">
+        <Bot className="h-4 w-4" />
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className={`block truncate text-[13px] font-medium ${active ? 'shimmer-text' : 'text-droid-text'}`}>
+          {active ? `Running ${name} subagent` : `Spawned ${name} subagent`}
+        </span>
+        {description && <span className="block truncate text-[11.5px] text-droid-text-muted">{description}</span>}
+      </span>
+      <ChevronRight className="h-4 w-4 shrink-0 text-droid-text-muted/50 transition-colors group-hover:text-droid-accent" />
+    </button>
+  );
+}
+
 /* ── The activity feed (list only; parent owns the scroll container) ── */
-export function MessageFeed({ events, pending, onOpenDiff, isSpec, specContent, specReady }: {
+export function MessageFeed({ events, pending, onOpenDiff, onOpenSubagent, specDraft, specContent, onOpenSpecWiki }: {
   events: TranscriptEvent[];
   pending: boolean;
   onOpenDiff?: (c: FileChange) => void;
-  isSpec?: boolean;
+  onOpenSubagent?: (label?: string) => void;
+  specDraft?: boolean;
   specContent?: string;
-  specReady?: boolean;
+  onOpenSpecWiki?: () => void;
 }) {
-  const [specModalOpen, setSpecModalOpen] = useState(false);
-  const openSpecModal = useCallback(() => setSpecModalOpen(true), []);
-  const items = useMemo(() => groupTurns(buildFeed(events), pending), [events, pending]);
+  // Subagent cards, waiting label, and live timers are enabled only for the
+  // chat/spec feed (which supplies onOpenSubagent). Mission Control omits the
+  // prop, so its feed renders exactly as before.
+  const rich = !!onOpenSubagent;
+  const items = useMemo(() => groupTurns(buildFeed(events, rich), pending), [events, pending, rich]);
   const lastIdx = items.length - 1;
   const last = items[lastIdx];
-  const showSpecCard = !!isSpec && !!specReady && (specContent?.length ?? 0) > 0;
+  const showSpecCard = (specContent?.length ?? 0) > 0;
 
   // Compaction is in progress when the latest status line announces it and no
   // completion line has arrived yet. Drives the centered "Compacting…" shimmer.
@@ -607,10 +691,20 @@ export function MessageFeed({ events, pending, onOpenDiff, isSpec, specContent, 
       last.type === 'status' ||
       (last.type === 'message' && last.event.author !== 'user'));
   const showWorking = pending && !tailSelfIndicates;
-  const workingLabel = last?.type === 'tools' ? 'Running' : last?.type === 'diff' ? 'Updating files' : 'Working';
+  // When the tail is an in-flight subagent spawn, the orchestrator is blocked
+  // waiting on that droid; otherwise reflect the current local activity.
+  const waitingFor = last?.type === 'subagent' ? subagentInfo(last.event.toolArgs).label ?? 'subagent' : undefined;
+  const workingLabel = waitingFor
+    ? `Waiting for ${waitingFor}`
+    : last?.type === 'tools' ? 'Running' : last?.type === 'diff' ? 'Updating files' : 'Working';
+  const workingStart = rich ? tailTimestamp(last) : undefined;
 
   return (
     <div className="space-y-4">
+      {showSpecCard && (
+        <InlineSpecCard content={specContent ?? ''} onOpenWiki={onOpenSpecWiki} />
+      )}
+
       {items.map((item, idx) => (
         <motion.div
           key={item.key}
@@ -623,23 +717,15 @@ export function MessageFeed({ events, pending, onOpenDiff, isSpec, specContent, 
             live={pending && idx === lastIdx}
             compacting={compacting && idx === lastIdx}
             onOpenDiff={onOpenDiff}
-            isSpec={isSpec}
-            specReady={specReady}
+            onOpenSubagent={onOpenSubagent}
+            liveTiming={rich}
+            specDraft={specDraft}
+            specContent={specContent}
           />
         </motion.div>
       ))}
 
-      {showSpecCard && (
-        <InlineSpecCard text={specContent ?? ''} onOpenSpecModal={openSpecModal} />
-      )}
-
-      {showWorking && <WorkingIndicator label={workingLabel} />}
-
-      <SpecModal
-        open={specModalOpen}
-        onClose={() => setSpecModalOpen(false)}
-        content={specContent ?? ''}
-      />
+      {showWorking && <WorkingIndicator label={workingLabel} startTs={workingStart} />}
     </div>
   );
 }

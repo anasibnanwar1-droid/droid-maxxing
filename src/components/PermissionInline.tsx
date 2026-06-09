@@ -15,6 +15,7 @@ const KIND_PROMPT: Record<PermissionKind, string> = {
   apply_patch: 'Droid wants to apply a code patch',
   mcp: 'Droid wants to use an MCP tool',
   spec: 'Droid wants to finish planning',
+  mission_plan: 'Droid proposed a mission plan',
   other: 'Droid is requesting permission to proceed',
 };
 
@@ -28,8 +29,8 @@ export default function PermissionInline() {
   const { state, dispatch } = useStore();
   const req = state.pendingPermission;
 
-  // Spec plans keep the dedicated full-height review modal.
-  if (!req || req.kind === 'spec') return null;
+  // Spec/mission plans use the dedicated approval bar (<PlanApprovalInline />).
+  if (!req || req.kind === 'spec' || req.kind === 'mission_plan') return null;
 
   const detail = cleanDetail(req.detail);
   // Always lead with a plain-language reason so the user knows *why* Droid is
