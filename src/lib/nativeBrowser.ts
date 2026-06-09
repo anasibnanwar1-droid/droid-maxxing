@@ -120,9 +120,18 @@ export async function runNativeBrowserAgentAction(
   });
 }
 
-export async function nativeBrowserCapture(sessionId: string, box?: NativeBrowserBox): Promise<string | undefined> {
+export interface NativeBrowserCaptureOptions {
+  fullPage?: boolean;
+  deviceScaleFactor?: number;
+}
+
+export async function nativeBrowserCapture(
+  sessionId: string,
+  box?: NativeBrowserBox,
+  options?: NativeBrowserCaptureOptions,
+): Promise<string | undefined> {
   if (!isDesktop()) return undefined;
-  return window.droidControl!.nativeBrowserCapture(sessionId, box);
+  return window.droidControl!.nativeBrowserCapture(sessionId, box, options);
 }
 
 export async function setNativeBrowserDesignMode(sessionId: string, active: boolean): Promise<void> {

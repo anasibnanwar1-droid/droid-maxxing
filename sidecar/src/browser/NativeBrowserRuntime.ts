@@ -29,12 +29,18 @@ export class NativeBrowserRuntime implements BrowserRuntime {
     this.viewport = viewport;
   }
 
-  async screenshot(_options: BrowserScreenshotOptions = {}): Promise<string> {
-    return this.capture();
+  async screenshot(options: BrowserScreenshotOptions = {}): Promise<string> {
+    return this.capture(undefined, options);
   }
 
-  async capture(box?: BrowserBox): Promise<string> {
-    const result = await this.send({ action: 'capture', box });
+  async capture(box?: BrowserBox, options: BrowserScreenshotOptions = {}): Promise<string> {
+    const result = await this.send({
+      action: 'capture',
+      box,
+      fullPage: options.fullPage,
+      deviceScaleFactor: options.deviceScaleFactor,
+    });
+    if (!result.ok) throw new Error(result.error ?? 'Native browser capture failed.');
     if (!result.image) throw new Error('Native browser did not return a captured image.');
     return result.image;
   }

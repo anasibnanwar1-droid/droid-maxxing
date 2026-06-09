@@ -70,6 +70,7 @@ export function NativeBrowserSurface({
   const surfaceReady = frameSize.width > 8 && frameSize.height > 8;
   const lastBounds = useRef<NativeBrowserBounds | null>(null);
   const attachedSessionRef = useRef<string | undefined>(undefined);
+  const attachingSessionRef = useRef<string | undefined>(undefined);
   const onLoadedRef = useRef(onLoaded);
   const onSelectionRef = useRef(onSelection);
   const onPromptRef = useRef(onPrompt);
@@ -160,6 +161,7 @@ export function NativeBrowserSurface({
     if (obscured) {
       detachNativeBrowser(visibleSessionId).catch(() => {});
       attachedSessionRef.current = undefined;
+      attachingSessionRef.current = undefined;
       lastBounds.current = null;
       return;
     }
@@ -169,13 +171,26 @@ export function NativeBrowserSurface({
     if (!visibleSessionId) {
       detachNativeBrowser().catch(() => {});
       attachedSessionRef.current = undefined;
+      attachingSessionRef.current = undefined;
       lastBounds.current = null;
       return;
     }
     if (attachedSessionRef.current !== visibleSessionId) {
-      attachNativeBrowser(visibleSessionId, bounds, url).catch(() => {});
-      attachedSessionRef.current = visibleSessionId;
-      lastBounds.current = bounds;
+      // Avoid duplicate attaches while one is in flight, and only mark the
+      // session attached once attachNativeBrowser actually resolves so a failed
+      // attach can be retried by a later effect run.
+      if (attachingSessionRef.current === visibleSessionId) return;
+      const target = visibleSessionId;
+      attachingSessionRef.current = target;
+      attachNativeBrowser(target, bounds, url)
+        .then(() => {
+          attachedSessionRef.current = target;
+          lastBounds.current = bounds;
+        })
+        .catch(() => {})
+        .finally(() => {
+          if (attachingSessionRef.current === target) attachingSessionRef.current = undefined;
+        });
       return;
     }
     if (!lastBounds.current || !equalBounds(lastBounds.current, bounds)) {
@@ -195,7 +210,10 @@ export function NativeBrowserSurface({
         bounds: () => boundsFor(slotRef),
         markOpen: (bounds) => {
           lastBounds.current = bounds;
-          if (visibleSessionId) attachedSessionRef.current = visibleSessionId;
+          if (visibleSessionId) {
+            attachedSessionRef.current = visibleSessionId;
+            attachingSessionRef.current = undefined;
+          }
         },
       })
       : performIframeRequest(request, {
@@ -286,7 +304,10 @@ async function performNativeRequest(
       return { requestId: request.requestId, missionId: request.missionId, ok: true, snapshot: navigationSnapshot(loadedEvent?.url ?? options.currentUrl) };
     }
     if (request.action === 'capture') {
-      const image = await nativeBrowserCapture(request.sessionId, request.box);
+      const image = await nativeBrowserCapture(request.sessionId, request.box, {
+        fullPage: request.fullPage,
+        deviceScaleFactor: request.deviceScaleFactor,
+      });
       return { requestId: request.requestId, missionId: request.missionId, ok: true, image };
     }
     const result = await runNativeBrowserAgentAction({

@@ -52,7 +52,7 @@ import { readDroidCliModelCatalog, readDroidCliModelCatalogCache } from './Droid
 import { BrowserSessionManager } from './browser/BrowserSessionManager.js';
 import { createBrowserMcpServer } from './browser/browserMcpServer.js';
 import { NativeBrowserRuntime } from './browser/NativeBrowserRuntime.js';
-import { isApprovalOutcome, normalizePermissionOutcome } from './permissionOutcomes.js';
+import { isAlwaysOutcome, isApprovalOutcome, normalizePermissionOutcome } from './permissionOutcomes.js';
 import { filterMissionListSummaries, type MissionListFilterOptions } from './missionListFilter.js';
 
 type Emit = (event: ServerEvent) => void;
@@ -868,7 +868,7 @@ export class MissionManager {
       this.emitError({ code: 'permission.invalid_outcome', missionId, message: errMsg(err) });
       normalized = normalizePermissionOutcome('cancel');
     }
-    if (pending.signature && outcome.startsWith('proceed_always')) {
+    if (pending.signature && isAlwaysOutcome(outcome)) {
       mission.permissionGrants.add(pending.signature);
     }
     if (pending.kind === 'spec' && isApprovalOutcome(normalized)) await this.prepareSpecExitForRun(mission);

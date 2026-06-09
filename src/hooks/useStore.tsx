@@ -507,9 +507,17 @@ function activeBrowserKey(state: AppState): string | undefined {
   return state.activeMissionId ? designModeSessionId(state, state.activeMissionId) : undefined;
 }
 
-// Mark a browser key open (true) or closed (delete) without mutating the input.
+// Record an explicit open (true) or hidden (false) decision for a browser key.
+// Storing `false` (rather than deleting) lets data syncs distinguish a pane the
+// user deliberately hid from one that was never opened.
 function withBrowserOpenKey(keys: Record<string, boolean>, key: string, open: boolean): Record<string, boolean> {
-  if (open) return { ...keys, [key]: true };
+  if (keys[key] === open) return keys;
+  return { ...keys, [key]: open };
+}
+
+// Forget a browser key entirely (full reset, e.g. session closed). A later
+// update then treats the session as never-opened.
+function clearBrowserOpenKey(keys: Record<string, boolean>, key: string): Record<string, boolean> {
   if (!(key in keys)) return keys;
   const next = { ...keys };
   delete next[key];
@@ -842,14 +850,18 @@ function baseReducer(state: AppState, action: Action): AppState {
       return { ...state, browserOpenKeys: withBrowserOpenKey(state.browserOpenKeys, key, action.open) };
     }
 
-    case 'BROWSER_UPDATED':
+    case 'BROWSER_UPDATED': {
       if (!action.browser.missionId) return state;
+      const missionId = action.browser.missionId;
+      // Surface a freshly opened browser, but never re-open a pane the user hid.
+      const hidden = state.browserOpenKeys[missionId] === false;
       return {
         ...state,
-        browsers: { ...state.browsers, [action.browser.missionId]: action.browser },
-        browserErrors: Object.fromEntries(Object.entries(state.browserErrors).filter(([id]) => id !== action.browser.missionId)),
-        browserOpenKeys: withBrowserOpenKey(state.browserOpenKeys, action.browser.missionId, true),
+        browsers: { ...state.browsers, [missionId]: action.browser },
+        browserErrors: Object.fromEntries(Object.entries(state.browserErrors).filter(([id]) => id !== missionId)),
+        browserOpenKeys: hidden ? state.browserOpenKeys : withBrowserOpenKey(state.browserOpenKeys, missionId, true),
       };
+    }
 
     case 'BROWSER_CLOSED':
       // Full close: drop the session's browser, design mode, and open flag so a
@@ -859,17 +871,19 @@ function baseReducer(state: AppState, action: Action): AppState {
         browsers: Object.fromEntries(Object.entries(state.browsers).filter(([id]) => id !== action.missionId)),
         browserErrors: Object.fromEntries(Object.entries(state.browserErrors).filter(([id]) => id !== action.missionId)),
         designModes: clearDesignMode(state.designModes, action.missionId),
-        browserOpenKeys: withBrowserOpenKey(state.browserOpenKeys, action.missionId, false),
+        browserOpenKeys: clearBrowserOpenKey(state.browserOpenKeys, action.missionId),
       };
 
     case 'BROWSER_ERROR':
-      return action.missionId
-        ? {
-            ...state,
-            browserErrors: { ...state.browserErrors, [action.missionId]: action.message },
-            browserOpenKeys: withBrowserOpenKey(state.browserOpenKeys, action.missionId, true),
-          }
-        : { ...state, browserGlobalError: action.message };
+      if (!action.missionId) return { ...state, browserGlobalError: action.message };
+      return {
+        ...state,
+        browserErrors: { ...state.browserErrors, [action.missionId]: action.message },
+        // Respect an explicit hide; otherwise surface the errored browser.
+        browserOpenKeys: state.browserOpenKeys[action.missionId] === false
+          ? state.browserOpenKeys
+          : withBrowserOpenKey(state.browserOpenKeys, action.missionId, true),
+      };
 
     case 'TOGGLE_DESIGN_MODE':
       return { ...state, designModes: toggleDesignMode(state.designModes, action.sessionId) };

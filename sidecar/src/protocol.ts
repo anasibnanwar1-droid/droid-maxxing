@@ -270,6 +270,8 @@ export interface BrowserNativeRequest {
   direction?: BrowserScrollDirection;
   pixels?: number;
   box?: BrowserBox;
+  fullPage?: boolean;
+  deviceScaleFactor?: number;
 }
 
 export interface BrowserNativeResult {

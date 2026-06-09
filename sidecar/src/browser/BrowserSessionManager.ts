@@ -30,7 +30,7 @@ export interface BrowserRuntime {
   reload(): Promise<{ url: string; title?: string; scroll: { x: number; y: number }; refs: BrowserElementRef[] }>;
   setViewport(viewport: BrowserViewport): Promise<void>;
   screenshot(options?: BrowserScreenshotOptions): Promise<string>;
-  capture(box?: BrowserBox): Promise<string>;
+  capture(box?: BrowserBox, options?: BrowserScreenshotOptions): Promise<string>;
   snapshot(): Promise<{ url: string; title?: string; scroll: { x: number; y: number }; refs: BrowserElementRef[] }>;
   click(x: number, y: number): Promise<void>;
   type(text: string): Promise<void>;

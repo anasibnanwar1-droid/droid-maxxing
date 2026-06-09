@@ -382,8 +382,16 @@ export function permissionSignature(params: RequestPermissionRequestParams): str
       return `mcp::${String(c.serverName ?? '')}::${String(c.toolName ?? '')}`;
     case 'edit':
     case 'create':
-    case 'apply_patch':
-      return type;
+    case 'apply_patch': {
+      // Scope file-write grants to the specific path so "Always allow" cannot
+      // bypass prompts for unrelated files. No identifiable path => ineligible.
+      const path = typeof c.filePath === 'string' && c.filePath
+        ? c.filePath
+        : typeof c.fileName === 'string' && c.fileName
+          ? c.fileName
+          : '';
+      return path ? `${type}::${path}` : '';
+    }
     default:
       return '';
   }

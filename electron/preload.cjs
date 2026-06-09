@@ -28,7 +28,7 @@ contextBridge.exposeInMainWorld('droidControl', {
   nativeBrowserSetDesignMode: (sessionId, active) => ipcRenderer.invoke('native-browser-set-design-mode', { sessionId, active }),
   nativeBrowserSetSketchMode: (sessionId, active) => ipcRenderer.invoke('native-browser-set-sketch-mode', { sessionId, active }),
   nativeBrowserAgentAction: (request) => ipcRenderer.invoke('native-browser-agent-action', { request }),
-  nativeBrowserCapture: (sessionId, box) => ipcRenderer.invoke('native-browser-capture', { sessionId, box }),
+  nativeBrowserCapture: (sessionId, box, options) => ipcRenderer.invoke('native-browser-capture', { sessionId, box, options }),
 
   onNativeBrowserSelection: (handler) => on('native-browser-selection', handler),
   onNativeBrowserDesignPrompt: (handler) => on('native-browser-design-prompt', handler),

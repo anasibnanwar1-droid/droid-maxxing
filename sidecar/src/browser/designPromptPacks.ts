@@ -32,7 +32,7 @@ export function formatDesignPrompt(packPath: string, instruction: string, refere
   const first = references[0];
   return [
     'Design Mode reference pack:',
-    `- URL: ${first?.url ?? 'about:blank'}`,
+    `- URL: ${sanitizeInline(first?.url ?? 'about:blank')}`,
     `- References JSON: ${packPath}`,
     '',
     'Anchored references:',
@@ -45,16 +45,25 @@ export function formatDesignPrompt(packPath: string, instruction: string, refere
   ].join('\n');
 }
 
+// Page-derived strings (labels, selectors, component names, paths) are
+// attacker-influenced via page content. Collapse control characters and
+// newlines so they cannot break out of their line and inject prompt structure.
+function sanitizeInline(value: string, max = 500): string {
+  const cleaned = value.replace(/[\u0000-\u001F\u007F]+/g, ' ').replace(/\s+/g, ' ').trim();
+  return cleaned.length > max ? `${cleaned.slice(0, max)}…` : cleaned;
+}
+
 function formatReferenceLine(reference: DesignReference): string {
   const anchor = reference.anchor;
-  const parts = [`- ${reference.id} (${anchor.kind}) ${anchor.label}`];
+  const parts = [`- ${sanitizeInline(reference.id)} (${sanitizeInline(anchor.kind)}) ${sanitizeInline(anchor.label)}`];
   if (reference.detail?.selector) {
-    parts.push(`selector=${reference.detail.selector}${reference.detail.selectorVerified ? ' [verified]' : ''}`);
+    parts.push(`selector=${sanitizeInline(reference.detail.selector)}${reference.detail.selectorVerified ? ' [verified]' : ''}`);
   }
   const source = anchor.source;
   if (source?.component) {
-    parts.push(`component=${source.component}${source.file ? ` (${source.file}${source.line ? `:${source.line}` : ''})` : ''}`);
+    const file = source.file ? sanitizeInline(source.file) : '';
+    parts.push(`component=${sanitizeInline(source.component)}${file ? ` (${file}${source.line ? `:${source.line}` : ''})` : ''}`);
   }
-  if (anchor.screenshotPath) parts.push(`crop=${anchor.screenshotPath}`);
+  if (anchor.screenshotPath) parts.push(`crop=${sanitizeInline(anchor.screenshotPath)}`);
   return parts.join(' | ');
 }

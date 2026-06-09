@@ -30,3 +30,13 @@ export function normalizePermissionOutcome(outcome: string): ToolConfirmationOut
 export function isApprovalOutcome(outcome: string): boolean {
   return normalizePermissionOutcome(outcome) !== ToolConfirmationOutcome.Cancel;
 }
+
+// True only for a valid "always allow" outcome. Invalid/unknown outcomes return
+// false so they can never persist an always-allow grant.
+export function isAlwaysOutcome(outcome: string): boolean {
+  try {
+    return normalizePermissionOutcome(outcome) === ToolConfirmationOutcome.ProceedAlways;
+  } catch {
+    return false;
+  }
+}

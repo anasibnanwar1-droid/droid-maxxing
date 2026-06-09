@@ -101,7 +101,7 @@ function registerIpc() {
   ipcMain.handle('native-browser-set-design-mode', (_event, { sessionId, active }) => setNativeBrowserDesignMode(sessionId, active));
   ipcMain.handle('native-browser-set-sketch-mode', (_event, { sessionId, active }) => setNativeBrowserSketchMode(sessionId, active));
   ipcMain.handle('native-browser-agent-action', (_event, { request }) => runNativeBrowserAgentAction(request));
-  ipcMain.handle('native-browser-capture', (_event, { sessionId, box }) => captureNativeBrowser(sessionId, box));
+  ipcMain.handle('native-browser-capture', (_event, { sessionId, box, options }) => captureNativeBrowser(sessionId, box, options));
 
   ipcMain.on('native-browser-selection', (event, selection) => {
     mainWindow?.webContents.send('native-browser-selection', withNativeBrowserSession(event, selection));
@@ -407,16 +407,55 @@ async function runNativeBrowserAgentAction(request) {
   }
 }
 
-async function captureNativeBrowser(sessionId, box) {
+async function captureNativeBrowser(sessionId, box, options = {}) {
   const entry = await restoreNativeBrowserForAction(sessionId);
   const contents = safeWebContents(entry.view);
   if (!contents) throw new Error('Droid Control browser is not open.');
   try {
+    const fullPage = Boolean(options?.fullPage);
+    const scale = typeof options?.deviceScaleFactor === 'number' && options.deviceScaleFactor > 0
+      ? options.deviceScaleFactor
+      : undefined;
+    if (fullPage || scale) {
+      const data = await captureNativeBrowserViaCdp(contents, { fullPage, scale }).catch((err) => {
+        console.error(`full-page/scale capture failed, falling back to viewport: ${err.message}`);
+        return undefined;
+      });
+      if (data) return data;
+    }
     const rect = normalizeCaptureRect(entry, box);
     const image = rect ? await contents.capturePage(rect) : await contents.capturePage();
     return image.isEmpty() ? undefined : image.toPNG().toString('base64');
   } finally {
     scheduleNativeBrowserIdleClose(entry);
+  }
+}
+
+async function captureNativeBrowserViaCdp(contents, { fullPage, scale }) {
+  const dbg = contents.debugger;
+  if (!dbg) return undefined;
+  let attached = false;
+  try {
+    if (!dbg.isAttached()) {
+      dbg.attach('1.3');
+      attached = true;
+    }
+    const params = { format: 'png', captureBeyondViewport: Boolean(fullPage) };
+    const metrics = await dbg.sendCommand('Page.getLayoutMetrics');
+    const region = fullPage
+      ? (metrics.cssContentSize || metrics.contentSize)
+      : (metrics.cssVisualViewport || metrics.visualViewport);
+    const width = fullPage ? region.width : region.clientWidth;
+    const height = fullPage ? region.height : region.clientHeight;
+    if (width > 0 && height > 0) {
+      params.clip = { x: 0, y: 0, width, height, scale: scale || 1 };
+    }
+    const result = await dbg.sendCommand('Page.captureScreenshot', params);
+    return result?.data || undefined;
+  } finally {
+    if (attached) {
+      try { dbg.detach(); } catch { /* already detached */ }
+    }
   }
 }
 
@@ -427,8 +466,8 @@ function normalizeCaptureRect(entry, box) {
   const maxHeight = bounds.height || Number.MAX_SAFE_INTEGER;
   const x = Math.max(0, Math.round(box.x));
   const y = Math.max(0, Math.round(box.y));
-  const width = Math.max(1, Math.min(Math.round(box.width), maxWidth - x));
-  const height = Math.max(1, Math.min(Math.round(box.height), maxHeight - y));
+  const width = Math.min(Math.round(box.width), maxWidth - x);
+  const height = Math.min(Math.round(box.height), maxHeight - y);
   if (width <= 0 || height <= 0) return undefined;
   return { x, y, width, height };
 }
