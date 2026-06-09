@@ -13,7 +13,7 @@ const PRESET_ACCENTS = [
 
 const PRESET_THEMES = {
   dark: { bg: '#0a0a0a', fg: '#ededed', surface: '#111111', border: '#1f1f1f' },
-  light: { bg: '#fafafa', fg: '#1a1a1a', surface: '#f0f0f0', border: '#e0e0e0' },
+  light: { bg: '#fcfcfc', fg: '#141414', surface: '#f3f3f3', border: '#eeeeee' },
   midnight: { bg: '#0a0e1a', fg: '#c8d0e0', surface: '#11152a', border: '#1a2040' },
   warm: { bg: '#1a1612', fg: '#d8d0c8', surface: '#221e18', border: '#322a22' },
 };
@@ -793,9 +793,15 @@ export function applyTheme(theme: ReturnType<typeof useStore>['state']['theme'])
   // enabled, the window becomes transparent (see index.css + Electron vibrancy)
   // and the sidebar uses a semi-transparent fill so the wallpaper behind the
   // window shows through a little — frosted, not fully clear.
+  // Light surfaces sit over a dark macOS vibrancy material, so a low-opacity
+  // fill plus a strong saturation boost lets the wallpaper bleed through as a
+  // muddy tint. Keep light themes mostly opaque with gentle saturation so the
+  // sidebar stays a clean frosted white; dark themes can show more through.
   root.setAttribute('data-translucent', theme.translucentSidebar ? 'true' : 'false');
-  root.style.setProperty('--sidebar-bg', theme.translucentSidebar ? `${theme.surface}99` : theme.surface);
-  root.style.setProperty('--sidebar-blur', theme.translucentSidebar ? 'blur(6px) saturate(150%)' : 'none');
+  const sidebarAlpha = bgIsDark ? '99' : 'f2';
+  const sidebarSaturate = bgIsDark ? 'saturate(150%)' : 'saturate(108%)';
+  root.style.setProperty('--sidebar-bg', theme.translucentSidebar ? `${theme.surface}${sidebarAlpha}` : theme.surface);
+  root.style.setProperty('--sidebar-blur', theme.translucentSidebar ? `blur(6px) ${sidebarSaturate}` : 'none');
 
   // Apply contrast as a filter only below 100% so it never creates a stacking
   // context that would defeat the sidebar's backdrop blur at the default value.
