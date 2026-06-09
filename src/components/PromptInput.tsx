@@ -390,6 +390,14 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
   const deliverPrompt = (p: QueuedPrompt) => {
     if (!activeMission) return;
     const composed = composeFrom(p.text, p.skills, p.files);
+    try {
+      sendToMission(activeMission.id, composed);
+    } catch (err) {
+      // Keep the prompt staged and skip the transcript echo so a send failure
+      // neither loses queued input nor leaves a duplicate user message behind.
+      console.error('[PromptInput] queued send failed:', err);
+      return;
+    }
     dispatch({
       type: 'MISSION_TRANSCRIPT',
       event: {
@@ -405,13 +413,6 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
         files: p.files,
       },
     });
-    try {
-      sendToMission(activeMission.id, composed);
-    } catch (err) {
-      // Keep the prompt staged so a send failure doesn't lose queued input.
-      console.error('[PromptInput] queued send failed:', err);
-      return;
-    }
     dispatch({ type: 'REMOVE_QUEUED_PROMPT', missionId: activeMission.id, id: p.id });
   };
 
