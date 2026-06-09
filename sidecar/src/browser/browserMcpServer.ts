@@ -140,7 +140,12 @@ export function createBrowserMcpServer(manager: BrowserSessionManager, missionId
       ),
       tool(
         'design-mode',
-        'Read the current Design Mode browser context for this chat only. Use after the user selects, hovers, clicks, or sketches an area in the live Droid Control browser pane.',
+        [
+          'Read the current Design Mode browser context for this chat only.',
+          'Use after the user selects, clicks, or sketches an area in the live Droid Control browser pane.',
+          'Returns compact source-anchored references: each has an @id, label, kind, tag/role/name/text, box, resolved source (framework/component/file), a verified CSS selector, and a cropped screenshotPath.',
+          'When you need the full element detail (all attributes, computed styles, ancestor chain, outerHTML), call design_reference with the @id instead of asking the user.',
+        ].join(' '),
         {
           instruction: z.string().optional().describe('Optional user design instruction to keep alongside the returned context.'),
         },
@@ -151,6 +156,23 @@ export function createBrowserMcpServer(manager: BrowserSessionManager, missionId
             instruction: input.instruction,
             ...stateForTool(context.state, context.references),
           });
+        }),
+      ),
+      tool(
+        'design_reference',
+        [
+          'Fetch the full source-anchored detail for one Design Mode reference by its @id.',
+          'Use the @id values returned by design-mode to inspect the exact verified selector, attributes, computed styles, ancestor chain, resolved source component/file, and the cropped screenshot path before editing code.',
+        ].join(' '),
+        {
+          id: z.string().min(1).describe('Design reference id returned by design-mode, e.g. @live-ab12cd or @region-...'),
+        },
+        safeTool(async (input) => {
+          const ref = manager.referenceDetail(missionId(), input.id);
+          if (!ref) {
+            return jsonResult({ ok: false, error: `No design reference ${input.id}. Call design-mode to list the current references.` });
+          }
+          return jsonResult({ ok: true, reference: designReferenceDetail(ref) });
         }),
       ),
     ],
@@ -174,28 +196,46 @@ function stateForTool(state: BrowserState, designReferences: DesignReference[] =
       selector: ref.selector,
       box: ref.box,
     })),
-    designReferences: designReferences.map((ref) => ({
-      id: ref.id,
-      kind: ref.kind,
-      url: ref.url,
-      title: ref.title,
-      viewport: ref.viewport,
-      screenshotPath: ref.screenshotPath,
-      scroll: ref.scroll,
-      element: ref.element
-        ? {
-            ref: ref.element.ref,
-            role: ref.element.role,
-            name: ref.element.name,
-            text: ref.element.text,
-            selector: ref.element.selector,
-            box: ref.element.box,
-          }
-        : undefined,
-      box: ref.box,
-      points: ref.points,
-      note: ref.note,
-    })),
+    designReferences: designReferences.map(designReferenceSummary),
+  };
+}
+
+function designReferenceSummary(ref: DesignReference): Record<string, unknown> {
+  const anchor = ref.anchor;
+  return {
+    id: ref.id,
+    kind: anchor.kind,
+    label: anchor.label,
+    tag: anchor.tag,
+    role: anchor.role,
+    name: anchor.name,
+    text: anchor.text,
+    box: anchor.box,
+    source: anchor.source,
+    selector: ref.detail?.selector,
+    selectorVerified: ref.detail?.selectorVerified,
+    screenshotPath: anchor.screenshotPath,
+    url: ref.url,
+  };
+}
+
+function designReferenceDetail(ref: DesignReference): Record<string, unknown> {
+  return {
+    ...designReferenceSummary(ref),
+    title: ref.title,
+    viewport: ref.viewport,
+    scroll: ref.scroll,
+    createdAt: ref.createdAt,
+    detail: ref.detail
+      ? {
+          selector: ref.detail.selector,
+          selectorVerified: ref.detail.selectorVerified,
+          attributes: ref.detail.attributes,
+          styles: ref.detail.styles,
+          ancestors: ref.detail.ancestors,
+          html: ref.detail.html,
+        }
+      : undefined,
   };
 }
 

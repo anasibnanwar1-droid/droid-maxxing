@@ -19,6 +19,7 @@ test('browser MCP server exposes agent-facing names and typed inputs', () => {
       'browser_keypress',
       'browser_scroll',
       'design-mode',
+      'design_reference',
     ],
   );
   assert.ok(server.tools.find((tool) => tool.name === 'browser_open')?.inputSchema?.url);

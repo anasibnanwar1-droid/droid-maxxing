@@ -1,11 +1,25 @@
 import assert from 'node:assert/strict';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import test from 'node:test';
-import { BrowserSessionManager, type BrowserRuntime } from './BrowserSessionManager.js';
-import type { BrowserElementRef, BrowserScreenshotOptions, BrowserViewport, ScrollDirection } from './types.js';
+import { BrowserSessionManager, type BrowserRuntime, type BrowserSessionManagerOptions } from './BrowserSessionManager.js';
+import type { BrowserBox, BrowserElementRef, BrowserScreenshotOptions, BrowserViewport, DesignAnchor, DesignAnchorDetail, ScrollDirection } from './types.js';
+
+const dataDir = mkdtempSync(join(tmpdir(), 'droid-browser-test-'));
+
+function createManager(options: BrowserSessionManagerOptions = {}): BrowserSessionManager {
+  return new BrowserSessionManager({
+    browserDataDir: dataDir,
+    runtimeFactory: (_id, viewport) => new FakeRuntime(viewport),
+    ...options,
+  });
+}
 
 class FakeRuntime implements BrowserRuntime {
   clicks: { x: number; y: number }[] = [];
   screenshots: BrowserScreenshotOptions[] = [];
+  captures: (BrowserBox | undefined)[] = [];
   viewport: BrowserViewport;
   openedUrls: string[] = [];
   reloads = 0;
@@ -30,7 +44,12 @@ class FakeRuntime implements BrowserRuntime {
 
   async screenshot(options: BrowserScreenshotOptions = {}): Promise<string> {
     this.screenshots.push(options);
-    return '/tmp/droid/shot.png';
+    return Buffer.from('full-screenshot').toString('base64');
+  }
+
+  async capture(box?: BrowserBox): Promise<string> {
+    this.captures.push(box);
+    return Buffer.from('crop').toString('base64');
   }
 
   async snapshot(url = 'http://127.0.0.1:1420/') {
@@ -54,7 +73,7 @@ class FakeRuntime implements BrowserRuntime {
 
 test('click by ref uses the element center', async () => {
   let runtime!: FakeRuntime;
-  const manager = new BrowserSessionManager({
+  const manager = createManager({
     runtimeFactory: (_id, viewport) => {
       runtime = new FakeRuntime(viewport);
       return runtime;
@@ -68,9 +87,7 @@ test('click by ref uses the element center', async () => {
 });
 
 test('agent click updates the visible agent cursor', async () => {
-  const manager = new BrowserSessionManager({
-    runtimeFactory: (_id, viewport) => new FakeRuntime(viewport),
-  });
+  const manager = createManager();
   await manager.open({ missionId: 'm1', url: 'http://127.0.0.1:1420/' });
 
   const state = await manager.click({ missionId: 'm1', ref: '@e1' });
@@ -79,9 +96,7 @@ test('agent click updates the visible agent cursor', async () => {
 });
 
 test('user click does not move the visible agent cursor', async () => {
-  const manager = new BrowserSessionManager({
-    runtimeFactory: (_id, viewport) => new FakeRuntime(viewport),
-  });
+  const manager = createManager();
   await manager.open({ missionId: 'm1', url: 'http://127.0.0.1:1420/' });
 
   const state = await manager.click({ missionId: 'm1', ref: '@e1', source: 'user' });
@@ -89,36 +104,40 @@ test('user click does not move the visible agent cursor', async () => {
   assert.equal(state.agentCursor, undefined);
 });
 
-test('addReference captures current browser context without forcing screenshots', async () => {
-  const manager = new BrowserSessionManager({
-    runtimeFactory: (_id, viewport) => new FakeRuntime(viewport),
+test('addReference captures an anchor crop and current browser context', async () => {
+  let runtime!: FakeRuntime;
+  const manager = createManager({
+    runtimeFactory: (_id, viewport) => {
+      runtime = new FakeRuntime(viewport);
+      return runtime;
+    },
   });
   await manager.open({ missionId: 'm1', url: 'http://127.0.0.1:1420/' });
 
-  const reference = manager.addReference('m1', { kind: 'element', element: buttonRef() });
+  const reference = await manager.addReference('m1', { anchor: buttonAnchor() });
 
   assert.equal(reference.url, 'http://127.0.0.1:1420/');
-  assert.equal(reference.screenshotPath, undefined);
   assert.equal(reference.viewport.width, 1200);
+  assert.equal(reference.anchor.id, reference.id);
+  assert.ok(reference.anchor.screenshotPath, 'expected an auto-captured crop path');
+  assert.deepEqual(runtime.captures.at(-1), buttonAnchor().box);
 });
 
-test('addReference keeps an explicitly captured screenshot', async () => {
-  const manager = new BrowserSessionManager({
-    runtimeFactory: (_id, viewport) => new FakeRuntime(viewport),
-  });
+test('referenceDetail returns the stored reference with detail', async () => {
+  const manager = createManager();
   await manager.open({ missionId: 'm1', url: 'http://127.0.0.1:1420/' });
-  await manager.screenshot('m1');
 
-  const reference = manager.addReference('m1', { kind: 'element', element: buttonRef() });
+  const reference = await manager.addReference('m1', { anchor: buttonAnchor(), detail: buttonDetail() });
+  const fetched = manager.referenceDetail('m1', reference.id);
 
-  assert.equal(reference.screenshotPath, '/tmp/droid/shot.png');
+  assert.equal(fetched?.detail?.selector, 'button');
+  assert.equal(fetched?.detail?.id, reference.id);
 });
 
 test('designPrompt writes selected references and trims the instruction', async () => {
   let writtenInstruction = '';
   let writtenReferenceCount = 0;
-  const manager = new BrowserSessionManager({
-    runtimeFactory: (_id, viewport) => new FakeRuntime(viewport),
+  const manager = createManager({
     writePack: async (options) => {
       writtenInstruction = options.instruction;
       writtenReferenceCount = options.references.length;
@@ -135,7 +154,7 @@ test('designPrompt writes selected references and trims the instruction', async 
     },
   });
   await manager.open({ missionId: 'm1', url: 'http://127.0.0.1:1420/' });
-  const reference = manager.addReference('m1', { kind: 'element', element: buttonRef() });
+  const reference = await manager.addReference('m1', { anchor: buttonAnchor() });
 
   const result = await manager.designPrompt({ missionId: 'm1', instruction: '  Make the button clearer  ', referenceIds: [reference.id] });
 
@@ -145,9 +164,7 @@ test('designPrompt writes selected references and trims the instruction', async 
 });
 
 test('designPrompt requires a selected or sketched reference', async () => {
-  const manager = new BrowserSessionManager({
-    runtimeFactory: (_id, viewport) => new FakeRuntime(viewport),
-  });
+  const manager = createManager();
   await manager.open({ missionId: 'm1', url: 'http://127.0.0.1:1420/' });
 
   await assert.rejects(
@@ -158,7 +175,7 @@ test('designPrompt requires a selected or sketched reference', async () => {
 
 test('screenshot forwards high-detail capture options', async () => {
   let runtime!: FakeRuntime;
-  const manager = new BrowserSessionManager({
+  const manager = createManager({
     runtimeFactory: (_id, viewport) => {
       runtime = new FakeRuntime(viewport);
       return runtime;
@@ -173,7 +190,7 @@ test('screenshot forwards high-detail capture options', async () => {
 
 test('open resizes an existing runtime before capture', async () => {
   let runtime!: FakeRuntime;
-  const manager = new BrowserSessionManager({
+  const manager = createManager({
     runtimeFactory: (_id, viewport) => {
       runtime = new FakeRuntime(viewport);
       return runtime;
@@ -189,7 +206,7 @@ test('open resizes an existing runtime before capture', async () => {
 
 test('open preserves existing viewport when agent omits viewport', async () => {
   let runtime!: FakeRuntime;
-  const manager = new BrowserSessionManager({
+  const manager = createManager({
     runtimeFactory: (_id, viewport) => {
       runtime = new FakeRuntime(viewport);
       return runtime;
@@ -206,7 +223,7 @@ test('open preserves existing viewport when agent omits viewport', async () => {
 
 test('open normalizes bare domains before the native runtime sees them', async () => {
   let runtime!: FakeRuntime;
-  const manager = new BrowserSessionManager({
+  const manager = createManager({
     runtimeFactory: (_id, viewport) => {
       runtime = new FakeRuntime(viewport);
       return runtime;
@@ -221,7 +238,7 @@ test('open normalizes bare domains before the native runtime sees them', async (
 
 test('reload updates the managed browser state from the runtime snapshot', async () => {
   let runtime!: FakeRuntime;
-  const manager = new BrowserSessionManager({
+  const manager = createManager({
     runtimeFactory: (_id, viewport) => {
       runtime = new FakeRuntime(viewport);
       return runtime;
@@ -237,7 +254,7 @@ test('reload updates the managed browser state from the runtime snapshot', async
 
 test('open and refresh do not force screenshot capture', async () => {
   let runtime!: FakeRuntime;
-  const manager = new BrowserSessionManager({
+  const manager = createManager({
     runtimeFactory: (_id, viewport) => {
       runtime = new FakeRuntime(viewport);
       return runtime;
@@ -261,5 +278,29 @@ function buttonRef(): BrowserElementRef {
     attributes: {},
     box: { x: 10, y: 20, width: 80, height: 30 },
     computedStyles: {},
+  };
+}
+
+function buttonAnchor(): DesignAnchor {
+  return {
+    id: '@live-button',
+    kind: 'element',
+    label: 'Save',
+    tag: 'button',
+    role: 'button',
+    name: 'Save',
+    text: 'Save',
+    box: { x: 10, y: 20, width: 80, height: 30 },
+  };
+}
+
+function buttonDetail(): DesignAnchorDetail {
+  return {
+    id: '@live-button',
+    selector: 'button',
+    selectorVerified: true,
+    attributes: {},
+    styles: {},
+    ancestors: [],
   };
 }

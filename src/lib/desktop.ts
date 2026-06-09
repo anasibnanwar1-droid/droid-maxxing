@@ -2,6 +2,8 @@ import type {
   NativeBrowserAgentAction,
   NativeBrowserAgentResult,
   NativeBrowserBounds,
+  NativeBrowserBox,
+  NativeBrowserCaptureOptions,
   NativeBrowserDesignPrompt,
   NativeBrowserLoaded,
   NativeBrowserSelection,
@@ -35,6 +37,7 @@ interface DroidControlApi {
   nativeBrowserSetDesignMode: (sessionId: string, active: boolean) => Promise<void>;
   nativeBrowserSetSketchMode: (sessionId: string, active: boolean) => Promise<void>;
   nativeBrowserAgentAction: (request: NativeBrowserAgentAction) => Promise<NativeBrowserAgentResult | undefined>;
+  nativeBrowserCapture: (sessionId: string, box?: NativeBrowserBox, options?: NativeBrowserCaptureOptions) => Promise<string | undefined>;
   onNativeBrowserSelection: (handler: (selection: NativeBrowserSelection) => void) => () => void;
   onNativeBrowserDesignPrompt: (handler: (prompt: NativeBrowserDesignPrompt) => void) => () => void;
   onNativeBrowserLoaded: (handler: (event: NativeBrowserLoaded) => void) => () => void;

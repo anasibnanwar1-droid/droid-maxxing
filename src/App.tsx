@@ -295,10 +295,10 @@ export default function App() {
       </div>
 
       <div data-electron-drag-region className="absolute top-0 right-0 h-9 z-40 flex items-center gap-1 pr-3">
-        {activeMission?.cwd && (
+        {activeMission?.cwd && !state.browserOpen && (
           <EditorOpenMenu cwd={activeMission.cwd} hasRepo={!!repoStatus} variant="toolbar" />
         )}
-        {canToggleContext && (
+        {canToggleContext && !state.browserOpen && (
           <button
             onClick={toggleRightPanel}
             className={`p-1.5 rounded-md transition-colors ${

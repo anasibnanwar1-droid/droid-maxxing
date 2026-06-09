@@ -36,7 +36,7 @@ import type {
   TranscriptEvent,
 } from './protocol.js';
 import { DroidRuntime } from './DroidRuntime.js';
-import { classifyPermission, confirmationType, mapFeature, normalizeNotification, normalizeStreamEvent } from './normalize.js';
+import { classifyPermission, confirmationType, mapFeature, normalizeNotification, normalizeStreamEvent, permissionSignature } from './normalize.js';
 import {
   applyCachedSummary,
   HistoryIndex,
@@ -52,7 +52,7 @@ import { readDroidCliModelCatalog, readDroidCliModelCatalogCache } from './Droid
 import { BrowserSessionManager } from './browser/BrowserSessionManager.js';
 import { createBrowserMcpServer } from './browser/browserMcpServer.js';
 import { NativeBrowserRuntime } from './browser/NativeBrowserRuntime.js';
-import { isApprovalOutcome, normalizePermissionOutcome } from './permissionOutcomes.js';
+import { isAlwaysOutcome, isApprovalOutcome, normalizePermissionOutcome } from './permissionOutcomes.js';
 import { filterMissionListSummaries, type MissionListFilterOptions } from './missionListFilter.js';
 
 type Emit = (event: ServerEvent) => void;
@@ -86,11 +86,13 @@ interface Mission {
   subagentSettings: Map<string, SubagentSettings>;
   pendingSubagents: PendingSubagent[];
   mcpServers: SdkMcpServer[];
+  permissionGrants: Set<string>;
 }
 
 interface PendingPermission {
   resolve: (r: RequestPermissionHandlerResult) => void;
   kind: PermissionKind;
+  signature?: string;
 }
 
 interface PendingSubagent {
@@ -344,7 +346,11 @@ export class MissionManager {
         return;
       case 'browser.design.addReference':
         await this.handleBrowser(cmd.missionId, async () => {
-          this.browsers.addReference(this.requireBrowserMissionId(cmd.missionId), cmd.reference);
+          await this.browsers.addReference(this.requireBrowserMissionId(cmd.missionId), {
+            anchor: cmd.reference.anchor,
+            detail: cmd.reference.detail,
+            id: cmd.reference.id,
+          });
         });
         return;
       case 'browser.design.sendPrompt':
@@ -804,6 +810,7 @@ export class MissionManager {
       subagentSettings: new Map(),
       pendingSubagents: [],
       mcpServers,
+      permissionGrants: new Set(),
     };
   }
 
@@ -814,8 +821,13 @@ export class MissionManager {
         const requestId = nextRequestId();
         const type = confirmationType(params);
         const request = classifyPermission(ref.id, requestId, params);
+        const signature = permissionSignature(params);
+        if (mission && signature && mission.permissionGrants.has(signature)) {
+          resolve(normalizePermissionOutcome('proceed_always'));
+          return;
+        }
         if (mission) {
-          mission.pendingPermissions.set(requestId, { resolve, kind: request.kind });
+          mission.pendingPermissions.set(requestId, { resolve, kind: request.kind, signature: signature || undefined });
           if (type === 'propose_mission') {
             this.patch(ref.id, { phase: 'awaiting_plan_approval', proposal: request.detail });
           } else if (type === 'start_mission_run') {
@@ -855,6 +867,9 @@ export class MissionManager {
     } catch (err) {
       this.emitError({ code: 'permission.invalid_outcome', missionId, message: errMsg(err) });
       normalized = normalizePermissionOutcome('cancel');
+    }
+    if (pending.signature && isAlwaysOutcome(outcome)) {
+      mission.permissionGrants.add(pending.signature);
     }
     if (pending.kind === 'spec' && isApprovalOutcome(normalized)) await this.prepareSpecExitForRun(mission);
     pending.resolve(normalized);

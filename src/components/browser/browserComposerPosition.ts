@@ -43,16 +43,7 @@ function surfaceLayout(frame: Size, viewport: BrowserViewport, mode: BrowserView
 }
 
 function boxForReference(reference: DesignReference): BrowserBox | undefined {
-  if (reference.kind === 'element') return reference.element?.box;
-  if (reference.kind === 'region') return reference.box;
-  if (reference.points?.length) {
-    const xs = reference.points.map((point) => point.x);
-    const ys = reference.points.map((point) => point.y);
-    const x = Math.min(...xs);
-    const y = Math.min(...ys);
-    return { x, y, width: Math.max(...xs) - x, height: Math.max(...ys) - y };
-  }
-  return undefined;
+  return reference.anchor?.box;
 }
 
 function unionBoxes(boxes: BrowserBox[]): BrowserBox | undefined {

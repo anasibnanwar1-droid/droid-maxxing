@@ -10,8 +10,6 @@ import {
   sendDesignPrompt,
 } from '../../lib/commands';
 import type {
-  BrowserBox,
-  BrowserElementRef,
   BrowserViewport,
   BrowserViewportMode,
   DesignReference,
@@ -32,6 +30,7 @@ import { BrowserToolbar } from './BrowserToolbar';
 import { DesignModeComposer } from './DesignModeComposer';
 import { composerStyleForReferences } from './browserComposerPosition';
 import { browserKeyForMission } from '../../lib/browserSessionIdentity';
+import { browserTranscriptReferencesFromDesignReferences } from './browserTranscriptReferences';
 import { isSelfBrowserUrl, safeBrowserUrl } from './browserUrlSafety';
 import { useElementSize } from './useElementSize';
 
@@ -44,6 +43,14 @@ export default function BrowserWorkspace() {
   const browserError = browserKey ? state.browserErrors[browserKey] : state.browserGlobalError;
   const designMode = isDesignModeOpen(state.designModes, browserKey);
   const nativeBrowser = isDesktop();
+  // The native BrowserView is an OS-level layer painted above the React tree,
+  // so any full-screen overlay would otherwise be punched through by it. Detach
+  // it while such an overlay is visible and re-attach once it closes.
+  const obscured =
+    state.settingsOpen ||
+    state.commandPaletteOpen ||
+    !!state.pendingQuestion ||
+    state.pendingPermission?.kind === 'spec';
   const frameRef = useRef<HTMLDivElement>(null);
   const urlInputRef = useRef<HTMLInputElement>(null);
   const appOrigin = typeof window === 'undefined' ? undefined : window.location.origin;
@@ -151,18 +158,37 @@ export default function BrowserWorkspace() {
     setViewportMode(mode);
   };
 
+  const emitDesignTranscript = useCallback((text: string, refs: DesignReference[]) => {
+    if (!requestedChatId) return;
+    const browserRefs = browserTranscriptReferencesFromDesignReferences(refs);
+    dispatch({
+      type: 'MISSION_TRANSCRIPT',
+      event: {
+        id: `local-design-${Date.now()}`,
+        missionId: requestedChatId,
+        agentSessionId: 'user',
+        role: 'orchestrator',
+        ts: Date.now(),
+        kind: 'text',
+        text,
+        author: 'user',
+        browserRefs: browserRefs.length ? browserRefs : undefined,
+      },
+    });
+  }, [dispatch, requestedChatId]);
+
   const sendPrompt = () => {
     if (!browserKey || !canSend) return;
-    sendDesignPrompt(browserKey, instruction.trim(), selectedIds);
+    const text = instruction.trim();
+    sendDesignPrompt(browserKey, text, selectedIds);
+    emitDesignTranscript(text, references);
+    setReferences([]);
     setInstruction('');
   };
 
   const handleSelection = useCallback((selection: NativeBrowserSelection) => {
     const reference = referenceFromNativeSelection(selection);
-    setReferences((prev) => {
-      if (reference.id && prev.some((item) => item.id === reference.id)) return prev;
-      return [...prev, reference];
-    });
+    setReferences([reference]);
     if (browserKey) addDesignReference(browserKey, reference);
   }, [browserKey]);
 
@@ -173,13 +199,12 @@ export default function BrowserWorkspace() {
     const reference = referenceFromNativeSelection(prompt.selection);
     const referenceId = reference.id;
     if (!referenceId) return;
-    setReferences((prev) => {
-      if (prev.some((item) => item.id === referenceId)) return prev;
-      return [...prev, reference];
-    });
+    setReferences([reference]);
     addDesignReference(browserKey, reference);
     window.setTimeout(() => sendDesignPrompt(browserKey, text, [referenceId]), 0);
-  }, [browserKey]);
+    emitDesignTranscript(text, [reference]);
+    setReferences([]);
+  }, [browserKey, emitDesignTranscript]);
 
   return (
     <div className="flex h-full min-h-0 min-w-0 flex-col bg-droid-bg">
@@ -204,6 +229,12 @@ export default function BrowserWorkspace() {
         }}
         onToggleSketchMode={() => setSketchMode((value) => !value)}
         onClose={() => {
+          // Hide the pane but keep this chat's browser session alive so it can
+          // be reopened (and resumes after an app restart).
+          dispatch({ type: 'SET_BROWSER_OPEN', open: false });
+        }}
+        onFullyClose={() => {
+          // Destroy this chat's browser session entirely; reopening starts fresh.
           if (browserKey) closeBrowser(browserKey);
           if (browser?.sessionId) closeNativeBrowser(browser.sessionId).catch(() => {});
           dispatch({ type: 'SET_BROWSER_OPEN', open: false });
@@ -221,6 +252,7 @@ export default function BrowserWorkspace() {
           <NativeBrowserSurface
             browserKey={browserKey}
             visibleSessionId={browser?.sessionId}
+            obscured={obscured}
             url={activeUrl}
             viewport={requestedViewport}
             viewportMode={viewportMode}
@@ -271,19 +303,12 @@ export default function BrowserWorkspace() {
 }
 
 function referenceFromNativeSelection(selection: NativeBrowserSelection): DesignReference {
-  if (selection.kind === 'region') {
-    return { id: selection.id, kind: 'region', box: selection.box as BrowserBox, note: selection.url };
-  }
-  const element: BrowserElementRef = {
-    ref: selection.id,
-    selector: selection.selector ?? '',
-    tagName: selection.tagName ?? 'element',
-    role: selection.role,
-    name: selection.name,
-    text: selection.text,
-    attributes: {},
-    box: selection.box as BrowserBox,
-    computedStyles: {},
+  return {
+    id: selection.anchor.id,
+    anchor: selection.anchor,
+    detail: selection.detail,
+    url: selection.url,
+    title: selection.title,
+    scroll: selection.scroll,
   };
-  return { id: selection.id, kind: 'element', element, note: selection.url };
 }

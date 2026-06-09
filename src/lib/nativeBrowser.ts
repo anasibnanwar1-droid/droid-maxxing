@@ -1,5 +1,5 @@
 import { isDesktop } from './desktop';
-import type { BrowserNativeAction, BrowserNativeSnapshot, BrowserScrollDirection } from '../types/bridge';
+import type { BrowserBox, BrowserNativeAction, BrowserNativeSnapshot, BrowserScrollDirection, DesignAnchor, DesignAnchorDetail } from '../types/bridge';
 
 export interface NativeBrowserBounds {
   x: number;
@@ -8,25 +8,15 @@ export interface NativeBrowserBounds {
   height: number;
 }
 
-export interface NativeBrowserBox {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-}
+export type NativeBrowserBox = BrowserBox;
 
 export interface NativeBrowserSelection {
   sessionId?: string;
-  id: string;
-  kind: 'element' | 'region';
+  anchor: DesignAnchor;
+  detail?: DesignAnchorDetail;
   url: string;
-  title: string;
-  selector?: string;
-  tagName?: string;
-  role?: string;
-  name?: string;
-  text?: string;
-  box: NativeBrowserBox;
+  title?: string;
+  scroll?: { x: number; y: number };
 }
 
 export interface NativeBrowserLoaded {
@@ -128,6 +118,20 @@ export async function runNativeBrowserAgentAction(
         finish(() => reject(err));
       });
   });
+}
+
+export interface NativeBrowserCaptureOptions {
+  fullPage?: boolean;
+  deviceScaleFactor?: number;
+}
+
+export async function nativeBrowserCapture(
+  sessionId: string,
+  box?: NativeBrowserBox,
+  options?: NativeBrowserCaptureOptions,
+): Promise<string | undefined> {
+  if (!isDesktop()) return undefined;
+  return window.droidControl!.nativeBrowserCapture(sessionId, box, options);
 }
 
 export async function setNativeBrowserDesignMode(sessionId: string, active: boolean): Promise<void> {

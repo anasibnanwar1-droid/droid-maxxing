@@ -35,7 +35,7 @@ export function DesignModeComposer({
       <div className="flex min-h-9 flex-wrap items-center gap-1.5 border-b border-droid-border px-2.5 py-2">
         {references.map((ref, index) => (
           <button
-            key={ref.id ?? `${ref.kind}-${index}`}
+            key={ref.id ?? `${ref.anchor.kind}-${index}`}
             onClick={() => ref.id && onRemoveReference(ref.id)}
             className="group flex h-6 max-w-[180px] items-center gap-1.5 rounded-md bg-droid-elevated px-2 text-[11px] text-droid-text-secondary hover:text-droid-text"
             title="Remove reference"
@@ -80,7 +80,7 @@ function displayReferenceId(ref: DesignReference): string {
 }
 
 function labelFor(ref: DesignReference): string {
-  if (ref.kind === 'element') return ref.element?.name || ref.element?.text || ref.element?.tagName || 'element';
-  if (ref.kind === 'region') return 'region';
-  return 'stroke';
+  const anchor = ref.anchor;
+  if (anchor.kind === 'region') return 'region';
+  return anchor.name || anchor.text || anchor.tag || 'element';
 }

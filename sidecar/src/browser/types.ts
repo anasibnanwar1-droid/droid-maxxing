@@ -25,10 +25,10 @@ export interface BrowserElementRef {
   role?: string;
   name?: string;
   text?: string;
-  attributes: Record<string, string>;
+  attributes?: Record<string, string>;
   className?: string;
   box: BrowserBox;
-  computedStyles: Record<string, string>;
+  computedStyles?: Record<string, string>;
 }
 
 export interface BrowserSnapshot {
@@ -51,18 +51,54 @@ export interface BrowserState extends BrowserSnapshot {
   error?: string;
 }
 
+export interface ElementSource {
+  framework?: 'react' | 'vue' | 'svelte' | 'unknown';
+  component?: string;
+  componentChain?: string[];
+  file?: string;
+  line?: number;
+  column?: number;
+  confidence: 'exact' | 'attribute' | 'heuristic' | 'none';
+}
+
+export interface DesignAnchorAncestor {
+  tag: string;
+  component?: string;
+  selector?: string;
+}
+
+export interface DesignAnchor {
+  id: string;
+  kind: 'element' | 'region';
+  label: string;
+  tag?: string;
+  role?: string;
+  name?: string;
+  text?: string;
+  box: BrowserBox;
+  source?: ElementSource;
+  screenshotPath?: string;
+}
+
+export interface DesignAnchorDetail {
+  id: string;
+  selector: string;
+  selectorVerified: boolean;
+  attributes: Record<string, string>;
+  styles: Record<string, string>;
+  ancestors: DesignAnchorAncestor[];
+  html?: string;
+}
+
 export interface DesignReference {
   id: string;
-  kind: 'element' | 'region' | 'stroke';
+  anchor: DesignAnchor;
+  detail?: DesignAnchorDetail;
   url: string;
   title?: string;
   viewport: BrowserViewport;
-  screenshotPath?: string;
   scroll: { x: number; y: number };
-  element?: BrowserElementRef;
-  box?: BrowserBox;
-  points?: { x: number; y: number }[];
-  note?: string;
+  createdAt: string;
 }
 
 export interface DesignPromptPack {

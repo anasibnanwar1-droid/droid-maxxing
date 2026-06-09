@@ -255,15 +255,49 @@ interface ConfirmationDetail {
   [k: string]: unknown;
 }
 
-// Extract the primary confirmation detail regardless of params shape variations.
+// Extract the primary confirmation detail. The Droid SDK shape is
+// `params.toolUses[0].details`; older/alternate shapes used `confirmations` or a
+// bare `confirmation`, which we still fall back to defensively.
 function primaryConfirmation(params: RequestPermissionRequestParams): ConfirmationDetail {
   const p = params as unknown as Record<string, unknown>;
+  const toolUses = p.toolUses as Array<Record<string, unknown>> | undefined;
+  if (Array.isArray(toolUses) && toolUses.length > 0) {
+    const details = toolUses[0].details as ConfirmationDetail | undefined;
+    if (details) return details;
+  }
   const list = p.confirmations as Array<Record<string, unknown>> | undefined;
   if (Array.isArray(list) && list.length > 0) {
     const item = list[0];
     return (item.confirmation as ConfirmationDetail) ?? (item as ConfirmationDetail);
   }
   return (p.confirmation as ConfirmationDetail) ?? {};
+}
+
+// The tool's actual call arguments live on the tool-use block, not the
+// confirmation detail.
+function primaryToolInput(params: RequestPermissionRequestParams): Record<string, unknown> {
+  const p = params as unknown as Record<string, unknown>;
+  const toolUses = p.toolUses as Array<Record<string, unknown>> | undefined;
+  if (Array.isArray(toolUses) && toolUses.length > 0) {
+    const toolUse = toolUses[0].toolUse as Record<string, unknown> | undefined;
+    const input = toolUse?.input;
+    if (input && typeof input === 'object') return input as Record<string, unknown>;
+  }
+  return {};
+}
+
+// Build a readable summary of an MCP tool request: its arguments (so the user
+// can see *what* it will do, e.g. the URL a browser tool will open) plus the
+// declared impact level when present.
+function mcpToolDetail(c: ConfirmationDetail, input: Record<string, unknown>): string {
+  const lines: string[] = [];
+  for (const [key, value] of Object.entries(input)) {
+    const rendered = typeof value === 'string' ? value : JSON.stringify(value);
+    if (rendered === undefined || rendered === '' || rendered === '{}') continue;
+    lines.push(`${key}: ${rendered}`);
+  }
+  if (c.impactLevel) lines.push(`Impact: ${c.impactLevel}`);
+  return lines.join('\n');
 }
 
 export function classifyPermission(
@@ -310,10 +344,20 @@ export function classifyPermission(
       title = 'Apply patch';
       detail = (c.fileName as string) ?? (c.filePath as string) ?? '';
       break;
-    case 'mcp_tool':
-      title = `MCP tool: ${c.toolName ?? ''}`;
-      detail = `Impact: ${c.impactLevel ?? 'unknown'}`;
+    case 'mcp_tool': {
+      const rawTool = typeof c.toolName === 'string' ? c.toolName : '';
+      // MCP tools are namespaced as `server___tool`; split for a readable label.
+      const [splitServer, splitTool] = rawTool.includes('___')
+        ? [rawTool.slice(0, rawTool.indexOf('___')), rawTool.slice(rawTool.indexOf('___') + 3)]
+        : ['', rawTool];
+      const serverName = typeof c.serverName === 'string' && c.serverName ? c.serverName : splitServer;
+      const toolName = splitTool;
+      title = toolName
+        ? serverName ? `${serverName} · ${toolName}` : toolName
+        : serverName ? `${serverName} tool` : 'External tool';
+      detail = mcpToolDetail(c, primaryToolInput(params));
       break;
+    }
     default:
       detail = JSON.stringify(c);
   }
@@ -323,4 +367,32 @@ export function classifyPermission(
 
 export function confirmationType(params: RequestPermissionRequestParams): string {
   return String(primaryConfirmation(params).type ?? 'other');
+}
+
+// Stable key identifying "the same action" so an app-level allowlist can honor
+// "Always allow" even when the underlying agent does not persist the grant.
+// An empty string means the request is not eligible for always-allow caching.
+export function permissionSignature(params: RequestPermissionRequestParams): string {
+  const c = primaryConfirmation(params);
+  const type = String(c.type ?? 'other');
+  switch (type) {
+    case 'exec':
+      return `exec::${String(c.command ?? '')}`;
+    case 'mcp_tool':
+      return `mcp::${String(c.serverName ?? '')}::${String(c.toolName ?? '')}`;
+    case 'edit':
+    case 'create':
+    case 'apply_patch': {
+      // Scope file-write grants to the specific path so "Always allow" cannot
+      // bypass prompts for unrelated files. No identifiable path => ineligible.
+      const path = typeof c.filePath === 'string' && c.filePath
+        ? c.filePath
+        : typeof c.fileName === 'string' && c.fileName
+          ? c.fileName
+          : '';
+      return path ? `${type}::${path}` : '';
+    }
+    default:
+      return '';
+  }
 }

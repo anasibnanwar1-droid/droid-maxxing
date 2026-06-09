@@ -1,12 +1,18 @@
 import { randomUUID } from 'node:crypto';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { browserDesignReferenceDir } from './browserPaths.js';
 import { normalizeBrowserUrl } from './browserUrl.js';
 import { formatDesignPrompt, writeDesignPromptPack } from './designPromptPacks.js';
 import type {
+  BrowserBox,
   BrowserElementRef,
   BrowserScreenshotOptions,
   BrowserState,
   BrowserViewport,
   BrowserViewportMode,
+  DesignAnchor,
+  DesignAnchorDetail,
   DesignReference,
   ScrollDirection,
 } from './types.js';
@@ -16,6 +22,7 @@ export interface BrowserSessionManagerOptions {
   runtimeFactory?: (sessionId: string, viewport: BrowserViewport, missionId: string) => BrowserRuntime;
   assetUrlFor?: (path: string) => string;
   writePack?: typeof writeDesignPromptPack;
+  browserDataDir?: string;
 }
 
 export interface BrowserRuntime {
@@ -23,6 +30,7 @@ export interface BrowserRuntime {
   reload(): Promise<{ url: string; title?: string; scroll: { x: number; y: number }; refs: BrowserElementRef[] }>;
   setViewport(viewport: BrowserViewport): Promise<void>;
   screenshot(options?: BrowserScreenshotOptions): Promise<string>;
+  capture(box?: BrowserBox, options?: BrowserScreenshotOptions): Promise<string>;
   snapshot(): Promise<{ url: string; title?: string; scroll: { x: number; y: number }; refs: BrowserElementRef[] }>;
   click(x: number, y: number): Promise<void>;
   type(text: string): Promise<void>;
@@ -131,7 +139,8 @@ export class BrowserSessionManager {
 
   async screenshot(missionId: string, options: BrowserScreenshotOptions = {}): Promise<string> {
     const session = this.requireSession(missionId);
-    const screenshotPath = await session.runtime.screenshot(options);
+    const base64 = await session.runtime.screenshot(options);
+    const screenshotPath = await this.persistImage(missionId, `screenshot-${Date.now().toString(36)}.png`, base64);
     session.state = {
       ...session.state,
       screenshotPath,
@@ -151,19 +160,34 @@ export class BrowserSessionManager {
     );
   }
 
-  addReference(missionId: string, reference: Omit<DesignReference, 'id' | 'url' | 'title' | 'viewport' | 'scroll' | 'screenshotPath'> & { id?: string }): DesignReference {
+  async addReference(
+    missionId: string,
+    input: { anchor: DesignAnchor; detail?: DesignAnchorDetail; id?: string },
+  ): Promise<DesignReference> {
     const session = this.requireSession(missionId);
+    const id = input.id ?? input.anchor.id ?? `ref-${randomUUID()}`;
+    const anchor: DesignAnchor = { ...input.anchor, id };
+    const detail = input.detail ? { ...input.detail, id } : undefined;
+    if (!anchor.screenshotPath) {
+      const crop = await this.captureAnchorImage(session, anchor.box).catch(() => undefined);
+      if (crop) anchor.screenshotPath = crop;
+    }
     const next: DesignReference = {
-      ...reference,
-      id: reference.id ?? `ref-${randomUUID()}`,
+      id,
+      anchor,
+      detail,
       url: session.state.url,
       title: session.state.title,
       viewport: session.state.viewport,
       scroll: session.state.scroll,
-      screenshotPath: session.state.screenshotPath,
+      createdAt: new Date().toISOString(),
     };
-    session.references.set(next.id, next);
+    session.references.set(id, next);
     return next;
+  }
+
+  referenceDetail(missionId: string, id: string): DesignReference | undefined {
+    return this.resolveSession(missionId)?.references.get(id);
   }
 
   async designPrompt(input: { missionId: string; instruction: string; referenceIds: string[] }): Promise<{ path: string; prompt: string }> {
@@ -276,6 +300,21 @@ export class BrowserSessionManager {
     const ref = session.state.refs.find((item) => item.ref === refId);
     if (!ref) throw new Error(`Browser ref ${refId} is not available. Refresh the browser snapshot and try again.`);
     return ref;
+  }
+
+  private async captureAnchorImage(session: ManagedBrowserSession, box?: BrowserBox): Promise<string | undefined> {
+    const base64 = await session.runtime.capture(box);
+    if (!base64) return undefined;
+    const tag = box ? `${box.x}-${box.y}-${box.width}-${box.height}` : 'view';
+    return this.persistImage(session.missionId, `anchor-${tag}-${Date.now().toString(36)}.png`, base64);
+  }
+
+  private async persistImage(missionId: string, name: string, base64: string): Promise<string> {
+    const dir = browserDesignReferenceDir(missionId, this.options.browserDataDir);
+    await mkdir(dir, { recursive: true });
+    const path = join(dir, name);
+    await writeFile(path, Buffer.from(base64, 'base64'));
+    return path;
   }
 
   private emitUpdated(state: BrowserState): void {

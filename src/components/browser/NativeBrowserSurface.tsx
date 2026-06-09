@@ -17,6 +17,7 @@ import {
   onNativeBrowserLoaded,
   onNativeBrowserSelection,
   openNativeBrowser,
+  nativeBrowserCapture,
   runNativeBrowserAgentAction,
   setNativeBrowserBounds,
   setNativeBrowserDesignMode,
@@ -36,6 +37,7 @@ import { useElementSize } from './useElementSize';
 interface NativeBrowserSurfaceProps {
   browserKey: string;
   visibleSessionId?: string;
+  obscured?: boolean;
   url: string;
   viewport: BrowserViewport;
   viewportMode: BrowserViewportMode;
@@ -50,6 +52,7 @@ interface NativeBrowserSurfaceProps {
 export function NativeBrowserSurface({
   browserKey,
   visibleSessionId,
+  obscured = false,
   url,
   viewport,
   viewportMode,
@@ -66,6 +69,8 @@ export function NativeBrowserSurface({
   const frameSize = useElementSize(stageRef);
   const surfaceReady = frameSize.width > 8 && frameSize.height > 8;
   const lastBounds = useRef<NativeBrowserBounds | null>(null);
+  const attachedSessionRef = useRef<string | undefined>(undefined);
+  const attachingSessionRef = useRef<string | undefined>(undefined);
   const onLoadedRef = useRef(onLoaded);
   const onSelectionRef = useRef(onSelection);
   const onPromptRef = useRef(onPrompt);
@@ -153,20 +158,49 @@ export function NativeBrowserSurface({
 
   useEffect(() => {
     if (!native) return;
+    if (obscured) {
+      detachNativeBrowser(visibleSessionId).catch(() => {});
+      attachedSessionRef.current = undefined;
+      attachingSessionRef.current = undefined;
+      lastBounds.current = null;
+      return;
+    }
     if (!surfaceReady) return;
     const bounds = boundsFor(slotRef);
     if (!bounds) return;
-    if (visibleSessionId) {
-      attachNativeBrowser(visibleSessionId, bounds, url).catch(() => {});
-    } else {
+    if (!visibleSessionId) {
       detachNativeBrowser().catch(() => {});
+      attachedSessionRef.current = undefined;
+      attachingSessionRef.current = undefined;
+      lastBounds.current = null;
+      return;
     }
-    const sameBounds = lastBounds.current && equalBounds(lastBounds.current, bounds);
-    if (visibleSessionId && !sameBounds) {
+    if (attachedSessionRef.current !== visibleSessionId) {
+      // Avoid duplicate attaches while one is in flight, and only mark the
+      // session attached once attachNativeBrowser actually resolves so a failed
+      // attach can be retried by a later effect run.
+      if (attachingSessionRef.current === visibleSessionId) return;
+      const target = visibleSessionId;
+      attachingSessionRef.current = target;
+      attachNativeBrowser(target, bounds, url)
+        .then(() => {
+          // A newer session may have started attaching while this was in
+          // flight; only commit state if `target` is still the intended one.
+          if (attachingSessionRef.current !== target) return;
+          attachedSessionRef.current = target;
+          lastBounds.current = bounds;
+        })
+        .catch(() => {})
+        .finally(() => {
+          if (attachingSessionRef.current === target) attachingSessionRef.current = undefined;
+        });
+      return;
+    }
+    if (!lastBounds.current || !equalBounds(lastBounds.current, bounds)) {
       setNativeBrowserBounds(visibleSessionId, bounds).catch(() => {});
       lastBounds.current = bounds;
     }
-  }, [native, surface.height, surface.left, surface.top, surface.width, surfaceReady, url, visibleSessionId]);
+  }, [native, obscured, surface.height, surface.left, surface.top, surface.width, surfaceReady, url, visibleSessionId]);
 
   useEffect(() => registerNativeBrowserController({
     perform: async (request) => native
@@ -179,6 +213,10 @@ export function NativeBrowserSurface({
         bounds: () => boundsFor(slotRef),
         markOpen: (bounds) => {
           lastBounds.current = bounds;
+          if (visibleSessionId) {
+            attachedSessionRef.current = visibleSessionId;
+            attachingSessionRef.current = undefined;
+          }
         },
       })
       : performIframeRequest(request, {
@@ -268,6 +306,13 @@ async function performNativeRequest(
       const loadedEvent = await loaded;
       return { requestId: request.requestId, missionId: request.missionId, ok: true, snapshot: navigationSnapshot(loadedEvent?.url ?? options.currentUrl) };
     }
+    if (request.action === 'capture') {
+      const image = await nativeBrowserCapture(request.sessionId, request.box, {
+        fullPage: request.fullPage,
+        deviceScaleFactor: request.deviceScaleFactor,
+      });
+      return { requestId: request.requestId, missionId: request.missionId, ok: true, image };
+    }
     const result = await runNativeBrowserAgentAction({
       requestId: request.requestId,
       sessionId: request.sessionId,
@@ -345,6 +390,8 @@ async function performIframeRequest(
       await keypressIframe(iframe, request.key ?? '');
     } else if (request.action === 'scroll') {
       await scrollIframe(iframe, request.direction ?? 'down', request.pixels);
+    } else if (request.action === 'capture') {
+      return { requestId: request.requestId, missionId: request.missionId, ok: true };
     } else if (request.action !== 'snapshot') {
       throw new Error(`Unsupported browser action: ${request.action}`);
     }

@@ -37,25 +37,25 @@ function readBrowserRefsFromPack(packPath: string): BrowserTranscriptReference[]
 }
 
 export function browserTranscriptReferenceFromDesignReference(reference: Partial<DesignReference>): BrowserTranscriptReference | null {
-  const id = reference.id ?? reference.element?.ref;
-  if (!id) return null;
-  const element = reference.element;
-  const kind = reference.kind ?? 'element';
+  const anchor = reference.anchor;
+  const id = reference.id ?? anchor?.id;
+  if (!id || !anchor) return null;
+  const attributes = reference.detail?.attributes;
   const label = normalizeBrowserReferenceLabel(
-    element?.name ??
-      element?.attributes?.['data-testid'] ??
-      element?.attributes?.id ??
-      element?.text ??
-      element?.role ??
-      element?.tagName,
-    kind === 'element' ? element?.tagName ?? 'element' : kind,
+    anchor.name ??
+      attributes?.['data-testid'] ??
+      attributes?.id ??
+      anchor.text ??
+      anchor.role ??
+      anchor.tag,
+    anchor.kind === 'element' ? anchor.tag ?? 'element' : anchor.kind,
   );
   return {
     id,
-    kind,
+    kind: anchor.kind,
     label,
-    url: reference.url ?? reference.note,
-    selector: element?.selector,
+    url: reference.url,
+    selector: reference.detail?.selector,
   };
 }
 

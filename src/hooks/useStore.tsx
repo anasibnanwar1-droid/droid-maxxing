@@ -83,7 +83,13 @@ interface AppState {
   missionMode: boolean;
   draftChat: { cwd: string } | null;
   workspaceCwds: string[];
+  // Derived (synced by the reducer): whether the browser pane is open for the
+  // *currently active* session. Source of truth is `browserOpenKeys`.
   browserOpen: boolean;
+  // Per-session browser-pane open state, keyed by browser key (the chat/session
+  // id). Presence means "open"; absence means "closed". Persisted so a session
+  // resumes where it left off after an app restart, unless it was fully closed.
+  browserOpenKeys: Record<string, boolean>;
   browsers: Record<string, BrowserState>;
   browserErrors: Record<string, string>;
   browserGlobalError?: string;
@@ -285,8 +291,8 @@ interface PersistedUiState {
   sidebarCollapsed: boolean;
   specMode: boolean;
   missionMode: boolean;
-  browserOpen: boolean;
   browsers: Record<string, BrowserState>;
+  browserOpenKeys: Record<string, boolean>;
   selectedFeatureId: string | null;
   selectedAgentSessionId: string | null;
 }
@@ -383,8 +389,8 @@ export function loadPersistedUiState(): Partial<PersistedUiState> {
       sidebarCollapsed: typeof parsed.sidebarCollapsed === 'boolean' ? parsed.sidebarCollapsed : undefined,
       specMode: typeof parsed.specMode === 'boolean' ? parsed.specMode : undefined,
       missionMode: typeof parsed.missionMode === 'boolean' ? parsed.missionMode : undefined,
-      browserOpen: typeof parsed.browserOpen === 'boolean' ? parsed.browserOpen : undefined,
       browsers: loadPersistedBrowsers(parsed.browsers),
+      browserOpenKeys: loadPersistedBrowserOpenKeys(parsed.browserOpenKeys),
       selectedFeatureId: typeof parsed.selectedFeatureId === 'string' ? parsed.selectedFeatureId : null,
       selectedAgentSessionId: typeof parsed.selectedAgentSessionId === 'string' ? parsed.selectedAgentSessionId : null,
     };
@@ -400,8 +406,8 @@ function savePersistedUiState(state: AppState): void {
     sidebarCollapsed: state.sidebarCollapsed,
     specMode: state.specMode,
     missionMode: state.missionMode,
-    browserOpen: state.browserOpen,
     browsers: persistBrowsers(state.browsers),
+    browserOpenKeys: state.browserOpenKeys,
     selectedFeatureId: state.selectedFeatureId,
     selectedAgentSessionId: state.selectedAgentSessionId,
   };
@@ -469,7 +475,8 @@ const initialState: AppState = {
   missionMode: persistedUiState.missionMode ?? false,
   draftChat: null,
   workspaceCwds: loadWorkspaceCwds(),
-  browserOpen: persistedUiState.browserOpen ?? false,
+  browserOpen: false,
+  browserOpenKeys: persistedUiState.browserOpenKeys ?? {},
   browsers: persistedUiState.browsers ?? {},
   browserErrors: {},
   browserGlobalError: undefined,
@@ -500,7 +507,36 @@ function activeBrowserKey(state: AppState): string | undefined {
   return state.activeMissionId ? designModeSessionId(state, state.activeMissionId) : undefined;
 }
 
+// Record an explicit open (true) or hidden (false) decision for a browser key.
+// Storing `false` (rather than deleting) lets data syncs distinguish a pane the
+// user deliberately hid from one that was never opened.
+function withBrowserOpenKey(keys: Record<string, boolean>, key: string, open: boolean): Record<string, boolean> {
+  if (keys[key] === open) return keys;
+  return { ...keys, [key]: open };
+}
+
+// Forget a browser key entirely (full reset, e.g. session closed). A later
+// update then treats the session as never-opened.
+function clearBrowserOpenKey(keys: Record<string, boolean>, key: string): Record<string, boolean> {
+  if (!(key in keys)) return keys;
+  const next = { ...keys };
+  delete next[key];
+  return next;
+}
+
+// Re-derive `browserOpen` from the per-session open set and the active session.
+// Applied after every reducer pass so the convenience flag never goes stale.
+function syncBrowserOpen(state: AppState): AppState {
+  const key = activeBrowserKey(state);
+  const open = key ? Boolean(state.browserOpenKeys[key]) : false;
+  return state.browserOpen === open ? state : { ...state, browserOpen: open };
+}
+
 function reducer(state: AppState, action: Action): AppState {
+  return syncBrowserOpen(baseReducer(state, action));
+}
+
+function baseReducer(state: AppState, action: Action): AppState {
   switch (action.type) {
     case 'SET_CONNECTION':
       return { ...state, connection: action.status, connectionError: action.message };
@@ -802,38 +838,52 @@ function reducer(state: AppState, action: Action): AppState {
     case 'ADD_WORKSPACE':
       return { ...state, workspaceCwds: saveWorkspaceCwds(addWorkspaceCwd(state.workspaceCwds, action.cwd)) };
 
-    case 'TOGGLE_BROWSER':
-      return { ...state, browserOpen: !state.browserOpen };
+    case 'TOGGLE_BROWSER': {
+      const key = activeBrowserKey(state);
+      if (!key) return state;
+      return { ...state, browserOpenKeys: withBrowserOpenKey(state.browserOpenKeys, key, !state.browserOpenKeys[key]) };
+    }
 
-    case 'SET_BROWSER_OPEN':
-      return { ...state, browserOpen: action.open };
+    case 'SET_BROWSER_OPEN': {
+      const key = activeBrowserKey(state);
+      if (!key) return state;
+      return { ...state, browserOpenKeys: withBrowserOpenKey(state.browserOpenKeys, key, action.open) };
+    }
 
-    case 'BROWSER_UPDATED':
+    case 'BROWSER_UPDATED': {
       if (!action.browser.missionId) return state;
+      const missionId = action.browser.missionId;
+      // Surface a freshly opened browser, but never re-open a pane the user hid.
+      const hidden = state.browserOpenKeys[missionId] === false;
       return {
         ...state,
-        browsers: { ...state.browsers, [action.browser.missionId]: action.browser },
-        browserErrors: Object.fromEntries(Object.entries(state.browserErrors).filter(([id]) => id !== action.browser.missionId)),
-        browserOpen: activeBrowserKey(state) === action.browser.missionId ? true : state.browserOpen,
+        browsers: { ...state.browsers, [missionId]: action.browser },
+        browserErrors: Object.fromEntries(Object.entries(state.browserErrors).filter(([id]) => id !== missionId)),
+        browserOpenKeys: hidden ? state.browserOpenKeys : withBrowserOpenKey(state.browserOpenKeys, missionId, true),
       };
+    }
 
     case 'BROWSER_CLOSED':
+      // Full close: drop the session's browser, design mode, and open flag so a
+      // later reopen starts fresh (and it is excluded from persistence).
       return {
         ...state,
         browsers: Object.fromEntries(Object.entries(state.browsers).filter(([id]) => id !== action.missionId)),
         browserErrors: Object.fromEntries(Object.entries(state.browserErrors).filter(([id]) => id !== action.missionId)),
         designModes: clearDesignMode(state.designModes, action.missionId),
-        browserOpen: activeBrowserKey(state) === action.missionId ? false : state.browserOpen,
+        browserOpenKeys: clearBrowserOpenKey(state.browserOpenKeys, action.missionId),
       };
 
     case 'BROWSER_ERROR':
-      return action.missionId
-        ? {
-            ...state,
-            browserErrors: { ...state.browserErrors, [action.missionId]: action.message },
-            browserOpen: activeBrowserKey(state) === action.missionId ? true : state.browserOpen,
-          }
-        : { ...state, browserGlobalError: action.message };
+      if (!action.missionId) return { ...state, browserGlobalError: action.message };
+      return {
+        ...state,
+        browserErrors: { ...state.browserErrors, [action.missionId]: action.message },
+        // Respect an explicit hide; otherwise surface the errored browser.
+        browserOpenKeys: state.browserOpenKeys[action.missionId] === false
+          ? state.browserOpenKeys
+          : withBrowserOpenKey(state.browserOpenKeys, action.missionId, true),
+      };
 
     case 'TOGGLE_DESIGN_MODE':
       return { ...state, designModes: toggleDesignMode(state.designModes, action.sessionId) };
@@ -1033,6 +1083,17 @@ function loadPersistedBrowsers(value: unknown): Record<string, BrowserState> {
   return Object.fromEntries(entries);
 }
 
+function loadPersistedBrowserOpenKeys(value: unknown): Record<string, boolean> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  // Preserve both true (open) and false (explicitly hidden) so the "hidden"
+  // decision survives a restart; a dropped `false` would let later updates
+  // re-open a pane the user deliberately hid.
+  const entries = Object.entries(value as Record<string, unknown>)
+    .filter((entry): entry is [string, boolean] =>
+      typeof entry[0] === 'string' && entry[0].length > 0 && typeof entry[1] === 'boolean');
+  return Object.fromEntries(entries);
+}
+
 function sanitizePersistedBrowser(key: string, value: unknown): BrowserState | undefined {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
   const browser = value as Partial<BrowserState>;
@@ -1170,13 +1231,13 @@ function adaptEvent(ev: ServerEvent): Action | null {
 const StoreContext = createContext<{ state: AppState; dispatch: React.Dispatch<Action> } | null>(null);
 
 export function StoreProvider({ children }: { children: ReactNode }) {
-  const [state, dispatch] = useReducer(reducer, initialState);
+  const [state, dispatch] = useReducer(reducer, initialState, syncBrowserOpen);
 
   useEffect(() => {
     savePersistedUiState(state);
   }, [
     state.activeMissionId,
-    state.browserOpen,
+    state.browserOpenKeys,
     state.browsers,
     state.missionMode,
     state.rightPanelOpen,
