@@ -572,6 +572,27 @@ test('worker compaction fails loudly instead of trusting a swapped backing sessi
   assert.equal(completed, false);
 });
 
+test('stale worker swap preserves queued sends as recoverable instead of replaying to the old id', async () => {
+  const { manager, events, mission, workerSession } = workerAutoCompactHarness(250_000, 200_000, 'worker-swapped');
+  const agent = mission.agents.get('worker-compact') as { pendingSends: string[] };
+  agent.pendingSends.push('queued-during-compaction');
+  await manager.handle({ type: 'agent.send', missionId: 'app-compact', agentSessionId: 'worker-compact', text: 'go' });
+  // The stale worker is closed.
+  assert.equal(mission.agents.has('worker-compact'), false);
+  // The queued send is never replayed to the now-stale session id...
+  assert.equal(workerSession.prompts.includes('queued-during-compaction'), false);
+  // ...it is surfaced as a recoverable error so it can be resent.
+  assert.equal(
+    events.some(
+      (e) =>
+        e.type === 'error' &&
+        /queued-during-compaction/.test((e as { message?: string }).message ?? '') &&
+        /resent/i.test((e as { message?: string }).message ?? ''),
+    ),
+    true,
+  );
+});
+
 test('transient worker compaction failure keeps the session and drains queued sends', async () => {
   const { manager, mission, workerSession } = workerAutoCompactHarness(250_000, 200_000);
   workerSession.failCompaction = true;

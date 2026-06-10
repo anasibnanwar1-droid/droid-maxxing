@@ -1519,15 +1519,23 @@ export class MissionManager {
         const compaction = await this.maybeAutoCompactAgent(agent);
         agent.streaming = false;
         if (compaction === 'stale') {
-          // The daemon swapped the worker's backing session id, which we cannot
-          // adopt without re-keying. Close the stale session and re-deliver any
-          // queued user input against a fresh one rather than dropping it or
-          // reusing the stale session.
+          // The daemon swapped the worker's backing session id. We cannot adopt
+          // the new id (workers stay keyed by their original id for the
+          // orchestrator's handoff addressing), and replaying to the now-stale
+          // id is unreliable. Close the stale session and surface any queued
+          // user input as a recoverable error so it is preserved for resend
+          // rather than silently dropped or sent into a dead session.
           const queued = agent.pendingSends.splice(0);
           const agentSessionId = agent.session.sessionId;
           this.contextSnapshots.delete(agentSessionId);
           await this.closeAgent(agent.missionId, agentSessionId);
-          for (const queuedText of queued) await this.sendAgent(agent.missionId, agentSessionId, queuedText);
+          if (queued.length > 0) {
+            this.emitError({
+              sessionId: agentSessionId,
+              missionId: agent.missionId,
+              message: `Subagent session changed during compaction; ${queued.length} queued message(s) were not delivered and must be resent:\n${queued.join('\n')}`,
+            });
+          }
           return;
         }
         // A transient compaction failure leaves the session valid, so fall
