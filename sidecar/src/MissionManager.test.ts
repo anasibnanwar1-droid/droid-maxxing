@@ -256,12 +256,22 @@ test('design turns disable TodoWrite and normal turns restore it', async () => {
   internals.missions.set(mission.summary.id, mission);
 
   const designPrompt = 'Design Mode reference pack:\n- URL: about:blank\n\nUser instruction:\nMake the hero cleaner';
+
+  // First normal turn (flag uninitialized) must still call updateSettings to
+  // ensure TodoWrite is enabled — the session might have it disabled from a
+  // prior design turn before the in-memory flag was lost to a page reload.
+  await manager.handle({ type: 'mission.send', missionId: mission.summary.id, text: 'just a normal question' });
+  await waitFor(() => session.prompts.includes('just a normal question'));
+  assert.deepEqual(session.settingsUpdates.at(-1), { disabledToolIds: [] });
+
+  // Design turn disables TodoWrite.
   await manager.handle({ type: 'mission.send', missionId: mission.summary.id, text: designPrompt });
   await waitFor(() => session.prompts.includes(designPrompt));
   assert.deepEqual(session.settingsUpdates.at(-1), { disabledToolIds: ['TodoWrite'] });
 
-  await manager.handle({ type: 'mission.send', missionId: mission.summary.id, text: 'just a normal question' });
-  await waitFor(() => session.prompts.includes('just a normal question'));
+  // Normal turn restores it.
+  await manager.handle({ type: 'mission.send', missionId: mission.summary.id, text: 'another normal one' });
+  await waitFor(() => session.prompts.includes('another normal one'));
   assert.deepEqual(session.settingsUpdates.at(-1), { disabledToolIds: [] });
 
   // A second design turn re-disables it after the normal turn restored it.

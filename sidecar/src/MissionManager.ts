@@ -961,7 +961,10 @@ export class MissionManager {
   // already answered. Disable TodoWrite for design turns and restore it for
   // normal turns, calling updateSettings only when the policy changes.
   private async applyDesignToolPolicy(mission: Mission, design: boolean): Promise<void> {
-    if ((mission.todoDisabledForDesign ?? false) === design) return;
+    // When the in-memory flag is unset (cold start / page reload) we don't
+    // know the session's current disabledToolIds, so always call updateSettings
+    // to synchronize. Once the flag is set we skip redundant calls.
+    if (mission.todoDisabledForDesign !== undefined && mission.todoDisabledForDesign === design) return;
     try {
       await mission.session.updateSettings({ disabledToolIds: design ? ['TodoWrite'] : [] });
       mission.todoDisabledForDesign = design;

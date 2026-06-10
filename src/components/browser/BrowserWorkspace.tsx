@@ -68,8 +68,11 @@ export default function BrowserWorkspace() {
 
   // Auto-reload: when the agent edits files and the browser shows a local
   // dev server URL, reload the pane after a short debounce so the new code
-  // is visible immediately.
+  // is visible immediately.  The timeout id lives in a ref so that
+  // subsequent transcript updates (non-edit events) don't clear a pending
+  // reload that was already scheduled.
   const lastEditTsRef = useRef(0);
+  const reloadTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const transcripts = requestedChatId ? state.transcripts[requestedChatId] : undefined;
   useEffect(() => {
     if (!browserKey || !transcripts) return;
@@ -84,8 +87,11 @@ export default function BrowserWorkspace() {
     if (!/^https?:\/\/(localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\])/.test(url)) return;
     if (last.ts <= lastEditTsRef.current) return;
     lastEditTsRef.current = last.ts;
-    const id = window.setTimeout(() => reloadBrowser(browserKey), 600);
-    return () => window.clearTimeout(id);
+    if (reloadTimerRef.current) clearTimeout(reloadTimerRef.current);
+    reloadTimerRef.current = setTimeout(() => {
+      reloadTimerRef.current = null;
+      reloadBrowser(browserKey);
+    }, 600);
   }, [activeUrl, browserKey, transcripts]);
 
   useEffect(() => {
@@ -113,6 +119,7 @@ export default function BrowserWorkspace() {
     setReferences([]);
     setInstruction('');
     setPencilMode(false);
+    setLoadFailure(null);
   }, [browser?.sessionId, browser?.url, browserKey]);
 
   useEffect(() => {
@@ -350,7 +357,10 @@ export default function BrowserWorkspace() {
 function referenceFromNativeSelection(selection: NativeBrowserSelection): DesignReference {
   return {
     id: selection.anchor.id,
-    anchor: selection.anchor,
+    anchor: {
+      ...selection.anchor,
+      strokes: selection.anchor.strokes ?? selection.strokes,
+    },
     detail: selection.detail,
     url: selection.url,
     title: selection.title,

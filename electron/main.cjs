@@ -247,9 +247,13 @@ function stopSidecar() {
 function configureBrowserSession() {
   if (browserSessionConfigured) return;
   const ses = session.fromPartition(BROWSER_PARTITION);
-  // Allow hardware authenticators (security keys / passkey devices) for this
-  // browsing session only; everything else keeps Electron's safe defaults.
-  ses.setDevicePermissionHandler((details) => details.deviceType === 'hid' || details.deviceType === 'usb');
+  // Allow hardware authenticators (security keys / passkey devices) only when
+  // the page the user is browsing requests them. Auto-granting to all origins
+  // would let any embedded cross-site content access HID/USB devices.
+  ses.setDevicePermissionHandler((details) => {
+    if (details.deviceType !== 'hid' && details.deviceType !== 'usb') return false;
+    return details.requestingOrigin === details.embeddingOrigin;
+  });
   ses.on('select-hid-device', (event, details, callback) => {
     event.preventDefault();
     const device = details.deviceList[0];

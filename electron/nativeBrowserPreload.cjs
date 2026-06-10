@@ -222,7 +222,11 @@ function onContextMenu(event) {
 
 function onClick(event) {
   if (!designMode || pencilMode || event.shiftKey) return;
-  if (isInternalEvent(event) || promptVisible()) return;
+  if (isInternalEvent(event)) return;
+  if (promptVisible()) {
+    swallow(event);
+    return;
+  }
   const target = pickTarget(event.clientX, event.clientY, Boolean(event.altKey));
   if (!target) return;
   const selection = elementSelection(target);
@@ -285,13 +289,14 @@ function fillCredentials(payload) {
 function usernameFieldFor(passwordField) {
   const form = passwordField.form;
   const scope = form || document;
-  const candidates = scope.querySelectorAll('input[type="email"],input[type="text"],input[type="tel"],input:not([type])');
+  const fields = scope.querySelectorAll('input');
   let previous = null;
-  for (const field of candidates) {
+  for (const field of fields) {
     if (field === passwordField) break;
-    if (isVisible(field)) previous = field;
+    const type = (field.getAttribute('type') || '').toLowerCase();
+    if ((type === 'email' || type === 'text' || type === 'tel' || type === '') && isVisible(field)) previous = field;
   }
-  return previous || firstVisible(candidates);
+  return previous || firstVisible(scope.querySelectorAll('input[type="email"],input[type="text"],input[type="tel"],input:not([type])'));
 }
 
 function setFieldValue(field, value) {
