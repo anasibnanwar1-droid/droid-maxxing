@@ -407,3 +407,81 @@ test('runtime defaults preserve saved model settings when the catalog is unavail
     },
   );
 });
+
+class FakeCompactionSession {
+  prompts: string[] = [];
+  compactions = 0;
+  settingsUpdates: Array<Record<string, unknown>> = [];
+
+  constructor(readonly sessionId: string, private used: number) {}
+
+  async *stream(prompt: string): AsyncGenerator<never, void, undefined> {
+    this.prompts.push(prompt);
+  }
+
+  async updateSettings(params: Record<string, unknown>): Promise<void> {
+    this.settingsUpdates.push(params);
+  }
+
+  async getContextStats(): Promise<{ used: number; remaining: number; limit: number; accuracy: 'exact'; updatedAt: string }> {
+    return { used: this.used, remaining: Math.max(0, 1_000_000 - this.used), limit: 1_000_000, accuracy: 'exact', updatedAt: new Date().toISOString() };
+  }
+
+  async compactSession(): Promise<{ newSessionId: string; removedCount: number }> {
+    this.compactions += 1;
+    return { newSessionId: this.sessionId, removedCount: 4 };
+  }
+}
+
+function autoCompactHarness(used: number) {
+  const events: ServerEvent[] = [];
+  const manager = new MissionManager((event) => events.push(event));
+  const session = new FakeCompactionSession('droid-compact', used);
+  const mission = {
+    summary: testSummary('app-compact', session.sessionId),
+    session,
+    streaming: false,
+    pendingSends: [],
+    pendingPermissions: new Map(),
+    pendingQuestions: new Map(),
+    agents: new Map(),
+    knownSubagents: new Set(),
+    completedSubagents: new Set(),
+    subagentToolUseIds: new Map(),
+    subagentSettings: new Map(),
+    pendingSubagents: [],
+    mcpServers: [],
+  };
+  const internals = manager as unknown as {
+    history: {
+      recordEvent: () => void;
+      syncSummaries: () => void;
+      summaryPatches: () => Map<string, unknown>;
+      hiddenDroidSessionIds: () => Set<string>;
+    };
+    missions: Map<string, typeof mission>;
+    getFactoryDefaults: () => Promise<{ compactionTokenLimit: number }>;
+  };
+  internals.history = {
+    recordEvent: () => {},
+    syncSummaries: () => {},
+    summaryPatches: () => new Map(),
+    hiddenDroidSessionIds: () => new Set(),
+  };
+  internals.getFactoryDefaults = async () => ({ compactionTokenLimit: 200_000 });
+  internals.missions.set(mission.summary.id, mission);
+  return { manager, session, events, mission };
+}
+
+test('auto-compacts an idle turn once context crosses the effective limit', async () => {
+  const { manager, session, events } = autoCompactHarness(250_000);
+  await manager.handle({ type: 'mission.send', missionId: 'app-compact', text: 'hello' });
+  assert.equal(session.compactions, 1);
+  assert.equal(events.some((event) => event.type === 'mission.error' || event.type === 'error'), false);
+});
+
+test('does not auto-compact when context stays under the effective limit', async () => {
+  const { manager, session } = autoCompactHarness(150_000);
+  await manager.handle({ type: 'mission.send', missionId: 'app-compact', text: 'hello' });
+  assert.equal(session.compactions, 0);
+});

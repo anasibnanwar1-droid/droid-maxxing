@@ -93,6 +93,9 @@ interface Mission {
   // Tracks whether TodoWrite is currently disabled on the session so we only
   // call updateSettings when the design/normal turn policy actually changes.
   todoDisabledForDesign?: boolean;
+  // Guards the idle auto-compaction check so a compaction in flight is not
+  // re-triggered re-entrantly while it replaces the underlying session.
+  autoCompacting?: boolean;
 }
 
 interface PendingPermission {
@@ -946,14 +949,43 @@ export class MissionManager {
       this.stopContextPolling(appSessionId);
       mission.streaming = false;
       mission.interruptingForSteer = false;
+      // Refresh first so the auto-compaction check sees the turn's final usage,
+      // then compact (which replaces the session) before draining the queue so
+      // any queued sends run against the freshly compacted context.
+      await this.refreshContext(appSessionId, mission.session);
+      await this.maybeAutoCompact(appSessionId);
       const next = mission.pendingSends.shift();
       this.patch(appSessionId, { queuedSends: mission.pendingSends.length });
       if (next !== undefined) void this.drive(appSessionId, next);
-      else {
-        await this.refreshContext(appSessionId, mission.session);
-        this.patch(appSessionId, { streaming: false, queuedSends: 0 });
-      }
+      else this.patch(appSessionId, { streaming: false, queuedSends: 0 });
     }
+  }
+
+  // The SDK exposes manual compaction only; auto-compaction is the client's job
+  // (the CLI runs its own loop). After each idle orchestrator turn we compact
+  // once the context window crosses the same effective limit the meter shows.
+  private async maybeAutoCompact(appSessionId: string): Promise<void> {
+    const mission = this.findMission(appSessionId);
+    if (!mission || mission.autoCompacting) return;
+    const limit = await this.effectiveCompactionLimit(mission.summary);
+    if (limit === undefined || limit <= 0) return;
+    const used = mission.summary.contextTokens;
+    if (!used || used < limit) return;
+    mission.autoCompacting = true;
+    try {
+      await this.compactSession(appSessionId);
+    } finally {
+      const current = this.findMission(appSessionId);
+      if (current) current.autoCompacting = false;
+    }
+  }
+
+  // Mirrors the ContextMeter computation: per-model override -> global default,
+  // clamped to the model's context window.
+  private async effectiveCompactionLimit(summary: MissionSummary): Promise<number | undefined> {
+    const defaults = await this.getFactoryDefaults();
+    const configured = compactionTokenLimitForModel(summary.modelId, {}, defaults);
+    return clampCompactionTokenLimit(configured, this.maxContextTokensForModel(summary.modelId));
   }
 
   // Design turns are a single focused task (extra prompts queue), so the model

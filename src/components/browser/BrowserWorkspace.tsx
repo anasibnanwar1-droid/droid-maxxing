@@ -47,6 +47,7 @@ export default function BrowserWorkspace() {
   const obscured =
     state.settingsOpen ||
     state.commandPaletteOpen ||
+    state.contextMeterOpen ||
     !!state.pendingQuestion ||
     state.pendingPermission?.kind === 'spec';
   const frameRef = useRef<HTMLDivElement>(null);
