@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { ChevronRight, Terminal, Copy, Check, FileText, Expand as ExpandIcon, FoldVertical, MousePointer2, PenLine, Bot } from 'lucide-react';
 import type { BrowserTranscriptReference, TranscriptEvent } from '../types/bridge';
 import { Markdown } from './Markdown';
+import { JsonRender, splitJsonRender, hasJsonRender } from './JsonRender';
 import { extractFileChange, type FileChange } from '../lib/diff';
 import { DiffCard } from './DiffView';
 import { CAT_LABEL, toolMeta, safeJson, stripAnsi, formatDuration, isSubagentTool, subagentInfo } from '../lib/tools';
@@ -543,6 +544,23 @@ const InlineSpecCard = memo(function InlineSpecCard({ content, onOpenWiki }: { c
   );
 });
 
+/* ── Assistant message body: interleaves Markdown with <json-render> blocks ── */
+const MessageBody = memo(function MessageBody({ text }: { text: string }) {
+  if (!hasJsonRender(text)) return <Markdown>{text}</Markdown>;
+  const segments = splitJsonRender(text);
+  return (
+    <>
+      {segments.map((seg, i) =>
+        seg.type === 'json-render' ? (
+          <JsonRender key={i} source={seg.value} />
+        ) : seg.value.trim() ? (
+          <Markdown key={i}>{seg.value}</Markdown>
+        ) : null,
+      )}
+    </>
+  );
+});
+
 const FeedItemView = memo(function FeedItemView({ item, live, compacting, onOpenDiff, onOpenSubagent, liveTiming, specDraft, specContent }: {
   item: FeedItem;
   live: boolean;
@@ -565,7 +583,7 @@ const FeedItemView = memo(function FeedItemView({ item, live, compacting, onOpen
       }
       return (
         <div className="group/msg">
-          <Markdown>{text}</Markdown>
+          <MessageBody text={text} />
           {live ? (
             <StreamingCaret />
           ) : (
