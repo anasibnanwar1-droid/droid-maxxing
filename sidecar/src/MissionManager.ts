@@ -1545,6 +1545,15 @@ export class MissionManager {
           error: (message) =>
             this.emitError({ sessionId: agentSessionId, missionId: agent.missionId, message: `Could not compact subagent: ${message}` }),
           refresh: () => this.refreshContext(agentSessionId, agent.session),
+          // Workers compact in place. A worker keyed by its session id is also
+          // how the orchestrator addresses its handoff/result, so we must never
+          // swap to a new backing id; surface it as an error instead of
+          // silently emitting "complete" while keeping a stale agent.session.
+          reload: (newSessionId) => {
+            throw new Error(
+              `daemon returned a new backing session (${newSessionId}); subagent sessions must compact in place to keep handoff addressing stable`,
+            );
+          },
         },
         { compactType },
       );

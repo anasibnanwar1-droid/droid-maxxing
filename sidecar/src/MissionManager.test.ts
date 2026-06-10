@@ -417,7 +417,7 @@ class FakeCompactionSession {
   compactions = 0;
   settingsUpdates: Array<Record<string, unknown>> = [];
 
-  constructor(readonly sessionId: string, private used: number) {}
+  constructor(readonly sessionId: string, private used: number, private swapTo?: string) {}
 
   async *stream(prompt: string): AsyncGenerator<never, void, undefined> {
     this.prompts.push(prompt);
@@ -433,7 +433,7 @@ class FakeCompactionSession {
 
   async compactSession(): Promise<{ newSessionId: string; removedCount: number }> {
     this.compactions += 1;
-    return { newSessionId: this.sessionId, removedCount: 4 };
+    return { newSessionId: this.swapTo ?? this.sessionId, removedCount: 4 };
   }
 }
 
@@ -505,9 +505,9 @@ test('rejects manual compaction while streaming', async () => {
   assert.equal(hasRejection, true);
 });
 
-function workerAutoCompactHarness(workerUsed: number, workerLimit?: number) {
+function workerAutoCompactHarness(workerUsed: number, workerLimit?: number, swapTo?: string) {
   const { manager, session: orchestratorSession, events, mission } = autoCompactHarness(0, undefined);
-  const workerSession = new FakeCompactionSession('worker-compact', workerUsed);
+  const workerSession = new FakeCompactionSession('worker-compact', workerUsed, swapTo);
   mission.knownSubagents.add('worker-compact');
   mission.agents.set('worker-compact', {
     session: workerSession,
@@ -550,4 +550,19 @@ test('worker does not auto-compact when its effective limit is unset', async () 
   const { manager, workerSession } = workerAutoCompactHarness(250_000, undefined);
   await manager.handle({ type: 'agent.send', missionId: 'app-compact', agentSessionId: 'worker-compact', text: 'go' });
   assert.equal(workerSession.compactions, 0);
+});
+
+test('worker compaction fails loudly instead of trusting a swapped backing session', async () => {
+  const { manager, events, mission } = workerAutoCompactHarness(250_000, 200_000, 'worker-swapped');
+  await manager.handle({ type: 'agent.send', missionId: 'app-compact', agentSessionId: 'worker-compact', text: 'go' });
+  // The agent keeps its original session id (handoff addressing stays stable).
+  assert.equal(mission.agents.get('worker-compact')?.session.sessionId, 'worker-compact');
+  // The swap surfaces as an error rather than a silent "complete".
+  assert.equal(events.some((e) => e.type === 'error' && /new backing session/i.test((e as { message?: string }).message ?? '')), true);
+  const completed = events.some(
+    (e) =>
+      e.type === 'mission.transcript' &&
+      /Compaction complete/i.test((e as { event?: { text?: string } }).event?.text ?? ''),
+  );
+  assert.equal(completed, false);
 });

@@ -110,20 +110,21 @@ export async function runCompaction(
 ): Promise<void> {
   const { compactType } = options;
   sink.status('Compacting conversation...', compactType);
-  let result: Awaited<ReturnType<CompactableSession['compactSession']>> | undefined;
+  // The reload and refresh hooks can fail too (e.g. loading a swapped backing
+  // session). Keep them inside the catch so a failure surfaces through
+  // sink.error and never escapes to wedge the caller's streaming/idle state.
   try {
-    result = await session.compactSession(
+    const result = await session.compactSession(
       options.customInstructions ? { customInstructions: options.customInstructions } : {},
     );
+    if (!result) return;
+    const removedCount = result.removedCount ?? 0;
+    if (sink.reload && result.newSessionId && result.newSessionId !== session.sessionId) {
+      await sink.reload(result.newSessionId, removedCount);
+    }
+    await sink.refresh();
+    sink.status(`Compaction complete. Removed ${removedCount.toLocaleString()} messages.`, compactType);
   } catch (err) {
     sink.error(err instanceof Error ? err.message : String(err));
-    return;
   }
-  if (!result) return;
-  const removedCount = result.removedCount ?? 0;
-  if (sink.reload && result.newSessionId && result.newSessionId !== session.sessionId) {
-    await sink.reload(result.newSessionId, removedCount);
-  }
-  await sink.refresh();
-  sink.status(`Compaction complete. Removed ${removedCount.toLocaleString()} messages.`, compactType);
 }
