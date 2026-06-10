@@ -435,6 +435,8 @@ class FakeCompactionSession {
     this.compactions += 1;
     return { newSessionId: this.swapTo ?? this.sessionId, removedCount: 4 };
   }
+
+  async close(): Promise<void> {}
 }
 
 function autoCompactHarness(used: number, effectiveCompactionTokenLimit?: number) {
@@ -555,8 +557,9 @@ test('worker does not auto-compact when its effective limit is unset', async () 
 test('worker compaction fails loudly instead of trusting a swapped backing session', async () => {
   const { manager, events, mission } = workerAutoCompactHarness(250_000, 200_000, 'worker-swapped');
   await manager.handle({ type: 'agent.send', missionId: 'app-compact', agentSessionId: 'worker-compact', text: 'go' });
-  // The agent keeps its original session id (handoff addressing stays stable).
-  assert.equal(mission.agents.get('worker-compact')?.session.sessionId, 'worker-compact');
+  // The stale worker is closed (removed) rather than left usable with a session
+  // the daemon swapped out from under us.
+  assert.equal(mission.agents.has('worker-compact'), false);
   // The swap surfaces as an error rather than a silent "complete".
   assert.equal(events.some((e) => e.type === 'error' && /new backing session/i.test((e as { message?: string }).message ?? '')), true);
   const completed = events.some(

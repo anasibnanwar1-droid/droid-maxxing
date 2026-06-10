@@ -61,6 +61,7 @@ import {
   effectiveCompactionLimit,
   normalizeCompactionTokenLimit,
   runCompaction,
+  type CompactionOutcome,
   type CompactType,
 } from './compaction.js';
 
@@ -1515,8 +1516,15 @@ export class MissionManager {
         // queue instead of racing a second driveAgent(). Worker compaction is
         // in-place and scoped to this worker's own session/history.
         await this.refreshContext(agent.session.sessionId, agent.session);
-        await this.maybeAutoCompactAgent(agent);
+        const compaction = await this.maybeAutoCompactAgent(agent);
         agent.streaming = false;
+        if (compaction === 'failed') {
+          // The worker's backing session is no longer trustworthy (e.g. the
+          // daemon swapped its id). Close it instead of draining queued sends
+          // against a stale session; the next send re-opens a fresh one.
+          await this.closeAgent(agent.missionId, agent.session.sessionId);
+          return;
+        }
         const next = agent.pendingSends.shift();
         if (next !== undefined) void this.driveAgent(agent, next);
         else this.emit({ type: 'agent.updated', missionId: agent.missionId, agentSessionId: agent.session.sessionId, role: agent.role, status: 'paused' });
@@ -1527,18 +1535,19 @@ export class MissionManager {
   // Workers compact their own session through the shared in-place path. No
   // reload hook: a worker keeps its session id stable so the orchestrator's
   // handoff addressing is never altered, and only this worker's own
-  // session/history is affected.
-  private async maybeAutoCompactAgent(agent: LiveAgent): Promise<void> {
+  // session/history is affected. Returns the compaction outcome (or undefined
+  // when no compaction was attempted) so the caller can recover on failure.
+  private async maybeAutoCompactAgent(agent: LiveAgent): Promise<CompactionOutcome | undefined> {
     const used = this.contextSnapshots.get(agent.session.sessionId)?.used;
-    if (!autoCompactionDue(agent, used)) return;
-    await this.compactAgent(agent, 'auto');
+    if (!autoCompactionDue(agent, used)) return undefined;
+    return this.compactAgent(agent, 'auto');
   }
 
-  private async compactAgent(agent: LiveAgent, compactType: CompactType): Promise<void> {
+  private async compactAgent(agent: LiveAgent, compactType: CompactType): Promise<CompactionOutcome> {
     const agentSessionId = agent.session.sessionId;
     agent.compacting = true;
     try {
-      await runCompaction(
+      return await runCompaction(
         agent.session,
         {
           status: (text, ct) => this.emitStatus(agent.missionId, text, ct, agentSessionId, agent.role),

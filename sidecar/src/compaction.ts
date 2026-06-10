@@ -101,13 +101,22 @@ export interface CompactionOptions {
   compactType: CompactType;
 }
 
+// 'completed' - compaction ran and the session is usable.
+// 'noop'      - the daemon reported nothing to compact; session unchanged.
+// 'failed'    - compaction (or its reload/refresh) errored. The caller must
+//               treat the session as no longer trustworthy and recover (e.g.
+//               close a worker) rather than reusing it.
+export type CompactionOutcome = 'completed' | 'noop' | 'failed';
+
 // The single in-place compaction path: announce, compact, (rarely) reload a
-// swapped backing session, refresh context, announce completion.
+// swapped backing session, refresh context, announce completion. Errors never
+// throw (so they cannot wedge the caller mid-stream); the returned outcome lets
+// the caller decide whether the session is still safe to reuse.
 export async function runCompaction(
   session: CompactableSession,
   sink: CompactionSink,
   options: CompactionOptions,
-): Promise<void> {
+): Promise<CompactionOutcome> {
   const { compactType } = options;
   sink.status('Compacting conversation...', compactType);
   // The reload and refresh hooks can fail too (e.g. loading a swapped backing
@@ -117,14 +126,16 @@ export async function runCompaction(
     const result = await session.compactSession(
       options.customInstructions ? { customInstructions: options.customInstructions } : {},
     );
-    if (!result) return;
+    if (!result) return 'noop';
     const removedCount = result.removedCount ?? 0;
     if (sink.reload && result.newSessionId && result.newSessionId !== session.sessionId) {
       await sink.reload(result.newSessionId, removedCount);
     }
     await sink.refresh();
     sink.status(`Compaction complete. Removed ${removedCount.toLocaleString()} messages.`, compactType);
+    return 'completed';
   } catch (err) {
     sink.error(err instanceof Error ? err.message : String(err));
+    return 'failed';
   }
 }
