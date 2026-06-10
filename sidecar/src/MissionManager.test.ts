@@ -415,6 +415,7 @@ test('runtime defaults preserve saved model settings when the catalog is unavail
 class FakeCompactionSession {
   prompts: string[] = [];
   compactions = 0;
+  failCompaction = false;
   settingsUpdates: Array<Record<string, unknown>> = [];
 
   constructor(readonly sessionId: string, private used: number, private swapTo?: string) {}
@@ -432,6 +433,7 @@ class FakeCompactionSession {
   }
 
   async compactSession(): Promise<{ newSessionId: string; removedCount: number }> {
+    if (this.failCompaction) throw new Error('transient compaction failure');
     this.compactions += 1;
     return { newSessionId: this.swapTo ?? this.sessionId, removedCount: 4 };
   }
@@ -568,4 +570,17 @@ test('worker compaction fails loudly instead of trusting a swapped backing sessi
       /Compaction complete/i.test((e as { event?: { text?: string } }).event?.text ?? ''),
   );
   assert.equal(completed, false);
+});
+
+test('transient worker compaction failure keeps the session and drains queued sends', async () => {
+  const { manager, mission, workerSession } = workerAutoCompactHarness(250_000, 200_000);
+  workerSession.failCompaction = true;
+  const agent = mission.agents.get('worker-compact') as { pendingSends: string[] };
+  agent.pendingSends.push('queued-after');
+  await manager.handle({ type: 'agent.send', missionId: 'app-compact', agentSessionId: 'worker-compact', text: 'go' });
+  // A transient failure must not close the worker...
+  assert.equal(mission.agents.has('worker-compact'), true);
+  // ...and must not drop the queued send (it drains on a fresh turn).
+  await waitFor(() => workerSession.prompts.includes('queued-after'));
+  assert.equal(workerSession.prompts.includes('queued-after'), true);
 });

@@ -1518,13 +1518,20 @@ export class MissionManager {
         await this.refreshContext(agent.session.sessionId, agent.session);
         const compaction = await this.maybeAutoCompactAgent(agent);
         agent.streaming = false;
-        if (compaction === 'failed') {
-          // The worker's backing session is no longer trustworthy (e.g. the
-          // daemon swapped its id). Close it instead of draining queued sends
-          // against a stale session; the next send re-opens a fresh one.
-          await this.closeAgent(agent.missionId, agent.session.sessionId);
+        if (compaction === 'stale') {
+          // The daemon swapped the worker's backing session id, which we cannot
+          // adopt without re-keying. Close the stale session and re-deliver any
+          // queued user input against a fresh one rather than dropping it or
+          // reusing the stale session.
+          const queued = agent.pendingSends.splice(0);
+          const agentSessionId = agent.session.sessionId;
+          this.contextSnapshots.delete(agentSessionId);
+          await this.closeAgent(agent.missionId, agentSessionId);
+          for (const queuedText of queued) await this.sendAgent(agent.missionId, agentSessionId, queuedText);
           return;
         }
+        // A transient compaction failure leaves the session valid, so fall
+        // through and drain queued sends normally.
         const next = agent.pendingSends.shift();
         if (next !== undefined) void this.driveAgent(agent, next);
         else this.emit({ type: 'agent.updated', missionId: agent.missionId, agentSessionId: agent.session.sessionId, role: agent.role, status: 'paused' });
@@ -1554,15 +1561,10 @@ export class MissionManager {
           error: (message) =>
             this.emitError({ sessionId: agentSessionId, missionId: agent.missionId, message: `Could not compact subagent: ${message}` }),
           refresh: () => this.refreshContext(agentSessionId, agent.session),
-          // Workers compact in place. A worker keyed by its session id is also
-          // how the orchestrator addresses its handoff/result, so we must never
-          // swap to a new backing id; surface it as an error instead of
-          // silently emitting "complete" while keeping a stale agent.session.
-          reload: (newSessionId) => {
-            throw new Error(
-              `daemon returned a new backing session (${newSessionId}); subagent sessions must compact in place to keep handoff addressing stable`,
-            );
-          },
+          // No reload hook: a worker keyed by its session id is also how the
+          // orchestrator addresses its handoff/result, so it must never swap to
+          // a new backing id. runCompaction reports a swap as a 'stale' outcome
+          // instead, and the driver recovers by reopening a fresh session.
         },
         { compactType },
       );

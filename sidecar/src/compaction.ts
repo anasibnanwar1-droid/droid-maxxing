@@ -103,10 +103,14 @@ export interface CompactionOptions {
 
 // 'completed' - compaction ran and the session is usable.
 // 'noop'      - the daemon reported nothing to compact; session unchanged.
-// 'failed'    - compaction (or its reload/refresh) errored. The caller must
-//               treat the session as no longer trustworthy and recover (e.g.
-//               close a worker) rather than reusing it.
-export type CompactionOutcome = 'completed' | 'noop' | 'failed';
+// 'failed'    - compaction (or its reload/refresh) errored transiently. The
+//               session object itself is unchanged and still usable; the caller
+//               can keep it and retry later.
+// 'stale'     - the daemon swapped to a new backing session id but the owner
+//               has no reload hook to adopt it (workers keep a stable id). The
+//               current session object is no longer valid; the caller must
+//               recover (close and reopen) rather than reuse it.
+export type CompactionOutcome = 'completed' | 'noop' | 'failed' | 'stale';
 
 // The single in-place compaction path: announce, compact, (rarely) reload a
 // swapped backing session, refresh context, announce completion. Errors never
@@ -128,7 +132,14 @@ export async function runCompaction(
     );
     if (!result) return 'noop';
     const removedCount = result.removedCount ?? 0;
-    if (sink.reload && result.newSessionId && result.newSessionId !== session.sessionId) {
+    if (result.newSessionId && result.newSessionId !== session.sessionId) {
+      if (!sink.reload) {
+        // The owner keeps a stable session id (workers) and cannot adopt a
+        // swapped backing id without re-keying. Surface it and signal the
+        // session is now stale so the caller can recover.
+        sink.error(`daemon returned a new backing session (${result.newSessionId}); subagent sessions must compact in place to keep handoff addressing stable`);
+        return 'stale';
+      }
       await sink.reload(result.newSessionId, removedCount);
     }
     await sink.refresh();
