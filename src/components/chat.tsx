@@ -412,7 +412,7 @@ function collapseRun(run: FeedItem[]): FeedItem[] {
   };
   for (const it of work) {
     if (it.type === 'subagent') { flush(); out.push(it); }
-    else if (it.type === 'status' && it.event.compactType === 'manual') { flush(); out.push(it); }
+    else if (it.type === 'status' && isCompactionCompleteStatus(it.event.text) && it.event.compactType === 'manual') { flush(); out.push(it); }
     else buf.push(it);
   }
   flush();

@@ -433,7 +433,7 @@ class FakeCompactionSession {
   }
 }
 
-function autoCompactHarness(used: number) {
+function autoCompactHarness(used: number, effectiveCompactionTokenLimit?: number) {
   const events: ServerEvent[] = [];
   const manager = new MissionManager((event) => events.push(event));
   const session = new FakeCompactionSession('droid-compact', used);
@@ -451,6 +451,7 @@ function autoCompactHarness(used: number) {
     subagentSettings: new Map(),
     pendingSubagents: [],
     mcpServers: [],
+    effectiveCompactionTokenLimit: effectiveCompactionTokenLimit,
   };
   const internals = manager as unknown as {
     history: {
@@ -460,7 +461,6 @@ function autoCompactHarness(used: number) {
       hiddenDroidSessionIds: () => Set<string>;
     };
     missions: Map<string, typeof mission>;
-    getFactoryDefaults: () => Promise<{ compactionTokenLimit: number }>;
   };
   internals.history = {
     recordEvent: () => {},
@@ -468,20 +468,34 @@ function autoCompactHarness(used: number) {
     summaryPatches: () => new Map(),
     hiddenDroidSessionIds: () => new Set(),
   };
-  internals.getFactoryDefaults = async () => ({ compactionTokenLimit: 200_000 });
   internals.missions.set(mission.summary.id, mission);
   return { manager, session, events, mission };
 }
 
 test('auto-compacts an idle turn once context crosses the effective limit', async () => {
-  const { manager, session, events } = autoCompactHarness(250_000);
+  const { manager, session, events } = autoCompactHarness(250_000, 200_000);
   await manager.handle({ type: 'mission.send', missionId: 'app-compact', text: 'hello' });
   assert.equal(session.compactions, 1);
   assert.equal(events.some((event) => event.type === 'mission.error' || event.type === 'error'), false);
 });
 
 test('does not auto-compact when context stays under the effective limit', async () => {
-  const { manager, session } = autoCompactHarness(150_000);
+  const { manager, session } = autoCompactHarness(150_000, 200_000);
   await manager.handle({ type: 'mission.send', missionId: 'app-compact', text: 'hello' });
   assert.equal(session.compactions, 0);
+});
+
+test('does not auto-compact when effectiveCompactionTokenLimit is unset', async () => {
+  const { manager, session } = autoCompactHarness(250_000, undefined);
+  await manager.handle({ type: 'mission.send', missionId: 'app-compact', text: 'hello' });
+  assert.equal(session.compactions, 0);
+});
+
+test('rejects manual compaction while streaming', async () => {
+  const { manager, mission, events } = autoCompactHarness(250_000, 200_000);
+  mission.streaming = true;
+  await manager.handle({ type: 'mission.compact', missionId: 'app-compact', customInstructions: undefined });
+  assert.equal(mission.streaming, true);
+  const hasRejection = events.some((e) => e.type === 'mission.transcript' && /cannot compact/i.test((e as { event?: { text?: string } }).event?.text ?? ''));
+  assert.equal(hasRejection, true);
 });

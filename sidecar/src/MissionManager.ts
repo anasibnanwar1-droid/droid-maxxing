@@ -96,6 +96,11 @@ interface Mission {
   // Guards the idle auto-compaction check so a compaction in flight is not
   // re-triggered re-entrantly while it replaces the underlying session.
   autoCompacting?: boolean;
+  // The effective compaction token limit computed at creation/resume time,
+  // matching the threshold the ContextMeter shows (per-model → global default,
+  // clamped to model window). Stored so maybeAutoCompact doesn't re-derive it
+  // from defaults that may have drifted since session creation.
+  effectiveCompactionTokenLimit?: number;
 }
 
 interface PendingPermission {
@@ -267,11 +272,16 @@ export class MissionManager {
         await this.updateSessionSettings(cmd.sessionId, cmd);
         return;
       case 'session.compact':
-        await this.compactSession(cmd.sessionId, cmd.customInstructions, 'manual');
+      case 'mission.compact': {
+        const missionId = cmd.type === 'session.compact' ? cmd.sessionId : cmd.missionId;
+        const mission = this.findMission(missionId);
+        if (mission?.streaming || mission?.autoCompacting) {
+          this.emitStatus(missionId, 'Cannot compact while a turn is active. Try again when the model is idle.');
+          return;
+        }
+        await this.compactSession(missionId, cmd.customInstructions, 'manual');
         return;
-      case 'mission.compact':
-        await this.compactSession(cmd.missionId, cmd.customInstructions, 'manual');
-        return;
+      }
       case 'session.fork':
         await this.withSession(cmd.sessionId, (session) => session.forkSession());
         return;
@@ -615,6 +625,10 @@ export class MissionManager {
         ? ''
         : stringValue(init.cwd) || stringValue(init.session?.cwd) || historical?.cwd || '';
       const modelId = init.settings?.modelId ?? historical?.modelId ?? defaults.modelId;
+      const resumeCompactionLimit = clampCompactionTokenLimit(
+        compactionTokenLimitForModel(modelId, {}, defaults),
+        this.maxContextTokensForModel(modelId),
+      );
       const summary = this.applyPendingSettingsToSummary({
         id: appSessionId,
         sessionId: droidSessionId,
@@ -649,7 +663,7 @@ export class MissionManager {
         createdAt: historical?.createdAt ?? now,
         updatedAt: now,
       });
-      const mission: Mission = this.createLiveMission(summary, session, mcp.servers);
+      const mission: Mission = this.createLiveMission(summary, session, mcp.servers, resumeCompactionLimit);
       this.missions.set(appSessionId, mission);
       this.history.syncSummaries([summary]);
       this.emit({ type: 'mission.created', clientRef: `resume:${appSessionId}`, mission: summary });
@@ -809,7 +823,7 @@ export class MissionManager {
         updatedAt: now,
       };
       ref.id = id;
-      const mission = this.createLiveMission(summary, session, mcp.servers);
+      const mission = this.createLiveMission(summary, session, mcp.servers, compactionSettings.compactionTokenLimit);
       this.missions.set(id, mission);
       this.history.syncSummaries([summary]);
       this.emit({ type: 'mission.created', clientRef: cmd.clientRef, mission: summary });
@@ -821,7 +835,7 @@ export class MissionManager {
     }
   }
 
-  private createLiveMission(summary: MissionSummary, session: DroidSession, mcpServers: SdkMcpServer[] = []): Mission {
+  private createLiveMission(summary: MissionSummary, session: DroidSession, mcpServers: SdkMcpServer[] = [], effectiveCompactionTokenLimit?: number): Mission {
     return {
       summary,
       session,
@@ -837,6 +851,7 @@ export class MissionManager {
       pendingSubagents: [],
       mcpServers,
       permissionGrants: new Set(),
+      effectiveCompactionTokenLimit,
     };
   }
 
@@ -947,27 +962,26 @@ export class MissionManager {
       }
     } finally {
       this.stopContextPolling(appSessionId);
-      mission.streaming = false;
       mission.interruptingForSteer = false;
-      // Refresh first so the auto-compaction check sees the turn's final usage,
-      // then compact (which replaces the session) before draining the queue so
-      // any queued sends run against the freshly compacted context.
+      // Keep streaming=true while refreshContext / maybeAutoCompact are in flight
+      // so concurrent sends queue instead of racing a second drive().
       await this.refreshContext(appSessionId, mission.session);
       await this.maybeAutoCompact(appSessionId);
+      mission.streaming = false;
       const next = mission.pendingSends.shift();
-      this.patch(appSessionId, { queuedSends: mission.pendingSends.length });
+      this.patch(appSessionId, { streaming: false, queuedSends: mission.pendingSends.length });
       if (next !== undefined) void this.drive(appSessionId, next);
-      else this.patch(appSessionId, { streaming: false, queuedSends: 0 });
     }
   }
 
   // The SDK exposes manual compaction only; auto-compaction is the client's job
   // (the CLI runs its own loop). After each idle orchestrator turn we compact
-  // once the context window crosses the same effective limit the meter shows.
+  // once the context window crosses the effective limit stored on the Mission
+  // at creation time (matching the threshold the ContextMeter shows).
   private async maybeAutoCompact(appSessionId: string): Promise<void> {
     const mission = this.findMission(appSessionId);
     if (!mission || mission.autoCompacting) return;
-    const limit = await this.effectiveCompactionLimit(mission.summary);
+    const limit = mission.effectiveCompactionTokenLimit;
     if (limit === undefined || limit <= 0) return;
     const used = mission.summary.contextTokens;
     if (!used || used < limit) return;
@@ -981,13 +995,6 @@ export class MissionManager {
   }
 
   // Mirrors the ContextMeter computation: per-model override -> global default,
-  // clamped to the model's context window.
-  private async effectiveCompactionLimit(summary: MissionSummary): Promise<number | undefined> {
-    const defaults = await this.getFactoryDefaults();
-    const configured = compactionTokenLimitForModel(summary.modelId, {}, defaults);
-    return clampCompactionTokenLimit(configured, this.maxContextTokensForModel(summary.modelId));
-  }
-
   // Design turns are a single focused task (extra prompts queue), so the model
   // does not need TodoWrite — it otherwise loops updating the list after it has
   // already answered. Disable TodoWrite for design turns and restore it for
