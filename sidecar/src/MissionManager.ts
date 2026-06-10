@@ -93,9 +93,10 @@ interface Mission {
   // Tracks whether TodoWrite is currently disabled on the session so we only
   // call updateSettings when the design/normal turn policy actually changes.
   todoDisabledForDesign?: boolean;
-  // Guards the idle auto-compaction check so a compaction in flight is not
-  // re-triggered re-entrantly while it replaces the underlying session.
-  autoCompacting?: boolean;
+  // Guards compactSession so neither auto nor manual compaction can run
+  // concurrently (the SDK session swap is not safe to overlap with another
+  // compact or a streaming turn).
+  compacting?: boolean;
   // The effective compaction token limit computed at creation/resume time,
   // matching the threshold the ContextMeter shows (per-model → global default,
   // clamped to model window). Stored so maybeAutoCompact doesn't re-derive it
@@ -275,7 +276,7 @@ export class MissionManager {
       case 'mission.compact': {
         const missionId = cmd.type === 'session.compact' ? cmd.sessionId : cmd.missionId;
         const mission = this.findMission(missionId);
-        if (mission?.streaming || mission?.autoCompacting) {
+        if (mission?.streaming || mission?.compacting) {
           this.emitStatus(missionId, 'Cannot compact while a turn is active. Try again when the model is idle.');
           return;
         }
@@ -980,18 +981,12 @@ export class MissionManager {
   // at creation time (matching the threshold the ContextMeter shows).
   private async maybeAutoCompact(appSessionId: string): Promise<void> {
     const mission = this.findMission(appSessionId);
-    if (!mission || mission.autoCompacting) return;
+    if (!mission || mission.compacting) return;
     const limit = mission.effectiveCompactionTokenLimit;
     if (limit === undefined || limit <= 0) return;
     const used = mission.summary.contextTokens;
     if (!used || used < limit) return;
-    mission.autoCompacting = true;
-    try {
-      await this.compactSession(appSessionId, undefined, 'auto');
-    } finally {
-      const current = this.findMission(appSessionId);
-      if (current) current.autoCompacting = false;
-    }
+    await this.compactSession(appSessionId, undefined, 'auto');
   }
 
   // Mirrors the ContextMeter computation: per-model override -> global default,
@@ -1184,6 +1179,7 @@ export class MissionManager {
       tokensIn: mission?.summary.tokensIn ?? 0,
       tokensOut: mission?.summary.tokensOut ?? 0,
     };
+    if (mission) mission.compacting = true;
     try {
       if (mission) this.emitStatus(appSessionId, 'Compacting conversation...', compactType);
       const result = await this.withSession(appSessionId, (session) =>
@@ -1243,6 +1239,9 @@ export class MissionManager {
       }
     } catch (err) {
       this.emitError({ sessionId: oldDroidSessionId, missionId: appSessionId, message: `Could not compact session: ${errMsg(err)}` });
+    } finally {
+      const current = this.findMission(appSessionId);
+      if (current) current.compacting = false;
     }
   }
 
@@ -1258,7 +1257,7 @@ export class MissionManager {
     }
     const appSessionId = mission.summary.id;
     if (!(await this.applyPendingSessionSettings(appSessionId))) return;
-    if (mission.streaming) {
+    if (mission.streaming || mission.compacting) {
       mission.pendingSends.push(text);
       this.patch(appSessionId, { queuedSends: mission.pendingSends.length });
       this.emitStatus(appSessionId, `Queued message ${mission.pendingSends.length}.`);

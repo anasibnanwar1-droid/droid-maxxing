@@ -206,6 +206,7 @@ test('sendNow interrupts the live turn and prioritizes the steering prompt', asy
     subagentSettings: new Map(),
     pendingSubagents: [],
     mcpServers: [],
+    compacting: false,
   };
   const internals = manager as unknown as {
     history: { recordEvent: () => void; syncSummaries: () => void };
@@ -247,6 +248,7 @@ test('design turns disable TodoWrite and normal turns restore it', async () => {
     subagentSettings: new Map(),
     pendingSubagents: [],
     mcpServers: [],
+    compacting: false,
   };
   const internals = manager as unknown as {
     history: { recordEvent: () => void; syncSummaries: () => void };
@@ -452,6 +454,7 @@ function autoCompactHarness(used: number, effectiveCompactionTokenLimit?: number
     pendingSubagents: [],
     mcpServers: [],
     effectiveCompactionTokenLimit: effectiveCompactionTokenLimit,
+    compacting: false,
   };
   const internals = manager as unknown as {
     history: {
