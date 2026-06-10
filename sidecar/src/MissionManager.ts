@@ -1279,7 +1279,6 @@ export class MissionManager {
     if (mission.streaming || mission.compacting) {
       mission.pendingSends.push(text);
       this.patch(appSessionId, { queuedSends: mission.pendingSends.length });
-      this.emitStatus(appSessionId, `Queued message ${mission.pendingSends.length}.`);
       return;
     }
     await this.drive(appSessionId, text);
@@ -1484,7 +1483,6 @@ export class MissionManager {
     agent.lastUsedAt = Date.now();
     if (agent.streaming || agent.compacting) {
       agent.pendingSends.push(text);
-      this.emitStatus(appSessionId, `Queued subagent message ${agent.pendingSends.length}.`);
       return;
     }
     await this.driveAgent(agent, text);
@@ -1529,6 +1527,9 @@ export class MissionManager {
           const agentSessionId = agent.session.sessionId;
           this.contextSnapshots.delete(agentSessionId);
           await this.closeAgent(agent.missionId, agentSessionId);
+          // closeAgent does not emit a worker status, so move the UI off the
+          // 'running' state it entered at turn start.
+          this.emit({ type: 'agent.updated', missionId: agent.missionId, agentSessionId, role: agent.role, status: 'paused' });
           if (queued.length > 0) {
             this.emitError({
               sessionId: agentSessionId,

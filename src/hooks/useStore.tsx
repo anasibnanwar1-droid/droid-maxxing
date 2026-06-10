@@ -17,6 +17,7 @@ import type {
   SessionKind,
   BrowserState,
   BrowserViewportMode,
+  DesignReference,
 } from '../types/bridge';
 import { addWorkspaceCwd } from '../lib/workspaces';
 
@@ -27,11 +28,18 @@ export interface WorkerInfo extends WorkerSummary {
   startedAt: number;
 }
 
+export interface QueuedDesignContext {
+  browserKey: string;
+  references: DesignReference[];
+  referenceIds: string[];
+}
+
 export interface QueuedPrompt {
   id: string;
   text: string;
   skills: string[];
   files: string[];
+  design?: QueuedDesignContext;
 }
 
 export interface AgentModelConfig {

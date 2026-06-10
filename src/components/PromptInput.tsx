@@ -3,9 +3,10 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { useStore } from '../hooks/useStore';
 import type { QueuedPrompt } from '../hooks/useStore';
 import { useMissionLive } from '../hooks/useMissionLive';
-import { sendToMission, sendToMissionNow, sendToAgent, sendToAgentNow, createMission, interruptMission, interruptAgent, compactSession, setInteractionMode, newClientRef, listSkills } from '../lib/commands';
+import { sendToMission, sendToMissionNow, sendToAgent, sendToAgentNow, sendDesignPrompt, createMission, interruptMission, interruptAgent, compactSession, setInteractionMode, newClientRef, listSkills } from '../lib/commands';
+import { browserTranscriptReferencesFromDesignReferences } from './browser/browserTranscriptReferences';
 import { pickDirectory, listFiles } from '../lib/desktop';
-import { ArrowUp, ChevronDown, SlidersHorizontal, Square, FileText, X, Folder, User, Box, ListPlus, GripVertical, Pencil } from 'lucide-react';
+import { ArrowUp, ChevronDown, SlidersHorizontal, Square, FileText, X, Folder, User, Box, ListPlus, GripVertical, Pencil, MousePointerSquareDashed } from 'lucide-react';
 import ModelSelectorPopover from './ModelSelectorPopover';
 import PermissionInline from './PermissionInline';
 import PlanApprovalInline from './PlanApprovalInline';
@@ -389,6 +390,31 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
 
   const deliverPrompt = (p: QueuedPrompt) => {
     if (!activeMission) return;
+    if (p.design) {
+      try {
+        sendDesignPrompt(p.design.browserKey, p.text, p.design.referenceIds);
+      } catch (err) {
+        console.error('[PromptInput] queued design send failed:', err);
+        return;
+      }
+      const browserRefs = browserTranscriptReferencesFromDesignReferences(p.design.references);
+      dispatch({
+        type: 'MISSION_TRANSCRIPT',
+        event: {
+          id: `local-design-${Date.now()}`,
+          missionId: activeMission.id,
+          agentSessionId: 'user',
+          role: 'orchestrator',
+          ts: Date.now(),
+          kind: 'text',
+          text: p.text,
+          author: 'user',
+          browserRefs: browserRefs.length ? browserRefs : undefined,
+        },
+      });
+      dispatch({ type: 'REMOVE_QUEUED_PROMPT', missionId: activeMission.id, id: p.id });
+      return;
+    }
     const composed = composeFrom(p.text, p.skills, p.files);
     try {
       sendToMission(activeMission.id, composed);
@@ -617,15 +643,25 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
                 <span className="mt-0.5 cursor-grab text-droid-text-muted/60 active:cursor-grabbing" title="Drag to reorder">
                   <GripVertical className="w-3.5 h-3.5" />
                 </span>
-                <span className="flex-1 whitespace-pre-wrap break-words text-[12px] text-droid-text-secondary">{p.text || '(empty)'}</span>
+                <span className="flex-1 min-w-0">
+                  <span className="block whitespace-pre-wrap break-words text-[12px] text-droid-text-secondary">{p.text || '(empty)'}</span>
+                  {p.design && p.design.references.length > 0 && (
+                    <span className="mt-1 inline-flex items-center gap-1 rounded-md bg-black/20 px-1.5 py-0.5 text-[10px] text-droid-text-muted">
+                      <MousePointerSquareDashed className="w-3 h-3" />
+                      {p.design.references.length} reference{p.design.references.length === 1 ? '' : 's'}
+                    </span>
+                  )}
+                </span>
                 <div className="flex shrink-0 items-center gap-0.5">
-                  <button
-                    onClick={() => editQueuedInComposer(p)}
-                    className="rounded p-1 text-droid-text-muted hover:text-droid-text hover:bg-black/20"
-                    title="Edit in composer"
-                  >
-                    <Pencil className="w-3.5 h-3.5" />
-                  </button>
+                  {!p.design && (
+                    <button
+                      onClick={() => editQueuedInComposer(p)}
+                      className="rounded p-1 text-droid-text-muted hover:text-droid-text hover:bg-black/20"
+                      title="Edit in composer"
+                    >
+                      <Pencil className="w-3.5 h-3.5" />
+                    </button>
+                  )}
                   <button
                     onClick={() => activeMission && dispatch({ type: 'REMOVE_QUEUED_PROMPT', missionId: activeMission.id, id: p.id })}
                     className="rounded p-1 text-droid-text-muted hover:text-droid-orange hover:bg-black/20"
