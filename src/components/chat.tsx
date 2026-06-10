@@ -52,13 +52,14 @@ export function CompactingIndicator() {
 }
 
 /* ── Compaction divider — persistent marker once compaction has completed ── */
-export function CompactionDivider() {
+export function CompactionDivider({ compactType }: { compactType?: 'auto' | 'manual' }) {
+  const manual = compactType === 'manual';
   return (
-    <div className="flex items-center gap-3 py-1 text-droid-text-muted">
+    <div className={`flex items-center gap-3 py-1 ${manual ? 'text-droid-text-secondary' : 'text-droid-text-muted'}`}>
       <div className="h-px flex-1 bg-droid-border/70" />
       <span className="flex items-center gap-1.5 text-[12px] whitespace-nowrap">
         <FoldVertical className="h-3.5 w-3.5" />
-        Context automatically compacted
+        {manual ? 'Session compacted' : 'Context automatically compacted'}
       </span>
       <div className="h-px flex-1 bg-droid-border/70" />
     </div>
@@ -411,6 +412,7 @@ function collapseRun(run: FeedItem[]): FeedItem[] {
   };
   for (const it of work) {
     if (it.type === 'subagent') { flush(); out.push(it); }
+    else if (it.type === 'status' && it.event.compactType === 'manual') { flush(); out.push(it); }
     else buf.push(it);
   }
   flush();
@@ -632,7 +634,7 @@ const FeedItemView = memo(function FeedItemView({ item, live, compacting, onOpen
     case 'status': {
       const text = item.event.text ?? '';
       if (compacting) return <CompactingIndicator />;
-      if (isCompactionCompleteStatus(text)) return <CompactionDivider />;
+      if (isCompactionCompleteStatus(text)) return <CompactionDivider compactType={item.event.compactType} />;
       return live ? (
         <span className="shimmer-text text-[13px] font-medium">{text}</span>
       ) : (

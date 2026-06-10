@@ -267,10 +267,10 @@ export class MissionManager {
         await this.updateSessionSettings(cmd.sessionId, cmd);
         return;
       case 'session.compact':
-        await this.compactSession(cmd.sessionId, cmd.customInstructions);
+        await this.compactSession(cmd.sessionId, cmd.customInstructions, 'manual');
         return;
       case 'mission.compact':
-        await this.compactSession(cmd.missionId, cmd.customInstructions);
+        await this.compactSession(cmd.missionId, cmd.customInstructions, 'manual');
         return;
       case 'session.fork':
         await this.withSession(cmd.sessionId, (session) => session.forkSession());
@@ -973,7 +973,7 @@ export class MissionManager {
     if (!used || used < limit) return;
     mission.autoCompacting = true;
     try {
-      await this.compactSession(appSessionId);
+      await this.compactSession(appSessionId, undefined, 'auto');
     } finally {
       const current = this.findMission(appSessionId);
       if (current) current.autoCompacting = false;
@@ -1155,7 +1155,7 @@ export class MissionManager {
     this.emit({ type: 'event.appended', event });
   }
 
-  private emitStatus(missionId: string, text: string): void {
+  private emitStatus(missionId: string, text: string, compactType?: 'auto' | 'manual'): void {
     this.emitTranscript({
       id: `status-${Date.now().toString(36)}`,
       missionId,
@@ -1164,10 +1164,11 @@ export class MissionManager {
       ts: Date.now(),
       kind: 'status',
       text,
+      compactType,
     });
   }
 
-  private async compactSession(sessionId: string, customInstructions?: string): Promise<void> {
+  private async compactSession(sessionId: string, customInstructions?: string, compactType?: 'auto' | 'manual'): Promise<void> {
     const historical = this.resolveSummary(sessionId);
     const mission = this.findMission(sessionId);
     const appSessionId = mission?.summary.id ?? historical?.id ?? sessionId;
@@ -1177,7 +1178,7 @@ export class MissionManager {
       tokensOut: mission?.summary.tokensOut ?? 0,
     };
     try {
-      if (mission) this.emitStatus(appSessionId, 'Compacting conversation...');
+      if (mission) this.emitStatus(appSessionId, 'Compacting conversation...', compactType);
       const result = await this.withSession(appSessionId, (session) =>
         session.compactSession(customInstructions ? { customInstructions } : {}),
       );
@@ -1211,7 +1212,7 @@ export class MissionManager {
             contextTokens: 0,
           });
           await this.refreshContext(appSessionId, mission.session);
-          this.emitStatus(appSessionId, `Compaction complete. Removed ${removedCount.toLocaleString()} messages.`);
+          this.emitStatus(appSessionId, `Compaction complete. Removed ${removedCount.toLocaleString()} messages.`, compactType);
         } else if (historical) {
           const updated = {
             ...historical,
@@ -1230,7 +1231,7 @@ export class MissionManager {
 
       if (mission) {
         await this.refreshContext(appSessionId, mission.session);
-        this.emitStatus(appSessionId, `Compaction complete. Removed ${removedCount.toLocaleString()} messages.`);
+        this.emitStatus(appSessionId, `Compaction complete. Removed ${removedCount.toLocaleString()} messages.`, compactType);
         this.patch(appSessionId, {});
       }
     } catch (err) {

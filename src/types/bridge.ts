@@ -112,6 +112,10 @@ export interface TranscriptEvent {
   browserRefs?: BrowserTranscriptReference[];
   // Frontend-only: this user message was sent while the model was already working.
   steered?: boolean;
+  // Whether a compaction status was triggered automatically (idle threshold) or
+  // manually (/compact). Manual compaction dividers are promoted to top level;
+  // auto-compaction dividers fold into "Worked for …" groups.
+  compactType?: 'auto' | 'manual';
 }
 
 export type BrowserTranscriptReferenceKind = 'element' | 'region' | 'text';

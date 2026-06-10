@@ -112,6 +112,7 @@ export interface TranscriptEvent {
   files?: string[];
   browserRefs?: BrowserTranscriptReference[];
   steered?: boolean;
+  compactType?: 'auto' | 'manual';
 }
 
 export type BrowserTranscriptReferenceKind = 'element' | 'region' | 'text';
