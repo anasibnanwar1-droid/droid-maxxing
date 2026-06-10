@@ -43,10 +43,11 @@ test('browserTranscriptReferenceFromDesignReference prefers element names for la
     label: 'Main-heading',
     url: 'https://example.com',
     selector: '#hero',
+    imageDataUrl: undefined,
   });
 });
 
-test('browserTranscriptReferenceFromDesignReference labels sketched regions', () => {
+test('browserTranscriptReferenceFromDesignReference labels pencilled regions', () => {
   assert.deepEqual(browserTranscriptReferenceFromDesignReference({
     id: '@region-1',
     anchor: {
@@ -65,5 +66,30 @@ test('browserTranscriptReferenceFromDesignReference labels sketched regions', ()
     label: 'region',
     url: 'https://example.com',
     selector: undefined,
+    imageDataUrl: undefined,
+  });
+});
+
+test('browserTranscriptReferenceFromDesignReference includes screenshot thumbnail', () => {
+  assert.deepEqual(browserTranscriptReferenceFromDesignReference({
+    id: '@region-2',
+    anchor: {
+      id: '@region-2',
+      kind: 'region',
+      label: 'region',
+      box: { x: 0, y: 0, width: 50, height: 20 },
+    },
+    url: 'https://example.com',
+    screenshot: { base64: 'abc123', box: { x: 0, y: 0, width: 50, height: 20 } },
+    viewport: { width: 1000, height: 800, deviceScaleFactor: 2 },
+    scroll: { x: 0, y: 0 },
+    createdAt: '2026-06-06T12:00:00.000Z',
+  }), {
+    id: '@region-2',
+    kind: 'region',
+    label: 'region',
+    url: 'https://example.com',
+    selector: undefined,
+    imageDataUrl: 'data:image/png;base64,abc123',
   });
 });

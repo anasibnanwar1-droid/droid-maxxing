@@ -1,4 +1,4 @@
-const { app, BrowserView, BrowserWindow, Menu, Notification, dialog, ipcMain, safeStorage, shell } = require('electron');
+const { app, BrowserWindow, Menu, Notification, WebContentsView, dialog, ipcMain, safeStorage, session, shell } = require('electron');
 const { execFile, spawn } = require('node:child_process');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
@@ -16,6 +16,11 @@ let sidecar = null;
 let attachedBrowserSessionId = null;
 const nativeBrowsers = new Map();
 const HIDDEN_BROWSER_IDLE_MS = Number(process.env.DROID_NATIVE_BROWSER_IDLE_MS ?? 300_000);
+// A single persistent partition keeps cookies, localStorage, and registered
+// passkeys alive across reloads, dev-server restarts, and app restarts so the
+// user does not have to sign in again every time.
+const BROWSER_PARTITION = 'persist:droid-control-browser';
+let browserSessionConfigured = false;
 
 app.setName(APP_NAME);
 app.setPath('userData', path.join(app.getPath('appData'), APP_NAME));
@@ -99,22 +104,29 @@ function registerIpc() {
   ipcMain.handle('native-browser-close', (_event, { sessionId }) => closeNativeBrowser(sessionId));
   ipcMain.handle('native-browser-reload', (_event, { sessionId }) => reloadNativeBrowser(sessionId));
   ipcMain.handle('native-browser-set-design-mode', (_event, { sessionId, active }) => setNativeBrowserDesignMode(sessionId, active));
-  ipcMain.handle('native-browser-set-sketch-mode', (_event, { sessionId, active }) => setNativeBrowserSketchMode(sessionId, active));
+  ipcMain.handle('native-browser-set-pencil-mode', (_event, { sessionId, active }) => setNativeBrowserPencilMode(sessionId, active));
   ipcMain.handle('native-browser-agent-action', (_event, { request }) => runNativeBrowserAgentAction(request));
   ipcMain.handle('native-browser-capture', (_event, { sessionId, box, options }) => captureNativeBrowser(sessionId, box, options));
 
   ipcMain.on('native-browser-selection', (event, selection) => {
     mainWindow?.webContents.send('native-browser-selection', withNativeBrowserSession(event, selection));
   });
-  ipcMain.on('native-browser-design-prompt', (event, payload) => {
+  ipcMain.on('native-browser-design-prompt', async (event, payload) => {
     const sessionId = nativeBrowserSessionIdForWebContents(event.sender);
-    mainWindow?.webContents.send('native-browser-design-prompt', {
-      ...payload,
-      selection: { ...payload.selection, sessionId },
-    });
+    let selection = { ...payload.selection, sessionId };
+    // Capture the annotated region (pencil strokes, highlights) while it is
+    // still on screen so the agent receives the marked screenshot, not a
+    // clean page that lost the user's annotations.
+    const screenshot = await captureDesignSelection(event.sender, selection).catch(() => undefined);
+    if (screenshot) selection = { ...selection, screenshot };
+    mainWindow?.webContents.send('native-browser-design-prompt', { ...payload, selection });
+    event.sender.send('native-browser-design-prompt-sent');
   });
   ipcMain.on('native-browser-agent-result', (_event, result) => {
     mainWindow?.webContents.send('native-browser-agent-result', result);
+  });
+  ipcMain.on('native-browser-credential-capture', (event, payload) => {
+    void handleCredentialCapture(event.sender, payload);
   });
 }
 
@@ -232,6 +244,164 @@ function stopSidecar() {
   sidecar = null;
 }
 
+function configureBrowserSession() {
+  if (browserSessionConfigured) return;
+  const ses = session.fromPartition(BROWSER_PARTITION);
+  // Allow hardware authenticators (security keys / passkey devices) for this
+  // browsing session only; everything else keeps Electron's safe defaults.
+  ses.setDevicePermissionHandler((details) => details.deviceType === 'hid' || details.deviceType === 'usb');
+  ses.on('select-hid-device', (event, details, callback) => {
+    event.preventDefault();
+    const device = details.deviceList[0];
+    callback(device ? device.deviceId : undefined);
+  });
+  browserSessionConfigured = true;
+}
+
+const CREDENTIAL_VAULT_FILE = () => path.join(app.getPath('userData'), 'browser-credentials.enc');
+const CREDENTIAL_CONSENT_FILE = () => path.join(app.getPath('userData'), 'browser-credentials.consent');
+let credentialCaptureBusy = false;
+
+// Saved-login support is strictly opt-in. Until the user agrees the first time
+// they sign in, nothing is captured, auto-filled, or exposed to the agent.
+// 'unset' = never asked, 'enabled' = allowed, 'disabled' = user said never.
+function getCredentialConsent() {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(CREDENTIAL_CONSENT_FILE(), 'utf8'));
+    return parsed && (parsed.consent === 'enabled' || parsed.consent === 'disabled') ? parsed.consent : 'unset';
+  } catch {
+    return 'unset';
+  }
+}
+
+function setCredentialConsent(consent) {
+  try {
+    fs.mkdirSync(path.dirname(CREDENTIAL_CONSENT_FILE()), { recursive: true });
+    fs.writeFileSync(CREDENTIAL_CONSENT_FILE(), JSON.stringify({ consent }), { mode: 0o600 });
+  } catch {
+    /* best effort */
+  }
+}
+
+function loadCredentialVault() {
+  try {
+    if (!safeStorage.isEncryptionAvailable()) return [];
+    const raw = fs.readFileSync(CREDENTIAL_VAULT_FILE(), 'utf8');
+    const rows = JSON.parse(raw);
+    if (!Array.isArray(rows)) return [];
+    return rows.filter((row) => row && typeof row.origin === 'string' && typeof row.enc === 'string');
+  } catch {
+    return [];
+  }
+}
+
+function saveCredentialVault(rows) {
+  fs.mkdirSync(path.dirname(CREDENTIAL_VAULT_FILE()), { recursive: true });
+  fs.writeFileSync(CREDENTIAL_VAULT_FILE(), JSON.stringify(rows), { mode: 0o600 });
+}
+
+function upsertCredential(origin, username, password) {
+  if (!safeStorage.isEncryptionAvailable()) return false;
+  const enc = safeStorage.encryptString(JSON.stringify({ username, password })).toString('base64');
+  const rows = loadCredentialVault().filter((row) => row.origin !== origin);
+  rows.push({ origin, enc });
+  saveCredentialVault(rows);
+  return true;
+}
+
+// Returns the decrypted credential for an origin. Callers must never forward
+// the returned values to the renderer or agent; they are injected in-page only.
+function findCredential(origin) {
+  const row = loadCredentialVault().find((entry) => entry.origin === origin);
+  if (!row) return undefined;
+  try {
+    const json = safeStorage.decryptString(Buffer.from(row.enc, 'base64'));
+    const parsed = JSON.parse(json);
+    if (parsed && typeof parsed.password === 'string') {
+      return { username: typeof parsed.username === 'string' ? parsed.username : '', password: parsed.password };
+    }
+  } catch {
+    return undefined;
+  }
+  return undefined;
+}
+
+function originFor(url) {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return undefined;
+  }
+}
+
+async function handleCredentialCapture(senderContents, payload) {
+  if (credentialCaptureBusy) return;
+  const origin = payload && typeof payload.origin === 'string' ? payload.origin : undefined;
+  const password = payload && typeof payload.password === 'string' ? payload.password : '';
+  if (!origin || origin === 'null' || !password) return;
+  if (!safeStorage.isEncryptionAvailable()) return;
+  const consent = getCredentialConsent();
+  if (consent === 'disabled') return;
+  const existing = findCredential(origin);
+  if (existing && existing.password === password && existing.username === (payload.username || '')) return;
+  credentialCaptureBusy = true;
+  try {
+    if (consent === 'unset') {
+      // First-time opt-in. The user can enable, skip for now, or never ask.
+      const { response } = await dialog.showMessageBox(mainWindow, {
+        type: 'question',
+        buttons: ['Enable & save login', 'Not now', 'Never'],
+        defaultId: 0,
+        cancelId: 1,
+        title: 'Save logins in Droid Control?',
+        message: 'Let Droid Control securely save logins for its browser?',
+        detail: `Logins are encrypted with your OS keychain so you stay signed in across restarts (${origin}). The agent can use a saved login to sign in for you, but can never read the username or password. You can turn this off anytime by choosing Never.`,
+      });
+      if (response === 2) {
+        setCredentialConsent('disabled');
+        return;
+      }
+      if (response === 1) return; // Not now: ask again on the next sign-in.
+      setCredentialConsent('enabled');
+      upsertCredential(origin, payload.username || '', password);
+      return;
+    }
+    const { response } = await dialog.showMessageBox(mainWindow, {
+      type: 'question',
+      buttons: ['Save password', 'Not now'],
+      defaultId: 0,
+      cancelId: 1,
+      title: 'Save password',
+      message: `Save this login for ${origin}?`,
+      detail: 'Droid Control stores it encrypted with your OS keychain. The agent can use it to sign in but can never read it.',
+    });
+    if (response === 0) upsertCredential(origin, payload.username || '', password);
+  } catch {
+    /* dialog dismissed */
+  } finally {
+    credentialCaptureBusy = false;
+  }
+}
+
+async function autofillSavedCredential(entry) {
+  if (getCredentialConsent() !== 'enabled') return false;
+  const contents = safeWebContents(entry?.view);
+  if (!contents) return false;
+  const origin = originFor(contents.getURL());
+  if (!origin) return false;
+  const credential = findCredential(origin);
+  if (!credential) return false;
+  try {
+    const result = await contents.executeJavaScript(
+      `window.__DROIDMAXX_FILL_CREDENTIALS?.(${JSON.stringify(credential)});`,
+      true,
+    );
+    return Boolean(result && result.filled);
+  } catch {
+    return false;
+  }
+}
+
 function ensureNativeBrowserEntry(sessionId) {
   sessionId = normalizeNativeBrowserSessionId(sessionId);
   let entry = nativeBrowsers.get(sessionId);
@@ -248,7 +418,7 @@ function createNativeBrowserEntry(sessionId) {
     sessionId,
     view: null,
     targetUrl: null,
-    state: { designMode: false, sketchMode: false },
+    state: { designMode: false, pencilMode: false },
     attached: false,
     windowAttached: false,
     hostWindow: null,
@@ -262,13 +432,15 @@ function ensureNativeBrowserView(sessionId) {
   const entry = ensureNativeBrowserEntry(sessionId);
   if (isBrowserViewUsable(entry.view)) return entry;
   if (!isWindowUsable(mainWindow)) throw new Error('Droid Control window is not available.');
-  const view = new BrowserView({
+  configureBrowserSession();
+  const view = new WebContentsView({
     webPreferences: {
       preload: path.join(__dirname, 'nativeBrowserPreload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
       backgroundThrottling: false,
+      partition: BROWSER_PARTITION,
     },
   });
   entry.view = view;
@@ -288,6 +460,16 @@ function ensureNativeBrowserView(sessionId) {
     entry.targetUrl = loadedUrl;
     emitNativeBrowserLoaded(entry, loadedUrl);
     applyNativeBrowserDesignState(entry);
+    void autofillSavedCredential(entry);
+  });
+  contents.on('did-fail-load', (_event, errorCode, errorDescription, failedUrl, isMainFrame) => {
+    if (entry.view !== view || !isMainFrame || errorCode === -3) return;
+    const fallback = httpFallbackUrl(failedUrl, errorCode);
+    if (fallback) {
+      void loadNativeBrowserUrl(entry, fallback, { force: true });
+      return;
+    }
+    emitNativeBrowserLoadFailed(entry, failedUrl, errorDescription || `net error ${errorCode}`);
   });
   contents.on('dom-ready', () => {
     if (entry.view === view) applyNativeBrowserDesignState(entry);
@@ -383,13 +565,13 @@ function reloadNativeBrowser(sessionId) {
 function setNativeBrowserDesignMode(sessionId, active) {
   const entry = ensureNativeBrowserEntry(sessionId);
   entry.state.designMode = Boolean(active);
-  if (!entry.state.designMode) entry.state.sketchMode = false;
+  if (!entry.state.designMode) entry.state.pencilMode = false;
   return applyNativeBrowserDesignState(entry);
 }
 
-function setNativeBrowserSketchMode(sessionId, active) {
+function setNativeBrowserPencilMode(sessionId, active) {
   const entry = ensureNativeBrowserEntry(sessionId);
-  entry.state.sketchMode = entry.state.designMode && Boolean(active);
+  entry.state.pencilMode = entry.state.designMode && Boolean(active);
   return applyNativeBrowserDesignState(entry);
 }
 
@@ -398,6 +580,9 @@ async function runNativeBrowserAgentAction(request) {
   const contents = safeWebContents(entry.view);
   if (!contents) throw new Error('Droid Control browser is not open.');
   try {
+    if (request.action === 'fillCredentials') {
+      return await fillCredentialsForAgent(contents, request);
+    }
     return await contents.executeJavaScript(
       `window.__DROIDMAXX_AGENT_ACTION?.(${JSON.stringify(request)});`,
       true,
@@ -405,6 +590,37 @@ async function runNativeBrowserAgentAction(request) {
   } finally {
     scheduleNativeBrowserIdleClose(entry);
   }
+}
+
+// Agent-blind login: the saved secret is decrypted and injected here in the
+// main process. The request and the result never carry the values, and the
+// returned snapshot has password fields redacted by the preload.
+async function fillCredentialsForAgent(contents, request) {
+  if (getCredentialConsent() !== 'enabled') {
+    return {
+      requestId: request.requestId,
+      ok: false,
+      error: 'Saved logins are turned off for the Droid Control browser. Ask the user to sign in once; they will be prompted to enable and save the login first.',
+    };
+  }
+  const origin = originFor(contents.getURL());
+  const credential = origin ? findCredential(origin) : undefined;
+  if (!credential) {
+    return {
+      requestId: request.requestId,
+      ok: false,
+      error: 'No saved credentials for this site. The user can sign in once and choose to save the password.',
+    };
+  }
+  await contents.executeJavaScript(
+    `window.__DROIDMAXX_FILL_CREDENTIALS?.(${JSON.stringify(credential)});`,
+    true,
+  );
+  const probe = await contents.executeJavaScript(
+    `window.__DROIDMAXX_AGENT_ACTION?.(${JSON.stringify({ ...request, action: 'snapshot' })});`,
+    true,
+  ).catch(() => undefined);
+  return { requestId: request.requestId, ok: true, snapshot: probe?.snapshot };
 }
 
 async function captureNativeBrowser(sessionId, box, options = {}) {
@@ -415,14 +631,22 @@ async function captureNativeBrowser(sessionId, box, options = {}) {
     const fullPage = Boolean(options?.fullPage);
     const scale = typeof options?.deviceScaleFactor === 'number' && options.deviceScaleFactor > 0
       ? options.deviceScaleFactor
-      : undefined;
-    if (fullPage || scale) {
-      const data = await captureNativeBrowserViaCdp(contents, { fullPage, scale }).catch((err) => {
-        console.error(`full-page/scale capture failed, falling back to viewport: ${err.message}`);
-        return undefined;
-      });
-      if (data) return data;
+      : 2;
+    // A box crop is always already on-screen (the user just selected/sketched
+    // it). Capture the composited frame directly: capturePage never re-renders
+    // the page off-screen the way CDP's captureBeyondViewport does, so the live
+    // pane no longer flickers on every selection or sketch.
+    if (box && !fullPage) {
+      const rect = normalizeCaptureRect(entry, box);
+      if (!rect) throw new Error('Requested capture region is empty or out of bounds.');
+      const cropped = await contents.capturePage(rect).catch(() => undefined);
+      if (cropped && !cropped.isEmpty()) return cropped.toPNG().toString('base64');
     }
+    const data = await captureNativeBrowserViaCdp(contents, { fullPage, scale, box }).catch((err) => {
+      console.error(`cdp capture failed, falling back to viewport: ${err.message}`);
+      return undefined;
+    });
+    if (data) return data;
     const rect = normalizeCaptureRect(entry, box);
     // A supplied box that normalizes away is an empty/out-of-bounds crop; fail
     // rather than silently returning the full viewport (unintended content).
@@ -434,7 +658,7 @@ async function captureNativeBrowser(sessionId, box, options = {}) {
   }
 }
 
-async function captureNativeBrowserViaCdp(contents, { fullPage, scale }) {
+async function captureNativeBrowserViaCdp(contents, { fullPage, scale, box }) {
   const dbg = contents.debugger;
   if (!dbg) return undefined;
   let attached = false;
@@ -443,15 +667,25 @@ async function captureNativeBrowserViaCdp(contents, { fullPage, scale }) {
       dbg.attach('1.3');
       attached = true;
     }
-    const params = { format: 'png', captureBeyondViewport: Boolean(fullPage) };
+    const params = { format: 'png', captureBeyondViewport: Boolean(fullPage) || Boolean(box) };
     const metrics = await dbg.sendCommand('Page.getLayoutMetrics');
-    const region = fullPage
-      ? (metrics.cssContentSize || metrics.contentSize)
-      : (metrics.cssVisualViewport || metrics.visualViewport);
-    const width = fullPage ? region.width : region.clientWidth;
-    const height = fullPage ? region.height : region.clientHeight;
-    if (width > 0 && height > 0) {
-      params.clip = { x: 0, y: 0, width, height, scale: scale || 1 };
+    const viewport = metrics.cssVisualViewport || metrics.visualViewport;
+    const content = metrics.cssContentSize || metrics.contentSize;
+    if (box) {
+      // Selection boxes are viewport CSS coordinates; clips beyond the
+      // viewport are in page coordinates, so offset by the current scroll.
+      const x = (viewport.pageX || 0) + Math.max(0, box.x);
+      const y = (viewport.pageY || 0) + Math.max(0, box.y);
+      const width = Math.min(box.width, content.width - x);
+      const height = Math.min(box.height, content.height - y);
+      if (width <= 0 || height <= 0) throw new Error('Requested capture region is empty or out of bounds.');
+      params.clip = { x, y, width, height, scale };
+    } else if (fullPage) {
+      if (content.width > 0 && content.height > 0) {
+        params.clip = { x: 0, y: 0, width: content.width, height: content.height, scale };
+      }
+    } else if (viewport.clientWidth > 0 && viewport.clientHeight > 0) {
+      params.clip = { x: 0, y: 0, width: viewport.clientWidth, height: viewport.clientHeight, scale };
     }
     const result = await dbg.sendCommand('Page.captureScreenshot', params);
     return result?.data || undefined;
@@ -460,6 +694,41 @@ async function captureNativeBrowserViaCdp(contents, { fullPage, scale }) {
       try { dbg.detach(); } catch { /* already detached */ }
     }
   }
+}
+
+const DESIGN_CAPTURE_PADDING = 32;
+
+// Capture the prompt's selection region with surrounding context while the
+// in-page annotations are still visible.
+async function captureDesignSelection(senderContents, selection) {
+  const box = selection?.anchor?.box;
+  if (!box || !(box.width > 0) || !(box.height > 0)) return undefined;
+  const entry = findNativeBrowserEntryForWebContents(senderContents);
+  const contents = safeWebContents(entry?.view);
+  if (!contents) return undefined;
+  const padded = {
+    x: Math.max(0, box.x - DESIGN_CAPTURE_PADDING),
+    y: Math.max(0, box.y - DESIGN_CAPTURE_PADDING),
+    width: box.width + DESIGN_CAPTURE_PADDING * 2,
+    height: box.height + DESIGN_CAPTURE_PADDING * 2,
+  };
+  // Crop the on-screen composited frame (annotations are visible DOM overlays)
+  // instead of a CDP captureBeyondViewport screenshot, which re-rasters the
+  // page off-screen and flickers the pane on every send.
+  const rect = normalizeCaptureRect(entry, padded);
+  if (rect) {
+    const image = await contents.capturePage(rect).catch(() => undefined);
+    if (image && !image.isEmpty()) return { base64: image.toPNG().toString('base64'), box: padded };
+  }
+  const base64 = await captureNativeBrowserViaCdp(contents, { scale: 2, box: padded }).catch(() => undefined);
+  return base64 ? { base64, box: padded } : undefined;
+}
+
+function findNativeBrowserEntryForWebContents(contents) {
+  for (const entry of nativeBrowsers.values()) {
+    if (safeWebContents(entry.view) === contents) return entry;
+  }
+  return undefined;
 }
 
 function normalizeCaptureRect(entry, box) {
@@ -487,6 +756,42 @@ function applyNativeBrowserDesignState(entry) {
 function emitNativeBrowserLoaded(entry, url) {
   if (!isWindowUsable(mainWindow)) return;
   mainWindow.webContents.send('native-browser-loaded', { sessionId: entry.sessionId, url });
+}
+
+function emitNativeBrowserLoadFailed(entry, url, error) {
+  if (!isWindowUsable(mainWindow)) return;
+  mainWindow.webContents.send('native-browser-load-failed', { sessionId: entry.sessionId, url, error });
+}
+
+// Bare hosts are normalized to https by the renderer; local dev servers are
+// usually plain http. Retry once over http for private/loopback hosts instead
+// of stranding the pane on a blank error page.
+function httpFallbackUrl(url, errorCode) {
+  const retryableCodes = new Set([
+    -102, // ERR_CONNECTION_REFUSED
+    -200, // ERR_CERT_COMMON_NAME_INVALID
+    -201, // ERR_CERT_DATE_INVALID
+    -202, // ERR_CERT_AUTHORITY_INVALID
+    -501, // ERR_INSECURE_RESPONSE
+  ]);
+  if (!retryableCodes.has(errorCode)) return undefined;
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== 'https:') return undefined;
+    if (!isPrivateHost(parsed.hostname)) return undefined;
+    parsed.protocol = 'http:';
+    return parsed.href;
+  } catch {
+    return undefined;
+  }
+}
+
+function isPrivateHost(hostname) {
+  const host = String(hostname || '').toLowerCase();
+  if (isLoopbackHost(host)) return true;
+  if (host.endsWith('.local') || host.endsWith('.test') || host.endsWith('.localhost')) return true;
+  if (!host.includes('.')) return true;
+  return /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(host);
 }
 
 async function loadNativeBrowserUrl(entry, url, options = {}) {
@@ -523,17 +828,11 @@ async function restoreNativeBrowserForAction(sessionId) {
 
 function attachNativeBrowserViewToMainWindow(entry) {
   if (!entry.view || !isWindowUsable(mainWindow)) return;
-  if (entry.windowAttached && entry.hostWindow === mainWindow) {
-    if (typeof mainWindow.setTopBrowserView === 'function') mainWindow.setTopBrowserView(entry.view);
-    return;
-  }
-  if (entry.windowAttached) removeNativeBrowserViewFromWindow(entry, entry.view);
-  mainWindow.setBrowserView(entry.view);
+  if (entry.windowAttached && entry.hostWindow !== mainWindow) removeNativeBrowserViewFromWindow(entry, entry.view);
+  // addChildView is idempotent and raises the view to the top of the stack.
+  mainWindow.contentView.addChildView(entry.view);
   entry.windowAttached = true;
   entry.hostWindow = mainWindow;
-  if (typeof mainWindow.setTopBrowserView === 'function') {
-    mainWindow.setTopBrowserView(entry.view);
-  }
 }
 
 function addHiddenNativeBrowserViewToWindow(entry) {
@@ -543,7 +842,7 @@ function addHiddenNativeBrowserViewToWindow(entry) {
   if (entry.windowAttached) return;
   const bounds = entry.view.getBounds();
   host.setContentSize(Math.max(1, bounds.width), Math.max(1, bounds.height));
-  host.addBrowserView(entry.view);
+  host.contentView.addChildView(entry.view);
   entry.windowAttached = true;
   entry.hostWindow = host;
 }
@@ -556,7 +855,7 @@ function removeNativeBrowserViewFromWindow(entry, view) {
     return;
   }
   try {
-    host.removeBrowserView(view);
+    host.contentView.removeChildView(view);
   } catch {
     // The window may already be tearing down; Electron destroys attached views with it.
   }
@@ -673,10 +972,7 @@ function restorableUrlForEntry(entry, url) {
 }
 
 function nativeBrowserSessionIdForWebContents(contents) {
-  for (const entry of nativeBrowsers.values()) {
-    if (safeWebContents(entry.view) === contents) return entry.sessionId;
-  }
-  return undefined;
+  return findNativeBrowserEntryForWebContents(contents)?.sessionId;
 }
 
 function withNativeBrowserSession(event, payload) {

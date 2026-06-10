@@ -56,6 +56,7 @@ export function browserTranscriptReferenceFromDesignReference(reference: Partial
     label,
     url: reference.url,
     selector: reference.detail?.selector,
+    imageDataUrl: reference.screenshot ? `data:image/png;base64,${reference.screenshot.base64}` : undefined,
   };
 }
 

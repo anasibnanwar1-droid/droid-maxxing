@@ -1,5 +1,5 @@
 import { isDesktop } from './desktop';
-import type { BrowserBox, BrowserNativeAction, BrowserNativeSnapshot, BrowserScrollDirection, DesignAnchor, DesignAnchorDetail } from '../types/bridge';
+import type { BrowserBox, BrowserNativeAction, BrowserNativeSnapshot, BrowserScrollDirection, DesignAnchor, DesignAnchorDetail, DesignSelectionScreenshot, DesignStrokePoint } from '../types/bridge';
 
 export interface NativeBrowserBounds {
   x: number;
@@ -17,11 +17,19 @@ export interface NativeBrowserSelection {
   url: string;
   title?: string;
   scroll?: { x: number; y: number };
+  screenshot?: DesignSelectionScreenshot;
+  strokes?: DesignStrokePoint[][];
 }
 
 export interface NativeBrowserLoaded {
   sessionId?: string;
   url: string;
+}
+
+export interface NativeBrowserLoadFailed {
+  sessionId?: string;
+  url: string;
+  error?: string;
 }
 
 export interface NativeBrowserDesignPrompt {
@@ -139,9 +147,9 @@ export async function setNativeBrowserDesignMode(sessionId: string, active: bool
   await window.droidControl!.nativeBrowserSetDesignMode(sessionId, active);
 }
 
-export async function setNativeBrowserSketchMode(sessionId: string, active: boolean): Promise<void> {
+export async function setNativeBrowserPencilMode(sessionId: string, active: boolean): Promise<void> {
   if (!isDesktop()) return;
-  await window.droidControl!.nativeBrowserSetSketchMode(sessionId, active);
+  await window.droidControl!.nativeBrowserSetPencilMode(sessionId, active);
 }
 
 export async function onNativeBrowserSelection(
@@ -163,6 +171,13 @@ export async function onNativeBrowserLoaded(
 ): Promise<() => void> {
   if (!isDesktop()) return () => {};
   return window.droidControl!.onNativeBrowserLoaded(handler);
+}
+
+export async function onNativeBrowserLoadFailed(
+  handler: (event: NativeBrowserLoadFailed) => void,
+): Promise<() => void> {
+  if (!isDesktop()) return () => {};
+  return window.droidControl!.onNativeBrowserLoadFailed(handler);
 }
 
 export async function waitForNextNativeBrowserLoad(sessionId: string, timeoutMs = 8_000): Promise<NativeBrowserLoaded> {

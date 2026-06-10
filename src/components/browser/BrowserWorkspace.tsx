@@ -3,7 +3,6 @@ import { isDesignModeOpen } from '../../hooks/designModeState';
 import { useStore } from '../../hooks/useStore';
 import {
   addDesignReference,
-  closeBrowser,
   openBrowser,
   reloadBrowser,
   resizeBrowserViewport,
@@ -23,9 +22,8 @@ import {
   viewportFromFrame,
 } from './browserViewport';
 import { NativeBrowserSurface } from './NativeBrowserSurface';
-import { closeNativeBrowser } from '../../lib/nativeBrowser';
 import { isDesktop } from '../../lib/desktop';
-import type { NativeBrowserDesignPrompt, NativeBrowserSelection } from '../../lib/nativeBrowser';
+import type { NativeBrowserDesignPrompt, NativeBrowserLoadFailed, NativeBrowserSelection } from '../../lib/nativeBrowser';
 import { BrowserToolbar } from './BrowserToolbar';
 import { DesignModeComposer } from './DesignModeComposer';
 import { composerStyleForReferences } from './browserComposerPosition';
@@ -63,9 +61,32 @@ export default function BrowserWorkspace() {
   const [viewportMode, setViewportMode] = useState<BrowserViewportMode>(browser?.viewportMode ?? 'fit');
   const [customViewport, setCustomViewport] = useState<BrowserViewport>(CUSTOM_DEFAULT_VIEWPORT);
   const [actualViewport, setActualViewport] = useState<Size>({ width: 1, height: 1 });
-  const [sketchMode, setSketchMode] = useState(false);
+  const [pencilMode, setPencilMode] = useState(false);
   const [instruction, setInstruction] = useState('');
   const [references, setReferences] = useState<DesignReference[]>([]);
+  const [loadFailure, setLoadFailure] = useState<NativeBrowserLoadFailed | null>(null);
+
+  // Auto-reload: when the agent edits files and the browser shows a local
+  // dev server URL, reload the pane after a short debounce so the new code
+  // is visible immediately.
+  const lastEditTsRef = useRef(0);
+  const transcripts = requestedChatId ? state.transcripts[requestedChatId] : undefined;
+  useEffect(() => {
+    if (!browserKey || !transcripts) return;
+    const last = transcripts[transcripts.length - 1];
+    if (!last || last.kind !== 'tool_result') return;
+    const name = last.toolName ?? '';
+    const isEdit = name === 'edit' || name === 'multiedit' || name === 'multi_edit'
+      || name === 'str_replace' || name === 'apply_patch' || name === 'create'
+      || name === 'write' || name.includes('edit') || name.includes('patch');
+    if (!isEdit || last.isError) return;
+    const url = activeUrl;
+    if (!/^https?:\/\/(localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\])/.test(url)) return;
+    if (last.ts <= lastEditTsRef.current) return;
+    lastEditTsRef.current = last.ts;
+    const id = window.setTimeout(() => reloadBrowser(browserKey), 600);
+    return () => window.clearTimeout(id);
+  }, [activeUrl, browserKey, transcripts]);
 
   useEffect(() => {
     if (!browser?.url) return;
@@ -91,11 +112,11 @@ export default function BrowserWorkspace() {
   useEffect(() => {
     setReferences([]);
     setInstruction('');
-    setSketchMode(false);
+    setPencilMode(false);
   }, [browser?.sessionId, browser?.url, browserKey]);
 
   useEffect(() => {
-    if (!designMode) setSketchMode(false);
+    if (!designMode) setPencilMode(false);
   }, [designMode]);
 
   const requestedViewport = viewportForMode(viewportMode, fitViewport, customViewport);
@@ -142,6 +163,7 @@ export default function BrowserWorkspace() {
       return;
     }
     const url = safeBrowserUrl(normalizedUrl, appOrigin);
+    setLoadFailure(null);
     setUrlInput(url);
     setActiveUrl(url);
     if (browserKey) {
@@ -152,10 +174,6 @@ export default function BrowserWorkspace() {
         viewportMode,
       });
     }
-  };
-
-  const applyPreset = (mode: BrowserViewportMode) => {
-    setViewportMode(mode);
   };
 
   const emitDesignTranscript = useCallback((text: string, refs: DesignReference[]) => {
@@ -184,13 +202,20 @@ export default function BrowserWorkspace() {
     emitDesignTranscript(text, references);
     setReferences([]);
     setInstruction('');
+    // Re-arm like Cursor: disarm after sending so the user clicks Design Mode
+    // again to start a new selection instead of staying live.
+    dispatch({ type: 'SET_DESIGN_MODE', sessionId: browserKey, open: false });
   };
 
   const handleSelection = useCallback((selection: NativeBrowserSelection) => {
     const reference = referenceFromNativeSelection(selection);
     setReferences([reference]);
-    if (browserKey) addDesignReference(browserKey, reference);
+    if (browserKey) addDesignReference(browserKey, reference, selection.screenshot);
   }, [browserKey]);
+
+  const handleLoadFailed = useCallback((failure: NativeBrowserLoadFailed) => {
+    setLoadFailure(failure);
+  }, []);
 
   const handleNativePrompt = useCallback((prompt: NativeBrowserDesignPrompt) => {
     if (!browserKey) return;
@@ -200,43 +225,34 @@ export default function BrowserWorkspace() {
     const referenceId = reference.id;
     if (!referenceId) return;
     setReferences([reference]);
-    addDesignReference(browserKey, reference);
+    addDesignReference(browserKey, reference, prompt.selection.screenshot);
     window.setTimeout(() => sendDesignPrompt(browserKey, text, [referenceId]), 0);
     emitDesignTranscript(text, [reference]);
     setReferences([]);
-  }, [browserKey, emitDesignTranscript]);
+    dispatch({ type: 'SET_DESIGN_MODE', sessionId: browserKey, open: false });
+  }, [browserKey, dispatch, emitDesignTranscript]);
 
   return (
     <div className="flex h-full min-h-0 min-w-0 flex-col bg-droid-bg">
       <BrowserToolbar
         urlInputRef={urlInputRef}
         urlInput={urlInput}
-        viewportMode={viewportMode}
-        customViewport={customViewport}
         designMode={designMode}
         designModeDisabled={!browserKey}
-        sketchMode={sketchMode}
+        pencilMode={pencilMode}
         onUrlInputChange={setUrlInput}
         onOpen={openCurrentUrl}
         onReload={() => {
           if (browserKey && browser) reloadBrowser(browserKey);
           else openCurrentUrl();
         }}
-        onViewportModeChange={applyPreset}
-        onCustomViewportChange={setCustomViewport}
         onToggleDesignMode={() => {
           if (browserKey) dispatch({ type: 'TOGGLE_DESIGN_MODE', sessionId: browserKey });
         }}
-        onToggleSketchMode={() => setSketchMode((value) => !value)}
+        onTogglePencilMode={() => setPencilMode((value) => !value)}
         onClose={() => {
           // Hide the pane but keep this chat's browser session alive so it can
           // be reopened (and resumes after an app restart).
-          dispatch({ type: 'SET_BROWSER_OPEN', open: false });
-        }}
-        onFullyClose={() => {
-          // Destroy this chat's browser session entirely; reopening starts fresh.
-          if (browserKey) closeBrowser(browserKey);
-          if (browser?.sessionId) closeNativeBrowser(browser.sessionId).catch(() => {});
           dispatch({ type: 'SET_BROWSER_OPEN', open: false });
         }}
       />
@@ -244,6 +260,33 @@ export default function BrowserWorkspace() {
       {browserError && (
         <div className="shrink-0 border-b border-droid-border bg-droid-accent/10 px-4 py-2 text-[12px] text-droid-text-secondary">
           {browserError}
+        </div>
+      )}
+
+      {loadFailure && (
+        <div className="flex shrink-0 items-center gap-2 border-b border-droid-border bg-red-500/10 px-4 py-2 text-[12px] text-droid-text-secondary">
+          <span className="min-w-0 flex-1 truncate">
+            Could not load {loadFailure.url}{loadFailure.error ? ` (${loadFailure.error})` : ''}. Check that the server is running.
+          </span>
+          <button
+            type="button"
+            className="shrink-0 rounded border border-droid-border px-2 py-0.5 text-[11px] text-droid-text-muted hover:text-droid-text"
+            onClick={() => {
+              setLoadFailure(null);
+              if (browserKey && browser) reloadBrowser(browserKey);
+              else openCurrentUrl();
+            }}
+          >
+            Retry
+          </button>
+          <button
+            type="button"
+            className="shrink-0 rounded px-1 text-[11px] text-droid-text-muted hover:text-droid-text"
+            onClick={() => setLoadFailure(null)}
+            aria-label="Dismiss"
+          >
+            x
+          </button>
         </div>
       )}
 
@@ -257,13 +300,15 @@ export default function BrowserWorkspace() {
             viewport={requestedViewport}
             viewportMode={viewportMode}
             designMode={designMode}
-            sketchMode={designMode && sketchMode}
+            pencilMode={designMode && pencilMode}
             onLoaded={(url) => {
+              setLoadFailure(null);
               setActiveUrl(url);
               if (document.activeElement !== urlInputRef.current) setUrlInput(url);
             }}
             onSelection={handleSelection}
             onPrompt={handleNativePrompt}
+            onLoadFailed={handleLoadFailed}
             onViewportSizeChange={setActualViewport}
           />
         ) : (
@@ -310,5 +355,6 @@ function referenceFromNativeSelection(selection: NativeBrowserSelection): Design
     url: selection.url,
     title: selection.title,
     scroll: selection.scroll,
+    screenshot: selection.screenshot,
   };
 }

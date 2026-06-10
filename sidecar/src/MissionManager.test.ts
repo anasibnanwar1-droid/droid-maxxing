@@ -17,6 +17,7 @@ import type { MissionSummary, ModelInfo, ServerEvent } from './protocol.js';
 class FakeSession {
   prompts: string[] = [];
   interrupts = 0;
+  settingsUpdates: Array<Record<string, unknown>> = [];
   private releaseFirstTurn?: () => void;
 
   constructor(readonly sessionId: string) {}
@@ -33,6 +34,10 @@ class FakeSession {
   async interrupt(): Promise<void> {
     this.interrupts += 1;
     this.releaseFirstTurn?.();
+  }
+
+  async updateSettings(params: Record<string, unknown>): Promise<void> {
+    this.settingsUpdates.push(params);
   }
 
   async getContextStats(): Promise<{ used: number; remaining: number; limit: number; accuracy: 'exact'; updatedAt: string }> {
@@ -221,6 +226,48 @@ test('sendNow interrupts the live turn and prioritizes the steering prompt', asy
   assert.equal(session.interrupts, 1);
   assert.deepEqual(session.prompts, ['first', 'now', 'queued']);
   assert.equal(mission.pendingSends.length, 0);
+  assert.equal(events.some((event) => event.type === 'mission.error' || event.type === 'error'), false);
+});
+
+test('design turns disable TodoWrite and normal turns restore it', async () => {
+  const events: ServerEvent[] = [];
+  const manager = new MissionManager((event) => events.push(event));
+  const session = new FakeSession('droid-design');
+  const mission = {
+    summary: testSummary('app-design', session.sessionId),
+    session,
+    streaming: false,
+    pendingSends: [],
+    pendingPermissions: new Map(),
+    pendingQuestions: new Map(),
+    agents: new Map(),
+    knownSubagents: new Set(),
+    completedSubagents: new Set(),
+    subagentToolUseIds: new Map(),
+    subagentSettings: new Map(),
+    pendingSubagents: [],
+    mcpServers: [],
+  };
+  const internals = manager as unknown as {
+    history: { recordEvent: () => void; syncSummaries: () => void };
+    missions: Map<string, typeof mission>;
+  };
+  internals.history = { recordEvent: () => {}, syncSummaries: () => {} };
+  internals.missions.set(mission.summary.id, mission);
+
+  const designPrompt = 'Design Mode reference pack:\n- URL: about:blank\n\nUser instruction:\nMake the hero cleaner';
+  await manager.handle({ type: 'mission.send', missionId: mission.summary.id, text: designPrompt });
+  await waitFor(() => session.prompts.includes(designPrompt));
+  assert.deepEqual(session.settingsUpdates.at(-1), { disabledToolIds: ['TodoWrite'] });
+
+  await manager.handle({ type: 'mission.send', missionId: mission.summary.id, text: 'just a normal question' });
+  await waitFor(() => session.prompts.includes('just a normal question'));
+  assert.deepEqual(session.settingsUpdates.at(-1), { disabledToolIds: [] });
+
+  // A second design turn re-disables it after the normal turn restored it.
+  await manager.handle({ type: 'mission.send', missionId: mission.summary.id, text: `${designPrompt} again` });
+  await waitFor(() => session.prompts.includes(`${designPrompt} again`));
+  assert.deepEqual(session.settingsUpdates.at(-1), { disabledToolIds: ['TodoWrite'] });
   assert.equal(events.some((event) => event.type === 'mission.error' || event.type === 'error'), false);
 });
 

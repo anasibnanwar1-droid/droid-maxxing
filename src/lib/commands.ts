@@ -1,5 +1,5 @@
 import { bridge } from './bridge';
-import type { Autonomy, BrowserNativeResult, BrowserScrollDirection, BrowserViewport, BrowserViewportMode, ConfigurableAgent, DesignReference, PermissionOutcome, ReasoningEffort, SessionInteractionMode } from '../types/bridge';
+import type { Autonomy, BrowserNativeResult, BrowserScrollDirection, BrowserViewport, BrowserViewportMode, ConfigurableAgent, DesignReference, DesignSelectionScreenshot, PermissionOutcome, ReasoningEffort, SessionInteractionMode } from '../types/bridge';
 
 let refCounter = 0;
 
@@ -126,8 +126,8 @@ export const keypressBrowser = (missionId: string, key: string) =>
 export const scrollBrowser = (p: { missionId: string; direction: BrowserScrollDirection; pixels?: number; source?: 'agent' | 'user' }) =>
   bridge.send({ type: 'browser.scroll', ...p });
 
-export const addDesignReference = (missionId: string, reference: DesignReference) =>
-  bridge.send({ type: 'browser.design.addReference', missionId, reference });
+export const addDesignReference = (missionId: string, reference: DesignReference, screenshot?: DesignSelectionScreenshot) =>
+  bridge.send({ type: 'browser.design.addReference', missionId, reference, screenshot });
 
 export const sendDesignPrompt = (missionId: string, instruction: string, referenceIds: string[]) =>
   bridge.send({ type: 'browser.design.sendPrompt', missionId, instruction, referenceIds });

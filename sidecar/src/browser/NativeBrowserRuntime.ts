@@ -65,6 +65,10 @@ export class NativeBrowserRuntime implements BrowserRuntime {
     await this.send({ action: 'scroll', direction, pixels });
   }
 
+  async fillCredentials(): Promise<BrowserSnapshot> {
+    return this.snapshotFrom(await this.send({ action: 'fillCredentials' }));
+  }
+
   async close(): Promise<void> {
     await this.send({ action: 'close' }).catch(() => {});
   }

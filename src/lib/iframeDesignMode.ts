@@ -1,9 +1,9 @@
 import type { NativeBrowserSelection } from './nativeBrowser';
-import type { BrowserElementRef, BrowserNativeSnapshot } from '../types/bridge';
+import type { BrowserBox, BrowserElementRef, BrowserNativeSnapshot, DesignStrokePoint } from '../types/bridge';
 
 interface AttachIframeDesignModeOptions {
   designMode: boolean;
-  sketchMode: boolean;
+  pencilMode: boolean;
   onSelection: (selection: NativeBrowserSelection) => void;
 }
 
@@ -22,7 +22,6 @@ export function attachIframeDesignMode(
   const win = iframe.contentWindow;
   if (!doc || !win || !doc.documentElement) return () => {};
 
-  let dragStart: Point | null = null;
   const overlay = makeBox(doc, '__droidmaxx_fallback_design_overlay', [
     'border:2px solid #2997ff',
     'box-shadow:0 0 0 1px rgba(0,0,0,.45),0 0 0 99999px rgba(0,0,0,.08)',
@@ -42,16 +41,39 @@ export function attachIframeDesignMode(
     'box-shadow:0 10px 28px rgba(0,0,0,.28)',
     'display:none',
   ].join(';');
-  const region = makeBox(doc, '__droidmaxx_fallback_design_region', [
-    'border:3px solid #7c4dff',
-    'border-radius:999px',
-    'background:rgba(124,77,255,.08)',
-  ]);
 
-  doc.documentElement.append(overlay, label, region);
+  // Freehand pencil: SVG overlay for multi-stroke drawing.
+  const svgNs = 'http://www.w3.org/2000/svg';
+  const svg = doc.createElementNS(svgNs, 'svg');
+  svg.id = '__droidmaxx_pencil_svg';
+  svg.setAttribute('style', [
+    'position:fixed',
+    'z-index:2147483646',
+    'left:0',
+    'top:0',
+    'width:100vw',
+    'height:100vh',
+    'pointer-events:none',
+  ].join(';'));
+  svg.setAttribute('width', String(win.innerWidth));
+  svg.setAttribute('height', String(win.innerHeight));
+
+  let strokes: DesignStrokePoint[][] = [];
+  let currentStroke: DesignStrokePoint[] | null = null;
+  let currentPath: SVGPolylineElement | null = null;
+
+  // Shift-drag text range highlight.
+  const textHighlight = makeBox(doc, '__droidmaxx_text_highlight', [
+    'background:rgba(47,128,237,.25)',
+    'border-radius:2px',
+    'mix-blend-mode:multiply',
+  ]);
+  let textDragStart: Point | null = null;
+
+  doc.documentElement.append(overlay, label, svg, textHighlight);
 
   const onMouseMove = (event: MouseEvent) => {
-    if (options.sketchMode || dragStart) return;
+    if (options.pencilMode) return;
     const target = pickTarget(doc.elementFromPoint(event.clientX, event.clientY));
     if (!target) {
       hideHover(overlay, label);
@@ -61,53 +83,160 @@ export function attachIframeDesignMode(
   };
 
   const onClick = (event: MouseEvent) => {
-    if (options.sketchMode) return;
+    if (options.pencilMode) return;
+    if (event.shiftKey) {
+      // Shift+click alone won't reach here because mousedown handles shift-drag.
+      return;
+    }
     const target = pickTarget(doc.elementFromPoint(event.clientX, event.clientY));
     if (!target) return;
     event.preventDefault();
     event.stopPropagation();
+    commitPencilStrokes();
     showHover(win, overlay, label, target.getBoundingClientRect(), labelFor(target), '#ff8a2a');
-    options.onSelection(selectionFor(win, doc, target));
+    options.onSelection(selectionFor(win, doc, target, strokes));
+    strokes = [];
   };
 
-  const onPointerDown = (event: PointerEvent) => {
-    if (!options.sketchMode) return;
+  // -- Shift-drag text range selection --
+  const onShiftPointerDown = (event: PointerEvent) => {
     event.preventDefault();
     event.stopPropagation();
-    dragStart = { x: event.clientX, y: event.clientY };
-    drawRegion(region, dragStart, dragStart);
+    textDragStart = { x: event.clientX, y: event.clientY };
+  };
+
+  const onShiftPointerMove = (event: PointerEvent) => {
+    if (!textDragStart) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const box = boundingBox(textDragStart, { x: event.clientX, y: event.clientY });
+    textHighlight.style.display = 'block';
+    textHighlight.style.left = `${box.x}px`;
+    textHighlight.style.top = `${box.y}px`;
+    textHighlight.style.width = `${box.width}px`;
+    textHighlight.style.height = `${box.height}px`;
+  };
+
+  const onShiftPointerUp = (event: PointerEvent) => {
+    if (!textDragStart) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const end = { x: event.clientX, y: event.clientY };
+    const box = boundingBox(textDragStart, end);
+    const startPt = { ...textDragStart };
+    textDragStart = null;
+    textHighlight.style.display = 'none';
+    if (box.width < 8 || box.height < 8) return;
+    // Try to extract text via caretRangeFromPoint for precise range.
+    let text = '';
+    try {
+      const startCaret = (doc as any).caretRangeFromPoint?.(startPt.x, startPt.y);
+      const endCaret = (doc as any).caretRangeFromPoint?.(end.x, end.y);
+      if (startCaret && endCaret) {
+        const range = doc.createRange();
+        range.setStart(startCaret.startContainer, startCaret.startOffset);
+        range.setEnd(endCaret.endContainer, endCaret.endOffset);
+        text = cleanText(range.toString());
+      }
+    } catch { /* fallback below */ }
+    if (!text) {
+      text = cleanText(win.getSelection()?.toString() ?? '');
+    }
+    commitPencilStrokes();
+    options.onSelection({
+      anchor: {
+        id: `@text-${Date.now().toString(36)}`,
+        kind: 'text',
+        label: text || 'text selection',
+        text: text || undefined,
+        box,
+      },
+      url: win.location.href,
+      title: doc.title,
+      scroll: { x: Math.round(win.scrollX), y: Math.round(win.scrollY) },
+    });
+    strokes = [];
+  };
+
+  // -- Freehand pencil drawing --
+  const onPencilPointerDown = (event: PointerEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+    currentStroke = [{ x: Math.round(event.clientX), y: Math.round(event.clientY) }];
+    currentPath = doc.createElementNS(svgNs, 'polyline');
+    currentPath.setAttribute('fill', 'none');
+    currentPath.setAttribute('stroke', '#7c4dff');
+    currentPath.setAttribute('stroke-width', '3');
+    currentPath.setAttribute('stroke-linecap', 'round');
+    currentPath.setAttribute('stroke-linejoin', 'round');
+    currentPath.setAttribute('points', `${event.clientX},${event.clientY}`);
+    svg.appendChild(currentPath);
+  };
+
+  const onPencilPointerMove = (event: PointerEvent) => {
+    if (!currentStroke || !currentPath) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const pt = { x: Math.round(event.clientX), y: Math.round(event.clientY) };
+    currentStroke.push(pt);
+    currentPath.setAttribute('points', currentPath.getAttribute('points') + ` ${pt.x},${pt.y}`);
+  };
+
+  const onPencilPointerUp = (event: PointerEvent) => {
+    if (!currentStroke || !currentPath) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const pt = { x: Math.round(event.clientX), y: Math.round(event.clientY) };
+    currentStroke.push(pt);
+    strokes.push(currentStroke);
+    currentStroke = null;
+    currentPath = null;
+  };
+
+  const commitPencilStrokes = () => {
+    if (strokes.length === 0) return;
+    const box = strokesBoundingBox(strokes);
+    options.onSelection({
+      anchor: {
+        id: `@pencil-${Date.now().toString(36)}`,
+        kind: 'region',
+        label: 'pencil annotation',
+        box,
+        strokes,
+      },
+      url: win.location.href,
+      title: doc.title,
+      scroll: { x: Math.round(win.scrollX), y: Math.round(win.scrollY) },
+    });
+  };
+
+  // Unified pointer handlers that dispatch based on mode.
+  const onPointerDown = (event: PointerEvent) => {
+    if (!options.pencilMode && event.shiftKey) {
+      onShiftPointerDown(event);
+    } else if (options.pencilMode) {
+      onPencilPointerDown(event);
+    }
   };
 
   const onPointerMove = (event: PointerEvent) => {
-    if (!dragStart) return;
-    event.preventDefault();
-    event.stopPropagation();
-    drawRegion(region, dragStart, { x: event.clientX, y: event.clientY });
+    if (!options.pencilMode && textDragStart) {
+      onShiftPointerMove(event);
+    } else if (options.pencilMode && currentStroke) {
+      onPencilPointerMove(event);
+    }
   };
 
   const onPointerUp = (event: PointerEvent) => {
-    if (!dragStart) return;
-    event.preventDefault();
-    event.stopPropagation();
-    const box = drawRegion(region, dragStart, { x: event.clientX, y: event.clientY });
-    dragStart = null;
-    if (box.width >= 8 && box.height >= 8) {
-      options.onSelection({
-        anchor: {
-          id: `@region-${Date.now().toString(36)}`,
-          kind: 'region',
-          label: 'region',
-          box,
-        },
-        url: win.location.href,
-        title: doc.title,
-        scroll: { x: Math.round(win.scrollX), y: Math.round(win.scrollY) },
-      });
+    if (!options.pencilMode && textDragStart) {
+      onShiftPointerUp(event);
+    } else if (options.pencilMode && currentStroke) {
+      onPencilPointerUp(event);
     }
   };
 
   const onMouseLeave = () => {
-    if (!dragStart) hideHover(overlay, label);
+    if (!currentStroke && !textDragStart) hideHover(overlay, label);
   };
 
   doc.addEventListener('mousemove', onMouseMove, true);
@@ -126,7 +255,8 @@ export function attachIframeDesignMode(
     doc.removeEventListener('mouseleave', onMouseLeave, true);
     overlay.remove();
     label.remove();
-    region.remove();
+    svg.remove();
+    textHighlight.remove();
   };
 }
 
@@ -304,7 +434,7 @@ function stableId(value: string): string {
   return `@live-${Math.abs(hash).toString(36)}`;
 }
 
-function selectionFor(win: Window, doc: Document, el: Element): NativeBrowserSelection {
+function selectionFor(win: Window, doc: Document, el: Element, strokes: DesignStrokePoint[][] = []): NativeBrowserSelection {
   const rect = el.getBoundingClientRect();
   const selector = selectorFor(el);
   const text = cleanText((el as HTMLElement).innerText || el.textContent);
@@ -343,6 +473,7 @@ function selectionFor(win: Window, doc: Document, el: Element): NativeBrowserSel
       styles: stylesFor(el),
       ancestors: ancestorsFor(el),
     },
+    strokes: strokes.length > 0 ? strokes : undefined,
     url: win.location.href,
     title: doc.title,
     scroll: { x: Math.round(win.scrollX), y: Math.round(win.scrollY) },
@@ -427,17 +558,30 @@ function hideHover(overlay: HTMLElement, label: HTMLElement): void {
   label.style.display = 'none';
 }
 
-function drawRegion(region: HTMLElement, start: Point, end: Point) {
-  const box = {
-    x: Math.round(Math.min(start.x, end.x)),
-    y: Math.round(Math.min(start.y, end.y)),
-    width: Math.round(Math.abs(start.x - end.x)),
-    height: Math.round(Math.abs(start.y - end.y)),
+function boundingBox(a: Point, b: Point) {
+  return {
+    x: Math.round(Math.min(a.x, b.x)),
+    y: Math.round(Math.min(a.y, b.y)),
+    width: Math.round(Math.abs(a.x - b.x)),
+    height: Math.round(Math.abs(a.y - b.y)),
   };
-  region.style.display = 'block';
-  region.style.left = `${box.x}px`;
-  region.style.top = `${box.y}px`;
-  region.style.width = `${box.width}px`;
-  region.style.height = `${box.height}px`;
-  return box;
+}
+
+function strokesBoundingBox(strokes: DesignStrokePoint[][]): BrowserBox {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const stroke of strokes) {
+    for (const pt of stroke) {
+      if (pt.x < minX) minX = pt.x;
+      if (pt.y < minY) minY = pt.y;
+      if (pt.x > maxX) maxX = pt.x;
+      if (pt.y > maxY) maxY = pt.y;
+    }
+  }
+  const pad = 4;
+  return {
+    x: Math.round(minX - pad),
+    y: Math.round(minY - pad),
+    width: Math.round(maxX - minX + pad * 2),
+    height: Math.round(maxY - minY + pad * 2),
+  };
 }

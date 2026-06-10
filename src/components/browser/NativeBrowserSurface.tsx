@@ -14,6 +14,7 @@ import {
   closeNativeBrowser,
   detachNativeBrowser,
   onNativeBrowserDesignPrompt,
+  onNativeBrowserLoadFailed,
   onNativeBrowserLoaded,
   onNativeBrowserSelection,
   openNativeBrowser,
@@ -21,10 +22,11 @@ import {
   runNativeBrowserAgentAction,
   setNativeBrowserBounds,
   setNativeBrowserDesignMode,
-  setNativeBrowserSketchMode,
+  setNativeBrowserPencilMode,
   waitForNextNativeBrowserLoad,
   type NativeBrowserBounds,
   type NativeBrowserDesignPrompt,
+  type NativeBrowserLoadFailed,
   type NativeBrowserSelection,
   reloadNativeBrowser,
 } from '../../lib/nativeBrowser';
@@ -42,10 +44,11 @@ interface NativeBrowserSurfaceProps {
   viewport: BrowserViewport;
   viewportMode: BrowserViewportMode;
   designMode: boolean;
-  sketchMode: boolean;
+  pencilMode: boolean;
   onLoaded: (url: string) => void;
   onSelection: (selection: NativeBrowserSelection) => void;
   onPrompt: (prompt: NativeBrowserDesignPrompt) => void;
+  onLoadFailed?: (failure: NativeBrowserLoadFailed) => void;
   onViewportSizeChange: (size: Size) => void;
 }
 
@@ -57,10 +60,11 @@ export function NativeBrowserSurface({
   viewport,
   viewportMode,
   designMode,
-  sketchMode,
+  pencilMode,
   onLoaded,
   onSelection,
   onPrompt,
+  onLoadFailed,
   onViewportSizeChange,
 }: NativeBrowserSurfaceProps) {
   const stageRef = useRef<HTMLDivElement>(null);
@@ -74,6 +78,7 @@ export function NativeBrowserSurface({
   const onLoadedRef = useRef(onLoaded);
   const onSelectionRef = useRef(onSelection);
   const onPromptRef = useRef(onPrompt);
+  const onLoadFailedRef = useRef(onLoadFailed);
   const native = isDesktop();
   const surface = useMemo(
     () => surfaceLayout(frameSize, viewport, viewportMode),
@@ -84,7 +89,8 @@ export function NativeBrowserSurface({
     onLoadedRef.current = onLoaded;
     onSelectionRef.current = onSelection;
     onPromptRef.current = onPrompt;
-  }, [onLoaded, onPrompt, onSelection]);
+    onLoadFailedRef.current = onLoadFailed;
+  }, [onLoadFailed, onLoaded, onPrompt, onSelection]);
 
   useEffect(() => {
     onViewportSizeChange({ width: Math.round(surface.width), height: Math.round(surface.height) });
@@ -95,8 +101,8 @@ export function NativeBrowserSurface({
   }, [designMode, visibleSessionId]);
 
   useEffect(() => {
-    if (visibleSessionId) setNativeBrowserSketchMode(visibleSessionId, designMode && sketchMode).catch(() => {});
-  }, [designMode, sketchMode, visibleSessionId]);
+    if (visibleSessionId) setNativeBrowserPencilMode(visibleSessionId, designMode && pencilMode).catch(() => {});
+  }, [designMode, pencilMode, visibleSessionId]);
 
   useEffect(() => {
     let disposed = false;
@@ -123,6 +129,10 @@ export function NativeBrowserSurface({
       if (event.sessionId && event.sessionId !== visibleSessionId) return;
       onLoadedRef.current(event.url);
     }));
+    track(onNativeBrowserLoadFailed((failure) => {
+      if (failure.sessionId && failure.sessionId !== visibleSessionId) return;
+      onLoadFailedRef.current?.(failure);
+    }));
 
     return () => {
       disposed = true;
@@ -140,7 +150,7 @@ export function NativeBrowserSurface({
       try {
         detachDesignMode = attachIframeDesignMode(iframe, {
           designMode,
-          sketchMode,
+          pencilMode,
           onSelection,
         });
         onLoaded(readIframeUrl(iframe) ?? url);
@@ -154,7 +164,7 @@ export function NativeBrowserSurface({
       iframe.removeEventListener('load', attach);
       detachDesignMode();
     };
-  }, [designMode, native, onLoaded, onSelection, sketchMode, url]);
+  }, [designMode, native, onLoaded, onSelection, pencilMode, url]);
 
   useEffect(() => {
     if (!native) return;
@@ -209,7 +219,7 @@ export function NativeBrowserSurface({
         browserKey,
         visibleSessionId,
         designMode,
-        sketchMode: designMode && sketchMode,
+        pencilMode: designMode && pencilMode,
         bounds: () => boundsFor(slotRef),
         markOpen: (bounds) => {
           lastBounds.current = bounds;
@@ -224,7 +234,7 @@ export function NativeBrowserSurface({
         iframe: iframeRef,
         onLoaded,
       }),
-  }), [browserKey, designMode, native, onLoaded, sketchMode, url, visibleSessionId]);
+  }), [browserKey, designMode, native, onLoaded, pencilMode, url, visibleSessionId]);
 
   useEffect(() => {
     return () => {
@@ -273,7 +283,7 @@ async function performNativeRequest(
     browserKey: string;
     visibleSessionId?: string;
     designMode: boolean;
-    sketchMode: boolean;
+    pencilMode: boolean;
     bounds: () => NativeBrowserBounds | null;
     markOpen: (bounds: NativeBrowserBounds) => void;
   },
@@ -291,7 +301,7 @@ async function performNativeRequest(
       requestSessionId: request.sessionId,
     });
     const visibleBounds = visible ? requireNativeBrowserBounds(bounds) : undefined;
-    await syncNativeDesignState(request.sessionId, visible ? options.designMode : false, visible ? options.sketchMode : false);
+    await syncNativeDesignState(request.sessionId, visible ? options.designMode : false, visible ? options.pencilMode : false);
     if (request.action === 'open') {
       const targetUrl = request.url ?? options.currentUrl;
       const loaded = waitForNextNativeBrowserLoad(request.sessionId).catch(() => undefined);
@@ -340,9 +350,9 @@ function requireNativeBrowserBounds(bounds: NativeBrowserBounds | null): NativeB
   return bounds;
 }
 
-async function syncNativeDesignState(sessionId: string, designMode: boolean, sketchMode: boolean): Promise<void> {
+async function syncNativeDesignState(sessionId: string, designMode: boolean, pencilMode: boolean): Promise<void> {
   await setNativeBrowserDesignMode(sessionId, designMode);
-  await setNativeBrowserSketchMode(sessionId, designMode && sketchMode);
+  await setNativeBrowserPencilMode(sessionId, designMode && pencilMode);
 }
 
 async function performIframeRequest(

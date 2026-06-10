@@ -67,9 +67,19 @@ export interface DesignAnchorAncestor {
   selector?: string;
 }
 
+export interface DesignStrokePoint {
+  x: number;
+  y: number;
+}
+
+export interface DesignSelectionScreenshot {
+  base64: string;
+  box: BrowserBox;
+}
+
 export interface DesignAnchor {
   id: string;
-  kind: 'element' | 'region';
+  kind: 'element' | 'region' | 'text';
   label: string;
   tag?: string;
   role?: string;
@@ -78,6 +88,7 @@ export interface DesignAnchor {
   box: BrowserBox;
   source?: ElementSource;
   screenshotPath?: string;
+  strokes?: DesignStrokePoint[][];
 }
 
 export interface DesignAnchorDetail {
@@ -98,6 +109,7 @@ export interface DesignReference {
   title?: string;
   viewport: BrowserViewport;
   scroll: { x: number; y: number };
+  screenshot?: DesignSelectionScreenshot;
   createdAt: string;
 }
 

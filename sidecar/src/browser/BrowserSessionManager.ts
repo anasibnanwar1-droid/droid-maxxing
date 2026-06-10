@@ -14,6 +14,7 @@ import type {
   DesignAnchor,
   DesignAnchorDetail,
   DesignReference,
+  DesignSelectionScreenshot,
   ScrollDirection,
 } from './types.js';
 
@@ -36,6 +37,7 @@ export interface BrowserRuntime {
   type(text: string): Promise<void>;
   keypress(key: string): Promise<void>;
   scroll(direction: ScrollDirection, pixels?: number): Promise<void>;
+  fillCredentials?(): Promise<{ url: string; title?: string; scroll: { x: number; y: number }; refs: BrowserElementRef[] }>;
   close(): Promise<void>;
 }
 
@@ -137,6 +139,17 @@ export class BrowserSessionManager {
     return this.refresh(session.missionId);
   }
 
+  async fillCredentials(missionId: string): Promise<BrowserState> {
+    const session = this.requireSession(missionId);
+    if (!session.runtime.fillCredentials) {
+      throw new Error('Credential autofill is only available in the live Droid Control browser.');
+    }
+    const snapshot = await session.runtime.fillCredentials();
+    session.state = this.stateFromSnapshot(session, snapshot);
+    this.emitUpdated(session.state);
+    return session.state;
+  }
+
   async screenshot(missionId: string, options: BrowserScreenshotOptions = {}): Promise<string> {
     const session = this.requireSession(missionId);
     const base64 = await session.runtime.screenshot(options);
@@ -163,6 +176,7 @@ export class BrowserSessionManager {
   async addReference(
     missionId: string,
     input: { anchor: DesignAnchor; detail?: DesignAnchorDetail; id?: string },
+    screenshot?: DesignSelectionScreenshot,
   ): Promise<DesignReference> {
     const session = this.requireSession(missionId);
     const id = input.id ?? input.anchor.id ?? `ref-${randomUUID()}`;
@@ -180,6 +194,7 @@ export class BrowserSessionManager {
       title: session.state.title,
       viewport: session.state.viewport,
       scroll: session.state.scroll,
+      screenshot,
       createdAt: new Date().toISOString(),
     };
     session.references.set(id, next);
