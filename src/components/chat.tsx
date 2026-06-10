@@ -752,8 +752,11 @@ function SubagentLine({ event, active, onOpen, activity }: {
   const running = activity?.status === 'running' || (!!active && activity?.status !== 'completed');
   const startTs = activity?.startedAt;
   const elapsed = useElapsed(startTs, running);
-  const timer = running && startTs != null && elapsed >= 1000 ? ` ${formatDuration(elapsed)}` : '';
+  const timer = running && startTs != null && elapsed >= 1000 ? formatDuration(elapsed) : '';
   const verb = running ? 'Running' : 'Spawned';
+  // Append the literal "subagent" only when the name is a real droid label, so a
+  // nameless spawn reads "Spawned subagent" instead of "Spawned subagent subagent".
+  const tail = [label ? 'subagent' : '', timer].filter(Boolean).join(' ');
   const muted = running ? 'shimmer-text font-medium' : 'text-droid-text-muted';
   const latest = subagentLatest(activity?.latest);
   const navigate = () => onOpen?.({ toolUseId: event.toolUseId, label });
@@ -773,7 +776,7 @@ function SubagentLine({ event, active, onOpen, activity }: {
         >
           {name}
         </button>
-        <span className={muted}>subagent{timer}</span>
+        {tail && <span className={muted}>{tail}</span>}
       </div>
       <Expand open={open}>
         <div className="mt-2 pl-[18px]">
