@@ -3,7 +3,7 @@ import { motion } from 'framer-motion';
 import { useStore } from '../hooks/useStore';
 import { pickDirectory } from '../lib/desktop';
 import { Folder, MessageSquare, FolderPlus, Plus, User, Settings, ChevronRight } from 'lucide-react';
-import { buildWorkspaceSections } from '../lib/workspaces';
+import { buildWorkspaceSections, isSubagentSession, SIDEBAR_VISIBLE_SESSION_LIMIT } from '../lib/workspaces';
 import { useMissionLive } from '../hooks/useMissionLive';
 import type { MissionSummary } from '../types/bridge';
 
@@ -61,9 +61,17 @@ export default function Sidebar() {
   const { state, dispatch } = useStore();
   const activeMission = state.activeMissionId ? state.missions[state.activeMissionId] : null;
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
   const toggleCollapse = (key: string) =>
     setCollapsed((prev) => {
+      const next = new Set(prev);
+      next.has(key) ? next.delete(key) : next.add(key);
+      return next;
+    });
+
+  const toggleExpanded = (key: string) =>
+    setExpanded((prev) => {
       const next = new Set(prev);
       next.has(key) ? next.delete(key) : next.add(key);
       return next;
@@ -85,15 +93,16 @@ export default function Sidebar() {
     startChat(cwd);
   };
 
-  // Plain, folder-less chats.
+  // Plain, folder-less chats (subagent sessions never appear as standalone rows).
   const chatMissions = useMemo<MissionSummary[]>(() => {
     return (state.missionOrder.map((id) => state.missions[id]).filter(Boolean) as MissionSummary[])
-      .filter((m) => !m.cwd)
+      .filter((m) => !m.cwd && !isSubagentSession(m))
       .sort((a, b) => b.updatedAt - a.updatedAt);
   }, [state.missionOrder, state.missions]);
 
   const workspaces = useMemo(() => {
-    const missions = state.missionOrder.map((id) => state.missions[id]).filter(Boolean) as MissionSummary[];
+    const missions = (state.missionOrder.map((id) => state.missions[id]).filter(Boolean) as MissionSummary[])
+      .filter((m) => !isSubagentSession(m));
     return buildWorkspaceSections(state.workspaceCwds, missions);
   }, [state.missionOrder, state.missions, state.workspaceCwds]);
 
@@ -108,6 +117,32 @@ export default function Sidebar() {
       }}
     />
   );
+
+  // Show the latest sessions and tuck the rest behind a "Show more" toggle. The
+  // active session is always kept visible so selecting an older one never hides
+  // it on the next render.
+  const renderSessionList = (sectionKey: string, sessions: MissionSummary[]) => {
+    const isExpanded = expanded.has(sectionKey);
+    const overflow = sessions.length - SIDEBAR_VISIBLE_SESSION_LIMIT;
+    let visible = isExpanded ? sessions : sessions.slice(0, SIDEBAR_VISIBLE_SESSION_LIMIT);
+    if (!isExpanded && activeMission && sessions.some((m) => m.id === activeMission.id) && !visible.some((m) => m.id === activeMission.id)) {
+      visible = [...visible, state.missions[activeMission.id]];
+    }
+    return (
+      <div className="mt-0.5 space-y-0.5">
+        {visible.map(renderRow)}
+        {overflow > 0 && (
+          <button
+            onClick={() => toggleExpanded(sectionKey)}
+            className="w-full flex items-center gap-2.5 pl-3 pr-2 py-1.5 rounded-xl text-left text-[12px] text-droid-text-muted hover:text-droid-text hover:bg-droid-elevated/40 transition-colors"
+          >
+            <span className="w-3 shrink-0" />
+            {isExpanded ? 'Show less' : `Show ${overflow} more`}
+          </button>
+        )}
+      </div>
+    );
+  };
 
   return (
     <aside
@@ -173,7 +208,7 @@ export default function Sidebar() {
                             <Plus className="w-3.5 h-3.5" />
                           </button>
                         </div>
-                        {wsOpen && <div className="mt-0.5 space-y-0.5">{ws.sessions.map(renderRow)}</div>}
+                        {wsOpen && renderSessionList(ws.cwd, ws.sessions)}
                       </div>
                     );
                   })}
@@ -218,12 +253,11 @@ export default function Sidebar() {
                 </button>
               </div>
               {open && (
-                <div className="mt-0.5 space-y-0.5">
-                  {chatMissions.map(renderRow)}
-                  {chatMissions.length === 0 && (
-                    <div className="px-3 py-2 text-[12px] text-droid-text-muted">No chats yet.</div>
-                  )}
-                </div>
+                chatMissions.length === 0 ? (
+                  <div className="mt-0.5 px-3 py-2 text-[12px] text-droid-text-muted">No chats yet.</div>
+                ) : (
+                  renderSessionList('__chats__', chatMissions)
+                )
               )}
             </div>
           );

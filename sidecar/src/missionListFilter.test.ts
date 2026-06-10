@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { MissionSummary } from './protocol.js';
-import { filterMissionListSummaries } from './missionListFilter.js';
+import { filterMissionListSummaries, isSubagentSummary } from './missionListFilter.js';
 
-const summary = (id: string, cwd: string, updatedAt: number): MissionSummary => ({
+const summary = (id: string, cwd: string, updatedAt: number, extra: Partial<MissionSummary> = {}): MissionSummary => ({
   id,
   sessionId: id,
   kind: 'chat',
@@ -20,6 +20,7 @@ const summary = (id: string, cwd: string, updatedAt: number): MissionSummary => 
   contextTokens: 0,
   createdAt: updatedAt,
   updatedAt,
+  ...extra,
 });
 
 test('filterMissionListSummaries returns only five latest summaries per requested workspace', () => {
@@ -45,6 +46,34 @@ test('filterMissionListSummaries returns only five latest summaries per requeste
     'app-3',
     'app-2',
   ]);
+});
+
+test('isSubagentSummary flags workers, validators and parented sessions', () => {
+  assert.equal(isSubagentSummary(summary('a', '/repo/app', 1)), false);
+  assert.equal(isSubagentSummary(summary('w', '/repo/app', 1, { role: 'worker' })), true);
+  assert.equal(isSubagentSummary(summary('v', '/repo/app', 1, { role: 'validator' })), true);
+  assert.equal(isSubagentSummary(summary('k', '/repo/app', 1, { kind: 'mission_worker' })), true);
+  assert.equal(isSubagentSummary(summary('p', '/repo/app', 1, { parentSessionId: 'parent' })), true);
+});
+
+test('filterMissionListSummaries excludes subagent sessions', () => {
+  const summaries = [
+    summary('chat', '/repo/app', 3),
+    summary('worker', '/repo/app', 2, { role: 'worker' }),
+    summary('child', '/repo/app', 1, { parentSessionId: 'chat' }),
+  ];
+
+  const filtered = filterMissionListSummaries(summaries, { workspaceCwds: ['/repo/app'] });
+
+  assert.deepEqual(filtered.map((m) => m.id), ['chat']);
+});
+
+test('filterMissionListSummaries returns every session when no per-workspace limit is given', () => {
+  const summaries = Array.from({ length: 9 }, (_, i) => summary(`app-${i}`, '/repo/app', i + 1));
+
+  const filtered = filterMissionListSummaries(summaries, { workspaceCwds: ['/repo/app'] });
+
+  assert.equal(filtered.length, 9);
 });
 
 test('filterMissionListSummaries keeps latest plain chats when workspace loading is limited', () => {

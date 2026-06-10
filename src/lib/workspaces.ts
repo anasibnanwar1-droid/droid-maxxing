@@ -1,11 +1,26 @@
 import type { MissionSummary } from '../types/bridge';
 
-export const WORKSPACE_BOOTSTRAP_SESSION_LIMIT = 5;
+// How many sessions a sidebar section shows before collapsing the rest behind
+// a "Show more" control. This is a display default, not a hard cap: every
+// loaded session stays available.
+export const SIDEBAR_VISIBLE_SESSION_LIMIT = 5;
 
 export interface WorkspaceSection {
   cwd: string;
   name: string;
   sessions: MissionSummary[];
+}
+
+// Subagent sessions (mission workers/validators or Task-tool children) are
+// never standalone conversations, so they must not appear in the sidebar.
+export function isSubagentSession(summary: MissionSummary): boolean {
+  return (
+    summary.role === 'worker' ||
+    summary.role === 'validator' ||
+    summary.kind === 'mission_worker' ||
+    summary.kind === 'mission_validator' ||
+    !!summary.parentSessionId
+  );
 }
 
 export function workspaceName(cwd: string): string {

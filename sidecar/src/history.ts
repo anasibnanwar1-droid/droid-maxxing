@@ -51,6 +51,11 @@ interface StoredSessionStart {
   sessionTitle?: string;
   decompSessionType?: string;
   decompMissionId?: string;
+  // Present when this session was spawned by another session's tool call
+  // (Task tool subagents). Such sessions are not standalone conversations.
+  callingSessionId?: string;
+  callingToolUseId?: string;
+  parent?: unknown;
 }
 
 interface StoredModelSettings {
@@ -897,6 +902,9 @@ function classifyStoredSession(
 ): Pick<MissionSummary, 'kind' | 'role' | 'missionId' | 'parentSessionId'> | null {
   if (start.decompSessionType === 'worker') return null;
   if (start.decompSessionType === 'validator') return null;
+  // Task-tool subagents run as their own droid sessions but are spawned by a
+  // parent session's tool call; they must not surface as standalone sessions.
+  if (start.callingSessionId || start.callingToolUseId || start.parent != null) return null;
   const mode = sessionInteractionMode(start);
   const missionId = start.decompMissionId;
   if (start.decompSessionType === 'orchestrator' || missionId || mode === 'agi') {
