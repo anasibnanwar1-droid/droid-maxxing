@@ -1,10 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  clampCompactionTokenLimit,
-  compactionTokenLimitForModel,
   createAutonomyForCommand,
-  createCompactionSettingsForModel,
   createMissionAgentDefaultsForMode,
   createModelDefaultsForMode,
   createSessionSettingsForAgent,
@@ -12,6 +9,11 @@ import {
   startupFactoryDefaults,
   validateFactoryDefaults,
 } from './MissionManager.js';
+import {
+  clampCompactionTokenLimit,
+  compactionTokenLimitForModel,
+  createCompactionSettingsForModel,
+} from './compaction.js';
 import type { MissionSummary, ModelInfo, ServerEvent } from './protocol.js';
 
 class FakeSession {
@@ -501,4 +503,51 @@ test('rejects manual compaction while streaming', async () => {
   assert.equal(mission.streaming, true);
   const hasRejection = events.some((e) => e.type === 'mission.transcript' && /cannot compact/i.test((e as { event?: { text?: string } }).event?.text ?? ''));
   assert.equal(hasRejection, true);
+});
+
+function workerAutoCompactHarness(workerUsed: number, workerLimit?: number) {
+  const { manager, session: orchestratorSession, events, mission } = autoCompactHarness(0, undefined);
+  const workerSession = new FakeCompactionSession('worker-compact', workerUsed);
+  mission.knownSubagents.add('worker-compact');
+  mission.agents.set('worker-compact', {
+    session: workerSession,
+    missionId: mission.summary.id,
+    role: 'worker',
+    streaming: false,
+    pendingSends: [],
+    lastUsedAt: Date.now(),
+    compacting: false,
+    effectiveCompactionTokenLimit: workerLimit,
+  });
+  return { manager, events, mission, workerSession, orchestratorSession };
+}
+
+test('worker auto-compacts its own session in place once context crosses the worker limit', async () => {
+  const { manager, events, workerSession, orchestratorSession } = workerAutoCompactHarness(250_000, 200_000);
+  await manager.handle({ type: 'agent.send', missionId: 'app-compact', agentSessionId: 'worker-compact', text: 'go' });
+  assert.equal(workerSession.compactions, 1);
+  // Boundary: worker compaction never touches the orchestrator's own session.
+  assert.equal(orchestratorSession.compactions, 0);
+  // Compaction status routes to the worker's own transcript, not the orchestrator chat.
+  const status = events.find(
+    (e) =>
+      e.type === 'mission.transcript' &&
+      (e as { event?: { kind?: string; text?: string } }).event?.kind === 'status' &&
+      /Compacting conversation/i.test((e as { event?: { text?: string } }).event?.text ?? ''),
+  ) as { event?: { agentSessionId?: string; role?: string } } | undefined;
+  assert.equal(status?.event?.agentSessionId, 'worker-compact');
+  assert.equal(status?.event?.role, 'worker');
+  assert.equal(events.some((e) => e.type === 'mission.error' || e.type === 'error'), false);
+});
+
+test('worker does not auto-compact while under its limit', async () => {
+  const { manager, workerSession } = workerAutoCompactHarness(150_000, 200_000);
+  await manager.handle({ type: 'agent.send', missionId: 'app-compact', agentSessionId: 'worker-compact', text: 'go' });
+  assert.equal(workerSession.compactions, 0);
+});
+
+test('worker does not auto-compact when its effective limit is unset', async () => {
+  const { manager, workerSession } = workerAutoCompactHarness(250_000, undefined);
+  await manager.handle({ type: 'agent.send', missionId: 'app-compact', agentSessionId: 'worker-compact', text: 'go' });
+  assert.equal(workerSession.compactions, 0);
 });
