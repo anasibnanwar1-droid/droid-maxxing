@@ -135,9 +135,14 @@ export function attachIframeDesignMode(
       const startCaret = (doc as any).caretRangeFromPoint?.(startPt.x, startPt.y);
       const endCaret = (doc as any).caretRangeFromPoint?.(end.x, end.y);
       if (startCaret && endCaret) {
+        // Order the carets by document position so a reverse drag (end before
+        // start) does not collapse the range and drop the selected text.
+        const backwards = startCaret.compareBoundaryPoints(Range.START_TO_START, endCaret) > 0;
+        const first = backwards ? endCaret : startCaret;
+        const second = backwards ? startCaret : endCaret;
         const range = doc.createRange();
-        range.setStart(startCaret.startContainer, startCaret.startOffset);
-        range.setEnd(endCaret.endContainer, endCaret.endOffset);
+        range.setStart(first.startContainer, first.startOffset);
+        range.setEnd(second.startContainer, second.startOffset);
         text = cleanText(range.toString());
       }
     } catch { /* fallback below */ }

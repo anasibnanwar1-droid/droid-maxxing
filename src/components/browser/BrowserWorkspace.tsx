@@ -75,7 +75,18 @@ export default function BrowserWorkspace() {
   const reloadTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const transcripts = requestedChatId ? state.transcripts[requestedChatId] : undefined;
   useEffect(() => {
-    if (!browserKey || !transcripts) return;
+    if (!browserKey) return;
+    // Eligibility is checked first so navigating away from a local dev server
+    // cancels any reload that was scheduled while the URL was still eligible;
+    // otherwise a stale edit reload could fire against an unrelated page.
+    if (!/^https?:\/\/(localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\])/.test(activeUrl)) {
+      if (reloadTimerRef.current) {
+        clearTimeout(reloadTimerRef.current);
+        reloadTimerRef.current = null;
+      }
+      return;
+    }
+    if (!transcripts) return;
     const last = transcripts[transcripts.length - 1];
     if (!last || last.kind !== 'tool_result') return;
     const name = last.toolName ?? '';
@@ -83,8 +94,6 @@ export default function BrowserWorkspace() {
       || name === 'str_replace' || name === 'apply_patch' || name === 'create'
       || name === 'write' || name.includes('edit') || name.includes('patch');
     if (!isEdit || last.isError) return;
-    const url = activeUrl;
-    if (!/^https?:\/\/(localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\])/.test(url)) return;
     if (last.ts <= lastEditTsRef.current) return;
     lastEditTsRef.current = last.ts;
     if (reloadTimerRef.current) clearTimeout(reloadTimerRef.current);

@@ -1164,6 +1164,10 @@ export class MissionManager {
             permissionHandler: this.makePermissionHandler(ref),
             askUserHandler: this.makeAskUserHandler(ref),
           });
+          // The replacement session starts with default tool settings, so the
+          // cached design-tool policy no longer reflects reality. Clear it so
+          // the next turn re-synchronizes disabledToolIds.
+          mission.todoDisabledForDesign = undefined;
           await oldSession.close().catch(() => {});
           this.usageOffsets.set(appSessionId, carryover);
           this.patch(appSessionId, {

@@ -612,10 +612,17 @@ async function fillCredentialsForAgent(contents, request) {
       error: 'No saved credentials for this site. The user can sign in once and choose to save the password.',
     };
   }
-  await contents.executeJavaScript(
+  const fill = await contents.executeJavaScript(
     `window.__DROIDMAXX_FILL_CREDENTIALS?.(${JSON.stringify(credential)});`,
     true,
-  );
+  ).catch(() => undefined);
+  if (!fill || !fill.ok) {
+    return {
+      requestId: request.requestId,
+      ok: false,
+      error: (fill && fill.error) || 'Could not find a login form to fill on this page.',
+    };
+  }
   const probe = await contents.executeJavaScript(
     `window.__DROIDMAXX_AGENT_ACTION?.(${JSON.stringify({ ...request, action: 'snapshot' })});`,
     true,

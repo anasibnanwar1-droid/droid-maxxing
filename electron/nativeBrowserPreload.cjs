@@ -153,8 +153,11 @@ function onKey(event) {
     return;
   }
   altHeld = Boolean(event.altKey);
-  if (event.type === 'keydown' && event.key === 'Escape' && !promptVisible()) {
-    clearAnnotations();
+  if (event.type === 'keydown' && event.key === 'Escape') {
+    // Escape must cancel reliably even when focus is not inside the composer
+    // (the composer's own handler only fires when it holds focus).
+    if (promptVisible()) cancelDesign();
+    else clearAnnotations();
   }
 }
 
@@ -211,7 +214,12 @@ function onMouseDown(event) {
     swallow(event);
     return;
   }
-  if (promptVisible()) return;
+  // Swallow so the underlying page cannot react to the press while the
+  // composer is open; clicks elsewhere are also intercepted in onClick.
+  if (promptVisible()) {
+    swallow(event);
+    return;
+  }
   if (pencilMode) {
     activeStroke = [point(event)];
     strokes.push(activeStroke);
