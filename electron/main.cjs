@@ -772,14 +772,14 @@ function emitNativeBrowserLoadFailed(entry, url, error) {
 
 // Bare hosts are normalized to https by the renderer; local dev servers are
 // usually plain http. Retry once over http for private/loopback hosts instead
-// of stranding the pane on a blank error page.
+// of stranding the pane on a blank error page. Only fall back when the endpoint
+// is clearly not serving HTTPS at all (nothing listening / not speaking TLS);
+// certificate-validation failures mean a real TLS server is present, so
+// downgrading those to plain http would silently weaken a secure connection.
 function httpFallbackUrl(url, errorCode) {
   const retryableCodes = new Set([
-    -102, // ERR_CONNECTION_REFUSED
-    -200, // ERR_CERT_COMMON_NAME_INVALID
-    -201, // ERR_CERT_DATE_INVALID
-    -202, // ERR_CERT_AUTHORITY_INVALID
-    -501, // ERR_INSECURE_RESPONSE
+    -102, // ERR_CONNECTION_REFUSED  (no server listening on https)
+    -107, // ERR_SSL_PROTOCOL_ERROR  (endpoint is a plain-http server)
   ]);
   if (!retryableCodes.has(errorCode)) return undefined;
   try {
