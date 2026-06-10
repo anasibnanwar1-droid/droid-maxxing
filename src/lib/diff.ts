@@ -55,6 +55,19 @@ function lineDiff(oldStr: string, newStr: string): DiffOp[] {
   return ops;
 }
 
+// apply_patch / unified-diff bodies carry the file path in their header lines
+// (`*** Update File: x`, `+++ b/x`), which the arg keys don't expose. Recover it
+// so edits show the real filename instead of the generic "file" fallback.
+function pathFromPatch(patch: string): string | undefined {
+  for (const line of patch.split('\n')) {
+    const star = line.match(/^\*\*\* (?:Update|Add|Delete|Move to) File:\s*(.+?)\s*$/);
+    if (star) return star[1];
+    const plus = line.match(/^\+\+\+ (?:[ab]\/)?(.+?)\s*$/);
+    if (plus && plus[1] !== '/dev/null') return plus[1];
+  }
+  return undefined;
+}
+
 function parsePatch(patch: string): DiffOp[] {
   const ops: DiffOp[] = [];
   for (const line of patch.split('\n')) {
@@ -74,13 +87,15 @@ export function extractFileChange(toolName?: string, args?: unknown): FileChange
   if (!isEditTool(toolName.toLowerCase())) return null;
 
   const a: Record<string, unknown> = args && typeof args === 'object' ? (args as Record<string, unknown>) : {};
-  const path = firstString(a, ['path', 'file_path', 'filePath', 'file', 'target_file', 'filename']) ?? 'file';
+  const argPath = firstString(a, ['path', 'file_path', 'filePath', 'file', 'target_file', 'filename']);
 
   const patch = firstString(a, ['patch', 'diff', 'input']) ?? (typeof args === 'string' ? args : undefined);
   if (patch && /(^|\n)[+-]/.test(patch)) {
     const ops = parsePatch(patch);
-    return finalize(path, 'patch', ops);
+    return finalize(argPath ?? pathFromPatch(patch) ?? 'file', 'patch', ops);
   }
+
+  const path = argPath ?? 'file';
 
   if (Array.isArray(a.edits)) {
     const ops: DiffOp[] = [];

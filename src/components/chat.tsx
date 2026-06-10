@@ -290,6 +290,7 @@ type FeedItem =
   | { type: 'status'; key: string; event: TranscriptEvent }
   | { type: 'error'; key: string; event: TranscriptEvent }
   | { type: 'diff'; key: string; event: TranscriptEvent; change: FileChange }
+  | { type: 'diffs'; key: string; changes: { event: TranscriptEvent; change: FileChange }[] }
   | { type: 'subagent'; key: string; event: TranscriptEvent }
   | { type: 'tools'; key: string; events: TranscriptEvent[] }
   | { type: 'worked'; key: string; items: FeedItem[]; durationMs: number };
@@ -323,7 +324,21 @@ function buildFeed(events: TranscriptEvent[], subagentCards = false): FeedItem[]
     if (ev.kind === 'error' || ev.isError) { items.push({ type: 'error', key: ev.id, event: ev }); i++; continue; }
     if (ev.kind === 'tool_call') {
       const change = extractFileChange(ev.toolName, ev.toolArgs);
-      if (change) { items.push({ type: 'diff', key: ev.id, event: ev, change }); i++; continue; }
+      if (change) {
+        // Fold a contiguous run of file edits into one collapsible group so a
+        // large multi-file change doesn't bury the chat under dozens of cards.
+        const changes: { event: TranscriptEvent; change: FileChange }[] = [{ event: ev, change }];
+        i++;
+        while (i < events.length && events[i].kind === 'tool_call') {
+          const c = extractFileChange(events[i].toolName, events[i].toolArgs);
+          if (!c) break;
+          changes.push({ event: events[i], change: c });
+          i++;
+        }
+        if (changes.length === 1) items.push({ type: 'diff', key: ev.id, event: ev, change });
+        else items.push({ type: 'diffs', key: `diffs-${ev.id}`, changes });
+        continue;
+      }
       if (subagentCards && isSubagentTool(ev.toolName, ev.toolArgs)) {
         const key = ev.toolUseId ?? ev.id;
         const at = subagentIdx.get(key);
@@ -370,6 +385,7 @@ function tailTimestamp(item?: FeedItem): number | undefined {
   if (!item) return undefined;
   if (item.type === 'worked') return undefined;
   if (item.type === 'tools') { const e = item.events[item.events.length - 1]; return e?.endTs ?? e?.ts; }
+  if (item.type === 'diffs') { const c = item.changes[item.changes.length - 1]; return c?.event.endTs ?? c?.event.ts; }
   return item.event.endTs ?? item.event.ts;
 }
 
@@ -384,6 +400,7 @@ function spanOf(items: FeedItem[]): { start: number; end: number } {
   };
   for (const it of items) {
     if (it.type === 'tools') it.events.forEach((e) => consider(e.ts, e.endTs));
+    else if (it.type === 'diffs') it.changes.forEach((c) => consider(c.event.ts, c.event.endTs));
     else if (it.type !== 'worked') consider(it.event.ts, it.event.endTs);
   }
   if (start === Infinity) return { start: 0, end: 0 };
@@ -649,6 +666,8 @@ const FeedItemView = memo(function FeedItemView({ item, live, compacting, onOpen
       );
     case 'diff':
       return <DiffCard change={item.change} onOpen={onOpenDiff ? () => onOpenDiff(item.change) : undefined} />;
+    case 'diffs':
+      return <DiffGroup changes={item.changes} onOpenDiff={onOpenDiff} />;
     case 'tools':
       return <ToolGroupItem events={item.events} active={live} />;
     case 'worked':
@@ -687,6 +706,37 @@ function WorkedGroup({ item, onOpenDiff, onOpenSubagent, subagentActivity, specD
               specDraft={specDraft}
               specContent={specContent}
             />
+          ))}
+        </div>
+      </Expand>
+    </div>
+  );
+}
+
+/* ── Folded run of file edits: one collapsible header over individual diffs ── */
+function DiffGroup({ changes, onOpenDiff }: {
+  changes: { event: TranscriptEvent; change: FileChange }[];
+  onOpenDiff?: (c: FileChange) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const added = changes.reduce((s, c) => s + c.change.added, 0);
+  const removed = changes.reduce((s, c) => s + c.change.removed, 0);
+  const files = new Set(changes.map((c) => c.change.path));
+  const label = files.size <= 1
+    ? `Edited ${baseName(changes[0].change.path)} · ${changes.length} edits`
+    : `Edited ${files.size} files · ${changes.length} edits`;
+  return (
+    <div>
+      <button onClick={() => setOpen((o) => !o)} className="group flex w-full min-w-0 items-center gap-1.5 text-left">
+        <ChevronRight className={`w-3 h-3 shrink-0 text-droid-text-muted/50 transition-transform duration-200 group-hover:text-droid-text-muted ${open ? 'rotate-90' : ''}`} />
+        <span className="min-w-0 truncate text-[13px] font-medium text-droid-text-muted group-hover:text-droid-text-secondary">{label}</span>
+        <span className="ml-auto text-[11px] font-mono shrink-0" style={{ color: '#5cc89a' }}>+{added}</span>
+        <span className="text-[11px] font-mono shrink-0" style={{ color: '#ff7a5c' }}>−{removed}</span>
+      </button>
+      <Expand open={open}>
+        <div className="mt-2 space-y-2 border-l border-droid-border pl-3">
+          {changes.map((c) => (
+            <DiffCard key={c.event.id} change={c.change} onOpen={onOpenDiff ? () => onOpenDiff(c.change) : undefined} />
           ))}
         </div>
       </Expand>
