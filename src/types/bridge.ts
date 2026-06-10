@@ -444,7 +444,7 @@ export type ClientCommand =
   | { type: 'browser.scroll'; missionId: string; direction: BrowserScrollDirection; pixels?: number; source?: 'agent' | 'user' }
   | { type: 'browser.screenshot'; missionId: string; fullPage?: boolean; deviceScaleFactor?: number }
   | { type: 'browser.inspectPoint'; missionId: string; x: number; y: number }
-  | { type: 'browser.design.addReference'; missionId: string; reference: DesignReference; screenshot?: DesignSelectionScreenshot }
+  | { type: 'browser.design.addReference'; missionId: string; reference: DesignReference }
   | { type: 'browser.design.sendPrompt'; missionId: string; instruction: string; referenceIds: string[] }
   | { type: 'browser.native.result'; result: BrowserNativeResult }
   | { type: 'sessions.list' }

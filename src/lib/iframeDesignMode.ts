@@ -92,7 +92,9 @@ export function attachIframeDesignMode(
     if (!target) return;
     event.preventDefault();
     event.stopPropagation();
-    commitPencilStrokes();
+    // Any pending pencil strokes are attached to this element selection rather
+    // than emitted as a separate region, so clicking after drawing produces a
+    // single annotated reference instead of a duplicate region + element pair.
     showHover(win, overlay, label, target.getBoundingClientRect(), labelFor(target), '#ff8a2a');
     options.onSelection(selectionFor(win, doc, target, strokes));
     strokes = [];

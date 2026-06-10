@@ -361,7 +361,7 @@ export class MissionManager {
             anchor: cmd.reference.anchor,
             detail: cmd.reference.detail,
             id: cmd.reference.id,
-          }, cmd.screenshot);
+          }, cmd.reference.screenshot);
         });
         return;
       case 'browser.design.sendPrompt':

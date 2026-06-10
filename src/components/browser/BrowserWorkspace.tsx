@@ -228,7 +228,7 @@ export default function BrowserWorkspace() {
   const handleSelection = useCallback((selection: NativeBrowserSelection) => {
     const reference = referenceFromNativeSelection(selection);
     setReferences([reference]);
-    if (browserKey) addDesignReference(browserKey, reference, selection.screenshot);
+    if (browserKey) addDesignReference(browserKey, reference);
   }, [browserKey]);
 
   const handleLoadFailed = useCallback((failure: NativeBrowserLoadFailed) => {
@@ -243,7 +243,7 @@ export default function BrowserWorkspace() {
     const referenceId = reference.id;
     if (!referenceId) return;
     setReferences([reference]);
-    addDesignReference(browserKey, reference, prompt.selection.screenshot);
+    addDesignReference(browserKey, reference);
     window.setTimeout(() => sendDesignPrompt(browserKey, text, [referenceId]), 0);
     emitDesignTranscript(text, [reference]);
     setReferences([]);

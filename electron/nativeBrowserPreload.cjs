@@ -20,6 +20,11 @@ let activePath = null;
 let textDragStart = null;
 let textRange = null;
 let clearTimer = null;
+// True between submitting a design prompt and the main process acking that it
+// has captured the annotated region. While set, all design interactions are
+// frozen so the user cannot move/redraw annotations mid-capture and produce a
+// screenshot that no longer matches the reference.
+let capturePending = false;
 
 const interactiveTags = new Set(['A', 'BUTTON', 'INPUT', 'TEXTAREA', 'SELECT', 'SUMMARY']);
 const interactiveRoles = new Set(['button', 'checkbox', 'combobox', 'link', 'menuitem', 'option', 'radio', 'searchbox', 'switch', 'tab', 'textbox']);
@@ -63,6 +68,7 @@ contextBridge.exposeInMainWorld('__DROIDMAXX_FILL_CREDENTIALS', fillCredentials)
 ipcRenderer.on('native-browser-design-prompt-sent', () => {
   if (clearTimer) clearTimeout(clearTimer);
   clearTimer = null;
+  capturePending = false;
   clearAnnotations();
 });
 
@@ -100,6 +106,11 @@ function applyState(state) {
   activeStroke = null;
   textDragStart = null;
   if (!designMode) {
+    capturePending = false;
+    if (clearTimer) {
+      clearTimeout(clearTimer);
+      clearTimer = null;
+    }
     hideBox();
     hidePrompt();
     clearAnnotations();
@@ -112,6 +123,7 @@ function applyState(state) {
 
 function onKey(event) {
   if (!designMode) return;
+  if (capturePending) return;
   altHeld = Boolean(event.altKey);
   if (event.type === 'keydown' && event.key === 'Escape' && !promptVisible()) {
     clearAnnotations();
@@ -121,6 +133,10 @@ function onKey(event) {
 function onMouseMove(event) {
   if (!designMode) return;
   if (isInternalEvent(event)) return;
+  if (capturePending) {
+    swallow(event);
+    return;
+  }
   altHeld = Boolean(event.altKey);
   if (activeStroke) {
     activeStroke.push(point(event));
@@ -163,6 +179,10 @@ function processHover() {
 function onMouseDown(event) {
   if (!designMode || event.button !== 0) return;
   if (isInternalEvent(event)) return;
+  if (capturePending) {
+    swallow(event);
+    return;
+  }
   if (promptVisible()) return;
   if (pencilMode) {
     activeStroke = [point(event)];
@@ -181,6 +201,10 @@ function onMouseDown(event) {
 
 function onMouseUp(event) {
   if (!designMode) return;
+  if (capturePending) {
+    swallow(event);
+    return;
+  }
   if (activeStroke) {
     const finished = strokes[strokes.length - 1];
     activeStroke = null;
@@ -223,6 +247,10 @@ function onContextMenu(event) {
 function onClick(event) {
   if (!designMode || pencilMode || event.shiftKey) return;
   if (isInternalEvent(event)) return;
+  if (capturePending) {
+    swallow(event);
+    return;
+  }
   if (promptVisible()) {
     swallow(event);
     return;
@@ -1070,6 +1098,7 @@ function cancelDesign() {
     clearTimeout(clearTimer);
     clearTimer = null;
   }
+  capturePending = false;
   hidePrompt();
   hideBox();
   clearAnnotations();
@@ -1121,10 +1150,14 @@ function mountPrompt() {
       // Hide the composer but keep strokes/highlights visible: the main
       // process captures the annotated region before acking, then the
       // 'native-browser-design-prompt-sent' handler clears everything.
+      capturePending = true;
       sendDesignPrompt({ selection: promptSelection, instruction });
       hidePrompt();
       if (clearTimer) clearTimeout(clearTimer);
-      clearTimer = setTimeout(clearAnnotations, 4000);
+      clearTimer = setTimeout(() => {
+        capturePending = false;
+        clearAnnotations();
+      }, 4000);
     });
     promptBox.addEventListener('keydown', (event) => {
       if (event.key === 'Escape') {

@@ -211,7 +211,16 @@ export function createBrowserMcpServer(manager: BrowserSessionManager, missionId
           if (!ref) {
             return jsonResult({ ok: false, error: `No design reference ${input.id}. Call design-mode to list the current references.` });
           }
-          return jsonResult({ ok: true, reference: designReferenceDetail(ref) });
+          const text = jsonResult({ ok: true, reference: designReferenceDetail(ref) });
+          if (ref.screenshot?.base64) {
+            return {
+              content: [
+                { type: 'text' as const, text },
+                { type: 'image' as const, data: ref.screenshot.base64, mimeType: 'image/png' as const },
+              ],
+            };
+          }
+          return text;
         }),
       ),
     ],
@@ -257,7 +266,10 @@ function designReferenceSummary(ref: DesignReference): Record<string, unknown> {
     url: ref.url,
   };
   if (anchor.strokes) out.strokes = anchor.strokes;
-  if (ref.screenshot) out.screenshotBase64 = ref.screenshot.base64;
+  // The annotated screenshot bytes are returned as a separate image block by
+  // the design-mode / design_reference tools; keep them out of the JSON to
+  // avoid duplicating large base64 payloads.
+  if (ref.screenshot) out.hasScreenshot = true;
   return out;
 }
 

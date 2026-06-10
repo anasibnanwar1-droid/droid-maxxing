@@ -247,19 +247,12 @@ function stopSidecar() {
 function configureBrowserSession() {
   if (browserSessionConfigured) return;
   const ses = session.fromPartition(BROWSER_PARTITION);
-  // Only allow hardware authenticators (security keys / passkey devices).
-  // Deny everything else so the browser session keeps Electron's safe defaults.
-  // Note: Electron's setDevicePermissionHandler does not expose embedding-frame
-  // origin info, so we cannot enforce a same-origin check here; we only gate
-  // by device type.
-  ses.setDevicePermissionHandler((details) => {
-    return details.deviceType === 'hid' || details.deviceType === 'usb';
-  });
-  ses.on('select-hid-device', (event, details, callback) => {
-    event.preventDefault();
-    const device = details.deviceList[0];
-    callback(device ? device.deviceId : undefined);
-  });
+  // Keep Electron's safe defaults: deny WebHID/WebUSB device access for the
+  // embedded browser. WebAuthn / passkeys are handled by Chromium natively and
+  // do not flow through these handlers, so granting HID/USB to arbitrary sites
+  // (and auto-selecting a device) would only open a hardware-permission
+  // escalation path with no upside.
+  ses.setDevicePermissionHandler(() => false);
   browserSessionConfigured = true;
 }
 
