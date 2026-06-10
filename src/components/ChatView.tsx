@@ -1,4 +1,4 @@
-import { useRef, useEffect, useMemo, useState } from 'react';
+import { useRef, useEffect, useMemo, useState, useCallback } from 'react';
 import { GripVertical, ChevronRight, Square } from 'lucide-react';
 import { useStore } from '../hooks/useStore';
 import { useMissionLive } from '../hooks/useMissionLive';
@@ -116,14 +116,40 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
     : undefined;
   const subMeta = [subModel, selectedWorker?.reasoningEffort].filter(Boolean).join(' · ');
 
-  // Navigate to a spawned subagent from its in-chat card: match the droid name,
-  // preferring a still-running instance, then hand off to the right-panel view.
-  const openSubagentByLabel = (label?: string) => {
-    if (!label) return;
-    const matches = missionWorkers.filter((w) => (w.label ?? '').toLowerCase() === label.toLowerCase());
-    const target = matches.find((w) => w.status === 'running') ?? matches[matches.length - 1];
-    if (target) dispatch({ type: 'SELECT_AGENT', id: target.sessionId });
-  };
+  // Resolve a spawn line to its worker: the Task tool_call id is the precise
+  // link; fall back to the droid name (preferring a still-running instance).
+  const findWorker = useCallback((toolUseId?: string, label?: string) => {
+    if (toolUseId) {
+      const byId = missionWorkers.find((w) => w.toolUseId === toolUseId);
+      if (byId) return byId;
+    }
+    if (label) {
+      const matches = missionWorkers.filter((w) => (w.label ?? '').toLowerCase() === label.toLowerCase());
+      return matches.find((w) => w.status === 'running') ?? matches[matches.length - 1];
+    }
+    return undefined;
+  }, [missionWorkers]);
+
+  // Click a spawn name → switch the main chat view to that subagent's session.
+  const openSubagent = useCallback((target: { toolUseId?: string; label?: string }) => {
+    const worker = findWorker(target.toolUseId, target.label);
+    if (worker) dispatch({ type: 'SELECT_AGENT', id: worker.sessionId });
+  }, [findWorker, dispatch]);
+
+  // Latest activity for a spawn line's inline disclosure: the worker's status,
+  // start time (for the timer), and its newest meaningful transcript event.
+  const subagentActivity = useCallback((target: { toolUseId?: string; label?: string }) => {
+    const worker = findWorker(target.toolUseId, target.label);
+    if (!worker) return undefined;
+    let latest: { kind: typeof allTranscript[number]['kind']; text?: string; toolName?: string; toolArgs?: unknown } | undefined;
+    for (let i = allTranscript.length - 1; i >= 0; i--) {
+      const t = allTranscript[i];
+      if (t.agentSessionId !== worker.sessionId || t.kind === 'tool_result') continue;
+      latest = { kind: t.kind, text: t.text, toolName: t.toolName, toolArgs: t.toolArgs };
+      break;
+    }
+    return { status: worker.status, startedAt: worker.startedAt, latest };
+  }, [findWorker, allTranscript]);
 
   const transcript = useMemo(() => {
     if (viewingSub) return allTranscript.filter((t) => t.agentSessionId === selectedAgent);
@@ -244,7 +270,8 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
             <MessageFeed
               events={transcript}
               pending={live}
-              onOpenSubagent={openSubagentByLabel}
+              onOpenSubagent={openSubagent}
+              subagentActivity={subagentActivity}
               specDraft={isSpec}
               specContent={specContent}
               onOpenSpecWiki={missionId ? () => dispatch({ type: 'SPEC_OPEN_WIKI', missionId }) : undefined}

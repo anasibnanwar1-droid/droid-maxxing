@@ -145,7 +145,7 @@ type Action =
   | { type: 'MISSION_UPDATED'; mission: MissionSummary }
   | { type: 'MISSION_FEATURES'; missionId: string; features: MissionSummary['features'] }
   | { type: 'MISSION_PROGRESS'; missionId: string; entries: ProgressEntry[] }
-  | { type: 'MISSION_WORKER'; missionId: string; event: 'started' | 'updated' | 'completed'; workerSessionId: string; label?: string; prompt?: string; modelId?: string; reasoningEffort?: ReasoningEffort }
+  | { type: 'MISSION_WORKER'; missionId: string; event: 'started' | 'updated' | 'completed'; workerSessionId: string; label?: string; prompt?: string; modelId?: string; reasoningEffort?: ReasoningEffort; toolUseId?: string }
   | { type: 'AGENT_UPDATED'; missionId: string; agentSessionId: string; role: AgentKind; status: 'opened' | 'running' | 'paused' | 'completed' }
   | { type: 'MISSION_TOKENS'; missionId: string; tokensIn: number; tokensOut: number; contextTokens: number; maxContextTokens?: number }
   | { type: 'CONTEXT_UPDATED'; sessionId: string; stats: ContextStatsSnapshot }
@@ -725,6 +725,7 @@ function baseReducer(state: AppState, action: Action): AppState {
           prompt: action.prompt ?? next[idx].prompt,
           modelId: action.modelId ?? next[idx].modelId,
           reasoningEffort: action.reasoningEffort ?? next[idx].reasoningEffort,
+          toolUseId: action.toolUseId ?? next[idx].toolUseId,
         };
       } else {
         if (action.event === 'updated') return state;
@@ -736,6 +737,7 @@ function baseReducer(state: AppState, action: Action): AppState {
           prompt: action.prompt,
           modelId: action.modelId,
           reasoningEffort: action.reasoningEffort,
+          toolUseId: action.toolUseId,
         }];
       }
       return { ...state, workers: { ...state.workers, [mid]: next } };
@@ -1259,6 +1261,7 @@ function adaptEvent(ev: ServerEvent): Action | null {
         prompt: ev.prompt,
         modelId: ev.modelId,
         reasoningEffort: ev.reasoningEffort,
+        toolUseId: ev.toolUseId,
       };
     case 'agent.updated':
       return {

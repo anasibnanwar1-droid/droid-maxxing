@@ -59,6 +59,10 @@ test('captures Task prompt metadata before the subagent session id exists', () =
   assert.equal(normalized?.subagent?.label, 'code-reviewer');
   assert.equal(normalized?.subagent?.prompt, 'Inspect the current diff and report correctness risks.');
   assert.equal(normalized?.subagent?.toolUseId, 'tool-1');
+  // The spawn's transcript copy must carry the tool_call id so the chat feed
+  // can collapse streaming deltas into one line and link it to the worker.
+  assert.equal(normalized?.transcript?.kind, 'tool_call');
+  assert.equal(normalized?.transcript?.toolUseId, 'tool-1');
 });
 
 test('captures subagent session ids from Task progress events', () => {

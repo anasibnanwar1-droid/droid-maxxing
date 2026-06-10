@@ -52,6 +52,9 @@ export interface WorkerSummary {
   prompt?: string;
   modelId?: string;
   reasoningEffort?: ReasoningEffort;
+  // The orchestrator Task tool_call id that spawned this worker; links an
+  // in-chat spawn line to its subagent session.
+  toolUseId?: string;
 }
 
 export interface MissionSummary {
@@ -101,6 +104,7 @@ export interface TranscriptEvent {
   text?: string;
   toolName?: string;
   toolArgs?: unknown;
+  toolUseId?: string;
   isError?: boolean;
   author?: 'user';
   // Frontend display metadata for user-authored prompt chips.
@@ -442,7 +446,7 @@ export type ServerEvent =
   | { type: 'mission.updated'; mission: MissionSummary }
   | { type: 'mission.features'; missionId: string; features: BridgeFeature[] }
   | { type: 'mission.progress'; missionId: string; entries: ProgressEntry[] }
-  | { type: 'mission.worker'; missionId: string; event: 'started' | 'updated' | 'completed'; workerSessionId: string; exitCode?: number; label?: string; prompt?: string; modelId?: string; reasoningEffort?: ReasoningEffort }
+  | { type: 'mission.worker'; missionId: string; event: 'started' | 'updated' | 'completed'; workerSessionId: string; exitCode?: number; label?: string; prompt?: string; modelId?: string; reasoningEffort?: ReasoningEffort; toolUseId?: string }
   | { type: 'mission.tokens'; missionId: string; tokensIn: number; tokensOut: number; contextTokens: number; maxContextTokens?: number }
   | { type: 'mission.transcript'; event: TranscriptEvent }
   | { type: 'mission.permission'; request: PermissionRequest }

@@ -1019,6 +1019,7 @@ export class MissionManager {
       workerSessionId: sessionId,
       label,
       prompt,
+      toolUseId,
     });
     if (prompt) {
       this.emitTranscript({

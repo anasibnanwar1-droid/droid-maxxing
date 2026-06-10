@@ -1,6 +1,6 @@
 import { useMemo, useState, memo, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ChevronRight, Terminal, Copy, Check, FileText, Expand as ExpandIcon, FoldVertical, MousePointer2, PenLine, Bot } from 'lucide-react';
+import { ChevronRight, Terminal, Copy, Check, FileText, Expand as ExpandIcon, FoldVertical, MousePointer2, PenLine } from 'lucide-react';
 import type { BrowserTranscriptReference, TranscriptEvent } from '../types/bridge';
 import { Markdown } from './Markdown';
 import { JsonRender, splitJsonRender, hasJsonRender } from './JsonRender';
@@ -293,8 +293,21 @@ type FeedItem =
   | { type: 'tools'; key: string; events: TranscriptEvent[] }
   | { type: 'worked'; key: string; items: FeedItem[]; durationMs: number };
 
+// A single Task spawn streams as many tool_call/tool_call_delta events sharing
+// one toolUseId; keep whichever copy actually carries the droid name/description.
+function richerSubagent(existing: TranscriptEvent, next: TranscriptEvent): TranscriptEvent {
+  const e = subagentInfo(existing.toolArgs);
+  const n = subagentInfo(next.toolArgs);
+  if (!e.label && n.label) return next;
+  if (e.label && !n.label) return existing;
+  if (!e.description && n.description) return next;
+  return existing;
+}
+
 function buildFeed(events: TranscriptEvent[], subagentCards = false): FeedItem[] {
   const items: FeedItem[] = [];
+  // toolUseId → index of its spawn item, so streaming deltas collapse into one.
+  const subagentIdx = new Map<string, number>();
   let i = 0;
   while (i < events.length) {
     const ev = events[i];
@@ -311,7 +324,15 @@ function buildFeed(events: TranscriptEvent[], subagentCards = false): FeedItem[]
       const change = extractFileChange(ev.toolName, ev.toolArgs);
       if (change) { items.push({ type: 'diff', key: ev.id, event: ev, change }); i++; continue; }
       if (subagentCards && isSubagentTool(ev.toolName, ev.toolArgs)) {
-        items.push({ type: 'subagent', key: ev.id, event: ev });
+        const key = ev.toolUseId ?? ev.id;
+        const at = subagentIdx.get(key);
+        if (at == null) {
+          subagentIdx.set(key, items.length);
+          items.push({ type: 'subagent', key: `subagent-${key}`, event: ev });
+        } else {
+          const cur = items[at] as Extract<FeedItem, { type: 'subagent' }>;
+          items[at] = { ...cur, event: richerSubagent(cur.event, ev) };
+        }
         i++;
         // Skip the subagent's completion tool_result so it doesn't become an
         // orphaned "Tool result" entry in the grouping block below.
@@ -561,12 +582,13 @@ const MessageBody = memo(function MessageBody({ text }: { text: string }) {
   );
 });
 
-const FeedItemView = memo(function FeedItemView({ item, live, compacting, onOpenDiff, onOpenSubagent, liveTiming, specDraft, specContent }: {
+const FeedItemView = memo(function FeedItemView({ item, live, compacting, onOpenDiff, onOpenSubagent, subagentActivity, liveTiming, specDraft, specContent }: {
   item: FeedItem;
   live: boolean;
   compacting?: boolean;
   onOpenDiff?: (c: FileChange) => void;
-  onOpenSubagent?: (label?: string) => void;
+  onOpenSubagent?: (target: SubagentTarget) => void;
+  subagentActivity?: (target: SubagentTarget) => SubagentActivity | undefined;
   liveTiming?: boolean;
   specDraft?: boolean;
   specContent?: string;
@@ -599,7 +621,14 @@ const FeedItemView = memo(function FeedItemView({ item, live, compacting, onOpen
     case 'thinking':
       return <ThinkingItem text={item.event.text ?? ''} durationMs={item.durationMs} active={live} startTs={liveTiming ? item.event.ts : undefined} />;
     case 'subagent':
-      return <SubagentSpawnCard event={item.event} active={live} onOpen={onOpenSubagent} />;
+      return (
+        <SubagentLine
+          event={item.event}
+          active={live}
+          onOpen={onOpenSubagent}
+          activity={subagentActivity?.({ toolUseId: item.event.toolUseId, label: subagentInfo(item.event.toolArgs).label })}
+        />
+      );
     case 'status': {
       const text = item.event.text ?? '';
       if (compacting) return <CompactingIndicator />;
@@ -621,14 +650,16 @@ const FeedItemView = memo(function FeedItemView({ item, live, compacting, onOpen
     case 'tools':
       return <ToolGroupItem events={item.events} active={live} />;
     case 'worked':
-      return <WorkedGroup item={item} onOpenDiff={onOpenDiff} specDraft={specDraft} specContent={specContent} />;
+      return <WorkedGroup item={item} onOpenDiff={onOpenDiff} onOpenSubagent={onOpenSubagent} subagentActivity={subagentActivity} specDraft={specDraft} specContent={specContent} />;
   }
 });
 
 /* ── Worked-for group: a completed turn's steps folded into one disclosure ── */
-function WorkedGroup({ item, onOpenDiff, specDraft, specContent }: {
+function WorkedGroup({ item, onOpenDiff, onOpenSubagent, subagentActivity, specDraft, specContent }: {
   item: Extract<FeedItem, { type: 'worked' }>;
   onOpenDiff?: (c: FileChange) => void;
+  onOpenSubagent?: (target: SubagentTarget) => void;
+  subagentActivity?: (target: SubagentTarget) => SubagentActivity | undefined;
   specDraft?: boolean;
   specContent?: string;
 }) {
@@ -649,6 +680,8 @@ function WorkedGroup({ item, onOpenDiff, specDraft, specContent }: {
               item={child}
               live={false}
               onOpenDiff={onOpenDiff}
+              onOpenSubagent={onOpenSubagent}
+              subagentActivity={subagentActivity}
               specDraft={specDraft}
               specContent={specContent}
             />
@@ -659,40 +692,122 @@ function WorkedGroup({ item, onOpenDiff, specDraft, specContent }: {
   );
 }
 
-/* ── In-chat spawned-subagent card: visible affordance + click to navigate ── */
-function SubagentSpawnCard({ event, active, onOpen }: {
+/* ── Per-agent name color: deterministic pick so each droid keeps one hue ── */
+const SUBAGENT_COLORS = ['#e0a458', '#6ea8fe', '#5cc8a8', '#c58af9', '#e8728f', '#7bd88f', '#f0a06a', '#9d8cff'] as const;
+function subagentColor(label: string): string {
+  let h = 0;
+  for (let i = 0; i < label.length; i++) h = (h * 31 + label.charCodeAt(i)) >>> 0;
+  return SUBAGENT_COLORS[h % SUBAGENT_COLORS.length];
+}
+
+export type SubagentTarget = { toolUseId?: string; label?: string };
+export type SubagentActivity = {
+  status?: 'running' | 'paused' | 'completed';
+  startedAt?: number;
+  latest?: { kind: TranscriptEvent['kind']; text?: string; toolName?: string; toolArgs?: unknown };
+};
+
+// Last non-empty line, capped, so a long thinking block stays a one-line cue.
+function previewLine(text?: string): string | undefined {
+  if (!text) return undefined;
+  const line = text.trim().split('\n').filter(Boolean).pop() ?? '';
+  return line.length > 160 ? `${line.slice(0, 159)}…` : line || undefined;
+}
+
+// Map the subagent's newest transcript event to a short head + body, mirroring
+// how the main feed labels thinking/tool steps.
+function subagentLatest(latest: SubagentActivity['latest']): { head: string; body?: string } | null {
+  if (!latest) return null;
+  switch (latest.kind) {
+    case 'thinking':
+      return { head: 'Thinking', body: previewLine(latest.text) };
+    case 'tool_call': {
+      const { cat, detail } = toolMeta(latest.toolName, latest.toolArgs);
+      return { head: CAT_LABEL[cat], body: detail || latest.toolName };
+    }
+    case 'text':
+      return { head: 'Responding', body: previewLine(latest.text) };
+    case 'error':
+      return { head: 'Error', body: previewLine(latest.text) };
+    case 'status':
+      return { head: 'Working', body: previewLine(latest.text) };
+    default:
+      return { head: 'Working', body: previewLine(latest.text) };
+  }
+}
+
+/* ── In-chat spawned subagent: inline thinking-style line + click to navigate ── */
+function SubagentLine({ event, active, onOpen, activity }: {
   event: TranscriptEvent;
   active?: boolean;
-  onOpen?: (label?: string) => void;
+  onOpen?: (target: SubagentTarget) => void;
+  activity?: SubagentActivity;
 }) {
+  const [open, setOpen] = useState(false);
   const { label, description } = subagentInfo(event.toolArgs);
   const name = label ?? 'subagent';
+  const color = subagentColor(name);
+  const running = activity?.status === 'running' || (!!active && activity?.status !== 'completed');
+  const startTs = activity?.startedAt;
+  const elapsed = useElapsed(startTs, running);
+  const timer = running && startTs != null && elapsed >= 1000 ? ` ${formatDuration(elapsed)}` : '';
+  const verb = running ? 'Running' : 'Spawned';
+  const muted = running ? 'shimmer-text font-medium' : 'text-droid-text-muted';
+  const latest = subagentLatest(activity?.latest);
+  const navigate = () => onOpen?.({ toolUseId: event.toolUseId, label });
   return (
-    <button
-      type="button"
-      onClick={() => onOpen?.(label)}
-      className="group flex w-full items-center gap-2.5 rounded-xl border border-droid-border/70 bg-droid-elevated/40 px-3 py-2.5 text-left transition-colors hover:border-droid-accent/40 hover:bg-droid-elevated/70"
-    >
-      <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-droid-accent/10 text-droid-accent">
-        <Bot className="h-4 w-4" />
-      </span>
-      <span className="min-w-0 flex-1">
-        <span className={`block truncate text-[13px] font-medium ${active ? 'shimmer-text' : 'text-droid-text'}`}>
-          {active ? `Running ${name} subagent` : `Spawned ${name} subagent`}
-        </span>
-        {description && <span className="block truncate text-[11.5px] text-droid-text-muted">{description}</span>}
-      </span>
-      <ChevronRight className="h-4 w-4 shrink-0 text-droid-text-muted/50 transition-colors group-hover:text-droid-accent" />
-    </button>
+    <div>
+      <div className="group flex items-center gap-1.5 text-[13px]">
+        <button type="button" onClick={() => setOpen((o) => !o)} className="flex items-center" aria-label="Toggle subagent activity">
+          <Caret open={open} />
+        </button>
+        <span className={muted}>{verb}</span>
+        <button
+          type="button"
+          onClick={navigate}
+          className="font-semibold underline-offset-2 hover:underline"
+          style={{ color }}
+          title="Open subagent session"
+        >
+          {name}
+        </button>
+        <span className={muted}>subagent{timer}</span>
+      </div>
+      <Expand open={open}>
+        <div className="mt-2 pl-[18px]">
+          {description && (
+            <div className="text-[12.5px] text-droid-text-muted/70 leading-relaxed [overflow-wrap:anywhere]">{description}</div>
+          )}
+          {latest && (
+            <div className="mt-1.5 text-[12.5px] leading-relaxed [overflow-wrap:anywhere]">
+              <span className={running ? 'shimmer-text font-medium' : 'text-droid-text-secondary font-medium'}>{latest.head}</span>
+              {latest.body && <span className="ml-1.5 font-mono text-[11.5px] text-droid-text-muted/80">{latest.body}</span>}
+            </div>
+          )}
+          {!latest && (
+            <div className="mt-1.5 text-[12px] text-droid-text-muted/60">No activity captured yet.</div>
+          )}
+          <button
+            type="button"
+            onClick={navigate}
+            className="mt-2 inline-flex items-center gap-1 text-[12px] text-droid-text-muted transition-colors hover:text-droid-text"
+          >
+            Open session
+            <ChevronRight className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      </Expand>
+    </div>
   );
 }
 
 /* ── The activity feed (list only; parent owns the scroll container) ── */
-export function MessageFeed({ events, pending, onOpenDiff, onOpenSubagent, specDraft, specContent, onOpenSpecWiki }: {
+export function MessageFeed({ events, pending, onOpenDiff, onOpenSubagent, subagentActivity, specDraft, specContent, onOpenSpecWiki }: {
   events: TranscriptEvent[];
   pending: boolean;
   onOpenDiff?: (c: FileChange) => void;
-  onOpenSubagent?: (label?: string) => void;
+  onOpenSubagent?: (target: SubagentTarget) => void;
+  subagentActivity?: (target: SubagentTarget) => SubagentActivity | undefined;
   specDraft?: boolean;
   specContent?: string;
   onOpenSpecWiki?: () => void;
@@ -711,18 +826,15 @@ export function MessageFeed({ events, pending, onOpenDiff, onOpenSubagent, specD
   const compacting = last?.type === 'status' && isCompactingStatus(last.event.text);
 
   // The tail already animates its own shimmer/caret for these; otherwise show an explicit cue.
+  // A subagent line self-indicates too: it shows its own "Running … <timer>".
   const tailSelfIndicates =
     !!last &&
     (last.type === 'thinking' ||
       last.type === 'status' ||
+      last.type === 'subagent' ||
       (last.type === 'message' && last.event.author !== 'user'));
   const showWorking = pending && !tailSelfIndicates;
-  // When the tail is an in-flight subagent spawn, the orchestrator is blocked
-  // waiting on that droid; otherwise reflect the current local activity.
-  const waitingFor = last?.type === 'subagent' ? subagentInfo(last.event.toolArgs).label ?? 'subagent' : undefined;
-  const workingLabel = waitingFor
-    ? `Waiting for ${waitingFor}`
-    : last?.type === 'tools' ? 'Running' : last?.type === 'diff' ? 'Updating files' : 'Working';
+  const workingLabel = last?.type === 'tools' ? 'Running' : last?.type === 'diff' ? 'Updating files' : 'Working';
   const workingStart = rich ? tailTimestamp(last) : undefined;
 
   return (
@@ -744,6 +856,7 @@ export function MessageFeed({ events, pending, onOpenDiff, onOpenSubagent, specD
             compacting={compacting && idx === lastIdx}
             onOpenDiff={onOpenDiff}
             onOpenSubagent={onOpenSubagent}
+            subagentActivity={subagentActivity}
             liveTiming={rich}
             specDraft={specDraft}
             specContent={specContent}
