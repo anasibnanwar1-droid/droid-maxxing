@@ -51,6 +51,7 @@ import { mergeModelCatalog } from './modelCatalog.js';
 import { readDroidCliModelCatalog, readDroidCliModelCatalogCache } from './DroidCliCatalog.js';
 import { BrowserSessionManager } from './browser/BrowserSessionManager.js';
 import { createBrowserMcpServer } from './browser/browserMcpServer.js';
+import { isDesignPrompt } from './browser/designPromptPacks.js';
 import { NativeBrowserRuntime } from './browser/NativeBrowserRuntime.js';
 import { isAlwaysOutcome, isApprovalOutcome, normalizePermissionOutcome } from './permissionOutcomes.js';
 import { filterMissionListSummaries, type MissionListFilterOptions } from './missionListFilter.js';
@@ -89,6 +90,9 @@ interface Mission {
   pendingSubagents: PendingSubagent[];
   mcpServers: SdkMcpServer[];
   permissionGrants: Set<string>;
+  // Tracks whether TodoWrite is currently disabled on the session so we only
+  // call updateSettings when the design/normal turn policy actually changes.
+  todoDisabledForDesign?: boolean;
 }
 
 interface PendingPermission {
@@ -357,7 +361,7 @@ export class MissionManager {
             anchor: cmd.reference.anchor,
             detail: cmd.reference.detail,
             id: cmd.reference.id,
-          });
+          }, cmd.reference.screenshot);
         });
         return;
       case 'browser.design.sendPrompt':
@@ -928,6 +932,7 @@ export class MissionManager {
       queuedSends: mission.pendingSends.length,
     });
     this.startContextPolling(appSessionId, mission.session);
+    await this.applyDesignToolPolicy(mission, isDesignPrompt(prompt));
     try {
       const stream = mission.session.stream(prompt, { includePartialMessages: true });
       for await (const ev of stream) this.applyEvent(appSessionId, appSessionId, 'orchestrator', ev);
@@ -948,6 +953,23 @@ export class MissionManager {
         await this.refreshContext(appSessionId, mission.session);
         this.patch(appSessionId, { streaming: false, queuedSends: 0 });
       }
+    }
+  }
+
+  // Design turns are a single focused task (extra prompts queue), so the model
+  // does not need TodoWrite — it otherwise loops updating the list after it has
+  // already answered. Disable TodoWrite for design turns and restore it for
+  // normal turns, calling updateSettings only when the policy changes.
+  private async applyDesignToolPolicy(mission: Mission, design: boolean): Promise<void> {
+    // When the in-memory flag is unset (cold start / page reload) we don't
+    // know the session's current disabledToolIds, so always call updateSettings
+    // to synchronize. Once the flag is set we skip redundant calls.
+    if (mission.todoDisabledForDesign !== undefined && mission.todoDisabledForDesign === design) return;
+    try {
+      await mission.session.updateSettings({ disabledToolIds: design ? ['TodoWrite'] : [] });
+      mission.todoDisabledForDesign = design;
+    } catch (err) {
+      this.emitError({ missionId: mission.summary.id, message: `Could not update design tool policy: ${errMsg(err)}` });
     }
   }
 
@@ -1142,6 +1164,10 @@ export class MissionManager {
             permissionHandler: this.makePermissionHandler(ref),
             askUserHandler: this.makeAskUserHandler(ref),
           });
+          // The replacement session starts with default tool settings, so the
+          // cached design-tool policy no longer reflects reality. Clear it so
+          // the next turn re-synchronizes disabledToolIds.
+          mission.todoDisabledForDesign = undefined;
           await oldSession.close().catch(() => {});
           this.usageOffsets.set(appSessionId, carryover);
           this.patch(appSessionId, {

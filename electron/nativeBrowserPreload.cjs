@@ -1,26 +1,41 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 let designMode = false;
-let sketchMode = false;
-let dragStart = null;
+let pencilMode = false;
 let altHeld = false;
 let promptBox = null;
 let promptInput = null;
 let promptTag = null;
+let promptSend = null;
 let promptSelection = null;
 let annotations = [];
 let repositionQueued = false;
 let hoverFrame = 0;
 let pendingHover = null;
 let hoverTarget = null;
-let penDrawing = false;
-let penPoints = [];
+let strokes = [];
+let strokePaths = [];
+let activeStroke = null;
+let activePath = null;
+let textDragStart = null;
+let textRange = null;
+let clearTimer = null;
+// True between submitting a design prompt and the main process acking that it
+// has captured the annotated region. While set, all design interactions are
+// frozen so the user cannot move/redraw/scroll mid-capture and produce a
+// screenshot that no longer matches the reference. The id makes the ack
+// request-scoped so a late ack from a superseded capture cannot clear a newer
+// pending capture.
+let capturePending = false;
+let pendingCaptureId = null;
+let captureSeq = 0;
 
 const interactiveTags = new Set(['A', 'BUTTON', 'INPUT', 'TEXTAREA', 'SELECT', 'SUMMARY']);
 const interactiveRoles = new Set(['button', 'checkbox', 'combobox', 'link', 'menuitem', 'option', 'radio', 'searchbox', 'switch', 'tab', 'textbox']);
 const textTags = new Set(['BLOCKQUOTE', 'CODE', 'EM', 'FIGCAPTION', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'LABEL', 'LI', 'P', 'PRE', 'SMALL', 'SPAN', 'STRONG', 'TD', 'TH']);
 const mediaTags = new Set(['IMG', 'SVG', 'VIDEO', 'CANVAS', 'PICTURE']);
 const INTERNAL_ATTR = 'data-droid-design';
+const PENCIL_COLOR = '#ff8a2a';
 
 const overlay = element('div', [
   'position:fixed', 'z-index:2147483646', 'left:0', 'top:0', 'width:0', 'height:0',
@@ -34,10 +49,7 @@ const label = element('div', [
   'font:12px -apple-system,BlinkMacSystemFont,Segoe UI,sans-serif',
   'box-shadow:0 10px 28px rgba(0,0,0,.28)', 'display:none',
 ]);
-const region = element('div', [
-  'position:fixed', 'z-index:2147483646', 'pointer-events:none', 'border:3px solid #7c4dff',
-  'border-radius:6px', 'background:rgba(124,77,255,.08)', 'display:none',
-]);
+const textHighlights = element('div', ['position:fixed', 'z-index:2147483645', 'left:0', 'top:0', 'pointer-events:none', 'display:none']);
 const penSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
 penSvg.setAttribute('width', '100%');
 penSvg.setAttribute('height', '100%');
@@ -45,22 +57,37 @@ penSvg.style.cssText = [
   'position:fixed', 'z-index:2147483646', 'left:0', 'top:0', 'width:100vw', 'height:100vh',
   'pointer-events:none', 'display:none', 'overflow:visible',
 ].join(';');
-const penPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-penPath.setAttribute('fill', 'none');
-penPath.setAttribute('stroke', '#7c4dff');
-penPath.setAttribute('stroke-width', '3');
-penPath.setAttribute('stroke-linecap', 'round');
-penPath.setAttribute('stroke-linejoin', 'round');
-penSvg.appendChild(penPath);
 overlay.setAttribute(INTERNAL_ATTR, '1');
 label.setAttribute(INTERNAL_ATTR, '1');
-region.setAttribute(INTERNAL_ATTR, '1');
+textHighlights.setAttribute(INTERNAL_ATTR, '1');
 penSvg.setAttribute(INTERNAL_ATTR, '1');
 
 contextBridge.exposeInMainWorld('__DROIDMAXX_APPLY_DESIGN_STATE', applyState);
 contextBridge.exposeInMainWorld('__DROIDMAXX_AGENT_ACTION', runAgentAction);
+// Credential autofill is driven entirely from the main process: the secret
+// arrives here only to be written into the page's inputs and is never returned
+// to any caller, so the agent can authorize a login without reading it.
+contextBridge.exposeInMainWorld('__DROIDMAXX_FILL_CREDENTIALS', fillCredentials);
+
+ipcRenderer.on('native-browser-design-prompt-sent', (_event, payload) => {
+  // Ignore acks that do not match the capture currently in flight: a stale ack
+  // from a superseded prompt must not clear a newer pending capture.
+  if (pendingCaptureId === null || !payload || payload.captureId !== pendingCaptureId) return;
+  finishCapture();
+});
+
+function finishCapture() {
+  if (clearTimer) {
+    clearTimeout(clearTimer);
+    clearTimer = null;
+  }
+  capturePending = false;
+  pendingCaptureId = null;
+  clearAnnotations();
+}
 
 window.addEventListener('DOMContentLoaded', mount);
+document.addEventListener('submit', onFormSubmit, true);
 document.addEventListener('mousemove', onMouseMove, true);
 document.addEventListener('mousedown', onMouseDown, true);
 document.addEventListener('mouseup', onMouseUp, true);
@@ -70,6 +97,9 @@ document.addEventListener('keydown', onKey, true);
 document.addEventListener('keyup', onKey, true);
 window.addEventListener('scroll', queueReposition, true);
 window.addEventListener('resize', queueReposition, true);
+// passive:false so we can cancel wheel scrolling while a capture is pending.
+window.addEventListener('wheel', onWheel, { capture: true, passive: false });
+window.addEventListener('touchmove', onWheel, { capture: true, passive: false });
 
 function element(tag, styles) {
   const node = document.createElement(tag);
@@ -82,54 +112,77 @@ function mount() {
   if (!root) return;
   if (!overlay.isConnected) root.appendChild(overlay);
   if (!label.isConnected) root.appendChild(label);
-  if (!region.isConnected) root.appendChild(region);
+  if (!textHighlights.isConnected) root.appendChild(textHighlights);
   if (!penSvg.isConnected) root.appendChild(penSvg);
 }
 
 function applyState(state) {
   designMode = Boolean(state && state.designMode);
-  sketchMode = designMode && Boolean(state && state.sketchMode);
-  dragStart = null;
+  pencilMode = designMode && Boolean(state && state.pencilMode);
   hoverTarget = null;
-  penDrawing = false;
-  penPoints = [];
-  clearPen();
+  activeStroke = null;
+  textDragStart = null;
   if (!designMode) {
+    capturePending = false;
+    pendingCaptureId = null;
+    if (clearTimer) {
+      clearTimeout(clearTimer);
+      clearTimer = null;
+    }
     hideBox();
     hidePrompt();
-    region.style.display = 'none';
     clearAnnotations();
     return;
   }
   mount();
   hideBox();
-  if (!sketchMode) region.style.display = 'none';
   repositionAnnotations();
+}
+
+function onWheel(event) {
+  if (!designMode || !capturePending) return;
+  swallow(event);
 }
 
 function onKey(event) {
   if (!designMode) return;
+  // Freeze keyboard scrolling (space, arrows, page keys) during capture so the
+  // viewport cannot shift out from under the region being captured.
+  if (capturePending) {
+    if (event.type === 'keydown') swallow(event);
+    return;
+  }
   altHeld = Boolean(event.altKey);
+  if (event.type === 'keydown' && event.key === 'Escape') {
+    // Escape must cancel reliably even when focus is not inside the composer
+    // (the composer's own handler only fires when it holds focus).
+    if (promptVisible()) cancelDesign();
+    else clearAnnotations();
+  }
 }
 
 function onMouseMove(event) {
   if (!designMode) return;
   if (isInternalEvent(event)) return;
+  if (capturePending) {
+    swallow(event);
+    return;
+  }
   altHeld = Boolean(event.altKey);
-  if (penDrawing) {
-    penPoints.push(point(event));
-    drawPen();
-    event.preventDefault();
-    event.stopPropagation();
+  if (activeStroke) {
+    activeStroke.push(point(event));
+    extendActiveStroke();
+    swallow(event);
     return;
   }
-  if (sketchMode && dragStart) {
-    drawRegion(dragStart, point(event));
-    event.preventDefault();
-    event.stopPropagation();
+  if (textDragStart) {
+    updateTextRange(textDragStart, point(event));
+    swallow(event);
     return;
   }
-  if (sketchMode || dragStart) return;
+  // While the prompt composer is open the selection is locked in, so the
+  // cursor can travel to the prompt without re-triggering hover/marker.
+  if (pencilMode || promptVisible()) return;
   pendingHover = { x: event.clientX, y: event.clientY, alt: altHeld };
   if (hoverFrame) return;
   hoverFrame = requestAnimationFrame(processHover);
@@ -137,7 +190,7 @@ function onMouseMove(event) {
 
 function processHover() {
   hoverFrame = 0;
-  if (!designMode || !pendingHover || sketchMode || dragStart || penDrawing) return;
+  if (!designMode || !pendingHover || pencilMode || activeStroke || textDragStart || promptVisible()) return;
   const { x, y, alt } = pendingHover;
   const target = pickTarget(x, y, alt);
   if (!target) {
@@ -147,11 +200,7 @@ function processHover() {
   }
   if (target === hoverTarget) {
     overlay.style.display = 'block';
-    const rect = target.getBoundingClientRect();
-    overlay.style.left = `${Math.round(rect.x)}px`;
-    overlay.style.top = `${Math.round(rect.y)}px`;
-    overlay.style.width = `${Math.round(rect.width)}px`;
-    overlay.style.height = `${Math.round(rect.height)}px`;
+    positionBox(overlay, target.getBoundingClientRect());
     return;
   }
   hoverTarget = target;
@@ -159,77 +208,179 @@ function processHover() {
 }
 
 function onMouseDown(event) {
-  if (!designMode) return;
+  if (!designMode || event.button !== 0) return;
   if (isInternalEvent(event)) return;
-  if (event.button === 2) {
-    penDrawing = true;
-    penPoints = [point(event)];
-    hideBox();
-    drawPen();
-    event.preventDefault();
-    event.stopPropagation();
+  if (capturePending) {
+    swallow(event);
     return;
   }
-  if (!sketchMode || event.button !== 0) return;
-  dragStart = point(event);
-  drawRegion(dragStart, dragStart);
-  event.preventDefault();
-  event.stopPropagation();
+  // Swallow so the underlying page cannot react to the press while the
+  // composer is open; clicks elsewhere are also intercepted in onClick.
+  if (promptVisible()) {
+    swallow(event);
+    return;
+  }
+  if (pencilMode) {
+    activeStroke = [point(event)];
+    strokes.push(activeStroke);
+    activePath = appendStrokePath(activeStroke);
+    hideBox();
+    swallow(event);
+    return;
+  }
+  if (event.shiftKey) {
+    textDragStart = point(event);
+    hideBox();
+    swallow(event);
+  }
 }
 
 function onMouseUp(event) {
   if (!designMode) return;
-  if (penDrawing) {
-    penDrawing = false;
-    const box = penBounds();
-    if (box && box.width >= 8 && box.height >= 8) {
-      const selection = regionSelection(box);
-      addAnnotation(selection.anchor, null);
-      drawPen();
+  if (capturePending) {
+    swallow(event);
+    return;
+  }
+  if (activeStroke) {
+    const finished = strokes[strokes.length - 1];
+    activeStroke = null;
+    activePath = null;
+    if (strokeLength(finished) < 6) {
+      strokes.pop();
+      const stalePath = strokePaths.pop();
+      if (stalePath) stalePath.remove();
+      if (strokes.length === 0) penSvg.style.display = 'none';
+    } else {
+      const selection = sketchSelection();
+      if (selection) {
+        sendSelection(selection);
+        showPrompt(selection);
+      }
+    }
+    swallow(event);
+    return;
+  }
+  if (textDragStart) {
+    const start = textDragStart;
+    textDragStart = null;
+    updateTextRange(start, point(event));
+    const selection = textSelection();
+    if (selection) {
       sendSelection(selection);
       showPrompt(selection);
     } else {
-      clearPen();
+      clearTextHighlights();
     }
-    event.preventDefault();
-    event.stopPropagation();
-    return;
+    swallow(event);
   }
-  if (!sketchMode || !dragStart) return;
-  if (isInternalEvent(event)) {
-    dragStart = null;
-    region.style.display = 'none';
-    return;
-  }
-  const box = drawRegion(dragStart, point(event));
-  dragStart = null;
-  if (box.width >= 8 && box.height >= 8) {
-    const selection = regionSelection(box);
-    addAnnotation(selection.anchor, null);
-    sendSelection(selection);
-    showPrompt(selection);
-  }
-  event.preventDefault();
-  event.stopPropagation();
 }
 
 function onContextMenu(event) {
   if (!designMode) return;
-  event.preventDefault();
-  event.stopPropagation();
+  swallow(event);
 }
 
 function onClick(event) {
-  if (!designMode || sketchMode) return;
+  if (!designMode || pencilMode || event.shiftKey) return;
   if (isInternalEvent(event)) return;
+  if (capturePending) {
+    swallow(event);
+    return;
+  }
+  if (promptVisible()) {
+    swallow(event);
+    return;
+  }
   const target = pickTarget(event.clientX, event.clientY, Boolean(event.altKey));
   if (!target) return;
   const selection = elementSelection(target);
   addAnnotation(selection.anchor, target);
   sendSelection(selection);
   showPrompt(selection);
+  swallow(event);
+}
+
+function swallow(event) {
   event.preventDefault();
   event.stopPropagation();
+}
+
+// Observe (never block) login submissions so the main process can offer to
+// save the credential. The values flow straight to main over IPC and are
+// encrypted there; nothing is stored in the page or exposed to the agent.
+function onFormSubmit(event) {
+  try {
+    const form = event.target;
+    if (!form || form.getAttribute(INTERNAL_ATTR)) return;
+    const fields = form.querySelectorAll ? form.querySelectorAll('input') : [];
+    let password = null;
+    let username = null;
+    for (const field of fields) {
+      const type = (field.getAttribute('type') || '').toLowerCase();
+      if (!password && type === 'password' && field.value) password = field.value;
+      else if (!username && (type === 'email' || type === 'text' || type === '' || type === 'tel') && field.value) username = field.value;
+    }
+    if (!password) return;
+    ipcRenderer.send('native-browser-credential-capture', {
+      origin: location.origin,
+      url: location.href,
+      username: username || '',
+      password,
+    });
+  } catch {
+    /* never interfere with the page's own submit */
+  }
+}
+
+function fillCredentials(payload) {
+  try {
+    const username = payload && typeof payload.username === 'string' ? payload.username : '';
+    const password = payload && typeof payload.password === 'string' ? payload.password : '';
+    if (!password) return { ok: false, filled: false };
+    const passwordField = firstVisible(document.querySelectorAll('input[type="password"]'));
+    if (!passwordField) return { ok: false, filled: false };
+    if (username) {
+      const userField = usernameFieldFor(passwordField);
+      if (userField) setFieldValue(userField, username);
+    }
+    setFieldValue(passwordField, password);
+    return { ok: true, filled: true };
+  } catch (err) {
+    return { ok: false, filled: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+function usernameFieldFor(passwordField) {
+  const form = passwordField.form;
+  const scope = form || document;
+  const fields = scope.querySelectorAll('input');
+  let previous = null;
+  for (const field of fields) {
+    if (field === passwordField) break;
+    const type = (field.getAttribute('type') || '').toLowerCase();
+    if ((type === 'email' || type === 'text' || type === 'tel' || type === '') && isVisible(field)) previous = field;
+  }
+  return previous || firstVisible(scope.querySelectorAll('input[type="email"],input[type="text"],input[type="tel"],input:not([type])'));
+}
+
+function setFieldValue(field, value) {
+  field.focus();
+  const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set;
+  if (setter) setter.call(field, value);
+  else field.value = value;
+  field.dispatchEvent(new Event('input', { bubbles: true }));
+  field.dispatchEvent(new Event('change', { bubbles: true }));
+}
+
+function firstVisible(nodes) {
+  for (const node of nodes) if (isVisible(node)) return node;
+  return null;
+}
+
+function isVisible(el) {
+  if (!el) return false;
+  const rect = el.getBoundingClientRect();
+  return rect.width > 0 && rect.height > 0;
 }
 
 async function runAgentAction(request) {
@@ -354,19 +505,112 @@ function elementSelection(el) {
   };
 }
 
-function regionSelection(box) {
-  const anchor = {
-    id: `@region-${Date.now().toString(36)}`,
-    kind: 'region',
-    label: `region ${box.width}x${box.height}`,
-    box,
-  };
+function sketchSelection() {
+  const box = strokesBounds();
+  if (!box) return null;
   return {
-    anchor,
+    anchor: {
+      id: `@sketch-${Date.now().toString(36)}`,
+      kind: 'region',
+      label: `sketch (${strokes.length} stroke${strokes.length === 1 ? '' : 's'})`,
+      box,
+      strokes: strokes.map((stroke) => stroke.map((pt) => ({ x: Math.round(pt.x), y: Math.round(pt.y) }))),
+    },
     url: location.href,
     title: document.title,
     scroll: { x: Math.round(window.scrollX), y: Math.round(window.scrollY) },
   };
+}
+
+function updateTextRange(start, end) {
+  const from = caretAt(start.x, start.y);
+  const to = caretAt(end.x, end.y);
+  if (!from || !to) return;
+  const range = document.createRange();
+  try {
+    range.setStart(from.node, from.offset);
+    range.setEnd(to.node, to.offset);
+    if (range.collapsed) {
+      range.setStart(to.node, to.offset);
+      range.setEnd(from.node, from.offset);
+    }
+  } catch {
+    return;
+  }
+  if (range.collapsed) return;
+  textRange = range;
+  drawTextHighlights(range);
+}
+
+function caretAt(x, y) {
+  if (document.caretPositionFromPoint) {
+    const pos = document.caretPositionFromPoint(x, y);
+    return pos ? { node: pos.offsetNode, offset: pos.offset } : null;
+  }
+  if (document.caretRangeFromPoint) {
+    const range = document.caretRangeFromPoint(x, y);
+    return range ? { node: range.startContainer, offset: range.startOffset } : null;
+  }
+  return null;
+}
+
+function textSelection() {
+  if (!textRange || textRange.collapsed) return null;
+  const text = cleanText(textRange.toString(), 400);
+  if (!text) return null;
+  const rect = textRange.getBoundingClientRect();
+  if (rect.width < 2 || rect.height < 2) return null;
+  const container = textRange.commonAncestorContainer;
+  const el = container.nodeType === Node.ELEMENT_NODE ? container : container.parentElement;
+  const selector = el ? selectorFor(el) : '';
+  const source = el ? resolveSource(el) : undefined;
+  return {
+    anchor: {
+      id: `@text-${stableHash(`${selector}:${text}`)}`,
+      kind: 'text',
+      label: `text "${cleanText(text, 40)}"`,
+      tag: el ? el.tagName.toLowerCase() : undefined,
+      text,
+      box: boxFor(rect),
+      source,
+    },
+    detail: el
+      ? {
+          id: `@text-${stableHash(`${selector}:${text}`)}`,
+          selector,
+          selectorVerified: verifySelector(el, selector),
+          attributes: attrsFor(el),
+          styles: stylesFor(el),
+          ancestors: ancestorsFor(el),
+          html: cleanText(el.outerHTML, 400) || undefined,
+        }
+      : undefined,
+    url: location.href,
+    title: document.title,
+    scroll: { x: Math.round(window.scrollX), y: Math.round(window.scrollY) },
+  };
+}
+
+function drawTextHighlights(range) {
+  mount();
+  textHighlights.textContent = '';
+  for (const rect of range.getClientRects()) {
+    if (rect.width < 1 || rect.height < 1) continue;
+    const piece = element('div', [
+      'position:fixed', 'pointer-events:none', 'background:rgba(41,151,255,.3)', 'border-radius:2px',
+      `left:${Math.round(rect.x)}px`, `top:${Math.round(rect.y)}px`,
+      `width:${Math.round(rect.width)}px`, `height:${Math.round(rect.height)}px`,
+    ]);
+    piece.setAttribute(INTERNAL_ATTR, '1');
+    textHighlights.appendChild(piece);
+  }
+  textHighlights.style.display = 'block';
+}
+
+function clearTextHighlights() {
+  textRange = null;
+  textHighlights.textContent = '';
+  textHighlights.style.display = 'none';
 }
 
 function buildAnchor(el, selector, source) {
@@ -465,11 +709,27 @@ function verifySelector(el, selector) {
 
 function attrsFor(el) {
   const out = {};
+  const secret = isSensitiveField(el);
   for (const name of ['id', 'class', 'data-testid', 'aria-label', 'title', 'placeholder', 'type', 'href', 'name', 'value', 'role']) {
     const value = el.getAttribute && el.getAttribute(name);
-    if (value) out[name] = String(value).slice(0, 160);
+    if (!value) continue;
+    if (name === 'value' && secret) {
+      out[name] = '\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022';
+      continue;
+    }
+    out[name] = String(value).slice(0, 160);
   }
   return out;
+}
+
+// Password and one-time-code fields must never reach the agent transcript, so
+// their live values are redacted from every snapshot/detail payload.
+function isSensitiveField(el) {
+  if (!el || el.tagName !== 'INPUT') return false;
+  const type = (el.getAttribute('type') || '').toLowerCase();
+  if (type === 'password') return true;
+  const auto = (el.getAttribute('autocomplete') || '').toLowerCase();
+  return auto.includes('password') || auto === 'one-time-code';
 }
 
 function stylesFor(el) {
@@ -671,7 +931,8 @@ function clearAnnotations() {
     item.pin.remove();
   }
   annotations = [];
-  clearPen();
+  clearStrokes();
+  clearTextHighlights();
 }
 
 function queueReposition() {
@@ -691,22 +952,23 @@ function repositionAnnotations() {
     item.outline.style.display = visible ? 'block' : 'none';
     item.pin.style.display = visible ? 'flex' : 'none';
     if (!visible) continue;
-    item.outline.style.left = `${Math.round(box.x)}px`;
-    item.outline.style.top = `${Math.round(box.y)}px`;
-    item.outline.style.width = `${Math.round(box.width)}px`;
-    item.outline.style.height = `${Math.round(box.height)}px`;
+    positionBox(item.outline, box);
     item.pin.style.left = `${Math.round(box.x)}px`;
     item.pin.style.top = `${Math.round(Math.max(2, box.y - 20))}px`;
   }
 }
 
+function positionBox(node, box) {
+  node.style.left = `${Math.round(box.x)}px`;
+  node.style.top = `${Math.round(box.y)}px`;
+  node.style.width = `${Math.round(box.width)}px`;
+  node.style.height = `${Math.round(box.height)}px`;
+}
+
 function showBox(rect, text) {
   mount();
   overlay.style.display = 'block';
-  overlay.style.left = `${Math.round(rect.x)}px`;
-  overlay.style.top = `${Math.round(rect.y)}px`;
-  overlay.style.width = `${Math.round(rect.width)}px`;
-  overlay.style.height = `${Math.round(rect.height)}px`;
+  positionBox(overlay, rect);
   label.style.display = 'block';
   label.textContent = text;
   label.style.left = `${Math.min(window.innerWidth - 16, Math.max(8, Math.round(rect.x)))}px`;
@@ -718,47 +980,65 @@ function hideBox() {
   label.style.display = 'none';
 }
 
-function drawRegion(start, end) {
+// Append one <path> per stroke and only mutate the active path's `d` as the
+// pointer moves. Rebuilding the whole SVG each frame made the pane flicker.
+function appendStrokePath(stroke) {
   mount();
-  const x = Math.min(start.x, end.x);
-  const y = Math.min(start.y, end.y);
-  const width = Math.abs(start.x - end.x);
-  const height = Math.abs(start.y - end.y);
-  region.style.display = 'block';
-  region.style.left = `${Math.round(x)}px`;
-  region.style.top = `${Math.round(y)}px`;
-  region.style.width = `${Math.round(width)}px`;
-  region.style.height = `${Math.round(height)}px`;
-  return { x: Math.round(x), y: Math.round(y), width: Math.round(width), height: Math.round(height) };
+  penSvg.style.display = 'block';
+  const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  path.setAttribute('fill', 'none');
+  path.setAttribute('stroke', PENCIL_COLOR);
+  path.setAttribute('stroke-width', '3');
+  path.setAttribute('stroke-linecap', 'round');
+  path.setAttribute('stroke-linejoin', 'round');
+  path.setAttribute('d', strokePathData(stroke));
+  penSvg.appendChild(path);
+  strokePaths.push(path);
+  return path;
 }
 
-function drawPen() {
-  mount();
-  if (penPoints.length === 0) return;
-  penSvg.style.display = 'block';
-  const d = penPoints
+function extendActiveStroke() {
+  if (activePath && activeStroke) activePath.setAttribute('d', strokePathData(activeStroke));
+}
+
+function strokePathData(stroke) {
+  return stroke
     .map((pt, index) => `${index === 0 ? 'M' : 'L'}${Math.round(pt.x)} ${Math.round(pt.y)}`)
     .join(' ');
-  penPath.setAttribute('d', d);
 }
 
-function penBounds() {
-  if (penPoints.length < 2) return null;
+function strokeLength(stroke) {
+  if (!stroke || stroke.length < 2) return 0;
+  let total = 0;
+  for (let index = 1; index < stroke.length; index += 1) {
+    total += Math.hypot(stroke[index].x - stroke[index - 1].x, stroke[index].y - stroke[index - 1].y);
+  }
+  return total;
+}
+
+function strokesBounds() {
   let minX = Infinity;
   let minY = Infinity;
   let maxX = -Infinity;
   let maxY = -Infinity;
-  for (const pt of penPoints) {
-    minX = Math.min(minX, pt.x);
-    minY = Math.min(minY, pt.y);
-    maxX = Math.max(maxX, pt.x);
-    maxY = Math.max(maxY, pt.y);
+  for (const stroke of strokes) {
+    for (const pt of stroke) {
+      minX = Math.min(minX, pt.x);
+      minY = Math.min(minY, pt.y);
+      maxX = Math.max(maxX, pt.x);
+      maxY = Math.max(maxY, pt.y);
+    }
   }
+  if (!Number.isFinite(minX) || maxX - minX < 4 || maxY - minY < 4) return null;
   return { x: Math.round(minX), y: Math.round(minY), width: Math.round(maxX - minX), height: Math.round(maxY - minY) };
 }
 
-function clearPen() {
-  penPath.setAttribute('d', '');
+function clearStrokes() {
+  strokes = [];
+  strokePaths = [];
+  activeStroke = null;
+  activePath = null;
+  penSvg.textContent = '';
   penSvg.style.display = 'none';
 }
 
@@ -770,7 +1050,7 @@ function labelFor(el) {
   if (source && source.file) {
     return `${head}  ${source.file}${source.line ? `:${source.line}` : ''}`;
   }
-  return `${head}${altHeld ? '' : '  (alt: parent)'}`;
+  return `${head}${altHeld ? '' : '  (alt: parent, shift-drag: text)'}`;
 }
 
 function sendSelection(payload) {
@@ -824,11 +1104,17 @@ function stableHash(value) {
   return Math.abs(hash).toString(36);
 }
 
+function promptVisible() {
+  return Boolean(promptBox && promptBox.style.display === 'block');
+}
+
 function showPrompt(selection) {
   promptSelection = selection;
   mountPrompt();
+  hideBox();
   if (promptTag) promptTag.textContent = selection.anchor.label || selection.anchor.id;
   promptInput.value = '';
+  syncPromptSend();
   positionPrompt(selection.anchor.box);
   promptBox.style.display = 'block';
   window.setTimeout(() => promptInput.focus({ preventScroll: true }), 0);
@@ -837,6 +1123,22 @@ function showPrompt(selection) {
 function hidePrompt() {
   promptSelection = null;
   if (promptBox) promptBox.style.display = 'none';
+}
+
+// Cancel fully resets the design turn: close the composer AND wipe the
+// pending selection box plus any sketch strokes / text highlights, leaving the
+// pane armed for a fresh selection. Hiding the composer alone left the
+// annotations on screen, which looked like the cancel button did nothing.
+function cancelDesign() {
+  if (clearTimer) {
+    clearTimeout(clearTimer);
+    clearTimer = null;
+  }
+  capturePending = false;
+  pendingCaptureId = null;
+  hidePrompt();
+  hideBox();
+  clearAnnotations();
 }
 
 function mountPrompt() {
@@ -859,40 +1161,71 @@ function mountPrompt() {
       'color:#f4f4f5', 'font:13px -apple-system,BlinkMacSystemFont,Segoe UI,sans-serif',
     ]);
     promptInput.placeholder = 'Describe the change';
-    const send = element('button', [
-      'width:32px', 'height:32px', 'border:0', 'border-radius:999px', 'background:#f4f4f5',
-      'color:#111', 'font:15px -apple-system,BlinkMacSystemFont,Segoe UI,sans-serif', 'cursor:pointer',
+    promptInput.addEventListener('input', syncPromptSend);
+    promptSend = element('button', [
+      'display:flex', 'align-items:center', 'justify-content:center',
+      'width:30px', 'height:30px', 'border:0', 'border-radius:999px', 'background:#f4f4f5',
+      'color:#111', 'cursor:pointer', 'flex:0 0 auto', 'transition:opacity .15s ease,background .15s ease',
     ]);
-    send.type = 'submit';
-    send.textContent = '>';
+    promptSend.type = 'submit';
+    promptSend.title = 'Send to Droid';
+    promptSend.innerHTML = sendIconSvg();
     const close = element('button', [
+      'display:flex', 'align-items:center', 'justify-content:center',
       'width:28px', 'height:28px', 'border:0', 'border-radius:7px', 'background:transparent',
-      'color:#9ca3af', 'font:14px -apple-system,BlinkMacSystemFont,Segoe UI,sans-serif', 'cursor:pointer',
+      'color:#9ca3af', 'cursor:pointer', 'flex:0 0 auto',
     ]);
     close.type = 'button';
-    close.textContent = 'x';
-    row.append(promptTag, promptInput, send, close);
+    close.title = 'Cancel';
+    close.innerHTML = closeIconSvg();
+    row.append(promptTag, promptInput, promptSend, close);
     promptBox.append(row);
     promptBox.addEventListener('submit', (event) => {
       event.preventDefault();
       const instruction = cleanPrompt(promptInput.value);
       if (!instruction || !promptSelection) return;
-      sendDesignPrompt({ selection: promptSelection, instruction });
+      // Hide the composer but keep strokes/highlights visible: the main
+      // process captures the annotated region before acking, then the
+      // 'native-browser-design-prompt-sent' handler clears everything.
+      captureSeq += 1;
+      const captureId = captureSeq;
+      pendingCaptureId = captureId;
+      capturePending = true;
+      sendDesignPrompt({ selection: promptSelection, instruction, captureId });
       hidePrompt();
-      clearAnnotations();
+      if (clearTimer) clearTimeout(clearTimer);
+      clearTimer = setTimeout(() => {
+        if (pendingCaptureId === captureId) finishCapture();
+      }, 4000);
     });
     promptBox.addEventListener('keydown', (event) => {
       if (event.key === 'Escape') {
         event.preventDefault();
-        hidePrompt();
+        cancelDesign();
       }
     });
-    close.addEventListener('click', hidePrompt);
+    close.addEventListener('click', cancelDesign);
     for (const type of ['mousedown', 'mouseup', 'click', 'mousemove', 'wheel']) {
       promptBox.addEventListener(type, (event) => event.stopPropagation(), true);
     }
   }
   if (!promptBox.isConnected) document.documentElement.appendChild(promptBox);
+}
+
+function syncPromptSend() {
+  if (!promptSend || !promptInput) return;
+  const ready = Boolean(cleanPrompt(promptInput.value));
+  promptSend.disabled = !ready;
+  promptSend.style.opacity = ready ? '1' : '0.35';
+  promptSend.style.cursor = ready ? 'pointer' : 'not-allowed';
+}
+
+function sendIconSvg() {
+  return '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="m5 12 7-7 7 7"/></svg>';
+}
+
+function closeIconSvg() {
+  return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>';
 }
 
 function positionPrompt(box) {

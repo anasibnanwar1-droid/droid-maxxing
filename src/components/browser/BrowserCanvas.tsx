@@ -11,7 +11,7 @@ interface BrowserCanvasProps {
   browser?: BrowserState;
   viewport: BrowserViewport;
   designMode: boolean;
-  sketchMode: boolean;
+  pencilMode: boolean;
   references: DesignReference[];
   selectedIds: string[];
   instruction: string;
@@ -31,7 +31,7 @@ export function BrowserCanvas({
   browser,
   viewport,
   designMode,
-  sketchMode,
+  pencilMode,
   references,
   selectedIds,
   instruction,
@@ -53,8 +53,8 @@ export function BrowserCanvas({
   const contentSize = browser?.viewport ?? viewport;
 
   useEffect(() => {
-    if (!designMode || sketchMode) setHoveredRef(null);
-  }, [designMode, sketchMode]);
+    if (!designMode || pencilMode) setHoveredRef(null);
+  }, [designMode, pencilMode]);
 
   return (
     <SmoothCanvas
@@ -65,7 +65,7 @@ export function BrowserCanvas({
       onFitChange={(fit) => onScaleChange?.(fit.scale)}
       onContentPointerDown={(point, event) => {
         if (!browser) return;
-        if (designMode && sketchMode) {
+        if (designMode && pencilMode) {
           event.currentTarget.setPointerCapture(event.pointerId);
           dragStart.current = point;
           setDraftRegion({ x: point.x, y: point.y, width: 0, height: 0 });
@@ -83,7 +83,7 @@ export function BrowserCanvas({
           setDraftRegion(normalizeBox(dragStart.current, point, contentSize.width, contentSize.height));
           return;
         }
-        if (!browser || !designMode || sketchMode) return;
+        if (!browser || !designMode || pencilMode) return;
         const next = pickDesignModeTarget(browser.refs, point, contentSize) ?? null;
         setHoveredRef((current) => current?.ref === next?.ref ? current : next);
       }}
@@ -148,7 +148,7 @@ export function BrowserCanvas({
             refs={browser?.refs ?? []}
             selectedIds={selectedIds}
             active={designMode}
-            hoveredRef={designMode && !sketchMode ? hoveredRef : null}
+            hoveredRef={designMode && !pencilMode ? hoveredRef : null}
             draftRegion={draftRegion}
             agentCursor={browser?.agentCursor}
           />

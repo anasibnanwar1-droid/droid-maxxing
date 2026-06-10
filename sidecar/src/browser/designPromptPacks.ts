@@ -28,10 +28,19 @@ export async function writeDesignPromptPack(options: WriteDesignPromptPackOption
   return { pack, path };
 }
 
+// First line of every design prompt. Used both as the human-facing header and
+// as a content marker so other layers (transcript display, tool-policy scoping)
+// can recognize a design turn from the prompt text alone.
+export const DESIGN_PROMPT_HEADER = 'Design Mode reference pack:';
+
+export function isDesignPrompt(text: string): boolean {
+  return text.startsWith(DESIGN_PROMPT_HEADER);
+}
+
 export function formatDesignPrompt(packPath: string, instruction: string, references: DesignReference[]): string {
   const first = references[0];
   return [
-    'Design Mode reference pack:',
+    DESIGN_PROMPT_HEADER,
     `- URL: ${sanitizeInline(first?.url ?? 'about:blank')}`,
     `- References JSON: ${packPath}`,
     '',
@@ -40,10 +49,21 @@ export function formatDesignPrompt(packPath: string, instruction: string, refere
     '',
     'Call the design_reference tool with an @id for full attributes, computed styles, ancestors, and outerHTML.',
     '',
+    DESIGN_MODE_GUIDANCE,
+    '',
     'User instruction:',
     instruction,
   ].join('\n');
 }
+
+// Kept as the last block before the user instruction so it stays close to the
+// request without breaking the `Design Mode reference pack:` / `User
+// instruction:` markers the transcript display parser relies on.
+const DESIGN_MODE_GUIDANCE = [
+  'How to work in Design Mode:',
+  '- Scope: change only the design/UI of the referenced elements and the code that renders them. Do not modify backend, data models, APIs, or business logic, and do not spawn subagents to do so. If the requested result truly needs a backend or data change, stop and tell the user exactly what is needed and why, then wait for their go-ahead. Stay on design until the user says otherwise.',
+  '- Before writing code, pick one clear visual idea. Avoid AI slop: purple gradients, Inter/Roboto/Arial defaults, generic cards, sparkles, emoji icons, glassmorphism/glow. Use real content, ASCII punctuation, no em dashes. Vary the style to fit this product rather than reusing one default look.',
+].join('\n');
 
 // Page-derived strings (labels, selectors, component names, paths) are
 // attacker-influenced via page content. Collapse control characters and

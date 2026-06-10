@@ -127,6 +127,22 @@ export function createBrowserMcpServer(manager: BrowserSessionManager, missionId
         }),
       ),
       tool(
+        'browser_resize',
+        'Resize the viewport of the live Droid Control browser. Use this to check responsive layouts or to match a specific screen size.',
+        {
+          viewport: viewportSchema.describe('New viewport dimensions.'),
+          viewportMode: viewportModeSchema.optional().describe('Viewport preset label.'),
+        },
+        safeTool(async (input) => {
+          const state = await manager.resizeViewport({
+            missionId: missionId(),
+            viewport: { ...input.viewport, deviceScaleFactor: input.viewport.deviceScaleFactor ?? 2 },
+            viewportMode: input.viewportMode ?? 'custom',
+          });
+          return jsonResult(stateForTool(state));
+        }),
+      ),
+      tool(
         'browser_scroll',
         'Scroll the live Droid Control browser page, then call browser_snapshot to refresh refs.',
         {
@@ -139,23 +155,46 @@ export function createBrowserMcpServer(manager: BrowserSessionManager, missionId
         }),
       ),
       tool(
+        'browser_fill_login',
+        [
+          'Fill the saved login for the current site in the live Droid Control browser.',
+          'You never see the username or password: the values are injected securely in the app and are redacted from every snapshot. This lets you authorize a sign-in without reading the secret.',
+          'Saved logins are strictly opt-in. Use only when a sign-in form is visible and the user has previously enabled saved logins and saved a credential for this site.',
+          'Returns an error if saved logins are disabled or no credential is saved; in that case ask the user to sign in once and accept the save-login prompt. After filling, you may submit the form with browser_click or browser_keypress.',
+        ].join(' '),
+        {},
+        safeTool(async () => {
+          const state = await manager.fillCredentials(missionId());
+          return jsonResult(stateForTool(state));
+        }),
+      ),
+      tool(
         'design-mode',
         [
           'Read the current Design Mode browser context for this chat only.',
           'Use after the user selects, clicks, or sketches an area in the live Droid Control browser pane.',
           'Returns compact source-anchored references: each has an @id, label, kind, tag/role/name/text, box, resolved source (framework/component/file), a verified CSS selector, and a cropped screenshotPath.',
           'When you need the full element detail (all attributes, computed styles, ancestor chain, outerHTML), call design_reference with the @id instead of asking the user.',
+          'Design Mode is for visual/UI work only: change the referenced elements and their styling, and do not modify backend, data, or business logic. If achieving the requested look requires a backend or data change, stop and tell the user what is needed and why instead of changing it yourself or spawning subagents.',
         ].join(' '),
         {
           instruction: z.string().optional().describe('Optional user design instruction to keep alongside the returned context.'),
         },
         safeTool(async (input) => {
           const context = manager.designContext(missionId());
-          return jsonResult({
+          const refs = context.references;
+          const images = refs
+            .filter((r) => r.screenshot)
+            .map((r) => ({ type: 'image' as const, data: r.screenshot!.base64, mimeType: 'image/png' as const }));
+          const result = jsonResult({
             ok: true,
             instruction: input.instruction,
-            ...stateForTool(context.state, context.references),
+            ...stateForTool(context.state, refs),
           });
+          if (images.length > 0) {
+            return { content: [{ type: 'text' as const, text: result }, ...images] };
+          }
+          return result;
         }),
       ),
       tool(
@@ -172,7 +211,16 @@ export function createBrowserMcpServer(manager: BrowserSessionManager, missionId
           if (!ref) {
             return jsonResult({ ok: false, error: `No design reference ${input.id}. Call design-mode to list the current references.` });
           }
-          return jsonResult({ ok: true, reference: designReferenceDetail(ref) });
+          const text = jsonResult({ ok: true, reference: designReferenceDetail(ref) });
+          if (ref.screenshot?.base64) {
+            return {
+              content: [
+                { type: 'text' as const, text },
+                { type: 'image' as const, data: ref.screenshot.base64, mimeType: 'image/png' as const },
+              ],
+            };
+          }
+          return text;
         }),
       ),
     ],
@@ -202,7 +250,7 @@ function stateForTool(state: BrowserState, designReferences: DesignReference[] =
 
 function designReferenceSummary(ref: DesignReference): Record<string, unknown> {
   const anchor = ref.anchor;
-  return {
+  const out: Record<string, unknown> = {
     id: ref.id,
     kind: anchor.kind,
     label: anchor.label,
@@ -217,6 +265,12 @@ function designReferenceSummary(ref: DesignReference): Record<string, unknown> {
     screenshotPath: anchor.screenshotPath,
     url: ref.url,
   };
+  if (anchor.strokes) out.strokes = anchor.strokes;
+  // The annotated screenshot bytes are returned as a separate image block by
+  // the design-mode / design_reference tools; keep them out of the JSON to
+  // avoid duplicating large base64 payloads.
+  if (ref.screenshot) out.hasScreenshot = true;
+  return out;
 }
 
 function designReferenceDetail(ref: DesignReference): Record<string, unknown> {

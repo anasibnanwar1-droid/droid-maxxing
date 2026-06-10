@@ -431,7 +431,15 @@ function BrowserReferenceChip({ reference }: { reference: BrowserTranscriptRefer
       title={reference.selector ? `${reference.selector}\n${reference.url ?? ''}` : reference.url ?? `Design reference: ${reference.label}`}
       className="flex min-w-0 items-center gap-1.5 rounded-lg bg-droid-accent/15 px-2 py-1 text-[11px] font-medium text-droid-text ring-1 ring-inset ring-droid-accent/30"
     >
-      <Icon className="h-3 w-3 shrink-0 text-droid-accent" />
+      {reference.imageDataUrl ? (
+        <img
+          src={reference.imageDataUrl}
+          alt={reference.label}
+          className="h-5 max-w-12 rounded-sm object-cover"
+        />
+      ) : (
+        <Icon className="h-3 w-3 shrink-0 text-droid-accent" />
+      )}
       <span className="max-w-40 truncate">@{reference.label}</span>
     </span>
   );

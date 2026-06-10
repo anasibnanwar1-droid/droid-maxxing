@@ -111,7 +111,7 @@ export interface TranscriptEvent {
   steered?: boolean;
 }
 
-export type BrowserTranscriptReferenceKind = 'element' | 'region';
+export type BrowserTranscriptReferenceKind = 'element' | 'region' | 'text';
 
 export interface BrowserTranscriptReference {
   id: string;
@@ -119,6 +119,8 @@ export interface BrowserTranscriptReference {
   kind: BrowserTranscriptReferenceKind;
   url?: string;
   selector?: string;
+  // Annotated capture shown as a thumbnail on the chat message.
+  imageDataUrl?: string;
 }
 
 export type PermissionKind = 'edit' | 'exec' | 'create' | 'apply_patch' | 'mcp' | 'spec' | 'mission_plan' | 'other';
@@ -263,7 +265,7 @@ export interface BrowserNativeSnapshot {
   refs: BrowserElementRef[];
 }
 
-export type BrowserNativeAction = 'open' | 'reload' | 'snapshot' | 'click' | 'type' | 'keypress' | 'scroll' | 'capture' | 'close';
+export type BrowserNativeAction = 'open' | 'reload' | 'snapshot' | 'click' | 'type' | 'keypress' | 'scroll' | 'capture' | 'close' | 'fillCredentials';
 
 export interface BrowserNativeRequest {
   requestId: string;
@@ -309,9 +311,21 @@ export interface DesignAnchorAncestor {
   selector?: string;
 }
 
+export interface DesignStrokePoint {
+  x: number;
+  y: number;
+}
+
+// Region capture taken by the Electron main process while in-page
+// annotations (pencil strokes, highlights) are still visible.
+export interface DesignSelectionScreenshot {
+  base64: string;
+  box: BrowserBox;
+}
+
 export interface DesignAnchor {
   id: string;
-  kind: 'element' | 'region';
+  kind: 'element' | 'region' | 'text';
   label: string;
   tag?: string;
   role?: string;
@@ -320,6 +334,7 @@ export interface DesignAnchor {
   box: BrowserBox;
   source?: ElementSource;
   screenshotPath?: string;
+  strokes?: DesignStrokePoint[][];
 }
 
 export interface DesignAnchorDetail {
@@ -340,6 +355,7 @@ export interface DesignReference {
   title?: string;
   viewport?: BrowserViewport;
   scroll?: { x: number; y: number };
+  screenshot?: DesignSelectionScreenshot;
   createdAt?: string;
 }
 

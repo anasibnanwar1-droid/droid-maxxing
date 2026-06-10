@@ -57,6 +57,7 @@ test('designPromptDisplayFromText extracts instruction and browser chips from a 
       label: 'Hero-heading',
       url: 'https://example.com',
       selector: 'h1',
+      imageDataUrl: undefined,
     }],
   });
 });
