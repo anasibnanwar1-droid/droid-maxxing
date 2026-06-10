@@ -94,6 +94,17 @@ export default function BrowserWorkspace() {
     }, 600);
   }, [activeUrl, browserKey, transcripts]);
 
+  // Cancel any pending auto-reload when the browser session switches or the
+  // component unmounts, so a stale timer doesn't reload the wrong session.
+  useEffect(() => {
+    return () => {
+      if (reloadTimerRef.current) {
+        clearTimeout(reloadTimerRef.current);
+        reloadTimerRef.current = null;
+      }
+    };
+  }, [browserKey]);
+
   useEffect(() => {
     if (!browser?.url) return;
     const nextUrl = safeBrowserUrl(browser.url, appOrigin);
