@@ -120,7 +120,9 @@ function registerIpc() {
     const screenshot = await captureDesignSelection(event.sender, selection).catch(() => undefined);
     if (screenshot) selection = { ...selection, screenshot };
     mainWindow?.webContents.send('native-browser-design-prompt', { ...payload, selection });
-    event.sender.send('native-browser-design-prompt-sent');
+    // Echo the capture id so the preload only clears the matching pending
+    // capture and ignores acks from superseded prompts.
+    event.sender.send('native-browser-design-prompt-sent', { captureId: payload.captureId });
   });
   ipcMain.on('native-browser-agent-result', (_event, result) => {
     mainWindow?.webContents.send('native-browser-agent-result', result);

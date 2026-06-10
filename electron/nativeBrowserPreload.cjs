@@ -22,9 +22,13 @@ let textRange = null;
 let clearTimer = null;
 // True between submitting a design prompt and the main process acking that it
 // has captured the annotated region. While set, all design interactions are
-// frozen so the user cannot move/redraw annotations mid-capture and produce a
-// screenshot that no longer matches the reference.
+// frozen so the user cannot move/redraw/scroll mid-capture and produce a
+// screenshot that no longer matches the reference. The id makes the ack
+// request-scoped so a late ack from a superseded capture cannot clear a newer
+// pending capture.
 let capturePending = false;
+let pendingCaptureId = null;
+let captureSeq = 0;
 
 const interactiveTags = new Set(['A', 'BUTTON', 'INPUT', 'TEXTAREA', 'SELECT', 'SUMMARY']);
 const interactiveRoles = new Set(['button', 'checkbox', 'combobox', 'link', 'menuitem', 'option', 'radio', 'searchbox', 'switch', 'tab', 'textbox']);
@@ -65,12 +69,22 @@ contextBridge.exposeInMainWorld('__DROIDMAXX_AGENT_ACTION', runAgentAction);
 // to any caller, so the agent can authorize a login without reading it.
 contextBridge.exposeInMainWorld('__DROIDMAXX_FILL_CREDENTIALS', fillCredentials);
 
-ipcRenderer.on('native-browser-design-prompt-sent', () => {
-  if (clearTimer) clearTimeout(clearTimer);
-  clearTimer = null;
-  capturePending = false;
-  clearAnnotations();
+ipcRenderer.on('native-browser-design-prompt-sent', (_event, payload) => {
+  // Ignore acks that do not match the capture currently in flight: a stale ack
+  // from a superseded prompt must not clear a newer pending capture.
+  if (pendingCaptureId === null || !payload || payload.captureId !== pendingCaptureId) return;
+  finishCapture();
 });
+
+function finishCapture() {
+  if (clearTimer) {
+    clearTimeout(clearTimer);
+    clearTimer = null;
+  }
+  capturePending = false;
+  pendingCaptureId = null;
+  clearAnnotations();
+}
 
 window.addEventListener('DOMContentLoaded', mount);
 document.addEventListener('submit', onFormSubmit, true);
@@ -83,6 +97,9 @@ document.addEventListener('keydown', onKey, true);
 document.addEventListener('keyup', onKey, true);
 window.addEventListener('scroll', queueReposition, true);
 window.addEventListener('resize', queueReposition, true);
+// passive:false so we can cancel wheel scrolling while a capture is pending.
+window.addEventListener('wheel', onWheel, { capture: true, passive: false });
+window.addEventListener('touchmove', onWheel, { capture: true, passive: false });
 
 function element(tag, styles) {
   const node = document.createElement(tag);
@@ -107,6 +124,7 @@ function applyState(state) {
   textDragStart = null;
   if (!designMode) {
     capturePending = false;
+    pendingCaptureId = null;
     if (clearTimer) {
       clearTimeout(clearTimer);
       clearTimer = null;
@@ -121,9 +139,19 @@ function applyState(state) {
   repositionAnnotations();
 }
 
+function onWheel(event) {
+  if (!designMode || !capturePending) return;
+  swallow(event);
+}
+
 function onKey(event) {
   if (!designMode) return;
-  if (capturePending) return;
+  // Freeze keyboard scrolling (space, arrows, page keys) during capture so the
+  // viewport cannot shift out from under the region being captured.
+  if (capturePending) {
+    if (event.type === 'keydown') swallow(event);
+    return;
+  }
   altHeld = Boolean(event.altKey);
   if (event.type === 'keydown' && event.key === 'Escape' && !promptVisible()) {
     clearAnnotations();
@@ -1099,6 +1127,7 @@ function cancelDesign() {
     clearTimer = null;
   }
   capturePending = false;
+  pendingCaptureId = null;
   hidePrompt();
   hideBox();
   clearAnnotations();
@@ -1150,13 +1179,15 @@ function mountPrompt() {
       // Hide the composer but keep strokes/highlights visible: the main
       // process captures the annotated region before acking, then the
       // 'native-browser-design-prompt-sent' handler clears everything.
+      captureSeq += 1;
+      const captureId = captureSeq;
+      pendingCaptureId = captureId;
       capturePending = true;
-      sendDesignPrompt({ selection: promptSelection, instruction });
+      sendDesignPrompt({ selection: promptSelection, instruction, captureId });
       hidePrompt();
       if (clearTimer) clearTimeout(clearTimer);
       clearTimer = setTimeout(() => {
-        capturePending = false;
-        clearAnnotations();
+        if (pendingCaptureId === captureId) finishCapture();
       }, 4000);
     });
     promptBox.addEventListener('keydown', (event) => {
