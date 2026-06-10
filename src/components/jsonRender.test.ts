@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { splitJsonRender, hasJsonRender } from './JsonRender';
+import { splitJsonRender, hasJsonRender, __resolveColorForTest as resolveColor } from './JsonRender';
 
 test('plain text yields a single markdown segment', () => {
   const segs = splitJsonRender('hello world');
@@ -30,4 +30,19 @@ test('hides a still-streaming (unclosed) json-render block', () => {
 test('hasJsonRender detects the opening tag', () => {
   assert.equal(hasJsonRender('x <json-render>{}</json-render>'), true);
   assert.equal(hasJsonRender('no tags here'), false);
+});
+
+test('resolveColor maps themed names and accepts safe literals', () => {
+  assert.equal(resolveColor('green'), 'var(--droid-green)');
+  assert.equal(resolveColor('#ff8800'), '#ff8800');
+  assert.equal(resolveColor('rgb(10, 20, 30)'), 'rgb(10, 20, 30)');
+  assert.equal(resolveColor('red'), '#d0584e');
+  assert.equal(resolveColor('teal'), 'teal');
+});
+
+test('resolveColor rejects CSS function injection', () => {
+  assert.equal(resolveColor('url(https://evil.example/x.png)'), undefined);
+  assert.equal(resolveColor('var(--secret)'), undefined);
+  assert.equal(resolveColor('red;background:url(http://x)'), undefined);
+  assert.equal(resolveColor(123), undefined);
 });

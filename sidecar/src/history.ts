@@ -816,13 +816,16 @@ function limitHistoricalRows(
   includePlainChats?: boolean,
 ): HistoricalMission[] {
   if (!workspaceCwds && !includePlainChats) return rows;
-  const limit = Math.max(1, Math.min(limitPerWorkspace ?? 5, 50));
+  // An omitted limit means "no cap" so the sidebar can load every persisted
+  // session and reveal the older ones behind "Show more".
+  const limit = limitPerWorkspace === undefined ? undefined : Math.max(1, Math.min(limitPerWorkspace, 50));
+  const cap = <T>(items: T[]): T[] => (limit === undefined ? items : items.slice(0, limit));
   const limited: HistoricalMission[] = [];
   if (includePlainChats) {
-    limited.push(...rows.filter((row) => !row.summary.cwd).slice(0, limit));
+    limited.push(...cap(rows.filter((row) => !row.summary.cwd)));
   }
   for (const cwd of workspaceCwds ?? []) {
-    limited.push(...rows.filter((row) => row.summary.cwd === cwd).slice(0, limit));
+    limited.push(...cap(rows.filter((row) => row.summary.cwd === cwd)));
   }
   return limited.sort((a, b) => b.summary.updatedAt - a.summary.updatedAt);
 }

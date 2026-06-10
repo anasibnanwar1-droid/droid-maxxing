@@ -48,9 +48,17 @@ const COLOR_MAP: Record<string, string> = {
   grey: 'var(--droid-text-muted)',
 };
 
+// Only allow our themed names plus literal hex/rgb/hsl/plain-word colors. This
+// blocks CSS functions like url()/var()/image-set() from model-supplied specs
+// from smuggling network requests or escaping the intended style.
+const SAFE_COLOR_RE = /^(#(?:[0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})|rgba?\([\d.,\s%/]+\)|hsla?\([\d.,\s%/]+\)|[a-z]+)$/i;
+
 function resolveColor(c: unknown): string | undefined {
   if (typeof c !== 'string' || !c) return undefined;
-  return COLOR_MAP[c.toLowerCase()] ?? c;
+  const trimmed = c.trim();
+  const mapped = COLOR_MAP[trimmed.toLowerCase()];
+  if (mapped) return mapped;
+  return SAFE_COLOR_RE.test(trimmed) ? trimmed : undefined;
 }
 
 function asString(v: unknown, fallback = ''): string {
@@ -159,7 +167,7 @@ function BarChartEl({ props }: { props: Record<string, unknown> }) {
           <div key={i} className="flex items-center gap-2 text-[12px]">
             <span className="w-24 shrink-0 truncate text-droid-text-secondary text-right">{asString(d.label)}</span>
             <div className="flex-1 h-3.5 rounded-sm bg-droid-elevated/60 overflow-hidden">
-              <div className="h-full rounded-sm" style={{ width: `${(value / max) * 100}%`, background: color }} />
+              <div className="h-full rounded-sm" style={{ width: `${(value / max) * 100}%`, backgroundColor: color }} />
             </div>
             <span className="w-12 shrink-0 font-mono text-droid-text-muted">{label}</span>
           </div>
@@ -181,7 +189,7 @@ function SparklineEl({ props }: { props: Record<string, unknown> }) {
         <div
           key={i}
           className="w-1 rounded-sm"
-          style={{ height: `${Math.max(8, ((v - min) / span) * 100)}%`, background: color }}
+          style={{ height: `${Math.max(8, ((v - min) / span) * 100)}%`, backgroundColor: color }}
         />
       ))}
     </div>
@@ -497,3 +505,5 @@ export function splitJsonRender(text: string): ContentSegment[] {
 export function hasJsonRender(text: string): boolean {
   return text.includes('<json-render>');
 }
+
+export const __resolveColorForTest = resolveColor;

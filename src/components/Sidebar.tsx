@@ -123,21 +123,22 @@ export default function Sidebar() {
   // it on the next render.
   const renderSessionList = (sectionKey: string, sessions: MissionSummary[]) => {
     const isExpanded = expanded.has(sectionKey);
-    const overflow = sessions.length - SIDEBAR_VISIBLE_SESSION_LIMIT;
+    const collapsible = sessions.length > SIDEBAR_VISIBLE_SESSION_LIMIT;
     let visible = isExpanded ? sessions : sessions.slice(0, SIDEBAR_VISIBLE_SESSION_LIMIT);
     if (!isExpanded && activeMission && sessions.some((m) => m.id === activeMission.id) && !visible.some((m) => m.id === activeMission.id)) {
       visible = [...visible, state.missions[activeMission.id]];
     }
+    const hidden = sessions.length - visible.length;
     return (
       <div className="mt-0.5 space-y-0.5">
         {visible.map(renderRow)}
-        {overflow > 0 && (
+        {(isExpanded ? collapsible : hidden > 0) && (
           <button
             onClick={() => toggleExpanded(sectionKey)}
             className="w-full flex items-center gap-2.5 pl-3 pr-2 py-1.5 rounded-xl text-left text-[12px] text-droid-text-muted hover:text-droid-text hover:bg-droid-elevated/40 transition-colors"
           >
             <span className="w-3 shrink-0" />
-            {isExpanded ? 'Show less' : `Show ${overflow} more`}
+            {isExpanded ? 'Show less' : `Show ${hidden} more`}
           </button>
         )}
       </div>

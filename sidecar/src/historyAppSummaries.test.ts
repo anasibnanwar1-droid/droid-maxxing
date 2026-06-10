@@ -17,7 +17,7 @@ test.after(() => {
   rmSync(home, { recursive: true, force: true });
 });
 
-function writeSession(id: string, cwd: string): void {
+function writeSession(id: string, cwd: string, extra: Record<string, unknown> = {}): void {
   const dir = join(home, '.factory', 'sessions', '2026', '06');
   mkdirSync(dir, { recursive: true });
   writeFileSync(
@@ -27,6 +27,7 @@ function writeSession(id: string, cwd: string): void {
       cwd,
       sessionTitle: 'Plain chat',
       settings: { interactionMode: 'auto' },
+      ...extra,
     })}\n`,
   );
 }
@@ -66,4 +67,23 @@ test('loadHistoricalSessions applies app summaries before plain chat filtering',
   assert.deepEqual(rows.map((row) => row.summary.id), ['plain-runtime-home']);
   assert.equal(rows[0].summary.cwd, '');
   assert.equal(rows[0].summary.workspaceKind, 'none');
+});
+
+test('loadHistoricalSessions skips Task-spawned subagent sessions', () => {
+  const cwd = join(home, 'workspace-subagent');
+  writeSession('real-session', cwd);
+  writeSession('subagent-session', cwd, { callingSessionId: 'real-session', callingToolUseId: 'tool-1' });
+
+  const rows = loadHistoricalSessions({ workspaceCwds: [cwd] });
+
+  assert.deepEqual(rows.map((row) => row.summary.id), ['real-session']);
+});
+
+test('loadHistoricalSessions returns every session when no limit is requested', () => {
+  const cwd = join(home, 'workspace-nolimit');
+  for (let i = 0; i < 7; i++) writeSession(`nolimit-${i}`, cwd);
+
+  const rows = loadHistoricalSessions({ workspaceCwds: [cwd] });
+
+  assert.equal(rows.filter((row) => row.summary.cwd === cwd).length, 7);
 });
