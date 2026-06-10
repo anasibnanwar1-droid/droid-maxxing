@@ -3,6 +3,7 @@ sidecar/node_modules/
 src-tauri/target/
 dist/
 .worktrees/
+benchmark-runs/
 
 .DS_Store
 *.log
