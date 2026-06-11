@@ -721,6 +721,9 @@ function parseSessionTranscript(
           events.push(event(missionId, sessionId, role, messageId, index, ts, 'tool_call', {
             toolName: stringValue(block.name) || 'tool',
             toolArgs: block.input,
+            // Carry the tool_use id so persisted subagent links resolve exactly
+            // (duplicate-label spawns would otherwise fall back to label match).
+            toolUseId: stringValue(block.id),
           }));
         }
         return;

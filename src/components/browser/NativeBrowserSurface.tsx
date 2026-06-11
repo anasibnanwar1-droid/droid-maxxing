@@ -218,6 +218,7 @@ export function NativeBrowserSurface({
         currentUrl: url,
         browserKey,
         visibleSessionId,
+        obscured,
         designMode,
         pencilMode: designMode && pencilMode,
         bounds: () => boundsFor(slotRef),
@@ -234,7 +235,7 @@ export function NativeBrowserSurface({
         iframe: iframeRef,
         onLoaded,
       }),
-  }), [browserKey, designMode, native, onLoaded, pencilMode, url, visibleSessionId]);
+  }), [browserKey, designMode, native, obscured, onLoaded, pencilMode, url, visibleSessionId]);
 
   useEffect(() => {
     return () => {
@@ -282,6 +283,7 @@ async function performNativeRequest(
     currentUrl: string;
     browserKey: string;
     visibleSessionId?: string;
+    obscured: boolean;
     designMode: boolean;
     pencilMode: boolean;
     bounds: () => NativeBrowserBounds | null;
@@ -294,7 +296,10 @@ async function performNativeRequest(
       return { requestId: request.requestId, missionId: request.missionId, ok: true };
     }
     const bounds = options.bounds();
-    const visible = nativeBrowserRequestTargetsVisibleSurface({
+    // While a full-screen overlay (settings, context meter, spec/question modal)
+    // obscures the pane, the BrowserView is detached; treat the surface as not
+    // visible so an `open`/`reload` doesn't reattach the OS layer over the overlay.
+    const visible = !options.obscured && nativeBrowserRequestTargetsVisibleSurface({
       browserKey: options.browserKey,
       visibleSessionId: options.visibleSessionId,
       requestMissionId: request.missionId,

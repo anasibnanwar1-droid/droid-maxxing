@@ -332,10 +332,19 @@ function buildFeed(events: TranscriptEvent[], subagentCards = false): FeedItem[]
         // large multi-file change doesn't bury the chat under dozens of cards.
         const changes: { event: TranscriptEvent; change: FileChange }[] = [{ event: ev, change }];
         i++;
-        while (i < events.length && events[i].kind === 'tool_call') {
-          const c = extractFileChange(events[i].toolName, events[i].toolArgs);
+        while (i < events.length) {
+          const t = events[i];
+          // Real transcripts interleave each edit's tool_result between calls;
+          // fold a successful edit result into the run so consecutive edits group
+          // into one card. A failed result breaks out so it can surface.
+          if (t.kind === 'tool_result') {
+            if (t.isError) break;
+            i++; continue;
+          }
+          if (t.kind !== 'tool_call') break;
+          const c = extractFileChange(t.toolName, t.toolArgs);
           if (!c) break;
-          changes.push({ event: events[i], change: c });
+          changes.push({ event: t, change: c });
           i++;
         }
         if (changes.length === 1) items.push({ type: 'diff', key: ev.id, event: ev, change });

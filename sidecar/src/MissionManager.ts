@@ -173,6 +173,10 @@ interface PendingNativeBrowserRequest {
 
 export class MissionManager {
   private ready = false;
+  // Monotonic suffix so two status lines emitted in the same millisecond get
+  // distinct transcript IDs (the UI drops duplicate IDs, which could otherwise
+  // strand the in-progress compaction shimmer).
+  private statusSeq = 0;
   private cachedModels: ModelInfo[] | null = null;
   private modelRefresh: Promise<ModelInfo[] | null> | null = null;
   private readonly runtime = new DroidRuntime();
@@ -513,7 +517,19 @@ export class MissionManager {
           const historical = this.resolveSummary(cmd.missionId);
           if (historical) this.emit({ type: 'mission.updated', mission: { ...historical, ...patch, updatedAt: Date.now() } });
         }
-        if (mission && missionId && cmd.agent === 'orchestrator') await this.refreshContext(missionId, mission.session);
+        if (mission && missionId && cmd.agent === 'orchestrator') {
+          // The auto-compaction threshold is derived from the orchestrator model,
+          // so recompute it when the model changes; otherwise auto-compaction
+          // keeps using the limit captured at create/resume time.
+          if (cmd.modelId !== undefined) {
+            mission.effectiveCompactionTokenLimit = effectiveCompactionLimit(
+              mission.summary.modelId,
+              await this.getFactoryDefaults(),
+              this.maxContextTokensForSummary(mission.summary),
+            );
+          }
+          await this.refreshContext(missionId, mission.session);
+        }
       }
     } catch (err) {
       this.emitError({ missionId: cmd.missionId, message: `Could not update agent settings: ${errMsg(err)}` });
@@ -1185,7 +1201,7 @@ export class MissionManager {
     role: AgentRole = 'orchestrator',
   ): void {
     this.emitTranscript({
-      id: `status-${Date.now().toString(36)}`,
+      id: `status-${Date.now().toString(36)}-${(this.statusSeq++).toString(36)}`,
       missionId,
       agentSessionId: agentSessionId ?? missionId,
       role,

@@ -942,22 +942,33 @@ function baseReducer(state: AppState, action: Action): AppState {
       const transcripts = action.transcripts.length === 0 && existing.length > 0
         ? state.transcripts
         : { ...state.transcripts, [action.missionId]: action.transcripts };
-      // Seed the exact spawn->worker mapping from history so subagent links
-      // resolve precisely. Never clobber a live worker list already in state.
+      // Merge the exact spawn->worker mapping from history with any live workers
+      // already in state (a live mission.worker may arrive before history). Live
+      // entries win; history links add missing workers and backfill toolUseId.
       const histLinks = action.workers ?? [];
       const existingWorkers = state.workers[action.missionId] ?? [];
-      const workers = existingWorkers.length === 0 && histLinks.length > 0
-        ? {
-            ...state.workers,
-            [action.missionId]: histLinks.map((link) => ({
+      let workers = state.workers;
+      if (histLinks.length > 0) {
+        const bySession = new Map(existingWorkers.map((w) => [w.sessionId, w]));
+        let changed = false;
+        for (const link of histLinks) {
+          const existing = bySession.get(link.workerSessionId);
+          if (!existing) {
+            bySession.set(link.workerSessionId, {
               sessionId: link.workerSessionId,
-              status: 'completed' as const,
+              status: 'completed',
               startedAt: 0,
               label: link.label,
               toolUseId: link.toolUseId,
-            })),
+            });
+            changed = true;
+          } else if (existing.toolUseId === undefined && link.toolUseId !== undefined) {
+            bySession.set(link.workerSessionId, { ...existing, toolUseId: link.toolUseId, label: existing.label ?? link.label });
+            changed = true;
           }
-        : state.workers;
+        }
+        if (changed) workers = { ...state.workers, [action.missionId]: Array.from(bySession.values()) };
+      }
       return {
         ...state,
         progress: { ...state.progress, [action.missionId]: action.progress },

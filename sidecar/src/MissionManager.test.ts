@@ -548,6 +548,18 @@ test('compaction failure surfaces a recoverable error and terminal status withou
   );
 });
 
+test('compaction status transcript IDs are unique within the same millisecond', async () => {
+  const { manager, events } = autoCompactHarness(250_000, 200_000);
+  await manager.handle({ type: 'mission.send', missionId: 'app-compact', text: 'hello' });
+  const statusIds = events
+    .filter((e) => e.type === 'mission.transcript' && (e as { event?: { kind?: string } }).event?.kind === 'status')
+    .map((e) => (e as { event: { id: string } }).event.id);
+  // The start ("Compacting conversation...") and terminal status can land in the
+  // same ms; their IDs must differ so the UI doesn't drop the terminal one.
+  assert.ok(statusIds.length >= 2);
+  assert.equal(new Set(statusIds).size, statusIds.length);
+});
+
 test('Stop during compaction drops queued sends but does not interrupt the compaction', async () => {
   const { manager, session, mission } = autoCompactHarness(0, undefined);
   mission.compacting = true;
