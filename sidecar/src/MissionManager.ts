@@ -1557,6 +1557,7 @@ export class MissionManager {
               sessionId: agentSessionId,
               missionId: agent.missionId,
               message: `Subagent session changed during compaction; ${queued.length} queued message(s) were not delivered and must be resent:\n${queued.join('\n')}`,
+              recoverable: true,
             });
           }
           return;

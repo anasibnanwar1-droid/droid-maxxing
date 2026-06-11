@@ -23,6 +23,12 @@ test('apply_patch recovers the path from a unified-diff +++ header', () => {
   assert.equal(change?.path, 'src/x.ts');
 });
 
+test('recovers the path from the --- header for a delete-only diff (+++ /dev/null)', () => {
+  const patch = ['--- a/src/gone.ts', '+++ /dev/null', '@@', '-old line 1', '-old line 2'].join('\n');
+  const change = extractFileChange('apply_patch', { patch });
+  assert.equal(change?.path, 'src/gone.ts');
+});
+
 test('an explicit path arg still wins over the patch body', () => {
   const patch = ['*** Update File: ignored.ts', '-old', '+new'].join('\n');
   const change = extractFileChange('apply_patch', { file_path: 'real.ts', patch });

@@ -59,13 +59,18 @@ function lineDiff(oldStr: string, newStr: string): DiffOp[] {
 // (`*** Update File: x`, `+++ b/x`), which the arg keys don't expose. Recover it
 // so edits show the real filename instead of the generic "file" fallback.
 function pathFromPatch(patch: string): string | undefined {
+  // Prefer the new-file path (`+++ b/x`); fall back to the old-file path
+  // (`--- a/x`) for delete-only diffs where the new side is `/dev/null`.
+  let fromOld: string | undefined;
   for (const line of patch.split('\n')) {
     const star = line.match(/^\*\*\* (?:Update|Add|Delete|Move to) File:\s*(.+?)\s*$/);
     if (star) return star[1];
     const plus = line.match(/^\+\+\+ (?:[ab]\/)?(.+?)\s*$/);
     if (plus && plus[1] !== '/dev/null') return plus[1];
+    const minus = line.match(/^--- (?:[ab]\/)?(.+?)\s*$/);
+    if (minus && minus[1] !== '/dev/null' && fromOld === undefined) fromOld = minus[1];
   }
-  return undefined;
+  return fromOld;
 }
 
 function parsePatch(patch: string): DiffOp[] {

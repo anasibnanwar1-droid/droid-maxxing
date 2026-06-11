@@ -884,13 +884,18 @@ export function MessageFeed({ events, pending, onOpenDiff, onOpenSubagent, subag
   // completion line has arrived yet. Drives the centered "Compacting…" shimmer.
   const compacting = last?.type === 'status' && isCompactingStatus(last.event.text);
 
+  // A subagent line self-indicates only while it is still running (it shows its
+  // own "Running … <timer>"). Once it completes, the orchestrator may still be
+  // working, so let the global cue show instead of looking idle.
+  const lastSubagentRunning =
+    last?.type === 'subagent' &&
+    subagentActivity?.({ toolUseId: last.event.toolUseId, label: subagentInfo(last.event.toolArgs).label })?.status === 'running';
   // The tail already animates its own shimmer/caret for these; otherwise show an explicit cue.
-  // A subagent line self-indicates too: it shows its own "Running … <timer>".
   const tailSelfIndicates =
     !!last &&
     (last.type === 'thinking' ||
       last.type === 'status' ||
-      last.type === 'subagent' ||
+      (last.type === 'subagent' && lastSubagentRunning) ||
       (last.type === 'message' && last.event.author !== 'user'));
   const showWorking = pending && !tailSelfIndicates;
   const workingLabel = last?.type === 'tools' ? 'Running' : (last?.type === 'diff' || last?.type === 'diffs') ? 'Updating files' : 'Working';
