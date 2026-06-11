@@ -5,6 +5,7 @@ import { useMissionLive } from '../hooks/useMissionLive';
 import { MessageFeed, WorkingIndicator } from './chat';
 import { readFile } from '../lib/desktop';
 import { interruptAgent } from '../lib/commands';
+import { resolveWorkers } from '../lib/subagents';
 
 function DroidWordmark() {
   return (
@@ -108,8 +109,12 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
   const viewingSub = !!selectedAgent && selectedAgent !== 'orchestrator';
 
   const missionWorkers = activeMission ? state.workers[activeMission.id] ?? [] : [];
-  const workerIndex = missionWorkers.findIndex((w) => w.sessionId === selectedAgent);
-  const selectedWorker = workerIndex >= 0 ? missionWorkers[workerIndex] : undefined;
+  // Historical chat/spec sessions don't receive live mission.worker events; seed
+  // from the persisted exact mapping (in state.workers) and fall back to
+  // transcript reconstruction for older history so subagent links stay navigable.
+  const resolvedWorkers = useMemo(() => resolveWorkers(missionWorkers, allTranscript), [missionWorkers, allTranscript]);
+  const workerIndex = resolvedWorkers.findIndex((w) => w.sessionId === selectedAgent);
+  const selectedWorker = workerIndex >= 0 ? resolvedWorkers[workerIndex] : undefined;
   const subLabel = selectedWorker ? selectedWorker.label ?? `Sub-agent ${workerIndex + 1}` : 'Sub-agent';
   const subModel = selectedWorker?.modelId
     ? state.models.find((m) => m.id === selectedWorker.modelId)?.displayName ?? selectedWorker.modelId
@@ -120,15 +125,15 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
   // link; fall back to the droid name (preferring a still-running instance).
   const findWorker = useCallback((toolUseId?: string, label?: string) => {
     if (toolUseId) {
-      const byId = missionWorkers.find((w) => w.toolUseId === toolUseId);
+      const byId = resolvedWorkers.find((w) => w.toolUseId === toolUseId);
       if (byId) return byId;
     }
     if (label) {
-      const matches = missionWorkers.filter((w) => (w.label ?? '').toLowerCase() === label.toLowerCase());
+      const matches = resolvedWorkers.filter((w) => (w.label ?? '').toLowerCase() === label.toLowerCase());
       return matches.find((w) => w.status === 'running') ?? matches[matches.length - 1];
     }
     return undefined;
-  }, [missionWorkers]);
+  }, [resolvedWorkers]);
 
   // Click a spawn name → switch the main chat view to that subagent's session.
   const openSubagent = useCallback((target: { toolUseId?: string; label?: string }) => {

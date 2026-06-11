@@ -102,6 +102,9 @@ interface Mission {
   subagentSettings: Map<string, SubagentSettings>;
   pendingSubagents: PendingSubagent[];
   mcpServers: SdkMcpServer[];
+  // The started local MCP server configs (handles to the running servers above),
+  // retained so a post-compaction session swap can re-attach the same tools.
+  mcpConfigs?: Awaited<ReturnType<SdkMcpServer['start']>>[];
   permissionGrants: Set<string>;
   // Tracks whether TodoWrite is currently disabled on the session so we only
   // call updateSettings when the design/normal turn policy actually changes.
@@ -681,7 +684,7 @@ export class MissionManager {
         createdAt: historical?.createdAt ?? now,
         updatedAt: now,
       });
-      const mission: Mission = this.createLiveMission(summary, session, mcp.servers, resumeCompactionLimit);
+      const mission: Mission = this.createLiveMission(summary, session, mcp.servers, resumeCompactionLimit, mcp.configs);
       this.missions.set(appSessionId, mission);
       this.history.syncSummaries([summary]);
       this.emit({ type: 'mission.created', clientRef: `resume:${appSessionId}`, mission: summary });
@@ -728,12 +731,13 @@ export class MissionManager {
       const history = this.hydrateMissionHistory(appSessionId, droidSessionId);
       const transcripts = history.transcripts.map((event) => ({ ...event, missionId: appSessionId }));
       transcripts.forEach((event) => this.history.recordEvent(event));
-      this.emit({ type: 'mission.history', missionId: appSessionId, progress: history.progress, transcripts });
+      const workers = this.history.subagentLinks(appSessionId);
+      this.emit({ type: 'mission.history', missionId: appSessionId, progress: history.progress, transcripts, workers });
     } catch {
       try {
         const page = loadSessionPage(droidSessionId, undefined, undefined, appSessionId);
         page.events.forEach((event) => this.history.recordEvent(event));
-        this.emit({ type: 'mission.history', missionId: appSessionId, progress: [], transcripts: page.events });
+        this.emit({ type: 'mission.history', missionId: appSessionId, progress: [], transcripts: page.events, workers: this.history.subagentLinks(appSessionId) });
       } catch (err) {
         if (!this.findMission(appSessionId)) {
           this.emitError({ missionId: appSessionId, sessionId: droidSessionId, message: errMsg(err) });
@@ -841,7 +845,7 @@ export class MissionManager {
         updatedAt: now,
       };
       ref.id = id;
-      const mission = this.createLiveMission(summary, session, mcp.servers, compactionSettings.compactionTokenLimit);
+      const mission = this.createLiveMission(summary, session, mcp.servers, compactionSettings.compactionTokenLimit, mcp.configs);
       this.missions.set(id, mission);
       this.history.syncSummaries([summary]);
       this.emit({ type: 'mission.created', clientRef: cmd.clientRef, mission: summary });
@@ -853,7 +857,7 @@ export class MissionManager {
     }
   }
 
-  private createLiveMission(summary: MissionSummary, session: DroidSession, mcpServers: SdkMcpServer[] = [], effectiveCompactionTokenLimit?: number): Mission {
+  private createLiveMission(summary: MissionSummary, session: DroidSession, mcpServers: SdkMcpServer[] = [], effectiveCompactionTokenLimit?: number, mcpConfigs: Awaited<ReturnType<SdkMcpServer['start']>>[] = []): Mission {
     return {
       summary,
       session,
@@ -868,6 +872,7 @@ export class MissionManager {
       subagentSettings: new Map(),
       pendingSubagents: [],
       mcpServers,
+      mcpConfigs,
       permissionGrants: new Set(),
       effectiveCompactionTokenLimit,
     };
@@ -1057,7 +1062,10 @@ export class MissionManager {
     const prompt = sub.prompt ?? pending?.prompt;
     mission.knownSubagents.add(sessionId);
     mission.completedSubagents.delete(sessionId);
-    if (toolUseId) mission.subagentToolUseIds.set(toolUseId, sessionId);
+    if (toolUseId) {
+      mission.subagentToolUseIds.set(toolUseId, sessionId);
+      this.history.recordSubagentLink(appSessionId, toolUseId, sessionId, label);
+    }
     this.emit({
       type: 'mission.worker',
       missionId: appSessionId,
@@ -1225,6 +1233,9 @@ export class MissionManager {
             mission.session = await this.runtime.loadSession(newSessionId, {
               permissionHandler: this.makePermissionHandler(ref),
               askUserHandler: this.makeAskUserHandler(ref),
+              // Re-attach the same local MCP servers (still running) so the
+              // swapped session keeps browser tools on subsequent turns.
+              mcpServers: mission.mcpConfigs,
             });
             // The replacement session starts with default tool settings, so the
             // cached design-tool policy no longer reflects reality. Clear it so

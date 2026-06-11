@@ -26,7 +26,8 @@ import { extractFileChange, type FileChange } from '../lib/diff';
 import { environmentLabels } from '../lib/repoEnvironment';
 import { DiffFull } from './DiffView';
 import { ModelIcon, providerOf } from './ModelIcon';
-import { CAT_ICON, CAT_LABEL, toolMeta, isSubagentTool, subagentInfo } from '../lib/tools';
+import { CAT_ICON, CAT_LABEL, toolMeta } from '../lib/tools';
+import { resolveWorkers } from '../lib/subagents';
 import type { WorkerInfo } from '../hooks/useStore';
 import { MessageFeed } from './chat';
 import EditorOpenMenu, { openCodebase, openCurrentDiff } from './EditorOpenMenu';
@@ -640,37 +641,10 @@ export default function MissionControl() {
   const progress = mission ? state.progress[mission.id] ?? [] : [];
   const missionWorkers = mission ? state.workers[mission.id] ?? [] : [];
 
-  // Live workers come from mission.worker events, but historical missions only
-  // load transcripts/progress (no state.workers), which would leave inline
-  // subagent links dead. Reconstruct a worker list from the transcript: pair
-  // each orchestrator subagent spawn with a worker session by order (mirroring
-  // the live pendingSubagent fallback) so the spawn's toolUseId/label resolves.
-  const resolvedWorkers = useMemo<WorkerInfo[]>(() => {
-    if (missionWorkers.length > 0) return missionWorkers;
-    const workerOrder: string[] = [];
-    const seenSession = new Set<string>();
-    for (const t of allTx) {
-      if (t.role === 'orchestrator' || t.author === 'user') continue;
-      if (!seenSession.has(t.agentSessionId)) { seenSession.add(t.agentSessionId); workerOrder.push(t.agentSessionId); }
-    }
-    if (workerOrder.length === 0) return missionWorkers;
-    const spawns: { toolUseId?: string; label?: string }[] = [];
-    const seenSpawn = new Set<string>();
-    for (const t of allTx) {
-      if (t.role !== 'orchestrator' || t.kind !== 'tool_call' || !isSubagentTool(t.toolName, t.toolArgs)) continue;
-      const key = t.toolUseId ?? t.id;
-      if (seenSpawn.has(key)) continue;
-      seenSpawn.add(key);
-      spawns.push({ toolUseId: t.toolUseId, label: subagentInfo(t.toolArgs).label });
-    }
-    return workerOrder.map((sessionId, i) => ({
-      sessionId,
-      status: 'completed' as const,
-      label: spawns[i]?.label,
-      toolUseId: spawns[i]?.toolUseId,
-      startedAt: 0,
-    }));
-  }, [missionWorkers, allTx]);
+  // Live workers come from mission.worker events; historical missions seed
+  // state.workers from the persisted exact mapping, and only fall back to
+  // transcript reconstruction for older history that predates persisted links.
+  const resolvedWorkers = useMemo<WorkerInfo[]>(() => resolveWorkers(missionWorkers, allTx), [missionWorkers, allTx]);
 
   // Resolve an inline spawn line to its worker: the Task tool_call id is the
   // precise link; fall back to the droid name (preferring a running instance).

@@ -11,6 +11,7 @@ import type {
   MissionQuestion,
   ModelInfo,
   WorkerSummary,
+  WorkerHistoryLink,
   SkillInfo,
   ReasoningEffort,
   ContextStatsSnapshot,
@@ -173,7 +174,7 @@ type Action =
   | { type: 'MISSION_QUESTION'; question: MissionQuestion }
   | { type: 'MISSION_ERROR'; missionId?: string; message: string }
   | { type: 'MISSION_LIST'; missions: MissionSummary[] }
-  | { type: 'MISSION_HISTORY'; missionId: string; progress: ProgressEntry[]; transcripts: TranscriptEvent[] }
+  | { type: 'MISSION_HISTORY'; missionId: string; progress: ProgressEntry[]; transcripts: TranscriptEvent[]; workers?: WorkerHistoryLink[] }
   | { type: 'CLEAR_PERMISSION' }
   | { type: 'CLEAR_QUESTION' }
 
@@ -941,10 +942,27 @@ function baseReducer(state: AppState, action: Action): AppState {
       const transcripts = action.transcripts.length === 0 && existing.length > 0
         ? state.transcripts
         : { ...state.transcripts, [action.missionId]: action.transcripts };
+      // Seed the exact spawn->worker mapping from history so subagent links
+      // resolve precisely. Never clobber a live worker list already in state.
+      const histLinks = action.workers ?? [];
+      const existingWorkers = state.workers[action.missionId] ?? [];
+      const workers = existingWorkers.length === 0 && histLinks.length > 0
+        ? {
+            ...state.workers,
+            [action.missionId]: histLinks.map((link) => ({
+              sessionId: link.workerSessionId,
+              status: 'completed' as const,
+              startedAt: 0,
+              label: link.label,
+              toolUseId: link.toolUseId,
+            })),
+          }
+        : state.workers;
       return {
         ...state,
         progress: { ...state.progress, [action.missionId]: action.progress },
         transcripts,
+        workers,
         historyLoaded: { ...state.historyLoaded, [action.missionId]: true },
       };
     }
@@ -1302,7 +1320,7 @@ function adaptEvent(ev: ServerEvent): Action | null {
     case 'mission.list':
       return { type: 'MISSION_LIST', missions: ev.missions };
     case 'mission.history':
-      return { type: 'MISSION_HISTORY', missionId: ev.missionId, progress: ev.progress, transcripts: ev.transcripts };
+      return { type: 'MISSION_HISTORY', missionId: ev.missionId, progress: ev.progress, transcripts: ev.transcripts, workers: ev.workers };
     case 'models.list':
       return { type: 'MODELS_LIST', models: ev.models };
     case 'context.updated':

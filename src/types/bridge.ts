@@ -54,6 +54,14 @@ export interface WorkerSummary {
   toolUseId?: string;
 }
 
+// The exact toolUseId -> workerSessionId mapping persisted for a mission, sent
+// with historical loads so subagent links resolve precisely (not by guessing).
+export interface WorkerHistoryLink {
+  workerSessionId: string;
+  toolUseId?: string;
+  label?: string;
+}
+
 export type WorkspaceKind = 'folder' | 'none';
 
 export interface MissionSummary {
@@ -483,7 +491,7 @@ export type ServerEvent =
   | { type: 'mission.question'; question: MissionQuestion }
   | { type: 'mission.error'; missionId?: string; message: string }
   | { type: 'mission.list'; missions: MissionSummary[] }
-  | { type: 'mission.history'; missionId: string; progress: ProgressEntry[]; transcripts: TranscriptEvent[] }
+  | { type: 'mission.history'; missionId: string; progress: ProgressEntry[]; transcripts: TranscriptEvent[]; workers?: WorkerHistoryLink[] }
   | { type: 'sessions.history'; missions: HistoryMission[] }
   | { type: 'models.list'; models: ModelInfo[] }
   | { type: 'browser.updated'; state: BrowserState }

@@ -14,6 +14,7 @@ import type {
   ProgressEntry,
   ReasoningEffort,
   TranscriptEvent,
+  WorkerHistoryLink,
 } from './protocol.js';
 import { mapFeature } from './normalize.js';
 import { designPromptDisplayFromText } from './browser/designPromptDisplay.js';
@@ -260,6 +261,14 @@ export class HistoryIndex {
         ts INTEGER NOT NULL,
         PRIMARY KEY (mission_id, key)
       );
+      CREATE TABLE IF NOT EXISTS subagent_links (
+        mission_id TEXT NOT NULL,
+        tool_use_id TEXT NOT NULL,
+        worker_session_id TEXT NOT NULL,
+        label TEXT,
+        updated_at INTEGER NOT NULL,
+        PRIMARY KEY (mission_id, tool_use_id)
+      );
       CREATE TABLE IF NOT EXISTS approvals (
         request_id TEXT PRIMARY KEY,
         mission_id TEXT NOT NULL,
@@ -387,6 +396,30 @@ export class HistoryIndex {
       INSERT OR IGNORE INTO events (id, session_id, mission_id, kind, ts)
       VALUES (?, ?, ?, ?, ?)
     `).run(event.id, event.agentSessionId, event.missionId, event.kind, event.ts);
+  }
+
+  // Persist the exact spawn->worker mapping the moment a live subagent resolves,
+  // so historical loads can rebuild precise links rather than pairing by order.
+  recordSubagentLink(missionId: string, toolUseId: string, workerSessionId: string, label?: string): void {
+    this.db.prepare(`
+      INSERT INTO subagent_links (mission_id, tool_use_id, worker_session_id, label, updated_at)
+      VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(mission_id, tool_use_id) DO UPDATE SET
+        worker_session_id = excluded.worker_session_id,
+        label = excluded.label,
+        updated_at = excluded.updated_at
+    `).run(missionId, toolUseId, workerSessionId, sqlValue(label), Date.now());
+  }
+
+  subagentLinks(missionId: string): WorkerHistoryLink[] {
+    const rows = this.db
+      .prepare('SELECT tool_use_id, worker_session_id, label FROM subagent_links WHERE mission_id = ? ORDER BY updated_at ASC')
+      .all(missionId) as Record<string, unknown>[];
+    return rows.map((row) => ({
+      workerSessionId: stringValue(row.worker_session_id) ?? '',
+      toolUseId: stringValue(row.tool_use_id),
+      label: stringValue(row.label),
+    })).filter((link) => link.workerSessionId);
   }
 
   close(): void {

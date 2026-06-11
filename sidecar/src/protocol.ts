@@ -57,6 +57,14 @@ export interface WorkerSummary {
   toolUseId?: string;
 }
 
+// The exact toolUseId -> workerSessionId mapping persisted for a mission, so
+// historical loads can rebuild precise subagent links instead of guessing.
+export interface WorkerHistoryLink {
+  workerSessionId: string;
+  toolUseId?: string;
+  label?: string;
+}
+
 export interface MissionSummary {
   id: string;            // stable app conversation id
   sessionId?: string;    // active Droid session id
@@ -455,7 +463,7 @@ export type ServerEvent =
   | { type: 'spec.content'; missionId: string; path: string; content: string }
   | { type: 'mission.error'; missionId?: string; message: string }
   | { type: 'mission.list'; missions: MissionSummary[] }
-  | { type: 'mission.history'; missionId: string; progress: ProgressEntry[]; transcripts: TranscriptEvent[] }
+  | { type: 'mission.history'; missionId: string; progress: ProgressEntry[]; transcripts: TranscriptEvent[]; workers?: WorkerHistoryLink[] }
   | { type: 'sessions.history'; missions: HistoryMission[] }
   | { type: 'models.list'; models: ModelInfo[] }
   | { type: 'browser.updated'; state: BrowserState }

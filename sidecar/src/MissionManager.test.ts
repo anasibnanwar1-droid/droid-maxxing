@@ -211,10 +211,10 @@ test('sendNow interrupts the live turn and prioritizes the steering prompt', asy
     compacting: false,
   };
   const internals = manager as unknown as {
-    history: { recordEvent: () => void; syncSummaries: () => void };
+    history: { recordEvent: () => void; syncSummaries: () => void; recordSubagentLink: () => void; subagentLinks: () => []; };
     missions: Map<string, typeof mission>;
   };
-  internals.history = { recordEvent: () => {}, syncSummaries: () => {} };
+  internals.history = { recordEvent: () => {}, syncSummaries: () => {}, recordSubagentLink: () => {}, subagentLinks: () => [] };
   internals.missions.set(mission.summary.id, mission);
 
   const firstTurn = manager.handle({ type: 'mission.send', missionId: mission.summary.id, text: 'first' });
@@ -253,10 +253,10 @@ test('sendNow queues during compaction instead of driving or interrupting', asyn
     compacting: true,
   };
   const internals = manager as unknown as {
-    history: { recordEvent: () => void; syncSummaries: () => void };
+    history: { recordEvent: () => void; syncSummaries: () => void; recordSubagentLink: () => void; subagentLinks: () => []; };
     missions: Map<string, typeof mission>;
   };
-  internals.history = { recordEvent: () => {}, syncSummaries: () => {} };
+  internals.history = { recordEvent: () => {}, syncSummaries: () => {}, recordSubagentLink: () => {}, subagentLinks: () => [] };
   internals.missions.set(mission.summary.id, mission);
 
   // Manual compaction (compacting=true, streaming=false): must not drive() concurrently.
@@ -295,10 +295,10 @@ test('design turns disable TodoWrite and normal turns restore it', async () => {
     compacting: false,
   };
   const internals = manager as unknown as {
-    history: { recordEvent: () => void; syncSummaries: () => void };
+    history: { recordEvent: () => void; syncSummaries: () => void; recordSubagentLink: () => void; subagentLinks: () => []; };
     missions: Map<string, typeof mission>;
   };
-  internals.history = { recordEvent: () => {}, syncSummaries: () => {} };
+  internals.history = { recordEvent: () => {}, syncSummaries: () => {}, recordSubagentLink: () => {}, subagentLinks: () => [] };
   internals.missions.set(mission.summary.id, mission);
 
   const designPrompt = 'Design Mode reference pack:\n- URL: about:blank\n\nUser instruction:\nMake the hero cleaner';
@@ -510,6 +510,8 @@ function autoCompactHarness(used: number, effectiveCompactionTokenLimit?: number
       syncSummaries: () => void;
       summaryPatches: () => Map<string, unknown>;
       hiddenDroidSessionIds: () => Set<string>;
+      recordSubagentLink: () => void;
+      subagentLinks: () => [];
     };
     missions: Map<string, typeof mission>;
   };
@@ -518,6 +520,8 @@ function autoCompactHarness(used: number, effectiveCompactionTokenLimit?: number
     syncSummaries: () => {},
     summaryPatches: () => new Map(),
     hiddenDroidSessionIds: () => new Set(),
+    recordSubagentLink: () => {},
+    subagentLinks: () => [],
   };
   internals.missions.set(mission.summary.id, mission);
   return { manager, session, events, mission };
