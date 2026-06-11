@@ -130,7 +130,13 @@ export async function runCompaction(
     const result = await session.compactSession(
       options.customInstructions ? { customInstructions: options.customInstructions } : {},
     );
-    if (!result) return 'noop';
+    // Every return path must emit a terminal status: the "Compacting
+    // conversation..." line drives an in-progress shimmer that only clears when
+    // a later (non-"compacting") status replaces it.
+    if (!result) {
+      sink.status('Nothing to compact.', compactType);
+      return 'noop';
+    }
     const removedCount = result.removedCount ?? 0;
     if (result.newSessionId && result.newSessionId !== session.sessionId) {
       if (!sink.reload) {
@@ -138,6 +144,7 @@ export async function runCompaction(
         // swapped backing id without re-keying. Surface it and signal the
         // session is now stale so the caller can recover.
         sink.error(`daemon returned a new backing session (${result.newSessionId}); subagent sessions must compact in place to keep handoff addressing stable`);
+        sink.status('Compaction could not finish; continuing with the current conversation.', compactType);
         return 'stale';
       }
       await sink.reload(result.newSessionId, removedCount);
@@ -147,6 +154,7 @@ export async function runCompaction(
     return 'completed';
   } catch (err) {
     sink.error(err instanceof Error ? err.message : String(err));
+    sink.status('Compaction could not finish; continuing with the current conversation.', compactType);
     return 'failed';
   }
 }

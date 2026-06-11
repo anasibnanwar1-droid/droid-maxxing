@@ -1,7 +1,7 @@
 import { useRef, useEffect, useMemo, useState, useCallback } from 'react';
 import { useStore } from '../hooks/useStore';
 import { useRepoStatus } from '../hooks/useRepoStatus';
-import { interruptMission, setMissionAutonomy } from '../lib/commands';
+import { interruptMission, setMissionAutonomy, subscribeWorker } from '../lib/commands';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   FileDiff, Monitor, GitBranch, GitCommitHorizontal, ChevronDown, ChevronRight,
@@ -654,10 +654,14 @@ export default function MissionControl() {
   }, [missionWorkers]);
 
   // Click a spawn name in the orchestrator transcript → focus that worker.
+  // Mission orchestrators are skipped by App's subscribe effect, so open the
+  // worker session here to load its history/live events before switching.
   const openSubagent = useCallback((target: { toolUseId?: string; label?: string }) => {
     const worker = findWorker(target.toolUseId, target.label);
-    if (worker) setViewedAgent(worker.sessionId);
-  }, [findWorker]);
+    if (!worker || !mission) return;
+    subscribeWorker(mission.id, worker.sessionId);
+    setViewedAgent(worker.sessionId);
+  }, [findWorker, mission]);
 
   const subagentActivity = useCallback((target: { toolUseId?: string; label?: string }) => {
     const worker = findWorker(target.toolUseId, target.label);

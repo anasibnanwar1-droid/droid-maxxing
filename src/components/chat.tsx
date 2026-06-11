@@ -66,10 +66,13 @@ export function CompactionDivider({ compactType }: { compactType?: 'auto' | 'man
   );
 }
 
-// A status line that signals compaction is in progress (not the completion line).
+// A status line that signals compaction is in progress (not the completion
+// line). Match the active gerund ("Compacting conversation...") specifically so
+// terminal lines ("Compaction complete.", "Nothing to compact.") and rejections
+// ("Cannot compact while a turn is active.") don't keep the shimmer running.
 export function isCompactingStatus(text?: string): boolean {
   const t = text ?? '';
-  return /compact/i.test(t) && !/complete/i.test(t);
+  return /compacting/i.test(t) && !/complete/i.test(t);
 }
 
 // A status line that signals compaction finished.
@@ -350,9 +353,10 @@ function buildFeed(events: TranscriptEvent[], subagentCards = false): FeedItem[]
           items[at] = { ...cur, event: richerSubagent(cur.event, ev) };
         }
         i++;
-        // Skip the subagent's completion tool_result so it doesn't become an
-        // orphaned "Tool result" entry in the grouping block below.
-        if (i < events.length && events[i].kind === 'tool_result' && events[i].toolName === ev.toolName) i++;
+        // Skip the subagent's successful completion tool_result so it doesn't
+        // become an orphaned "Tool result" entry in the grouping block below.
+        // Keep error results so a failed spawn surfaces instead of vanishing.
+        if (i < events.length && events[i].kind === 'tool_result' && events[i].toolName === ev.toolName && !events[i].isError) i++;
         continue;
       }
     }

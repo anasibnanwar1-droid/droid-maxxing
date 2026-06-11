@@ -78,6 +78,15 @@ function asArray<T = unknown>(v: unknown): T[] {
   return Array.isArray(v) ? (v as T[]) : [];
 }
 
+// Like asArray but drops entries that are not plain objects, so components can
+// safely dereference fields (d.value, Object.keys(r), it.status) on specs that
+// include null/primitive entries such as data: [null].
+function asRecordArray(v: unknown): Record<string, unknown>[] {
+  return Array.isArray(v)
+    ? v.filter((e): e is Record<string, unknown> => typeof e === 'object' && e !== null && !Array.isArray(e))
+    : [];
+}
+
 /* Merge stray top-level keys into props so malformed specs still render. */
 function mergedProps(el: RawElement): Record<string, unknown> {
   const { type: _t, props, children: _c, ...rest } = el;
@@ -153,7 +162,7 @@ function DividerEl({ props }: { props: Record<string, unknown> }) {
 }
 
 function BarChartEl({ props }: { props: Record<string, unknown> }) {
-  const data = asArray<Record<string, unknown>>(props.data);
+  const data = asRecordArray(props.data);
   const showPct = !!props.showPercentage;
   const max = Math.max(1, ...data.map((d) => asNumber(d.value) ?? 0));
   const total = data.reduce((s, d) => s + (asNumber(d.value) ?? 0), 0) || 1;
@@ -197,8 +206,8 @@ function SparklineEl({ props }: { props: Record<string, unknown> }) {
 }
 
 function TableEl({ props }: { props: Record<string, unknown> }) {
-  const columns = asArray<Record<string, unknown>>(props.columns);
-  const rows = asArray<Record<string, unknown>>(props.rows);
+  const columns = asRecordArray(props.columns);
+  const rows = asRecordArray(props.rows);
   const headerColor = resolveColor(props.headerColor);
   // Fall back to row keys when columns are omitted.
   const cols: Record<string, unknown>[] = columns.length
@@ -356,7 +365,7 @@ function CalloutEl({ props, children }: { props: Record<string, unknown>; childr
 }
 
 function TimelineEl({ props }: { props: Record<string, unknown> }) {
-  const items = asArray<Record<string, unknown>>(props.items);
+  const items = asRecordArray(props.items);
   return (
     <div className="flex flex-col">
       {items.map((it, i) => {

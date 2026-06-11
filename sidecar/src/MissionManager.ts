@@ -1213,7 +1213,7 @@ export class MissionManager {
         {
           status: (text, ct) => this.emitStatus(appSessionId, text, ct),
           error: (message) =>
-            this.emitError({ sessionId: mission.summary.sessionId, missionId: appSessionId, message: `Could not compact session: ${message}` }),
+            this.emitError({ sessionId: mission.summary.sessionId, missionId: appSessionId, message: `Could not compact session: ${message}`, recoverable: true }),
           refresh: () => this.refreshContext(appSessionId, mission.session),
           reload: async (newSessionId) => {
             const compactedFromSessionIds = uniqueStrings([
@@ -1408,6 +1408,13 @@ export class MissionManager {
     if (!mission) return;
     const appSessionId = mission.summary.id;
     mission.pendingSends = [];
+    // Never interrupt an in-flight compaction (it risks a failed/corrupt
+    // compaction). Dropping queued sends is enough; compaction finishes on its
+    // own and its drive()/command drain then settles streaming/phase.
+    if (mission.compacting) {
+      this.patch(appSessionId, { queuedSends: 0 });
+      return;
+    }
     await mission.session.interrupt();
     this.patch(appSessionId, { phase: 'paused', streaming: false, queuedSends: 0 });
   }
@@ -1583,7 +1590,7 @@ export class MissionManager {
         {
           status: (text, ct) => this.emitStatus(agent.missionId, text, ct, agentSessionId, agent.role),
           error: (message) =>
-            this.emitError({ sessionId: agentSessionId, missionId: agent.missionId, message: `Could not compact subagent: ${message}` }),
+            this.emitError({ sessionId: agentSessionId, missionId: agent.missionId, message: `Could not compact subagent: ${message}`, recoverable: true }),
           refresh: () => this.refreshContext(agentSessionId, agent.session),
           // No reload hook: a worker keyed by its session id is also how the
           // orchestrator addresses its handoff/result, so it must never swap to
@@ -1639,6 +1646,8 @@ export class MissionManager {
     if (!agent) return;
     agent.pendingSends = [];
     agent.lastUsedAt = Date.now();
+    // Never interrupt an in-flight subagent compaction; let it finish and drain.
+    if (agent.compacting) return;
     await agent.session.interrupt();
     agent.streaming = false;
     this.emit({ type: 'agent.updated', missionId: appSessionId, agentSessionId, role: agent.role, status: 'paused' });
@@ -1895,9 +1904,15 @@ export class MissionManager {
     this.emit({ type: 'session.updated', session: mission.summary });
   }
 
-  private emitError(error: { code?: string; sessionId?: string; missionId?: string; message: string }): void {
-    this.emit({ type: 'mission.error', missionId: error.missionId ?? error.sessionId, message: error.message });
-    this.emit({ type: 'error', ...error });
+  private emitError(error: { code?: string; sessionId?: string; missionId?: string; message: string; recoverable?: boolean }): void {
+    const { recoverable, ...rest } = error;
+    // A recoverable error surfaces to the user (toast) without marking the whole
+    // mission failed; the session stays usable (e.g. a transient compaction
+    // error leaves the conversation intact and the next turn can proceed).
+    if (!recoverable) {
+      this.emit({ type: 'mission.error', missionId: rest.missionId ?? rest.sessionId, message: rest.message });
+    }
+    this.emit({ type: 'error', ...rest });
   }
 
   private async handleBrowser(missionId: string | undefined, action: () => Promise<void | unknown>): Promise<void> {

@@ -530,6 +530,34 @@ test('auto-compacts an idle turn once context crosses the effective limit', asyn
   assert.equal(events.some((event) => event.type === 'mission.error' || event.type === 'error'), false);
 });
 
+test('compaction failure surfaces a recoverable error and terminal status without failing the mission', async () => {
+  const { manager, session, events } = autoCompactHarness(250_000, 200_000);
+  session.failCompaction = true;
+  await manager.handle({ type: 'mission.send', missionId: 'app-compact', text: 'hello' });
+  // Recoverable: a toast error is emitted but the mission is not marked failed.
+  assert.equal(events.some((e) => e.type === 'mission.error'), false);
+  assert.equal(events.some((e) => e.type === 'error' && /could not compact session/i.test((e as { message?: string }).message ?? '')), true);
+  // A terminal status clears the in-progress "Compacting..." shimmer.
+  assert.equal(
+    events.some((e) => e.type === 'mission.transcript' && /could not finish/i.test((e as { event?: { text?: string } }).event?.text ?? '')),
+    true,
+  );
+});
+
+test('Stop during compaction drops queued sends but does not interrupt the compaction', async () => {
+  const { manager, session, mission } = autoCompactHarness(0, undefined);
+  mission.compacting = true;
+  let interrupts = 0;
+  (session as unknown as { interrupt: () => Promise<void> }).interrupt = async () => { interrupts += 1; };
+  // A send during compaction queues instead of driving.
+  await manager.handle({ type: 'mission.send', missionId: 'app-compact', text: 'queued' });
+  assert.equal(mission.pendingSends.length, 1);
+  // Stop must clear the queue but never interrupt the in-flight compaction.
+  await manager.handle({ type: 'mission.interrupt', missionId: 'app-compact' });
+  assert.equal(interrupts, 0);
+  assert.equal(mission.pendingSends.length, 0);
+});
+
 test('does not auto-compact when context stays under the effective limit', async () => {
   const { manager, session } = autoCompactHarness(150_000, 200_000);
   await manager.handle({ type: 'mission.send', missionId: 'app-compact', text: 'hello' });
