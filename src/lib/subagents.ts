@@ -8,7 +8,9 @@ export function workersFromLinks(links: WorkerHistoryLink[] | undefined): Worker
   if (!links || links.length === 0) return [];
   return links.map((link) => ({
     sessionId: link.workerSessionId,
-    status: 'completed' as const,
+    // The backend attaches live status for active missions; historical loads
+    // omit it, so default to completed.
+    status: link.status ?? 'completed',
     startedAt: 0,
     label: link.label,
     toolUseId: link.toolUseId,
@@ -47,9 +49,13 @@ export function reconstructWorkersFromTranscript(allTx: TranscriptEvent[]): Work
   }));
 }
 
-// Prefer live/persisted workers; fall back to transcript reconstruction only when
-// no exact mapping is available (older history).
+// Prefer live/persisted workers, then merge in any transcript-reconstructed
+// workers whose session isn't already covered. A long-lived session can mix
+// older unlinked spawns with newer persisted links, so returning only the
+// linked workers would leave the older historical subagent lines unopenable.
 export function resolveWorkers(missionWorkers: WorkerInfo[], allTx: TranscriptEvent[]): WorkerInfo[] {
-  if (missionWorkers.length > 0) return missionWorkers;
-  return reconstructWorkersFromTranscript(allTx);
+  if (missionWorkers.length === 0) return reconstructWorkersFromTranscript(allTx);
+  const known = new Set(missionWorkers.map((w) => w.sessionId));
+  const extra = reconstructWorkersFromTranscript(allTx).filter((w) => !known.has(w.sessionId));
+  return extra.length === 0 ? missionWorkers : [...missionWorkers, ...extra];
 }

@@ -34,6 +34,7 @@ import type {
   SessionInteractionMode,
   SessionKind,
   TranscriptEvent,
+  WorkerHistoryLink,
 } from './protocol.js';
 import { DroidRuntime } from './DroidRuntime.js';
 import { classifyPermission, confirmationType, mapFeature, normalizeNotification, normalizeStreamEvent, permissionSignature } from './normalize.js';
@@ -57,6 +58,8 @@ import { isAlwaysOutcome, isApprovalOutcome, normalizePermissionOutcome } from '
 import { filterMissionListSummaries, type MissionListFilterOptions } from './missionListFilter.js';
 import {
   autoCompactionDue,
+  clampCompactionTokenLimit,
+  compactionTokenLimitForModel,
   createCompactionSettingsForModel,
   effectiveCompactionLimit,
   normalizeCompactionTokenLimit,
@@ -717,9 +720,16 @@ export class MissionManager {
         createdAt: historical?.createdAt ?? now,
         updatedAt: now,
       });
-      // Derive the auto-compaction limit from the resolved summary model, since
-      // pending agent settings may override the init/historical model above.
-      const resumeCompactionLimit = effectiveCompactionLimit(summary.modelId, defaults, this.maxContextTokensForSummary(summary));
+      // Auto-compaction threshold after resume: the SDK does not persist a
+      // per-session compactionTokenLimit, so honor one only if the resumed init
+      // settings expose it; otherwise the threshold follows current app defaults.
+      const resumeCompactionLimit = clampCompactionTokenLimit(
+        compactionTokenLimitForModel(summary.modelId, {
+          compactionTokenLimit: init.settings?.compactionTokenLimit,
+          compactionTokenLimitPerModel: init.settings?.compactionTokenLimitPerModel,
+        }, defaults),
+        this.maxContextTokensForSummary(summary),
+      );
       const mission: Mission = this.createLiveMission(summary, session, mcp.servers, resumeCompactionLimit, mcp.configs);
       this.missions.set(appSessionId, mission);
       this.history.syncSummaries([summary]);
@@ -759,6 +769,20 @@ export class MissionManager {
     this.emit({ type: 'mission.list', missions: this.listAllSummaries(options) });
   }
 
+  // Annotate persisted subagent links with the live run state from the active
+  // mission so a renderer reconnect/reload doesn't render a still-running
+  // subagent as finished. Historical (non-live) loads leave status undefined,
+  // which the renderer treats as completed.
+  private withLiveWorkerStatus(appSessionId: string, links: WorkerHistoryLink[]): WorkerHistoryLink[] {
+    const mission = this.findMission(appSessionId);
+    if (!mission) return links;
+    return links.map((link) =>
+      mission.knownSubagents.has(link.workerSessionId)
+        ? { ...link, status: mission.completedSubagents.has(link.workerSessionId) ? 'completed' : 'running' }
+        : link,
+    );
+  }
+
   private loadMissionHistory(missionId: string): void {
     const summary = this.resolveSummary(missionId);
     const appSessionId = summary?.id ?? missionId;
@@ -767,13 +791,13 @@ export class MissionManager {
       const history = this.hydrateMissionHistory(appSessionId, droidSessionId);
       const transcripts = history.transcripts.map((event) => ({ ...event, missionId: appSessionId }));
       transcripts.forEach((event) => this.history.recordEvent(event));
-      const workers = this.history.subagentLinks(appSessionId);
+      const workers = this.withLiveWorkerStatus(appSessionId, this.history.subagentLinks(appSessionId));
       this.emit({ type: 'mission.history', missionId: appSessionId, progress: history.progress, transcripts, workers });
     } catch {
       try {
         const page = loadSessionPage(droidSessionId, undefined, undefined, appSessionId);
         page.events.forEach((event) => this.history.recordEvent(event));
-        this.emit({ type: 'mission.history', missionId: appSessionId, progress: [], transcripts: page.events, workers: this.history.subagentLinks(appSessionId) });
+        this.emit({ type: 'mission.history', missionId: appSessionId, progress: [], transcripts: page.events, workers: this.withLiveWorkerStatus(appSessionId, this.history.subagentLinks(appSessionId)) });
       } catch (err) {
         if (!this.findMission(appSessionId)) {
           this.emitError({ missionId: appSessionId, sessionId: droidSessionId, message: errMsg(err) });
@@ -2030,6 +2054,8 @@ interface InitResultLike {
     modelId?: string;
     reasoningEffort?: string;
     compactionModel?: string;
+    compactionTokenLimit?: number;
+    compactionTokenLimitPerModel?: Record<string, number>;
     interactionMode?: string;
     autonomyLevel?: string;
   };

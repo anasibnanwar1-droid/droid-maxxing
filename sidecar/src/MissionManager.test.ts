@@ -14,7 +14,7 @@ import {
   compactionTokenLimitForModel,
   createCompactionSettingsForModel,
 } from './compaction.js';
-import type { MissionSummary, ModelInfo, ServerEvent } from './protocol.js';
+import type { MissionSummary, ModelInfo, ServerEvent, WorkerHistoryLink } from './protocol.js';
 
 class FakeSession {
   prompts: string[] = [];
@@ -188,6 +188,69 @@ test('leaves unset compaction limits to Factory session defaults', () => {
     createCompactionSettingsForModel('model-a', { compactionTokenLimit: null, compactionTokenLimitPerModel: {} }, {}, 100_000),
     {},
   );
+});
+
+test('resume threshold honors an init-exposed compaction limit ahead of current defaults', () => {
+  // When the resumed SDK init settings expose a compactionTokenLimit, it wins
+  // over the current Factory defaults.
+  assert.equal(
+    clampCompactionTokenLimit(
+      compactionTokenLimitForModel(
+        'model-a',
+        { compactionTokenLimit: 120_000, compactionTokenLimitPerModel: undefined },
+        { compactionTokenLimit: 200_000 },
+      ),
+      500_000,
+    ),
+    120_000,
+  );
+});
+
+test('resume threshold falls back to current defaults when init omits a compaction limit', () => {
+  // The SDK does not persist a per-session compactionTokenLimit, so an init
+  // without one follows the current app defaults.
+  assert.equal(
+    clampCompactionTokenLimit(
+      compactionTokenLimitForModel(
+        'model-a',
+        { compactionTokenLimit: undefined, compactionTokenLimitPerModel: undefined },
+        { compactionTokenLimit: 200_000 },
+      ),
+      500_000,
+    ),
+    200_000,
+  );
+});
+
+test('withLiveWorkerStatus annotates live links and leaves historical/unknown ones untouched', () => {
+  const manager = new MissionManager(() => {});
+  const mission = {
+    summary: testSummary('app-live', 'droid-live'),
+    knownSubagents: new Set(['run-1', 'done-1']),
+    completedSubagents: new Set(['done-1']),
+  };
+  const internals = manager as unknown as {
+    missions: Map<string, typeof mission>;
+    withLiveWorkerStatus: (id: string, links: WorkerHistoryLink[]) => WorkerHistoryLink[];
+  };
+  internals.missions.set(mission.summary.id, mission);
+  const out = internals.withLiveWorkerStatus(mission.summary.id, [
+    { workerSessionId: 'run-1', toolUseId: 't1' },
+    { workerSessionId: 'done-1', toolUseId: 't2' },
+    { workerSessionId: 'gone-1', toolUseId: 't3' },
+  ]);
+  assert.equal(out.find((l) => l.workerSessionId === 'run-1')?.status, 'running');
+  assert.equal(out.find((l) => l.workerSessionId === 'done-1')?.status, 'completed');
+  assert.equal(out.find((l) => l.workerSessionId === 'gone-1')?.status, undefined);
+});
+
+test('withLiveWorkerStatus leaves links untouched for historical (non-live) missions', () => {
+  const manager = new MissionManager(() => {});
+  const internals = manager as unknown as {
+    withLiveWorkerStatus: (id: string, links: WorkerHistoryLink[]) => WorkerHistoryLink[];
+  };
+  const links: WorkerHistoryLink[] = [{ workerSessionId: 'w1', toolUseId: 't1' }];
+  assert.deepEqual(internals.withLiveWorkerStatus('not-live', links), links);
 });
 
 test('sendNow interrupts the live turn and prioritizes the steering prompt', async () => {

@@ -46,3 +46,24 @@ test('resolveWorkers falls back to reconstruction when no exact mapping exists',
   assert.equal(resolved.length, 2);
   assert.equal(resolved.find((w) => w.toolUseId === 'tool-A')?.sessionId, 'sess-A');
 });
+
+test('resolveWorkers merges reconstructed workers when persisted links are partial', () => {
+  // A long-lived session: only the newer spawn (tool-B) has a persisted link;
+  // the older spawn (tool-A -> sess-A) predates link persistence.
+  const partialLinks = [{ workerSessionId: 'sess-B', toolUseId: 'tool-B', label: 'worker' }];
+  const resolved = resolveWorkers(workersFromLinks(partialLinks), transcript);
+  // The linked worker is kept exactly, and the older unlinked spawn is still
+  // resolvable from the transcript instead of being dropped.
+  assert.equal(resolved.find((w) => w.sessionId === 'sess-B')?.toolUseId, 'tool-B');
+  assert.ok(resolved.some((w) => w.sessionId === 'sess-A'));
+  assert.equal(resolved.length, 2);
+});
+
+test('workersFromLinks honors live link status and defaults to completed', () => {
+  const workers = workersFromLinks([
+    { workerSessionId: 'sess-A', toolUseId: 'tool-A', label: 'worker', status: 'running' },
+    { workerSessionId: 'sess-B', toolUseId: 'tool-B', label: 'worker' },
+  ]);
+  assert.equal(workers.find((w) => w.sessionId === 'sess-A')?.status, 'running');
+  assert.equal(workers.find((w) => w.sessionId === 'sess-B')?.status, 'completed');
+});

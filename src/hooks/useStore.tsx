@@ -956,7 +956,10 @@ function baseReducer(state: AppState, action: Action): AppState {
           if (!existing) {
             bySession.set(link.workerSessionId, {
               sessionId: link.workerSessionId,
-              status: 'completed',
+              // Honor the live run state the backend attaches for active
+              // missions so a reconnect/reload doesn't mark a still-running
+              // subagent as finished; historical loads omit it (-> completed).
+              status: link.status ?? 'completed',
               startedAt: 0,
               label: link.label,
               toolUseId: link.toolUseId,

@@ -63,6 +63,10 @@ export interface WorkerHistoryLink {
   workerSessionId: string;
   toolUseId?: string;
   label?: string;
+  // Live run state for the linked worker, set only when the mission is still
+  // active so a reconnect/reload doesn't render a running subagent as finished.
+  // Omitted (treated as completed) for historical loads.
+  status?: 'running' | 'paused' | 'completed';
 }
 
 export interface MissionSummary {
