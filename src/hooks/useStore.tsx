@@ -599,12 +599,12 @@ function progressKey(entry: ProgressEntry): string {
   return `${entry.timestamp}|${entry.type}|${entry.featureId ?? ''}|${entry.workerSessionId ?? ''}|${entry.title ?? ''}`;
 }
 
-function designModeSessionId(state: AppState, appMissionId: string): string {
-  return state.missions[appMissionId]?.sessionId ?? appMissionId;
-}
-
 function activeBrowserKey(state: AppState): string | undefined {
-  return state.activeMissionId ? designModeSessionId(state, state.activeMissionId) : undefined;
+  if (!state.activeMissionId) return undefined;
+  // Browser state and open-keys are keyed by the stable app session id
+  // (mission.id), matching the backend; the droid sessionId is swapped by
+  // compaction and would desync the open state from the backend's updates.
+  return state.missions[state.activeMissionId]?.id ?? state.activeMissionId;
 }
 
 // Record an explicit open (true) or hidden (false) decision for a browser key.

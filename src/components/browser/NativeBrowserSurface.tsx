@@ -96,13 +96,17 @@ export function NativeBrowserSurface({
     onViewportSizeChange({ width: Math.round(surface.width), height: Math.round(surface.height) });
   }, [onViewportSizeChange, surface.height, surface.width]);
 
+  // While obscured, native design/pencil mode is forced off (the BrowserView is
+  // detached). Depending on `obscured` here re-runs the effect when the overlay
+  // closes, re-asserting the real design state so the toolbar and in-page
+  // selection don't disagree after a request arrived while obscured.
   useEffect(() => {
-    if (visibleSessionId) setNativeBrowserDesignMode(visibleSessionId, designMode).catch(() => {});
-  }, [designMode, visibleSessionId]);
+    if (visibleSessionId) setNativeBrowserDesignMode(visibleSessionId, !obscured && designMode).catch(() => {});
+  }, [designMode, obscured, visibleSessionId]);
 
   useEffect(() => {
-    if (visibleSessionId) setNativeBrowserPencilMode(visibleSessionId, designMode && pencilMode).catch(() => {});
-  }, [designMode, pencilMode, visibleSessionId]);
+    if (visibleSessionId) setNativeBrowserPencilMode(visibleSessionId, !obscured && designMode && pencilMode).catch(() => {});
+  }, [designMode, obscured, pencilMode, visibleSessionId]);
 
   useEffect(() => {
     let disposed = false;

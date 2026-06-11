@@ -1512,7 +1512,15 @@ export class MissionManager {
         });
       }
       const defaults = await this.getFactoryDefaults();
-      const workerModelId = resolvedSettings.modelId ?? mission.summary.modelId;
+      // When the loaded agent session doesn't report its own model, fall back to
+      // the role's configured model (not the orchestrator's), so per-model limits
+      // and context-window clamps stay correct for differing worker/validator models.
+      const roleModelId = role === 'worker'
+        ? mission.summary.workerModelId
+        : role === 'validator'
+          ? mission.summary.validatorModelId
+          : undefined;
+      const workerModelId = resolvedSettings.modelId ?? roleModelId ?? mission.summary.modelId;
       const agent: LiveAgent = {
         session,
         missionId: appSessionId,
@@ -1941,7 +1949,10 @@ export class MissionManager {
     } catch {
       /* ignore */
     }
-    await this.browsers.close(mission.summary.sessionId ?? key).catch(() => {});
+    // Browser sessions are keyed by the stable app session id (mission.id), not
+    // the droid sessionId, which compaction swaps. Close by the app id so a
+    // compacted mission's native browser is actually torn down.
+    await this.browsers.close(mission.summary.id).catch(() => {});
     this.missions.delete(key);
     this.usageOffsets.delete(key);
     this.emitMissionList();
