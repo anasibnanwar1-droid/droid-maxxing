@@ -289,6 +289,18 @@ export class MissionManager {
           return;
         }
         await this.compactSession(missionId, cmd.customInstructions, 'manual');
+        // Manual compaction is a standalone command, so unlike auto-compaction
+        // (which runs inside drive()'s finally and drains there) nothing else
+        // delivers messages queued during it. Drain one now; drive()'s finally
+        // chains the rest.
+        const compacted = this.findMission(missionId);
+        if (compacted && !compacted.streaming && !compacted.compacting) {
+          const next = compacted.pendingSends.shift();
+          if (next !== undefined) {
+            this.patch(compacted.summary.id, { queuedSends: compacted.pendingSends.length });
+            await this.drive(compacted.summary.id, next);
+          }
+        }
         return;
       }
       case 'session.fork':
@@ -1296,13 +1308,16 @@ export class MissionManager {
     }
     const appSessionId = mission.summary.id;
     if (!(await this.applyPendingSessionSettings(appSessionId))) return;
-    if (!mission.streaming) {
+    if (!mission.streaming && !mission.compacting) {
       await this.drive(appSessionId, text);
       return;
     }
+    // Run next after the in-flight turn/compaction; never interrupt a compaction
+    // (driving or interrupting against it risks a failed compaction or lost steering).
     mission.pendingSends.unshift(text);
-    mission.interruptingForSteer = true;
     this.patch(appSessionId, { queuedSends: mission.pendingSends.length });
+    if (mission.compacting) return;
+    mission.interruptingForSteer = true;
     this.emitStatus(appSessionId, 'Steering now...');
     try {
       await mission.session.interrupt();

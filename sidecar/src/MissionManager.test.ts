@@ -232,6 +232,48 @@ test('sendNow interrupts the live turn and prioritizes the steering prompt', asy
   assert.equal(events.some((event) => event.type === 'mission.error' || event.type === 'error'), false);
 });
 
+test('sendNow queues during compaction instead of driving or interrupting', async () => {
+  const events: ServerEvent[] = [];
+  const manager = new MissionManager((event) => events.push(event));
+  const session = new FakeSession('droid-compact-now');
+  const mission = {
+    summary: testSummary('app-compact-now', session.sessionId),
+    session,
+    streaming: false,
+    pendingSends: [],
+    pendingPermissions: new Map(),
+    pendingQuestions: new Map(),
+    agents: new Map(),
+    knownSubagents: new Set(),
+    completedSubagents: new Set(),
+    subagentToolUseIds: new Map(),
+    subagentSettings: new Map(),
+    pendingSubagents: [],
+    mcpServers: [],
+    compacting: true,
+  };
+  const internals = manager as unknown as {
+    history: { recordEvent: () => void; syncSummaries: () => void };
+    missions: Map<string, typeof mission>;
+  };
+  internals.history = { recordEvent: () => {}, syncSummaries: () => {} };
+  internals.missions.set(mission.summary.id, mission);
+
+  // Manual compaction (compacting=true, streaming=false): must not drive() concurrently.
+  await manager.handle({ type: 'mission.sendNow', missionId: mission.summary.id, text: 'steer-manual' });
+  assert.deepEqual(session.prompts, []);
+  assert.equal(session.interrupts, 0);
+
+  // Auto-compaction (compacting=true, streaming=true): must not interrupt the compaction.
+  mission.streaming = true;
+  await manager.handle({ type: 'mission.sendNow', missionId: mission.summary.id, text: 'steer-auto' });
+  assert.equal(session.interrupts, 0);
+
+  // Both steers are preserved at the front of the queue for delivery after compaction.
+  assert.deepEqual(mission.pendingSends, ['steer-auto', 'steer-manual']);
+  assert.equal(events.some((event) => event.type === 'mission.error' || event.type === 'error'), false);
+});
+
 test('design turns disable TodoWrite and normal turns restore it', async () => {
   const events: ServerEvent[] = [];
   const manager = new MissionManager((event) => events.push(event));
