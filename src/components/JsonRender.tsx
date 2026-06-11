@@ -502,10 +502,15 @@ export function splitJsonRender(text: string): ContentSegment[] {
   }
 
   let tail = text.slice(lastIndex);
-  // A still-streaming spec has an opening tag without a close: hide the partial
-  // JSON rather than dumping it as raw text, and keep any text before it.
+  // A still-streaming render has an opening tag without a close: hide the partial
+  // JSON rather than dumping it as raw text, and keep any text before it. Only do
+  // this when the tag is genuinely starting a render block (its JSON has begun);
+  // a literal mention in prose like "use <json-render> tags" is kept as-is.
   const openIdx = tail.indexOf('<json-render>');
-  if (openIdx !== -1) tail = tail.slice(0, openIdx);
+  if (openIdx !== -1) {
+    const after = tail.slice(openIdx + '<json-render>'.length).trimStart();
+    if (after.startsWith('{')) tail = tail.slice(0, openIdx);
+  }
   if (tail) segments.push({ type: 'markdown', value: tail });
 
   return segments;

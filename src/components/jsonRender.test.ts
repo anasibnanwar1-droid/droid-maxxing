@@ -27,6 +27,18 @@ test('hides a still-streaming (unclosed) json-render block', () => {
   assert.deepEqual(segs, [{ type: 'markdown', value: 'done\n' }]);
 });
 
+test('keeps completed prose that merely mentions the json-render tag', () => {
+  const text = 'Use <json-render> tags to render rich UI in the terminal.';
+  assert.deepEqual(splitJsonRender(text), [{ type: 'markdown', value: text }]);
+});
+
+test('keeps prose mentioning the tag after a completed block', () => {
+  const segs = splitJsonRender('<json-render>{"a":1}</json-render>\nEmit a <json-render> block to draw charts.');
+  assert.equal(segs.length, 2);
+  assert.deepEqual(segs[0], { type: 'json-render', value: '{"a":1}' });
+  assert.deepEqual(segs[1], { type: 'markdown', value: '\nEmit a <json-render> block to draw charts.' });
+});
+
 test('hasJsonRender detects the opening tag', () => {
   assert.equal(hasJsonRender('x <json-render>{}</json-render>'), true);
   assert.equal(hasJsonRender('no tags here'), false);

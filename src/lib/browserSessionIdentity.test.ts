@@ -27,9 +27,11 @@ const mission = (id: string, sessionId?: string): MissionSummary => ({
   updatedAt: 1,
 });
 
-test('browserKeyForMission uses the chat session id before the mission id', () => {
-  assert.equal(browserKeyForMission(mission('mission-1', 'chat-session-1')), 'chat-session-1');
-  assert.equal(browserKeyForMission(mission('chat-session-2')), 'chat-session-2');
+test('browserKeyForMission uses the stable app session id (survives compaction)', () => {
+  // The droid session id (mission.sessionId) changes on compaction; the browser
+  // key must stay the app id so browser tools keep targeting the visible chat.
+  assert.equal(browserKeyForMission(mission('app-1', 'droid-session-after-compaction')), 'app-1');
+  assert.equal(browserKeyForMission(mission('app-2')), 'app-2');
 });
 
 test('activeMissionAfterNativeBrowserRequest does not steal the current chat', () => {
@@ -44,16 +46,17 @@ test('activeMissionAfterNativeBrowserRequest does not steal the current chat', (
   assert.equal(activeMissionAfterNativeBrowserRequest(null, request), 'background-chat');
 });
 
-test('missionIdForBrowserKey maps Droid session ids back to app chat ids', () => {
+test('missionIdForBrowserKey resolves the app chat id from the stable browser key', () => {
   const missions = {
-    'chat-app-id': mission('chat-app-id', 'droid-session-id'),
+    'chat-app-id': mission('chat-app-id', 'droid-session-after-compaction'),
   };
 
-  assert.equal(missionIdForBrowserKey(missions, 'droid-session-id'), 'chat-app-id');
+  // The backend keys browser requests by the app session id (mission.id).
+  assert.equal(missionIdForBrowserKey(missions, 'chat-app-id'), 'chat-app-id');
   assert.equal(activeMissionAfterNativeBrowserRequest(null, {
     requestId: 'req-1',
-    missionId: 'droid-session-id',
-    sessionId: 'browser-droid-session-id',
+    missionId: 'chat-app-id',
+    sessionId: 'browser-chat-app-id',
     action: 'snapshot',
   }, missions), 'chat-app-id');
 });

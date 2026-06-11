@@ -521,13 +521,7 @@ export class MissionManager {
           // The auto-compaction threshold is derived from the orchestrator model,
           // so recompute it when the model changes; otherwise auto-compaction
           // keeps using the limit captured at create/resume time.
-          if (cmd.modelId !== undefined) {
-            mission.effectiveCompactionTokenLimit = effectiveCompactionLimit(
-              mission.summary.modelId,
-              await this.getFactoryDefaults(),
-              this.maxContextTokensForSummary(mission.summary),
-            );
-          }
+          if (cmd.modelId !== undefined) await this.recomputeOrchestratorCompactionLimit(mission);
           await this.refreshContext(missionId, mission.session);
         }
       }
@@ -578,6 +572,21 @@ export class MissionManager {
     if (Object.keys(next).length > 0) await mission.session.updateSettings(next as never);
   }
 
+  // Refresh the auto-compaction threshold from the mission's effective orchestrator
+  // model. When the model was reset to Default, summary.modelId is undefined, so
+  // resolve the actual default model (its per-model limit and context-window clamp
+  // would otherwise be ignored).
+  private async recomputeOrchestratorCompactionLimit(mission: Mission): Promise<void> {
+    const defaults = await this.getFactoryDefaults();
+    const modelId = mission.summary.modelId
+      ?? defaultModelForAgent('orchestrator', modeForSummary(mission.summary), defaults);
+    mission.effectiveCompactionTokenLimit = effectiveCompactionLimit(
+      modelId,
+      defaults,
+      this.maxContextTokensForModel(modelId),
+    );
+  }
+
   private async runtimeAgentSettings(mission: Mission, agent: ConfigurableAgent, settings: AgentSettingPatch): Promise<AgentSettingPatch> {
     if (settings.modelId !== null) return settings;
     const defaults = await this.getFactoryDefaults();
@@ -602,11 +611,7 @@ export class MissionManager {
       if (pending.orchestrator?.modelId !== undefined) {
         // A pending orchestrator model applied before send changes the
         // auto-compaction threshold; recompute it to match the new model.
-        mission.effectiveCompactionTokenLimit = effectiveCompactionLimit(
-          mission.summary.modelId,
-          await this.getFactoryDefaults(),
-          this.maxContextTokensForSummary(mission.summary),
-        );
+        await this.recomputeOrchestratorCompactionLimit(mission);
       }
       return true;
     } catch (err) {
@@ -655,7 +660,11 @@ export class MissionManager {
       void this.refreshContext(existing.summary.id, existing.session);
       return;
     }
-    const ref = { id: droidSessionId };
+    // Key local MCP servers and permission handlers by the stable app session id
+    // (not the droid session id, which compaction swaps). This keeps the browser
+    // session key consistent across compaction so browser tools keep targeting the
+    // visible chat. Mirrors create(), which sets ref.id to the app session id.
+    const ref = { id: appSessionId };
     let pendingMcpServers: SdkMcpServer[] = [];
     try {
       const mcp = await this.startLocalMcpServers(ref);
@@ -1441,11 +1450,7 @@ export class MissionManager {
     if (mission && settings.modelId !== undefined) {
       // The model drives the auto-compaction threshold; recompute it so this
       // path doesn't leave maybeAutoCompact using the old limit.
-      mission.effectiveCompactionTokenLimit = effectiveCompactionLimit(
-        mission.summary.modelId,
-        await this.getFactoryDefaults(),
-        this.maxContextTokensForSummary(mission.summary),
-      );
+      await this.recomputeOrchestratorCompactionLimit(mission);
     }
     if (mission && session) await this.refreshContext(appSessionId, session);
   }
