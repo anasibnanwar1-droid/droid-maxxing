@@ -599,6 +599,15 @@ export class MissionManager {
         patch = { ...patch, ...this.summaryPatchForAgent(agent, settings) };
       }
       this.patch(appSessionId, patch);
+      if (pending.orchestrator?.modelId !== undefined) {
+        // A pending orchestrator model applied before send changes the
+        // auto-compaction threshold; recompute it to match the new model.
+        mission.effectiveCompactionTokenLimit = effectiveCompactionLimit(
+          mission.summary.modelId,
+          await this.getFactoryDefaults(),
+          this.maxContextTokensForSummary(mission.summary),
+        );
+      }
       return true;
     } catch (err) {
       this.emitError({ missionId: appSessionId, message: `Could not apply selected model before send: ${errMsg(err)}` });
@@ -665,7 +674,6 @@ export class MissionManager {
         ? ''
         : stringValue(init.cwd) || stringValue(init.session?.cwd) || historical?.cwd || '';
       const modelId = init.settings?.modelId ?? historical?.modelId ?? defaults.modelId;
-      const resumeCompactionLimit = effectiveCompactionLimit(modelId, defaults, this.maxContextTokensForModel(modelId));
       const summary = this.applyPendingSettingsToSummary({
         id: appSessionId,
         sessionId: droidSessionId,
@@ -700,6 +708,9 @@ export class MissionManager {
         createdAt: historical?.createdAt ?? now,
         updatedAt: now,
       });
+      // Derive the auto-compaction limit from the resolved summary model, since
+      // pending agent settings may override the init/historical model above.
+      const resumeCompactionLimit = effectiveCompactionLimit(summary.modelId, defaults, this.maxContextTokensForSummary(summary));
       const mission: Mission = this.createLiveMission(summary, session, mcp.servers, resumeCompactionLimit, mcp.configs);
       this.missions.set(appSessionId, mission);
       this.history.syncSummaries([summary]);
@@ -1427,6 +1438,15 @@ export class MissionManager {
       return activeSession;
     });
     if (mission) this.patch(appSessionId, patch);
+    if (mission && settings.modelId !== undefined) {
+      // The model drives the auto-compaction threshold; recompute it so this
+      // path doesn't leave maybeAutoCompact using the old limit.
+      mission.effectiveCompactionTokenLimit = effectiveCompactionLimit(
+        mission.summary.modelId,
+        await this.getFactoryDefaults(),
+        this.maxContextTokensForSummary(mission.summary),
+      );
+    }
     if (mission && session) await this.refreshContext(appSessionId, session);
   }
 
