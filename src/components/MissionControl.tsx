@@ -1,4 +1,4 @@
-import { useRef, useEffect, useMemo, useState } from 'react';
+import { useRef, useEffect, useMemo, useState, useCallback } from 'react';
 import { useStore } from '../hooks/useStore';
 import { useRepoStatus } from '../hooks/useRepoStatus';
 import { interruptMission, setMissionAutonomy } from '../lib/commands';
@@ -41,7 +41,15 @@ function featureAgentRole(feature: BridgeFeature): AgentEntry['role'] {
   return text.includes('validator') || text.includes('validation') || text.includes('scrutiny') ? 'validator' : 'worker';
 }
 
-function ChatArea({ events, live, pending, onOpenDiff, big }: { events: TranscriptEvent[]; live: boolean; pending: boolean; onOpenDiff?: (c: FileChange) => void; big?: boolean }) {
+function ChatArea({ events, live, pending, onOpenDiff, onOpenSubagent, subagentActivity, big }: {
+  events: TranscriptEvent[];
+  live: boolean;
+  pending: boolean;
+  onOpenDiff?: (c: FileChange) => void;
+  onOpenSubagent?: (target: { toolUseId?: string; label?: string }) => void;
+  subagentActivity?: (target: { toolUseId?: string; label?: string }) => { status?: 'running' | 'paused' | 'completed'; startedAt?: number; latest?: { kind: TranscriptEvent['kind']; text?: string; toolName?: string; toolArgs?: unknown } } | undefined;
+  big?: boolean;
+}) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const renderEvents = events.length > 900 ? events.slice(-900) : events;
   const hidden = events.length - renderEvents.length;
@@ -58,7 +66,7 @@ function ChatArea({ events, live, pending, onOpenDiff, big }: { events: Transcri
           </div>
         )}
 
-        <MessageFeed events={renderEvents} pending={pending} onOpenDiff={onOpenDiff} />
+        <MessageFeed events={renderEvents} pending={pending} onOpenDiff={onOpenDiff} onOpenSubagent={onOpenSubagent} subagentActivity={subagentActivity} />
 
         {events.length === 0 && !pending && (
           <div className="py-24 text-center text-[13px] text-droid-text-muted">
@@ -629,6 +637,40 @@ export default function MissionControl() {
   const features = mission?.features ?? [];
   const allTx = mission ? state.transcripts[mission.id] ?? [] : [];
   const progress = mission ? state.progress[mission.id] ?? [] : [];
+  const missionWorkers = mission ? state.workers[mission.id] ?? [] : [];
+
+  // Resolve an inline spawn line to its worker: the Task tool_call id is the
+  // precise link; fall back to the droid name (preferring a running instance).
+  const findWorker = useCallback((toolUseId?: string, label?: string) => {
+    if (toolUseId) {
+      const byId = missionWorkers.find((w) => w.toolUseId === toolUseId);
+      if (byId) return byId;
+    }
+    if (label) {
+      const matches = missionWorkers.filter((w) => (w.label ?? '').toLowerCase() === label.toLowerCase());
+      return matches.find((w) => w.status === 'running') ?? matches[matches.length - 1];
+    }
+    return undefined;
+  }, [missionWorkers]);
+
+  // Click a spawn name in the orchestrator transcript → focus that worker.
+  const openSubagent = useCallback((target: { toolUseId?: string; label?: string }) => {
+    const worker = findWorker(target.toolUseId, target.label);
+    if (worker) setViewedAgent(worker.sessionId);
+  }, [findWorker]);
+
+  const subagentActivity = useCallback((target: { toolUseId?: string; label?: string }) => {
+    const worker = findWorker(target.toolUseId, target.label);
+    if (!worker) return undefined;
+    let latest: { kind: TranscriptEvent['kind']; text?: string; toolName?: string; toolArgs?: unknown } | undefined;
+    for (let i = allTx.length - 1; i >= 0; i--) {
+      const t = allTx[i];
+      if (t.agentSessionId !== worker.sessionId || t.kind === 'tool_result') continue;
+      latest = { kind: t.kind, text: t.text, toolName: t.toolName, toolArgs: t.toolArgs };
+      break;
+    }
+    return { status: worker.status, startedAt: worker.startedAt, latest };
+  }, [findWorker, allTx]);
   const phaseLive = mission ? ['running', 'initializing', 'orchestrator_turn'].includes(mission.phase) : false;
 
   // Track real generation activity (streaming text grows in place, so watch text length too).
@@ -803,6 +845,8 @@ export default function MissionControl() {
               live={isLive}
               pending={isLive && viewedAgent === activeAgentId}
               onOpenDiff={setOpenDiff}
+              onOpenSubagent={onOrchestrator ? openSubagent : undefined}
+              subagentActivity={onOrchestrator ? subagentActivity : undefined}
             />
           )}
           <PromptInput />
