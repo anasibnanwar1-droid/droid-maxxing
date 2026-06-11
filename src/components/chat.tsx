@@ -889,7 +889,7 @@ export function MessageFeed({ events, pending, onOpenDiff, onOpenSubagent, subag
       last.type === 'subagent' ||
       (last.type === 'message' && last.event.author !== 'user'));
   const showWorking = pending && !tailSelfIndicates;
-  const workingLabel = last?.type === 'tools' ? 'Running' : last?.type === 'diff' ? 'Updating files' : 'Working';
+  const workingLabel = last?.type === 'tools' ? 'Running' : (last?.type === 'diff' || last?.type === 'diffs') ? 'Updating files' : 'Working';
   const workingStart = rich ? tailTimestamp(last) : undefined;
 
   return (

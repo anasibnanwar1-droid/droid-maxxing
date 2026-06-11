@@ -144,7 +144,7 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
     let latest: { kind: typeof allTranscript[number]['kind']; text?: string; toolName?: string; toolArgs?: unknown } | undefined;
     for (let i = allTranscript.length - 1; i >= 0; i--) {
       const t = allTranscript[i];
-      if (t.agentSessionId !== worker.sessionId || t.kind === 'tool_result') continue;
+      if (t.agentSessionId !== worker.sessionId || t.kind === 'tool_result' || t.author === 'user') continue;
       latest = { kind: t.kind, text: t.text, toolName: t.toolName, toolArgs: t.toolArgs };
       break;
     }
