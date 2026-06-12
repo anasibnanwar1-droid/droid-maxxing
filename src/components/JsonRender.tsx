@@ -107,6 +107,13 @@ const STATUS_META: Record<string, { color: string; Icon: typeof Info }> = {
   info: { color: 'var(--droid-accent)', Icon: Info },
 };
 
+// Look up status metadata by own-property only. A model-supplied status like
+// "constructor" or "toString" would otherwise resolve to a truthy Object.proto
+// member (with no .Icon) and crash React while rendering an undefined component.
+function statusMeta(key: string): { color: string; Icon: typeof Info } {
+  return Object.prototype.hasOwnProperty.call(STATUS_META, key) ? STATUS_META[key] : STATUS_META.info;
+}
+
 /* ── individual components ── */
 
 function BoxEl({ props, children }: { props: Record<string, unknown>; children: ReactNode }) {
@@ -283,7 +290,7 @@ function CardEl({ props, children }: { props: Record<string, unknown>; children:
 
 function StatusLineEl({ props }: { props: Record<string, unknown> }) {
   const status = asString(props.status, 'info').toLowerCase();
-  const meta = STATUS_META[status] ?? STATUS_META.info;
+  const meta = statusMeta(status);
   const Icon = meta.Icon;
   return (
     <span className="inline-flex items-center gap-1.5 text-[13px]" style={{ color: meta.color }}>
@@ -350,7 +357,7 @@ function MetricEl({ props }: { props: Record<string, unknown> }) {
 
 function CalloutEl({ props, children }: { props: Record<string, unknown>; children: ReactNode }) {
   const type = asString(props.type, 'info').toLowerCase();
-  const meta = STATUS_META[type] ?? STATUS_META.info;
+  const meta = statusMeta(type);
   const Icon = meta.Icon;
   const title = asString(props.title);
   const content = asString(props.content);
@@ -527,6 +534,7 @@ export function hasJsonRender(text: string): boolean {
 }
 
 export const __resolveColorForTest = resolveColor;
+export const __statusMetaForTest = statusMeta;
 
 // Test seam: render a spec and report how many nodes were actually expanded, so
 // the global budget can be asserted without a DOM. Returns at most MAX_NODES.

@@ -629,6 +629,31 @@ function clearBrowserOpenKey(keys: Record<string, boolean>, key: string): Record
   return next;
 }
 
+// One-time upgrade migration for browser state. Panes used to be keyed by the
+// volatile droid session id (mission.sessionId, which compaction swaps); they
+// are now keyed by the stable app id (mission.id). When missions first load,
+// move any persisted entry from a mission's current session id to its stable id
+// so an open pane survives the upgrade instead of being orphaned. Stale
+// pre-compaction keys (which match no live mission.sessionId) are left behind
+// and never read by the new stable-key lookups.
+function migrateBrowserStateByMission<T>(
+  record: Record<string, T>,
+  missions: MissionSummary[],
+  rekeyValue: (value: T, stableId: string) => T = (value) => value,
+): Record<string, T> {
+  let next: Record<string, T> | undefined;
+  for (const m of missions) {
+    const oldKey = m.sessionId;
+    if (!oldKey || oldKey === m.id) continue;
+    const source = next ?? record;
+    if (source[oldKey] === undefined || source[m.id] !== undefined) continue;
+    next = next ?? { ...record };
+    next[m.id] = rekeyValue(next[oldKey], m.id);
+    delete next[oldKey];
+  }
+  return next ?? record;
+}
+
 // Re-derive `browserOpen` from the per-session open set and the active session.
 // Applied after every reducer pass so the convenience flag never goes stale.
 function syncBrowserOpen(state: AppState): AppState {
@@ -1000,6 +1025,10 @@ function baseReducer(state: AppState, action: Action): AppState {
         ...state,
         missions: map,
         missionOrder: order,
+        // Carry any pre-upgrade browser panes from the old session-id key to the
+        // stable mission id so a re-keyed/compacted session keeps its open pane.
+        browsers: migrateBrowserStateByMission(state.browsers, action.missions, (b, id) => ({ ...b, missionId: id })),
+        browserOpenKeys: migrateBrowserStateByMission(state.browserOpenKeys, action.missions),
         activeMissionId: state.activeMissionId && map[state.activeMissionId] ? state.activeMissionId : state.activeMissionId,
       };
     }

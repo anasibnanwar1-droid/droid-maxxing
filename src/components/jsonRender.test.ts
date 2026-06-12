@@ -6,6 +6,7 @@ import {
   __resolveColorForTest as resolveColor,
   __renderBudgetForTest as renderBudget,
   __MAX_NODES_FOR_TEST as MAX_NODES,
+  __statusMetaForTest as statusMeta,
 } from './JsonRender';
 
 test('plain text yields a single markdown segment', () => {
@@ -78,6 +79,17 @@ test('render budget caps an exponential shared-child DAG', () => {
   elements[`n${levels}`] = { type: 'Text', props: { text: 'leaf' } };
   const count = renderBudget({ root: 'n0', elements });
   assert.ok(count <= MAX_NODES, `expanded ${count} nodes, expected <= ${MAX_NODES}`);
+});
+
+test('statusMeta resolves real statuses and falls back for prototype keys', () => {
+  assert.ok(statusMeta('success').Icon, 'known status keeps its icon');
+  // A model-supplied prototype key must not resolve through Object.prototype to
+  // a meta without an Icon (which would crash React rendering <undefined />).
+  for (const key of ['constructor', 'toString', 'hasOwnProperty', '__proto__']) {
+    const meta = statusMeta(key);
+    assert.ok(meta && meta.Icon, `${key} falls back to a meta with an icon`);
+    assert.equal(meta.color, statusMeta('info').color);
+  }
 });
 
 test('render budget leaves small specs fully expanded', () => {

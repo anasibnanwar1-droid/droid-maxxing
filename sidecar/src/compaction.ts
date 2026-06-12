@@ -123,6 +123,10 @@ export async function runCompaction(
 ): Promise<CompactionOutcome> {
   const { compactType } = options;
   sink.status('Compacting conversation...', compactType);
+  // Tracks whether the current backing session is still safe to reuse. It flips
+  // to false while a swapped-session reload is in flight and back to true once
+  // adopted, so a reload failure (below) reports 'stale' rather than 'failed'.
+  let sessionUsable = true;
   // The reload and refresh hooks can fail too (e.g. loading a swapped backing
   // session). Keep them inside the catch so a failure surfaces through
   // sink.error and never escapes to wedge the caller's streaming/idle state.
@@ -147,7 +151,11 @@ export async function runCompaction(
         sink.status('Compaction could not finish; continuing with the current conversation.', compactType);
         return 'stale';
       }
+      // The daemon has already swapped: the old backing id is now dead, so the
+      // session is unusable until the reload adopts the new id.
+      sessionUsable = false;
       await sink.reload(result.newSessionId, removedCount);
+      sessionUsable = true;
     }
     await sink.refresh();
     sink.status(`Compaction complete. Removed ${removedCount.toLocaleString()} messages.`, compactType);
@@ -155,6 +163,9 @@ export async function runCompaction(
   } catch (err) {
     sink.error(err instanceof Error ? err.message : String(err));
     sink.status('Compaction could not finish; continuing with the current conversation.', compactType);
-    return 'failed';
+    // If the swap reload failed mid-flight the old session id is dead; report
+    // 'stale' so the caller recovers (reopens) instead of draining sends into a
+    // stale session. A failure without a swap leaves the session usable.
+    return sessionUsable ? 'failed' : 'stale';
   }
 }

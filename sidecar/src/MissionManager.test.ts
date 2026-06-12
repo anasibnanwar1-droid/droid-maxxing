@@ -14,7 +14,7 @@ import {
   compactionTokenLimitForModel,
   createCompactionSettingsForModel,
 } from './compaction.js';
-import type { MissionSummary, ModelInfo, ServerEvent, WorkerHistoryLink } from './protocol.js';
+import type { BridgeFeature, MissionSummary, ModelInfo, ServerEvent, WorkerHistoryLink } from './protocol.js';
 
 class FakeSession {
   prompts: string[] = [];
@@ -913,4 +913,92 @@ test('transient worker compaction failure keeps the session and drains queued se
   // ...and must not drop the queued send (it drains on a fresh turn).
   await waitFor(() => workerSession.prompts.includes('queued-after'));
   assert.equal(workerSession.prompts.includes('queued-after'), true);
+});
+
+test('worker swap whose reload fails goes stale: closes the worker and never drains into a dead session', async () => {
+  const { manager, events, mission, workerSession, swappedSession } = workerAutoCompactHarness(250_000, 200_000, 'worker-swapped');
+  // The daemon swapped the backing id, but adopting the replacement fails
+  // (loadSession rejects), so the old id is dead and the new one never loaded.
+  (manager as unknown as { runtime: { loadSession: () => Promise<never> } }).runtime = {
+    loadSession: async () => { throw new Error('cannot load swapped session'); },
+  };
+  const agent = mission.agents.get('worker-compact') as { pendingSends: string[] };
+  agent.pendingSends.push('queued-into-dead');
+  await manager.handle({ type: 'agent.send', missionId: 'app-compact', agentSessionId: 'worker-compact', text: 'go' });
+  // The worker is torn down (no live agent under the old or swapped id)...
+  assert.equal(mission.agents.has('worker-compact'), false);
+  assert.equal(mission.agents.has('worker-swapped'), false);
+  // ...the swap never completed, so no rekey is advertised to clients...
+  assert.equal(events.some((e) => e.type === 'mission.worker.rekey'), false);
+  // ...a recoverable error tells the user to re-open (mission not failed)...
+  assert.equal(events.some((e) => e.type === 'mission.error'), false);
+  assert.equal(
+    events.some((e) => e.type === 'error' && /could not be adopted|re-open/i.test((e as { message?: string }).message ?? '')),
+    true,
+  );
+  // ...and the queued send is never delivered to the stale old or unloaded new session.
+  assert.equal(workerSession.prompts.includes('queued-into-dead'), false);
+  assert.equal(swappedSession?.prompts.includes('queued-into-dead') ?? false, false);
+});
+
+test('rekeyAgentSession remaps worker ids inside mission summary features', async () => {
+  const manager = new MissionManager(() => {});
+  const oldSession = new FakeAgentSession('worker-old');
+  const newSession = new FakeAgentSession('worker-new');
+  const agent = {
+    session: oldSession,
+    missionId: 'app-feat',
+    role: 'worker' as const,
+    streaming: false,
+    pendingSends: [] as string[],
+    lastUsedAt: Date.now(),
+    unsubscribe: () => {},
+  };
+  const feature = (id: string, over: Partial<BridgeFeature>): BridgeFeature => ({
+    id,
+    description: '',
+    status: 'in_progress',
+    skillName: 'builder',
+    preconditions: [],
+    expectedBehavior: [],
+    verificationSteps: [],
+    ...over,
+  });
+  const summary = testSummary('app-feat', 'droid-feat');
+  summary.features = [
+    feature('f1', { workerSessionIds: ['worker-old', 'worker-other'], currentWorkerSessionId: 'worker-old', completedWorkerSessionId: null }),
+    feature('f2', { status: 'completed', workerSessionIds: ['worker-other'], currentWorkerSessionId: null, completedWorkerSessionId: 'worker-old' }),
+    feature('f3', { status: 'pending', workerSessionIds: ['worker-other'], currentWorkerSessionId: null, completedWorkerSessionId: null }),
+  ];
+  const mission = {
+    summary,
+    agents: new Map<string, typeof agent>([['worker-old', agent]]),
+    knownSubagents: new Set(['worker-old']),
+    completedSubagents: new Set<string>(),
+    linkedSubagents: new Set<string>(),
+    subagentToolUseIds: new Map<string, string>(),
+    subagentSettings: new Map<string, { modelId?: string }>(),
+  };
+  const internals = manager as unknown as {
+    runtime: { loadSession: () => Promise<FakeAgentSession> };
+    history: { subagentLinks: () => WorkerHistoryLink[]; recordSubagentLink: () => void };
+    contextSnapshots: Map<string, unknown>;
+    missions: Map<string, typeof mission>;
+    rekeyAgentSession: (a: typeof agent, newId: string) => Promise<void>;
+  };
+  internals.runtime = { loadSession: async () => newSession };
+  internals.history = { subagentLinks: () => [], recordSubagentLink: () => {} };
+  internals.missions.set('app-feat', mission);
+
+  await internals.rekeyAgentSession(agent, 'worker-new');
+
+  const [f1, f2, f3] = mission.summary.features;
+  // Old worker id is rewritten everywhere it is pinned (focus + numbering)...
+  assert.deepEqual(f1.workerSessionIds, ['worker-new', 'worker-other']);
+  assert.equal(f1.currentWorkerSessionId, 'worker-new');
+  assert.deepEqual(f2.workerSessionIds, ['worker-other']);
+  assert.equal(f2.completedWorkerSessionId, 'worker-new');
+  // ...while unrelated ids and untouched features are preserved as-is.
+  assert.deepEqual(f3.workerSessionIds, ['worker-other']);
+  assert.equal(f3.currentWorkerSessionId, null);
 });

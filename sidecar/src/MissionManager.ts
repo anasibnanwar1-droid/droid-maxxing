@@ -1633,15 +1633,29 @@ export class MissionManager {
         // queue instead of racing a second driveAgent(). Compaction is scoped to
         // this worker's own session/history (and may re-key it to a new id).
         await this.refreshContext(agent.session.sessionId, agent.session);
-        await this.maybeAutoCompactAgent(agent);
+        const outcome = await this.maybeAutoCompactAgent(agent);
         agent.streaming = false;
-        // Compaction is applied in place: 'completed' re-keys the worker to the
-        // daemon's new backing session (via the reload hook) and a transient
-        // 'failed' leaves the current session valid. Either way agent.session
-        // stays usable, so drain queued sends against it normally.
-        const next = agent.pendingSends.shift();
-        if (next !== undefined) void this.driveAgent(agent, next);
-        else this.emit({ type: 'agent.updated', missionId: agent.missionId, agentSessionId: agent.session.sessionId, role: agent.role, status: 'paused' });
+        if (outcome === 'stale') {
+          // The daemon swapped this worker to a new backing session but adopting
+          // it failed, so agent.session now points at a dead id. Tear the worker
+          // down instead of draining queued sends into a stale session; a later
+          // open/send re-creates it against the live session.
+          this.emitError({
+            sessionId: agent.session.sessionId,
+            missionId: agent.missionId,
+            message: 'Subagent compaction swapped sessions but could not be adopted; closing the subagent. Re-open it to continue.',
+            recoverable: true,
+          });
+          await this.closeAgent(agent.missionId, agent.session.sessionId);
+        } else {
+          // Compaction is applied in place: 'completed' re-keys the worker to the
+          // daemon's new backing session (via the reload hook) and a transient
+          // 'failed' leaves the current session valid. Either way agent.session
+          // stays usable, so drain queued sends against it normally.
+          const next = agent.pendingSends.shift();
+          if (next !== undefined) void this.driveAgent(agent, next);
+          else this.emit({ type: 'agent.updated', missionId: agent.missionId, agentSessionId: agent.session.sessionId, role: agent.role, status: 'paused' });
+        }
       }
     }
   }
@@ -1739,6 +1753,25 @@ export class MissionManager {
         if (sid !== oldSessionId) continue;
         mission.subagentToolUseIds.set(toolUseId, newSessionId);
         this.history.recordSubagentLink(agent.missionId, toolUseId, newSessionId, labelByToolUseId.get(toolUseId));
+      }
+      // Mission features pin workers by session id (feature focus + worker
+      // numbering). Remap them on the summary too, so a later mission.list/
+      // mission.updated (which re-emits summary.features) can't overwrite the
+      // client's rekey with the dead id and make feature-focused views unopenable.
+      const features = mission.summary.features;
+      if (features?.length) {
+        mission.summary.features = features.map((f) =>
+          f.currentWorkerSessionId === oldSessionId ||
+          f.completedWorkerSessionId === oldSessionId ||
+          f.workerSessionIds?.includes(oldSessionId)
+            ? {
+                ...f,
+                workerSessionIds: f.workerSessionIds?.map((id) => (id === oldSessionId ? newSessionId : id)),
+                currentWorkerSessionId: f.currentWorkerSessionId === oldSessionId ? newSessionId : f.currentWorkerSessionId,
+                completedWorkerSessionId: f.completedWorkerSessionId === oldSessionId ? newSessionId : f.completedWorkerSessionId,
+              }
+            : f,
+        );
       }
     }
     await oldSession.close().catch(() => {});
