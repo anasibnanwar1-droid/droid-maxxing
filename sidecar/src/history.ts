@@ -188,7 +188,7 @@ export function loadSessionHistory(): HistoryMission[] {
 export function loadSessionPage(sessionId: string, cursor?: string, limit = 200, missionId = sessionId): HistoryPage {
   const path = buildSessionIndex().get(sessionId);
   if (!path) throw new Error(`Session history not found for ${sessionId}`);
-  const role = roleFromSessionStart(readSessionStart(path).decompSessionType);
+  const role = roleFromSessionStart(readSessionStart(path));
   const all = parseSessionTranscript(missionId, sessionId, path, role);
   const safeLimit = Math.max(1, Math.min(limit, 500));
   const end = cursor ? Math.max(0, Number(cursor) || 0) : all.length;
@@ -1113,9 +1113,14 @@ function sqlValue(value: string | number | undefined): string | number | null {
   return value ?? null;
 }
 
-function roleFromSessionStart(decompSessionType?: string): AgentRole {
-  if (decompSessionType === 'validator') return 'validator';
-  if (decompSessionType === 'worker') return 'worker';
+function roleFromSessionStart(start: StoredSessionStart): AgentRole {
+  if (start.decompSessionType === 'validator') return 'validator';
+  if (start.decompSessionType === 'worker') return 'worker';
+  // Task-tool subagents carry no decompSessionType but are spawned by a parent
+  // session's tool call (callingSessionId/callingToolUseId). Replay them as
+  // workers so their transcript keys to their own session id instead of being
+  // folded into 'orchestrator' (which would leave the opened subagent blank).
+  if (start.callingSessionId || start.callingToolUseId) return 'worker';
   return 'orchestrator';
 }
 

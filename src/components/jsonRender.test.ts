@@ -1,6 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { splitJsonRender, hasJsonRender, __resolveColorForTest as resolveColor } from './JsonRender';
+import {
+  splitJsonRender,
+  hasJsonRender,
+  __resolveColorForTest as resolveColor,
+  __renderBudgetForTest as renderBudget,
+  __MAX_NODES_FOR_TEST as MAX_NODES,
+} from './JsonRender';
 
 test('plain text yields a single markdown segment', () => {
   const segs = splitJsonRender('hello world');
@@ -57,4 +63,31 @@ test('resolveColor rejects CSS function injection', () => {
   assert.equal(resolveColor('var(--secret)'), undefined);
   assert.equal(resolveColor('red;background:url(http://x)'), undefined);
   assert.equal(resolveColor(123), undefined);
+});
+
+test('render budget caps an exponential shared-child DAG', () => {
+  // Each level points twice at the next distinct id: a -> [b,b], b -> [c,c]...
+  // `seen` only blocks per-path cycles, so without a global budget this fans out
+  // to ~2^40 nodes and freezes. The budget must keep it bounded (and finish).
+  const levels = 40;
+  const elements: Record<string, unknown> = {};
+  for (let i = 0; i < levels; i++) {
+    const next = `n${i + 1}`;
+    elements[`n${i}`] = { type: 'Box', children: [next, next] };
+  }
+  elements[`n${levels}`] = { type: 'Text', props: { text: 'leaf' } };
+  const count = renderBudget({ root: 'n0', elements });
+  assert.ok(count <= MAX_NODES, `expanded ${count} nodes, expected <= ${MAX_NODES}`);
+});
+
+test('render budget leaves small specs fully expanded', () => {
+  const count = renderBudget({
+    root: 'r',
+    elements: {
+      r: { type: 'Box', children: ['a', 'b'] },
+      a: { type: 'Text', props: { text: 'a' } },
+      b: { type: 'Text', props: { text: 'b' } },
+    },
+  });
+  assert.equal(count, 3);
 });

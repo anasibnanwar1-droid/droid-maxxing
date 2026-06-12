@@ -28,6 +28,39 @@ test('MISSION_WORKER_REKEY remaps worker list, transcript events, context stats,
   assert.equal(next.selectedAgentSessionId, 'w-new');
 });
 
+test('MISSION_WORKER_REKEY keeps fresh new-id context stats instead of clobbering with old', () => {
+  // The backend refreshes context for the new id (post-compaction, lower usage)
+  // before the rekey event, so fresh new-id stats already exist in the store.
+  const start = {
+    ...initialState,
+    workers: { m1: [{ sessionId: 'w-old', status: 'running', startedAt: 1 }] },
+    contextStats: {
+      'w-old': { used: 95, remaining: 5, limit: 100, accuracy: 'estimated', updatedAt: 'old' },
+      'w-new': { used: 12, remaining: 88, limit: 100, accuracy: 'estimated', updatedAt: 'new' },
+    },
+  } as unknown as AppState;
+
+  const next = reducer(start, { type: 'MISSION_WORKER_REKEY', missionId: 'm1', oldSessionId: 'w-old', newSessionId: 'w-new' });
+
+  assert.equal(next.contextStats['w-old'], undefined);
+  // Fresh post-compaction stats survive; the stale old snapshot is dropped.
+  assert.equal(next.contextStats['w-new'].used, 12);
+  assert.equal(next.contextStats['w-new'].updatedAt, 'new');
+});
+
+test('MISSION_WORKER_REKEY migrates old stats when the new id has none yet', () => {
+  const start = {
+    ...initialState,
+    workers: { m1: [{ sessionId: 'w-old', status: 'running', startedAt: 1 }] },
+    contextStats: { 'w-old': { used: 40, remaining: 60, limit: 100, accuracy: 'estimated', updatedAt: 'old' } },
+  } as unknown as AppState;
+
+  const next = reducer(start, { type: 'MISSION_WORKER_REKEY', missionId: 'm1', oldSessionId: 'w-old', newSessionId: 'w-new' });
+
+  assert.equal(next.contextStats['w-old'], undefined);
+  assert.equal(next.contextStats['w-new'].used, 40);
+});
+
 test('MISSION_WORKER_REKEY leaves a non-selected worker selection untouched', () => {
   const start = {
     ...initialState,

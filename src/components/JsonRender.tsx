@@ -16,6 +16,11 @@ import { ArrowUp, ArrowDown, CheckCircle2, XCircle, AlertTriangle, Info } from '
 
 const CELL = 8; // px per layout "cell" for padding/gap multipliers
 const MAX_DEPTH = 50;
+// Global expansion budget. `seen` only blocks cycles along a single ancestry
+// path, so a shared-child DAG (a -> [b,b], b -> [c,c], ...) still fans out
+// exponentially before MAX_DEPTH alone stops it. A shared node budget caps the
+// total rendered elements so a small malicious/buggy spec can't freeze the UI.
+const MAX_NODES = 1000;
 
 type RawElement = {
   type?: string;
@@ -436,15 +441,16 @@ function renderElement(type: string, props: Record<string, unknown>, children: R
   }
 }
 
-function renderNode(id: string, spec: Spec, seen: Set<string>, depth: number): ReactNode {
-  if (depth > MAX_DEPTH || seen.has(id)) return null;
+function renderNode(id: string, spec: Spec, seen: Set<string>, depth: number, budget: { count: number }): ReactNode {
+  if (depth > MAX_DEPTH || seen.has(id) || budget.count >= MAX_NODES) return null;
+  budget.count++;
   const el = spec.elements?.[id];
   if (!el || typeof el !== 'object') return null;
   const props = mergedProps(el);
   const childIds = asArray(el.children ?? props.children).filter((c): c is string => typeof c === 'string');
   const nextSeen = new Set(seen).add(id);
   const children = childIds.length
-    ? childIds.map((cid, i) => <Fragment key={`${cid}-${i}`}>{renderNode(cid, spec, nextSeen, depth + 1)}</Fragment>)
+    ? childIds.map((cid, i) => <Fragment key={`${cid}-${i}`}>{renderNode(cid, spec, nextSeen, depth + 1, budget)}</Fragment>)
     : null;
   return renderElement(asString(el.type), props, children);
 }
@@ -476,7 +482,7 @@ export const JsonRender = memo(function JsonRender({ source }: { source: string 
     return <ErrorFallback raw={source.trim()} />;
   }
 
-  const tree = renderNode(parsed.root, parsed, new Set(), 0);
+  const tree = renderNode(parsed.root, parsed, new Set(), 0, { count: 0 });
   if (tree == null) return <ErrorFallback raw={source.trim()} />;
 
   return <div className="my-2.5 w-full max-w-full [overflow-wrap:anywhere]">{tree}</div>;
@@ -521,3 +527,12 @@ export function hasJsonRender(text: string): boolean {
 }
 
 export const __resolveColorForTest = resolveColor;
+
+// Test seam: render a spec and report how many nodes were actually expanded, so
+// the global budget can be asserted without a DOM. Returns at most MAX_NODES.
+export function __renderBudgetForTest(spec: Spec): number {
+  const budget = { count: 0 };
+  renderNode(spec.root ?? '', spec, new Set(), 0, budget);
+  return budget.count;
+}
+export const __MAX_NODES_FOR_TEST = MAX_NODES;

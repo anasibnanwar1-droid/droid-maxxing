@@ -783,7 +783,11 @@ function baseReducer(state: AppState, action: Action): AppState {
       let contextStats = state.contextStats;
       if (oldStats) {
         const { [oldSessionId]: _dropped, ...rest } = state.contextStats;
-        contextStats = { ...rest, [newSessionId]: oldStats };
+        // The backend refreshes context for the new id (post-compaction, lower
+        // usage) before emitting this rekey, so prefer any fresh new-id stats
+        // already in the store; only carry the old snapshot over as a bridge
+        // when the new id has none yet. Overwriting would show stale usage.
+        contextStats = rest[newSessionId] !== undefined ? rest : { ...rest, [newSessionId]: oldStats };
       }
       // Mission features reference workers by session id (feature focus + worker
       // role/numbering), so follow the compacted worker to its new backing id.
