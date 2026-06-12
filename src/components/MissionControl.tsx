@@ -636,6 +636,14 @@ export default function MissionControl() {
   const [expanded, setExpanded] = useState<'features' | 'context' | null>(null);
   const [openDiff, setOpenDiff] = useState<FileChange | null>(null);
 
+  // A viewed worker can auto-compact and get re-keyed to a new backing session;
+  // follow the store's remap so the feed keeps filtering by the live id instead
+  // of going blank on the stale one. The map chains (old->A, A->B) across renders.
+  useEffect(() => {
+    const next = state.workerRekeys[viewedAgent];
+    if (next) setViewedAgent(next);
+  }, [state.workerRekeys, viewedAgent]);
+
   const features = mission?.features ?? [];
   const allTx = mission ? state.transcripts[mission.id] ?? [] : [];
   const progress = mission ? state.progress[mission.id] ?? [] : [];

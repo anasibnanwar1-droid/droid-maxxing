@@ -77,6 +77,9 @@ export interface AppState {
   transcripts: Record<string, TranscriptEvent[]>;
   progress: Record<string, ProgressEntry[]>;
   workers: Record<string, WorkerInfo[]>;   // subagents spawned per mission
+  // old worker session id -> new id, recorded on worker-compaction rekeys so
+  // views holding a worker id in local state can follow it to the new session.
+  workerRekeys: Record<string, string>;
   historyLoaded: Record<string, boolean>;
   pendingPermission: PermissionRequest | null;
   pendingQuestion: MissionQuestion | null;
@@ -558,6 +561,7 @@ export const initialState: AppState = {
   transcripts: {},
   progress: {},
   workers: {},
+  workerRekeys: {},
   historyLoaded: {},
   pendingPermission: null,
   pendingQuestion: null,
@@ -812,6 +816,9 @@ function baseReducer(state: AppState, action: Action): AppState {
         transcripts,
         progress,
         contextStats,
+        // Record the remap so views holding this id in local state (e.g. Mission
+        // Control's viewedAgent) can follow the worker to its new session.
+        workerRekeys: { ...state.workerRekeys, [oldSessionId]: newSessionId },
         selectedAgentSessionId:
           state.selectedAgentSessionId === oldSessionId ? newSessionId : state.selectedAgentSessionId,
       };

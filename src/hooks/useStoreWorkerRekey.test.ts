@@ -47,6 +47,16 @@ test('MISSION_WORKER_REKEY is a no-op when the id is unchanged', () => {
   assert.equal(next, start);
 });
 
+test('MISSION_WORKER_REKEY records the old->new mapping so local views can follow it', () => {
+  const start = { ...initialState, workers: { m1: [{ sessionId: 'w-old', status: 'running', startedAt: 1 }] } } as unknown as AppState;
+  const once = reducer(start, { type: 'MISSION_WORKER_REKEY', missionId: 'm1', oldSessionId: 'w-old', newSessionId: 'w-a' });
+  assert.equal(once.workerRekeys['w-old'], 'w-a');
+  // A second compaction chains: both hops remain resolvable across renders.
+  const twice = reducer(once, { type: 'MISSION_WORKER_REKEY', missionId: 'm1', oldSessionId: 'w-a', newSessionId: 'w-b' });
+  assert.equal(twice.workerRekeys['w-old'], 'w-a');
+  assert.equal(twice.workerRekeys['w-a'], 'w-b');
+});
+
 test('MISSION_WORKER_REKEY remaps mission feature worker ids and progress entries', () => {
   const start = {
     ...initialState,
