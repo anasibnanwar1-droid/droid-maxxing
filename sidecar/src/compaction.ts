@@ -63,11 +63,10 @@ export function effectiveCompactionLimit(
 // ---------------------------------------------------------------------------
 // Unified runtime compaction layer. Every Droid session (the Mission Control
 // orchestrator and each worker/subagent alike) flows through this single path
-// after an idle turn. Compaction is in-place: the daemon rewrites the session
-// in place, so a returned new backing id is only handled by the owner via the
-// optional `reload` hook (the orchestrator swaps its backing session; workers
-// compact in place so their session id, and the orchestrator's handoff
-// addressing, never change).
+// after an idle turn. The daemon returns a new backing session id on success;
+// the owner adopts it via the optional `reload` hook (the orchestrator swaps
+// its backing session behind a stable app id; a worker re-keys itself to the
+// new id). A caller without a reload hook reports the swap as 'stale'.
 // ---------------------------------------------------------------------------
 
 export interface AutoCompactState {
@@ -91,8 +90,9 @@ export interface CompactionSink {
   error(message: string): void;
   // Re-read context stats so the meter reflects the compacted window.
   refresh(): Promise<void>;
-  // Invoked only when the SDK returns a different backing session id. The
-  // orchestrator swaps its backing session here; workers omit it.
+  // Invoked only when the SDK returns a different backing session id. The owner
+  // adopts it here (the orchestrator swaps its backing session; a worker
+  // re-keys itself). Omitted only by callers that cannot adopt a swap.
   reload?: (newSessionId: string, removedCount: number) => Promise<void>;
 }
 
@@ -107,9 +107,9 @@ export interface CompactionOptions {
 //               session object itself is unchanged and still usable; the caller
 //               can keep it and retry later.
 // 'stale'     - the daemon swapped to a new backing session id but the owner
-//               has no reload hook to adopt it (workers keep a stable id). The
-//               current session object is no longer valid; the caller must
-//               recover (close and reopen) rather than reuse it.
+//               has no reload hook to adopt it. The current session object is
+//               no longer valid; the caller must recover (close and reopen)
+//               rather than reuse it.
 export type CompactionOutcome = 'completed' | 'noop' | 'failed' | 'stale';
 
 // The single in-place compaction path: announce, compact, (rarely) reload a

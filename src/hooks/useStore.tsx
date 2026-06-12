@@ -65,7 +65,7 @@ export interface ThemeConfig {
   contrast: number;
 }
 
-interface AppState {
+export interface AppState {
   // Connection
   connection: 'idle' | 'connecting' | 'connected' | 'error';
   connectionError?: string;
@@ -161,6 +161,7 @@ type Action =
   | { type: 'MISSION_PROGRESS'; missionId: string; entries: ProgressEntry[] }
   | { type: 'MISSION_WORKER'; missionId: string; event: 'started' | 'updated' | 'completed'; workerSessionId: string; label?: string; prompt?: string; modelId?: string; reasoningEffort?: ReasoningEffort; toolUseId?: string }
   | { type: 'AGENT_UPDATED'; missionId: string; agentSessionId: string; role: AgentKind; status: 'opened' | 'running' | 'paused' | 'completed' }
+  | { type: 'MISSION_WORKER_REKEY'; missionId: string; oldSessionId: string; newSessionId: string }
   | { type: 'MISSION_TOKENS'; missionId: string; tokensIn: number; tokensOut: number; contextTokens: number; maxContextTokens?: number }
   | { type: 'CONTEXT_UPDATED'; sessionId: string; stats: ContextStatsSnapshot }
   | { type: 'MISSION_TRANSCRIPT'; event: TranscriptEvent }
@@ -549,7 +550,7 @@ function applyMissionOverride(
 
 const persistedUiState = loadPersistedUiState();
 
-const initialState: AppState = {
+export const initialState: AppState = {
   connection: 'idle',
   missions: {},
   missionOrder: [],
@@ -632,7 +633,7 @@ function syncBrowserOpen(state: AppState): AppState {
   return state.browserOpen === open ? state : { ...state, browserOpen: open };
 }
 
-function reducer(state: AppState, action: Action): AppState {
+export function reducer(state: AppState, action: Action): AppState {
   return syncBrowserOpen(baseReducer(state, action));
 }
 
@@ -757,6 +758,37 @@ function baseReducer(state: AppState, action: Action): AppState {
         }];
       }
       return { ...state, workers: { ...state.workers, [mid]: next } };
+    }
+
+    case 'MISSION_WORKER_REKEY': {
+      const { missionId: mid, oldSessionId, newSessionId } = action;
+      if (oldSessionId === newSessionId) return state;
+      const workers = (state.workers[mid] ?? []).map((w) =>
+        w.sessionId === oldSessionId ? { ...w, sessionId: newSessionId } : w,
+      );
+      const missionTranscripts = state.transcripts[mid];
+      const transcripts = missionTranscripts
+        ? {
+            ...state.transcripts,
+            [mid]: missionTranscripts.map((ev) =>
+              ev.agentSessionId === oldSessionId ? { ...ev, agentSessionId: newSessionId } : ev,
+            ),
+          }
+        : state.transcripts;
+      const oldStats = state.contextStats[oldSessionId];
+      let contextStats = state.contextStats;
+      if (oldStats) {
+        const { [oldSessionId]: _dropped, ...rest } = state.contextStats;
+        contextStats = { ...rest, [newSessionId]: oldStats };
+      }
+      return {
+        ...state,
+        workers: { ...state.workers, [mid]: workers },
+        transcripts,
+        contextStats,
+        selectedAgentSessionId:
+          state.selectedAgentSessionId === oldSessionId ? newSessionId : state.selectedAgentSessionId,
+      };
     }
 
     case 'AGENT_UPDATED': {
@@ -960,7 +992,10 @@ function baseReducer(state: AppState, action: Action): AppState {
               // missions so a reconnect/reload doesn't mark a still-running
               // subagent as finished; historical loads omit it (-> completed).
               status: link.status ?? 'completed',
-              startedAt: 0,
+              // A running link has no persisted start time; seed "now" so the
+              // elapsed timer counts from reconnect rather than the Unix epoch.
+              // Completed links don't render a timer, so 0 is fine.
+              startedAt: link.status === 'running' ? Date.now() : 0,
               label: link.label,
               toolUseId: link.toolUseId,
             });
@@ -1313,6 +1348,8 @@ function adaptEvent(ev: ServerEvent): Action | null {
         reasoningEffort: ev.reasoningEffort,
         toolUseId: ev.toolUseId,
       };
+    case 'mission.worker.rekey':
+      return { type: 'MISSION_WORKER_REKEY', missionId: ev.missionId, oldSessionId: ev.oldSessionId, newSessionId: ev.newSessionId };
     case 'agent.updated':
       return {
         type: 'AGENT_UPDATED',

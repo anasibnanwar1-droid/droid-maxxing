@@ -101,6 +101,11 @@ interface Mission {
   agents: Map<string, LiveAgent>;
   knownSubagents: Set<string>;
   completedSubagents: Set<string>;
+  // Worker session ids tied to this mission by persisted spawn->worker links,
+  // seeded on resume so historical subagents stay openable even before any live
+  // spawn re-populates knownSubagents. Kept separate from knownSubagents so live
+  // run-status reporting only reflects subagents actually seen this session.
+  linkedSubagents: Set<string>;
   subagentToolUseIds: Map<string, string>;
   subagentSettings: Map<string, SubagentSettings>;
   pendingSubagents: PendingSubagent[];
@@ -731,6 +736,13 @@ export class MissionManager {
         this.maxContextTokensForSummary(summary),
       );
       const mission: Mission = this.createLiveMission(summary, session, mcp.servers, resumeCompactionLimit, mcp.configs);
+      // Seed the spawn->worker links persisted for this mission so historical
+      // subagents are recognized (and thus openable/steerable) after a resume,
+      // even before any live spawn re-populates knownSubagents.
+      for (const link of this.history.subagentLinks(appSessionId)) {
+        mission.linkedSubagents.add(link.workerSessionId);
+        if (link.toolUseId) mission.subagentToolUseIds.set(link.toolUseId, link.workerSessionId);
+      }
       this.missions.set(appSessionId, mission);
       this.history.syncSummaries([summary]);
       this.emit({ type: 'mission.created', clientRef: `resume:${appSessionId}`, mission: summary });
@@ -928,6 +940,7 @@ export class MissionManager {
       agents: new Map(),
       knownSubagents: new Set(),
       completedSubagents: new Set(),
+      linkedSubagents: new Set(),
       subagentToolUseIds: new Map(),
       subagentSettings: new Map(),
       pendingSubagents: [],
@@ -1617,37 +1630,15 @@ export class MissionManager {
         await this.closeAgent(agent.missionId, agent.session.sessionId);
       } else {
         // Refresh + auto-compact while streaming stays true so concurrent sends
-        // queue instead of racing a second driveAgent(). Worker compaction is
-        // in-place and scoped to this worker's own session/history.
+        // queue instead of racing a second driveAgent(). Compaction is scoped to
+        // this worker's own session/history (and may re-key it to a new id).
         await this.refreshContext(agent.session.sessionId, agent.session);
-        const compaction = await this.maybeAutoCompactAgent(agent);
+        await this.maybeAutoCompactAgent(agent);
         agent.streaming = false;
-        if (compaction === 'stale') {
-          // The daemon swapped the worker's backing session id. We cannot adopt
-          // the new id (workers stay keyed by their original id for the
-          // orchestrator's handoff addressing), and replaying to the now-stale
-          // id is unreliable. Close the stale session and surface any queued
-          // user input as a recoverable error so it is preserved for resend
-          // rather than silently dropped or sent into a dead session.
-          const queued = agent.pendingSends.splice(0);
-          const agentSessionId = agent.session.sessionId;
-          this.contextSnapshots.delete(agentSessionId);
-          await this.closeAgent(agent.missionId, agentSessionId);
-          // closeAgent does not emit a worker status, so move the UI off the
-          // 'running' state it entered at turn start.
-          this.emit({ type: 'agent.updated', missionId: agent.missionId, agentSessionId, role: agent.role, status: 'paused' });
-          if (queued.length > 0) {
-            this.emitError({
-              sessionId: agentSessionId,
-              missionId: agent.missionId,
-              message: `Subagent session changed during compaction; ${queued.length} queued message(s) were not delivered and must be resent:\n${queued.join('\n')}`,
-              recoverable: true,
-            });
-          }
-          return;
-        }
-        // A transient compaction failure leaves the session valid, so fall
-        // through and drain queued sends normally.
+        // Compaction is applied in place: 'completed' re-keys the worker to the
+        // daemon's new backing session (via the reload hook) and a transient
+        // 'failed' leaves the current session valid. Either way agent.session
+        // stays usable, so drain queued sends against it normally.
         const next = agent.pendingSends.shift();
         if (next !== undefined) void this.driveAgent(agent, next);
         else this.emit({ type: 'agent.updated', missionId: agent.missionId, agentSessionId: agent.session.sessionId, role: agent.role, status: 'paused' });
@@ -1655,11 +1646,11 @@ export class MissionManager {
     }
   }
 
-  // Workers compact their own session through the shared in-place path. No
-  // reload hook: a worker keeps its session id stable so the orchestrator's
-  // handoff addressing is never altered, and only this worker's own
-  // session/history is affected. Returns the compaction outcome (or undefined
-  // when no compaction was attempted) so the caller can recover on failure.
+  // Workers compact their own session through the shared compaction path. The
+  // daemon swaps to a new backing id on success, which the reload hook adopts
+  // in place (re-keying the worker) so the worker stays alive and addressable.
+  // Returns the compaction outcome (or undefined when no compaction was
+  // attempted) so the caller can recover on a transient failure.
   private async maybeAutoCompactAgent(agent: LiveAgent): Promise<CompactionOutcome | undefined> {
     const used = this.contextSnapshots.get(agent.session.sessionId)?.used;
     if (!autoCompactionDue(agent, used)) return undefined;
@@ -1670,23 +1661,87 @@ export class MissionManager {
     const agentSessionId = agent.session.sessionId;
     agent.compacting = true;
     try {
-      return await runCompaction(
+      const outcome = await runCompaction(
         agent.session,
         {
+          // Status lines stay keyed by the worker's original id so they land on
+          // the worker the client is still showing; the rekey event below moves
+          // that transcript to the new id afterwards.
           status: (text, ct) => this.emitStatus(agent.missionId, text, ct, agentSessionId, agent.role),
           error: (message) =>
             this.emitError({ sessionId: agentSessionId, missionId: agent.missionId, message: `Could not compact subagent: ${message}`, recoverable: true }),
-          refresh: () => this.refreshContext(agentSessionId, agent.session),
-          // No reload hook: a worker keyed by its session id is also how the
-          // orchestrator addresses its handoff/result, so it must never swap to
-          // a new backing id. runCompaction reports a swap as a 'stale' outcome
-          // instead, and the driver recovers by reopening a fresh session.
+          // After a swap the snapshot must live under the worker's current id so
+          // the next auto-compaction check reads the right usage.
+          refresh: () => this.refreshContext(agent.session.sessionId, agent.session),
+          // The daemon swaps to a new backing session id on a successful
+          // compaction. Adopt it in place (re-key all maps and re-subscribe)
+          // so the worker stays alive and queued sends keep flowing rather than
+          // the session being treated as stale and torn down.
+          reload: (newSessionId) => this.rekeyAgentSession(agent, newSessionId),
         },
         { compactType },
       );
+      // The reload hook re-keyed the worker; tell clients to remap state from
+      // the old id to the new one. Emitted after runCompaction so all
+      // old-id-keyed transcript/status events are flushed first.
+      if (agent.session.sessionId !== agentSessionId) {
+        this.emit({
+          type: 'mission.worker.rekey',
+          missionId: agent.missionId,
+          oldSessionId: agentSessionId,
+          newSessionId: agent.session.sessionId,
+        });
+      }
+      return outcome;
     } finally {
       agent.compacting = false;
     }
+  }
+
+  // Adopt a worker's swapped backing session id (returned by the daemon on a
+  // successful compaction) in place: load the new session, move every map/set
+  // keyed by the old id, re-subscribe notifications, and persist the updated
+  // spawn links so a later resume points at the compacted session. Loading runs
+  // first so a failure leaves the old (still valid) session untouched; the
+  // synchronous re-keying that follows cannot throw.
+  private async rekeyAgentSession(agent: LiveAgent, newSessionId: string): Promise<void> {
+    const oldSessionId = agent.session.sessionId;
+    if (newSessionId === oldSessionId) return;
+    const ref = { id: agent.missionId };
+    const newSession = await this.runtime.loadSession(newSessionId, {
+      permissionHandler: this.makePermissionHandler(ref),
+      askUserHandler: this.makeAskUserHandler(ref),
+    });
+    const oldSession = agent.session;
+    agent.unsubscribe?.();
+    agent.session = newSession;
+    agent.unsubscribe = newSession.onNotification((note: Record<string, unknown>) => {
+      for (const n of normalizeNotification(agent.missionId, newSessionId, agent.role, note)) this.applyNormalized(agent.missionId, n);
+    });
+    const snapshot = this.contextSnapshots.get(oldSessionId);
+    this.contextSnapshots.delete(oldSessionId);
+    if (snapshot) this.contextSnapshots.set(newSessionId, snapshot);
+    const mission = this.findMission(agent.missionId);
+    if (mission) {
+      if (mission.agents.delete(oldSessionId)) mission.agents.set(newSessionId, agent);
+      if (mission.knownSubagents.delete(oldSessionId)) mission.knownSubagents.add(newSessionId);
+      if (mission.completedSubagents.delete(oldSessionId)) mission.completedSubagents.add(newSessionId);
+      if (mission.linkedSubagents.delete(oldSessionId)) mission.linkedSubagents.add(newSessionId);
+      const settings = mission.subagentSettings.get(oldSessionId);
+      if (settings) {
+        mission.subagentSettings.delete(oldSessionId);
+        mission.subagentSettings.set(newSessionId, settings);
+      }
+      // Re-point any spawn link for this worker at the new id (preserving its
+      // label) so a later resume seeds linkedSubagents with the compacted id.
+      const labelByToolUseId = new Map(this.history.subagentLinks(agent.missionId).map((l) => [l.toolUseId, l.label]));
+      for (const [toolUseId, sid] of mission.subagentToolUseIds) {
+        if (sid !== oldSessionId) continue;
+        mission.subagentToolUseIds.set(toolUseId, newSessionId);
+        this.history.recordSubagentLink(agent.missionId, toolUseId, newSessionId, labelByToolUseId.get(toolUseId));
+      }
+    }
+    await oldSession.close().catch(() => {});
   }
 
   private async sendAgentNow(missionId: string, agentSessionId: string, text: string): Promise<void> {
@@ -1741,6 +1796,7 @@ export class MissionManager {
   private agentBelongsToMission(mission: Mission, agentSessionId: string): boolean {
     if (mission.summary.kind === 'mission_orchestrator') return true;
     if (mission.knownSubagents.has(agentSessionId)) return true;
+    if (mission.linkedSubagents.has(agentSessionId)) return true;
     const appSessionId = mission.summary.id;
     this.emit({
       type: 'error',

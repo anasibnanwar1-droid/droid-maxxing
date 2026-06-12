@@ -460,6 +460,10 @@ export type ServerEvent =
   | { type: 'mission.features'; missionId: string; features: BridgeFeature[] }
   | { type: 'mission.progress'; missionId: string; entries: ProgressEntry[] }
   | { type: 'mission.worker'; missionId: string; event: 'started' | 'updated' | 'completed'; workerSessionId: string; exitCode?: number; label?: string; prompt?: string; modelId?: string; reasoningEffort?: ReasoningEffort; toolUseId?: string }
+  // A worker compacted and the daemon swapped its backing session id. The
+  // worker stays alive under the new id; clients must remap any state keyed by
+  // the old worker session id (worker list, transcript events, selection).
+  | { type: 'mission.worker.rekey'; missionId: string; oldSessionId: string; newSessionId: string }
   | { type: 'mission.tokens'; missionId: string; tokensIn: number; tokensOut: number; contextTokens: number; maxContextTokens?: number }
   | { type: 'mission.transcript'; event: TranscriptEvent }
   | { type: 'mission.permission'; request: PermissionRequest }
