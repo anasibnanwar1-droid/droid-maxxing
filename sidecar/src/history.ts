@@ -56,7 +56,6 @@ interface StoredSessionStart {
   // (Task tool subagents). Such sessions are not standalone conversations.
   callingSessionId?: string;
   callingToolUseId?: string;
-  parent?: unknown;
 }
 
 interface StoredModelSettings {
@@ -943,7 +942,10 @@ function classifyStoredSession(
   if (start.decompSessionType === 'validator') return null;
   // Task-tool subagents run as their own droid sessions but are spawned by a
   // parent session's tool call; they must not surface as standalone sessions.
-  if (start.callingSessionId || start.callingToolUseId || start.parent != null) return null;
+  // Gate only on the spawn markers (callingSessionId/callingToolUseId): a bare
+  // `parent` link is also set on ordinary forked chats, which ARE standalone
+  // conversations and must stay visible in history.
+  if (start.callingSessionId || start.callingToolUseId) return null;
   const mode = sessionInteractionMode(start);
   const missionId = start.decompMissionId;
   if (start.decompSessionType === 'orchestrator' || missionId || mode === 'agi') {

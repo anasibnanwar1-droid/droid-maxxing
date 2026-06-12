@@ -7,6 +7,7 @@ import { JsonRender, splitJsonRender, hasJsonRender } from './JsonRender';
 import { extractFileChange, type FileChange } from '../lib/diff';
 import { DiffCard } from './DiffView';
 import { CAT_LABEL, toolMeta, safeJson, stripAnsi, formatDuration, isSubagentTool, subagentInfo } from '../lib/tools';
+import { richerSubagent, subagentLatest, type SubagentLatest } from '../lib/subagents';
 
 const ACCENT = 'var(--droid-accent)';
 const EASE = [0.16, 1, 0.3, 1] as const;
@@ -297,17 +298,6 @@ type FeedItem =
   | { type: 'subagent'; key: string; event: TranscriptEvent }
   | { type: 'tools'; key: string; events: TranscriptEvent[] }
   | { type: 'worked'; key: string; items: FeedItem[]; durationMs: number };
-
-// A single Task spawn streams as many tool_call/tool_call_delta events sharing
-// one toolUseId; keep whichever copy actually carries the droid name/description.
-function richerSubagent(existing: TranscriptEvent, next: TranscriptEvent): TranscriptEvent {
-  const e = subagentInfo(existing.toolArgs);
-  const n = subagentInfo(next.toolArgs);
-  if (!e.label && n.label) return next;
-  if (e.label && !n.label) return existing;
-  if (!e.description && n.description) return next;
-  return existing;
-}
 
 function buildFeed(events: TranscriptEvent[], subagentCards = false): FeedItem[] {
   const items: FeedItem[] = [];
@@ -769,37 +759,8 @@ export type SubagentTarget = { toolUseId?: string; label?: string };
 export type SubagentActivity = {
   status?: 'running' | 'paused' | 'completed';
   startedAt?: number;
-  latest?: { kind: TranscriptEvent['kind']; text?: string; toolName?: string; toolArgs?: unknown };
+  latest?: SubagentLatest;
 };
-
-// Last non-empty line, capped, so a long thinking block stays a one-line cue.
-function previewLine(text?: string): string | undefined {
-  if (!text) return undefined;
-  const line = text.trim().split('\n').filter(Boolean).pop() ?? '';
-  return line.length > 160 ? `${line.slice(0, 159)}…` : line || undefined;
-}
-
-// Map the subagent's newest transcript event to a short head + body, mirroring
-// how the main feed labels thinking/tool steps.
-function subagentLatest(latest: SubagentActivity['latest']): { head: string; body?: string } | null {
-  if (!latest) return null;
-  switch (latest.kind) {
-    case 'thinking':
-      return { head: 'Thinking', body: previewLine(latest.text) };
-    case 'tool_call': {
-      const { cat, detail } = toolMeta(latest.toolName, latest.toolArgs);
-      return { head: CAT_LABEL[cat], body: detail || latest.toolName };
-    }
-    case 'text':
-      return { head: 'Responding', body: previewLine(latest.text) };
-    case 'error':
-      return { head: 'Error', body: previewLine(latest.text) };
-    case 'status':
-      return { head: 'Working', body: previewLine(latest.text) };
-    default:
-      return { head: 'Working', body: previewLine(latest.text) };
-  }
-}
 
 /* ── In-chat spawned subagent: inline thinking-style line + click to navigate ── */
 function SubagentLine({ event, active, onOpen, activity }: {

@@ -79,6 +79,20 @@ test('loadHistoricalSessions skips Task-spawned subagent sessions', () => {
   assert.deepEqual(rows.map((row) => row.summary.id), ['real-session']);
 });
 
+test('loadHistoricalSessions keeps forked chats (bare parent, no spawn markers) visible', () => {
+  const cwd = join(home, 'workspace-fork');
+  writeSession('source-session', cwd);
+  // A forked chat carries a `parent` link but no callingSessionId/callingToolUseId;
+  // it is a standalone conversation and must stay in history.
+  writeSession('forked-session', cwd, { parent: 'source-session' });
+  // A real Task subagent (spawn markers present) must still be hidden.
+  writeSession('task-subagent', cwd, { parent: 'source-session', callingSessionId: 'source-session', callingToolUseId: 'tool-9' });
+
+  const rows = loadHistoricalSessions({ workspaceCwds: [cwd] });
+
+  assert.deepEqual(rows.map((row) => row.summary.id).sort(), ['forked-session', 'source-session']);
+});
+
 test('loadHistoricalSessions returns every session when no limit is requested', () => {
   const cwd = join(home, 'workspace-nolimit');
   for (let i = 0; i < 7; i++) writeSession(`nolimit-${i}`, cwd);

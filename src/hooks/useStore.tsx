@@ -781,10 +781,36 @@ function baseReducer(state: AppState, action: Action): AppState {
         const { [oldSessionId]: _dropped, ...rest } = state.contextStats;
         contextStats = { ...rest, [newSessionId]: oldStats };
       }
+      // Mission features reference workers by session id (feature focus + worker
+      // role/numbering), so follow the compacted worker to its new backing id.
+      const existingMission = state.missions[mid];
+      let missions = state.missions;
+      if (existingMission) {
+        const remapId = (id?: string | null) => (id === oldSessionId ? newSessionId : id);
+        const features = existingMission.features.map((f) => ({
+          ...f,
+          workerSessionIds: f.workerSessionIds?.map((id) => (id === oldSessionId ? newSessionId : id)),
+          currentWorkerSessionId: remapId(f.currentWorkerSessionId),
+          completedWorkerSessionId: remapId(f.completedWorkerSessionId),
+        }));
+        missions = { ...state.missions, [mid]: { ...existingMission, features } };
+      }
+      // Progress entries tag the worker that produced them; keep them aligned too.
+      const missionProgress = state.progress[mid];
+      const progress = missionProgress
+        ? {
+            ...state.progress,
+            [mid]: missionProgress.map((p) =>
+              p.workerSessionId === oldSessionId ? { ...p, workerSessionId: newSessionId } : p,
+            ),
+          }
+        : state.progress;
       return {
         ...state,
+        missions,
         workers: { ...state.workers, [mid]: workers },
         transcripts,
+        progress,
         contextStats,
         selectedAgentSessionId:
           state.selectedAgentSessionId === oldSessionId ? newSessionId : state.selectedAgentSessionId,

@@ -46,3 +46,45 @@ test('MISSION_WORKER_REKEY is a no-op when the id is unchanged', () => {
   const next = reducer(start, { type: 'MISSION_WORKER_REKEY', missionId: 'm1', oldSessionId: 'w', newSessionId: 'w' });
   assert.equal(next, start);
 });
+
+test('MISSION_WORKER_REKEY remaps mission feature worker ids and progress entries', () => {
+  const start = {
+    ...initialState,
+    missions: {
+      m1: {
+        id: 'm1',
+        features: [
+          {
+            id: 'f1',
+            workerSessionIds: ['w-old', 'w-other'],
+            currentWorkerSessionId: 'w-old',
+            completedWorkerSessionId: null,
+          },
+          {
+            id: 'f2',
+            workerSessionIds: ['w-other'],
+            currentWorkerSessionId: null,
+            completedWorkerSessionId: 'w-old',
+          },
+        ],
+      },
+    },
+    progress: {
+      m1: [
+        { type: 'worker_started', timestamp: '1', workerSessionId: 'w-old' },
+        { type: 'worker_started', timestamp: '2', workerSessionId: 'w-other' },
+      ],
+    },
+  } as unknown as AppState;
+
+  const next = reducer(start, { type: 'MISSION_WORKER_REKEY', missionId: 'm1', oldSessionId: 'w-old', newSessionId: 'w-new' });
+
+  const f1 = next.missions.m1.features[0];
+  assert.deepEqual(f1.workerSessionIds, ['w-new', 'w-other']);
+  assert.equal(f1.currentWorkerSessionId, 'w-new');
+  const f2 = next.missions.m1.features[1];
+  assert.equal(f2.completedWorkerSessionId, 'w-new');
+  assert.deepEqual(f2.workerSessionIds, ['w-other']);
+  assert.equal(next.progress.m1[0].workerSessionId, 'w-new');
+  assert.equal(next.progress.m1[1].workerSessionId, 'w-other');
+});

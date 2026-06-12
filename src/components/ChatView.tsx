@@ -146,11 +146,13 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
   const subagentActivity = useCallback((target: { toolUseId?: string; label?: string }) => {
     const worker = findWorker(target.toolUseId, target.label);
     if (!worker) return undefined;
-    let latest: { kind: typeof allTranscript[number]['kind']; text?: string; toolName?: string; toolArgs?: unknown } | undefined;
+    let latest: { kind: typeof allTranscript[number]['kind']; text?: string; toolName?: string; toolArgs?: unknown; isError?: boolean } | undefined;
     for (let i = allTranscript.length - 1; i >= 0; i--) {
       const t = allTranscript[i];
-      if (t.agentSessionId !== worker.sessionId || t.kind === 'tool_result' || t.author === 'user') continue;
-      latest = { kind: t.kind, text: t.text, toolName: t.toolName, toolArgs: t.toolArgs };
+      // Skip successful tool results (just output), but keep a failed one so the
+      // worker's error surfaces instead of hiding behind stale/empty activity.
+      if (t.agentSessionId !== worker.sessionId || (t.kind === 'tool_result' && !t.isError) || t.author === 'user') continue;
+      latest = { kind: t.kind, text: t.text, toolName: t.toolName, toolArgs: t.toolArgs, isError: t.isError };
       break;
     }
     return { status: worker.status, startedAt: worker.startedAt, latest };
