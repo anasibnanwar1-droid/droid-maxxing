@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { bridge } from '../lib/bridge';
 import { connect, detectEnv, installCli, startCliLogin, updateCli } from '../lib/commands';
 import { setApiKey as persistApiKey } from '../lib/desktop';
@@ -35,6 +35,7 @@ export function useOnboarding(): OnboardingController {
   const [installLog, setInstallLog] = useState<string[]>([]);
   const [installing, setInstalling] = useState<'install' | 'update' | null>(null);
   const [lastResult, setLastResult] = useState<{ phase: 'install' | 'update'; ok: boolean } | null>(null);
+  const reDetectedForKey = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -53,6 +54,13 @@ export function useOnboarding(): OnboardingController {
       switch (ev.type) {
         case 'runtime.updated':
           setRuntime(ev.status);
+          // App restores a saved API key via connect() after the initial
+          // detect; connect only emits runtime.updated, so re-detect once to
+          // refresh auth state instead of leaving the user shown as signed out.
+          if (ev.status.apiKeyConfigured && !reDetectedForKey.current) {
+            reDetectedForKey.current = true;
+            detectEnv();
+          }
           break;
         case 'env.report':
           setEnv(ev.report);

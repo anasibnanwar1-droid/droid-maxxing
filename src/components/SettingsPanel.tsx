@@ -697,6 +697,16 @@ function SetupSection({ onClose }: { onClose: () => void }) {
     setChecking(false);
   };
 
+  // The main process returns an empty `latest` when the manifest fetch fails;
+  // surface that as an error rather than a successful "Up to date" result.
+  const updateStatus = !update
+    ? `Installed v${appVersion}`
+    : update.updateAvailable
+      ? `${update.latest} available`
+      : update.latest
+        ? 'Up to date'
+        : "Couldn't check for updates";
+
   return (
     <div className="max-w-2xl mx-auto">
       <SectionTitle title="Setup & updates" sub="Manage the Droid CLI, your sign-in, and app updates." />
@@ -734,7 +744,7 @@ function SetupSection({ onClose }: { onClose: () => void }) {
 
       <GroupLabel>DROIDEX app</GroupLabel>
       <div className="rounded-xl border border-droid-border bg-droid-surface divide-y divide-droid-border mb-8">
-        <SettingRow label="Current version" description={update ? (update.updateAvailable ? `${update.latest} available` : 'Up to date') : `Installed v${appVersion}`}>
+        <SettingRow label="Current version" description={updateStatus}>
           <div className="flex items-center gap-2">
             <button
               onClick={runCheck}

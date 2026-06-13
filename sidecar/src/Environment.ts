@@ -7,13 +7,24 @@ import type { EnvironmentReport, InstallChannel, PackageManagers } from './proto
 
 const execFileAsync = promisify(execFile);
 
+// Shared resolution order so what onboarding reports as "installed" is exactly
+// what DroidRuntime will spawn for login/update/session commands.
 const CLI_CANDIDATES = [
-  process.env.DROID_PATH,
   join(homedir(), '.factory', 'bin', 'droid'),
   join(homedir(), '.local', 'bin', 'droid'),
   '/opt/homebrew/bin/droid',
   '/usr/local/bin/droid',
-].filter((value): value is string => Boolean(value));
+];
+
+// Synchronous, runtime-facing resolver. Returns the literal `droid` (resolved
+// via PATH at spawn time) when no known location holds an executable.
+export function resolveDroidPath(): string {
+  if (process.env.DROID_PATH) return process.env.DROID_PATH;
+  for (const candidate of CLI_CANDIDATES) {
+    if (isExecutable(candidate)) return candidate;
+  }
+  return 'droid';
+}
 
 // Heuristic auth marker written by `droid login`.
 const AUTH_FILE = join(homedir(), '.factory', 'auth.v2.file');
@@ -70,9 +81,12 @@ function parseSemver(value: string | undefined): [number, number, number] {
 }
 
 async function resolveCliPath(): Promise<string | undefined> {
+  if (process.env.DROID_PATH && isExecutable(process.env.DROID_PATH)) return process.env.DROID_PATH;
   for (const candidate of CLI_CANDIDATES) {
     if (isExecutable(candidate)) return candidate;
   }
+  // A PATH hit is runnable by the runtime's `droid` fallback, so it stays
+  // consistent with resolveDroidPath().
   const onPath = await commandPath('droid');
   return onPath && isExecutable(onPath) ? onPath : undefined;
 }

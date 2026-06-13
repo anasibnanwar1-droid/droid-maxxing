@@ -42,9 +42,11 @@ export type ProgressLine = { stream: 'stdout' | 'stderr'; line: string };
 
 export function runStreaming(cmd: ShellCommand, onLine: (line: ProgressLine) => void): Promise<number> {
   return new Promise((resolve) => {
+    // On Windows, `npm` and npm-installed `droid` are `.cmd` shims that cannot
+    // be spawned directly, so route non-pipeline commands through a shell too.
     const child = cmd.shell
       ? spawn(cmd.command, { shell: true, env: process.env })
-      : spawn(cmd.command, cmd.args, { env: process.env });
+      : spawn(cmd.command, cmd.args, { shell: process.platform === 'win32', env: process.env });
 
     const pump = (stream: 'stdout' | 'stderr') => (chunk: Buffer) => {
       for (const line of chunk.toString().split(/\r?\n/)) {

@@ -1167,7 +1167,17 @@ async function downloadAppUpdate() {
     try {
       const { autoUpdater } = require('electron');
       autoUpdater.setFeedURL({ url: UPDATE_FEED });
+      // checkForUpdates() reports feed/network failures via the async 'error'
+      // event, not the surrounding try/catch. Without a listener that error is
+      // unhandled and crashes the main process, so fall back to the managed
+      // download instead.
+      autoUpdater.removeAllListeners('error');
+      autoUpdater.removeAllListeners('update-downloaded');
       autoUpdater.once('update-downloaded', () => autoUpdater.quitAndInstall());
+      autoUpdater.once('error', (err) => {
+        console.warn('[update] autoUpdater failed, falling back to managed download:', err?.message || err);
+        managedMacDownload().catch((e) => console.warn('[update] managed download failed:', e?.message || e));
+      });
       autoUpdater.checkForUpdates();
       return { mode: 'autoUpdater' };
     } catch {
@@ -1178,6 +1188,10 @@ async function downloadAppUpdate() {
     await openExternal(`${DOWNLOAD_BASE}/download`);
     return { mode: 'external' };
   }
+  return managedMacDownload();
+}
+
+async function managedMacDownload() {
   const url = `${DOWNLOAD_BASE}/downloads/${macDmgName()}`;
   const dest = path.join(app.getPath('downloads'), macDmgName());
   const res = await fetch(url);

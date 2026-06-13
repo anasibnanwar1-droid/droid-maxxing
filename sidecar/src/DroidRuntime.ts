@@ -13,10 +13,8 @@ import {
   type PermissionHandler,
 } from '@factory/droid-sdk';
 import { spawn } from 'node:child_process';
-import { existsSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
 import { createDroidTransport } from './DroidTransport.js';
+import { resolveDroidPath } from './Environment.js';
 import type { Autonomy, ReasoningEffort, SessionInteractionMode } from './protocol.js';
 
 const EXEC_ARGS = ['exec', '--input-format', 'stream-jsonrpc', '--output-format', 'stream-jsonrpc'];
@@ -130,12 +128,7 @@ export class DroidRuntime {
   }
 
   private resolveDroidPath(): string {
-    if (process.env.DROID_PATH) return process.env.DROID_PATH;
-    const factoryBin = join(homedir(), '.factory', 'bin', 'droid');
-    if (existsSync(factoryBin)) return factoryBin;
-    if (existsSync('/opt/homebrew/bin/droid')) return '/opt/homebrew/bin/droid';
-    if (existsSync('/usr/local/bin/droid')) return '/usr/local/bin/droid';
-    return 'droid';
+    return resolveDroidPath();
   }
 }
 
