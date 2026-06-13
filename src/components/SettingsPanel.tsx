@@ -6,8 +6,8 @@ import { ColorField } from './ColorPicker';
 import { ModelIcon, providerOf } from './ModelIcon';
 import type { ModelInfo } from '../types/bridge';
 import { useOnboarding } from '../hooks/useOnboarding';
-import { checkAppUpdate, getAppVersion, type AppUpdateInfo } from '../lib/onboarding';
-import { startAppUpdate } from '../lib/appUpdate';
+import { getAppVersion, type AppUpdateInfo } from '../lib/onboarding';
+import { refreshAppUpdate, startAppUpdate } from '../lib/appUpdate';
 
 const PRESET_ACCENTS = [
   '#ee6018', '#ef6f2e', '#d15010', '#e8a838', '#4a9e7a',
@@ -693,7 +693,9 @@ function SetupSection({ onClose }: { onClose: () => void }) {
 
   const runCheck = async () => {
     setChecking(true);
-    const info = await checkAppUpdate();
+    // Publish to the shared store so a found update also lights up the sidebar
+    // pill, while keeping the full result locally for the up-to-date/error text.
+    const info = await refreshAppUpdate();
     setUpdate(info);
     setChecking(false);
   };

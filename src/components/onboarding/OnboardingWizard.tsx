@@ -67,7 +67,7 @@ export default function OnboardingWizard({ controller, onComplete }: { controlle
             >
               {stepId === 'welcome' && <WelcomeStep onNext={() => go(1)} />}
               {stepId === 'system' && <SystemStep controller={controller} onNext={() => go(1)} />}
-              {stepId === 'install' && <InstallStep controller={controller} onNext={() => go(1)} />}
+              {stepId === 'install' && <InstallStep controller={controller} onNext={() => go(1)} onBack={() => go(-1)} />}
               {stepId === 'signin' && <SignInStep controller={controller} onNext={() => go(1)} onBack={() => go(-1)} />}
               {stepId === 'preferences' && <PreferencesStep controller={controller} onNext={() => go(1)} onBack={() => go(-1)} />}
               {stepId === 'done' && <DoneStep controller={controller} onComplete={onComplete} />}
@@ -209,8 +209,8 @@ function systemChecks(env: EnvironmentReport | null): { label: string; ok: boole
   ];
 }
 
-function InstallStep({ controller, onNext }: { controller: OnboardingController; onNext: () => void }) {
-  const { env, installLog, installing, lastResult, install } = controller;
+function InstallStep({ controller, onNext, onBack }: { controller: OnboardingController; onNext: () => void; onBack: () => void }) {
+  const { env, installLog, installing, lastResult, install, refreshEnv } = controller;
   const channels = env?.availableChannels ?? [];
   const [channel, setChannel] = useState<InstallChannel | null>(channels[0] ?? null);
   useEffect(() => {
@@ -239,7 +239,10 @@ function InstallStep({ controller, onNext }: { controller: OnboardingController;
       <Heading title="Install the Droid CLI" sub="Droid runs on the Factory CLI. Pick how you'd like to install it." />
       <div className="grid grid-cols-1 gap-2 mb-4">
         {channels.length === 0 && (
-          <p className="text-[12px] text-droid-orange">No supported package manager found. Install curl, Homebrew, or npm first.</p>
+          <div className="rounded-lg border border-droid-border bg-droid-surface px-3.5 py-3 text-[12px] text-droid-text-secondary">
+            <p className="text-droid-orange mb-1">No supported package manager found.</p>
+            Install Homebrew, npm, or curl, then re-scan. You can also skip this for now and finish setup later.
+          </div>
         )}
         {channels.map((c) => (
           <button
@@ -274,10 +277,23 @@ function InstallStep({ controller, onNext }: { controller: OnboardingController;
         <PrimaryButton onClick={() => {}} disabled>
           <Loader2 className="w-4 h-4 animate-spin" /> Installing…
         </PrimaryButton>
+      ) : channels.length === 0 ? (
+        <PrimaryButton onClick={() => refreshEnv()}>
+          <RefreshCw className="w-4 h-4" /> Re-scan
+        </PrimaryButton>
       ) : (
         <PrimaryButton onClick={() => channel && install(channel)} disabled={!channel}>
           <Download className="w-4 h-4" /> Install with {channel ? CHANNEL_LABEL[channel] : 'package manager'}
         </PrimaryButton>
+      )}
+
+      {!installing && (
+        <div className="flex items-center gap-2 mt-2">
+          <button onClick={onBack} className="h-10 px-4 rounded-lg text-droid-text-muted text-[13px] hover:text-droid-text transition-colors">Back</button>
+          <div className="flex-1">
+            <GhostButton onClick={onNext}>Skip for now</GhostButton>
+          </div>
+        </div>
       )}
     </div>
   );

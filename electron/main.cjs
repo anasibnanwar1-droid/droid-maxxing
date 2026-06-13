@@ -1202,7 +1202,10 @@ async function managedMacDownload(dmgUrl) {
   const buffer = Buffer.from(await res.arrayBuffer());
   await fsp.writeFile(dest, buffer);
   shell.showItemInFolder(dest);
-  await shell.openPath(dest);
+  // openPath resolves with a non-empty error string (it doesn't reject) when
+  // the OS can't launch the file, so treat that as a failure.
+  const openError = await shell.openPath(dest);
+  if (openError) throw new Error(`could not open downloaded update: ${openError}`);
   return { mode: 'download', path: dest };
 }
 

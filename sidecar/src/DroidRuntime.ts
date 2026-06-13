@@ -93,10 +93,13 @@ export class DroidRuntime {
   }
 
   async startCliLogin(): Promise<void> {
+    // On Windows the npm-installed `droid` is a `.cmd` shim that direct spawn
+    // can't launch, so run it through a shell there.
     const child = spawn(this.resolveDroidPath(), ['login'], {
       env: this.env(),
       detached: true,
       stdio: 'ignore',
+      shell: process.platform === 'win32',
     });
     // A missing/non-executable CLI makes spawn emit 'error'; without a listener
     // that would crash the sidecar, so swallow it here.
