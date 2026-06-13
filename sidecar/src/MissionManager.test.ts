@@ -719,6 +719,7 @@ test('runtime defaults preserve saved model settings when the catalog is unavail
 
 class FakeCompactionSession {
   prompts: string[] = [];
+  callOrder: string[] = [];
   compactions = 0;
   failCompaction = false;
   usedAfterStream?: number;
@@ -733,6 +734,7 @@ class FakeCompactionSession {
   constructor(readonly sessionId: string, private used: number, private swapTo?: string) {}
 
   async *stream(prompt: string): AsyncGenerator<Record<string, unknown>, void, undefined> {
+    this.callOrder.push(`stream:${prompt}`);
     this.prompts.push(prompt);
     for (const event of this.streamEvents) {
       if (this.usedBeforeStreamEvent !== undefined) this.used = this.usedBeforeStreamEvent;
@@ -759,6 +761,7 @@ class FakeCompactionSession {
   }
 
   async compactSession(): Promise<{ newSessionId: string; removedCount: number }> {
+    this.callOrder.push('compact');
     if (this.failCompaction) throw new Error('transient compaction failure');
     this.compactions += 1;
     return { newSessionId: this.swapTo ?? this.sessionId, removedCount: 4 };
@@ -995,6 +998,7 @@ test('worker auto-compacts its own session in place once context crosses the wor
   const { manager, events, workerSession, orchestratorSession } = workerAutoCompactHarness(250_000, 200_000);
   await manager.handle({ type: 'agent.send', missionId: 'app-compact', agentSessionId: 'worker-compact', text: 'go' });
   assert.equal(workerSession.compactions, 1);
+  assert.deepEqual(workerSession.callOrder, ['compact', 'stream:go']);
   // Boundary: worker compaction never touches the orchestrator's own session.
   assert.equal(orchestratorSession.compactions, 0);
   // Compaction status routes to the worker's own transcript, not the orchestrator chat.
@@ -1007,6 +1011,14 @@ test('worker auto-compacts its own session in place once context crosses the wor
   assert.equal(status?.event?.agentSessionId, 'worker-compact');
   assert.equal(status?.event?.role, 'worker');
   assert.equal(events.some((e) => e.type === 'mission.error' || e.type === 'error'), false);
+});
+
+test('worker does not auto-compact after its final answer in the same visible turn', async () => {
+  const { manager, workerSession } = workerAutoCompactHarness(150_000, 200_000);
+  workerSession.usedAfterStream = 250_000;
+  await manager.handle({ type: 'agent.send', missionId: 'app-compact', agentSessionId: 'worker-compact', text: 'go' });
+  assert.equal(workerSession.compactions, 0);
+  assert.deepEqual(workerSession.callOrder, ['stream:go']);
 });
 
 test('worker does not auto-compact while under its limit', async () => {
@@ -1094,7 +1106,9 @@ test('worker swap re-keys and drains queued sends to the new backing session', a
   // The worker is re-keyed; the queued send is delivered to the new session
   // rather than dropped or surfaced as an error to resend.
   assert.equal(mission.agents.has('worker-swapped'), true);
+  await waitFor(() => swappedSession?.prompts.includes('go') ?? false);
   await waitFor(() => swappedSession?.prompts.includes('queued-during-compaction') ?? false);
+  assert.equal(swappedSession?.prompts.includes('go'), true);
   assert.equal(swappedSession?.prompts.includes('queued-during-compaction'), true);
   assert.equal(events.some((e) => e.type === 'error' && /resent/i.test((e as { message?: string }).message ?? '')), false);
 });
@@ -1143,7 +1157,8 @@ test('worker swap whose reload fails goes stale: closes the worker and never dra
     events.some((e) => e.type === 'error' && /could not be adopted|re-open/i.test((e as { message?: string }).message ?? '')),
     true,
   );
-  // ...and the queued send is never delivered to the stale old or unloaded new session.
+  // ...and no prompt is delivered to the stale old or unloaded new session.
+  assert.equal(workerSession.prompts.includes('go'), false);
   assert.equal(workerSession.prompts.includes('queued-into-dead'), false);
   assert.equal(swappedSession?.prompts.includes('queued-into-dead') ?? false, false);
 });
