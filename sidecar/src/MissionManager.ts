@@ -62,8 +62,8 @@ import {
   autoCompactionTokenLimit,
   autoCompactionDue,
   clampCompactionTokenLimit,
+  compactionTokenLimitForModel,
   createCompactionSettingsForModel,
-  effectiveCompactionLimit,
   normalizeCompactionTokenLimit,
   resumedCompactionTokenLimit,
   runCompaction,
@@ -90,6 +90,8 @@ interface LiveAgent {
   // Workers are normal Droid sessions and flow through the same compaction
   // layer as the orchestrator, in-place and scoped to their own session.
   compacting?: boolean;
+  compactionTokenBudget?: number;
+  compactionCount?: number;
   effectiveCompactionTokenLimit?: number;
 }
 
@@ -127,6 +129,7 @@ interface Mission {
   // Droid Control's effective auto-compaction trigger, computed from the
   // configured budget plus the 90%-to-75% session-age policy. Stored so
   // maybeAutoCompact doesn't re-derive it from defaults that may have drifted.
+  compactionTokenBudget?: number;
   effectiveCompactionTokenLimit?: number;
 }
 
@@ -596,12 +599,12 @@ export class MissionManager {
     const defaults = await this.getFactoryDefaults();
     const modelId = mission.summary.modelId
       ?? defaultModelForAgent('orchestrator', modeForSummary(mission.summary), defaults);
-    mission.effectiveCompactionTokenLimit = effectiveCompactionLimit(
-      modelId,
-      defaults,
+    const budget = clampCompactionTokenLimit(
+      compactionTokenLimitForModel(modelId, {}, defaults),
       this.maxContextTokensForModel(modelId),
-      mission.summary.compactedFromSessionIds?.length ?? 0,
     );
+    mission.compactionTokenBudget = budget;
+    mission.effectiveCompactionTokenLimit = autoCompactionTokenLimit(budget, mission.summary.compactedFromSessionIds?.length ?? 0);
   }
 
   private async runtimeAgentSettings(mission: Mission, agent: ConfigurableAgent, settings: AgentSettingPatch): Promise<AgentSettingPatch> {
@@ -748,7 +751,7 @@ export class MissionManager {
         summary,
         session,
         mcp.servers,
-        autoCompactionTokenLimit(resumeCompactionLimit, summary.compactedFromSessionIds?.length ?? 0),
+        resumeCompactionLimit,
         mcp.configs,
       );
       // Seed the spawn->worker links persisted for this mission so historical
@@ -964,7 +967,7 @@ export class MissionManager {
         summary,
         session,
         mcp.servers,
-        autoCompactionTokenLimit(compactionSettings.compactionTokenLimit, 0),
+        compactionSettings.compactionTokenLimit,
         mcp.configs,
       );
       this.missions.set(id, mission);
@@ -978,7 +981,7 @@ export class MissionManager {
     }
   }
 
-  private createLiveMission(summary: MissionSummary, session: DroidSession, mcpServers: SdkMcpServer[] = [], effectiveCompactionTokenLimit?: number, mcpConfigs: Awaited<ReturnType<SdkMcpServer['start']>>[] = []): Mission {
+  private createLiveMission(summary: MissionSummary, session: DroidSession, mcpServers: SdkMcpServer[] = [], compactionTokenBudget?: number, mcpConfigs: Awaited<ReturnType<SdkMcpServer['start']>>[] = []): Mission {
     return {
       summary,
       session,
@@ -996,7 +999,8 @@ export class MissionManager {
       mcpServers,
       mcpConfigs,
       permissionGrants: new Set(),
-      effectiveCompactionTokenLimit,
+      compactionTokenBudget,
+      effectiveCompactionTokenLimit: autoCompactionTokenLimit(compactionTokenBudget, summary.compactedFromSessionIds?.length ?? 0),
     };
   }
 
@@ -1089,6 +1093,12 @@ export class MissionManager {
     if (!mission) return;
     const preCompactionMission = mission;
     const appSessionId = mission.summary.id;
+    mission.streaming = true;
+    this.patch(appSessionId, {
+      phase: mission.summary.kind === 'mission_orchestrator' ? 'planning' : 'running',
+      streaming: true,
+      queuedSends: mission.pendingSends.length,
+    });
     await this.compactBeforeModelStep(appSessionId);
     mission = this.findMission(missionId);
     if (!mission) {
@@ -1096,12 +1106,6 @@ export class MissionManager {
       if (queued.length > 0) void this.redeliverQueuedSends(appSessionId, queued);
       return;
     }
-    mission.streaming = true;
-    this.patch(appSessionId, {
-      phase: mission.summary.kind === 'mission_orchestrator' ? 'planning' : 'running',
-      streaming: true,
-      queuedSends: mission.pendingSends.length,
-    });
     this.startContextPolling(appSessionId, mission.session);
     await this.applyDesignToolPolicy(mission, isDesignPrompt(prompt));
     try {
@@ -1152,7 +1156,7 @@ export class MissionManager {
   // time. This keeps compaction out of the completed final-answer turn.
   private async compactBeforeModelStep(appSessionId: string): Promise<void> {
     const mission = this.findMission(appSessionId);
-    if (!mission || mission.compacting || mission.streaming) return;
+    if (!mission || mission.compacting) return;
     await this.refreshContext(appSessionId, mission.session);
     await this.maybeAutoCompact(appSessionId);
   }
@@ -1431,6 +1435,7 @@ export class MissionManager {
       tokensOut: carryover.tokensOut,
       contextTokens: 0,
     });
+    mission.effectiveCompactionTokenLimit = autoCompactionTokenLimit(mission.compactionTokenBudget, compactedFromSessionIds.length);
   }
 
   // Recovery for an orchestrator compaction that swapped backing sessions but
@@ -1696,6 +1701,10 @@ export class MissionManager {
           ? mission.summary.validatorModelId
           : undefined;
       const workerModelId = resolvedSettings.modelId ?? roleModelId ?? mission.summary.modelId;
+      const compactionTokenBudget = clampCompactionTokenLimit(
+        compactionTokenLimitForModel(workerModelId, {}, defaults),
+        this.maxContextTokensForModel(workerModelId),
+      );
       const agent: LiveAgent = {
         session,
         missionId: appSessionId,
@@ -1703,11 +1712,9 @@ export class MissionManager {
         streaming: false,
         pendingSends: [],
         lastUsedAt: Date.now(),
-        effectiveCompactionTokenLimit: effectiveCompactionLimit(
-          workerModelId,
-          defaults,
-          this.maxContextTokensForModel(workerModelId),
-        ),
+        compactionTokenBudget,
+        compactionCount: 0,
+        effectiveCompactionTokenLimit: autoCompactionTokenLimit(compactionTokenBudget, 0),
       };
       agent.unsubscribe = session.onNotification((note: Record<string, unknown>) => {
         for (const n of normalizeNotification(appSessionId, agentSessionId, role, note)) this.applyNormalized(appSessionId, n);
@@ -1922,6 +1929,8 @@ export class MissionManager {
       this.persistWorkerSwap(mission, oldSessionId, newSessionId);
     }
     await oldSession.close().catch(() => {});
+    agent.compactionCount = (agent.compactionCount ?? 0) + 1;
+    agent.effectiveCompactionTokenLimit = autoCompactionTokenLimit(agent.compactionTokenBudget, agent.compactionCount);
   }
 
   // Persist a worker's compaction swap to the durable spawn link and the mission
