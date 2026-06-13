@@ -1103,7 +1103,7 @@ export class MissionManager {
       streaming: true,
       queuedSends: mission.pendingSends.length,
     });
-    await this.compactBeforeModelStep(appSessionId);
+    await this.compactBeforeStreamedTurn(appSessionId);
     mission = this.findMission(missionId);
     if (!mission) {
       const queued = [prompt, ...preCompactionMission.pendingSends.splice(0)];
@@ -1158,11 +1158,11 @@ export class MissionManager {
     }
   }
 
-  // The SDK exposes manual compaction only; auto-compaction is the client's job
-  // (the CLI runs its own loop). Before each model step, compact once the context
-  // window crosses the effective limit stored on the Mission at creation/resume
-  // time. This keeps compaction out of the completed final-answer turn.
-  private async compactBeforeModelStep(appSessionId: string): Promise<void> {
+  // The SDK owns the model/tool continuation loop inside one stream() call and
+  // does not expose a safe pre-continuation checkpoint. Compact only before
+  // starting the streamed turn; true mid-task compaction belongs in the
+  // SDK/daemon boundary so compaction can run before the next model request.
+  private async compactBeforeStreamedTurn(appSessionId: string): Promise<void> {
     const mission = this.findMission(appSessionId);
     if (!mission || mission.compacting) return;
     await this.refreshContext(appSessionId, mission.session);
