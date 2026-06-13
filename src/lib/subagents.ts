@@ -111,6 +111,42 @@ export type SubagentLatest = {
   isError?: boolean;
 };
 
+export type SubagentTarget = { toolUseId?: string; label?: string };
+
+export type SubagentActivity = {
+  status?: WorkerInfo['status'];
+  startedAt?: number;
+  latest?: SubagentLatest;
+};
+
+export function findWorkerForTarget(workers: WorkerInfo[], target: SubagentTarget): WorkerInfo | undefined {
+  if (target.toolUseId) {
+    const byId = workers.find((w) => w.toolUseId === target.toolUseId);
+    if (byId) return byId;
+  }
+  const label = target.label?.toLowerCase();
+  if (!label) return undefined;
+  const matches = workers.filter((w) => (w.label ?? '').toLowerCase() === label);
+  return matches.find((w) => w.status === 'running') ?? matches[matches.length - 1];
+}
+
+export function subagentActivityForTarget(
+  workers: WorkerInfo[],
+  allTx: TranscriptEvent[],
+  target: SubagentTarget,
+): SubagentActivity | undefined {
+  const worker = findWorkerForTarget(workers, target);
+  if (!worker) return undefined;
+  let latest: SubagentLatest | undefined;
+  for (let i = allTx.length - 1; i >= 0; i--) {
+    const t = allTx[i];
+    if (t.agentSessionId !== worker.sessionId || (t.kind === 'tool_result' && !t.isError) || t.author === 'user') continue;
+    latest = { kind: t.kind, text: t.text, toolName: t.toolName, toolArgs: t.toolArgs, isError: t.isError };
+    break;
+  }
+  return { status: worker.status, startedAt: worker.startedAt, latest };
+}
+
 // Last non-empty line, capped, so a long thinking block stays a one-line cue.
 export function previewLine(text?: string): string | undefined {
   if (!text) return undefined;

@@ -26,6 +26,7 @@ const MAX_NODES = 1000;
 // also blow the call stack via spread math like `Math.min(...data)` (a
 // model-supplied `data` of 100k+ numbers throws RangeError and freezes chat).
 const MAX_ITEMS = 2000;
+const MAX_TABLE_COLUMNS = 40;
 
 type RawElement = {
   type?: string;
@@ -119,6 +120,10 @@ const STATUS_META: Record<string, { color: string; Icon: typeof Info }> = {
 // member (with no .Icon) and crash React while rendering an undefined component.
 function statusMeta(key: string): { color: string; Icon: typeof Info } {
   return Object.prototype.hasOwnProperty.call(STATUS_META, key) ? STATUS_META[key] : STATUS_META.info;
+}
+
+function statusColor(key: string, fallback = 'var(--droid-text-muted)'): string {
+  return Object.prototype.hasOwnProperty.call(STATUS_META, key) ? STATUS_META[key].color : fallback;
 }
 
 /* ── individual components ── */
@@ -225,13 +230,15 @@ function SparklineEl({ props }: { props: Record<string, unknown> }) {
 }
 
 function TableEl({ props }: { props: Record<string, unknown> }) {
-  const columns = asRecordArray(props.columns);
+  const columns = asRecordArray(props.columns).slice(0, MAX_TABLE_COLUMNS);
   const rows = asRecordArray(props.rows);
   const headerColor = resolveColor(props.headerColor);
   // Fall back to row keys when columns are omitted.
   const cols: Record<string, unknown>[] = columns.length
     ? columns
-    : Array.from(new Set(rows.flatMap((r) => Object.keys(r)))).map((key) => ({ header: key, key }));
+    : Array.from(new Set(rows.flatMap((r) => Object.keys(r))))
+        .slice(0, MAX_TABLE_COLUMNS)
+        .map((key) => ({ header: key, key }));
   return (
     <div className="overflow-x-auto rounded-xl border border-droid-border w-full">
       <table className="w-full border-collapse text-[12.5px]">
@@ -389,7 +396,7 @@ function TimelineEl({ props }: { props: Record<string, unknown> }) {
     <div className="flex flex-col">
       {items.map((it, i) => {
         const status = asString(it.status).toLowerCase();
-        const dot = STATUS_META[status]?.color ?? 'var(--droid-text-muted)';
+        const dot = statusColor(status);
         const last = i === items.length - 1;
         return (
           <div key={i} className="flex gap-2.5">

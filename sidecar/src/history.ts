@@ -18,6 +18,7 @@ import type {
 } from './protocol.js';
 import { mapFeature } from './normalize.js';
 import { designPromptDisplayFromText } from './browser/designPromptDisplay.js';
+import { normalizeCompactionTokenLimit } from './compaction.js';
 
 interface StoredMissionState {
   missionId?: string;
@@ -785,8 +786,7 @@ function mapInteractionMode(value?: string): FactoryDefaults['interactionMode'] 
 }
 
 function tokenLimitValue(value: unknown): number | undefined {
-  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return undefined;
-  return Math.trunc(value);
+  return normalizeCompactionTokenLimit(value);
 }
 
 function tokenLimitRecordValue(value: unknown): Record<string, number> | undefined {

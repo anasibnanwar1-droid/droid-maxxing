@@ -13,8 +13,9 @@ export interface FileChange {
 
 const EDIT_TOOLS = ['edit', 'multiedit', 'multi_edit', 'str_replace', 'apply_patch', 'create', 'write'];
 
-function isEditTool(name: string): boolean {
-  return EDIT_TOOLS.some((t) => name === t) || name.includes('edit') || name.includes('patch') || name.includes('write') || name.includes('str_replace');
+export function isEditTool(name: string | undefined): boolean {
+  const lower = name?.toLowerCase() ?? '';
+  return EDIT_TOOLS.some((t) => lower === t) || lower.includes('edit') || lower.includes('patch') || lower.includes('write') || lower.includes('str_replace');
 }
 
 function firstString(obj: Record<string, unknown>, keys: string[]): string | undefined {
@@ -89,7 +90,7 @@ function parsePatch(patch: string): DiffOp[] {
 
 export function extractFileChange(toolName?: string, args?: unknown): FileChange | null {
   if (!toolName) return null;
-  if (!isEditTool(toolName.toLowerCase())) return null;
+  if (!isEditTool(toolName)) return null;
 
   const a: Record<string, unknown> = args && typeof args === 'object' ? (args as Record<string, unknown>) : {};
   const argPath = firstString(a, ['path', 'file_path', 'filePath', 'file', 'target_file', 'filename']);

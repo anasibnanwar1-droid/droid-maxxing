@@ -5,7 +5,7 @@ import { useMissionLive } from '../hooks/useMissionLive';
 import { MessageFeed, WorkingIndicator } from './chat';
 import { readFile } from '../lib/desktop';
 import { interruptAgent, loadOlderMissionHistory } from '../lib/commands';
-import { resolveWorkers } from '../lib/subagents';
+import { findWorkerForTarget, resolveWorkers, subagentActivityForTarget } from '../lib/subagents';
 
 function DroidWordmark() {
   return (
@@ -121,42 +121,17 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
     : undefined;
   const subMeta = [subModel, selectedWorker?.reasoningEffort].filter(Boolean).join(' · ');
 
-  // Resolve a spawn line to its worker: the Task tool_call id is the precise
-  // link; fall back to the droid name (preferring a still-running instance).
-  const findWorker = useCallback((toolUseId?: string, label?: string) => {
-    if (toolUseId) {
-      const byId = resolvedWorkers.find((w) => w.toolUseId === toolUseId);
-      if (byId) return byId;
-    }
-    if (label) {
-      const matches = resolvedWorkers.filter((w) => (w.label ?? '').toLowerCase() === label.toLowerCase());
-      return matches.find((w) => w.status === 'running') ?? matches[matches.length - 1];
-    }
-    return undefined;
-  }, [resolvedWorkers]);
-
   // Click a spawn name → switch the main chat view to that subagent's session.
   const openSubagent = useCallback((target: { toolUseId?: string; label?: string }) => {
-    const worker = findWorker(target.toolUseId, target.label);
+    const worker = findWorkerForTarget(resolvedWorkers, target);
     if (worker) dispatch({ type: 'SELECT_AGENT', id: worker.sessionId });
-  }, [findWorker, dispatch]);
+  }, [resolvedWorkers, dispatch]);
 
   // Latest activity for a spawn line's inline disclosure: the worker's status,
   // start time (for the timer), and its newest meaningful transcript event.
   const subagentActivity = useCallback((target: { toolUseId?: string; label?: string }) => {
-    const worker = findWorker(target.toolUseId, target.label);
-    if (!worker) return undefined;
-    let latest: { kind: typeof allTranscript[number]['kind']; text?: string; toolName?: string; toolArgs?: unknown; isError?: boolean } | undefined;
-    for (let i = allTranscript.length - 1; i >= 0; i--) {
-      const t = allTranscript[i];
-      // Skip successful tool results (just output), but keep a failed one so the
-      // worker's error surfaces instead of hiding behind stale/empty activity.
-      if (t.agentSessionId !== worker.sessionId || (t.kind === 'tool_result' && !t.isError) || t.author === 'user') continue;
-      latest = { kind: t.kind, text: t.text, toolName: t.toolName, toolArgs: t.toolArgs, isError: t.isError };
-      break;
-    }
-    return { status: worker.status, startedAt: worker.startedAt, latest };
-  }, [findWorker, allTranscript]);
+    return subagentActivityForTarget(resolvedWorkers, allTranscript, target);
+  }, [resolvedWorkers, allTranscript]);
 
   const transcript = useMemo(() => {
     if (viewingSub) return allTranscript.filter((t) => t.agentSessionId === selectedAgent);

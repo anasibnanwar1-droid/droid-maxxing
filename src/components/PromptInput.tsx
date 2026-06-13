@@ -6,6 +6,7 @@ import { useMissionLive } from '../hooks/useMissionLive';
 import { sendToMission, sendToMissionNow, sendToAgent, sendToAgentNow, sendDesignPrompt, createMission, interruptMission, interruptAgent, compactSession, setInteractionMode, newClientRef, listSkills } from '../lib/commands';
 import { browserTranscriptReferencesFromDesignReferences } from './browser/browserTranscriptReferences';
 import { pickDirectory, listFiles } from '../lib/desktop';
+import { createLocalDesignTranscriptEvent, newQueueId } from '../lib/promptQueue';
 import { ArrowUp, ChevronDown, SlidersHorizontal, Square, FileText, X, Folder, User, Box, ListPlus, GripVertical, Pencil, MousePointerSquareDashed } from 'lucide-react';
 import ModelSelectorPopover from './ModelSelectorPopover';
 import PermissionInline from './PermissionInline';
@@ -17,7 +18,6 @@ const ACCENT = 'var(--droid-accent)';
 const accentMix = (pct: number) => `color-mix(in srgb, var(--droid-accent) ${pct}%, transparent)`;
 type SubmitMode = 'queue' | 'now';
 const oppositeSubmitMode = (mode: SubmitMode): SubmitMode => mode === 'queue' ? 'now' : 'queue';
-const newQueueId = () => `q-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 
 type SlashCommand = { cmd: string; desc: string; run: () => void };
 
@@ -398,20 +398,7 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
         return;
       }
       const browserRefs = browserTranscriptReferencesFromDesignReferences(p.design.references);
-      dispatch({
-        type: 'MISSION_TRANSCRIPT',
-        event: {
-          id: `local-design-${Date.now()}`,
-          missionId: activeMission.id,
-          agentSessionId: 'user',
-          role: 'orchestrator',
-          ts: Date.now(),
-          kind: 'text',
-          text: p.text,
-          author: 'user',
-          browserRefs: browserRefs.length ? browserRefs : undefined,
-        },
-      });
+      dispatch({ type: 'MISSION_TRANSCRIPT', event: createLocalDesignTranscriptEvent(activeMission.id, p.text, browserRefs) });
       dispatch({ type: 'REMOVE_QUEUED_PROMPT', missionId: activeMission.id, id: p.id });
       return;
     }

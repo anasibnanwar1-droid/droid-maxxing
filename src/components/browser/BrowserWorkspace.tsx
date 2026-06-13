@@ -32,6 +32,8 @@ import { browserKeyForMission } from '../../lib/browserSessionIdentity';
 import { browserTranscriptReferencesFromDesignReferences } from './browserTranscriptReferences';
 import { isSelfBrowserUrl, safeBrowserUrl } from './browserUrlSafety';
 import { useElementSize } from './useElementSize';
+import { isEditTool } from '../../lib/diff';
+import { createLocalDesignTranscriptEvent, newQueueId } from '../../lib/promptQueue';
 
 export default function BrowserWorkspace() {
   const { state, dispatch } = useStore();
@@ -92,11 +94,7 @@ export default function BrowserWorkspace() {
     if (!transcripts) return;
     const last = transcripts[transcripts.length - 1];
     if (!last || last.kind !== 'tool_result') return;
-    const name = last.toolName ?? '';
-    const isEdit = name === 'edit' || name === 'multiedit' || name === 'multi_edit'
-      || name === 'str_replace' || name === 'apply_patch' || name === 'create'
-      || name === 'write' || name.includes('edit') || name.includes('patch');
-    if (!isEdit || last.isError) return;
+    if (!isEditTool(last.toolName) || last.isError) return;
     if (last.ts <= lastEditTsRef.current) return;
     lastEditTsRef.current = last.ts;
     if (reloadTimerRef.current) clearTimeout(reloadTimerRef.current);
@@ -209,20 +207,7 @@ export default function BrowserWorkspace() {
   const emitDesignTranscript = useCallback((text: string, refs: DesignReference[]) => {
     if (!requestedChatId) return;
     const browserRefs = browserTranscriptReferencesFromDesignReferences(refs);
-    dispatch({
-      type: 'MISSION_TRANSCRIPT',
-      event: {
-        id: `local-design-${Date.now()}`,
-        missionId: requestedChatId,
-        agentSessionId: 'user',
-        role: 'orchestrator',
-        ts: Date.now(),
-        kind: 'text',
-        text,
-        author: 'user',
-        browserRefs: browserRefs.length ? browserRefs : undefined,
-      },
-    });
+    dispatch({ type: 'MISSION_TRANSCRIPT', event: createLocalDesignTranscriptEvent(requestedChatId, text, browserRefs) });
   }, [dispatch, requestedChatId]);
 
   // Stage a design prompt in the same client-side queue normal prompts use so
@@ -234,7 +219,7 @@ export default function BrowserWorkspace() {
       type: 'QUEUE_PROMPT',
       missionId: requestedChatId,
       prompt: {
-        id: `q-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        id: newQueueId(),
         text,
         skills: [],
         files: [],
@@ -276,7 +261,6 @@ export default function BrowserWorkspace() {
     const reference = referenceFromNativeSelection(prompt.selection);
     const referenceId = reference.id;
     if (!referenceId) return;
-    setReferences([reference]);
     addDesignReference(browserKey, reference);
     if (missionLive) {
       queueDesignPrompt(text, [reference], [referenceId]);

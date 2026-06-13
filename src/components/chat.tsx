@@ -7,7 +7,7 @@ import { JsonRender, splitJsonRender, hasJsonRender } from './JsonRender';
 import { extractFileChange, type FileChange } from '../lib/diff';
 import { DiffCard } from './DiffView';
 import { CAT_LABEL, toolMeta, safeJson, stripAnsi, formatDuration, isSubagentTool, subagentInfo } from '../lib/tools';
-import { richerSubagent, subagentLatest, type SubagentLatest } from '../lib/subagents';
+import { richerSubagent, subagentLatest, type SubagentActivity, type SubagentTarget } from '../lib/subagents';
 
 const ACCENT = 'var(--droid-accent)';
 const EASE = [0.16, 1, 0.3, 1] as const;
@@ -759,13 +759,6 @@ function subagentColor(label: string): string {
   for (let i = 0; i < label.length; i++) h = (h * 31 + label.charCodeAt(i)) >>> 0;
   return SUBAGENT_COLORS[h % SUBAGENT_COLORS.length];
 }
-
-export type SubagentTarget = { toolUseId?: string; label?: string };
-export type SubagentActivity = {
-  status?: 'running' | 'paused' | 'completed';
-  startedAt?: number;
-  latest?: SubagentLatest;
-};
 
 /* ── In-chat spawned subagent: inline thinking-style line + click to navigate ── */
 function SubagentLine({ event, active, onOpen, activity }: {

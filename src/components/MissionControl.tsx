@@ -27,7 +27,7 @@ import { environmentLabels } from '../lib/repoEnvironment';
 import { DiffFull } from './DiffView';
 import { ModelIcon, providerOf } from './ModelIcon';
 import { CAT_ICON, CAT_LABEL, toolMeta } from '../lib/tools';
-import { resolveWorkers } from '../lib/subagents';
+import { findWorkerForTarget, resolveWorkers, subagentActivityForTarget } from '../lib/subagents';
 import type { WorkerInfo } from '../hooks/useStore';
 import { MessageFeed } from './chat';
 import EditorOpenMenu, { openCodebase, openCurrentDiff } from './EditorOpenMenu';
@@ -654,44 +654,19 @@ export default function MissionControl() {
   // transcript reconstruction for older history that predates persisted links.
   const resolvedWorkers = useMemo<WorkerInfo[]>(() => resolveWorkers(missionWorkers, allTx), [missionWorkers, allTx]);
 
-  // Resolve an inline spawn line to its worker: the Task tool_call id is the
-  // precise link; fall back to the droid name (preferring a running instance).
-  const findWorker = useCallback((toolUseId?: string, label?: string) => {
-    if (toolUseId) {
-      const byId = resolvedWorkers.find((w) => w.toolUseId === toolUseId);
-      if (byId) return byId;
-    }
-    if (label) {
-      const matches = resolvedWorkers.filter((w) => (w.label ?? '').toLowerCase() === label.toLowerCase());
-      return matches.find((w) => w.status === 'running') ?? matches[matches.length - 1];
-    }
-    return undefined;
-  }, [resolvedWorkers]);
-
   // Click a spawn name in the orchestrator transcript → focus that worker.
   // Mission orchestrators are skipped by App's subscribe effect, so open the
   // worker session here to load its history/live events before switching.
   const openSubagent = useCallback((target: { toolUseId?: string; label?: string }) => {
-    const worker = findWorker(target.toolUseId, target.label);
+    const worker = findWorkerForTarget(resolvedWorkers, target);
     if (!worker || !mission) return;
     subscribeWorker(mission.id, worker.sessionId);
     setViewedAgent(worker.sessionId);
-  }, [findWorker, mission]);
+  }, [resolvedWorkers, mission]);
 
   const subagentActivity = useCallback((target: { toolUseId?: string; label?: string }) => {
-    const worker = findWorker(target.toolUseId, target.label);
-    if (!worker) return undefined;
-    let latest: { kind: TranscriptEvent['kind']; text?: string; toolName?: string; toolArgs?: unknown; isError?: boolean } | undefined;
-    for (let i = allTx.length - 1; i >= 0; i--) {
-      const t = allTx[i];
-      // Skip successful tool results (just output), but keep a failed one so the
-      // worker's error surfaces instead of hiding behind stale/empty activity.
-      if (t.agentSessionId !== worker.sessionId || (t.kind === 'tool_result' && !t.isError) || t.author === 'user') continue;
-      latest = { kind: t.kind, text: t.text, toolName: t.toolName, toolArgs: t.toolArgs, isError: t.isError };
-      break;
-    }
-    return { status: worker.status, startedAt: worker.startedAt, latest };
-  }, [findWorker, allTx]);
+    return subagentActivityForTarget(resolvedWorkers, allTx, target);
+  }, [resolvedWorkers, allTx]);
   const phaseLive = mission ? ['running', 'initializing', 'orchestrator_turn'].includes(mission.phase) : false;
 
   // Track real generation activity (streaming text grows in place, so watch text length too).
