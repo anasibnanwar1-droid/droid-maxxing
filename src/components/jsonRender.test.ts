@@ -1,6 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
 import {
+  JsonRender,
   splitJsonRender,
   hasJsonRender,
   __resolveColorForTest as resolveColor,
@@ -90,6 +93,21 @@ test('statusMeta resolves real statuses and falls back for prototype keys', () =
     assert.ok(meta && meta.Icon, `${key} falls back to a meta with an icon`);
     assert.equal(meta.color, statusMeta('info').color);
   }
+});
+
+test('a huge Sparkline data array renders without blowing the call stack', () => {
+  // Before the collection cap, SparklineEl's `Math.min(...data)` spread on a
+  // 200k-element array threw RangeError and froze the chat. The cap must keep
+  // the spec renderable.
+  const data = Array.from({ length: 200_000 }, (_, i) => i % 50);
+  const source = JSON.stringify({ root: 'r', elements: { r: { type: 'Sparkline', props: { data } } } });
+  assert.doesNotThrow(() => renderToStaticMarkup(createElement(JsonRender, { source })));
+});
+
+test('a huge BarChart data array renders without blowing the call stack', () => {
+  const data = Array.from({ length: 200_000 }, (_, i) => ({ label: `l${i}`, value: i % 50 }));
+  const source = JSON.stringify({ root: 'r', elements: { r: { type: 'BarChart', props: { data } } } });
+  assert.doesNotThrow(() => renderToStaticMarkup(createElement(JsonRender, { source })));
 });
 
 test('render budget leaves small specs fully expanded', () => {

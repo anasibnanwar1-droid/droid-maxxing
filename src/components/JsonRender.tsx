@@ -21,6 +21,11 @@ const MAX_DEPTH = 50;
 // exponentially before MAX_DEPTH alone stops it. A shared node budget caps the
 // total rendered elements so a small malicious/buggy spec can't freeze the UI.
 const MAX_NODES = 1000;
+// Collection props (chart data, table rows, list items) are capped before
+// rendering: a huge array would not only spawn thousands of DOM nodes but can
+// also blow the call stack via spread math like `Math.min(...data)` (a
+// model-supplied `data` of 100k+ numbers throws RangeError and freezes chat).
+const MAX_ITEMS = 2000;
 
 type RawElement = {
   type?: string;
@@ -80,7 +85,7 @@ function asNumber(v: unknown): number | undefined {
 }
 
 function asArray<T = unknown>(v: unknown): T[] {
-  return Array.isArray(v) ? (v as T[]) : [];
+  return Array.isArray(v) ? (v as T[]).slice(0, MAX_ITEMS) : [];
 }
 
 // Like asArray but drops entries that are not plain objects, so components can
@@ -88,7 +93,9 @@ function asArray<T = unknown>(v: unknown): T[] {
 // include null/primitive entries such as data: [null].
 function asRecordArray(v: unknown): Record<string, unknown>[] {
   return Array.isArray(v)
-    ? v.filter((e): e is Record<string, unknown> => typeof e === 'object' && e !== null && !Array.isArray(e))
+    ? v
+        .filter((e): e is Record<string, unknown> => typeof e === 'object' && e !== null && !Array.isArray(e))
+        .slice(0, MAX_ITEMS)
     : [];
 }
 
