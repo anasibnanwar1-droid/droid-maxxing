@@ -641,8 +641,20 @@ interface CompactionState {
 // Read the leading compaction_state record a compacted session begins with.
 // It marks the boundary where earlier turns were summarized away; we surface it
 // as a subtle "context compacted" divider rather than replaying the summary.
+// Reads from the HEAD of the file (compaction_state is a leading record); the
+// transcript reader tail-windows oversized files and would miss it.
 function readCompactionState(path: string): CompactionState | null {
-  const rows = readSessionJsonLines<{ type?: string; timestamp?: string; removedCount?: unknown }>(path).rows;
+  const size = statSync(path).size;
+  const bytes = Math.min(size, SESSION_START_BYTES);
+  const fd = openSync(path, 'r');
+  let rows: Array<{ type?: string; timestamp?: string; removedCount?: unknown }>;
+  try {
+    const buffer = Buffer.alloc(bytes);
+    readSync(fd, buffer, 0, bytes, 0);
+    rows = parseJsonLines(buffer.toString('utf8'));
+  } finally {
+    closeSync(fd);
+  }
   for (const row of rows) {
     if (row.type === 'session_start') continue;
     if (row.type === 'compaction_state') {

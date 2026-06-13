@@ -98,6 +98,19 @@ test('cursor pages older history across the chain with no gaps or duplicates', (
   assert.deepEqual(collected, ['a0-1', 'a0-2', 'divider:5', 'a1-1', 'a1-2', 'divider:7', 'a2-1', 'a2-2']);
 });
 
+test('an oversized compacted segment still surfaces its divider (read from the head)', () => {
+  // > MAX_SESSION_BYTES so the transcript reader tail-windows the file; the
+  // leading compaction_state must still be found by reading the head.
+  const huge = 'x'.repeat(6_000_000);
+  writeSession('orig', [assistant('first')]);
+  writeSession('big', [compactionState(42), assistant('after-1'), assistant(huge)]);
+
+  const { events } = loadMissionTranscriptWindow('m', ['orig', 'big'], { limit: 100 });
+  const divider = events.find((e) => e.kind === 'compaction');
+  assert.ok(divider, 'expected a compaction divider for the oversized segment');
+  assert.equal(divider!.removedCount, 42);
+});
+
 test('a single (never-compacted) session yields no divider and no older cursor', () => {
   writeSession('solo', [assistant('only-1'), assistant('only-2')]);
   const { events, olderCursor } = loadMissionTranscriptWindow('m', ['solo'], { limit: 100 });
