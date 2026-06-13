@@ -1191,11 +1191,40 @@ async function downloadAppUpdate(dmgUrl) {
   return managedMacDownload(dmgUrl);
 }
 
+// The renderer relays the manifest-selected URL, so it cannot be trusted on its
+// own. Only allow HTTPS downloads from the update host(s) we control: the
+// download base, an optional autoUpdater feed, and any explicitly configured
+// CDN hosts. Anything else is rejected so a compromised renderer can't make the
+// main process fetch and launch an arbitrary payload.
+function trustedUpdateHosts() {
+  const hosts = new Set();
+  const add = (base) => { try { hosts.add(new URL(base).host); } catch { /* ignore */ } };
+  add(DOWNLOAD_BASE);
+  if (UPDATE_FEED) add(UPDATE_FEED);
+  for (const host of (process.env.DROID_UPDATE_HOSTS || '').split(',').map((s) => s.trim()).filter(Boolean)) {
+    hosts.add(host);
+  }
+  return hosts;
+}
+
+function assertTrustedDmgUrl(rawUrl) {
+  let parsed;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    throw new Error('refusing malformed update URL');
+  }
+  if (parsed.protocol !== 'https:') throw new Error('refusing non-HTTPS update URL');
+  if (!trustedUpdateHosts().has(parsed.host)) throw new Error(`refusing update from untrusted host: ${parsed.host}`);
+  return parsed;
+}
+
 async function managedMacDownload(dmgUrl) {
   // Honor the manifest-selected artifact (versioned/CDN/arch-specific) so we
   // never advertise one update then fetch a different default file.
-  const url = dmgUrl || `${DOWNLOAD_BASE}/downloads/${macDmgName()}`;
-  const fileName = path.basename(new URL(url).pathname) || macDmgName();
+  const parsed = assertTrustedDmgUrl(dmgUrl || `${DOWNLOAD_BASE}/downloads/${macDmgName()}`);
+  const url = parsed.toString();
+  const fileName = path.basename(parsed.pathname) || macDmgName();
   const dest = path.join(app.getPath('downloads'), fileName);
   const res = await fetch(url);
   if (!res.ok) throw new Error(`download failed (${res.status})`);
