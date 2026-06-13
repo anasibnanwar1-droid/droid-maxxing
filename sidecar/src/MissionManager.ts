@@ -59,10 +59,10 @@ import { filterMissionListSummaries, type MissionListFilterOptions } from './mis
 import {
   autoCompactionDue,
   clampCompactionTokenLimit,
-  compactionTokenLimitForModel,
   createCompactionSettingsForModel,
   effectiveCompactionLimit,
   normalizeCompactionTokenLimit,
+  resumedCompactionTokenLimit,
   runCompaction,
   type CompactionOutcome,
   type CompactType,
@@ -729,7 +729,7 @@ export class MissionManager {
       // per-session compactionTokenLimit, so honor one only if the resumed init
       // settings expose it; otherwise the threshold follows current app defaults.
       const resumeCompactionLimit = clampCompactionTokenLimit(
-        compactionTokenLimitForModel(summary.modelId, {
+        resumedCompactionTokenLimit(summary.modelId, {
           compactionTokenLimit: init.settings?.compactionTokenLimit,
           compactionTokenLimitPerModel: init.settings?.compactionTokenLimitPerModel,
         }, defaults),
@@ -788,8 +788,11 @@ export class MissionManager {
   private withLiveWorkerStatus(appSessionId: string, links: WorkerHistoryLink[]): WorkerHistoryLink[] {
     const mission = this.findMission(appSessionId);
     if (!mission) return links;
+    // A resumed worker that the user has opened is live in mission.agents but is
+    // not re-added to knownSubagents (that only happens on a live spawn), so
+    // check both; otherwise a history reload would render it as completed.
     return links.map((link) =>
-      mission.knownSubagents.has(link.workerSessionId)
+      mission.knownSubagents.has(link.workerSessionId) || mission.agents.has(link.workerSessionId)
         ? { ...link, status: mission.completedSubagents.has(link.workerSessionId) ? 'completed' : 'running' }
         : link,
     );
@@ -1288,8 +1291,11 @@ export class MissionManager {
       tokensOut: mission.summary.tokensOut ?? 0,
     };
     mission.compacting = true;
+    // Remembers the daemon's new backing id so a reload failure can be recovered
+    // after runCompaction returns 'stale' (the hook sets it before adopting).
+    let swapTarget: string | undefined;
     try {
-      await runCompaction(
+      const outcome = await runCompaction(
         mission.session,
         {
           status: (text, ct) => this.emitStatus(appSessionId, text, ct),
@@ -1297,39 +1303,87 @@ export class MissionManager {
             this.emitError({ sessionId: mission.summary.sessionId, missionId: appSessionId, message: `Could not compact session: ${message}`, recoverable: true }),
           refresh: () => this.refreshContext(appSessionId, mission.session),
           reload: async (newSessionId) => {
-            const compactedFromSessionIds = uniqueStrings([
-              ...(mission.summary.compactedFromSessionIds ?? []),
-              mission.summary.sessionId,
-            ]);
-            const ref = { id: appSessionId };
-            const oldSession = mission.session;
-            mission.session = await this.runtime.loadSession(newSessionId, {
-              permissionHandler: this.makePermissionHandler(ref),
-              askUserHandler: this.makeAskUserHandler(ref),
-              // Re-attach the same local MCP servers (still running) so the
-              // swapped session keeps browser tools on subsequent turns.
-              mcpServers: mission.mcpConfigs,
-            });
-            // The replacement session starts with default tool settings, so the
-            // cached design-tool policy no longer reflects reality. Clear it so
-            // the next turn re-synchronizes disabledToolIds.
-            mission.todoDisabledForDesign = undefined;
-            await oldSession.close().catch(() => {});
-            this.usageOffsets.set(appSessionId, carryover);
-            this.patch(appSessionId, {
-              sessionId: newSessionId,
-              compactedFromSessionIds,
-              tokensIn: carryover.tokensIn,
-              tokensOut: carryover.tokensOut,
-              contextTokens: 0,
-            });
+            swapTarget = newSessionId;
+            await this.swapMissionSession(mission, newSessionId, carryover);
           },
         },
         { customInstructions, compactType },
       );
+      // The daemon swapped to a new backing id but adopting it threw, so
+      // mission.session still points at the swapped-away (now-dead) old id.
+      // Recover before later sends stream into that stale session.
+      if (outcome === 'stale' && swapTarget) {
+        await this.recoverStaleMissionSwap(mission, swapTarget, carryover);
+      }
     } finally {
       mission.compacting = false;
     }
+  }
+
+  // Adopt the daemon's compacted backing session behind the stable app id:
+  // load the new id, swap it in, retire the old session, and persist the new id
+  // with carried-over usage. Throws if the new session cannot be loaded.
+  private async swapMissionSession(mission: Mission, newSessionId: string, carryover: UsageOffset): Promise<void> {
+    const appSessionId = mission.summary.id;
+    const compactedFromSessionIds = uniqueStrings([
+      ...(mission.summary.compactedFromSessionIds ?? []),
+      mission.summary.sessionId,
+    ]);
+    const ref = { id: appSessionId };
+    const oldSession = mission.session;
+    mission.session = await this.runtime.loadSession(newSessionId, {
+      permissionHandler: this.makePermissionHandler(ref),
+      askUserHandler: this.makeAskUserHandler(ref),
+      // Re-attach the same local MCP servers (still running) so the swapped
+      // session keeps browser tools on subsequent turns.
+      mcpServers: mission.mcpConfigs,
+    });
+    // The replacement session starts with default tool settings, so the cached
+    // design-tool policy no longer reflects reality. Clear it so the next turn
+    // re-synchronizes disabledToolIds.
+    mission.todoDisabledForDesign = undefined;
+    await oldSession.close().catch(() => {});
+    this.usageOffsets.set(appSessionId, carryover);
+    this.patch(appSessionId, {
+      sessionId: newSessionId,
+      compactedFromSessionIds,
+      tokensIn: carryover.tokensIn,
+      tokensOut: carryover.tokensOut,
+      contextTokens: 0,
+    });
+  }
+
+  // Recovery for an orchestrator compaction that swapped backing sessions but
+  // failed to adopt the new one (mission.session is now a dead id). Retry the
+  // adoption once for a transient failure; if it still fails, persist the new
+  // id and drop the live mission so the next send re-resumes against the live
+  // (compacted) session instead of streaming into the dead one.
+  private async recoverStaleMissionSwap(mission: Mission, newSessionId: string, carryover: UsageOffset): Promise<void> {
+    const appSessionId = mission.summary.id;
+    try {
+      await this.swapMissionSession(mission, newSessionId, carryover);
+      return;
+    } catch {
+      /* adoption still failing; persist the new id and drop the mission below */
+    }
+    this.usageOffsets.set(appSessionId, carryover);
+    this.patch(appSessionId, {
+      sessionId: newSessionId,
+      compactedFromSessionIds: uniqueStrings([
+        ...(mission.summary.compactedFromSessionIds ?? []),
+        mission.summary.sessionId,
+      ]),
+      tokensIn: carryover.tokensIn,
+      tokensOut: carryover.tokensOut,
+      contextTokens: 0,
+    });
+    await this.closeMission(appSessionId);
+    this.emitError({
+      missionId: appSessionId,
+      sessionId: newSessionId,
+      message: 'Compaction moved this conversation to a new session but reloading it failed; it will reload on your next message.',
+      recoverable: true,
+    });
   }
 
   // Compacting a session that is not currently loaded (e.g. from the sidebar

@@ -13,6 +13,7 @@ import {
   clampCompactionTokenLimit,
   compactionTokenLimitForModel,
   createCompactionSettingsForModel,
+  resumedCompactionTokenLimit,
 } from './compaction.js';
 import type { BridgeFeature, MissionSummary, ModelInfo, ServerEvent, WorkerHistoryLink } from './protocol.js';
 
@@ -208,7 +209,7 @@ test('resume threshold honors an init-exposed compaction limit ahead of current 
   // over the current Factory defaults.
   assert.equal(
     clampCompactionTokenLimit(
-      compactionTokenLimitForModel(
+      resumedCompactionTokenLimit(
         'model-a',
         { compactionTokenLimit: 120_000, compactionTokenLimitPerModel: undefined },
         { compactionTokenLimit: 200_000 },
@@ -219,12 +220,35 @@ test('resume threshold honors an init-exposed compaction limit ahead of current 
   );
 });
 
+test("resume threshold honors an init-exposed global limit over a current default per-model limit", () => {
+  // The resumed session exposes only a global limit; a current per-model default
+  // must not override the session's own saved limit (regression: the plain
+  // helper preferred the default per-model entry first).
+  assert.equal(
+    resumedCompactionTokenLimit(
+      'model-a',
+      { compactionTokenLimit: 120_000, compactionTokenLimitPerModel: undefined },
+      { compactionTokenLimitPerModel: { 'model-a': 200_000 } },
+    ),
+    120_000,
+  );
+  // Sanity check that the plain helper is what exhibited the override.
+  assert.equal(
+    compactionTokenLimitForModel(
+      'model-a',
+      { compactionTokenLimit: 120_000, compactionTokenLimitPerModel: undefined },
+      { compactionTokenLimitPerModel: { 'model-a': 200_000 } },
+    ),
+    200_000,
+  );
+});
+
 test('resume threshold falls back to current defaults when init omits a compaction limit', () => {
   // The SDK does not persist a per-session compactionTokenLimit, so an init
-  // without one follows the current app defaults.
+  // without one follows the current app defaults (including per-model).
   assert.equal(
     clampCompactionTokenLimit(
-      compactionTokenLimitForModel(
+      resumedCompactionTokenLimit(
         'model-a',
         { compactionTokenLimit: undefined, compactionTokenLimitPerModel: undefined },
         { compactionTokenLimit: 200_000 },
@@ -232,6 +256,15 @@ test('resume threshold falls back to current defaults when init omits a compacti
       500_000,
     ),
     200_000,
+  );
+  // A current per-model default still applies when init exposes nothing.
+  assert.equal(
+    resumedCompactionTokenLimit(
+      'model-a',
+      { compactionTokenLimit: undefined, compactionTokenLimitPerModel: undefined },
+      { compactionTokenLimitPerModel: { 'model-a': 175_000 } },
+    ),
+    175_000,
   );
 });
 
@@ -241,6 +274,9 @@ test('withLiveWorkerStatus annotates live links and leaves historical/unknown on
     summary: testSummary('app-live', 'droid-live'),
     knownSubagents: new Set(['run-1', 'done-1']),
     completedSubagents: new Set(['done-1']),
+    // A resumed worker the user has opened is live in agents but not in
+    // knownSubagents (which only a live spawn populates).
+    agents: new Map<string, unknown>([['open-1', {}]]),
   };
   const internals = manager as unknown as {
     missions: Map<string, typeof mission>;
@@ -250,10 +286,13 @@ test('withLiveWorkerStatus annotates live links and leaves historical/unknown on
   const out = internals.withLiveWorkerStatus(mission.summary.id, [
     { workerSessionId: 'run-1', toolUseId: 't1' },
     { workerSessionId: 'done-1', toolUseId: 't2' },
-    { workerSessionId: 'gone-1', toolUseId: 't3' },
+    { workerSessionId: 'open-1', toolUseId: 't3' },
+    { workerSessionId: 'gone-1', toolUseId: 't4' },
   ]);
   assert.equal(out.find((l) => l.workerSessionId === 'run-1')?.status, 'running');
   assert.equal(out.find((l) => l.workerSessionId === 'done-1')?.status, 'completed');
+  // An opened resumed worker (in agents only) is marked running, not completed.
+  assert.equal(out.find((l) => l.workerSessionId === 'open-1')?.status, 'running');
   assert.equal(out.find((l) => l.workerSessionId === 'gone-1')?.status, undefined);
 });
 
@@ -1001,4 +1040,106 @@ test('rekeyAgentSession remaps worker ids inside mission summary features', asyn
   // ...while unrelated ids and untouched features are preserved as-is.
   assert.deepEqual(f3.workerSessionIds, ['worker-other']);
   assert.equal(f3.currentWorkerSessionId, null);
+});
+
+function orchestratorSwapHarness(used: number, limit: number, swapTo: string) {
+  const events: ServerEvent[] = [];
+  const manager = new MissionManager((event) => events.push(event));
+  const session = new FakeCompactionSession('droid-old', used, swapTo);
+  const mission = {
+    summary: testSummary('app-swap', session.sessionId),
+    session,
+    streaming: false,
+    pendingSends: [] as string[],
+    pendingPermissions: new Map(),
+    pendingQuestions: new Map(),
+    agents: new Map(),
+    knownSubagents: new Set<string>(),
+    completedSubagents: new Set<string>(),
+    linkedSubagents: new Set<string>(),
+    subagentToolUseIds: new Map(),
+    subagentSettings: new Map(),
+    pendingSubagents: [],
+    mcpServers: [],
+    mcpConfigs: [],
+    effectiveCompactionTokenLimit: limit,
+    compacting: false,
+    todoDisabledForDesign: undefined as boolean | undefined,
+  };
+  const internals = manager as unknown as {
+    history: {
+      recordEvent: () => void;
+      syncSummaries: () => void;
+      summaryPatches: () => Map<string, unknown>;
+      hiddenDroidSessionIds: () => Set<string>;
+      recordSubagentLink: () => void;
+      subagentLinks: () => [];
+    };
+    missions: Map<string, typeof mission>;
+    runtime: { loadSession: (id: string, handlers: unknown) => Promise<FakeCompactionSession> };
+  };
+  internals.history = {
+    recordEvent: () => {},
+    syncSummaries: () => {},
+    summaryPatches: () => new Map(),
+    hiddenDroidSessionIds: () => new Set(),
+    recordSubagentLink: () => {},
+    subagentLinks: () => [],
+  };
+  internals.missions.set(mission.summary.id, mission);
+  return { manager, session, events, mission, internals };
+}
+
+test('orchestrator compaction swap recovers when the first reload fails but a retry succeeds', async () => {
+  const { manager, session, events, mission, internals } = orchestratorSwapHarness(250_000, 200_000, 'droid-new');
+  const swapped = new FakeCompactionSession('droid-new', 10_000);
+  let loadCalls = 0;
+  internals.runtime = {
+    loadSession: async () => {
+      loadCalls += 1;
+      if (loadCalls === 1) throw new Error('transient load failure');
+      return swapped;
+    },
+  };
+  mission.pendingSends.push('queued');
+  await manager.handle({ type: 'mission.send', missionId: 'app-swap', text: 'go' });
+  // Adopted on retry: the live session is the new backing id, persisted on the summary.
+  assert.equal(mission.session.sessionId, 'droid-new');
+  assert.equal(mission.summary.sessionId, 'droid-new');
+  assert.equal(loadCalls, 2);
+  // The mission stays live (not dropped) and the queued send drains to the new session.
+  assert.equal(internals.missions.has('app-swap'), true);
+  await waitFor(() => swapped.prompts.includes('queued'));
+  assert.equal(swapped.prompts.includes('queued'), true);
+  // The old (swapped-away) session never receives the queued send.
+  assert.equal(session.prompts.includes('queued'), false);
+  // Recovered transiently: the mission is not marked failed.
+  assert.equal(events.some((e) => e.type === 'mission.error'), false);
+});
+
+test('orchestrator compaction swap that never reloads persists the new id, drops the mission, and never drains into the dead session', async () => {
+  const { manager, session, events, mission, internals } = orchestratorSwapHarness(250_000, 200_000, 'droid-new');
+  internals.runtime = { loadSession: async () => { throw new Error('permanent load failure'); } };
+  let closedId: string | undefined;
+  // Stub the disk-backed teardown; assert the mission is dropped for re-resume.
+  (manager as unknown as { closeMission: (id: string) => Promise<void> }).closeMission = async (id: string) => {
+    closedId = id;
+    internals.missions.delete(id);
+  };
+  mission.pendingSends.push('queued-into-dead');
+  await manager.handle({ type: 'mission.send', missionId: 'app-swap', text: 'go' });
+  // The daemon's new backing id is persisted so a later send re-resumes the live session...
+  assert.equal(mission.summary.sessionId, 'droid-new');
+  // ...the live mission is dropped (the next send re-resumes it)...
+  assert.equal(closedId, 'app-swap');
+  assert.equal(internals.missions.has('app-swap'), false);
+  // ...a recoverable error is surfaced without marking the mission failed...
+  assert.equal(events.some((e) => e.type === 'mission.error'), false);
+  assert.equal(
+    events.some((e) => e.type === 'error' && /reloading it failed/i.test((e as { message?: string }).message ?? '')),
+    true,
+  );
+  // ...and the queued send is never streamed into the dead old session.
+  assert.equal(session.prompts.includes('queued-into-dead'), false);
+  assert.equal(session.prompts.includes('go'), true);
 });

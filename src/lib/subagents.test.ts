@@ -1,11 +1,24 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import type { TranscriptEvent } from '../types/bridge';
-import { workersFromLinks, reconstructWorkersFromTranscript, resolveWorkers, richerSubagent, subagentLatest } from './subagents';
+import type { TranscriptEvent, WorkerHistoryLink } from '../types/bridge';
+import type { WorkerInfo } from '../hooks/useStore';
+import { reconstructWorkersFromTranscript, resolveWorkers, richerSubagent, subagentLatest } from './subagents';
 import { subagentInfo } from './tools';
 
 function ev(p: Partial<TranscriptEvent> & Pick<TranscriptEvent, 'id' | 'agentSessionId' | 'role' | 'ts' | 'kind'>): TranscriptEvent {
   return { missionId: 'm1', ...p } as TranscriptEvent;
+}
+
+// resolveWorkers consumes already-hydrated worker entries (the backend/store
+// builds these from persisted links); build them here to drive its tests.
+function workersFromLinks(links: WorkerHistoryLink[]): WorkerInfo[] {
+  return links.map((link) => ({
+    sessionId: link.workerSessionId,
+    status: link.status ?? 'completed',
+    startedAt: 0,
+    label: link.label,
+    toolUseId: link.toolUseId,
+  }));
 }
 
 // Two spawns with the SAME label, where the worker sessions appear in an order
@@ -22,12 +35,6 @@ const links = [
   { workerSessionId: 'sess-B', toolUseId: 'tool-A', label: 'worker' },
   { workerSessionId: 'sess-A', toolUseId: 'tool-B', label: 'worker' },
 ];
-
-test('workersFromLinks preserves the exact toolUseId -> session mapping (duplicate labels)', () => {
-  const workers = workersFromLinks(links);
-  assert.equal(workers.find((w) => w.toolUseId === 'tool-A')?.sessionId, 'sess-B');
-  assert.equal(workers.find((w) => w.toolUseId === 'tool-B')?.sessionId, 'sess-A');
-});
 
 test('transcript reconstruction would mis-pair out-of-order sessions (fallback only)', () => {
   const rebuilt = reconstructWorkersFromTranscript(transcript);
@@ -58,15 +65,6 @@ test('resolveWorkers merges reconstructed workers when persisted links are parti
   assert.equal(resolved.find((w) => w.sessionId === 'sess-B')?.toolUseId, 'tool-B');
   assert.ok(resolved.some((w) => w.sessionId === 'sess-A'));
   assert.equal(resolved.length, 2);
-});
-
-test('workersFromLinks honors live link status and defaults to completed', () => {
-  const workers = workersFromLinks([
-    { workerSessionId: 'sess-A', toolUseId: 'tool-A', label: 'worker', status: 'running' },
-    { workerSessionId: 'sess-B', toolUseId: 'tool-B', label: 'worker' },
-  ]);
-  assert.equal(workers.find((w) => w.sessionId === 'sess-A')?.status, 'running');
-  assert.equal(workers.find((w) => w.sessionId === 'sess-B')?.status, 'completed');
 });
 
 const spawn = (toolArgs: Record<string, unknown>): TranscriptEvent =>

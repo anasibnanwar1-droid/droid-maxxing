@@ -32,6 +32,20 @@ export function compactionTokenLimitForModel(
   return globalLimit === null ? undefined : normalizeCompactionTokenLimit(globalLimit);
 }
 
+// Resume precedence: honor the limit the resumed session itself exposes
+// (per-model, then global) before falling back to the current app defaults.
+// compactionTokenLimitForModel mixes settings and defaults per tier, so a
+// default per-model limit could otherwise override a session's own saved global
+// limit; resolving the exposed settings first (with no defaults) prevents that.
+export function resumedCompactionTokenLimit(
+  modelId: string | undefined,
+  exposed: CompactionTokenLimitPatch,
+  defaults: CompactionDefaults = {},
+): number | undefined {
+  const own = compactionTokenLimitForModel(modelId, exposed);
+  return own !== undefined ? own : compactionTokenLimitForModel(modelId, {}, defaults);
+}
+
 export function clampCompactionTokenLimit(limit: number | undefined, maxContextTokens?: number): number | undefined {
   if (limit === undefined) return undefined;
   const max = normalizeCompactionTokenLimit(maxContextTokens);

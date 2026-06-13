@@ -1,21 +1,6 @@
-import type { TranscriptEvent, WorkerHistoryLink } from '../types/bridge';
+import type { TranscriptEvent } from '../types/bridge';
 import type { WorkerInfo } from '../hooks/useStore';
 import { isSubagentTool, subagentInfo, toolMeta, CAT_LABEL } from './tools';
-
-// Build worker entries from a persisted exact spawn->worker mapping (the precise
-// path used for missions recorded after links were persisted).
-export function workersFromLinks(links: WorkerHistoryLink[] | undefined): WorkerInfo[] {
-  if (!links || links.length === 0) return [];
-  return links.map((link) => ({
-    sessionId: link.workerSessionId,
-    // The backend attaches live status for active missions; historical loads
-    // omit it, so default to completed.
-    status: link.status ?? 'completed',
-    startedAt: 0,
-    label: link.label,
-    toolUseId: link.toolUseId,
-  }));
-}
 
 // Fallback for older history that predates persisted links: reconstruct a worker
 // list from the transcript by pairing each orchestrator subagent spawn with a
