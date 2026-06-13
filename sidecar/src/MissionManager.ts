@@ -59,6 +59,7 @@ import { NativeBrowserRuntime } from './browser/NativeBrowserRuntime.js';
 import { isAlwaysOutcome, isApprovalOutcome, normalizePermissionOutcome } from './permissionOutcomes.js';
 import { filterMissionListSummaries, type MissionListFilterOptions } from './missionListFilter.js';
 import {
+  autoCompactionTokenLimit,
   autoCompactionDue,
   clampCompactionTokenLimit,
   createCompactionSettingsForModel,
@@ -123,10 +124,9 @@ interface Mission {
   // concurrently (the SDK session swap is not safe to overlap with another
   // compact or a streaming turn).
   compacting?: boolean;
-  // The effective compaction token limit computed at creation/resume time,
-  // matching the threshold the ContextMeter shows (per-model → global default,
-  // clamped to model window). Stored so maybeAutoCompact doesn't re-derive it
-  // from defaults that may have drifted since session creation.
+  // Droid Control's effective auto-compaction trigger, computed from the
+  // configured budget plus the 90%-to-75% session-age policy. Stored so
+  // maybeAutoCompact doesn't re-derive it from defaults that may have drifted.
   effectiveCompactionTokenLimit?: number;
 }
 
@@ -600,6 +600,7 @@ export class MissionManager {
       modelId,
       defaults,
       this.maxContextTokensForModel(modelId),
+      mission.summary.compactedFromSessionIds?.length ?? 0,
     );
   }
 
@@ -733,9 +734,9 @@ export class MissionManager {
         createdAt: historical?.createdAt ?? now,
         updatedAt: now,
       });
-      // Auto-compaction threshold after resume: the SDK does not persist a
-      // per-session compactionTokenLimit, so honor one only if the resumed init
-      // settings expose it; otherwise the threshold follows current app defaults.
+      // Auto-compaction budget after resume: the SDK does not always expose a
+      // per-session compactionTokenLimit, so honor one only if init reports it;
+      // otherwise the budget follows current app defaults.
       const resumeCompactionLimit = clampCompactionTokenLimit(
         resumedCompactionTokenLimit(summary.modelId, {
           compactionTokenLimit: init.settings?.compactionTokenLimit,
@@ -743,7 +744,13 @@ export class MissionManager {
         }, defaults),
         this.maxContextTokensForSummary(summary),
       );
-      const mission: Mission = this.createLiveMission(summary, session, mcp.servers, resumeCompactionLimit, mcp.configs);
+      const mission: Mission = this.createLiveMission(
+        summary,
+        session,
+        mcp.servers,
+        autoCompactionTokenLimit(resumeCompactionLimit, summary.compactedFromSessionIds?.length ?? 0),
+        mcp.configs,
+      );
       // Seed the spawn->worker links persisted for this mission so historical
       // subagents are recognized (and thus openable/steerable) after a resume,
       // even before any live spawn re-populates knownSubagents.
@@ -953,7 +960,13 @@ export class MissionManager {
         updatedAt: now,
       };
       ref.id = id;
-      const mission = this.createLiveMission(summary, session, mcp.servers, compactionSettings.compactionTokenLimit, mcp.configs);
+      const mission = this.createLiveMission(
+        summary,
+        session,
+        mcp.servers,
+        autoCompactionTokenLimit(compactionSettings.compactionTokenLimit, 0),
+        mcp.configs,
+      );
       this.missions.set(id, mission);
       this.history.syncSummaries([summary]);
       this.emit({ type: 'mission.created', clientRef: cmd.clientRef, mission: summary });
@@ -1072,9 +1085,17 @@ export class MissionManager {
   }
 
   private async drive(missionId: string, prompt: string): Promise<void> {
-    const mission = this.findMission(missionId);
+    let mission = this.findMission(missionId);
     if (!mission) return;
+    const preCompactionMission = mission;
     const appSessionId = mission.summary.id;
+    await this.compactBeforeModelStep(appSessionId);
+    mission = this.findMission(missionId);
+    if (!mission) {
+      const queued = [prompt, ...preCompactionMission.pendingSends.splice(0)];
+      if (queued.length > 0) void this.redeliverQueuedSends(appSessionId, queued);
+      return;
+    }
     mission.streaming = true;
     this.patch(appSessionId, {
       phase: mission.summary.kind === 'mission_orchestrator' ? 'planning' : 'running',
@@ -1095,10 +1116,7 @@ export class MissionManager {
     } finally {
       this.stopContextPolling(appSessionId);
       mission.interruptingForSteer = false;
-      // Keep streaming=true while refreshContext / maybeAutoCompact are in flight
-      // so concurrent sends queue instead of racing a second drive().
       await this.refreshContext(appSessionId, mission.session);
-      await this.maybeAutoCompact(appSessionId);
       mission.streaming = false;
       if (!this.findMission(appSessionId)) {
         // maybeAutoCompact's stale-swap recovery can drop the live mission. A
@@ -1129,9 +1147,16 @@ export class MissionManager {
   }
 
   // The SDK exposes manual compaction only; auto-compaction is the client's job
-  // (the CLI runs its own loop). After each idle orchestrator turn we compact
-  // once the context window crosses the effective limit stored on the Mission
-  // at creation time (matching the threshold the ContextMeter shows).
+  // (the CLI runs its own loop). Before each model step, compact once the context
+  // window crosses the effective limit stored on the Mission at creation/resume
+  // time. This keeps compaction out of the completed final-answer turn.
+  private async compactBeforeModelStep(appSessionId: string): Promise<void> {
+    const mission = this.findMission(appSessionId);
+    if (!mission || mission.compacting || mission.streaming) return;
+    await this.refreshContext(appSessionId, mission.session);
+    await this.maybeAutoCompact(appSessionId);
+  }
+
   private async maybeAutoCompact(appSessionId: string): Promise<void> {
     const mission = this.findMission(appSessionId);
     if (!mission || !autoCompactionDue(mission, mission.summary.contextTokens)) return;
