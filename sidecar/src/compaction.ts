@@ -12,6 +12,9 @@ type CompactionDefaults = Pick<
   FactoryDefaultSettings,
   'compactionTokenLimit' | 'compactionTokenLimitPerModel'
 >;
+const FRESH_SESSION_THRESHOLD = 0.9;
+const OLDEST_SESSION_THRESHOLD = 0.75;
+const THRESHOLD_STEP = 0.05;
 
 export function normalizeCompactionTokenLimit(value: unknown): number | undefined {
   if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return undefined;
@@ -73,18 +76,29 @@ export function createCompactionSettingsForModel(
   return limit !== undefined ? { compactionTokenLimit: limit } : {};
 }
 
+export function compactionThresholdPercent(priorCompactions = 0): number {
+  const steps = Math.max(0, Math.trunc(priorCompactions));
+  return Math.max(OLDEST_SESSION_THRESHOLD, FRESH_SESSION_THRESHOLD - steps * THRESHOLD_STEP);
+}
+
+export function autoCompactionTokenLimit(baseLimit: number | undefined, priorCompactions = 0): number | undefined {
+  const limit = normalizeCompactionTokenLimit(baseLimit);
+  return limit === undefined ? undefined : Math.max(1, Math.floor(limit * compactionThresholdPercent(priorCompactions)));
+}
+
 // Single derivation of the auto-compaction threshold, shared by mission
 // create, resume, and worker open so every session's trigger matches the
-// limit the ContextMeter shows (per-model override -> global default, clamped
-// to the model window).
+// configured budget (per-model override -> global default, clamped to the model
+// window) while Droid Control owns the 90%-to-75% auto-trigger policy.
 export function effectiveCompactionLimit(
   modelId: string | undefined,
   defaults: CompactionDefaults,
   maxContextTokens: number | undefined,
+  priorCompactions = 0,
 ): number | undefined {
-  return clampCompactionTokenLimit(
-    compactionTokenLimitForModel(modelId, {}, defaults),
-    maxContextTokens,
+  return autoCompactionTokenLimit(
+    clampCompactionTokenLimit(compactionTokenLimitForModel(modelId, {}, defaults), maxContextTokens),
+    priorCompactions,
   );
 }
 

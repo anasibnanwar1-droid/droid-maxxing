@@ -140,6 +140,9 @@ export interface TranscriptEvent {
   files?: string[];
   browserRefs?: BrowserTranscriptReference[];
   steered?: boolean;
+  // Whether a compaction status was triggered automatically (Droid-owned
+  // threshold) or manually (/compact). Compaction metadata renders separately
+  // from assistant answers so it cannot hide final user-facing content.
   compactType?: 'auto' | 'manual';
 }
 
