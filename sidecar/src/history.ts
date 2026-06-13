@@ -189,7 +189,14 @@ export function loadSessionHistory(): HistoryMission[] {
 export function loadSessionPage(sessionId: string, cursor?: string, limit = 200, missionId = sessionId): HistoryPage {
   const path = buildSessionIndex().get(sessionId);
   if (!path) throw new Error(`Session history not found for ${sessionId}`);
-  const role = roleFromSessionStart(readSessionStart(path));
+  // A transcript opened as its OWN standalone chat (missionId === sessionId, e.g.
+  // an orphan Task subagent surfaced in the sidebar) must replay as orchestrator
+  // so the main chat view renders it: the worker role keys events to the session
+  // id and drops user prompts, which ChatView's main feed then filters out,
+  // leaving the chat blank. Worker-role replay is only correct when the
+  // transcript is loaded inside its parent mission (missionId !== sessionId),
+  // where it is shown in the worker panel keyed to its own id.
+  const role = missionId === sessionId ? 'orchestrator' : roleFromSessionStart(readSessionStart(path));
   const all = parseSessionTranscript(missionId, sessionId, path, role);
   const safeLimit = Math.max(1, Math.min(limit, 500));
   const end = cursor ? Math.max(0, Number(cursor) || 0) : all.length;
