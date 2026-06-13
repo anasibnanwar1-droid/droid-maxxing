@@ -72,7 +72,8 @@ const AUTH_FILE = join(homedir(), '.factory', 'auth.v2.file');
 
 export async function detectEnvironment(apiKeyConfigured: boolean): Promise<EnvironmentReport> {
   const cliPath = await resolveCliPath();
-  const cliVersion = cliPath ? await commandVersion(cliPath, ['--version']) : undefined;
+  // Route a Windows .cmd/.bat shim through cmd.exe; execFile can't run it directly.
+  const cliVersion = cliPath ? await probeCliVersion(cliPath) : undefined;
   const packageManagers = await detectPackageManagers();
 
   return {
@@ -171,6 +172,11 @@ async function commandPath(command: string): Promise<string | null> {
   } catch {
     return null;
   }
+}
+
+function probeCliVersion(cliPath: string): Promise<string | undefined> {
+  const { execPath, execArgs } = wrapDroidInvocation(cliPath, ['--version']);
+  return commandVersion(execPath, execArgs);
 }
 
 async function commandVersion(command: string, args: string[]): Promise<string | undefined> {
