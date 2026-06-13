@@ -3,7 +3,7 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { ArrowRight, Check, Download, ExternalLink, KeyRound, Loader2, RefreshCw } from 'lucide-react';
 import type { OnboardingController } from '../../hooks/useOnboarding';
 import type { EnvironmentReport, InstallChannel } from '../../types/bridge';
-import { EDITOR_OPTIONS, setDefaultEditor, type EditorId } from '../../lib/editorOpen';
+import { EDITOR_OPTIONS, getDefaultEditor, setDefaultEditor, type EditorId } from '../../lib/editorOpen';
 import { listEditors } from '../../lib/desktop';
 import { EditorIcon } from '../EditorIcon';
 
@@ -378,7 +378,9 @@ function SignInStep({ controller, onNext, onBack }: { controller: OnboardingCont
 
 function PreferencesStep({ controller, onNext, onBack }: { controller: OnboardingController; onNext: () => void; onBack: () => void }) {
   const [editors, setEditors] = useState<EditorId[]>([]);
-  const [editor, setEditor] = useState<EditorId>(controller.onboarding?.defaultEditor as EditorId ?? 'vscode');
+  // Prefer onboarding state, then any previously saved default editor, so a
+  // returning user's Cursor/Finder/Terminal choice isn't reset to VS Code.
+  const [editor, setEditor] = useState<EditorId>((controller.onboarding?.defaultEditor as EditorId) ?? getDefaultEditor());
   const [cliAuto, setCliAuto] = useState(controller.onboarding?.cliAutoUpdate ?? true);
   const [appAuto, setAppAuto] = useState(controller.onboarding?.appAutoUpdate ?? true);
 

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { availableChannels, compareSemver, resolveDroidPath } from './Environment.js';
+import { availableChannels, compareSemver, resolveDroidPath, wrapDroidInvocation } from './Environment.js';
 
 test('compareSemver orders versions numerically', () => {
   assert.ok(compareSemver('0.144.2', '0.144.1') > 0);
@@ -55,5 +55,33 @@ test('availableChannels omits the shell-script channel on Windows', () => {
   assert.deepEqual(
     availableChannels({ brew: false, npm: true, curl: true, pnpm: false }, 'win32'),
     ['npm'],
+  );
+});
+
+test('availableChannels omits brew off macOS (cask is mac-only)', () => {
+  assert.deepEqual(
+    availableChannels({ brew: true, npm: true, curl: true, pnpm: false }, 'linux'),
+    ['script', 'npm'],
+  );
+});
+
+test('wrapDroidInvocation routes a Windows .cmd shim through cmd.exe', () => {
+  const prev = process.env.ComSpec;
+  process.env.ComSpec = 'C\\\\Windows\\\\System32\\\\cmd.exe';
+  try {
+    assert.deepEqual(
+      wrapDroidInvocation('C\\\\npm\\\\droid.cmd', ['exec'], 'win32'),
+      { execPath: 'C\\\\Windows\\\\System32\\\\cmd.exe', execArgs: ['/c', 'C\\\\npm\\\\droid.cmd', 'exec'] },
+    );
+  } finally {
+    if (prev === undefined) delete process.env.ComSpec;
+    else process.env.ComSpec = prev;
+  }
+});
+
+test('wrapDroidInvocation spawns the binary directly on POSIX', () => {
+  assert.deepEqual(
+    wrapDroidInvocation('/usr/local/bin/droid', ['exec'], 'darwin'),
+    { execPath: '/usr/local/bin/droid', execArgs: ['exec'] },
   );
 });

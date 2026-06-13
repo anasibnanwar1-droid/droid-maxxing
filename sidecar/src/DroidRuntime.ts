@@ -14,7 +14,7 @@ import {
 } from '@factory/droid-sdk';
 import { spawn } from 'node:child_process';
 import { createDroidTransport } from './DroidTransport.js';
-import { resolveDroidPath } from './Environment.js';
+import { buildDroidInvocation, resolveDroidPath } from './Environment.js';
 import type { Autonomy, ReasoningEffort, SessionInteractionMode } from './protocol.js';
 
 const EXEC_ARGS = ['exec', '--input-format', 'stream-jsonrpc', '--output-format', 'stream-jsonrpc'];
@@ -108,9 +108,10 @@ export class DroidRuntime {
   }
 
   private async createClient(cwd?: string, handlers: RuntimeHandlers = {}): Promise<{ client: DroidClient; transport: DroidClientTransport }> {
+    const { execPath, execArgs } = buildDroidInvocation(EXEC_ARGS);
     const transport = createDroidTransport({
-      execPath: this.resolveDroidPath(),
-      execArgs: EXEC_ARGS,
+      execPath,
+      execArgs,
       cwd,
       env: this.env(),
     });

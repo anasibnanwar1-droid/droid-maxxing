@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process';
 import { accessSync, constants, existsSync } from 'node:fs';
 import { homedir, release } from 'node:os';
-import { join } from 'node:path';
+import { delimiter, join } from 'node:path';
 import { promisify } from 'node:util';
 import type { EnvironmentReport, InstallChannel, PackageManagers } from './protocol.js';
 
@@ -25,7 +25,46 @@ export function resolveDroidPath(): string {
   for (const candidate of CLI_CANDIDATES) {
     if (isExecutable(candidate)) return candidate;
   }
-  return 'droid';
+  // Resolve the real PATH entry (on Windows this is usually a `droid.cmd` shim)
+  // so callers can spawn it correctly instead of a bare `droid`.
+  return resolveOnPathSync('droid') ?? 'droid';
+}
+
+// Builds the spawn target for the daemon transport. The SDK's ProcessTransport
+// spawns without a shell, and on Windows the npm-installed `droid` is a `.cmd`
+// shim that can't be spawned directly, so route it through cmd.exe.
+export function wrapDroidInvocation(
+  droidPath: string,
+  args: string[],
+  platform: NodeJS.Platform = process.platform,
+): { execPath: string; execArgs: string[] } {
+  if (platform === 'win32' && /\.(cmd|bat)$/i.test(droidPath)) {
+    return { execPath: process.env.ComSpec || 'cmd.exe', execArgs: ['/c', droidPath, ...args] };
+  }
+  return { execPath: droidPath, execArgs: args };
+}
+
+export function buildDroidInvocation(args: string[]): { execPath: string; execArgs: string[] } {
+  return wrapDroidInvocation(resolveDroidPath(), args);
+}
+
+function resolveOnPathSync(command: string): string | undefined {
+  const dirs = (process.env.PATH || '').split(delimiter).filter(Boolean);
+  if (process.platform === 'win32') {
+    const exts = (process.env.PATHEXT || '.COM;.EXE;.BAT;.CMD').split(';').map((e) => e.trim()).filter(Boolean);
+    for (const dir of dirs) {
+      for (const ext of exts) {
+        const candidate = join(dir, command + ext);
+        if (existsSync(candidate)) return candidate;
+      }
+    }
+    return undefined;
+  }
+  for (const dir of dirs) {
+    const candidate = join(dir, command);
+    if (isExecutable(candidate)) return candidate;
+  }
+  return undefined;
 }
 
 // Heuristic auth marker written by `droid login`.
@@ -60,7 +99,9 @@ export function availableChannels(pm: PackageManagers, platform: NodeJS.Platform
   // The official installer is a POSIX shell script, so only offer it where a
   // `sh` pipeline can run. On Windows curl exists but `sh` usually does not.
   if (pm.curl && platform !== 'win32') channels.push('script');
-  if (pm.brew) channels.push('brew');
+  // The brew installer uses `--cask`, which only exists on macOS Homebrew;
+  // Linuxbrew would fail deterministically.
+  if (pm.brew && platform === 'darwin') channels.push('brew');
   if (pm.npm) channels.push('npm');
   return channels;
 }

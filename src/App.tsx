@@ -27,7 +27,7 @@ import { useOnboarding, shouldShowOnboarding, hasSetupBlocker } from './hooks/us
 import OnboardingWizard from './components/onboarding/OnboardingWizard';
 import SetupBanner from './components/onboarding/SetupBanner';
 import { updateCli } from './lib/commands';
-import { refreshAppUpdate } from './lib/appUpdate';
+import { refreshAppUpdate, startAppUpdate } from './lib/appUpdate';
 import { toast } from './lib/toast';
 
 function ContextListIcon({ className }: { className?: string }) {
@@ -142,7 +142,11 @@ export default function App() {
       updateCli(onboard.onboarding.installChannel);
     }
     if (onboard.onboarding.appAutoUpdate !== false) {
-      void refreshAppUpdate();
+      void refreshAppUpdate().then((info) => {
+        // Auto-update is on by default: download and (on the feed path) restart
+        // into the new build, not just record it for the sidebar pill.
+        if (info?.updateAvailable) void startAppUpdate(info);
+      });
     }
   }, [embedded, onboard.ready, onboard.onboarding, onboard.env]);
 

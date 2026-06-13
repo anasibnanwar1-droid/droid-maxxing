@@ -1165,22 +1165,12 @@ async function checkAppUpdate() {
 async function downloadAppUpdate(dmgUrl) {
   if (UPDATE_FEED && process.platform === 'darwin') {
     try {
-      const { autoUpdater } = require('electron');
-      autoUpdater.setFeedURL({ url: UPDATE_FEED });
-      // checkForUpdates() reports feed/network failures via the async 'error'
-      // event, not the surrounding try/catch. Without a listener that error is
-      // unhandled and crashes the main process, so fall back to the managed
-      // download instead.
-      autoUpdater.removeAllListeners('error');
-      autoUpdater.removeAllListeners('update-downloaded');
-      autoUpdater.once('update-downloaded', () => autoUpdater.quitAndInstall());
-      autoUpdater.once('error', (err) => {
-        console.warn('[update] autoUpdater failed, falling back to managed download:', err?.message || err);
-        managedMacDownload(dmgUrl).catch((e) => console.warn('[update] managed download failed:', e?.message || e));
-      });
-      autoUpdater.checkForUpdates();
-      return { mode: 'autoUpdater' };
-    } catch {
+      // Await the actual feed outcome so the renderer only reports success once
+      // the build is downloaded (or up to date), not right after kicking off
+      // the check.
+      return await runAutoUpdater();
+    } catch (err) {
+      console.warn('[update] autoUpdater failed, falling back to managed download:', err?.message || err);
       /* fall through to managed download */
     }
   }
@@ -1189,6 +1179,25 @@ async function downloadAppUpdate(dmgUrl) {
     return { mode: 'external' };
   }
   return managedMacDownload(dmgUrl);
+}
+
+// Resolves when the feed reports a downloaded update (then relaunches) or that
+// we're up to date; rejects on feed/network errors so the caller can fall back.
+function runAutoUpdater() {
+  return new Promise((resolve, reject) => {
+    const { autoUpdater } = require('electron');
+    autoUpdater.setFeedURL({ url: UPDATE_FEED });
+    autoUpdater.removeAllListeners('error');
+    autoUpdater.removeAllListeners('update-downloaded');
+    autoUpdater.removeAllListeners('update-not-available');
+    autoUpdater.once('update-downloaded', () => {
+      resolve({ mode: 'autoUpdater', status: 'downloaded' });
+      autoUpdater.quitAndInstall();
+    });
+    autoUpdater.once('update-not-available', () => resolve({ mode: 'autoUpdater', status: 'up-to-date' }));
+    autoUpdater.once('error', (err) => reject(err instanceof Error ? err : new Error(String(err))));
+    autoUpdater.checkForUpdates();
+  });
 }
 
 // The renderer relays the manifest-selected URL, so it cannot be trusted on its
