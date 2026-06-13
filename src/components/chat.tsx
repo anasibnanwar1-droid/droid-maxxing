@@ -386,6 +386,21 @@ function isUserMessage(item: FeedItem): boolean {
   return item.type === 'message' && item.event.author === 'user';
 }
 
+function isAssistantMessage(item: FeedItem): boolean {
+  return item.type === 'message' && item.event.author !== 'user';
+}
+
+function isCompactionMetadata(item: FeedItem): boolean {
+  return item.type === 'status' && (
+    item.event.kind === 'compaction' ||
+    (item.event.compactType !== undefined && !isCompactingStatus(item.event.text))
+  );
+}
+
+function isCompletedCompactingStarter(item: FeedItem): boolean {
+  return item.type === 'status' && item.event.compactType !== undefined && isCompactingStatus(item.event.text);
+}
+
 // Best-effort end timestamp of a feed item, used to time the live working cue.
 function tailTimestamp(item?: FeedItem): number | undefined {
   if (!item) return undefined;
@@ -413,19 +428,14 @@ function spanOf(items: FeedItem[]): { start: number; end: number } {
   return { start, end };
 }
 
-// Collapse a single completed assistant turn: everything except the concluding
-// message folds into a "Worked for …" group (compaction steps included). While
-// the turn is live it is never collapsed, so compaction stays visible then.
+// Collapse a single completed assistant run. Assistant messages are hard
+// top-level boundaries: later compaction/status events must never make a final
+// answer a child of "Worked for …".
 function collapseRun(run: FeedItem[]): FeedItem[] {
   if (run.length === 0) return [];
-  const lastItem = run[run.length - 1];
-  const conclusionIdx =
-    lastItem.type === 'message' && lastItem.event.author !== 'user' ? run.length - 1 : -1;
-
-  const work = conclusionIdx === -1 ? run : run.slice(0, conclusionIdx);
   const out: FeedItem[] = [];
   // Fold contiguous work into "Worked for …" groups, but keep subagent spawn
-  // cards at the top level so they stay visible (and navigable) after a turn.
+  // cards, assistant answers, and compaction metadata at the top level.
   let buf: FeedItem[] = [];
   const flush = () => {
     if (buf.length === 0) return;
@@ -433,14 +443,12 @@ function collapseRun(run: FeedItem[]): FeedItem[] {
     out.push({ type: 'worked', key: `worked-${buf[0].key}`, items: buf, durationMs: Math.max(0, end - start) });
     buf = [];
   };
-  for (const it of work) {
-    if (it.type === 'subagent') { flush(); out.push(it); }
-    else if (it.type === 'status' && it.event.kind === 'compaction') { flush(); out.push(it); }
-    else if (it.type === 'status' && isCompactionCompleteStatus(it.event.text) && it.event.compactType === 'manual') { flush(); out.push(it); }
+  for (const it of run) {
+    if (isCompletedCompactingStarter(it)) continue;
+    if (it.type === 'subagent' || isAssistantMessage(it) || isCompactionMetadata(it)) { flush(); out.push(it); }
     else buf.push(it);
   }
   flush();
-  if (conclusionIdx !== -1) out.push(run[conclusionIdx]);
   return out;
 }
 
