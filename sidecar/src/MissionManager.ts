@@ -1756,6 +1756,11 @@ export class MissionManager {
   private async compactAgent(agent: LiveAgent, compactType: CompactType): Promise<CompactionOutcome> {
     const agentSessionId = agent.session.sessionId;
     agent.compacting = true;
+    // Remembers the daemon's new backing id (set by the reload hook before it
+    // adopts the swap) so a reload failure that returns 'stale' can still
+    // recover the new id instead of losing it, mirroring the orchestrator's
+    // swapTarget / recoverStaleMissionSwap path.
+    let swapTarget: string | undefined;
     try {
       const outcome = await runCompaction(
         agent.session,
@@ -1773,25 +1778,55 @@ export class MissionManager {
           // compaction. Adopt it in place (re-key all maps and re-subscribe)
           // so the worker stays alive and queued sends keep flowing rather than
           // the session being treated as stale and torn down.
-          reload: (newSessionId) => this.rekeyAgentSession(agent, newSessionId),
+          reload: async (newSessionId) => {
+            swapTarget = newSessionId;
+            await this.rekeyAgentSession(agent, newSessionId);
+          },
         },
         { compactType },
       );
-      // The reload hook re-keyed the worker; tell clients to remap state from
-      // the old id to the new one. Emitted after runCompaction so all
-      // old-id-keyed transcript/status events are flushed first.
+      // In-place adoption succeeded: tell clients to remap state from the old id
+      // to the new one. Emitted after runCompaction so all old-id-keyed
+      // transcript/status events are flushed first.
       if (agent.session.sessionId !== agentSessionId) {
-        this.emit({
-          type: 'mission.worker.rekey',
-          missionId: agent.missionId,
-          oldSessionId: agentSessionId,
-          newSessionId: agent.session.sessionId,
-        });
+        this.emitWorkerRekey(agent.missionId, agentSessionId, agent.session.sessionId);
+        return outcome;
+      }
+      // The daemon swapped to a new backing id but adopting it threw, so
+      // agent.session still points at the swapped-away (now-dead) old id.
+      // Recover so the new id isn't lost: otherwise queued sends and future
+      // re-opens would target the dead old id.
+      if (outcome === 'stale' && swapTarget) {
+        return await this.recoverStaleAgentSwap(agent, agentSessionId, swapTarget);
       }
       return outcome;
     } finally {
       agent.compacting = false;
     }
+  }
+
+  private emitWorkerRekey(missionId: string, oldSessionId: string, newSessionId: string): void {
+    this.emit({ type: 'mission.worker.rekey', missionId, oldSessionId, newSessionId });
+  }
+
+  // Recovery for a worker compaction that swapped backing sessions but failed to
+  // adopt the new one (agent.session is now a dead id). Retry the adoption once
+  // for a transient load failure; if it still fails, persist the new id to the
+  // durable spawn link and mission features so a later re-open/resume targets
+  // the live (compacted) session, then report 'stale' so the caller tears down
+  // the dead-id worker instead of draining sends into it.
+  private async recoverStaleAgentSwap(agent: LiveAgent, oldSessionId: string, newSessionId: string): Promise<CompactionOutcome> {
+    try {
+      await this.rekeyAgentSession(agent, newSessionId);
+      this.emitWorkerRekey(agent.missionId, oldSessionId, agent.session.sessionId);
+      return 'completed';
+    } catch {
+      /* adoption still failing; persist the new id below so re-open hits it */
+    }
+    const mission = this.findMission(agent.missionId);
+    if (mission) this.persistWorkerSwap(mission, oldSessionId, newSessionId);
+    this.emitWorkerRekey(agent.missionId, oldSessionId, newSessionId);
+    return 'stale';
   }
 
   // Adopt a worker's swapped backing session id (returned by the daemon on a
@@ -1828,35 +1863,44 @@ export class MissionManager {
         mission.subagentSettings.delete(oldSessionId);
         mission.subagentSettings.set(newSessionId, settings);
       }
-      // Re-point any spawn link for this worker at the new id (preserving its
-      // label) so a later resume seeds linkedSubagents with the compacted id.
-      const labelByToolUseId = new Map(this.history.subagentLinks(agent.missionId).map((l) => [l.toolUseId, l.label]));
-      for (const [toolUseId, sid] of mission.subagentToolUseIds) {
-        if (sid !== oldSessionId) continue;
-        mission.subagentToolUseIds.set(toolUseId, newSessionId);
-        this.history.recordSubagentLink(agent.missionId, toolUseId, newSessionId, labelByToolUseId.get(toolUseId));
-      }
-      // Mission features pin workers by session id (feature focus + worker
-      // numbering). Remap them on the summary too, so a later mission.list/
-      // mission.updated (which re-emits summary.features) can't overwrite the
-      // client's rekey with the dead id and make feature-focused views unopenable.
-      const features = mission.summary.features;
-      if (features?.length) {
-        mission.summary.features = features.map((f) =>
-          f.currentWorkerSessionId === oldSessionId ||
-          f.completedWorkerSessionId === oldSessionId ||
-          f.workerSessionIds?.includes(oldSessionId)
-            ? {
-                ...f,
-                workerSessionIds: f.workerSessionIds?.map((id) => (id === oldSessionId ? newSessionId : id)),
-                currentWorkerSessionId: f.currentWorkerSessionId === oldSessionId ? newSessionId : f.currentWorkerSessionId,
-                completedWorkerSessionId: f.completedWorkerSessionId === oldSessionId ? newSessionId : f.completedWorkerSessionId,
-              }
-            : f,
-        );
-      }
+      this.persistWorkerSwap(mission, oldSessionId, newSessionId);
     }
     await oldSession.close().catch(() => {});
+  }
+
+  // Persist a worker's compaction swap to the durable spawn link and the mission
+  // summary features so a later resume or re-open targets the compacted id (not
+  // the dead old one). Shared by the in-place rekey and the stale-swap recovery
+  // (which runs this even when the new session could not be loaded, so the new
+  // id survives in history and the worker is re-openable).
+  private persistWorkerSwap(mission: Mission, oldSessionId: string, newSessionId: string): void {
+    // Re-point any spawn link for this worker at the new id (preserving its
+    // label) so a later resume seeds linkedSubagents with the compacted id.
+    const labelByToolUseId = new Map(this.history.subagentLinks(mission.summary.id).map((l) => [l.toolUseId, l.label]));
+    for (const [toolUseId, sid] of mission.subagentToolUseIds) {
+      if (sid !== oldSessionId) continue;
+      mission.subagentToolUseIds.set(toolUseId, newSessionId);
+      this.history.recordSubagentLink(mission.summary.id, toolUseId, newSessionId, labelByToolUseId.get(toolUseId));
+    }
+    // Mission features pin workers by session id (feature focus + worker
+    // numbering). Remap them on the summary too, so a later mission.list/
+    // mission.updated (which re-emits summary.features) can't overwrite the
+    // client's rekey with the dead id and make feature-focused views unopenable.
+    const features = mission.summary.features;
+    if (features?.length) {
+      mission.summary.features = features.map((f) =>
+        f.currentWorkerSessionId === oldSessionId ||
+        f.completedWorkerSessionId === oldSessionId ||
+        f.workerSessionIds?.includes(oldSessionId)
+          ? {
+              ...f,
+              workerSessionIds: f.workerSessionIds?.map((id) => (id === oldSessionId ? newSessionId : id)),
+              currentWorkerSessionId: f.currentWorkerSessionId === oldSessionId ? newSessionId : f.currentWorkerSessionId,
+              completedWorkerSessionId: f.completedWorkerSessionId === oldSessionId ? newSessionId : f.completedWorkerSessionId,
+            }
+          : f,
+      );
+    }
   }
 
   private async sendAgentNow(missionId: string, agentSessionId: string, text: string): Promise<void> {

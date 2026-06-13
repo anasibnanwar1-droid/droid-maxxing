@@ -967,8 +967,18 @@ test('worker swap whose reload fails goes stale: closes the worker and never dra
   // The worker is torn down (no live agent under the old or swapped id)...
   assert.equal(mission.agents.has('worker-compact'), false);
   assert.equal(mission.agents.has('worker-swapped'), false);
-  // ...the swap never completed, so no rekey is advertised to clients...
-  assert.equal(events.some((e) => e.type === 'mission.worker.rekey'), false);
+  // ...but the new backing id is preserved: a rekey old->new is advertised so
+  // clients remap the worker to the live (compacted) id and re-opens target it
+  // rather than the dead old id...
+  assert.equal(
+    events.some(
+      (e) =>
+        e.type === 'mission.worker.rekey' &&
+        (e as { oldSessionId?: string }).oldSessionId === 'worker-compact' &&
+        (e as { newSessionId?: string }).newSessionId === 'worker-swapped',
+    ),
+    true,
+  );
   // ...a recoverable error tells the user to re-open (mission not failed)...
   assert.equal(events.some((e) => e.type === 'mission.error'), false);
   assert.equal(
@@ -978,6 +988,49 @@ test('worker swap whose reload fails goes stale: closes the worker and never dra
   // ...and the queued send is never delivered to the stale old or unloaded new session.
   assert.equal(workerSession.prompts.includes('queued-into-dead'), false);
   assert.equal(swappedSession?.prompts.includes('queued-into-dead') ?? false, false);
+});
+
+test('worker swap whose reload keeps failing persists the new id to the spawn link and features', async () => {
+  const { manager, events, mission } = workerAutoCompactHarness(250_000, 200_000, 'worker-swapped');
+  // The new backing id can never be loaded, so adoption (and the retry) fail.
+  (manager as unknown as { runtime: { loadSession: () => Promise<never> } }).runtime = {
+    loadSession: async () => { throw new Error('cannot load swapped session'); },
+  };
+  // Give the worker a persisted spawn link and a feature pinned to its id.
+  mission.subagentToolUseIds.set('tool-w', 'worker-compact');
+  mission.summary.features = [
+    {
+      id: 'f1',
+      description: '',
+      status: 'in_progress',
+      skillName: 'builder',
+      preconditions: [],
+      expectedBehavior: [],
+      verificationSteps: [],
+      workerSessionIds: ['worker-compact'],
+      currentWorkerSessionId: 'worker-compact',
+      completedWorkerSessionId: null,
+    },
+  ];
+  const recorded: Array<{ toolUseId: string; workerSessionId: string }> = [];
+  (manager as unknown as { history: { recordEvent: () => void; syncSummaries: () => void; subagentLinks: () => WorkerHistoryLink[]; recordSubagentLink: (m: string, t: string, w: string) => void } }).history = {
+    recordEvent: () => {},
+    syncSummaries: () => {},
+    subagentLinks: () => [{ workerSessionId: 'worker-compact', toolUseId: 'tool-w', label: 'Builder' }],
+    recordSubagentLink: (_m, t, w) => recorded.push({ toolUseId: t, workerSessionId: w }),
+  };
+
+  await manager.handle({ type: 'agent.send', missionId: 'app-compact', agentSessionId: 'worker-compact', text: 'go' });
+
+  // The durable spawn link is re-pointed at the live (compacted) id...
+  assert.deepEqual(recorded, [{ toolUseId: 'tool-w', workerSessionId: 'worker-swapped' }]);
+  assert.equal(mission.subagentToolUseIds.get('tool-w'), 'worker-swapped');
+  // ...and the feature pins move to the new id so feature-focused re-opens work.
+  assert.deepEqual(mission.summary.features?.[0].workerSessionIds, ['worker-swapped']);
+  assert.equal(mission.summary.features?.[0].currentWorkerSessionId, 'worker-swapped');
+  // The worker is still torn down (its in-memory session is dead).
+  assert.equal(mission.agents.has('worker-compact'), false);
+  assert.equal(events.some((e) => e.type === 'mission.error'), false);
 });
 
 test('rekeyAgentSession remaps worker ids inside mission summary features', async () => {
