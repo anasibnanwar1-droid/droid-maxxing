@@ -2184,8 +2184,22 @@ export class MissionManager {
       role: agent.role,
       status: 'running',
     });
-    this.startContextPolling(agent.session.sessionId, agent.session);
+    let closedForStaleCompaction = false;
     try {
+      const outcome = await this.compactBeforeAgentStreamedTurn(agent);
+      if (outcome === 'stale') {
+        closedForStaleCompaction = true;
+        this.emitError({
+          sessionId: agent.session.sessionId,
+          missionId: agent.missionId,
+          message:
+            'Subagent compaction swapped sessions but could not be adopted; closing the subagent. Re-open it to continue.',
+          recoverable: true,
+        });
+        await this.closeAgent(agent.missionId, agent.session.sessionId);
+        return;
+      }
+      this.startContextPolling(agent.session.sessionId, agent.session);
       const stream = agent.session.stream(text, { includePartialMessages: true });
       for await (const ev of stream)
         this.applyEvent(agent.missionId, agent.session.sessionId, agent.role, ev);
@@ -2211,47 +2225,36 @@ export class MissionManager {
     } finally {
       this.stopContextPolling(agent.session.sessionId);
       agent.interruptingForSteer = false;
+      if (closedForStaleCompaction) {
+        agent.streaming = false;
+        return;
+      }
       if (agent.pendingSends.length === 0 && agent.closeWhenIdle) {
         agent.streaming = false;
         await this.closeAgent(agent.missionId, agent.session.sessionId);
       } else {
-        // Refresh + auto-compact while streaming stays true so concurrent sends
-        // queue instead of racing a second driveAgent(). Compaction is scoped to
-        // this worker's own session/history (and may re-key it to a new id).
+        // Refresh while streaming stays true so concurrent sends queue instead of
+        // racing a second driveAgent(). Auto-compaction runs before the next
+        // worker stream starts, so a final worker answer stays visible.
         await this.refreshContext(agent.session.sessionId, agent.session);
-        const outcome = await this.maybeAutoCompactAgent(agent);
         agent.streaming = false;
-        if (outcome === 'stale') {
-          // The daemon swapped this worker to a new backing session but adopting
-          // it failed, so agent.session now points at a dead id. Tear the worker
-          // down instead of draining queued sends into a stale session; a later
-          // open/send re-creates it against the live session.
-          this.emitError({
-            sessionId: agent.session.sessionId,
+        const next = agent.pendingSends.shift();
+        if (next !== undefined) void this.driveAgent(agent, next);
+        else
+          this.emit({
+            type: 'agent.updated',
             missionId: agent.missionId,
-            message:
-              'Subagent compaction swapped sessions but could not be adopted; closing the subagent. Re-open it to continue.',
-            recoverable: true,
+            agentSessionId: agent.session.sessionId,
+            role: agent.role,
+            status: 'paused',
           });
-          await this.closeAgent(agent.missionId, agent.session.sessionId);
-        } else {
-          // Compaction is applied in place: 'completed' re-keys the worker to the
-          // daemon's new backing session (via the reload hook) and a transient
-          // 'failed' leaves the current session valid. Either way agent.session
-          // stays usable, so drain queued sends against it normally.
-          const next = agent.pendingSends.shift();
-          if (next !== undefined) void this.driveAgent(agent, next);
-          else
-            this.emit({
-              type: 'agent.updated',
-              missionId: agent.missionId,
-              agentSessionId: agent.session.sessionId,
-              role: agent.role,
-              status: 'paused',
-            });
-        }
       }
     }
+  }
+
+  private async compactBeforeAgentStreamedTurn(agent: LiveAgent): Promise<CompactionOutcome | undefined> {
+    await this.refreshContext(agent.session.sessionId, agent.session);
+    return this.maybeAutoCompactAgent(agent);
   }
 
   // Workers compact their own session through the shared compaction path. The
