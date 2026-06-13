@@ -187,6 +187,32 @@ export interface ModelInfo {
   defaultReasoningEffort?: ReasoningEffort;
 }
 
+export type InstallChannel = 'script' | 'brew' | 'npm';
+
+export interface PackageManagers {
+  brew: boolean;
+  npm: boolean;
+  curl: boolean;
+  pnpm: boolean;
+}
+
+export interface CliInfo {
+  present: boolean;
+  path: string;
+  version?: string;
+}
+
+export interface EnvironmentReport {
+  platform: string;
+  arch: string;
+  osVersion: string;
+  node: { present: boolean; version?: string };
+  cli: CliInfo;
+  packageManagers: PackageManagers;
+  auth: { apiKeyConfigured: boolean; loginPresent: boolean };
+  availableChannels: InstallChannel[];
+}
+
 export interface FactoryDefaultSettings {
   modelId?: string;
   reasoningEffort?: ReasoningEffort;
@@ -399,6 +425,9 @@ export type ClientCommand =
   | { type: 'runtime.status' }
   | { type: 'auth.status' }
   | { type: 'auth.startCliLogin' }
+  | { type: 'env.detect' }
+  | { type: 'cli.install'; channel: InstallChannel }
+  | { type: 'cli.update'; channel?: InstallChannel }
   | { type: 'catalog.models' }
   | { type: 'catalog.tools'; sessionId?: string }
   | { type: 'catalog.skills'; sessionId?: string }
@@ -475,6 +504,9 @@ export type ClientCommand =
 export type ServerEvent =
   | { type: 'connection'; status: 'connected' | 'error'; message?: string }
   | { type: 'runtime.updated'; status: { mode: 'cli_auth'; droidPath: string; apiKeyConfigured: boolean } }
+  | { type: 'env.report'; report: EnvironmentReport }
+  | { type: 'cli.install.progress'; phase: 'install' | 'update'; stream: 'stdout' | 'stderr'; line: string }
+  | { type: 'cli.install.done'; phase: 'install' | 'update'; ok: boolean; exitCode: number }
   | { type: 'session.updated'; session: MissionSummary }
   | { type: 'agent.updated'; missionId: string; agentSessionId: string; role: AgentRole; status: 'opened' | 'running' | 'paused' | 'completed' }
   | { type: 'event.appended'; event: TranscriptEvent }

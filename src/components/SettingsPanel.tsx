@@ -5,6 +5,8 @@ import { useEffect, useRef, useState } from 'react';
 import { ColorField } from './ColorPicker';
 import { ModelIcon, providerOf } from './ModelIcon';
 import type { ModelInfo } from '../types/bridge';
+import { useOnboarding } from '../hooks/useOnboarding';
+import { checkAppUpdate, downloadAppUpdate, getAppVersion, type AppUpdateInfo } from '../lib/onboarding';
 
 const PRESET_ACCENTS = [
   '#ee6018', '#ef6f2e', '#d15010', '#e8a838', '#4a9e7a',
@@ -47,6 +49,7 @@ const NAV: { group: string; items: NavItem[] }[] = [
     group: 'Personal',
     items: [
       { label: 'General' },
+      { label: 'Setup & updates' },
       { label: 'Profile' },
       { label: 'Appearance' },
       { label: 'Configuration' },
@@ -661,6 +664,115 @@ function GeneralSection() {
   );
 }
 
+function Switch({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
+  return (
+    <button
+      onClick={() => onChange(!checked)}
+      className={`w-10 h-6 rounded-full transition-colors shrink-0 flex items-center p-0.5 ${checked ? 'bg-droid-accent' : 'bg-droid-border'}`}
+    >
+      <span className={`w-5 h-5 rounded-full bg-white shadow-sm transition-transform ${checked ? 'translate-x-4' : 'translate-x-0'}`} />
+    </button>
+  );
+}
+
+function SetupSection({ onClose }: { onClose: () => void }) {
+  const onboard = useOnboarding();
+  const { env, onboarding, installing } = onboard;
+  const [appVersion, setAppVersion] = useState('');
+  const [update, setUpdate] = useState<AppUpdateInfo | null>(null);
+  const [checking, setChecking] = useState(false);
+
+  useEffect(() => {
+    void getAppVersion().then(setAppVersion);
+  }, []);
+
+  const cliAuto = onboarding?.cliAutoUpdate ?? true;
+  const appAuto = onboarding?.appAutoUpdate ?? true;
+  const signedIn = Boolean(env?.auth.loginPresent || env?.auth.apiKeyConfigured);
+
+  const runCheck = async () => {
+    setChecking(true);
+    const info = await checkAppUpdate();
+    setUpdate(info);
+    setChecking(false);
+  };
+
+  return (
+    <div className="max-w-2xl mx-auto">
+      <SectionTitle title="Setup & updates" sub="Manage the Droid CLI, your sign-in, and app updates." />
+
+      <GroupLabel>Droid CLI</GroupLabel>
+      <div className="rounded-xl border border-droid-border bg-droid-surface divide-y divide-droid-border mb-8">
+        <SettingRow label="CLI status" description={env?.cli.present ? env.cli.path : 'Not detected on this machine.'}>
+          <div className="flex items-center gap-2">
+            <span className="text-[12px] font-mono text-droid-text-muted">{env?.cli.present ? (env.cli.version ?? 'installed') : 'missing'}</span>
+            <button
+              onClick={() => onboard.update(onboarding?.installChannel)}
+              disabled={!!installing || !env?.cli.present}
+              className="px-2.5 h-7 rounded-md bg-droid-elevated border border-droid-border text-[12px] text-droid-text hover:border-droid-border-hover transition-colors disabled:opacity-40"
+            >
+              {installing === 'update' ? 'Updating…' : 'Update'}
+            </button>
+          </div>
+        </SettingRow>
+        <SettingRow label="Keep the CLI up to date" description="Updates silently on launch.">
+          <Switch checked={cliAuto} onChange={(v) => void onboard.patch({ cliAutoUpdate: v })} />
+        </SettingRow>
+        <SettingRow label="Sign-in" description={signedIn ? 'Connected to Factory.' : 'Sign in so models can run.'}>
+          {signedIn ? (
+            <span className="text-[12px] text-droid-green">Signed in</span>
+          ) : (
+            <button
+              onClick={() => onboard.login()}
+              className="px-2.5 h-7 rounded-md bg-droid-elevated border border-droid-border text-[12px] text-droid-text hover:border-droid-border-hover transition-colors"
+            >
+              Sign in
+            </button>
+          )}
+        </SettingRow>
+      </div>
+
+      <GroupLabel>DROIDEX app</GroupLabel>
+      <div className="rounded-xl border border-droid-border bg-droid-surface divide-y divide-droid-border mb-8">
+        <SettingRow label="Current version" description={update ? (update.updateAvailable ? `${update.latest} available` : 'Up to date') : `Installed v${appVersion}`}>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={runCheck}
+              disabled={checking}
+              className="px-2.5 h-7 rounded-md bg-droid-elevated border border-droid-border text-[12px] text-droid-text hover:border-droid-border-hover transition-colors disabled:opacity-40"
+            >
+              {checking ? 'Checking…' : 'Check for updates'}
+            </button>
+            {update?.updateAvailable && (
+              <button
+                onClick={() => { void downloadAppUpdate(); }}
+                className="px-2.5 h-7 rounded-md bg-droid-accent text-white text-[12px] hover:opacity-90 transition-opacity"
+              >
+                Restart & update
+              </button>
+            )}
+          </div>
+        </SettingRow>
+        <SettingRow label="Auto-update DROIDEX" description="Installs new builds and restarts.">
+          <Switch checked={appAuto} onChange={(v) => void onboard.patch({ appAutoUpdate: v })} />
+        </SettingRow>
+      </div>
+
+      <GroupLabel>Onboarding</GroupLabel>
+      <div className="rounded-xl border border-droid-border bg-droid-surface divide-y divide-droid-border">
+        <SettingRow label="Run setup again" description="Re-open the first-run setup tour.">
+          <button
+            onClick={() => { window.dispatchEvent(new CustomEvent('droid:open-onboarding')); onClose(); }}
+            className="px-2.5 h-7 rounded-md bg-droid-elevated border border-droid-border text-[12px] text-droid-text hover:border-droid-border-hover transition-colors"
+          >
+            Run setup
+          </button>
+        </SettingRow>
+      </div>
+    </div>
+  );
+}
+
 function PlaceholderSection({ title }: { title: string }) {
   return (
     <div className="max-w-2xl mx-auto">
@@ -751,6 +863,8 @@ export default function SettingsPanel() {
                 <AppearanceSection />
               ) : active === 'General' ? (
                 <GeneralSection />
+              ) : active === 'Setup & updates' ? (
+                <SetupSection onClose={close} />
               ) : (
                 <PlaceholderSection title={active} />
               )}

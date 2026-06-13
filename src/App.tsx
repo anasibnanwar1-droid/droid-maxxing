@@ -23,6 +23,12 @@ import AskUserModal from './components/AskUserModal';
 import SpecWikiModal from './components/SpecWikiModal';
 import BrowserWorkspace from './components/browser/BrowserWorkspace';
 import { isDesktop } from './lib/desktop';
+import { useOnboarding, shouldShowOnboarding, hasSetupBlocker } from './hooks/useOnboarding';
+import OnboardingWizard from './components/onboarding/OnboardingWizard';
+import SetupBanner from './components/onboarding/SetupBanner';
+import { updateCli } from './lib/commands';
+import { checkAppUpdate, downloadAppUpdate, type AppUpdateInfo } from './lib/onboarding';
+import { toast } from './lib/toast';
 
 function ContextListIcon({ className }: { className?: string }) {
   return (
@@ -43,12 +49,18 @@ const BROWSER_PANE_WIDTH_STORAGE_KEY = 'droid-browser-pane-width';
 export default function App() {
   const { state, dispatch } = useStore();
   const embedded = isEmbedded();
+  const onboard = useOnboarding();
+  const [forceWizard, setForceWizard] = useState(false);
+  const [appUpdate, setAppUpdate] = useState<AppUpdateInfo | null>(null);
+  const [bannerDismissed, setBannerDismissed] = useState(false);
+  const launchHandled = useRef(false);
+  const showWizard = !embedded && onboard.ready && (forceWizard || shouldShowOnboarding(onboard.onboarding));
   const activeMission = state.activeMissionId ? state.missions[state.activeMissionId] : null;
   const repoStatus = useRepoStatus(activeMission?.cwd ?? '');
   // The view is a real mission only when the active session is a mission orchestrator,
   // not merely because the global mission-compose flag is on.
   const isMissionView = !!activeMission && activeMission.kind === 'mission_orchestrator';
-  const showBrowserPane = !embedded && state.browserOpen;
+  const showBrowserPane = !embedded && state.browserOpen && !showWizard;
   const nativeBrowserPane = showBrowserPane && isDesktop();
   const focused = isMissionView;
   // A normal/spec session only has something worth showing once a message has
@@ -116,6 +128,41 @@ export default function App() {
     // latest few and reveals the rest behind "Show more" rather than capping.
     listMissions({ workspaceCwds: state.workspaceCwds, includePlainChats: true });
   }, [embedded, state.workspaceCwds]);
+
+  // Post-onboarding launch tasks: silent CLI update + non-blocking app update
+  // check. Runs once, only after the first-run tour is complete.
+  useEffect(() => {
+    if (embedded || launchHandled.current) return;
+    if (!onboard.ready || !onboard.onboarding?.completed) return;
+    launchHandled.current = true;
+    if (onboard.onboarding.cliAutoUpdate !== false && onboard.env?.cli.present) {
+      updateCli(onboard.onboarding.installChannel);
+    }
+    if (onboard.onboarding.appAutoUpdate !== false) {
+      void checkAppUpdate().then((info) => {
+        if (info?.updateAvailable) setAppUpdate(info);
+      });
+    }
+  }, [embedded, onboard.ready, onboard.onboarding, onboard.env]);
+
+  // Surface the result of a background CLI update.
+  useEffect(() => {
+    if (onboard.lastResult?.phase !== 'update') return;
+    if (onboard.lastResult.ok) toast.success('Droid CLI is up to date.');
+  }, [onboard.lastResult]);
+
+  // The native browser is a separate Electron layer that floats above the DOM,
+  // so close it while the full-screen wizard is up or it paints over the tour.
+  useEffect(() => {
+    if (showWizard && state.browserOpen) dispatch({ type: 'SET_BROWSER_OPEN', open: false });
+  }, [showWizard, state.browserOpen, dispatch]);
+
+  // "Run setup again" from Settings re-opens the tour.
+  useEffect(() => {
+    const onOpen = () => { setBannerDismissed(false); setForceWizard(true); };
+    window.addEventListener('droid:open-onboarding', onOpen);
+    return () => window.removeEventListener('droid:open-onboarding', onOpen);
+  }, []);
 
   useEffect(() => {
     if (embedded) return;
@@ -194,8 +241,30 @@ export default function App() {
     return () => window.removeEventListener('keydown', handler);
   }, [dispatch, toggleBrowserPane, toggleRightPanel]);
 
+  const setupBlocker = !showWizard && !embedded && onboard.ready && onboard.onboarding?.completed === true && hasSetupBlocker(onboard.env);
+  const showBanner = !bannerDismissed && (setupBlocker || (!!appUpdate && !showWizard));
+
   return (
     <div id="app-root" className="h-screen w-screen flex flex-col bg-droid-bg text-droid-text overflow-hidden relative">
+      {showBanner && (
+        setupBlocker ? (
+          <SetupBanner
+            kind="blocker"
+            message="Finish setting up Droid to start running agents."
+            actionLabel="Finish setup"
+            onAction={() => setForceWizard(true)}
+            onDismiss={() => setBannerDismissed(true)}
+          />
+        ) : (
+          <SetupBanner
+            kind="update"
+            message={`DROIDEX ${appUpdate?.latest} is available.`}
+            actionLabel="Restart & update"
+            onAction={() => { void downloadAppUpdate(); }}
+            onDismiss={() => setBannerDismissed(true)}
+          />
+        )
+      )}
       <div className="flex-1 flex min-h-0 relative">
         {/* Sidebar with collapse animation */}
         <AnimatePresence initial={false}>
@@ -318,6 +387,15 @@ export default function App() {
       {state.settingsOpen && <SettingsPanel />}
       <SpecWikiModal />
       <Toaster />
+
+      <AnimatePresence>
+        {showWizard && (
+          <OnboardingWizard
+            controller={onboard}
+            onComplete={() => { setForceWizard(false); setBannerDismissed(false); }}
+          />
+        )}
+      </AnimatePresence>
     </div>
   );
 }

@@ -25,6 +25,7 @@ import type {
   ContextStatsSnapshot,
   FactoryDefaultSettings,
   HistoryMission,
+  InstallChannel,
   MissionPhase,
   MissionSummary,
   ModelInfo,
@@ -37,6 +38,8 @@ import type {
   WorkerHistoryLink,
 } from './protocol.js';
 import { DroidRuntime } from './DroidRuntime.js';
+import { detectEnvironment } from './Environment.js';
+import { buildInstallCommand, buildUpdateCommand, runStreaming } from './CliInstaller.js';
 import { classifyPermission, confirmationType, mapFeature, normalizeNotification, normalizeStreamEvent, permissionSignature } from './normalize.js';
 import {
   applyCachedSummary,
@@ -232,6 +235,16 @@ export class MissionManager {
       case 'auth.startCliLogin':
         await this.runtime.startCliLogin();
         this.emit({ type: 'runtime.updated', status: this.runtime.status() });
+        void this.pollAuthAfterLogin();
+        return;
+      case 'env.detect':
+        await this.emitEnvironment();
+        return;
+      case 'cli.install':
+        await this.runCliInstall(cmd.channel);
+        return;
+      case 'cli.update':
+        await this.runCliUpdate(cmd.channel);
         return;
       case 'catalog.models':
       case 'models.list': {
@@ -464,6 +477,45 @@ export class MissionManager {
       }
     })();
     return this.modelRefresh;
+  }
+
+  private async emitEnvironment(): Promise<void> {
+    const report = await detectEnvironment(this.runtime.status().apiKeyConfigured);
+    this.emit({ type: 'env.report', report });
+  }
+
+  private async runCliInstall(channel: InstallChannel): Promise<void> {
+    const cmd = buildInstallCommand(channel);
+    const exitCode = await runStreaming(cmd, ({ stream, line }) =>
+      this.emit({ type: 'cli.install.progress', phase: 'install', stream, line }),
+    );
+    this.emit({ type: 'cli.install.done', phase: 'install', ok: exitCode === 0, exitCode });
+    this.emit({ type: 'runtime.updated', status: this.runtime.status() });
+    await this.emitEnvironment();
+  }
+
+  private async runCliUpdate(channel?: InstallChannel): Promise<void> {
+    const status = this.runtime.status();
+    const env = await detectEnvironment(status.apiKeyConfigured);
+    const cmd = buildUpdateCommand(channel, status.droidPath, env.cli.present);
+    const exitCode = await runStreaming(cmd, ({ stream, line }) =>
+      this.emit({ type: 'cli.install.progress', phase: 'update', stream, line }),
+    );
+    this.emit({ type: 'cli.install.done', phase: 'update', ok: exitCode === 0, exitCode });
+    this.emit({ type: 'runtime.updated', status: this.runtime.status() });
+    await this.emitEnvironment();
+  }
+
+  // After `droid login` opens the browser, the auth marker appears once the
+  // user finishes. Re-emit environment a few times so the UI flips to signed-in
+  // without forcing the user to click refresh.
+  private async pollAuthAfterLogin(): Promise<void> {
+    for (let i = 0; i < 30; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+      const report = await detectEnvironment(this.runtime.status().apiKeyConfigured);
+      this.emit({ type: 'env.report', report });
+      if (report.auth.loginPresent) return;
+    }
   }
 
   private async getFactoryDefaults(): Promise<FactoryDefaultSettings> {

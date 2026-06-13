@@ -19,6 +19,14 @@ contextBridge.exposeInMainWorld('droidControl', {
   listEditors: () => ipcRenderer.invoke('list-editors'),
   openProject: (dir, editor, target) => ipcRenderer.invoke('open-project', { dir, editor, target }),
 
+  getOnboarding: () => ipcRenderer.invoke('onboarding-get'),
+  setOnboarding: (patch) => ipcRenderer.invoke('onboarding-set', { patch }),
+  appVersion: () => ipcRenderer.invoke('app-version'),
+  checkAppUpdate: () => ipcRenderer.invoke('app-check-update'),
+  downloadAppUpdate: () => ipcRenderer.invoke('app-download-update'),
+  relaunchApp: () => ipcRenderer.invoke('app-relaunch'),
+  openExternal: (url) => ipcRenderer.invoke('open-external', { url }),
+
   nativeBrowserOpen: (sessionId, url, bounds, viewport) => ipcRenderer.invoke('native-browser-open', { sessionId, url, bounds, viewport }),
   nativeBrowserAttach: (sessionId, bounds, url) => ipcRenderer.invoke('native-browser-attach', { sessionId, bounds, url }),
   nativeBrowserDetach: (sessionId) => ipcRenderer.invoke('native-browser-detach', { sessionId }),

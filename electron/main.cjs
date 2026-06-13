@@ -96,6 +96,13 @@ function registerIpc() {
   ipcMain.handle('repo-status', (_event, { dir }) => repoStatus(dir));
   ipcMain.handle('list-editors', () => listEditors());
   ipcMain.handle('open-project', (_event, { dir, editor, target }) => openProject(dir, editor, target));
+  ipcMain.handle('onboarding-get', getOnboarding);
+  ipcMain.handle('onboarding-set', (_event, { patch }) => setOnboarding(patch));
+  ipcMain.handle('app-version', () => app.getVersion());
+  ipcMain.handle('app-check-update', checkAppUpdate);
+  ipcMain.handle('app-download-update', downloadAppUpdate);
+  ipcMain.handle('app-relaunch', () => relaunchApp());
+  ipcMain.handle('open-external', (_event, { url }) => openExternal(url));
 
   ipcMain.handle('native-browser-open', (_event, { sessionId, url, bounds, viewport }) => openNativeBrowser(sessionId, url, bounds, viewport));
   ipcMain.handle('native-browser-attach', (_event, { sessionId, bounds, url }) => attachNativeBrowser(sessionId, bounds, { restoreUrl: url }));
@@ -1092,6 +1099,117 @@ async function clearApiKey() {
 
 function apiKeyPath() {
   return path.join(app.getPath('userData'), 'factory-api-key.bin');
+}
+
+// ── Onboarding state ────────────────────────────────────────────────
+// Kept in userData (not localStorage) so the first-run tour survives a cache
+// clear and only ever shows once.
+const ONBOARDING_VERSION = 1;
+
+function onboardingPath() {
+  return path.join(app.getPath('userData'), 'onboarding.json');
+}
+
+async function getOnboarding() {
+  try {
+    const raw = await fsp.readFile(onboardingPath(), 'utf8');
+    const parsed = JSON.parse(raw);
+    return { completed: false, version: ONBOARDING_VERSION, ...parsed };
+  } catch {
+    return { completed: false, version: ONBOARDING_VERSION };
+  }
+}
+
+async function setOnboarding(patch) {
+  const current = await getOnboarding();
+  const next = { ...current, ...(patch || {}), version: ONBOARDING_VERSION };
+  await fsp.mkdir(path.dirname(onboardingPath()), { recursive: true });
+  await fsp.writeFile(onboardingPath(), JSON.stringify(next, null, 2));
+  return next;
+}
+
+// ── App self-update ─────────────────────────────────────────────────
+// Managed per-arch .dmg download against a configurable host; falls back to
+// the Squirrel autoUpdater when an update feed is configured.
+const DOWNLOAD_BASE = (process.env.DROID_DOWNLOAD_BASE || 'https://droidex.app').replace(/\/$/, '');
+const UPDATE_FEED = process.env.DROID_UPDATE_FEED || '';
+
+function macDmgName() {
+  return process.arch === 'arm64' ? 'droidex-arm64.dmg' : 'droidex-x64.dmg';
+}
+
+async function checkAppUpdate() {
+  const current = app.getVersion();
+  try {
+    const res = await fetch(`${DOWNLOAD_BASE}/downloads/latest.json`, { cache: 'no-store' });
+    if (!res.ok) throw new Error(`manifest ${res.status}`);
+    const manifest = await res.json();
+    const latest = String(manifest.version || '');
+    const dmgUrl = process.platform === 'darwin'
+      ? (manifest.mac?.[process.arch] || `${DOWNLOAD_BASE}/downloads/${macDmgName()}`)
+      : undefined;
+    return {
+      current,
+      latest,
+      updateAvailable: latest ? compareSemverParts(latest, current) > 0 : false,
+      arch: process.arch,
+      platform: process.platform,
+      dmgUrl,
+      feedConfigured: Boolean(UPDATE_FEED),
+    };
+  } catch {
+    return { current, latest: '', updateAvailable: false, arch: process.arch, platform: process.platform, feedConfigured: Boolean(UPDATE_FEED) };
+  }
+}
+
+async function downloadAppUpdate() {
+  if (UPDATE_FEED && process.platform === 'darwin') {
+    try {
+      const { autoUpdater } = require('electron');
+      autoUpdater.setFeedURL({ url: UPDATE_FEED });
+      autoUpdater.once('update-downloaded', () => autoUpdater.quitAndInstall());
+      autoUpdater.checkForUpdates();
+      return { mode: 'autoUpdater' };
+    } catch {
+      /* fall through to managed download */
+    }
+  }
+  if (process.platform !== 'darwin') {
+    await openExternal(`${DOWNLOAD_BASE}/download`);
+    return { mode: 'external' };
+  }
+  const url = `${DOWNLOAD_BASE}/downloads/${macDmgName()}`;
+  const dest = path.join(app.getPath('downloads'), macDmgName());
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`download failed (${res.status})`);
+  const buffer = Buffer.from(await res.arrayBuffer());
+  await fsp.writeFile(dest, buffer);
+  shell.showItemInFolder(dest);
+  await shell.openPath(dest);
+  return { mode: 'download', path: dest };
+}
+
+function relaunchApp() {
+  app.relaunch();
+  app.exit(0);
+}
+
+function openExternal(url) {
+  if (typeof url !== 'string' || !/^https?:\/\//i.test(url)) {
+    throw new Error('Refusing to open non-http(s) URL.');
+  }
+  return shell.openExternal(url);
+}
+
+// Compare two dotted versions: positive when a > b.
+function compareSemverParts(a, b) {
+  const pa = String(a).match(/\d+/g)?.map(Number) ?? [];
+  const pb = String(b).match(/\d+/g)?.map(Number) ?? [];
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const diff = (pa[i] ?? 0) - (pb[i] ?? 0);
+    if (diff) return diff;
+  }
+  return 0;
 }
 
 async function listFiles(dir) {
