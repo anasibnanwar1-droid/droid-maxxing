@@ -859,6 +859,7 @@ class FakeCompactionSession {
   compactions = 0;
   failCompaction = false;
   usedAfterStream?: number;
+  beforeContextStats?: () => Promise<void> | void;
   settingsUpdates: Array<Record<string, unknown>> = [];
 
   constructor(
@@ -887,6 +888,7 @@ class FakeCompactionSession {
     accuracy: 'exact';
     updatedAt: string;
   }> {
+    await this.beforeContextStats?.();
     return {
       used: this.used,
       remaining: Math.max(0, 1_000_000 - this.used),
@@ -956,6 +958,32 @@ test('auto-compacts before starting a model step once context crosses the effect
   assert.equal(session.compactions, 1);
   assert.deepEqual(session.prompts, ['hello']);
   assert.equal(events.some((event) => event.type === 'mission.error' || event.type === 'error'), false);
+});
+
+test('queues concurrent sends while pre-step context refresh is pending', async () => {
+  const { manager, session, mission } = autoCompactHarness(150_000, 200_000);
+  let releaseStats!: () => void;
+  const statsStarted = new Promise<void>((resolve) => {
+    session.beforeContextStats = async () => {
+      resolve();
+      await new Promise<void>((release) => {
+        releaseStats = release;
+      });
+      session.beforeContextStats = undefined;
+    };
+  });
+
+  const first = manager.handle({ type: 'mission.send', missionId: 'app-compact', text: 'first' });
+  await statsStarted;
+  await manager.handle({ type: 'mission.send', missionId: 'app-compact', text: 'second' });
+
+  assert.deepEqual(session.prompts, []);
+  assert.deepEqual(mission.pendingSends, ['second']);
+
+  releaseStats();
+  await first;
+  await waitFor(() => session.prompts.includes('second'));
+  assert.deepEqual(session.prompts, ['first', 'second']);
 });
 
 test('does not auto-compact after the final answer in the same visible turn', async () => {
@@ -1055,13 +1083,16 @@ test('rejects manual compaction while streaming', async () => {
   assert.equal(hasRejection, true);
 });
 
-function workerAutoCompactHarness(workerUsed: number, workerLimit?: number, swapTo?: string) {
-  const {
-    manager,
-    session: orchestratorSession,
-    events,
-    mission,
-  } = autoCompactHarness(0, undefined);
+function workerAutoCompactHarness(
+  workerUsed: number,
+  workerLimit?: number,
+  swapTo?: string,
+  workerBudget = workerLimit,
+) {
+  const { manager, session: orchestratorSession, events, mission } = autoCompactHarness(
+    0,
+    undefined,
+  );
   const workerSession = new FakeCompactionSession('worker-compact', workerUsed, swapTo);
   // When the daemon swaps the backing id, the reload hook loads the replacement
   // session; wire the runtime so that load resolves to a usable fake.
@@ -1084,6 +1115,8 @@ function workerAutoCompactHarness(workerUsed: number, workerLimit?: number, swap
     pendingSends: [],
     lastUsedAt: Date.now(),
     compacting: false,
+    compactionTokenBudget: workerBudget,
+    compactionCount: 0,
     effectiveCompactionTokenLimit: workerLimit,
   });
   return { manager, events, mission, workerSession, swappedSession, orchestratorSession };
@@ -1177,6 +1210,44 @@ test('worker compaction adopts a swapped backing session in place and re-keys it
     events.some((e) => e.type === 'error' || e.type === 'mission.error'),
     false,
   );
+});
+
+test('worker rekeys step down through the Droid-owned threshold policy', async () => {
+  type TestAgent = {
+    session: FakeCompactionSession;
+    compactionCount?: number;
+    effectiveCompactionTokenLimit?: number;
+  };
+  const budget = 200_000;
+  const { manager, mission } = workerAutoCompactHarness(0, autoCompactionTokenLimit(budget, 0), undefined, budget);
+  const internals = manager as unknown as {
+    runtime: { loadSession: (id: string, handlers: unknown) => Promise<FakeCompactionSession> };
+    rekeyAgentSession: (agent: TestAgent, newId: string) => Promise<void>;
+  };
+  internals.runtime = {
+    loadSession: async (id) => new FakeCompactionSession(id, 10_000),
+  };
+  let agent = mission.agents.get('worker-compact') as TestAgent;
+
+  await internals.rekeyAgentSession(agent, 'worker-1');
+  agent = mission.agents.get('worker-1') as TestAgent;
+  assert.equal(agent.compactionCount, 1);
+  assert.equal(agent.effectiveCompactionTokenLimit, autoCompactionTokenLimit(budget, 1));
+
+  await internals.rekeyAgentSession(agent, 'worker-2');
+  agent = mission.agents.get('worker-2') as TestAgent;
+  assert.equal(agent.compactionCount, 2);
+  assert.equal(agent.effectiveCompactionTokenLimit, autoCompactionTokenLimit(budget, 2));
+
+  await internals.rekeyAgentSession(agent, 'worker-3');
+  agent = mission.agents.get('worker-3') as TestAgent;
+  assert.equal(agent.compactionCount, 3);
+  assert.equal(agent.effectiveCompactionTokenLimit, autoCompactionTokenLimit(budget, 3));
+
+  await internals.rekeyAgentSession(agent, 'worker-4');
+  agent = mission.agents.get('worker-4') as TestAgent;
+  assert.equal(agent.compactionCount, 4);
+  assert.equal(agent.effectiveCompactionTokenLimit, autoCompactionTokenLimit(budget, 4));
 });
 
 test('worker swap re-keys and drains queued sends to the new backing session', async () => {
