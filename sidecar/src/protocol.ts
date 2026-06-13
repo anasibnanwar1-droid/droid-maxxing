@@ -52,6 +52,21 @@ export interface WorkerSummary {
   prompt?: string;
   modelId?: string;
   reasoningEffort?: ReasoningEffort;
+  // The orchestrator Task tool_call id that spawned this worker; links an
+  // in-chat spawn line to its subagent session.
+  toolUseId?: string;
+}
+
+// The exact toolUseId -> workerSessionId mapping persisted for a mission, so
+// historical loads can rebuild precise subagent links instead of guessing.
+export interface WorkerHistoryLink {
+  workerSessionId: string;
+  toolUseId?: string;
+  label?: string;
+  // Live run state for the linked worker, set only when the mission is still
+  // active so a reconnect/reload doesn't render a running subagent as finished.
+  // Omitted (treated as completed) for historical loads.
+  status?: 'running' | 'paused' | 'completed';
 }
 
 export interface MissionSummary {
@@ -97,17 +112,21 @@ export interface TranscriptEvent {
   role: AgentRole;
   ts: number;
   endTs?: number;
-  kind: 'text' | 'thinking' | 'tool_call' | 'tool_result' | 'error' | 'status';
+  kind: 'text' | 'thinking' | 'tool_call' | 'tool_result' | 'error' | 'status' | 'compaction';
   text?: string;
   toolName?: string;
   toolArgs?: unknown;
+  toolUseId?: string;
   isError?: boolean;
+  // For a 'compaction' divider: how many messages the compaction summarized away.
+  removedCount?: number;
   author?: 'user';
   // Frontend display metadata for user-authored prompt chips.
   skills?: string[];
   files?: string[];
   browserRefs?: BrowserTranscriptReference[];
   steered?: boolean;
+  compactType?: 'auto' | 'manual';
 }
 
 export type BrowserTranscriptReferenceKind = 'element' | 'region' | 'text';
@@ -400,7 +419,7 @@ export type ClientCommand =
   | { type: 'mission.subscribeWorker'; missionId: string; workerSessionId: string }
   | { type: 'mission.close'; missionId: string }
   | { type: 'mission.list'; workspaceCwds?: string[]; includePlainChats?: boolean; limitPerWorkspace?: number }
-  | { type: 'mission.loadHistory'; missionId: string }
+  | { type: 'mission.loadHistory'; missionId: string; cursor?: string }
   | { type: 'settings.agent.update'; missionId?: string; agent: ConfigurableAgent; modelId?: string | null; reasoningEffort?: ReasoningEffort }
   | { type: 'mission.setAutonomy'; missionId: string; autonomy: Autonomy }
   | { type: 'mission.setInteractionMode'; missionId: string; mode: SessionInteractionMode }
@@ -442,7 +461,11 @@ export type ServerEvent =
   | { type: 'mission.updated'; mission: MissionSummary }
   | { type: 'mission.features'; missionId: string; features: BridgeFeature[] }
   | { type: 'mission.progress'; missionId: string; entries: ProgressEntry[] }
-  | { type: 'mission.worker'; missionId: string; event: 'started' | 'updated' | 'completed'; workerSessionId: string; exitCode?: number; label?: string; prompt?: string; modelId?: string; reasoningEffort?: ReasoningEffort }
+  | { type: 'mission.worker'; missionId: string; event: 'started' | 'updated' | 'completed'; workerSessionId: string; exitCode?: number; label?: string; prompt?: string; modelId?: string; reasoningEffort?: ReasoningEffort; toolUseId?: string }
+  // A worker compacted and the daemon swapped its backing session id. The
+  // worker stays alive under the new id; clients must remap any state keyed by
+  // the old worker session id (worker list, transcript events, selection).
+  | { type: 'mission.worker.rekey'; missionId: string; oldSessionId: string; newSessionId: string }
   | { type: 'mission.tokens'; missionId: string; tokensIn: number; tokensOut: number; contextTokens: number; maxContextTokens?: number }
   | { type: 'mission.transcript'; event: TranscriptEvent }
   | { type: 'mission.permission'; request: PermissionRequest }
@@ -450,7 +473,7 @@ export type ServerEvent =
   | { type: 'spec.content'; missionId: string; path: string; content: string }
   | { type: 'mission.error'; missionId?: string; message: string }
   | { type: 'mission.list'; missions: MissionSummary[] }
-  | { type: 'mission.history'; missionId: string; progress: ProgressEntry[]; transcripts: TranscriptEvent[] }
+  | { type: 'mission.history'; missionId: string; progress: ProgressEntry[]; transcripts: TranscriptEvent[]; workers?: WorkerHistoryLink[]; mode?: 'replace' | 'prepend'; olderCursor?: string }
   | { type: 'sessions.history'; missions: HistoryMission[] }
   | { type: 'models.list'; models: ModelInfo[] }
   | { type: 'browser.updated'; state: BrowserState }

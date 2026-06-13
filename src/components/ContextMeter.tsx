@@ -65,7 +65,7 @@ function categoryColor(key?: string): string {
 }
 
 export default function ContextMeter({ mission, stats }: { mission: MissionSummary; stats?: ContextStatsSnapshot }) {
-  const { state } = useStore();
+  const { state, dispatch } = useStore();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
@@ -112,6 +112,15 @@ export default function ContextMeter({ mission, stats }: { mission: MissionSumma
     const r = ref.current.getBoundingClientRect();
     setPos({ right: window.innerWidth - r.right, bottom: window.innerHeight - r.top + 8 });
   }, [open]);
+
+  // Detach the native browser view while the popover is open so it renders
+  // above the right pane and outside clicks reach this component's handler.
+  useEffect(() => {
+    dispatch({ type: 'SET_CONTEXT_METER_OPEN', open });
+    return () => {
+      if (open) dispatch({ type: 'SET_CONTEXT_METER_OPEN', open: false });
+    };
+  }, [open, dispatch]);
 
   useEffect(() => {
     if (!open) return;

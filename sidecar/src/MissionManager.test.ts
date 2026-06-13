@@ -1,10 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  clampCompactionTokenLimit,
-  compactionTokenLimitForModel,
   createAutonomyForCommand,
-  createCompactionSettingsForModel,
   createMissionAgentDefaultsForMode,
   createModelDefaultsForMode,
   createSessionSettingsForAgent,
@@ -12,7 +9,13 @@ import {
   startupFactoryDefaults,
   validateFactoryDefaults,
 } from './MissionManager.js';
-import type { MissionSummary, ModelInfo, ServerEvent } from './protocol.js';
+import {
+  clampCompactionTokenLimit,
+  compactionTokenLimitForModel,
+  createCompactionSettingsForModel,
+  resumedCompactionTokenLimit,
+} from './compaction.js';
+import type { BridgeFeature, MissionSummary, ModelInfo, ServerEvent, WorkerHistoryLink } from './protocol.js';
 
 class FakeSession {
   prompts: string[] = [];
@@ -42,6 +45,19 @@ class FakeSession {
 
   async getContextStats(): Promise<{ used: number; remaining: number; limit: number; accuracy: 'exact'; updatedAt: string }> {
     return { used: 0, remaining: 100_000, limit: 100_000, accuracy: 'exact', updatedAt: new Date().toISOString() };
+  }
+}
+
+class FakeAgentSession {
+  closed = false;
+  notify?: (note: Record<string, unknown>) => void;
+  constructor(readonly sessionId: string) {}
+  onNotification(cb: (note: Record<string, unknown>) => void): () => void {
+    this.notify = cb;
+    return () => { this.notify = undefined; };
+  }
+  async close(): Promise<void> {
+    this.closed = true;
   }
 }
 
@@ -188,6 +204,235 @@ test('leaves unset compaction limits to Factory session defaults', () => {
   );
 });
 
+test('resume threshold honors an init-exposed compaction limit ahead of current defaults', () => {
+  // When the resumed SDK init settings expose a compactionTokenLimit, it wins
+  // over the current Factory defaults.
+  assert.equal(
+    clampCompactionTokenLimit(
+      resumedCompactionTokenLimit(
+        'model-a',
+        { compactionTokenLimit: 120_000, compactionTokenLimitPerModel: undefined },
+        { compactionTokenLimit: 200_000 },
+      ),
+      500_000,
+    ),
+    120_000,
+  );
+});
+
+test("resume threshold honors an init-exposed global limit over a current default per-model limit", () => {
+  // The resumed session exposes only a global limit; a current per-model default
+  // must not override the session's own saved limit (regression: the plain
+  // helper preferred the default per-model entry first).
+  assert.equal(
+    resumedCompactionTokenLimit(
+      'model-a',
+      { compactionTokenLimit: 120_000, compactionTokenLimitPerModel: undefined },
+      { compactionTokenLimitPerModel: { 'model-a': 200_000 } },
+    ),
+    120_000,
+  );
+  // Sanity check that the plain helper is what exhibited the override.
+  assert.equal(
+    compactionTokenLimitForModel(
+      'model-a',
+      { compactionTokenLimit: 120_000, compactionTokenLimitPerModel: undefined },
+      { compactionTokenLimitPerModel: { 'model-a': 200_000 } },
+    ),
+    200_000,
+  );
+});
+
+test('resume threshold falls back to current defaults when init omits a compaction limit', () => {
+  // The SDK does not persist a per-session compactionTokenLimit, so an init
+  // without one follows the current app defaults (including per-model).
+  assert.equal(
+    clampCompactionTokenLimit(
+      resumedCompactionTokenLimit(
+        'model-a',
+        { compactionTokenLimit: undefined, compactionTokenLimitPerModel: undefined },
+        { compactionTokenLimit: 200_000 },
+      ),
+      500_000,
+    ),
+    200_000,
+  );
+  // A current per-model default still applies when init exposes nothing.
+  assert.equal(
+    resumedCompactionTokenLimit(
+      'model-a',
+      { compactionTokenLimit: undefined, compactionTokenLimitPerModel: undefined },
+      { compactionTokenLimitPerModel: { 'model-a': 175_000 } },
+    ),
+    175_000,
+  );
+});
+
+test('withLiveWorkerStatus annotates live links and leaves historical/unknown ones untouched', () => {
+  const manager = new MissionManager(() => {});
+  const mission = {
+    summary: testSummary('app-live', 'droid-live'),
+    knownSubagents: new Set(['run-1', 'done-1']),
+    completedSubagents: new Set(['done-1']),
+    // A resumed worker the user has opened is live in agents but not in
+    // knownSubagents (which only a live spawn populates).
+    agents: new Map<string, unknown>([['open-1', {}]]),
+  };
+  const internals = manager as unknown as {
+    missions: Map<string, typeof mission>;
+    withLiveWorkerStatus: (id: string, links: WorkerHistoryLink[]) => WorkerHistoryLink[];
+  };
+  internals.missions.set(mission.summary.id, mission);
+  const out = internals.withLiveWorkerStatus(mission.summary.id, [
+    { workerSessionId: 'run-1', toolUseId: 't1' },
+    { workerSessionId: 'done-1', toolUseId: 't2' },
+    { workerSessionId: 'open-1', toolUseId: 't3' },
+    { workerSessionId: 'gone-1', toolUseId: 't4' },
+  ]);
+  assert.equal(out.find((l) => l.workerSessionId === 'run-1')?.status, 'running');
+  assert.equal(out.find((l) => l.workerSessionId === 'done-1')?.status, 'completed');
+  // An opened resumed worker (in agents only) is marked running, not completed.
+  assert.equal(out.find((l) => l.workerSessionId === 'open-1')?.status, 'running');
+  assert.equal(out.find((l) => l.workerSessionId === 'gone-1')?.status, undefined);
+});
+
+test('agentBelongsToMission accepts persisted-linked subagents for chat/spec missions', () => {
+  const manager = new MissionManager(() => {});
+  const mission = {
+    summary: testSummary('app-linked', 'droid-linked'),
+    knownSubagents: new Set<string>(),
+    linkedSubagents: new Set(['hist-worker-1']),
+  };
+  const internals = manager as unknown as {
+    agentBelongsToMission: (m: typeof mission, id: string) => boolean;
+  };
+  // A historical subagent known only from a persisted link is still openable.
+  assert.equal(internals.agentBelongsToMission(mission, 'hist-worker-1'), true);
+  assert.equal(internals.agentBelongsToMission(mission, 'unknown-worker'), false);
+});
+
+test('rekeyAgentSession adopts the swapped worker id across all mission state', async () => {
+  const manager = new MissionManager(() => {});
+  const oldSession = new FakeAgentSession('worker-old');
+  const newSession = new FakeAgentSession('worker-new');
+  let unsubscribed = 0;
+  const agent = {
+    session: oldSession,
+    missionId: 'app-rk',
+    role: 'worker' as const,
+    streaming: false,
+    pendingSends: [] as string[],
+    lastUsedAt: Date.now(),
+    unsubscribe: () => { unsubscribed += 1; },
+  };
+  const mission = {
+    summary: testSummary('app-rk', 'droid-rk'),
+    agents: new Map<string, typeof agent>([['worker-old', agent]]),
+    knownSubagents: new Set(['worker-old']),
+    completedSubagents: new Set<string>(),
+    linkedSubagents: new Set(['worker-old']),
+    subagentToolUseIds: new Map([['tool-rk', 'worker-old']]),
+    subagentSettings: new Map([['worker-old', { modelId: 'm-worker' }]]),
+  };
+  const recorded: Array<{ toolUseId: string; workerSessionId: string; label?: string }> = [];
+  const internals = manager as unknown as {
+    runtime: { loadSession: (id: string, handlers: unknown) => Promise<FakeAgentSession> };
+    history: { subagentLinks: () => WorkerHistoryLink[]; recordSubagentLink: (m: string, t: string, w: string, l?: string) => void };
+    contextSnapshots: Map<string, unknown>;
+    missions: Map<string, typeof mission>;
+    rekeyAgentSession: (a: typeof agent, newId: string) => Promise<void>;
+  };
+  internals.runtime = { loadSession: async () => newSession };
+  internals.history = {
+    subagentLinks: () => [{ workerSessionId: 'worker-old', toolUseId: 'tool-rk', label: 'Builder' }],
+    recordSubagentLink: (_m, t, w, l) => recorded.push({ toolUseId: t, workerSessionId: w, label: l }),
+  };
+  internals.contextSnapshots.set('worker-old', { used: 5 });
+  internals.missions.set('app-rk', mission);
+
+  await internals.rekeyAgentSession(agent, 'worker-new');
+
+  assert.equal(agent.session.sessionId, 'worker-new');
+  assert.equal(unsubscribed, 1);
+  assert.equal(oldSession.closed, true);
+  assert.equal(mission.agents.has('worker-old'), false);
+  assert.equal(mission.agents.get('worker-new'), agent);
+  assert.ok(mission.knownSubagents.has('worker-new') && !mission.knownSubagents.has('worker-old'));
+  assert.ok(mission.linkedSubagents.has('worker-new') && !mission.linkedSubagents.has('worker-old'));
+  assert.equal(mission.subagentToolUseIds.get('tool-rk'), 'worker-new');
+  assert.equal(mission.subagentSettings.get('worker-new')?.modelId, 'm-worker');
+  assert.equal(internals.contextSnapshots.has('worker-old'), false);
+  assert.deepEqual(internals.contextSnapshots.get('worker-new'), { used: 5 });
+  // The spawn link is re-pointed at the new id while preserving its label.
+  assert.deepEqual(recorded, [{ toolUseId: 'tool-rk', workerSessionId: 'worker-new', label: 'Builder' }]);
+});
+
+test('worker compaction re-keys to the new backing id and emits a rekey event (not stale)', async () => {
+  const events: ServerEvent[] = [];
+  const manager = new MissionManager((event) => events.push(event));
+  const oldSession = new FakeCompactionSession('worker-old', 900_000, 'worker-new');
+  const newSession = new FakeCompactionSession('worker-new', 10_000);
+  const agent = {
+    session: oldSession,
+    missionId: 'app-cmp',
+    role: 'worker' as const,
+    streaming: false,
+    pendingSends: [] as string[],
+    lastUsedAt: Date.now(),
+    unsubscribe: () => {},
+    effectiveCompactionTokenLimit: 200_000,
+  };
+  const mission = {
+    summary: testSummary('app-cmp', 'droid-cmp'),
+    agents: new Map<string, typeof agent>([['worker-old', agent]]),
+    knownSubagents: new Set(['worker-old']),
+    completedSubagents: new Set<string>(),
+    linkedSubagents: new Set<string>(),
+    subagentToolUseIds: new Map([['tool-cmp', 'worker-old']]),
+    subagentSettings: new Map<string, { modelId?: string }>(),
+  };
+  const internals = manager as unknown as {
+    runtime: { loadSession: (id: string, handlers: unknown) => Promise<FakeCompactionSession> };
+    history: { recordEvent: () => void; syncSummaries: () => void; subagentLinks: () => WorkerHistoryLink[]; recordSubagentLink: () => void };
+    missions: Map<string, typeof mission>;
+    compactAgent: (a: typeof agent, t: 'auto' | 'manual') => Promise<string>;
+  };
+  internals.runtime = { loadSession: async () => newSession };
+  internals.history = {
+    recordEvent: () => {},
+    syncSummaries: () => {},
+    subagentLinks: () => [{ workerSessionId: 'worker-old', toolUseId: 'tool-cmp' }],
+    recordSubagentLink: () => {},
+  };
+  internals.missions.set('app-cmp', mission);
+
+  const outcome = await internals.compactAgent(agent, 'auto');
+
+  // The swap is adopted in place: completed (not stale), worker stays alive.
+  assert.equal(outcome, 'completed');
+  assert.equal(agent.session.sessionId, 'worker-new');
+  assert.equal(mission.agents.has('worker-new'), true);
+  assert.equal(mission.agents.has('worker-old'), false);
+  const rekey = events.find((e) => e.type === 'mission.worker.rekey') as
+    | { missionId: string; oldSessionId: string; newSessionId: string }
+    | undefined;
+  assert.deepEqual(rekey && { missionId: rekey.missionId, oldSessionId: rekey.oldSessionId, newSessionId: rekey.newSessionId }, {
+    missionId: 'app-cmp',
+    oldSessionId: 'worker-old',
+    newSessionId: 'worker-new',
+  });
+  assert.equal(events.some((e) => e.type === 'mission.error'), false);
+});
+
+test('withLiveWorkerStatus leaves links untouched for historical (non-live) missions', () => {
+  const manager = new MissionManager(() => {});
+  const internals = manager as unknown as {
+    withLiveWorkerStatus: (id: string, links: WorkerHistoryLink[]) => WorkerHistoryLink[];
+  };
+  const links: WorkerHistoryLink[] = [{ workerSessionId: 'w1', toolUseId: 't1' }];
+  assert.deepEqual(internals.withLiveWorkerStatus('not-live', links), links);
+});
+
 test('sendNow interrupts the live turn and prioritizes the steering prompt', async () => {
   const events: ServerEvent[] = [];
   const manager = new MissionManager((event) => events.push(event));
@@ -202,16 +447,18 @@ test('sendNow interrupts the live turn and prioritizes the steering prompt', asy
     agents: new Map(),
     knownSubagents: new Set(),
     completedSubagents: new Set(),
+    linkedSubagents: new Set(),
     subagentToolUseIds: new Map(),
     subagentSettings: new Map(),
     pendingSubagents: [],
     mcpServers: [],
+    compacting: false,
   };
   const internals = manager as unknown as {
-    history: { recordEvent: () => void; syncSummaries: () => void };
+    history: { recordEvent: () => void; syncSummaries: () => void; recordSubagentLink: () => void; subagentLinks: () => []; };
     missions: Map<string, typeof mission>;
   };
-  internals.history = { recordEvent: () => {}, syncSummaries: () => {} };
+  internals.history = { recordEvent: () => {}, syncSummaries: () => {}, recordSubagentLink: () => {}, subagentLinks: () => [] };
   internals.missions.set(mission.summary.id, mission);
 
   const firstTurn = manager.handle({ type: 'mission.send', missionId: mission.summary.id, text: 'first' });
@@ -229,6 +476,49 @@ test('sendNow interrupts the live turn and prioritizes the steering prompt', asy
   assert.equal(events.some((event) => event.type === 'mission.error' || event.type === 'error'), false);
 });
 
+test('sendNow queues during compaction instead of driving or interrupting', async () => {
+  const events: ServerEvent[] = [];
+  const manager = new MissionManager((event) => events.push(event));
+  const session = new FakeSession('droid-compact-now');
+  const mission = {
+    summary: testSummary('app-compact-now', session.sessionId),
+    session,
+    streaming: false,
+    pendingSends: [],
+    pendingPermissions: new Map(),
+    pendingQuestions: new Map(),
+    agents: new Map(),
+    knownSubagents: new Set(),
+    completedSubagents: new Set(),
+    linkedSubagents: new Set(),
+    subagentToolUseIds: new Map(),
+    subagentSettings: new Map(),
+    pendingSubagents: [],
+    mcpServers: [],
+    compacting: true,
+  };
+  const internals = manager as unknown as {
+    history: { recordEvent: () => void; syncSummaries: () => void; recordSubagentLink: () => void; subagentLinks: () => []; };
+    missions: Map<string, typeof mission>;
+  };
+  internals.history = { recordEvent: () => {}, syncSummaries: () => {}, recordSubagentLink: () => {}, subagentLinks: () => [] };
+  internals.missions.set(mission.summary.id, mission);
+
+  // Manual compaction (compacting=true, streaming=false): must not drive() concurrently.
+  await manager.handle({ type: 'mission.sendNow', missionId: mission.summary.id, text: 'steer-manual' });
+  assert.deepEqual(session.prompts, []);
+  assert.equal(session.interrupts, 0);
+
+  // Auto-compaction (compacting=true, streaming=true): must not interrupt the compaction.
+  mission.streaming = true;
+  await manager.handle({ type: 'mission.sendNow', missionId: mission.summary.id, text: 'steer-auto' });
+  assert.equal(session.interrupts, 0);
+
+  // Both steers are preserved at the front of the queue for delivery after compaction.
+  assert.deepEqual(mission.pendingSends, ['steer-auto', 'steer-manual']);
+  assert.equal(events.some((event) => event.type === 'mission.error' || event.type === 'error'), false);
+});
+
 test('design turns disable TodoWrite and normal turns restore it', async () => {
   const events: ServerEvent[] = [];
   const manager = new MissionManager((event) => events.push(event));
@@ -243,16 +533,18 @@ test('design turns disable TodoWrite and normal turns restore it', async () => {
     agents: new Map(),
     knownSubagents: new Set(),
     completedSubagents: new Set(),
+    linkedSubagents: new Set(),
     subagentToolUseIds: new Map(),
     subagentSettings: new Map(),
     pendingSubagents: [],
     mcpServers: [],
+    compacting: false,
   };
   const internals = manager as unknown as {
-    history: { recordEvent: () => void; syncSummaries: () => void };
+    history: { recordEvent: () => void; syncSummaries: () => void; recordSubagentLink: () => void; subagentLinks: () => []; };
     missions: Map<string, typeof mission>;
   };
-  internals.history = { recordEvent: () => {}, syncSummaries: () => {} };
+  internals.history = { recordEvent: () => {}, syncSummaries: () => {}, recordSubagentLink: () => {}, subagentLinks: () => [] };
   internals.missions.set(mission.summary.id, mission);
 
   const designPrompt = 'Design Mode reference pack:\n- URL: about:blank\n\nUser instruction:\nMake the hero cleaner';
@@ -406,4 +698,538 @@ test('runtime defaults preserve saved model settings when the catalog is unavail
       compactionTokenLimitPerModel: { 'saved-model': 150_000 },
     },
   );
+});
+
+class FakeCompactionSession {
+  prompts: string[] = [];
+  compactions = 0;
+  failCompaction = false;
+  settingsUpdates: Array<Record<string, unknown>> = [];
+
+  constructor(readonly sessionId: string, private used: number, private swapTo?: string) {}
+
+  async *stream(prompt: string): AsyncGenerator<never, void, undefined> {
+    this.prompts.push(prompt);
+  }
+
+  async updateSettings(params: Record<string, unknown>): Promise<void> {
+    this.settingsUpdates.push(params);
+  }
+
+  onNotification(_cb: (note: Record<string, unknown>) => void): () => void {
+    return () => {};
+  }
+
+  async getContextStats(): Promise<{ used: number; remaining: number; limit: number; accuracy: 'exact'; updatedAt: string }> {
+    return { used: this.used, remaining: Math.max(0, 1_000_000 - this.used), limit: 1_000_000, accuracy: 'exact', updatedAt: new Date().toISOString() };
+  }
+
+  async compactSession(): Promise<{ newSessionId: string; removedCount: number }> {
+    if (this.failCompaction) throw new Error('transient compaction failure');
+    this.compactions += 1;
+    return { newSessionId: this.swapTo ?? this.sessionId, removedCount: 4 };
+  }
+
+  async close(): Promise<void> {}
+}
+
+function autoCompactHarness(used: number, effectiveCompactionTokenLimit?: number) {
+  const events: ServerEvent[] = [];
+  const manager = new MissionManager((event) => events.push(event));
+  const session = new FakeCompactionSession('droid-compact', used);
+  const mission = {
+    summary: testSummary('app-compact', session.sessionId),
+    session,
+    streaming: false,
+    pendingSends: [],
+    pendingPermissions: new Map(),
+    pendingQuestions: new Map(),
+    agents: new Map(),
+    knownSubagents: new Set(),
+    completedSubagents: new Set(),
+    linkedSubagents: new Set(),
+    subagentToolUseIds: new Map(),
+    subagentSettings: new Map(),
+    pendingSubagents: [],
+    mcpServers: [],
+    effectiveCompactionTokenLimit: effectiveCompactionTokenLimit,
+    compacting: false,
+  };
+  const internals = manager as unknown as {
+    history: {
+      recordEvent: () => void;
+      syncSummaries: () => void;
+      summaryPatches: () => Map<string, unknown>;
+      hiddenDroidSessionIds: () => Set<string>;
+      recordSubagentLink: () => void;
+      subagentLinks: () => [];
+    };
+    missions: Map<string, typeof mission>;
+  };
+  internals.history = {
+    recordEvent: () => {},
+    syncSummaries: () => {},
+    summaryPatches: () => new Map(),
+    hiddenDroidSessionIds: () => new Set(),
+    recordSubagentLink: () => {},
+    subagentLinks: () => [],
+  };
+  internals.missions.set(mission.summary.id, mission);
+  return { manager, session, events, mission };
+}
+
+test('auto-compacts an idle turn once context crosses the effective limit', async () => {
+  const { manager, session, events } = autoCompactHarness(250_000, 200_000);
+  await manager.handle({ type: 'mission.send', missionId: 'app-compact', text: 'hello' });
+  assert.equal(session.compactions, 1);
+  assert.equal(events.some((event) => event.type === 'mission.error' || event.type === 'error'), false);
+});
+
+test('compaction failure surfaces a recoverable error and terminal status without failing the mission', async () => {
+  const { manager, session, events } = autoCompactHarness(250_000, 200_000);
+  session.failCompaction = true;
+  await manager.handle({ type: 'mission.send', missionId: 'app-compact', text: 'hello' });
+  // Recoverable: a toast error is emitted but the mission is not marked failed.
+  assert.equal(events.some((e) => e.type === 'mission.error'), false);
+  assert.equal(events.some((e) => e.type === 'error' && /could not compact session/i.test((e as { message?: string }).message ?? '')), true);
+  // A terminal status clears the in-progress "Compacting..." shimmer.
+  assert.equal(
+    events.some((e) => e.type === 'mission.transcript' && /could not finish/i.test((e as { event?: { text?: string } }).event?.text ?? '')),
+    true,
+  );
+});
+
+test('compaction status transcript IDs are unique within the same millisecond', async () => {
+  const { manager, events } = autoCompactHarness(250_000, 200_000);
+  await manager.handle({ type: 'mission.send', missionId: 'app-compact', text: 'hello' });
+  const statusIds = events
+    .filter((e) => e.type === 'mission.transcript' && (e as { event?: { kind?: string } }).event?.kind === 'status')
+    .map((e) => (e as { event: { id: string } }).event.id);
+  // The start ("Compacting conversation...") and terminal status can land in the
+  // same ms; their IDs must differ so the UI doesn't drop the terminal one.
+  assert.ok(statusIds.length >= 2);
+  assert.equal(new Set(statusIds).size, statusIds.length);
+});
+
+test('Stop during compaction drops queued sends but does not interrupt the compaction', async () => {
+  const { manager, session, mission } = autoCompactHarness(0, undefined);
+  mission.compacting = true;
+  let interrupts = 0;
+  (session as unknown as { interrupt: () => Promise<void> }).interrupt = async () => { interrupts += 1; };
+  // A send during compaction queues instead of driving.
+  await manager.handle({ type: 'mission.send', missionId: 'app-compact', text: 'queued' });
+  assert.equal(mission.pendingSends.length, 1);
+  // Stop must clear the queue but never interrupt the in-flight compaction.
+  await manager.handle({ type: 'mission.interrupt', missionId: 'app-compact' });
+  assert.equal(interrupts, 0);
+  assert.equal(mission.pendingSends.length, 0);
+});
+
+test('does not auto-compact when context stays under the effective limit', async () => {
+  const { manager, session } = autoCompactHarness(150_000, 200_000);
+  await manager.handle({ type: 'mission.send', missionId: 'app-compact', text: 'hello' });
+  assert.equal(session.compactions, 0);
+});
+
+test('does not auto-compact when effectiveCompactionTokenLimit is unset', async () => {
+  const { manager, session } = autoCompactHarness(250_000, undefined);
+  await manager.handle({ type: 'mission.send', missionId: 'app-compact', text: 'hello' });
+  assert.equal(session.compactions, 0);
+});
+
+test('rejects manual compaction while streaming', async () => {
+  const { manager, mission, events } = autoCompactHarness(250_000, 200_000);
+  mission.streaming = true;
+  await manager.handle({ type: 'mission.compact', missionId: 'app-compact', customInstructions: undefined });
+  assert.equal(mission.streaming, true);
+  const hasRejection = events.some((e) => e.type === 'mission.transcript' && /cannot compact/i.test((e as { event?: { text?: string } }).event?.text ?? ''));
+  assert.equal(hasRejection, true);
+});
+
+function workerAutoCompactHarness(workerUsed: number, workerLimit?: number, swapTo?: string) {
+  const { manager, session: orchestratorSession, events, mission } = autoCompactHarness(0, undefined);
+  const workerSession = new FakeCompactionSession('worker-compact', workerUsed, swapTo);
+  // When the daemon swaps the backing id, the reload hook loads the replacement
+  // session; wire the runtime so that load resolves to a usable fake.
+  const swappedSession = swapTo ? new FakeCompactionSession(swapTo, 10_000) : undefined;
+  if (swappedSession) {
+    (manager as unknown as { runtime: { loadSession: (id: string, handlers: unknown) => Promise<FakeCompactionSession> } }).runtime = {
+      loadSession: async () => swappedSession,
+    };
+  }
+  mission.knownSubagents.add('worker-compact');
+  mission.agents.set('worker-compact', {
+    session: workerSession,
+    missionId: mission.summary.id,
+    role: 'worker',
+    streaming: false,
+    pendingSends: [],
+    lastUsedAt: Date.now(),
+    compacting: false,
+    effectiveCompactionTokenLimit: workerLimit,
+  });
+  return { manager, events, mission, workerSession, swappedSession, orchestratorSession };
+}
+
+test('worker auto-compacts its own session in place once context crosses the worker limit', async () => {
+  const { manager, events, workerSession, orchestratorSession } = workerAutoCompactHarness(250_000, 200_000);
+  await manager.handle({ type: 'agent.send', missionId: 'app-compact', agentSessionId: 'worker-compact', text: 'go' });
+  assert.equal(workerSession.compactions, 1);
+  // Boundary: worker compaction never touches the orchestrator's own session.
+  assert.equal(orchestratorSession.compactions, 0);
+  // Compaction status routes to the worker's own transcript, not the orchestrator chat.
+  const status = events.find(
+    (e) =>
+      e.type === 'mission.transcript' &&
+      (e as { event?: { kind?: string; text?: string } }).event?.kind === 'status' &&
+      /Compacting conversation/i.test((e as { event?: { text?: string } }).event?.text ?? ''),
+  ) as { event?: { agentSessionId?: string; role?: string } } | undefined;
+  assert.equal(status?.event?.agentSessionId, 'worker-compact');
+  assert.equal(status?.event?.role, 'worker');
+  assert.equal(events.some((e) => e.type === 'mission.error' || e.type === 'error'), false);
+});
+
+test('worker does not auto-compact while under its limit', async () => {
+  const { manager, workerSession } = workerAutoCompactHarness(150_000, 200_000);
+  await manager.handle({ type: 'agent.send', missionId: 'app-compact', agentSessionId: 'worker-compact', text: 'go' });
+  assert.equal(workerSession.compactions, 0);
+});
+
+test('worker does not auto-compact when its effective limit is unset', async () => {
+  const { manager, workerSession } = workerAutoCompactHarness(250_000, undefined);
+  await manager.handle({ type: 'agent.send', missionId: 'app-compact', agentSessionId: 'worker-compact', text: 'go' });
+  assert.equal(workerSession.compactions, 0);
+});
+
+test('worker compaction adopts a swapped backing session in place and re-keys it', async () => {
+  const { manager, events, mission } = workerAutoCompactHarness(250_000, 200_000, 'worker-swapped');
+  await manager.handle({ type: 'agent.send', missionId: 'app-compact', agentSessionId: 'worker-compact', text: 'go' });
+  // The worker is adopted under the daemon's new backing id and stays usable.
+  assert.equal(mission.agents.has('worker-compact'), false);
+  assert.equal(mission.agents.has('worker-swapped'), true);
+  assert.ok(mission.knownSubagents.has('worker-swapped') && !mission.knownSubagents.has('worker-compact'));
+  // Clients are told to remap state from the old id to the new one.
+  assert.equal(
+    events.some(
+      (e) =>
+        e.type === 'mission.worker.rekey' &&
+        (e as { oldSessionId?: string }).oldSessionId === 'worker-compact' &&
+        (e as { newSessionId?: string }).newSessionId === 'worker-swapped',
+    ),
+    true,
+  );
+  // It completes normally (not stale/error).
+  assert.equal(
+    events.some(
+      (e) => e.type === 'mission.transcript' && /Compaction complete/i.test((e as { event?: { text?: string } }).event?.text ?? ''),
+    ),
+    true,
+  );
+  assert.equal(events.some((e) => e.type === 'error' || e.type === 'mission.error'), false);
+});
+
+test('worker swap re-keys and drains queued sends to the new backing session', async () => {
+  const { manager, events, mission, swappedSession } = workerAutoCompactHarness(250_000, 200_000, 'worker-swapped');
+  const agent = mission.agents.get('worker-compact') as { pendingSends: string[] };
+  agent.pendingSends.push('queued-during-compaction');
+  await manager.handle({ type: 'agent.send', missionId: 'app-compact', agentSessionId: 'worker-compact', text: 'go' });
+  // The worker is re-keyed; the queued send is delivered to the new session
+  // rather than dropped or surfaced as an error to resend.
+  assert.equal(mission.agents.has('worker-swapped'), true);
+  await waitFor(() => swappedSession?.prompts.includes('queued-during-compaction') ?? false);
+  assert.equal(swappedSession?.prompts.includes('queued-during-compaction'), true);
+  assert.equal(events.some((e) => e.type === 'error' && /resent/i.test((e as { message?: string }).message ?? '')), false);
+});
+
+test('transient worker compaction failure keeps the session and drains queued sends', async () => {
+  const { manager, mission, workerSession } = workerAutoCompactHarness(250_000, 200_000);
+  workerSession.failCompaction = true;
+  const agent = mission.agents.get('worker-compact') as { pendingSends: string[] };
+  agent.pendingSends.push('queued-after');
+  await manager.handle({ type: 'agent.send', missionId: 'app-compact', agentSessionId: 'worker-compact', text: 'go' });
+  // A transient failure must not close the worker...
+  assert.equal(mission.agents.has('worker-compact'), true);
+  // ...and must not drop the queued send (it drains on a fresh turn).
+  await waitFor(() => workerSession.prompts.includes('queued-after'));
+  assert.equal(workerSession.prompts.includes('queued-after'), true);
+});
+
+test('worker swap whose reload fails goes stale: closes the worker and never drains into a dead session', async () => {
+  const { manager, events, mission, workerSession, swappedSession } = workerAutoCompactHarness(250_000, 200_000, 'worker-swapped');
+  // The daemon swapped the backing id, but adopting the replacement fails
+  // (loadSession rejects), so the old id is dead and the new one never loaded.
+  (manager as unknown as { runtime: { loadSession: () => Promise<never> } }).runtime = {
+    loadSession: async () => { throw new Error('cannot load swapped session'); },
+  };
+  const agent = mission.agents.get('worker-compact') as { pendingSends: string[] };
+  agent.pendingSends.push('queued-into-dead');
+  await manager.handle({ type: 'agent.send', missionId: 'app-compact', agentSessionId: 'worker-compact', text: 'go' });
+  // The worker is torn down (no live agent under the old or swapped id)...
+  assert.equal(mission.agents.has('worker-compact'), false);
+  assert.equal(mission.agents.has('worker-swapped'), false);
+  // ...but the new backing id is preserved: a rekey old->new is advertised so
+  // clients remap the worker to the live (compacted) id and re-opens target it
+  // rather than the dead old id...
+  assert.equal(
+    events.some(
+      (e) =>
+        e.type === 'mission.worker.rekey' &&
+        (e as { oldSessionId?: string }).oldSessionId === 'worker-compact' &&
+        (e as { newSessionId?: string }).newSessionId === 'worker-swapped',
+    ),
+    true,
+  );
+  // ...a recoverable error tells the user to re-open (mission not failed)...
+  assert.equal(events.some((e) => e.type === 'mission.error'), false);
+  assert.equal(
+    events.some((e) => e.type === 'error' && /could not be adopted|re-open/i.test((e as { message?: string }).message ?? '')),
+    true,
+  );
+  // ...and the queued send is never delivered to the stale old or unloaded new session.
+  assert.equal(workerSession.prompts.includes('queued-into-dead'), false);
+  assert.equal(swappedSession?.prompts.includes('queued-into-dead') ?? false, false);
+});
+
+test('worker swap whose reload keeps failing persists the new id to the spawn link and features', async () => {
+  const { manager, events, mission } = workerAutoCompactHarness(250_000, 200_000, 'worker-swapped');
+  // The new backing id can never be loaded, so adoption (and the retry) fail.
+  (manager as unknown as { runtime: { loadSession: () => Promise<never> } }).runtime = {
+    loadSession: async () => { throw new Error('cannot load swapped session'); },
+  };
+  // Give the worker a persisted spawn link and a feature pinned to its id.
+  mission.subagentToolUseIds.set('tool-w', 'worker-compact');
+  mission.summary.features = [
+    {
+      id: 'f1',
+      description: '',
+      status: 'in_progress',
+      skillName: 'builder',
+      preconditions: [],
+      expectedBehavior: [],
+      verificationSteps: [],
+      workerSessionIds: ['worker-compact'],
+      currentWorkerSessionId: 'worker-compact',
+      completedWorkerSessionId: null,
+    },
+  ];
+  const recorded: Array<{ toolUseId: string; workerSessionId: string }> = [];
+  (manager as unknown as { history: { recordEvent: () => void; syncSummaries: () => void; subagentLinks: () => WorkerHistoryLink[]; recordSubagentLink: (m: string, t: string, w: string) => void } }).history = {
+    recordEvent: () => {},
+    syncSummaries: () => {},
+    subagentLinks: () => [{ workerSessionId: 'worker-compact', toolUseId: 'tool-w', label: 'Builder' }],
+    recordSubagentLink: (_m, t, w) => recorded.push({ toolUseId: t, workerSessionId: w }),
+  };
+
+  await manager.handle({ type: 'agent.send', missionId: 'app-compact', agentSessionId: 'worker-compact', text: 'go' });
+
+  // The durable spawn link is re-pointed at the live (compacted) id...
+  assert.deepEqual(recorded, [{ toolUseId: 'tool-w', workerSessionId: 'worker-swapped' }]);
+  assert.equal(mission.subagentToolUseIds.get('tool-w'), 'worker-swapped');
+  // ...and the feature pins move to the new id so feature-focused re-opens work.
+  assert.deepEqual(mission.summary.features?.[0].workerSessionIds, ['worker-swapped']);
+  assert.equal(mission.summary.features?.[0].currentWorkerSessionId, 'worker-swapped');
+  // The worker is still torn down (its in-memory session is dead).
+  assert.equal(mission.agents.has('worker-compact'), false);
+  assert.equal(events.some((e) => e.type === 'mission.error'), false);
+});
+
+test('rekeyAgentSession remaps worker ids inside mission summary features', async () => {
+  const manager = new MissionManager(() => {});
+  const oldSession = new FakeAgentSession('worker-old');
+  const newSession = new FakeAgentSession('worker-new');
+  const agent = {
+    session: oldSession,
+    missionId: 'app-feat',
+    role: 'worker' as const,
+    streaming: false,
+    pendingSends: [] as string[],
+    lastUsedAt: Date.now(),
+    unsubscribe: () => {},
+  };
+  const feature = (id: string, over: Partial<BridgeFeature>): BridgeFeature => ({
+    id,
+    description: '',
+    status: 'in_progress',
+    skillName: 'builder',
+    preconditions: [],
+    expectedBehavior: [],
+    verificationSteps: [],
+    ...over,
+  });
+  const summary = testSummary('app-feat', 'droid-feat');
+  summary.features = [
+    feature('f1', { workerSessionIds: ['worker-old', 'worker-other'], currentWorkerSessionId: 'worker-old', completedWorkerSessionId: null }),
+    feature('f2', { status: 'completed', workerSessionIds: ['worker-other'], currentWorkerSessionId: null, completedWorkerSessionId: 'worker-old' }),
+    feature('f3', { status: 'pending', workerSessionIds: ['worker-other'], currentWorkerSessionId: null, completedWorkerSessionId: null }),
+  ];
+  const mission = {
+    summary,
+    agents: new Map<string, typeof agent>([['worker-old', agent]]),
+    knownSubagents: new Set(['worker-old']),
+    completedSubagents: new Set<string>(),
+    linkedSubagents: new Set<string>(),
+    subagentToolUseIds: new Map<string, string>(),
+    subagentSettings: new Map<string, { modelId?: string }>(),
+  };
+  const internals = manager as unknown as {
+    runtime: { loadSession: () => Promise<FakeAgentSession> };
+    history: { subagentLinks: () => WorkerHistoryLink[]; recordSubagentLink: () => void };
+    contextSnapshots: Map<string, unknown>;
+    missions: Map<string, typeof mission>;
+    rekeyAgentSession: (a: typeof agent, newId: string) => Promise<void>;
+  };
+  internals.runtime = { loadSession: async () => newSession };
+  internals.history = { subagentLinks: () => [], recordSubagentLink: () => {} };
+  internals.missions.set('app-feat', mission);
+
+  await internals.rekeyAgentSession(agent, 'worker-new');
+
+  const [f1, f2, f3] = mission.summary.features;
+  // Old worker id is rewritten everywhere it is pinned (focus + numbering)...
+  assert.deepEqual(f1.workerSessionIds, ['worker-new', 'worker-other']);
+  assert.equal(f1.currentWorkerSessionId, 'worker-new');
+  assert.deepEqual(f2.workerSessionIds, ['worker-other']);
+  assert.equal(f2.completedWorkerSessionId, 'worker-new');
+  // ...while unrelated ids and untouched features are preserved as-is.
+  assert.deepEqual(f3.workerSessionIds, ['worker-other']);
+  assert.equal(f3.currentWorkerSessionId, null);
+});
+
+function orchestratorSwapHarness(used: number, limit: number, swapTo: string) {
+  const events: ServerEvent[] = [];
+  const manager = new MissionManager((event) => events.push(event));
+  const session = new FakeCompactionSession('droid-old', used, swapTo);
+  const mission = {
+    summary: testSummary('app-swap', session.sessionId),
+    session,
+    streaming: false,
+    pendingSends: [] as string[],
+    pendingPermissions: new Map(),
+    pendingQuestions: new Map(),
+    agents: new Map(),
+    knownSubagents: new Set<string>(),
+    completedSubagents: new Set<string>(),
+    linkedSubagents: new Set<string>(),
+    subagentToolUseIds: new Map(),
+    subagentSettings: new Map(),
+    pendingSubagents: [],
+    mcpServers: [],
+    mcpConfigs: [],
+    effectiveCompactionTokenLimit: limit,
+    compacting: false,
+    todoDisabledForDesign: undefined as boolean | undefined,
+  };
+  const internals = manager as unknown as {
+    history: {
+      recordEvent: () => void;
+      syncSummaries: () => void;
+      summaryPatches: () => Map<string, unknown>;
+      hiddenDroidSessionIds: () => Set<string>;
+      recordSubagentLink: () => void;
+      subagentLinks: () => [];
+    };
+    missions: Map<string, typeof mission>;
+    runtime: { loadSession: (id: string, handlers: unknown) => Promise<FakeCompactionSession> };
+  };
+  internals.history = {
+    recordEvent: () => {},
+    syncSummaries: () => {},
+    summaryPatches: () => new Map(),
+    hiddenDroidSessionIds: () => new Set(),
+    recordSubagentLink: () => {},
+    subagentLinks: () => [],
+  };
+  internals.missions.set(mission.summary.id, mission);
+  return { manager, session, events, mission, internals };
+}
+
+test('orchestrator compaction swap recovers when the first reload fails but a retry succeeds', async () => {
+  const { manager, session, events, mission, internals } = orchestratorSwapHarness(250_000, 200_000, 'droid-new');
+  const swapped = new FakeCompactionSession('droid-new', 10_000);
+  let loadCalls = 0;
+  internals.runtime = {
+    loadSession: async () => {
+      loadCalls += 1;
+      if (loadCalls === 1) throw new Error('transient load failure');
+      return swapped;
+    },
+  };
+  mission.pendingSends.push('queued');
+  await manager.handle({ type: 'mission.send', missionId: 'app-swap', text: 'go' });
+  // Adopted on retry: the live session is the new backing id, persisted on the summary.
+  assert.equal(mission.session.sessionId, 'droid-new');
+  assert.equal(mission.summary.sessionId, 'droid-new');
+  assert.equal(loadCalls, 2);
+  // The mission stays live (not dropped) and the queued send drains to the new session.
+  assert.equal(internals.missions.has('app-swap'), true);
+  await waitFor(() => swapped.prompts.includes('queued'));
+  assert.equal(swapped.prompts.includes('queued'), true);
+  // The old (swapped-away) session never receives the queued send.
+  assert.equal(session.prompts.includes('queued'), false);
+  // Recovered transiently: the mission is not marked failed.
+  assert.equal(events.some((e) => e.type === 'mission.error'), false);
+});
+
+test('orchestrator compaction swap that never reloads drops the mission and re-delivers queued sends through resume', async () => {
+  const { manager, session, events, mission, internals } = orchestratorSwapHarness(250_000, 200_000, 'droid-new');
+  internals.runtime = { loadSession: async () => { throw new Error('permanent load failure'); } };
+  let closedId: string | undefined;
+  // Stub the disk-backed teardown; assert the mission is dropped for re-resume.
+  (manager as unknown as { closeMission: (id: string) => Promise<void> }).closeMission = async (id: string) => {
+    closedId = id;
+    internals.missions.delete(id);
+  };
+  // Simulate a successful lazy resume: re-register a live mission on the new id.
+  const resumed = new FakeCompactionSession('droid-new', 10_000);
+  let resumeCalls = 0;
+  (manager as unknown as { resumeMission: (id: string) => Promise<void> }).resumeMission = async (id: string) => {
+    resumeCalls += 1;
+    internals.missions.set(id, { ...mission, session: resumed, streaming: false, compacting: false, pendingSends: [] });
+  };
+  mission.pendingSends.push('queued-after-recovery');
+  await manager.handle({ type: 'mission.send', missionId: 'app-swap', text: 'go' });
+  // The daemon's new backing id is persisted so a later send re-resumes the live session...
+  assert.equal(mission.summary.sessionId, 'droid-new');
+  // ...the live mission is dropped (the next send re-resumes it)...
+  assert.equal(closedId, 'app-swap');
+  // ...a recoverable error is surfaced without marking the mission failed...
+  assert.equal(events.some((e) => e.type === 'mission.error'), false);
+  assert.equal(
+    events.some((e) => e.type === 'error' && /reloading it failed/i.test((e as { message?: string }).message ?? '')),
+    true,
+  );
+  // ...the queued send is NOT discarded: it re-resumes and drives the new session...
+  await waitFor(() => resumed.prompts.includes('queued-after-recovery'));
+  assert.equal(resumeCalls >= 1, true);
+  // ...and it never streamed into the dead old session.
+  assert.equal(session.prompts.includes('queued-after-recovery'), false);
+  assert.equal(session.prompts.includes('go'), true);
+});
+
+test('manual compaction swap that never reloads re-delivers sends queued during compaction', async () => {
+  const { manager, session, events, mission, internals } = orchestratorSwapHarness(10_000, 200_000, 'droid-new');
+  internals.runtime = { loadSession: async () => { throw new Error('permanent load failure'); } };
+  let closedId: string | undefined;
+  (manager as unknown as { closeMission: (id: string) => Promise<void> }).closeMission = async (id: string) => {
+    closedId = id;
+    internals.missions.delete(id);
+  };
+  const resumed = new FakeCompactionSession('droid-new', 10_000);
+  let resumeCalls = 0;
+  (manager as unknown as { resumeMission: (id: string) => Promise<void> }).resumeMission = async (id: string) => {
+    resumeCalls += 1;
+    internals.missions.set(id, { ...mission, session: resumed, streaming: false, compacting: false, pendingSends: [] });
+  };
+  // A prompt queued while the manual compaction was running.
+  mission.pendingSends.push('queued-during-manual');
+  await manager.handle({ type: 'mission.compact', missionId: 'app-swap' });
+  // The live mission is dropped and the new backing id is persisted...
+  assert.equal(closedId, 'app-swap');
+  assert.equal(mission.summary.sessionId, 'droid-new');
+  // ...the queued prompt is re-delivered through resume (not discarded)...
+  await waitFor(() => resumed.prompts.includes('queued-during-manual'));
+  assert.equal(resumeCalls >= 1, true);
+  // ...without ever streaming into the dead old session, and not marked failed.
+  assert.equal(session.prompts.includes('queued-during-manual'), false);
+  assert.equal(events.some((e) => e.type === 'mission.error'), false);
 });

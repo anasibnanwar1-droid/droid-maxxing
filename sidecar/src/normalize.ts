@@ -188,6 +188,9 @@ export function normalizeStreamEvent(
         transcript: transcript(missionId, agentSessionId, role, 'tool_call', {
           toolName: toolUse.name,
           toolArgs: subagent ? slimSubagentArgs(toolUse.input ?? {}) : toolUse.input,
+          // Stamp the Task tool_call with its id so the chat feed can collapse
+          // streaming deltas into a single spawn line and link it to the worker.
+          ...(subagent ? { toolUseId } : {}),
         }),
         ...(subagent ? { subagent } : {}),
       };

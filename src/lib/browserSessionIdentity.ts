@@ -2,7 +2,9 @@ import type { BrowserNativeRequest, MissionSummary } from '../types/bridge';
 
 export function browserKeyForMission(mission: MissionSummary | undefined): string | undefined {
   if (!mission) return undefined;
-  return mission.sessionId ?? mission.id;
+  // The backend keys browser sessions by the stable app session id, which never
+  // changes (compaction swaps mission.sessionId, but the browser key must not).
+  return mission.id;
 }
 
 export function activeMissionAfterNativeBrowserRequest(

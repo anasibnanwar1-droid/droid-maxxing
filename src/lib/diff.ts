@@ -13,8 +13,9 @@ export interface FileChange {
 
 const EDIT_TOOLS = ['edit', 'multiedit', 'multi_edit', 'str_replace', 'apply_patch', 'create', 'write'];
 
-function isEditTool(name: string): boolean {
-  return EDIT_TOOLS.some((t) => name === t) || name.includes('edit') || name.includes('patch') || name.includes('write') || name.includes('str_replace');
+export function isEditTool(name: string | undefined): boolean {
+  const lower = name?.toLowerCase() ?? '';
+  return EDIT_TOOLS.some((t) => lower === t) || lower.includes('edit') || lower.includes('patch') || lower.includes('write') || lower.includes('str_replace');
 }
 
 function firstString(obj: Record<string, unknown>, keys: string[]): string | undefined {
@@ -55,6 +56,24 @@ function lineDiff(oldStr: string, newStr: string): DiffOp[] {
   return ops;
 }
 
+// apply_patch / unified-diff bodies carry the file path in their header lines
+// (`*** Update File: x`, `+++ b/x`), which the arg keys don't expose. Recover it
+// so edits show the real filename instead of the generic "file" fallback.
+function pathFromPatch(patch: string): string | undefined {
+  // Prefer the new-file path (`+++ b/x`); fall back to the old-file path
+  // (`--- a/x`) for delete-only diffs where the new side is `/dev/null`.
+  let fromOld: string | undefined;
+  for (const line of patch.split('\n')) {
+    const star = line.match(/^\*\*\* (?:Update|Add|Delete|Move to) File:\s*(.+?)\s*$/);
+    if (star) return star[1];
+    const plus = line.match(/^\+\+\+ (?:[ab]\/)?(.+?)\s*$/);
+    if (plus && plus[1] !== '/dev/null') return plus[1];
+    const minus = line.match(/^--- (?:[ab]\/)?(.+?)\s*$/);
+    if (minus && minus[1] !== '/dev/null' && fromOld === undefined) fromOld = minus[1];
+  }
+  return fromOld;
+}
+
 function parsePatch(patch: string): DiffOp[] {
   const ops: DiffOp[] = [];
   for (const line of patch.split('\n')) {
@@ -71,16 +90,18 @@ function parsePatch(patch: string): DiffOp[] {
 
 export function extractFileChange(toolName?: string, args?: unknown): FileChange | null {
   if (!toolName) return null;
-  if (!isEditTool(toolName.toLowerCase())) return null;
+  if (!isEditTool(toolName)) return null;
 
   const a: Record<string, unknown> = args && typeof args === 'object' ? (args as Record<string, unknown>) : {};
-  const path = firstString(a, ['path', 'file_path', 'filePath', 'file', 'target_file', 'filename']) ?? 'file';
+  const argPath = firstString(a, ['path', 'file_path', 'filePath', 'file', 'target_file', 'filename']);
 
   const patch = firstString(a, ['patch', 'diff', 'input']) ?? (typeof args === 'string' ? args : undefined);
   if (patch && /(^|\n)[+-]/.test(patch)) {
     const ops = parsePatch(patch);
-    return finalize(path, 'patch', ops);
+    return finalize(argPath ?? pathFromPatch(patch) ?? 'file', 'patch', ops);
   }
+
+  const path = argPath ?? 'file';
 
   if (Array.isArray(a.edits)) {
     const ops: DiffOp[] = [];

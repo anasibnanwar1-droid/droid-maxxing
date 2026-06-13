@@ -89,6 +89,9 @@ export const listMissions = (options?: { workspaceCwds?: string[]; includePlainC
 export const loadMissionHistory = (missionId: string) =>
   bridge.send({ type: 'mission.loadHistory', missionId });
 
+export const loadOlderMissionHistory = (missionId: string, cursor: string) =>
+  bridge.send({ type: 'mission.loadHistory', missionId, cursor });
+
 export const resumeMission = (sessionId: string) =>
   bridge.send({ type: 'mission.resume', sessionId });
 

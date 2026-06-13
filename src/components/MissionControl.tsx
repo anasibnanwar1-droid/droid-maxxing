@@ -1,7 +1,7 @@
-import { useRef, useEffect, useMemo, useState } from 'react';
+import { useRef, useEffect, useMemo, useState, useCallback } from 'react';
 import { useStore } from '../hooks/useStore';
 import { useRepoStatus } from '../hooks/useRepoStatus';
-import { interruptMission, setMissionAutonomy } from '../lib/commands';
+import { interruptMission, setMissionAutonomy, subscribeWorker } from '../lib/commands';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   FileDiff, Monitor, GitBranch, GitCommitHorizontal, ChevronDown, ChevronRight,
@@ -27,6 +27,8 @@ import { environmentLabels } from '../lib/repoEnvironment';
 import { DiffFull } from './DiffView';
 import { ModelIcon, providerOf } from './ModelIcon';
 import { CAT_ICON, CAT_LABEL, toolMeta } from '../lib/tools';
+import { findWorkerForTarget, resolveWorkers, subagentActivityForTarget } from '../lib/subagents';
+import type { WorkerInfo } from '../hooks/useStore';
 import { MessageFeed } from './chat';
 import EditorOpenMenu, { openCodebase, openCurrentDiff } from './EditorOpenMenu';
 import PromptInput from './PromptInput';
@@ -41,7 +43,15 @@ function featureAgentRole(feature: BridgeFeature): AgentEntry['role'] {
   return text.includes('validator') || text.includes('validation') || text.includes('scrutiny') ? 'validator' : 'worker';
 }
 
-function ChatArea({ events, live, pending, onOpenDiff, big }: { events: TranscriptEvent[]; live: boolean; pending: boolean; onOpenDiff?: (c: FileChange) => void; big?: boolean }) {
+function ChatArea({ events, live, pending, onOpenDiff, onOpenSubagent, subagentActivity, big }: {
+  events: TranscriptEvent[];
+  live: boolean;
+  pending: boolean;
+  onOpenDiff?: (c: FileChange) => void;
+  onOpenSubagent?: (target: { toolUseId?: string; label?: string }) => void;
+  subagentActivity?: (target: { toolUseId?: string; label?: string }) => { status?: 'running' | 'paused' | 'completed'; startedAt?: number; latest?: { kind: TranscriptEvent['kind']; text?: string; toolName?: string; toolArgs?: unknown } } | undefined;
+  big?: boolean;
+}) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const renderEvents = events.length > 900 ? events.slice(-900) : events;
   const hidden = events.length - renderEvents.length;
@@ -58,7 +68,7 @@ function ChatArea({ events, live, pending, onOpenDiff, big }: { events: Transcri
           </div>
         )}
 
-        <MessageFeed events={renderEvents} pending={pending} onOpenDiff={onOpenDiff} />
+        <MessageFeed events={renderEvents} pending={pending} onOpenDiff={onOpenDiff} onOpenSubagent={onOpenSubagent} subagentActivity={subagentActivity} />
 
         {events.length === 0 && !pending && (
           <div className="py-24 text-center text-[13px] text-droid-text-muted">
@@ -626,9 +636,37 @@ export default function MissionControl() {
   const [expanded, setExpanded] = useState<'features' | 'context' | null>(null);
   const [openDiff, setOpenDiff] = useState<FileChange | null>(null);
 
+  // A viewed worker can auto-compact and get re-keyed to a new backing session;
+  // follow the store's remap so the feed keeps filtering by the live id instead
+  // of going blank on the stale one. The map chains (old->A, A->B) across renders.
+  useEffect(() => {
+    const next = state.workerRekeys[viewedAgent];
+    if (next) setViewedAgent(next);
+  }, [state.workerRekeys, viewedAgent]);
+
   const features = mission?.features ?? [];
   const allTx = mission ? state.transcripts[mission.id] ?? [] : [];
   const progress = mission ? state.progress[mission.id] ?? [] : [];
+  const missionWorkers = mission ? state.workers[mission.id] ?? [] : [];
+
+  // Live workers come from mission.worker events; historical missions seed
+  // state.workers from the persisted exact mapping, and only fall back to
+  // transcript reconstruction for older history that predates persisted links.
+  const resolvedWorkers = useMemo<WorkerInfo[]>(() => resolveWorkers(missionWorkers, allTx), [missionWorkers, allTx]);
+
+  // Click a spawn name in the orchestrator transcript → focus that worker.
+  // Mission orchestrators are skipped by App's subscribe effect, so open the
+  // worker session here to load its history/live events before switching.
+  const openSubagent = useCallback((target: { toolUseId?: string; label?: string }) => {
+    const worker = findWorkerForTarget(resolvedWorkers, target);
+    if (!worker || !mission) return;
+    subscribeWorker(mission.id, worker.sessionId);
+    setViewedAgent(worker.sessionId);
+  }, [resolvedWorkers, mission]);
+
+  const subagentActivity = useCallback((target: { toolUseId?: string; label?: string }) => {
+    return subagentActivityForTarget(resolvedWorkers, allTx, target);
+  }, [resolvedWorkers, allTx]);
   const phaseLive = mission ? ['running', 'initializing', 'orchestrator_turn'].includes(mission.phase) : false;
 
   // Track real generation activity (streaming text grows in place, so watch text length too).
@@ -803,6 +841,8 @@ export default function MissionControl() {
               live={isLive}
               pending={isLive && viewedAgent === activeAgentId}
               onOpenDiff={setOpenDiff}
+              onOpenSubagent={onOrchestrator ? openSubagent : undefined}
+              subagentActivity={onOrchestrator ? subagentActivity : undefined}
             />
           )}
           <PromptInput />

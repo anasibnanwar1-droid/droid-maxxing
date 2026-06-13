@@ -1,10 +1,11 @@
-import { useRef, useEffect, useMemo, useState } from 'react';
+import { useRef, useEffect, useLayoutEffect, useMemo, useState, useCallback } from 'react';
 import { GripVertical, ChevronRight, Square } from 'lucide-react';
 import { useStore } from '../hooks/useStore';
 import { useMissionLive } from '../hooks/useMissionLive';
 import { MessageFeed, WorkingIndicator } from './chat';
 import { readFile } from '../lib/desktop';
-import { interruptAgent } from '../lib/commands';
+import { interruptAgent, loadOlderMissionHistory } from '../lib/commands';
+import { findWorkerForTarget, resolveWorkers, subagentActivityForTarget } from '../lib/subagents';
 
 function DroidWordmark() {
   return (
@@ -108,27 +109,45 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
   const viewingSub = !!selectedAgent && selectedAgent !== 'orchestrator';
 
   const missionWorkers = activeMission ? state.workers[activeMission.id] ?? [] : [];
-  const workerIndex = missionWorkers.findIndex((w) => w.sessionId === selectedAgent);
-  const selectedWorker = workerIndex >= 0 ? missionWorkers[workerIndex] : undefined;
+  // Historical chat/spec sessions don't receive live mission.worker events; seed
+  // from the persisted exact mapping (in state.workers) and fall back to
+  // transcript reconstruction for older history so subagent links stay navigable.
+  const resolvedWorkers = useMemo(() => resolveWorkers(missionWorkers, allTranscript), [missionWorkers, allTranscript]);
+  const workerIndex = resolvedWorkers.findIndex((w) => w.sessionId === selectedAgent);
+  const selectedWorker = workerIndex >= 0 ? resolvedWorkers[workerIndex] : undefined;
   const subLabel = selectedWorker ? selectedWorker.label ?? `Sub-agent ${workerIndex + 1}` : 'Sub-agent';
   const subModel = selectedWorker?.modelId
     ? state.models.find((m) => m.id === selectedWorker.modelId)?.displayName ?? selectedWorker.modelId
     : undefined;
   const subMeta = [subModel, selectedWorker?.reasoningEffort].filter(Boolean).join(' · ');
 
-  // Navigate to a spawned subagent from its in-chat card: match the droid name,
-  // preferring a still-running instance, then hand off to the right-panel view.
-  const openSubagentByLabel = (label?: string) => {
-    if (!label) return;
-    const matches = missionWorkers.filter((w) => (w.label ?? '').toLowerCase() === label.toLowerCase());
-    const target = matches.find((w) => w.status === 'running') ?? matches[matches.length - 1];
-    if (target) dispatch({ type: 'SELECT_AGENT', id: target.sessionId });
-  };
+  // Click a spawn name → switch the main chat view to that subagent's session.
+  const openSubagent = useCallback((target: { toolUseId?: string; label?: string }) => {
+    const worker = findWorkerForTarget(resolvedWorkers, target);
+    if (worker) dispatch({ type: 'SELECT_AGENT', id: worker.sessionId });
+  }, [resolvedWorkers, dispatch]);
+
+  // Latest activity for a spawn line's inline disclosure: the worker's status,
+  // start time (for the timer), and its newest meaningful transcript event.
+  const subagentActivity = useCallback((target: { toolUseId?: string; label?: string }) => {
+    return subagentActivityForTarget(resolvedWorkers, allTranscript, target);
+  }, [resolvedWorkers, allTranscript]);
 
   const transcript = useMemo(() => {
     if (viewingSub) return allTranscript.filter((t) => t.agentSessionId === selectedAgent);
     return allTranscript.filter((t) => t.role === 'orchestrator' || (t.author === 'user' && t.agentSessionId === 'user'));
   }, [allTranscript, viewingSub, selectedAgent]);
+
+  // Lazily page older orchestrator history (across the compaction chain) in as
+  // the user scrolls toward the top, prefetching well before the edge so the
+  // scrollback feels endless and smooth rather than hitting a hard stop.
+  const historyMissionId = activeMission?.id;
+  const olderCursor = historyMissionId ? state.historyCursor[historyMissionId] : undefined;
+  const loadingOlder = historyMissionId ? state.historyLoadingOlder[historyMissionId] : false;
+  // Anchor captured when an older page is requested, used to keep the viewport
+  // visually fixed once the prepended messages grow the scroll height.
+  const prependAnchor = useRef<{ height: number; top: number } | null>(null);
+  const PREFETCH_PX = 800;
 
   // Only auto-scroll when the user is already pinned to the bottom; if they've
   // scrolled up to read, leave their position alone while the model responds.
@@ -137,7 +156,24 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
     const el = scrollRef.current;
     if (!el) return;
     stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+    if (!viewingSub && historyMissionId && olderCursor && !loadingOlder && el.scrollTop < PREFETCH_PX) {
+      prependAnchor.current = { height: el.scrollHeight, top: el.scrollTop };
+      dispatch({ type: 'MISSION_HISTORY_LOADING_OLDER', missionId: historyMissionId });
+      loadOlderMissionHistory(historyMissionId, olderCursor);
+    }
   };
+
+  // Restore scroll position after an older page settles so the content the user
+  // was reading stays put instead of jumping to the top. Keyed on the loading
+  // flag too, so an empty (fully-deduped) page still clears the stale anchor.
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    if (!el || prependAnchor.current === null || loadingOlder) return;
+    const delta = el.scrollHeight - prependAnchor.current.height;
+    if (delta > 0) el.scrollTop = prependAnchor.current.top + delta;
+    prependAnchor.current = null;
+  }, [transcript.length, loadingOlder]);
+
   const tailLen = transcript.length > 0 ? (transcript[transcript.length - 1].text?.length ?? 0) : 0;
   useEffect(() => {
     if (scrollRef.current && stickRef.current) {
@@ -244,7 +280,8 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
             <MessageFeed
               events={transcript}
               pending={live}
-              onOpenSubagent={openSubagentByLabel}
+              onOpenSubagent={openSubagent}
+              subagentActivity={subagentActivity}
               specDraft={isSpec}
               specContent={specContent}
               onOpenSpecWiki={missionId ? () => dispatch({ type: 'SPEC_OPEN_WIKI', missionId }) : undefined}

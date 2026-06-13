@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { isDesignModeOpen } from '../../hooks/designModeState';
 import { useStore } from '../../hooks/useStore';
+import { useMissionLive } from '../../hooks/useMissionLive';
 import {
   addDesignReference,
   openBrowser,
@@ -31,6 +32,8 @@ import { browserKeyForMission } from '../../lib/browserSessionIdentity';
 import { browserTranscriptReferencesFromDesignReferences } from './browserTranscriptReferences';
 import { isSelfBrowserUrl, safeBrowserUrl } from './browserUrlSafety';
 import { useElementSize } from './useElementSize';
+import { isEditTool } from '../../lib/diff';
+import { createLocalDesignTranscriptEvent, newQueueId } from '../../lib/promptQueue';
 
 export default function BrowserWorkspace() {
   const { state, dispatch } = useStore();
@@ -40,6 +43,7 @@ export default function BrowserWorkspace() {
   const browser = browserKey ? state.browsers[browserKey] : undefined;
   const browserError = browserKey ? state.browserErrors[browserKey] : state.browserGlobalError;
   const designMode = isDesignModeOpen(state.designModes, browserKey);
+  const missionLive = useMissionLive(requestedChatId ?? null);
   const nativeBrowser = isDesktop();
   // The native BrowserView is an OS-level layer painted above the React tree,
   // so any full-screen overlay would otherwise be punched through by it. Detach
@@ -47,6 +51,7 @@ export default function BrowserWorkspace() {
   const obscured =
     state.settingsOpen ||
     state.commandPaletteOpen ||
+    state.contextMeterOpen ||
     !!state.pendingQuestion ||
     state.pendingPermission?.kind === 'spec';
   const frameRef = useRef<HTMLDivElement>(null);
@@ -89,11 +94,7 @@ export default function BrowserWorkspace() {
     if (!transcripts) return;
     const last = transcripts[transcripts.length - 1];
     if (!last || last.kind !== 'tool_result') return;
-    const name = last.toolName ?? '';
-    const isEdit = name === 'edit' || name === 'multiedit' || name === 'multi_edit'
-      || name === 'str_replace' || name === 'apply_patch' || name === 'create'
-      || name === 'write' || name.includes('edit') || name.includes('patch');
-    if (!isEdit || last.isError) return;
+    if (!isEditTool(last.toolName) || last.isError) return;
     if (last.ts <= lastEditTsRef.current) return;
     lastEditTsRef.current = last.ts;
     if (reloadTimerRef.current) clearTimeout(reloadTimerRef.current);
@@ -206,27 +207,36 @@ export default function BrowserWorkspace() {
   const emitDesignTranscript = useCallback((text: string, refs: DesignReference[]) => {
     if (!requestedChatId) return;
     const browserRefs = browserTranscriptReferencesFromDesignReferences(refs);
+    dispatch({ type: 'MISSION_TRANSCRIPT', event: createLocalDesignTranscriptEvent(requestedChatId, text, browserRefs) });
+  }, [dispatch, requestedChatId]);
+
+  // Stage a design prompt in the same client-side queue normal prompts use so
+  // it shows up as a draggable item and is delivered (with its references) once
+  // the current turn finishes, instead of hitting the backend mid-turn.
+  const queueDesignPrompt = useCallback((text: string, refs: DesignReference[], ids: string[]) => {
+    if (!browserKey || !requestedChatId) return;
     dispatch({
-      type: 'MISSION_TRANSCRIPT',
-      event: {
-        id: `local-design-${Date.now()}`,
-        missionId: requestedChatId,
-        agentSessionId: 'user',
-        role: 'orchestrator',
-        ts: Date.now(),
-        kind: 'text',
+      type: 'QUEUE_PROMPT',
+      missionId: requestedChatId,
+      prompt: {
+        id: newQueueId(),
         text,
-        author: 'user',
-        browserRefs: browserRefs.length ? browserRefs : undefined,
+        skills: [],
+        files: [],
+        design: { browserKey, references: refs, referenceIds: ids },
       },
     });
-  }, [dispatch, requestedChatId]);
+  }, [browserKey, dispatch, requestedChatId]);
 
   const sendPrompt = () => {
     if (!browserKey || !canSend) return;
     const text = instruction.trim();
-    sendDesignPrompt(browserKey, text, selectedIds);
-    emitDesignTranscript(text, references);
+    if (missionLive) {
+      queueDesignPrompt(text, references, selectedIds);
+    } else {
+      sendDesignPrompt(browserKey, text, selectedIds);
+      emitDesignTranscript(text, references);
+    }
     setReferences([]);
     setInstruction('');
     // Re-arm like Cursor: disarm after sending so the user clicks Design Mode
@@ -251,13 +261,16 @@ export default function BrowserWorkspace() {
     const reference = referenceFromNativeSelection(prompt.selection);
     const referenceId = reference.id;
     if (!referenceId) return;
-    setReferences([reference]);
     addDesignReference(browserKey, reference);
-    window.setTimeout(() => sendDesignPrompt(browserKey, text, [referenceId]), 0);
-    emitDesignTranscript(text, [reference]);
+    if (missionLive) {
+      queueDesignPrompt(text, [reference], [referenceId]);
+    } else {
+      window.setTimeout(() => sendDesignPrompt(browserKey, text, [referenceId]), 0);
+      emitDesignTranscript(text, [reference]);
+    }
     setReferences([]);
     dispatch({ type: 'SET_DESIGN_MODE', sessionId: browserKey, open: false });
-  }, [browserKey, dispatch, emitDesignTranscript]);
+  }, [browserKey, dispatch, emitDesignTranscript, missionLive, queueDesignPrompt]);
 
   return (
     <div className="flex h-full min-h-0 min-w-0 flex-col bg-droid-bg">

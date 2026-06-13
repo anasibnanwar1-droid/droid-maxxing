@@ -11,12 +11,14 @@ import type {
   MissionQuestion,
   ModelInfo,
   WorkerSummary,
+  WorkerHistoryLink,
   SkillInfo,
   ReasoningEffort,
   ContextStatsSnapshot,
   SessionKind,
   BrowserState,
   BrowserViewportMode,
+  DesignReference,
 } from '../types/bridge';
 import { addWorkspaceCwd } from '../lib/workspaces';
 
@@ -27,11 +29,18 @@ export interface WorkerInfo extends WorkerSummary {
   startedAt: number;
 }
 
+export interface QueuedDesignContext {
+  browserKey: string;
+  references: DesignReference[];
+  referenceIds: string[];
+}
+
 export interface QueuedPrompt {
   id: string;
   text: string;
   skills: string[];
   files: string[];
+  design?: QueuedDesignContext;
 }
 
 export interface AgentModelConfig {
@@ -56,7 +65,7 @@ export interface ThemeConfig {
   contrast: number;
 }
 
-interface AppState {
+export interface AppState {
   // Connection
   connection: 'idle' | 'connecting' | 'connected' | 'error';
   connectionError?: string;
@@ -68,7 +77,16 @@ interface AppState {
   transcripts: Record<string, TranscriptEvent[]>;
   progress: Record<string, ProgressEntry[]>;
   workers: Record<string, WorkerInfo[]>;   // subagents spawned per mission
+  // old worker session id -> new id, recorded on worker-compaction rekeys so
+  // views holding a worker id in local state can follow it to the new session.
+  workerRekeys: Record<string, string>;
   historyLoaded: Record<string, boolean>;
+  // Cursor for the next older page of orchestrator scrollback per mission;
+  // undefined/absent once the oldest compaction segment has been loaded.
+  historyCursor: Record<string, string | undefined>;
+  // Whether an older-history page is currently in flight (prevents duplicate
+  // prefetches while the user keeps scrolling up).
+  historyLoadingOlder: Record<string, boolean>;
   pendingPermission: PermissionRequest | null;
   pendingQuestion: MissionQuestion | null;
   contextStats: Record<string, ContextStatsSnapshot>;
@@ -87,6 +105,11 @@ interface AppState {
   specMode: boolean;
   settingsOpen: boolean;
   commandPaletteOpen: boolean;
+  // The context-usage popover portals over the app; the native browser view is
+  // an OS layer painted above the DOM, so we track this flag to detach the
+  // browser while the popover is open (otherwise it renders behind it and
+  // swallows outside-click dismissal).
+  contextMeterOpen: boolean;
   theme: ThemeConfig;
   missionMode: boolean;
   draftChat: { cwd: string } | null;
@@ -145,8 +168,9 @@ type Action =
   | { type: 'MISSION_UPDATED'; mission: MissionSummary }
   | { type: 'MISSION_FEATURES'; missionId: string; features: MissionSummary['features'] }
   | { type: 'MISSION_PROGRESS'; missionId: string; entries: ProgressEntry[] }
-  | { type: 'MISSION_WORKER'; missionId: string; event: 'started' | 'updated' | 'completed'; workerSessionId: string; label?: string; prompt?: string; modelId?: string; reasoningEffort?: ReasoningEffort }
+  | { type: 'MISSION_WORKER'; missionId: string; event: 'started' | 'updated' | 'completed'; workerSessionId: string; label?: string; prompt?: string; modelId?: string; reasoningEffort?: ReasoningEffort; toolUseId?: string }
   | { type: 'AGENT_UPDATED'; missionId: string; agentSessionId: string; role: AgentKind; status: 'opened' | 'running' | 'paused' | 'completed' }
+  | { type: 'MISSION_WORKER_REKEY'; missionId: string; oldSessionId: string; newSessionId: string }
   | { type: 'MISSION_TOKENS'; missionId: string; tokensIn: number; tokensOut: number; contextTokens: number; maxContextTokens?: number }
   | { type: 'CONTEXT_UPDATED'; sessionId: string; stats: ContextStatsSnapshot }
   | { type: 'MISSION_TRANSCRIPT'; event: TranscriptEvent }
@@ -160,7 +184,8 @@ type Action =
   | { type: 'MISSION_QUESTION'; question: MissionQuestion }
   | { type: 'MISSION_ERROR'; missionId?: string; message: string }
   | { type: 'MISSION_LIST'; missions: MissionSummary[] }
-  | { type: 'MISSION_HISTORY'; missionId: string; progress: ProgressEntry[]; transcripts: TranscriptEvent[] }
+  | { type: 'MISSION_HISTORY'; missionId: string; progress: ProgressEntry[]; transcripts: TranscriptEvent[]; workers?: WorkerHistoryLink[]; mode?: 'replace' | 'prepend'; olderCursor?: string }
+  | { type: 'MISSION_HISTORY_LOADING_OLDER'; missionId: string }
   | { type: 'CLEAR_PERMISSION' }
   | { type: 'CLEAR_QUESTION' }
 
@@ -169,6 +194,7 @@ type Action =
   | { type: 'SET_RIGHT_PANEL'; open: boolean }
   | { type: 'TOGGLE_COMMAND_PALETTE' }
   | { type: 'CLOSE_COMMAND_PALETTE' }
+  | { type: 'SET_CONTEXT_METER_OPEN'; open: boolean }
   | { type: 'TOGGLE_SIDEBAR' }
   | { type: 'TOGGLE_SPEC_MODE' }
   | { type: 'MISSION_SET_KIND'; missionId: string; kind: SessionKind }
@@ -534,7 +560,7 @@ function applyMissionOverride(
 
 const persistedUiState = loadPersistedUiState();
 
-const initialState: AppState = {
+export const initialState: AppState = {
   connection: 'idle',
   missions: {},
   missionOrder: [],
@@ -542,7 +568,10 @@ const initialState: AppState = {
   transcripts: {},
   progress: {},
   workers: {},
+  workerRekeys: {},
   historyLoaded: {},
+  historyCursor: {},
+  historyLoadingOlder: {},
   pendingPermission: null,
   pendingQuestion: null,
   contextStats: {},
@@ -555,6 +584,7 @@ const initialState: AppState = {
   specMode: persistedUiState.specMode ?? false,
   settingsOpen: false,
   commandPaletteOpen: false,
+  contextMeterOpen: false,
   theme: loadTheme(),
   missionMode: persistedUiState.missionMode ?? false,
   draftChat: null,
@@ -583,12 +613,12 @@ function progressKey(entry: ProgressEntry): string {
   return `${entry.timestamp}|${entry.type}|${entry.featureId ?? ''}|${entry.workerSessionId ?? ''}|${entry.title ?? ''}`;
 }
 
-function designModeSessionId(state: AppState, appMissionId: string): string {
-  return state.missions[appMissionId]?.sessionId ?? appMissionId;
-}
-
 function activeBrowserKey(state: AppState): string | undefined {
-  return state.activeMissionId ? designModeSessionId(state, state.activeMissionId) : undefined;
+  if (!state.activeMissionId) return undefined;
+  // Browser state and open-keys are keyed by the stable app session id
+  // (mission.id), matching the backend; the droid sessionId is swapped by
+  // compaction and would desync the open state from the backend's updates.
+  return state.missions[state.activeMissionId]?.id ?? state.activeMissionId;
 }
 
 // Record an explicit open (true) or hidden (false) decision for a browser key.
@@ -608,6 +638,31 @@ function clearBrowserOpenKey(keys: Record<string, boolean>, key: string): Record
   return next;
 }
 
+// One-time upgrade migration for browser state. Panes used to be keyed by the
+// volatile droid session id (mission.sessionId, which compaction swaps); they
+// are now keyed by the stable app id (mission.id). When missions first load,
+// move any persisted entry from a mission's current session id to its stable id
+// so an open pane survives the upgrade instead of being orphaned. Stale
+// pre-compaction keys (which match no live mission.sessionId) are left behind
+// and never read by the new stable-key lookups.
+function migrateBrowserStateByMission<T>(
+  record: Record<string, T>,
+  missions: MissionSummary[],
+  rekeyValue: (value: T, stableId: string) => T = (value) => value,
+): Record<string, T> {
+  let next: Record<string, T> | undefined;
+  for (const m of missions) {
+    const oldKey = m.sessionId;
+    if (!oldKey || oldKey === m.id) continue;
+    const source = next ?? record;
+    if (source[oldKey] === undefined || source[m.id] !== undefined) continue;
+    next = next ?? { ...record };
+    next[m.id] = rekeyValue(next[oldKey], m.id);
+    delete next[oldKey];
+  }
+  return next ?? record;
+}
+
 // Re-derive `browserOpen` from the per-session open set and the active session.
 // Applied after every reducer pass so the convenience flag never goes stale.
 function syncBrowserOpen(state: AppState): AppState {
@@ -616,7 +671,7 @@ function syncBrowserOpen(state: AppState): AppState {
   return state.browserOpen === open ? state : { ...state, browserOpen: open };
 }
 
-function reducer(state: AppState, action: Action): AppState {
+export function reducer(state: AppState, action: Action): AppState {
   return syncBrowserOpen(baseReducer(state, action));
 }
 
@@ -725,6 +780,7 @@ function baseReducer(state: AppState, action: Action): AppState {
           prompt: action.prompt ?? next[idx].prompt,
           modelId: action.modelId ?? next[idx].modelId,
           reasoningEffort: action.reasoningEffort ?? next[idx].reasoningEffort,
+          toolUseId: action.toolUseId ?? next[idx].toolUseId,
         };
       } else {
         if (action.event === 'updated') return state;
@@ -736,9 +792,74 @@ function baseReducer(state: AppState, action: Action): AppState {
           prompt: action.prompt,
           modelId: action.modelId,
           reasoningEffort: action.reasoningEffort,
+          toolUseId: action.toolUseId,
         }];
       }
       return { ...state, workers: { ...state.workers, [mid]: next } };
+    }
+
+    case 'MISSION_WORKER_REKEY': {
+      const { missionId: mid, oldSessionId, newSessionId } = action;
+      if (oldSessionId === newSessionId) return state;
+      const workers = (state.workers[mid] ?? []).map((w) =>
+        w.sessionId === oldSessionId ? { ...w, sessionId: newSessionId } : w,
+      );
+      const missionTranscripts = state.transcripts[mid];
+      const transcripts = missionTranscripts
+        ? {
+            ...state.transcripts,
+            [mid]: missionTranscripts.map((ev) =>
+              ev.agentSessionId === oldSessionId ? { ...ev, agentSessionId: newSessionId } : ev,
+            ),
+          }
+        : state.transcripts;
+      const oldStats = state.contextStats[oldSessionId];
+      let contextStats = state.contextStats;
+      if (oldStats) {
+        const { [oldSessionId]: _dropped, ...rest } = state.contextStats;
+        // The backend refreshes context for the new id (post-compaction, lower
+        // usage) before emitting this rekey, so prefer any fresh new-id stats
+        // already in the store; only carry the old snapshot over as a bridge
+        // when the new id has none yet. Overwriting would show stale usage.
+        contextStats = rest[newSessionId] !== undefined ? rest : { ...rest, [newSessionId]: oldStats };
+      }
+      // Mission features reference workers by session id (feature focus + worker
+      // role/numbering), so follow the compacted worker to its new backing id.
+      const existingMission = state.missions[mid];
+      let missions = state.missions;
+      if (existingMission) {
+        const remapId = (id?: string | null) => (id === oldSessionId ? newSessionId : id);
+        const features = existingMission.features.map((f) => ({
+          ...f,
+          workerSessionIds: f.workerSessionIds?.map((id) => (id === oldSessionId ? newSessionId : id)),
+          currentWorkerSessionId: remapId(f.currentWorkerSessionId),
+          completedWorkerSessionId: remapId(f.completedWorkerSessionId),
+        }));
+        missions = { ...state.missions, [mid]: { ...existingMission, features } };
+      }
+      // Progress entries tag the worker that produced them; keep them aligned too.
+      const missionProgress = state.progress[mid];
+      const progress = missionProgress
+        ? {
+            ...state.progress,
+            [mid]: missionProgress.map((p) =>
+              p.workerSessionId === oldSessionId ? { ...p, workerSessionId: newSessionId } : p,
+            ),
+          }
+        : state.progress;
+      return {
+        ...state,
+        missions,
+        workers: { ...state.workers, [mid]: workers },
+        transcripts,
+        progress,
+        contextStats,
+        // Record the remap so views holding this id in local state (e.g. Mission
+        // Control's viewedAgent) can follow the worker to its new session.
+        workerRekeys: { ...state.workerRekeys, [oldSessionId]: newSessionId },
+        selectedAgentSessionId:
+          state.selectedAgentSessionId === oldSessionId ? newSessionId : state.selectedAgentSessionId,
+      };
     }
 
     case 'AGENT_UPDATED': {
@@ -913,22 +1034,79 @@ function baseReducer(state: AppState, action: Action): AppState {
         ...state,
         missions: map,
         missionOrder: order,
+        // Carry any pre-upgrade browser panes from the old session-id key to the
+        // stable mission id so a re-keyed/compacted session keeps its open pane.
+        browsers: migrateBrowserStateByMission(state.browsers, action.missions, (b, id) => ({ ...b, missionId: id })),
+        browserOpenKeys: migrateBrowserStateByMission(state.browserOpenKeys, action.missions),
         activeMissionId: state.activeMissionId && map[state.activeMissionId] ? state.activeMissionId : state.activeMissionId,
       };
     }
 
+    case 'MISSION_HISTORY_LOADING_OLDER':
+      return { ...state, historyLoadingOlder: { ...state.historyLoadingOlder, [action.missionId]: true } };
+
     case 'MISSION_HISTORY': {
+      const existing = state.transcripts[action.missionId] ?? [];
+      // An older page prepends its events to the front of the existing scrollback
+      // (deduping by id so a trimmed/overlapping boundary never doubles a message).
+      if (action.mode === 'prepend') {
+        const have = new Set(existing.map((e) => e.id));
+        const older = action.transcripts.filter((e) => !have.has(e.id));
+        return {
+          ...state,
+          transcripts: older.length > 0
+            ? { ...state.transcripts, [action.missionId]: [...older, ...existing] }
+            : state.transcripts,
+          historyCursor: { ...state.historyCursor, [action.missionId]: action.olderCursor },
+          historyLoadingOlder: { ...state.historyLoadingOlder, [action.missionId]: false },
+        };
+      }
       // Don't let an empty history snapshot wipe a locally-seeded transcript
       // (e.g. a brand-new mission whose session isn't persisted to disk yet).
-      const existing = state.transcripts[action.missionId] ?? [];
       const transcripts = action.transcripts.length === 0 && existing.length > 0
         ? state.transcripts
         : { ...state.transcripts, [action.missionId]: action.transcripts };
+      // Merge the exact spawn->worker mapping from history with any live workers
+      // already in state (a live mission.worker may arrive before history). Live
+      // entries win; history links add missing workers and backfill toolUseId.
+      const histLinks = action.workers ?? [];
+      const existingWorkers = state.workers[action.missionId] ?? [];
+      let workers = state.workers;
+      if (histLinks.length > 0) {
+        const bySession = new Map(existingWorkers.map((w) => [w.sessionId, w]));
+        let changed = false;
+        for (const link of histLinks) {
+          const existing = bySession.get(link.workerSessionId);
+          if (!existing) {
+            bySession.set(link.workerSessionId, {
+              sessionId: link.workerSessionId,
+              // Honor the live run state the backend attaches for active
+              // missions so a reconnect/reload doesn't mark a still-running
+              // subagent as finished; historical loads omit it (-> completed).
+              status: link.status ?? 'completed',
+              // A running link has no persisted start time; seed "now" so the
+              // elapsed timer counts from reconnect rather than the Unix epoch.
+              // Completed links don't render a timer, so 0 is fine.
+              startedAt: link.status === 'running' ? Date.now() : 0,
+              label: link.label,
+              toolUseId: link.toolUseId,
+            });
+            changed = true;
+          } else if (existing.toolUseId === undefined && link.toolUseId !== undefined) {
+            bySession.set(link.workerSessionId, { ...existing, toolUseId: link.toolUseId, label: existing.label ?? link.label });
+            changed = true;
+          }
+        }
+        if (changed) workers = { ...state.workers, [action.missionId]: Array.from(bySession.values()) };
+      }
       return {
         ...state,
         progress: { ...state.progress, [action.missionId]: action.progress },
         transcripts,
+        workers,
         historyLoaded: { ...state.historyLoaded, [action.missionId]: true },
+        historyCursor: { ...state.historyCursor, [action.missionId]: action.olderCursor },
+        historyLoadingOlder: { ...state.historyLoadingOlder, [action.missionId]: false },
       };
     }
 
@@ -949,6 +1127,9 @@ function baseReducer(state: AppState, action: Action): AppState {
 
     case 'CLOSE_COMMAND_PALETTE':
       return { ...state, commandPaletteOpen: false };
+
+    case 'SET_CONTEXT_METER_OPEN':
+      return { ...state, contextMeterOpen: action.open };
 
     case 'TOGGLE_SIDEBAR':
       return { ...state, sidebarCollapsed: !state.sidebarCollapsed };
@@ -1259,7 +1440,10 @@ function adaptEvent(ev: ServerEvent): Action | null {
         prompt: ev.prompt,
         modelId: ev.modelId,
         reasoningEffort: ev.reasoningEffort,
+        toolUseId: ev.toolUseId,
       };
+    case 'mission.worker.rekey':
+      return { type: 'MISSION_WORKER_REKEY', missionId: ev.missionId, oldSessionId: ev.oldSessionId, newSessionId: ev.newSessionId };
     case 'agent.updated':
       return {
         type: 'AGENT_UPDATED',
@@ -1281,7 +1465,7 @@ function adaptEvent(ev: ServerEvent): Action | null {
     case 'mission.list':
       return { type: 'MISSION_LIST', missions: ev.missions };
     case 'mission.history':
-      return { type: 'MISSION_HISTORY', missionId: ev.missionId, progress: ev.progress, transcripts: ev.transcripts };
+      return { type: 'MISSION_HISTORY', missionId: ev.missionId, progress: ev.progress, transcripts: ev.transcripts, workers: ev.workers, mode: ev.mode, olderCursor: ev.olderCursor };
     case 'models.list':
       return { type: 'MODELS_LIST', models: ev.models };
     case 'context.updated':

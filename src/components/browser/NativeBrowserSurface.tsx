@@ -96,13 +96,17 @@ export function NativeBrowserSurface({
     onViewportSizeChange({ width: Math.round(surface.width), height: Math.round(surface.height) });
   }, [onViewportSizeChange, surface.height, surface.width]);
 
+  // While obscured, native design/pencil mode is forced off (the BrowserView is
+  // detached). Depending on `obscured` here re-runs the effect when the overlay
+  // closes, re-asserting the real design state so the toolbar and in-page
+  // selection don't disagree after a request arrived while obscured.
   useEffect(() => {
-    if (visibleSessionId) setNativeBrowserDesignMode(visibleSessionId, designMode).catch(() => {});
-  }, [designMode, visibleSessionId]);
+    if (visibleSessionId) setNativeBrowserDesignMode(visibleSessionId, !obscured && designMode).catch(() => {});
+  }, [designMode, obscured, visibleSessionId]);
 
   useEffect(() => {
-    if (visibleSessionId) setNativeBrowserPencilMode(visibleSessionId, designMode && pencilMode).catch(() => {});
-  }, [designMode, pencilMode, visibleSessionId]);
+    if (visibleSessionId) setNativeBrowserPencilMode(visibleSessionId, !obscured && designMode && pencilMode).catch(() => {});
+  }, [designMode, obscured, pencilMode, visibleSessionId]);
 
   useEffect(() => {
     let disposed = false;
@@ -218,6 +222,7 @@ export function NativeBrowserSurface({
         currentUrl: url,
         browserKey,
         visibleSessionId,
+        obscured,
         designMode,
         pencilMode: designMode && pencilMode,
         bounds: () => boundsFor(slotRef),
@@ -234,7 +239,7 @@ export function NativeBrowserSurface({
         iframe: iframeRef,
         onLoaded,
       }),
-  }), [browserKey, designMode, native, onLoaded, pencilMode, url, visibleSessionId]);
+  }), [browserKey, designMode, native, obscured, onLoaded, pencilMode, url, visibleSessionId]);
 
   useEffect(() => {
     return () => {
@@ -282,6 +287,7 @@ async function performNativeRequest(
     currentUrl: string;
     browserKey: string;
     visibleSessionId?: string;
+    obscured: boolean;
     designMode: boolean;
     pencilMode: boolean;
     bounds: () => NativeBrowserBounds | null;
@@ -294,7 +300,10 @@ async function performNativeRequest(
       return { requestId: request.requestId, missionId: request.missionId, ok: true };
     }
     const bounds = options.bounds();
-    const visible = nativeBrowserRequestTargetsVisibleSurface({
+    // While a full-screen overlay (settings, context meter, spec/question modal)
+    // obscures the pane, the BrowserView is detached; treat the surface as not
+    // visible so an `open`/`reload` doesn't reattach the OS layer over the overlay.
+    const visible = !options.obscured && nativeBrowserRequestTargetsVisibleSurface({
       browserKey: options.browserKey,
       visibleSessionId: options.visibleSessionId,
       requestMissionId: request.missionId,

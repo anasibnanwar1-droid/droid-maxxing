@@ -14,9 +14,11 @@ import type {
   ProgressEntry,
   ReasoningEffort,
   TranscriptEvent,
+  WorkerHistoryLink,
 } from './protocol.js';
 import { mapFeature } from './normalize.js';
 import { designPromptDisplayFromText } from './browser/designPromptDisplay.js';
+import { normalizeCompactionTokenLimit } from './compaction.js';
 
 interface StoredMissionState {
   missionId?: string;
@@ -51,6 +53,10 @@ interface StoredSessionStart {
   sessionTitle?: string;
   decompSessionType?: string;
   decompMissionId?: string;
+  // Present when this session was spawned by another session's tool call
+  // (Task tool subagents). Such sessions are not standalone conversations.
+  callingSessionId?: string;
+  callingToolUseId?: string;
 }
 
 interface StoredModelSettings {
@@ -81,6 +87,9 @@ export interface HistoricalSummaryFilter {
 export interface HydratedMissionHistory {
   progress: ProgressEntry[];
   transcripts: TranscriptEvent[];
+  // Opaque cursor for the next (older) page of orchestrator scrollback across
+  // the compaction chain; undefined once the oldest segment has been loaded.
+  olderCursor?: string;
 }
 
 export type FactoryDefaults = FactoryDefaultSettings;
@@ -101,7 +110,12 @@ const STATE_TO_PHASE: Record<string, MissionPhase> = {
 };
 
 const MAX_TEXT_CHARS = 12_000;
-const MAX_EVENTS_PER_MISSION = 3_000;
+// Safety cap for worker transcript events on the initial page (the orchestrator
+// scrollback is paged via the cursor, so only workers need bounding here).
+const MAX_WORKER_EVENTS = 3_000;
+// How many orchestrator scrollback events to load per page (initial open and
+// each lazy older-page fetch). Bounds work for very long, multi-compaction chats.
+const DEFAULT_HISTORY_WINDOW = 400;
 const MAX_SESSION_BYTES = 5_000_000;
 const SESSION_START_BYTES = 256_000;
 
@@ -122,11 +136,12 @@ export function loadHistoricalMissions(options: HistoricalSummaryFilter = {}): H
 export function loadHistoricalSessions(options: HistoricalSummaryFilter = {}): HistoricalMission[] {
   const rows: HistoricalMission[] = [];
   const cached = readStoredSummaryPatches();
+  const linkedWorkerIds = readLinkedWorkerSessionIds();
   const workspaceCwds = options.workspaceCwds ? new Set(options.workspaceCwds.filter(Boolean)) : null;
   if (workspaceCwds && workspaceCwds.size === 0 && !options.includePlainChats) return [];
   for (const [sessionId, path] of buildSessionIndex()) {
     const start = readSessionStart(path);
-    const classification = classifyStoredSession(start);
+    const classification = classifyStoredSession(start, linkedWorkerIds.has(sessionId));
     if (!classification) continue;
     const stat = statSync(path);
     const title = start.sessionTitle || start.title || `Session ${sessionId.slice(0, 8)}`;
@@ -183,7 +198,14 @@ export function loadSessionHistory(): HistoryMission[] {
 export function loadSessionPage(sessionId: string, cursor?: string, limit = 200, missionId = sessionId): HistoryPage {
   const path = buildSessionIndex().get(sessionId);
   if (!path) throw new Error(`Session history not found for ${sessionId}`);
-  const role = roleFromSessionStart(readSessionStart(path).decompSessionType);
+  // A transcript opened as its OWN standalone chat (missionId === sessionId, e.g.
+  // an orphan Task subagent surfaced in the sidebar) must replay as orchestrator
+  // so the main chat view renders it: the worker role keys events to the session
+  // id and drops user prompts, which ChatView's main feed then filters out,
+  // leaving the chat blank. Worker-role replay is only correct when the
+  // transcript is loaded inside its parent mission (missionId !== sessionId),
+  // where it is shown in the worker panel keyed to its own id.
+  const role = missionId === sessionId ? 'orchestrator' : roleFromSessionStart(readSessionStart(path));
   const all = parseSessionTranscript(missionId, sessionId, path, role);
   const safeLimit = Math.max(1, Math.min(limit, 500));
   const end = cursor ? Math.max(0, Number(cursor) || 0) : all.length;
@@ -254,6 +276,18 @@ export class HistoryIndex {
         key TEXT NOT NULL,
         ts INTEGER NOT NULL,
         PRIMARY KEY (mission_id, key)
+      );
+      CREATE TABLE IF NOT EXISTS subagent_links (
+        mission_id TEXT NOT NULL,
+        tool_use_id TEXT NOT NULL,
+        worker_session_id TEXT NOT NULL,
+        label TEXT,
+        updated_at INTEGER NOT NULL,
+        PRIMARY KEY (mission_id, tool_use_id)
+      );
+      CREATE TABLE IF NOT EXISTS linked_worker_sessions (
+        worker_session_id TEXT PRIMARY KEY,
+        updated_at INTEGER NOT NULL
       );
       CREATE TABLE IF NOT EXISTS approvals (
         request_id TEXT PRIMARY KEY,
@@ -384,8 +418,78 @@ export class HistoryIndex {
     `).run(event.id, event.agentSessionId, event.missionId, event.kind, event.ts);
   }
 
+  // Persist the exact spawn->worker mapping the moment a live subagent resolves,
+  // so historical loads can rebuild precise links rather than pairing by order.
+  recordSubagentLink(missionId: string, toolUseId: string, workerSessionId: string, label?: string): void {
+    const now = Date.now();
+    this.db.prepare(`
+      INSERT INTO subagent_links (mission_id, tool_use_id, worker_session_id, label, updated_at)
+      VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(mission_id, tool_use_id) DO UPDATE SET
+        worker_session_id = excluded.worker_session_id,
+        label = excluded.label,
+        updated_at = excluded.updated_at
+    `).run(missionId, toolUseId, workerSessionId, sqlValue(label), now);
+    // Remember every worker session ever linked to a spawn. A rekey (worker
+    // compaction) repoints subagent_links at the new id, dropping the old id
+    // from the current mapping; this append-only set keeps superseded worker
+    // sessions hidden so they never resurface as standalone history chats.
+    this.db.prepare(`
+      INSERT INTO linked_worker_sessions (worker_session_id, updated_at)
+      VALUES (?, ?)
+      ON CONFLICT(worker_session_id) DO UPDATE SET updated_at = excluded.updated_at
+    `).run(workerSessionId, now);
+  }
+
+  subagentLinks(missionId: string): WorkerHistoryLink[] {
+    const rows = this.db
+      .prepare('SELECT tool_use_id, worker_session_id, label FROM subagent_links WHERE mission_id = ? ORDER BY updated_at ASC')
+      .all(missionId) as Record<string, unknown>[];
+    return rows.map((row) => ({
+      workerSessionId: stringValue(row.worker_session_id) ?? '',
+      toolUseId: stringValue(row.tool_use_id),
+      label: stringValue(row.label),
+    })).filter((link) => link.workerSessionId);
+  }
+
   close(): void {
     this.db.close();
+  }
+}
+
+// The set of worker session ids that have a persisted spawn->worker link. A
+// Task subagent with a link is openable from its parent chat, so it is hidden
+// from the standalone session list; one without a link (e.g. recorded before
+// links were persisted) would otherwise be orphaned, so it stays visible.
+// Unions the current mapping (subagent_links) with the append-only history of
+// every linked worker id (linked_worker_sessions) so a worker that was rekeyed
+// by compaction stays hidden under its superseded id too.
+function readLinkedWorkerSessionIds(): Set<string> {
+  const path = join(homedir(), '.factory', 'droid-control', 'index.sqlite');
+  if (!existsSync(path)) return new Set();
+  let db: DatabaseSync;
+  try {
+    db = new DatabaseSync(path);
+  } catch {
+    return new Set();
+  }
+  const ids = new Set<string>();
+  const collect = (sql: string) => {
+    try {
+      for (const row of db.prepare(sql).all() as Record<string, unknown>[]) {
+        const id = stringValue(row.worker_session_id);
+        if (id) ids.add(id);
+      }
+    } catch {
+      /* table may not exist on older databases; ignore */
+    }
+  };
+  try {
+    collect('SELECT DISTINCT worker_session_id FROM subagent_links');
+    collect('SELECT worker_session_id FROM linked_worker_sessions');
+    return ids;
+  } finally {
+    db.close();
   }
 }
 
@@ -465,33 +569,190 @@ function definedPatch(patch: Partial<MissionSummary>): Partial<MissionSummary> {
   return Object.fromEntries(Object.entries(patch).filter(([, value]) => value !== undefined)) as Partial<MissionSummary>;
 }
 
-export function hydrateHistoricalMission(missionId: string): HydratedMissionHistory {
+export function hydrateHistoricalMission(
+  missionId: string,
+  opts: { cursor?: string; limit?: number } = {},
+): HydratedMissionHistory {
   const dir = resolveMissionDir(missionId);
   if (!dir) throw new Error(`Mission history not found for ${missionId}`);
 
   const { summary, progress, state, features } = loadHistoricalMission(dir);
   const sessionIndex = buildSessionIndex();
-  const agentRoles = buildAgentRoles(state, features, progress);
-  const sessionIds = new Set<string>();
-  sessionIds.add(summary.sessionId ?? summary.id);
-  sessionIds.add(summary.id);
-  agentRoles.forEach((_role, id) => sessionIds.add(id));
 
-  const transcripts: TranscriptEvent[] = [];
-  for (const sessionId of sessionIds) {
-    const path = sessionIndex.get(sessionId);
-    if (!path) continue;
-    const role = sessionId === summary.sessionId || sessionId === summary.id
-      ? 'orchestrator'
-      : agentRoles.get(sessionId) ?? 'worker';
-    transcripts.push(...parseSessionTranscript(summary.id, sessionId, path, role));
+  // The orchestrator backing session is rekeyed on every compaction, so the
+  // full conversation is spread across a CHAIN of session files. Resolve that
+  // chain (oldest -> newest) from the persisted app-session row; replaying only
+  // the latest segment is what made compacted chats lose their scrollback.
+  const chain = orchestratorChain(summary, sessionIndex);
+  const window = loadMissionTranscriptWindow(summary.id, chain, opts);
+
+  // Older pages only extend the orchestrator scrollback upward; workers and
+  // progress were already delivered with the initial (newest) page.
+  if (opts.cursor) {
+    return { progress: [], transcripts: window.events, olderCursor: window.olderCursor };
   }
 
-  transcripts.sort((a, b) => a.ts - b.ts);
+  const agentRoles = buildAgentRoles(state, features, progress);
+  const chainSet = new Set(chain);
+  const workerEvents: TranscriptEvent[] = [];
+  for (const [sessionId, role] of agentRoles) {
+    if (chainSet.has(sessionId)) continue;
+    const path = sessionIndex.get(sessionId);
+    if (!path) continue;
+    workerEvents.push(...parseSessionTranscript(summary.id, sessionId, path, role));
+  }
+  // The orchestrator scrollback is paged via the cursor; only the (bounded)
+  // worker events need a safety cap so a worker-heavy mission stays responsive.
+  const cappedWorkers = workerEvents.length > MAX_WORKER_EVENTS
+    ? workerEvents.slice(workerEvents.length - MAX_WORKER_EVENTS)
+    : workerEvents;
+
+  const transcripts = [...window.events, ...cappedWorkers].sort((a, b) => a.ts - b.ts);
+  return { progress, transcripts, olderCursor: window.olderCursor };
+}
+
+// Resolve the orchestrator's compaction chain (oldest -> newest backing session
+// ids) for a mission. The persisted app-session row keeps the authoritative
+// chain (previous backing ids + current); fall back to the summary when it is
+// already hydrated with one. Filtered to ids that still have a session file.
+function orchestratorChain(summary: MissionSummary, sessionIndex: Map<string, string>): string[] {
+  const patches = readStoredSummaryPatches();
+  const patch = patches.get(summary.id) ?? patches.get(summary.sessionId ?? summary.id);
+  const currentSession = patch?.sessionId ?? summary.sessionId ?? summary.id;
+  const compactedFrom = patch?.compactedFromSessionIds ?? summary.compactedFromSessionIds ?? [];
+  return dedupeStrings([summary.id, ...compactedFrom, currentSession]).filter((id) => sessionIndex.has(id));
+}
+
+// Resolve the compaction chain (oldest -> newest backing session ids) for a
+// plain chat / spec session that has NO mission directory. Such sessions never
+// reach hydrateHistoricalMission, so without this they would replay only the
+// newest backing file and lose all pre-compaction scrollback. Reads the chain
+// straight from the persisted app-session row (keyed by either id) and filters
+// to ids that still have a session file on disk.
+export function resolveSessionChain(appSessionId: string, droidSessionId: string): string[] {
+  const sessionIndex = buildSessionIndex();
+  const patches = readStoredSummaryPatches();
+  const patch = patches.get(appSessionId) ?? patches.get(droidSessionId);
+  const currentSession = patch?.sessionId ?? droidSessionId;
+  const compactedFrom = patch?.compactedFromSessionIds ?? [];
+  return dedupeStrings([appSessionId, ...compactedFrom, currentSession]).filter((id) => sessionIndex.has(id));
+}
+
+function dedupeStrings(values: Array<string | undefined>): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const value of values) {
+    if (!value || seen.has(value)) continue;
+    seen.add(value);
+    out.push(value);
+  }
+  return out;
+}
+
+interface CompactionState {
+  removedCount?: number;
+  ts: number;
+}
+
+// Read the leading compaction_state record a compacted session begins with.
+// It marks the boundary where earlier turns were summarized away; we surface it
+// as a subtle "context compacted" divider rather than replaying the summary.
+// Reads from the HEAD of the file (compaction_state is a leading record); the
+// transcript reader tail-windows oversized files and would miss it.
+function readCompactionState(path: string): CompactionState | null {
+  const size = statSync(path).size;
+  const bytes = Math.min(size, SESSION_START_BYTES);
+  const fd = openSync(path, 'r');
+  let rows: Array<{ type?: string; timestamp?: string; removedCount?: unknown }>;
+  try {
+    const buffer = Buffer.alloc(bytes);
+    readSync(fd, buffer, 0, bytes, 0);
+    rows = parseJsonLines(buffer.toString('utf8'));
+  } finally {
+    closeSync(fd);
+  }
+  for (const row of rows) {
+    if (row.type === 'session_start') continue;
+    if (row.type === 'compaction_state') {
+      return { removedCount: numberValue(row.removedCount), ts: dateMs(row.timestamp) || 0 };
+    }
+    return null;
+  }
+  return null;
+}
+
+function compactionDividerEvent(missionId: string, sessionId: string, comp: CompactionState): TranscriptEvent {
   return {
-    progress,
-    transcripts: trimMissionEvents(summary.id, transcripts),
+    id: `${sessionId}:compaction`,
+    missionId,
+    agentSessionId: 'orchestrator',
+    role: 'orchestrator',
+    ts: comp.ts,
+    kind: 'compaction',
+    removedCount: comp.removedCount,
   };
+}
+
+// The chronological items for one chain segment: a leading compaction divider
+// (when the file actually starts with a compaction_state) followed by that
+// file's messages. The divider is detected by reading the record itself rather
+// than the segment's position, so an in-place-compacted single segment - or the
+// oldest reachable segment once earlier files have been pruned - still surfaces
+// it instead of silently dropping the boundary.
+function segmentItems(missionId: string, sessionId: string, path: string): TranscriptEvent[] {
+  const items: TranscriptEvent[] = [];
+  const comp = readCompactionState(path);
+  if (comp) items.push(compactionDividerEvent(missionId, sessionId, comp));
+  items.push(...parseSessionTranscript(missionId, sessionId, path, 'orchestrator'));
+  return items;
+}
+
+// Window the orchestrator transcript backward across the compaction chain.
+// Reads files newest -> oldest only as far as needed to fill `limit`, so a
+// months-long, heavily-compacted chat opens fast and pages older history in on
+// demand. The cursor is "<chainIdx>:<itemEnd>" ('end' = the file's tail).
+export function loadMissionTranscriptWindow(
+  missionId: string,
+  chainSessionIds: string[],
+  opts: { cursor?: string; limit?: number } = {},
+): { events: TranscriptEvent[]; olderCursor?: string } {
+  const limit = Math.max(1, opts.limit ?? DEFAULT_HISTORY_WINDOW);
+  const sessionIndex = buildSessionIndex();
+  const chain = chainSessionIds.filter((id) => sessionIndex.has(id));
+  if (chain.length === 0) return { events: [] };
+
+  let startIdx: number;
+  let end: number;
+  if (opts.cursor) {
+    const [ciStr, endStr] = opts.cursor.split(':');
+    startIdx = Number(ciStr);
+    end = endStr === 'end' ? Infinity : Number(endStr);
+    if (!Number.isInteger(startIdx) || startIdx < 0 || startIdx >= chain.length) return { events: [] };
+  } else {
+    startIdx = chain.length - 1;
+    end = Infinity;
+  }
+
+  const picked: TranscriptEvent[] = [];
+  let olderCursor: string | undefined;
+  for (let ci = startIdx; ci >= 0; ci--) {
+    const path = sessionIndex.get(chain[ci])!;
+    const items = segmentItems(missionId, chain[ci], path);
+    let start = ci === startIdx ? Math.min(end, items.length) : items.length;
+    while (start > 0 && picked.length < limit) {
+      start--;
+      picked.push(items[start]);
+    }
+    if (picked.length >= limit) {
+      if (start > 0) olderCursor = `${ci}:${start}`;
+      else if (ci > 0) olderCursor = `${ci - 1}:end`;
+      break;
+    }
+    end = Infinity;
+  }
+
+  picked.reverse();
+  return { events: picked, olderCursor };
 }
 
 export function readFactoryDefaults(): FactoryDefaults {
@@ -525,8 +786,7 @@ function mapInteractionMode(value?: string): FactoryDefaults['interactionMode'] 
 }
 
 function tokenLimitValue(value: unknown): number | undefined {
-  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return undefined;
-  return Math.trunc(value);
+  return normalizeCompactionTokenLimit(value);
 }
 
 function tokenLimitRecordValue(value: unknown): Record<string, number> | undefined {
@@ -683,6 +943,9 @@ function parseSessionTranscript(
           events.push(event(missionId, sessionId, role, messageId, index, ts, 'tool_call', {
             toolName: stringValue(block.name) || 'tool',
             toolArgs: block.input,
+            // Carry the tool_use id so persisted subagent links resolve exactly
+            // (duplicate-label spawns would otherwise fall back to label match).
+            toolUseId: stringValue(block.id),
           }));
         }
         return;
@@ -767,21 +1030,6 @@ function isValidatorFeature(feature: BridgeFeature): boolean {
   return text.includes('validator') || text.includes('validation') || text.includes('scrutiny');
 }
 
-function trimMissionEvents(missionId: string, events: TranscriptEvent[]): TranscriptEvent[] {
-  if (events.length <= MAX_EVENTS_PER_MISSION) return events;
-  const kept = events.slice(events.length - MAX_EVENTS_PER_MISSION);
-  kept.unshift({
-    id: `${missionId}:history-trimmed`,
-    missionId,
-    agentSessionId: 'orchestrator',
-    role: 'orchestrator',
-    ts: kept[0]?.ts ?? Date.now(),
-    kind: 'status',
-    text: `History trimmed to the latest ${MAX_EVENTS_PER_MISSION.toLocaleString()} transcript events for UI performance.`,
-  });
-  return kept;
-}
-
 function missionDirs(): string[] {
   const root = join(homedir(), '.factory', 'missions');
   if (!existsSync(root)) return [];
@@ -811,13 +1059,16 @@ function limitHistoricalRows(
   includePlainChats?: boolean,
 ): HistoricalMission[] {
   if (!workspaceCwds && !includePlainChats) return rows;
-  const limit = Math.max(1, Math.min(limitPerWorkspace ?? 5, 50));
+  // An omitted limit means "no cap" so the sidebar can load every persisted
+  // session and reveal the older ones behind "Show more".
+  const limit = limitPerWorkspace === undefined ? undefined : Math.max(1, Math.min(limitPerWorkspace, 50));
+  const cap = <T>(items: T[]): T[] => (limit === undefined ? items : items.slice(0, limit));
   const limited: HistoricalMission[] = [];
   if (includePlainChats) {
-    limited.push(...rows.filter((row) => !row.summary.cwd).slice(0, limit));
+    limited.push(...cap(rows.filter((row) => !row.summary.cwd)));
   }
   for (const cwd of workspaceCwds ?? []) {
-    limited.push(...rows.filter((row) => row.summary.cwd === cwd).slice(0, limit));
+    limited.push(...cap(rows.filter((row) => row.summary.cwd === cwd)));
   }
   return limited.sort((a, b) => b.summary.updatedAt - a.summary.updatedAt);
 }
@@ -894,9 +1145,18 @@ function readSessionStart(path: string): StoredSessionStart {
 
 function classifyStoredSession(
   start: StoredSessionStart,
+  hasPersistedLink: boolean,
 ): Pick<MissionSummary, 'kind' | 'role' | 'missionId' | 'parentSessionId'> | null {
   if (start.decompSessionType === 'worker') return null;
   if (start.decompSessionType === 'validator') return null;
+  // Task-tool subagents run as their own droid sessions but are spawned by a
+  // parent session's tool call. Hide one only when a persisted spawn->worker
+  // link lets the parent chat open it as a worker; without a link (e.g. sessions
+  // recorded before links were persisted) it would be orphaned, so keep it
+  // visible as a standalone session. Gate on the spawn markers only: a bare
+  // `parent` link is also set on ordinary forked chats, which ARE standalone
+  // conversations and must stay visible in history.
+  if ((start.callingSessionId || start.callingToolUseId) && hasPersistedLink) return null;
   const mode = sessionInteractionMode(start);
   const missionId = start.decompMissionId;
   if (start.decompSessionType === 'orchestrator' || missionId || mode === 'agi') {
@@ -1064,9 +1324,14 @@ function sqlValue(value: string | number | undefined): string | number | null {
   return value ?? null;
 }
 
-function roleFromSessionStart(decompSessionType?: string): AgentRole {
-  if (decompSessionType === 'validator') return 'validator';
-  if (decompSessionType === 'worker') return 'worker';
+function roleFromSessionStart(start: StoredSessionStart): AgentRole {
+  if (start.decompSessionType === 'validator') return 'validator';
+  if (start.decompSessionType === 'worker') return 'worker';
+  // Task-tool subagents carry no decompSessionType but are spawned by a parent
+  // session's tool call (callingSessionId/callingToolUseId). Replay them as
+  // workers so their transcript keys to their own session id instead of being
+  // folded into 'orchestrator' (which would leave the opened subagent blank).
+  if (start.callingSessionId || start.callingToolUseId) return 'worker';
   return 'orchestrator';
 }
 
