@@ -85,7 +85,14 @@ export default function ContextMeter({ mission, stats }: { mission: MissionSumma
 
   const max = statLimit;
 
-  const used = measured?.used;
+  const breakdownUsed =
+    measured?.accuracy !== 'exact' &&
+    measured?.breakdown &&
+    measured.breakdown.usedTokens >= 0 &&
+    (max === undefined || measured.breakdown.usedTokens <= max)
+      ? measured.breakdown.usedTokens
+      : undefined;
+  const used = breakdownUsed ?? measured?.used;
   const remaining = used !== undefined && max !== undefined ? Math.max(0, max - used) : measured?.remaining;
   const accuracy = measured?.accuracy;
   const categories = measured?.breakdown?.categories ?? [];

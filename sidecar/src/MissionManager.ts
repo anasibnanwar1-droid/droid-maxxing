@@ -2432,10 +2432,17 @@ function contextStatsSnapshot(
   stats: GetContextStatsResult,
   breakdown: ContextBreakdownSnapshot | undefined,
 ): ContextStatsSnapshot {
+  const limit = stats.limit > 0 ? stats.limit : breakdown?.contextBudget ?? stats.limit;
+  const breakdownUsed =
+    breakdown && stats.accuracy !== 'exact' && isWindowTokenCount(breakdown.usedTokens, limit)
+      ? breakdown.usedTokens
+      : undefined;
+  const used = breakdownUsed ?? stats.used;
+  const remaining = breakdownUsed !== undefined ? Math.max(0, limit - used) : stats.remaining;
   return {
-    used: stats.used,
-    remaining: stats.remaining,
-    limit: stats.limit,
+    used,
+    remaining,
+    limit,
     accuracy: stats.accuracy as ContextStatsSnapshot['accuracy'],
     updatedAt: stats.updatedAt,
     breakdown,

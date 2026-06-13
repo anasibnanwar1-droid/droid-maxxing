@@ -38,6 +38,19 @@ function stats(used: number): ContextStatsSnapshot {
   };
 }
 
+function statsWithBreakdown(used: number, breakdownUsed: number): ContextStatsSnapshot {
+  return {
+    ...stats(used),
+    remaining: Math.max(0, 200_000 - used),
+    breakdown: {
+      contextBudget: 200_000,
+      usedTokens: breakdownUsed,
+      freeTokens: Math.max(0, 200_000 - breakdownUsed),
+      categories: [{ name: 'Messages', tokens: breakdownUsed }],
+    },
+  };
+}
+
 test('streaming token updates do not move context usage backward', () => {
   const start = {
     ...initialState,
@@ -111,4 +124,22 @@ test('token updates ignore impossible context counts', () => {
   assert.equal(next.missions.m1.tokensIn, 10_603_766);
   assert.equal(next.missions.m1.tokensOut, 78_367);
   assert.equal(next.missions.m1.contextTokens, 120_000);
+});
+
+test('streaming estimated breakdown can correct a saturated context meter', () => {
+  const start = {
+    ...initialState,
+    missions: { m1: mission(200_000, true) },
+    contextStats: { m1: statsWithBreakdown(200_000, 200_000) },
+  } as unknown as AppState;
+
+  const next = reducer(start, {
+    type: 'CONTEXT_UPDATED',
+    sessionId: 'm1',
+    stats: statsWithBreakdown(154_982, 154_982),
+  });
+
+  assert.equal(next.missions.m1.contextTokens, 154_982);
+  assert.equal(next.contextStats.m1.used, 154_982);
+  assert.equal(next.contextStats.m1.breakdown?.usedTokens, 154_982);
 });
