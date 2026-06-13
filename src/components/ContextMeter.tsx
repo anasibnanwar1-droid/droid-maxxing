@@ -58,13 +58,6 @@ const CATEGORY_COLORS: Record<string, string> = {
   mcp: 'var(--droid-accent)',
   messages: 'var(--droid-text-muted)',
 };
-const FRESH_SESSION_THRESHOLD = 0.9;
-const OLDEST_SESSION_THRESHOLD = 0.75;
-const THRESHOLD_STEP = 0.05;
-
-function compactionThresholdPercent(priorCompactions: number): number {
-  return Math.max(OLDEST_SESSION_THRESHOLD, FRESH_SESSION_THRESHOLD - Math.max(0, Math.trunc(priorCompactions)) * THRESHOLD_STEP);
-}
 
 function categoryColor(key?: string): string {
   if (!key) return 'var(--droid-text-muted)';
@@ -72,7 +65,7 @@ function categoryColor(key?: string): string {
 }
 
 export default function ContextMeter({ mission, stats }: { mission: MissionSummary; stats?: ContextStatsSnapshot }) {
-  const { state, dispatch } = useStore();
+  const { dispatch } = useStore();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
@@ -90,22 +83,7 @@ export default function ContextMeter({ mission, stats }: { mission: MissionSumma
   const modelWindow = mission.maxContextTokens && mission.maxContextTokens > 0 ? mission.maxContextTokens : undefined;
   const statLimit = measured?.limit && measured.limit > 0 ? measured.limit : modelWindow;
 
-  // Droid Control owns the auto-compaction trigger: fresh sessions compact near
-  // 90% of the configured budget, then older compacted sessions step down to 75%.
-  const compactionLimit =
-    mission.modelId && state.compactionTokenLimitPerModel[mission.modelId] !== undefined
-      ? state.compactionTokenLimitPerModel[mission.modelId]
-      : state.compactionTokenLimit;
-  const compactionBudget =
-    compactionLimit && compactionLimit > 0
-      ? modelWindow
-        ? Math.min(compactionLimit, modelWindow)
-        : compactionLimit
-      : undefined;
-  const effectiveCompaction = compactionBudget
-    ? Math.max(1, Math.floor(compactionBudget * compactionThresholdPercent(mission.compactedFromSessionIds?.length ?? 0)))
-    : undefined;
-  const max = effectiveCompaction ?? statLimit;
+  const max = statLimit;
 
   const used = measured?.used;
   const remaining = used !== undefined && max !== undefined ? Math.max(0, max - used) : measured?.remaining;
@@ -200,8 +178,6 @@ export default function ContextMeter({ mission, stats }: { mission: MissionSumma
             <div className="mt-4 flex flex-col gap-2.5">
               {ready && <Row color="var(--droid-accent)" label="Window used" value={used} />}
               {remaining !== undefined && <Row color="var(--droid-text-muted)" label="Window free" value={remaining} />}
-              {effectiveCompaction !== undefined && <Row color="var(--droid-orange)" label="Compacts at" value={effectiveCompaction} />}
-              {modelWindow !== undefined && <Row color="var(--droid-text-muted)" label="Model window" value={modelWindow} />}
               <Row color="var(--droid-text-muted)" label="Session input" value={mission.tokensIn} />
               <Row color="var(--droid-green)" label="Session output" value={mission.tokensOut} />
             </div>

@@ -80,3 +80,35 @@ test('idle context stats can drop after compaction', () => {
   assert.equal(next.missions.m1.contextTokens, 40_000);
   assert.equal(next.contextStats.m1.used, 40_000);
 });
+
+test('exact context stats replace impossible cumulative usage while streaming', () => {
+  const start = {
+    ...initialState,
+    missions: { m1: mission(10_603_766, true) },
+  } as unknown as AppState;
+
+  const next = reducer(start, { type: 'CONTEXT_UPDATED', sessionId: 'm1', stats: stats(40_000) });
+
+  assert.equal(next.missions.m1.contextTokens, 40_000);
+  assert.equal(next.contextStats.m1.used, 40_000);
+});
+
+test('token updates ignore impossible context counts', () => {
+  const start = {
+    ...initialState,
+    missions: { m1: mission(120_000, true) },
+  } as unknown as AppState;
+
+  const next = reducer(start, {
+    type: 'MISSION_TOKENS',
+    missionId: 'm1',
+    tokensIn: 10_603_766,
+    tokensOut: 78_367,
+    contextTokens: 10_603_766,
+    maxContextTokens: 200_000,
+  });
+
+  assert.equal(next.missions.m1.tokensIn, 10_603_766);
+  assert.equal(next.missions.m1.tokensOut, 78_367);
+  assert.equal(next.missions.m1.contextTokens, 120_000);
+});

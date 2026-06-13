@@ -681,9 +681,9 @@ const FeedItemView = memo(function FeedItemView({ item, live, compacting, onOpen
         </div>
       );
     case 'diff':
-      return <DiffCard change={item.change} onOpen={onOpenDiff ? () => onOpenDiff(item.change) : undefined} />;
+      return <DiffCard change={item.change} active={live} onOpen={onOpenDiff ? () => onOpenDiff(item.change) : undefined} />;
     case 'diffs':
-      return <DiffGroup changes={item.changes} onOpenDiff={onOpenDiff} />;
+      return <DiffGroup changes={item.changes} active={live} onOpenDiff={onOpenDiff} />;
     case 'tools':
       return <ToolGroupItem events={item.events} active={live} />;
     case 'worked':
@@ -730,8 +730,9 @@ function WorkedGroup({ item, onOpenDiff, onOpenSubagent, subagentActivity, specD
 }
 
 /* ── Folded run of file edits: one collapsible header over individual diffs ── */
-function DiffGroup({ changes, onOpenDiff }: {
+function DiffGroup({ changes, active, onOpenDiff }: {
   changes: { event: TranscriptEvent; change: FileChange }[];
+  active?: boolean;
   onOpenDiff?: (c: FileChange) => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -741,18 +742,21 @@ function DiffGroup({ changes, onOpenDiff }: {
   const label = files.size <= 1
     ? `Edited ${baseName(changes[0].change.path)} · ${changes.length} edits`
     : `Edited ${files.size} files · ${changes.length} edits`;
+  const liveLabel = files.size <= 1
+    ? `Editing ${baseName(changes[0].change.path)}`
+    : `Editing ${files.size} files`;
   return (
     <div>
       <button onClick={() => setOpen((o) => !o)} className="group flex w-full min-w-0 items-center gap-1.5 text-left">
         <ChevronRight className={`w-3 h-3 shrink-0 text-droid-text-muted/50 transition-transform duration-200 group-hover:text-droid-text-muted ${open ? 'rotate-90' : ''}`} />
-        <span className="min-w-0 truncate text-[13px] font-medium text-droid-text-muted group-hover:text-droid-text-secondary">{label}</span>
+        <span className={`min-w-0 truncate text-[13px] font-medium ${active ? 'shimmer-text' : 'text-droid-text-muted group-hover:text-droid-text-secondary'}`}>{active ? liveLabel : label}</span>
         <span className="ml-auto text-[11px] font-mono shrink-0" style={{ color: '#5cc89a' }}>+{added}</span>
         <span className="text-[11px] font-mono shrink-0" style={{ color: '#ff7a5c' }}>−{removed}</span>
       </button>
       <Expand open={open}>
         <div className="mt-2 space-y-2 border-l border-droid-border pl-3">
           {changes.map((c) => (
-            <DiffCard key={c.event.id} change={c.change} onOpen={onOpenDiff ? () => onOpenDiff(c.change) : undefined} />
+            <DiffCard key={c.event.id} change={c.change} active={active} onOpen={onOpenDiff ? () => onOpenDiff(c.change) : undefined} />
           ))}
         </div>
       </Expand>
@@ -874,7 +878,7 @@ export function MessageFeed({ events, pending, onOpenDiff, onOpenSubagent, subag
       (last.type === 'subagent' && lastSubagentRunning) ||
       (last.type === 'message' && last.event.author !== 'user'));
   const showWorking = pending && !tailSelfIndicates;
-  const workingLabel = last?.type === 'tools' ? 'Running' : (last?.type === 'diff' || last?.type === 'diffs') ? 'Updating files' : 'Working';
+  const workingLabel = last?.type === 'tools' ? 'Running' : (last?.type === 'diff' || last?.type === 'diffs') ? 'Editing files' : 'Working';
   const workingStart = rich ? tailTimestamp(last) : undefined;
 
   return (
