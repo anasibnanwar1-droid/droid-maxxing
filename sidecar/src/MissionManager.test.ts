@@ -860,6 +860,7 @@ class FakeCompactionSession {
   failCompaction = false;
   usedAfterStream?: number;
   streamEvents: Record<string, unknown>[] = [];
+  usedBeforeStreamEvent?: number;
   limit = 1_000_000;
   accuracy: 'exact' | 'estimated' = 'exact';
   breakdown?: unknown;
@@ -874,7 +875,10 @@ class FakeCompactionSession {
 
   async *stream(prompt: string): AsyncGenerator<Record<string, unknown>, void, undefined> {
     this.prompts.push(prompt);
-    for (const event of this.streamEvents) yield event;
+    for (const event of this.streamEvents) {
+      if (this.usedBeforeStreamEvent !== undefined) this.used = this.usedBeforeStreamEvent;
+      yield event;
+    }
     if (this.usedAfterStream !== undefined) this.used = this.usedAfterStream;
   }
 
@@ -961,12 +965,23 @@ function autoCompactHarness(used: number, effectiveCompactionTokenLimit?: number
   return { manager, session, events, mission };
 }
 
-test('auto-compacts before starting a model step once context crosses the effective limit', async () => {
+test('auto-compacts before starting a streamed turn once context crosses the effective limit', async () => {
   const { manager, session, events } = autoCompactHarness(250_000, 200_000);
   await manager.handle({ type: 'mission.send', missionId: 'app-compact', text: 'hello' });
   assert.equal(session.compactions, 1);
   assert.deepEqual(session.prompts, ['hello']);
   assert.equal(events.some((event) => event.type === 'mission.error' || event.type === 'error'), false);
+});
+
+test('does not treat tool_result as a safe mid-task compaction checkpoint', async () => {
+  const { manager, session } = autoCompactHarness(150_000, 200_000);
+  session.usedBeforeStreamEvent = 250_000;
+  session.streamEvents = [{ type: 'tool_result', toolName: 'Read', content: 'ok', isError: false }];
+
+  await manager.handle({ type: 'mission.send', missionId: 'app-compact', text: 'hello' });
+
+  assert.equal(session.compactions, 0);
+  assert.deepEqual(session.prompts, ['hello']);
 });
 
 test('queues concurrent sends while pre-step context refresh is pending', async () => {
