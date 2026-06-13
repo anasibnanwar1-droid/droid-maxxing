@@ -289,6 +289,7 @@ function SignInStep({ controller, onNext, onBack }: { controller: OnboardingCont
   const [showKey, setShowKey] = useState(false);
   const [key, setKey] = useState('');
   const [saving, setSaving] = useState(false);
+  const [keyError, setKeyError] = useState<string | null>(null);
 
   const signedIn = Boolean(env?.auth.loginPresent || env?.auth.apiKeyConfigured);
 
@@ -306,9 +307,10 @@ function SignInStep({ controller, onNext, onBack }: { controller: OnboardingCont
         </div>
       ) : (
         <div className="space-y-2 mb-5">
-          <PrimaryButton onClick={() => { setWaiting(true); login(); }}>
+          <PrimaryButton onClick={() => { setWaiting(true); login(); }} disabled={!env?.cli.present}>
             {waiting ? <><Loader2 className="w-4 h-4 animate-spin" /> Waiting for browser…</> : <><ExternalLink className="w-4 h-4" /> Sign in with browser</>}
           </PrimaryButton>
+          {!env?.cli.present && <p className="text-[12px] text-droid-text-muted">Install the Droid CLI first to sign in with your browser.</p>}
           {!showKey ? (
             <button onClick={() => setShowKey(true)} className="w-full text-[12px] text-droid-text-muted hover:text-droid-text transition-colors py-1.5 flex items-center justify-center gap-1.5">
               <KeyRound className="w-3.5 h-3.5" /> Use an API key instead
@@ -323,11 +325,22 @@ function SignInStep({ controller, onNext, onBack }: { controller: OnboardingCont
                 className="w-full h-9 px-3 rounded-md bg-droid-surface border border-droid-border text-[12px] font-mono text-droid-text focus:outline-none focus:border-droid-accent"
               />
               <PrimaryButton
-                onClick={async () => { setSaving(true); try { await controller.saveApiKey(key); } finally { setSaving(false); } }}
+                onClick={async () => {
+                  setSaving(true);
+                  setKeyError(null);
+                  try {
+                    await controller.saveApiKey(key);
+                  } catch {
+                    setKeyError("Couldn't save the API key. Check that secure storage is available and try again.");
+                  } finally {
+                    setSaving(false);
+                  }
+                }}
                 disabled={!key.trim() || saving}
               >
                 {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Save key'}
               </PrimaryButton>
+              {keyError && <p className="text-[12px] text-droid-orange">{keyError}</p>}
             </div>
           )}
         </div>

@@ -6,7 +6,8 @@ import { ColorField } from './ColorPicker';
 import { ModelIcon, providerOf } from './ModelIcon';
 import type { ModelInfo } from '../types/bridge';
 import { useOnboarding } from '../hooks/useOnboarding';
-import { checkAppUpdate, downloadAppUpdate, getAppVersion, type AppUpdateInfo } from '../lib/onboarding';
+import { checkAppUpdate, getAppVersion, type AppUpdateInfo } from '../lib/onboarding';
+import { startAppUpdate } from '../lib/appUpdate';
 
 const PRESET_ACCENTS = [
   '#ee6018', '#ef6f2e', '#d15010', '#e8a838', '#4a9e7a',
@@ -728,13 +729,15 @@ function SetupSection({ onClose }: { onClose: () => void }) {
         <SettingRow label="Keep the CLI up to date" description="Updates silently on launch.">
           <Switch checked={cliAuto} onChange={(v) => void onboard.patch({ cliAutoUpdate: v })} />
         </SettingRow>
-        <SettingRow label="Sign-in" description={signedIn ? 'Connected to Factory.' : 'Sign in so models can run.'}>
+        <SettingRow label="Sign-in" description={signedIn ? 'Connected to Factory.' : env?.cli.present ? 'Sign in so models can run.' : 'Install the Droid CLI before signing in.'}>
           {signedIn ? (
             <span className="text-[12px] text-droid-green">Signed in</span>
           ) : (
             <button
               onClick={() => onboard.login()}
-              className="px-2.5 h-7 rounded-md bg-droid-elevated border border-droid-border text-[12px] text-droid-text hover:border-droid-border-hover transition-colors"
+              disabled={!env?.cli.present}
+              title={env?.cli.present ? undefined : 'The Droid CLI must be installed first.'}
+              className="px-2.5 h-7 rounded-md bg-droid-elevated border border-droid-border text-[12px] text-droid-text hover:border-droid-border-hover transition-colors disabled:opacity-40"
             >
               Sign in
             </button>
@@ -755,7 +758,7 @@ function SetupSection({ onClose }: { onClose: () => void }) {
             </button>
             {update?.updateAvailable && (
               <button
-                onClick={() => { void downloadAppUpdate(); }}
+                onClick={() => { void startAppUpdate(update); }}
                 className="px-2.5 h-7 rounded-md bg-droid-accent text-white text-[12px] hover:opacity-90 transition-opacity"
               >
                 Restart & update

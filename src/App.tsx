@@ -27,7 +27,7 @@ import { useOnboarding, shouldShowOnboarding, hasSetupBlocker } from './hooks/us
 import OnboardingWizard from './components/onboarding/OnboardingWizard';
 import SetupBanner from './components/onboarding/SetupBanner';
 import { updateCli } from './lib/commands';
-import { checkAppUpdate, downloadAppUpdate, type AppUpdateInfo } from './lib/onboarding';
+import { refreshAppUpdate } from './lib/appUpdate';
 import { toast } from './lib/toast';
 
 function ContextListIcon({ className }: { className?: string }) {
@@ -51,7 +51,6 @@ export default function App() {
   const embedded = isEmbedded();
   const onboard = useOnboarding();
   const [forceWizard, setForceWizard] = useState(false);
-  const [appUpdate, setAppUpdate] = useState<AppUpdateInfo | null>(null);
   const [bannerDismissed, setBannerDismissed] = useState(false);
   const launchHandled = useRef(false);
   const showWizard = !embedded && onboard.ready && (forceWizard || shouldShowOnboarding(onboard.onboarding));
@@ -143,9 +142,7 @@ export default function App() {
       updateCli(onboard.onboarding.installChannel);
     }
     if (onboard.onboarding.appAutoUpdate !== false) {
-      void checkAppUpdate().then((info) => {
-        if (info?.updateAvailable) setAppUpdate(info);
-      });
+      void refreshAppUpdate();
     }
   }, [embedded, onboard.ready, onboard.onboarding, onboard.env]);
 
@@ -246,28 +243,18 @@ export default function App() {
   }, [dispatch, toggleBrowserPane, toggleRightPanel]);
 
   const setupBlocker = !showWizard && !embedded && onboard.ready && onboard.onboarding?.completed === true && hasSetupBlocker(onboard.env);
-  const showBanner = !bannerDismissed && (setupBlocker || (!!appUpdate && !showWizard));
+  const showBanner = !bannerDismissed && setupBlocker;
 
   return (
     <div id="app-root" className="h-screen w-screen flex flex-col bg-droid-bg text-droid-text overflow-hidden relative">
       {showBanner && (
-        setupBlocker ? (
-          <SetupBanner
-            kind="blocker"
-            message="Finish setting up Droid to start running agents."
-            actionLabel="Finish setup"
-            onAction={() => setForceWizard(true)}
-            onDismiss={() => setBannerDismissed(true)}
-          />
-        ) : (
-          <SetupBanner
-            kind="update"
-            message={`DROIDEX ${appUpdate?.latest} is available.`}
-            actionLabel="Restart & update"
-            onAction={() => { void downloadAppUpdate(); }}
-            onDismiss={() => setBannerDismissed(true)}
-          />
-        )
+        <SetupBanner
+          kind="blocker"
+          message="Finish setting up Droid to start running agents."
+          actionLabel="Finish setup"
+          onAction={() => setForceWizard(true)}
+          onDismiss={() => setBannerDismissed(true)}
+        />
       )}
       <div className="flex-1 flex min-h-0 relative">
         {/* Sidebar with collapse animation */}

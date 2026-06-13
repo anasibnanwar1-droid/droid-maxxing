@@ -100,7 +100,7 @@ function registerIpc() {
   ipcMain.handle('onboarding-set', (_event, { patch }) => setOnboarding(patch));
   ipcMain.handle('app-version', () => app.getVersion());
   ipcMain.handle('app-check-update', checkAppUpdate);
-  ipcMain.handle('app-download-update', downloadAppUpdate);
+  ipcMain.handle('app-download-update', (_e, dmgUrl) => downloadAppUpdate(dmgUrl));
   ipcMain.handle('app-relaunch', () => relaunchApp());
   ipcMain.handle('open-external', (_event, { url }) => openExternal(url));
 
@@ -1162,7 +1162,7 @@ async function checkAppUpdate() {
   }
 }
 
-async function downloadAppUpdate() {
+async function downloadAppUpdate(dmgUrl) {
   if (UPDATE_FEED && process.platform === 'darwin') {
     try {
       const { autoUpdater } = require('electron');
@@ -1176,7 +1176,7 @@ async function downloadAppUpdate() {
       autoUpdater.once('update-downloaded', () => autoUpdater.quitAndInstall());
       autoUpdater.once('error', (err) => {
         console.warn('[update] autoUpdater failed, falling back to managed download:', err?.message || err);
-        managedMacDownload().catch((e) => console.warn('[update] managed download failed:', e?.message || e));
+        managedMacDownload(dmgUrl).catch((e) => console.warn('[update] managed download failed:', e?.message || e));
       });
       autoUpdater.checkForUpdates();
       return { mode: 'autoUpdater' };
@@ -1188,12 +1188,15 @@ async function downloadAppUpdate() {
     await openExternal(`${DOWNLOAD_BASE}/download`);
     return { mode: 'external' };
   }
-  return managedMacDownload();
+  return managedMacDownload(dmgUrl);
 }
 
-async function managedMacDownload() {
-  const url = `${DOWNLOAD_BASE}/downloads/${macDmgName()}`;
-  const dest = path.join(app.getPath('downloads'), macDmgName());
+async function managedMacDownload(dmgUrl) {
+  // Honor the manifest-selected artifact (versioned/CDN/arch-specific) so we
+  // never advertise one update then fetch a different default file.
+  const url = dmgUrl || `${DOWNLOAD_BASE}/downloads/${macDmgName()}`;
+  const fileName = path.basename(new URL(url).pathname) || macDmgName();
+  const dest = path.join(app.getPath('downloads'), fileName);
   const res = await fetch(url);
   if (!res.ok) throw new Error(`download failed (${res.status})`);
   const buffer = Buffer.from(await res.arrayBuffer());

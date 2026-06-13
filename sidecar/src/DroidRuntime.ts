@@ -98,6 +98,9 @@ export class DroidRuntime {
       detached: true,
       stdio: 'ignore',
     });
+    // A missing/non-executable CLI makes spawn emit 'error'; without a listener
+    // that would crash the sidecar, so swallow it here.
+    child.on('error', () => {});
     child.unref();
   }
 

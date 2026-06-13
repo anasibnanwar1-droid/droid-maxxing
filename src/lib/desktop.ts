@@ -34,7 +34,7 @@ interface DroidControlApi {
   setOnboarding: (patch: Partial<OnboardingState>) => Promise<OnboardingState>;
   appVersion: () => Promise<string>;
   checkAppUpdate: () => Promise<AppUpdateInfo>;
-  downloadAppUpdate: () => Promise<{ mode: string; path?: string }>;
+  downloadAppUpdate: (dmgUrl?: string) => Promise<{ mode: string; path?: string }>;
   relaunchApp: () => Promise<void>;
   openExternal: (url: string) => Promise<void>;
   nativeBrowserOpen: (sessionId: string, url: string, bounds?: NativeBrowserBounds, viewport?: { width: number; height: number; deviceScaleFactor: number }) => Promise<void>;

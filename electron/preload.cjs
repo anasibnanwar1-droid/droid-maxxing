@@ -23,7 +23,7 @@ contextBridge.exposeInMainWorld('droidControl', {
   setOnboarding: (patch) => ipcRenderer.invoke('onboarding-set', { patch }),
   appVersion: () => ipcRenderer.invoke('app-version'),
   checkAppUpdate: () => ipcRenderer.invoke('app-check-update'),
-  downloadAppUpdate: () => ipcRenderer.invoke('app-download-update'),
+  downloadAppUpdate: (dmgUrl) => ipcRenderer.invoke('app-download-update', dmgUrl),
   relaunchApp: () => ipcRenderer.invoke('app-relaunch'),
   openExternal: (url) => ipcRenderer.invoke('open-external', { url }),
 

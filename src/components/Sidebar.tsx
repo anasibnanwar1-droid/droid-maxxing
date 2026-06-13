@@ -2,10 +2,28 @@ import { useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
 import { useStore } from '../hooks/useStore';
 import { pickDirectory } from '../lib/desktop';
-import { Folder, MessageSquare, FolderPlus, Plus, User, Settings, ChevronRight } from 'lucide-react';
+import { Folder, MessageSquare, FolderPlus, Plus, User, Settings, ChevronRight, ArrowUpCircle, Loader2 } from 'lucide-react';
 import { buildWorkspaceSections, isSubagentSession, SIDEBAR_VISIBLE_SESSION_LIMIT } from '../lib/workspaces';
 import { useMissionLive } from '../hooks/useMissionLive';
+import { useAppUpdate } from '../lib/appUpdate';
 import type { MissionSummary } from '../types/bridge';
+
+// Shown in the title-bar strip when a newer DROIDEX build is available.
+function UpdatePill() {
+  const { update, downloading, start } = useAppUpdate();
+  if (!update?.updateAvailable) return null;
+  return (
+    <button
+      onClick={() => { void start(); }}
+      disabled={downloading}
+      title={`Update to ${update.latest} and restart`}
+      className="no-drag flex items-center gap-1.5 h-6 px-2 rounded-full bg-droid-accent text-white text-[11px] font-medium hover:opacity-90 transition-opacity disabled:opacity-60"
+    >
+      {downloading ? <Loader2 className="w-3 h-3 animate-spin" /> : <ArrowUpCircle className="w-3 h-3" />}
+      {downloading ? 'Updating…' : 'Update'}
+    </button>
+  );
+}
 
 function RunningGrid() {
   return (
@@ -151,7 +169,9 @@ export default function Sidebar() {
       style={{ background: 'var(--sidebar-bg)', backdropFilter: 'var(--sidebar-blur)', WebkitBackdropFilter: 'var(--sidebar-blur)' }}
     >
       {/* Draggable top strip (clears macOS traffic lights) */}
-      <div data-electron-drag-region className="h-9 shrink-0" />
+      <div data-electron-drag-region className="h-9 shrink-0 flex items-center justify-end pr-2">
+        <UpdatePill />
+      </div>
 
       <div className="px-2 pb-2">
         <button

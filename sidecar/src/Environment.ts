@@ -19,7 +19,9 @@ const CLI_CANDIDATES = [
 // Synchronous, runtime-facing resolver. Returns the literal `droid` (resolved
 // via PATH at spawn time) when no known location holds an executable.
 export function resolveDroidPath(): string {
-  if (process.env.DROID_PATH) return process.env.DROID_PATH;
+  // Only trust DROID_PATH when it points at a runnable binary; a stale override
+  // must fall through to a real install instead of being spawned and failing.
+  if (process.env.DROID_PATH && isExecutable(process.env.DROID_PATH)) return process.env.DROID_PATH;
   for (const candidate of CLI_CANDIDATES) {
     if (isExecutable(candidate)) return candidate;
   }
