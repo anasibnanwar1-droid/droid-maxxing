@@ -97,6 +97,23 @@ test('loadHistoricalSessions keeps a marker-only Task subagent visible when it h
   assert.deepEqual(rows.map((row) => row.summary.id).sort(), ['orphan-parent', 'orphan-subagent']);
 });
 
+test('loadHistoricalSessions keeps a rekeyed worker hidden under its superseded id', () => {
+  const cwd = join(home, 'workspace-rekey');
+  writeSession('rekey-parent', cwd);
+  writeSession('worker-old', cwd, { callingSessionId: 'rekey-parent', callingToolUseId: 'tool-r' });
+  writeSession('worker-new', cwd, { callingSessionId: 'rekey-parent', callingToolUseId: 'tool-r' });
+  const index = new HistoryIndex();
+  index.recordSubagentLink('rekey-parent', 'tool-r', 'worker-old', 'builder');
+  // Worker compaction rekeys the spawn, repointing the link at the new id.
+  index.recordSubagentLink('rekey-parent', 'tool-r', 'worker-new', 'builder');
+  index.close();
+
+  const rows = loadHistoricalSessions({ workspaceCwds: [cwd] });
+
+  // Both the pre- and post-rekey worker sessions stay hidden; only the parent shows.
+  assert.deepEqual(rows.map((row) => row.summary.id), ['rekey-parent']);
+});
+
 test('loadHistoricalSessions keeps forked chats (bare parent, no spawn markers) visible', () => {
   const cwd = join(home, 'workspace-fork');
   writeSession('source-session', cwd);

@@ -315,6 +315,12 @@ export class MissionManager {
             this.patch(compacted.summary.id, { queuedSends: compacted.pendingSends.length });
             await this.drive(compacted.summary.id, next);
           }
+        } else if (!compacted && mission) {
+          // Stale-swap recovery dropped the live mission during compaction; the
+          // queued prompts live on the detached mission object, so re-deliver
+          // them through the resume path instead of discarding them.
+          const queued = mission.pendingSends.splice(0);
+          if (queued.length > 0) await this.redeliverQueuedSends(missionId, queued);
         }
         return;
       }

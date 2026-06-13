@@ -269,6 +269,10 @@ export class HistoryIndex {
         updated_at INTEGER NOT NULL,
         PRIMARY KEY (mission_id, tool_use_id)
       );
+      CREATE TABLE IF NOT EXISTS linked_worker_sessions (
+        worker_session_id TEXT PRIMARY KEY,
+        updated_at INTEGER NOT NULL
+      );
       CREATE TABLE IF NOT EXISTS approvals (
         request_id TEXT PRIMARY KEY,
         mission_id TEXT NOT NULL,
@@ -401,6 +405,7 @@ export class HistoryIndex {
   // Persist the exact spawn->worker mapping the moment a live subagent resolves,
   // so historical loads can rebuild precise links rather than pairing by order.
   recordSubagentLink(missionId: string, toolUseId: string, workerSessionId: string, label?: string): void {
+    const now = Date.now();
     this.db.prepare(`
       INSERT INTO subagent_links (mission_id, tool_use_id, worker_session_id, label, updated_at)
       VALUES (?, ?, ?, ?, ?)
@@ -408,7 +413,16 @@ export class HistoryIndex {
         worker_session_id = excluded.worker_session_id,
         label = excluded.label,
         updated_at = excluded.updated_at
-    `).run(missionId, toolUseId, workerSessionId, sqlValue(label), Date.now());
+    `).run(missionId, toolUseId, workerSessionId, sqlValue(label), now);
+    // Remember every worker session ever linked to a spawn. A rekey (worker
+    // compaction) repoints subagent_links at the new id, dropping the old id
+    // from the current mapping; this append-only set keeps superseded worker
+    // sessions hidden so they never resurface as standalone history chats.
+    this.db.prepare(`
+      INSERT INTO linked_worker_sessions (worker_session_id, updated_at)
+      VALUES (?, ?)
+      ON CONFLICT(worker_session_id) DO UPDATE SET updated_at = excluded.updated_at
+    `).run(workerSessionId, now);
   }
 
   subagentLinks(missionId: string): WorkerHistoryLink[] {
@@ -431,6 +445,9 @@ export class HistoryIndex {
 // Task subagent with a link is openable from its parent chat, so it is hidden
 // from the standalone session list; one without a link (e.g. recorded before
 // links were persisted) would otherwise be orphaned, so it stays visible.
+// Unions the current mapping (subagent_links) with the append-only history of
+// every linked worker id (linked_worker_sessions) so a worker that was rekeyed
+// by compaction stays hidden under its superseded id too.
 function readLinkedWorkerSessionIds(): Set<string> {
   const path = join(homedir(), '.factory', 'droid-control', 'index.sqlite');
   if (!existsSync(path)) return new Set();
@@ -440,16 +457,21 @@ function readLinkedWorkerSessionIds(): Set<string> {
   } catch {
     return new Set();
   }
-  try {
-    const rows = db.prepare('SELECT DISTINCT worker_session_id FROM subagent_links').all() as Record<string, unknown>[];
-    const ids = new Set<string>();
-    for (const row of rows) {
-      const id = stringValue(row.worker_session_id);
-      if (id) ids.add(id);
+  const ids = new Set<string>();
+  const collect = (sql: string) => {
+    try {
+      for (const row of db.prepare(sql).all() as Record<string, unknown>[]) {
+        const id = stringValue(row.worker_session_id);
+        if (id) ids.add(id);
+      }
+    } catch {
+      /* table may not exist on older databases; ignore */
     }
+  };
+  try {
+    collect('SELECT DISTINCT worker_session_id FROM subagent_links');
+    collect('SELECT worker_session_id FROM linked_worker_sessions');
     return ids;
-  } catch {
-    return new Set();
   } finally {
     db.close();
   }

@@ -1152,3 +1152,31 @@ test('orchestrator compaction swap that never reloads drops the mission and re-d
   assert.equal(session.prompts.includes('queued-after-recovery'), false);
   assert.equal(session.prompts.includes('go'), true);
 });
+
+test('manual compaction swap that never reloads re-delivers sends queued during compaction', async () => {
+  const { manager, session, events, mission, internals } = orchestratorSwapHarness(10_000, 200_000, 'droid-new');
+  internals.runtime = { loadSession: async () => { throw new Error('permanent load failure'); } };
+  let closedId: string | undefined;
+  (manager as unknown as { closeMission: (id: string) => Promise<void> }).closeMission = async (id: string) => {
+    closedId = id;
+    internals.missions.delete(id);
+  };
+  const resumed = new FakeCompactionSession('droid-new', 10_000);
+  let resumeCalls = 0;
+  (manager as unknown as { resumeMission: (id: string) => Promise<void> }).resumeMission = async (id: string) => {
+    resumeCalls += 1;
+    internals.missions.set(id, { ...mission, session: resumed, streaming: false, compacting: false, pendingSends: [] });
+  };
+  // A prompt queued while the manual compaction was running.
+  mission.pendingSends.push('queued-during-manual');
+  await manager.handle({ type: 'mission.compact', missionId: 'app-swap' });
+  // The live mission is dropped and the new backing id is persisted...
+  assert.equal(closedId, 'app-swap');
+  assert.equal(mission.summary.sessionId, 'droid-new');
+  // ...the queued prompt is re-delivered through resume (not discarded)...
+  await waitFor(() => resumed.prompts.includes('queued-during-manual'));
+  assert.equal(resumeCalls >= 1, true);
+  // ...without ever streaming into the dead old session, and not marked failed.
+  assert.equal(session.prompts.includes('queued-during-manual'), false);
+  assert.equal(events.some((e) => e.type === 'mission.error'), false);
+});
