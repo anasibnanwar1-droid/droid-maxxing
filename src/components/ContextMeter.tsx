@@ -58,6 +58,13 @@ const CATEGORY_COLORS: Record<string, string> = {
   mcp: 'var(--droid-accent)',
   messages: 'var(--droid-text-muted)',
 };
+const FRESH_SESSION_THRESHOLD = 0.9;
+const OLDEST_SESSION_THRESHOLD = 0.75;
+const THRESHOLD_STEP = 0.05;
+
+function compactionThresholdPercent(priorCompactions: number): number {
+  return Math.max(OLDEST_SESSION_THRESHOLD, FRESH_SESSION_THRESHOLD - Math.max(0, Math.trunc(priorCompactions)) * THRESHOLD_STEP);
+}
 
 function categoryColor(key?: string): string {
   if (!key) return 'var(--droid-text-muted)';
@@ -83,20 +90,21 @@ export default function ContextMeter({ mission, stats }: { mission: MissionSumma
   const modelWindow = mission.maxContextTokens && mission.maxContextTokens > 0 ? mission.maxContextTokens : undefined;
   const statLimit = measured?.limit && measured.limit > 0 ? measured.limit : modelWindow;
 
-  // The conversation compacts once it passes the configured token limit, so the
-  // meter measures usage against that threshold (per-model override -> global
-  // default), capped to the model window. Falls back to observed/model context
-  // size when the app lets Factory use its model-dependent default.
+  // Droid Control owns the auto-compaction trigger: fresh sessions compact near
+  // 90% of the configured budget, then older compacted sessions step down to 75%.
   const compactionLimit =
     mission.modelId && state.compactionTokenLimitPerModel[mission.modelId] !== undefined
       ? state.compactionTokenLimitPerModel[mission.modelId]
       : state.compactionTokenLimit;
-  const effectiveCompaction =
+  const compactionBudget =
     compactionLimit && compactionLimit > 0
       ? modelWindow
         ? Math.min(compactionLimit, modelWindow)
         : compactionLimit
       : undefined;
+  const effectiveCompaction = compactionBudget
+    ? Math.max(1, Math.floor(compactionBudget * compactionThresholdPercent(mission.compactedFromSessionIds?.length ?? 0)))
+    : undefined;
   const max = effectiveCompaction ?? statLimit;
 
   const used = measured?.used;
