@@ -1620,7 +1620,8 @@ export class MissionManager {
     if (n.progress) this.emit({ type: 'mission.progress', missionId, entries: n.progress });
     if (n.missionState) {
       const phase = STATE_TO_PHASE[n.missionState];
-      if (phase) this.patch(missionId, { phase });
+      const mission = this.findMission(missionId);
+      if (phase && !(mission?.streaming && phase === 'paused')) this.patch(missionId, { phase });
     }
     if (n.worker) {
       this.emit({
@@ -1648,11 +1649,20 @@ export class MissionManager {
         const offset = this.usageOffsets.get(appSessionId);
         m.summary.tokensIn = n.tokens.tokensIn + (offset?.tokensIn ?? 0);
         m.summary.tokensOut = n.tokens.tokensOut + (offset?.tokensOut ?? 0);
-        m.summary.contextTokens = n.tokens.contextTokens;
         const maxContextTokens = this.maxContextTokensForSummary(m.summary);
         if (maxContextTokens === undefined) delete m.summary.maxContextTokens;
         else m.summary.maxContextTokens = maxContextTokens;
-        this.emitContextEstimate(appSessionId, m.summary);
+        const snapshot = this.contextSnapshots.get(appSessionId);
+        const contextLimit = maxContextTokens ?? snapshot?.limit;
+        if (isWindowTokenCount(n.tokens.contextTokens, contextLimit)) {
+          m.summary.contextTokens = n.tokens.contextTokens;
+          this.emitContextEstimate(appSessionId, m.summary);
+        } else if (!isWindowTokenCount(m.summary.contextTokens, contextLimit)) {
+          const snapshotUsed = snapshot?.used;
+          m.summary.contextTokens = isWindowTokenCount(snapshotUsed, snapshot?.limit ?? maxContextTokens)
+            ? snapshotUsed
+            : 0;
+        }
         this.emit({
           type: 'mission.tokens',
           missionId: appSessionId,
@@ -2963,6 +2973,11 @@ function contextStatsSnapshot(
     updatedAt: stats.updatedAt,
     breakdown,
   };
+}
+
+function isWindowTokenCount(value: unknown, limit: number | undefined): value is number {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) return false;
+  return !(limit && limit > 0) || value <= limit;
 }
 
 function contextBreakdownSnapshot(raw: unknown): ContextBreakdownSnapshot | undefined {

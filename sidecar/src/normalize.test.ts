@@ -114,3 +114,37 @@ test('marks Task results as correlated subagent completion', () => {
   assert.equal(normalized?.subagent?.done, true);
   assert.equal(normalized?.subagent?.toolUseId, 'tool-1');
 });
+
+test('token usage updates do not treat cumulative totals as context usage', () => {
+  const normalized = normalizeStreamEvent('mission-1', 'mission-1', 'orchestrator', {
+    type: 'token_usage_update',
+    tokenUsage: {
+      inputTokens: 10_603_766,
+      outputTokens: 78_367,
+      cacheReadTokens: 10,
+      cacheCreationTokens: 20,
+    },
+  } as never);
+
+  assert.equal(normalized?.tokens?.tokensIn, 10_603_796);
+  assert.equal(normalized?.tokens?.tokensOut, 78_367);
+  assert.equal(normalized?.tokens?.contextTokens, undefined);
+});
+
+test('token usage updates keep explicit last-call context usage', () => {
+  const normalized = normalizeStreamEvent('mission-1', 'mission-1', 'orchestrator', {
+    type: 'token_usage_update',
+    tokenUsage: {
+      inputTokens: 10_603_766,
+      outputTokens: 78_367,
+    },
+    lastCallTokenUsage: {
+      inputTokens: 40_000,
+      cacheReadTokens: 1_000,
+    },
+  } as never);
+
+  assert.equal(normalized?.tokens?.tokensIn, 10_603_766);
+  assert.equal(normalized?.tokens?.tokensOut, 78_367);
+  assert.equal(normalized?.tokens?.contextTokens, 41_000);
+});

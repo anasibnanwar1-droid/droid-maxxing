@@ -570,3 +570,21 @@ test('#14 an assistant message that is exactly the spec text is not double-rende
   const occurrences = html.split('The one and only spec body').length - 1;
   assert.equal(occurrences, 0);
 });
+
+test('live file edits show an editing cue while pending', () => {
+  const html = renderToStaticMarkup(createElement(MessageFeed, {
+    events: [
+      ev('u1', 'text', 'Update the file', { author: 'user', ts: 1 }),
+      ev('e1', 'tool_call', '', {
+        ts: 2,
+        toolName: 'edit',
+        toolArgs: { file_path: 'src/app.ts', old_string: 'old', new_string: 'new' },
+      }),
+    ],
+    pending: true,
+  }));
+
+  assert.match(html, /Editing/);
+  assert.match(html, /src\/app\.ts/);
+  assert.doesNotMatch(html, /Worked for/);
+});

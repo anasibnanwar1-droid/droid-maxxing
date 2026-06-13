@@ -42,6 +42,11 @@ const VERB_LABEL: Record<FileChange['verb'], string> = {
   create: 'Create',
   patch: 'Patch',
 };
+const LIVE_VERB_LABEL: Record<FileChange['verb'], string> = {
+  edit: 'Editing',
+  create: 'Creating',
+  patch: 'Patching',
+};
 
 function DiffHeader({ change }: { change: FileChange }) {
   return (
@@ -62,10 +67,11 @@ function DiffHeader({ change }: { change: FileChange }) {
   );
 }
 
-export function DiffCard({ change, onOpen }: { change: FileChange; onOpen?: () => void }) {
+export function DiffCard({ change, onOpen, active }: { change: FileChange; onOpen?: () => void; active?: boolean }) {
   const [open, setOpen] = useState(false);
   const preview = change.ops.slice(0, 14);
   const more = change.ops.length - preview.length;
+  const label = active ? LIVE_VERB_LABEL[change.verb] : VERB_LABEL[change.verb];
 
   return (
     <div>
@@ -76,8 +82,12 @@ export function DiffCard({ change, onOpen }: { change: FileChange; onOpen?: () =
         <ChevronRight
           className={`w-3 h-3 shrink-0 text-droid-text-muted/50 transition-transform duration-200 group-hover:text-droid-text-muted ${open ? 'rotate-90' : ''}`}
         />
-        <span className="text-[13px] font-medium shrink-0 text-droid-text-muted group-hover:text-droid-text-secondary">
-          {VERB_LABEL[change.verb]}
+        <span
+          className={`text-[13px] font-medium shrink-0 ${
+            active ? 'shimmer-text' : 'text-droid-text-muted group-hover:text-droid-text-secondary'
+          }`}
+        >
+          {label}
         </span>
         <span className="min-w-0 truncate font-mono text-[12px] text-droid-text-muted">
           {change.path}
