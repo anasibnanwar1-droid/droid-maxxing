@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { accessSync, constants, existsSync } from 'node:fs';
 import { homedir, release } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
@@ -42,9 +42,11 @@ export async function detectEnvironment(apiKeyConfigured: boolean): Promise<Envi
   };
 }
 
-export function availableChannels(pm: PackageManagers): InstallChannel[] {
+export function availableChannels(pm: PackageManagers, platform: NodeJS.Platform = process.platform): InstallChannel[] {
   const channels: InstallChannel[] = [];
-  if (pm.curl) channels.push('script');
+  // The official installer is a POSIX shell script, so only offer it where a
+  // `sh` pipeline can run. On Windows curl exists but `sh` usually does not.
+  if (pm.curl && platform !== 'win32') channels.push('script');
   if (pm.brew) channels.push('brew');
   if (pm.npm) channels.push('npm');
   return channels;
@@ -69,10 +71,24 @@ function parseSemver(value: string | undefined): [number, number, number] {
 
 async function resolveCliPath(): Promise<string | undefined> {
   for (const candidate of CLI_CANDIDATES) {
-    if (existsSync(candidate)) return candidate;
+    if (isExecutable(candidate)) return candidate;
   }
   const onPath = await commandPath('droid');
-  return onPath ?? undefined;
+  return onPath && isExecutable(onPath) ? onPath : undefined;
+}
+
+// A path that exists but is not executable (broken/partial install) must not
+// be reported as a present CLI. On Windows X_OK is not meaningful, so fall
+// back to plain existence there.
+function isExecutable(path: string): boolean {
+  if (!existsSync(path)) return false;
+  if (process.platform === 'win32') return true;
+  try {
+    accessSync(path, constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 async function detectPackageManagers(): Promise<PackageManagers> {

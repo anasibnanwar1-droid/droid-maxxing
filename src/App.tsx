@@ -134,8 +134,12 @@ export default function App() {
   useEffect(() => {
     if (embedded || launchHandled.current) return;
     if (!onboard.ready || !onboard.onboarding?.completed) return;
+    // Defer until env detection lands so the CLI auto-update isn't skipped by a
+    // race where this runs before `env` arrives.
+    const wantsCliAutoUpdate = onboard.onboarding.cliAutoUpdate !== false;
+    if (wantsCliAutoUpdate && !onboard.env) return;
     launchHandled.current = true;
-    if (onboard.onboarding.cliAutoUpdate !== false && onboard.env?.cli.present) {
+    if (wantsCliAutoUpdate && onboard.env?.cli.present) {
       updateCli(onboard.onboarding.installChannel);
     }
     if (onboard.onboarding.appAutoUpdate !== false) {

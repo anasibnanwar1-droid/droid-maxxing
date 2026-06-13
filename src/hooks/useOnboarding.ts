@@ -76,6 +76,8 @@ export function useOnboarding(): OnboardingController {
     setInstallLog([]);
     setLastResult(null);
     setInstalling('install');
+    // Remember the channel so later CLI updates use the matching updater path.
+    void setOnboarding({ installChannel: channel }).then(setOnboardingState);
     installCli(channel);
   }, []);
 

@@ -17,6 +17,8 @@ const CHANNEL_LABEL: Record<InstallChannel, string> = {
 
 type StepId = 'welcome' | 'system' | 'install' | 'signin' | 'preferences' | 'done';
 
+const STEP_ORDER: StepId[] = ['welcome', 'system', 'install', 'signin', 'preferences', 'done'];
+
 export default function OnboardingWizard({ controller, onComplete }: { controller: OnboardingController; onComplete: () => void }) {
   const { env } = controller;
   const [stepId, setStepId] = useState<StepId>('welcome');
@@ -33,11 +35,15 @@ export default function OnboardingWizard({ controller, onComplete }: { controlle
     const next = steps[Math.min(steps.length - 1, Math.max(0, index + delta))];
     setStepId(next);
   };
-  // If the CLI gets installed mid-flow the install step disappears; keep the
-  // current step valid.
+  // If the CLI gets installed mid-flow the install step disappears; advance to
+  // the next still-present step (by canonical order) instead of snapping back
+  // to Welcome.
   useEffect(() => {
-    if (!steps.includes(stepId)) setStepId(steps[Math.min(index, steps.length - 1)]);
-  }, [steps, stepId, index]);
+    if (steps.includes(stepId)) return;
+    const pos = STEP_ORDER.indexOf(stepId);
+    const next = steps.find((s) => STEP_ORDER.indexOf(s) >= pos) ?? steps[steps.length - 1];
+    setStepId(next);
+  }, [steps, stepId]);
 
   return (
     <motion.div
@@ -317,7 +323,7 @@ function SignInStep({ controller, onNext, onBack }: { controller: OnboardingCont
                 className="w-full h-9 px-3 rounded-md bg-droid-surface border border-droid-border text-[12px] font-mono text-droid-text focus:outline-none focus:border-droid-accent"
               />
               <PrimaryButton
-                onClick={async () => { setSaving(true); await controller.saveApiKey(key); setSaving(false); }}
+                onClick={async () => { setSaving(true); try { await controller.saveApiKey(key); } finally { setSaving(false); } }}
                 disabled={!key.trim() || saving}
               >
                 {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Save key'}

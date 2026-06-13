@@ -16,7 +16,14 @@ export function pickInstallChannel(env: Pick<EnvironmentReport, 'availableChanne
 export function buildInstallCommand(channel: InstallChannel): ShellCommand {
   switch (channel) {
     case 'script':
-      return { command: 'curl -fsSL https://app.factory.ai/cli | sh', args: [], shell: true };
+      // Download to a temp file first so a failed curl aborts before `sh`
+      // runs; a piped `curl | sh` would swallow download errors and could
+      // report a successful install with nothing installed.
+      return {
+        command: 'f="$(mktemp)" && curl -fsSL https://app.factory.ai/cli -o "$f" && sh "$f"; r=$?; rm -f "$f"; exit $r',
+        args: [],
+        shell: true,
+      };
     case 'brew':
       return { command: 'brew', args: ['install', '--cask', 'droid'] };
     case 'npm':

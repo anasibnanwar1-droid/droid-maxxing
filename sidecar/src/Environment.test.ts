@@ -16,15 +16,22 @@ test('compareSemver tolerates prefixes and missing values', () => {
 
 test('availableChannels reflects detected package managers in priority order', () => {
   assert.deepEqual(
-    availableChannels({ brew: true, npm: true, curl: true, pnpm: false }),
+    availableChannels({ brew: true, npm: true, curl: true, pnpm: false }, 'darwin'),
     ['script', 'brew', 'npm'],
   );
   assert.deepEqual(
-    availableChannels({ brew: false, npm: true, curl: false, pnpm: false }),
+    availableChannels({ brew: false, npm: true, curl: false, pnpm: false }, 'darwin'),
     ['npm'],
   );
   assert.deepEqual(
-    availableChannels({ brew: false, npm: false, curl: false, pnpm: false }),
+    availableChannels({ brew: false, npm: false, curl: false, pnpm: false }, 'darwin'),
     [],
+  );
+});
+
+test('availableChannels omits the shell-script channel on Windows', () => {
+  assert.deepEqual(
+    availableChannels({ brew: false, npm: true, curl: true, pnpm: false }, 'win32'),
+    ['npm'],
   );
 });
