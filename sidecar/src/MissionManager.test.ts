@@ -859,6 +859,7 @@ class FakeCompactionSession {
   compactions = 0;
   failCompaction = false;
   usedAfterStream?: number;
+  streamEvents: Record<string, unknown>[] = [];
   beforeContextStats?: () => Promise<void> | void;
   settingsUpdates: Array<Record<string, unknown>> = [];
 
@@ -868,8 +869,9 @@ class FakeCompactionSession {
     private swapTo?: string,
   ) {}
 
-  async *stream(prompt: string): AsyncGenerator<never, void, undefined> {
+  async *stream(prompt: string): AsyncGenerator<Record<string, unknown>, void, undefined> {
     this.prompts.push(prompt);
+    for (const event of this.streamEvents) yield event;
     if (this.usedAfterStream !== undefined) this.used = this.usedAfterStream;
   }
 
@@ -992,6 +994,17 @@ test('does not auto-compact after the final answer in the same visible turn', as
   await manager.handle({ type: 'mission.send', missionId: 'app-compact', text: 'hello' });
   assert.equal(session.compactions, 0);
   assert.deepEqual(session.prompts, ['hello']);
+});
+
+test('settles to paused when a mid-stream paused event was ignored', async () => {
+  const { manager, session, mission } = autoCompactHarness(100_000, 200_000);
+  mission.summary.kind = 'mission_orchestrator';
+  session.streamEvents = [{ type: 'mission_state_changed', state: 'paused' }];
+
+  await manager.handle({ type: 'mission.send', missionId: 'app-compact', text: 'hello' });
+
+  assert.equal(mission.summary.streaming, false);
+  assert.equal(mission.summary.phase, 'paused');
 });
 
 test('compaction failure surfaces a recoverable error and terminal status without failing the mission', async () => {

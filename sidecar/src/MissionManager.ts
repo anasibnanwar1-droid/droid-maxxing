@@ -184,6 +184,10 @@ const STATE_TO_PHASE: Record<string, MissionPhase> = {
   awaiting_input: 'running',
 };
 
+function shouldSettleToPaused(phase: MissionPhase): boolean {
+  return !['completed', 'failed', 'awaiting_plan_approval', 'awaiting_run_start'].includes(phase);
+}
+
 const MAX_OPEN_AGENT_TRANSPORTS = boundedInt(process.env.DROID_CONTROL_MAX_OPEN_AGENTS, 4, 1, 24);
 const BROWSER_NATIVE_TIMEOUT_MS = boundedInt(
   process.env.DROID_CONTROL_BROWSER_NATIVE_TIMEOUT_MS,
@@ -1421,7 +1425,11 @@ export class MissionManager {
         if (queued.length > 0) void this.redeliverQueuedSends(appSessionId, queued);
       } else {
         const next = mission.pendingSends.shift();
-        this.patch(appSessionId, { streaming: false, queuedSends: mission.pendingSends.length });
+        this.patch(appSessionId, {
+          streaming: false,
+          queuedSends: mission.pendingSends.length,
+          ...(next === undefined && shouldSettleToPaused(mission.summary.phase) ? { phase: 'paused' as const } : {}),
+        });
         if (next !== undefined) void this.drive(appSessionId, next);
       }
     }
