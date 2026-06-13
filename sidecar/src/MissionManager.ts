@@ -44,9 +44,11 @@ import {
   hydrateHistoricalMission,
   loadHistoricalMissions,
   loadHistoricalSessions,
+  loadMissionTranscriptWindow,
   loadSessionHistory,
   loadSessionPage,
   readFactoryDefaults,
+  resolveSessionChain,
 } from './history.js';
 import { mergeModelCatalog } from './modelCatalog.js';
 import { readDroidCliModelCatalog, readDroidCliModelCatalogCache } from './DroidCliCatalog.js';
@@ -821,14 +823,30 @@ export class MissionManager {
       const workers = this.withLiveWorkerStatus(appSessionId, this.history.subagentLinks(appSessionId));
       this.emit({ type: 'mission.history', missionId: appSessionId, progress: history.progress, transcripts, workers, mode: 'replace', olderCursor: history.olderCursor });
     } catch {
-      // A failed older-page fetch must not clobber the loaded transcript with a
-      // single-file replace; there is simply no more chain history to deliver.
-      if (cursor) return;
+      // No mission directory (plain chat / spec session). These have no workers
+      // or progress, but their orchestrator transcript can still span a
+      // compaction CHAIN, so replay the full chain - not just the newest backing
+      // file - and page it with the same cursor the mission path uses.
       try {
-        const page = loadSessionPage(droidSessionId, undefined, undefined, appSessionId);
-        page.events.forEach((event) => this.history.recordEvent(event));
-        this.emit({ type: 'mission.history', missionId: appSessionId, progress: [], transcripts: page.events, workers: this.withLiveWorkerStatus(appSessionId, this.history.subagentLinks(appSessionId)) });
+        const chain = resolveSessionChain(appSessionId, droidSessionId);
+        if (chain.length === 0) throw new Error(`Session history not found for ${droidSessionId}`);
+        const window = loadMissionTranscriptWindow(appSessionId, chain, { cursor });
+        const transcripts = window.events.map((event) => ({ ...event, missionId: appSessionId }));
+        transcripts.forEach((event) => this.history.recordEvent(event));
+        if (cursor) {
+          this.emit({ type: 'mission.history', missionId: appSessionId, progress: [], transcripts, mode: 'prepend', olderCursor: window.olderCursor });
+          return;
+        }
+        const workers = this.withLiveWorkerStatus(appSessionId, this.history.subagentLinks(appSessionId));
+        this.emit({ type: 'mission.history', missionId: appSessionId, progress: [], transcripts, workers, mode: 'replace', olderCursor: window.olderCursor });
       } catch (err) {
+        // Always answer an older-page request, even on failure, so the client's
+        // historyLoadingOlder flag clears instead of sticking and blocking all
+        // further pagination.
+        if (cursor) {
+          this.emit({ type: 'mission.history', missionId: appSessionId, progress: [], transcripts: [], mode: 'prepend', olderCursor: undefined });
+          return;
+        }
         if (!this.findMission(appSessionId)) {
           this.emitError({ missionId: appSessionId, sessionId: droidSessionId, message: errMsg(err) });
         }
@@ -1403,7 +1421,6 @@ export class MissionManager {
     } catch {
       /* adoption still failing; persist the new id and drop the mission below */
     }
-    this.usageOffsets.set(appSessionId, carryover);
     this.patch(appSessionId, {
       sessionId: newSessionId,
       compactedFromSessionIds: uniqueStrings([
@@ -1415,6 +1432,11 @@ export class MissionManager {
       contextTokens: 0,
     });
     await this.closeMission(appSessionId);
+    // closeMission clears the usage offset for this app id, so seed it AFTER the
+    // teardown: when the next message re-resumes against the compacted backing
+    // session (whose token counts restart low), the carried-over totals are
+    // added back instead of the displayed usage collapsing to the new segment.
+    this.usageOffsets.set(appSessionId, carryover);
     this.emitError({
       missionId: appSessionId,
       sessionId: newSessionId,
@@ -1883,6 +1905,14 @@ export class MissionManager {
   // (which runs this even when the new session could not be loaded, so the new
   // id survives in history and the worker is re-openable).
   private persistWorkerSwap(mission: Mission, oldSessionId: string, newSessionId: string): void {
+    // Authorize the new id for live agent.open/agent.send immediately. When
+    // rekeyAgentSession succeeds it has already swapped these sets; but the
+    // stale-recovery path runs persistWorkerSwap WITHOUT a successful rekey, so
+    // without this the rekeyed id is in neither set and every open/send fails
+    // with agent.not_in_session until the mission is reloaded. delete() guards
+    // keep it idempotent when the rekey path already moved them.
+    if (mission.knownSubagents.delete(oldSessionId)) mission.knownSubagents.add(newSessionId);
+    if (mission.linkedSubagents.delete(oldSessionId)) mission.linkedSubagents.add(newSessionId);
     // Re-point any spawn link for this worker at the new id (preserving its
     // label) so a later resume seeds linkedSubagents with the compacted id.
     const labelByToolUseId = new Map(this.history.subagentLinks(mission.summary.id).map((l) => [l.toolUseId, l.label]));

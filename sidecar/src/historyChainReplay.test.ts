@@ -3,12 +3,13 @@ import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 
 const originalHome = process.env.HOME;
 const home = mkdtempSync(join(tmpdir(), 'droid-chain-replay-'));
 process.env.HOME = home;
 
-const { loadMissionTranscriptWindow } = await import('./history.js');
+const { loadMissionTranscriptWindow, resolveSessionChain } = await import('./history.js');
 
 test.after(() => {
   if (originalHome === undefined) delete process.env.HOME;
@@ -118,4 +119,37 @@ test('a single (never-compacted) session yields no divider and no older cursor',
   assert.equal(events.filter((e) => e.kind === 'compaction').length, 0);
   assert.equal(olderCursor, undefined);
   assert.deepEqual(events.map((e) => e.text), ['only-1', 'only-2']);
+});
+
+test('an in-place-compacted single segment still surfaces its divider', () => {
+  // Chain length 1 (e.g. earlier files were pruned) but the only file begins
+  // with a compaction_state: position can no longer flag it, so the divider
+  // must be detected by reading the record itself.
+  writeSession('inplace', [compactionState(9), assistant('after')]);
+  const { events } = loadMissionTranscriptWindow('m', ['inplace'], { limit: 100 });
+
+  const divider = events.find((e) => e.kind === 'compaction');
+  assert.ok(divider, 'expected a divider for the in-place-compacted segment');
+  assert.equal(divider!.removedCount, 9);
+  assert.equal(events.find((e) => e.kind === 'text')?.text, 'after');
+});
+
+test('resolveSessionChain rebuilds the chain from the persisted app-session row', () => {
+  // Plain chats have no mission dir, so the chain must come from the sqlite
+  // app-session row (original + previous backing ids + current), oldest first.
+  writeSession('app0', [assistant('c0')]);
+  writeSession('mid1', [compactionState(3), assistant('c1')]);
+  writeSession('cur2', [compactionState(4), assistant('c2')]);
+  const dbDir = join(home, '.factory', 'droid-control');
+  mkdirSync(dbDir, { recursive: true });
+  const db = new DatabaseSync(join(dbDir, 'index.sqlite'));
+  db.exec('CREATE TABLE app_sessions (app_session_id TEXT, droid_session_id TEXT, previous_droid_session_ids TEXT)');
+  db.prepare('INSERT INTO app_sessions (app_session_id, droid_session_id, previous_droid_session_ids) VALUES (?, ?, ?)')
+    .run('app0', 'cur2', JSON.stringify(['app0', 'mid1']));
+  db.close();
+
+  assert.deepEqual(resolveSessionChain('app0', 'cur2'), ['app0', 'mid1', 'cur2']);
+  // Replaying that chain yields the full conversation in order.
+  const { events } = loadMissionTranscriptWindow('app0', resolveSessionChain('app0', 'cur2'), { limit: 100 });
+  assert.deepEqual(events.filter((e) => e.kind === 'text').map((e) => e.text), ['c0', 'c1', 'c2']);
 });

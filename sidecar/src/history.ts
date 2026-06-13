@@ -622,6 +622,21 @@ function orchestratorChain(summary: MissionSummary, sessionIndex: Map<string, st
   return dedupeStrings([summary.id, ...compactedFrom, currentSession]).filter((id) => sessionIndex.has(id));
 }
 
+// Resolve the compaction chain (oldest -> newest backing session ids) for a
+// plain chat / spec session that has NO mission directory. Such sessions never
+// reach hydrateHistoricalMission, so without this they would replay only the
+// newest backing file and lose all pre-compaction scrollback. Reads the chain
+// straight from the persisted app-session row (keyed by either id) and filters
+// to ids that still have a session file on disk.
+export function resolveSessionChain(appSessionId: string, droidSessionId: string): string[] {
+  const sessionIndex = buildSessionIndex();
+  const patches = readStoredSummaryPatches();
+  const patch = patches.get(appSessionId) ?? patches.get(droidSessionId);
+  const currentSession = patch?.sessionId ?? droidSessionId;
+  const compactedFrom = patch?.compactedFromSessionIds ?? [];
+  return dedupeStrings([appSessionId, ...compactedFrom, currentSession]).filter((id) => sessionIndex.has(id));
+}
+
 function dedupeStrings(values: Array<string | undefined>): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
@@ -678,13 +693,15 @@ function compactionDividerEvent(missionId: string, sessionId: string, comp: Comp
 }
 
 // The chronological items for one chain segment: a leading compaction divider
-// (for every post-original session) followed by that file's messages.
-function segmentItems(missionId: string, sessionId: string, path: string, isCompacted: boolean): TranscriptEvent[] {
+// (when the file actually starts with a compaction_state) followed by that
+// file's messages. The divider is detected by reading the record itself rather
+// than the segment's position, so an in-place-compacted single segment - or the
+// oldest reachable segment once earlier files have been pruned - still surfaces
+// it instead of silently dropping the boundary.
+function segmentItems(missionId: string, sessionId: string, path: string): TranscriptEvent[] {
   const items: TranscriptEvent[] = [];
-  if (isCompacted) {
-    const comp = readCompactionState(path);
-    if (comp) items.push(compactionDividerEvent(missionId, sessionId, comp));
-  }
+  const comp = readCompactionState(path);
+  if (comp) items.push(compactionDividerEvent(missionId, sessionId, comp));
   items.push(...parseSessionTranscript(missionId, sessionId, path, 'orchestrator'));
   return items;
 }
@@ -719,7 +736,7 @@ export function loadMissionTranscriptWindow(
   let olderCursor: string | undefined;
   for (let ci = startIdx; ci >= 0; ci--) {
     const path = sessionIndex.get(chain[ci])!;
-    const items = segmentItems(missionId, chain[ci], path, ci > 0);
+    const items = segmentItems(missionId, chain[ci], path);
     let start = ci === startIdx ? Math.min(end, items.length) : items.length;
     while (start > 0 && picked.length < limit) {
       start--;
