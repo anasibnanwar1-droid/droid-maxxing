@@ -127,11 +127,12 @@ export function loadHistoricalMissions(options: HistoricalSummaryFilter = {}): H
 export function loadHistoricalSessions(options: HistoricalSummaryFilter = {}): HistoricalMission[] {
   const rows: HistoricalMission[] = [];
   const cached = readStoredSummaryPatches();
+  const linkedWorkerIds = readLinkedWorkerSessionIds();
   const workspaceCwds = options.workspaceCwds ? new Set(options.workspaceCwds.filter(Boolean)) : null;
   if (workspaceCwds && workspaceCwds.size === 0 && !options.includePlainChats) return [];
   for (const [sessionId, path] of buildSessionIndex()) {
     const start = readSessionStart(path);
-    const classification = classifyStoredSession(start);
+    const classification = classifyStoredSession(start, linkedWorkerIds.has(sessionId));
     if (!classification) continue;
     const stat = statSync(path);
     const title = start.sessionTitle || start.title || `Session ${sessionId.slice(0, 8)}`;
@@ -423,6 +424,34 @@ export class HistoryIndex {
 
   close(): void {
     this.db.close();
+  }
+}
+
+// The set of worker session ids that have a persisted spawn->worker link. A
+// Task subagent with a link is openable from its parent chat, so it is hidden
+// from the standalone session list; one without a link (e.g. recorded before
+// links were persisted) would otherwise be orphaned, so it stays visible.
+function readLinkedWorkerSessionIds(): Set<string> {
+  const path = join(homedir(), '.factory', 'droid-control', 'index.sqlite');
+  if (!existsSync(path)) return new Set();
+  let db: DatabaseSync;
+  try {
+    db = new DatabaseSync(path);
+  } catch {
+    return new Set();
+  }
+  try {
+    const rows = db.prepare('SELECT DISTINCT worker_session_id FROM subagent_links').all() as Record<string, unknown>[];
+    const ids = new Set<string>();
+    for (const row of rows) {
+      const id = stringValue(row.worker_session_id);
+      if (id) ids.add(id);
+    }
+    return ids;
+  } catch {
+    return new Set();
+  } finally {
+    db.close();
   }
 }
 
@@ -937,15 +966,18 @@ function readSessionStart(path: string): StoredSessionStart {
 
 function classifyStoredSession(
   start: StoredSessionStart,
+  hasPersistedLink: boolean,
 ): Pick<MissionSummary, 'kind' | 'role' | 'missionId' | 'parentSessionId'> | null {
   if (start.decompSessionType === 'worker') return null;
   if (start.decompSessionType === 'validator') return null;
   // Task-tool subagents run as their own droid sessions but are spawned by a
-  // parent session's tool call; they must not surface as standalone sessions.
-  // Gate only on the spawn markers (callingSessionId/callingToolUseId): a bare
+  // parent session's tool call. Hide one only when a persisted spawn->worker
+  // link lets the parent chat open it as a worker; without a link (e.g. sessions
+  // recorded before links were persisted) it would be orphaned, so keep it
+  // visible as a standalone session. Gate on the spawn markers only: a bare
   // `parent` link is also set on ordinary forked chats, which ARE standalone
   // conversations and must stay visible in history.
-  if (start.callingSessionId || start.callingToolUseId) return null;
+  if ((start.callingSessionId || start.callingToolUseId) && hasPersistedLink) return null;
   const mode = sessionInteractionMode(start);
   const missionId = start.decompMissionId;
   if (start.decompSessionType === 'orchestrator' || missionId || mode === 'agi') {

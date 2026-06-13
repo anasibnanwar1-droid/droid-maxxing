@@ -1117,7 +1117,7 @@ test('orchestrator compaction swap recovers when the first reload fails but a re
   assert.equal(events.some((e) => e.type === 'mission.error'), false);
 });
 
-test('orchestrator compaction swap that never reloads persists the new id, drops the mission, and never drains into the dead session', async () => {
+test('orchestrator compaction swap that never reloads drops the mission and re-delivers queued sends through resume', async () => {
   const { manager, session, events, mission, internals } = orchestratorSwapHarness(250_000, 200_000, 'droid-new');
   internals.runtime = { loadSession: async () => { throw new Error('permanent load failure'); } };
   let closedId: string | undefined;
@@ -1126,20 +1126,29 @@ test('orchestrator compaction swap that never reloads persists the new id, drops
     closedId = id;
     internals.missions.delete(id);
   };
-  mission.pendingSends.push('queued-into-dead');
+  // Simulate a successful lazy resume: re-register a live mission on the new id.
+  const resumed = new FakeCompactionSession('droid-new', 10_000);
+  let resumeCalls = 0;
+  (manager as unknown as { resumeMission: (id: string) => Promise<void> }).resumeMission = async (id: string) => {
+    resumeCalls += 1;
+    internals.missions.set(id, { ...mission, session: resumed, streaming: false, compacting: false, pendingSends: [] });
+  };
+  mission.pendingSends.push('queued-after-recovery');
   await manager.handle({ type: 'mission.send', missionId: 'app-swap', text: 'go' });
   // The daemon's new backing id is persisted so a later send re-resumes the live session...
   assert.equal(mission.summary.sessionId, 'droid-new');
   // ...the live mission is dropped (the next send re-resumes it)...
   assert.equal(closedId, 'app-swap');
-  assert.equal(internals.missions.has('app-swap'), false);
   // ...a recoverable error is surfaced without marking the mission failed...
   assert.equal(events.some((e) => e.type === 'mission.error'), false);
   assert.equal(
     events.some((e) => e.type === 'error' && /reloading it failed/i.test((e as { message?: string }).message ?? '')),
     true,
   );
-  // ...and the queued send is never streamed into the dead old session.
-  assert.equal(session.prompts.includes('queued-into-dead'), false);
+  // ...the queued send is NOT discarded: it re-resumes and drives the new session...
+  await waitFor(() => resumed.prompts.includes('queued-after-recovery'));
+  assert.equal(resumeCalls >= 1, true);
+  // ...and it never streamed into the dead old session.
+  assert.equal(session.prompts.includes('queued-after-recovery'), false);
   assert.equal(session.prompts.includes('go'), true);
 });

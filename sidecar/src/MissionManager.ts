@@ -1067,9 +1067,31 @@ export class MissionManager {
       await this.refreshContext(appSessionId, mission.session);
       await this.maybeAutoCompact(appSessionId);
       mission.streaming = false;
-      const next = mission.pendingSends.shift();
-      this.patch(appSessionId, { streaming: false, queuedSends: mission.pendingSends.length });
-      if (next !== undefined) void this.drive(appSessionId, next);
+      if (!this.findMission(appSessionId)) {
+        // maybeAutoCompact's stale-swap recovery can drop the live mission. A
+        // drive() against the now-missing mission would silently discard the
+        // queued sends, so re-deliver them through the resume path instead.
+        const queued = mission.pendingSends.splice(0);
+        if (queued.length > 0) void this.redeliverQueuedSends(appSessionId, queued);
+      } else {
+        const next = mission.pendingSends.shift();
+        this.patch(appSessionId, { streaming: false, queuedSends: mission.pendingSends.length });
+        if (next !== undefined) void this.drive(appSessionId, next);
+      }
+    }
+  }
+
+  // Re-deliver sends that were queued while a turn streamed, after stale-compaction
+  // recovery dropped the live mission. send() re-resumes the mission from the
+  // persisted (compacted) backing id; delivering sequentially resumes it once and
+  // preserves prompt order rather than racing multiple resumes.
+  private async redeliverQueuedSends(missionId: string, queued: string[]): Promise<void> {
+    for (const text of queued) {
+      try {
+        await this.send(missionId, text);
+      } catch (err) {
+        this.emitError({ missionId, message: `Could not deliver a queued message after compaction recovery: ${errMsg(err)}` });
+      }
     }
   }
 
