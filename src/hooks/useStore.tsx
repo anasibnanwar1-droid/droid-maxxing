@@ -993,6 +993,8 @@ function baseReducer(state: AppState, action: Action): AppState {
       const mid = action.missionId;
       const existing = state.missions[mid];
       if (!existing) return state;
+      const contextTokens =
+        existing.streaming ? Math.max(existing.contextTokens, action.contextTokens) : action.contextTokens;
       return {
         ...state,
         missions: {
@@ -1001,7 +1003,7 @@ function baseReducer(state: AppState, action: Action): AppState {
             ...existing,
             tokensIn: action.tokensIn,
             tokensOut: action.tokensOut,
-            contextTokens: action.contextTokens,
+            contextTokens,
             maxContextTokens: action.maxContextTokens ?? existing.maxContextTokens,
           },
         },
@@ -1010,19 +1012,34 @@ function baseReducer(state: AppState, action: Action): AppState {
 
     case 'CONTEXT_UPDATED': {
       const existing = state.missions[action.sessionId];
+      const stats =
+        existing?.streaming && action.stats.used < existing.contextTokens
+          ? {
+              ...action.stats,
+              used: existing.contextTokens,
+              remaining: Math.max(0, action.stats.limit - existing.contextTokens),
+              breakdown: action.stats.breakdown
+                ? {
+                    ...action.stats.breakdown,
+                    usedTokens: existing.contextTokens,
+                    freeTokens: Math.max(0, action.stats.limit - existing.contextTokens),
+                  }
+                : undefined,
+            }
+          : action.stats;
       return {
         ...state,
-        contextStats: { ...state.contextStats, [action.sessionId]: action.stats },
+        contextStats: { ...state.contextStats, [action.sessionId]: stats },
         missions: existing
           ? {
               ...state.missions,
               [action.sessionId]: {
                 ...existing,
-                contextTokens: action.stats.used,
-                contextRemainingTokens: action.stats.remaining,
-                maxContextTokens: action.stats.limit,
-                contextAccuracy: action.stats.accuracy,
-                contextUpdatedAt: action.stats.updatedAt,
+                contextTokens: stats.used,
+                contextRemainingTokens: stats.remaining,
+                maxContextTokens: stats.limit,
+                contextAccuracy: stats.accuracy,
+                contextUpdatedAt: stats.updatedAt,
               },
             }
           : state.missions,
