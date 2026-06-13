@@ -1,10 +1,10 @@
-import { useRef, useEffect, useMemo, useState, useCallback } from 'react';
+import { useRef, useEffect, useLayoutEffect, useMemo, useState, useCallback } from 'react';
 import { GripVertical, ChevronRight, Square } from 'lucide-react';
 import { useStore } from '../hooks/useStore';
 import { useMissionLive } from '../hooks/useMissionLive';
 import { MessageFeed, WorkingIndicator } from './chat';
 import { readFile } from '../lib/desktop';
-import { interruptAgent } from '../lib/commands';
+import { interruptAgent, loadOlderMissionHistory } from '../lib/commands';
 import { resolveWorkers } from '../lib/subagents';
 
 function DroidWordmark() {
@@ -163,6 +163,17 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
     return allTranscript.filter((t) => t.role === 'orchestrator' || (t.author === 'user' && t.agentSessionId === 'user'));
   }, [allTranscript, viewingSub, selectedAgent]);
 
+  // Lazily page older orchestrator history (across the compaction chain) in as
+  // the user scrolls toward the top, prefetching well before the edge so the
+  // scrollback feels endless and smooth rather than hitting a hard stop.
+  const historyMissionId = activeMission?.id;
+  const olderCursor = historyMissionId ? state.historyCursor[historyMissionId] : undefined;
+  const loadingOlder = historyMissionId ? state.historyLoadingOlder[historyMissionId] : false;
+  // Anchor captured when an older page is requested, used to keep the viewport
+  // visually fixed once the prepended messages grow the scroll height.
+  const prependAnchor = useRef<{ height: number; top: number } | null>(null);
+  const PREFETCH_PX = 800;
+
   // Only auto-scroll when the user is already pinned to the bottom; if they've
   // scrolled up to read, leave their position alone while the model responds.
   const stickRef = useRef(true);
@@ -170,7 +181,24 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
     const el = scrollRef.current;
     if (!el) return;
     stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+    if (!viewingSub && historyMissionId && olderCursor && !loadingOlder && el.scrollTop < PREFETCH_PX) {
+      prependAnchor.current = { height: el.scrollHeight, top: el.scrollTop };
+      dispatch({ type: 'MISSION_HISTORY_LOADING_OLDER', missionId: historyMissionId });
+      loadOlderMissionHistory(historyMissionId, olderCursor);
+    }
   };
+
+  // Restore scroll position after an older page settles so the content the user
+  // was reading stays put instead of jumping to the top. Keyed on the loading
+  // flag too, so an empty (fully-deduped) page still clears the stale anchor.
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    if (!el || prependAnchor.current === null || loadingOlder) return;
+    const delta = el.scrollHeight - prependAnchor.current.height;
+    if (delta > 0) el.scrollTop = prependAnchor.current.top + delta;
+    prependAnchor.current = null;
+  }, [transcript.length, loadingOlder]);
+
   const tailLen = transcript.length > 0 ? (transcript[transcript.length - 1].text?.length ?? 0) : 0;
   useEffect(() => {
     if (scrollRef.current && stickRef.current) {

@@ -86,6 +86,9 @@ export interface HistoricalSummaryFilter {
 export interface HydratedMissionHistory {
   progress: ProgressEntry[];
   transcripts: TranscriptEvent[];
+  // Opaque cursor for the next (older) page of orchestrator scrollback across
+  // the compaction chain; undefined once the oldest segment has been loaded.
+  olderCursor?: string;
 }
 
 export type FactoryDefaults = FactoryDefaultSettings;
@@ -106,7 +109,12 @@ const STATE_TO_PHASE: Record<string, MissionPhase> = {
 };
 
 const MAX_TEXT_CHARS = 12_000;
-const MAX_EVENTS_PER_MISSION = 3_000;
+// Safety cap for worker transcript events on the initial page (the orchestrator
+// scrollback is paged via the cursor, so only workers need bounding here).
+const MAX_WORKER_EVENTS = 3_000;
+// How many orchestrator scrollback events to load per page (initial open and
+// each lazy older-page fetch). Bounds work for very long, multi-compaction chats.
+const DEFAULT_HISTORY_WINDOW = 400;
 const MAX_SESSION_BYTES = 5_000_000;
 const SESSION_START_BYTES = 256_000;
 
@@ -560,33 +568,161 @@ function definedPatch(patch: Partial<MissionSummary>): Partial<MissionSummary> {
   return Object.fromEntries(Object.entries(patch).filter(([, value]) => value !== undefined)) as Partial<MissionSummary>;
 }
 
-export function hydrateHistoricalMission(missionId: string): HydratedMissionHistory {
+export function hydrateHistoricalMission(
+  missionId: string,
+  opts: { cursor?: string; limit?: number } = {},
+): HydratedMissionHistory {
   const dir = resolveMissionDir(missionId);
   if (!dir) throw new Error(`Mission history not found for ${missionId}`);
 
   const { summary, progress, state, features } = loadHistoricalMission(dir);
   const sessionIndex = buildSessionIndex();
-  const agentRoles = buildAgentRoles(state, features, progress);
-  const sessionIds = new Set<string>();
-  sessionIds.add(summary.sessionId ?? summary.id);
-  sessionIds.add(summary.id);
-  agentRoles.forEach((_role, id) => sessionIds.add(id));
 
-  const transcripts: TranscriptEvent[] = [];
-  for (const sessionId of sessionIds) {
-    const path = sessionIndex.get(sessionId);
-    if (!path) continue;
-    const role = sessionId === summary.sessionId || sessionId === summary.id
-      ? 'orchestrator'
-      : agentRoles.get(sessionId) ?? 'worker';
-    transcripts.push(...parseSessionTranscript(summary.id, sessionId, path, role));
+  // The orchestrator backing session is rekeyed on every compaction, so the
+  // full conversation is spread across a CHAIN of session files. Resolve that
+  // chain (oldest -> newest) from the persisted app-session row; replaying only
+  // the latest segment is what made compacted chats lose their scrollback.
+  const chain = orchestratorChain(summary, sessionIndex);
+  const window = loadMissionTranscriptWindow(summary.id, chain, opts);
+
+  // Older pages only extend the orchestrator scrollback upward; workers and
+  // progress were already delivered with the initial (newest) page.
+  if (opts.cursor) {
+    return { progress: [], transcripts: window.events, olderCursor: window.olderCursor };
   }
 
-  transcripts.sort((a, b) => a.ts - b.ts);
+  const agentRoles = buildAgentRoles(state, features, progress);
+  const chainSet = new Set(chain);
+  const workerEvents: TranscriptEvent[] = [];
+  for (const [sessionId, role] of agentRoles) {
+    if (chainSet.has(sessionId)) continue;
+    const path = sessionIndex.get(sessionId);
+    if (!path) continue;
+    workerEvents.push(...parseSessionTranscript(summary.id, sessionId, path, role));
+  }
+  // The orchestrator scrollback is paged via the cursor; only the (bounded)
+  // worker events need a safety cap so a worker-heavy mission stays responsive.
+  const cappedWorkers = workerEvents.length > MAX_WORKER_EVENTS
+    ? workerEvents.slice(workerEvents.length - MAX_WORKER_EVENTS)
+    : workerEvents;
+
+  const transcripts = [...window.events, ...cappedWorkers].sort((a, b) => a.ts - b.ts);
+  return { progress, transcripts, olderCursor: window.olderCursor };
+}
+
+// Resolve the orchestrator's compaction chain (oldest -> newest backing session
+// ids) for a mission. The persisted app-session row keeps the authoritative
+// chain (previous backing ids + current); fall back to the summary when it is
+// already hydrated with one. Filtered to ids that still have a session file.
+function orchestratorChain(summary: MissionSummary, sessionIndex: Map<string, string>): string[] {
+  const patches = readStoredSummaryPatches();
+  const patch = patches.get(summary.id) ?? patches.get(summary.sessionId ?? summary.id);
+  const currentSession = patch?.sessionId ?? summary.sessionId ?? summary.id;
+  const compactedFrom = patch?.compactedFromSessionIds ?? summary.compactedFromSessionIds ?? [];
+  return dedupeStrings([summary.id, ...compactedFrom, currentSession]).filter((id) => sessionIndex.has(id));
+}
+
+function dedupeStrings(values: Array<string | undefined>): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const value of values) {
+    if (!value || seen.has(value)) continue;
+    seen.add(value);
+    out.push(value);
+  }
+  return out;
+}
+
+interface CompactionState {
+  removedCount?: number;
+  ts: number;
+}
+
+// Read the leading compaction_state record a compacted session begins with.
+// It marks the boundary where earlier turns were summarized away; we surface it
+// as a subtle "context compacted" divider rather than replaying the summary.
+function readCompactionState(path: string): CompactionState | null {
+  const rows = readSessionJsonLines<{ type?: string; timestamp?: string; removedCount?: unknown }>(path).rows;
+  for (const row of rows) {
+    if (row.type === 'session_start') continue;
+    if (row.type === 'compaction_state') {
+      return { removedCount: numberValue(row.removedCount), ts: dateMs(row.timestamp) || 0 };
+    }
+    return null;
+  }
+  return null;
+}
+
+function compactionDividerEvent(missionId: string, sessionId: string, comp: CompactionState): TranscriptEvent {
   return {
-    progress,
-    transcripts: trimMissionEvents(summary.id, transcripts),
+    id: `${sessionId}:compaction`,
+    missionId,
+    agentSessionId: 'orchestrator',
+    role: 'orchestrator',
+    ts: comp.ts,
+    kind: 'compaction',
+    removedCount: comp.removedCount,
   };
+}
+
+// The chronological items for one chain segment: a leading compaction divider
+// (for every post-original session) followed by that file's messages.
+function segmentItems(missionId: string, sessionId: string, path: string, isCompacted: boolean): TranscriptEvent[] {
+  const items: TranscriptEvent[] = [];
+  if (isCompacted) {
+    const comp = readCompactionState(path);
+    if (comp) items.push(compactionDividerEvent(missionId, sessionId, comp));
+  }
+  items.push(...parseSessionTranscript(missionId, sessionId, path, 'orchestrator'));
+  return items;
+}
+
+// Window the orchestrator transcript backward across the compaction chain.
+// Reads files newest -> oldest only as far as needed to fill `limit`, so a
+// months-long, heavily-compacted chat opens fast and pages older history in on
+// demand. The cursor is "<chainIdx>:<itemEnd>" ('end' = the file's tail).
+export function loadMissionTranscriptWindow(
+  missionId: string,
+  chainSessionIds: string[],
+  opts: { cursor?: string; limit?: number } = {},
+): { events: TranscriptEvent[]; olderCursor?: string } {
+  const limit = Math.max(1, opts.limit ?? DEFAULT_HISTORY_WINDOW);
+  const sessionIndex = buildSessionIndex();
+  const chain = chainSessionIds.filter((id) => sessionIndex.has(id));
+  if (chain.length === 0) return { events: [] };
+
+  let startIdx: number;
+  let end: number;
+  if (opts.cursor) {
+    const [ciStr, endStr] = opts.cursor.split(':');
+    startIdx = Number(ciStr);
+    end = endStr === 'end' ? Infinity : Number(endStr);
+    if (!Number.isInteger(startIdx) || startIdx < 0 || startIdx >= chain.length) return { events: [] };
+  } else {
+    startIdx = chain.length - 1;
+    end = Infinity;
+  }
+
+  const picked: TranscriptEvent[] = [];
+  let olderCursor: string | undefined;
+  for (let ci = startIdx; ci >= 0; ci--) {
+    const path = sessionIndex.get(chain[ci])!;
+    const items = segmentItems(missionId, chain[ci], path, ci > 0);
+    let start = ci === startIdx ? Math.min(end, items.length) : items.length;
+    while (start > 0 && picked.length < limit) {
+      start--;
+      picked.push(items[start]);
+    }
+    if (picked.length >= limit) {
+      if (start > 0) olderCursor = `${ci}:${start}`;
+      else if (ci > 0) olderCursor = `${ci - 1}:end`;
+      break;
+    }
+    end = Infinity;
+  }
+
+  picked.reverse();
+  return { events: picked, olderCursor };
 }
 
 export function readFactoryDefaults(): FactoryDefaults {
@@ -863,21 +999,6 @@ function featureWorkerIds(feature: BridgeFeature): string[] {
 function isValidatorFeature(feature: BridgeFeature): boolean {
   const text = `${feature.id} ${feature.skillName} ${feature.description}`.toLowerCase();
   return text.includes('validator') || text.includes('validation') || text.includes('scrutiny');
-}
-
-function trimMissionEvents(missionId: string, events: TranscriptEvent[]): TranscriptEvent[] {
-  if (events.length <= MAX_EVENTS_PER_MISSION) return events;
-  const kept = events.slice(events.length - MAX_EVENTS_PER_MISSION);
-  kept.unshift({
-    id: `${missionId}:history-trimmed`,
-    missionId,
-    agentSessionId: 'orchestrator',
-    role: 'orchestrator',
-    ts: kept[0]?.ts ?? Date.now(),
-    kind: 'status',
-    text: `History trimmed to the latest ${MAX_EVENTS_PER_MISSION.toLocaleString()} transcript events for UI performance.`,
-  });
-  return kept;
 }
 
 function missionDirs(): string[] {

@@ -81,6 +81,12 @@ export interface AppState {
   // views holding a worker id in local state can follow it to the new session.
   workerRekeys: Record<string, string>;
   historyLoaded: Record<string, boolean>;
+  // Cursor for the next older page of orchestrator scrollback per mission;
+  // undefined/absent once the oldest compaction segment has been loaded.
+  historyCursor: Record<string, string | undefined>;
+  // Whether an older-history page is currently in flight (prevents duplicate
+  // prefetches while the user keeps scrolling up).
+  historyLoadingOlder: Record<string, boolean>;
   pendingPermission: PermissionRequest | null;
   pendingQuestion: MissionQuestion | null;
   contextStats: Record<string, ContextStatsSnapshot>;
@@ -178,7 +184,8 @@ type Action =
   | { type: 'MISSION_QUESTION'; question: MissionQuestion }
   | { type: 'MISSION_ERROR'; missionId?: string; message: string }
   | { type: 'MISSION_LIST'; missions: MissionSummary[] }
-  | { type: 'MISSION_HISTORY'; missionId: string; progress: ProgressEntry[]; transcripts: TranscriptEvent[]; workers?: WorkerHistoryLink[] }
+  | { type: 'MISSION_HISTORY'; missionId: string; progress: ProgressEntry[]; transcripts: TranscriptEvent[]; workers?: WorkerHistoryLink[]; mode?: 'replace' | 'prepend'; olderCursor?: string }
+  | { type: 'MISSION_HISTORY_LOADING_OLDER'; missionId: string }
   | { type: 'CLEAR_PERMISSION' }
   | { type: 'CLEAR_QUESTION' }
 
@@ -563,6 +570,8 @@ export const initialState: AppState = {
   workers: {},
   workerRekeys: {},
   historyLoaded: {},
+  historyCursor: {},
+  historyLoadingOlder: {},
   pendingPermission: null,
   pendingQuestion: null,
   contextStats: {},
@@ -1033,10 +1042,27 @@ function baseReducer(state: AppState, action: Action): AppState {
       };
     }
 
+    case 'MISSION_HISTORY_LOADING_OLDER':
+      return { ...state, historyLoadingOlder: { ...state.historyLoadingOlder, [action.missionId]: true } };
+
     case 'MISSION_HISTORY': {
+      const existing = state.transcripts[action.missionId] ?? [];
+      // An older page prepends its events to the front of the existing scrollback
+      // (deduping by id so a trimmed/overlapping boundary never doubles a message).
+      if (action.mode === 'prepend') {
+        const have = new Set(existing.map((e) => e.id));
+        const older = action.transcripts.filter((e) => !have.has(e.id));
+        return {
+          ...state,
+          transcripts: older.length > 0
+            ? { ...state.transcripts, [action.missionId]: [...older, ...existing] }
+            : state.transcripts,
+          historyCursor: { ...state.historyCursor, [action.missionId]: action.olderCursor },
+          historyLoadingOlder: { ...state.historyLoadingOlder, [action.missionId]: false },
+        };
+      }
       // Don't let an empty history snapshot wipe a locally-seeded transcript
       // (e.g. a brand-new mission whose session isn't persisted to disk yet).
-      const existing = state.transcripts[action.missionId] ?? [];
       const transcripts = action.transcripts.length === 0 && existing.length > 0
         ? state.transcripts
         : { ...state.transcripts, [action.missionId]: action.transcripts };
@@ -1079,6 +1105,8 @@ function baseReducer(state: AppState, action: Action): AppState {
         transcripts,
         workers,
         historyLoaded: { ...state.historyLoaded, [action.missionId]: true },
+        historyCursor: { ...state.historyCursor, [action.missionId]: action.olderCursor },
+        historyLoadingOlder: { ...state.historyLoadingOlder, [action.missionId]: false },
       };
     }
 
@@ -1437,7 +1465,7 @@ function adaptEvent(ev: ServerEvent): Action | null {
     case 'mission.list':
       return { type: 'MISSION_LIST', missions: ev.missions };
     case 'mission.history':
-      return { type: 'MISSION_HISTORY', missionId: ev.missionId, progress: ev.progress, transcripts: ev.transcripts, workers: ev.workers };
+      return { type: 'MISSION_HISTORY', missionId: ev.missionId, progress: ev.progress, transcripts: ev.transcripts, workers: ev.workers, mode: ev.mode, olderCursor: ev.olderCursor };
     case 'models.list':
       return { type: 'MODELS_LIST', models: ev.models };
     case 'context.updated':

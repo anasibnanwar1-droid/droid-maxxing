@@ -53,14 +53,17 @@ export function CompactingIndicator() {
 }
 
 /* ── Compaction divider — persistent marker once compaction has completed ── */
-export function CompactionDivider({ compactType }: { compactType?: 'auto' | 'manual' }) {
+export function CompactionDivider({ compactType, removedCount }: { compactType?: 'auto' | 'manual'; removedCount?: number }) {
   const manual = compactType === 'manual';
+  const label = removedCount && removedCount > 0
+    ? `Context compacted · ${removedCount.toLocaleString()} earlier message${removedCount === 1 ? '' : 's'} summarized`
+    : manual ? 'Session compacted' : 'Context automatically compacted';
   return (
     <div className={`flex items-center gap-3 py-1 ${manual ? 'text-droid-text-secondary' : 'text-droid-text-muted'}`}>
       <div className="h-px flex-1 bg-droid-border/70" />
       <span className="flex items-center gap-1.5 text-[12px] whitespace-nowrap">
         <FoldVertical className="h-3.5 w-3.5" />
-        {manual ? 'Session compacted' : 'Context automatically compacted'}
+        {label}
       </span>
       <div className="h-px flex-1 bg-droid-border/70" />
     </div>
@@ -313,7 +316,7 @@ function buildFeed(events: TranscriptEvent[], subagentCards = false): FeedItem[]
       items.push({ type: 'thinking', key: ev.id, event: ev, durationMs: end != null ? Math.max(0, end - ev.ts) : undefined });
       i++; continue;
     }
-    if (ev.kind === 'status') { items.push({ type: 'status', key: ev.id, event: ev }); i++; continue; }
+    if (ev.kind === 'compaction' || ev.kind === 'status') { items.push({ type: 'status', key: ev.id, event: ev }); i++; continue; }
     if (ev.kind === 'error' || ev.isError) { items.push({ type: 'error', key: ev.id, event: ev }); i++; continue; }
     if (ev.kind === 'tool_call') {
       const change = extractFileChange(ev.toolName, ev.toolArgs);
@@ -432,6 +435,7 @@ function collapseRun(run: FeedItem[]): FeedItem[] {
   };
   for (const it of work) {
     if (it.type === 'subagent') { flush(); out.push(it); }
+    else if (it.type === 'status' && it.event.kind === 'compaction') { flush(); out.push(it); }
     else if (it.type === 'status' && isCompactionCompleteStatus(it.event.text) && it.event.compactType === 'manual') { flush(); out.push(it); }
     else buf.push(it);
   }
@@ -653,6 +657,7 @@ const FeedItemView = memo(function FeedItemView({ item, live, compacting, onOpen
       );
     case 'status': {
       const text = item.event.text ?? '';
+      if (item.event.kind === 'compaction') return <CompactionDivider compactType="auto" removedCount={item.event.removedCount} />;
       if (compacting) return <CompactingIndicator />;
       if (isCompactionCompleteStatus(text)) return <CompactionDivider compactType={item.event.compactType} />;
       return live ? (

@@ -354,7 +354,7 @@ export class MissionManager {
         this.loadHistoryPage(cmd.sessionId, cmd.cursor, cmd.limit);
         return;
       case 'mission.loadHistory':
-        this.loadMissionHistory(cmd.missionId);
+        this.loadMissionHistory(cmd.missionId, cmd.cursor);
         return;
       case 'settings.agent.update':
         await this.updateAgentSettings(cmd);
@@ -804,17 +804,26 @@ export class MissionManager {
     );
   }
 
-  private loadMissionHistory(missionId: string): void {
+  private loadMissionHistory(missionId: string, cursor?: string): void {
     const summary = this.resolveSummary(missionId);
     const appSessionId = summary?.id ?? missionId;
     const droidSessionId = summary?.sessionId ?? missionId;
     try {
-      const history = this.hydrateMissionHistory(appSessionId, droidSessionId);
+      const history = this.hydrateMissionHistory(appSessionId, droidSessionId, { cursor });
       const transcripts = history.transcripts.map((event) => ({ ...event, missionId: appSessionId }));
       transcripts.forEach((event) => this.history.recordEvent(event));
+      // An older page only extends the orchestrator scrollback upward; prepend it
+      // without touching the already-delivered workers/progress.
+      if (cursor) {
+        this.emit({ type: 'mission.history', missionId: appSessionId, progress: [], transcripts, mode: 'prepend', olderCursor: history.olderCursor });
+        return;
+      }
       const workers = this.withLiveWorkerStatus(appSessionId, this.history.subagentLinks(appSessionId));
-      this.emit({ type: 'mission.history', missionId: appSessionId, progress: history.progress, transcripts, workers });
+      this.emit({ type: 'mission.history', missionId: appSessionId, progress: history.progress, transcripts, workers, mode: 'replace', olderCursor: history.olderCursor });
     } catch {
+      // A failed older-page fetch must not clobber the loaded transcript with a
+      // single-file replace; there is simply no more chain history to deliver.
+      if (cursor) return;
       try {
         const page = loadSessionPage(droidSessionId, undefined, undefined, appSessionId);
         page.events.forEach((event) => this.history.recordEvent(event));
@@ -840,11 +849,11 @@ export class MissionManager {
     }
   }
 
-  private hydrateMissionHistory(appSessionId: string, droidSessionId: string): ReturnType<typeof hydrateHistoricalMission> {
+  private hydrateMissionHistory(appSessionId: string, droidSessionId: string, opts: { cursor?: string; limit?: number } = {}): ReturnType<typeof hydrateHistoricalMission> {
     try {
-      return hydrateHistoricalMission(appSessionId);
+      return hydrateHistoricalMission(appSessionId, opts);
     } catch {
-      return hydrateHistoricalMission(droidSessionId);
+      return hydrateHistoricalMission(droidSessionId, opts);
     }
   }
 

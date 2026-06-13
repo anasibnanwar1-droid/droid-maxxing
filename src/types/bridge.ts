@@ -111,12 +111,14 @@ export interface TranscriptEvent {
   role: AgentRole;
   ts: number;
   endTs?: number;
-  kind: 'text' | 'thinking' | 'tool_call' | 'tool_result' | 'error' | 'status';
+  kind: 'text' | 'thinking' | 'tool_call' | 'tool_result' | 'error' | 'status' | 'compaction';
   text?: string;
   toolName?: string;
   toolArgs?: unknown;
   toolUseId?: string;
   isError?: boolean;
+  // For a 'compaction' divider: how many messages the compaction summarized away.
+  removedCount?: number;
   author?: 'user';
   // Frontend-only: attachments shown as chips on a user message.
   skills?: string[];
@@ -448,7 +450,7 @@ export type ClientCommand =
   | { type: 'mission.subscribeWorker'; missionId: string; workerSessionId: string }
   | { type: 'mission.close'; missionId: string }
   | { type: 'mission.list'; workspaceCwds?: string[]; includePlainChats?: boolean; limitPerWorkspace?: number }
-  | { type: 'mission.loadHistory'; missionId: string }
+  | { type: 'mission.loadHistory'; missionId: string; cursor?: string }
   | { type: 'settings.agent.update'; missionId?: string; agent: ConfigurableAgent; modelId?: string | null; reasoningEffort?: ReasoningEffort }
   | { type: 'mission.setAutonomy'; missionId: string; autonomy: Autonomy }
   | { type: 'mission.setInteractionMode'; missionId: string; mode: SessionInteractionMode }
@@ -498,7 +500,7 @@ export type ServerEvent =
   | { type: 'mission.question'; question: MissionQuestion }
   | { type: 'mission.error'; missionId?: string; message: string }
   | { type: 'mission.list'; missions: MissionSummary[] }
-  | { type: 'mission.history'; missionId: string; progress: ProgressEntry[]; transcripts: TranscriptEvent[]; workers?: WorkerHistoryLink[] }
+  | { type: 'mission.history'; missionId: string; progress: ProgressEntry[]; transcripts: TranscriptEvent[]; workers?: WorkerHistoryLink[]; mode?: 'replace' | 'prepend'; olderCursor?: string }
   | { type: 'sessions.history'; missions: HistoryMission[] }
   | { type: 'models.list'; models: ModelInfo[] }
   | { type: 'browser.updated'; state: BrowserState }
