@@ -328,6 +328,14 @@ function sanitizeMissionContext(mission: MissionSummary): MissionSummary {
   };
 }
 
+function hasUsableBreakdownUsage(stats: ContextStatsSnapshot): boolean {
+  return (
+    stats.accuracy !== 'exact' &&
+    stats.breakdown !== undefined &&
+    isContextWindowTokenCount(stats.breakdown.usedTokens, stats.limit)
+  );
+}
+
 function getLocalStorage(): Storage | undefined {
   if (typeof window !== 'undefined') return window.localStorage;
   const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
@@ -1037,8 +1045,9 @@ function baseReducer(state: AppState, action: Action): AppState {
       const currentIsWindowUsage = existing
         ? isContextWindowTokenCount(existing.contextTokens, action.stats.limit)
         : false;
+      const incomingHasBreakdownUsage = hasUsableBreakdownUsage(action.stats);
       const stats =
-        existing?.streaming && currentIsWindowUsage && action.stats.used < existing.contextTokens
+        existing?.streaming && currentIsWindowUsage && !incomingHasBreakdownUsage && action.stats.used < existing.contextTokens
           ? {
               ...action.stats,
               used: existing.contextTokens,

@@ -860,6 +860,9 @@ class FakeCompactionSession {
   failCompaction = false;
   usedAfterStream?: number;
   streamEvents: Record<string, unknown>[] = [];
+  limit = 1_000_000;
+  accuracy: 'exact' | 'estimated' = 'exact';
+  breakdown?: unknown;
   beforeContextStats?: () => Promise<void> | void;
   settingsUpdates: Array<Record<string, unknown>> = [];
 
@@ -887,17 +890,21 @@ class FakeCompactionSession {
     used: number;
     remaining: number;
     limit: number;
-    accuracy: 'exact';
+    accuracy: 'exact' | 'estimated';
     updatedAt: string;
   }> {
     await this.beforeContextStats?.();
     return {
       used: this.used,
-      remaining: Math.max(0, 1_000_000 - this.used),
-      limit: 1_000_000,
-      accuracy: 'exact',
+      remaining: Math.max(0, this.limit - this.used),
+      limit: this.limit,
+      accuracy: this.accuracy,
       updatedAt: new Date().toISOString(),
     };
+  }
+
+  async getContextBreakdown(): Promise<unknown> {
+    return this.breakdown;
   }
 
   async compactSession(): Promise<{ newSessionId: string; removedCount: number }> {
@@ -1005,6 +1012,33 @@ test('settles to paused when a mid-stream paused event was ignored', async () =>
 
   assert.equal(mission.summary.streaming, false);
   assert.equal(mission.summary.phase, 'paused');
+});
+
+test('estimated context stats prefer detailed breakdown usage', async () => {
+  const { manager, session, mission, events } = autoCompactHarness(200_000);
+  session.limit = 200_000;
+  session.accuracy = 'estimated';
+  session.breakdown = {
+    contextBudget: 200_000,
+    usedTokens: 154_982,
+    freeTokens: 45_018,
+    categories: [
+      { name: 'System prompt', tokens: 2_082 },
+      { name: 'System tools', tokens: 9_556 },
+      { name: 'Messages', tokens: 134_827 },
+    ],
+  };
+
+  await manager.handle({ type: 'mission.send', missionId: 'app-compact', text: 'hello' });
+
+  assert.equal(mission.summary.contextTokens, 154_982);
+  assert.equal(mission.summary.contextRemainingTokens, 45_018);
+  const contextEvent = events.findLast((event) => event.type === 'context.updated') as
+    | { type: 'context.updated'; stats: { used: number; remaining: number; limit: number } }
+    | undefined;
+  assert.equal(contextEvent?.stats.used, 154_982);
+  assert.equal(contextEvent?.stats.remaining, 45_018);
+  assert.equal(contextEvent?.stats.limit, 200_000);
 });
 
 test('compaction failure surfaces a recoverable error and terminal status without failing the mission', async () => {
