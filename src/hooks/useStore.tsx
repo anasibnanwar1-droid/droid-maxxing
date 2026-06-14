@@ -243,6 +243,7 @@ const defaultTheme: ThemeConfig = {
 
 const AGENT_CONFIG_STORAGE_KEY = 'droid-agent-config-v2';
 const OLD_AGENT_CONFIG_STORAGE_KEYS = ['droid-agent-config'];
+const MAX_CONTEXT_TOKENS_WITHOUT_LIMIT = 2_000_000;
 const defaultAgentConfig: AgentConfig = {
   orchestrator: { modelId: undefined, reasoning: 'high' },
   worker: { modelId: undefined, reasoning: 'medium' },
@@ -260,6 +261,31 @@ function isReasoningEffort(value: unknown): value is ReasoningEffort {
     value === 'xhigh' ||
     value === 'max' ||
     value === 'dynamic'
+  );
+}
+
+function isContextWindowTokenCount(value: unknown, limit?: number): value is number {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) return false;
+  if (limit && limit > 0) return value <= limit;
+  return value <= MAX_CONTEXT_TOKENS_WITHOUT_LIMIT;
+}
+
+function sanitizeMissionContext(mission: MissionSummary): MissionSummary {
+  if (isContextWindowTokenCount(mission.contextTokens, mission.maxContextTokens)) return mission;
+  return {
+    ...mission,
+    contextTokens: 0,
+    contextRemainingTokens: mission.maxContextTokens,
+    contextAccuracy: undefined,
+    contextUpdatedAt: undefined,
+  };
+}
+
+function hasUsableBreakdownUsage(stats: ContextStatsSnapshot): boolean {
+  return (
+    stats.accuracy !== 'exact' &&
+    stats.breakdown !== undefined &&
+    isContextWindowTokenCount(stats.breakdown.usedTokens, stats.limit)
   );
 }
 
@@ -681,6 +707,7 @@ function baseReducer(state: AppState, action: Action): AppState {
       return { ...state, connection: action.status, connectionError: action.message };
 
     case 'MISSION_CREATED': {
+      const mission = sanitizeMissionContext(applyMissionOverride(action.mission, state.missionSettingOverrides[action.mission.id]));
       const order = state.missionOrder.includes(action.mission.id)
         ? state.missionOrder
         : [action.mission.id, ...state.missionOrder];
@@ -712,7 +739,7 @@ function baseReducer(state: AppState, action: Action): AppState {
 
       const next = {
         ...state,
-        missions: { ...state.missions, [action.mission.id]: applyMissionOverride(action.mission, state.missionSettingOverrides[action.mission.id]) },
+        missions: { ...state.missions, [mission.id]: mission },
         missionOrder: order,
         transcripts,
         activeMissionId: action.mission.id,
@@ -732,7 +759,7 @@ function baseReducer(state: AppState, action: Action): AppState {
       };
 
     case 'MISSION_UPDATED': {
-      const m = applyMissionOverride(action.mission, state.missionSettingOverrides[action.mission.id]);
+      const m = sanitizeMissionContext(applyMissionOverride(action.mission, state.missionSettingOverrides[action.mission.id]));
       return {
         ...state,
         missions: { ...state.missions, [m.id]: m },
@@ -876,6 +903,18 @@ function baseReducer(state: AppState, action: Action): AppState {
       const mid = action.missionId;
       const existing = state.missions[mid];
       if (!existing) return state;
+      const maxContextTokens = action.maxContextTokens ?? existing.maxContextTokens;
+      const currentIsWindowUsage = isContextWindowTokenCount(existing.contextTokens, maxContextTokens);
+      const nextIsWindowUsage = isContextWindowTokenCount(action.contextTokens, maxContextTokens);
+      const nextContextTokens = nextIsWindowUsage
+        ? action.contextTokens
+        : currentIsWindowUsage
+          ? existing.contextTokens
+          : 0;
+      const contextTokens =
+        existing.streaming && currentIsWindowUsage && nextIsWindowUsage
+          ? Math.max(existing.contextTokens, nextContextTokens)
+          : nextContextTokens;
       return {
         ...state,
         missions: {
@@ -884,8 +923,8 @@ function baseReducer(state: AppState, action: Action): AppState {
             ...existing,
             tokensIn: action.tokensIn,
             tokensOut: action.tokensOut,
-            contextTokens: action.contextTokens,
-            maxContextTokens: action.maxContextTokens ?? existing.maxContextTokens,
+            contextTokens,
+            maxContextTokens,
           },
         },
       };
@@ -893,19 +932,38 @@ function baseReducer(state: AppState, action: Action): AppState {
 
     case 'CONTEXT_UPDATED': {
       const existing = state.missions[action.sessionId];
+      const currentIsWindowUsage = existing
+        ? isContextWindowTokenCount(existing.contextTokens, action.stats.limit)
+        : false;
+      const incomingHasBreakdownUsage = hasUsableBreakdownUsage(action.stats);
+      const stats =
+        existing?.streaming && currentIsWindowUsage && !incomingHasBreakdownUsage && action.stats.used < existing.contextTokens
+          ? {
+              ...action.stats,
+              used: existing.contextTokens,
+              remaining: Math.max(0, action.stats.limit - existing.contextTokens),
+              breakdown: action.stats.breakdown
+                ? {
+                    ...action.stats.breakdown,
+                    usedTokens: existing.contextTokens,
+                    freeTokens: Math.max(0, action.stats.limit - existing.contextTokens),
+                  }
+                : undefined,
+            }
+          : action.stats;
       return {
         ...state,
-        contextStats: { ...state.contextStats, [action.sessionId]: action.stats },
+        contextStats: { ...state.contextStats, [action.sessionId]: stats },
         missions: existing
           ? {
               ...state.missions,
               [action.sessionId]: {
                 ...existing,
-                contextTokens: action.stats.used,
-                contextRemainingTokens: action.stats.remaining,
-                maxContextTokens: action.stats.limit,
-                contextAccuracy: action.stats.accuracy,
-                contextUpdatedAt: action.stats.updatedAt,
+                contextTokens: stats.used,
+                contextRemainingTokens: stats.remaining,
+                maxContextTokens: stats.limit,
+                contextAccuracy: stats.accuracy,
+                contextUpdatedAt: stats.updatedAt,
               },
             }
           : state.missions,
@@ -1025,7 +1083,7 @@ function baseReducer(state: AppState, action: Action): AppState {
     case 'MISSION_LIST': {
       const map: Record<string, MissionSummary> = { ...state.missions };
       for (const m of action.missions) {
-        map[m.id] = applyMissionOverride(m, state.missionSettingOverrides[m.id]);
+        map[m.id] = sanitizeMissionContext(applyMissionOverride(m, state.missionSettingOverrides[m.id]));
       }
       const order = [...new Set([...action.missions.map((m) => m.id), ...state.missionOrder])]
         .filter((id) => map[id])

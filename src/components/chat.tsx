@@ -386,6 +386,21 @@ function isUserMessage(item: FeedItem): boolean {
   return item.type === 'message' && item.event.author === 'user';
 }
 
+function isAssistantMessage(item: FeedItem): boolean {
+  return item.type === 'message' && item.event.author !== 'user';
+}
+
+function isCompactionMetadata(item: FeedItem): boolean {
+  return item.type === 'status' && (
+    item.event.kind === 'compaction' ||
+    (item.event.compactType !== undefined && !isCompactingStatus(item.event.text))
+  );
+}
+
+function isCompletedCompactingStarter(item: FeedItem): boolean {
+  return item.type === 'status' && item.event.compactType !== undefined && isCompactingStatus(item.event.text);
+}
+
 // Best-effort end timestamp of a feed item, used to time the live working cue.
 function tailTimestamp(item?: FeedItem): number | undefined {
   if (!item) return undefined;
@@ -413,19 +428,14 @@ function spanOf(items: FeedItem[]): { start: number; end: number } {
   return { start, end };
 }
 
-// Collapse a single completed assistant turn: everything except the concluding
-// message folds into a "Worked for …" group (compaction steps included). While
-// the turn is live it is never collapsed, so compaction stays visible then.
+// Collapse a single completed assistant run. Assistant messages are hard
+// top-level boundaries: later compaction/status events must never make a final
+// answer a child of "Worked for …".
 function collapseRun(run: FeedItem[]): FeedItem[] {
   if (run.length === 0) return [];
-  const lastItem = run[run.length - 1];
-  const conclusionIdx =
-    lastItem.type === 'message' && lastItem.event.author !== 'user' ? run.length - 1 : -1;
-
-  const work = conclusionIdx === -1 ? run : run.slice(0, conclusionIdx);
   const out: FeedItem[] = [];
   // Fold contiguous work into "Worked for …" groups, but keep subagent spawn
-  // cards at the top level so they stay visible (and navigable) after a turn.
+  // cards, assistant answers, and compaction metadata at the top level.
   let buf: FeedItem[] = [];
   const flush = () => {
     if (buf.length === 0) return;
@@ -433,14 +443,12 @@ function collapseRun(run: FeedItem[]): FeedItem[] {
     out.push({ type: 'worked', key: `worked-${buf[0].key}`, items: buf, durationMs: Math.max(0, end - start) });
     buf = [];
   };
-  for (const it of work) {
-    if (it.type === 'subagent') { flush(); out.push(it); }
-    else if (it.type === 'status' && it.event.kind === 'compaction') { flush(); out.push(it); }
-    else if (it.type === 'status' && isCompactionCompleteStatus(it.event.text) && it.event.compactType === 'manual') { flush(); out.push(it); }
+  for (const it of run) {
+    if (isCompletedCompactingStarter(it)) continue;
+    if (it.type === 'subagent' || isAssistantMessage(it) || isCompactionMetadata(it)) { flush(); out.push(it); }
     else buf.push(it);
   }
   flush();
-  if (conclusionIdx !== -1) out.push(run[conclusionIdx]);
   return out;
 }
 
@@ -673,9 +681,9 @@ const FeedItemView = memo(function FeedItemView({ item, live, compacting, onOpen
         </div>
       );
     case 'diff':
-      return <DiffCard change={item.change} onOpen={onOpenDiff ? () => onOpenDiff(item.change) : undefined} />;
+      return <DiffCard change={item.change} active={live} onOpen={onOpenDiff ? () => onOpenDiff(item.change) : undefined} />;
     case 'diffs':
-      return <DiffGroup changes={item.changes} onOpenDiff={onOpenDiff} />;
+      return <DiffGroup changes={item.changes} active={live} onOpenDiff={onOpenDiff} />;
     case 'tools':
       return <ToolGroupItem events={item.events} active={live} />;
     case 'worked':
@@ -722,8 +730,9 @@ function WorkedGroup({ item, onOpenDiff, onOpenSubagent, subagentActivity, specD
 }
 
 /* ── Folded run of file edits: one collapsible header over individual diffs ── */
-function DiffGroup({ changes, onOpenDiff }: {
+function DiffGroup({ changes, active, onOpenDiff }: {
   changes: { event: TranscriptEvent; change: FileChange }[];
+  active?: boolean;
   onOpenDiff?: (c: FileChange) => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -733,18 +742,21 @@ function DiffGroup({ changes, onOpenDiff }: {
   const label = files.size <= 1
     ? `Edited ${baseName(changes[0].change.path)} · ${changes.length} edits`
     : `Edited ${files.size} files · ${changes.length} edits`;
+  const liveLabel = files.size <= 1
+    ? `Editing ${baseName(changes[0].change.path)}`
+    : `Editing ${files.size} files`;
   return (
     <div>
       <button onClick={() => setOpen((o) => !o)} className="group flex w-full min-w-0 items-center gap-1.5 text-left">
         <ChevronRight className={`w-3 h-3 shrink-0 text-droid-text-muted/50 transition-transform duration-200 group-hover:text-droid-text-muted ${open ? 'rotate-90' : ''}`} />
-        <span className="min-w-0 truncate text-[13px] font-medium text-droid-text-muted group-hover:text-droid-text-secondary">{label}</span>
+        <span className={`min-w-0 truncate text-[13px] font-medium ${active ? 'shimmer-text' : 'text-droid-text-muted group-hover:text-droid-text-secondary'}`}>{active ? liveLabel : label}</span>
         <span className="ml-auto text-[11px] font-mono shrink-0" style={{ color: '#5cc89a' }}>+{added}</span>
         <span className="text-[11px] font-mono shrink-0" style={{ color: '#ff7a5c' }}>−{removed}</span>
       </button>
       <Expand open={open}>
         <div className="mt-2 space-y-2 border-l border-droid-border pl-3">
           {changes.map((c) => (
-            <DiffCard key={c.event.id} change={c.change} onOpen={onOpenDiff ? () => onOpenDiff(c.change) : undefined} />
+            <DiffCard key={c.event.id} change={c.change} active={active} onOpen={onOpenDiff ? () => onOpenDiff(c.change) : undefined} />
           ))}
         </div>
       </Expand>
@@ -866,7 +878,7 @@ export function MessageFeed({ events, pending, onOpenDiff, onOpenSubagent, subag
       (last.type === 'subagent' && lastSubagentRunning) ||
       (last.type === 'message' && last.event.author !== 'user'));
   const showWorking = pending && !tailSelfIndicates;
-  const workingLabel = last?.type === 'tools' ? 'Running' : (last?.type === 'diff' || last?.type === 'diffs') ? 'Updating files' : 'Working';
+  const workingLabel = last?.type === 'tools' ? 'Running' : (last?.type === 'diff' || last?.type === 'diffs') ? 'Editing files' : 'Working';
   const workingStart = rich ? tailTimestamp(last) : undefined;
 
   return (

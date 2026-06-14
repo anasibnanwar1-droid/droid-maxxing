@@ -72,7 +72,7 @@ export interface NormalizedEvent {
   missionState?: string;
   worker?: { event: 'started' | 'completed'; workerSessionId: string; exitCode?: number };
   subagent?: { sessionId?: string; toolUseId?: string; label?: string; prompt?: string; done?: boolean };
-  tokens?: { tokensIn: number; tokensOut: number; contextTokens: number };
+  tokens?: { tokensIn: number; tokensOut: number; contextTokens?: number };
   done?: boolean;
 }
 
@@ -145,15 +145,16 @@ export function normalizeStreamEvent(
   if (raw.type === 'token_usage_update' || raw.type === 'session_token_usage_changed') {
     const e = raw as Record<string, Record<string, unknown> | undefined>;
     const cumulative = e.inclusiveTokenUsage ?? e.tokenUsage ?? e;
-    const context = e.lastCallTokenUsage ?? e.tokenUsage ?? e;
+    const context = e.lastCallTokenUsage;
     const tokensIn =
       (Number(cumulative.inputTokens ?? 0) || 0) +
       (Number(cumulative.cacheReadTokens ?? 0) || 0) +
       (Number(cumulative.cacheCreationTokens ?? 0) || 0);
     const tokensOut = Number(cumulative.outputTokens ?? 0) || 0;
-    const contextTokens =
-      (Number(context.inputTokens ?? 0) || 0) +
-      (Number(context.cacheReadTokens ?? 0) || 0);
+    const contextTokens = context
+      ? (Number(context.inputTokens ?? 0) || 0) +
+        (Number(context.cacheReadTokens ?? 0) || 0)
+      : undefined;
     return { tokens: { tokensIn, tokensOut, contextTokens } };
   }
 

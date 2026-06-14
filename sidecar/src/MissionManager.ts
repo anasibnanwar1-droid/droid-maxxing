@@ -59,10 +59,11 @@ import { NativeBrowserRuntime } from './browser/NativeBrowserRuntime.js';
 import { isAlwaysOutcome, isApprovalOutcome, normalizePermissionOutcome } from './permissionOutcomes.js';
 import { filterMissionListSummaries, type MissionListFilterOptions } from './missionListFilter.js';
 import {
+  autoCompactionTokenLimit,
   autoCompactionDue,
   clampCompactionTokenLimit,
+  compactionTokenLimitForModel,
   createCompactionSettingsForModel,
-  effectiveCompactionLimit,
   normalizeCompactionTokenLimit,
   resumedCompactionTokenLimit,
   runCompaction,
@@ -89,6 +90,8 @@ interface LiveAgent {
   // Workers are normal Droid sessions and flow through the same compaction
   // layer as the orchestrator, in-place and scoped to their own session.
   compacting?: boolean;
+  compactionTokenBudget?: number;
+  compactionCount?: number;
   effectiveCompactionTokenLimit?: number;
 }
 
@@ -123,10 +126,10 @@ interface Mission {
   // concurrently (the SDK session swap is not safe to overlap with another
   // compact or a streaming turn).
   compacting?: boolean;
-  // The effective compaction token limit computed at creation/resume time,
-  // matching the threshold the ContextMeter shows (per-model → global default,
-  // clamped to model window). Stored so maybeAutoCompact doesn't re-derive it
-  // from defaults that may have drifted since session creation.
+  // Droid Control's effective auto-compaction trigger, computed from the
+  // configured budget plus the 90%-to-75% session-age policy. Stored so
+  // maybeAutoCompact doesn't re-derive it from defaults that may have drifted.
+  compactionTokenBudget?: number;
   effectiveCompactionTokenLimit?: number;
 }
 
@@ -166,6 +169,10 @@ const STATE_TO_PHASE: Record<string, MissionPhase> = {
   failed: 'failed',
   awaiting_input: 'running',
 };
+
+function shouldSettleToPaused(phase: MissionPhase): boolean {
+  return !['completed', 'failed', 'awaiting_plan_approval', 'awaiting_run_start'].includes(phase);
+}
 
 const MAX_OPEN_AGENT_TRANSPORTS = boundedInt(process.env.DROID_CONTROL_MAX_OPEN_AGENTS, 4, 1, 24);
 const BROWSER_NATIVE_TIMEOUT_MS = boundedInt(process.env.DROID_CONTROL_BROWSER_NATIVE_TIMEOUT_MS, 12_000, 1_000, 60_000);
@@ -596,11 +603,12 @@ export class MissionManager {
     const defaults = await this.getFactoryDefaults();
     const modelId = mission.summary.modelId
       ?? defaultModelForAgent('orchestrator', modeForSummary(mission.summary), defaults);
-    mission.effectiveCompactionTokenLimit = effectiveCompactionLimit(
-      modelId,
-      defaults,
+    const budget = clampCompactionTokenLimit(
+      compactionTokenLimitForModel(modelId, {}, defaults),
       this.maxContextTokensForModel(modelId),
     );
+    mission.compactionTokenBudget = budget;
+    mission.effectiveCompactionTokenLimit = autoCompactionTokenLimit(budget, mission.summary.compactedFromSessionIds?.length ?? 0);
   }
 
   private async runtimeAgentSettings(mission: Mission, agent: ConfigurableAgent, settings: AgentSettingPatch): Promise<AgentSettingPatch> {
@@ -733,9 +741,9 @@ export class MissionManager {
         createdAt: historical?.createdAt ?? now,
         updatedAt: now,
       });
-      // Auto-compaction threshold after resume: the SDK does not persist a
-      // per-session compactionTokenLimit, so honor one only if the resumed init
-      // settings expose it; otherwise the threshold follows current app defaults.
+      // Auto-compaction budget after resume: the SDK does not always expose a
+      // per-session compactionTokenLimit, so honor one only if init reports it;
+      // otherwise the budget follows current app defaults.
       const resumeCompactionLimit = clampCompactionTokenLimit(
         resumedCompactionTokenLimit(summary.modelId, {
           compactionTokenLimit: init.settings?.compactionTokenLimit,
@@ -743,7 +751,13 @@ export class MissionManager {
         }, defaults),
         this.maxContextTokensForSummary(summary),
       );
-      const mission: Mission = this.createLiveMission(summary, session, mcp.servers, resumeCompactionLimit, mcp.configs);
+      const mission: Mission = this.createLiveMission(
+        summary,
+        session,
+        mcp.servers,
+        resumeCompactionLimit,
+        mcp.configs,
+      );
       // Seed the spawn->worker links persisted for this mission so historical
       // subagents are recognized (and thus openable/steerable) after a resume,
       // even before any live spawn re-populates knownSubagents.
@@ -953,7 +967,13 @@ export class MissionManager {
         updatedAt: now,
       };
       ref.id = id;
-      const mission = this.createLiveMission(summary, session, mcp.servers, compactionSettings.compactionTokenLimit, mcp.configs);
+      const mission = this.createLiveMission(
+        summary,
+        session,
+        mcp.servers,
+        compactionSettings.compactionTokenLimit,
+        mcp.configs,
+      );
       this.missions.set(id, mission);
       this.history.syncSummaries([summary]);
       this.emit({ type: 'mission.created', clientRef: cmd.clientRef, mission: summary });
@@ -965,7 +985,7 @@ export class MissionManager {
     }
   }
 
-  private createLiveMission(summary: MissionSummary, session: DroidSession, mcpServers: SdkMcpServer[] = [], effectiveCompactionTokenLimit?: number, mcpConfigs: Awaited<ReturnType<SdkMcpServer['start']>>[] = []): Mission {
+  private createLiveMission(summary: MissionSummary, session: DroidSession, mcpServers: SdkMcpServer[] = [], compactionTokenBudget?: number, mcpConfigs: Awaited<ReturnType<SdkMcpServer['start']>>[] = []): Mission {
     return {
       summary,
       session,
@@ -983,7 +1003,8 @@ export class MissionManager {
       mcpServers,
       mcpConfigs,
       permissionGrants: new Set(),
-      effectiveCompactionTokenLimit,
+      compactionTokenBudget,
+      effectiveCompactionTokenLimit: autoCompactionTokenLimit(compactionTokenBudget, summary.compactedFromSessionIds?.length ?? 0),
     };
   }
 
@@ -1072,8 +1093,9 @@ export class MissionManager {
   }
 
   private async drive(missionId: string, prompt: string): Promise<void> {
-    const mission = this.findMission(missionId);
+    let mission = this.findMission(missionId);
     if (!mission) return;
+    const preCompactionMission = mission;
     const appSessionId = mission.summary.id;
     mission.streaming = true;
     this.patch(appSessionId, {
@@ -1081,6 +1103,13 @@ export class MissionManager {
       streaming: true,
       queuedSends: mission.pendingSends.length,
     });
+    await this.compactBeforeStreamedTurn(appSessionId);
+    mission = this.findMission(missionId);
+    if (!mission) {
+      const queued = [prompt, ...preCompactionMission.pendingSends.splice(0)];
+      if (queued.length > 0) void this.redeliverQueuedSends(appSessionId, queued);
+      return;
+    }
     this.startContextPolling(appSessionId, mission.session);
     await this.applyDesignToolPolicy(mission, isDesignPrompt(prompt));
     try {
@@ -1095,10 +1124,7 @@ export class MissionManager {
     } finally {
       this.stopContextPolling(appSessionId);
       mission.interruptingForSteer = false;
-      // Keep streaming=true while refreshContext / maybeAutoCompact are in flight
-      // so concurrent sends queue instead of racing a second drive().
       await this.refreshContext(appSessionId, mission.session);
-      await this.maybeAutoCompact(appSessionId);
       mission.streaming = false;
       if (!this.findMission(appSessionId)) {
         // maybeAutoCompact's stale-swap recovery can drop the live mission. A
@@ -1108,7 +1134,11 @@ export class MissionManager {
         if (queued.length > 0) void this.redeliverQueuedSends(appSessionId, queued);
       } else {
         const next = mission.pendingSends.shift();
-        this.patch(appSessionId, { streaming: false, queuedSends: mission.pendingSends.length });
+        this.patch(appSessionId, {
+          streaming: false,
+          queuedSends: mission.pendingSends.length,
+          ...(next === undefined && shouldSettleToPaused(mission.summary.phase) ? { phase: 'paused' as const } : {}),
+        });
         if (next !== undefined) void this.drive(appSessionId, next);
       }
     }
@@ -1128,10 +1158,17 @@ export class MissionManager {
     }
   }
 
-  // The SDK exposes manual compaction only; auto-compaction is the client's job
-  // (the CLI runs its own loop). After each idle orchestrator turn we compact
-  // once the context window crosses the effective limit stored on the Mission
-  // at creation time (matching the threshold the ContextMeter shows).
+  // The SDK owns the model/tool continuation loop inside one stream() call and
+  // does not expose a safe pre-continuation checkpoint. Compact only before
+  // starting the streamed turn; true mid-task compaction belongs in the
+  // SDK/daemon boundary so compaction can run before the next model request.
+  private async compactBeforeStreamedTurn(appSessionId: string): Promise<void> {
+    const mission = this.findMission(appSessionId);
+    if (!mission || mission.compacting) return;
+    await this.refreshContext(appSessionId, mission.session);
+    await this.maybeAutoCompact(appSessionId);
+  }
+
   private async maybeAutoCompact(appSessionId: string): Promise<void> {
     const mission = this.findMission(appSessionId);
     if (!mission || !autoCompactionDue(mission, mission.summary.contextTokens)) return;
@@ -1258,7 +1295,8 @@ export class MissionManager {
     if (n.progress) this.emit({ type: 'mission.progress', missionId, entries: n.progress });
     if (n.missionState) {
       const phase = STATE_TO_PHASE[n.missionState];
-      if (phase) this.patch(missionId, { phase });
+      const mission = this.findMission(missionId);
+      if (phase && !(mission?.streaming && phase === 'paused')) this.patch(missionId, { phase });
     }
     if (n.worker) {
       this.emit({
@@ -1285,11 +1323,20 @@ export class MissionManager {
         const offset = this.usageOffsets.get(appSessionId);
         m.summary.tokensIn = n.tokens.tokensIn + (offset?.tokensIn ?? 0);
         m.summary.tokensOut = n.tokens.tokensOut + (offset?.tokensOut ?? 0);
-        m.summary.contextTokens = n.tokens.contextTokens;
         const maxContextTokens = this.maxContextTokensForSummary(m.summary);
         if (maxContextTokens === undefined) delete m.summary.maxContextTokens;
         else m.summary.maxContextTokens = maxContextTokens;
-        this.emitContextEstimate(appSessionId, m.summary);
+        const snapshot = this.contextSnapshots.get(appSessionId);
+        const contextLimit = maxContextTokens ?? snapshot?.limit;
+        if (isWindowTokenCount(n.tokens.contextTokens, contextLimit)) {
+          m.summary.contextTokens = n.tokens.contextTokens;
+          this.emitContextEstimate(appSessionId, m.summary);
+        } else if (!isWindowTokenCount(m.summary.contextTokens, contextLimit)) {
+          const snapshotUsed = snapshot?.used;
+          m.summary.contextTokens = isWindowTokenCount(snapshotUsed, snapshot?.limit ?? maxContextTokens)
+            ? snapshotUsed
+            : 0;
+        }
         this.emit({
           type: 'mission.tokens',
           missionId: appSessionId,
@@ -1406,6 +1453,7 @@ export class MissionManager {
       tokensOut: carryover.tokensOut,
       contextTokens: 0,
     });
+    mission.effectiveCompactionTokenLimit = autoCompactionTokenLimit(mission.compactionTokenBudget, compactedFromSessionIds.length);
   }
 
   // Recovery for an orchestrator compaction that swapped backing sessions but
@@ -1671,6 +1719,10 @@ export class MissionManager {
           ? mission.summary.validatorModelId
           : undefined;
       const workerModelId = resolvedSettings.modelId ?? roleModelId ?? mission.summary.modelId;
+      const compactionTokenBudget = clampCompactionTokenLimit(
+        compactionTokenLimitForModel(workerModelId, {}, defaults),
+        this.maxContextTokensForModel(workerModelId),
+      );
       const agent: LiveAgent = {
         session,
         missionId: appSessionId,
@@ -1678,11 +1730,9 @@ export class MissionManager {
         streaming: false,
         pendingSends: [],
         lastUsedAt: Date.now(),
-        effectiveCompactionTokenLimit: effectiveCompactionLimit(
-          workerModelId,
-          defaults,
-          this.maxContextTokensForModel(workerModelId),
-        ),
+        compactionTokenBudget,
+        compactionCount: 0,
+        effectiveCompactionTokenLimit: autoCompactionTokenLimit(compactionTokenBudget, 0),
       };
       agent.unsubscribe = session.onNotification((note: Record<string, unknown>) => {
         for (const n of normalizeNotification(appSessionId, agentSessionId, role, note)) this.applyNormalized(appSessionId, n);
@@ -1724,8 +1774,21 @@ export class MissionManager {
     agent.streaming = true;
     agent.lastUsedAt = Date.now();
     this.emit({ type: 'agent.updated', missionId: agent.missionId, agentSessionId: agent.session.sessionId, role: agent.role, status: 'running' });
-    this.startContextPolling(agent.session.sessionId, agent.session);
+    let closedForStaleCompaction = false;
     try {
+      const outcome = await this.compactBeforeAgentStreamedTurn(agent);
+      if (outcome === 'stale') {
+        closedForStaleCompaction = true;
+        this.emitError({
+          sessionId: agent.session.sessionId,
+          missionId: agent.missionId,
+          message: 'Subagent compaction swapped sessions but could not be adopted; closing the subagent. Re-open it to continue.',
+          recoverable: true,
+        });
+        await this.closeAgent(agent.missionId, agent.session.sessionId);
+        return;
+      }
+      this.startContextPolling(agent.session.sessionId, agent.session);
       const stream = agent.session.stream(text, { includePartialMessages: true });
       for await (const ev of stream) this.applyEvent(agent.missionId, agent.session.sessionId, agent.role, ev);
     } catch (err) {
@@ -1738,39 +1801,29 @@ export class MissionManager {
     } finally {
       this.stopContextPolling(agent.session.sessionId);
       agent.interruptingForSteer = false;
+      if (closedForStaleCompaction) {
+        agent.streaming = false;
+        return;
+      }
       if (agent.pendingSends.length === 0 && agent.closeWhenIdle) {
         agent.streaming = false;
         await this.closeAgent(agent.missionId, agent.session.sessionId);
       } else {
-        // Refresh + auto-compact while streaming stays true so concurrent sends
-        // queue instead of racing a second driveAgent(). Compaction is scoped to
-        // this worker's own session/history (and may re-key it to a new id).
+        // Refresh while streaming stays true so concurrent sends queue instead of
+        // racing a second driveAgent(). Auto-compaction runs before the next
+        // worker stream starts, so a final worker answer stays visible.
         await this.refreshContext(agent.session.sessionId, agent.session);
-        const outcome = await this.maybeAutoCompactAgent(agent);
         agent.streaming = false;
-        if (outcome === 'stale') {
-          // The daemon swapped this worker to a new backing session but adopting
-          // it failed, so agent.session now points at a dead id. Tear the worker
-          // down instead of draining queued sends into a stale session; a later
-          // open/send re-creates it against the live session.
-          this.emitError({
-            sessionId: agent.session.sessionId,
-            missionId: agent.missionId,
-            message: 'Subagent compaction swapped sessions but could not be adopted; closing the subagent. Re-open it to continue.',
-            recoverable: true,
-          });
-          await this.closeAgent(agent.missionId, agent.session.sessionId);
-        } else {
-          // Compaction is applied in place: 'completed' re-keys the worker to the
-          // daemon's new backing session (via the reload hook) and a transient
-          // 'failed' leaves the current session valid. Either way agent.session
-          // stays usable, so drain queued sends against it normally.
-          const next = agent.pendingSends.shift();
-          if (next !== undefined) void this.driveAgent(agent, next);
-          else this.emit({ type: 'agent.updated', missionId: agent.missionId, agentSessionId: agent.session.sessionId, role: agent.role, status: 'paused' });
-        }
+        const next = agent.pendingSends.shift();
+        if (next !== undefined) void this.driveAgent(agent, next);
+        else this.emit({ type: 'agent.updated', missionId: agent.missionId, agentSessionId: agent.session.sessionId, role: agent.role, status: 'paused' });
       }
     }
+  }
+
+  private async compactBeforeAgentStreamedTurn(agent: LiveAgent): Promise<CompactionOutcome | undefined> {
+    await this.refreshContext(agent.session.sessionId, agent.session);
+    return this.maybeAutoCompactAgent(agent);
   }
 
   // Workers compact their own session through the shared compaction path. The
@@ -1897,6 +1950,8 @@ export class MissionManager {
       this.persistWorkerSwap(mission, oldSessionId, newSessionId);
     }
     await oldSession.close().catch(() => {});
+    agent.compactionCount = (agent.compactionCount ?? 0) + 1;
+    agent.effectiveCompactionTokenLimit = autoCompactionTokenLimit(agent.compactionTokenBudget, agent.compactionCount);
   }
 
   // Persist a worker's compaction swap to the durable spawn link and the mission
@@ -2380,14 +2435,26 @@ function contextStatsSnapshot(
   stats: GetContextStatsResult,
   breakdown: ContextBreakdownSnapshot | undefined,
 ): ContextStatsSnapshot {
+  const limit = stats.limit > 0 ? stats.limit : breakdown?.contextBudget ?? stats.limit;
+  const breakdownUsed =
+    breakdown && stats.accuracy !== 'exact' && isWindowTokenCount(breakdown.usedTokens, limit)
+      ? breakdown.usedTokens
+      : undefined;
+  const used = breakdownUsed ?? stats.used;
+  const remaining = breakdownUsed !== undefined ? Math.max(0, limit - used) : stats.remaining;
   return {
-    used: stats.used,
-    remaining: stats.remaining,
-    limit: stats.limit,
+    used,
+    remaining,
+    limit,
     accuracy: stats.accuracy as ContextStatsSnapshot['accuracy'],
     updatedAt: stats.updatedAt,
     breakdown,
   };
+}
+
+function isWindowTokenCount(value: unknown, limit: number | undefined): value is number {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) return false;
+  return !(limit && limit > 0) || value <= limit;
 }
 
 function contextBreakdownSnapshot(raw: unknown): ContextBreakdownSnapshot | undefined {

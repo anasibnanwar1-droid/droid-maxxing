@@ -65,7 +65,7 @@ function categoryColor(key?: string): string {
 }
 
 export default function ContextMeter({ mission, stats }: { mission: MissionSummary; stats?: ContextStatsSnapshot }) {
-  const { state, dispatch } = useStore();
+  const { dispatch } = useStore();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
@@ -83,23 +83,16 @@ export default function ContextMeter({ mission, stats }: { mission: MissionSumma
   const modelWindow = mission.maxContextTokens && mission.maxContextTokens > 0 ? mission.maxContextTokens : undefined;
   const statLimit = measured?.limit && measured.limit > 0 ? measured.limit : modelWindow;
 
-  // The conversation compacts once it passes the configured token limit, so the
-  // meter measures usage against that threshold (per-model override -> global
-  // default), capped to the model window. Falls back to observed/model context
-  // size when the app lets Factory use its model-dependent default.
-  const compactionLimit =
-    mission.modelId && state.compactionTokenLimitPerModel[mission.modelId] !== undefined
-      ? state.compactionTokenLimitPerModel[mission.modelId]
-      : state.compactionTokenLimit;
-  const effectiveCompaction =
-    compactionLimit && compactionLimit > 0
-      ? modelWindow
-        ? Math.min(compactionLimit, modelWindow)
-        : compactionLimit
-      : undefined;
-  const max = effectiveCompaction ?? statLimit;
+  const max = statLimit;
 
-  const used = measured?.used;
+  const breakdownUsed =
+    measured?.accuracy !== 'exact' &&
+    measured?.breakdown &&
+    measured.breakdown.usedTokens >= 0 &&
+    (max === undefined || measured.breakdown.usedTokens <= max)
+      ? measured.breakdown.usedTokens
+      : undefined;
+  const used = breakdownUsed ?? measured?.used;
   const remaining = used !== undefined && max !== undefined ? Math.max(0, max - used) : measured?.remaining;
   const accuracy = measured?.accuracy;
   const categories = measured?.breakdown?.categories ?? [];
@@ -192,8 +185,6 @@ export default function ContextMeter({ mission, stats }: { mission: MissionSumma
             <div className="mt-4 flex flex-col gap-2.5">
               {ready && <Row color="var(--droid-accent)" label="Window used" value={used} />}
               {remaining !== undefined && <Row color="var(--droid-text-muted)" label="Window free" value={remaining} />}
-              {effectiveCompaction !== undefined && <Row color="var(--droid-orange)" label="Compacts at" value={effectiveCompaction} />}
-              {modelWindow !== undefined && <Row color="var(--droid-text-muted)" label="Model window" value={modelWindow} />}
               <Row color="var(--droid-text-muted)" label="Session input" value={mission.tokensIn} />
               <Row color="var(--droid-green)" label="Session output" value={mission.tokensOut} />
             </div>

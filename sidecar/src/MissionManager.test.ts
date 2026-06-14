@@ -10,9 +10,12 @@ import {
   validateFactoryDefaults,
 } from './MissionManager.js';
 import {
+  autoCompactionTokenLimit,
   clampCompactionTokenLimit,
+  compactionThresholdPercent,
   compactionTokenLimitForModel,
   createCompactionSettingsForModel,
+  effectiveCompactionLimit,
   resumedCompactionTokenLimit,
 } from './compaction.js';
 import type { BridgeFeature, MissionSummary, ModelInfo, ServerEvent, WorkerHistoryLink } from './protocol.js';
@@ -201,6 +204,20 @@ test('leaves unset compaction limits to Factory session defaults', () => {
   assert.deepEqual(
     createCompactionSettingsForModel('model-a', { compactionTokenLimit: null, compactionTokenLimitPerModel: {} }, {}, 100_000),
     {},
+  );
+});
+
+test('derives Droid-owned auto-compaction thresholds from prior compactions', () => {
+  assert.equal(compactionThresholdPercent(0), 0.9);
+  assert.equal(compactionThresholdPercent(1), 0.85);
+  assert.equal(compactionThresholdPercent(2), 0.8);
+  assert.equal(compactionThresholdPercent(3), 0.75);
+  assert.equal(compactionThresholdPercent(99), 0.75);
+  assert.equal(autoCompactionTokenLimit(200_000, 0), 180_000);
+  assert.equal(autoCompactionTokenLimit(200_000, 3), 150_000);
+  assert.equal(
+    effectiveCompactionLimit('model-a', { compactionTokenLimitPerModel: { 'model-a': 200_000 } }, 500_000, 2),
+    160_000,
   );
 });
 
@@ -702,14 +719,28 @@ test('runtime defaults preserve saved model settings when the catalog is unavail
 
 class FakeCompactionSession {
   prompts: string[] = [];
+  callOrder: string[] = [];
   compactions = 0;
   failCompaction = false;
+  usedAfterStream?: number;
+  streamEvents: Record<string, unknown>[] = [];
+  usedBeforeStreamEvent?: number;
+  limit = 1_000_000;
+  accuracy: 'exact' | 'estimated' = 'exact';
+  breakdown?: unknown;
+  beforeContextStats?: () => Promise<void> | void;
   settingsUpdates: Array<Record<string, unknown>> = [];
 
   constructor(readonly sessionId: string, private used: number, private swapTo?: string) {}
 
-  async *stream(prompt: string): AsyncGenerator<never, void, undefined> {
+  async *stream(prompt: string): AsyncGenerator<Record<string, unknown>, void, undefined> {
+    this.callOrder.push(`stream:${prompt}`);
     this.prompts.push(prompt);
+    for (const event of this.streamEvents) {
+      if (this.usedBeforeStreamEvent !== undefined) this.used = this.usedBeforeStreamEvent;
+      yield event;
+    }
+    if (this.usedAfterStream !== undefined) this.used = this.usedAfterStream;
   }
 
   async updateSettings(params: Record<string, unknown>): Promise<void> {
@@ -720,11 +751,17 @@ class FakeCompactionSession {
     return () => {};
   }
 
-  async getContextStats(): Promise<{ used: number; remaining: number; limit: number; accuracy: 'exact'; updatedAt: string }> {
-    return { used: this.used, remaining: Math.max(0, 1_000_000 - this.used), limit: 1_000_000, accuracy: 'exact', updatedAt: new Date().toISOString() };
+  async getContextStats(): Promise<{ used: number; remaining: number; limit: number; accuracy: 'exact' | 'estimated'; updatedAt: string }> {
+    await this.beforeContextStats?.();
+    return { used: this.used, remaining: Math.max(0, this.limit - this.used), limit: this.limit, accuracy: this.accuracy, updatedAt: new Date().toISOString() };
+  }
+
+  async getContextBreakdown(): Promise<unknown> {
+    return this.breakdown;
   }
 
   async compactSession(): Promise<{ newSessionId: string; removedCount: number }> {
+    this.callOrder.push('compact');
     if (this.failCompaction) throw new Error('transient compaction failure');
     this.compactions += 1;
     return { newSessionId: this.swapTo ?? this.sessionId, removedCount: 4 };
@@ -778,11 +815,95 @@ function autoCompactHarness(used: number, effectiveCompactionTokenLimit?: number
   return { manager, session, events, mission };
 }
 
-test('auto-compacts an idle turn once context crosses the effective limit', async () => {
+test('auto-compacts before starting a streamed turn once context crosses the effective limit', async () => {
   const { manager, session, events } = autoCompactHarness(250_000, 200_000);
   await manager.handle({ type: 'mission.send', missionId: 'app-compact', text: 'hello' });
   assert.equal(session.compactions, 1);
+  assert.deepEqual(session.prompts, ['hello']);
   assert.equal(events.some((event) => event.type === 'mission.error' || event.type === 'error'), false);
+});
+
+test('does not treat tool_result as a safe mid-task compaction checkpoint', async () => {
+  const { manager, session } = autoCompactHarness(150_000, 200_000);
+  session.usedBeforeStreamEvent = 250_000;
+  session.streamEvents = [{ type: 'tool_result', toolName: 'Read', content: 'ok', isError: false }];
+
+  await manager.handle({ type: 'mission.send', missionId: 'app-compact', text: 'hello' });
+
+  assert.equal(session.compactions, 0);
+  assert.deepEqual(session.prompts, ['hello']);
+});
+
+test('queues concurrent sends while pre-step context refresh is pending', async () => {
+  const { manager, session, mission } = autoCompactHarness(150_000, 200_000);
+  let releaseStats!: () => void;
+  const statsStarted = new Promise<void>((resolve) => {
+    session.beforeContextStats = async () => {
+      resolve();
+      await new Promise<void>((release) => {
+        releaseStats = release;
+      });
+      session.beforeContextStats = undefined;
+    };
+  });
+
+  const first = manager.handle({ type: 'mission.send', missionId: 'app-compact', text: 'first' });
+  await statsStarted;
+  await manager.handle({ type: 'mission.send', missionId: 'app-compact', text: 'second' });
+
+  assert.deepEqual(session.prompts, []);
+  assert.deepEqual(mission.pendingSends, ['second']);
+
+  releaseStats();
+  await first;
+  await waitFor(() => session.prompts.includes('second'));
+  assert.deepEqual(session.prompts, ['first', 'second']);
+});
+
+test('does not auto-compact after the final answer in the same visible turn', async () => {
+  const { manager, session } = autoCompactHarness(150_000, 200_000);
+  session.usedAfterStream = 250_000;
+  await manager.handle({ type: 'mission.send', missionId: 'app-compact', text: 'hello' });
+  assert.equal(session.compactions, 0);
+  assert.deepEqual(session.prompts, ['hello']);
+});
+
+test('settles to paused when a mid-stream paused event was ignored', async () => {
+  const { manager, session, mission } = autoCompactHarness(100_000, 200_000);
+  mission.summary.kind = 'mission_orchestrator';
+  session.streamEvents = [{ type: 'mission_state_changed', state: 'paused' }];
+
+  await manager.handle({ type: 'mission.send', missionId: 'app-compact', text: 'hello' });
+
+  assert.equal(mission.summary.streaming, false);
+  assert.equal(mission.summary.phase, 'paused');
+});
+
+test('estimated context stats prefer detailed breakdown usage', async () => {
+  const { manager, session, mission, events } = autoCompactHarness(200_000);
+  session.limit = 200_000;
+  session.accuracy = 'estimated';
+  session.breakdown = {
+    contextBudget: 200_000,
+    usedTokens: 154_982,
+    freeTokens: 45_018,
+    categories: [
+      { name: 'System prompt', tokens: 2_082 },
+      { name: 'System tools', tokens: 9_556 },
+      { name: 'Messages', tokens: 134_827 },
+    ],
+  };
+
+  await manager.handle({ type: 'mission.send', missionId: 'app-compact', text: 'hello' });
+
+  assert.equal(mission.summary.contextTokens, 154_982);
+  assert.equal(mission.summary.contextRemainingTokens, 45_018);
+  const contextEvent = events.findLast((event) => event.type === 'context.updated') as
+    | { type: 'context.updated'; stats: { used: number; remaining: number; limit: number } }
+    | undefined;
+  assert.equal(contextEvent?.stats.used, 154_982);
+  assert.equal(contextEvent?.stats.remaining, 45_018);
+  assert.equal(contextEvent?.stats.limit, 200_000);
 });
 
 test('compaction failure surfaces a recoverable error and terminal status without failing the mission', async () => {
@@ -846,7 +967,7 @@ test('rejects manual compaction while streaming', async () => {
   assert.equal(hasRejection, true);
 });
 
-function workerAutoCompactHarness(workerUsed: number, workerLimit?: number, swapTo?: string) {
+function workerAutoCompactHarness(workerUsed: number, workerLimit?: number, swapTo?: string, workerBudget = workerLimit) {
   const { manager, session: orchestratorSession, events, mission } = autoCompactHarness(0, undefined);
   const workerSession = new FakeCompactionSession('worker-compact', workerUsed, swapTo);
   // When the daemon swaps the backing id, the reload hook loads the replacement
@@ -866,6 +987,8 @@ function workerAutoCompactHarness(workerUsed: number, workerLimit?: number, swap
     pendingSends: [],
     lastUsedAt: Date.now(),
     compacting: false,
+    compactionTokenBudget: workerBudget,
+    compactionCount: 0,
     effectiveCompactionTokenLimit: workerLimit,
   });
   return { manager, events, mission, workerSession, swappedSession, orchestratorSession };
@@ -875,6 +998,7 @@ test('worker auto-compacts its own session in place once context crosses the wor
   const { manager, events, workerSession, orchestratorSession } = workerAutoCompactHarness(250_000, 200_000);
   await manager.handle({ type: 'agent.send', missionId: 'app-compact', agentSessionId: 'worker-compact', text: 'go' });
   assert.equal(workerSession.compactions, 1);
+  assert.deepEqual(workerSession.callOrder, ['compact', 'stream:go']);
   // Boundary: worker compaction never touches the orchestrator's own session.
   assert.equal(orchestratorSession.compactions, 0);
   // Compaction status routes to the worker's own transcript, not the orchestrator chat.
@@ -887,6 +1011,14 @@ test('worker auto-compacts its own session in place once context crosses the wor
   assert.equal(status?.event?.agentSessionId, 'worker-compact');
   assert.equal(status?.event?.role, 'worker');
   assert.equal(events.some((e) => e.type === 'mission.error' || e.type === 'error'), false);
+});
+
+test('worker does not auto-compact after its final answer in the same visible turn', async () => {
+  const { manager, workerSession } = workerAutoCompactHarness(150_000, 200_000);
+  workerSession.usedAfterStream = 250_000;
+  await manager.handle({ type: 'agent.send', missionId: 'app-compact', agentSessionId: 'worker-compact', text: 'go' });
+  assert.equal(workerSession.compactions, 0);
+  assert.deepEqual(workerSession.callOrder, ['stream:go']);
 });
 
 test('worker does not auto-compact while under its limit', async () => {
@@ -928,6 +1060,44 @@ test('worker compaction adopts a swapped backing session in place and re-keys it
   assert.equal(events.some((e) => e.type === 'error' || e.type === 'mission.error'), false);
 });
 
+test('worker rekeys step down through the Droid-owned threshold policy', async () => {
+  type TestAgent = {
+    session: FakeCompactionSession;
+    compactionCount?: number;
+    effectiveCompactionTokenLimit?: number;
+  };
+  const budget = 200_000;
+  const { manager, mission } = workerAutoCompactHarness(0, autoCompactionTokenLimit(budget, 0), undefined, budget);
+  const internals = manager as unknown as {
+    runtime: { loadSession: (id: string, handlers: unknown) => Promise<FakeCompactionSession> };
+    rekeyAgentSession: (agent: TestAgent, newId: string) => Promise<void>;
+  };
+  internals.runtime = {
+    loadSession: async (id) => new FakeCompactionSession(id, 10_000),
+  };
+  let agent = mission.agents.get('worker-compact') as TestAgent;
+
+  await internals.rekeyAgentSession(agent, 'worker-1');
+  agent = mission.agents.get('worker-1') as TestAgent;
+  assert.equal(agent.compactionCount, 1);
+  assert.equal(agent.effectiveCompactionTokenLimit, autoCompactionTokenLimit(budget, 1));
+
+  await internals.rekeyAgentSession(agent, 'worker-2');
+  agent = mission.agents.get('worker-2') as TestAgent;
+  assert.equal(agent.compactionCount, 2);
+  assert.equal(agent.effectiveCompactionTokenLimit, autoCompactionTokenLimit(budget, 2));
+
+  await internals.rekeyAgentSession(agent, 'worker-3');
+  agent = mission.agents.get('worker-3') as TestAgent;
+  assert.equal(agent.compactionCount, 3);
+  assert.equal(agent.effectiveCompactionTokenLimit, autoCompactionTokenLimit(budget, 3));
+
+  await internals.rekeyAgentSession(agent, 'worker-4');
+  agent = mission.agents.get('worker-4') as TestAgent;
+  assert.equal(agent.compactionCount, 4);
+  assert.equal(agent.effectiveCompactionTokenLimit, autoCompactionTokenLimit(budget, 4));
+});
+
 test('worker swap re-keys and drains queued sends to the new backing session', async () => {
   const { manager, events, mission, swappedSession } = workerAutoCompactHarness(250_000, 200_000, 'worker-swapped');
   const agent = mission.agents.get('worker-compact') as { pendingSends: string[] };
@@ -936,7 +1106,9 @@ test('worker swap re-keys and drains queued sends to the new backing session', a
   // The worker is re-keyed; the queued send is delivered to the new session
   // rather than dropped or surfaced as an error to resend.
   assert.equal(mission.agents.has('worker-swapped'), true);
+  await waitFor(() => swappedSession?.prompts.includes('go') ?? false);
   await waitFor(() => swappedSession?.prompts.includes('queued-during-compaction') ?? false);
+  assert.equal(swappedSession?.prompts.includes('go'), true);
   assert.equal(swappedSession?.prompts.includes('queued-during-compaction'), true);
   assert.equal(events.some((e) => e.type === 'error' && /resent/i.test((e as { message?: string }).message ?? '')), false);
 });
@@ -985,7 +1157,8 @@ test('worker swap whose reload fails goes stale: closes the worker and never dra
     events.some((e) => e.type === 'error' && /could not be adopted|re-open/i.test((e as { message?: string }).message ?? '')),
     true,
   );
-  // ...and the queued send is never delivered to the stale old or unloaded new session.
+  // ...and no prompt is delivered to the stale old or unloaded new session.
+  assert.equal(workerSession.prompts.includes('go'), false);
   assert.equal(workerSession.prompts.includes('queued-into-dead'), false);
   assert.equal(swappedSession?.prompts.includes('queued-into-dead') ?? false, false);
 });
@@ -1198,12 +1371,14 @@ test('orchestrator compaction swap that never reloads drops the mission and re-d
     events.some((e) => e.type === 'error' && /reloading it failed/i.test((e as { message?: string }).message ?? '')),
     true,
   );
-  // ...the queued send is NOT discarded: it re-resumes and drives the new session...
-  await waitFor(() => resumed.prompts.includes('queued-after-recovery'));
+  // ...the current prompt and queued send are NOT discarded: both re-resume and
+  // drive the new session...
+  await waitFor(() => resumed.prompts.includes('go') && resumed.prompts.includes('queued-after-recovery'));
+  assert.deepEqual(resumed.prompts, ['go', 'queued-after-recovery']);
   assert.equal(resumeCalls >= 1, true);
   // ...and it never streamed into the dead old session.
   assert.equal(session.prompts.includes('queued-after-recovery'), false);
-  assert.equal(session.prompts.includes('go'), true);
+  assert.equal(session.prompts.includes('go'), false);
 });
 
 test('manual compaction swap that never reloads re-delivers sends queued during compaction', async () => {
