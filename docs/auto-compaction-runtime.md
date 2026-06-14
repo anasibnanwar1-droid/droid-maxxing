@@ -13,4 +13,6 @@ True Codex-style same-task compaction needs an SDK/daemon checkpoint before the 
 - `shouldAutoCompact`
 - `autoCompactTokenLimit`
 
+Tracked follow-up: [#42](https://github.com/anasibnanwar1-droid/droid-maxxing/issues/42).
+
 Once the SDK/daemon exposes that boundary, Droid Control should pass its effective threshold into the stream options, render `Compacting conversation...` while the daemon pauses at the checkpoint, and keep the existing pre-stream compaction as a first-turn guard.
