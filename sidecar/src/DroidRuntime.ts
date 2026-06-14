@@ -13,10 +13,8 @@ import {
   type PermissionHandler,
 } from '@factory/droid-sdk';
 import { spawn } from 'node:child_process';
-import { existsSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
 import { createDroidTransport } from './DroidTransport.js';
+import { buildDroidInvocation, resolveDroidPath } from './Environment.js';
 import type { Autonomy, ReasoningEffort, SessionInteractionMode } from './protocol.js';
 
 const EXEC_ARGS = ['exec', '--input-format', 'stream-jsonrpc', '--output-format', 'stream-jsonrpc'];
@@ -95,18 +93,25 @@ export class DroidRuntime {
   }
 
   async startCliLogin(): Promise<void> {
+    // On Windows the npm-installed `droid` is a `.cmd` shim that direct spawn
+    // can't launch, so run it through a shell there.
     const child = spawn(this.resolveDroidPath(), ['login'], {
       env: this.env(),
       detached: true,
       stdio: 'ignore',
+      shell: process.platform === 'win32',
     });
+    // A missing/non-executable CLI makes spawn emit 'error'; without a listener
+    // that would crash the sidecar, so swallow it here.
+    child.on('error', () => {});
     child.unref();
   }
 
   private async createClient(cwd?: string, handlers: RuntimeHandlers = {}): Promise<{ client: DroidClient; transport: DroidClientTransport }> {
+    const { execPath, execArgs } = buildDroidInvocation(EXEC_ARGS);
     const transport = createDroidTransport({
-      execPath: this.resolveDroidPath(),
-      execArgs: EXEC_ARGS,
+      execPath,
+      execArgs,
       cwd,
       env: this.env(),
     });
@@ -130,12 +135,7 @@ export class DroidRuntime {
   }
 
   private resolveDroidPath(): string {
-    if (process.env.DROID_PATH) return process.env.DROID_PATH;
-    const factoryBin = join(homedir(), '.factory', 'bin', 'droid');
-    if (existsSync(factoryBin)) return factoryBin;
-    if (existsSync('/opt/homebrew/bin/droid')) return '/opt/homebrew/bin/droid';
-    if (existsSync('/usr/local/bin/droid')) return '/usr/local/bin/droid';
-    return 'droid';
+    return resolveDroidPath();
   }
 }
 

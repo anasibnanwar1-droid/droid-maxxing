@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
+import { wrapDroidInvocation } from './Environment.js';
 import type { ModelInfo, ReasoningEffort } from './protocol.js';
 
 const execFileAsync = promisify(execFile);
@@ -11,7 +12,9 @@ const CACHE_PATH = join(homedir(), '.factory', 'droid-control', 'model-catalog.j
 type Section = 'available' | 'custom' | 'details' | null;
 
 export async function readDroidCliModelCatalog(droidPath: string): Promise<ModelInfo[]> {
-  const { stdout } = await execFileAsync(droidPath, ['exec', '--help'], {
+  // Route a Windows .cmd/.bat shim through cmd.exe; execFile can't run it directly.
+  const { execPath, execArgs } = wrapDroidInvocation(droidPath, ['exec', '--help']);
+  const { stdout } = await execFileAsync(execPath, execArgs, {
     maxBuffer: 1024 * 1024,
     env: process.env,
   });
