@@ -11,7 +11,7 @@ import type {
 } from './nativeBrowser';
 import type { EditorId, EditorTarget } from './editorOpen';
 import type { RepoStatus } from './repoEnvironment';
-import type { AppUpdateInfo, OnboardingState } from './onboarding';
+import type { AppUpdateInfo, AppUpdateResult, OnboardingState } from './onboarding';
 
 interface BridgeInfo {
   port: number;
@@ -34,7 +34,7 @@ interface DroidControlApi {
   setOnboarding: (patch: Partial<OnboardingState>) => Promise<OnboardingState>;
   appVersion: () => Promise<string>;
   checkAppUpdate: () => Promise<AppUpdateInfo>;
-  downloadAppUpdate: (dmgUrl?: string) => Promise<{ mode: string; path?: string }>;
+  downloadAppUpdate: (dmgUrl?: string) => Promise<AppUpdateResult>;
   relaunchApp: () => Promise<void>;
   openExternal: (url: string) => Promise<void>;
   nativeBrowserOpen: (sessionId: string, url: string, bounds?: NativeBrowserBounds, viewport?: { width: number; height: number; deviceScaleFactor: number }) => Promise<void>;

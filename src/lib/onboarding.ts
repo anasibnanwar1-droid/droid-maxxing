@@ -43,9 +43,15 @@ export async function checkAppUpdate(): Promise<AppUpdateInfo | null> {
   }
 }
 
-export async function downloadAppUpdate(dmgUrl?: string): Promise<void> {
-  if (!isDesktop()) return;
-  await window.droidControl!.downloadAppUpdate(dmgUrl);
+export interface AppUpdateResult {
+  mode: 'autoUpdater' | 'external' | 'download';
+  status?: 'downloaded' | 'up-to-date';
+  path?: string;
+}
+
+export async function downloadAppUpdate(dmgUrl?: string): Promise<AppUpdateResult | null> {
+  if (!isDesktop()) return null;
+  return window.droidControl!.downloadAppUpdate(dmgUrl);
 }
 
 export async function relaunchApp(): Promise<void> {

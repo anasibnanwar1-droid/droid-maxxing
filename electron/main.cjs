@@ -1120,12 +1120,21 @@ async function getOnboarding() {
   }
 }
 
-async function setOnboarding(patch) {
-  const current = await getOnboarding();
-  const next = { ...current, ...(patch || {}), version: ONBOARDING_VERSION };
-  await fsp.mkdir(path.dirname(onboardingPath()), { recursive: true });
-  await fsp.writeFile(onboardingPath(), JSON.stringify(next, null, 2));
-  return next;
+// Serialize read-modify-write so rapid fire-and-forget patches (e.g. two quick
+// Settings toggles) can't both read the same old state and clobber each other.
+let onboardingWriteQueue = Promise.resolve();
+
+function setOnboarding(patch) {
+  const run = onboardingWriteQueue.then(async () => {
+    const current = await getOnboarding();
+    const next = { ...current, ...(patch || {}), version: ONBOARDING_VERSION };
+    await fsp.mkdir(path.dirname(onboardingPath()), { recursive: true });
+    await fsp.writeFile(onboardingPath(), JSON.stringify(next, null, 2));
+    return next;
+  });
+  // Keep the queue chained even if this write rejects.
+  onboardingWriteQueue = run.catch(() => {});
+  return run;
 }
 
 // ── App self-update ─────────────────────────────────────────────────

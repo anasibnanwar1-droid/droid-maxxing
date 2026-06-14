@@ -34,8 +34,12 @@ export async function startAppUpdate(target: AppUpdateInfo | null = info): Promi
   downloading = true;
   emit();
   try {
-    await ipcDownload(target?.dmgUrl);
-    toast.info('Downloading the update. The app will restart to finish installing.');
+    const result = await ipcDownload(target?.dmgUrl);
+    // The feed path can resolve as already up to date (e.g. a launch probe with
+    // only a feed configured); don't show a misleading "downloading" toast then.
+    if (result?.status !== 'up-to-date') {
+      toast.info('Downloading the update. The app will restart to finish installing.');
+    }
   } catch {
     toast.error('Update download failed. Please try again.');
   } finally {
