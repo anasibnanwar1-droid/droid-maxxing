@@ -33,6 +33,7 @@ export interface CreateRuntimeSessionOptions extends RuntimeHandlers {
   reasoningEffort?: ReasoningEffort;
   compactionModel?: string;
   compactionTokenLimit?: number;
+  compactionThresholdCheckEnabled?: boolean;
   specModeModelId?: string;
   specModeReasoningEffort?: ReasoningEffort;
   autonomyLevel?: Autonomy;
@@ -166,6 +167,8 @@ export function createInitializeSessionParams(
   if (options.compactionModel) params.compactionModel = options.compactionModel;
   if (options.compactionTokenLimit !== undefined)
     params.compactionTokenLimit = options.compactionTokenLimit;
+  if (options.compactionThresholdCheckEnabled !== undefined)
+    params.compactionThresholdCheckEnabled = options.compactionThresholdCheckEnabled;
   if (options.specModeModelId) params.specModeModelId = options.specModeModelId;
   if (options.specModeReasoningEffort)
     params.specModeReasoningEffort = mapReasoning(options.specModeReasoningEffort);

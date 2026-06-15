@@ -211,6 +211,7 @@ test('builds Droid compaction init payloads', () => {
     }),
     {
       compactionTokenLimit: 150_000,
+      compactionThresholdCheckEnabled: true,
     },
   );
 });
@@ -228,11 +229,12 @@ test('caps Droid compaction limits to the selected model context window', () => 
     ),
     {
       compactionTokenLimit: 100_000,
+      compactionThresholdCheckEnabled: true,
     },
   );
 });
 
-test('leaves unset compaction limits to Factory session defaults', () => {
+test('disables daemon compaction threshold checks when no budget exists', () => {
   assert.deepEqual(
     createCompactionSettingsForModel(
       'model-a',
@@ -240,7 +242,7 @@ test('leaves unset compaction limits to Factory session defaults', () => {
       {},
       100_000,
     ),
-    {},
+    { compactionThresholdCheckEnabled: false },
   );
 });
 
@@ -253,7 +255,12 @@ test('derives Droid-owned auto-compaction thresholds from prior compactions', ()
   assert.equal(autoCompactionTokenLimit(200_000, 0), 180_000);
   assert.equal(autoCompactionTokenLimit(200_000, 3), 150_000);
   assert.equal(
-    effectiveCompactionLimit('model-a', { compactionTokenLimitPerModel: { 'model-a': 200_000 } }, 500_000, 2),
+    effectiveCompactionLimit(
+      'model-a',
+      { compactionTokenLimitPerModel: { 'model-a': 200_000 } },
+      500_000,
+      2,
+    ),
     160_000,
   );
 });
@@ -718,13 +725,13 @@ test('design turns disable TodoWrite and normal turns restore it', async () => {
   );
 });
 
-test('does not emit live compaction disable payloads', () => {
+test('emits live daemon compaction disable payloads without a budget', () => {
   assert.deepEqual(
     createCompactionSettingsForModel('model-a', {
       compactionTokenLimit: null,
       compactionTokenLimitPerModel: {},
     }),
-    {},
+    { compactionThresholdCheckEnabled: false },
   );
 });
 
@@ -748,6 +755,117 @@ test('maps orchestrator model changes with current compaction limits', () => {
     {
       modelId: 'model-b',
     },
+  );
+});
+
+test('live orchestrator model changes enable daemon compaction threshold checks', async () => {
+  const events: ServerEvent[] = [];
+  const manager = new MissionManager((event) => events.push(event));
+  const session = new FakeSession('droid-settings');
+  const mission = {
+    summary: {
+      ...testSummary('app-settings', session.sessionId),
+      modelId: 'model-a',
+      maxContextTokens: 500_000,
+    },
+    session,
+    streaming: false,
+    pendingSends: [],
+    pendingPermissions: new Map(),
+    pendingQuestions: new Map(),
+    agents: new Map(),
+    knownSubagents: new Set(),
+    completedSubagents: new Set(),
+    linkedSubagents: new Set(),
+    subagentToolUseIds: new Map(),
+    subagentSettings: new Map(),
+    pendingSubagents: [],
+    mcpServers: [],
+    compacting: false,
+  };
+  const internals = manager as unknown as {
+    getFactoryDefaults: () => Promise<{
+      modelId?: string;
+      compactionTokenLimit?: number;
+      compactionTokenLimitPerModel?: Record<string, number>;
+    }>;
+    history: {
+      syncSummaries: () => void;
+      recordEvent: () => void;
+      recordSubagentLink: () => void;
+      subagentLinks: () => [];
+      summaryPatches: () => Map<string, Partial<MissionSummary>>;
+      hiddenDroidSessionIds: () => Set<string>;
+    };
+    missions: Map<string, typeof mission>;
+    cachedModels?: ModelInfo[];
+  };
+  internals.getFactoryDefaults = async () => ({
+    modelId: 'model-a',
+    compactionTokenLimit: 400_000,
+    compactionTokenLimitPerModel: { 'model-b': 250_000 },
+  });
+  internals.cachedModels = [
+    {
+      id: 'model-b',
+      displayName: 'Model B',
+      isDefault: false,
+      isCustom: false,
+      supportedReasoningEfforts: ['high'],
+      defaultReasoningEffort: 'high',
+      maxContextTokens: 300_000,
+    },
+  ];
+  internals.history = {
+    syncSummaries: () => {},
+    recordEvent: () => {},
+    recordSubagentLink: () => {},
+    subagentLinks: () => [],
+    summaryPatches: () => new Map(),
+    hiddenDroidSessionIds: () => new Set(),
+  };
+  internals.missions.set(mission.summary.id, mission);
+
+  await manager.handle({
+    type: 'settings.agent.update',
+    missionId: mission.summary.id,
+    agent: 'orchestrator',
+    modelId: 'model-b',
+  });
+
+  assert.deepEqual(session.settingsUpdates.at(-1), {
+    modelId: 'model-b',
+    compactionTokenLimit: 250_000,
+    compactionThresholdCheckEnabled: true,
+  });
+
+  await manager.handle({
+    type: 'settings.agent.update',
+    missionId: mission.summary.id,
+    agent: 'orchestrator',
+    modelId: null,
+  });
+
+  assert.deepEqual(session.settingsUpdates.at(-1), {
+    modelId: 'model-a',
+    compactionTokenLimit: 400_000,
+    compactionThresholdCheckEnabled: true,
+  });
+
+  await manager.handle({
+    type: 'session.updateSettings',
+    sessionId: mission.summary.id,
+    modelId: null,
+  });
+
+  assert.deepEqual(session.settingsUpdates.at(-1), {
+    modelId: 'model-a',
+    compactionTokenLimit: 400_000,
+    compactionThresholdCheckEnabled: true,
+  });
+  assert.equal(
+    events.some((event) => event.type === 'mission.error' || event.type === 'error'),
+    false,
   );
 });
 
@@ -973,7 +1091,10 @@ test('auto-compacts before starting a streamed turn once context crosses the eff
   await manager.handle({ type: 'mission.send', missionId: 'app-compact', text: 'hello' });
   assert.equal(session.compactions, 1);
   assert.deepEqual(session.prompts, ['hello']);
-  assert.equal(events.some((event) => event.type === 'mission.error' || event.type === 'error'), false);
+  assert.equal(
+    events.some((event) => event.type === 'mission.error' || event.type === 'error'),
+    false,
+  );
 });
 
 test('does not treat tool_result as a safe mid-task compaction checkpoint', async () => {
@@ -1154,10 +1275,12 @@ function workerAutoCompactHarness(
   swapTo?: string,
   workerBudget = workerLimit,
 ) {
-  const { manager, session: orchestratorSession, events, mission } = autoCompactHarness(
-    0,
-    undefined,
-  );
+  const {
+    manager,
+    session: orchestratorSession,
+    events,
+    mission,
+  } = autoCompactHarness(0, undefined);
   const workerSession = new FakeCompactionSession('worker-compact', workerUsed, swapTo);
   // When the daemon swaps the backing id, the reload hook loads the replacement
   // session; wire the runtime so that load resolves to a usable fake.
@@ -1220,7 +1343,12 @@ test('worker auto-compacts its own session in place once context crosses the wor
 test('worker does not auto-compact after its final answer in the same visible turn', async () => {
   const { manager, workerSession } = workerAutoCompactHarness(150_000, 200_000);
   workerSession.usedAfterStream = 250_000;
-  await manager.handle({ type: 'agent.send', missionId: 'app-compact', agentSessionId: 'worker-compact', text: 'go' });
+  await manager.handle({
+    type: 'agent.send',
+    missionId: 'app-compact',
+    agentSessionId: 'worker-compact',
+    text: 'go',
+  });
   assert.equal(workerSession.compactions, 0);
   assert.deepEqual(workerSession.callOrder, ['stream:go']);
 });
@@ -1293,7 +1421,12 @@ test('worker rekeys step down through the Droid-owned threshold policy', async (
     effectiveCompactionTokenLimit?: number;
   };
   const budget = 200_000;
-  const { manager, mission } = workerAutoCompactHarness(0, autoCompactionTokenLimit(budget, 0), undefined, budget);
+  const { manager, mission } = workerAutoCompactHarness(
+    0,
+    autoCompactionTokenLimit(budget, 0),
+    undefined,
+    budget,
+  );
   const internals = manager as unknown as {
     runtime: { loadSession: (id: string, handlers: unknown) => Promise<FakeCompactionSession> };
     rekeyAgentSession: (agent: TestAgent, newId: string) => Promise<void>;
@@ -1703,7 +1836,9 @@ test('orchestrator compaction swap that never reloads drops the mission and re-d
   );
   // ...the current prompt and queued send are NOT discarded: both re-resume and
   // drive the new session...
-  await waitFor(() => resumed.prompts.includes('go') && resumed.prompts.includes('queued-after-recovery'));
+  await waitFor(
+    () => resumed.prompts.includes('go') && resumed.prompts.includes('queued-after-recovery'),
+  );
   assert.deepEqual(resumed.prompts, ['go', 'queued-after-recovery']);
   assert.equal(resumeCalls >= 1, true);
   // ...and it never streamed into the dead old session.

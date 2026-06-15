@@ -158,8 +158,7 @@ export function normalizeStreamEvent(
       (Number(cumulative.cacheCreationTokens ?? 0) || 0);
     const tokensOut = Number(cumulative.outputTokens ?? 0) || 0;
     const contextTokens = context
-      ? (Number(context.inputTokens ?? 0) || 0) +
-        (Number(context.cacheReadTokens ?? 0) || 0)
+      ? (Number(context.inputTokens ?? 0) || 0) + (Number(context.cacheReadTokens ?? 0) || 0)
       : undefined;
     return { tokens: { tokensIn, tokensOut, contextTokens } };
   }

@@ -67,7 +67,15 @@ function DiffHeader({ change }: { change: FileChange }) {
   );
 }
 
-export function DiffCard({ change, onOpen, active }: { change: FileChange; onOpen?: () => void; active?: boolean }) {
+export function DiffCard({
+  change,
+  onOpen,
+  active,
+}: {
+  change: FileChange;
+  onOpen?: () => void;
+  active?: boolean;
+}) {
   const [open, setOpen] = useState(false);
   const preview = change.ops.slice(0, 14);
   const more = change.ops.length - preview.length;

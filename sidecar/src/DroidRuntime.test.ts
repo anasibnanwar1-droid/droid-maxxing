@@ -9,10 +9,12 @@ test('passes compaction settings when initializing a session', () => {
     modelId: 'main-model',
     compactionModel: 'summary-model',
     compactionTokenLimit: 400_000,
+    compactionThresholdCheckEnabled: true,
   });
 
   assert.equal(params.compactionModel, 'summary-model');
   assert.equal(params.compactionTokenLimit, 400_000);
+  assert.equal(params.compactionThresholdCheckEnabled, true);
 });
 
 test('passes current-model compaction sentinel when initializing a session', () => {

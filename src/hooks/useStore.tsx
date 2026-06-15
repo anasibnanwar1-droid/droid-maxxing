@@ -800,7 +800,9 @@ function baseReducer(state: AppState, action: Action): AppState {
       return { ...state, connection: action.status, connectionError: action.message };
 
     case 'MISSION_CREATED': {
-      const mission = sanitizeMissionContext(applyMissionOverride(action.mission, state.missionSettingOverrides[action.mission.id]));
+      const mission = sanitizeMissionContext(
+        applyMissionOverride(action.mission, state.missionSettingOverrides[action.mission.id]),
+      );
       const order = state.missionOrder.includes(action.mission.id)
         ? state.missionOrder
         : [action.mission.id, ...state.missionOrder];
@@ -1014,7 +1016,10 @@ function baseReducer(state: AppState, action: Action): AppState {
       const existing = state.missions[mid];
       if (!existing) return state;
       const maxContextTokens = action.maxContextTokens ?? existing.maxContextTokens;
-      const currentIsWindowUsage = isContextWindowTokenCount(existing.contextTokens, maxContextTokens);
+      const currentIsWindowUsage = isContextWindowTokenCount(
+        existing.contextTokens,
+        maxContextTokens,
+      );
       const nextIsWindowUsage = isContextWindowTokenCount(action.contextTokens, maxContextTokens);
       const nextContextTokens = nextIsWindowUsage
         ? action.contextTokens
@@ -1047,7 +1052,10 @@ function baseReducer(state: AppState, action: Action): AppState {
         : false;
       const incomingHasBreakdownUsage = hasUsableBreakdownUsage(action.stats);
       const stats =
-        existing?.streaming && currentIsWindowUsage && !incomingHasBreakdownUsage && action.stats.used < existing.contextTokens
+        existing?.streaming &&
+        currentIsWindowUsage &&
+        !incomingHasBreakdownUsage &&
+        action.stats.used < existing.contextTokens
           ? {
               ...action.stats,
               used: existing.contextTokens,
@@ -1212,7 +1220,9 @@ function baseReducer(state: AppState, action: Action): AppState {
     case 'MISSION_LIST': {
       const map: Record<string, MissionSummary> = { ...state.missions };
       for (const m of action.missions) {
-        map[m.id] = sanitizeMissionContext(applyMissionOverride(m, state.missionSettingOverrides[m.id]));
+        map[m.id] = sanitizeMissionContext(
+          applyMissionOverride(m, state.missionSettingOverrides[m.id]),
+        );
       }
       const order = [...new Set([...action.missions.map((m) => m.id), ...state.missionOrder])]
         .filter((id) => map[id])

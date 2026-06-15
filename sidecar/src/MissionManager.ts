@@ -734,6 +734,21 @@ export class MissionManager {
     settings: AgentSettingPatch,
   ): Promise<void> {
     const next = createSessionSettingsForAgent(agent, settings);
+    if (agent === 'orchestrator' && settings.modelId !== undefined) {
+      const defaults = await this.getFactoryDefaults();
+      const nextModelId =
+        settings.modelId ??
+        defaultModelForAgent('orchestrator', modeForSummary(mission.summary), defaults);
+      Object.assign(
+        next,
+        createCompactionSettingsForModel(
+          nextModelId,
+          {},
+          defaults,
+          this.maxContextTokensForModel(nextModelId),
+        ),
+      );
+    }
     if (Object.keys(next).length > 0) await mission.session.updateSettings(next as never);
   }
 
@@ -1200,6 +1215,7 @@ export class MissionManager {
         validatorReasoningEffort,
         compactionModel,
         compactionTokenLimit: compactionSettings.compactionTokenLimit,
+        compactionThresholdCheckEnabled: compactionSettings.compactionThresholdCheckEnabled,
         mcpServers: mcp.configs,
         permissionHandler: this.makePermissionHandler(ref),
         askUserHandler: this.makeAskUserHandler(ref),
@@ -1280,7 +1296,10 @@ export class MissionManager {
       mcpConfigs,
       permissionGrants: new Set(),
       compactionTokenBudget,
-      effectiveCompactionTokenLimit: autoCompactionTokenLimit(compactionTokenBudget, summary.compactedFromSessionIds?.length ?? 0),
+      effectiveCompactionTokenLimit: autoCompactionTokenLimit(
+        compactionTokenBudget,
+        summary.compactedFromSessionIds?.length ?? 0,
+      ),
     };
   }
 
@@ -1428,7 +1447,9 @@ export class MissionManager {
         this.patch(appSessionId, {
           streaming: false,
           queuedSends: mission.pendingSends.length,
-          ...(next === undefined && shouldSettleToPaused(mission.summary.phase) ? { phase: 'paused' as const } : {}),
+          ...(next === undefined && shouldSettleToPaused(mission.summary.phase)
+            ? { phase: 'paused' as const }
+            : {}),
         });
         if (next !== undefined) void this.drive(appSessionId, next);
       }
@@ -1667,7 +1688,10 @@ export class MissionManager {
           this.emitContextEstimate(appSessionId, m.summary);
         } else if (!isWindowTokenCount(m.summary.contextTokens, contextLimit)) {
           const snapshotUsed = snapshot?.used;
-          m.summary.contextTokens = isWindowTokenCount(snapshotUsed, snapshot?.limit ?? maxContextTokens)
+          m.summary.contextTokens = isWindowTokenCount(
+            snapshotUsed,
+            snapshot?.limit ?? maxContextTokens,
+          )
             ? snapshotUsed
             : 0;
         }
@@ -1804,7 +1828,10 @@ export class MissionManager {
       tokensOut: carryover.tokensOut,
       contextTokens: 0,
     });
-    mission.effectiveCompactionTokenLimit = autoCompactionTokenLimit(mission.compactionTokenBudget, compactedFromSessionIds.length);
+    mission.effectiveCompactionTokenLimit = autoCompactionTokenLimit(
+      mission.compactionTokenBudget,
+      compactedFromSessionIds.length,
+    );
   }
 
   // Recovery for an orchestrator compaction that swapped backing sessions but
@@ -2004,9 +2031,25 @@ export class MissionManager {
     const patch: Partial<MissionSummary> = {};
     const next: Record<string, unknown> = {};
     if (settings.modelId !== undefined) {
-      if (settings.modelId) next.modelId = settings.modelId;
+      const defaults = await this.getFactoryDefaults();
+      const summary = mission?.summary ?? historical;
+      const nextModelId =
+        settings.modelId ??
+        (summary
+          ? defaultModelForAgent('orchestrator', modeForSummary(summary), defaults)
+          : defaults.modelId);
+      if (nextModelId) next.modelId = nextModelId;
       patch.modelId = settings.modelId ?? undefined;
-      patch.maxContextTokens = this.maxContextTokensForModel(settings.modelId ?? undefined);
+      patch.maxContextTokens = this.maxContextTokensForModel(nextModelId);
+      Object.assign(
+        next,
+        createCompactionSettingsForModel(
+          nextModelId,
+          {},
+          defaults,
+          this.maxContextTokensForModel(nextModelId),
+        ),
+      );
     }
     if (settings.reasoningEffort) {
       next.reasoningEffort = settings.reasoningEffort;
@@ -2252,7 +2295,9 @@ export class MissionManager {
     }
   }
 
-  private async compactBeforeAgentStreamedTurn(agent: LiveAgent): Promise<CompactionOutcome | undefined> {
+  private async compactBeforeAgentStreamedTurn(
+    agent: LiveAgent,
+  ): Promise<CompactionOutcome | undefined> {
     await this.refreshContext(agent.session.sessionId, agent.session);
     return this.maybeAutoCompactAgent(agent);
   }
@@ -2397,7 +2442,10 @@ export class MissionManager {
     }
     await oldSession.close().catch(() => {});
     agent.compactionCount = (agent.compactionCount ?? 0) + 1;
-    agent.effectiveCompactionTokenLimit = autoCompactionTokenLimit(agent.compactionTokenBudget, agent.compactionCount);
+    agent.effectiveCompactionTokenLimit = autoCompactionTokenLimit(
+      agent.compactionTokenBudget,
+      agent.compactionCount,
+    );
   }
 
   // Persist a worker's compaction swap to the durable spawn link and the mission
@@ -2976,7 +3024,7 @@ function contextStatsSnapshot(
   stats: GetContextStatsResult,
   breakdown: ContextBreakdownSnapshot | undefined,
 ): ContextStatsSnapshot {
-  const limit = stats.limit > 0 ? stats.limit : breakdown?.contextBudget ?? stats.limit;
+  const limit = stats.limit > 0 ? stats.limit : (breakdown?.contextBudget ?? stats.limit);
   const breakdownUsed =
     breakdown && stats.accuracy !== 'exact' && isWindowTokenCount(breakdown.usedTokens, limit)
       ? breakdown.usedTokens

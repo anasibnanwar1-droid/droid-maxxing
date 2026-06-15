@@ -8,6 +8,11 @@ export interface CompactionTokenLimitPatch {
   compactionTokenLimitPerModel?: Record<string, number>;
 }
 
+export interface CompactionRuntimeSettings {
+  compactionTokenLimit?: number;
+  compactionThresholdCheckEnabled?: boolean;
+}
+
 type CompactionDefaults = Pick<
   FactoryDefaultSettings,
   'compactionTokenLimit' | 'compactionTokenLimitPerModel'
@@ -68,12 +73,14 @@ export function createCompactionSettingsForModel(
   settings: CompactionTokenLimitPatch,
   defaults: CompactionDefaults = {},
   maxContextTokens?: number,
-): Record<string, number> {
+): CompactionRuntimeSettings {
   const limit = clampCompactionTokenLimit(
     compactionTokenLimitForModel(modelId, settings, defaults),
     maxContextTokens,
   );
-  return limit !== undefined ? { compactionTokenLimit: limit } : {};
+  return limit !== undefined
+    ? { compactionTokenLimit: limit, compactionThresholdCheckEnabled: true }
+    : { compactionThresholdCheckEnabled: false };
 }
 
 export function compactionThresholdPercent(priorCompactions = 0): number {
@@ -81,9 +88,14 @@ export function compactionThresholdPercent(priorCompactions = 0): number {
   return Math.max(OLDEST_SESSION_THRESHOLD, FRESH_SESSION_THRESHOLD - steps * THRESHOLD_STEP);
 }
 
-export function autoCompactionTokenLimit(baseLimit: number | undefined, priorCompactions = 0): number | undefined {
+export function autoCompactionTokenLimit(
+  baseLimit: number | undefined,
+  priorCompactions = 0,
+): number | undefined {
   const limit = normalizeCompactionTokenLimit(baseLimit);
-  return limit === undefined ? undefined : Math.max(1, Math.floor(limit * compactionThresholdPercent(priorCompactions)));
+  return limit === undefined
+    ? undefined
+    : Math.max(1, Math.floor(limit * compactionThresholdPercent(priorCompactions)));
 }
 
 // Single derivation of the auto-compaction threshold, shared by mission
@@ -97,7 +109,10 @@ export function effectiveCompactionLimit(
   priorCompactions = 0,
 ): number | undefined {
   return autoCompactionTokenLimit(
-    clampCompactionTokenLimit(compactionTokenLimitForModel(modelId, {}, defaults), maxContextTokens),
+    clampCompactionTokenLimit(
+      compactionTokenLimitForModel(modelId, {}, defaults),
+      maxContextTokens,
+    ),
     priorCompactions,
   );
 }
