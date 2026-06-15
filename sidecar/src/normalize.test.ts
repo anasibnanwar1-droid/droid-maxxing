@@ -3,6 +3,7 @@ import test from 'node:test';
 import {
   classifyPermission,
   confirmationType,
+  normalizeNotification,
   permissionSignature,
   normalizeStreamEvent,
 } from './normalize.js';
@@ -113,6 +114,27 @@ test('marks Task results as correlated subagent completion', () => {
 
   assert.equal(normalized?.subagent?.done, true);
   assert.equal(normalized?.subagent?.toolUseId, 'tool-1');
+});
+
+test('maps daemon compaction working state to an active status line', () => {
+  const normalized = normalizeStreamEvent('mission-1', 'mission-1', 'orchestrator', {
+    type: 'working_state_changed',
+    state: 'compacting_conversation',
+  } as never);
+
+  assert.equal(normalized?.transcript?.kind, 'status');
+  assert.equal(normalized?.transcript?.text, 'Compacting conversation...');
+  assert.equal(normalized?.transcript?.compactType, 'auto');
+});
+
+test('maps daemon compacted notification to a completion status line', () => {
+  const normalized = normalizeNotification('mission-1', 'mission-1', 'orchestrator', {
+    notification: { type: 'session_compacted', removedCount: 4 },
+  });
+
+  assert.equal(normalized[0]?.transcript?.kind, 'status');
+  assert.equal(normalized[0]?.transcript?.text, 'Compaction complete. Removed 4 messages.');
+  assert.equal(normalized[0]?.transcript?.compactType, 'auto');
 });
 
 test('token usage updates do not treat cumulative totals as context usage', () => {

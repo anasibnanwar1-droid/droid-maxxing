@@ -263,6 +263,16 @@ export function normalizeStreamEvent(
           exitCode: ev.exitCode,
         },
       };
+    case 'working_state_changed': {
+      const state = (ev as { state?: string }).state;
+      if (state !== 'compacting_conversation') return null;
+      return {
+        transcript: transcript(missionId, agentSessionId, role, 'status', {
+          text: 'Compacting conversation...',
+          compactType: 'auto',
+        }),
+      };
+    }
     case 'result':
       return { done: true };
     default:
@@ -279,6 +289,8 @@ export function normalizeNotification(
   notification: Record<string, unknown>,
 ): NormalizedEvent[] {
   const raw = extractNotification(notification);
+  const direct = normalizeRawNotification(missionId, agentSessionId, role, raw);
+  if (direct) return [direct];
   const converted = convertNotificationToStreamMessage(raw);
   const messages = Array.isArray(converted) ? converted : converted ? [converted] : [];
   return messages
@@ -286,6 +298,30 @@ export function normalizeNotification(
       normalizeStreamEvent(missionId, agentSessionId, role, message as DroidStreamEvent),
     )
     .filter((event): event is NormalizedEvent => event !== null);
+}
+
+export function isSessionCompactedNotification(notification: Record<string, unknown>): boolean {
+  const raw = extractNotification(notification);
+  if (!raw || typeof raw !== 'object') return false;
+  return (raw as Record<string, unknown>).type === 'session_compacted';
+}
+
+function normalizeRawNotification(
+  missionId: string,
+  agentSessionId: string,
+  role: AgentRole,
+  raw: unknown,
+): NormalizedEvent | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const record = raw as Record<string, unknown>;
+  if (record.type !== 'session_compacted') return null;
+  const removed = Number(record.removedCount ?? 0) || 0;
+  return {
+    transcript: transcript(missionId, agentSessionId, role, 'status', {
+      text: `Compaction complete. Removed ${removed} messages.`,
+      compactType: 'auto',
+    }),
+  };
 }
 
 function extractNotification(notification: Record<string, unknown>): unknown {

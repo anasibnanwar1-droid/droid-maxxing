@@ -17,9 +17,6 @@ type CompactionDefaults = Pick<
   FactoryDefaultSettings,
   'compactionTokenLimit' | 'compactionTokenLimitPerModel'
 >;
-const FRESH_SESSION_THRESHOLD = 0.9;
-const OLDEST_SESSION_THRESHOLD = 0.75;
-const THRESHOLD_STEP = 0.05;
 
 export function normalizeCompactionTokenLimit(value: unknown): number | undefined {
   if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return undefined;
@@ -45,20 +42,6 @@ export function compactionTokenLimitForModel(
   return globalLimit === null ? undefined : normalizeCompactionTokenLimit(globalLimit);
 }
 
-// Resume precedence: honor the limit the resumed session itself exposes
-// (per-model, then global) before falling back to the current app defaults.
-// compactionTokenLimitForModel mixes settings and defaults per tier, so a
-// default per-model limit could otherwise override a session's own saved global
-// limit; resolving the exposed settings first (with no defaults) prevents that.
-export function resumedCompactionTokenLimit(
-  modelId: string | undefined,
-  exposed: CompactionTokenLimitPatch,
-  defaults: CompactionDefaults = {},
-): number | undefined {
-  const own = compactionTokenLimitForModel(modelId, exposed);
-  return own !== undefined ? own : compactionTokenLimitForModel(modelId, {}, defaults);
-}
-
 export function clampCompactionTokenLimit(
   limit: number | undefined,
   maxContextTokens?: number,
@@ -81,65 +64,6 @@ export function createCompactionSettingsForModel(
   return limit !== undefined
     ? { compactionTokenLimit: limit, compactionThresholdCheckEnabled: true }
     : { compactionThresholdCheckEnabled: false };
-}
-
-export function compactionThresholdPercent(priorCompactions = 0): number {
-  const steps = Math.max(0, Math.trunc(priorCompactions));
-  return Math.max(OLDEST_SESSION_THRESHOLD, FRESH_SESSION_THRESHOLD - steps * THRESHOLD_STEP);
-}
-
-export function autoCompactionTokenLimit(
-  baseLimit: number | undefined,
-  priorCompactions = 0,
-): number | undefined {
-  const limit = normalizeCompactionTokenLimit(baseLimit);
-  return limit === undefined
-    ? undefined
-    : Math.max(1, Math.floor(limit * compactionThresholdPercent(priorCompactions)));
-}
-
-// Single derivation of the auto-compaction threshold, shared by mission
-// create, resume, and worker open so every session's trigger matches the
-// configured budget (per-model override -> global default, clamped to the model
-// window) while Droid Control owns the 90%-to-75% auto-trigger policy.
-export function effectiveCompactionLimit(
-  modelId: string | undefined,
-  defaults: CompactionDefaults,
-  maxContextTokens: number | undefined,
-  priorCompactions = 0,
-): number | undefined {
-  return autoCompactionTokenLimit(
-    clampCompactionTokenLimit(
-      compactionTokenLimitForModel(modelId, {}, defaults),
-      maxContextTokens,
-    ),
-    priorCompactions,
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Unified runtime compaction layer. Every Droid session (the Mission Control
-// orchestrator and each worker/subagent alike) flows through this single path
-// after an idle turn. The daemon returns a new backing session id on success;
-// the owner adopts it via the optional `reload` hook (the orchestrator swaps
-// its backing session behind a stable app id; a worker re-keys itself to the
-// new id). A caller without a reload hook reports the swap as 'stale'.
-// ---------------------------------------------------------------------------
-
-export interface AutoCompactState {
-  compacting?: boolean;
-  effectiveCompactionTokenLimit?: number;
-}
-
-// The one threshold rule used by both the orchestrator and workers.
-export function autoCompactionDue(
-  state: AutoCompactState,
-  usedTokens: number | undefined,
-): boolean {
-  if (state.compacting) return false;
-  const limit = state.effectiveCompactionTokenLimit;
-  if (limit === undefined || limit <= 0) return false;
-  return usedTokens !== undefined && usedTokens > 0 && usedTokens >= limit;
 }
 
 export type CompactableSession = Pick<DroidSession, 'sessionId' | 'compactSession'>;
