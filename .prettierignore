@@ -1,0 +1,14 @@
+dist/
+sidecar/dist/
+node_modules/
+sidecar/node_modules/
+.worktrees/
+src-tauri/target/
+benchmark-runs/
+benchmarks/
+public/
+tools/
+package-lock.json
+sidecar/package-lock.json
+*.png
+*.md
