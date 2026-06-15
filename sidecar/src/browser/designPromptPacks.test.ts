@@ -13,7 +13,34 @@ test('writeDesignPromptPack stores compact JSON on disk', async () => {
     browserSessionId: 'browser-one',
     instruction: 'Remove this dot pattern',
     now: () => new Date('2026-06-06T12:00:00.000Z'),
-    references: [{
+    references: [
+      {
+        id: 'ref-one',
+        anchor: {
+          id: 'ref-one',
+          kind: 'region',
+          label: 'region',
+          box: { x: 10, y: 10, width: 40, height: 40 },
+          screenshotPath: '/tmp/shot.png',
+        },
+        url: 'http://127.0.0.1:1420/',
+        viewport: { width: 900, height: 700, deviceScaleFactor: 1 },
+        scroll: { x: 0, y: 0 },
+        createdAt: '2026-06-06T12:00:00.000Z',
+      },
+    ],
+  });
+
+  assert.equal(pack.createdAt, '2026-06-06T12:00:00.000Z');
+  assert.match(path, /mission-one\/pack-2026-06-06T12-00-00-000Z\.json$/);
+  const saved = JSON.parse(await readFile(path, 'utf8')) as { instruction: string };
+  assert.equal(saved.instruction, 'Remove this dot pattern');
+  await rm(baseDir, { recursive: true, force: true });
+});
+
+test('formatDesignPrompt returns path-backed context', () => {
+  const text = formatDesignPrompt('/tmp/pack.json', 'Make this cleaner', [
+    {
       id: 'ref-one',
       anchor: {
         id: 'ref-one',
@@ -26,31 +53,8 @@ test('writeDesignPromptPack stores compact JSON on disk', async () => {
       viewport: { width: 900, height: 700, deviceScaleFactor: 1 },
       scroll: { x: 0, y: 0 },
       createdAt: '2026-06-06T12:00:00.000Z',
-    }],
-  });
-
-  assert.equal(pack.createdAt, '2026-06-06T12:00:00.000Z');
-  assert.match(path, /mission-one\/pack-2026-06-06T12-00-00-000Z\.json$/);
-  const saved = JSON.parse(await readFile(path, 'utf8')) as { instruction: string };
-  assert.equal(saved.instruction, 'Remove this dot pattern');
-  await rm(baseDir, { recursive: true, force: true });
-});
-
-test('formatDesignPrompt returns path-backed context', () => {
-  const text = formatDesignPrompt('/tmp/pack.json', 'Make this cleaner', [{
-    id: 'ref-one',
-    anchor: {
-      id: 'ref-one',
-      kind: 'region',
-      label: 'region',
-      box: { x: 10, y: 10, width: 40, height: 40 },
-      screenshotPath: '/tmp/shot.png',
     },
-    url: 'http://127.0.0.1:1420/',
-    viewport: { width: 900, height: 700, deviceScaleFactor: 1 },
-    scroll: { x: 0, y: 0 },
-    createdAt: '2026-06-06T12:00:00.000Z',
-  }]);
+  ]);
 
   assert.match(text, /References JSON: \/tmp\/pack\.json/);
   assert.match(text, /User instruction:\nMake this cleaner/);

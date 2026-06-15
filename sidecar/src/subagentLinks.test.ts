@@ -45,5 +45,8 @@ test('subagentLinks scopes mappings per mission and upserts on repeated toolUseI
 
   assert.equal(m2.length, 1);
   assert.equal(m2[0].workerSessionId, 'sess-new');
-  assert.deepEqual(m3.map((l) => l.workerSessionId), ['sess-other']);
+  assert.deepEqual(
+    m3.map((l) => l.workerSessionId),
+    ['sess-other'],
+  );
 });

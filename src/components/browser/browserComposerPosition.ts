@@ -1,5 +1,10 @@
 import type { CSSProperties } from 'react';
-import type { BrowserBox, BrowserViewport, BrowserViewportMode, DesignReference } from '../../types/bridge';
+import type {
+  BrowserBox,
+  BrowserViewport,
+  BrowserViewportMode,
+  DesignReference,
+} from '../../types/bridge';
 import type { Size } from '../canvas/canvasMath';
 import { clamp } from './browserViewport';
 
@@ -10,7 +15,9 @@ export function composerStyleForReferences(
   mode: BrowserViewportMode,
 ): CSSProperties {
   const surface = surfaceLayout(frame, viewport, mode);
-  const box = unionBoxes(references.map(boxForReference).filter((item): item is BrowserBox => Boolean(item))) ?? {
+  const box = unionBoxes(
+    references.map(boxForReference).filter((item): item is BrowserBox => Boolean(item)),
+  ) ?? {
     x: 0,
     y: 0,
     width: surface.width,
@@ -28,7 +35,11 @@ export function composerStyleForReferences(
   };
 }
 
-function surfaceLayout(frame: Size, viewport: BrowserViewport, mode: BrowserViewportMode): Size & { left: number; top: number } {
+function surfaceLayout(
+  frame: Size,
+  viewport: BrowserViewport,
+  mode: BrowserViewportMode,
+): Size & { left: number; top: number } {
   const padding = 18;
   const availableWidth = Math.max(1, frame.width - padding * 2);
   const availableHeight = Math.max(1, frame.height - padding * 2);

@@ -3,11 +3,21 @@ import { useStore } from './hooks/useStore';
 import { AnimatePresence, motion } from 'framer-motion';
 import { Monitor, PanelLeft } from 'lucide-react';
 import { bridge } from './lib/bridge';
-import { connect, listFactoryDefaults, listMissions, loadMissionHistory, sendNativeBrowserResult, subscribeWorker } from './lib/commands';
+import {
+  connect,
+  listFactoryDefaults,
+  listMissions,
+  loadMissionHistory,
+  sendNativeBrowserResult,
+  subscribeWorker,
+} from './lib/commands';
 import { isEmbedded } from './lib/embed';
 import { getApiKey } from './lib/desktop';
 import { performNativeBrowserRequest } from './lib/nativeBrowserAgent';
-import { activeMissionAfterNativeBrowserRequest, browserKeyForMission } from './lib/browserSessionIdentity';
+import {
+  activeMissionAfterNativeBrowserRequest,
+  browserKeyForMission,
+} from './lib/browserSessionIdentity';
 import Sidebar from './components/Sidebar';
 import ChatView from './components/ChatView';
 import MissionControl from './components/MissionControl';
@@ -32,7 +42,14 @@ import { toast } from './lib/toast';
 
 function ContextListIcon({ className }: { className?: string }) {
   return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" className={className}>
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      className={className}
+    >
       <circle cx="5" cy="8" r="1.6" />
       <line x1="10" y1="8" x2="19" y2="8" />
       <circle cx="5" cy="16" r="1.6" />
@@ -53,7 +70,8 @@ export default function App() {
   const [forceWizard, setForceWizard] = useState(false);
   const [bannerDismissed, setBannerDismissed] = useState(false);
   const launchHandled = useRef(false);
-  const showWizard = !embedded && onboard.ready && (forceWizard || shouldShowOnboarding(onboard.onboarding));
+  const showWizard =
+    !embedded && onboard.ready && (forceWizard || shouldShowOnboarding(onboard.onboarding));
   const activeMission = state.activeMissionId ? state.missions[state.activeMissionId] : null;
   const repoStatus = useRepoStatus(activeMission?.cwd ?? '');
   // The view is a real mission only when the active session is a mission orchestrator,
@@ -64,14 +82,16 @@ export default function App() {
   const focused = isMissionView;
   // A normal/spec session only has something worth showing once a message has
   // been sent (the first transcript is seeded from the opening prompt).
-  const hasSessionContent = !!activeMission && (state.transcripts[activeMission.id]?.length ?? 0) > 0;
+  const hasSessionContent =
+    !!activeMission && (state.transcripts[activeMission.id]?.length ?? 0) > 0;
   // The context toggle is meaningful in Mission Control (always) and in a normal
   // chat only after it has content; otherwise there is nothing to open.
   const canToggleContext = isMissionView || hasSessionContent;
   // The context panel floats *over* the chat as an overlay (it does not shrink
   // the main scroll area), so the page scrollbar stays pinned to the window's
   // right edge instead of sliding inward and looking like a divider.
-  const rightPanelVisible = !focused && !showBrowserPane && state.rightPanelOpen && hasSessionContent;
+  const rightPanelVisible =
+    !focused && !showBrowserPane && state.rightPanelOpen && hasSessionContent;
   const requestedHistory = useRef(new Set<string>());
   const [browserPaneWidth, setBrowserPaneWidth] = useState(() => initialBrowserPaneWidth());
   const setStoredBrowserPaneWidth = useCallback((width: number) => {
@@ -79,7 +99,9 @@ export default function App() {
     setBrowserPaneWidth(next);
     try {
       localStorage.setItem(BROWSER_PANE_WIDTH_STORAGE_KEY, String(next));
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
   }, []);
 
   const toggleBrowserPane = useCallback(() => {
@@ -168,7 +190,10 @@ export default function App() {
 
   // "Run setup again" from Settings re-opens the tour.
   useEffect(() => {
-    const onOpen = () => { setBannerDismissed(false); setForceWizard(true); };
+    const onOpen = () => {
+      setBannerDismissed(false);
+      setForceWizard(true);
+    };
     window.addEventListener('droid:open-onboarding', onOpen);
     return () => window.removeEventListener('droid:open-onboarding', onOpen);
   }, []);
@@ -177,9 +202,15 @@ export default function App() {
     if (embedded) return;
     const unsub = bridge.subscribe((event) => {
       if (event.type !== 'browser.native.request') return;
-      const activeBrowserKey = browserKeyForMission(state.activeMissionId ? state.missions[state.activeMissionId] : undefined);
+      const activeBrowserKey = browserKeyForMission(
+        state.activeMissionId ? state.missions[state.activeMissionId] : undefined,
+      );
       const requestIsForActiveChat = activeBrowserKey === event.request.missionId;
-      const nextActiveMissionId = activeMissionAfterNativeBrowserRequest(state.activeMissionId, event.request, state.missions);
+      const nextActiveMissionId = activeMissionAfterNativeBrowserRequest(
+        state.activeMissionId,
+        event.request,
+        state.missions,
+      );
       if (nextActiveMissionId !== state.activeMissionId) {
         dispatch({ type: 'SET_ACTIVE_MISSION', id: nextActiveMissionId });
       }
@@ -204,7 +235,8 @@ export default function App() {
   useEffect(() => {
     if (embedded) return;
     if (!activeMission) return;
-    if (state.historyLoaded[activeMission.id] || requestedHistory.current.has(activeMission.id)) return;
+    if (state.historyLoaded[activeMission.id] || requestedHistory.current.has(activeMission.id))
+      return;
     requestedHistory.current.add(activeMission.id);
     loadMissionHistory(activeMission.id);
   }, [activeMission, embedded, state.historyLoaded]);
@@ -250,11 +282,19 @@ export default function App() {
     return () => window.removeEventListener('keydown', handler);
   }, [dispatch, toggleBrowserPane, toggleRightPanel]);
 
-  const setupBlocker = !showWizard && !embedded && onboard.ready && onboard.onboarding?.completed === true && hasSetupBlocker(onboard.env);
+  const setupBlocker =
+    !showWizard &&
+    !embedded &&
+    onboard.ready &&
+    onboard.onboarding?.completed === true &&
+    hasSetupBlocker(onboard.env);
   const showBanner = !bannerDismissed && setupBlocker;
 
   return (
-    <div id="app-root" className="h-screen w-screen flex flex-col bg-droid-bg text-droid-text overflow-hidden relative">
+    <div
+      id="app-root"
+      className="h-screen w-screen flex flex-col bg-droid-bg text-droid-text overflow-hidden relative"
+    >
       {showBanner && (
         <SetupBanner
           kind="blocker"
@@ -342,7 +382,10 @@ export default function App() {
           would re-assert `drag` over these buttons and swallow their clicks
           (Electron #27149). They stay absolutely positioned, so paint order and
           layout are unchanged. */}
-      <div data-electron-drag-region className="absolute top-0 left-[92px] h-9 z-40 flex items-center gap-1.5">
+      <div
+        data-electron-drag-region
+        className="absolute top-0 left-[92px] h-9 z-40 flex items-center gap-1.5"
+      >
         <button
           onClick={() => dispatch({ type: 'TOGGLE_SIDEBAR' })}
           className="p-1.5 rounded-md text-droid-text-muted/70 hover:text-droid-text hover:bg-droid-elevated/60 transition-colors"
@@ -363,7 +406,10 @@ export default function App() {
         </button>
       </div>
 
-      <div data-electron-drag-region className="absolute top-0 right-0 h-9 z-40 flex items-center gap-1 pr-3">
+      <div
+        data-electron-drag-region
+        className="absolute top-0 right-0 h-9 z-40 flex items-center gap-1 pr-3"
+      >
         {activeMission?.cwd && !state.browserOpen && (
           <EditorOpenMenu cwd={activeMission.cwd} hasRepo={!!repoStatus} variant="toolbar" />
         )}
@@ -391,7 +437,10 @@ export default function App() {
         {showWizard && (
           <OnboardingWizard
             controller={onboard}
-            onComplete={() => { setForceWizard(false); setBannerDismissed(false); }}
+            onComplete={() => {
+              setForceWizard(false);
+              setBannerDismissed(false);
+            }}
           />
         )}
       </AnimatePresence>
@@ -415,7 +464,8 @@ function BrowserPane({
     </>
   );
 
-  const className = 'relative shrink-0 overflow-hidden border-l border-droid-border bg-droid-bg shadow-[-24px_0_60px_rgba(0,0,0,0.18)]';
+  const className =
+    'relative shrink-0 overflow-hidden border-l border-droid-border bg-droid-bg shadow-[-24px_0_60px_rgba(0,0,0,0.18)]';
   if (!animated) {
     return (
       <aside key="browser-pane" className={className} style={{ width }}>
@@ -480,13 +530,16 @@ function initialBrowserPaneWidth(): number {
   try {
     const stored = Number(localStorage.getItem(BROWSER_PANE_WIDTH_STORAGE_KEY));
     if (Number.isFinite(stored) && stored > 0) return clampBrowserPane(stored);
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
   return clampBrowserPane(Math.round(window.innerWidth * 0.44));
 }
 
 function clampBrowserPane(width: number): number {
-  const viewportMax = typeof window === 'undefined'
-    ? BROWSER_PANE_MAX
-    : Math.max(BROWSER_PANE_MIN, Math.min(BROWSER_PANE_MAX, Math.round(window.innerWidth - 520)));
+  const viewportMax =
+    typeof window === 'undefined'
+      ? BROWSER_PANE_MAX
+      : Math.max(BROWSER_PANE_MIN, Math.min(BROWSER_PANE_MAX, Math.round(window.innerWidth - 520)));
   return Math.min(viewportMax, Math.max(BROWSER_PANE_MIN, Math.round(width)));
 }

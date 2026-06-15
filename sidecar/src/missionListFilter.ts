@@ -31,9 +31,10 @@ export function filterMissionListSummaries(
   // An explicit limit caps each workspace (used for bootstrap-style loads);
   // when omitted, every known session for the requested workspaces is returned
   // so the sidebar can reveal them on demand.
-  const limit = options.limitPerWorkspace === undefined
-    ? undefined
-    : Math.max(1, Math.min(options.limitPerWorkspace, 50));
+  const limit =
+    options.limitPerWorkspace === undefined
+      ? undefined
+      : Math.max(1, Math.min(options.limitPerWorkspace, 50));
   const requested = new Set(workspaceCwds);
   const grouped = new Map<string, MissionSummary[]>();
   const plain: MissionSummary[] = [];
@@ -53,8 +54,8 @@ export function filterMissionListSummaries(
 
   return [
     ...capped(plain.sort((a, b) => b.updatedAt - a.updatedAt)),
-    ...workspaceCwds
-      .flatMap((cwd) => capped((grouped.get(cwd) ?? []).sort((a, b) => b.updatedAt - a.updatedAt))),
-  ]
-    .sort((a, b) => b.updatedAt - a.updatedAt);
+    ...workspaceCwds.flatMap((cwd) =>
+      capped((grouped.get(cwd) ?? []).sort((a, b) => b.updatedAt - a.updatedAt)),
+    ),
+  ].sort((a, b) => b.updatedAt - a.updatedAt);
 }

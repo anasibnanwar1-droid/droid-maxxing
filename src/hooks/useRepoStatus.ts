@@ -15,7 +15,8 @@ export function useRepoStatus(cwd: string): RepoStatus | null | undefined {
     const refresh = () => {
       const requestId = ++requestRef.current;
       void getRepoStatus(cwd).then((next) => {
-        if (!cancelled && isCurrentRepoStatusRequest(requestId, requestRef.current)) setStatus(next);
+        if (!cancelled && isCurrentRepoStatusRequest(requestId, requestRef.current))
+          setStatus(next);
       });
     };
 

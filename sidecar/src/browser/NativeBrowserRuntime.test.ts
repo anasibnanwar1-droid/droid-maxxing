@@ -31,7 +31,10 @@ test('NativeBrowserRuntime sends live browser requests with mission and session 
   await runtime.click(12, 34);
 
   assert.equal(snapshot.url, 'https://example.com/');
-  assert.deepEqual(requests.map((request) => request.action), ['open', 'reload', 'click']);
+  assert.deepEqual(
+    requests.map((request) => request.action),
+    ['open', 'reload', 'click'],
+  );
   assert.equal(requests[0].missionId, 'mission-one');
   assert.equal(requests[0].sessionId, 'browser-one');
   assert.deepEqual(requests[0].viewport, { width: 900, height: 700, deviceScaleFactor: 2 });

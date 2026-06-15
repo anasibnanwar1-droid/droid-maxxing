@@ -15,7 +15,7 @@
     --droid-accent: #ee6018;
     --droid-green: #6a8a6a;
     --droid-orange: #b06a4a;
-    --ui-font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    --ui-font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
     --ui-font-size: 14px;
     --ui-zoom: 1;
     --code-font-size: 12px;
@@ -23,7 +23,9 @@
     --sidebar-blur: none;
   }
 
-  html, body, #root {
+  html,
+  body,
+  #root {
     height: 100%;
     overflow: hidden;
   }
@@ -45,14 +47,16 @@
      macOS vibrancy (the wallpaper behind the window) shows through the sidebar.
      The main content area paints its own opaque background, so only the
      semi-transparent sidebar reveals what's behind the window. */
-  html[data-translucent="true"],
-  html[data-translucent="true"] body,
-  html[data-translucent="true"] #root,
-  html[data-translucent="true"] #app-root {
+  html[data-translucent='true'],
+  html[data-translucent='true'] body,
+  html[data-translucent='true'] #root,
+  html[data-translucent='true'] #app-root {
     background-color: transparent !important;
   }
 
-  code, pre, .font-mono {
+  code,
+  pre,
+  .font-mono {
     font-size: var(--code-font-size);
   }
 
@@ -96,12 +100,21 @@
   }
 
   @keyframes shimmer {
-    0% { background-position: 200% 0; }
-    100% { background-position: -200% 0; }
+    0% {
+      background-position: 200% 0;
+    }
+    100% {
+      background-position: -200% 0;
+    }
   }
 
   .shimmer-text {
-    background: linear-gradient(90deg, var(--droid-text-muted) 0%, var(--droid-text) 50%, var(--droid-text-muted) 100%);
+    background: linear-gradient(
+      90deg,
+      var(--droid-text-muted) 0%,
+      var(--droid-text) 50%,
+      var(--droid-text-muted) 100%
+    );
     background-size: 200% 100%;
     -webkit-background-clip: text;
     background-clip: text;

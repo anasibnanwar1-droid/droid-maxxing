@@ -10,8 +10,16 @@ import { getAppVersion, type AppUpdateInfo } from '../lib/onboarding';
 import { refreshAppUpdate, startAppUpdate } from '../lib/appUpdate';
 
 const PRESET_ACCENTS = [
-  '#ee6018', '#ef6f2e', '#d15010', '#e8a838', '#4a9e7a',
-  '#4ecdc4', '#7a8aaa', '#a78bfa', '#f87171', '#fcfcfc',
+  '#ee6018',
+  '#ef6f2e',
+  '#d15010',
+  '#e8a838',
+  '#4a9e7a',
+  '#4ecdc4',
+  '#7a8aaa',
+  '#a78bfa',
+  '#f87171',
+  '#fcfcfc',
 ];
 
 const PRESET_THEMES = {
@@ -38,9 +46,12 @@ export function uiFontStack(id: string): string {
 
 // Base palette for a theme mode. `system` follows the OS preference.
 export function paletteForMode(mode: 'dark' | 'light' | 'system') {
-  const resolved = mode === 'system'
-    ? (window.matchMedia?.('(prefers-color-scheme: light)').matches ? 'light' : 'dark')
-    : mode;
+  const resolved =
+    mode === 'system'
+      ? window.matchMedia?.('(prefers-color-scheme: light)').matches
+        ? 'light'
+        : 'dark'
+      : mode;
   return resolved === 'light' ? PRESET_THEMES.light : PRESET_THEMES.dark;
 }
 
@@ -61,11 +72,7 @@ const NAV: { group: string; items: NavItem[] }[] = [
   },
   {
     group: 'Integrations',
-    items: [
-      { label: 'Snapshots' },
-      { label: 'MCP servers' },
-      { label: 'Browser' },
-    ],
+    items: [{ label: 'Snapshots' }, { label: 'MCP servers' }, { label: 'Browser' }],
   },
   {
     group: 'Coding',
@@ -84,7 +91,15 @@ const NAV: { group: string; items: NavItem[] }[] = [
 ];
 
 /* ── shared controls ── */
-function ColorSwatch({ color, active, onClick }: { color: string; active: boolean; onClick: () => void }) {
+function ColorSwatch({
+  color,
+  active,
+  onClick,
+}: {
+  color: string;
+  active: boolean;
+  onClick: () => void;
+}) {
   return (
     <button
       onClick={onClick}
@@ -98,8 +113,16 @@ function ColorSwatch({ color, active, onClick }: { color: string; active: boolea
   );
 }
 
-function ModeButton({ active, onClick, icon: Icon, label }: {
-  active: boolean; onClick: () => void; icon: React.ElementType; label: string;
+function ModeButton({
+  active,
+  onClick,
+  icon: Icon,
+  label,
+}: {
+  active: boolean;
+  onClick: () => void;
+  icon: React.ElementType;
+  label: string;
 }) {
   return (
     <button
@@ -116,8 +139,22 @@ function ModeButton({ active, onClick, icon: Icon, label }: {
   );
 }
 
-function Slider({ label, sub, value, min, max, onChange, suffix = '' }: {
-  label: string; sub?: string; value: number; min: number; max: number; onChange: (v: number) => void; suffix?: string;
+function Slider({
+  label,
+  sub,
+  value,
+  min,
+  max,
+  onChange,
+  suffix = '',
+}: {
+  label: string;
+  sub?: string;
+  value: number;
+  min: number;
+  max: number;
+  onChange: (v: number) => void;
+  suffix?: string;
 }) {
   return (
     <div className="flex items-center justify-between gap-3 py-2.5 border-b border-droid-border">
@@ -135,13 +172,26 @@ function Slider({ label, sub, value, min, max, onChange, suffix = '' }: {
           className="w-32 h-1 rounded-full cursor-pointer"
           style={{ accentColor: 'var(--droid-accent)' }}
         />
-        <span className="font-mono text-[11px] text-droid-text-muted w-8 text-right">{value}{suffix}</span>
+        <span className="font-mono text-[11px] text-droid-text-muted w-8 text-right">
+          {value}
+          {suffix}
+        </span>
       </div>
     </div>
   );
 }
 
-function Toggle({ label, sub, checked, onChange }: { label: string; sub?: string; checked: boolean; onChange: (v: boolean) => void }) {
+function Toggle({
+  label,
+  sub,
+  checked,
+  onChange,
+}: {
+  label: string;
+  sub?: string;
+  checked: boolean;
+  onChange: (v: boolean) => void;
+}) {
   return (
     <div className="flex items-center justify-between py-2.5 border-b border-droid-border">
       <div>
@@ -152,7 +202,9 @@ function Toggle({ label, sub, checked, onChange }: { label: string; sub?: string
         onClick={() => onChange(!checked)}
         className={`w-10 h-6 rounded-full transition-colors shrink-0 flex items-center p-0.5 ${checked ? 'bg-droid-accent' : 'bg-droid-border'}`}
       >
-        <span className={`w-5 h-5 rounded-full bg-white shadow-sm transition-transform ${checked ? 'translate-x-4' : 'translate-x-0'}`} />
+        <span
+          className={`w-5 h-5 rounded-full bg-white shadow-sm transition-transform ${checked ? 'translate-x-4' : 'translate-x-0'}`}
+        />
       </button>
     </div>
   );
@@ -161,12 +213,22 @@ function Toggle({ label, sub, checked, onChange }: { label: string; sub?: string
 function DiffPreview() {
   return (
     <div className="rounded-lg border border-droid-border overflow-hidden font-mono text-[11px] leading-5">
-      <div className="px-3 py-1.5 bg-droid-elevated border-b border-droid-border text-droid-text-muted">themePreview.ts</div>
+      <div className="px-3 py-1.5 bg-droid-elevated border-b border-droid-border text-droid-text-muted">
+        themePreview.ts
+      </div>
       <div className="px-3 py-1.5">
-        <div style={{ backgroundColor: 'rgba(176,106,74,0.12)', color: 'var(--droid-orange)' }}>−  accent: "#ff5d2e",</div>
-        <div style={{ backgroundColor: 'rgba(106,138,106,0.12)', color: 'var(--droid-green)' }}>+  accent: "#ee6018",</div>
-        <div style={{ backgroundColor: 'rgba(176,106,74,0.12)', color: 'var(--droid-orange)' }}>−  surface: "#181818",</div>
-        <div style={{ backgroundColor: 'rgba(106,138,106,0.12)', color: 'var(--droid-green)' }}>+  surface: "#111111",</div>
+        <div style={{ backgroundColor: 'rgba(176,106,74,0.12)', color: 'var(--droid-orange)' }}>
+          − accent: "#ff5d2e",
+        </div>
+        <div style={{ backgroundColor: 'rgba(106,138,106,0.12)', color: 'var(--droid-green)' }}>
+          + accent: "#ee6018",
+        </div>
+        <div style={{ backgroundColor: 'rgba(176,106,74,0.12)', color: 'var(--droid-orange)' }}>
+          − surface: "#181818",
+        </div>
+        <div style={{ backgroundColor: 'rgba(106,138,106,0.12)', color: 'var(--droid-green)' }}>
+          + surface: "#111111",
+        </div>
       </div>
     </div>
   );
@@ -182,7 +244,11 @@ function SectionTitle({ title, sub }: { title: string; sub?: string }) {
 }
 
 function GroupLabel({ children }: { children: React.ReactNode }) {
-  return <div className="text-[11px] font-medium text-droid-text-muted uppercase tracking-wider mb-2 mt-1">{children}</div>;
+  return (
+    <div className="text-[11px] font-medium text-droid-text-muted uppercase tracking-wider mb-2 mt-1">
+      {children}
+    </div>
+  );
 }
 
 /* ── appearance content ── */
@@ -203,12 +269,29 @@ function AppearanceSection() {
         <div className="flex items-start justify-between mb-3">
           <div>
             <div className="text-[13px] text-droid-text">Theme</div>
-            <div className="text-[11px] text-droid-text-muted">Use light, dark, or match your system</div>
+            <div className="text-[11px] text-droid-text-muted">
+              Use light, dark, or match your system
+            </div>
           </div>
           <div className="flex gap-1">
-            <ModeButton active={theme.mode === 'light'} onClick={() => updateTheme({ mode: 'light', ...paletteForMode('light') })} icon={Sun} label="Light" />
-            <ModeButton active={theme.mode === 'dark'} onClick={() => updateTheme({ mode: 'dark', ...paletteForMode('dark') })} icon={Moon} label="Dark" />
-            <ModeButton active={theme.mode === 'system'} onClick={() => updateTheme({ mode: 'system', ...paletteForMode('system') })} icon={Monitor} label="System" />
+            <ModeButton
+              active={theme.mode === 'light'}
+              onClick={() => updateTheme({ mode: 'light', ...paletteForMode('light') })}
+              icon={Sun}
+              label="Light"
+            />
+            <ModeButton
+              active={theme.mode === 'dark'}
+              onClick={() => updateTheme({ mode: 'dark', ...paletteForMode('dark') })}
+              icon={Moon}
+              label="Dark"
+            />
+            <ModeButton
+              active={theme.mode === 'system'}
+              onClick={() => updateTheme({ mode: 'system', ...paletteForMode('system') })}
+              icon={Monitor}
+              label="System"
+            />
           </div>
         </div>
         <DiffPreview />
@@ -223,7 +306,10 @@ function AppearanceSection() {
             onClick={() => updateTheme(colors)}
             className="flex flex-col items-center gap-1.5 p-2 rounded-lg border border-droid-border hover:border-droid-border-hover transition-colors"
           >
-            <div className="w-full h-8 rounded-md border border-droid-border" style={{ backgroundColor: colors.bg }} />
+            <div
+              className="w-full h-8 rounded-md border border-droid-border"
+              style={{ backgroundColor: colors.bg }}
+            />
             <span className="text-[10px] text-droid-text-muted capitalize">{name}</span>
           </button>
         ))}
@@ -233,17 +319,47 @@ function AppearanceSection() {
       <GroupLabel>Colors</GroupLabel>
       <div className="rounded-xl border border-droid-border bg-droid-surface p-4 mb-6">
         <div className="space-y-3">
-          <ColorField label="Accent" description="Highlights, active states, send button & design-mode controls" value={theme.accent} onChange={(v) => updateTheme({ accent: v })} />
-          <ColorField label="App background" description="The main window behind everything" value={theme.bg} onChange={(v) => updateTheme({ bg: v })} />
-          <ColorField label="Text color" description="Default color for all text" value={theme.fg} onChange={(v) => updateTheme({ fg: v })} />
-          <ColorField label="Panel background" description="Sidebar, cards and raised surfaces" value={theme.surface} onChange={(v) => updateTheme({ surface: v })} />
-          <ColorField label="Borders" description="Dividers and outlines between sections" value={theme.border} onChange={(v) => updateTheme({ border: v })} />
+          <ColorField
+            label="Accent"
+            description="Highlights, active states, send button & design-mode controls"
+            value={theme.accent}
+            onChange={(v) => updateTheme({ accent: v })}
+          />
+          <ColorField
+            label="App background"
+            description="The main window behind everything"
+            value={theme.bg}
+            onChange={(v) => updateTheme({ bg: v })}
+          />
+          <ColorField
+            label="Text color"
+            description="Default color for all text"
+            value={theme.fg}
+            onChange={(v) => updateTheme({ fg: v })}
+          />
+          <ColorField
+            label="Panel background"
+            description="Sidebar, cards and raised surfaces"
+            value={theme.surface}
+            onChange={(v) => updateTheme({ surface: v })}
+          />
+          <ColorField
+            label="Borders"
+            description="Dividers and outlines between sections"
+            value={theme.border}
+            onChange={(v) => updateTheme({ border: v })}
+          />
         </div>
         <div className="mt-3.5 pt-3.5 border-t border-droid-border">
           <div className="text-[10.5px] text-droid-text-muted mb-2">Quick accents</div>
           <div className="flex flex-wrap gap-1.5">
             {PRESET_ACCENTS.map((c) => (
-              <ColorSwatch key={c} color={c} active={theme.accent.toLowerCase() === c.toLowerCase()} onClick={() => updateTheme({ accent: c })} />
+              <ColorSwatch
+                key={c}
+                color={c}
+                active={theme.accent.toLowerCase() === c.toLowerCase()}
+                onClick={() => updateTheme({ accent: c })}
+              />
             ))}
           </div>
         </div>
@@ -255,7 +371,9 @@ function AppearanceSection() {
         <div className="flex items-center justify-between py-2.5 border-b border-droid-border">
           <div>
             <div className="text-[13px] text-droid-text">UI font</div>
-            <div className="text-[11px] text-droid-text-muted">Typeface for the whole app (defaults to your OS font)</div>
+            <div className="text-[11px] text-droid-text-muted">
+              Typeface for the whole app (defaults to your OS font)
+            </div>
           </div>
           <Dropdown
             value={theme.uiFont}
@@ -264,10 +382,38 @@ function AppearanceSection() {
             onChange={(v) => updateTheme({ uiFont: v })}
           />
         </div>
-        <Slider label="UI font size" sub="Base size used for the Mission Control UI" value={theme.uiFontSize} min={12} max={18} onChange={(v) => updateTheme({ uiFontSize: v })} suffix="px" />
-        <Slider label="Code font size" sub="Base size for code across chats and diffs" value={theme.codeFontSize} min={10} max={16} onChange={(v) => updateTheme({ codeFontSize: v })} suffix="px" />
-        <Slider label="Contrast" sub="Adjust overall UI contrast" value={theme.contrast} min={40} max={100} onChange={(v) => updateTheme({ contrast: v })} />
-        <Toggle label="Translucent sidebar" sub="Blur and lighten the sidebar surface" checked={theme.translucentSidebar} onChange={(v) => updateTheme({ translucentSidebar: v })} />
+        <Slider
+          label="UI font size"
+          sub="Base size used for the Mission Control UI"
+          value={theme.uiFontSize}
+          min={12}
+          max={18}
+          onChange={(v) => updateTheme({ uiFontSize: v })}
+          suffix="px"
+        />
+        <Slider
+          label="Code font size"
+          sub="Base size for code across chats and diffs"
+          value={theme.codeFontSize}
+          min={10}
+          max={16}
+          onChange={(v) => updateTheme({ codeFontSize: v })}
+          suffix="px"
+        />
+        <Slider
+          label="Contrast"
+          sub="Adjust overall UI contrast"
+          value={theme.contrast}
+          min={40}
+          max={100}
+          onChange={(v) => updateTheme({ contrast: v })}
+        />
+        <Toggle
+          label="Translucent sidebar"
+          sub="Blur and lighten the sidebar surface"
+          checked={theme.translucentSidebar}
+          onChange={(v) => updateTheme({ translucentSidebar: v })}
+        />
       </div>
     </div>
   );
@@ -282,7 +428,8 @@ function formatTokenLimit(n: number): string {
 }
 
 const TOKEN_PRESETS = [
-  100_000, 200_000, 250_000, 300_000, 400_000, 500_000, 600_000, 700_000, 800_000, 900_000, 1_000_000,
+  100_000, 200_000, 250_000, 300_000, 400_000, 500_000, 600_000, 700_000, 800_000, 900_000,
+  1_000_000,
 ];
 const RECOMMENDED_LIMIT = 250_000;
 
@@ -305,7 +452,9 @@ function TokenLimitSelect({
     const onDown = (e: MouseEvent) => {
       if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
     };
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
     window.addEventListener('mousedown', onDown);
     window.addEventListener('keydown', onKey);
     return () => {
@@ -316,7 +465,10 @@ function TokenLimitSelect({
 
   const label = value === undefined ? 'Factory default' : formatTokenLimit(value);
 
-  const choose = (n?: number) => { onSelect(n); setOpen(false); };
+  const choose = (n?: number) => {
+    onSelect(n);
+    setOpen(false);
+  };
 
   const Row = ({ n, l, sub }: { n?: number; l: string; sub?: string }) => {
     const active = value === n;
@@ -329,7 +481,13 @@ function TokenLimitSelect({
       >
         <span className="flex-1 font-mono text-[12.5px] text-droid-text">{l}</span>
         {sub && <span className="text-[10.5px] text-droid-text-muted">{sub}</span>}
-        {active && <Check className="w-3.5 h-3.5 shrink-0" style={{ color: 'var(--droid-accent)' }} strokeWidth={3} />}
+        {active && (
+          <Check
+            className="w-3.5 h-3.5 shrink-0"
+            style={{ color: 'var(--droid-accent)' }}
+            strokeWidth={3}
+          />
+        )}
       </button>
     );
   };
@@ -339,11 +497,15 @@ function TokenLimitSelect({
       <button
         onClick={() => setOpen((v) => !v)}
         className={`${width} flex items-center justify-between gap-2 rounded-lg border px-2.5 py-1.5 text-[12px] transition-colors ${
-          open ? 'border-droid-border-hover bg-droid-elevated text-droid-text' : 'border-droid-border bg-droid-bg/60 text-droid-text hover:border-droid-border-hover'
+          open
+            ? 'border-droid-border-hover bg-droid-elevated text-droid-text'
+            : 'border-droid-border bg-droid-bg/60 text-droid-text hover:border-droid-border-hover'
         }`}
       >
         <span className="truncate font-mono">{label}</span>
-        <ChevronDown className={`w-3.5 h-3.5 text-droid-text-muted transition-transform ${open ? 'rotate-180' : ''}`} />
+        <ChevronDown
+          className={`w-3.5 h-3.5 text-droid-text-muted transition-transform ${open ? 'rotate-180' : ''}`}
+        />
       </button>
 
       {open && (
@@ -351,11 +513,17 @@ function TokenLimitSelect({
           <div className="max-h-72 overflow-y-auto space-y-0.5">
             <Row l="Factory default" sub="model-dependent" />
             {TOKEN_PRESETS.map((n) => (
-              <Row key={n} n={n} l={formatTokenLimit(n)} sub={n === RECOMMENDED_LIMIT ? 'recommended' : undefined} />
+              <Row
+                key={n}
+                n={n}
+                l={formatTokenLimit(n)}
+                sub={n === RECOMMENDED_LIMIT ? 'recommended' : undefined}
+              />
             ))}
           </div>
           <p className="mt-2 border-t border-droid-border px-1.5 pt-2 text-[10.5px] leading-[1.5] text-droid-text-muted">
-            If a model's context window is lower than the selected value, the session starts with the lower effective limit.
+            If a model's context window is lower than the selected value, the session starts with
+            the lower effective limit.
           </p>
         </div>
       )}
@@ -390,7 +558,9 @@ function Dropdown({
     const onDown = (e: MouseEvent) => {
       if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
     };
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
     window.addEventListener('mousedown', onDown);
     window.addEventListener('keydown', onKey);
     return () => {
@@ -406,32 +576,49 @@ function Dropdown({
       <button
         onClick={() => setOpen((v) => !v)}
         className={`${width} flex items-center justify-between gap-2 rounded-lg border px-2.5 py-1.5 text-[12px] transition-colors ${
-          open ? 'border-droid-border-hover bg-droid-elevated text-droid-text' : 'border-droid-border bg-droid-bg/60 text-droid-text hover:border-droid-border-hover'
+          open
+            ? 'border-droid-border-hover bg-droid-elevated text-droid-text'
+            : 'border-droid-border bg-droid-bg/60 text-droid-text hover:border-droid-border-hover'
         }`}
       >
         <span className="flex min-w-0 items-center gap-2">
           {triggerIcon ?? sel?.icon}
           <span className="truncate">{sel?.label ?? placeholder}</span>
         </span>
-        <ChevronDown className={`w-3.5 h-3.5 shrink-0 text-droid-text-muted transition-transform ${open ? 'rotate-180' : ''}`} />
+        <ChevronDown
+          className={`w-3.5 h-3.5 shrink-0 text-droid-text-muted transition-transform ${open ? 'rotate-180' : ''}`}
+        />
       </button>
 
       {open && (
-        <div className={`absolute ${align === 'right' ? 'right-0' : 'left-0'} top-full z-50 mt-1.5 min-w-full rounded-xl border border-droid-border bg-droid-surface p-2 shadow-2xl shadow-black/50`}>
+        <div
+          className={`absolute ${align === 'right' ? 'right-0' : 'left-0'} top-full z-50 mt-1.5 min-w-full rounded-xl border border-droid-border bg-droid-surface p-2 shadow-2xl shadow-black/50`}
+        >
           <div className="max-h-72 overflow-y-auto space-y-0.5">
             {options.map((o) => {
               const active = o.value === value;
               return (
                 <button
                   key={o.value}
-                  onClick={() => { onChange(o.value); setOpen(false); }}
+                  onClick={() => {
+                    onChange(o.value);
+                    setOpen(false);
+                  }}
                   className={`flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left transition-colors ${
                     active ? 'bg-droid-elevated' : 'hover:bg-droid-elevated/50'
                   }`}
                 >
                   {o.icon}
-                  <span className="min-w-0 flex-1 truncate text-[12.5px] text-droid-text">{o.label}</span>
-                  {active && <Check className="w-3.5 h-3.5 shrink-0" style={{ color: 'var(--droid-accent)' }} strokeWidth={3} />}
+                  <span className="min-w-0 flex-1 truncate text-[12.5px] text-droid-text">
+                    {o.label}
+                  </span>
+                  {active && (
+                    <Check
+                      className="w-3.5 h-3.5 shrink-0"
+                      style={{ color: 'var(--droid-accent)' }}
+                      strokeWidth={3}
+                    />
+                  )}
                 </button>
               );
             })}
@@ -461,7 +648,9 @@ function CompactionModelPicker({
     const onDown = (e: MouseEvent) => {
       if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
     };
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
     window.addEventListener('mousedown', onDown);
     window.addEventListener('keydown', onKey);
     return () => {
@@ -476,7 +665,9 @@ function CompactionModelPicker({
 
   const q = query.trim().toLowerCase();
   const filtered = q
-    ? models.filter((m) => m.displayName.toLowerCase().includes(q) || m.id.toLowerCase().includes(q))
+    ? models.filter(
+        (m) => m.displayName.toLowerCase().includes(q) || m.id.toLowerCase().includes(q),
+      )
     : models;
 
   const choose = (id: string) => {
@@ -485,7 +676,17 @@ function CompactionModelPicker({
     setQuery('');
   };
 
-  const Option = ({ id, label: l, sub, current }: { id: string; label: string; sub?: string; current?: boolean }) => {
+  const Option = ({
+    id,
+    label: l,
+    sub,
+    current,
+  }: {
+    id: string;
+    label: string;
+    sub?: string;
+    current?: boolean;
+  }) => {
     const active = selected === id;
     return (
       <button
@@ -494,12 +695,26 @@ function CompactionModelPicker({
           active ? 'bg-droid-elevated' : 'hover:bg-droid-elevated/50'
         }`}
       >
-        {!current && <ModelIcon provider={providerOf(models.find((m) => m.id === id), id)} size={16} />}
+        {!current && (
+          <ModelIcon
+            provider={providerOf(
+              models.find((m) => m.id === id),
+              id,
+            )}
+            size={16}
+          />
+        )}
         <div className="min-w-0 flex-1">
           <div className="text-[12.5px] text-droid-text truncate">{l}</div>
           {sub && <div className="text-[10.5px] text-droid-text-muted truncate">{sub}</div>}
         </div>
-        {active && <Check className="w-3.5 h-3.5 shrink-0" style={{ color: 'var(--droid-accent)' }} strokeWidth={3} />}
+        {active && (
+          <Check
+            className="w-3.5 h-3.5 shrink-0"
+            style={{ color: 'var(--droid-accent)' }}
+            strokeWidth={3}
+          />
+        )}
       </button>
     );
   };
@@ -509,12 +724,16 @@ function CompactionModelPicker({
       <button
         onClick={() => setOpen((v) => !v)}
         className={`flex items-center gap-2 rounded-lg border px-2.5 py-1.5 text-[12px] transition-colors ${
-          open ? 'border-droid-border-hover bg-droid-elevated text-droid-text' : 'border-droid-border bg-droid-bg/60 text-droid-text hover:border-droid-border-hover'
+          open
+            ? 'border-droid-border-hover bg-droid-elevated text-droid-text'
+            : 'border-droid-border bg-droid-bg/60 text-droid-text hover:border-droid-border-hover'
         }`}
       >
         {!isCurrent && <ModelIcon provider={providerOf(selModel, selected)} size={14} />}
         <span className="max-w-[160px] truncate">{label}</span>
-        <ChevronDown className={`w-3.5 h-3.5 text-droid-text-muted transition-transform ${open ? 'rotate-180' : ''}`} />
+        <ChevronDown
+          className={`w-3.5 h-3.5 text-droid-text-muted transition-transform ${open ? 'rotate-180' : ''}`}
+        />
       </button>
 
       {open && (
@@ -530,12 +749,19 @@ function CompactionModelPicker({
             />
           </div>
           <div className="max-h-64 overflow-y-auto space-y-0.5">
-            <Option id="current-model" label="Current model" sub="Use whatever model the session runs" current />
+            <Option
+              id="current-model"
+              label="Current model"
+              sub="Use whatever model the session runs"
+              current
+            />
             {filtered.map((m) => (
               <Option key={m.id} id={m.id} label={m.displayName} sub={m.provider} />
             ))}
             {filtered.length === 0 && (
-              <div className="px-2.5 py-4 text-center text-[12px] text-droid-text-muted">No models match.</div>
+              <div className="px-2.5 py-4 text-center text-[12px] text-droid-text-muted">
+                No models match.
+              </div>
             )}
           </div>
         </div>
@@ -545,12 +771,22 @@ function CompactionModelPicker({
 }
 
 /* ── settings row: label + description on the left, control on the right ── */
-function SettingRow({ label, description, children }: { label: string; description?: string; children: React.ReactNode }) {
+function SettingRow({
+  label,
+  description,
+  children,
+}: {
+  label: string;
+  description?: string;
+  children: React.ReactNode;
+}) {
   return (
     <div className="flex items-center justify-between gap-4 px-4 py-3">
       <div className="min-w-0">
         <div className="text-[13px] text-droid-text">{label}</div>
-        {description && <div className="text-[11px] text-droid-text-muted mt-0.5">{description}</div>}
+        {description && (
+          <div className="text-[11px] text-droid-text-muted mt-0.5">{description}</div>
+        )}
       </div>
       {children}
     </div>
@@ -575,7 +811,9 @@ function GeneralSection() {
   };
 
   const overrideEntries = Object.entries(state.compactionTokenLimitPerModel);
-  const availableForOverride = state.models.filter((m) => !(m.id in state.compactionTokenLimitPerModel));
+  const availableForOverride = state.models.filter(
+    (m) => !(m.id in state.compactionTokenLimitPerModel),
+  );
   const modelLabel = (id: string) => state.models.find((m) => m.id === id)?.displayName ?? id;
 
   return (
@@ -605,8 +843,15 @@ function GeneralSection() {
       {/* Compaction */}
       <GroupLabel>Compaction</GroupLabel>
       <div className="rounded-xl border border-droid-border bg-droid-surface divide-y divide-droid-border mb-8">
-        <SettingRow label="Compaction model" description="Model that summarizes a conversation when it is compacted.">
-          <CompactionModelPicker selected={selected} models={state.models} onSelect={setCompaction} />
+        <SettingRow
+          label="Compaction model"
+          description="Model that summarizes a conversation when it is compacted."
+        >
+          <CompactionModelPicker
+            selected={selected}
+            models={state.models}
+            onSelect={setCompaction}
+          />
         </SettingRow>
         <SettingRow
           label="Token limit"
@@ -623,13 +868,24 @@ function GeneralSection() {
       </p>
       <div className="rounded-xl border border-droid-border bg-droid-surface p-3">
         {overrideEntries.length === 0 && (
-          <div className="text-[12px] text-droid-text-muted px-1 py-1.5">No overrides — every model uses the default limit.</div>
+          <div className="text-[12px] text-droid-text-muted px-1 py-1.5">
+            No overrides — every model uses the default limit.
+          </div>
         )}
 
         <div className="space-y-1.5">
           {overrideEntries.map(([id, limit]) => (
-            <div key={id} className="flex items-center gap-2.5 rounded-lg border border-droid-border bg-droid-bg/40 px-2.5 py-2">
-              <ModelIcon provider={providerOf(state.models.find((m) => m.id === id), id)} size={16} />
+            <div
+              key={id}
+              className="flex items-center gap-2.5 rounded-lg border border-droid-border bg-droid-bg/40 px-2.5 py-2"
+            >
+              <ModelIcon
+                provider={providerOf(
+                  state.models.find((m) => m.id === id),
+                  id,
+                )}
+                size={16}
+              />
               <span className="text-[12px] text-droid-text truncate flex-1">{modelLabel(id)}</span>
               <TokenLimitSelect value={limit} onSelect={(n) => setModelLimit(id, n)} width="w-32" />
               <button
@@ -671,7 +927,9 @@ function Switch({ checked, onChange }: { checked: boolean; onChange: (v: boolean
       onClick={() => onChange(!checked)}
       className={`w-10 h-6 rounded-full transition-colors shrink-0 flex items-center p-0.5 ${checked ? 'bg-droid-accent' : 'bg-droid-border'}`}
     >
-      <span className={`w-5 h-5 rounded-full bg-white shadow-sm transition-transform ${checked ? 'translate-x-4' : 'translate-x-0'}`} />
+      <span
+        className={`w-5 h-5 rounded-full bg-white shadow-sm transition-transform ${checked ? 'translate-x-4' : 'translate-x-0'}`}
+      />
     </button>
   );
 }
@@ -712,13 +970,21 @@ function SetupSection({ onClose }: { onClose: () => void }) {
 
   return (
     <div className="max-w-2xl mx-auto">
-      <SectionTitle title="Setup & updates" sub="Manage the Droid CLI, your sign-in, and app updates." />
+      <SectionTitle
+        title="Setup & updates"
+        sub="Manage the Droid CLI, your sign-in, and app updates."
+      />
 
       <GroupLabel>Droid CLI</GroupLabel>
       <div className="rounded-xl border border-droid-border bg-droid-surface divide-y divide-droid-border mb-8">
-        <SettingRow label="CLI status" description={env?.cli.present ? env.cli.path : 'Not detected on this machine.'}>
+        <SettingRow
+          label="CLI status"
+          description={env?.cli.present ? env.cli.path : 'Not detected on this machine.'}
+        >
           <div className="flex items-center gap-2">
-            <span className="text-[12px] font-mono text-droid-text-muted">{env?.cli.present ? (env.cli.version ?? 'installed') : 'missing'}</span>
+            <span className="text-[12px] font-mono text-droid-text-muted">
+              {env?.cli.present ? (env.cli.version ?? 'installed') : 'missing'}
+            </span>
             <button
               onClick={() => onboard.update(onboarding?.installChannel)}
               disabled={!!installing || !env?.cli.present}
@@ -731,7 +997,16 @@ function SetupSection({ onClose }: { onClose: () => void }) {
         <SettingRow label="Keep the CLI up to date" description="Updates silently on launch.">
           <Switch checked={cliAuto} onChange={(v) => void onboard.patch({ cliAutoUpdate: v })} />
         </SettingRow>
-        <SettingRow label="Sign-in" description={signedIn ? 'Connected to Factory.' : env?.cli.present ? 'Sign in so models can run.' : 'Install the Droid CLI before signing in.'}>
+        <SettingRow
+          label="Sign-in"
+          description={
+            signedIn
+              ? 'Connected to Factory.'
+              : env?.cli.present
+                ? 'Sign in so models can run.'
+                : 'Install the Droid CLI before signing in.'
+          }
+        >
           {signedIn ? (
             <span className="text-[12px] text-droid-green">Signed in</span>
           ) : (
@@ -760,7 +1035,9 @@ function SetupSection({ onClose }: { onClose: () => void }) {
             </button>
             {update?.updateAvailable && (
               <button
-                onClick={() => { void startAppUpdate(update); }}
+                onClick={() => {
+                  void startAppUpdate(update);
+                }}
                 className="px-2.5 h-7 rounded-md bg-droid-accent text-white text-[12px] hover:opacity-90 transition-opacity"
               >
                 Restart & update
@@ -777,7 +1054,10 @@ function SetupSection({ onClose }: { onClose: () => void }) {
       <div className="rounded-xl border border-droid-border bg-droid-surface divide-y divide-droid-border">
         <SettingRow label="Run setup again" description="Re-open the first-run setup tour.">
           <button
-            onClick={() => { window.dispatchEvent(new CustomEvent('droid:open-onboarding')); onClose(); }}
+            onClick={() => {
+              window.dispatchEvent(new CustomEvent('droid:open-onboarding'));
+              onClose();
+            }}
             className="px-2.5 h-7 rounded-md bg-droid-elevated border border-droid-border text-[12px] text-droid-text hover:border-droid-border-hover transition-colors"
           >
             Run setup
@@ -853,13 +1133,17 @@ export default function SettingsPanel() {
                 if (filtered.length === 0) return null;
                 return (
                   <div key={group}>
-                    <div className="text-[10px] font-medium text-droid-text-muted uppercase tracking-wider px-2 mb-1">{group}</div>
+                    <div className="text-[10px] font-medium text-droid-text-muted uppercase tracking-wider px-2 mb-1">
+                      {group}
+                    </div>
                     {filtered.map(({ label }) => (
                       <button
                         key={label}
                         onClick={() => setActive(label)}
                         className={`flex items-center w-full px-2 h-8 rounded-md text-[12px] transition-colors ${
-                          active === label ? 'bg-droid-elevated text-droid-text' : 'text-droid-text-secondary hover:text-droid-text hover:bg-droid-elevated/50'
+                          active === label
+                            ? 'bg-droid-elevated text-droid-text'
+                            : 'text-droid-text-secondary hover:text-droid-text hover:bg-droid-elevated/50'
                         }`}
                       >
                         <span className="truncate">{label}</span>
@@ -903,7 +1187,10 @@ export function applyTheme(theme: ReturnType<typeof useStore>['state']['theme'])
   // we push it closer to the background to keep the subtle look light mode has.
   const bgIsDark = colorLuminance(theme.bg) < 0.4;
   root.style.setProperty('--droid-border', mixHex(theme.border, theme.bg, bgIsDark ? 0.72 : 0.6));
-  root.style.setProperty('--droid-border-hover', mixHex(theme.border, theme.bg, bgIsDark ? 0.4 : 0.2));
+  root.style.setProperty(
+    '--droid-border-hover',
+    mixHex(theme.border, theme.bg, bgIsDark ? 0.4 : 0.2),
+  );
   root.style.setProperty('--droid-text', theme.fg);
   root.style.setProperty('--droid-text-secondary', adjustColor(theme.fg, -30));
   root.style.setProperty('--droid-text-muted', adjustColor(theme.fg, -50));
@@ -929,8 +1216,14 @@ export function applyTheme(theme: ReturnType<typeof useStore>['state']['theme'])
   root.setAttribute('data-translucent', theme.translucentSidebar ? 'true' : 'false');
   const sidebarAlpha = bgIsDark ? '99' : 'f2';
   const sidebarSaturate = bgIsDark ? 'saturate(150%)' : 'saturate(108%)';
-  root.style.setProperty('--sidebar-bg', theme.translucentSidebar ? `${theme.surface}${sidebarAlpha}` : theme.surface);
-  root.style.setProperty('--sidebar-blur', theme.translucentSidebar ? `blur(6px) ${sidebarSaturate}` : 'none');
+  root.style.setProperty(
+    '--sidebar-bg',
+    theme.translucentSidebar ? `${theme.surface}${sidebarAlpha}` : theme.surface,
+  );
+  root.style.setProperty(
+    '--sidebar-blur',
+    theme.translucentSidebar ? `blur(6px) ${sidebarSaturate}` : 'none',
+  );
 
   // Apply contrast as a filter only below 100% so it never creates a stacking
   // context that would defeat the sidebar's backdrop blur at the default value.
@@ -958,7 +1251,11 @@ function adjustColor(hex: string, lighten: number): string {
 
 // Blend `hex` toward `target` by t (0..1).
 function mixHex(hex: string, target: string, t: number): string {
-  const parse = (h: string) => [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)];
+  const parse = (h: string) => [
+    parseInt(h.slice(1, 3), 16),
+    parseInt(h.slice(3, 5), 16),
+    parseInt(h.slice(5, 7), 16),
+  ];
   const [r1, g1, b1] = parse(hex);
   const [r2, g2, b2] = parse(target);
   const mix = (a: number, b: number) => Math.round(a * (1 - t) + b * t);

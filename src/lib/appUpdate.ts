@@ -1,5 +1,9 @@
 import { useEffect, useState } from 'react';
-import { checkAppUpdate as ipcCheck, downloadAppUpdate as ipcDownload, type AppUpdateInfo } from './onboarding';
+import {
+  checkAppUpdate as ipcCheck,
+  downloadAppUpdate as ipcDownload,
+  type AppUpdateInfo,
+} from './onboarding';
 import { toast } from './toast';
 
 // Shared, subscribable app-update state so the sidebar header button, the
@@ -48,12 +52,18 @@ export async function startAppUpdate(target: AppUpdateInfo | null = info): Promi
   }
 }
 
-export function useAppUpdate(): { update: AppUpdateInfo | null; downloading: boolean; start: () => Promise<void> } {
+export function useAppUpdate(): {
+  update: AppUpdateInfo | null;
+  downloading: boolean;
+  start: () => Promise<void>;
+} {
   const [, force] = useState(0);
   useEffect(() => {
     const listener = () => force((n) => n + 1);
     listeners.add(listener);
-    return () => { listeners.delete(listener); };
+    return () => {
+      listeners.delete(listener);
+    };
   }, []);
   return { update: info, downloading, start: () => startAppUpdate() };
 }

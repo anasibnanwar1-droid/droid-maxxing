@@ -43,7 +43,10 @@ function compactionState(removedCount: number): string {
 function writeSession(id: string, lines: string[]): void {
   const dir = join(home, '.factory', 'sessions', '2026', '06');
   mkdirSync(dir, { recursive: true });
-  const all = [JSON.stringify({ type: 'session_start', id, cwd: home, sessionTitle: 'S' }), ...lines];
+  const all = [
+    JSON.stringify({ type: 'session_start', id, cwd: home, sessionTitle: 'S' }),
+    ...lines,
+  ];
   writeFileSync(join(dir, `${id}.jsonl`), `${all.join('\n')}\n`);
 }
 
@@ -70,7 +73,10 @@ test('each post-original chain segment surfaces a compaction divider with remove
   const { events } = loadMissionTranscriptWindow('m', chain, { limit: 100 });
 
   const dividers = events.filter((e) => e.kind === 'compaction');
-  assert.deepEqual(dividers.map((d) => d.removedCount), [5, 7]);
+  assert.deepEqual(
+    dividers.map((d) => d.removedCount),
+    [5, 7],
+  );
   // Divider sits immediately before the first message of its segment.
   const idxDivider5 = events.findIndex((e) => e.kind === 'compaction' && e.removedCount === 5);
   assert.equal(events[idxDivider5 + 1].text, 'a1-1');
@@ -86,7 +92,9 @@ test('cursor pages older history across the chain with no gaps or duplicates', (
   do {
     const page = loadMissionTranscriptWindow('m', chain, { limit: 3, cursor });
     // Prepend each older page to rebuild the transcript oldest -> newest.
-    collected.unshift(...page.events.map((e) => e.kind === 'compaction' ? `divider:${e.removedCount}` : e.text!));
+    collected.unshift(
+      ...page.events.map((e) => (e.kind === 'compaction' ? `divider:${e.removedCount}` : e.text!)),
+    );
     for (const e of page.events) {
       assert.ok(!seenIds.has(e.id), `duplicate event ${e.id} across pages`);
       seenIds.add(e.id);
@@ -96,7 +104,16 @@ test('cursor pages older history across the chain with no gaps or duplicates', (
     assert.ok(pages < 10, 'pagination did not terminate');
   } while (cursor);
 
-  assert.deepEqual(collected, ['a0-1', 'a0-2', 'divider:5', 'a1-1', 'a1-2', 'divider:7', 'a2-1', 'a2-2']);
+  assert.deepEqual(collected, [
+    'a0-1',
+    'a0-2',
+    'divider:5',
+    'a1-1',
+    'a1-2',
+    'divider:7',
+    'a2-1',
+    'a2-2',
+  ]);
 });
 
 test('an oversized compacted segment still surfaces its divider (read from the head)', () => {
@@ -118,7 +135,10 @@ test('a single (never-compacted) session yields no divider and no older cursor',
 
   assert.equal(events.filter((e) => e.kind === 'compaction').length, 0);
   assert.equal(olderCursor, undefined);
-  assert.deepEqual(events.map((e) => e.text), ['only-1', 'only-2']);
+  assert.deepEqual(
+    events.map((e) => e.text),
+    ['only-1', 'only-2'],
+  );
 });
 
 test('an in-place-compacted single segment still surfaces its divider', () => {
@@ -143,13 +163,21 @@ test('resolveSessionChain rebuilds the chain from the persisted app-session row'
   const dbDir = join(home, '.factory', 'droid-control');
   mkdirSync(dbDir, { recursive: true });
   const db = new DatabaseSync(join(dbDir, 'index.sqlite'));
-  db.exec('CREATE TABLE app_sessions (app_session_id TEXT, droid_session_id TEXT, previous_droid_session_ids TEXT)');
-  db.prepare('INSERT INTO app_sessions (app_session_id, droid_session_id, previous_droid_session_ids) VALUES (?, ?, ?)')
-    .run('app0', 'cur2', JSON.stringify(['app0', 'mid1']));
+  db.exec(
+    'CREATE TABLE app_sessions (app_session_id TEXT, droid_session_id TEXT, previous_droid_session_ids TEXT)',
+  );
+  db.prepare(
+    'INSERT INTO app_sessions (app_session_id, droid_session_id, previous_droid_session_ids) VALUES (?, ?, ?)',
+  ).run('app0', 'cur2', JSON.stringify(['app0', 'mid1']));
   db.close();
 
   assert.deepEqual(resolveSessionChain('app0', 'cur2'), ['app0', 'mid1', 'cur2']);
   // Replaying that chain yields the full conversation in order.
-  const { events } = loadMissionTranscriptWindow('app0', resolveSessionChain('app0', 'cur2'), { limit: 100 });
-  assert.deepEqual(events.filter((e) => e.kind === 'text').map((e) => e.text), ['c0', 'c1', 'c2']);
+  const { events } = loadMissionTranscriptWindow('app0', resolveSessionChain('app0', 'cur2'), {
+    limit: 100,
+  });
+  assert.deepEqual(
+    events.filter((e) => e.kind === 'text').map((e) => e.text),
+    ['c0', 'c1', 'c2'],
+  );
 });

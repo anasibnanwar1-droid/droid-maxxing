@@ -21,7 +21,8 @@ const CATEGORY_LABEL: Record<ModelCategory, string> = {
 function categoryOf(model: ModelInfo): ModelCategory {
   if (model.isCustom || model.id.startsWith('custom:')) return 'custom';
   const provider = (model.provider ?? '').toLowerCase();
-  if (provider === 'droid-core' || model.displayName.toLowerCase().startsWith('droid core')) return 'core';
+  if (provider === 'droid-core' || model.displayName.toLowerCase().startsWith('droid core'))
+    return 'core';
   return 'factory';
 }
 
@@ -31,9 +32,25 @@ const AGENTS: { kind: AgentKind; label: string; hint: string }[] = [
   { kind: 'validator', label: 'Validator', hint: 'Verifies the work' },
 ];
 
-const BASE_REASONING: ReasoningEffort[] = ['off', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'dynamic'];
+const BASE_REASONING: ReasoningEffort[] = [
+  'off',
+  'none',
+  'minimal',
+  'low',
+  'medium',
+  'high',
+  'xhigh',
+  'max',
+  'dynamic',
+];
 
-export default function ModelSelectorPopover({ onClose, singleAgent = false }: { onClose: () => void; singleAgent?: boolean }) {
+export default function ModelSelectorPopover({
+  onClose,
+  singleAgent = false,
+}: {
+  onClose: () => void;
+  singleAgent?: boolean;
+}) {
   const { state, dispatch } = useStore();
   const [agent, setAgent] = useState<AgentKind>('orchestrator');
   const [query, setQuery] = useState('');
@@ -49,7 +66,9 @@ export default function ModelSelectorPopover({ onClose, singleAgent = false }: {
   const activeMission = state.activeMissionId ? state.missions[state.activeMissionId] : null;
   const missionScoped = singleAgent && !!activeMission;
   const effModelId = missionScoped ? activeMission!.modelId : cfg.modelId;
-  const effReasoning = missionScoped ? activeMission!.reasoningEffort ?? cfg.reasoning : cfg.reasoning;
+  const effReasoning = missionScoped
+    ? (activeMission!.reasoningEffort ?? cfg.reasoning)
+    : cfg.reasoning;
 
   const hasRealModels = state.models.length > 0;
   const source = state.models;
@@ -61,7 +80,9 @@ export default function ModelSelectorPopover({ onClose, singleAgent = false }: {
 
   const catCounts = useMemo(() => {
     const counts: Record<ModelCategory, number> = { core: 0, factory: 0, custom: 0 };
-    source.forEach((m) => { counts[categoryOf(m)] += 1; });
+    source.forEach((m) => {
+      counts[categoryOf(m)] += 1;
+    });
     return counts;
   }, [source]);
 
@@ -117,13 +138,19 @@ export default function ModelSelectorPopover({ onClose, singleAgent = false }: {
     : BASE_REASONING;
 
   const updateReasoning = (reasoning: ReasoningEffort) => {
-    if (missionScoped) dispatch({ type: 'MISSION_SET_REASONING', missionId: activeMission!.id, reasoning });
+    if (missionScoped)
+      dispatch({ type: 'MISSION_SET_REASONING', missionId: activeMission!.id, reasoning });
     else dispatch({ type: 'SET_AGENT_REASONING', agent, reasoning });
-    updateAgentSettings({ missionId: state.activeMissionId ?? undefined, agent, reasoningEffort: reasoning });
+    updateAgentSettings({
+      missionId: state.activeMissionId ?? undefined,
+      agent,
+      reasoningEffort: reasoning,
+    });
   };
 
   const updateModel = (modelId?: string) => {
-    if (missionScoped) dispatch({ type: 'MISSION_SET_MODEL', missionId: activeMission!.id, modelId });
+    if (missionScoped)
+      dispatch({ type: 'MISSION_SET_MODEL', missionId: activeMission!.id, modelId });
     else dispatch({ type: 'SET_AGENT_MODEL', agent, modelId });
     updateAgentSettings({
       missionId: state.activeMissionId ?? undefined,
@@ -136,7 +163,11 @@ export default function ModelSelectorPopover({ onClose, singleAgent = false }: {
     const supported = next?.supportedReasoningEfforts;
     if (supported?.length && !supported.includes(effReasoning)) {
       updateReasoning(next?.defaultReasoningEffort ?? supported[supported.length - 1]);
-    } else if (!supported?.length && next?.defaultReasoningEffort && effReasoning !== next.defaultReasoningEffort) {
+    } else if (
+      !supported?.length &&
+      next?.defaultReasoningEffort &&
+      effReasoning !== next.defaultReasoningEffort
+    ) {
       updateReasoning(next.defaultReasoningEffort);
     }
   };
@@ -146,8 +177,14 @@ export default function ModelSelectorPopover({ onClose, singleAgent = false }: {
   useEffect(() => {
     const supported = selectedSupportedReasoning;
     if (supported?.length && !supported.includes(effReasoning)) {
-      updateReasoning(selectedConfigModel?.defaultReasoningEffort ?? supported[supported.length - 1]);
-    } else if (!supported?.length && selectedConfigModel?.defaultReasoningEffort && effReasoning !== selectedConfigModel.defaultReasoningEffort) {
+      updateReasoning(
+        selectedConfigModel?.defaultReasoningEffort ?? supported[supported.length - 1],
+      );
+    } else if (
+      !supported?.length &&
+      selectedConfigModel?.defaultReasoningEffort &&
+      effReasoning !== selectedConfigModel.defaultReasoningEffort
+    ) {
       updateReasoning(selectedConfigModel.defaultReasoningEffort);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -165,8 +202,12 @@ export default function ModelSelectorPopover({ onClose, singleAgent = false }: {
       <div className="rounded-2xl border border-droid-border bg-droid-elevated shadow-2xl shadow-black/50 overflow-hidden">
         {/* Header */}
         <div className="flex items-center justify-between px-4 pt-3 pb-2">
-          <span className="text-[11px] font-medium text-droid-text-secondary tracking-wide">{singleAgent ? 'Model' : 'Models'}</span>
-          <span className="text-[10px] text-droid-text-muted">{singleAgent ? 'Used for this chat' : active.hint}</span>
+          <span className="text-[11px] font-medium text-droid-text-secondary tracking-wide">
+            {singleAgent ? 'Model' : 'Models'}
+          </span>
+          <span className="text-[10px] text-droid-text-muted">
+            {singleAgent ? 'Used for this chat' : active.hint}
+          </span>
         </div>
 
         {/* Agent tabs */}
@@ -180,7 +221,9 @@ export default function ModelSelectorPopover({ onClose, singleAgent = false }: {
                     key={a.kind}
                     onClick={() => setAgent(a.kind)}
                     className={`flex-1 px-2 py-1.5 rounded-lg text-[11px] font-medium transition-colors truncate ${
-                      on ? 'bg-droid-surface text-droid-text' : 'text-droid-text-muted hover:text-droid-text-secondary'
+                      on
+                        ? 'bg-droid-surface text-droid-text'
+                        : 'text-droid-text-muted hover:text-droid-text-secondary'
                     }`}
                     style={on ? { boxShadow: `inset 0 0 0 1px ${accentMix(33)}` } : undefined}
                   >
@@ -195,8 +238,12 @@ export default function ModelSelectorPopover({ onClose, singleAgent = false }: {
         {/* Reasoning selector */}
         <div className="px-4 pt-3.5 pb-1">
           <div className="flex items-center justify-between mb-1.5">
-            <span className="text-[10px] text-droid-text-muted uppercase tracking-wider">Reasoning</span>
-            <span className="text-[10px] font-mono capitalize" style={{ color: ACCENT }}>{effReasoning}</span>
+            <span className="text-[10px] text-droid-text-muted uppercase tracking-wider">
+              Reasoning
+            </span>
+            <span className="text-[10px] font-mono capitalize" style={{ color: ACCENT }}>
+              {effReasoning}
+            </span>
           </div>
           <div className="relative flex p-0.5 rounded-lg bg-droid-bg/60 border border-droid-border">
             {reasoningOptions.map((r) => {
@@ -213,7 +260,10 @@ export default function ModelSelectorPopover({ onClose, singleAgent = false }: {
                     <motion.span
                       layoutId="reasoning-pill"
                       className="absolute inset-0 rounded-md"
-                      style={{ backgroundColor: accentMix(13), boxShadow: `inset 0 0 0 1px ${accentMix(33)}` }}
+                      style={{
+                        backgroundColor: accentMix(13),
+                        boxShadow: `inset 0 0 0 1px ${accentMix(33)}`,
+                      }}
                       transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
                     />
                   )}
@@ -247,7 +297,14 @@ export default function ModelSelectorPopover({ onClose, singleAgent = false }: {
                     ? 'text-droid-text border-transparent'
                     : 'text-droid-text-muted border-droid-border hover:text-droid-text hover:border-droid-border-hover bg-droid-bg/60'
                 }`}
-                style={filterOpen || cat !== 'all' ? { backgroundColor: accentMix(13), boxShadow: `inset 0 0 0 1px ${accentMix(40)}` } : undefined}
+                style={
+                  filterOpen || cat !== 'all'
+                    ? {
+                        backgroundColor: accentMix(13),
+                        boxShadow: `inset 0 0 0 1px ${accentMix(40)}`,
+                      }
+                    : undefined
+                }
               >
                 <SlidersHorizontal className="w-3.5 h-3.5" />
               </button>
@@ -261,23 +318,39 @@ export default function ModelSelectorPopover({ onClose, singleAgent = false }: {
                     transition={{ duration: 0.14, ease: [0.16, 1, 0.3, 1] }}
                     className="absolute right-0 top-full mt-1.5 w-44 z-50 rounded-xl border border-droid-border bg-droid-elevated shadow-2xl shadow-black/50 overflow-hidden p-1"
                   >
-                    {([
+                    {[
                       { value: 'all' as const, label: 'All models', count: source.length },
                       { value: 'core' as const, label: CATEGORY_LABEL.core, count: catCounts.core },
-                      { value: 'factory' as const, label: CATEGORY_LABEL.factory, count: catCounts.factory },
-                      { value: 'custom' as const, label: CATEGORY_LABEL.custom, count: catCounts.custom },
-                    ]).map((opt) => {
+                      {
+                        value: 'factory' as const,
+                        label: CATEGORY_LABEL.factory,
+                        count: catCounts.factory,
+                      },
+                      {
+                        value: 'custom' as const,
+                        label: CATEGORY_LABEL.custom,
+                        count: catCounts.custom,
+                      },
+                    ].map((opt) => {
                       const on = cat === opt.value;
                       return (
                         <button
                           key={opt.value}
                           onClick={() => selectCat(opt.value)}
                           className={`w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-left text-[12px] transition-colors ${
-                            on ? 'bg-droid-surface text-droid-text' : 'text-droid-text-secondary hover:bg-droid-surface/60'
+                            on
+                              ? 'bg-droid-surface text-droid-text'
+                              : 'text-droid-text-secondary hover:bg-droid-surface/60'
                           }`}
                         >
                           <span className="w-3.5 h-3.5 shrink-0 flex items-center justify-center">
-                            {on && <Check className="w-3 h-3" style={{ color: ACCENT }} strokeWidth={3.5} />}
+                            {on && (
+                              <Check
+                                className="w-3 h-3"
+                                style={{ color: ACCENT }}
+                                strokeWidth={3.5}
+                              />
+                            )}
                           </span>
                           <span className="flex-1">{opt.label}</span>
                           <span className="text-[10px] text-droid-text-muted">{opt.count}</span>
@@ -331,7 +404,11 @@ export default function ModelSelectorPopover({ onClose, singleAgent = false }: {
 }
 
 function ModelRow({
-  label, sub, selected, onClick, model,
+  label,
+  sub,
+  selected,
+  onClick,
+  model,
 }: {
   label: string;
   sub?: string;

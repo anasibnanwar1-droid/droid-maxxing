@@ -1,6 +1,11 @@
 import { createContext, useContext, useReducer, ReactNode, useEffect } from 'react';
 import { bridge } from '../lib/bridge';
-import { clearDesignMode, setDesignMode, toggleDesignMode, type DesignModes } from './designModeState';
+import {
+  clearDesignMode,
+  setDesignMode,
+  toggleDesignMode,
+  type DesignModes,
+} from './designModeState';
 import type {
   FactoryDefaultSettings,
   ServerEvent,
@@ -76,7 +81,7 @@ export interface AppState {
   activeMissionId: string | null;
   transcripts: Record<string, TranscriptEvent[]>;
   progress: Record<string, ProgressEntry[]>;
-  workers: Record<string, WorkerInfo[]>;   // subagents spawned per mission
+  workers: Record<string, WorkerInfo[]>; // subagents spawned per mission
   // old worker session id -> new id, recorded on worker-compaction rekeys so
   // views holding a worker id in local state can follow it to the new session.
   workerRekeys: Record<string, string>;
@@ -90,7 +95,7 @@ export interface AppState {
   pendingPermission: PermissionRequest | null;
   pendingQuestion: MissionQuestion | null;
   contextStats: Record<string, ContextStatsSnapshot>;
-  specPlans: Record<string, string>;   // latest ExitSpecMode plan per session
+  specPlans: Record<string, string>; // latest ExitSpecMode plan per session
   // Persisted spec per mission (file path + rendered content). Survives exiting
   // spec mode so the inline card, mermaid, and the wiki reader stay available.
   missionSpecs: Record<string, { path?: string; title: string; content: string }>;
@@ -160,18 +165,51 @@ export interface AppState {
 
 type Action =
   // Connection
-  | { type: 'SET_CONNECTION'; status: 'idle' | 'connecting' | 'connected' | 'error'; message?: string }
+  | {
+      type: 'SET_CONNECTION';
+      status: 'idle' | 'connecting' | 'connected' | 'error';
+      message?: string;
+    }
 
   // Mission lifecycle
   | { type: 'MISSION_CREATED'; clientRef: string; mission: MissionSummary }
-  | { type: 'SET_PENDING_COMPOSE'; clientRef: string; text: string; skills: string[]; files: string[] }
+  | {
+      type: 'SET_PENDING_COMPOSE';
+      clientRef: string;
+      text: string;
+      skills: string[];
+      files: string[];
+    }
   | { type: 'MISSION_UPDATED'; mission: MissionSummary }
   | { type: 'MISSION_FEATURES'; missionId: string; features: MissionSummary['features'] }
   | { type: 'MISSION_PROGRESS'; missionId: string; entries: ProgressEntry[] }
-  | { type: 'MISSION_WORKER'; missionId: string; event: 'started' | 'updated' | 'completed'; workerSessionId: string; label?: string; prompt?: string; modelId?: string; reasoningEffort?: ReasoningEffort; toolUseId?: string }
-  | { type: 'AGENT_UPDATED'; missionId: string; agentSessionId: string; role: AgentKind; status: 'opened' | 'running' | 'paused' | 'completed' }
+  | {
+      type: 'MISSION_WORKER';
+      missionId: string;
+      event: 'started' | 'updated' | 'completed';
+      workerSessionId: string;
+      label?: string;
+      prompt?: string;
+      modelId?: string;
+      reasoningEffort?: ReasoningEffort;
+      toolUseId?: string;
+    }
+  | {
+      type: 'AGENT_UPDATED';
+      missionId: string;
+      agentSessionId: string;
+      role: AgentKind;
+      status: 'opened' | 'running' | 'paused' | 'completed';
+    }
   | { type: 'MISSION_WORKER_REKEY'; missionId: string; oldSessionId: string; newSessionId: string }
-  | { type: 'MISSION_TOKENS'; missionId: string; tokensIn: number; tokensOut: number; contextTokens: number; maxContextTokens?: number }
+  | {
+      type: 'MISSION_TOKENS';
+      missionId: string;
+      tokensIn: number;
+      tokensOut: number;
+      contextTokens: number;
+      maxContextTokens?: number;
+    }
   | { type: 'CONTEXT_UPDATED'; sessionId: string; stats: ContextStatsSnapshot }
   | { type: 'MISSION_TRANSCRIPT'; event: TranscriptEvent }
   | { type: 'QUEUE_PROMPT'; missionId: string; prompt: QueuedPrompt }
@@ -184,7 +222,15 @@ type Action =
   | { type: 'MISSION_QUESTION'; question: MissionQuestion }
   | { type: 'MISSION_ERROR'; missionId?: string; message: string }
   | { type: 'MISSION_LIST'; missions: MissionSummary[] }
-  | { type: 'MISSION_HISTORY'; missionId: string; progress: ProgressEntry[]; transcripts: TranscriptEvent[]; workers?: WorkerHistoryLink[]; mode?: 'replace' | 'prepend'; olderCursor?: string }
+  | {
+      type: 'MISSION_HISTORY';
+      missionId: string;
+      progress: ProgressEntry[];
+      transcripts: TranscriptEvent[];
+      workers?: WorkerHistoryLink[];
+      mode?: 'replace' | 'prepend';
+      olderCursor?: string;
+    }
   | { type: 'MISSION_HISTORY_LOADING_OLDER'; missionId: string }
   | { type: 'CLEAR_PERMISSION' }
   | { type: 'CLEAR_QUESTION' }
@@ -266,14 +312,16 @@ function isReasoningEffort(value: unknown): value is ReasoningEffort {
 function getLocalStorage(): Storage | undefined {
   if (typeof window !== 'undefined') return window.localStorage;
   const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
-  return descriptor && 'value' in descriptor ? descriptor.value as Storage : undefined;
+  return descriptor && 'value' in descriptor ? (descriptor.value as Storage) : undefined;
 }
 
 function loadTheme(): ThemeConfig {
   try {
     const saved = getLocalStorage()?.getItem('droid-theme');
     if (saved) return { ...defaultTheme, ...JSON.parse(saved) };
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
   return defaultTheme;
 }
 
@@ -295,7 +343,10 @@ function loadAgentConfig(): AgentConfig {
   }
 }
 
-function readAgentConfig(value: Partial<AgentModelConfig> | undefined, fallback: AgentModelConfig): AgentModelConfig {
+function readAgentConfig(
+  value: Partial<AgentModelConfig> | undefined,
+  fallback: AgentModelConfig,
+): AgentModelConfig {
   return {
     modelId: typeof value?.modelId === 'string' && value.modelId ? value.modelId : fallback.modelId,
     reasoning: isReasoningEffort(value?.reasoning) ? value.reasoning : fallback.reasoning,
@@ -305,7 +356,9 @@ function readAgentConfig(value: Partial<AgentModelConfig> | undefined, fallback:
 function saveAgentConfig(config: AgentConfig): AgentConfig {
   try {
     getLocalStorage()?.setItem(AGENT_CONFIG_STORAGE_KEY, JSON.stringify(config));
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
   return config;
 }
 
@@ -319,7 +372,14 @@ const COMPACTION_TOKEN_LIMIT_PER_MODEL_STORAGE_KEY = 'droid-compaction-token-lim
 const LIVE_ENTER_BEHAVIOR_STORAGE_KEY = 'droid-live-enter-behavior';
 const WORKSPACES_STORAGE_KEY = 'droid-workspaces';
 const UI_STATE_STORAGE_KEY = 'droid-ui-state-v1';
-const BROWSER_VIEWPORT_MODES = new Set<BrowserViewportMode>(['fit', 'desktop', 'laptop', 'tablet', 'mobile', 'custom']);
+const BROWSER_VIEWPORT_MODES = new Set<BrowserViewportMode>([
+  'fit',
+  'desktop',
+  'laptop',
+  'tablet',
+  'mobile',
+  'custom',
+]);
 
 interface PersistedUiState {
   activeMissionId: string | null;
@@ -344,7 +404,9 @@ function loadCompactionModel(): string {
 function saveCompactionModel(value: string): string {
   try {
     getLocalStorage()?.setItem(COMPACTION_MODEL_STORAGE_KEY, value);
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
   return value;
 }
 
@@ -376,13 +438,19 @@ function hasStoredCompactionTokenLimit(): boolean {
   }
 }
 
-function saveCompactionTokenLimit(value?: number, options: { userConfigured?: boolean } = {}): number | undefined {
+function saveCompactionTokenLimit(
+  value?: number,
+  options: { userConfigured?: boolean } = {},
+): number | undefined {
   try {
     const storage = getLocalStorage();
     if (value === undefined) storage?.removeItem(COMPACTION_TOKEN_LIMIT_STORAGE_KEY);
     else storage?.setItem(COMPACTION_TOKEN_LIMIT_STORAGE_KEY, String(value));
-    if (options.userConfigured ?? true) storage?.setItem(COMPACTION_TOKEN_LIMIT_CONFIGURED_STORAGE_KEY, '1');
-  } catch { /* ignore */ }
+    if (options.userConfigured ?? true)
+      storage?.setItem(COMPACTION_TOKEN_LIMIT_CONFIGURED_STORAGE_KEY, '1');
+  } catch {
+    /* ignore */
+  }
   return value;
 }
 
@@ -413,11 +481,15 @@ function hasStoredCompactionTokenLimitPerModel(): boolean {
 function saveCompactionTokenLimitPerModel(value: Record<string, number>): Record<string, number> {
   try {
     getLocalStorage()?.setItem(COMPACTION_TOKEN_LIMIT_PER_MODEL_STORAGE_KEY, JSON.stringify(value));
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
   return value;
 }
 
-function normalizeTokenLimitRecord(value: Record<string, number> | undefined): Record<string, number> {
+function normalizeTokenLimitRecord(
+  value: Record<string, number> | undefined,
+): Record<string, number> {
   return Object.fromEntries(
     Object.entries(value ?? {})
       .map(([id, limit]) => [id, normalizeTokenLimit(limit)])
@@ -435,7 +507,9 @@ export function applyFactoryCompactionDefaults(
   const defaultPerModel = normalizeTokenLimitRecord(defaults.compactionTokenLimitPerModel);
 
   const compactionTokenLimit = hasLocalLimit ? state.compactionTokenLimit : defaultLimit;
-  const compactionTokenLimitPerModel = hasLocalPerModel ? state.compactionTokenLimitPerModel : defaultPerModel;
+  const compactionTokenLimitPerModel = hasLocalPerModel
+    ? state.compactionTokenLimitPerModel
+    : defaultPerModel;
 
   if (!hasLocalLimit && compactionTokenLimit !== undefined) {
     saveCompactionTokenLimit(compactionTokenLimit, { userConfigured: false });
@@ -463,7 +537,9 @@ function saveLiveEnterBehavior(value: LiveEnterBehavior): LiveEnterBehavior {
   const behavior = normalizeLiveEnterBehavior(value);
   try {
     getLocalStorage()?.setItem(LIVE_ENTER_BEHAVIOR_STORAGE_KEY, behavior);
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
   return behavior;
 }
 
@@ -482,7 +558,9 @@ function loadWorkspaceCwds(): string[] {
 function saveWorkspaceCwds(cwds: string[]): string[] {
   try {
     getLocalStorage()?.setItem(WORKSPACES_STORAGE_KEY, JSON.stringify(cwds));
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
   return cwds;
 }
 
@@ -493,14 +571,18 @@ export function loadPersistedUiState(): Partial<PersistedUiState> {
     const parsed = JSON.parse(raw) as Partial<PersistedUiState>;
     return {
       activeMissionId: typeof parsed.activeMissionId === 'string' ? parsed.activeMissionId : null,
-      rightPanelOpen: typeof parsed.rightPanelOpen === 'boolean' ? parsed.rightPanelOpen : undefined,
-      sidebarCollapsed: typeof parsed.sidebarCollapsed === 'boolean' ? parsed.sidebarCollapsed : undefined,
+      rightPanelOpen:
+        typeof parsed.rightPanelOpen === 'boolean' ? parsed.rightPanelOpen : undefined,
+      sidebarCollapsed:
+        typeof parsed.sidebarCollapsed === 'boolean' ? parsed.sidebarCollapsed : undefined,
       specMode: typeof parsed.specMode === 'boolean' ? parsed.specMode : undefined,
       missionMode: typeof parsed.missionMode === 'boolean' ? parsed.missionMode : undefined,
       browsers: loadPersistedBrowsers(parsed.browsers),
       browserOpenKeys: loadPersistedBrowserOpenKeys(parsed.browserOpenKeys),
-      selectedFeatureId: typeof parsed.selectedFeatureId === 'string' ? parsed.selectedFeatureId : null,
-      selectedAgentSessionId: typeof parsed.selectedAgentSessionId === 'string' ? parsed.selectedAgentSessionId : null,
+      selectedFeatureId:
+        typeof parsed.selectedFeatureId === 'string' ? parsed.selectedFeatureId : null,
+      selectedAgentSessionId:
+        typeof parsed.selectedAgentSessionId === 'string' ? parsed.selectedAgentSessionId : null,
     };
   } catch {
     return {};
@@ -521,7 +603,9 @@ function savePersistedUiState(state: AppState): void {
   };
   try {
     getLocalStorage()?.setItem(UI_STATE_STORAGE_KEY, JSON.stringify(snapshot));
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
 }
 
 function sanitizeAgentConfig(config: AgentConfig, models: ModelInfo[]): AgentConfig {
@@ -541,7 +625,11 @@ function sanitizeAgent(config: AgentModelConfig, models: ModelInfo[]): AgentMode
   if (supported?.length && !supported.includes(config.reasoning)) {
     return { modelId: config.modelId, reasoning: model.defaultReasoningEffort ?? supported[0] };
   }
-  if (!supported?.length && model.defaultReasoningEffort && config.reasoning !== model.defaultReasoningEffort) {
+  if (
+    !supported?.length &&
+    model.defaultReasoningEffort &&
+    config.reasoning !== model.defaultReasoningEffort
+  ) {
     return { modelId: config.modelId, reasoning: model.defaultReasoningEffort };
   }
   return config;
@@ -624,7 +712,11 @@ function activeBrowserKey(state: AppState): string | undefined {
 // Record an explicit open (true) or hidden (false) decision for a browser key.
 // Storing `false` (rather than deleting) lets data syncs distinguish a pane the
 // user deliberately hid from one that was never opened.
-function withBrowserOpenKey(keys: Record<string, boolean>, key: string, open: boolean): Record<string, boolean> {
+function withBrowserOpenKey(
+  keys: Record<string, boolean>,
+  key: string,
+  open: boolean,
+): Record<string, boolean> {
   if (keys[key] === open) return keys;
   return { ...keys, [key]: open };
 }
@@ -707,12 +799,20 @@ function baseReducer(state: AppState, action: Action): AppState {
       }
 
       const pendingCompose = pending
-        ? Object.fromEntries(Object.entries(state.pendingCompose).filter(([k]) => k !== action.clientRef))
+        ? Object.fromEntries(
+            Object.entries(state.pendingCompose).filter(([k]) => k !== action.clientRef),
+          )
         : state.pendingCompose;
 
       const next = {
         ...state,
-        missions: { ...state.missions, [action.mission.id]: applyMissionOverride(action.mission, state.missionSettingOverrides[action.mission.id]) },
+        missions: {
+          ...state.missions,
+          [action.mission.id]: applyMissionOverride(
+            action.mission,
+            state.missionSettingOverrides[action.mission.id],
+          ),
+        },
         missionOrder: order,
         transcripts,
         activeMissionId: action.mission.id,
@@ -732,7 +832,10 @@ function baseReducer(state: AppState, action: Action): AppState {
       };
 
     case 'MISSION_UPDATED': {
-      const m = applyMissionOverride(action.mission, state.missionSettingOverrides[action.mission.id]);
+      const m = applyMissionOverride(
+        action.mission,
+        state.missionSettingOverrides[action.mission.id],
+      );
       return {
         ...state,
         missions: { ...state.missions, [m.id]: m },
@@ -775,7 +878,12 @@ function baseReducer(state: AppState, action: Action): AppState {
         next = [...prev];
         next[idx] = {
           ...next[idx],
-          status: action.event === 'completed' ? 'completed' : action.event === 'updated' ? next[idx].status : 'running',
+          status:
+            action.event === 'completed'
+              ? 'completed'
+              : action.event === 'updated'
+                ? next[idx].status
+                : 'running',
           label: action.label ?? next[idx].label,
           prompt: action.prompt ?? next[idx].prompt,
           modelId: action.modelId ?? next[idx].modelId,
@@ -784,16 +892,19 @@ function baseReducer(state: AppState, action: Action): AppState {
         };
       } else {
         if (action.event === 'updated') return state;
-        next = [...prev, {
-          sessionId: action.workerSessionId,
-          status: action.event === 'completed' ? 'completed' : 'running',
-          startedAt: Date.now(),
-          label: action.label,
-          prompt: action.prompt,
-          modelId: action.modelId,
-          reasoningEffort: action.reasoningEffort,
-          toolUseId: action.toolUseId,
-        }];
+        next = [
+          ...prev,
+          {
+            sessionId: action.workerSessionId,
+            status: action.event === 'completed' ? 'completed' : 'running',
+            startedAt: Date.now(),
+            label: action.label,
+            prompt: action.prompt,
+            modelId: action.modelId,
+            reasoningEffort: action.reasoningEffort,
+            toolUseId: action.toolUseId,
+          },
+        ];
       }
       return { ...state, workers: { ...state.workers, [mid]: next } };
     }
@@ -821,7 +932,8 @@ function baseReducer(state: AppState, action: Action): AppState {
         // usage) before emitting this rekey, so prefer any fresh new-id stats
         // already in the store; only carry the old snapshot over as a bridge
         // when the new id has none yet. Overwriting would show stale usage.
-        contextStats = rest[newSessionId] !== undefined ? rest : { ...rest, [newSessionId]: oldStats };
+        contextStats =
+          rest[newSessionId] !== undefined ? rest : { ...rest, [newSessionId]: oldStats };
       }
       // Mission features reference workers by session id (feature focus + worker
       // role/numbering), so follow the compacted worker to its new backing id.
@@ -831,7 +943,9 @@ function baseReducer(state: AppState, action: Action): AppState {
         const remapId = (id?: string | null) => (id === oldSessionId ? newSessionId : id);
         const features = existingMission.features.map((f) => ({
           ...f,
-          workerSessionIds: f.workerSessionIds?.map((id) => (id === oldSessionId ? newSessionId : id)),
+          workerSessionIds: f.workerSessionIds?.map((id) =>
+            id === oldSessionId ? newSessionId : id,
+          ),
           currentWorkerSessionId: remapId(f.currentWorkerSessionId),
           completedWorkerSessionId: remapId(f.completedWorkerSessionId),
         }));
@@ -858,7 +972,9 @@ function baseReducer(state: AppState, action: Action): AppState {
         // Control's viewedAgent) can follow the worker to its new session.
         workerRekeys: { ...state.workerRekeys, [oldSessionId]: newSessionId },
         selectedAgentSessionId:
-          state.selectedAgentSessionId === oldSessionId ? newSessionId : state.selectedAgentSessionId,
+          state.selectedAgentSessionId === oldSessionId
+            ? newSessionId
+            : state.selectedAgentSessionId,
       };
     }
 
@@ -954,13 +1070,22 @@ function baseReducer(state: AppState, action: Action): AppState {
       const prev = state.promptQueue[action.missionId] ?? [];
       return {
         ...state,
-        promptQueue: { ...state.promptQueue, [action.missionId]: prev.filter((p) => p.id !== action.id) },
+        promptQueue: {
+          ...state.promptQueue,
+          [action.missionId]: prev.filter((p) => p.id !== action.id),
+        },
       };
     }
 
     case 'REORDER_QUEUE': {
       const prev = state.promptQueue[action.missionId] ?? [];
-      if (action.from === action.to || action.from < 0 || action.to < 0 || action.from >= prev.length || action.to >= prev.length) {
+      if (
+        action.from === action.to ||
+        action.from < 0 ||
+        action.to < 0 ||
+        action.from >= prev.length ||
+        action.to >= prev.length
+      ) {
         return state;
       }
       const next = [...prev];
@@ -971,7 +1096,12 @@ function baseReducer(state: AppState, action: Action): AppState {
 
     case 'SPEC_SET': {
       const prev = state.missionSpecs[action.missionId];
-      if (prev && prev.content === action.content && prev.path === action.path && prev.title === action.title) {
+      if (
+        prev &&
+        prev.content === action.content &&
+        prev.path === action.path &&
+        prev.title === action.title
+      ) {
         return state;
       }
       return {
@@ -1002,8 +1132,13 @@ function baseReducer(state: AppState, action: Action): AppState {
       // file on revision and overrides with the richer on-disk content.
       const existingSpec = state.missionSpecs[r.missionId];
       const missionSpecs =
-        (r.kind === 'spec' || r.kind === 'mission_plan') && r.plan && existingSpec?.content !== r.plan
-          ? { ...state.missionSpecs, [r.missionId]: { path: existingSpec?.path, title: r.title, content: r.plan } }
+        (r.kind === 'spec' || r.kind === 'mission_plan') &&
+        r.plan &&
+        existingSpec?.content !== r.plan
+          ? {
+              ...state.missionSpecs,
+              [r.missionId]: { path: existingSpec?.path, title: r.title, content: r.plan },
+            }
           : state.missionSpecs;
       return { ...state, pendingPermission: r, specPlans, missionSpecs };
     }
@@ -1036,14 +1171,23 @@ function baseReducer(state: AppState, action: Action): AppState {
         missionOrder: order,
         // Carry any pre-upgrade browser panes from the old session-id key to the
         // stable mission id so a re-keyed/compacted session keeps its open pane.
-        browsers: migrateBrowserStateByMission(state.browsers, action.missions, (b, id) => ({ ...b, missionId: id })),
+        browsers: migrateBrowserStateByMission(state.browsers, action.missions, (b, id) => ({
+          ...b,
+          missionId: id,
+        })),
         browserOpenKeys: migrateBrowserStateByMission(state.browserOpenKeys, action.missions),
-        activeMissionId: state.activeMissionId && map[state.activeMissionId] ? state.activeMissionId : state.activeMissionId,
+        activeMissionId:
+          state.activeMissionId && map[state.activeMissionId]
+            ? state.activeMissionId
+            : state.activeMissionId,
       };
     }
 
     case 'MISSION_HISTORY_LOADING_OLDER':
-      return { ...state, historyLoadingOlder: { ...state.historyLoadingOlder, [action.missionId]: true } };
+      return {
+        ...state,
+        historyLoadingOlder: { ...state.historyLoadingOlder, [action.missionId]: true },
+      };
 
     case 'MISSION_HISTORY': {
       const existing = state.transcripts[action.missionId] ?? [];
@@ -1054,18 +1198,20 @@ function baseReducer(state: AppState, action: Action): AppState {
         const older = action.transcripts.filter((e) => !have.has(e.id));
         return {
           ...state,
-          transcripts: older.length > 0
-            ? { ...state.transcripts, [action.missionId]: [...older, ...existing] }
-            : state.transcripts,
+          transcripts:
+            older.length > 0
+              ? { ...state.transcripts, [action.missionId]: [...older, ...existing] }
+              : state.transcripts,
           historyCursor: { ...state.historyCursor, [action.missionId]: action.olderCursor },
           historyLoadingOlder: { ...state.historyLoadingOlder, [action.missionId]: false },
         };
       }
       // Don't let an empty history snapshot wipe a locally-seeded transcript
       // (e.g. a brand-new mission whose session isn't persisted to disk yet).
-      const transcripts = action.transcripts.length === 0 && existing.length > 0
-        ? state.transcripts
-        : { ...state.transcripts, [action.missionId]: action.transcripts };
+      const transcripts =
+        action.transcripts.length === 0 && existing.length > 0
+          ? state.transcripts
+          : { ...state.transcripts, [action.missionId]: action.transcripts };
       // Merge the exact spawn->worker mapping from history with any live workers
       // already in state (a live mission.worker may arrive before history). Live
       // entries win; history links add missing workers and backfill toolUseId.
@@ -1093,11 +1239,16 @@ function baseReducer(state: AppState, action: Action): AppState {
             });
             changed = true;
           } else if (existing.toolUseId === undefined && link.toolUseId !== undefined) {
-            bySession.set(link.workerSessionId, { ...existing, toolUseId: link.toolUseId, label: existing.label ?? link.label });
+            bySession.set(link.workerSessionId, {
+              ...existing,
+              toolUseId: link.toolUseId,
+              label: existing.label ?? link.label,
+            });
             changed = true;
           }
         }
-        if (changed) workers = { ...state.workers, [action.missionId]: Array.from(bySession.values()) };
+        if (changed)
+          workers = { ...state.workers, [action.missionId]: Array.from(bySession.values()) };
       }
       return {
         ...state,
@@ -1117,7 +1268,12 @@ function baseReducer(state: AppState, action: Action): AppState {
       return { ...state, pendingQuestion: null };
 
     case 'SET_ACTIVE_MISSION':
-      return { ...state, activeMissionId: action.id, draftChat: null, selectedAgentSessionId: null };
+      return {
+        ...state,
+        activeMissionId: action.id,
+        draftChat: null,
+        selectedAgentSessionId: null,
+      };
 
     case 'SET_RIGHT_PANEL':
       return { ...state, rightPanelOpen: action.open };
@@ -1155,21 +1311,39 @@ function baseReducer(state: AppState, action: Action): AppState {
       return { ...state, missionMode: !state.missionMode };
 
     case 'START_CHAT':
-      return { ...state, draftChat: { cwd: action.cwd }, activeMissionId: null, missionMode: false };
+      return {
+        ...state,
+        draftChat: { cwd: action.cwd },
+        activeMissionId: null,
+        missionMode: false,
+      };
 
     case 'ADD_WORKSPACE':
-      return { ...state, workspaceCwds: saveWorkspaceCwds(addWorkspaceCwd(state.workspaceCwds, action.cwd)) };
+      return {
+        ...state,
+        workspaceCwds: saveWorkspaceCwds(addWorkspaceCwd(state.workspaceCwds, action.cwd)),
+      };
 
     case 'TOGGLE_BROWSER': {
       const key = activeBrowserKey(state);
       if (!key) return state;
-      return { ...state, browserOpenKeys: withBrowserOpenKey(state.browserOpenKeys, key, !state.browserOpenKeys[key]) };
+      return {
+        ...state,
+        browserOpenKeys: withBrowserOpenKey(
+          state.browserOpenKeys,
+          key,
+          !state.browserOpenKeys[key],
+        ),
+      };
     }
 
     case 'SET_BROWSER_OPEN': {
       const key = activeBrowserKey(state);
       if (!key) return state;
-      return { ...state, browserOpenKeys: withBrowserOpenKey(state.browserOpenKeys, key, action.open) };
+      return {
+        ...state,
+        browserOpenKeys: withBrowserOpenKey(state.browserOpenKeys, key, action.open),
+      };
     }
 
     case 'BROWSER_UPDATED': {
@@ -1180,8 +1354,12 @@ function baseReducer(state: AppState, action: Action): AppState {
       return {
         ...state,
         browsers: { ...state.browsers, [missionId]: action.browser },
-        browserErrors: Object.fromEntries(Object.entries(state.browserErrors).filter(([id]) => id !== missionId)),
-        browserOpenKeys: hidden ? state.browserOpenKeys : withBrowserOpenKey(state.browserOpenKeys, missionId, true),
+        browserErrors: Object.fromEntries(
+          Object.entries(state.browserErrors).filter(([id]) => id !== missionId),
+        ),
+        browserOpenKeys: hidden
+          ? state.browserOpenKeys
+          : withBrowserOpenKey(state.browserOpenKeys, missionId, true),
       };
     }
 
@@ -1190,8 +1368,12 @@ function baseReducer(state: AppState, action: Action): AppState {
       // later reopen starts fresh (and it is excluded from persistence).
       return {
         ...state,
-        browsers: Object.fromEntries(Object.entries(state.browsers).filter(([id]) => id !== action.missionId)),
-        browserErrors: Object.fromEntries(Object.entries(state.browserErrors).filter(([id]) => id !== action.missionId)),
+        browsers: Object.fromEntries(
+          Object.entries(state.browsers).filter(([id]) => id !== action.missionId),
+        ),
+        browserErrors: Object.fromEntries(
+          Object.entries(state.browserErrors).filter(([id]) => id !== action.missionId),
+        ),
         designModes: clearDesignMode(state.designModes, action.missionId),
         browserOpenKeys: clearBrowserOpenKey(state.browserOpenKeys, action.missionId),
       };
@@ -1202,20 +1384,28 @@ function baseReducer(state: AppState, action: Action): AppState {
         ...state,
         browserErrors: { ...state.browserErrors, [action.missionId]: action.message },
         // Respect an explicit hide; otherwise surface the errored browser.
-        browserOpenKeys: state.browserOpenKeys[action.missionId] === false
-          ? state.browserOpenKeys
-          : withBrowserOpenKey(state.browserOpenKeys, action.missionId, true),
+        browserOpenKeys:
+          state.browserOpenKeys[action.missionId] === false
+            ? state.browserOpenKeys
+            : withBrowserOpenKey(state.browserOpenKeys, action.missionId, true),
       };
 
     case 'TOGGLE_DESIGN_MODE':
       return { ...state, designModes: toggleDesignMode(state.designModes, action.sessionId) };
 
     case 'SET_DESIGN_MODE':
-      return { ...state, designModes: setDesignMode(state.designModes, action.sessionId, action.open) };
+      return {
+        ...state,
+        designModes: setDesignMode(state.designModes, action.sessionId, action.open),
+      };
 
     case 'SET_THEME': {
       const next = { ...state.theme, ...action.theme };
-      try { getLocalStorage()?.setItem('droid-theme', JSON.stringify(next)); } catch { /* ignore */ }
+      try {
+        getLocalStorage()?.setItem('droid-theme', JSON.stringify(next));
+      } catch {
+        /* ignore */
+      }
       return { ...state, theme: next };
     }
 
@@ -1226,26 +1416,39 @@ function baseReducer(state: AppState, action: Action): AppState {
       return { ...state, selectedAgentSessionId: action.id };
 
     case 'MODELS_LIST':
-      return { ...state, models: action.models, agentConfig: saveAgentConfig(sanitizeAgentConfig(state.agentConfig, action.models)) };
+      return {
+        ...state,
+        models: action.models,
+        agentConfig: saveAgentConfig(sanitizeAgentConfig(state.agentConfig, action.models)),
+      };
 
     case 'SKILLS_LIST':
       return { ...state, skills: action.skills, skillsSessionId: action.sessionId };
 
     case 'FACTORY_DEFAULTS': {
-      const next = sanitizeAgentConfig({
-        orchestrator: {
-          modelId: state.agentConfig.orchestrator.modelId ?? action.defaults.modelId,
-          reasoning: state.agentConfig.orchestrator.modelId ? state.agentConfig.orchestrator.reasoning : action.defaults.reasoningEffort ?? state.agentConfig.orchestrator.reasoning,
+      const next = sanitizeAgentConfig(
+        {
+          orchestrator: {
+            modelId: state.agentConfig.orchestrator.modelId ?? action.defaults.modelId,
+            reasoning: state.agentConfig.orchestrator.modelId
+              ? state.agentConfig.orchestrator.reasoning
+              : (action.defaults.reasoningEffort ?? state.agentConfig.orchestrator.reasoning),
+          },
+          worker: {
+            modelId: state.agentConfig.worker.modelId ?? action.defaults.workerModelId,
+            reasoning: state.agentConfig.worker.modelId
+              ? state.agentConfig.worker.reasoning
+              : (action.defaults.workerReasoningEffort ?? state.agentConfig.worker.reasoning),
+          },
+          validator: {
+            modelId: state.agentConfig.validator.modelId ?? action.defaults.validatorModelId,
+            reasoning: state.agentConfig.validator.modelId
+              ? state.agentConfig.validator.reasoning
+              : (action.defaults.validatorReasoningEffort ?? state.agentConfig.validator.reasoning),
+          },
         },
-        worker: {
-          modelId: state.agentConfig.worker.modelId ?? action.defaults.workerModelId,
-          reasoning: state.agentConfig.worker.modelId ? state.agentConfig.worker.reasoning : action.defaults.workerReasoningEffort ?? state.agentConfig.worker.reasoning,
-        },
-        validator: {
-          modelId: state.agentConfig.validator.modelId ?? action.defaults.validatorModelId,
-          reasoning: state.agentConfig.validator.modelId ? state.agentConfig.validator.reasoning : action.defaults.validatorReasoningEffort ?? state.agentConfig.validator.reasoning,
-        },
-      }, state.models);
+        state.models,
+      );
 
       // Seed Factory defaults only before local compaction settings exist. An
       // explicit clear stores an empty local value and must not resurrect
@@ -1297,7 +1500,10 @@ function baseReducer(state: AppState, action: Action): AppState {
       const prevOverride = state.missionSettingOverrides[action.missionId] ?? {};
       return {
         ...state,
-        missions: { ...state.missions, [action.missionId]: { ...m, reasoningEffort: action.reasoning } },
+        missions: {
+          ...state.missions,
+          [action.missionId]: { ...m, reasoningEffort: action.reasoning },
+        },
         missionSettingOverrides: {
           ...state.missionSettingOverrides,
           [action.missionId]: { ...prevOverride, reasoningEffort: action.reasoning },
@@ -1348,9 +1554,10 @@ function loadPersistedBrowserOpenKeys(value: unknown): Record<string, boolean> {
   // Preserve both true (open) and false (explicitly hidden) so the "hidden"
   // decision survives a restart; a dropped `false` would let later updates
   // re-open a pane the user deliberately hid.
-  const entries = Object.entries(value as Record<string, unknown>)
-    .filter((entry): entry is [string, boolean] =>
-      typeof entry[0] === 'string' && entry[0].length > 0 && typeof entry[1] === 'boolean');
+  const entries = Object.entries(value as Record<string, unknown>).filter(
+    (entry): entry is [string, boolean] =>
+      typeof entry[0] === 'string' && entry[0].length > 0 && typeof entry[1] === 'boolean',
+  );
   return Object.fromEntries(entries);
 }
 
@@ -1384,7 +1591,9 @@ function sanitizeBrowserViewport(value: unknown): BrowserState['viewport'] | und
 }
 
 function sanitizeBrowserViewportMode(value: unknown): BrowserViewportMode {
-  return BROWSER_VIEWPORT_MODES.has(value as BrowserViewportMode) ? value as BrowserViewportMode : 'fit';
+  return BROWSER_VIEWPORT_MODES.has(value as BrowserViewportMode)
+    ? (value as BrowserViewportMode)
+    : 'fit';
 }
 
 function sanitizeBrowserScroll(value: unknown): BrowserState['scroll'] {
@@ -1421,7 +1630,11 @@ function finiteNumber(value: unknown): number | undefined {
 function adaptEvent(ev: ServerEvent): Action | null {
   switch (ev.type) {
     case 'connection':
-      return { type: 'SET_CONNECTION', status: ev.status === 'connected' ? 'connected' : 'error', message: ev.message };
+      return {
+        type: 'SET_CONNECTION',
+        status: ev.status === 'connected' ? 'connected' : 'error',
+        message: ev.message,
+      };
     case 'mission.created':
       return { type: 'MISSION_CREATED', clientRef: ev.clientRef, mission: ev.mission };
     case 'mission.updated':
@@ -1443,7 +1656,12 @@ function adaptEvent(ev: ServerEvent): Action | null {
         toolUseId: ev.toolUseId,
       };
     case 'mission.worker.rekey':
-      return { type: 'MISSION_WORKER_REKEY', missionId: ev.missionId, oldSessionId: ev.oldSessionId, newSessionId: ev.newSessionId };
+      return {
+        type: 'MISSION_WORKER_REKEY',
+        missionId: ev.missionId,
+        oldSessionId: ev.oldSessionId,
+        newSessionId: ev.newSessionId,
+      };
     case 'agent.updated':
       return {
         type: 'AGENT_UPDATED',
@@ -1453,7 +1671,14 @@ function adaptEvent(ev: ServerEvent): Action | null {
         status: ev.status,
       };
     case 'mission.tokens':
-      return { type: 'MISSION_TOKENS', missionId: ev.missionId, tokensIn: ev.tokensIn, tokensOut: ev.tokensOut, contextTokens: ev.contextTokens, maxContextTokens: ev.maxContextTokens };
+      return {
+        type: 'MISSION_TOKENS',
+        missionId: ev.missionId,
+        tokensIn: ev.tokensIn,
+        tokensOut: ev.tokensOut,
+        contextTokens: ev.contextTokens,
+        maxContextTokens: ev.maxContextTokens,
+      };
     case 'mission.transcript':
       return { type: 'MISSION_TRANSCRIPT', event: ev.event };
     case 'mission.permission':
@@ -1465,7 +1690,15 @@ function adaptEvent(ev: ServerEvent): Action | null {
     case 'mission.list':
       return { type: 'MISSION_LIST', missions: ev.missions };
     case 'mission.history':
-      return { type: 'MISSION_HISTORY', missionId: ev.missionId, progress: ev.progress, transcripts: ev.transcripts, workers: ev.workers, mode: ev.mode, olderCursor: ev.olderCursor };
+      return {
+        type: 'MISSION_HISTORY',
+        missionId: ev.missionId,
+        progress: ev.progress,
+        transcripts: ev.transcripts,
+        workers: ev.workers,
+        mode: ev.mode,
+        olderCursor: ev.olderCursor,
+      };
     case 'models.list':
       return { type: 'MODELS_LIST', models: ev.models };
     case 'context.updated':
@@ -1473,7 +1706,7 @@ function adaptEvent(ev: ServerEvent): Action | null {
     case 'catalog.updated':
       if (ev.catalog === 'skills') {
         const skills = (ev.items as SkillInfo[]).filter(
-          (s) => s && typeof s.name === 'string' && s.name.length > 0
+          (s) => s && typeof s.name === 'string' && s.name.length > 0,
         );
         return { type: 'SKILLS_LIST', skills, sessionId: ev.sessionId ?? null };
       }
@@ -1491,7 +1724,9 @@ function adaptEvent(ev: ServerEvent): Action | null {
   }
 }
 
-const StoreContext = createContext<{ state: AppState; dispatch: React.Dispatch<Action> } | null>(null);
+const StoreContext = createContext<{ state: AppState; dispatch: React.Dispatch<Action> } | null>(
+  null,
+);
 
 export function StoreProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(reducer, initialState, syncBrowserOpen);
@@ -1516,14 +1751,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const action = adaptEvent(ev);
       if (action) dispatch(action);
     });
-    return () => { unsub(); };
+    return () => {
+      unsub();
+    };
   }, []);
 
-  return (
-    <StoreContext.Provider value={{ state, dispatch }}>
-      {children}
-    </StoreContext.Provider>
-  );
+  return <StoreContext.Provider value={{ state, dispatch }}>{children}</StoreContext.Provider>;
 }
 
 export function useStore() {

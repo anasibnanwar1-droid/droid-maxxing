@@ -29,7 +29,10 @@ export default function SetupBanner({
       </button>
       <div className="flex-1" />
       {onDismiss && (
-        <button onClick={onDismiss} className="text-droid-text-muted hover:text-droid-text transition-colors">
+        <button
+          onClick={onDismiss}
+          className="text-droid-text-muted hover:text-droid-text transition-colors"
+        >
           <X className="w-3.5 h-3.5" />
         </button>
       )}

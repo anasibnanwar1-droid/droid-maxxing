@@ -89,7 +89,9 @@ export function SpecOutline({
     return (
       <>
         {text.slice(0, idx)}
-        <mark className="bg-transparent text-droid-accent font-medium">{text.slice(idx, idx + q.length)}</mark>
+        <mark className="bg-transparent text-droid-accent font-medium">
+          {text.slice(idx, idx + q.length)}
+        </mark>
         {text.slice(idx + q.length)}
       </>
     );

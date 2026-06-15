@@ -1,8 +1,16 @@
 import type { BrowserViewport, BrowserViewportMode } from '../../types/bridge';
 import type { Size } from '../canvas/canvasMath';
 
-export const FIT_FALLBACK_VIEWPORT: BrowserViewport = { width: 1200, height: 800, deviceScaleFactor: 2 };
-export const CUSTOM_DEFAULT_VIEWPORT: BrowserViewport = { width: 1024, height: 720, deviceScaleFactor: 2 };
+export const FIT_FALLBACK_VIEWPORT: BrowserViewport = {
+  width: 1200,
+  height: 800,
+  deviceScaleFactor: 2,
+};
+export const CUSTOM_DEFAULT_VIEWPORT: BrowserViewport = {
+  width: 1024,
+  height: 720,
+  deviceScaleFactor: 2,
+};
 
 export const PRESET_VIEWPORTS: Partial<Record<BrowserViewportMode, BrowserViewport>> = {
   desktop: { width: 1440, height: 900, deviceScaleFactor: 2 },
@@ -31,7 +39,9 @@ export function viewportForMode(
 }
 
 export function sameViewport(a: BrowserViewport, b: BrowserViewport): boolean {
-  return a.width === b.width && a.height === b.height && a.deviceScaleFactor === b.deviceScaleFactor;
+  return (
+    a.width === b.width && a.height === b.height && a.deviceScaleFactor === b.deviceScaleFactor
+  );
 }
 
 export function normalizeUrl(value: string): string {
@@ -41,7 +51,8 @@ export function normalizeUrl(value: string): string {
   if (trimmed.startsWith('//')) return `https:${trimmed}`;
   const ipv6Loopback = normalizeBareIpv6Loopback(trimmed);
   if (ipv6Loopback) return ipv6Loopback;
-  if (/^(localhost|127\.0\.0\.1|\[::1\]|::1)(:\d+)?(\/|$)/i.test(trimmed)) return `http://${trimmed}`;
+  if (/^(localhost|127\.0\.0\.1|\[::1\]|::1)(:\d+)?(\/|$)/i.test(trimmed))
+    return `http://${trimmed}`;
   return `https://${trimmed}`;
 }
 

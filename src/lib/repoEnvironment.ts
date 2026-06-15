@@ -9,13 +9,14 @@ export interface RepoStatus {
 
 export function environmentLabels(cwd: string, status: RepoStatus | null | undefined) {
   return {
-    changes: status === undefined
-      ? 'Checking'
-      : status === null
-        ? 'No repo'
-        : status.changed > 0
-          ? `${status.changed} change${status.changed === 1 ? '' : 's'}`
-          : 'Clean',
+    changes:
+      status === undefined
+        ? 'Checking'
+        : status === null
+          ? 'No repo'
+          : status.changed > 0
+            ? `${status.changed} change${status.changed === 1 ? '' : 's'}`
+            : 'Clean',
     location: basename(status?.repoRoot ?? cwd) || 'No folder',
     branch: status?.branch || 'No branch',
   };

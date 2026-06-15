@@ -5,7 +5,8 @@ export function normalizeBrowserUrl(value: string): string {
   if (trimmed.startsWith('//')) return `https:${trimmed}`;
   const ipv6Loopback = normalizeBareIpv6Loopback(trimmed);
   if (ipv6Loopback) return ipv6Loopback;
-  if (/^(localhost|127\.0\.0\.1|\[::1\]|::1)(:\d+)?(\/|$)/i.test(trimmed)) return `http://${trimmed}`;
+  if (/^(localhost|127\.0\.0\.1|\[::1\]|::1)(:\d+)?(\/|$)/i.test(trimmed))
+    return `http://${trimmed}`;
   return `https://${trimmed}`;
 }
 

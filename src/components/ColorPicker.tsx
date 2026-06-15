@@ -3,7 +3,11 @@ import { createPortal } from 'react-dom';
 import { Pipette } from 'lucide-react';
 
 /* ── color math ── */
-interface HSV { h: number; s: number; v: number }
+interface HSV {
+  h: number;
+  s: number;
+  v: number;
+}
 
 function clamp(n: number, lo: number, hi: number) {
   return Math.max(lo, Math.min(hi, n));
@@ -11,7 +15,11 @@ function clamp(n: number, lo: number, hi: number) {
 
 function normalizeHex(hex: string): string | null {
   let h = hex.trim().replace(/^#/, '');
-  if (/^[0-9a-fA-F]{3}$/.test(h)) h = h.split('').map((c) => c + c).join('');
+  if (/^[0-9a-fA-F]{3}$/.test(h))
+    h = h
+      .split('')
+      .map((c) => c + c)
+      .join('');
   if (!/^[0-9a-fA-F]{6}$/.test(h)) return null;
   return `#${h.toLowerCase()}`;
 }
@@ -57,7 +65,10 @@ function hsvToHex(h: number, s: number, v: number): string {
   else if (h < 240) [r, g, b] = [0, x, c];
   else if (h < 300) [r, g, b] = [x, 0, c];
   else [r, g, b] = [c, 0, x];
-  const toHex = (n: number) => Math.round((n + m) * 255).toString(16).padStart(2, '0');
+  const toHex = (n: number) =>
+    Math.round((n + m) * 255)
+      .toString(16)
+      .padStart(2, '0');
   return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
 }
 
@@ -72,13 +83,21 @@ const HUE_GRADIENT =
 /* ── the picker surface ── */
 const hasEyeDropper = typeof window !== 'undefined' && 'EyeDropper' in window;
 
-export function ColorPicker({ value, onChange }: { value: string; onChange: (hex: string) => void }) {
+export function ColorPicker({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (hex: string) => void;
+}) {
   const { h, s, v } = hexToHsv(value);
   const satRef = useRef<HTMLDivElement>(null);
   const hueRef = useRef<HTMLDivElement>(null);
   const [hexDraft, setHexDraft] = useState(value);
 
-  useEffect(() => { setHexDraft(value); }, [value]);
+  useEffect(() => {
+    setHexDraft(value);
+  }, [value]);
 
   const commitHex = (raw: string) => {
     setHexDraft(raw);
@@ -130,11 +149,21 @@ export function ColorPicker({ value, onChange }: { value: string; onChange: (hex
         className="relative h-[150px] rounded-lg cursor-crosshair overflow-hidden"
         style={{ background: `hsl(${h}, 100%, 50%)` }}
       >
-        <div className="absolute inset-0" style={{ background: 'linear-gradient(to right, #fff, rgba(255,255,255,0))' }} />
-        <div className="absolute inset-0" style={{ background: 'linear-gradient(to top, #000, rgba(0,0,0,0))' }} />
+        <div
+          className="absolute inset-0"
+          style={{ background: 'linear-gradient(to right, #fff, rgba(255,255,255,0))' }}
+        />
+        <div
+          className="absolute inset-0"
+          style={{ background: 'linear-gradient(to top, #000, rgba(0,0,0,0))' }}
+        />
         <span
           className="absolute w-3.5 h-3.5 -ml-[7px] -mt-[7px] rounded-full border-2 border-white pointer-events-none"
-          style={{ left: `${s * 100}%`, top: `${(1 - v) * 100}%`, boxShadow: '0 0 0 1px rgba(0,0,0,0.5)' }}
+          style={{
+            left: `${s * 100}%`,
+            top: `${(1 - v) * 100}%`,
+            boxShadow: '0 0 0 1px rgba(0,0,0,0.5)',
+          }}
         />
       </div>
       <div
@@ -150,7 +179,10 @@ export function ColorPicker({ value, onChange }: { value: string; onChange: (hex
       </div>
 
       <div className="mt-3 flex items-center gap-1.5">
-        <span className="h-7 w-7 shrink-0 rounded-md border border-droid-border" style={{ backgroundColor: value }} />
+        <span
+          className="h-7 w-7 shrink-0 rounded-md border border-droid-border"
+          style={{ backgroundColor: value }}
+        />
         <input
           value={hexDraft}
           onChange={(e) => commitHex(e.target.value)}
@@ -172,7 +204,15 @@ export function ColorPicker({ value, onChange }: { value: string; onChange: (hex
 }
 
 /* ── popover positioned near an anchor ── */
-function ColorPopover({ anchor, onClose, children }: { anchor: HTMLElement | null; onClose: () => void; children: React.ReactNode }) {
+function ColorPopover({
+  anchor,
+  onClose,
+  children,
+}: {
+  anchor: HTMLElement | null;
+  onClose: () => void;
+  children: React.ReactNode;
+}) {
   const ref = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
 
@@ -191,7 +231,9 @@ function ColorPopover({ anchor, onClose, children }: { anchor: HTMLElement | nul
     const onDown = (e: MouseEvent) => {
       if (ref.current && !ref.current.contains(e.target as Node) && e.target !== anchor) onClose();
     };
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
     window.addEventListener('mousedown', onDown);
     window.addEventListener('keydown', onKey);
     return () => {
@@ -214,12 +256,24 @@ function ColorPopover({ anchor, onClose, children }: { anchor: HTMLElement | nul
 }
 
 /* ── full settings row: swatch + hex + picker popover ── */
-export function ColorField({ label, description, value, onChange }: { label: string; description?: string; value: string; onChange: (v: string) => void }) {
+export function ColorField({
+  label,
+  description,
+  value,
+  onChange,
+}: {
+  label: string;
+  description?: string;
+  value: string;
+  onChange: (v: string) => void;
+}) {
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState(value);
   const swatchRef = useRef<HTMLButtonElement>(null);
 
-  useEffect(() => { setDraft(value); }, [value]);
+  useEffect(() => {
+    setDraft(value);
+  }, [value]);
 
   const commit = (raw: string) => {
     setDraft(raw);

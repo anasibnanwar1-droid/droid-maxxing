@@ -7,11 +7,38 @@ export function hashStr(s: string): number {
   return h >>> 0;
 }
 
-const PALETTE = ['#a07cff', '#ff5d2e', '#7c9cff', '#ff7a6b', '#5b8def', '#ffa94d', '#9b8cff', '#ff6fae', '#4fd1c5', '#c084fc'];
+const PALETTE = [
+  '#a07cff',
+  '#ff5d2e',
+  '#7c9cff',
+  '#ff7a6b',
+  '#5b8def',
+  '#ffa94d',
+  '#9b8cff',
+  '#ff6fae',
+  '#4fd1c5',
+  '#c084fc',
+];
 
 const NAMES = [
-  'Popper', 'Epicurus', 'Dewey', 'Goodall', 'Gauss', 'Newton', 'Curie', 'Turing',
-  'Lovelace', 'Bohr', 'Hopper', 'Feynman', 'Darwin', 'Tesla', 'Euler', 'Kepler', 'Planck', 'Pascal',
+  'Popper',
+  'Epicurus',
+  'Dewey',
+  'Goodall',
+  'Gauss',
+  'Newton',
+  'Curie',
+  'Turing',
+  'Lovelace',
+  'Bohr',
+  'Hopper',
+  'Feynman',
+  'Darwin',
+  'Tesla',
+  'Euler',
+  'Kepler',
+  'Planck',
+  'Pascal',
 ];
 
 export function agentName(seed: string): string {
@@ -32,10 +59,25 @@ export function Identicon({ seed, size = 18 }: { seed: string; size?: number }) 
   }
 
   return (
-    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="shrink-0" aria-hidden>
+    <svg
+      width={size}
+      height={size}
+      viewBox={`0 0 ${size} ${size}`}
+      className="shrink-0"
+      aria-hidden
+    >
       {grid.map((row, r) =>
         row.map((on, c) =>
-          on ? <rect key={`${r}-${c}`} x={c * px} y={r * px} width={px + 0.4} height={px + 0.4} fill={color} /> : null,
+          on ? (
+            <rect
+              key={`${r}-${c}`}
+              x={c * px}
+              y={r * px}
+              width={px + 0.4}
+              height={px + 0.4}
+              fill={color}
+            />
+          ) : null,
         ),
       )}
     </svg>

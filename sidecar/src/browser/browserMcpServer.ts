@@ -14,7 +14,10 @@ const viewportSchema = z.object({
 const viewportModeSchema = z.enum(['fit', 'desktop', 'laptop', 'tablet', 'mobile', 'custom']);
 const scrollDirectionSchema = z.enum(['up', 'down', 'left', 'right']);
 
-export function createBrowserMcpServer(manager: BrowserSessionManager, missionIdForTool: () => string | undefined) {
+export function createBrowserMcpServer(
+  manager: BrowserSessionManager,
+  missionIdForTool: () => string | undefined,
+) {
   const missionId = () => {
     const id = missionIdForTool();
     if (!id) throw new Error('Browser tools are not attached to a live Droid Control mission yet.');
@@ -36,7 +39,12 @@ export function createBrowserMcpServer(manager: BrowserSessionManager, missionId
           'Do not use Read, FetchUrl, curl, or agent-browser as a substitute for browser work.',
         ].join(' '),
         {
-          url: z.string().min(1).describe('Absolute URL to open, such as https://example.com or http://127.0.0.1:1421/.'),
+          url: z
+            .string()
+            .min(1)
+            .describe(
+              'Absolute URL to open, such as https://example.com or http://127.0.0.1:1421/.',
+            ),
           viewport: viewportSchema.optional().describe('Optional explicit browser viewport.'),
           viewportMode: viewportModeSchema.optional().describe('Viewport preset label for the UI.'),
         },
@@ -44,11 +52,14 @@ export function createBrowserMcpServer(manager: BrowserSessionManager, missionId
           const state = await manager.open({
             missionId: missionId(),
             url: input.url,
-            viewport: input.viewport ? { ...input.viewport, deviceScaleFactor: input.viewport.deviceScaleFactor ?? 2 } : undefined,
+            viewport: input.viewport
+              ? { ...input.viewport, deviceScaleFactor: input.viewport.deviceScaleFactor ?? 2 }
+              : undefined,
             viewportMode: input.viewportMode ?? (input.viewport ? 'custom' : undefined),
           });
           return jsonResult({
-            message: 'Opened the live Droid Control browser. Use browser_snapshot next for refs, then browser_click/browser_type/browser_scroll for interaction.',
+            message:
+              'Opened the live Droid Control browser. Use browser_snapshot next for refs, then browser_click/browser_type/browser_scroll for interaction.',
             ...stateForTool(state),
           });
         }),
@@ -75,8 +86,18 @@ export function createBrowserMcpServer(manager: BrowserSessionManager, missionId
         'browser_screenshot',
         'Capture the current live Droid Control browser viewport as a high-detail PNG image for visual inspection. Use browser_snapshot for normal navigation refs.',
         {
-          fullPage: z.boolean().optional().describe('Capture the full page instead of only the visible viewport.'),
-          deviceScaleFactor: z.number().positive().max(4).optional().describe('Temporary screenshot scale. Defaults to the current high-detail viewport scale.'),
+          fullPage: z
+            .boolean()
+            .optional()
+            .describe('Capture the full page instead of only the visible viewport.'),
+          deviceScaleFactor: z
+            .number()
+            .positive()
+            .max(4)
+            .optional()
+            .describe(
+              'Temporary screenshot scale. Defaults to the current high-detail viewport scale.',
+            ),
         },
         safeTool(async (input) => {
           const path = await manager.screenshot(missionId(), {
@@ -90,7 +111,10 @@ export function createBrowserMcpServer(manager: BrowserSessionManager, missionId
         'browser_click',
         'Move the agent cursor and click in the live Droid Control browser by ref or viewport coordinates. Prefer refs returned by browser_snapshot.',
         {
-          ref: z.string().optional().describe('Element ref returned by browser_snapshot. Preferred when available.'),
+          ref: z
+            .string()
+            .optional()
+            .describe('Element ref returned by browser_snapshot. Preferred when available.'),
           x: z.number().optional().describe('Viewport x coordinate when clicking by coordinate.'),
           y: z.number().optional().describe('Viewport y coordinate when clicking by coordinate.'),
         },
@@ -119,7 +143,10 @@ export function createBrowserMcpServer(manager: BrowserSessionManager, missionId
         'browser_keypress',
         'Press a key in the live Droid Control browser.',
         {
-          key: z.string().min(1).describe('Key name to press, such as Enter, Escape, Tab, ArrowDown.'),
+          key: z
+            .string()
+            .min(1)
+            .describe('Key name to press, such as Enter, Escape, Tab, ArrowDown.'),
         },
         safeTool(async (input) => {
           const state = await manager.keypress(missionId(), input.key);
@@ -136,7 +163,10 @@ export function createBrowserMcpServer(manager: BrowserSessionManager, missionId
         safeTool(async (input) => {
           const state = await manager.resizeViewport({
             missionId: missionId(),
-            viewport: { ...input.viewport, deviceScaleFactor: input.viewport.deviceScaleFactor ?? 2 },
+            viewport: {
+              ...input.viewport,
+              deviceScaleFactor: input.viewport.deviceScaleFactor ?? 2,
+            },
             viewportMode: input.viewportMode ?? 'custom',
           });
           return jsonResult(stateForTool(state));
@@ -178,14 +208,21 @@ export function createBrowserMcpServer(manager: BrowserSessionManager, missionId
           'Design Mode is for visual/UI work only: change the referenced elements and their styling, and do not modify backend, data, or business logic. If achieving the requested look requires a backend or data change, stop and tell the user what is needed and why instead of changing it yourself or spawning subagents.',
         ].join(' '),
         {
-          instruction: z.string().optional().describe('Optional user design instruction to keep alongside the returned context.'),
+          instruction: z
+            .string()
+            .optional()
+            .describe('Optional user design instruction to keep alongside the returned context.'),
         },
         safeTool(async (input) => {
           const context = manager.designContext(missionId());
           const refs = context.references;
           const images = refs
             .filter((r) => r.screenshot)
-            .map((r) => ({ type: 'image' as const, data: r.screenshot!.base64, mimeType: 'image/png' as const }));
+            .map((r) => ({
+              type: 'image' as const,
+              data: r.screenshot!.base64,
+              mimeType: 'image/png' as const,
+            }));
           const result = jsonResult({
             ok: true,
             instruction: input.instruction,
@@ -204,19 +241,31 @@ export function createBrowserMcpServer(manager: BrowserSessionManager, missionId
           'Use the @id values returned by design-mode to inspect the exact verified selector, attributes, computed styles, ancestor chain, resolved source component/file, and the cropped screenshot path before editing code.',
         ].join(' '),
         {
-          id: z.string().min(1).describe('Design reference id returned by design-mode, e.g. @live-ab12cd or @region-...'),
+          id: z
+            .string()
+            .min(1)
+            .describe(
+              'Design reference id returned by design-mode, e.g. @live-ab12cd or @region-...',
+            ),
         },
         safeTool(async (input) => {
           const ref = manager.referenceDetail(missionId(), input.id);
           if (!ref) {
-            return jsonResult({ ok: false, error: `No design reference ${input.id}. Call design-mode to list the current references.` });
+            return jsonResult({
+              ok: false,
+              error: `No design reference ${input.id}. Call design-mode to list the current references.`,
+            });
           }
           const text = jsonResult({ ok: true, reference: designReferenceDetail(ref) });
           if (ref.screenshot?.base64) {
             return {
               content: [
                 { type: 'text' as const, text },
-                { type: 'image' as const, data: ref.screenshot.base64, mimeType: 'image/png' as const },
+                {
+                  type: 'image' as const,
+                  data: ref.screenshot.base64,
+                  mimeType: 'image/png' as const,
+                },
               ],
             };
           }
@@ -227,7 +276,10 @@ export function createBrowserMcpServer(manager: BrowserSessionManager, missionId
   });
 }
 
-function stateForTool(state: BrowserState, designReferences: DesignReference[] = []): Record<string, unknown> {
+function stateForTool(
+  state: BrowserState,
+  designReferences: DesignReference[] = [],
+): Record<string, unknown> {
   return {
     ok: true,
     url: state.url,

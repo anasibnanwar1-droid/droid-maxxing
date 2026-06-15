@@ -14,8 +14,14 @@ test('buildInstallCommand maps each channel to its command', () => {
   assert.equal(script.shell, true);
   assert.match(script.command, /curl -fsSL https:\/\/app\.factory\.ai\/cli/);
   assert.match(script.command, /&& sh/);
-  assert.deepEqual(buildInstallCommand('brew'), { command: 'brew', args: ['install', '--cask', 'droid'] });
-  assert.deepEqual(buildInstallCommand('npm'), { command: 'npm', args: ['install', '-g', '@factory/cli'] });
+  assert.deepEqual(buildInstallCommand('brew'), {
+    command: 'brew',
+    args: ['install', '--cask', 'droid'],
+  });
+  assert.deepEqual(buildInstallCommand('npm'), {
+    command: 'npm',
+    args: ['install', '-g', '@factory/cli'],
+  });
 });
 
 test('the script install aborts when the download fails', () => {
@@ -25,10 +31,16 @@ test('the script install aborts when the download fails', () => {
 });
 
 test('buildUpdateCommand uses droid update when the CLI exists', () => {
-  assert.deepEqual(buildUpdateCommand('npm', '/usr/bin/droid', true), { command: '/usr/bin/droid', args: ['update'] });
+  assert.deepEqual(buildUpdateCommand('npm', '/usr/bin/droid', true), {
+    command: '/usr/bin/droid',
+    args: ['update'],
+  });
 });
 
 test('buildUpdateCommand falls back to install when the CLI is missing', () => {
-  assert.deepEqual(buildUpdateCommand('brew', 'droid', false), { command: 'brew', args: ['install', '--cask', 'droid'] });
+  assert.deepEqual(buildUpdateCommand('brew', 'droid', false), {
+    command: 'brew',
+    args: ['install', '--cask', 'droid'],
+  });
   assert.equal(buildUpdateCommand('npm', 'droid', false).command, 'npm');
 });

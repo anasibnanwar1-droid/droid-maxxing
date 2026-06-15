@@ -10,21 +10,41 @@ test('MISSION_WORKER_REKEY remaps worker list, transcript events, context stats,
     transcripts: {
       m1: [
         { id: 't1', missionId: 'm1', agentSessionId: 'w-old', kind: 'text', text: 'hi', ts: 1 },
-        { id: 't2', missionId: 'm1', agentSessionId: 'orchestrator', kind: 'text', text: 'orch', ts: 2 },
+        {
+          id: 't2',
+          missionId: 'm1',
+          agentSessionId: 'orchestrator',
+          kind: 'text',
+          text: 'orch',
+          ts: 2,
+        },
       ],
     },
-    contextStats: { 'w-old': { used: 10, remaining: 90, limit: 100, accuracy: 'estimated', updatedAt: 'x' } },
+    contextStats: {
+      'w-old': { used: 10, remaining: 90, limit: 100, accuracy: 'estimated', updatedAt: 'x' },
+    },
     selectedAgentSessionId: 'w-old',
   } as unknown as AppState;
 
-  const next = reducer(start, { type: 'MISSION_WORKER_REKEY', missionId: 'm1', oldSessionId: 'w-old', newSessionId: 'w-new' });
+  const next = reducer(start, {
+    type: 'MISSION_WORKER_REKEY',
+    missionId: 'm1',
+    oldSessionId: 'w-old',
+    newSessionId: 'w-new',
+  });
 
   assert.equal(next.workers.m1[0].sessionId, 'w-new');
   // Only the worker's own transcript events move; the orchestrator's stay put.
   assert.equal(next.transcripts.m1[0].agentSessionId, 'w-new');
   assert.equal(next.transcripts.m1[1].agentSessionId, 'orchestrator');
   assert.equal(next.contextStats['w-old'], undefined);
-  assert.deepEqual(next.contextStats['w-new'], { used: 10, remaining: 90, limit: 100, accuracy: 'estimated', updatedAt: 'x' });
+  assert.deepEqual(next.contextStats['w-new'], {
+    used: 10,
+    remaining: 90,
+    limit: 100,
+    accuracy: 'estimated',
+    updatedAt: 'x',
+  });
   assert.equal(next.selectedAgentSessionId, 'w-new');
 });
 
@@ -40,7 +60,12 @@ test('MISSION_WORKER_REKEY keeps fresh new-id context stats instead of clobberin
     },
   } as unknown as AppState;
 
-  const next = reducer(start, { type: 'MISSION_WORKER_REKEY', missionId: 'm1', oldSessionId: 'w-old', newSessionId: 'w-new' });
+  const next = reducer(start, {
+    type: 'MISSION_WORKER_REKEY',
+    missionId: 'm1',
+    oldSessionId: 'w-old',
+    newSessionId: 'w-new',
+  });
 
   assert.equal(next.contextStats['w-old'], undefined);
   // Fresh post-compaction stats survive; the stale old snapshot is dropped.
@@ -52,10 +77,17 @@ test('MISSION_WORKER_REKEY migrates old stats when the new id has none yet', () 
   const start = {
     ...initialState,
     workers: { m1: [{ sessionId: 'w-old', status: 'running', startedAt: 1 }] },
-    contextStats: { 'w-old': { used: 40, remaining: 60, limit: 100, accuracy: 'estimated', updatedAt: 'old' } },
+    contextStats: {
+      'w-old': { used: 40, remaining: 60, limit: 100, accuracy: 'estimated', updatedAt: 'old' },
+    },
   } as unknown as AppState;
 
-  const next = reducer(start, { type: 'MISSION_WORKER_REKEY', missionId: 'm1', oldSessionId: 'w-old', newSessionId: 'w-new' });
+  const next = reducer(start, {
+    type: 'MISSION_WORKER_REKEY',
+    missionId: 'm1',
+    oldSessionId: 'w-old',
+    newSessionId: 'w-new',
+  });
 
   assert.equal(next.contextStats['w-old'], undefined);
   assert.equal(next.contextStats['w-new'].used, 40);
@@ -68,7 +100,12 @@ test('MISSION_WORKER_REKEY leaves a non-selected worker selection untouched', ()
     selectedAgentSessionId: 'orchestrator',
   } as unknown as AppState;
 
-  const next = reducer(start, { type: 'MISSION_WORKER_REKEY', missionId: 'm1', oldSessionId: 'w-old', newSessionId: 'w-new' });
+  const next = reducer(start, {
+    type: 'MISSION_WORKER_REKEY',
+    missionId: 'm1',
+    oldSessionId: 'w-old',
+    newSessionId: 'w-new',
+  });
 
   assert.equal(next.workers.m1[0].sessionId, 'w-new');
   assert.equal(next.selectedAgentSessionId, 'orchestrator');
@@ -76,16 +113,34 @@ test('MISSION_WORKER_REKEY leaves a non-selected worker selection untouched', ()
 
 test('MISSION_WORKER_REKEY is a no-op when the id is unchanged', () => {
   const start = { ...initialState, selectedAgentSessionId: 'w' } as unknown as AppState;
-  const next = reducer(start, { type: 'MISSION_WORKER_REKEY', missionId: 'm1', oldSessionId: 'w', newSessionId: 'w' });
+  const next = reducer(start, {
+    type: 'MISSION_WORKER_REKEY',
+    missionId: 'm1',
+    oldSessionId: 'w',
+    newSessionId: 'w',
+  });
   assert.equal(next, start);
 });
 
 test('MISSION_WORKER_REKEY records the old->new mapping so local views can follow it', () => {
-  const start = { ...initialState, workers: { m1: [{ sessionId: 'w-old', status: 'running', startedAt: 1 }] } } as unknown as AppState;
-  const once = reducer(start, { type: 'MISSION_WORKER_REKEY', missionId: 'm1', oldSessionId: 'w-old', newSessionId: 'w-a' });
+  const start = {
+    ...initialState,
+    workers: { m1: [{ sessionId: 'w-old', status: 'running', startedAt: 1 }] },
+  } as unknown as AppState;
+  const once = reducer(start, {
+    type: 'MISSION_WORKER_REKEY',
+    missionId: 'm1',
+    oldSessionId: 'w-old',
+    newSessionId: 'w-a',
+  });
   assert.equal(once.workerRekeys['w-old'], 'w-a');
   // A second compaction chains: both hops remain resolvable across renders.
-  const twice = reducer(once, { type: 'MISSION_WORKER_REKEY', missionId: 'm1', oldSessionId: 'w-a', newSessionId: 'w-b' });
+  const twice = reducer(once, {
+    type: 'MISSION_WORKER_REKEY',
+    missionId: 'm1',
+    oldSessionId: 'w-a',
+    newSessionId: 'w-b',
+  });
   assert.equal(twice.workerRekeys['w-old'], 'w-a');
   assert.equal(twice.workerRekeys['w-a'], 'w-b');
 });
@@ -120,7 +175,12 @@ test('MISSION_WORKER_REKEY remaps mission feature worker ids and progress entrie
     },
   } as unknown as AppState;
 
-  const next = reducer(start, { type: 'MISSION_WORKER_REKEY', missionId: 'm1', oldSessionId: 'w-old', newSessionId: 'w-new' });
+  const next = reducer(start, {
+    type: 'MISSION_WORKER_REKEY',
+    missionId: 'm1',
+    oldSessionId: 'w-old',
+    newSessionId: 'w-new',
+  });
 
   const f1 = next.missions.m1.features[0];
   assert.deepEqual(f1.workerSessionIds, ['w-new', 'w-other']);

@@ -180,7 +180,9 @@ export function normalizeSnapshot(value: unknown): BrowserSnapshot {
     url: stringValue(object.url) ?? 'about:blank',
     title: stringValue(object.title),
     scroll: normalizeScroll(object.scroll),
-    refs: arrayValue(object.refs).map(normalizeElementRef).filter((ref): ref is BrowserElementRef => Boolean(ref)),
+    refs: arrayValue(object.refs)
+      .map(normalizeElementRef)
+      .filter((ref): ref is BrowserElementRef => Boolean(ref)),
   };
 }
 
@@ -211,7 +213,8 @@ function normalizeBox(value: unknown): BrowserElementRef['box'] | null {
   const y = numberValue(object.y);
   const width = numberValue(object.width);
   const height = numberValue(object.height);
-  if (x === undefined || y === undefined || width === undefined || height === undefined) return null;
+  if (x === undefined || y === undefined || width === undefined || height === undefined)
+    return null;
   return { x, y, width, height };
 }
 
@@ -224,7 +227,7 @@ function normalizeScroll(value: unknown): BrowserSnapshot['scroll'] {
 }
 
 function record(value: unknown): Record<string, unknown> {
-  return value && typeof value === 'object' ? value as Record<string, unknown> : {};
+  return value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
 }
 
 function arrayValue(value: unknown): unknown[] {
@@ -234,7 +237,9 @@ function arrayValue(value: unknown): unknown[] {
 function stringRecord(value: unknown): Record<string, string> {
   const object = record(value);
   return Object.fromEntries(
-    Object.entries(object).filter((entry): entry is [string, string] => typeof entry[1] === 'string'),
+    Object.entries(object).filter(
+      (entry): entry is [string, string] => typeof entry[1] === 'string',
+    ),
   );
 }
 

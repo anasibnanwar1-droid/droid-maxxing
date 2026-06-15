@@ -6,7 +6,13 @@ import type { AppState } from './useStore';
 function missionList(missions: Array<{ id: string; sessionId: string }>) {
   return {
     type: 'MISSION_LIST' as const,
-    missions: missions.map((m, i) => ({ id: m.id, sessionId: m.sessionId, title: m.id, phase: 'running', updatedAt: i + 1 })),
+    missions: missions.map((m, i) => ({
+      id: m.id,
+      sessionId: m.sessionId,
+      title: m.id,
+      phase: 'running',
+      updatedAt: i + 1,
+    })),
   };
 }
 

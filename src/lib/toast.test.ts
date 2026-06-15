@@ -5,7 +5,9 @@ import { __resetToasts, dismissToast, pushToast, subscribeToasts } from './toast
 test('pushToast adds a toast and notifies subscribers', () => {
   __resetToasts();
   let latest: { id: number; message: string; variant: string }[] = [];
-  const unsub = subscribeToasts((t) => { latest = t; });
+  const unsub = subscribeToasts((t) => {
+    latest = t;
+  });
 
   const id = pushToast('Opened VS Code', 'success', 0);
   assert.equal(latest.length, 1);
@@ -18,21 +20,28 @@ test('pushToast adds a toast and notifies subscribers', () => {
 test('dismissToast removes only the matching toast', () => {
   __resetToasts();
   let latest: { id: number }[] = [];
-  const unsub = subscribeToasts((t) => { latest = t; });
+  const unsub = subscribeToasts((t) => {
+    latest = t;
+  });
 
   const first = pushToast('one', 'info', 0);
   const second = pushToast('two', 'error', 0);
   assert.equal(latest.length, 2);
 
   dismissToast(first);
-  assert.deepEqual(latest.map((t) => t.id), [second]);
+  assert.deepEqual(
+    latest.map((t) => t.id),
+    [second],
+  );
   unsub();
 });
 
 test('subscribeToasts unsubscribes cleanly', () => {
   __resetToasts();
   let calls = 0;
-  const unsub = subscribeToasts(() => { calls += 1; });
+  const unsub = subscribeToasts(() => {
+    calls += 1;
+  });
   assert.equal(calls, 1); // immediate snapshot
   unsub();
   pushToast('ignored', 'info', 0);

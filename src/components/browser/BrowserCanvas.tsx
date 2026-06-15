@@ -2,7 +2,13 @@ import { useEffect, useRef, useState } from 'react';
 import { SmoothCanvas } from '../canvas/SmoothCanvas';
 import { contentPointToCanvas } from '../canvas/canvasMath';
 import type { CanvasFit, Point, Size } from '../canvas/canvasMath';
-import type { BrowserBox, BrowserElementRef, BrowserState, BrowserViewport, DesignReference } from '../../types/bridge';
+import type {
+  BrowserBox,
+  BrowserElementRef,
+  BrowserState,
+  BrowserViewport,
+  DesignReference,
+} from '../../types/bridge';
 import { DesignModeOverlay } from './DesignModeOverlay';
 import { DesignModeComposer } from './DesignModeComposer';
 import { pickDesignModeTarget } from './designModeTargeting';
@@ -80,12 +86,14 @@ export function BrowserCanvas({
       }}
       onContentPointerMove={(point) => {
         if (dragStart.current) {
-          setDraftRegion(normalizeBox(dragStart.current, point, contentSize.width, contentSize.height));
+          setDraftRegion(
+            normalizeBox(dragStart.current, point, contentSize.width, contentSize.height),
+          );
           return;
         }
         if (!browser || !designMode || pencilMode) return;
         const next = pickDesignModeTarget(browser.refs, point, contentSize) ?? null;
-        setHoveredRef((current) => current?.ref === next?.ref ? current : next);
+        setHoveredRef((current) => (current?.ref === next?.ref ? current : next));
       }}
       onContentPointerUp={(point, event) => {
         if (!dragStart.current) return;
@@ -108,9 +116,16 @@ export function BrowserCanvas({
         lastWheelAt.current = now;
         const horizontal = Math.abs(event.deltaX) > Math.abs(event.deltaY);
         const direction = horizontal
-          ? event.deltaX > 0 ? 'right' : 'left'
-          : event.deltaY > 0 ? 'down' : 'up';
-        const pixels = Math.min(1100, Math.max(180, Math.round(horizontal ? Math.abs(event.deltaX) : Math.abs(event.deltaY))));
+          ? event.deltaX > 0
+            ? 'right'
+            : 'left'
+          : event.deltaY > 0
+            ? 'down'
+            : 'up';
+        const pixels = Math.min(
+          1100,
+          Math.max(180, Math.round(horizontal ? Math.abs(event.deltaX) : Math.abs(event.deltaY))),
+        );
         onScroll(direction, pixels);
       }}
       overlay={(fit) => {
@@ -141,7 +156,9 @@ export function BrowserCanvas({
             />
           ) : (
             <div className="flex h-full w-full items-center justify-center bg-[#0b0b0b]">
-              <div className="font-mono text-[42px] tracking-[0.18em] text-droid-text-muted/35">DROID</div>
+              <div className="font-mono text-[42px] tracking-[0.18em] text-droid-text-muted/35">
+                DROID
+              </div>
             </div>
           )}
           <DesignModeOverlay
@@ -164,7 +181,11 @@ function composerStyle(
   contentSize: Size,
   fit: CanvasFit,
 ): { left: number; top: number } {
-  const box = unionBoxes(references.map((ref) => boxForReference(ref, refs)).filter((item): item is BrowserBox => Boolean(item))) ?? {
+  const box = unionBoxes(
+    references
+      .map((ref) => boxForReference(ref, refs))
+      .filter((item): item is BrowserBox => Boolean(item)),
+  ) ?? {
     x: 0,
     y: 0,
     width: contentSize.width,
@@ -174,16 +195,18 @@ function composerStyle(
   const composerHeight = 112;
   const below = contentPointToCanvas({ x: box.x, y: box.y + box.height + 10 }, fit);
   const above = contentPointToCanvas({ x: box.x, y: box.y }, fit);
-  const top = below.y + composerHeight <= fit.container.height - 12
-    ? below.y
-    : above.y - composerHeight - 10;
+  const top =
+    below.y + composerHeight <= fit.container.height - 12 ? below.y : above.y - composerHeight - 10;
   return {
     left: clamp(below.x, 12, Math.max(12, fit.container.width - composerWidth - 12)),
     top: clamp(top, 12, Math.max(12, fit.container.height - composerHeight - 12)),
   };
 }
 
-function boxForReference(reference: DesignReference, refs: BrowserElementRef[]): BrowserBox | undefined {
+function boxForReference(
+  reference: DesignReference,
+  refs: BrowserElementRef[],
+): BrowserBox | undefined {
   return reference.anchor?.box ?? refs.find((ref) => ref.ref === reference.id)?.box;
 }
 

@@ -2,10 +2,18 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import type { TranscriptEvent, WorkerHistoryLink } from '../types/bridge';
 import type { WorkerInfo } from '../hooks/useStore';
-import { reconstructWorkersFromTranscript, resolveWorkers, richerSubagent, subagentLatest } from './subagents';
+import {
+  reconstructWorkersFromTranscript,
+  resolveWorkers,
+  richerSubagent,
+  subagentLatest,
+} from './subagents';
 import { subagentInfo } from './tools';
 
-function ev(p: Partial<TranscriptEvent> & Pick<TranscriptEvent, 'id' | 'agentSessionId' | 'role' | 'ts' | 'kind'>): TranscriptEvent {
+function ev(
+  p: Partial<TranscriptEvent> &
+    Pick<TranscriptEvent, 'id' | 'agentSessionId' | 'role' | 'ts' | 'kind'>,
+): TranscriptEvent {
   return { missionId: 'm1', ...p } as TranscriptEvent;
 }
 
@@ -24,10 +32,42 @@ function workersFromLinks(links: WorkerHistoryLink[]): WorkerInfo[] {
 // Two spawns with the SAME label, where the worker sessions appear in an order
 // opposite to the spawn order, so order-based reconstruction mis-pairs them.
 const transcript: TranscriptEvent[] = [
-  ev({ id: 's1', agentSessionId: 'orc', role: 'orchestrator', ts: 1, kind: 'tool_call', toolName: 'Task', toolArgs: { subagent_type: 'worker' }, toolUseId: 'tool-A' }),
-  ev({ id: 's2', agentSessionId: 'orc', role: 'orchestrator', ts: 2, kind: 'tool_call', toolName: 'Task', toolArgs: { subagent_type: 'worker' }, toolUseId: 'tool-B' }),
-  ev({ id: 'w1', agentSessionId: 'sess-A', role: 'worker', ts: 3, kind: 'text', text: 'hi from A' }),
-  ev({ id: 'w2', agentSessionId: 'sess-B', role: 'worker', ts: 4, kind: 'text', text: 'hi from B' }),
+  ev({
+    id: 's1',
+    agentSessionId: 'orc',
+    role: 'orchestrator',
+    ts: 1,
+    kind: 'tool_call',
+    toolName: 'Task',
+    toolArgs: { subagent_type: 'worker' },
+    toolUseId: 'tool-A',
+  }),
+  ev({
+    id: 's2',
+    agentSessionId: 'orc',
+    role: 'orchestrator',
+    ts: 2,
+    kind: 'tool_call',
+    toolName: 'Task',
+    toolArgs: { subagent_type: 'worker' },
+    toolUseId: 'tool-B',
+  }),
+  ev({
+    id: 'w1',
+    agentSessionId: 'sess-A',
+    role: 'worker',
+    ts: 3,
+    kind: 'text',
+    text: 'hi from A',
+  }),
+  ev({
+    id: 'w2',
+    agentSessionId: 'sess-B',
+    role: 'worker',
+    ts: 4,
+    kind: 'text',
+    text: 'hi from B',
+  }),
 ];
 
 // The persisted exact mapping is the inverse of first-seen order.
@@ -73,8 +113,26 @@ test('resolveWorkers does not let an unlinked worker steal a linked spawn (out o
   // (the linked spawn); excluding the linked session AND its spawn before
   // pairing keeps sess-A on its own tool-A.
   const tx: TranscriptEvent[] = [
-    ev({ id: 's1', agentSessionId: 'orc', role: 'orchestrator', ts: 1, kind: 'tool_call', toolName: 'Task', toolArgs: { subagent_type: 'worker' }, toolUseId: 'tool-A' }),
-    ev({ id: 's2', agentSessionId: 'orc', role: 'orchestrator', ts: 2, kind: 'tool_call', toolName: 'Task', toolArgs: { subagent_type: 'worker' }, toolUseId: 'tool-B' }),
+    ev({
+      id: 's1',
+      agentSessionId: 'orc',
+      role: 'orchestrator',
+      ts: 1,
+      kind: 'tool_call',
+      toolName: 'Task',
+      toolArgs: { subagent_type: 'worker' },
+      toolUseId: 'tool-A',
+    }),
+    ev({
+      id: 's2',
+      agentSessionId: 'orc',
+      role: 'orchestrator',
+      ts: 2,
+      kind: 'tool_call',
+      toolName: 'Task',
+      toolArgs: { subagent_type: 'worker' },
+      toolUseId: 'tool-B',
+    }),
     ev({ id: 'wB', agentSessionId: 'sess-B', role: 'worker', ts: 3, kind: 'text', text: 'B' }),
     ev({ id: 'wA', agentSessionId: 'sess-A', role: 'worker', ts: 4, kind: 'text', text: 'A' }),
   ];
@@ -89,10 +147,28 @@ test('reconstruct pairs causally so an unrelated session between spawns steals n
   // the two spawns. Causal pairing must leave it unpaired and still give the
   // later worker its later spawn instead of shifting everything by one.
   const tx: TranscriptEvent[] = [
-    ev({ id: 's1', agentSessionId: 'orc', role: 'orchestrator', ts: 1, kind: 'tool_call', toolName: 'Task', toolArgs: { subagent_type: 'worker' }, toolUseId: 'tool-A' }),
+    ev({
+      id: 's1',
+      agentSessionId: 'orc',
+      role: 'orchestrator',
+      ts: 1,
+      kind: 'tool_call',
+      toolName: 'Task',
+      toolArgs: { subagent_type: 'worker' },
+      toolUseId: 'tool-A',
+    }),
     ev({ id: 'wA', agentSessionId: 'sess-A', role: 'worker', ts: 2, kind: 'text', text: 'A' }),
     ev({ id: 'wX', agentSessionId: 'sess-X', role: 'worker', ts: 3, kind: 'text', text: 'X' }),
-    ev({ id: 's2', agentSessionId: 'orc', role: 'orchestrator', ts: 4, kind: 'tool_call', toolName: 'Task', toolArgs: { subagent_type: 'worker' }, toolUseId: 'tool-B' }),
+    ev({
+      id: 's2',
+      agentSessionId: 'orc',
+      role: 'orchestrator',
+      ts: 4,
+      kind: 'tool_call',
+      toolName: 'Task',
+      toolArgs: { subagent_type: 'worker' },
+      toolUseId: 'tool-B',
+    }),
     ev({ id: 'wB', agentSessionId: 'sess-B', role: 'worker', ts: 5, kind: 'text', text: 'B' }),
   ];
   const rebuilt = reconstructWorkersFromTranscript(tx);
@@ -102,15 +178,29 @@ test('reconstruct pairs causally so an unrelated session between spawns steals n
 });
 
 const spawn = (toolArgs: Record<string, unknown>): TranscriptEvent =>
-  ev({ id: 's', agentSessionId: 'orc', role: 'orchestrator', ts: 1, kind: 'tool_call', toolName: 'Task', toolArgs });
+  ev({
+    id: 's',
+    agentSessionId: 'orc',
+    role: 'orchestrator',
+    ts: 1,
+    kind: 'tool_call',
+    toolName: 'Task',
+    toolArgs,
+  });
 
 test('richerSubagent merges a label-only delta with a later description-only delta', () => {
-  const merged = richerSubagent(spawn({ subagent_type: 'worker' }), spawn({ description: 'fix the bug' }));
+  const merged = richerSubagent(
+    spawn({ subagent_type: 'worker' }),
+    spawn({ description: 'fix the bug' }),
+  );
   assert.deepEqual(subagentInfo(merged.toolArgs), { label: 'worker', description: 'fix the bug' });
 });
 
 test('richerSubagent merges a description-only delta with a later label-only delta', () => {
-  const merged = richerSubagent(spawn({ description: 'fix the bug' }), spawn({ subagent_type: 'worker' }));
+  const merged = richerSubagent(
+    spawn({ description: 'fix the bug' }),
+    spawn({ subagent_type: 'worker' }),
+  );
   assert.deepEqual(subagentInfo(merged.toolArgs), { label: 'worker', description: 'fix the bug' });
 });
 
@@ -120,7 +210,12 @@ test('richerSubagent returns the latest event untouched when it already carries 
 });
 
 test('subagentLatest surfaces a failed tool result as a failure, not stale activity', () => {
-  const out = subagentLatest({ kind: 'tool_result', text: 'command exited 1', toolName: 'Bash', isError: true });
+  const out = subagentLatest({
+    kind: 'tool_result',
+    text: 'command exited 1',
+    toolName: 'Bash',
+    isError: true,
+  });
   assert.equal(out?.head, 'Failed');
   assert.equal(out?.body, 'command exited 1');
 });

@@ -38,12 +38,10 @@ test('normalizes current CLI permission options before SDK validation', () => {
 
   const normalized = normalizeDroidTransportMessage(message);
 
-  assert.deepEqual((normalized.params as { options: { value: string }[] }).options.map((option) => option.value), [
-    'proceed_once',
-    'proceed_always',
-    'proceed_always',
-    'proceed_always',
-  ]);
+  assert.deepEqual(
+    (normalized.params as { options: { value: string }[] }).options.map((option) => option.value),
+    ['proceed_once', 'proceed_always', 'proceed_always', 'proceed_always'],
+  );
   assert.doesNotThrow(() => RequestPermissionRequestSchema.parse(normalized));
 });
 

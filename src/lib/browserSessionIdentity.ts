@@ -15,8 +15,14 @@ export function activeMissionAfterNativeBrowserRequest(
   return activeMissionId ?? missionIdForBrowserKey(missions, request.missionId);
 }
 
-export function missionIdForBrowserKey(missions: Record<string, MissionSummary>, browserKey: string): string {
-  return Object.values(missions).find((mission) => browserKeyForMission(mission) === browserKey)?.id ?? browserKey;
+export function missionIdForBrowserKey(
+  missions: Record<string, MissionSummary>,
+  browserKey: string,
+): string {
+  return (
+    Object.values(missions).find((mission) => browserKeyForMission(mission) === browserKey)?.id ??
+    browserKey
+  );
 }
 
 export function nativeBrowserRequestTargetsVisibleSurface(input: {
@@ -25,5 +31,7 @@ export function nativeBrowserRequestTargetsVisibleSurface(input: {
   requestMissionId: string;
   requestSessionId: string;
 }): boolean {
-  return input.browserKey === input.requestMissionId || input.visibleSessionId === input.requestSessionId;
+  return (
+    input.browserKey === input.requestMissionId || input.visibleSessionId === input.requestSessionId
+  );
 }

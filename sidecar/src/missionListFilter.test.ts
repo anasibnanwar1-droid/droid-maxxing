@@ -3,7 +3,12 @@ import test from 'node:test';
 import type { MissionSummary } from './protocol.js';
 import { filterMissionListSummaries, isSubagentSummary } from './missionListFilter.js';
 
-const summary = (id: string, cwd: string, updatedAt: number, extra: Partial<MissionSummary> = {}): MissionSummary => ({
+const summary = (
+  id: string,
+  cwd: string,
+  updatedAt: number,
+  extra: Partial<MissionSummary> = {},
+): MissionSummary => ({
   id,
   sessionId: id,
   kind: 'chat',
@@ -36,16 +41,10 @@ test('filterMissionListSummaries returns only five latest summaries per requeste
     limitPerWorkspace: 5,
   });
 
-  assert.deepEqual(filtered.map((m) => m.id), [
-    'api-2',
-    'api-1',
-    'api-0',
-    'app-6',
-    'app-5',
-    'app-4',
-    'app-3',
-    'app-2',
-  ]);
+  assert.deepEqual(
+    filtered.map((m) => m.id),
+    ['api-2', 'api-1', 'api-0', 'app-6', 'app-5', 'app-4', 'app-3', 'app-2'],
+  );
 });
 
 test('isSubagentSummary flags workers, validators and parented sessions', () => {
@@ -53,7 +52,10 @@ test('isSubagentSummary flags workers, validators and parented sessions', () => 
   assert.equal(isSubagentSummary(summary('w', '/repo/app', 1, { role: 'worker' })), true);
   assert.equal(isSubagentSummary(summary('v', '/repo/app', 1, { role: 'validator' })), true);
   assert.equal(isSubagentSummary(summary('k', '/repo/app', 1, { kind: 'mission_worker' })), true);
-  assert.equal(isSubagentSummary(summary('p', '/repo/app', 1, { parentSessionId: 'parent' })), true);
+  assert.equal(
+    isSubagentSummary(summary('p', '/repo/app', 1, { parentSessionId: 'parent' })),
+    true,
+  );
 });
 
 test('filterMissionListSummaries excludes subagent sessions', () => {
@@ -65,7 +67,10 @@ test('filterMissionListSummaries excludes subagent sessions', () => {
 
   const filtered = filterMissionListSummaries(summaries, { workspaceCwds: ['/repo/app'] });
 
-  assert.deepEqual(filtered.map((m) => m.id), ['chat']);
+  assert.deepEqual(
+    filtered.map((m) => m.id),
+    ['chat'],
+  );
 });
 
 test('filterMissionListSummaries returns every session when no per-workspace limit is given', () => {
@@ -89,12 +94,8 @@ test('filterMissionListSummaries keeps latest plain chats when workspace loading
     limitPerWorkspace: 3,
   });
 
-  assert.deepEqual(filtered.map((m) => m.id), [
-    'app-6',
-    'app-5',
-    'app-4',
-    'plain-6',
-    'plain-5',
-    'plain-4',
-  ]);
+  assert.deepEqual(
+    filtered.map((m) => m.id),
+    ['app-6', 'app-5', 'app-4', 'plain-6', 'plain-5', 'plain-4'],
+  );
 });

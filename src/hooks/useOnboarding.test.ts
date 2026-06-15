@@ -28,11 +28,20 @@ test('hasSetupBlocker flags a missing CLI', () => {
 });
 
 test('hasSetupBlocker flags missing auth when no api key', () => {
-  assert.equal(hasSetupBlocker(env({ auth: { apiKeyConfigured: false, loginPresent: false } })), true);
+  assert.equal(
+    hasSetupBlocker(env({ auth: { apiKeyConfigured: false, loginPresent: false } })),
+    true,
+  );
 });
 
 test('no blocker when signed in or api key configured', () => {
-  assert.equal(hasSetupBlocker(env({ auth: { apiKeyConfigured: false, loginPresent: true } })), false);
-  assert.equal(hasSetupBlocker(env({ auth: { apiKeyConfigured: true, loginPresent: false } })), false);
+  assert.equal(
+    hasSetupBlocker(env({ auth: { apiKeyConfigured: false, loginPresent: true } })),
+    false,
+  );
+  assert.equal(
+    hasSetupBlocker(env({ auth: { apiKeyConfigured: true, loginPresent: false } })),
+    false,
+  );
   assert.equal(hasSetupBlocker(null), false);
 });

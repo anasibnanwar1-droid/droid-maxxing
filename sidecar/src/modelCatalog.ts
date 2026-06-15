@@ -7,7 +7,10 @@ export function mergeModelCatalog(sdkModels: Array<ModelRecord | ModelInfo>): Mo
   const add = (model: ModelInfo) => {
     if (!model.id) return;
     const previous = merged.get(model.id);
-    merged.set(model.id, previous ? { ...model, ...previous, isCustom: previous.isCustom || model.isCustom } : model);
+    merged.set(
+      model.id,
+      previous ? { ...model, ...previous, isCustom: previous.isCustom || model.isCustom } : model,
+    );
   };
 
   sdkModels.map(fromSdkModel).forEach(add);

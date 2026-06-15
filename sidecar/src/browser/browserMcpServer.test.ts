@@ -25,7 +25,9 @@ test('browser MCP server exposes agent-facing names and typed inputs', () => {
     ],
   );
   assert.ok(server.tools.find((tool) => tool.name === 'browser_open')?.inputSchema?.url);
-  assert.ok(server.tools.find((tool) => tool.name === 'browser_screenshot')?.inputSchema?.deviceScaleFactor);
+  assert.ok(
+    server.tools.find((tool) => tool.name === 'browser_screenshot')?.inputSchema?.deviceScaleFactor,
+  );
   assert.match(
     server.tools.find((tool) => tool.name === 'browser_open')?.description ?? '',
     /Do not ask the user for a URL/,
@@ -50,7 +52,9 @@ test('browser MCP handlers return visible tool errors', async () => {
 test('browser_open keeps high-detail viewport scale by default', async () => {
   let openedViewport: { width: number; height: number; deviceScaleFactor?: number } | undefined;
   const manager = {
-    async open(input: { viewport?: { width: number; height: number; deviceScaleFactor?: number } }) {
+    async open(input: {
+      viewport?: { width: number; height: number; deviceScaleFactor?: number };
+    }) {
       openedViewport = input.viewport;
       return {
         url: 'https://example.com',

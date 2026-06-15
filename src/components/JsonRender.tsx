@@ -62,7 +62,8 @@ const COLOR_MAP: Record<string, string> = {
 // Only allow our themed names plus literal hex/rgb/hsl/plain-word colors. This
 // blocks CSS functions like url()/var()/image-set() from model-supplied specs
 // from smuggling network requests or escaping the intended style.
-const SAFE_COLOR_RE = /^(#(?:[0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})|rgba?\([\d.,\s%/]+\)|hsla?\([\d.,\s%/]+\)|[a-z]+)$/i;
+const SAFE_COLOR_RE =
+  /^(#(?:[0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})|rgba?\([\d.,\s%/]+\)|hsla?\([\d.,\s%/]+\)|[a-z]+)$/i;
 
 function resolveColor(c: unknown): string | undefined {
   if (typeof c !== 'string' || !c) return undefined;
@@ -95,7 +96,10 @@ function asArray<T = unknown>(v: unknown): T[] {
 function asRecordArray(v: unknown): Record<string, unknown>[] {
   return Array.isArray(v)
     ? v
-        .filter((e): e is Record<string, unknown> => typeof e === 'object' && e !== null && !Array.isArray(e))
+        .filter(
+          (e): e is Record<string, unknown> =>
+            typeof e === 'object' && e !== null && !Array.isArray(e),
+        )
         .slice(0, MAX_ITEMS)
     : [];
 }
@@ -119,7 +123,9 @@ const STATUS_META: Record<string, { color: string; Icon: typeof Info }> = {
 // "constructor" or "toString" would otherwise resolve to a truthy Object.proto
 // member (with no .Icon) and crash React while rendering an undefined component.
 function statusMeta(key: string): { color: string; Icon: typeof Info } {
-  return Object.prototype.hasOwnProperty.call(STATUS_META, key) ? STATUS_META[key] : STATUS_META.info;
+  return Object.prototype.hasOwnProperty.call(STATUS_META, key)
+    ? STATUS_META[key]
+    : STATUS_META.info;
 }
 
 function statusColor(key: string, fallback = 'var(--droid-text-muted)'): string {
@@ -198,9 +204,14 @@ function BarChartEl({ props }: { props: Record<string, unknown> }) {
         const label = showPct ? `${Math.round((value / total) * 100)}%` : String(value);
         return (
           <div key={i} className="flex items-center gap-2 text-[12px]">
-            <span className="w-24 shrink-0 truncate text-droid-text-secondary text-right">{asString(d.label)}</span>
+            <span className="w-24 shrink-0 truncate text-droid-text-secondary text-right">
+              {asString(d.label)}
+            </span>
             <div className="flex-1 h-3.5 rounded-sm bg-droid-elevated/60 overflow-hidden">
-              <div className="h-full rounded-sm" style={{ width: `${(value / max) * 100}%`, backgroundColor: color }} />
+              <div
+                className="h-full rounded-sm"
+                style={{ width: `${(value / max) * 100}%`, backgroundColor: color }}
+              />
             </div>
             <span className="w-12 shrink-0 font-mono text-droid-text-muted">{label}</span>
           </div>
@@ -259,7 +270,10 @@ function TableEl({ props }: { props: Record<string, unknown> }) {
           {rows.map((r, ri) => (
             <tr key={ri}>
               {cols.map((c, ci) => (
-                <td key={ci} className="border-t border-droid-border text-droid-text-secondary px-2.5 py-1.5">
+                <td
+                  key={ci}
+                  className="border-t border-droid-border text-droid-text-secondary px-2.5 py-1.5"
+                >
                   {asString(r[asString(c.key)])}
                 </td>
               ))}
@@ -295,7 +309,9 @@ function CardEl({ props, children }: { props: Record<string, unknown>; children:
   return (
     <div className="rounded-xl border border-droid-border bg-droid-elevated/20 overflow-hidden w-full">
       {title && (
-        <div className="px-3.5 py-2 border-b border-droid-border text-[12px] font-medium text-droid-text">{title}</div>
+        <div className="px-3.5 py-2 border-b border-droid-border text-[12px] font-medium text-droid-text">
+          {title}
+        </div>
       )}
       <div style={{ padding: (padding != null ? padding : 1.5) * CELL }}>{children}</div>
     </div>
@@ -318,7 +334,9 @@ function KeyValueEl({ props }: { props: Record<string, unknown> }) {
   return (
     <div className="flex items-baseline gap-2 text-[13px]">
       <span className="text-droid-text-muted">{asString(props.label)}</span>
-      <span className="text-droid-text font-medium [overflow-wrap:anywhere]">{asString(props.value)}</span>
+      <span className="text-droid-text font-medium [overflow-wrap:anywhere]">
+        {asString(props.value)}
+      </span>
     </div>
   );
 }
@@ -328,7 +346,11 @@ function BadgeEl({ props }: { props: Record<string, unknown> }) {
   return (
     <span
       className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium border"
-      style={{ color, borderColor: color, background: `color-mix(in srgb, ${color} 12%, transparent)` }}
+      style={{
+        color,
+        borderColor: color,
+        background: `color-mix(in srgb, ${color} 12%, transparent)`,
+      }}
     >
       {asString(props.label)}
     </span>
@@ -348,7 +370,10 @@ function ProgressBarEl({ props }: { props: Record<string, unknown> }) {
         </div>
       )}
       <div className="h-2 rounded-full bg-droid-elevated/60 overflow-hidden">
-        <div className="h-full rounded-full" style={{ width: `${pct}%`, background: 'var(--droid-accent)' }} />
+        <div
+          className="h-full rounded-full"
+          style={{ width: `${pct}%`, background: 'var(--droid-accent)' }}
+        />
       </div>
     </div>
   );
@@ -356,11 +381,14 @@ function ProgressBarEl({ props }: { props: Record<string, unknown> }) {
 
 function MetricEl({ props }: { props: Record<string, unknown> }) {
   const trend = asString(props.trend).toLowerCase();
-  const trendColor = trend === 'up' ? 'var(--droid-green)' : trend === 'down' ? '#d0584e' : undefined;
+  const trendColor =
+    trend === 'up' ? 'var(--droid-green)' : trend === 'down' ? '#d0584e' : undefined;
   const TrendIcon = trend === 'up' ? ArrowUp : trend === 'down' ? ArrowDown : null;
   return (
     <div className="flex flex-col gap-0.5">
-      <span className="text-[11px] uppercase tracking-wide text-droid-text-muted">{asString(props.label)}</span>
+      <span className="text-[11px] uppercase tracking-wide text-droid-text-muted">
+        {asString(props.label)}
+      </span>
       <span className="inline-flex items-center gap-1 text-[20px] font-semibold text-droid-text leading-tight">
         {asString(props.value)}
         {TrendIcon && <TrendIcon className="w-4 h-4" style={{ color: trendColor }} />}
@@ -383,7 +411,11 @@ function CalloutEl({ props, children }: { props: Record<string, unknown>; childr
       <Icon className="w-4 h-4 shrink-0 mt-0.5" style={{ color: meta.color }} />
       <div className="flex flex-col gap-0.5 min-w-0">
         {title && <span className="text-[13px] font-semibold text-droid-text">{title}</span>}
-        {content && <span className="text-[13px] text-droid-text-secondary [overflow-wrap:anywhere]">{content}</span>}
+        {content && (
+          <span className="text-[13px] text-droid-text-secondary [overflow-wrap:anywhere]">
+            {content}
+          </span>
+        )}
         {children}
       </div>
     </div>
@@ -407,7 +439,9 @@ function TimelineEl({ props }: { props: Record<string, unknown> }) {
             <div className={`flex flex-col gap-0.5 ${last ? '' : 'pb-3'}`}>
               <span className="text-[13px] font-medium text-droid-text">{asString(it.title)}</span>
               {asString(it.description) && (
-                <span className="text-[12px] text-droid-text-secondary">{asString(it.description)}</span>
+                <span className="text-[12px] text-droid-text-secondary">
+                  {asString(it.description)}
+                </span>
               )}
             </div>
           </div>
@@ -419,7 +453,11 @@ function TimelineEl({ props }: { props: Record<string, unknown> }) {
 
 /* ── element dispatch ── */
 
-function renderElement(type: string, props: Record<string, unknown>, children: ReactNode): ReactNode {
+function renderElement(
+  type: string,
+  props: Record<string, unknown>,
+  children: ReactNode,
+): ReactNode {
   switch (type) {
     case 'Box':
       return <BoxEl props={props}>{children}</BoxEl>;
@@ -462,16 +500,28 @@ function renderElement(type: string, props: Record<string, unknown>, children: R
   }
 }
 
-function renderNode(id: string, spec: Spec, seen: Set<string>, depth: number, budget: { count: number }): ReactNode {
+function renderNode(
+  id: string,
+  spec: Spec,
+  seen: Set<string>,
+  depth: number,
+  budget: { count: number },
+): ReactNode {
   if (depth > MAX_DEPTH || seen.has(id) || budget.count >= MAX_NODES) return null;
   budget.count++;
   const el = spec.elements?.[id];
   if (!el || typeof el !== 'object') return null;
   const props = mergedProps(el);
-  const childIds = asArray(el.children ?? props.children).filter((c): c is string => typeof c === 'string');
+  const childIds = asArray(el.children ?? props.children).filter(
+    (c): c is string => typeof c === 'string',
+  );
   const nextSeen = new Set(seen).add(id);
   const children = childIds.length
-    ? childIds.map((cid, i) => <Fragment key={`${cid}-${i}`}>{renderNode(cid, spec, nextSeen, depth + 1, budget)}</Fragment>)
+    ? childIds.map((cid, i) => (
+        <Fragment key={`${cid}-${i}`}>
+          {renderNode(cid, spec, nextSeen, depth + 1, budget)}
+        </Fragment>
+      ))
     : null;
   return renderElement(asString(el.type), props, children);
 }
@@ -483,7 +533,9 @@ function ErrorFallback({ raw }: { raw: string }) {
         Render spec (unparseable)
       </div>
       <pre className="overflow-x-auto p-3.5">
-        <code className="font-mono text-[12px] text-droid-text-secondary whitespace-pre">{raw}</code>
+        <code className="font-mono text-[12px] text-droid-text-secondary whitespace-pre">
+          {raw}
+        </code>
       </pre>
     </div>
   );
@@ -511,7 +563,9 @@ export const JsonRender = memo(function JsonRender({ source }: { source: string 
 
 /* ── splitting helper for message bodies ── */
 
-export type ContentSegment = { type: 'markdown'; value: string } | { type: 'json-render'; value: string };
+export type ContentSegment =
+  | { type: 'markdown'; value: string }
+  | { type: 'json-render'; value: string };
 
 const JSON_RENDER_RE = /<json-render>([\s\S]*?)<\/json-render>/g;
 

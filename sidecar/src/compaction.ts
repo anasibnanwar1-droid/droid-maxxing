@@ -8,7 +8,10 @@ export interface CompactionTokenLimitPatch {
   compactionTokenLimitPerModel?: Record<string, number>;
 }
 
-type CompactionDefaults = Pick<FactoryDefaultSettings, 'compactionTokenLimit' | 'compactionTokenLimitPerModel'>;
+type CompactionDefaults = Pick<
+  FactoryDefaultSettings,
+  'compactionTokenLimit' | 'compactionTokenLimitPerModel'
+>;
 
 export function normalizeCompactionTokenLimit(value: unknown): number | undefined {
   if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return undefined;
@@ -20,15 +23,17 @@ export function compactionTokenLimitForModel(
   settings: CompactionTokenLimitPatch,
   defaults: CompactionDefaults = {},
 ): number | undefined {
-  const perModel = settings.compactionTokenLimitPerModel !== undefined
-    ? settings.compactionTokenLimitPerModel
-    : defaults.compactionTokenLimitPerModel;
+  const perModel =
+    settings.compactionTokenLimitPerModel !== undefined
+      ? settings.compactionTokenLimitPerModel
+      : defaults.compactionTokenLimitPerModel;
   const modelLimit = modelId ? normalizeCompactionTokenLimit(perModel?.[modelId]) : undefined;
   if (modelLimit !== undefined) return modelLimit;
 
-  const globalLimit = settings.compactionTokenLimit !== undefined
-    ? settings.compactionTokenLimit
-    : defaults.compactionTokenLimit;
+  const globalLimit =
+    settings.compactionTokenLimit !== undefined
+      ? settings.compactionTokenLimit
+      : defaults.compactionTokenLimit;
   return globalLimit === null ? undefined : normalizeCompactionTokenLimit(globalLimit);
 }
 
@@ -46,7 +51,10 @@ export function resumedCompactionTokenLimit(
   return own !== undefined ? own : compactionTokenLimitForModel(modelId, {}, defaults);
 }
 
-export function clampCompactionTokenLimit(limit: number | undefined, maxContextTokens?: number): number | undefined {
+export function clampCompactionTokenLimit(
+  limit: number | undefined,
+  maxContextTokens?: number,
+): number | undefined {
   if (limit === undefined) return undefined;
   const max = normalizeCompactionTokenLimit(maxContextTokens);
   return max === undefined ? limit : Math.min(limit, max);
@@ -58,7 +66,10 @@ export function createCompactionSettingsForModel(
   defaults: CompactionDefaults = {},
   maxContextTokens?: number,
 ): Record<string, number> {
-  const limit = clampCompactionTokenLimit(compactionTokenLimitForModel(modelId, settings, defaults), maxContextTokens);
+  const limit = clampCompactionTokenLimit(
+    compactionTokenLimitForModel(modelId, settings, defaults),
+    maxContextTokens,
+  );
   return limit !== undefined ? { compactionTokenLimit: limit } : {};
 }
 
@@ -71,7 +82,10 @@ export function effectiveCompactionLimit(
   defaults: CompactionDefaults,
   maxContextTokens: number | undefined,
 ): number | undefined {
-  return clampCompactionTokenLimit(compactionTokenLimitForModel(modelId, {}, defaults), maxContextTokens);
+  return clampCompactionTokenLimit(
+    compactionTokenLimitForModel(modelId, {}, defaults),
+    maxContextTokens,
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -89,7 +103,10 @@ export interface AutoCompactState {
 }
 
 // The one threshold rule used by both the orchestrator and workers.
-export function autoCompactionDue(state: AutoCompactState, usedTokens: number | undefined): boolean {
+export function autoCompactionDue(
+  state: AutoCompactState,
+  usedTokens: number | undefined,
+): boolean {
   if (state.compacting) return false;
   const limit = state.effectiveCompactionTokenLimit;
   if (limit === undefined || limit <= 0) return false;
@@ -161,8 +178,13 @@ export async function runCompaction(
         // The owner keeps a stable session id (workers) and cannot adopt a
         // swapped backing id without re-keying. Surface it and signal the
         // session is now stale so the caller can recover.
-        sink.error(`daemon returned a new backing session (${result.newSessionId}); subagent sessions must compact in place to keep handoff addressing stable`);
-        sink.status('Compaction could not finish; continuing with the current conversation.', compactType);
+        sink.error(
+          `daemon returned a new backing session (${result.newSessionId}); subagent sessions must compact in place to keep handoff addressing stable`,
+        );
+        sink.status(
+          'Compaction could not finish; continuing with the current conversation.',
+          compactType,
+        );
         return 'stale';
       }
       // The daemon has already swapped: the old backing id is now dead, so the
@@ -172,11 +194,17 @@ export async function runCompaction(
       sessionUsable = true;
     }
     await sink.refresh();
-    sink.status(`Compaction complete. Removed ${removedCount.toLocaleString()} messages.`, compactType);
+    sink.status(
+      `Compaction complete. Removed ${removedCount.toLocaleString()} messages.`,
+      compactType,
+    );
     return 'completed';
   } catch (err) {
     sink.error(err instanceof Error ? err.message : String(err));
-    sink.status('Compaction could not finish; continuing with the current conversation.', compactType);
+    sink.status(
+      'Compaction could not finish; continuing with the current conversation.',
+      compactType,
+    );
     // If the swap reload failed mid-flight the old session id is dead; report
     // 'stale' so the caller recovers (reopens) instead of draining sends into a
     // stale session. A failure without a swap leaves the session usable.

@@ -24,7 +24,9 @@ test('apply_patch recovers the path from a unified-diff +++ header', () => {
 });
 
 test('recovers the path from the --- header for a delete-only diff (+++ /dev/null)', () => {
-  const patch = ['--- a/src/gone.ts', '+++ /dev/null', '@@', '-old line 1', '-old line 2'].join('\n');
+  const patch = ['--- a/src/gone.ts', '+++ /dev/null', '@@', '-old line 1', '-old line 2'].join(
+    '\n',
+  );
   const change = extractFileChange('apply_patch', { patch });
   assert.equal(change?.path, 'src/gone.ts');
 });

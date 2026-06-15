@@ -1,9 +1,22 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { ArrowRight, Check, Download, ExternalLink, KeyRound, Loader2, RefreshCw } from 'lucide-react';
+import {
+  ArrowRight,
+  Check,
+  Download,
+  ExternalLink,
+  KeyRound,
+  Loader2,
+  RefreshCw,
+} from 'lucide-react';
 import type { OnboardingController } from '../../hooks/useOnboarding';
 import type { EnvironmentReport, InstallChannel } from '../../types/bridge';
-import { EDITOR_OPTIONS, getDefaultEditor, setDefaultEditor, type EditorId } from '../../lib/editorOpen';
+import {
+  EDITOR_OPTIONS,
+  getDefaultEditor,
+  setDefaultEditor,
+  type EditorId,
+} from '../../lib/editorOpen';
 import { listEditors } from '../../lib/desktop';
 import { EditorIcon } from '../EditorIcon';
 
@@ -19,7 +32,13 @@ type StepId = 'welcome' | 'system' | 'install' | 'signin' | 'preferences' | 'don
 
 const STEP_ORDER: StepId[] = ['welcome', 'system', 'install', 'signin', 'preferences', 'done'];
 
-export default function OnboardingWizard({ controller, onComplete }: { controller: OnboardingController; onComplete: () => void }) {
+export default function OnboardingWizard({
+  controller,
+  onComplete,
+}: {
+  controller: OnboardingController;
+  onComplete: () => void;
+}) {
   const { env } = controller;
   const [stepId, setStepId] = useState<StepId>('welcome');
 
@@ -67,16 +86,28 @@ export default function OnboardingWizard({ controller, onComplete }: { controlle
             >
               {stepId === 'welcome' && <WelcomeStep onNext={() => go(1)} />}
               {stepId === 'system' && <SystemStep controller={controller} onNext={() => go(1)} />}
-              {stepId === 'install' && <InstallStep controller={controller} onNext={() => go(1)} onBack={() => go(-1)} />}
-              {stepId === 'signin' && <SignInStep controller={controller} onNext={() => go(1)} onBack={() => go(-1)} />}
-              {stepId === 'preferences' && <PreferencesStep controller={controller} onNext={() => go(1)} onBack={() => go(-1)} />}
+              {stepId === 'install' && (
+                <InstallStep controller={controller} onNext={() => go(1)} onBack={() => go(-1)} />
+              )}
+              {stepId === 'signin' && (
+                <SignInStep controller={controller} onNext={() => go(1)} onBack={() => go(-1)} />
+              )}
+              {stepId === 'preferences' && (
+                <PreferencesStep
+                  controller={controller}
+                  onNext={() => go(1)}
+                  onBack={() => go(-1)}
+                />
+              )}
               {stepId === 'done' && <DoneStep controller={controller} onComplete={onComplete} />}
             </motion.div>
           </AnimatePresence>
         </div>
       </div>
       <div className="h-12 shrink-0 flex items-center justify-center">
-        <span className="text-[11px] text-droid-text-muted">You can always change these settings later.</span>
+        <span className="text-[11px] text-droid-text-muted">
+          You can always change these settings later.
+        </span>
       </div>
     </motion.div>
   );
@@ -97,7 +128,15 @@ function StepDots({ count, index }: { count: number; index: number }) {
   );
 }
 
-function PrimaryButton({ children, onClick, disabled }: { children: React.ReactNode; onClick: () => void; disabled?: boolean }) {
+function PrimaryButton({
+  children,
+  onClick,
+  disabled,
+}: {
+  children: React.ReactNode;
+  onClick: () => void;
+  disabled?: boolean;
+}) {
   return (
     <button
       onClick={onClick}
@@ -135,7 +174,9 @@ function WelcomeStep({ onNext }: { onNext: () => void }) {
   return (
     <div className="flex flex-col items-center text-center">
       <h1 className="text-[22px] font-semibold tracking-tight">DROIDEX</h1>
-      <p className="text-[13px] text-droid-text-muted mt-1.5 mb-8">The agentic desktop for Droid, built on the Factory CLI.</p>
+      <p className="text-[13px] text-droid-text-muted mt-1.5 mb-8">
+        The agentic desktop for Droid, built on the Factory CLI.
+      </p>
       <div className="w-full">
         <PrimaryButton onClick={onNext}>
           Get started <ArrowRight className="w-4 h-4" />
@@ -145,13 +186,22 @@ function WelcomeStep({ onNext }: { onNext: () => void }) {
   );
 }
 
-function SystemStep({ controller, onNext }: { controller: OnboardingController; onNext: () => void }) {
+function SystemStep({
+  controller,
+  onNext,
+}: {
+  controller: OnboardingController;
+  onNext: () => void;
+}) {
   const { env, refreshEnv } = controller;
   const checks = useMemo(() => systemChecks(env), [env]);
 
   return (
     <div>
-      <Heading title="System check" sub="DROIDEX is detecting what's already set up on your machine." />
+      <Heading
+        title="System check"
+        sub="DROIDEX is detecting what's already set up on your machine."
+      />
       <div className="rounded-lg border border-droid-border divide-y divide-droid-border overflow-hidden mb-6">
         {checks.map((check) => (
           <div key={check.label} className="flex items-center justify-between px-3.5 py-3">
@@ -183,13 +233,21 @@ function SystemStep({ controller, onNext }: { controller: OnboardingController; 
 function CheckDot({ ok, pending }: { ok: boolean; pending?: boolean }) {
   if (pending) return <Loader2 className="w-4 h-4 text-droid-text-muted animate-spin" />;
   return (
-    <span className={`w-4 h-4 rounded-full flex items-center justify-center ${ok ? 'bg-droid-green/20 text-droid-green' : 'bg-droid-orange/20 text-droid-orange'}`}>
-      {ok ? <Check className="w-3 h-3" strokeWidth={3} /> : <span className="w-1.5 h-1.5 rounded-full bg-droid-orange" />}
+    <span
+      className={`w-4 h-4 rounded-full flex items-center justify-center ${ok ? 'bg-droid-green/20 text-droid-green' : 'bg-droid-orange/20 text-droid-orange'}`}
+    >
+      {ok ? (
+        <Check className="w-3 h-3" strokeWidth={3} />
+      ) : (
+        <span className="w-1.5 h-1.5 rounded-full bg-droid-orange" />
+      )}
     </span>
   );
 }
 
-function systemChecks(env: EnvironmentReport | null): { label: string; ok: boolean; detail: string }[] {
+function systemChecks(
+  env: EnvironmentReport | null,
+): { label: string; ok: boolean; detail: string }[] {
   if (!env) {
     return [
       { label: 'Operating system', ok: false, detail: '…' },
@@ -203,13 +261,33 @@ function systemChecks(env: EnvironmentReport | null): { label: string; ok: boole
     .map(([name]) => name);
   return [
     { label: 'Operating system', ok: true, detail: `${env.platform} · ${env.arch}` },
-    { label: 'Node runtime', ok: env.node.present, detail: env.node.version ? `v${env.node.version}` : 'missing' },
-    { label: 'Droid CLI', ok: env.cli.present, detail: env.cli.present ? (env.cli.version ?? 'installed') : 'not found' },
-    { label: 'Package managers', ok: managers.length > 0, detail: managers.length ? managers.join(', ') : 'none' },
+    {
+      label: 'Node runtime',
+      ok: env.node.present,
+      detail: env.node.version ? `v${env.node.version}` : 'missing',
+    },
+    {
+      label: 'Droid CLI',
+      ok: env.cli.present,
+      detail: env.cli.present ? (env.cli.version ?? 'installed') : 'not found',
+    },
+    {
+      label: 'Package managers',
+      ok: managers.length > 0,
+      detail: managers.length ? managers.join(', ') : 'none',
+    },
   ];
 }
 
-function InstallStep({ controller, onNext, onBack }: { controller: OnboardingController; onNext: () => void; onBack: () => void }) {
+function InstallStep({
+  controller,
+  onNext,
+  onBack,
+}: {
+  controller: OnboardingController;
+  onNext: () => void;
+  onBack: () => void;
+}) {
   const { env, installLog, installing, lastResult, install, refreshEnv } = controller;
   const channels = env?.availableChannels ?? [];
   const [channel, setChannel] = useState<InstallChannel | null>(channels[0] ?? null);
@@ -226,7 +304,10 @@ function InstallStep({ controller, onNext, onBack }: { controller: OnboardingCon
   if (installed) {
     return (
       <div>
-        <Heading title="Droid CLI ready" sub={`Detected ${env?.cli.version ? `v${env.cli.version}` : 'an installation'} at ${env?.cli.path}.`} />
+        <Heading
+          title="Droid CLI ready"
+          sub={`Detected ${env?.cli.version ? `v${env.cli.version}` : 'an installation'} at ${env?.cli.path}.`}
+        />
         <PrimaryButton onClick={onNext}>
           Continue <ArrowRight className="w-4 h-4" />
         </PrimaryButton>
@@ -236,12 +317,16 @@ function InstallStep({ controller, onNext, onBack }: { controller: OnboardingCon
 
   return (
     <div>
-      <Heading title="Install the Droid CLI" sub="Droid runs on the Factory CLI. Pick how you'd like to install it." />
+      <Heading
+        title="Install the Droid CLI"
+        sub="Droid runs on the Factory CLI. Pick how you'd like to install it."
+      />
       <div className="grid grid-cols-1 gap-2 mb-4">
         {channels.length === 0 && (
           <div className="rounded-lg border border-droid-border bg-droid-surface px-3.5 py-3 text-[12px] text-droid-text-secondary">
             <p className="text-droid-orange mb-1">No supported package manager found.</p>
-            Install Homebrew, npm, or curl, then re-scan. You can also skip this for now and finish setup later.
+            Install Homebrew, npm, or curl, then re-scan. You can also skip this for now and finish
+            setup later.
           </div>
         )}
         {channels.map((c) => (
@@ -263,14 +348,22 @@ function InstallStep({ controller, onNext, onBack }: { controller: OnboardingCon
           className="mb-4 max-h-40 overflow-auto rounded-lg border border-droid-border bg-droid-surface p-3 font-mono text-[11px] leading-5 text-droid-text-muted"
         >
           {installLog.map((line, i) => (
-            <div key={i} className="whitespace-pre-wrap break-words">{line}</div>
+            <div key={i} className="whitespace-pre-wrap break-words">
+              {line}
+            </div>
           ))}
-          {installing && <div className="flex items-center gap-1.5 text-droid-accent"><Loader2 className="w-3 h-3 animate-spin" /> working…</div>}
+          {installing && (
+            <div className="flex items-center gap-1.5 text-droid-accent">
+              <Loader2 className="w-3 h-3 animate-spin" /> working…
+            </div>
+          )}
         </div>
       )}
 
       {lastResult && !lastResult.ok && (
-        <p className="text-[12px] text-droid-orange mb-3">Installation didn't finish. Review the log and try again.</p>
+        <p className="text-[12px] text-droid-orange mb-3">
+          Installation didn't finish. Review the log and try again.
+        </p>
       )}
 
       {installing ? (
@@ -283,13 +376,19 @@ function InstallStep({ controller, onNext, onBack }: { controller: OnboardingCon
         </PrimaryButton>
       ) : (
         <PrimaryButton onClick={() => channel && install(channel)} disabled={!channel}>
-          <Download className="w-4 h-4" /> Install with {channel ? CHANNEL_LABEL[channel] : 'package manager'}
+          <Download className="w-4 h-4" /> Install with{' '}
+          {channel ? CHANNEL_LABEL[channel] : 'package manager'}
         </PrimaryButton>
       )}
 
       {!installing && (
         <div className="flex items-center gap-2 mt-2">
-          <button onClick={onBack} className="h-10 px-4 rounded-lg text-droid-text-muted text-[13px] hover:text-droid-text transition-colors">Back</button>
+          <button
+            onClick={onBack}
+            className="h-10 px-4 rounded-lg text-droid-text-muted text-[13px] hover:text-droid-text transition-colors"
+          >
+            Back
+          </button>
           <div className="flex-1">
             <GhostButton onClick={onNext}>Skip for now</GhostButton>
           </div>
@@ -299,7 +398,15 @@ function InstallStep({ controller, onNext, onBack }: { controller: OnboardingCon
   );
 }
 
-function SignInStep({ controller, onNext, onBack }: { controller: OnboardingController; onNext: () => void; onBack: () => void }) {
+function SignInStep({
+  controller,
+  onNext,
+  onBack,
+}: {
+  controller: OnboardingController;
+  onNext: () => void;
+  onBack: () => void;
+}) {
   const { env, login } = controller;
   const [waiting, setWaiting] = useState(false);
   const [showKey, setShowKey] = useState(false);
@@ -315,7 +422,10 @@ function SignInStep({ controller, onNext, onBack }: { controller: OnboardingCont
 
   return (
     <div>
-      <Heading title="Sign in to Factory" sub="Connect your account so Droid's models can run. This opens your browser to finish sign-in." />
+      <Heading
+        title="Sign in to Factory"
+        sub="Connect your account so Droid's models can run. This opens your browser to finish sign-in."
+      />
 
       {signedIn ? (
         <div className="rounded-lg border border-droid-green/40 bg-droid-green/10 px-3.5 py-3 mb-5 flex items-center gap-2 text-[13px] text-droid-text">
@@ -323,12 +433,33 @@ function SignInStep({ controller, onNext, onBack }: { controller: OnboardingCont
         </div>
       ) : (
         <div className="space-y-2 mb-5">
-          <PrimaryButton onClick={() => { setWaiting(true); login(); }} disabled={!env?.cli.present}>
-            {waiting ? <><Loader2 className="w-4 h-4 animate-spin" /> Waiting for browser…</> : <><ExternalLink className="w-4 h-4" /> Sign in with browser</>}
+          <PrimaryButton
+            onClick={() => {
+              setWaiting(true);
+              login();
+            }}
+            disabled={!env?.cli.present}
+          >
+            {waiting ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" /> Waiting for browser…
+              </>
+            ) : (
+              <>
+                <ExternalLink className="w-4 h-4" /> Sign in with browser
+              </>
+            )}
           </PrimaryButton>
-          {!env?.cli.present && <p className="text-[12px] text-droid-text-muted">Install the Droid CLI first to sign in with your browser.</p>}
+          {!env?.cli.present && (
+            <p className="text-[12px] text-droid-text-muted">
+              Install the Droid CLI first to sign in with your browser.
+            </p>
+          )}
           {!showKey ? (
-            <button onClick={() => setShowKey(true)} className="w-full text-[12px] text-droid-text-muted hover:text-droid-text transition-colors py-1.5 flex items-center justify-center gap-1.5">
+            <button
+              onClick={() => setShowKey(true)}
+              className="w-full text-[12px] text-droid-text-muted hover:text-droid-text transition-colors py-1.5 flex items-center justify-center gap-1.5"
+            >
               <KeyRound className="w-3.5 h-3.5" /> Use an API key instead
             </button>
           ) : (
@@ -347,7 +478,9 @@ function SignInStep({ controller, onNext, onBack }: { controller: OnboardingCont
                   try {
                     await controller.saveApiKey(key);
                   } catch {
-                    setKeyError("Couldn't save the API key. Check that secure storage is available and try again.");
+                    setKeyError(
+                      "Couldn't save the API key. Check that secure storage is available and try again.",
+                    );
                   } finally {
                     setSaving(false);
                   }
@@ -363,10 +496,17 @@ function SignInStep({ controller, onNext, onBack }: { controller: OnboardingCont
       )}
 
       <div className="flex items-center gap-2">
-        <button onClick={onBack} className="h-10 px-4 rounded-lg text-droid-text-muted text-[13px] hover:text-droid-text transition-colors">Back</button>
+        <button
+          onClick={onBack}
+          className="h-10 px-4 rounded-lg text-droid-text-muted text-[13px] hover:text-droid-text transition-colors"
+        >
+          Back
+        </button>
         <div className="flex-1">
           {signedIn ? (
-            <PrimaryButton onClick={onNext}>Continue <ArrowRight className="w-4 h-4" /></PrimaryButton>
+            <PrimaryButton onClick={onNext}>
+              Continue <ArrowRight className="w-4 h-4" />
+            </PrimaryButton>
           ) : (
             <GhostButton onClick={onNext}>Skip for now</GhostButton>
           )}
@@ -376,11 +516,21 @@ function SignInStep({ controller, onNext, onBack }: { controller: OnboardingCont
   );
 }
 
-function PreferencesStep({ controller, onNext, onBack }: { controller: OnboardingController; onNext: () => void; onBack: () => void }) {
+function PreferencesStep({
+  controller,
+  onNext,
+  onBack,
+}: {
+  controller: OnboardingController;
+  onNext: () => void;
+  onBack: () => void;
+}) {
   const [editors, setEditors] = useState<EditorId[]>([]);
   // Prefer onboarding state, then any previously saved default editor, so a
   // returning user's Cursor/Finder/Terminal choice isn't reset to VS Code.
-  const [editor, setEditor] = useState<EditorId>((controller.onboarding?.defaultEditor as EditorId) ?? getDefaultEditor());
+  const [editor, setEditor] = useState<EditorId>(
+    (controller.onboarding?.defaultEditor as EditorId) ?? getDefaultEditor(),
+  );
   const [cliAuto, setCliAuto] = useState(controller.onboarding?.cliAutoUpdate ?? true);
   const [appAuto, setAppAuto] = useState(controller.onboarding?.appAutoUpdate ?? true);
 
@@ -396,19 +546,28 @@ function PreferencesStep({ controller, onNext, onBack }: { controller: Onboardin
 
   const save = async () => {
     setDefaultEditor(editor);
-    await controller.patch({ defaultEditor: editor, cliAutoUpdate: cliAuto, appAutoUpdate: appAuto });
+    await controller.patch({
+      defaultEditor: editor,
+      cliAutoUpdate: cliAuto,
+      appAutoUpdate: appAuto,
+    });
     onNext();
   };
 
   return (
     <div>
-      <Heading title="Preferences" sub="Set your defaults. Existing Droid settings are imported automatically." />
+      <Heading
+        title="Preferences"
+        sub="Set your defaults. Existing Droid settings are imported automatically."
+      />
 
       <div className="rounded-lg border border-droid-border divide-y divide-droid-border overflow-hidden mb-6">
         <div className="px-3.5 py-3">
           <div className="text-[13px] text-droid-text mb-2">Default editor</div>
           <div className="flex flex-wrap gap-2">
-            {editorOptions.length === 0 && <span className="text-[12px] text-droid-text-muted">No editors detected.</span>}
+            {editorOptions.length === 0 && (
+              <span className="text-[12px] text-droid-text-muted">No editors detected.</span>
+            )}
             {editorOptions.map((o) => (
               <button
                 key={o.id}
@@ -420,21 +579,48 @@ function PreferencesStep({ controller, onNext, onBack }: { controller: Onboardin
             ))}
           </div>
         </div>
-        <ToggleRow label="Keep the Droid CLI up to date" sub="Updates silently on launch." checked={cliAuto} onChange={setCliAuto} />
-        <ToggleRow label="Auto-update DROIDEX" sub="Installs new app builds and restarts." checked={appAuto} onChange={setAppAuto} />
+        <ToggleRow
+          label="Keep the Droid CLI up to date"
+          sub="Updates silently on launch."
+          checked={cliAuto}
+          onChange={setCliAuto}
+        />
+        <ToggleRow
+          label="Auto-update DROIDEX"
+          sub="Installs new app builds and restarts."
+          checked={appAuto}
+          onChange={setAppAuto}
+        />
       </div>
 
       <div className="flex items-center gap-2">
-        <button onClick={onBack} className="h-10 px-4 rounded-lg text-droid-text-muted text-[13px] hover:text-droid-text transition-colors">Back</button>
+        <button
+          onClick={onBack}
+          className="h-10 px-4 rounded-lg text-droid-text-muted text-[13px] hover:text-droid-text transition-colors"
+        >
+          Back
+        </button>
         <div className="flex-1">
-          <PrimaryButton onClick={save}>Continue <ArrowRight className="w-4 h-4" /></PrimaryButton>
+          <PrimaryButton onClick={save}>
+            Continue <ArrowRight className="w-4 h-4" />
+          </PrimaryButton>
         </div>
       </div>
     </div>
   );
 }
 
-function ToggleRow({ label, sub, checked, onChange }: { label: string; sub?: string; checked: boolean; onChange: (v: boolean) => void }) {
+function ToggleRow({
+  label,
+  sub,
+  checked,
+  onChange,
+}: {
+  label: string;
+  sub?: string;
+  checked: boolean;
+  onChange: (v: boolean) => void;
+}) {
   return (
     <div className="flex items-center justify-between px-3.5 py-3">
       <div>
@@ -445,13 +631,21 @@ function ToggleRow({ label, sub, checked, onChange }: { label: string; sub?: str
         onClick={() => onChange(!checked)}
         className={`w-10 h-6 rounded-full transition-colors shrink-0 flex items-center p-0.5 ${checked ? 'bg-droid-accent' : 'bg-droid-border'}`}
       >
-        <span className={`w-5 h-5 rounded-full bg-white shadow-sm transition-transform ${checked ? 'translate-x-4' : 'translate-x-0'}`} />
+        <span
+          className={`w-5 h-5 rounded-full bg-white shadow-sm transition-transform ${checked ? 'translate-x-4' : 'translate-x-0'}`}
+        />
       </button>
     </div>
   );
 }
 
-function DoneStep({ controller, onComplete }: { controller: OnboardingController; onComplete: () => void }) {
+function DoneStep({
+  controller,
+  onComplete,
+}: {
+  controller: OnboardingController;
+  onComplete: () => void;
+}) {
   const { env } = controller;
   const summary = [
     { label: 'Droid CLI', ok: Boolean(env?.cli.present) },
@@ -460,7 +654,9 @@ function DoneStep({ controller, onComplete }: { controller: OnboardingController
   return (
     <div className="flex flex-col items-center text-center">
       <h1 className="text-[20px] font-semibold tracking-tight">You're all set</h1>
-      <p className="text-[13px] text-droid-text-muted mt-1.5 mb-6">Everything's ready. Let's build something.</p>
+      <p className="text-[13px] text-droid-text-muted mt-1.5 mb-6">
+        Everything's ready. Let's build something.
+      </p>
       <div className="w-full rounded-lg border border-droid-border divide-y divide-droid-border overflow-hidden mb-6">
         {summary.map((s) => (
           <div key={s.label} className="flex items-center justify-between px-3.5 py-2.5">
@@ -470,7 +666,12 @@ function DoneStep({ controller, onComplete }: { controller: OnboardingController
         ))}
       </div>
       <div className="w-full">
-        <PrimaryButton onClick={async () => { await controller.patch({ completed: true }); onComplete(); }}>
+        <PrimaryButton
+          onClick={async () => {
+            await controller.patch({ completed: true });
+            onComplete();
+          }}
+        >
           Start using DROIDEX <ArrowRight className="w-4 h-4" />
         </PrimaryButton>
       </div>

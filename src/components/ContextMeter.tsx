@@ -17,7 +17,14 @@ function Ring({ pct, size = 16 }: { pct: number; size?: number }) {
   const hot = clamped > 0.85;
   return (
     <svg width={size} height={size} className="-rotate-90 shrink-0">
-      <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="var(--droid-border-hover)" strokeWidth={stroke} />
+      <circle
+        cx={size / 2}
+        cy={size / 2}
+        r={r}
+        fill="none"
+        stroke="var(--droid-border-hover)"
+        strokeWidth={stroke}
+      />
       <motion.circle
         cx={size / 2}
         cy={size / 2}
@@ -64,23 +71,32 @@ function categoryColor(key?: string): string {
   return CATEGORY_COLORS[key] ?? 'var(--droid-text-muted)';
 }
 
-export default function ContextMeter({ mission, stats }: { mission: MissionSummary; stats?: ContextStatsSnapshot }) {
+export default function ContextMeter({
+  mission,
+  stats,
+}: {
+  mission: MissionSummary;
+  stats?: ContextStatsSnapshot;
+}) {
   const { state, dispatch } = useStore();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<{ right: number; bottom: number }>({ right: 0, bottom: 0 });
 
-  const measured = stats ?? (mission.contextUpdatedAt
-    ? {
-        used: mission.contextTokens,
-        remaining: mission.contextRemainingTokens ?? 0,
-        limit: mission.maxContextTokens ?? 0,
-        accuracy: mission.contextAccuracy ?? 'estimated',
-        updatedAt: mission.contextUpdatedAt,
-      }
-    : undefined);
-  const modelWindow = mission.maxContextTokens && mission.maxContextTokens > 0 ? mission.maxContextTokens : undefined;
+  const measured =
+    stats ??
+    (mission.contextUpdatedAt
+      ? {
+          used: mission.contextTokens,
+          remaining: mission.contextRemainingTokens ?? 0,
+          limit: mission.maxContextTokens ?? 0,
+          accuracy: mission.contextAccuracy ?? 'estimated',
+          updatedAt: mission.contextUpdatedAt,
+        }
+      : undefined);
+  const modelWindow =
+    mission.maxContextTokens && mission.maxContextTokens > 0 ? mission.maxContextTokens : undefined;
   const statLimit = measured?.limit && measured.limit > 0 ? measured.limit : modelWindow;
 
   // The conversation compacts once it passes the configured token limit, so the
@@ -100,7 +116,8 @@ export default function ContextMeter({ mission, stats }: { mission: MissionSumma
   const max = effectiveCompaction ?? statLimit;
 
   const used = measured?.used;
-  const remaining = used !== undefined && max !== undefined ? Math.max(0, max - used) : measured?.remaining;
+  const remaining =
+    used !== undefined && max !== undefined ? Math.max(0, max - used) : measured?.remaining;
   const accuracy = measured?.accuracy;
   const categories = measured?.breakdown?.categories ?? [];
   const ready = used !== undefined && max !== undefined && max > 0;
@@ -158,64 +175,90 @@ export default function ContextMeter({ mission, stats }: { mission: MissionSumma
               style={{ position: 'fixed', right: pos.right, bottom: pos.bottom }}
               className="w-72 origin-bottom-right rounded-xl border border-droid-border bg-droid-elevated p-4 shadow-2xl shadow-black/50 z-[100]"
             >
-            <div className="mb-3 flex items-center justify-between">
-              <span className="text-[13px] font-medium text-droid-text">Context</span>
-              <button onClick={() => setOpen(false)} className="text-droid-text-muted transition-colors hover:text-droid-text">
-                <X className="h-3.5 w-3.5" />
-              </button>
-            </div>
+              <div className="mb-3 flex items-center justify-between">
+                <span className="text-[13px] font-medium text-droid-text">Context</span>
+                <button
+                  onClick={() => setOpen(false)}
+                  className="text-droid-text-muted transition-colors hover:text-droid-text"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
 
-            {ready ? (
-              <>
-                <div className="mb-2 flex items-center justify-between">
-                  <span className="text-[11px] text-droid-text-secondary">{pctLabel}% full</span>
-                  <span className="font-mono text-[11px] text-droid-text-secondary">
-                    {fmt(used)} / {fmt(max)} tokens
-                  </span>
+              {ready ? (
+                <>
+                  <div className="mb-2 flex items-center justify-between">
+                    <span className="text-[11px] text-droid-text-secondary">{pctLabel}% full</span>
+                    <span className="font-mono text-[11px] text-droid-text-secondary">
+                      {fmt(used)} / {fmt(max)} tokens
+                    </span>
+                  </div>
+
+                  <div className="h-1.5 w-full overflow-hidden rounded-full bg-droid-border-hover">
+                    <motion.div
+                      className="h-full rounded-full"
+                      style={{
+                        background: pct > 0.85 ? 'var(--droid-orange)' : 'var(--droid-accent)',
+                      }}
+                      animate={{ width: `${Math.min(100, pct * 100)}%` }}
+                      transition={{ duration: 0.5, ease: EASE }}
+                    />
+                  </div>
+                </>
+              ) : (
+                <div className="rounded-lg border border-droid-border bg-droid-bg/40 px-3 py-2 text-[12px] text-droid-text-muted">
+                  Waiting for Droid context stats
                 </div>
+              )}
 
-                <div className="h-1.5 w-full overflow-hidden rounded-full bg-droid-border-hover">
-                  <motion.div
-                    className="h-full rounded-full"
-                    style={{ background: pct > 0.85 ? 'var(--droid-orange)' : 'var(--droid-accent)' }}
-                    animate={{ width: `${Math.min(100, pct * 100)}%` }}
-                    transition={{ duration: 0.5, ease: EASE }}
+              <div className="mt-4 flex flex-col gap-2.5">
+                {ready && <Row color="var(--droid-accent)" label="Window used" value={used} />}
+                {remaining !== undefined && (
+                  <Row color="var(--droid-text-muted)" label="Window free" value={remaining} />
+                )}
+                {effectiveCompaction !== undefined && (
+                  <Row
+                    color="var(--droid-orange)"
+                    label="Compacts at"
+                    value={effectiveCompaction}
                   />
+                )}
+                {modelWindow !== undefined && (
+                  <Row color="var(--droid-text-muted)" label="Model window" value={modelWindow} />
+                )}
+                <Row
+                  color="var(--droid-text-muted)"
+                  label="Session input"
+                  value={mission.tokensIn}
+                />
+                <Row color="var(--droid-green)" label="Session output" value={mission.tokensOut} />
+              </div>
+
+              {categories.length > 0 && (
+                <div className="mt-3 border-t border-droid-border pt-3">
+                  <div className="mb-2 text-[10px] uppercase tracking-wide text-droid-text-muted">
+                    Breakdown
+                  </div>
+                  <div className="flex flex-col gap-2">
+                    {categories.slice(0, 8).map((cat) => (
+                      <Row
+                        key={cat.name}
+                        color={categoryColor(cat.colorKey)}
+                        label={cat.name}
+                        value={cat.tokens}
+                      />
+                    ))}
+                  </div>
                 </div>
-              </>
-            ) : (
-              <div className="rounded-lg border border-droid-border bg-droid-bg/40 px-3 py-2 text-[12px] text-droid-text-muted">
-                Waiting for Droid context stats
-              </div>
-            )}
+              )}
 
-            <div className="mt-4 flex flex-col gap-2.5">
-              {ready && <Row color="var(--droid-accent)" label="Window used" value={used} />}
-              {remaining !== undefined && <Row color="var(--droid-text-muted)" label="Window free" value={remaining} />}
-              {effectiveCompaction !== undefined && <Row color="var(--droid-orange)" label="Compacts at" value={effectiveCompaction} />}
-              {modelWindow !== undefined && <Row color="var(--droid-text-muted)" label="Model window" value={modelWindow} />}
-              <Row color="var(--droid-text-muted)" label="Session input" value={mission.tokensIn} />
-              <Row color="var(--droid-green)" label="Session output" value={mission.tokensOut} />
-            </div>
-
-            {categories.length > 0 && (
-              <div className="mt-3 border-t border-droid-border pt-3">
-                <div className="mb-2 text-[10px] uppercase tracking-wide text-droid-text-muted">Breakdown</div>
-                <div className="flex flex-col gap-2">
-                  {categories.slice(0, 8).map((cat) => (
-                    <Row key={cat.name} color={categoryColor(cat.colorKey)} label={cat.name} value={cat.tokens} />
-                  ))}
+              {accuracy && (
+                <div className="mt-3 border-t border-droid-border pt-2 text-[10px] capitalize text-droid-text-muted">
+                  {accuracy} context stats
                 </div>
-              </div>
-            )}
-
-            {accuracy && (
-              <div className="mt-3 border-t border-droid-border pt-2 text-[10px] capitalize text-droid-text-muted">
-                {accuracy} context stats
-              </div>
-            )}
-          </motion.div>
-        )}
+              )}
+            </motion.div>
+          )}
         </AnimatePresence>,
         document.body,
       )}

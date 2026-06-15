@@ -51,7 +51,10 @@ export function buildDroidInvocation(args: string[]): { execPath: string; execAr
 function resolveOnPathSync(command: string): string | undefined {
   const dirs = (process.env.PATH || '').split(delimiter).filter(Boolean);
   if (process.platform === 'win32') {
-    const exts = (process.env.PATHEXT || '.COM;.EXE;.BAT;.CMD').split(';').map((e) => e.trim()).filter(Boolean);
+    const exts = (process.env.PATHEXT || '.COM;.EXE;.BAT;.CMD')
+      .split(';')
+      .map((e) => e.trim())
+      .filter(Boolean);
     for (const dir of dirs) {
       for (const ext of exts) {
         const candidate = join(dir, command + ext);
@@ -95,7 +98,10 @@ export async function detectEnvironment(apiKeyConfigured: boolean): Promise<Envi
   };
 }
 
-export function availableChannels(pm: PackageManagers, platform: NodeJS.Platform = process.platform): InstallChannel[] {
+export function availableChannels(
+  pm: PackageManagers,
+  platform: NodeJS.Platform = process.platform,
+): InstallChannel[] {
   const channels: InstallChannel[] = [];
   // The official installer is a POSIX shell script, so only offer it where a
   // `sh` pipeline can run. On Windows curl exists but `sh` usually does not.
@@ -167,7 +173,10 @@ async function commandPath(command: string): Promise<string | null> {
   const probe = process.platform === 'win32' ? 'where' : 'which';
   try {
     const { stdout } = await execFileAsync(probe, [command], { timeout: 4000 });
-    const first = stdout.split(/\r?\n/).map((line) => line.trim()).find(Boolean);
+    const first = stdout
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .find(Boolean);
     return first ?? null;
   } catch {
     return null;

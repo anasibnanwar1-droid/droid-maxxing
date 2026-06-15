@@ -38,9 +38,7 @@ export default function PermissionInline() {
   // secondary label when it adds information beyond the generic reason.
   const reason = KIND_PROMPT[req.kind];
   const subtitle =
-    req.title && req.title !== 'Permission required' && req.title !== reason
-      ? req.title
-      : '';
+    req.title && req.title !== 'Permission required' && req.title !== reason ? req.title : '';
 
   const respond = (outcome: PermissionOutcome) => {
     respondPermission(req.missionId, req.requestId, outcome);
@@ -60,12 +58,16 @@ export default function PermissionInline() {
       >
         <div className="flex items-start gap-2 px-3.5 pt-3 pb-2">
           <div className="min-w-0 flex-1">
-            <div className="text-[12.5px] font-medium leading-snug text-droid-text [overflow-wrap:anywhere]">{reason}</div>
+            <div className="text-[12.5px] font-medium leading-snug text-droid-text [overflow-wrap:anywhere]">
+              {reason}
+            </div>
             {subtitle && (
               <div className="mt-0.5 truncate text-[11px] text-droid-text-muted">{subtitle}</div>
             )}
           </div>
-          <span className="shrink-0 text-[10px] uppercase tracking-wide text-droid-text-muted/70">Permission</span>
+          <span className="shrink-0 text-[10px] uppercase tracking-wide text-droid-text-muted/70">
+            Permission
+          </span>
         </div>
 
         {detail && (

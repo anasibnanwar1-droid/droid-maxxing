@@ -27,16 +27,23 @@ contextBridge.exposeInMainWorld('droidControl', {
   relaunchApp: () => ipcRenderer.invoke('app-relaunch'),
   openExternal: (url) => ipcRenderer.invoke('open-external', { url }),
 
-  nativeBrowserOpen: (sessionId, url, bounds, viewport) => ipcRenderer.invoke('native-browser-open', { sessionId, url, bounds, viewport }),
-  nativeBrowserAttach: (sessionId, bounds, url) => ipcRenderer.invoke('native-browser-attach', { sessionId, bounds, url }),
+  nativeBrowserOpen: (sessionId, url, bounds, viewport) =>
+    ipcRenderer.invoke('native-browser-open', { sessionId, url, bounds, viewport }),
+  nativeBrowserAttach: (sessionId, bounds, url) =>
+    ipcRenderer.invoke('native-browser-attach', { sessionId, bounds, url }),
   nativeBrowserDetach: (sessionId) => ipcRenderer.invoke('native-browser-detach', { sessionId }),
-  nativeBrowserSetBounds: (sessionId, bounds) => ipcRenderer.invoke('native-browser-set-bounds', { sessionId, bounds }),
+  nativeBrowserSetBounds: (sessionId, bounds) =>
+    ipcRenderer.invoke('native-browser-set-bounds', { sessionId, bounds }),
   nativeBrowserClose: (sessionId) => ipcRenderer.invoke('native-browser-close', { sessionId }),
   nativeBrowserReload: (sessionId) => ipcRenderer.invoke('native-browser-reload', { sessionId }),
-  nativeBrowserSetDesignMode: (sessionId, active) => ipcRenderer.invoke('native-browser-set-design-mode', { sessionId, active }),
-  nativeBrowserSetPencilMode: (sessionId, active) => ipcRenderer.invoke('native-browser-set-pencil-mode', { sessionId, active }),
-  nativeBrowserAgentAction: (request) => ipcRenderer.invoke('native-browser-agent-action', { request }),
-  nativeBrowserCapture: (sessionId, box, options) => ipcRenderer.invoke('native-browser-capture', { sessionId, box, options }),
+  nativeBrowserSetDesignMode: (sessionId, active) =>
+    ipcRenderer.invoke('native-browser-set-design-mode', { sessionId, active }),
+  nativeBrowserSetPencilMode: (sessionId, active) =>
+    ipcRenderer.invoke('native-browser-set-pencil-mode', { sessionId, active }),
+  nativeBrowserAgentAction: (request) =>
+    ipcRenderer.invoke('native-browser-agent-action', { request }),
+  nativeBrowserCapture: (sessionId, box, options) =>
+    ipcRenderer.invoke('native-browser-capture', { sessionId, box, options }),
 
   onNativeBrowserSelection: (handler) => on('native-browser-selection', handler),
   onNativeBrowserDesignPrompt: (handler) => on('native-browser-design-prompt', handler),

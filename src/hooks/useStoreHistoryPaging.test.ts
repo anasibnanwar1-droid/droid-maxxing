@@ -5,7 +5,15 @@ import type { AppState } from './useStore';
 import type { TranscriptEvent } from '../types/bridge';
 
 function ev(id: string, ts: number, text = id): TranscriptEvent {
-  return { id, missionId: 'm1', agentSessionId: 'orchestrator', role: 'orchestrator', kind: 'text', text, ts };
+  return {
+    id,
+    missionId: 'm1',
+    agentSessionId: 'orchestrator',
+    role: 'orchestrator',
+    kind: 'text',
+    text,
+    ts,
+  };
 }
 
 test('MISSION_HISTORY replace seeds the transcript and the older cursor', () => {
@@ -18,7 +26,10 @@ test('MISSION_HISTORY replace seeds the transcript and the older cursor', () => 
     olderCursor: '1:end',
   });
 
-  assert.deepEqual(next.transcripts.m1.map((e) => e.id), ['c', 'd']);
+  assert.deepEqual(
+    next.transcripts.m1.map((e) => e.id),
+    ['c', 'd'],
+  );
   assert.equal(next.historyCursor.m1, '1:end');
   assert.equal(next.historyLoadingOlder.m1, false);
   assert.equal(next.historyLoaded.m1, true);
@@ -41,7 +52,10 @@ test('MISSION_HISTORY prepend prepends older events ahead of the existing scroll
     olderCursor: '0:end',
   });
 
-  assert.deepEqual(next.transcripts.m1.map((e) => e.id), ['a', 'b', 'c', 'd']);
+  assert.deepEqual(
+    next.transcripts.m1.map((e) => e.id),
+    ['a', 'b', 'c', 'd'],
+  );
   assert.equal(next.historyCursor.m1, '0:end');
   assert.equal(next.historyLoadingOlder.m1, false);
 });
@@ -63,7 +77,10 @@ test('MISSION_HISTORY prepend dedups events already present at the boundary', ()
   });
 
   // 'b' overlaps the existing head and must not be duplicated.
-  assert.deepEqual(next.transcripts.m1.map((e) => e.id), ['a', 'b', 'c']);
+  assert.deepEqual(
+    next.transcripts.m1.map((e) => e.id),
+    ['a', 'b', 'c'],
+  );
   assert.equal(next.historyCursor.m1, undefined);
   assert.equal(next.historyLoadingOlder.m1, false);
 });
@@ -90,6 +107,9 @@ test('MISSION_HISTORY prepend with a fully-duplicate page only clears the loadin
 });
 
 test('MISSION_HISTORY_LOADING_OLDER marks the in-flight prefetch', () => {
-  const next = reducer(initialState as unknown as AppState, { type: 'MISSION_HISTORY_LOADING_OLDER', missionId: 'm1' });
+  const next = reducer(initialState as unknown as AppState, {
+    type: 'MISSION_HISTORY_LOADING_OLDER',
+    missionId: 'm1',
+  });
   assert.equal(next.historyLoadingOlder.m1, true);
 });

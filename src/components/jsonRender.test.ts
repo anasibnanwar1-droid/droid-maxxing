@@ -26,7 +26,9 @@ test('interleaves markdown and json-render blocks', () => {
 });
 
 test('handles multiple json-render blocks', () => {
-  const segs = splitJsonRender('<json-render>{"a":1}</json-render><json-render>{"b":2}</json-render>');
+  const segs = splitJsonRender(
+    '<json-render>{"a":1}</json-render><json-render>{"b":2}</json-render>',
+  );
   assert.equal(segs.length, 2);
   assert.equal(segs[0].type, 'json-render');
   assert.equal(segs[1].type, 'json-render');
@@ -43,10 +45,15 @@ test('keeps completed prose that merely mentions the json-render tag', () => {
 });
 
 test('keeps prose mentioning the tag after a completed block', () => {
-  const segs = splitJsonRender('<json-render>{"a":1}</json-render>\nEmit a <json-render> block to draw charts.');
+  const segs = splitJsonRender(
+    '<json-render>{"a":1}</json-render>\nEmit a <json-render> block to draw charts.',
+  );
   assert.equal(segs.length, 2);
   assert.deepEqual(segs[0], { type: 'json-render', value: '{"a":1}' });
-  assert.deepEqual(segs[1], { type: 'markdown', value: '\nEmit a <json-render> block to draw charts.' });
+  assert.deepEqual(segs[1], {
+    type: 'markdown',
+    value: '\nEmit a <json-render> block to draw charts.',
+  });
 });
 
 test('hasJsonRender detects the opening tag', () => {
@@ -100,13 +107,19 @@ test('a huge Sparkline data array renders without blowing the call stack', () =>
   // 200k-element array threw RangeError and froze the chat. The cap must keep
   // the spec renderable.
   const data = Array.from({ length: 200_000 }, (_, i) => i % 50);
-  const source = JSON.stringify({ root: 'r', elements: { r: { type: 'Sparkline', props: { data } } } });
+  const source = JSON.stringify({
+    root: 'r',
+    elements: { r: { type: 'Sparkline', props: { data } } },
+  });
   assert.doesNotThrow(() => renderToStaticMarkup(createElement(JsonRender, { source })));
 });
 
 test('a huge BarChart data array renders without blowing the call stack', () => {
   const data = Array.from({ length: 200_000 }, (_, i) => ({ label: `l${i}`, value: i % 50 }));
-  const source = JSON.stringify({ root: 'r', elements: { r: { type: 'BarChart', props: { data } } } });
+  const source = JSON.stringify({
+    root: 'r',
+    elements: { r: { type: 'BarChart', props: { data } } },
+  });
   assert.doesNotThrow(() => renderToStaticMarkup(createElement(JsonRender, { source })));
 });
 

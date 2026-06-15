@@ -32,7 +32,10 @@ function writeTranscript(id: string, start: Record<string, unknown>): void {
 }
 
 test('loadSessionPage replays a marker-only Task subagent with worker role keyed to its own id', () => {
-  writeTranscript('subagent-session', { callingSessionId: 'parent-session', callingToolUseId: 'tool-1' });
+  writeTranscript('subagent-session', {
+    callingSessionId: 'parent-session',
+    callingToolUseId: 'tool-1',
+  });
 
   const page = loadSessionPage('subagent-session', undefined, 200, 'mission-app');
   const text = page.events.find((e) => e.kind === 'text');
@@ -58,7 +61,10 @@ test('loadSessionPage still replays a plain session as orchestrator', () => {
 test('loadSessionPage replays an orphan Task subagent opened standalone as orchestrator so it renders', () => {
   // Marker-only subagent with no live parent context, opened as its OWN chat
   // (missionId === sessionId) from the sidebar.
-  writeTranscript('orphan-standalone', { callingSessionId: 'gone-parent', callingToolUseId: 'tool-x' });
+  writeTranscript('orphan-standalone', {
+    callingSessionId: 'gone-parent',
+    callingToolUseId: 'tool-x',
+  });
 
   const page = loadSessionPage('orphan-standalone', undefined, 200, 'orphan-standalone');
   const text = page.events.find((e) => e.kind === 'text');

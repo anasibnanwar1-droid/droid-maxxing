@@ -37,16 +37,31 @@ interface DroidControlApi {
   downloadAppUpdate: (dmgUrl?: string) => Promise<AppUpdateResult>;
   relaunchApp: () => Promise<void>;
   openExternal: (url: string) => Promise<void>;
-  nativeBrowserOpen: (sessionId: string, url: string, bounds?: NativeBrowserBounds, viewport?: { width: number; height: number; deviceScaleFactor: number }) => Promise<void>;
-  nativeBrowserAttach: (sessionId: string, bounds: NativeBrowserBounds, url?: string) => Promise<void>;
+  nativeBrowserOpen: (
+    sessionId: string,
+    url: string,
+    bounds?: NativeBrowserBounds,
+    viewport?: { width: number; height: number; deviceScaleFactor: number },
+  ) => Promise<void>;
+  nativeBrowserAttach: (
+    sessionId: string,
+    bounds: NativeBrowserBounds,
+    url?: string,
+  ) => Promise<void>;
   nativeBrowserDetach: (sessionId?: string) => Promise<void>;
   nativeBrowserSetBounds: (sessionId: string, bounds: NativeBrowserBounds) => Promise<void>;
   nativeBrowserClose: (sessionId: string) => Promise<void>;
   nativeBrowserReload: (sessionId: string) => Promise<void>;
   nativeBrowserSetDesignMode: (sessionId: string, active: boolean) => Promise<void>;
   nativeBrowserSetPencilMode: (sessionId: string, active: boolean) => Promise<void>;
-  nativeBrowserAgentAction: (request: NativeBrowserAgentAction) => Promise<NativeBrowserAgentResult | undefined>;
-  nativeBrowserCapture: (sessionId: string, box?: NativeBrowserBox, options?: NativeBrowserCaptureOptions) => Promise<string | undefined>;
+  nativeBrowserAgentAction: (
+    request: NativeBrowserAgentAction,
+  ) => Promise<NativeBrowserAgentResult | undefined>;
+  nativeBrowserCapture: (
+    sessionId: string,
+    box?: NativeBrowserBox,
+    options?: NativeBrowserCaptureOptions,
+  ) => Promise<string | undefined>;
   onNativeBrowserSelection: (handler: (selection: NativeBrowserSelection) => void) => () => void;
   onNativeBrowserDesignPrompt: (handler: (prompt: NativeBrowserDesignPrompt) => void) => () => void;
   onNativeBrowserLoaded: (handler: (event: NativeBrowserLoaded) => void) => () => void;
@@ -119,7 +134,11 @@ export async function getRepoStatus(dir: string): Promise<RepoStatus | null> {
   }
 }
 
-export async function openProject(dir: string, editor: EditorId, target: EditorTarget): Promise<void> {
+export async function openProject(
+  dir: string,
+  editor: EditorId,
+  target: EditorTarget,
+): Promise<void> {
   if (!isDesktop()) return;
   await window.droidControl!.openProject(dir, editor, target);
 }

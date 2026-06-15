@@ -34,7 +34,9 @@ export function useOnboarding(): OnboardingController {
   const [runtime, setRuntime] = useState<RuntimeStatus | null>(null);
   const [installLog, setInstallLog] = useState<string[]>([]);
   const [installing, setInstalling] = useState<'install' | 'update' | null>(null);
-  const [lastResult, setLastResult] = useState<{ phase: 'install' | 'update'; ok: boolean } | null>(null);
+  const [lastResult, setLastResult] = useState<{ phase: 'install' | 'update'; ok: boolean } | null>(
+    null,
+  );
   const reDetectedForKey = useRef(false);
 
   useEffect(() => {
@@ -46,7 +48,9 @@ export function useOnboarding(): OnboardingController {
       }
     });
     detectEnv();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
@@ -75,7 +79,9 @@ export function useOnboarding(): OnboardingController {
           break;
       }
     });
-    return () => { unsub(); };
+    return () => {
+      unsub();
+    };
   }, []);
 
   const refreshEnv = useCallback(() => detectEnv(), []);

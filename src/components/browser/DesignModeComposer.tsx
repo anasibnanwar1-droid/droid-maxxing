@@ -40,7 +40,9 @@ export function DesignModeComposer({
             className="group flex h-6 max-w-[180px] items-center gap-1.5 rounded-md bg-droid-elevated px-2 text-[11px] text-droid-text-secondary hover:text-droid-text"
             title="Remove reference"
           >
-            <span className="max-w-[74px] truncate font-mono text-droid-accent">{displayReferenceId(ref)}</span>
+            <span className="max-w-[74px] truncate font-mono text-droid-accent">
+              {displayReferenceId(ref)}
+            </span>
             <span className="truncate">{labelFor(ref)}</span>
             <X className="h-3 w-3 shrink-0 text-droid-text-muted group-hover:text-droid-text" />
           </button>

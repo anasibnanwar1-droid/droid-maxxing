@@ -11,11 +11,25 @@ export interface FileChange {
   removed: number;
 }
 
-const EDIT_TOOLS = ['edit', 'multiedit', 'multi_edit', 'str_replace', 'apply_patch', 'create', 'write'];
+const EDIT_TOOLS = [
+  'edit',
+  'multiedit',
+  'multi_edit',
+  'str_replace',
+  'apply_patch',
+  'create',
+  'write',
+];
 
 export function isEditTool(name: string | undefined): boolean {
   const lower = name?.toLowerCase() ?? '';
-  return EDIT_TOOLS.some((t) => lower === t) || lower.includes('edit') || lower.includes('patch') || lower.includes('write') || lower.includes('str_replace');
+  return (
+    EDIT_TOOLS.some((t) => lower === t) ||
+    lower.includes('edit') ||
+    lower.includes('patch') ||
+    lower.includes('write') ||
+    lower.includes('str_replace')
+  );
 }
 
 function firstString(obj: Record<string, unknown>, keys: string[]): string | undefined {
@@ -47,9 +61,17 @@ function lineDiff(oldStr: string, newStr: string): DiffOp[] {
   let i = 0;
   let j = 0;
   while (i < n && j < m) {
-    if (a[i] === b[j]) { ops.push({ type: 'ctx', text: a[i] }); i++; j++; }
-    else if (dp[i + 1][j] >= dp[i][j + 1]) { ops.push({ type: 'del', text: a[i] }); i++; }
-    else { ops.push({ type: 'add', text: b[j] }); j++; }
+    if (a[i] === b[j]) {
+      ops.push({ type: 'ctx', text: a[i] });
+      i++;
+      j++;
+    } else if (dp[i + 1][j] >= dp[i][j + 1]) {
+      ops.push({ type: 'del', text: a[i] });
+      i++;
+    } else {
+      ops.push({ type: 'add', text: b[j] });
+      j++;
+    }
   }
   while (i < n) ops.push({ type: 'del', text: a[i++] });
   while (j < m) ops.push({ type: 'add', text: b[j++] });
@@ -78,9 +100,14 @@ function parsePatch(patch: string): DiffOp[] {
   const ops: DiffOp[] = [];
   for (const line of patch.split('\n')) {
     if (
-      line.startsWith('+++') || line.startsWith('---') || line.startsWith('@@') ||
-      line.startsWith('diff ') || line.startsWith('index ') || line.startsWith('*** ')
-    ) continue;
+      line.startsWith('+++') ||
+      line.startsWith('---') ||
+      line.startsWith('@@') ||
+      line.startsWith('diff ') ||
+      line.startsWith('index ') ||
+      line.startsWith('*** ')
+    )
+      continue;
     if (line.startsWith('+')) ops.push({ type: 'add', text: line.slice(1) });
     else if (line.startsWith('-')) ops.push({ type: 'del', text: line.slice(1) });
     else ops.push({ type: 'ctx', text: line.startsWith(' ') ? line.slice(1) : line });
@@ -92,10 +119,19 @@ export function extractFileChange(toolName?: string, args?: unknown): FileChange
   if (!toolName) return null;
   if (!isEditTool(toolName)) return null;
 
-  const a: Record<string, unknown> = args && typeof args === 'object' ? (args as Record<string, unknown>) : {};
-  const argPath = firstString(a, ['path', 'file_path', 'filePath', 'file', 'target_file', 'filename']);
+  const a: Record<string, unknown> =
+    args && typeof args === 'object' ? (args as Record<string, unknown>) : {};
+  const argPath = firstString(a, [
+    'path',
+    'file_path',
+    'filePath',
+    'file',
+    'target_file',
+    'filename',
+  ]);
 
-  const patch = firstString(a, ['patch', 'diff', 'input']) ?? (typeof args === 'string' ? args : undefined);
+  const patch =
+    firstString(a, ['patch', 'diff', 'input']) ?? (typeof args === 'string' ? args : undefined);
   if (patch && /(^|\n)[+-]/.test(patch)) {
     const ops = parsePatch(patch);
     return finalize(argPath ?? pathFromPatch(patch) ?? 'file', 'patch', ops);
@@ -115,10 +151,16 @@ export function extractFileChange(toolName?: string, args?: unknown): FileChange
 
   const oldS = firstString(a, ['old_string', 'old_str', 'oldText', 'old']);
   const newS = firstString(a, ['new_string', 'new_str', 'newText', 'new']);
-  if (oldS !== undefined || newS !== undefined) return finalize(path, 'edit', lineDiff(oldS ?? '', newS ?? ''));
+  if (oldS !== undefined || newS !== undefined)
+    return finalize(path, 'edit', lineDiff(oldS ?? '', newS ?? ''));
 
   const content = firstString(a, ['content', 'contents', 'text']);
-  if (content !== undefined) return finalize(path, 'create', content.split('\n').map((t) => ({ type: 'add' as const, text: t })));
+  if (content !== undefined)
+    return finalize(
+      path,
+      'create',
+      content.split('\n').map((t) => ({ type: 'add' as const, text: t })),
+    );
 
   return null;
 }

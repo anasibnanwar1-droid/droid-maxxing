@@ -14,10 +14,24 @@ export type MissionPhase =
 
 export type FeatureStatus = 'pending' | 'in_progress' | 'completed' | 'cancelled';
 export type AgentRole = 'orchestrator' | 'worker' | 'validator';
-export type SessionKind = 'chat' | 'spec' | 'mission_orchestrator' | 'mission_worker' | 'mission_validator';
+export type SessionKind =
+  | 'chat'
+  | 'spec'
+  | 'mission_orchestrator'
+  | 'mission_worker'
+  | 'mission_validator';
 export type SessionInteractionMode = 'auto' | 'spec' | 'agi';
 export type Autonomy = 'off' | 'low' | 'medium' | 'high';
-export type ReasoningEffort = 'off' | 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'dynamic';
+export type ReasoningEffort =
+  | 'off'
+  | 'none'
+  | 'minimal'
+  | 'low'
+  | 'medium'
+  | 'high'
+  | 'xhigh'
+  | 'max'
+  | 'dynamic';
 
 export interface BridgeFeature {
   id: string;
@@ -69,8 +83,8 @@ export interface WorkerHistoryLink {
 export type WorkspaceKind = 'folder' | 'none';
 
 export interface MissionSummary {
-  id: string;            // stable app conversation id
-  sessionId?: string;    // active Droid session id
+  id: string; // stable app conversation id
+  sessionId?: string; // active Droid session id
   compactedFromSessionIds?: string[];
   missionId?: string;
   parentSessionId?: string;
@@ -144,7 +158,15 @@ export interface BrowserTranscriptReference {
   imageDataUrl?: string;
 }
 
-export type PermissionKind = 'edit' | 'exec' | 'create' | 'apply_patch' | 'mcp' | 'spec' | 'mission_plan' | 'other';
+export type PermissionKind =
+  | 'edit'
+  | 'exec'
+  | 'create'
+  | 'apply_patch'
+  | 'mcp'
+  | 'spec'
+  | 'mission_plan'
+  | 'other';
 export type ConfigurableAgent = 'orchestrator' | 'worker' | 'validator';
 
 export interface PermissionRequest {
@@ -312,7 +334,17 @@ export interface BrowserNativeSnapshot {
   refs: BrowserElementRef[];
 }
 
-export type BrowserNativeAction = 'open' | 'reload' | 'snapshot' | 'click' | 'type' | 'keypress' | 'scroll' | 'capture' | 'close' | 'fillCredentials';
+export type BrowserNativeAction =
+  | 'open'
+  | 'reload'
+  | 'snapshot'
+  | 'click'
+  | 'type'
+  | 'keypress'
+  | 'scroll'
+  | 'capture'
+  | 'close'
+  | 'fillCredentials';
 
 export interface BrowserNativeRequest {
   requestId: string;
@@ -451,12 +483,31 @@ export type ClientCommand =
       validatorModel?: string;
       validatorReasoning?: ReasoningEffort;
     }
-  | { type: 'session.create'; clientRef: string; cwd?: string; title: string; goal: string; interactionMode: SessionInteractionMode; modelId?: string; reasoningEffort?: ReasoningEffort; compactionModel?: string; compactionTokenLimit?: number | null; compactionTokenLimitPerModel?: Record<string, number>; autonomy: Autonomy }
+  | {
+      type: 'session.create';
+      clientRef: string;
+      cwd?: string;
+      title: string;
+      goal: string;
+      interactionMode: SessionInteractionMode;
+      modelId?: string;
+      reasoningEffort?: ReasoningEffort;
+      compactionModel?: string;
+      compactionTokenLimit?: number | null;
+      compactionTokenLimitPerModel?: Record<string, number>;
+      autonomy: Autonomy;
+    }
   | { type: 'session.send'; sessionId: string; text: string }
   | { type: 'session.sendNow'; sessionId: string; text: string }
   | { type: 'session.resume'; sessionId: string }
   | { type: 'session.interrupt'; sessionId: string }
-  | { type: 'session.updateSettings'; sessionId: string; modelId?: string | null; reasoningEffort?: ReasoningEffort; autonomy?: Autonomy }
+  | {
+      type: 'session.updateSettings';
+      sessionId: string;
+      modelId?: string | null;
+      reasoningEffort?: ReasoningEffort;
+      autonomy?: Autonomy;
+    }
   | { type: 'session.compact'; sessionId: string; customInstructions?: string }
   | { type: 'session.fork'; sessionId: string }
   | { type: 'session.rename'; sessionId: string; title: string }
@@ -467,35 +518,97 @@ export type ClientCommand =
   | { type: 'agent.sendNow'; missionId: string; agentSessionId: string; text: string }
   | { type: 'agent.interrupt'; missionId: string; agentSessionId: string }
   | { type: 'approval.respond'; missionId: string; requestId: string; outcome: PermissionOutcome }
-  | { type: 'question.respond'; missionId: string; requestId: string; cancelled: boolean; answers: { index: number; question: string; answer: string }[] }
+  | {
+      type: 'question.respond';
+      missionId: string;
+      requestId: string;
+      cancelled: boolean;
+      answers: { index: number; question: string; answer: string }[];
+    }
   | { type: 'history.list' }
   | { type: 'history.page'; sessionId: string; cursor?: string; limit?: number }
   | { type: 'mission.send'; missionId: string; text: string }
   | { type: 'mission.sendNow'; missionId: string; text: string }
-  | { type: 'mission.respondPermission'; missionId: string; requestId: string; outcome: PermissionOutcome }
-  | { type: 'mission.respondQuestion'; missionId: string; requestId: string; cancelled: boolean; answers: { index: number; question: string; answer: string }[] }
+  | {
+      type: 'mission.respondPermission';
+      missionId: string;
+      requestId: string;
+      outcome: PermissionOutcome;
+    }
+  | {
+      type: 'mission.respondQuestion';
+      missionId: string;
+      requestId: string;
+      cancelled: boolean;
+      answers: { index: number; question: string; answer: string }[];
+    }
   | { type: 'mission.interrupt'; missionId: string }
   | { type: 'mission.compact'; missionId: string; customInstructions?: string }
   | { type: 'mission.subscribeWorker'; missionId: string; workerSessionId: string }
   | { type: 'mission.close'; missionId: string }
-  | { type: 'mission.list'; workspaceCwds?: string[]; includePlainChats?: boolean; limitPerWorkspace?: number }
+  | {
+      type: 'mission.list';
+      workspaceCwds?: string[];
+      includePlainChats?: boolean;
+      limitPerWorkspace?: number;
+    }
   | { type: 'mission.loadHistory'; missionId: string; cursor?: string }
-  | { type: 'settings.agent.update'; missionId?: string; agent: ConfigurableAgent; modelId?: string | null; reasoningEffort?: ReasoningEffort }
+  | {
+      type: 'settings.agent.update';
+      missionId?: string;
+      agent: ConfigurableAgent;
+      modelId?: string | null;
+      reasoningEffort?: ReasoningEffort;
+    }
   | { type: 'mission.setAutonomy'; missionId: string; autonomy: Autonomy }
   | { type: 'mission.setInteractionMode'; missionId: string; mode: SessionInteractionMode }
-  | { type: 'browser.open'; missionId: string; url: string; viewport?: BrowserViewport; viewportMode?: BrowserViewportMode }
+  | {
+      type: 'browser.open';
+      missionId: string;
+      url: string;
+      viewport?: BrowserViewport;
+      viewportMode?: BrowserViewportMode;
+    }
   | { type: 'browser.close'; missionId: string }
   | { type: 'browser.reload'; missionId: string }
   | { type: 'browser.refresh'; missionId: string }
-  | { type: 'browser.resizeViewport'; missionId: string; viewport: BrowserViewport; viewportMode: BrowserViewportMode }
-  | { type: 'browser.click'; missionId: string; ref?: string; x?: number; y?: number; source?: 'agent' | 'user' }
+  | {
+      type: 'browser.resizeViewport';
+      missionId: string;
+      viewport: BrowserViewport;
+      viewportMode: BrowserViewportMode;
+    }
+  | {
+      type: 'browser.click';
+      missionId: string;
+      ref?: string;
+      x?: number;
+      y?: number;
+      source?: 'agent' | 'user';
+    }
   | { type: 'browser.type'; missionId: string; text: string }
   | { type: 'browser.keypress'; missionId: string; key: string }
-  | { type: 'browser.scroll'; missionId: string; direction: BrowserScrollDirection; pixels?: number; source?: 'agent' | 'user' }
-  | { type: 'browser.screenshot'; missionId: string; fullPage?: boolean; deviceScaleFactor?: number }
+  | {
+      type: 'browser.scroll';
+      missionId: string;
+      direction: BrowserScrollDirection;
+      pixels?: number;
+      source?: 'agent' | 'user';
+    }
+  | {
+      type: 'browser.screenshot';
+      missionId: string;
+      fullPage?: boolean;
+      deviceScaleFactor?: number;
+    }
   | { type: 'browser.inspectPoint'; missionId: string; x: number; y: number }
   | { type: 'browser.design.addReference'; missionId: string; reference: DesignReference }
-  | { type: 'browser.design.sendPrompt'; missionId: string; instruction: string; referenceIds: string[] }
+  | {
+      type: 'browser.design.sendPrompt';
+      missionId: string;
+      instruction: string;
+      referenceIds: string[];
+    }
   | { type: 'browser.native.result'; result: BrowserNativeResult }
   | { type: 'sessions.list' }
   | { type: 'mission.resume'; sessionId: string }
@@ -503,18 +616,43 @@ export type ClientCommand =
 
 export type ServerEvent =
   | { type: 'connection'; status: 'connected' | 'error'; message?: string }
-  | { type: 'runtime.updated'; status: { mode: 'cli_auth'; droidPath: string; apiKeyConfigured: boolean } }
+  | {
+      type: 'runtime.updated';
+      status: { mode: 'cli_auth'; droidPath: string; apiKeyConfigured: boolean };
+    }
   | { type: 'env.report'; report: EnvironmentReport }
-  | { type: 'cli.install.progress'; phase: 'install' | 'update'; stream: 'stdout' | 'stderr'; line: string }
+  | {
+      type: 'cli.install.progress';
+      phase: 'install' | 'update';
+      stream: 'stdout' | 'stderr';
+      line: string;
+    }
   | { type: 'cli.install.done'; phase: 'install' | 'update'; ok: boolean; exitCode: number }
   | { type: 'session.updated'; session: MissionSummary }
-  | { type: 'agent.updated'; missionId: string; agentSessionId: string; role: AgentRole; status: 'opened' | 'running' | 'paused' | 'completed' }
+  | {
+      type: 'agent.updated';
+      missionId: string;
+      agentSessionId: string;
+      role: AgentRole;
+      status: 'opened' | 'running' | 'paused' | 'completed';
+    }
   | { type: 'event.appended'; event: TranscriptEvent }
   | { type: 'approval.requested'; request: PermissionRequest }
   | { type: 'question.requested'; question: MissionQuestion }
   | { type: 'context.updated'; sessionId: string; stats: ContextStatsSnapshot; breakdown?: unknown }
-  | { type: 'mcp.authRequested'; sessionId: string; serverName?: string; authUrl?: string; message?: string }
-  | { type: 'catalog.updated'; catalog: 'models' | 'tools' | 'skills' | 'mcp'; items: unknown[]; sessionId?: string | null }
+  | {
+      type: 'mcp.authRequested';
+      sessionId: string;
+      serverName?: string;
+      authUrl?: string;
+      message?: string;
+    }
+  | {
+      type: 'catalog.updated';
+      catalog: 'models' | 'tools' | 'skills' | 'mcp';
+      items: unknown[];
+      sessionId?: string | null;
+    }
   | { type: 'settings.defaults'; defaults: FactoryDefaultSettings }
   | { type: 'error'; code?: string; sessionId?: string; missionId?: string; message: string }
   | { type: 'agent.not_steerable'; missionId: string; agentSessionId: string; message: string }
@@ -522,17 +660,43 @@ export type ServerEvent =
   | { type: 'mission.updated'; mission: MissionSummary }
   | { type: 'mission.features'; missionId: string; features: BridgeFeature[] }
   | { type: 'mission.progress'; missionId: string; entries: ProgressEntry[] }
-  | { type: 'mission.worker'; missionId: string; event: 'started' | 'updated' | 'completed'; workerSessionId: string; exitCode?: number; label?: string; prompt?: string; modelId?: string; reasoningEffort?: ReasoningEffort; toolUseId?: string }
+  | {
+      type: 'mission.worker';
+      missionId: string;
+      event: 'started' | 'updated' | 'completed';
+      workerSessionId: string;
+      exitCode?: number;
+      label?: string;
+      prompt?: string;
+      modelId?: string;
+      reasoningEffort?: ReasoningEffort;
+      toolUseId?: string;
+    }
   // A worker compacted and the daemon swapped its backing session id; remap any
   // state keyed by the old worker session id (worker list, transcripts, selection).
   | { type: 'mission.worker.rekey'; missionId: string; oldSessionId: string; newSessionId: string }
-  | { type: 'mission.tokens'; missionId: string; tokensIn: number; tokensOut: number; contextTokens: number; maxContextTokens?: number }
+  | {
+      type: 'mission.tokens';
+      missionId: string;
+      tokensIn: number;
+      tokensOut: number;
+      contextTokens: number;
+      maxContextTokens?: number;
+    }
   | { type: 'mission.transcript'; event: TranscriptEvent }
   | { type: 'mission.permission'; request: PermissionRequest }
   | { type: 'mission.question'; question: MissionQuestion }
   | { type: 'mission.error'; missionId?: string; message: string }
   | { type: 'mission.list'; missions: MissionSummary[] }
-  | { type: 'mission.history'; missionId: string; progress: ProgressEntry[]; transcripts: TranscriptEvent[]; workers?: WorkerHistoryLink[]; mode?: 'replace' | 'prepend'; olderCursor?: string }
+  | {
+      type: 'mission.history';
+      missionId: string;
+      progress: ProgressEntry[];
+      transcripts: TranscriptEvent[];
+      workers?: WorkerHistoryLink[];
+      mode?: 'replace' | 'prepend';
+      olderCursor?: string;
+    }
   | { type: 'sessions.history'; missions: HistoryMission[] }
   | { type: 'models.list'; models: ModelInfo[] }
   | { type: 'browser.updated'; state: BrowserState }

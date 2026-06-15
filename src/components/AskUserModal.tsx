@@ -101,10 +101,14 @@ export default function AskUserModal() {
                       : 'border-transparent hover:bg-droid-elevated/25'
                   }`}
                 >
-                  <span className={`text-[12px] font-mono w-3 shrink-0 ${selected ? 'text-droid-text' : 'text-droid-text-muted'}`}>
+                  <span
+                    className={`text-[12px] font-mono w-3 shrink-0 ${selected ? 'text-droid-text' : 'text-droid-text-muted'}`}
+                  >
                     {i + 1}
                   </span>
-                  <span className={`text-[13.5px] [overflow-wrap:anywhere] ${selected ? 'text-droid-text' : 'text-droid-text-secondary'}`}>
+                  <span
+                    className={`text-[13.5px] [overflow-wrap:anywhere] ${selected ? 'text-droid-text' : 'text-droid-text-secondary'}`}
+                  >
                     {opt}
                   </span>
                 </button>
@@ -114,10 +118,14 @@ export default function AskUserModal() {
             {/* Type-your-own row */}
             <div
               className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg border border-dashed ${
-                typing ? 'border-droid-border-hover bg-droid-elevated/40' : 'border-transparent hover:bg-droid-elevated/25'
+                typing
+                  ? 'border-droid-border-hover bg-droid-elevated/40'
+                  : 'border-transparent hover:bg-droid-elevated/25'
               }`}
             >
-              <span className={`text-[12px] font-mono w-3 shrink-0 ${typing ? 'text-droid-text' : 'text-droid-text-muted'}`}>
+              <span
+                className={`text-[12px] font-mono w-3 shrink-0 ${typing ? 'text-droid-text' : 'text-droid-text-muted'}`}
+              >
                 {q.options.length + 1}
               </span>
               {typing ? (
@@ -136,7 +144,10 @@ export default function AskUserModal() {
                   className="flex-1 bg-transparent text-[13.5px] text-droid-text placeholder:text-droid-text-muted/60 outline-none"
                 />
               ) : (
-                <button onClick={openCustom} className="flex-1 text-left text-[13.5px] text-droid-text-secondary">
+                <button
+                  onClick={openCustom}
+                  className="flex-1 text-left text-[13.5px] text-droid-text-secondary"
+                >
                   Or type your own answer…
                 </button>
               )}

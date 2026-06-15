@@ -53,31 +53,47 @@ test('missionIdForBrowserKey resolves the app chat id from the stable browser ke
 
   // The backend keys browser requests by the app session id (mission.id).
   assert.equal(missionIdForBrowserKey(missions, 'chat-app-id'), 'chat-app-id');
-  assert.equal(activeMissionAfterNativeBrowserRequest(null, {
-    requestId: 'req-1',
-    missionId: 'chat-app-id',
-    sessionId: 'browser-chat-app-id',
-    action: 'snapshot',
-  }, missions), 'chat-app-id');
+  assert.equal(
+    activeMissionAfterNativeBrowserRequest(
+      null,
+      {
+        requestId: 'req-1',
+        missionId: 'chat-app-id',
+        sessionId: 'browser-chat-app-id',
+        action: 'snapshot',
+      },
+      missions,
+    ),
+    'chat-app-id',
+  );
 });
 
 test('nativeBrowserRequestTargetsVisibleSurface only attaches the active browser request', () => {
-  assert.equal(nativeBrowserRequestTargetsVisibleSurface({
-    browserKey: 'visible-chat',
-    requestMissionId: 'visible-chat',
-    requestSessionId: 'browser-visible-chat',
-  }), true);
+  assert.equal(
+    nativeBrowserRequestTargetsVisibleSurface({
+      browserKey: 'visible-chat',
+      requestMissionId: 'visible-chat',
+      requestSessionId: 'browser-visible-chat',
+    }),
+    true,
+  );
 
-  assert.equal(nativeBrowserRequestTargetsVisibleSurface({
-    browserKey: 'visible-chat',
-    visibleSessionId: 'browser-visible-chat',
-    requestMissionId: 'background-chat',
-    requestSessionId: 'browser-visible-chat',
-  }), true);
+  assert.equal(
+    nativeBrowserRequestTargetsVisibleSurface({
+      browserKey: 'visible-chat',
+      visibleSessionId: 'browser-visible-chat',
+      requestMissionId: 'background-chat',
+      requestSessionId: 'browser-visible-chat',
+    }),
+    true,
+  );
 
-  assert.equal(nativeBrowserRequestTargetsVisibleSurface({
-    browserKey: 'visible-chat',
-    requestMissionId: 'background-chat',
-    requestSessionId: 'browser-background-chat',
-  }), false);
+  assert.equal(
+    nativeBrowserRequestTargetsVisibleSurface({
+      browserKey: 'visible-chat',
+      requestMissionId: 'background-chat',
+      requestSessionId: 'browser-background-chat',
+    }),
+    false,
+  );
 });

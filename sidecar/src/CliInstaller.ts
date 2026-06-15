@@ -8,7 +8,9 @@ export interface ShellCommand {
 }
 
 // Prefer the official script when curl exists, then Homebrew, then npm.
-export function pickInstallChannel(env: Pick<EnvironmentReport, 'availableChannels'>): InstallChannel | null {
+export function pickInstallChannel(
+  env: Pick<EnvironmentReport, 'availableChannels'>,
+): InstallChannel | null {
   const order: InstallChannel[] = ['script', 'brew', 'npm'];
   return order.find((channel) => env.availableChannels.includes(channel)) ?? null;
 }
@@ -20,7 +22,8 @@ export function buildInstallCommand(channel: InstallChannel): ShellCommand {
       // runs; a piped `curl | sh` would swallow download errors and could
       // report a successful install with nothing installed.
       return {
-        command: 'f="$(mktemp)" && curl -fsSL https://app.factory.ai/cli -o "$f" && sh "$f"; r=$?; rm -f "$f"; exit $r',
+        command:
+          'f="$(mktemp)" && curl -fsSL https://app.factory.ai/cli -o "$f" && sh "$f"; r=$?; rm -f "$f"; exit $r',
         args: [],
         shell: true,
       };
@@ -33,14 +36,21 @@ export function buildInstallCommand(channel: InstallChannel): ShellCommand {
 
 // `droid update` self-detects the install method. When the CLI is missing we
 // fall back to the channel installer.
-export function buildUpdateCommand(channel: InstallChannel | undefined, droidPath: string, cliPresent: boolean): ShellCommand {
+export function buildUpdateCommand(
+  channel: InstallChannel | undefined,
+  droidPath: string,
+  cliPresent: boolean,
+): ShellCommand {
   if (cliPresent) return { command: droidPath, args: ['update'] };
   return buildInstallCommand(channel ?? 'script');
 }
 
 export type ProgressLine = { stream: 'stdout' | 'stderr'; line: string };
 
-export function runStreaming(cmd: ShellCommand, onLine: (line: ProgressLine) => void): Promise<number> {
+export function runStreaming(
+  cmd: ShellCommand,
+  onLine: (line: ProgressLine) => void,
+): Promise<number> {
   return new Promise((resolve) => {
     // On Windows, `npm` and npm-installed `droid` are `.cmd` shims that cannot
     // be spawned directly, so route non-pipeline commands through a shell too.

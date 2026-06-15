@@ -16,8 +16,11 @@ export function registerNativeBrowserController(next: NativeBrowserController): 
   };
 }
 
-export async function performNativeBrowserRequest(request: BrowserNativeRequest, timeoutMs = 8_000): Promise<BrowserNativeResult> {
-  const active = controller ?? await waitForController(timeoutMs);
+export async function performNativeBrowserRequest(
+  request: BrowserNativeRequest,
+  timeoutMs = 8_000,
+): Promise<BrowserNativeResult> {
+  const active = controller ?? (await waitForController(timeoutMs));
   return active.perform(request);
 }
 

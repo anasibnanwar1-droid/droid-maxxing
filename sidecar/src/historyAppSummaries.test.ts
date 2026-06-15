@@ -64,7 +64,10 @@ test('loadHistoricalSessions applies app summaries before plain chat filtering',
 
   const rows = loadHistoricalSessions({ includePlainChats: true, limitPerWorkspace: 5 });
 
-  assert.deepEqual(rows.map((row) => row.summary.id), ['plain-runtime-home']);
+  assert.deepEqual(
+    rows.map((row) => row.summary.id),
+    ['plain-runtime-home'],
+  );
   assert.equal(rows[0].summary.cwd, '');
   assert.equal(rows[0].summary.workspaceKind, 'none');
 });
@@ -72,7 +75,10 @@ test('loadHistoricalSessions applies app summaries before plain chat filtering',
 test('loadHistoricalSessions hides a Task-spawned subagent that has a persisted worker link', () => {
   const cwd = join(home, 'workspace-subagent');
   writeSession('real-session', cwd);
-  writeSession('subagent-session', cwd, { callingSessionId: 'real-session', callingToolUseId: 'tool-1' });
+  writeSession('subagent-session', cwd, {
+    callingSessionId: 'real-session',
+    callingToolUseId: 'tool-1',
+  });
   // A persisted link lets the parent chat open it as a worker, so it must not
   // also surface as a standalone session.
   const index = new HistoryIndex();
@@ -81,7 +87,10 @@ test('loadHistoricalSessions hides a Task-spawned subagent that has a persisted 
 
   const rows = loadHistoricalSessions({ workspaceCwds: [cwd] });
 
-  assert.deepEqual(rows.map((row) => row.summary.id), ['real-session']);
+  assert.deepEqual(
+    rows.map((row) => row.summary.id),
+    ['real-session'],
+  );
 });
 
 test('loadHistoricalSessions keeps a marker-only Task subagent visible when it has no persisted link', () => {
@@ -90,7 +99,10 @@ test('loadHistoricalSessions keeps a marker-only Task subagent visible when it h
   // Recorded before links were persisted: spawn markers but no subagent_links
   // row. Hiding it would orphan it (the parent has no link to open it), so it
   // must remain a standalone, openable session.
-  writeSession('orphan-subagent', cwd, { callingSessionId: 'orphan-parent', callingToolUseId: 'tool-7' });
+  writeSession('orphan-subagent', cwd, {
+    callingSessionId: 'orphan-parent',
+    callingToolUseId: 'tool-7',
+  });
 
   const rows = loadHistoricalSessions({ workspaceCwds: [cwd] });
 
@@ -111,7 +123,10 @@ test('loadHistoricalSessions keeps a rekeyed worker hidden under its superseded 
   const rows = loadHistoricalSessions({ workspaceCwds: [cwd] });
 
   // Both the pre- and post-rekey worker sessions stay hidden; only the parent shows.
-  assert.deepEqual(rows.map((row) => row.summary.id), ['rekey-parent']);
+  assert.deepEqual(
+    rows.map((row) => row.summary.id),
+    ['rekey-parent'],
+  );
 });
 
 test('loadHistoricalSessions keeps forked chats (bare parent, no spawn markers) visible', () => {
@@ -122,7 +137,11 @@ test('loadHistoricalSessions keeps forked chats (bare parent, no spawn markers) 
   writeSession('forked-session', cwd, { parent: 'source-session' });
   // A real Task subagent (spawn markers present) with a persisted link must still
   // be hidden (it is openable from the parent as a worker).
-  writeSession('task-subagent', cwd, { parent: 'source-session', callingSessionId: 'source-session', callingToolUseId: 'tool-9' });
+  writeSession('task-subagent', cwd, {
+    parent: 'source-session',
+    callingSessionId: 'source-session',
+    callingToolUseId: 'tool-9',
+  });
   const index = new HistoryIndex();
   index.recordSubagentLink('source-session', 'tool-9', 'task-subagent');
   index.close();

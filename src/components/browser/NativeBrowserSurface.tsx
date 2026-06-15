@@ -32,7 +32,12 @@ import {
 } from '../../lib/nativeBrowser';
 import { registerNativeBrowserController } from '../../lib/nativeBrowserAgent';
 import { nativeBrowserRequestTargetsVisibleSurface } from '../../lib/browserSessionIdentity';
-import type { BrowserNativeRequest, BrowserNativeResult, BrowserViewport, BrowserViewportMode } from '../../types/bridge';
+import type {
+  BrowserNativeRequest,
+  BrowserNativeResult,
+  BrowserViewport,
+  BrowserViewportMode,
+} from '../../types/bridge';
 import type { Size } from '../canvas/canvasMath';
 import { useElementSize } from './useElementSize';
 
@@ -101,11 +106,15 @@ export function NativeBrowserSurface({
   // closes, re-asserting the real design state so the toolbar and in-page
   // selection don't disagree after a request arrived while obscured.
   useEffect(() => {
-    if (visibleSessionId) setNativeBrowserDesignMode(visibleSessionId, !obscured && designMode).catch(() => {});
+    if (visibleSessionId)
+      setNativeBrowserDesignMode(visibleSessionId, !obscured && designMode).catch(() => {});
   }, [designMode, obscured, visibleSessionId]);
 
   useEffect(() => {
-    if (visibleSessionId) setNativeBrowserPencilMode(visibleSessionId, !obscured && designMode && pencilMode).catch(() => {});
+    if (visibleSessionId)
+      setNativeBrowserPencilMode(visibleSessionId, !obscured && designMode && pencilMode).catch(
+        () => {},
+      );
   }, [designMode, obscured, pencilMode, visibleSessionId]);
 
   useEffect(() => {
@@ -121,22 +130,30 @@ export function NativeBrowserSurface({
       });
     };
 
-    track(onNativeBrowserSelection((selection) => {
-      if (selection.sessionId && selection.sessionId !== visibleSessionId) return;
-      onSelectionRef.current(selection);
-    }));
-    track(onNativeBrowserDesignPrompt((prompt) => {
-      if (prompt.selection.sessionId && prompt.selection.sessionId !== visibleSessionId) return;
-      onPromptRef.current(prompt);
-    }));
-    track(onNativeBrowserLoaded((event) => {
-      if (event.sessionId && event.sessionId !== visibleSessionId) return;
-      onLoadedRef.current(event.url);
-    }));
-    track(onNativeBrowserLoadFailed((failure) => {
-      if (failure.sessionId && failure.sessionId !== visibleSessionId) return;
-      onLoadFailedRef.current?.(failure);
-    }));
+    track(
+      onNativeBrowserSelection((selection) => {
+        if (selection.sessionId && selection.sessionId !== visibleSessionId) return;
+        onSelectionRef.current(selection);
+      }),
+    );
+    track(
+      onNativeBrowserDesignPrompt((prompt) => {
+        if (prompt.selection.sessionId && prompt.selection.sessionId !== visibleSessionId) return;
+        onPromptRef.current(prompt);
+      }),
+    );
+    track(
+      onNativeBrowserLoaded((event) => {
+        if (event.sessionId && event.sessionId !== visibleSessionId) return;
+        onLoadedRef.current(event.url);
+      }),
+    );
+    track(
+      onNativeBrowserLoadFailed((failure) => {
+        if (failure.sessionId && failure.sessionId !== visibleSessionId) return;
+        onLoadFailedRef.current?.(failure);
+      }),
+    );
 
     return () => {
       disposed = true;
@@ -214,32 +231,47 @@ export function NativeBrowserSurface({
       setNativeBrowserBounds(visibleSessionId, bounds).catch(() => {});
       lastBounds.current = bounds;
     }
-  }, [native, obscured, surface.height, surface.left, surface.top, surface.width, surfaceReady, url, visibleSessionId]);
+  }, [
+    native,
+    obscured,
+    surface.height,
+    surface.left,
+    surface.top,
+    surface.width,
+    surfaceReady,
+    url,
+    visibleSessionId,
+  ]);
 
-  useEffect(() => registerNativeBrowserController({
-    perform: async (request) => native
-      ? performNativeRequest(request, {
-        currentUrl: url,
-        browserKey,
-        visibleSessionId,
-        obscured,
-        designMode,
-        pencilMode: designMode && pencilMode,
-        bounds: () => boundsFor(slotRef),
-        markOpen: (bounds) => {
-          lastBounds.current = bounds;
-          if (visibleSessionId) {
-            attachedSessionRef.current = visibleSessionId;
-            attachingSessionRef.current = undefined;
-          }
-        },
-      })
-      : performIframeRequest(request, {
-        currentUrl: url,
-        iframe: iframeRef,
-        onLoaded,
+  useEffect(
+    () =>
+      registerNativeBrowserController({
+        perform: async (request) =>
+          native
+            ? performNativeRequest(request, {
+                currentUrl: url,
+                browserKey,
+                visibleSessionId,
+                obscured,
+                designMode,
+                pencilMode: designMode && pencilMode,
+                bounds: () => boundsFor(slotRef),
+                markOpen: (bounds) => {
+                  lastBounds.current = bounds;
+                  if (visibleSessionId) {
+                    attachedSessionRef.current = visibleSessionId;
+                    attachingSessionRef.current = undefined;
+                  }
+                },
+              })
+            : performIframeRequest(request, {
+                currentUrl: url,
+                iframe: iframeRef,
+                onLoaded,
+              }),
       }),
-  }), [browserKey, designMode, native, obscured, onLoaded, pencilMode, url, visibleSessionId]);
+    [browserKey, designMode, native, obscured, onLoaded, pencilMode, url, visibleSessionId],
+  );
 
   useEffect(() => {
     return () => {
@@ -303,27 +335,43 @@ async function performNativeRequest(
     // While a full-screen overlay (settings, context meter, spec/question modal)
     // obscures the pane, the BrowserView is detached; treat the surface as not
     // visible so an `open`/`reload` doesn't reattach the OS layer over the overlay.
-    const visible = !options.obscured && nativeBrowserRequestTargetsVisibleSurface({
-      browserKey: options.browserKey,
-      visibleSessionId: options.visibleSessionId,
-      requestMissionId: request.missionId,
-      requestSessionId: request.sessionId,
-    });
+    const visible =
+      !options.obscured &&
+      nativeBrowserRequestTargetsVisibleSurface({
+        browserKey: options.browserKey,
+        visibleSessionId: options.visibleSessionId,
+        requestMissionId: request.missionId,
+        requestSessionId: request.sessionId,
+      });
     const visibleBounds = visible ? requireNativeBrowserBounds(bounds) : undefined;
-    await syncNativeDesignState(request.sessionId, visible ? options.designMode : false, visible ? options.pencilMode : false);
+    await syncNativeDesignState(
+      request.sessionId,
+      visible ? options.designMode : false,
+      visible ? options.pencilMode : false,
+    );
     if (request.action === 'open') {
       const targetUrl = request.url ?? options.currentUrl;
       const loaded = waitForNextNativeBrowserLoad(request.sessionId).catch(() => undefined);
       await openNativeBrowser(request.sessionId, targetUrl, visibleBounds, request.viewport);
       if (visibleBounds) options.markOpen(visibleBounds);
       const loadedEvent = await loaded;
-      return { requestId: request.requestId, missionId: request.missionId, ok: true, snapshot: navigationSnapshot(loadedEvent?.url ?? targetUrl) };
+      return {
+        requestId: request.requestId,
+        missionId: request.missionId,
+        ok: true,
+        snapshot: navigationSnapshot(loadedEvent?.url ?? targetUrl),
+      };
     }
     if (request.action === 'reload') {
       const loaded = waitForNextNativeBrowserLoad(request.sessionId).catch(() => undefined);
       await reloadNativeBrowser(request.sessionId);
       const loadedEvent = await loaded;
-      return { requestId: request.requestId, missionId: request.missionId, ok: true, snapshot: navigationSnapshot(loadedEvent?.url ?? options.currentUrl) };
+      return {
+        requestId: request.requestId,
+        missionId: request.missionId,
+        ok: true,
+        snapshot: navigationSnapshot(loadedEvent?.url ?? options.currentUrl),
+      };
     }
     if (request.action === 'capture') {
       const image = await nativeBrowserCapture(request.sessionId, request.box, {
@@ -343,7 +391,13 @@ async function performNativeRequest(
       direction: request.direction,
       pixels: request.pixels,
     });
-    return { requestId: request.requestId, missionId: request.missionId, ok: result.ok, snapshot: result.snapshot, error: result.error };
+    return {
+      requestId: request.requestId,
+      missionId: request.missionId,
+      ok: result.ok,
+      snapshot: result.snapshot,
+      error: result.error,
+    };
   } catch (err) {
     return {
       requestId: request.requestId,
@@ -359,7 +413,11 @@ function requireNativeBrowserBounds(bounds: NativeBrowserBounds | null): NativeB
   return bounds;
 }
 
-async function syncNativeDesignState(sessionId: string, designMode: boolean, pencilMode: boolean): Promise<void> {
+async function syncNativeDesignState(
+  sessionId: string,
+  designMode: boolean,
+  pencilMode: boolean,
+): Promise<void> {
   await setNativeBrowserDesignMode(sessionId, designMode);
   await setNativeBrowserPencilMode(sessionId, designMode && pencilMode);
 }
@@ -473,7 +531,9 @@ function navigationSnapshot(url: string) {
 }
 
 function settleFrame(): Promise<void> {
-  return new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  return new Promise((resolve) =>
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+  );
 }
 
 function surfaceLayout(frame: Size, viewport: BrowserViewport, mode: BrowserViewportMode) {

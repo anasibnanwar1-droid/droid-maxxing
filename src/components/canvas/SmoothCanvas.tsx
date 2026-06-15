@@ -17,8 +17,16 @@ interface SmoothCanvasProps {
   children: (fit: CanvasFit) => ReactNode;
   overlay?: (fit: CanvasFit) => ReactNode;
   onFitChange?: (fit: CanvasFit) => void;
-  onContentPointerDown?: (point: Point, event: PointerEvent<HTMLDivElement>, fit: CanvasFit) => void;
-  onContentPointerMove?: (point: Point, event: PointerEvent<HTMLDivElement>, fit: CanvasFit) => void;
+  onContentPointerDown?: (
+    point: Point,
+    event: PointerEvent<HTMLDivElement>,
+    fit: CanvasFit,
+  ) => void;
+  onContentPointerMove?: (
+    point: Point,
+    event: PointerEvent<HTMLDivElement>,
+    fit: CanvasFit,
+  ) => void;
   onContentPointerUp?: (point: Point, event: PointerEvent<HTMLDivElement>, fit: CanvasFit) => void;
   onContentPointerLeave?: (event: PointerEvent<HTMLDivElement>, fit: CanvasFit) => void;
   onContentWheel?: (point: Point, event: WheelEvent<HTMLDivElement>, fit: CanvasFit) => void;
@@ -42,7 +50,10 @@ export function SmoothCanvas({
 }: SmoothCanvasProps) {
   const rootRef = useRef<HTMLDivElement>(null);
   const [container, setContainer] = useState<Size>(MIN_SIZE);
-  const fit = useMemo(() => fitContent(container, contentSize, padding), [container, contentSize, padding]);
+  const fit = useMemo(
+    () => fitContent(container, contentSize, padding),
+    [container, contentSize, padding],
+  );
 
   useEffect(() => {
     const node = rootRef.current;
@@ -66,7 +77,9 @@ export function SmoothCanvas({
     onFitChange?.(fit);
   }, [fit, onFitChange]);
 
-  const readPoint = (event: PointerEvent<HTMLDivElement> | WheelEvent<HTMLDivElement>): Point | null => {
+  const readPoint = (
+    event: PointerEvent<HTMLDivElement> | WheelEvent<HTMLDivElement>,
+  ): Point | null => {
     const node = rootRef.current;
     if (!node) return null;
     const rect = node.getBoundingClientRect();

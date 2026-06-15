@@ -40,7 +40,14 @@ import type {
 import { DroidRuntime } from './DroidRuntime.js';
 import { detectEnvironment } from './Environment.js';
 import { buildInstallCommand, buildUpdateCommand, runStreaming } from './CliInstaller.js';
-import { classifyPermission, confirmationType, mapFeature, normalizeNotification, normalizeStreamEvent, permissionSignature } from './normalize.js';
+import {
+  classifyPermission,
+  confirmationType,
+  mapFeature,
+  normalizeNotification,
+  normalizeStreamEvent,
+  permissionSignature,
+} from './normalize.js';
 import {
   applyCachedSummary,
   HistoryIndex,
@@ -59,7 +66,11 @@ import { BrowserSessionManager } from './browser/BrowserSessionManager.js';
 import { createBrowserMcpServer } from './browser/browserMcpServer.js';
 import { isDesignPrompt } from './browser/designPromptPacks.js';
 import { NativeBrowserRuntime } from './browser/NativeBrowserRuntime.js';
-import { isAlwaysOutcome, isApprovalOutcome, normalizePermissionOutcome } from './permissionOutcomes.js';
+import {
+  isAlwaysOutcome,
+  isApprovalOutcome,
+  normalizePermissionOutcome,
+} from './permissionOutcomes.js';
 import { filterMissionListSummaries, type MissionListFilterOptions } from './missionListFilter.js';
 import {
   autoCompactionDue,
@@ -171,12 +182,18 @@ const STATE_TO_PHASE: Record<string, MissionPhase> = {
 };
 
 const MAX_OPEN_AGENT_TRANSPORTS = boundedInt(process.env.DROID_CONTROL_MAX_OPEN_AGENTS, 4, 1, 24);
-const BROWSER_NATIVE_TIMEOUT_MS = boundedInt(process.env.DROID_CONTROL_BROWSER_NATIVE_TIMEOUT_MS, 12_000, 1_000, 60_000);
+const BROWSER_NATIVE_TIMEOUT_MS = boundedInt(
+  process.env.DROID_CONTROL_BROWSER_NATIVE_TIMEOUT_MS,
+  12_000,
+  1_000,
+  60_000,
+);
 
 let permSeq = 0;
 const nextRequestId = () => `req-${Date.now().toString(36)}-${(permSeq++).toString(36)}`;
 let nativeBrowserSeq = 0;
-const nextNativeBrowserRequestId = () => `browser-native-${Date.now().toString(36)}-${(nativeBrowserSeq++).toString(36)}`;
+const nextNativeBrowserRequestId = () =>
+  `browser-native-${Date.now().toString(36)}-${(nativeBrowserSeq++).toString(36)}`;
 
 interface PendingNativeBrowserRequest {
   resolve: (result: BrowserNativeResult) => void;
@@ -195,24 +212,31 @@ export class MissionManager {
   private readonly runtime = new DroidRuntime();
   private readonly history = new HistoryIndex();
   private readonly missions = new Map<string, Mission>();
-  private readonly pendingAgentSettings = new Map<string, Partial<Record<ConfigurableAgent, AgentSettingPatch>>>();
+  private readonly pendingAgentSettings = new Map<
+    string,
+    Partial<Record<ConfigurableAgent, AgentSettingPatch>>
+  >();
   private readonly usageOffsets = new Map<string, UsageOffset>();
   private readonly contextSnapshots = new Map<string, ContextStatsSnapshot>();
   private readonly contextPollers = new Map<string, ReturnType<typeof setInterval>>();
   private readonly pendingNativeBrowserRequests = new Map<string, PendingNativeBrowserRequest>();
   private readonly browsers: BrowserSessionManager;
 
-  constructor(private readonly emit: Emit, options: MissionManagerOptions = {}) {
+  constructor(
+    private readonly emit: Emit,
+    options: MissionManagerOptions = {},
+  ) {
     this.browsers = new BrowserSessionManager({
       assetUrlFor: options.assetUrlFor,
       emit: (event) => this.emit(event),
-      runtimeFactory: (sessionId, viewport, missionId) => new NativeBrowserRuntime({
-        sessionId,
-        missionId,
-        viewport,
-        request: (request) => this.requestNativeBrowser(request),
-        nextRequestId: nextNativeBrowserRequestId,
-      }),
+      runtimeFactory: (sessionId, viewport, missionId) =>
+        new NativeBrowserRuntime({
+          sessionId,
+          missionId,
+          viewport,
+          request: (request) => this.requestNativeBrowser(request),
+          nextRequestId: nextNativeBrowserRequestId,
+        }),
     });
   }
 
@@ -315,7 +339,10 @@ export class MissionManager {
         const missionId = cmd.type === 'session.compact' ? cmd.sessionId : cmd.missionId;
         const mission = this.findMission(missionId);
         if (mission?.streaming || mission?.compacting) {
-          this.emitStatus(missionId, 'Cannot compact while a turn is active. Try again when the model is idle.');
+          this.emitStatus(
+            missionId,
+            'Cannot compact while a turn is active. Try again when the model is idle.',
+          );
           return;
         }
         await this.compactSession(missionId, cmd.customInstructions, 'manual');
@@ -349,7 +376,9 @@ export class MissionManager {
         await this.withSession(cmd.sessionId, (session) => session.getRewindInfo({} as never));
         return;
       case 'session.rewind':
-        await this.withSession(cmd.sessionId, (session) => session.executeRewind({ rewindId: cmd.rewindId } as never));
+        await this.withSession(cmd.sessionId, (session) =>
+          session.executeRewind({ rewindId: cmd.rewindId } as never),
+        );
         return;
       case 'session.resume':
       case 'mission.resume':
@@ -381,7 +410,9 @@ export class MissionManager {
         await this.setInteractionMode(cmd.missionId, cmd.mode);
         return;
       case 'browser.open':
-        await this.handleBrowser(cmd.missionId, () => this.browsers.open({ ...cmd, missionId: this.requireBrowserMissionId(cmd.missionId) }));
+        await this.handleBrowser(cmd.missionId, () =>
+          this.browsers.open({ ...cmd, missionId: this.requireBrowserMissionId(cmd.missionId) }),
+        );
         return;
       case 'browser.close':
         await this.handleBrowser(cmd.missionId, async () => {
@@ -391,25 +422,47 @@ export class MissionManager {
         });
         return;
       case 'browser.reload':
-        await this.handleBrowser(cmd.missionId, () => this.browsers.reload(this.requireBrowserMissionId(cmd.missionId)));
+        await this.handleBrowser(cmd.missionId, () =>
+          this.browsers.reload(this.requireBrowserMissionId(cmd.missionId)),
+        );
         return;
       case 'browser.refresh':
-        await this.handleBrowser(cmd.missionId, () => this.browsers.refresh(this.requireBrowserMissionId(cmd.missionId)));
+        await this.handleBrowser(cmd.missionId, () =>
+          this.browsers.refresh(this.requireBrowserMissionId(cmd.missionId)),
+        );
         return;
       case 'browser.resizeViewport':
-        await this.handleBrowser(cmd.missionId, () => this.browsers.resizeViewport({ ...cmd, missionId: this.requireBrowserMissionId(cmd.missionId) }));
+        await this.handleBrowser(cmd.missionId, () =>
+          this.browsers.resizeViewport({
+            ...cmd,
+            missionId: this.requireBrowserMissionId(cmd.missionId),
+          }),
+        );
         return;
       case 'browser.click':
-        await this.handleBrowser(cmd.missionId, () => this.browsers.click({ ...cmd, missionId: this.requireBrowserMissionId(cmd.missionId) }));
+        await this.handleBrowser(cmd.missionId, () =>
+          this.browsers.click({ ...cmd, missionId: this.requireBrowserMissionId(cmd.missionId) }),
+        );
         return;
       case 'browser.type':
-        await this.handleBrowser(cmd.missionId, () => this.browsers.type(this.requireBrowserMissionId(cmd.missionId), cmd.text));
+        await this.handleBrowser(cmd.missionId, () =>
+          this.browsers.type(this.requireBrowserMissionId(cmd.missionId), cmd.text),
+        );
         return;
       case 'browser.keypress':
-        await this.handleBrowser(cmd.missionId, () => this.browsers.keypress(this.requireBrowserMissionId(cmd.missionId), cmd.key));
+        await this.handleBrowser(cmd.missionId, () =>
+          this.browsers.keypress(this.requireBrowserMissionId(cmd.missionId), cmd.key),
+        );
         return;
       case 'browser.scroll':
-        await this.handleBrowser(cmd.missionId, () => this.browsers.scroll(this.requireBrowserMissionId(cmd.missionId), cmd.direction, cmd.pixels, cmd.source));
+        await this.handleBrowser(cmd.missionId, () =>
+          this.browsers.scroll(
+            this.requireBrowserMissionId(cmd.missionId),
+            cmd.direction,
+            cmd.pixels,
+            cmd.source,
+          ),
+        );
         return;
       case 'browser.screenshot':
         await this.handleBrowser(cmd.missionId, async () => {
@@ -421,17 +474,25 @@ export class MissionManager {
         return;
       case 'browser.inspectPoint':
         await this.handleBrowser(cmd.missionId, async () => {
-          const element = this.browsers.inspectPoint(this.requireBrowserMissionId(cmd.missionId), cmd.x, cmd.y);
+          const element = this.browsers.inspectPoint(
+            this.requireBrowserMissionId(cmd.missionId),
+            cmd.x,
+            cmd.y,
+          );
           if (!element) throw new Error('No browser element found at that point.');
         });
         return;
       case 'browser.design.addReference':
         await this.handleBrowser(cmd.missionId, async () => {
-          await this.browsers.addReference(this.requireBrowserMissionId(cmd.missionId), {
-            anchor: cmd.reference.anchor,
-            detail: cmd.reference.detail,
-            id: cmd.reference.id,
-          }, cmd.reference.screenshot);
+          await this.browsers.addReference(
+            this.requireBrowserMissionId(cmd.missionId),
+            {
+              anchor: cmd.reference.anchor,
+              detail: cmd.reference.detail,
+              id: cmd.reference.id,
+            },
+            cmd.reference.screenshot,
+          );
         });
         return;
       case 'browser.design.sendPrompt':
@@ -462,7 +523,9 @@ export class MissionManager {
     if (this.modelRefresh) return this.modelRefresh;
     this.modelRefresh = (async () => {
       try {
-        const models = mergeModelCatalog(await readDroidCliModelCatalog(this.runtime.status().droidPath));
+        const models = mergeModelCatalog(
+          await readDroidCliModelCatalog(this.runtime.status().droidPath),
+        );
         this.cachedModels = models;
         if (emit) {
           this.emit({ type: 'models.list', models });
@@ -532,12 +595,10 @@ export class MissionManager {
     this.emit({ type: 'settings.defaults', defaults: startupFactoryDefaults(defaults, models) });
   }
 
-  private async startLocalMcpServers(
-    ref: { id: string },
-  ): Promise<{ servers: SdkMcpServer[]; configs: Awaited<ReturnType<SdkMcpServer['start']>>[] }> {
-    const servers = [
-      createBrowserMcpServer(this.browsers, () => ref.id),
-    ];
+  private async startLocalMcpServers(ref: {
+    id: string;
+  }): Promise<{ servers: SdkMcpServer[]; configs: Awaited<ReturnType<SdkMcpServer['start']>>[] }> {
+    const servers = [createBrowserMcpServer(this.browsers, () => ref.id)];
     const configs: Awaited<ReturnType<SdkMcpServer['start']>>[] = [];
     try {
       for (const server of servers) configs.push(await server.start());
@@ -557,11 +618,19 @@ export class MissionManager {
     return this.cachedModels?.find((model) => model.id === modelId)?.maxContextTokens;
   }
 
-  private async updateAgentSettings(cmd: Extract<ClientCommand, { type: 'settings.agent.update' }>): Promise<void> {
+  private async updateAgentSettings(
+    cmd: Extract<ClientCommand, { type: 'settings.agent.update' }>,
+  ): Promise<void> {
     try {
       const mission = cmd.missionId ? this.findMission(cmd.missionId) : undefined;
-      const summary = mission?.summary ?? (cmd.missionId ? this.resolveSummary(cmd.missionId) : undefined);
-      if (cmd.missionId && cmd.agent !== 'orchestrator' && summary && summary.kind !== 'mission_orchestrator') {
+      const summary =
+        mission?.summary ?? (cmd.missionId ? this.resolveSummary(cmd.missionId) : undefined);
+      if (
+        cmd.missionId &&
+        cmd.agent !== 'orchestrator' &&
+        summary &&
+        summary.kind !== 'mission_orchestrator'
+      ) {
         this.emitError({
           code: 'agent.settings_unsupported',
           missionId: summary.id,
@@ -583,7 +652,11 @@ export class MissionManager {
         if (mission && missionId) this.patch(missionId, patch);
         else {
           const historical = this.resolveSummary(cmd.missionId);
-          if (historical) this.emit({ type: 'mission.updated', mission: { ...historical, ...patch, updatedAt: Date.now() } });
+          if (historical)
+            this.emit({
+              type: 'mission.updated',
+              mission: { ...historical, ...patch, updatedAt: Date.now() },
+            });
         }
         if (mission && missionId && cmd.agent === 'orchestrator') {
           // The auto-compaction threshold is derived from the orchestrator model,
@@ -594,13 +667,21 @@ export class MissionManager {
         }
       }
     } catch (err) {
-      this.emitError({ missionId: cmd.missionId, message: `Could not update agent settings: ${errMsg(err)}` });
+      this.emitError({
+        missionId: cmd.missionId,
+        message: `Could not update agent settings: ${errMsg(err)}`,
+      });
     }
   }
 
-  private rememberPendingAgentSettings(cmd: Extract<ClientCommand, { type: 'settings.agent.update' }>): void {
+  private rememberPendingAgentSettings(
+    cmd: Extract<ClientCommand, { type: 'settings.agent.update' }>,
+  ): void {
     if (!cmd.missionId) return;
-    const missionId = this.findMission(cmd.missionId)?.summary.id ?? this.resolveSummary(cmd.missionId)?.id ?? cmd.missionId;
+    const missionId =
+      this.findMission(cmd.missionId)?.summary.id ??
+      this.resolveSummary(cmd.missionId)?.id ??
+      cmd.missionId;
     const existing = this.pendingAgentSettings.get(missionId) ?? {};
     const agent = { ...(existing[cmd.agent] ?? {}) };
     if (cmd.modelId !== undefined) agent.modelId = cmd.modelId;
@@ -608,7 +689,10 @@ export class MissionManager {
     this.pendingAgentSettings.set(missionId, { ...existing, [cmd.agent]: agent });
   }
 
-  private summaryPatchForAgent(agent: ConfigurableAgent, settings: AgentSettingPatch): Partial<MissionSummary> {
+  private summaryPatchForAgent(
+    agent: ConfigurableAgent,
+    settings: AgentSettingPatch,
+  ): Partial<MissionSummary> {
     const patch: Partial<MissionSummary> = {};
     if (agent === 'orchestrator') {
       if (settings.modelId !== undefined) {
@@ -618,10 +702,12 @@ export class MissionManager {
       if (settings.reasoningEffort !== undefined) patch.reasoningEffort = settings.reasoningEffort;
     } else if (agent === 'worker') {
       if (settings.modelId !== undefined) patch.workerModelId = settings.modelId ?? undefined;
-      if (settings.reasoningEffort !== undefined) patch.workerReasoningEffort = settings.reasoningEffort;
+      if (settings.reasoningEffort !== undefined)
+        patch.workerReasoningEffort = settings.reasoningEffort;
     } else {
       if (settings.modelId !== undefined) patch.validatorModelId = settings.modelId ?? undefined;
-      if (settings.reasoningEffort !== undefined) patch.validatorReasoningEffort = settings.reasoningEffort;
+      if (settings.reasoningEffort !== undefined)
+        patch.validatorReasoningEffort = settings.reasoningEffort;
     }
     return patch;
   }
@@ -635,7 +721,11 @@ export class MissionManager {
     );
   }
 
-  private async applyAgentSessionSettings(mission: Mission, agent: ConfigurableAgent, settings: AgentSettingPatch): Promise<void> {
+  private async applyAgentSessionSettings(
+    mission: Mission,
+    agent: ConfigurableAgent,
+    settings: AgentSettingPatch,
+  ): Promise<void> {
     const next = createSessionSettingsForAgent(agent, settings);
     if (Object.keys(next).length > 0) await mission.session.updateSettings(next as never);
   }
@@ -646,8 +736,9 @@ export class MissionManager {
   // would otherwise be ignored).
   private async recomputeOrchestratorCompactionLimit(mission: Mission): Promise<void> {
     const defaults = await this.getFactoryDefaults();
-    const modelId = mission.summary.modelId
-      ?? defaultModelForAgent('orchestrator', modeForSummary(mission.summary), defaults);
+    const modelId =
+      mission.summary.modelId ??
+      defaultModelForAgent('orchestrator', modeForSummary(mission.summary), defaults);
     mission.effectiveCompactionTokenLimit = effectiveCompactionLimit(
       modelId,
       defaults,
@@ -655,7 +746,11 @@ export class MissionManager {
     );
   }
 
-  private async runtimeAgentSettings(mission: Mission, agent: ConfigurableAgent, settings: AgentSettingPatch): Promise<AgentSettingPatch> {
+  private async runtimeAgentSettings(
+    mission: Mission,
+    agent: ConfigurableAgent,
+    settings: AgentSettingPatch,
+  ): Promise<AgentSettingPatch> {
     if (settings.modelId !== null) return settings;
     const defaults = await this.getFactoryDefaults();
     return {
@@ -671,8 +766,15 @@ export class MissionManager {
     if (!mission || !pending) return true;
     try {
       let patch: Partial<MissionSummary> = {};
-      for (const [agent, settings] of Object.entries(pending) as [ConfigurableAgent, AgentSettingPatch][]) {
-        await this.applyAgentSessionSettings(mission, agent, await this.runtimeAgentSettings(mission, agent, settings));
+      for (const [agent, settings] of Object.entries(pending) as [
+        ConfigurableAgent,
+        AgentSettingPatch,
+      ][]) {
+        await this.applyAgentSessionSettings(
+          mission,
+          agent,
+          await this.runtimeAgentSettings(mission, agent, settings),
+        );
         patch = { ...patch, ...this.summaryPatchForAgent(agent, settings) };
       }
       this.patch(appSessionId, patch);
@@ -683,7 +785,10 @@ export class MissionManager {
       }
       return true;
     } catch (err) {
-      this.emitError({ missionId: appSessionId, message: `Could not apply selected model before send: ${errMsg(err)}` });
+      this.emitError({
+        missionId: appSessionId,
+        message: `Could not apply selected model before send: ${errMsg(err)}`,
+      });
       return false;
     }
   }
@@ -698,22 +803,31 @@ export class MissionManager {
   }
 
   private findMission(id: string): Mission | undefined {
-    return this.missions.get(id) ?? [...this.missions.values()].find((mission) =>
-      mission.summary.sessionId === id || Boolean(mission.summary.compactedFromSessionIds?.includes(id)),
+    return (
+      this.missions.get(id) ??
+      [...this.missions.values()].find(
+        (mission) =>
+          mission.summary.sessionId === id ||
+          Boolean(mission.summary.compactedFromSessionIds?.includes(id)),
+      )
     );
   }
 
   private findMissionKey(id: string): string | undefined {
     if (this.missions.has(id)) return id;
     for (const [key, mission] of this.missions) {
-      if (mission.summary.sessionId === id || mission.summary.compactedFromSessionIds?.includes(id)) return key;
+      if (mission.summary.sessionId === id || mission.summary.compactedFromSessionIds?.includes(id))
+        return key;
     }
     return undefined;
   }
 
   private resolveSummary(id: string): MissionSummary | undefined {
-    return this.listAllSummaries().find((summary) =>
-      summary.id === id || summary.sessionId === id || Boolean(summary.compactedFromSessionIds?.includes(id)),
+    return this.listAllSummaries().find(
+      (summary) =>
+        summary.id === id ||
+        summary.sessionId === id ||
+        Boolean(summary.compactedFromSessionIds?.includes(id)),
     );
   }
 
@@ -724,7 +838,11 @@ export class MissionManager {
     const droidSessionId = historical?.sessionId ?? sessionId;
     const existing = this.findMission(appSessionId);
     if (existing) {
-      this.emit({ type: 'mission.created', clientRef: `resume:${appSessionId}`, mission: existing.summary });
+      this.emit({
+        type: 'mission.created',
+        clientRef: `resume:${appSessionId}`,
+        mission: existing.summary,
+      });
       void this.refreshContext(existing.summary.id, existing.session);
       return;
     }
@@ -747,9 +865,10 @@ export class MissionManager {
       const defaults = await this.getFactoryDefaults();
       const classification = classifySession(init, historical);
       const now = Date.now();
-      const cwd = historical?.workspaceKind === 'none'
-        ? ''
-        : stringValue(init.cwd) || stringValue(init.session?.cwd) || historical?.cwd || '';
+      const cwd =
+        historical?.workspaceKind === 'none'
+          ? ''
+          : stringValue(init.cwd) || stringValue(init.session?.cwd) || historical?.cwd || '';
       const modelId = init.settings?.modelId ?? historical?.modelId ?? defaults.modelId;
       const summary = this.applyPendingSettingsToSummary({
         id: appSessionId,
@@ -759,18 +878,34 @@ export class MissionManager {
         parentSessionId: classification.parentSessionId,
         kind: classification.kind,
         role: classification.role,
-        title: stringValue(init.session?.title) || stringValue(init.session?.sessionTitle) || historical?.title || `Session ${droidSessionId.slice(0, 8)}`,
+        title:
+          stringValue(init.session?.title) ||
+          stringValue(init.session?.sessionTitle) ||
+          historical?.title ||
+          `Session ${droidSessionId.slice(0, 8)}`,
         goal: historical?.goal ?? '',
         cwd,
-        workspaceKind: cwd ? 'folder' : historical?.workspaceKind ?? 'none',
+        workspaceKind: cwd ? 'folder' : (historical?.workspaceKind ?? 'none'),
         modelId,
-        reasoningEffort: (init.settings?.reasoningEffort as ReasoningEffort | undefined) ?? historical?.reasoningEffort ?? defaults.reasoningEffort,
-        compactionModel: init.settings?.compactionModel ?? historical?.compactionModel ?? defaults.compactionModel ?? 'current-model',
+        reasoningEffort:
+          (init.settings?.reasoningEffort as ReasoningEffort | undefined) ??
+          historical?.reasoningEffort ??
+          defaults.reasoningEffort,
+        compactionModel:
+          init.settings?.compactionModel ??
+          historical?.compactionModel ??
+          defaults.compactionModel ??
+          'current-model',
         workerModelId: historical?.workerModelId ?? defaults.workerModelId,
         workerReasoningEffort: historical?.workerReasoningEffort ?? defaults.workerReasoningEffort,
         validatorModelId: historical?.validatorModelId ?? defaults.validatorModelId,
-        validatorReasoningEffort: historical?.validatorReasoningEffort ?? defaults.validatorReasoningEffort,
-        autonomy: (init.settings?.autonomyLevel as Autonomy | undefined) ?? historical?.autonomy ?? defaults.autonomy ?? 'low',
+        validatorReasoningEffort:
+          historical?.validatorReasoningEffort ?? defaults.validatorReasoningEffort,
+        autonomy:
+          (init.settings?.autonomyLevel as Autonomy | undefined) ??
+          historical?.autonomy ??
+          defaults.autonomy ??
+          'low',
         phase: phaseFromInit(init),
         streaming: false,
         queuedSends: 0,
@@ -789,13 +924,23 @@ export class MissionManager {
       // per-session compactionTokenLimit, so honor one only if the resumed init
       // settings expose it; otherwise the threshold follows current app defaults.
       const resumeCompactionLimit = clampCompactionTokenLimit(
-        resumedCompactionTokenLimit(summary.modelId, {
-          compactionTokenLimit: init.settings?.compactionTokenLimit,
-          compactionTokenLimitPerModel: init.settings?.compactionTokenLimitPerModel,
-        }, defaults),
+        resumedCompactionTokenLimit(
+          summary.modelId,
+          {
+            compactionTokenLimit: init.settings?.compactionTokenLimit,
+            compactionTokenLimitPerModel: init.settings?.compactionTokenLimitPerModel,
+          },
+          defaults,
+        ),
         this.maxContextTokensForSummary(summary),
       );
-      const mission: Mission = this.createLiveMission(summary, session, mcp.servers, resumeCompactionLimit, mcp.configs);
+      const mission: Mission = this.createLiveMission(
+        summary,
+        session,
+        mcp.servers,
+        resumeCompactionLimit,
+        mcp.configs,
+      );
       // Seed the spawn->worker links persisted for this mission so historical
       // subagents are recognized (and thus openable/steerable) after a resume,
       // even before any live spawn re-populates knownSubagents.
@@ -807,7 +952,8 @@ export class MissionManager {
       this.history.syncSummaries([summary]);
       this.emit({ type: 'mission.created', clientRef: `resume:${appSessionId}`, mission: summary });
       this.emit({ type: 'session.updated', session: summary });
-      if (features.length) this.emit({ type: 'mission.features', missionId: appSessionId, features });
+      if (features.length)
+        this.emit({ type: 'mission.features', missionId: appSessionId, features });
       void this.refreshContext(appSessionId, session);
     } catch (err) {
       await Promise.all(pendingMcpServers.map((server) => server.close().catch(() => {})));
@@ -824,17 +970,27 @@ export class MissionManager {
     const cached = this.history.summaryPatches();
     const hiddenDroidSessionIds = this.history.hiddenDroidSessionIds();
     for (const historical of loadHistoricalSessions(options)) {
-      if (hiddenDroidSessionIds.has(historical.summary.sessionId ?? historical.summary.id)) continue;
-      const summary = this.applyPendingSettingsToSummary(applyCachedSummary(historical.summary, cached));
+      if (hiddenDroidSessionIds.has(historical.summary.sessionId ?? historical.summary.id))
+        continue;
+      const summary = this.applyPendingSettingsToSummary(
+        applyCachedSummary(historical.summary, cached),
+      );
       map.set(summary.id, summary);
     }
     for (const historical of loadHistoricalMissions(options)) {
-      if (hiddenDroidSessionIds.has(historical.summary.sessionId ?? historical.summary.id)) continue;
-      const summary = this.applyPendingSettingsToSummary(applyCachedSummary(historical.summary, cached));
+      if (hiddenDroidSessionIds.has(historical.summary.sessionId ?? historical.summary.id))
+        continue;
+      const summary = this.applyPendingSettingsToSummary(
+        applyCachedSummary(historical.summary, cached),
+      );
       map.set(summary.id, summary);
     }
-    for (const live of this.listSummaries()) map.set(live.id, this.applyPendingSettingsToSummary(live));
-    return filterMissionListSummaries([...map.values()].sort((a, b) => b.updatedAt - a.updatedAt), options);
+    for (const live of this.listSummaries())
+      map.set(live.id, this.applyPendingSettingsToSummary(live));
+    return filterMissionListSummaries(
+      [...map.values()].sort((a, b) => b.updatedAt - a.updatedAt),
+      options,
+    );
   }
 
   private emitMissionList(options?: MissionListFilterOptions): void {
@@ -845,7 +1001,10 @@ export class MissionManager {
   // mission so a renderer reconnect/reload doesn't render a still-running
   // subagent as finished. Historical (non-live) loads leave status undefined,
   // which the renderer treats as completed.
-  private withLiveWorkerStatus(appSessionId: string, links: WorkerHistoryLink[]): WorkerHistoryLink[] {
+  private withLiveWorkerStatus(
+    appSessionId: string,
+    links: WorkerHistoryLink[],
+  ): WorkerHistoryLink[] {
     const mission = this.findMission(appSessionId);
     if (!mission) return links;
     // A resumed worker that the user has opened is live in mission.agents but is
@@ -853,7 +1012,10 @@ export class MissionManager {
     // check both; otherwise a history reload would render it as completed.
     return links.map((link) =>
       mission.knownSubagents.has(link.workerSessionId) || mission.agents.has(link.workerSessionId)
-        ? { ...link, status: mission.completedSubagents.has(link.workerSessionId) ? 'completed' : 'running' }
+        ? {
+            ...link,
+            status: mission.completedSubagents.has(link.workerSessionId) ? 'completed' : 'running',
+          }
         : link,
     );
   }
@@ -864,16 +1026,37 @@ export class MissionManager {
     const droidSessionId = summary?.sessionId ?? missionId;
     try {
       const history = this.hydrateMissionHistory(appSessionId, droidSessionId, { cursor });
-      const transcripts = history.transcripts.map((event) => ({ ...event, missionId: appSessionId }));
+      const transcripts = history.transcripts.map((event) => ({
+        ...event,
+        missionId: appSessionId,
+      }));
       transcripts.forEach((event) => this.history.recordEvent(event));
       // An older page only extends the orchestrator scrollback upward; prepend it
       // without touching the already-delivered workers/progress.
       if (cursor) {
-        this.emit({ type: 'mission.history', missionId: appSessionId, progress: [], transcripts, mode: 'prepend', olderCursor: history.olderCursor });
+        this.emit({
+          type: 'mission.history',
+          missionId: appSessionId,
+          progress: [],
+          transcripts,
+          mode: 'prepend',
+          olderCursor: history.olderCursor,
+        });
         return;
       }
-      const workers = this.withLiveWorkerStatus(appSessionId, this.history.subagentLinks(appSessionId));
-      this.emit({ type: 'mission.history', missionId: appSessionId, progress: history.progress, transcripts, workers, mode: 'replace', olderCursor: history.olderCursor });
+      const workers = this.withLiveWorkerStatus(
+        appSessionId,
+        this.history.subagentLinks(appSessionId),
+      );
+      this.emit({
+        type: 'mission.history',
+        missionId: appSessionId,
+        progress: history.progress,
+        transcripts,
+        workers,
+        mode: 'replace',
+        olderCursor: history.olderCursor,
+      });
     } catch {
       // No mission directory (plain chat / spec session). These have no workers
       // or progress, but their orchestrator transcript can still span a
@@ -886,21 +1069,50 @@ export class MissionManager {
         const transcripts = window.events.map((event) => ({ ...event, missionId: appSessionId }));
         transcripts.forEach((event) => this.history.recordEvent(event));
         if (cursor) {
-          this.emit({ type: 'mission.history', missionId: appSessionId, progress: [], transcripts, mode: 'prepend', olderCursor: window.olderCursor });
+          this.emit({
+            type: 'mission.history',
+            missionId: appSessionId,
+            progress: [],
+            transcripts,
+            mode: 'prepend',
+            olderCursor: window.olderCursor,
+          });
           return;
         }
-        const workers = this.withLiveWorkerStatus(appSessionId, this.history.subagentLinks(appSessionId));
-        this.emit({ type: 'mission.history', missionId: appSessionId, progress: [], transcripts, workers, mode: 'replace', olderCursor: window.olderCursor });
+        const workers = this.withLiveWorkerStatus(
+          appSessionId,
+          this.history.subagentLinks(appSessionId),
+        );
+        this.emit({
+          type: 'mission.history',
+          missionId: appSessionId,
+          progress: [],
+          transcripts,
+          workers,
+          mode: 'replace',
+          olderCursor: window.olderCursor,
+        });
       } catch (err) {
         // Always answer an older-page request, even on failure, so the client's
         // historyLoadingOlder flag clears instead of sticking and blocking all
         // further pagination.
         if (cursor) {
-          this.emit({ type: 'mission.history', missionId: appSessionId, progress: [], transcripts: [], mode: 'prepend', olderCursor: undefined });
+          this.emit({
+            type: 'mission.history',
+            missionId: appSessionId,
+            progress: [],
+            transcripts: [],
+            mode: 'prepend',
+            olderCursor: undefined,
+          });
           return;
         }
         if (!this.findMission(appSessionId)) {
-          this.emitError({ missionId: appSessionId, sessionId: droidSessionId, message: errMsg(err) });
+          this.emitError({
+            missionId: appSessionId,
+            sessionId: droidSessionId,
+            message: errMsg(err),
+          });
         }
       }
     }
@@ -913,13 +1125,22 @@ export class MissionManager {
     try {
       const page = loadSessionPage(droidSessionId, cursor, limit, appSessionId);
       page.events.forEach((event) => this.history.recordEvent(event));
-      this.emit({ type: 'mission.history', missionId: appSessionId, progress: [], transcripts: page.events });
+      this.emit({
+        type: 'mission.history',
+        missionId: appSessionId,
+        progress: [],
+        transcripts: page.events,
+      });
     } catch (err) {
       this.emitError({ missionId: appSessionId, sessionId: droidSessionId, message: errMsg(err) });
     }
   }
 
-  private hydrateMissionHistory(appSessionId: string, droidSessionId: string, opts: { cursor?: string; limit?: number } = {}): ReturnType<typeof hydrateHistoricalMission> {
+  private hydrateMissionHistory(
+    appSessionId: string,
+    droidSessionId: string,
+    opts: { cursor?: string; limit?: number } = {},
+  ): ReturnType<typeof hydrateHistoricalMission> {
     try {
       return hydrateHistoricalMission(appSessionId, opts);
     } catch {
@@ -927,7 +1148,9 @@ export class MissionManager {
     }
   }
 
-  private async createMission(cmd: Extract<ClientCommand, { type: 'mission.create' }>): Promise<void> {
+  private async createMission(
+    cmd: Extract<ClientCommand, { type: 'mission.create' }>,
+  ): Promise<void> {
     if (!this.ready) this.connect();
     const appCwd = cmd.cwd ?? '';
     const runtimeCwd = appCwd || homedir();
@@ -937,7 +1160,8 @@ export class MissionManager {
       const defaults = await this.getFactoryDefaults();
       const mode = cmd.interactionMode ?? defaults.interactionMode ?? 'agi';
       const autonomy = createAutonomyForCommand(cmd, defaults);
-      const { modelId: orchestratorModelId, reasoningEffort: orchestratorReasoning } = createModelDefaultsForMode(mode, cmd, defaults);
+      const { modelId: orchestratorModelId, reasoningEffort: orchestratorReasoning } =
+        createModelDefaultsForMode(mode, cmd, defaults);
       const compactionModel = cmd.compactionModel ?? defaults.compactionModel ?? 'current-model';
       const compactionSettings = createCompactionSettingsForModel(
         orchestratorModelId,
@@ -945,12 +1169,8 @@ export class MissionManager {
         defaults,
         this.maxContextTokensForModel(orchestratorModelId),
       );
-      const {
-        workerModelId,
-        workerReasoningEffort,
-        validatorModelId,
-        validatorReasoningEffort,
-      } = createMissionAgentDefaultsForMode(mode, cmd, defaults);
+      const { workerModelId, workerReasoningEffort, validatorModelId, validatorReasoningEffort } =
+        createMissionAgentDefaultsForMode(mode, cmd, defaults);
       const mcp = await this.startLocalMcpServers(ref);
       pendingMcpServers = mcp.servers;
       const session = await this.runtime.createSession({
@@ -960,7 +1180,8 @@ export class MissionManager {
         autonomyLevel: autonomy,
         reasoningEffort: orchestratorReasoning,
         specModeModelId: mode === 'spec' ? orchestratorModelId : defaults.specModelId,
-        specModeReasoningEffort: mode === 'spec' ? orchestratorReasoning : defaults.specReasoningEffort,
+        specModeReasoningEffort:
+          mode === 'spec' ? orchestratorReasoning : defaults.specReasoningEffort,
         decompSessionType: mode === 'agi' ? DecompSessionType.Orchestrator : undefined,
         workerModelId,
         workerReasoningEffort,
@@ -1005,7 +1226,13 @@ export class MissionManager {
         updatedAt: now,
       };
       ref.id = id;
-      const mission = this.createLiveMission(summary, session, mcp.servers, compactionSettings.compactionTokenLimit, mcp.configs);
+      const mission = this.createLiveMission(
+        summary,
+        session,
+        mcp.servers,
+        compactionSettings.compactionTokenLimit,
+        mcp.configs,
+      );
       this.missions.set(id, mission);
       this.history.syncSummaries([summary]);
       this.emit({ type: 'mission.created', clientRef: cmd.clientRef, mission: summary });
@@ -1017,7 +1244,13 @@ export class MissionManager {
     }
   }
 
-  private createLiveMission(summary: MissionSummary, session: DroidSession, mcpServers: SdkMcpServer[] = [], effectiveCompactionTokenLimit?: number, mcpConfigs: Awaited<ReturnType<SdkMcpServer['start']>>[] = []): Mission {
+  private createLiveMission(
+    summary: MissionSummary,
+    session: DroidSession,
+    mcpServers: SdkMcpServer[] = [],
+    effectiveCompactionTokenLimit?: number,
+    mcpConfigs: Awaited<ReturnType<SdkMcpServer['start']>>[] = [],
+  ): Mission {
     return {
       summary,
       session,
@@ -1052,7 +1285,11 @@ export class MissionManager {
           return;
         }
         if (mission) {
-          mission.pendingPermissions.set(requestId, { resolve, kind: request.kind, signature: signature || undefined });
+          mission.pendingPermissions.set(requestId, {
+            resolve,
+            kind: request.kind,
+            signature: signature || undefined,
+          });
           if (type === 'propose_mission') {
             this.patch(ref.id, { phase: 'awaiting_plan_approval', proposal: request.detail });
           } else if (type === 'start_mission_run') {
@@ -1081,7 +1318,11 @@ export class MissionManager {
       });
   }
 
-  private async resolvePermission(missionId: string, requestId: string, outcome: string): Promise<void> {
+  private async resolvePermission(
+    missionId: string,
+    requestId: string,
+    outcome: string,
+  ): Promise<void> {
     const mission = this.findMission(missionId);
     const pending = mission?.pendingPermissions.get(requestId);
     if (!mission || !pending) return;
@@ -1096,7 +1337,8 @@ export class MissionManager {
     if (pending.signature && isAlwaysOutcome(outcome)) {
       mission.permissionGrants.add(pending.signature);
     }
-    if (pending.kind === 'spec' && isApprovalOutcome(normalized)) await this.prepareSpecExitForRun(mission);
+    if (pending.kind === 'spec' && isApprovalOutcome(normalized))
+      await this.prepareSpecExitForRun(mission);
     pending.resolve(normalized);
   }
 
@@ -1106,7 +1348,11 @@ export class MissionManager {
     try {
       await mission.session.updateSettings({ interactionMode: DroidInteractionMode.Auto } as never);
     } catch (err) {
-      this.emitError({ code: 'spec.exit_failed', missionId: appSessionId, message: `Could not switch spec session to Auto before run: ${errMsg(err)}` });
+      this.emitError({
+        code: 'spec.exit_failed',
+        missionId: appSessionId,
+        message: `Could not switch spec session to Auto before run: ${errMsg(err)}`,
+      });
     }
   }
 
@@ -1137,9 +1383,11 @@ export class MissionManager {
     await this.applyDesignToolPolicy(mission, isDesignPrompt(prompt));
     try {
       const stream = mission.session.stream(prompt, { includePartialMessages: true });
-      for await (const ev of stream) this.applyEvent(appSessionId, appSessionId, 'orchestrator', ev);
+      for await (const ev of stream)
+        this.applyEvent(appSessionId, appSessionId, 'orchestrator', ev);
     } catch (err) {
-      if (mission.interruptingForSteer) this.emitStatus(appSessionId, 'Current turn interrupted for steering.');
+      if (mission.interruptingForSteer)
+        this.emitStatus(appSessionId, 'Current turn interrupted for steering.');
       else {
         this.emitError({ missionId: appSessionId, message: errMsg(err) });
         this.patch(appSessionId, { phase: 'failed' });
@@ -1175,7 +1423,10 @@ export class MissionManager {
       try {
         await this.send(missionId, text);
       } catch (err) {
-        this.emitError({ missionId, message: `Could not deliver a queued message after compaction recovery: ${errMsg(err)}` });
+        this.emitError({
+          missionId,
+          message: `Could not deliver a queued message after compaction recovery: ${errMsg(err)}`,
+        });
       }
     }
   }
@@ -1198,12 +1449,16 @@ export class MissionManager {
     // When the in-memory flag is unset (cold start / page reload) we don't
     // know the session's current disabledToolIds, so always call updateSettings
     // to synchronize. Once the flag is set we skip redundant calls.
-    if (mission.todoDisabledForDesign !== undefined && mission.todoDisabledForDesign === design) return;
+    if (mission.todoDisabledForDesign !== undefined && mission.todoDisabledForDesign === design)
+      return;
     try {
       await mission.session.updateSettings({ disabledToolIds: design ? ['TodoWrite'] : [] });
       mission.todoDisabledForDesign = design;
     } catch (err) {
-      this.emitError({ missionId: mission.summary.id, message: `Could not update design tool policy: ${errMsg(err)}` });
+      this.emitError({
+        missionId: mission.summary.id,
+        message: `Could not update design tool policy: ${errMsg(err)}`,
+      });
     }
   }
 
@@ -1220,7 +1475,13 @@ export class MissionManager {
 
   private applySubagent(
     missionId: string,
-    sub: { sessionId?: string; toolUseId?: string; label?: string; prompt?: string; done?: boolean },
+    sub: {
+      sessionId?: string;
+      toolUseId?: string;
+      label?: string;
+      prompt?: string;
+      done?: boolean;
+    },
   ): void {
     const mission = this.findMission(missionId);
     if (!mission) return;
@@ -1230,7 +1491,11 @@ export class MissionManager {
       if (sub.done) {
         if (sub.toolUseId) this.completeSubagentForToolUse(mission, sub.toolUseId);
       } else if (sub.toolUseId || sub.label || sub.prompt) {
-        mission.pendingSubagents.push({ toolUseId: sub.toolUseId, label: sub.label, prompt: sub.prompt });
+        mission.pendingSubagents.push({
+          toolUseId: sub.toolUseId,
+          label: sub.label,
+          prompt: sub.prompt,
+        });
       }
       return;
     }
@@ -1269,18 +1534,28 @@ export class MissionManager {
         text: `Task prompt\n\n${prompt}`,
       });
     }
-    this.emit({ type: 'agent.updated', missionId: appSessionId, agentSessionId: sessionId, role: 'worker', status: 'running' });
+    this.emit({
+      type: 'agent.updated',
+      missionId: appSessionId,
+      agentSessionId: sessionId,
+      role: 'worker',
+      status: 'running',
+    });
   }
 
   private takePendingSubagent(mission: Mission, sub: PendingSubagent): PendingSubagent | undefined {
     if (mission.pendingSubagents.length === 0) return undefined;
     if (sub.toolUseId) {
-      const index = mission.pendingSubagents.findIndex((pending) => pending.toolUseId === sub.toolUseId);
+      const index = mission.pendingSubagents.findIndex(
+        (pending) => pending.toolUseId === sub.toolUseId,
+      );
       if (index >= 0) return mission.pendingSubagents.splice(index, 1)[0];
     }
     const label = sub.label?.toLowerCase();
     if (label) {
-      const index = mission.pendingSubagents.findIndex((pending) => pending.label?.toLowerCase() === label);
+      const index = mission.pendingSubagents.findIndex(
+        (pending) => pending.label?.toLowerCase() === label,
+      );
       if (index >= 0) return mission.pendingSubagents.splice(index, 1)[0];
     }
     return mission.pendingSubagents.shift();
@@ -1296,12 +1571,27 @@ export class MissionManager {
     const appSessionId = mission.summary.id;
     mission.completedSubagents.add(sessionId);
     const settings = mission.subagentSettings.get(sessionId) ?? {};
-    this.emit({ type: 'mission.worker', missionId: appSessionId, event: 'completed', workerSessionId: sessionId, ...settings });
-    this.emit({ type: 'agent.updated', missionId: appSessionId, agentSessionId: sessionId, role: 'worker', status: 'completed' });
+    this.emit({
+      type: 'mission.worker',
+      missionId: appSessionId,
+      event: 'completed',
+      workerSessionId: sessionId,
+      ...settings,
+    });
+    this.emit({
+      type: 'agent.updated',
+      missionId: appSessionId,
+      agentSessionId: sessionId,
+      role: 'worker',
+      status: 'completed',
+    });
     void this.closeAgentWhenIdle(appSessionId, sessionId);
   }
 
-  private applyNormalized(missionId: string, n: NonNullable<ReturnType<typeof normalizeStreamEvent>>): void {
+  private applyNormalized(
+    missionId: string,
+    n: NonNullable<ReturnType<typeof normalizeStreamEvent>>,
+  ): void {
     if (n.transcript) this.emitTranscript(n.transcript);
     if (n.features) {
       this.patch(missionId, { features: n.features });
@@ -1327,7 +1617,8 @@ export class MissionManager {
         role: 'worker',
         status: n.worker.event === 'completed' ? 'completed' : 'running',
       });
-      if (n.worker.event === 'completed') void this.closeAgentWhenIdle(missionId, n.worker.workerSessionId);
+      if (n.worker.event === 'completed')
+        void this.closeAgentWhenIdle(missionId, n.worker.workerSessionId);
     }
     if (n.subagent) this.applySubagent(missionId, n.subagent);
     if (n.tokens) {
@@ -1379,7 +1670,11 @@ export class MissionManager {
     });
   }
 
-  private async compactSession(sessionId: string, customInstructions?: string, compactType: CompactType = 'manual'): Promise<void> {
+  private async compactSession(
+    sessionId: string,
+    customInstructions?: string,
+    compactType: CompactType = 'manual',
+  ): Promise<void> {
     const mission = this.findMission(sessionId);
     if (mission) {
       await this.compactMission(mission, customInstructions, compactType);
@@ -1391,7 +1686,11 @@ export class MissionManager {
   // Orchestrator (live chat) compaction. Runs the shared in-place path; if the
   // daemon returns a new backing id the `reload` hook swaps the session while
   // keeping the stable app id (summary.id) so the visible chat is unchanged.
-  private async compactMission(mission: Mission, customInstructions: string | undefined, compactType: CompactType): Promise<void> {
+  private async compactMission(
+    mission: Mission,
+    customInstructions: string | undefined,
+    compactType: CompactType,
+  ): Promise<void> {
     const appSessionId = mission.summary.id;
     const carryover: UsageOffset = {
       tokensIn: mission.summary.tokensIn ?? 0,
@@ -1407,7 +1706,12 @@ export class MissionManager {
         {
           status: (text, ct) => this.emitStatus(appSessionId, text, ct),
           error: (message) =>
-            this.emitError({ sessionId: mission.summary.sessionId, missionId: appSessionId, message: `Could not compact session: ${message}`, recoverable: true }),
+            this.emitError({
+              sessionId: mission.summary.sessionId,
+              missionId: appSessionId,
+              message: `Could not compact session: ${message}`,
+              recoverable: true,
+            }),
           refresh: () => this.refreshContext(appSessionId, mission.session),
           reload: async (newSessionId) => {
             swapTarget = newSessionId;
@@ -1430,7 +1734,11 @@ export class MissionManager {
   // Adopt the daemon's compacted backing session behind the stable app id:
   // load the new id, swap it in, retire the old session, and persist the new id
   // with carried-over usage. Throws if the new session cannot be loaded.
-  private async swapMissionSession(mission: Mission, newSessionId: string, carryover: UsageOffset): Promise<void> {
+  private async swapMissionSession(
+    mission: Mission,
+    newSessionId: string,
+    carryover: UsageOffset,
+  ): Promise<void> {
     const appSessionId = mission.summary.id;
     const compactedFromSessionIds = uniqueStrings([
       ...(mission.summary.compactedFromSessionIds ?? []),
@@ -1465,7 +1773,11 @@ export class MissionManager {
   // adoption once for a transient failure; if it still fails, persist the new
   // id and drop the live mission so the next send re-resumes against the live
   // (compacted) session instead of streaming into the dead one.
-  private async recoverStaleMissionSwap(mission: Mission, newSessionId: string, carryover: UsageOffset): Promise<void> {
+  private async recoverStaleMissionSwap(
+    mission: Mission,
+    newSessionId: string,
+    carryover: UsageOffset,
+  ): Promise<void> {
     const appSessionId = mission.summary.id;
     try {
       await this.swapMissionSession(mission, newSessionId, carryover);
@@ -1492,7 +1804,8 @@ export class MissionManager {
     this.emitError({
       missionId: appSessionId,
       sessionId: newSessionId,
-      message: 'Compaction moved this conversation to a new session but reloading it failed; it will reload on your next message.',
+      message:
+        'Compaction moved this conversation to a new session but reloading it failed; it will reload on your next message.',
       recoverable: true,
     });
   }
@@ -1500,7 +1813,10 @@ export class MissionManager {
   // Compacting a session that is not currently loaded (e.g. from the sidebar
   // history). There is no live session to refresh; the swapped backing id is
   // persisted to history so the next resume continues from the compacted state.
-  private async compactHistoricalSession(sessionId: string, customInstructions?: string): Promise<void> {
+  private async compactHistoricalSession(
+    sessionId: string,
+    customInstructions?: string,
+  ): Promise<void> {
     const historical = this.resolveSummary(sessionId);
     const oldDroidSessionId = historical?.sessionId ?? sessionId;
     try {
@@ -1513,7 +1829,10 @@ export class MissionManager {
         const updated = {
           ...historical,
           sessionId: newSessionId,
-          compactedFromSessionIds: uniqueStrings([...(historical.compactedFromSessionIds ?? []), oldDroidSessionId]),
+          compactedFromSessionIds: uniqueStrings([
+            ...(historical.compactedFromSessionIds ?? []),
+            oldDroidSessionId,
+          ]),
           updatedAt: Date.now(),
         };
         this.history.syncSummaries([updated]);
@@ -1521,7 +1840,11 @@ export class MissionManager {
         this.emit({ type: 'session.updated', session: updated });
       }
     } catch (err) {
-      this.emitError({ sessionId: oldDroidSessionId, missionId: historical?.id ?? sessionId, message: `Could not compact session: ${errMsg(err)}` });
+      this.emitError({
+        sessionId: oldDroidSessionId,
+        missionId: historical?.id ?? sessionId,
+        message: `Could not compact session: ${errMsg(err)}`,
+      });
     }
   }
 
@@ -1589,14 +1912,20 @@ export class MissionManager {
     const appSessionId = mission.summary.id;
     const nextAutonomy = normalizeAutonomy(autonomy);
     if (!nextAutonomy) {
-      this.emitError({ missionId: appSessionId, message: `Unsupported autonomy level: ${autonomy}` });
+      this.emitError({
+        missionId: appSessionId,
+        message: `Unsupported autonomy level: ${autonomy}`,
+      });
       return;
     }
     try {
       await mission.session.updateSettings({ autonomyLevel: nextAutonomy } as never);
       this.patch(appSessionId, { autonomy: nextAutonomy });
     } catch (err) {
-      this.emitError({ missionId: appSessionId, message: `Could not change autonomy: ${errMsg(err)}` });
+      this.emitError({
+        missionId: appSessionId,
+        message: `Could not change autonomy: ${errMsg(err)}`,
+      });
     }
   }
 
@@ -1615,13 +1944,20 @@ export class MissionManager {
       }
       this.patch(appSessionId, { kind: kindForMode(mode) });
     } catch (err) {
-      this.emitError({ missionId: appSessionId, message: `Could not switch interaction mode: ${errMsg(err)}` });
+      this.emitError({
+        missionId: appSessionId,
+        message: `Could not switch interaction mode: ${errMsg(err)}`,
+      });
     }
   }
 
   private async updateSessionSettings(
     sessionId: string,
-    settings: { modelId?: string | null; reasoningEffort?: ReasoningEffort; autonomy?: Autonomy | 'none' },
+    settings: {
+      modelId?: string | null;
+      reasoningEffort?: ReasoningEffort;
+      autonomy?: Autonomy | 'none';
+    },
   ): Promise<void> {
     const mission = this.findMission(sessionId);
     const historical = this.resolveSummary(sessionId);
@@ -1673,7 +2009,11 @@ export class MissionManager {
     this.patch(appSessionId, { phase: 'paused', streaming: false, queuedSends: 0 });
   }
 
-  private async openAgent(missionId: string, agentSessionId: string, role: AgentRole): Promise<void> {
+  private async openAgent(
+    missionId: string,
+    agentSessionId: string,
+    role: AgentRole,
+  ): Promise<void> {
     const mission = this.findMission(missionId);
     if (!mission) return;
     const appSessionId = mission.summary.id;
@@ -1681,7 +2021,13 @@ export class MissionManager {
     if (mission.agents.has(agentSessionId)) {
       const agent = mission.agents.get(agentSessionId);
       if (agent) agent.lastUsedAt = Date.now();
-      this.emit({ type: 'agent.updated', missionId: appSessionId, agentSessionId, role, status: 'opened' });
+      this.emit({
+        type: 'agent.updated',
+        missionId: appSessionId,
+        agentSessionId,
+        role,
+        status: 'opened',
+      });
       return;
     }
     try {
@@ -1695,14 +2041,14 @@ export class MissionManager {
       // For a chat/spec subagent, fall back to the session's model when the
       // droid inherits it. Mission Control workers/validators keep their own
       // configured model selection untouched.
-      const inheritsSessionModel = mission.summary.kind === 'chat' || mission.summary.kind === 'spec';
-      const resolvedSettings: SubagentSettings =
-        inheritsSessionModel
-          ? {
-              modelId: actualSettings.modelId ?? mission.summary.modelId,
-              reasoningEffort: actualSettings.reasoningEffort ?? mission.summary.reasoningEffort,
-            }
-          : actualSettings;
+      const inheritsSessionModel =
+        mission.summary.kind === 'chat' || mission.summary.kind === 'spec';
+      const resolvedSettings: SubagentSettings = inheritsSessionModel
+        ? {
+            modelId: actualSettings.modelId ?? mission.summary.modelId,
+            reasoningEffort: actualSettings.reasoningEffort ?? mission.summary.reasoningEffort,
+          }
+        : actualSettings;
       if (resolvedSettings.modelId || resolvedSettings.reasoningEffort) {
         mission.subagentSettings.set(agentSessionId, resolvedSettings);
         this.emit({
@@ -1717,11 +2063,12 @@ export class MissionManager {
       // When the loaded agent session doesn't report its own model, fall back to
       // the role's configured model (not the orchestrator's), so per-model limits
       // and context-window clamps stay correct for differing worker/validator models.
-      const roleModelId = role === 'worker'
-        ? mission.summary.workerModelId
-        : role === 'validator'
-          ? mission.summary.validatorModelId
-          : undefined;
+      const roleModelId =
+        role === 'worker'
+          ? mission.summary.workerModelId
+          : role === 'validator'
+            ? mission.summary.validatorModelId
+            : undefined;
       const workerModelId = resolvedSettings.modelId ?? roleModelId ?? mission.summary.modelId;
       const agent: LiveAgent = {
         session,
@@ -1737,13 +2084,26 @@ export class MissionManager {
         ),
       };
       agent.unsubscribe = session.onNotification((note: Record<string, unknown>) => {
-        for (const n of normalizeNotification(appSessionId, agentSessionId, role, note)) this.applyNormalized(appSessionId, n);
+        for (const n of normalizeNotification(appSessionId, agentSessionId, role, note))
+          this.applyNormalized(appSessionId, n);
       });
       mission.agents.set(agentSessionId, agent);
       this.emitAgentHistory(appSessionId, agentSessionId);
-      this.emit({ type: 'agent.updated', missionId: appSessionId, agentSessionId, role, status: 'opened' });
+      this.emit({
+        type: 'agent.updated',
+        missionId: appSessionId,
+        agentSessionId,
+        role,
+        status: 'opened',
+      });
     } catch (err) {
-      this.emit({ type: 'error', code: 'agent.open_failed', missionId: appSessionId, sessionId: agentSessionId, message: errMsg(err) });
+      this.emit({
+        type: 'error',
+        code: 'agent.open_failed',
+        missionId: appSessionId,
+        sessionId: agentSessionId,
+        message: errMsg(err),
+      });
     }
   }
 
@@ -1761,7 +2121,8 @@ export class MissionManager {
     if (!mission) return;
     const appSessionId = mission.summary.id;
     if (!this.agentBelongsToMission(mission, agentSessionId)) return;
-    if (!mission.agents.has(agentSessionId)) await this.openAgent(appSessionId, agentSessionId, 'worker');
+    if (!mission.agents.has(agentSessionId))
+      await this.openAgent(appSessionId, agentSessionId, 'worker');
     const agent = mission.agents.get(agentSessionId);
     if (!agent) return;
     agent.lastUsedAt = Date.now();
@@ -1775,17 +2136,36 @@ export class MissionManager {
   private async driveAgent(agent: LiveAgent, text: string): Promise<void> {
     agent.streaming = true;
     agent.lastUsedAt = Date.now();
-    this.emit({ type: 'agent.updated', missionId: agent.missionId, agentSessionId: agent.session.sessionId, role: agent.role, status: 'running' });
+    this.emit({
+      type: 'agent.updated',
+      missionId: agent.missionId,
+      agentSessionId: agent.session.sessionId,
+      role: agent.role,
+      status: 'running',
+    });
     this.startContextPolling(agent.session.sessionId, agent.session);
     try {
       const stream = agent.session.stream(text, { includePartialMessages: true });
-      for await (const ev of stream) this.applyEvent(agent.missionId, agent.session.sessionId, agent.role, ev);
+      for await (const ev of stream)
+        this.applyEvent(agent.missionId, agent.session.sessionId, agent.role, ev);
     } catch (err) {
-      if (agent.interruptingForSteer) this.emitStatus(agent.missionId, 'Subagent turn interrupted for steering.');
+      if (agent.interruptingForSteer)
+        this.emitStatus(agent.missionId, 'Subagent turn interrupted for steering.');
       else {
         const message = errMsg(err);
-        this.emit({ type: 'agent.not_steerable', missionId: agent.missionId, agentSessionId: agent.session.sessionId, message });
-        this.emit({ type: 'error', code: 'agent.not_steerable', missionId: agent.missionId, sessionId: agent.session.sessionId, message });
+        this.emit({
+          type: 'agent.not_steerable',
+          missionId: agent.missionId,
+          agentSessionId: agent.session.sessionId,
+          message,
+        });
+        this.emit({
+          type: 'error',
+          code: 'agent.not_steerable',
+          missionId: agent.missionId,
+          sessionId: agent.session.sessionId,
+          message,
+        });
       }
     } finally {
       this.stopContextPolling(agent.session.sessionId);
@@ -1808,7 +2188,8 @@ export class MissionManager {
           this.emitError({
             sessionId: agent.session.sessionId,
             missionId: agent.missionId,
-            message: 'Subagent compaction swapped sessions but could not be adopted; closing the subagent. Re-open it to continue.',
+            message:
+              'Subagent compaction swapped sessions but could not be adopted; closing the subagent. Re-open it to continue.',
             recoverable: true,
           });
           await this.closeAgent(agent.missionId, agent.session.sessionId);
@@ -1819,7 +2200,14 @@ export class MissionManager {
           // stays usable, so drain queued sends against it normally.
           const next = agent.pendingSends.shift();
           if (next !== undefined) void this.driveAgent(agent, next);
-          else this.emit({ type: 'agent.updated', missionId: agent.missionId, agentSessionId: agent.session.sessionId, role: agent.role, status: 'paused' });
+          else
+            this.emit({
+              type: 'agent.updated',
+              missionId: agent.missionId,
+              agentSessionId: agent.session.sessionId,
+              role: agent.role,
+              status: 'paused',
+            });
         }
       }
     }
@@ -1836,7 +2224,10 @@ export class MissionManager {
     return this.compactAgent(agent, 'auto');
   }
 
-  private async compactAgent(agent: LiveAgent, compactType: CompactType): Promise<CompactionOutcome> {
+  private async compactAgent(
+    agent: LiveAgent,
+    compactType: CompactType,
+  ): Promise<CompactionOutcome> {
     const agentSessionId = agent.session.sessionId;
     agent.compacting = true;
     // Remembers the daemon's new backing id (set by the reload hook before it
@@ -1851,9 +2242,15 @@ export class MissionManager {
           // Status lines stay keyed by the worker's original id so they land on
           // the worker the client is still showing; the rekey event below moves
           // that transcript to the new id afterwards.
-          status: (text, ct) => this.emitStatus(agent.missionId, text, ct, agentSessionId, agent.role),
+          status: (text, ct) =>
+            this.emitStatus(agent.missionId, text, ct, agentSessionId, agent.role),
           error: (message) =>
-            this.emitError({ sessionId: agentSessionId, missionId: agent.missionId, message: `Could not compact subagent: ${message}`, recoverable: true }),
+            this.emitError({
+              sessionId: agentSessionId,
+              missionId: agent.missionId,
+              message: `Could not compact subagent: ${message}`,
+              recoverable: true,
+            }),
           // After a swap the snapshot must live under the worker's current id so
           // the next auto-compaction check reads the right usage.
           refresh: () => this.refreshContext(agent.session.sessionId, agent.session),
@@ -1898,7 +2295,11 @@ export class MissionManager {
   // durable spawn link and mission features so a later re-open/resume targets
   // the live (compacted) session, then report 'stale' so the caller tears down
   // the dead-id worker instead of draining sends into it.
-  private async recoverStaleAgentSwap(agent: LiveAgent, oldSessionId: string, newSessionId: string): Promise<CompactionOutcome> {
+  private async recoverStaleAgentSwap(
+    agent: LiveAgent,
+    oldSessionId: string,
+    newSessionId: string,
+  ): Promise<CompactionOutcome> {
     try {
       await this.rekeyAgentSession(agent, newSessionId);
       this.emitWorkerRekey(agent.missionId, oldSessionId, agent.session.sessionId);
@@ -1930,7 +2331,8 @@ export class MissionManager {
     agent.unsubscribe?.();
     agent.session = newSession;
     agent.unsubscribe = newSession.onNotification((note: Record<string, unknown>) => {
-      for (const n of normalizeNotification(agent.missionId, newSessionId, agent.role, note)) this.applyNormalized(agent.missionId, n);
+      for (const n of normalizeNotification(agent.missionId, newSessionId, agent.role, note))
+        this.applyNormalized(agent.missionId, n);
     });
     const snapshot = this.contextSnapshots.get(oldSessionId);
     this.contextSnapshots.delete(oldSessionId);
@@ -1939,7 +2341,8 @@ export class MissionManager {
     if (mission) {
       if (mission.agents.delete(oldSessionId)) mission.agents.set(newSessionId, agent);
       if (mission.knownSubagents.delete(oldSessionId)) mission.knownSubagents.add(newSessionId);
-      if (mission.completedSubagents.delete(oldSessionId)) mission.completedSubagents.add(newSessionId);
+      if (mission.completedSubagents.delete(oldSessionId))
+        mission.completedSubagents.add(newSessionId);
       if (mission.linkedSubagents.delete(oldSessionId)) mission.linkedSubagents.add(newSessionId);
       const settings = mission.subagentSettings.get(oldSessionId);
       if (settings) {
@@ -1967,11 +2370,18 @@ export class MissionManager {
     if (mission.linkedSubagents.delete(oldSessionId)) mission.linkedSubagents.add(newSessionId);
     // Re-point any spawn link for this worker at the new id (preserving its
     // label) so a later resume seeds linkedSubagents with the compacted id.
-    const labelByToolUseId = new Map(this.history.subagentLinks(mission.summary.id).map((l) => [l.toolUseId, l.label]));
+    const labelByToolUseId = new Map(
+      this.history.subagentLinks(mission.summary.id).map((l) => [l.toolUseId, l.label]),
+    );
     for (const [toolUseId, sid] of mission.subagentToolUseIds) {
       if (sid !== oldSessionId) continue;
       mission.subagentToolUseIds.set(toolUseId, newSessionId);
-      this.history.recordSubagentLink(mission.summary.id, toolUseId, newSessionId, labelByToolUseId.get(toolUseId));
+      this.history.recordSubagentLink(
+        mission.summary.id,
+        toolUseId,
+        newSessionId,
+        labelByToolUseId.get(toolUseId),
+      );
     }
     // Mission features pin workers by session id (feature focus + worker
     // numbering). Remap them on the summary too, so a later mission.list/
@@ -1985,21 +2395,32 @@ export class MissionManager {
         f.workerSessionIds?.includes(oldSessionId)
           ? {
               ...f,
-              workerSessionIds: f.workerSessionIds?.map((id) => (id === oldSessionId ? newSessionId : id)),
-              currentWorkerSessionId: f.currentWorkerSessionId === oldSessionId ? newSessionId : f.currentWorkerSessionId,
-              completedWorkerSessionId: f.completedWorkerSessionId === oldSessionId ? newSessionId : f.completedWorkerSessionId,
+              workerSessionIds: f.workerSessionIds?.map((id) =>
+                id === oldSessionId ? newSessionId : id,
+              ),
+              currentWorkerSessionId:
+                f.currentWorkerSessionId === oldSessionId ? newSessionId : f.currentWorkerSessionId,
+              completedWorkerSessionId:
+                f.completedWorkerSessionId === oldSessionId
+                  ? newSessionId
+                  : f.completedWorkerSessionId,
             }
           : f,
       );
     }
   }
 
-  private async sendAgentNow(missionId: string, agentSessionId: string, text: string): Promise<void> {
+  private async sendAgentNow(
+    missionId: string,
+    agentSessionId: string,
+    text: string,
+  ): Promise<void> {
     const mission = this.findMission(missionId);
     if (!mission) return;
     const appSessionId = mission.summary.id;
     if (!this.agentBelongsToMission(mission, agentSessionId)) return;
-    if (!mission.agents.has(agentSessionId)) await this.openAgent(appSessionId, agentSessionId, 'worker');
+    if (!mission.agents.has(agentSessionId))
+      await this.openAgent(appSessionId, agentSessionId, 'worker');
     const agent = mission.agents.get(agentSessionId);
     if (!agent) return;
     agent.lastUsedAt = Date.now();
@@ -2031,7 +2452,8 @@ export class MissionManager {
     if (!mission) return;
     const appSessionId = mission.summary.id;
     if (!this.agentBelongsToMission(mission, agentSessionId)) return;
-    if (!mission.agents.has(agentSessionId)) await this.openAgent(appSessionId, agentSessionId, 'worker');
+    if (!mission.agents.has(agentSessionId))
+      await this.openAgent(appSessionId, agentSessionId, 'worker');
     const agent = mission.agents.get(agentSessionId);
     if (!agent) return;
     agent.pendingSends = [];
@@ -2040,7 +2462,13 @@ export class MissionManager {
     if (agent.compacting) return;
     await agent.session.interrupt();
     agent.streaming = false;
-    this.emit({ type: 'agent.updated', missionId: appSessionId, agentSessionId, role: agent.role, status: 'paused' });
+    this.emit({
+      type: 'agent.updated',
+      missionId: appSessionId,
+      agentSessionId,
+      role: agent.role,
+      status: 'paused',
+    });
   }
 
   private agentBelongsToMission(mission: Mission, agentSessionId: string): boolean {
@@ -2058,13 +2486,18 @@ export class MissionManager {
     return false;
   }
 
-  private async ensureAgentCapacity(mission: Mission, requestedAgentSessionId: string): Promise<boolean> {
+  private async ensureAgentCapacity(
+    mission: Mission,
+    requestedAgentSessionId: string,
+  ): Promise<boolean> {
     if (mission.agents.size < MAX_OPEN_AGENT_TRANSPORTS) return true;
     const idle = [...mission.agents.entries()]
-      .filter(([sessionId, agent]) =>
-        sessionId !== requestedAgentSessionId &&
-        !agent.streaming &&
-        agent.pendingSends.length === 0)
+      .filter(
+        ([sessionId, agent]) =>
+          sessionId !== requestedAgentSessionId &&
+          !agent.streaming &&
+          agent.pendingSends.length === 0,
+      )
       .sort((a, b) => a[1].lastUsedAt - b[1].lastUsedAt)[0];
     if (idle) {
       await this.closeAgent(mission.summary.id, idle[0]);
@@ -2096,16 +2529,21 @@ export class MissionManager {
     const agent = mission?.agents.get(agentSessionId);
     if (!mission || !agent) return;
     agent.closeWhenIdle = true;
-    if (!agent.streaming && agent.pendingSends.length === 0) await this.closeAgent(missionId, agentSessionId);
+    if (!agent.streaming && agent.pendingSends.length === 0)
+      await this.closeAgent(missionId, agentSessionId);
   }
 
   private async renameSession(sessionId: string, title: string): Promise<void> {
     await this.withSession(sessionId, (session) => session.renameSession({ title }));
-    const appSessionId = this.findMission(sessionId)?.summary.id ?? this.resolveSummary(sessionId)?.id;
+    const appSessionId =
+      this.findMission(sessionId)?.summary.id ?? this.resolveSummary(sessionId)?.id;
     if (appSessionId) this.patch(appSessionId, { title });
   }
 
-  private async withSession<T>(sessionId: string, fn: (session: DroidSession) => Promise<T>): Promise<T | undefined> {
+  private async withSession<T>(
+    sessionId: string,
+    fn: (session: DroidSession) => Promise<T>,
+  ): Promise<T | undefined> {
     const liveMission = this.findMission(sessionId);
     const live = liveMission?.session;
     if (live) return fn(live);
@@ -2118,11 +2556,21 @@ export class MissionManager {
     }
   }
 
-  private async catalogSession(sessionId?: string): Promise<{ session: DroidSession; close: () => Promise<void> }> {
+  private async catalogSession(
+    sessionId?: string,
+  ): Promise<{ session: DroidSession; close: () => Promise<void> }> {
     const first = this.listSummaries()[0];
-    const live = sessionId ? this.findMission(sessionId)?.session : first ? this.findMission(first.id)?.session : undefined;
+    const live = sessionId
+      ? this.findMission(sessionId)?.session
+      : first
+        ? this.findMission(first.id)?.session
+        : undefined;
     if (live) return { session: live, close: async () => {} };
-    const session = await this.runtime.createSession({ cwd: tmpdir(), interactionMode: 'auto', autonomyLevel: 'low' });
+    const session = await this.runtime.createSession({
+      cwd: tmpdir(),
+      interactionMode: 'auto',
+      autonomyLevel: 'low',
+    });
     return { session, close: () => session.close() };
   }
 
@@ -2140,7 +2588,12 @@ export class MissionManager {
     const { session, close } = await this.catalogSession(sessionId);
     try {
       const result = await session.listSkills();
-      this.emit({ type: 'catalog.updated', catalog: 'skills', items: arrayItems(result, 'skills'), sessionId: sessionId ?? null });
+      this.emit({
+        type: 'catalog.updated',
+        catalog: 'skills',
+        items: arrayItems(result, 'skills'),
+        sessionId: sessionId ?? null,
+      });
     } finally {
       await close();
     }
@@ -2175,7 +2628,8 @@ export class MissionManager {
   private emitContextEstimate(sessionId: string, summary: MissionSummary): void {
     if (summary.contextTokens <= 0) return;
     const previous = this.contextSnapshots.get(sessionId);
-    const limit = this.maxContextTokensForSummary(summary) ?? summary.maxContextTokens ?? previous?.limit;
+    const limit =
+      this.maxContextTokensForSummary(summary) ?? summary.maxContextTokens ?? previous?.limit;
     if (!limit || limit <= 0) return;
     const used = Math.min(summary.contextTokens, limit);
     const breakdown = previous?.breakdown
@@ -2198,7 +2652,11 @@ export class MissionManager {
     this.emit({ type: 'context.updated', sessionId, stats: snapshot });
   }
 
-  private async refreshContext(sessionId: string, session: DroidSession, options: { persist?: boolean } = {}): Promise<void> {
+  private async refreshContext(
+    sessionId: string,
+    session: DroidSession,
+    options: { persist?: boolean } = {},
+  ): Promise<void> {
     try {
       const stats = await session.getContextStats();
       const breakdown = await this.readContextBreakdown(session);
@@ -2234,21 +2692,28 @@ export class MissionManager {
     }
   }
 
-  private async readContextBreakdown(session: DroidSession): Promise<ContextBreakdownSnapshot | undefined> {
+  private async readContextBreakdown(
+    session: DroidSession,
+  ): Promise<ContextBreakdownSnapshot | undefined> {
     try {
       const exposed = session as unknown as { getContextBreakdown?: () => Promise<unknown> };
       if (typeof exposed.getContextBreakdown === 'function') {
         return contextBreakdownSnapshot(await exposed.getContextBreakdown());
       }
 
-      const client = (session as unknown as {
-        _client?: {
-          _sessionRpcWithoutParams?: (method: string, schema: unknown) => Promise<unknown>;
-        };
-      })._client;
+      const client = (
+        session as unknown as {
+          _client?: {
+            _sessionRpcWithoutParams?: (method: string, schema: unknown) => Promise<unknown>;
+          };
+        }
+      )._client;
       if (!client?._sessionRpcWithoutParams) return undefined;
       return contextBreakdownSnapshot(
-        await client._sessionRpcWithoutParams('droid.get_context_breakdown', ContextBreakdownResultSchema),
+        await client._sessionRpcWithoutParams(
+          'droid.get_context_breakdown',
+          ContextBreakdownResultSchema,
+        ),
       );
     } catch {
       return undefined;
@@ -2298,18 +2763,31 @@ export class MissionManager {
     this.emit({ type: 'session.updated', session: mission.summary });
   }
 
-  private emitError(error: { code?: string; sessionId?: string; missionId?: string; message: string; recoverable?: boolean }): void {
+  private emitError(error: {
+    code?: string;
+    sessionId?: string;
+    missionId?: string;
+    message: string;
+    recoverable?: boolean;
+  }): void {
     const { recoverable, ...rest } = error;
     // A recoverable error surfaces to the user (toast) without marking the whole
     // mission failed; the session stays usable (e.g. a transient compaction
     // error leaves the conversation intact and the next turn can proceed).
     if (!recoverable) {
-      this.emit({ type: 'mission.error', missionId: rest.missionId ?? rest.sessionId, message: rest.message });
+      this.emit({
+        type: 'mission.error',
+        missionId: rest.missionId ?? rest.sessionId,
+        message: rest.message,
+      });
     }
     this.emit({ type: 'error', ...rest });
   }
 
-  private async handleBrowser(missionId: string | undefined, action: () => Promise<void | unknown>): Promise<void> {
+  private async handleBrowser(
+    missionId: string | undefined,
+    action: () => Promise<void | unknown>,
+  ): Promise<void> {
     try {
       await action();
     } catch (err) {
@@ -2323,7 +2801,11 @@ export class MissionManager {
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
         this.pendingNativeBrowserRequests.delete(request.requestId);
-        reject(new Error(`Droid Control browser did not respond to ${request.action} within ${BROWSER_NATIVE_TIMEOUT_MS}ms.`));
+        reject(
+          new Error(
+            `Droid Control browser did not respond to ${request.action} within ${BROWSER_NATIVE_TIMEOUT_MS}ms.`,
+          ),
+        );
       }, BROWSER_NATIVE_TIMEOUT_MS);
       this.pendingNativeBrowserRequests.set(request.requestId, { resolve, reject, timeout });
       this.emit({ type: 'browser.native.request', request });
@@ -2341,7 +2823,9 @@ export class MissionManager {
 
   private requireBrowserMissionId(missionId?: string): string {
     if (!missionId) {
-      throw new Error('Browser sessions are scoped to a Droid chat. Select or create a chat before opening the browser.');
+      throw new Error(
+        'Browser sessions are scoped to a Droid chat. Select or create a chat before opening the browser.',
+      );
     }
     return missionId;
   }
@@ -2386,11 +2870,15 @@ function reasoningValue(value?: string): ReasoningEffort | undefined {
     value === 'xhigh' ||
     value === 'max' ||
     value === 'dynamic'
-  ) return value;
+  )
+    return value;
   return undefined;
 }
 
-function classifySession(init: InitResultLike, historical?: MissionSummary): Pick<MissionSummary, 'kind' | 'role' | 'missionId' | 'parentSessionId'> {
+function classifySession(
+  init: InitResultLike,
+  historical?: MissionSummary,
+): Pick<MissionSummary, 'kind' | 'role' | 'missionId' | 'parentSessionId'> {
   const session = init.session ?? {};
   const decompType = stringValue(session.decompSessionType);
   const missionId = stringValue(session.decompMissionId) ?? historical?.missionId;
@@ -2403,10 +2891,20 @@ function classifySession(init: InitResultLike, historical?: MissionSummary): Pic
     };
   }
   const mode = init.settings?.interactionMode ?? (init.mission ? 'agi' : undefined);
-  if (mode === 'agi' || decompType === 'orchestrator' || historical?.kind === 'mission_orchestrator') {
-    return { kind: 'mission_orchestrator', role: 'orchestrator', missionId: missionId ?? historical?.id, parentSessionId: undefined };
+  if (
+    mode === 'agi' ||
+    decompType === 'orchestrator' ||
+    historical?.kind === 'mission_orchestrator'
+  ) {
+    return {
+      kind: 'mission_orchestrator',
+      role: 'orchestrator',
+      missionId: missionId ?? historical?.id,
+      parentSessionId: undefined,
+    };
   }
-  if (mode === 'spec' || historical?.kind === 'spec') return { kind: 'spec', role: 'orchestrator', missionId: undefined, parentSessionId: undefined };
+  if (mode === 'spec' || historical?.kind === 'spec')
+    return { kind: 'spec', role: 'orchestrator', missionId: undefined, parentSessionId: undefined };
   return { kind: 'chat', role: 'orchestrator', missionId: undefined, parentSessionId: undefined };
 }
 
@@ -2454,8 +2952,10 @@ function contextBreakdownSnapshot(raw: unknown): ContextBreakdownSnapshot | unde
         }))
         .filter((item) => item.tokens > 0)
     : [];
-  const usedTokens = numberValue(value.usedTokens) ?? categories.reduce((sum, item) => sum + item.tokens, 0);
-  const contextBudget = numberValue(value.contextBudget) ?? usedTokens + (numberValue(value.freeTokens) ?? 0);
+  const usedTokens =
+    numberValue(value.usedTokens) ?? categories.reduce((sum, item) => sum + item.tokens, 0);
+  const contextBudget =
+    numberValue(value.contextBudget) ?? usedTokens + (numberValue(value.freeTokens) ?? 0);
   if (contextBudget <= 0 && usedTokens <= 0 && categories.length === 0) return undefined;
   return {
     modelId: stringValue(value.modelId),
@@ -2499,7 +2999,12 @@ export function createModelDefaultsForMode(
   cmd: { modelId?: string; reasoningEffort?: ReasoningEffort },
   defaults: Pick<
     FactoryDefaultSettings,
-    'modelId' | 'reasoningEffort' | 'specModelId' | 'specReasoningEffort' | 'missionOrchestratorModelId' | 'missionOrchestratorReasoningEffort'
+    | 'modelId'
+    | 'reasoningEffort'
+    | 'specModelId'
+    | 'specReasoningEffort'
+    | 'missionOrchestratorModelId'
+    | 'missionOrchestratorReasoningEffort'
   >,
 ): { modelId?: string; reasoningEffort?: ReasoningEffort } {
   if (cmd.modelId || cmd.reasoningEffort) {
@@ -2516,12 +3021,20 @@ export function createModelDefaultsForMode(
 
 export function createMissionAgentDefaultsForMode(
   mode: SessionInteractionMode,
-  cmd: { workerModel?: string; workerReasoning?: ReasoningEffort; validatorModel?: string; validatorReasoning?: ReasoningEffort },
+  cmd: {
+    workerModel?: string;
+    workerReasoning?: ReasoningEffort;
+    validatorModel?: string;
+    validatorReasoning?: ReasoningEffort;
+  },
   defaults: Pick<
     FactoryDefaultSettings,
     'workerModelId' | 'workerReasoningEffort' | 'validatorModelId' | 'validatorReasoningEffort'
   >,
-): Pick<MissionSummary, 'workerModelId' | 'workerReasoningEffort' | 'validatorModelId' | 'validatorReasoningEffort'> {
+): Pick<
+  MissionSummary,
+  'workerModelId' | 'workerReasoningEffort' | 'validatorModelId' | 'validatorReasoningEffort'
+> {
   if (mode !== 'agi') return {};
   return {
     workerModelId: cmd.workerModel ?? defaults.workerModelId,
@@ -2545,52 +3058,85 @@ export function createSessionSettingsForAgent(
   const missionSettings: Record<string, unknown> = {};
   if (agent === 'worker') {
     if (settings.modelId) missionSettings.workerModel = settings.modelId;
-    if (settings.reasoningEffort !== undefined) missionSettings.workerReasoningEffort = settings.reasoningEffort;
+    if (settings.reasoningEffort !== undefined)
+      missionSettings.workerReasoningEffort = settings.reasoningEffort;
   } else {
     if (settings.modelId) missionSettings.validationWorkerModel = settings.modelId;
-    if (settings.reasoningEffort !== undefined) missionSettings.validationWorkerReasoningEffort = settings.reasoningEffort;
+    if (settings.reasoningEffort !== undefined)
+      missionSettings.validationWorkerReasoningEffort = settings.reasoningEffort;
   }
 
   if (Object.keys(missionSettings).length > 0) next.missionSettings = missionSettings;
   return next;
 }
 
-export function startupFactoryDefaults(defaults: FactoryDefaultSettings, models: ModelInfo[]): FactoryDefaultSettings {
+export function startupFactoryDefaults(
+  defaults: FactoryDefaultSettings,
+  models: ModelInfo[],
+): FactoryDefaultSettings {
   if (models.length > 0) return validateFactoryDefaults(defaults, models);
   const safe: FactoryDefaultSettings = {
     autonomy: defaults.autonomy,
     interactionMode: defaults.interactionMode,
     compactionTokenLimit: normalizeCompactionTokenLimit(defaults.compactionTokenLimit),
-    compactionTokenLimitPerModel: validCompactionTokenLimitRecord(defaults.compactionTokenLimitPerModel),
+    compactionTokenLimitPerModel: validCompactionTokenLimitRecord(
+      defaults.compactionTokenLimitPerModel,
+    ),
   };
   if (defaults.compactionModel === 'current-model') safe.compactionModel = 'current-model';
   return safe;
 }
 
-export function validateFactoryDefaults(defaults: FactoryDefaultSettings, models: ModelInfo[]): FactoryDefaultSettings {
+export function validateFactoryDefaults(
+  defaults: FactoryDefaultSettings,
+  models: ModelInfo[],
+): FactoryDefaultSettings {
   if (models.length === 0) return runtimeFactoryDefaultsWithoutCatalog(defaults);
-  const cliDefault = models.find((model) => model.isDefault && !model.isCustom) ?? models.find((model) => !model.isCustom) ?? models[0];
+  const cliDefault =
+    models.find((model) => model.isDefault && !model.isCustom) ??
+    models.find((model) => !model.isCustom) ??
+    models[0];
   return {
     ...defaults,
     modelId: validModelId(defaults.modelId, models) ?? cliDefault?.id,
-    reasoningEffort: validReasoning(defaults.modelId, defaults.reasoningEffort, models) ?? cliDefault?.defaultReasoningEffort,
+    reasoningEffort:
+      validReasoning(defaults.modelId, defaults.reasoningEffort, models) ??
+      cliDefault?.defaultReasoningEffort,
     compactionModel: validCompactionModel(defaults.compactionModel, models),
     compactionTokenLimit: normalizeCompactionTokenLimit(defaults.compactionTokenLimit),
-    compactionTokenLimitPerModel: validCompactionTokenLimitPerModel(defaults.compactionTokenLimitPerModel, models),
-    specModelId: validModelId(defaults.specModelId, models) ?? validModelId(defaults.modelId, models) ?? cliDefault?.id,
+    compactionTokenLimitPerModel: validCompactionTokenLimitPerModel(
+      defaults.compactionTokenLimitPerModel,
+      models,
+    ),
+    specModelId:
+      validModelId(defaults.specModelId, models) ??
+      validModelId(defaults.modelId, models) ??
+      cliDefault?.id,
     specReasoningEffort: validReasoning(defaults.specModelId, defaults.specReasoningEffort, models),
     workerModelId: validModelId(defaults.workerModelId, models) ?? cliDefault?.id,
-    workerReasoningEffort: validReasoning(defaults.workerModelId, defaults.workerReasoningEffort, models),
+    workerReasoningEffort: validReasoning(
+      defaults.workerModelId,
+      defaults.workerReasoningEffort,
+      models,
+    ),
     validatorModelId: validModelId(defaults.validatorModelId, models) ?? cliDefault?.id,
-    validatorReasoningEffort: validReasoning(defaults.validatorModelId, defaults.validatorReasoningEffort, models),
+    validatorReasoningEffort: validReasoning(
+      defaults.validatorModelId,
+      defaults.validatorReasoningEffort,
+      models,
+    ),
   };
 }
 
-function runtimeFactoryDefaultsWithoutCatalog(defaults: FactoryDefaultSettings): FactoryDefaultSettings {
+function runtimeFactoryDefaultsWithoutCatalog(
+  defaults: FactoryDefaultSettings,
+): FactoryDefaultSettings {
   return {
     ...defaults,
     compactionTokenLimit: normalizeCompactionTokenLimit(defaults.compactionTokenLimit),
-    compactionTokenLimitPerModel: validCompactionTokenLimitRecord(defaults.compactionTokenLimitPerModel),
+    compactionTokenLimitPerModel: validCompactionTokenLimitRecord(
+      defaults.compactionTokenLimitPerModel,
+    ),
   };
 }
 
@@ -2598,7 +3144,11 @@ function validModelId(modelId: string | undefined, models: ModelInfo[]): string 
   return modelId && models.some((model) => model.id === modelId) ? modelId : undefined;
 }
 
-function validReasoning(modelId: string | undefined, reasoning: ReasoningEffort | undefined, models: ModelInfo[]): ReasoningEffort | undefined {
+function validReasoning(
+  modelId: string | undefined,
+  reasoning: ReasoningEffort | undefined,
+  models: ModelInfo[],
+): ReasoningEffort | undefined {
   const model = modelId ? models.find((item) => item.id === modelId) : undefined;
   if (!model) return undefined;
   const supported = model.supportedReasoningEfforts;
@@ -2611,7 +3161,9 @@ function validCompactionModel(modelId: string | undefined, models: ModelInfo[]):
   return validModelId(modelId, models) ?? 'current-model';
 }
 
-function validCompactionTokenLimitRecord(limits: Record<string, number> | undefined): Record<string, number> | undefined {
+function validCompactionTokenLimitRecord(
+  limits: Record<string, number> | undefined,
+): Record<string, number> | undefined {
   if (!limits) return undefined;
   const entries = Object.entries(limits)
     .map(([modelId, limit]) => [modelId, normalizeCompactionTokenLimit(limit)] as const)
@@ -2619,7 +3171,10 @@ function validCompactionTokenLimitRecord(limits: Record<string, number> | undefi
   return entries.length > 0 ? Object.fromEntries(entries) : undefined;
 }
 
-function validCompactionTokenLimitPerModel(limits: Record<string, number> | undefined, models: ModelInfo[]): Record<string, number> | undefined {
+function validCompactionTokenLimitPerModel(
+  limits: Record<string, number> | undefined,
+  models: ModelInfo[],
+): Record<string, number> | undefined {
   if (!limits) return undefined;
   const modelIds = new Set(models.map((model) => model.id));
   const entries = Object.entries(limits)
@@ -2637,7 +3192,11 @@ function modelDefaultForMode(
   return defaults.modelId;
 }
 
-function defaultModelForAgent(agent: ConfigurableAgent, mode: SessionInteractionMode, defaults: FactoryDefaultSettings): string | undefined {
+function defaultModelForAgent(
+  agent: ConfigurableAgent,
+  mode: SessionInteractionMode,
+  defaults: FactoryDefaultSettings,
+): string | undefined {
   if (agent === 'worker') return defaults.workerModelId;
   if (agent === 'validator') return defaults.validatorModelId;
   return modelDefaultForMode(mode, defaults);
@@ -2651,10 +3210,14 @@ function modeForSummary(summary: MissionSummary): SessionInteractionMode {
 
 function reasoningDefaultForMode(
   mode: SessionInteractionMode,
-  defaults: Pick<FactoryDefaultSettings, 'reasoningEffort' | 'specReasoningEffort' | 'missionOrchestratorReasoningEffort'>,
+  defaults: Pick<
+    FactoryDefaultSettings,
+    'reasoningEffort' | 'specReasoningEffort' | 'missionOrchestratorReasoningEffort'
+  >,
 ): ReasoningEffort | undefined {
   if (mode === 'spec') return defaults.specReasoningEffort ?? defaults.reasoningEffort;
-  if (mode === 'agi') return defaults.missionOrchestratorReasoningEffort ?? defaults.reasoningEffort;
+  if (mode === 'agi')
+    return defaults.missionOrchestratorReasoningEffort ?? defaults.reasoningEffort;
   return defaults.reasoningEffort;
 }
 

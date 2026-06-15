@@ -1,6 +1,25 @@
-import { Eye, FilePlus, FilePen, Terminal, FileText, Search, Globe, Boxes, Bot } from 'lucide-react';
+import {
+  Eye,
+  FilePlus,
+  FilePen,
+  Terminal,
+  FileText,
+  Search,
+  Globe,
+  Boxes,
+  Bot,
+} from 'lucide-react';
 
-export type ToolCat = 'read' | 'create' | 'edit' | 'exec' | 'search' | 'web' | 'skill' | 'task' | 'other';
+export type ToolCat =
+  | 'read'
+  | 'create'
+  | 'edit'
+  | 'exec'
+  | 'search'
+  | 'web'
+  | 'skill'
+  | 'task'
+  | 'other';
 
 export const CAT_ICON: Record<ToolCat, React.ElementType> = {
   read: Eye,
@@ -93,7 +112,8 @@ export function isSubagentTool(name?: string, args?: unknown): boolean {
 // The droid name and short description carried by a Task spawn's arguments.
 export function subagentInfo(args: unknown): { label?: string; description?: string } {
   const a = args && typeof args === 'object' ? (args as Record<string, unknown>) : {};
-  const s = (k: string) => (typeof a[k] === 'string' ? (a[k] as string).trim() || undefined : undefined);
+  const s = (k: string) =>
+    typeof a[k] === 'string' ? (a[k] as string).trim() || undefined : undefined;
   return { label: s('subagent_type') ?? s('subagentType'), description: s('description') };
 }
 

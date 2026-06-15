@@ -16,7 +16,10 @@ type ReconstructExclude = { sessions?: Set<string>; toolUseIds?: Set<string> };
 // lines mapped to the right worker even when workers run concurrently, their
 // events interleave out of spawn order, or an unrelated session (e.g. a
 // validator with no spawn) appears between spawns.
-export function reconstructWorkersFromTranscript(allTx: TranscriptEvent[], exclude?: ReconstructExclude): WorkerInfo[] {
+export function reconstructWorkersFromTranscript(
+  allTx: TranscriptEvent[],
+  exclude?: ReconstructExclude,
+): WorkerInfo[] {
   const workers: { sessionId: string; firstTs: number }[] = [];
   const seenSession = new Set<string>();
   const spawns: { toolUseId?: string; label?: string; ts: number }[] = [];
@@ -67,7 +70,10 @@ export function reconstructWorkersFromTranscript(allTx: TranscriptEvent[], exclu
 // workers whose session isn't already covered. A long-lived session can mix
 // older unlinked spawns with newer persisted links, so returning only the
 // linked workers would leave the older historical subagent lines unopenable.
-export function resolveWorkers(missionWorkers: WorkerInfo[], allTx: TranscriptEvent[]): WorkerInfo[] {
+export function resolveWorkers(
+  missionWorkers: WorkerInfo[],
+  allTx: TranscriptEvent[],
+): WorkerInfo[] {
   if (missionWorkers.length === 0) return reconstructWorkersFromTranscript(allTx);
   const known = new Set(missionWorkers.map((w) => w.sessionId));
   // Exclude the spawns already claimed by linked workers before pairing, so a
@@ -76,7 +82,10 @@ export function resolveWorkers(missionWorkers: WorkerInfo[], allTx: TranscriptEv
   const claimedToolUseIds = new Set(
     missionWorkers.map((w) => w.toolUseId).filter((id): id is string => Boolean(id)),
   );
-  const extra = reconstructWorkersFromTranscript(allTx, { sessions: known, toolUseIds: claimedToolUseIds });
+  const extra = reconstructWorkersFromTranscript(allTx, {
+    sessions: known,
+    toolUseIds: claimedToolUseIds,
+  });
   return extra.length === 0 ? missionWorkers : [...missionWorkers, ...extra];
 }
 
@@ -92,7 +101,10 @@ export function richerSubagent(existing: TranscriptEvent, next: TranscriptEvent)
   // The latest delta is the freshest base; only rebuild its args when an earlier
   // delta carried a label/description this one is missing.
   if (label === n.label && description === n.description) return next;
-  const base = next.toolArgs && typeof next.toolArgs === 'object' ? (next.toolArgs as Record<string, unknown>) : {};
+  const base =
+    next.toolArgs && typeof next.toolArgs === 'object'
+      ? (next.toolArgs as Record<string, unknown>)
+      : {};
   return {
     ...next,
     toolArgs: {
@@ -119,7 +131,10 @@ export type SubagentActivity = {
   latest?: SubagentLatest;
 };
 
-export function findWorkerForTarget(workers: WorkerInfo[], target: SubagentTarget): WorkerInfo | undefined {
+export function findWorkerForTarget(
+  workers: WorkerInfo[],
+  target: SubagentTarget,
+): WorkerInfo | undefined {
   if (target.toolUseId) {
     const byId = workers.find((w) => w.toolUseId === target.toolUseId);
     if (byId) return byId;
@@ -140,8 +155,19 @@ export function subagentActivityForTarget(
   let latest: SubagentLatest | undefined;
   for (let i = allTx.length - 1; i >= 0; i--) {
     const t = allTx[i];
-    if (t.agentSessionId !== worker.sessionId || (t.kind === 'tool_result' && !t.isError) || t.author === 'user') continue;
-    latest = { kind: t.kind, text: t.text, toolName: t.toolName, toolArgs: t.toolArgs, isError: t.isError };
+    if (
+      t.agentSessionId !== worker.sessionId ||
+      (t.kind === 'tool_result' && !t.isError) ||
+      t.author === 'user'
+    )
+      continue;
+    latest = {
+      kind: t.kind,
+      text: t.text,
+      toolName: t.toolName,
+      toolArgs: t.toolArgs,
+      isError: t.isError,
+    };
     break;
   }
   return { status: worker.status, startedAt: worker.startedAt, latest };
@@ -156,7 +182,9 @@ export function previewLine(text?: string): string | undefined {
 
 // Map the subagent's newest transcript event to a short head + body, mirroring
 // how the main feed labels thinking/tool steps.
-export function subagentLatest(latest: SubagentLatest | undefined): { head: string; body?: string } | null {
+export function subagentLatest(
+  latest: SubagentLatest | undefined,
+): { head: string; body?: string } | null {
   if (!latest) return null;
   // A failed tool result is surfaced by the activity scanners (which skip only
   // successful results), so render it as a failure instead of stale "Working".

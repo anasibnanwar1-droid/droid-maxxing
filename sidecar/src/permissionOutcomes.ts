@@ -1,6 +1,4 @@
-import {
-  ToolConfirmationOutcome,
-} from '@factory/droid-sdk';
+import { ToolConfirmationOutcome } from '@factory/droid-sdk';
 
 const SDK_OUTCOMES = new Set<string>(Object.values(ToolConfirmationOutcome));
 
