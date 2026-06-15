@@ -135,6 +135,11 @@ export interface TranscriptEvent {
   // For a 'compaction' divider: how many messages the compaction summarized away.
   removedCount?: number;
   author?: 'user';
+  // Marks the terminal assistant text of a turn (`assistant_final`). It is set
+  // live when the turn ends and on history replay so the renderer can guarantee
+  // a final answer is always a top-level chat message and never folded into
+  // Worked/Thought/tool/compaction activity.
+  final?: boolean;
   // Frontend display metadata for user-authored prompt chips.
   skills?: string[];
   files?: string[];
@@ -625,6 +630,10 @@ export type ServerEvent =
       status: 'opened' | 'running' | 'paused' | 'completed';
     }
   | { type: 'event.appended'; event: TranscriptEvent }
+  // Marks an already-appended assistant text as the terminal answer of a turn.
+  // Append-compatible: the renderer/store sets `final` on the referenced event
+  // instead of re-emitting it (which the id-dedup would drop).
+  | { type: 'transcript.finalize'; missionId: string; agentSessionId: string; eventId: string }
   | { type: 'approval.requested'; request: PermissionRequest }
   | { type: 'question.requested'; question: MissionQuestion }
   | { type: 'context.updated'; sessionId: string; stats: ContextStatsSnapshot; breakdown?: unknown }
