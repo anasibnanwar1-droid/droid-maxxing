@@ -1,5 +1,5 @@
 import { bridge } from './bridge';
-import type { Autonomy, BrowserNativeResult, BrowserScrollDirection, BrowserViewport, BrowserViewportMode, ConfigurableAgent, DesignReference, PermissionOutcome, ReasoningEffort, SessionInteractionMode } from '../types/bridge';
+import type { Autonomy, BrowserNativeResult, BrowserScrollDirection, BrowserViewport, BrowserViewportMode, ConfigurableAgent, DesignReference, InstallChannel, PermissionOutcome, ReasoningEffort, SessionInteractionMode } from '../types/bridge';
 
 let refCounter = 0;
 
@@ -32,6 +32,12 @@ export const updateSessionSettings = (p: {
   reasoningEffort?: ReasoningEffort;
   autonomy?: Autonomy;
 }) => bridge.send({ type: 'session.updateSettings', ...p });
+
+export const detectEnv = () => bridge.send({ type: 'env.detect' });
+export const installCli = (channel: InstallChannel) => bridge.send({ type: 'cli.install', channel });
+export const updateCli = (channel?: InstallChannel) => bridge.send({ type: 'cli.update', channel });
+export const startCliLogin = () => bridge.send({ type: 'auth.startCliLogin' });
+export const requestRuntimeStatus = () => bridge.send({ type: 'runtime.status' });
 
 export const listModels = () => bridge.send({ type: 'models.list' });
 export const listSkills = (sessionId?: string) => bridge.send({ type: 'catalog.skills', sessionId });
