@@ -341,6 +341,11 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
       attachedFiles,
     );
 
+  const compactionSettings = () => ({
+    compactionTokenLimit: state.compactionTokenLimit,
+    compactionTokenLimitPerModel: state.compactionTokenLimitPerModel,
+  });
+
   const resetAttachments = () => {
     setActiveSkills([]);
     setAttachedFiles([]);
@@ -463,10 +468,11 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
 
     try {
       if (targetAgentSessionId) {
-        if (mode === 'now') sendToAgentNow(activeMission.id, targetAgentSessionId, composed);
-        else sendToAgent(activeMission.id, targetAgentSessionId, composed);
-      } else if (mode === 'now') sendToMissionNow(activeMission.id, composed);
-      else sendToMission(activeMission.id, composed);
+        if (mode === 'now')
+          sendToAgentNow(activeMission.id, targetAgentSessionId, composed, compactionSettings());
+        else sendToAgent(activeMission.id, targetAgentSessionId, composed, compactionSettings());
+      } else if (mode === 'now') sendToMissionNow(activeMission.id, composed, compactionSettings());
+      else sendToMission(activeMission.id, composed, compactionSettings());
     } catch (err) {
       console.error('[PromptInput] sendToMission failed:', err);
     }
@@ -481,7 +487,7 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
     if (!activeMission) return;
     if (p.design) {
       try {
-        sendDesignPrompt(p.design.browserKey, p.text, p.design.referenceIds);
+        sendDesignPrompt(p.design.browserKey, p.text, p.design.referenceIds, compactionSettings());
       } catch (err) {
         console.error('[PromptInput] queued design send failed:', err);
         return;
@@ -496,7 +502,7 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
     }
     const composed = composeFrom(p.text, p.skills, p.files);
     try {
-      sendToMission(activeMission.id, composed);
+      sendToMission(activeMission.id, composed, compactionSettings());
     } catch (err) {
       // Keep the prompt staged and skip the transcript echo so a send failure
       // neither loses queued input nor leaves a duplicate user message behind.

@@ -56,31 +56,65 @@ export const listModels = () => bridge.send({ type: 'models.list' });
 export const listSkills = (sessionId?: string) =>
   bridge.send({ type: 'catalog.skills', sessionId });
 export const listFactoryDefaults = () => bridge.send({ type: 'settings.defaults' });
+export const updateCompactionSettings = (p: {
+  compactionTokenLimit?: number | null;
+  compactionTokenLimitPerModel?: Record<string, number>;
+}) => bridge.send({ type: 'settings.compaction.update', ...p });
 
-export const sendToMission = (missionId: string, text: string) =>
-  bridge.send({ type: 'mission.send', missionId, text });
+type CompactionSettingsPatch = {
+  compactionTokenLimit?: number | null;
+  compactionTokenLimitPerModel?: Record<string, number>;
+};
 
-export const sendToMissionNow = (missionId: string, text: string) =>
-  bridge.send({ type: 'mission.sendNow', missionId, text });
+export const sendToMission = (
+  missionId: string,
+  text: string,
+  compaction?: CompactionSettingsPatch,
+) => bridge.send({ type: 'mission.send', missionId, text, ...compaction });
 
-export const sendToAgent = (missionId: string, agentSessionId: string, text: string) =>
-  bridge.send({ type: 'agent.send', missionId, agentSessionId, text });
+export const sendToMissionNow = (
+  missionId: string,
+  text: string,
+  compaction?: CompactionSettingsPatch,
+) => bridge.send({ type: 'mission.sendNow', missionId, text, ...compaction });
 
-export const sendToAgentNow = (missionId: string, agentSessionId: string, text: string) =>
-  bridge.send({ type: 'agent.sendNow', missionId, agentSessionId, text });
+export const sendToAgent = (
+  missionId: string,
+  agentSessionId: string,
+  text: string,
+  compaction?: CompactionSettingsPatch,
+) => bridge.send({ type: 'agent.send', missionId, agentSessionId, text, ...compaction });
+
+export const sendToAgentNow = (
+  missionId: string,
+  agentSessionId: string,
+  text: string,
+  compaction?: CompactionSettingsPatch,
+) => bridge.send({ type: 'agent.sendNow', missionId, agentSessionId, text, ...compaction });
 
 export const respondPermission = (
   missionId: string,
   requestId: string,
   outcome: PermissionOutcome,
-) => bridge.send({ type: 'mission.respondPermission', missionId, requestId, outcome });
+  compaction?: CompactionSettingsPatch,
+) =>
+  bridge.send({ type: 'mission.respondPermission', missionId, requestId, outcome, ...compaction });
 
 export const respondQuestion = (
   missionId: string,
   requestId: string,
   cancelled: boolean,
   answers: { index: number; question: string; answer: string }[],
-) => bridge.send({ type: 'mission.respondQuestion', missionId, requestId, cancelled, answers });
+  compaction?: CompactionSettingsPatch,
+) =>
+  bridge.send({
+    type: 'mission.respondQuestion',
+    missionId,
+    requestId,
+    cancelled,
+    answers,
+    ...compaction,
+  });
 
 export const interruptMission = (missionId: string) =>
   bridge.send({ type: 'mission.interrupt', missionId });
@@ -171,8 +205,19 @@ export const scrollBrowser = (p: {
 export const addDesignReference = (missionId: string, reference: DesignReference) =>
   bridge.send({ type: 'browser.design.addReference', missionId, reference });
 
-export const sendDesignPrompt = (missionId: string, instruction: string, referenceIds: string[]) =>
-  bridge.send({ type: 'browser.design.sendPrompt', missionId, instruction, referenceIds });
+export const sendDesignPrompt = (
+  missionId: string,
+  instruction: string,
+  referenceIds: string[],
+  compaction?: CompactionSettingsPatch,
+) =>
+  bridge.send({
+    type: 'browser.design.sendPrompt',
+    missionId,
+    instruction,
+    referenceIds,
+    ...compaction,
+  });
 
 export const sendNativeBrowserResult = (result: BrowserNativeResult) =>
   bridge.send({ type: 'browser.native.result', result });

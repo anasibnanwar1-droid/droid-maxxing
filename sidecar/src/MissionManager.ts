@@ -158,6 +158,11 @@ interface UsageOffset {
   tokensOut: number;
 }
 
+interface CompactionSettingsPatch {
+  compactionTokenLimit?: number | null;
+  compactionTokenLimitPerModel?: Record<string, number>;
+}
+
 const STATE_TO_PHASE: Record<string, MissionPhase> = {
   initializing: 'initializing',
   running: 'running',
@@ -170,6 +175,15 @@ const STATE_TO_PHASE: Record<string, MissionPhase> = {
 
 function shouldSettleToPaused(phase: MissionPhase): boolean {
   return !['completed', 'failed', 'awaiting_plan_approval', 'awaiting_run_start'].includes(phase);
+}
+
+function hasCompactionSettingsPatch(
+  settings: CompactionSettingsPatch | undefined,
+): settings is CompactionSettingsPatch {
+  return (
+    settings?.compactionTokenLimit !== undefined ||
+    settings?.compactionTokenLimitPerModel !== undefined
+  );
 }
 
 const MAX_OPEN_AGENT_TRANSPORTS = boundedInt(process.env.DROID_CONTROL_MAX_OPEN_AGENTS, 4, 1, 24);
@@ -211,6 +225,7 @@ export class MissionManager {
   private readonly contextSnapshots = new Map<string, ContextStatsSnapshot>();
   private readonly contextPollers = new Map<string, ReturnType<typeof setInterval>>();
   private readonly pendingNativeBrowserRequests = new Map<string, PendingNativeBrowserRequest>();
+  private currentCompactionSettings: CompactionSettingsPatch = {};
   private readonly browsers: BrowserSessionManager;
 
   constructor(
@@ -281,6 +296,9 @@ export class MissionManager {
       case 'settings.defaults':
         await this.emitFactoryDefaults();
         return;
+      case 'settings.compaction.update':
+        await this.updateLiveCompactionSettings(cmd);
+        return;
       case 'session.create':
         await this.createMission({ ...cmd, type: 'mission.create' });
         return;
@@ -289,19 +307,31 @@ export class MissionManager {
         return;
       case 'session.send':
       case 'mission.send':
-        await this.send('sessionId' in cmd ? cmd.sessionId : cmd.missionId, cmd.text);
+        await this.send('sessionId' in cmd ? cmd.sessionId : cmd.missionId, cmd.text, {
+          compactionTokenLimit: cmd.compactionTokenLimit,
+          compactionTokenLimitPerModel: cmd.compactionTokenLimitPerModel,
+        });
         return;
       case 'session.sendNow':
       case 'mission.sendNow':
-        await this.sendNow('sessionId' in cmd ? cmd.sessionId : cmd.missionId, cmd.text);
+        await this.sendNow('sessionId' in cmd ? cmd.sessionId : cmd.missionId, cmd.text, {
+          compactionTokenLimit: cmd.compactionTokenLimit,
+          compactionTokenLimitPerModel: cmd.compactionTokenLimitPerModel,
+        });
         return;
       case 'approval.respond':
       case 'mission.respondPermission':
-        await this.resolvePermission(cmd.missionId, cmd.requestId, cmd.outcome);
+        await this.resolvePermission(cmd.missionId, cmd.requestId, cmd.outcome, {
+          compactionTokenLimit: cmd.compactionTokenLimit,
+          compactionTokenLimitPerModel: cmd.compactionTokenLimitPerModel,
+        });
         return;
       case 'question.respond':
       case 'mission.respondQuestion':
-        this.resolveQuestion(cmd.missionId, cmd.requestId, cmd.cancelled, cmd.answers);
+        await this.resolveQuestion(cmd.missionId, cmd.requestId, cmd.cancelled, cmd.answers, {
+          compactionTokenLimit: cmd.compactionTokenLimit,
+          compactionTokenLimitPerModel: cmd.compactionTokenLimitPerModel,
+        });
         return;
       case 'session.interrupt':
       case 'mission.interrupt':
@@ -314,10 +344,16 @@ export class MissionManager {
         await this.openAgent(cmd.missionId, cmd.workerSessionId, 'worker');
         return;
       case 'agent.send':
-        await this.sendAgent(cmd.missionId, cmd.agentSessionId, cmd.text);
+        await this.sendAgent(cmd.missionId, cmd.agentSessionId, cmd.text, {
+          compactionTokenLimit: cmd.compactionTokenLimit,
+          compactionTokenLimitPerModel: cmd.compactionTokenLimitPerModel,
+        });
         return;
       case 'agent.sendNow':
-        await this.sendAgentNow(cmd.missionId, cmd.agentSessionId, cmd.text);
+        await this.sendAgentNow(cmd.missionId, cmd.agentSessionId, cmd.text, {
+          compactionTokenLimit: cmd.compactionTokenLimit,
+          compactionTokenLimitPerModel: cmd.compactionTokenLimitPerModel,
+        });
         return;
       case 'agent.interrupt':
         await this.interruptAgent(cmd.missionId, cmd.agentSessionId);
@@ -490,7 +526,10 @@ export class MissionManager {
         await this.handleBrowser(cmd.missionId, async () => {
           const missionId = this.requireBrowserMissionId(cmd.missionId);
           const { prompt } = await this.browsers.designPrompt({ ...cmd, missionId });
-          await this.send(missionId, prompt);
+          await this.send(missionId, prompt, {
+            compactionTokenLimit: cmd.compactionTokenLimit,
+            compactionTokenLimitPerModel: cmd.compactionTokenLimitPerModel,
+          });
         });
         return;
       case 'browser.native.result':
@@ -584,6 +623,65 @@ export class MissionManager {
     const models = this.cachedModels ?? mergeModelCatalog(readDroidCliModelCatalogCache(droidPath));
     if (!this.cachedModels && models.length > 0) this.cachedModels = models;
     this.emit({ type: 'settings.defaults', defaults: startupFactoryDefaults(defaults, models) });
+  }
+
+  private async updateLiveCompactionSettings(
+    cmd: Extract<ClientCommand, { type: 'settings.compaction.update' }>,
+  ): Promise<void> {
+    const defaults = await this.getFactoryDefaults();
+    const settings = this.compactionSettingsForCommand(cmd);
+    await Promise.all(
+      [...this.missions.values()].map(async (mission) => {
+        const appSessionId = mission.summary.id;
+        try {
+          await this.applyCompactionSettingsToMission(mission, settings, defaults);
+        } catch (err) {
+          this.emitError({
+            missionId: appSessionId,
+            message: `Could not update live compaction settings: ${errMsg(err)}`,
+            recoverable: true,
+          });
+        }
+      }),
+    );
+  }
+
+  private compactionSettingsForCommand(
+    settings?: CompactionSettingsPatch,
+  ): CompactionSettingsPatch {
+    if (hasCompactionSettingsPatch(settings)) {
+      this.currentCompactionSettings = {
+        compactionTokenLimit: settings.compactionTokenLimit,
+        compactionTokenLimitPerModel: settings.compactionTokenLimitPerModel
+          ? { ...settings.compactionTokenLimitPerModel }
+          : {},
+      };
+    }
+    return this.currentCompactionSettings;
+  }
+
+  private async applyCompactionSettingsToMission(
+    mission: Mission,
+    settings: CompactionSettingsPatch,
+    defaults: FactoryDefaultSettings,
+  ): Promise<void> {
+    await this.applyDaemonCompactionSettings(
+      mission.session,
+      this.compactionModelIdForSummary(mission.summary, defaults),
+      settings,
+      defaults,
+    );
+    for (const [agentSessionId, agent] of mission.agents) {
+      const configured = mission.subagentSettings.get(agentSessionId)?.modelId;
+      const roleDefault = defaultModelForAgent(
+        agent.role === 'validator' ? 'validator' : 'worker',
+        modeForSummary(mission.summary),
+        defaults,
+      );
+      const modelId =
+        configured ?? roleDefault ?? this.compactionModelIdForSummary(mission.summary, defaults);
+      await this.applyDaemonCompactionSettings(agent.session, modelId, settings, defaults);
+    }
   }
 
   private async startLocalMcpServers(ref: {
@@ -722,7 +820,7 @@ export class MissionManager {
         next,
         createCompactionSettingsForModel(
           nextModelId,
-          {},
+          this.currentCompactionSettings,
           defaults,
           this.maxContextTokensForModel(nextModelId),
         ),
@@ -734,10 +832,7 @@ export class MissionManager {
   private async applyDaemonCompactionSettings(
     session: DroidSession,
     modelId: string | undefined,
-    settings: {
-      compactionTokenLimit?: number | null;
-      compactionTokenLimitPerModel?: Record<string, number>;
-    },
+    settings: CompactionSettingsPatch,
     defaults: FactoryDefaultSettings,
   ): Promise<void> {
     await session.updateSettings(
@@ -942,7 +1037,12 @@ export class MissionManager {
         createdAt: historical?.createdAt ?? now,
         updatedAt: now,
       });
-      await this.applyDaemonCompactionSettings(session, summary.modelId, {}, defaults);
+      await this.applyDaemonCompactionSettings(
+        session,
+        summary.modelId,
+        this.currentCompactionSettings,
+        defaults,
+      );
       const mission: Mission = this.createLiveMission(summary, session, mcp.servers, mcp.configs);
       // Seed the spawn->worker links persisted for this mission so historical
       // subagents are recognized (and thus openable/steerable) after a resume,
@@ -1165,10 +1265,11 @@ export class MissionManager {
       const autonomy = createAutonomyForCommand(cmd, defaults);
       const { modelId: orchestratorModelId, reasoningEffort: orchestratorReasoning } =
         createModelDefaultsForMode(mode, cmd, defaults);
+      const activeCompactionSettings = this.compactionSettingsForCommand(cmd);
       const compactionModel = cmd.compactionModel ?? defaults.compactionModel ?? 'current-model';
       const compactionSettings = createCompactionSettingsForModel(
         orchestratorModelId,
-        cmd,
+        activeCompactionSettings,
         defaults,
         this.maxContextTokensForModel(orchestratorModelId),
       );
@@ -1196,7 +1297,12 @@ export class MissionManager {
         permissionHandler: this.makePermissionHandler(ref),
         askUserHandler: this.makeAskUserHandler(ref),
       });
-      await this.applyDaemonCompactionSettings(session, orchestratorModelId, cmd, defaults);
+      await this.applyDaemonCompactionSettings(
+        session,
+        orchestratorModelId,
+        activeCompactionSettings,
+        defaults,
+      );
 
       const id = session.sessionId;
       const now = Date.now();
@@ -1325,11 +1431,13 @@ export class MissionManager {
     missionId: string,
     requestId: string,
     outcome: string,
+    compactionSettings?: CompactionSettingsPatch,
   ): Promise<void> {
     const mission = this.findMission(missionId);
     const pending = mission?.pendingPermissions.get(requestId);
     if (!mission || !pending) return;
     mission.pendingPermissions.delete(requestId);
+    await this.applySendCompactionSettings(mission, compactionSettings);
     let normalized: RequestPermissionHandlerResult;
     try {
       normalized = normalizePermissionOutcome(outcome);
@@ -1359,16 +1467,18 @@ export class MissionManager {
     }
   }
 
-  private resolveQuestion(
+  private async resolveQuestion(
     missionId: string,
     requestId: string,
     cancelled: boolean,
     answers: { index: number; question: string; answer: string }[],
-  ): void {
+    compactionSettings?: CompactionSettingsPatch,
+  ): Promise<void> {
     const mission = this.findMission(missionId);
     const resolver = mission?.pendingQuestions.get(requestId);
     if (!mission || !resolver) return;
     mission.pendingQuestions.delete(requestId);
+    await this.applySendCompactionSettings(mission, compactionSettings);
     resolver({ cancelled, answers });
   }
 
@@ -1769,7 +1879,7 @@ export class MissionManager {
       await this.applyDaemonCompactionSettings(
         mission.session,
         this.compactionModelIdForSummary(mission.summary, defaults),
-        {},
+        this.currentCompactionSettings,
         defaults,
       );
     } catch (err) {
@@ -1875,7 +1985,11 @@ export class MissionManager {
     }
   }
 
-  private async send(missionId: string, text: string): Promise<void> {
+  private async send(
+    missionId: string,
+    text: string,
+    compactionSettings?: CompactionSettingsPatch,
+  ): Promise<void> {
     let mission = this.findMission(missionId);
     if (!mission) {
       await this.resumeMission(missionId);
@@ -1887,6 +2001,7 @@ export class MissionManager {
     }
     const appSessionId = mission.summary.id;
     if (!(await this.applyPendingSessionSettings(appSessionId))) return;
+    await this.applySendCompactionSettings(mission, compactionSettings);
     if (mission.streaming || mission.compacting) {
       mission.pendingSends.push(text);
       this.patch(appSessionId, { queuedSends: mission.pendingSends.length });
@@ -1895,7 +2010,11 @@ export class MissionManager {
     await this.drive(appSessionId, text);
   }
 
-  private async sendNow(missionId: string, text: string): Promise<void> {
+  private async sendNow(
+    missionId: string,
+    text: string,
+    compactionSettings?: CompactionSettingsPatch,
+  ): Promise<void> {
     let mission = this.findMission(missionId);
     if (!mission) {
       await this.resumeMission(missionId);
@@ -1907,6 +2026,7 @@ export class MissionManager {
     }
     const appSessionId = mission.summary.id;
     if (!(await this.applyPendingSessionSettings(appSessionId))) return;
+    await this.applySendCompactionSettings(mission, compactionSettings);
     if (!mission.streaming && !mission.compacting) {
       await this.drive(appSessionId, text);
       return;
@@ -1926,6 +2046,24 @@ export class MissionManager {
         code: 'session.send_now_failed',
         missionId: appSessionId,
         message: `Could not interrupt session for steering: ${errMsg(err)}`,
+      });
+    }
+  }
+
+  private async applySendCompactionSettings(
+    mission: Mission,
+    settings?: CompactionSettingsPatch,
+  ): Promise<void> {
+    const effective = this.compactionSettingsForCommand(settings);
+    if (!hasCompactionSettingsPatch(effective)) return;
+    try {
+      const defaults = await this.getFactoryDefaults();
+      await this.applyCompactionSettingsToMission(mission, effective, defaults);
+    } catch (err) {
+      this.emitError({
+        missionId: mission.summary.id,
+        message: `Could not update live compaction settings: ${errMsg(err)}`,
+        recoverable: true,
       });
     }
   }
@@ -2006,7 +2144,7 @@ export class MissionManager {
         next,
         createCompactionSettingsForModel(
           nextModelId,
-          {},
+          this.currentCompactionSettings,
           defaults,
           this.maxContextTokensForModel(nextModelId),
         ),
@@ -2108,7 +2246,12 @@ export class MissionManager {
             ? mission.summary.validatorModelId
             : undefined;
       const workerModelId = resolvedSettings.modelId ?? roleModelId ?? mission.summary.modelId;
-      await this.applyDaemonCompactionSettings(session, workerModelId, {}, defaults);
+      await this.applyDaemonCompactionSettings(
+        session,
+        workerModelId,
+        this.currentCompactionSettings,
+        defaults,
+      );
       const agent: LiveAgent = {
         session,
         missionId: appSessionId,
@@ -2152,7 +2295,12 @@ export class MissionManager {
     }
   }
 
-  private async sendAgent(missionId: string, agentSessionId: string, text: string): Promise<void> {
+  private async sendAgent(
+    missionId: string,
+    agentSessionId: string,
+    text: string,
+    compactionSettings?: CompactionSettingsPatch,
+  ): Promise<void> {
     const mission = this.findMission(missionId);
     if (!mission) return;
     const appSessionId = mission.summary.id;
@@ -2161,6 +2309,7 @@ export class MissionManager {
       await this.openAgent(appSessionId, agentSessionId, 'worker');
     const agent = mission.agents.get(agentSessionId);
     if (!agent) return;
+    await this.applySendCompactionSettings(mission, compactionSettings);
     agent.lastUsedAt = Date.now();
     if (agent.streaming) {
       agent.pendingSends.push(text);
@@ -2232,6 +2381,7 @@ export class MissionManager {
     missionId: string,
     agentSessionId: string,
     text: string,
+    compactionSettings?: CompactionSettingsPatch,
   ): Promise<void> {
     const mission = this.findMission(missionId);
     if (!mission) return;
@@ -2241,6 +2391,7 @@ export class MissionManager {
       await this.openAgent(appSessionId, agentSessionId, 'worker');
     const agent = mission.agents.get(agentSessionId);
     if (!agent) return;
+    await this.applySendCompactionSettings(mission, compactionSettings);
     agent.lastUsedAt = Date.now();
     if (!agent.streaming) {
       await this.driveAgent(agent, text);

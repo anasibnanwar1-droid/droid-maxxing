@@ -37,6 +37,10 @@ export default function AskUserModal() {
   const answer = (answers[q.index] ?? '').trim();
   const typing = !!customOpen[q.index];
   const canAdvance = answer.length > 0;
+  const compactionSettings = {
+    compactionTokenLimit: state.compactionTokenLimit,
+    compactionTokenLimitPerModel: state.compactionTokenLimitPerModel,
+  };
 
   const pickOption = (opt: string) => {
     setAnswers((p) => ({ ...p, [q.index]: opt }));
@@ -53,7 +57,7 @@ export default function AskUserModal() {
         question: qq.question,
         answer: (answers[qq.index] ?? '').trim(),
       }));
-      respondQuestion(question.missionId, question.requestId, false, payload);
+      respondQuestion(question.missionId, question.requestId, false, payload, compactionSettings);
       dispatch({ type: 'CLEAR_QUESTION' });
     } else {
       setCurrent((c) => c + 1);
@@ -61,7 +65,7 @@ export default function AskUserModal() {
   };
 
   const cancel = () => {
-    respondQuestion(question.missionId, question.requestId, true, []);
+    respondQuestion(question.missionId, question.requestId, true, [], compactionSettings);
     dispatch({ type: 'CLEAR_QUESTION' });
   };
 

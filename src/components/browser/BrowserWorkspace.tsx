@@ -45,6 +45,13 @@ export default function BrowserWorkspace() {
   const designMode = isDesignModeOpen(state.designModes, browserKey);
   const missionLive = useMissionLive(requestedChatId ?? null);
   const nativeBrowser = isDesktop();
+  const compactionSettings = useMemo(
+    () => ({
+      compactionTokenLimit: state.compactionTokenLimit,
+      compactionTokenLimitPerModel: state.compactionTokenLimitPerModel,
+    }),
+    [state.compactionTokenLimit, state.compactionTokenLimitPerModel],
+  );
   // The native BrowserView is an OS-level layer painted above the React tree,
   // so any full-screen overlay would otherwise be punched through by it. Detach
   // it while such an overlay is visible and re-attach once it closes.
@@ -247,7 +254,7 @@ export default function BrowserWorkspace() {
     if (missionLive) {
       queueDesignPrompt(text, references, selectedIds);
     } else {
-      sendDesignPrompt(browserKey, text, selectedIds);
+      sendDesignPrompt(browserKey, text, selectedIds, compactionSettings);
       emitDesignTranscript(text, references);
     }
     setReferences([]);
@@ -282,13 +289,23 @@ export default function BrowserWorkspace() {
       if (missionLive) {
         queueDesignPrompt(text, [reference], [referenceId]);
       } else {
-        window.setTimeout(() => sendDesignPrompt(browserKey, text, [referenceId]), 0);
+        window.setTimeout(
+          () => sendDesignPrompt(browserKey, text, [referenceId], compactionSettings),
+          0,
+        );
         emitDesignTranscript(text, [reference]);
       }
       setReferences([]);
       dispatch({ type: 'SET_DESIGN_MODE', sessionId: browserKey, open: false });
     },
-    [browserKey, dispatch, emitDesignTranscript, missionLive, queueDesignPrompt],
+    [
+      browserKey,
+      compactionSettings,
+      dispatch,
+      emitDesignTranscript,
+      missionLive,
+      queueDesignPrompt,
+    ],
   );
 
   return (

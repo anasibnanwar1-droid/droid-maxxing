@@ -20,12 +20,14 @@ class FakeSession {
   prompts: string[] = [];
   interrupts = 0;
   settingsUpdates: Array<Record<string, unknown>> = [];
+  callOrder: string[] = [];
   private releaseFirstTurn?: () => void;
 
   constructor(readonly sessionId: string) {}
 
   async *stream(prompt: string): AsyncGenerator<never, void, undefined> {
     this.prompts.push(prompt);
+    this.callOrder.push(`stream:${prompt}`);
     if (prompt !== 'first') return;
     await new Promise<void>((resolve) => {
       this.releaseFirstTurn = resolve;
@@ -40,6 +42,9 @@ class FakeSession {
 
   async updateSettings(params: Record<string, unknown>): Promise<void> {
     this.settingsUpdates.push(params);
+    if ('compactionTokenLimit' in params || 'compactionThresholdCheckEnabled' in params)
+      this.callOrder.push(`compaction:${params.compactionTokenLimit ?? 'off'}`);
+    else this.callOrder.push('settings');
   }
 
   async getContextStats(): Promise<{
@@ -510,7 +515,7 @@ test('maps orchestrator model changes with current compaction limits', () => {
   );
 });
 
-test('live orchestrator model changes enable daemon compaction threshold checks', async () => {
+test('live sessions refresh daemon compaction settings from model and limit changes', async () => {
   const events: ServerEvent[] = [];
   const manager = new MissionManager((event) => events.push(event));
   const session = new FakeSession('droid-settings');
@@ -615,6 +620,245 @@ test('live orchestrator model changes enable daemon compaction threshold checks'
     compactionTokenLimit: 400_000,
     compactionThresholdCheckEnabled: true,
   });
+
+  mission.streaming = true;
+  await manager.handle({
+    type: 'settings.compaction.update',
+    compactionTokenLimit: 200_000,
+    compactionTokenLimitPerModel: { 'model-a': 150_000 },
+  });
+
+  assert.deepEqual(session.settingsUpdates.at(-1), {
+    compactionTokenLimit: 150_000,
+    compactionThresholdCheckEnabled: true,
+  });
+  mission.streaming = false;
+
+  await manager.handle({
+    type: 'settings.agent.update',
+    missionId: mission.summary.id,
+    agent: 'orchestrator',
+    modelId: 'model-b',
+  });
+
+  assert.deepEqual(session.settingsUpdates.at(-1), {
+    modelId: 'model-b',
+    compactionTokenLimit: 200_000,
+    compactionThresholdCheckEnabled: true,
+  });
+
+  await manager.handle({
+    type: 'mission.send',
+    missionId: mission.summary.id,
+    text: 'existing chat turn',
+    compactionTokenLimit: 180_000,
+    compactionTokenLimitPerModel: {},
+  });
+
+  assert.equal(
+    session.settingsUpdates.some(
+      (update) =>
+        update.compactionTokenLimit === 180_000 && update.compactionThresholdCheckEnabled === true,
+    ),
+    true,
+  );
+  const compactionUpdateIndex = session.callOrder.lastIndexOf('compaction:180000');
+  const streamIndex = session.callOrder.indexOf('stream:existing chat turn');
+  assert.equal(compactionUpdateIndex >= 0, true);
+  assert.equal(streamIndex >= 0, true);
+  assert.equal(compactionUpdateIndex < streamIndex, true);
+  assert.deepEqual(session.prompts.at(-1), 'existing chat turn');
+  assert.equal(
+    events.some((event) => event.type === 'mission.error' || event.type === 'error'),
+    false,
+  );
+});
+
+test('agent sends refresh daemon compaction settings before streaming', async () => {
+  const events: ServerEvent[] = [];
+  const manager = new MissionManager((event) => events.push(event));
+  const session = new FakeSession('droid-agent-parent');
+  const agentSession = new FakeSession('worker-1');
+  const mission = {
+    summary: {
+      ...testSummary('app-agent-settings', session.sessionId),
+      modelId: 'model-a',
+      maxContextTokens: 500_000,
+    },
+    session,
+    streaming: false,
+    pendingSends: [],
+    pendingPermissions: new Map(),
+    pendingQuestions: new Map(),
+    agents: new Map([
+      [
+        agentSession.sessionId,
+        {
+          session: agentSession,
+          missionId: 'app-agent-settings',
+          role: 'worker' as const,
+          streaming: false,
+          pendingSends: [],
+          lastUsedAt: Date.now(),
+        },
+      ],
+    ]),
+    knownSubagents: new Set([agentSession.sessionId]),
+    completedSubagents: new Set(),
+    linkedSubagents: new Set(),
+    subagentToolUseIds: new Map(),
+    subagentSettings: new Map([[agentSession.sessionId, { modelId: 'worker-model' }]]),
+    pendingSubagents: [],
+    mcpServers: [],
+    compacting: false,
+  };
+  const internals = manager as unknown as {
+    getFactoryDefaults: () => Promise<{
+      modelId?: string;
+      compactionTokenLimit?: number;
+      compactionTokenLimitPerModel?: Record<string, number>;
+    }>;
+    history: {
+      syncSummaries: () => void;
+      recordEvent: () => void;
+      recordSubagentLink: () => void;
+      subagentLinks: () => [];
+      summaryPatches: () => Map<string, Partial<MissionSummary>>;
+      hiddenDroidSessionIds: () => Set<string>;
+    };
+    missions: Map<string, typeof mission>;
+  };
+  internals.getFactoryDefaults = async () => ({
+    modelId: 'model-a',
+    compactionTokenLimit: 400_000,
+    compactionTokenLimitPerModel: {},
+  });
+  internals.history = {
+    syncSummaries: () => {},
+    recordEvent: () => {},
+    recordSubagentLink: () => {},
+    subagentLinks: () => [],
+    summaryPatches: () => new Map(),
+    hiddenDroidSessionIds: () => new Set(),
+  };
+  internals.missions.set(mission.summary.id, mission);
+
+  await manager.handle({
+    type: 'agent.send',
+    missionId: mission.summary.id,
+    agentSessionId: agentSession.sessionId,
+    text: 'worker turn',
+    compactionTokenLimit: 200_000,
+    compactionTokenLimitPerModel: { 'worker-model': 175_000 },
+  });
+
+  assert.deepEqual(agentSession.settingsUpdates.at(-1), {
+    compactionTokenLimit: 175_000,
+    compactionThresholdCheckEnabled: true,
+  });
+  const compactionUpdateIndex = agentSession.callOrder.lastIndexOf('compaction:175000');
+  const streamIndex = agentSession.callOrder.indexOf('stream:worker turn');
+  assert.equal(compactionUpdateIndex >= 0, true);
+  assert.equal(streamIndex >= 0, true);
+  assert.equal(compactionUpdateIndex < streamIndex, true);
+  assert.deepEqual(agentSession.prompts, ['worker turn']);
+  assert.equal(
+    events.some((event) => event.type === 'mission.error' || event.type === 'error'),
+    false,
+  );
+});
+
+test('permission and question responses refresh compaction settings before continuation', async () => {
+  const events: ServerEvent[] = [];
+  const manager = new MissionManager((event) => events.push(event));
+  const session = new FakeSession('droid-response-settings');
+  const mission = {
+    summary: {
+      ...testSummary('app-response-settings', session.sessionId),
+      modelId: 'model-a',
+      maxContextTokens: 500_000,
+    },
+    session,
+    streaming: false,
+    pendingSends: [],
+    pendingPermissions: new Map([
+      [
+        'req-permission',
+        {
+          resolve: () => session.callOrder.push('permission-resolved'),
+          kind: 'other' as const,
+        },
+      ],
+    ]),
+    pendingQuestions: new Map([
+      ['req-question', () => session.callOrder.push('question-resolved')],
+    ]),
+    agents: new Map(),
+    knownSubagents: new Set(),
+    completedSubagents: new Set(),
+    linkedSubagents: new Set(),
+    subagentToolUseIds: new Map(),
+    subagentSettings: new Map(),
+    pendingSubagents: [],
+    mcpServers: [],
+    compacting: false,
+  };
+  const internals = manager as unknown as {
+    getFactoryDefaults: () => Promise<{
+      modelId?: string;
+      compactionTokenLimit?: number;
+      compactionTokenLimitPerModel?: Record<string, number>;
+    }>;
+    history: {
+      syncSummaries: () => void;
+      recordEvent: () => void;
+      recordSubagentLink: () => void;
+      subagentLinks: () => [];
+      summaryPatches: () => Map<string, Partial<MissionSummary>>;
+      hiddenDroidSessionIds: () => Set<string>;
+    };
+    missions: Map<string, typeof mission>;
+  };
+  internals.getFactoryDefaults = async () => ({
+    modelId: 'model-a',
+    compactionTokenLimit: 400_000,
+    compactionTokenLimitPerModel: {},
+  });
+  internals.history = {
+    syncSummaries: () => {},
+    recordEvent: () => {},
+    recordSubagentLink: () => {},
+    subagentLinks: () => [],
+    summaryPatches: () => new Map(),
+    hiddenDroidSessionIds: () => new Set(),
+  };
+  internals.missions.set(mission.summary.id, mission);
+
+  await manager.handle({
+    type: 'mission.respondPermission',
+    missionId: mission.summary.id,
+    requestId: 'req-permission',
+    outcome: 'proceed_once',
+    compactionTokenLimit: 190_000,
+    compactionTokenLimitPerModel: {},
+  });
+
+  await manager.handle({
+    type: 'mission.respondQuestion',
+    missionId: mission.summary.id,
+    requestId: 'req-question',
+    cancelled: false,
+    answers: [{ index: 0, question: 'Continue?', answer: 'yes' }],
+    compactionTokenLimit: 180_000,
+    compactionTokenLimitPerModel: {},
+  });
+
+  assert.deepEqual(session.callOrder, [
+    'compaction:190000',
+    'permission-resolved',
+    'compaction:180000',
+    'question-resolved',
+  ]);
   assert.equal(
     events.some((event) => event.type === 'mission.error' || event.type === 'error'),
     false,
@@ -758,6 +1002,8 @@ class FakeCompactionSession {
 
   async updateSettings(params: Record<string, unknown>): Promise<void> {
     this.settingsUpdates.push(params);
+    if ('compactionTokenLimit' in params || 'compactionThresholdCheckEnabled' in params)
+      this.callOrder.push(`compaction:${params.compactionTokenLimit ?? 'off'}`);
   }
 
   onNotification(cb: (note: Record<string, unknown>) => void): () => void {
@@ -1116,6 +1362,50 @@ test('manual compaction swap reapplies default model per-model daemon settings',
 
   assert.deepEqual(swapped.settingsUpdates.at(-1), {
     compactionTokenLimit: 150_000,
+    compactionThresholdCheckEnabled: true,
+  });
+});
+
+test('manual compaction swap reapplies current live compaction settings', async () => {
+  const { manager, mission, internals } = orchestratorSwapHarness(10_000, 'droid-new');
+  const swapped = new FakeCompactionSession('droid-new', 10_000);
+  mission.summary.modelId = undefined;
+  const settingsInternals = internals as typeof internals & {
+    cachedModels?: ModelInfo[];
+    getFactoryDefaults: () => Promise<{
+      modelId?: string;
+      compactionTokenLimit?: number;
+      compactionTokenLimitPerModel?: Record<string, number>;
+    }>;
+  };
+  settingsInternals.cachedModels = [
+    {
+      id: 'default-model',
+      displayName: 'Default Model',
+      isDefault: true,
+      isCustom: false,
+      supportedReasoningEfforts: [],
+      maxContextTokens: 200_000,
+    },
+  ];
+  settingsInternals.getFactoryDefaults = async () => ({
+    modelId: 'default-model',
+    compactionTokenLimit: 400_000,
+    compactionTokenLimitPerModel: { 'default-model': 150_000 },
+  });
+  internals.runtime = {
+    loadSession: async () => swapped,
+  };
+
+  await manager.handle({
+    type: 'settings.compaction.update',
+    compactionTokenLimit: 200_000,
+    compactionTokenLimitPerModel: { 'default-model': 175_000 },
+  });
+  await manager.handle({ type: 'mission.compact', missionId: 'app-swap' });
+
+  assert.deepEqual(swapped.settingsUpdates.at(-1), {
+    compactionTokenLimit: 175_000,
     compactionThresholdCheckEnabled: true,
   });
 });

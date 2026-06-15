@@ -8,6 +8,7 @@ import type { ModelInfo } from '../types/bridge';
 import { useOnboarding } from '../hooks/useOnboarding';
 import { getAppVersion, type AppUpdateInfo } from '../lib/onboarding';
 import { refreshAppUpdate, startAppUpdate } from '../lib/appUpdate';
+import { updateCompactionSettings } from '../lib/commands';
 
 const PRESET_ACCENTS = [
   '#ee6018',
@@ -804,10 +805,21 @@ function GeneralSection() {
 
   const setGlobalLimit = (limit?: number) => {
     dispatch({ type: 'SET_COMPACTION_TOKEN_LIMIT_GLOBAL', limit });
+    updateCompactionSettings({
+      compactionTokenLimit: limit,
+      compactionTokenLimitPerModel: state.compactionTokenLimitPerModel,
+    });
   };
 
   const setModelLimit = (modelId: string, limit?: number) => {
+    const next = { ...state.compactionTokenLimitPerModel };
+    if (limit === undefined) delete next[modelId];
+    else next[modelId] = limit;
     dispatch({ type: 'SET_COMPACTION_TOKEN_LIMIT_FOR_MODEL', modelId, limit });
+    updateCompactionSettings({
+      compactionTokenLimit: state.compactionTokenLimit,
+      compactionTokenLimitPerModel: next,
+    });
   };
 
   const overrideEntries = Object.entries(state.compactionTokenLimitPerModel);

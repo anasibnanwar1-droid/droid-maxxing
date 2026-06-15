@@ -8,6 +8,7 @@ Automatic compaction therefore works by configuring the daemon:
 
 - `initialize_session` receives `compactionThresholdCheckEnabled` so threshold checks are enabled for the session from startup.
 - `updateSettings()` receives the selected `compactionTokenLimit` because the current SDK initialize schema does not accept that field.
+- Live settings changes and existing-chat sends also refresh daemon compaction settings, so a resumed or already-open session does not keep a stale threshold.
 - Droid Control does not call `compactSession()` automatically before, during, or after a streamed turn.
 - Manual compaction still uses `compactSession()`, and remains blocked while a turn is active.
 

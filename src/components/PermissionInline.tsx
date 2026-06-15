@@ -39,9 +39,13 @@ export default function PermissionInline() {
   const reason = KIND_PROMPT[req.kind];
   const subtitle =
     req.title && req.title !== 'Permission required' && req.title !== reason ? req.title : '';
+  const compactionSettings = {
+    compactionTokenLimit: state.compactionTokenLimit,
+    compactionTokenLimitPerModel: state.compactionTokenLimitPerModel,
+  };
 
   const respond = (outcome: PermissionOutcome) => {
-    respondPermission(req.missionId, req.requestId, outcome);
+    respondPermission(req.missionId, req.requestId, outcome, compactionSettings);
     dispatch({ type: 'CLEAR_PERMISSION' });
   };
 

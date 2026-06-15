@@ -455,6 +455,11 @@ export type ClientCommand =
   | { type: 'catalog.mcp'; sessionId?: string }
   | { type: 'settings.defaults' }
   | {
+      type: 'settings.compaction.update';
+      compactionTokenLimit?: number | null;
+      compactionTokenLimitPerModel?: Record<string, number>;
+    }
+  | {
       type: 'mission.create';
       clientRef: string;
       cwd?: string;
@@ -486,8 +491,20 @@ export type ClientCommand =
       compactionTokenLimitPerModel?: Record<string, number>;
       autonomy?: Autonomy;
     }
-  | { type: 'session.send'; sessionId: string; text: string }
-  | { type: 'session.sendNow'; sessionId: string; text: string }
+  | {
+      type: 'session.send';
+      sessionId: string;
+      text: string;
+      compactionTokenLimit?: number | null;
+      compactionTokenLimitPerModel?: Record<string, number>;
+    }
+  | {
+      type: 'session.sendNow';
+      sessionId: string;
+      text: string;
+      compactionTokenLimit?: number | null;
+      compactionTokenLimitPerModel?: Record<string, number>;
+    }
   | { type: 'session.resume'; sessionId: string }
   | { type: 'session.interrupt'; sessionId: string }
   | {
@@ -503,26 +520,63 @@ export type ClientCommand =
   | { type: 'session.rewindInfo'; sessionId: string }
   | { type: 'session.rewind'; sessionId: string; rewindId?: string }
   | { type: 'agent.open'; missionId: string; agentSessionId: string; role?: AgentRole }
-  | { type: 'agent.send'; missionId: string; agentSessionId: string; text: string }
-  | { type: 'agent.sendNow'; missionId: string; agentSessionId: string; text: string }
+  | {
+      type: 'agent.send';
+      missionId: string;
+      agentSessionId: string;
+      text: string;
+      compactionTokenLimit?: number | null;
+      compactionTokenLimitPerModel?: Record<string, number>;
+    }
+  | {
+      type: 'agent.sendNow';
+      missionId: string;
+      agentSessionId: string;
+      text: string;
+      compactionTokenLimit?: number | null;
+      compactionTokenLimitPerModel?: Record<string, number>;
+    }
   | { type: 'agent.interrupt'; missionId: string; agentSessionId: string }
-  | { type: 'approval.respond'; missionId: string; requestId: string; outcome: PermissionOutcome }
+  | {
+      type: 'approval.respond';
+      missionId: string;
+      requestId: string;
+      outcome: PermissionOutcome;
+      compactionTokenLimit?: number | null;
+      compactionTokenLimitPerModel?: Record<string, number>;
+    }
   | {
       type: 'question.respond';
       missionId: string;
       requestId: string;
       cancelled: boolean;
       answers: { index: number; question: string; answer: string }[];
+      compactionTokenLimit?: number | null;
+      compactionTokenLimitPerModel?: Record<string, number>;
     }
   | { type: 'history.list' }
   | { type: 'history.page'; sessionId: string; cursor?: string; limit?: number }
-  | { type: 'mission.send'; missionId: string; text: string }
-  | { type: 'mission.sendNow'; missionId: string; text: string }
+  | {
+      type: 'mission.send';
+      missionId: string;
+      text: string;
+      compactionTokenLimit?: number | null;
+      compactionTokenLimitPerModel?: Record<string, number>;
+    }
+  | {
+      type: 'mission.sendNow';
+      missionId: string;
+      text: string;
+      compactionTokenLimit?: number | null;
+      compactionTokenLimitPerModel?: Record<string, number>;
+    }
   | {
       type: 'mission.respondPermission';
       missionId: string;
       requestId: string;
       outcome: PermissionOutcome;
+      compactionTokenLimit?: number | null;
+      compactionTokenLimitPerModel?: Record<string, number>;
     }
   | {
       type: 'mission.respondQuestion';
@@ -530,6 +584,8 @@ export type ClientCommand =
       requestId: string;
       cancelled: boolean;
       answers: { index: number; question: string; answer: string }[];
+      compactionTokenLimit?: number | null;
+      compactionTokenLimitPerModel?: Record<string, number>;
     }
   | { type: 'mission.interrupt'; missionId: string }
   | { type: 'mission.compact'; missionId: string; customInstructions?: string }
@@ -597,6 +653,8 @@ export type ClientCommand =
       missionId: string;
       instruction: string;
       referenceIds: string[];
+      compactionTokenLimit?: number | null;
+      compactionTokenLimitPerModel?: Record<string, number>;
     }
   | { type: 'browser.native.result'; result: BrowserNativeResult }
   | { type: 'spec.read'; missionId: string; path: string }
