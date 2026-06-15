@@ -24,7 +24,9 @@ import {
   formatDuration,
   isSubagentTool,
   subagentInfo,
+  parseTodos,
 } from '../lib/tools';
+import { classifyEvent } from '../lib/transcript';
 import {
   richerSubagent,
   subagentLatest,
@@ -210,10 +212,20 @@ function ThinkingItem({
 function summarizeTools(events: TranscriptEvent[]): string {
   const calls = events.filter((e) => e.kind === 'tool_call');
   if (calls.length === 0) return 'Tool result';
-  const counts = { file: 0, search: 0, command: 0, page: 0, task: 0, step: 0 };
+  const counts = { file: 0, search: 0, command: 0, page: 0, task: 0, step: 0, plan: 0 };
   let onlyExec = true;
   let onlyWeb = true;
+  let onlyPlan = true;
   calls.forEach((e) => {
+    // A TodoWrite is internal plan bookkeeping, not a file/command, so it must
+    // not inflate the "Explored N files" summary (#20).
+    if (classifyEvent(e) === 'plan_update') {
+      counts.plan++;
+      onlyExec = false;
+      onlyWeb = false;
+      return;
+    }
+    onlyPlan = false;
     const { cat } = toolMeta(e.toolName, e.toolArgs);
     if (cat !== 'exec') onlyExec = false;
     if (cat !== 'web') onlyWeb = false;
@@ -225,6 +237,7 @@ function summarizeTools(events: TranscriptEvent[]): string {
     else if (cat === 'skill') counts.step++;
     else counts.step++;
   });
+  if (onlyPlan) return counts.plan === 1 ? 'Updated plan' : 'Updated plan';
   const parts: string[] = [];
   const add = (n: number, s: string, p: string) => {
     if (n > 0) parts.push(`${n} ${n === 1 ? s : p}`);
@@ -235,6 +248,7 @@ function summarizeTools(events: TranscriptEvent[]): string {
   add(counts.page, 'page', 'pages');
   add(counts.task, 'task', 'tasks');
   add(counts.step, 'step', 'steps');
+  add(counts.plan, 'plan update', 'plan updates');
   const verb = onlyExec ? 'Ran' : onlyWeb ? 'Fetched' : 'Explored';
   return `${verb} ${parts.join(', ')}`;
 }
@@ -322,11 +336,39 @@ function ToolLine({ event, output }: { event: TranscriptEvent; output?: string }
   );
 }
 
+function TodoChecklist({ event }: { event: TranscriptEvent }) {
+  const todos = parseTodos(event.toolArgs);
+  if (todos.length === 0)
+    return <div className="text-[12.5px] text-droid-text-secondary">Updated plan</div>;
+  const mark = { completed: '✓', in_progress: '◐', pending: '○' } as const;
+  return (
+    <div className="space-y-1">
+      {todos.map((t, i) => (
+        <div
+          key={i}
+          className={`flex items-start gap-2 text-[12.5px] leading-relaxed [overflow-wrap:anywhere] ${
+            t.status === 'completed' ? 'text-droid-text-muted line-through' : 'text-droid-text-secondary'
+          }`}
+        >
+          <span className="select-none text-droid-text-muted">{mark[t.status]}</span>
+          <span>{t.text}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function renderToolEvents(events: TranscriptEvent[]): React.ReactNode[] {
   const nodes: React.ReactNode[] = [];
   for (let i = 0; i < events.length; i++) {
     const e = events[i];
     if (e.kind === 'tool_call') {
+      if (classifyEvent(e) === 'plan_update') {
+        nodes.push(<TodoChecklist key={e.id} event={e} />);
+        // A TodoWrite tool_result carries no useful payload; skip it.
+        if (events[i + 1]?.kind === 'tool_result') i++;
+        continue;
+      }
       const next = events[i + 1];
       const result = next && next.kind === 'tool_result' ? next : undefined;
       if (result) i++;
@@ -392,7 +434,7 @@ function ToolGroupItem({ events, active }: { events: TranscriptEvent[]; active?:
 }
 
 /* ── Feed model ── */
-type FeedItem =
+export type FeedItem =
   | { type: 'message'; key: string; event: TranscriptEvent }
   | { type: 'thinking'; key: string; event: TranscriptEvent; durationMs?: number }
   | { type: 'status'; key: string; event: TranscriptEvent }
@@ -403,7 +445,7 @@ type FeedItem =
   | { type: 'tools'; key: string; events: TranscriptEvent[] }
   | { type: 'worked'; key: string; items: FeedItem[]; durationMs: number };
 
-function buildFeed(events: TranscriptEvent[], subagentCards = false): FeedItem[] {
+export function buildFeed(events: TranscriptEvent[], subagentCards = false): FeedItem[] {
   const items: FeedItem[] = [];
   // toolUseId → index of its spawn item, so streaming deltas collapse into one.
   const subagentIdx = new Map<string, number>();
@@ -508,13 +550,32 @@ function buildFeed(events: TranscriptEvent[], subagentCards = false): FeedItem[]
         }
         break;
       }
-      if (group.length) items.push({ type: 'tools', key: group[0].id, events: group });
+      if (group.length)
+        items.push({ type: 'tools', key: group[0].id, events: dedupePlanUpdates(group) });
       else i++;
       continue;
     }
     i++;
   }
   return items;
+}
+
+// Repeated TodoWrite calls in one activity group are noise (#20): keep only the
+// latest plan snapshot and drop the superseded ones (and their empty results).
+function dedupePlanUpdates(events: TranscriptEvent[]): TranscriptEvent[] {
+  const plans = events.filter((e) => e.kind === 'tool_call' && classifyEvent(e) === 'plan_update');
+  if (plans.length <= 1) return events;
+  const keepId = plans[plans.length - 1].id;
+  const out: TranscriptEvent[] = [];
+  for (let j = 0; j < events.length; j++) {
+    const e = events[j];
+    if (e.kind === 'tool_call' && classifyEvent(e) === 'plan_update' && e.id !== keepId) {
+      if (events[j + 1]?.kind === 'tool_result') j++;
+      continue;
+    }
+    out.push(e);
+  }
+  return out;
 }
 
 function isUserMessage(item: FeedItem): boolean {
@@ -554,22 +615,23 @@ function spanOf(items: FeedItem[]): { start: number; end: number } {
   return { start, end };
 }
 
-// Collapse a single completed assistant turn: everything except the concluding
-// message folds into a "Worked for …" group (compaction steps included). While
-// the turn is live it is never collapsed, so compaction stays visible then.
+// Collapse a completed assistant turn: thinking/tool/file activity folds into
+// "Worked for …" groups while assistant chat messages, subagent cards, and
+// compaction dividers stay top-level. Invariant (#18): an assistant message is
+// ALWAYS a top-level boundary and can never be nested inside a Worked group,
+// no matter what trailing compaction/tool status follows it.
 function collapseRun(run: FeedItem[]): FeedItem[] {
   if (run.length === 0) return [];
-  const lastItem = run[run.length - 1];
-  const conclusionIdx =
-    lastItem.type === 'message' && lastItem.event.author !== 'user' ? run.length - 1 : -1;
-
-  const work = conclusionIdx === -1 ? run : run.slice(0, conclusionIdx);
   const out: FeedItem[] = [];
   // Fold contiguous work into "Worked for …" groups, but keep subagent spawn
   // cards at the top level so they stay visible (and navigable) after a turn.
   let buf: FeedItem[] = [];
   const flush = () => {
     if (buf.length === 0) return;
+    if (buf.some((it) => it.type === 'message')) {
+      // Should never happen: assistant chat must stay top-level (#18).
+      console.warn('[transcript] assistant message folded into Worked activity group');
+    }
     const { start, end } = spanOf(buf);
     out.push({
       type: 'worked',
@@ -579,8 +641,12 @@ function collapseRun(run: FeedItem[]): FeedItem[] {
     });
     buf = [];
   };
-  for (const it of work) {
-    if (it.type === 'subagent') {
+  for (const it of run) {
+    if (it.type === 'message') {
+      // Assistant chat (user messages were already split out by groupTurns).
+      flush();
+      out.push(it);
+    } else if (it.type === 'subagent') {
       flush();
       out.push(it);
     } else if (it.type === 'status' && it.event.kind === 'compaction') {
@@ -596,13 +662,12 @@ function collapseRun(run: FeedItem[]): FeedItem[] {
     } else buf.push(it);
   }
   flush();
-  if (conclusionIdx !== -1) out.push(run[conclusionIdx]);
   return out;
 }
 
 // Fold completed assistant turns into "Worked for …" groups. The in-flight turn
 // (while pending) is left expanded so live thinking/tools/status keep streaming.
-function groupTurns(items: FeedItem[], pending: boolean): FeedItem[] {
+export function groupTurns(items: FeedItem[], pending: boolean): FeedItem[] {
   const out: FeedItem[] = [];
   let i = 0;
   while (i < items.length) {
