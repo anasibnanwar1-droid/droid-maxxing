@@ -1074,7 +1074,27 @@ function parseSessionTranscript(
       }
     });
   }
+  markFinalAssistantText(events);
   return events;
+}
+
+// Mark the terminal assistant answer of each turn (`assistant_final`). A turn
+// runs from one user message to the next; its final answer is the last
+// assistant text before that boundary. Persisting `final` on replay lets the
+// renderer keep the answer top-level after reload even when a compaction or
+// tool status was recorded after it.
+export function markFinalAssistantText(events: TranscriptEvent[]): void {
+  let lastAssistantTextIdx = -1;
+  const close = () => {
+    if (lastAssistantTextIdx >= 0) events[lastAssistantTextIdx].final = true;
+    lastAssistantTextIdx = -1;
+  };
+  for (let i = 0; i < events.length; i++) {
+    const ev = events[i];
+    if (ev.author === 'user') close();
+    else if (ev.kind === 'text') lastAssistantTextIdx = i;
+  }
+  close();
 }
 
 function event(

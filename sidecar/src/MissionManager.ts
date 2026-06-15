@@ -217,6 +217,9 @@ export class MissionManager {
     Partial<Record<ConfigurableAgent, AgentSettingPatch>>
   >();
   private readonly usageOffsets = new Map<string, UsageOffset>();
+  // agentSessionId -> id of the first delta of the currently-open assistant text
+  // run. Lets a finished turn mark its terminal answer as `assistant_final`.
+  private readonly openAssistantText = new Map<string, string>();
   private readonly contextSnapshots = new Map<string, ContextStatsSnapshot>();
   private readonly contextPollers = new Map<string, ReturnType<typeof setInterval>>();
   private readonly pendingNativeBrowserRequests = new Map<string, PendingNativeBrowserRequest>();
@@ -1385,6 +1388,7 @@ export class MissionManager {
       const stream = mission.session.stream(prompt, { includePartialMessages: true });
       for await (const ev of stream)
         this.applyEvent(appSessionId, appSessionId, 'orchestrator', ev);
+      this.finalizeAssistantRun(appSessionId, appSessionId);
     } catch (err) {
       if (mission.interruptingForSteer)
         this.emitStatus(appSessionId, 'Current turn interrupted for steering.');
@@ -1646,9 +1650,32 @@ export class MissionManager {
   }
 
   private emitTranscript(event: TranscriptEvent): void {
+    this.trackAssistantRun(event);
     this.history.recordEvent(event);
     this.emit({ type: 'mission.transcript', event });
     this.emit({ type: 'event.appended', event });
+  }
+
+  // Track the open assistant-text run per session, mirroring the frontend's
+  // delta merge: consecutive assistant text deltas coalesce under the first
+  // delta's id, and any non-text event closes the run.
+  private trackAssistantRun(event: TranscriptEvent): void {
+    if (event.kind === 'text' && !event.author) {
+      if (!this.openAssistantText.has(event.agentSessionId))
+        this.openAssistantText.set(event.agentSessionId, event.id);
+    } else {
+      this.openAssistantText.delete(event.agentSessionId);
+    }
+  }
+
+  // At turn end, mark the terminal assistant answer as `assistant_final` so the
+  // renderer keeps it top-level even when compaction/tool status follows it.
+  // Append-compatible: references the already-emitted event by id.
+  private finalizeAssistantRun(missionId: string, agentSessionId: string): void {
+    const eventId = this.openAssistantText.get(agentSessionId);
+    if (!eventId) return;
+    this.openAssistantText.delete(agentSessionId);
+    this.emit({ type: 'transcript.finalize', missionId, agentSessionId, eventId });
   }
 
   private emitStatus(
@@ -2148,6 +2175,7 @@ export class MissionManager {
       const stream = agent.session.stream(text, { includePartialMessages: true });
       for await (const ev of stream)
         this.applyEvent(agent.missionId, agent.session.sessionId, agent.role, ev);
+      this.finalizeAssistantRun(agent.missionId, agent.session.sessionId);
     } catch (err) {
       if (agent.interruptingForSteer)
         this.emitStatus(agent.missionId, 'Subagent turn interrupted for steering.');
