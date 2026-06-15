@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildFeed, groupTurns, type FeedItem } from './chat';
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { buildFeed, groupTurns, MessageFeed, type FeedItem } from './chat';
 import type { TranscriptEvent } from '../types/bridge';
 
 let seq = 0;
@@ -86,4 +88,35 @@ test('#18 multiple assistant texts in a turn each stay top-level', () => {
   const events = [userMsg('q'), asst('first'), grep(), asst('second', true)];
   const grouped = groupTurns(buildFeed(events), false);
   assert.deepEqual(topLevelAnswers(grouped), ['first', 'second']);
+});
+
+// ── #14: spec mode must not capture normal chat responses ──
+
+test('#14 a normal assistant response still renders in chat while a spec exists', () => {
+  const events = [userMsg('hi'), asst('a perfectly normal answer', true)];
+  const html = renderToStaticMarkup(
+    createElement(MessageFeed, {
+      events,
+      pending: false,
+      specContent: '# Specification\n\nSome unrelated spec doc',
+    }),
+  );
+  // The normal answer is NOT swallowed by the spec surface just because spec
+  // content is present (the old blanket spec-draft suppression bug).
+  assert.ok(html.includes('a perfectly normal answer'));
+});
+
+test('#14 an assistant message that is exactly the spec text is not double-rendered in chat', () => {
+  const spec = '# Specification\n\nThe one and only spec body';
+  const events = [userMsg('hi'), asst(spec, true)];
+  const html = renderToStaticMarkup(
+    createElement(MessageFeed, { events, pending: false, specContent: spec }),
+  );
+  // The pinned spec card is present (its title renders)...
+  assert.ok(html.includes('Specification'));
+  // ...and the identical assistant message is suppressed from the chat stream,
+  // so the spec body is not duplicated as a normal chat row (the card body is
+  // collapsed by default, hence absent here).
+  const occurrences = html.split('The one and only spec body').length - 1;
+  assert.equal(occurrences, 0);
 });

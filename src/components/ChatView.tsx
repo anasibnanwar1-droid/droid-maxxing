@@ -265,6 +265,9 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
 
   const hasFileSpec = !!fileSpec && fileSpec.path === specPath;
 
+  // Spec content is ONLY content explicitly produced/stored as spec (#14): the
+  // saved spec file or the plan submitted via ExitSpecMode. Normal assistant
+  // prose is never reclassified as spec, so pressing Spec can't capture chat.
   const specContent = useMemo(() => {
     if (!hadSpec) return '';
     // 1) The saved spec file (full doc with diagrams/tables) is the best source.
@@ -273,14 +276,8 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
     if (capturedPlan) return capturedPlan;
     // 3) Previously persisted spec (e.g. after switching missions and back).
     if (storedSpec?.content) return storedSpec.content;
-    // 4) Fallback while still drafting: the largest assistant text block.
-    if (!isSpec) return '';
-    const texts = allTranscript
-      .filter((t) => t.author !== 'user' && t.kind === 'text')
-      .map((m) => m.text ?? '')
-      .filter(Boolean);
-    return texts.reduce((best, t) => (t.length > best.length ? t : best), '');
-  }, [hadSpec, isSpec, hasFileSpec, fileSpec, capturedPlan, storedSpec, allTranscript]);
+    return '';
+  }, [hadSpec, hasFileSpec, fileSpec, capturedPlan, storedSpec]);
 
   // Persist the best spec we have so the card, wiki reader, and right-panel
   // button survive exiting spec mode and switching between sessions.
@@ -332,7 +329,6 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
               pending={live}
               onOpenSubagent={openSubagent}
               subagentActivity={subagentActivity}
-              specDraft={isSpec}
               specContent={specContent}
               onOpenSpecWiki={
                 missionId ? () => dispatch({ type: 'SPEC_OPEN_WIKI', missionId }) : undefined

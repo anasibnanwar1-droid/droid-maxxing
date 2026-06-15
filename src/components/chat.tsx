@@ -862,7 +862,6 @@ const FeedItemView = memo(function FeedItemView({
   onOpenSubagent,
   subagentActivity,
   liveTiming,
-  specDraft,
   specContent,
 }: {
   item: FeedItem;
@@ -872,19 +871,16 @@ const FeedItemView = memo(function FeedItemView({
   onOpenSubagent?: (target: SubagentTarget) => void;
   subagentActivity?: (target: SubagentTarget) => SubagentActivity | undefined;
   liveTiming?: boolean;
-  specDraft?: boolean;
   specContent?: string;
 }) {
   switch (item.type) {
     case 'message': {
       if (item.event.author === 'user') return <UserBubble event={item.event} />;
       const text = item.event.text ?? '';
-      // The spec lives in the pinned card, so hide its prose: while drafting we
-      // suppress all assistant prose; afterwards only the exact spec block.
-      if (specContent) {
-        if (specDraft) return null;
-        if (text.trim() && text.trim() === specContent.trim()) return null;
-      }
+      // The spec is rendered in the pinned card. Suppress an assistant message
+      // only when it is exactly that spec text (avoid double-rendering the same
+      // plan); never hide other prose just because spec mode is active (#14).
+      if (specContent && text.trim() && text.trim() === specContent.trim()) return null;
       return (
         <div className="group/msg">
           <MessageBody text={text} />
@@ -963,7 +959,6 @@ const FeedItemView = memo(function FeedItemView({
           onOpenDiff={onOpenDiff}
           onOpenSubagent={onOpenSubagent}
           subagentActivity={subagentActivity}
-          specDraft={specDraft}
           specContent={specContent}
         />
       );
@@ -976,14 +971,12 @@ function WorkedGroup({
   onOpenDiff,
   onOpenSubagent,
   subagentActivity,
-  specDraft,
   specContent,
 }: {
   item: Extract<FeedItem, { type: 'worked' }>;
   onOpenDiff?: (c: FileChange) => void;
   onOpenSubagent?: (target: SubagentTarget) => void;
   subagentActivity?: (target: SubagentTarget) => SubagentActivity | undefined;
-  specDraft?: boolean;
   specContent?: string;
 }) {
   const [open, setOpen] = useState(false);
@@ -1008,7 +1001,6 @@ function WorkedGroup({
               onOpenDiff={onOpenDiff}
               onOpenSubagent={onOpenSubagent}
               subagentActivity={subagentActivity}
-              specDraft={specDraft}
               specContent={specContent}
             />
           ))}
@@ -1184,7 +1176,6 @@ export function MessageFeed({
   onOpenDiff,
   onOpenSubagent,
   subagentActivity,
-  specDraft,
   specContent,
   onOpenSpecWiki,
 }: {
@@ -1193,7 +1184,6 @@ export function MessageFeed({
   onOpenDiff?: (c: FileChange) => void;
   onOpenSubagent?: (target: SubagentTarget) => void;
   subagentActivity?: (target: SubagentTarget) => SubagentActivity | undefined;
-  specDraft?: boolean;
   specContent?: string;
   onOpenSpecWiki?: () => void;
 }) {
@@ -1257,7 +1247,6 @@ export function MessageFeed({
             onOpenSubagent={onOpenSubagent}
             subagentActivity={subagentActivity}
             liveTiming={rich}
-            specDraft={specDraft}
             specContent={specContent}
           />
         </motion.div>
