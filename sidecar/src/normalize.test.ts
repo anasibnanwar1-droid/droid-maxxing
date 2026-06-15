@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { classifyPermission, confirmationType, permissionSignature, normalizeStreamEvent } from './normalize.js';
+import {
+  classifyPermission,
+  confirmationType,
+  permissionSignature,
+  normalizeStreamEvent,
+} from './normalize.js';
 
 test('classifyPermission reads the SDK toolUses shape for MCP tools', () => {
   const params = {
@@ -8,8 +13,17 @@ test('classifyPermission reads the SDK toolUses shape for MCP tools', () => {
     toolUses: [
       {
         confirmationType: 'mcp_tool',
-        details: { type: 'mcp_tool', toolName: 'droidmaxx-browser___design_reference', impactLevel: 'low' },
-        toolUse: { type: 'tool_use', id: 't1', name: 'droidmaxx-browser___design_reference', input: { url: 'https://skeina.app' } },
+        details: {
+          type: 'mcp_tool',
+          toolName: 'droidmaxx-browser___design_reference',
+          impactLevel: 'low',
+        },
+        toolUse: {
+          type: 'tool_use',
+          id: 't1',
+          name: 'droidmaxx-browser___design_reference',
+          input: { url: 'https://skeina.app' },
+        },
       },
     ],
   } as never;
@@ -30,7 +44,12 @@ test('classifyPermission reads the SDK toolUses shape for exec', () => {
       {
         confirmationType: 'exec',
         details: { type: 'exec', command: 'rm -rf build', fullCommand: 'rm -rf build' },
-        toolUse: { type: 'tool_use', id: 't2', name: 'Execute', input: { command: 'rm -rf build' } },
+        toolUse: {
+          type: 'tool_use',
+          id: 't2',
+          name: 'Execute',
+          input: { command: 'rm -rf build' },
+        },
       },
     ],
   } as never;
@@ -57,7 +76,10 @@ test('captures Task prompt metadata before the subagent session id exists', () =
   } as never);
 
   assert.equal(normalized?.subagent?.label, 'code-reviewer');
-  assert.equal(normalized?.subagent?.prompt, 'Inspect the current diff and report correctness risks.');
+  assert.equal(
+    normalized?.subagent?.prompt,
+    'Inspect the current diff and report correctness risks.',
+  );
   assert.equal(normalized?.subagent?.toolUseId, 'tool-1');
 });
 

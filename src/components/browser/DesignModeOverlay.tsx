@@ -25,31 +25,35 @@ export function DesignModeOverlay({
 
   return (
     <div className="pointer-events-none absolute inset-0">
-      {active && visibleRefs.map((ref) => {
-        const isSelected = selected.has(ref.ref);
-        return (
-          <div
-            key={ref.ref}
-            className={`absolute border ${isSelected ? 'border-droid-accent' : 'border-droid-accent/80'}`}
-            style={boxStyle(ref.box, isSelected ? 'rgba(238, 96, 24, 0.12)' : 'rgba(238, 96, 24, 0.06)')}
-          >
-            <span
-              className={`absolute -left-px -top-6 h-6 max-w-[260px] truncate rounded-t px-2 text-[11px] font-medium leading-6 ${
-                isSelected ? 'bg-droid-accent text-black' : 'bg-[#2383d9] text-white'
-              }`}
-            >
-              {isSelected ? (
-                labelForBrowserRef(ref)
-              ) : (
-                <>
-                  {labelForBrowserRef(ref)}
-                  <span className="ml-2 opacity-80">Click to select</span>
-                </>
+      {active &&
+        visibleRefs.map((ref) => {
+          const isSelected = selected.has(ref.ref);
+          return (
+            <div
+              key={ref.ref}
+              className={`absolute border ${isSelected ? 'border-droid-accent' : 'border-droid-accent/80'}`}
+              style={boxStyle(
+                ref.box,
+                isSelected ? 'rgba(238, 96, 24, 0.12)' : 'rgba(238, 96, 24, 0.06)',
               )}
-            </span>
-          </div>
-        );
-      })}
+            >
+              <span
+                className={`absolute -left-px -top-6 h-6 max-w-[260px] truncate rounded-t px-2 text-[11px] font-medium leading-6 ${
+                  isSelected ? 'bg-droid-accent text-black' : 'bg-[#2383d9] text-white'
+                }`}
+              >
+                {isSelected ? (
+                  labelForBrowserRef(ref)
+                ) : (
+                  <>
+                    {labelForBrowserRef(ref)}
+                    <span className="ml-2 opacity-80">Click to select</span>
+                  </>
+                )}
+              </span>
+            </div>
+          );
+        })}
 
       {draftRegion && (
         <div

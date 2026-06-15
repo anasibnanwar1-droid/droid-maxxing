@@ -50,31 +50,47 @@ test('missionIdForBrowserKey maps Droid session ids back to app chat ids', () =>
   };
 
   assert.equal(missionIdForBrowserKey(missions, 'droid-session-id'), 'chat-app-id');
-  assert.equal(activeMissionAfterNativeBrowserRequest(null, {
-    requestId: 'req-1',
-    missionId: 'droid-session-id',
-    sessionId: 'browser-droid-session-id',
-    action: 'snapshot',
-  }, missions), 'chat-app-id');
+  assert.equal(
+    activeMissionAfterNativeBrowserRequest(
+      null,
+      {
+        requestId: 'req-1',
+        missionId: 'droid-session-id',
+        sessionId: 'browser-droid-session-id',
+        action: 'snapshot',
+      },
+      missions,
+    ),
+    'chat-app-id',
+  );
 });
 
 test('nativeBrowserRequestTargetsVisibleSurface only attaches the active browser request', () => {
-  assert.equal(nativeBrowserRequestTargetsVisibleSurface({
-    browserKey: 'visible-chat',
-    requestMissionId: 'visible-chat',
-    requestSessionId: 'browser-visible-chat',
-  }), true);
+  assert.equal(
+    nativeBrowserRequestTargetsVisibleSurface({
+      browserKey: 'visible-chat',
+      requestMissionId: 'visible-chat',
+      requestSessionId: 'browser-visible-chat',
+    }),
+    true,
+  );
 
-  assert.equal(nativeBrowserRequestTargetsVisibleSurface({
-    browserKey: 'visible-chat',
-    visibleSessionId: 'browser-visible-chat',
-    requestMissionId: 'background-chat',
-    requestSessionId: 'browser-visible-chat',
-  }), true);
+  assert.equal(
+    nativeBrowserRequestTargetsVisibleSurface({
+      browserKey: 'visible-chat',
+      visibleSessionId: 'browser-visible-chat',
+      requestMissionId: 'background-chat',
+      requestSessionId: 'browser-visible-chat',
+    }),
+    true,
+  );
 
-  assert.equal(nativeBrowserRequestTargetsVisibleSurface({
-    browserKey: 'visible-chat',
-    requestMissionId: 'background-chat',
-    requestSessionId: 'browser-background-chat',
-  }), false);
+  assert.equal(
+    nativeBrowserRequestTargetsVisibleSurface({
+      browserKey: 'visible-chat',
+      requestMissionId: 'background-chat',
+      requestSessionId: 'browser-background-chat',
+    }),
+    false,
+  );
 });

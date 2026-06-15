@@ -1,11 +1,30 @@
 import { useMemo, useState, memo, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ChevronRight, Terminal, Copy, Check, FileText, Expand as ExpandIcon, FoldVertical, MousePointer2, PenLine, Bot } from 'lucide-react';
+import {
+  ChevronRight,
+  Terminal,
+  Copy,
+  Check,
+  FileText,
+  Expand as ExpandIcon,
+  FoldVertical,
+  MousePointer2,
+  PenLine,
+  Bot,
+} from 'lucide-react';
 import type { BrowserTranscriptReference, TranscriptEvent } from '../types/bridge';
 import { Markdown } from './Markdown';
 import { extractFileChange, type FileChange } from '../lib/diff';
 import { DiffCard } from './DiffView';
-import { CAT_LABEL, toolMeta, safeJson, stripAnsi, formatDuration, isSubagentTool, subagentInfo } from '../lib/tools';
+import {
+  CAT_LABEL,
+  toolMeta,
+  safeJson,
+  stripAnsi,
+  formatDuration,
+  isSubagentTool,
+  subagentInfo,
+} from '../lib/tools';
 
 const ACCENT = 'var(--droid-accent)';
 const EASE = [0.16, 1, 0.3, 1] as const;
@@ -35,17 +54,30 @@ export function StreamingCaret() {
 }
 
 /* ── Working indicator — minimal shimmer label, no icons/dots/bars ── */
-export function WorkingIndicator({ label = 'Working', startTs }: { label?: string; startTs?: number }) {
+export function WorkingIndicator({
+  label = 'Working',
+  startTs,
+}: {
+  label?: string;
+  startTs?: number;
+}) {
   const elapsed = useElapsed(startTs, true);
   const suffix = startTs != null && elapsed >= 1000 ? ` ${formatDuration(elapsed)}` : '';
-  return <span className="shimmer-text text-[13px] font-medium tracking-tight" aria-live="polite">{label}{suffix}…</span>;
+  return (
+    <span className="shimmer-text text-[13px] font-medium tracking-tight" aria-live="polite">
+      {label}
+      {suffix}…
+    </span>
+  );
 }
 
 /* ── Compaction indicator — centered, larger shimmer while compacting ── */
 export function CompactingIndicator() {
   return (
     <div className="flex justify-center py-3">
-      <span className="shimmer-text text-[16px] font-semibold tracking-tight" aria-live="polite">Compacting…</span>
+      <span className="shimmer-text text-[16px] font-semibold tracking-tight" aria-live="polite">
+        Compacting…
+      </span>
     </div>
   );
 }
@@ -105,20 +137,39 @@ function Expand({ open, children }: { open: boolean; children: React.ReactNode }
 }
 
 /* ── Thinking / Thought ── */
-function ThinkingItem({ text, durationMs, active, startTs }: { text: string; durationMs?: number; active?: boolean; startTs?: number }) {
+function ThinkingItem({
+  text,
+  durationMs,
+  active,
+  startTs,
+}: {
+  text: string;
+  durationMs?: number;
+  active?: boolean;
+  startTs?: number;
+}) {
   const [open, setOpen] = useState(false);
   const elapsed = useElapsed(startTs, !!active);
   const label = active
-    ? elapsed >= 1000 ? `Thinking ${formatDuration(elapsed)}` : 'Thinking'
-    : durationMs != null && durationMs >= 1000 ? `Thought for ${formatDuration(durationMs)}` : 'Thought';
+    ? elapsed >= 1000
+      ? `Thinking ${formatDuration(elapsed)}`
+      : 'Thinking'
+    : durationMs != null && durationMs >= 1000
+      ? `Thought for ${formatDuration(durationMs)}`
+      : 'Thought';
   return (
     <div>
-      <button onClick={() => setOpen((o) => !o)} className="group flex items-center gap-1.5 text-left">
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="group flex items-center gap-1.5 text-left"
+      >
         <Caret open={active ? true : open} />
         {active ? (
           <span className="shimmer-text text-[13px] font-medium">{label}</span>
         ) : (
-          <span className="text-[13px] text-droid-text-muted group-hover:text-droid-text-secondary transition-colors">{label}</span>
+          <span className="text-[13px] text-droid-text-muted group-hover:text-droid-text-secondary transition-colors">
+            {label}
+          </span>
         )}
       </button>
       <Expand open={active ? true : open}>
@@ -151,7 +202,9 @@ function summarizeTools(events: TranscriptEvent[]): string {
     else counts.step++;
   });
   const parts: string[] = [];
-  const add = (n: number, s: string, p: string) => { if (n > 0) parts.push(`${n} ${n === 1 ? s : p}`); };
+  const add = (n: number, s: string, p: string) => {
+    if (n > 0) parts.push(`${n} ${n === 1 ? s : p}`);
+  };
   add(counts.file, 'file', 'files');
   add(counts.search, 'search', 'searches');
   add(counts.command, 'command', 'commands');
@@ -189,13 +242,23 @@ function CopyButton({ text }: { text: string }) {
 }
 
 /* ── Terminal-style command card ── */
-function CommandCard({ command, output, title }: { command: string; output?: string; title?: string }) {
+function CommandCard({
+  command,
+  output,
+  title,
+}: {
+  command: string;
+  output?: string;
+  title?: string;
+}) {
   const out = output ? stripAnsi(output).trimEnd() : '';
   return (
     <div className="rounded-xl bg-droid-bg/60 overflow-hidden ring-1 ring-droid-border">
       <div className="flex items-center gap-2 h-8 px-3 bg-droid-elevated/30">
         <Terminal className="w-3.5 h-3.5 text-droid-text-muted shrink-0" />
-        <span className="min-w-0 flex-1 truncate text-[11.5px] text-droid-text-secondary">{title || 'Command'}</span>
+        <span className="min-w-0 flex-1 truncate text-[11.5px] text-droid-text-secondary">
+          {title || 'Command'}
+        </span>
         <CopyButton text={out ? `${command}\n\n${out}` : command} />
       </div>
       <div className="px-3 py-2.5 font-mono text-[11.5px] leading-[1.6]">
@@ -221,7 +284,9 @@ function ToolLine({ event, output }: { event: TranscriptEvent; output?: string }
       <div className="text-[12.5px] leading-relaxed [overflow-wrap:anywhere]">
         <span className="text-droid-text-secondary">{CAT_LABEL[cat]}</span>
         {(detail || event.toolName) && (
-          <span className="ml-1.5 font-mono text-[11.5px] text-droid-text-muted">{detail || event.toolName}</span>
+          <span className="ml-1.5 font-mono text-[11.5px] text-droid-text-muted">
+            {detail || event.toolName}
+          </span>
         )}
       </div>
       {cat === 'other' && out && (
@@ -243,8 +308,21 @@ function renderToolEvents(events: TranscriptEvent[]): React.ReactNode[] {
       if (result) i++;
       const { cat, detail } = toolMeta(e.toolName, e.toolArgs);
       if (cat === 'exec') {
-        const command = argStr(e.toolArgs, 'command') ?? argStr(e.toolArgs, 'cmd') ?? argStr(e.toolArgs, 'script') ?? detail ?? e.toolName ?? 'command';
-        nodes.push(<CommandCard key={e.id} command={command} output={result?.text} title={argStr(e.toolArgs, 'summary')} />);
+        const command =
+          argStr(e.toolArgs, 'command') ??
+          argStr(e.toolArgs, 'cmd') ??
+          argStr(e.toolArgs, 'script') ??
+          detail ??
+          e.toolName ??
+          'command';
+        nodes.push(
+          <CommandCard
+            key={e.id}
+            command={command}
+            output={result?.text}
+            title={argStr(e.toolArgs, 'summary')}
+          />,
+        );
       } else {
         nodes.push(<ToolLine key={e.id} event={e} output={result?.text} />);
       }
@@ -253,7 +331,10 @@ function renderToolEvents(events: TranscriptEvent[]): React.ReactNode[] {
     const body = stripAnsi(e.text ?? safeJson(e.toolArgs)).trimEnd();
     if (!body) continue;
     nodes.push(
-      <pre key={e.id} className="max-h-48 overflow-auto rounded-md bg-droid-bg/50 px-2.5 py-2 text-[11px] leading-relaxed font-mono text-droid-text-muted/80 whitespace-pre-wrap [overflow-wrap:anywhere]">
+      <pre
+        key={e.id}
+        className="max-h-48 overflow-auto rounded-md bg-droid-bg/50 px-2.5 py-2 text-[11px] leading-relaxed font-mono text-droid-text-muted/80 whitespace-pre-wrap [overflow-wrap:anywhere]"
+      >
         {body}
       </pre>,
     );
@@ -266,12 +347,17 @@ function ToolGroupItem({ events, active }: { events: TranscriptEvent[]; active?:
   const summary = summarizeTools(events);
   return (
     <div>
-      <button onClick={() => setOpen((o) => !o)} className="group flex items-center gap-1.5 text-left">
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="group flex items-center gap-1.5 text-left"
+      >
         <Caret open={open} />
         {active ? (
           <span className="shimmer-text text-[13px] font-medium">{summary}</span>
         ) : (
-          <span className="text-[13px] text-droid-text-muted group-hover:text-droid-text-secondary transition-colors">{summary}</span>
+          <span className="text-[13px] text-droid-text-muted group-hover:text-droid-text-secondary transition-colors">
+            {summary}
+          </span>
         )}
       </button>
       <Expand open={open}>
@@ -297,24 +383,51 @@ function buildFeed(events: TranscriptEvent[], subagentCards = false): FeedItem[]
   let i = 0;
   while (i < events.length) {
     const ev = events[i];
-    if (ev.author === 'user' || ev.kind === 'text') { items.push({ type: 'message', key: ev.id, event: ev }); i++; continue; }
+    if (ev.author === 'user' || ev.kind === 'text') {
+      items.push({ type: 'message', key: ev.id, event: ev });
+      i++;
+      continue;
+    }
     if (ev.kind === 'thinking') {
       const next = events[i + 1];
       const end = ev.endTs ?? next?.ts;
-      items.push({ type: 'thinking', key: ev.id, event: ev, durationMs: end != null ? Math.max(0, end - ev.ts) : undefined });
-      i++; continue;
+      items.push({
+        type: 'thinking',
+        key: ev.id,
+        event: ev,
+        durationMs: end != null ? Math.max(0, end - ev.ts) : undefined,
+      });
+      i++;
+      continue;
     }
-    if (ev.kind === 'status') { items.push({ type: 'status', key: ev.id, event: ev }); i++; continue; }
-    if (ev.kind === 'error' || ev.isError) { items.push({ type: 'error', key: ev.id, event: ev }); i++; continue; }
+    if (ev.kind === 'status') {
+      items.push({ type: 'status', key: ev.id, event: ev });
+      i++;
+      continue;
+    }
+    if (ev.kind === 'error' || ev.isError) {
+      items.push({ type: 'error', key: ev.id, event: ev });
+      i++;
+      continue;
+    }
     if (ev.kind === 'tool_call') {
       const change = extractFileChange(ev.toolName, ev.toolArgs);
-      if (change) { items.push({ type: 'diff', key: ev.id, event: ev, change }); i++; continue; }
+      if (change) {
+        items.push({ type: 'diff', key: ev.id, event: ev, change });
+        i++;
+        continue;
+      }
       if (subagentCards && isSubagentTool(ev.toolName, ev.toolArgs)) {
         items.push({ type: 'subagent', key: ev.id, event: ev });
         i++;
         // Skip the subagent's completion tool_result so it doesn't become an
         // orphaned "Tool result" entry in the grouping block below.
-        if (i < events.length && events[i].kind === 'tool_result' && events[i].toolName === ev.toolName) i++;
+        if (
+          i < events.length &&
+          events[i].kind === 'tool_result' &&
+          events[i].toolName === ev.toolName
+        )
+          i++;
         continue;
       }
     }
@@ -322,11 +435,20 @@ function buildFeed(events: TranscriptEvent[], subagentCards = false): FeedItem[]
       const group: TranscriptEvent[] = [];
       while (i < events.length) {
         const t = events[i];
-        if (t.kind === 'tool_result') { group.push(t); i++; continue; }
+        if (t.kind === 'tool_result') {
+          group.push(t);
+          i++;
+          continue;
+        }
         // A subagent spawn must break the group so the outer loop can render it
         // as its own card instead of folding it into the generic tools group.
-        if (subagentCards && t.kind === 'tool_call' && isSubagentTool(t.toolName, t.toolArgs)) break;
-        if (t.kind === 'tool_call' && !extractFileChange(t.toolName, t.toolArgs)) { group.push(t); i++; continue; }
+        if (subagentCards && t.kind === 'tool_call' && isSubagentTool(t.toolName, t.toolArgs))
+          break;
+        if (t.kind === 'tool_call' && !extractFileChange(t.toolName, t.toolArgs)) {
+          group.push(t);
+          i++;
+          continue;
+        }
         break;
       }
       if (group.length) items.push({ type: 'tools', key: group[0].id, events: group });
@@ -346,7 +468,10 @@ function isUserMessage(item: FeedItem): boolean {
 function tailTimestamp(item?: FeedItem): number | undefined {
   if (!item) return undefined;
   if (item.type === 'worked') return undefined;
-  if (item.type === 'tools') { const e = item.events[item.events.length - 1]; return e?.endTs ?? e?.ts; }
+  if (item.type === 'tools') {
+    const e = item.events[item.events.length - 1];
+    return e?.endTs ?? e?.ts;
+  }
   return item.event.endTs ?? item.event.ts;
 }
 
@@ -384,12 +509,19 @@ function collapseRun(run: FeedItem[]): FeedItem[] {
   const flush = () => {
     if (buf.length === 0) return;
     const { start, end } = spanOf(buf);
-    out.push({ type: 'worked', key: `worked-${buf[0].key}`, items: buf, durationMs: Math.max(0, end - start) });
+    out.push({
+      type: 'worked',
+      key: `worked-${buf[0].key}`,
+      items: buf,
+      durationMs: Math.max(0, end - start),
+    });
     buf = [];
   };
   for (const it of work) {
-    if (it.type === 'subagent') { flush(); out.push(it); }
-    else buf.push(it);
+    if (it.type === 'subagent') {
+      flush();
+      out.push(it);
+    } else buf.push(it);
   }
   flush();
   if (conclusionIdx !== -1) out.push(run[conclusionIdx]);
@@ -428,7 +560,11 @@ function BrowserReferenceChip({ reference }: { reference: BrowserTranscriptRefer
   const Icon = reference.kind === 'element' ? MousePointer2 : PenLine;
   return (
     <span
-      title={reference.selector ? `${reference.selector}\n${reference.url ?? ''}` : reference.url ?? `Design reference: ${reference.label}`}
+      title={
+        reference.selector
+          ? `${reference.selector}\n${reference.url ?? ''}`
+          : (reference.url ?? `Design reference: ${reference.label}`)
+      }
       className="flex min-w-0 items-center gap-1.5 rounded-lg bg-droid-accent/15 px-2 py-1 text-[11px] font-medium text-droid-text ring-1 ring-inset ring-droid-accent/30"
     >
       {reference.imageDataUrl ? (
@@ -454,7 +590,15 @@ function UserBubble({ event }: { event: TranscriptEvent }) {
     <div className="flex flex-col items-end gap-1.5 py-1">
       {event.steered && (
         <span className="flex items-center gap-1 text-[10px] font-medium tracking-wide text-droid-text-muted">
-          <svg className="h-3 w-3" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+          <svg
+            className="h-3 w-3"
+            viewBox="0 0 16 16"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
             <path d="M3 8h10M9 4l4 4-4 4" />
           </svg>
           Steered the conversation
@@ -496,9 +640,18 @@ function UserBubble({ event }: { event: TranscriptEvent }) {
 }
 
 /* ── Collapsed spec card shown inline in chat (chevron to expand) ── */
-const InlineSpecCard = memo(function InlineSpecCard({ content, onOpenWiki }: { content: string; onOpenWiki?: () => void }) {
+const InlineSpecCard = memo(function InlineSpecCard({
+  content,
+  onOpenWiki,
+}: {
+  content: string;
+  onOpenWiki?: () => void;
+}) {
   const [expanded, setExpanded] = useState(false);
-  const title = useMemo(() => content.match(/^#{1,3}\s+(.+)$/m)?.[1]?.trim() ?? 'Specification', [content]);
+  const title = useMemo(
+    () => content.match(/^#{1,3}\s+(.+)$/m)?.[1]?.trim() ?? 'Specification',
+    [content],
+  );
   const sections = useMemo(() => (content.match(/^#{1,3}\s+/gm) ?? []).length, [content]);
 
   return (
@@ -508,11 +661,15 @@ const InlineSpecCard = memo(function InlineSpecCard({ content, onOpenWiki }: { c
           onClick={() => setExpanded((e) => !e)}
           className="flex items-center gap-2 flex-1 min-w-0 text-left group"
         >
-          <ChevronRight className={`w-4 h-4 shrink-0 text-droid-text-muted transition-transform duration-200 ${expanded ? 'rotate-90' : ''}`} />
+          <ChevronRight
+            className={`w-4 h-4 shrink-0 text-droid-text-muted transition-transform duration-200 ${expanded ? 'rotate-90' : ''}`}
+          />
           <FileText className="w-4 h-4 shrink-0 text-droid-text-muted" />
           <span className="truncate text-[13px] font-medium text-droid-text">{title}</span>
           {sections > 0 && (
-            <span className="shrink-0 text-[11px] font-mono text-droid-text-muted/70">{sections} sections</span>
+            <span className="shrink-0 text-[11px] font-mono text-droid-text-muted/70">
+              {sections} sections
+            </span>
           )}
         </button>
         {onOpenWiki && (
@@ -543,7 +700,16 @@ const InlineSpecCard = memo(function InlineSpecCard({ content, onOpenWiki }: { c
   );
 });
 
-const FeedItemView = memo(function FeedItemView({ item, live, compacting, onOpenDiff, onOpenSubagent, liveTiming, specDraft, specContent }: {
+const FeedItemView = memo(function FeedItemView({
+  item,
+  live,
+  compacting,
+  onOpenDiff,
+  onOpenSubagent,
+  liveTiming,
+  specDraft,
+  specContent,
+}: {
   item: FeedItem;
   live: boolean;
   compacting?: boolean;
@@ -579,7 +745,14 @@ const FeedItemView = memo(function FeedItemView({ item, live, compacting, onOpen
       );
     }
     case 'thinking':
-      return <ThinkingItem text={item.event.text ?? ''} durationMs={item.durationMs} active={live} startTs={liveTiming ? item.event.ts : undefined} />;
+      return (
+        <ThinkingItem
+          text={item.event.text ?? ''}
+          durationMs={item.durationMs}
+          active={live}
+          startTs={liveTiming ? item.event.ts : undefined}
+        />
+      );
     case 'subagent':
       return <SubagentSpawnCard event={item.event} active={live} onOpen={onOpenSubagent} />;
     case 'status': {
@@ -589,26 +762,48 @@ const FeedItemView = memo(function FeedItemView({ item, live, compacting, onOpen
       return live ? (
         <span className="shimmer-text text-[13px] font-medium">{text}</span>
       ) : (
-        <span className="block text-[13px] text-droid-text-muted leading-relaxed [overflow-wrap:anywhere]">{text}</span>
+        <span className="block text-[13px] text-droid-text-muted leading-relaxed [overflow-wrap:anywhere]">
+          {text}
+        </span>
       );
     }
     case 'error':
       return (
-        <div className="text-[13px] leading-relaxed whitespace-pre-wrap [overflow-wrap:anywhere]" style={{ color: ACCENT }}>
+        <div
+          className="text-[13px] leading-relaxed whitespace-pre-wrap [overflow-wrap:anywhere]"
+          style={{ color: ACCENT }}
+        >
           {item.event.text}
         </div>
       );
     case 'diff':
-      return <DiffCard change={item.change} onOpen={onOpenDiff ? () => onOpenDiff(item.change) : undefined} />;
+      return (
+        <DiffCard
+          change={item.change}
+          onOpen={onOpenDiff ? () => onOpenDiff(item.change) : undefined}
+        />
+      );
     case 'tools':
       return <ToolGroupItem events={item.events} active={live} />;
     case 'worked':
-      return <WorkedGroup item={item} onOpenDiff={onOpenDiff} specDraft={specDraft} specContent={specContent} />;
+      return (
+        <WorkedGroup
+          item={item}
+          onOpenDiff={onOpenDiff}
+          specDraft={specDraft}
+          specContent={specContent}
+        />
+      );
   }
 });
 
 /* ── Worked-for group: a completed turn's steps folded into one disclosure ── */
-function WorkedGroup({ item, onOpenDiff, specDraft, specContent }: {
+function WorkedGroup({
+  item,
+  onOpenDiff,
+  specDraft,
+  specContent,
+}: {
   item: Extract<FeedItem, { type: 'worked' }>;
   onOpenDiff?: (c: FileChange) => void;
   specDraft?: boolean;
@@ -617,7 +812,10 @@ function WorkedGroup({ item, onOpenDiff, specDraft, specContent }: {
   const [open, setOpen] = useState(false);
   return (
     <div>
-      <button onClick={() => setOpen((o) => !o)} className="group flex items-center gap-1.5 text-left">
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="group flex items-center gap-1.5 text-left"
+      >
         <span className="text-[13px] text-droid-text-muted group-hover:text-droid-text-secondary transition-colors">
           Worked for {formatDuration(item.durationMs)}
         </span>
@@ -642,7 +840,11 @@ function WorkedGroup({ item, onOpenDiff, specDraft, specContent }: {
 }
 
 /* ── In-chat spawned-subagent card: visible affordance + click to navigate ── */
-function SubagentSpawnCard({ event, active, onOpen }: {
+function SubagentSpawnCard({
+  event,
+  active,
+  onOpen,
+}: {
   event: TranscriptEvent;
   active?: boolean;
   onOpen?: (label?: string) => void;
@@ -659,10 +861,14 @@ function SubagentSpawnCard({ event, active, onOpen }: {
         <Bot className="h-4 w-4" />
       </span>
       <span className="min-w-0 flex-1">
-        <span className={`block truncate text-[13px] font-medium ${active ? 'shimmer-text' : 'text-droid-text'}`}>
+        <span
+          className={`block truncate text-[13px] font-medium ${active ? 'shimmer-text' : 'text-droid-text'}`}
+        >
           {active ? `Running ${name} subagent` : `Spawned ${name} subagent`}
         </span>
-        {description && <span className="block truncate text-[11.5px] text-droid-text-muted">{description}</span>}
+        {description && (
+          <span className="block truncate text-[11.5px] text-droid-text-muted">{description}</span>
+        )}
       </span>
       <ChevronRight className="h-4 w-4 shrink-0 text-droid-text-muted/50 transition-colors group-hover:text-droid-accent" />
     </button>
@@ -670,7 +876,15 @@ function SubagentSpawnCard({ event, active, onOpen }: {
 }
 
 /* ── The activity feed (list only; parent owns the scroll container) ── */
-export function MessageFeed({ events, pending, onOpenDiff, onOpenSubagent, specDraft, specContent, onOpenSpecWiki }: {
+export function MessageFeed({
+  events,
+  pending,
+  onOpenDiff,
+  onOpenSubagent,
+  specDraft,
+  specContent,
+  onOpenSpecWiki,
+}: {
   events: TranscriptEvent[];
   pending: boolean;
   onOpenDiff?: (c: FileChange) => void;
@@ -683,7 +897,10 @@ export function MessageFeed({ events, pending, onOpenDiff, onOpenSubagent, specD
   // chat/spec feed (which supplies onOpenSubagent). Mission Control omits the
   // prop, so its feed renders exactly as before.
   const rich = !!onOpenSubagent;
-  const items = useMemo(() => groupTurns(buildFeed(events, rich), pending), [events, pending, rich]);
+  const items = useMemo(
+    () => groupTurns(buildFeed(events, rich), pending),
+    [events, pending, rich],
+  );
   const lastIdx = items.length - 1;
   const last = items[lastIdx];
   const showSpecCard = (specContent?.length ?? 0) > 0;
@@ -701,17 +918,20 @@ export function MessageFeed({ events, pending, onOpenDiff, onOpenSubagent, specD
   const showWorking = pending && !tailSelfIndicates;
   // When the tail is an in-flight subagent spawn, the orchestrator is blocked
   // waiting on that droid; otherwise reflect the current local activity.
-  const waitingFor = last?.type === 'subagent' ? subagentInfo(last.event.toolArgs).label ?? 'subagent' : undefined;
+  const waitingFor =
+    last?.type === 'subagent' ? (subagentInfo(last.event.toolArgs).label ?? 'subagent') : undefined;
   const workingLabel = waitingFor
     ? `Waiting for ${waitingFor}`
-    : last?.type === 'tools' ? 'Running' : last?.type === 'diff' ? 'Updating files' : 'Working';
+    : last?.type === 'tools'
+      ? 'Running'
+      : last?.type === 'diff'
+        ? 'Updating files'
+        : 'Working';
   const workingStart = rich ? tailTimestamp(last) : undefined;
 
   return (
     <div className="space-y-4">
-      {showSpecCard && (
-        <InlineSpecCard content={specContent ?? ''} onOpenWiki={onOpenSpecWiki} />
-      )}
+      {showSpecCard && <InlineSpecCard content={specContent ?? ''} onOpenWiki={onOpenSpecWiki} />}
 
       {items.map((item, idx) => (
         <motion.div

@@ -15,30 +15,49 @@ function DiffLines({ ops }: { ops: DiffOp[] }) {
         <div
           key={i}
           className="flex"
-          style={{ background: o.type === 'add' ? ADD_BG : o.type === 'del' ? DEL_BG : 'transparent' }}
+          style={{
+            background: o.type === 'add' ? ADD_BG : o.type === 'del' ? DEL_BG : 'transparent',
+          }}
         >
           <span
             className="w-5 shrink-0 text-center select-none"
-            style={{ color: o.type === 'add' ? ADD_FG : o.type === 'del' ? DEL_FG : 'var(--droid-text-muted)' }}
+            style={{
+              color:
+                o.type === 'add' ? ADD_FG : o.type === 'del' ? DEL_FG : 'var(--droid-text-muted)',
+            }}
           >
             {o.type === 'add' ? '+' : o.type === 'del' ? '−' : ''}
           </span>
-          <span className="whitespace-pre flex-1 px-1 text-droid-text-secondary">{o.text || ' '}</span>
+          <span className="whitespace-pre flex-1 px-1 text-droid-text-secondary">
+            {o.text || ' '}
+          </span>
         </div>
       ))}
     </div>
   );
 }
 
-const VERB_LABEL: Record<FileChange['verb'], string> = { edit: 'Edit', create: 'Create', patch: 'Patch' };
+const VERB_LABEL: Record<FileChange['verb'], string> = {
+  edit: 'Edit',
+  create: 'Create',
+  patch: 'Patch',
+};
 
 function DiffHeader({ change }: { change: FileChange }) {
   return (
     <div className="flex items-center gap-2 px-3 h-9 border-b border-droid-border bg-droid-bg/40 shrink-0">
-      <span className="text-[12px] font-medium text-droid-text-secondary shrink-0">{VERB_LABEL[change.verb]}</span>
-      <span className="text-[12px] font-mono text-droid-text-muted truncate flex-1">{change.path}</span>
-      <span className="text-[11px] font-mono" style={{ color: ADD_FG }}>+{change.added}</span>
-      <span className="text-[11px] font-mono" style={{ color: DEL_FG }}>−{change.removed}</span>
+      <span className="text-[12px] font-medium text-droid-text-secondary shrink-0">
+        {VERB_LABEL[change.verb]}
+      </span>
+      <span className="text-[12px] font-mono text-droid-text-muted truncate flex-1">
+        {change.path}
+      </span>
+      <span className="text-[11px] font-mono" style={{ color: ADD_FG }}>
+        +{change.added}
+      </span>
+      <span className="text-[11px] font-mono" style={{ color: DEL_FG }}>
+        −{change.removed}
+      </span>
     </div>
   );
 }
@@ -50,12 +69,25 @@ export function DiffCard({ change, onOpen }: { change: FileChange; onOpen?: () =
 
   return (
     <div>
-      <button onClick={() => setOpen((o) => !o)} className="group flex w-full min-w-0 items-center gap-1.5 text-left">
-        <ChevronRight className={`w-3 h-3 shrink-0 text-droid-text-muted/50 transition-transform duration-200 group-hover:text-droid-text-muted ${open ? 'rotate-90' : ''}`} />
-        <span className="text-[13px] font-medium shrink-0 text-droid-text-muted group-hover:text-droid-text-secondary">{VERB_LABEL[change.verb]}</span>
-        <span className="min-w-0 truncate font-mono text-[12px] text-droid-text-muted">{change.path}</span>
-        <span className="ml-auto text-[11px] font-mono shrink-0" style={{ color: ADD_FG }}>+{change.added}</span>
-        <span className="text-[11px] font-mono shrink-0" style={{ color: DEL_FG }}>−{change.removed}</span>
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="group flex w-full min-w-0 items-center gap-1.5 text-left"
+      >
+        <ChevronRight
+          className={`w-3 h-3 shrink-0 text-droid-text-muted/50 transition-transform duration-200 group-hover:text-droid-text-muted ${open ? 'rotate-90' : ''}`}
+        />
+        <span className="text-[13px] font-medium shrink-0 text-droid-text-muted group-hover:text-droid-text-secondary">
+          {VERB_LABEL[change.verb]}
+        </span>
+        <span className="min-w-0 truncate font-mono text-[12px] text-droid-text-muted">
+          {change.path}
+        </span>
+        <span className="ml-auto text-[11px] font-mono shrink-0" style={{ color: ADD_FG }}>
+          +{change.added}
+        </span>
+        <span className="text-[11px] font-mono shrink-0" style={{ color: DEL_FG }}>
+          −{change.removed}
+        </span>
       </button>
       <AnimatePresence initial={false}>
         {open && (
@@ -69,7 +101,10 @@ export function DiffCard({ change, onOpen }: { change: FileChange; onOpen?: () =
             <div className="mt-2 rounded-lg bg-droid-bg/40 py-1">
               <DiffLines ops={preview} />
               {(more > 0 || onOpen) && (
-                <button onClick={onOpen} className="block w-full text-left px-3 py-1.5 text-[11px] text-droid-text-muted hover:text-droid-text transition-colors">
+                <button
+                  onClick={onOpen}
+                  className="block w-full text-left px-3 py-1.5 text-[11px] text-droid-text-muted hover:text-droid-text transition-colors"
+                >
                   {more > 0 ? `+${more} more lines · open full diff` : 'Open full diff'}
                 </button>
               )}

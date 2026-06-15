@@ -9,39 +9,14 @@ test('loadPersistedUiState returns an empty snapshot when storage is empty', () 
 });
 
 test('loadPersistedUiState sanitizes persisted shell fields', () => {
-  withLocalStorage(JSON.stringify({
-    activeMissionId: 'm1',
-    rightPanelOpen: false,
-    sidebarCollapsed: true,
-    specMode: true,
-    missionMode: false,
-    browserOpenKeys: { 'chat-1': true, 'chat-2': false, '': true },
-    browsers: {
-      'chat-1': {
-        sessionId: 'browser-chat-1',
-        missionId: 'chat-1',
-        url: 'http://127.0.0.1:17777/',
-        title: 'Local app',
-        viewport: { width: 1200, height: 800, deviceScaleFactor: 2 },
-        viewportMode: 'fit',
-        scroll: { x: 3, y: 7 },
-        refs: [{ stale: true }],
-        agentCursor: { x: 1, y: 2 },
-        screenshotPath: '/tmp/old.png',
-      },
-      bad: { url: 'https://example.com' },
-    },
-    selectedFeatureId: 'f1',
-    selectedAgentSessionId: 'orchestrator',
-    settingsOpen: true,
-  }), () => {
-    assert.deepEqual(loadPersistedUiState(), {
+  withLocalStorage(
+    JSON.stringify({
       activeMissionId: 'm1',
       rightPanelOpen: false,
       sidebarCollapsed: true,
       specMode: true,
       missionMode: false,
-      browserOpenKeys: { 'chat-1': true, 'chat-2': false },
+      browserOpenKeys: { 'chat-1': true, 'chat-2': false, '': true },
       browsers: {
         'chat-1': {
           sessionId: 'browser-chat-1',
@@ -51,13 +26,41 @@ test('loadPersistedUiState sanitizes persisted shell fields', () => {
           viewport: { width: 1200, height: 800, deviceScaleFactor: 2 },
           viewportMode: 'fit',
           scroll: { x: 3, y: 7 },
-          refs: [],
+          refs: [{ stale: true }],
+          agentCursor: { x: 1, y: 2 },
+          screenshotPath: '/tmp/old.png',
         },
+        bad: { url: 'https://example.com' },
       },
       selectedFeatureId: 'f1',
       selectedAgentSessionId: 'orchestrator',
-    });
-  });
+      settingsOpen: true,
+    }),
+    () => {
+      assert.deepEqual(loadPersistedUiState(), {
+        activeMissionId: 'm1',
+        rightPanelOpen: false,
+        sidebarCollapsed: true,
+        specMode: true,
+        missionMode: false,
+        browserOpenKeys: { 'chat-1': true, 'chat-2': false },
+        browsers: {
+          'chat-1': {
+            sessionId: 'browser-chat-1',
+            missionId: 'chat-1',
+            url: 'http://127.0.0.1:17777/',
+            title: 'Local app',
+            viewport: { width: 1200, height: 800, deviceScaleFactor: 2 },
+            viewportMode: 'fit',
+            scroll: { x: 3, y: 7 },
+            refs: [],
+          },
+        },
+        selectedFeatureId: 'f1',
+        selectedAgentSessionId: 'orchestrator',
+      });
+    },
+  );
 });
 
 test('factory defaults do not restore a cleared per-model compaction override', () => {
@@ -103,16 +106,27 @@ function withLocalStorage(value: string | null, fn: () => void): void {
   withLocalStorageMap(value === null ? {} : { 'droid-ui-state-v1': value }, fn);
 }
 
-function withLocalStorageMap(seed: Record<string, string> | Map<string, string>, fn: () => void): void {
+function withLocalStorageMap(
+  seed: Record<string, string> | Map<string, string>,
+  fn: () => void,
+): void {
   const previous = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
   const values = seed instanceof Map ? seed : new Map(Object.entries(seed));
   const mock: Storage = {
     getItem: (key) => values.get(key) ?? null,
-    setItem: (key, next) => { values.set(key, next); },
-    removeItem: (key) => { values.delete(key); },
-    clear: () => { values.clear(); },
+    setItem: (key, next) => {
+      values.set(key, next);
+    },
+    removeItem: (key) => {
+      values.delete(key);
+    },
+    clear: () => {
+      values.clear();
+    },
     key: (index) => Array.from(values.keys())[index] ?? null,
-    get length() { return values.size; },
+    get length() {
+      return values.size;
+    },
   };
   Object.defineProperty(globalThis, 'localStorage', {
     configurable: true,

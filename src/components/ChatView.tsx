@@ -45,22 +45,32 @@ function EmptyState({ folder }: { folder?: string }) {
 
 function FolderIcon() {
   return (
-    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <svg
+      width="12"
+      height="12"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
       <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
     </svg>
   );
 }
 
-function ChatHeader({ title, live, sub }: {
+function ChatHeader({
+  title,
+  live,
+  sub,
+}: {
   title: string;
   live: boolean;
   sub?: { label: string; meta?: string; running: boolean; onBack: () => void; onStop?: () => void };
 }) {
   return (
-    <div
-      data-electron-drag-region
-      className="shrink-0 flex items-center gap-2 h-9 pr-4 pl-4"
-    >
+    <div data-electron-drag-region className="shrink-0 flex items-center gap-2 h-9 pr-4 pl-4">
       <div className="flex min-w-0 items-center gap-1.5 rounded-xl bg-droid-elevated/60 pl-2 pr-3 py-1.5">
         <GripVertical className="w-3.5 h-3.5 shrink-0 text-droid-text-muted/40" />
         {sub ? (
@@ -73,13 +83,25 @@ function ChatHeader({ title, live, sub }: {
             {title}
           </button>
         ) : (
-          <span className={`truncate text-[13px] font-medium max-w-[240px] ${live ? 'shimmer-text' : 'text-droid-text'}`}>{title}</span>
+          <span
+            className={`truncate text-[13px] font-medium max-w-[240px] ${live ? 'shimmer-text' : 'text-droid-text'}`}
+          >
+            {title}
+          </span>
         )}
         {sub && (
           <>
             <ChevronRight className="w-3.5 h-3.5 shrink-0 text-droid-text-muted/50" />
-            <span className={`truncate text-[13px] font-medium max-w-[200px] ${sub.running ? 'shimmer-text' : 'text-droid-text'}`}>{sub.label}</span>
-            {sub.meta && <span className="shrink-0 font-mono text-[10px] text-droid-text-muted/70">{sub.meta}</span>}
+            <span
+              className={`truncate text-[13px] font-medium max-w-[200px] ${sub.running ? 'shimmer-text' : 'text-droid-text'}`}
+            >
+              {sub.label}
+            </span>
+            {sub.meta && (
+              <span className="shrink-0 font-mono text-[10px] text-droid-text-muted/70">
+                {sub.meta}
+              </span>
+            )}
           </>
         )}
       </div>
@@ -102,17 +124,20 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
   const { state, dispatch } = useStore();
   const scrollRef = useRef<HTMLDivElement>(null);
   const activeMission = state.activeMissionId ? state.missions[state.activeMissionId] : null;
-  const allTranscript = activeMission ? state.transcripts[activeMission.id] ?? [] : [];
+  const allTranscript = activeMission ? (state.transcripts[activeMission.id] ?? []) : [];
 
   const selectedAgent = state.selectedAgentSessionId;
   const viewingSub = !!selectedAgent && selectedAgent !== 'orchestrator';
 
-  const missionWorkers = activeMission ? state.workers[activeMission.id] ?? [] : [];
+  const missionWorkers = activeMission ? (state.workers[activeMission.id] ?? []) : [];
   const workerIndex = missionWorkers.findIndex((w) => w.sessionId === selectedAgent);
   const selectedWorker = workerIndex >= 0 ? missionWorkers[workerIndex] : undefined;
-  const subLabel = selectedWorker ? selectedWorker.label ?? `Sub-agent ${workerIndex + 1}` : 'Sub-agent';
+  const subLabel = selectedWorker
+    ? (selectedWorker.label ?? `Sub-agent ${workerIndex + 1}`)
+    : 'Sub-agent';
   const subModel = selectedWorker?.modelId
-    ? state.models.find((m) => m.id === selectedWorker.modelId)?.displayName ?? selectedWorker.modelId
+    ? (state.models.find((m) => m.id === selectedWorker.modelId)?.displayName ??
+      selectedWorker.modelId)
     : undefined;
   const subMeta = [subModel, selectedWorker?.reasoningEffort].filter(Boolean).join(' · ');
 
@@ -120,14 +145,18 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
   // preferring a still-running instance, then hand off to the right-panel view.
   const openSubagentByLabel = (label?: string) => {
     if (!label) return;
-    const matches = missionWorkers.filter((w) => (w.label ?? '').toLowerCase() === label.toLowerCase());
+    const matches = missionWorkers.filter(
+      (w) => (w.label ?? '').toLowerCase() === label.toLowerCase(),
+    );
     const target = matches.find((w) => w.status === 'running') ?? matches[matches.length - 1];
     if (target) dispatch({ type: 'SELECT_AGENT', id: target.sessionId });
   };
 
   const transcript = useMemo(() => {
     if (viewingSub) return allTranscript.filter((t) => t.agentSessionId === selectedAgent);
-    return allTranscript.filter((t) => t.role === 'orchestrator' || (t.author === 'user' && t.agentSessionId === 'user'));
+    return allTranscript.filter(
+      (t) => t.role === 'orchestrator' || (t.author === 'user' && t.agentSessionId === 'user'),
+    );
   }, [allTranscript, viewingSub, selectedAgent]);
 
   // Only auto-scroll when the user is already pinned to the bottom; if they've
@@ -222,22 +251,30 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
         <ChatHeader
           title={activeMission.title}
           live={live}
-          sub={viewingSub ? {
-            label: subLabel,
-            meta: subMeta || undefined,
-            running: selectedWorker?.status === 'running',
-            onBack: () => dispatch({ type: 'SELECT_AGENT', id: null }),
-            onStop: activeMission && selectedAgent && selectedWorker?.status === 'running'
-              ? () => interruptAgent(activeMission.id, selectedAgent)
-              : undefined,
-          } : undefined}
+          sub={
+            viewingSub
+              ? {
+                  label: subLabel,
+                  meta: subMeta || undefined,
+                  running: selectedWorker?.status === 'running',
+                  onBack: () => dispatch({ type: 'SELECT_AGENT', id: null }),
+                  onStop:
+                    activeMission && selectedAgent && selectedWorker?.status === 'running'
+                      ? () => interruptAgent(activeMission.id, selectedAgent)
+                      : undefined,
+                }
+              : undefined
+          }
         />
       )}
       <div
         ref={scrollRef}
         onScroll={onScroll}
         className="flex-1 min-h-0 min-w-0 overflow-y-auto overflow-x-hidden"
-        style={{ paddingRight: rightInset ? 312 : undefined, transition: 'padding-right 0.2s ease' }}
+        style={{
+          paddingRight: rightInset ? 312 : undefined,
+          transition: 'padding-right 0.2s ease',
+        }}
       >
         {activeMission && transcript.length > 0 ? (
           <div className="mx-auto min-w-0 px-6 py-6 max-w-2xl">
@@ -247,21 +284,32 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
               onOpenSubagent={openSubagentByLabel}
               specDraft={isSpec}
               specContent={specContent}
-              onOpenSpecWiki={missionId ? () => dispatch({ type: 'SPEC_OPEN_WIKI', missionId }) : undefined}
+              onOpenSpecWiki={
+                missionId ? () => dispatch({ type: 'SPEC_OPEN_WIKI', missionId }) : undefined
+              }
             />
           </div>
         ) : activeMission && viewingSub ? (
           <div className="mx-auto flex h-full max-w-2xl flex-col items-center justify-center gap-4 px-8 text-center">
             {selectedWorker?.prompt && (
               <div className="max-w-lg rounded-xl bg-droid-elevated/40 px-4 py-3 text-left">
-                <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-droid-text-muted">Task</div>
-                <div className="text-[12.5px] leading-relaxed text-droid-text-secondary whitespace-pre-wrap [overflow-wrap:anywhere]">{selectedWorker.prompt}</div>
+                <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-droid-text-muted">
+                  Task
+                </div>
+                <div className="text-[12.5px] leading-relaxed text-droid-text-secondary whitespace-pre-wrap [overflow-wrap:anywhere]">
+                  {selectedWorker.prompt}
+                </div>
               </div>
             )}
             {selectedWorker?.status === 'running' ? (
-              <WorkingIndicator label={`${subLabel} is working`} startTs={selectedWorker.startedAt} />
+              <WorkingIndicator
+                label={`${subLabel} is working`}
+                startTs={selectedWorker.startedAt}
+              />
             ) : (
-              <span className="text-[13px] text-droid-text-muted">No activity captured for {subLabel}.</span>
+              <span className="text-[13px] text-droid-text-muted">
+                No activity captured for {subLabel}.
+              </span>
             )}
           </div>
         ) : (

@@ -98,7 +98,11 @@ export default function PlanApprovalInline() {
               }
             }}
             rows={1}
-            placeholder={isSpec ? 'Add a comment to guide implementation (optional)…' : 'Add a comment (optional)…'}
+            placeholder={
+              isSpec
+                ? 'Add a comment to guide implementation (optional)…'
+                : 'Add a comment (optional)…'
+            }
             className="w-full resize-none rounded-lg border border-droid-border bg-droid-bg/60 px-2.5 py-2 text-[12.5px] leading-snug text-droid-text placeholder:text-droid-text-muted/60 outline-none focus:border-droid-border-hover"
           />
         </div>

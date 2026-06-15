@@ -35,16 +35,10 @@ test('filterMissionListSummaries returns only five latest summaries per requeste
     limitPerWorkspace: 5,
   });
 
-  assert.deepEqual(filtered.map((m) => m.id), [
-    'api-2',
-    'api-1',
-    'api-0',
-    'app-6',
-    'app-5',
-    'app-4',
-    'app-3',
-    'app-2',
-  ]);
+  assert.deepEqual(
+    filtered.map((m) => m.id),
+    ['api-2', 'api-1', 'api-0', 'app-6', 'app-5', 'app-4', 'app-3', 'app-2'],
+  );
 });
 
 test('filterMissionListSummaries keeps latest plain chats when workspace loading is limited', () => {
@@ -60,12 +54,8 @@ test('filterMissionListSummaries keeps latest plain chats when workspace loading
     limitPerWorkspace: 3,
   });
 
-  assert.deepEqual(filtered.map((m) => m.id), [
-    'app-6',
-    'app-5',
-    'app-4',
-    'plain-6',
-    'plain-5',
-    'plain-4',
-  ]);
+  assert.deepEqual(
+    filtered.map((m) => m.id),
+    ['app-6', 'app-5', 'app-4', 'plain-6', 'plain-5', 'plain-4'],
+  );
 });

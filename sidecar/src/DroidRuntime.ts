@@ -73,7 +73,11 @@ export class DroidRuntime {
     const params = createInitializeSessionParams(options);
 
     try {
-      const init = await withTimeout(client.initializeSession(params), SESSION_INIT_TIMEOUT_MS, 'initialize_session');
+      const init = await withTimeout(
+        client.initializeSession(params),
+        SESSION_INIT_TIMEOUT_MS,
+        'initialize_session',
+      );
       return new DroidSession(client, init.sessionId, init);
     } catch (err) {
       await transport.close().catch(() => {});
@@ -86,7 +90,11 @@ export class DroidRuntime {
     const params: LoadSessionRequestParams = { sessionId };
     if (handlers.mcpServers?.length) params.mcpServers = handlers.mcpServers;
     try {
-      const init = await withTimeout(client.loadSession(params), SESSION_INIT_TIMEOUT_MS, 'load_session');
+      const init = await withTimeout(
+        client.loadSession(params),
+        SESSION_INIT_TIMEOUT_MS,
+        'load_session',
+      );
       return new DroidSession(client, sessionId, init);
     } catch (err) {
       await transport.close().catch(() => {});
@@ -103,7 +111,10 @@ export class DroidRuntime {
     child.unref();
   }
 
-  private async createClient(cwd?: string, handlers: RuntimeHandlers = {}): Promise<{ client: DroidClient; transport: DroidClientTransport }> {
+  private async createClient(
+    cwd?: string,
+    handlers: RuntimeHandlers = {},
+  ): Promise<{ client: DroidClient; transport: DroidClientTransport }> {
     const transport = createDroidTransport({
       execPath: this.resolveDroidPath(),
       execArgs: EXEC_ARGS,
@@ -139,7 +150,9 @@ export class DroidRuntime {
   }
 }
 
-export function createInitializeSessionParams(options: CreateRuntimeSessionOptions): InitializeSessionRequestParams & Record<string, unknown> {
+export function createInitializeSessionParams(
+  options: CreateRuntimeSessionOptions,
+): InitializeSessionRequestParams & Record<string, unknown> {
   const params: InitializeSessionRequestParams & Record<string, unknown> = {
     machineId: 'default',
     cwd: options.cwd,
@@ -151,9 +164,11 @@ export function createInitializeSessionParams(options: CreateRuntimeSessionOptio
   if (options.modelId) params.modelId = options.modelId;
   if (options.reasoningEffort) params.reasoningEffort = mapReasoning(options.reasoningEffort);
   if (options.compactionModel) params.compactionModel = options.compactionModel;
-  if (options.compactionTokenLimit !== undefined) params.compactionTokenLimit = options.compactionTokenLimit;
+  if (options.compactionTokenLimit !== undefined)
+    params.compactionTokenLimit = options.compactionTokenLimit;
   if (options.specModeModelId) params.specModeModelId = options.specModeModelId;
-  if (options.specModeReasoningEffort) params.specModeReasoningEffort = mapReasoning(options.specModeReasoningEffort);
+  if (options.specModeReasoningEffort)
+    params.specModeReasoningEffort = mapReasoning(options.specModeReasoningEffort);
   if (options.autonomyLevel) params.autonomyLevel = mapAutonomy(options.autonomyLevel);
   if (options.decompSessionType) params.decompSessionType = options.decompSessionType;
   if (options.missionId) params.decompMissionId = options.missionId;
@@ -183,21 +198,40 @@ function mapReasoning(reasoning: ReasoningEffort): SdkReasoningEffort {
 }
 
 function tagsFor(options: CreateRuntimeSessionOptions): InitializeSessionRequestParams['tags'] {
-  const kind = options.interactionMode === 'agi' ? 'mission_orchestrator' : options.interactionMode === 'spec' ? 'spec' : 'chat';
+  const kind =
+    options.interactionMode === 'agi'
+      ? 'mission_orchestrator'
+      : options.interactionMode === 'spec'
+        ? 'spec'
+        : 'chat';
   return [
     { name: 'droid-control', metadata: { source: 'droid-control' } },
     { name: 'kind', metadata: { kind } },
-    ...(options.missionId ? [{ name: 'missionId', metadata: { missionId: options.missionId } }] : []),
+    ...(options.missionId
+      ? [{ name: 'missionId', metadata: { missionId: options.missionId } }]
+      : []),
   ];
 }
 
-function missionSettingsFor(options: CreateRuntimeSessionOptions): Record<string, unknown> | undefined {
-  if (!options.workerModelId && !options.workerReasoningEffort && !options.validatorModelId && !options.validatorReasoningEffort) return undefined;
+function missionSettingsFor(
+  options: CreateRuntimeSessionOptions,
+): Record<string, unknown> | undefined {
+  if (
+    !options.workerModelId &&
+    !options.workerReasoningEffort &&
+    !options.validatorModelId &&
+    !options.validatorReasoningEffort
+  )
+    return undefined;
   return {
     ...(options.workerModelId ? { workerModel: options.workerModelId } : {}),
-    ...(options.workerReasoningEffort ? { workerReasoningEffort: mapReasoning(options.workerReasoningEffort) } : {}),
+    ...(options.workerReasoningEffort
+      ? { workerReasoningEffort: mapReasoning(options.workerReasoningEffort) }
+      : {}),
     ...(options.validatorModelId ? { validationWorkerModel: options.validatorModelId } : {}),
-    ...(options.validatorReasoningEffort ? { validationWorkerReasoningEffort: mapReasoning(options.validatorReasoningEffort) } : {}),
+    ...(options.validatorReasoningEffort
+      ? { validationWorkerReasoningEffort: mapReasoning(options.validatorReasoningEffort) }
+      : {}),
   };
 }
 
@@ -207,7 +241,10 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: str
     return await Promise.race([
       promise,
       new Promise<T>((_, reject) => {
-        timer = setTimeout(() => reject(new Error(`Droid ${label} timed out after ${timeoutMs}ms`)), timeoutMs);
+        timer = setTimeout(
+          () => reject(new Error(`Droid ${label} timed out after ${timeoutMs}ms`)),
+          timeoutMs,
+        );
       }),
     ]);
   } finally {

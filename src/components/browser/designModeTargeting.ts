@@ -61,7 +61,9 @@ function targetScore(ref: BrowserElementRef, viewport: Size): number {
   const tag = ref.tagName.toLowerCase();
   const role = ref.role?.toLowerCase();
   const hasName = Boolean(ref.name || ref.text);
-  const namedContainer = Boolean(ref.attributes?.['data-testid'] || ref.attributes?.title || ref.attributes?.['aria-label']);
+  const namedContainer = Boolean(
+    ref.attributes?.['data-testid'] || ref.attributes?.title || ref.attributes?.['aria-label'],
+  );
 
   let score = 400;
   if (INTERACTIVE_TAGS.has(tag) || (role && INTERACTIVE_ROLES.has(role))) score = 0;

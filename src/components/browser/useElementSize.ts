@@ -15,9 +15,9 @@ export function useElementSize(ref: RefObject<HTMLElement | null>): Size {
         width: Math.max(1, Math.round(rect.width)),
         height: Math.max(1, Math.round(rect.height)),
       };
-      setSize((current) => (
-        current.width === next.width && current.height === next.height ? current : next
-      ));
+      setSize((current) =>
+        current.width === next.width && current.height === next.height ? current : next,
+      );
     };
 
     update();

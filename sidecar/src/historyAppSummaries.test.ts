@@ -63,7 +63,10 @@ test('loadHistoricalSessions applies app summaries before plain chat filtering',
 
   const rows = loadHistoricalSessions({ includePlainChats: true, limitPerWorkspace: 5 });
 
-  assert.deepEqual(rows.map((row) => row.summary.id), ['plain-runtime-home']);
+  assert.deepEqual(
+    rows.map((row) => row.summary.id),
+    ['plain-runtime-home'],
+  );
   assert.equal(rows[0].summary.cwd, '');
   assert.equal(rows[0].summary.workspaceKind, 'none');
 });

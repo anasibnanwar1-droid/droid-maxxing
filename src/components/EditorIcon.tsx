@@ -30,9 +30,31 @@ export function EditorIcon({ editor, size = 16 }: { editor: EditorId; size?: num
       <svg {...s} viewBox="0 0 24 24" className="shrink-0" aria-hidden>
         <rect x="2" y="2.5" width="20" height="19" rx="5" fill="#1FA2FF" />
         <path d="M12 2.5h5a5 5 0 0 1 5 5v9a5 5 0 0 1-5 5h-5Z" fill="#0B79E6" />
-        <line x1="8" y1="8" x2="8" y2="10.5" stroke="#fff" strokeWidth="1.4" strokeLinecap="round" />
-        <line x1="16" y1="8" x2="16" y2="10.5" stroke="#fff" strokeWidth="1.4" strokeLinecap="round" />
-        <path d="M8.5 15.5c1.3 1.3 5.7 1.3 7 0" stroke="#fff" strokeWidth="1.4" fill="none" strokeLinecap="round" />
+        <line
+          x1="8"
+          y1="8"
+          x2="8"
+          y2="10.5"
+          stroke="#fff"
+          strokeWidth="1.4"
+          strokeLinecap="round"
+        />
+        <line
+          x1="16"
+          y1="8"
+          x2="16"
+          y2="10.5"
+          stroke="#fff"
+          strokeWidth="1.4"
+          strokeLinecap="round"
+        />
+        <path
+          d="M8.5 15.5c1.3 1.3 5.7 1.3 7 0"
+          stroke="#fff"
+          strokeWidth="1.4"
+          fill="none"
+          strokeLinecap="round"
+        />
       </svg>
     );
 
@@ -40,8 +62,23 @@ export function EditorIcon({ editor, size = 16 }: { editor: EditorId; size?: num
     return (
       <svg {...s} viewBox="0 0 24 24" className="shrink-0" aria-hidden>
         <rect x="2" y="3.5" width="20" height="17" rx="4" fill="#26262A" />
-        <path d="M6 9.5 9 12l-3 2.5" stroke="#43D17E" strokeWidth="1.6" fill="none" strokeLinecap="round" strokeLinejoin="round" />
-        <line x1="11.5" y1="14.5" x2="16" y2="14.5" stroke="#E6E6E6" strokeWidth="1.6" strokeLinecap="round" />
+        <path
+          d="M6 9.5 9 12l-3 2.5"
+          stroke="#43D17E"
+          strokeWidth="1.6"
+          fill="none"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+        <line
+          x1="11.5"
+          y1="14.5"
+          x2="16"
+          y2="14.5"
+          stroke="#E6E6E6"
+          strokeWidth="1.6"
+          strokeLinecap="round"
+        />
       </svg>
     );
 

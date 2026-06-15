@@ -19,25 +19,53 @@ import type {
 } from './types.js';
 
 export interface BrowserSessionManagerOptions {
-  emit?: (event: { type: 'browser.updated'; state: BrowserState } | { type: 'browser.error'; missionId?: string; message: string }) => void;
-  runtimeFactory?: (sessionId: string, viewport: BrowserViewport, missionId: string) => BrowserRuntime;
+  emit?: (
+    event:
+      | { type: 'browser.updated'; state: BrowserState }
+      | { type: 'browser.error'; missionId?: string; message: string },
+  ) => void;
+  runtimeFactory?: (
+    sessionId: string,
+    viewport: BrowserViewport,
+    missionId: string,
+  ) => BrowserRuntime;
   assetUrlFor?: (path: string) => string;
   writePack?: typeof writeDesignPromptPack;
   browserDataDir?: string;
 }
 
 export interface BrowserRuntime {
-  open(url: string): Promise<{ url: string; title?: string; scroll: { x: number; y: number }; refs: BrowserElementRef[] }>;
-  reload(): Promise<{ url: string; title?: string; scroll: { x: number; y: number }; refs: BrowserElementRef[] }>;
+  open(url: string): Promise<{
+    url: string;
+    title?: string;
+    scroll: { x: number; y: number };
+    refs: BrowserElementRef[];
+  }>;
+  reload(): Promise<{
+    url: string;
+    title?: string;
+    scroll: { x: number; y: number };
+    refs: BrowserElementRef[];
+  }>;
   setViewport(viewport: BrowserViewport): Promise<void>;
   screenshot(options?: BrowserScreenshotOptions): Promise<string>;
   capture(box?: BrowserBox, options?: BrowserScreenshotOptions): Promise<string>;
-  snapshot(): Promise<{ url: string; title?: string; scroll: { x: number; y: number }; refs: BrowserElementRef[] }>;
+  snapshot(): Promise<{
+    url: string;
+    title?: string;
+    scroll: { x: number; y: number };
+    refs: BrowserElementRef[];
+  }>;
   click(x: number, y: number): Promise<void>;
   type(text: string): Promise<void>;
   keypress(key: string): Promise<void>;
   scroll(direction: ScrollDirection, pixels?: number): Promise<void>;
-  fillCredentials?(): Promise<{ url: string; title?: string; scroll: { x: number; y: number }; refs: BrowserElementRef[] }>;
+  fillCredentials?(): Promise<{
+    url: string;
+    title?: string;
+    scroll: { x: number; y: number };
+    refs: BrowserElementRef[];
+  }>;
   close(): Promise<void>;
 }
 
@@ -51,9 +79,17 @@ interface ManagedBrowserSession {
 
 type BrowserInputSource = 'agent' | 'user';
 
-export const DEFAULT_BROWSER_VIEWPORT: BrowserViewport = { width: 1200, height: 800, deviceScaleFactor: 2 };
+export const DEFAULT_BROWSER_VIEWPORT: BrowserViewport = {
+  width: 1200,
+  height: 800,
+  deviceScaleFactor: 2,
+};
 
-export const VIEWPORT_PRESETS: { id: BrowserViewportMode; label: string; viewport?: BrowserViewport }[] = [
+export const VIEWPORT_PRESETS: {
+  id: BrowserViewportMode;
+  label: string;
+  viewport?: BrowserViewport;
+}[] = [
   { id: 'fit', label: 'Fit' },
   { id: 'desktop', label: 'Desktop', viewport: { width: 1440, height: 900, deviceScaleFactor: 2 } },
   { id: 'laptop', label: 'Laptop', viewport: { width: 1280, height: 800, deviceScaleFactor: 2 } },
@@ -67,7 +103,12 @@ export class BrowserSessionManager {
 
   constructor(private readonly options: BrowserSessionManagerOptions = {}) {}
 
-  async open(input: { missionId: string; url: string; viewport?: BrowserViewport; viewportMode?: BrowserViewportMode }): Promise<BrowserState> {
+  async open(input: {
+    missionId: string;
+    url: string;
+    viewport?: BrowserViewport;
+    viewportMode?: BrowserViewportMode;
+  }): Promise<BrowserState> {
     const session = this.sessionFor(input.missionId, input.viewport, input.viewportMode);
     const url = normalizeBrowserUrl(input.url);
     if (input.viewport) {
@@ -102,9 +143,17 @@ export class BrowserSessionManager {
     return session.state;
   }
 
-  async resizeViewport(input: { missionId: string; viewport: BrowserViewport; viewportMode: BrowserViewportMode }): Promise<BrowserState> {
+  async resizeViewport(input: {
+    missionId: string;
+    viewport: BrowserViewport;
+    viewportMode: BrowserViewportMode;
+  }): Promise<BrowserState> {
     const session = this.requireSession(input.missionId);
-    session.state = { ...session.state, viewport: input.viewport, viewportMode: input.viewportMode };
+    session.state = {
+      ...session.state,
+      viewport: input.viewport,
+      viewportMode: input.viewportMode,
+    };
     this.emitUpdated(session.state);
     await session.runtime.setViewport(input.viewport);
     session.state = await this.captureState(session);
@@ -112,7 +161,13 @@ export class BrowserSessionManager {
     return session.state;
   }
 
-  async click(input: { missionId: string; ref?: string; x?: number; y?: number; source?: BrowserInputSource }): Promise<BrowserState> {
+  async click(input: {
+    missionId: string;
+    ref?: string;
+    x?: number;
+    y?: number;
+    source?: BrowserInputSource;
+  }): Promise<BrowserState> {
     const session = this.requireSession(input.missionId);
     const point = input.ref ? centerOf(this.requireRef(session, input.ref)) : pointFrom(input);
     this.showAgentCursor(session, point, input.source);
@@ -132,9 +187,21 @@ export class BrowserSessionManager {
     return this.refresh(session.missionId);
   }
 
-  async scroll(missionId: string, direction: ScrollDirection, pixels?: number, source?: BrowserInputSource): Promise<BrowserState> {
+  async scroll(
+    missionId: string,
+    direction: ScrollDirection,
+    pixels?: number,
+    source?: BrowserInputSource,
+  ): Promise<BrowserState> {
     const session = this.requireSession(missionId);
-    this.showAgentCursor(session, { x: Math.round(session.state.viewport.width / 2), y: Math.round(session.state.viewport.height / 2) }, source);
+    this.showAgentCursor(
+      session,
+      {
+        x: Math.round(session.state.viewport.width / 2),
+        y: Math.round(session.state.viewport.height / 2),
+      },
+      source,
+    );
     await session.runtime.scroll(direction, pixels);
     return this.refresh(session.missionId);
   }
@@ -153,7 +220,11 @@ export class BrowserSessionManager {
   async screenshot(missionId: string, options: BrowserScreenshotOptions = {}): Promise<string> {
     const session = this.requireSession(missionId);
     const base64 = await session.runtime.screenshot(options);
-    const screenshotPath = await this.persistImage(missionId, `screenshot-${Date.now().toString(36)}.png`, base64);
+    const screenshotPath = await this.persistImage(
+      missionId,
+      `screenshot-${Date.now().toString(36)}.png`,
+      base64,
+    );
     session.state = {
       ...session.state,
       screenshotPath,
@@ -165,11 +236,12 @@ export class BrowserSessionManager {
 
   inspectPoint(missionId: string, x: number, y: number): BrowserElementRef | undefined {
     const session = this.requireSession(missionId);
-    return session.state.refs.find((ref) =>
-      x >= ref.box.x &&
-      y >= ref.box.y &&
-      x <= ref.box.x + ref.box.width &&
-      y <= ref.box.y + ref.box.height,
+    return session.state.refs.find(
+      (ref) =>
+        x >= ref.box.x &&
+        y >= ref.box.y &&
+        x <= ref.box.x + ref.box.width &&
+        y <= ref.box.y + ref.box.height,
     );
   }
 
@@ -205,14 +277,21 @@ export class BrowserSessionManager {
     return this.resolveSession(missionId)?.references.get(id);
   }
 
-  async designPrompt(input: { missionId: string; instruction: string; referenceIds: string[] }): Promise<{ path: string; prompt: string }> {
+  async designPrompt(input: {
+    missionId: string;
+    instruction: string;
+    referenceIds: string[];
+  }): Promise<{ path: string; prompt: string }> {
     const session = this.requireSession(input.missionId);
     const instruction = input.instruction.trim();
     if (!instruction) throw new Error('Browser prompt cannot be empty.');
     const references = input.referenceIds
       .map((id) => session.references.get(id))
       .filter((ref): ref is DesignReference => Boolean(ref));
-    if (references.length === 0) throw new Error('Select or sketch at least one browser reference before sending a Design Mode prompt.');
+    if (references.length === 0)
+      throw new Error(
+        'Select or sketch at least one browser reference before sending a Design Mode prompt.',
+      );
     const { path } = await (this.options.writePack ?? writeDesignPromptPack)({
       missionId: input.missionId,
       browserSessionId: session.id,
@@ -242,11 +321,17 @@ export class BrowserSessionManager {
   }
 
   async closeAll(): Promise<void> {
-    await Promise.all([...this.sessions.values()].map((session) => session.runtime.close().catch(() => {})));
+    await Promise.all(
+      [...this.sessions.values()].map((session) => session.runtime.close().catch(() => {})),
+    );
     this.sessions.clear();
   }
 
-  private sessionFor(missionId: string, viewport?: BrowserViewport, viewportMode?: BrowserViewportMode): ManagedBrowserSession {
+  private sessionFor(
+    missionId: string,
+    viewport?: BrowserViewport,
+    viewportMode?: BrowserViewportMode,
+  ): ManagedBrowserSession {
     const key = keyFor(missionId);
     const existing = this.sessions.get(key);
     if (existing) {
@@ -295,7 +380,12 @@ export class BrowserSessionManager {
 
   private stateFromSnapshot(
     session: ManagedBrowserSession,
-    snapshot: { url: string; title?: string; scroll: { x: number; y: number }; refs: BrowserElementRef[] },
+    snapshot: {
+      url: string;
+      title?: string;
+      scroll: { x: number; y: number };
+      refs: BrowserElementRef[];
+    },
   ): BrowserState {
     return {
       ...session.state,
@@ -313,15 +403,25 @@ export class BrowserSessionManager {
 
   private requireRef(session: ManagedBrowserSession, refId: string): BrowserElementRef {
     const ref = session.state.refs.find((item) => item.ref === refId);
-    if (!ref) throw new Error(`Browser ref ${refId} is not available. Refresh the browser snapshot and try again.`);
+    if (!ref)
+      throw new Error(
+        `Browser ref ${refId} is not available. Refresh the browser snapshot and try again.`,
+      );
     return ref;
   }
 
-  private async captureAnchorImage(session: ManagedBrowserSession, box?: BrowserBox): Promise<string | undefined> {
+  private async captureAnchorImage(
+    session: ManagedBrowserSession,
+    box?: BrowserBox,
+  ): Promise<string | undefined> {
     const base64 = await session.runtime.capture(box);
     if (!base64) return undefined;
     const tag = box ? `${box.x}-${box.y}-${box.width}-${box.height}` : 'view';
-    return this.persistImage(session.missionId, `anchor-${tag}-${Date.now().toString(36)}.png`, base64);
+    return this.persistImage(
+      session.missionId,
+      `anchor-${tag}-${Date.now().toString(36)}.png`,
+      base64,
+    );
   }
 
   private async persistImage(missionId: string, name: string, base64: string): Promise<string> {
@@ -336,7 +436,11 @@ export class BrowserSessionManager {
     this.options.emit?.({ type: 'browser.updated', state });
   }
 
-  private showAgentCursor(session: ManagedBrowserSession, point: { x: number; y: number }, source: BrowserInputSource = 'agent'): void {
+  private showAgentCursor(
+    session: ManagedBrowserSession,
+    point: { x: number; y: number },
+    source: BrowserInputSource = 'agent',
+  ): void {
     if (source === 'user') return;
     session.state = { ...session.state, agentCursor: point };
     this.emitUpdated(session.state);
@@ -355,6 +459,7 @@ function centerOf(ref: BrowserElementRef): { x: number; y: number } {
 }
 
 function pointFrom(input: { x?: number; y?: number }): { x: number; y: number } {
-  if (input.x === undefined || input.y === undefined) throw new Error('browser.click requires either a ref or x/y coordinates.');
+  if (input.x === undefined || input.y === undefined)
+    throw new Error('browser.click requires either a ref or x/y coordinates.');
   return { x: input.x, y: input.y };
 }

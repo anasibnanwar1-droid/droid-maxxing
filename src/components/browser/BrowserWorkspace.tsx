@@ -8,11 +8,7 @@ import {
   resizeBrowserViewport,
   sendDesignPrompt,
 } from '../../lib/commands';
-import type {
-  BrowserViewport,
-  BrowserViewportMode,
-  DesignReference,
-} from '../../types/bridge';
+import type { BrowserViewport, BrowserViewportMode, DesignReference } from '../../types/bridge';
 import type { Size } from '../canvas/canvasMath';
 import {
   CUSTOM_DEFAULT_VIEWPORT,
@@ -23,7 +19,11 @@ import {
 } from './browserViewport';
 import { NativeBrowserSurface } from './NativeBrowserSurface';
 import { isDesktop } from '../../lib/desktop';
-import type { NativeBrowserDesignPrompt, NativeBrowserLoadFailed, NativeBrowserSelection } from '../../lib/nativeBrowser';
+import type {
+  NativeBrowserDesignPrompt,
+  NativeBrowserLoadFailed,
+  NativeBrowserSelection,
+} from '../../lib/nativeBrowser';
 import { BrowserToolbar } from './BrowserToolbar';
 import { DesignModeComposer } from './DesignModeComposer';
 import { composerStyleForReferences } from './browserComposerPosition';
@@ -58,7 +58,9 @@ export default function BrowserWorkspace() {
   const initialUrl = safeBrowserUrl(browser?.url, appOrigin);
   const [urlInput, setUrlInput] = useState(initialUrl);
   const [activeUrl, setActiveUrl] = useState(initialUrl);
-  const [viewportMode, setViewportMode] = useState<BrowserViewportMode>(browser?.viewportMode ?? 'fit');
+  const [viewportMode, setViewportMode] = useState<BrowserViewportMode>(
+    browser?.viewportMode ?? 'fit',
+  );
   const [customViewport, setCustomViewport] = useState<BrowserViewport>(CUSTOM_DEFAULT_VIEWPORT);
   const [actualViewport, setActualViewport] = useState<Size>({ width: 1, height: 1 });
   const [pencilMode, setPencilMode] = useState(false);
@@ -90,9 +92,16 @@ export default function BrowserWorkspace() {
     const last = transcripts[transcripts.length - 1];
     if (!last || last.kind !== 'tool_result') return;
     const name = last.toolName ?? '';
-    const isEdit = name === 'edit' || name === 'multiedit' || name === 'multi_edit'
-      || name === 'str_replace' || name === 'apply_patch' || name === 'create'
-      || name === 'write' || name.includes('edit') || name.includes('patch');
+    const isEdit =
+      name === 'edit' ||
+      name === 'multiedit' ||
+      name === 'multi_edit' ||
+      name === 'str_replace' ||
+      name === 'apply_patch' ||
+      name === 'create' ||
+      name === 'write' ||
+      name.includes('edit') ||
+      name.includes('patch');
     if (!isEdit || last.isError) return;
     if (last.ts <= lastEditTsRef.current) return;
     lastEditTsRef.current = last.ts;
@@ -152,8 +161,8 @@ export default function BrowserWorkspace() {
   const disabledReason = !browserKey
     ? 'Select or create a Droid session'
     : selectedIds.length === 0
-    ? 'Select a reference'
-    : 'Enter a prompt';
+      ? 'Select a reference'
+      : 'Enter a prompt';
   const composerStyle = useMemo(
     () => composerStyleForReferences(references, frameSize, requestedViewport, viewportMode),
     [frameSize, references, requestedViewport, viewportMode],
@@ -161,7 +170,8 @@ export default function BrowserWorkspace() {
 
   useEffect(() => {
     if (!browserKey || !browser) return;
-    if (browser.viewportMode === viewportMode && sameViewport(browser.viewport, requestedViewport)) return;
+    if (browser.viewportMode === viewportMode && sameViewport(browser.viewport, requestedViewport))
+      return;
     const id = window.setTimeout(() => {
       resizeBrowserViewport({ missionId: browserKey, viewport: requestedViewport, viewportMode });
     }, 120);
@@ -185,7 +195,8 @@ export default function BrowserWorkspace() {
       dispatch({
         type: 'BROWSER_ERROR',
         missionId: browserKey,
-        message: 'Cannot open the Droid Control shell inside its own browser pane. Use a different local app port.',
+        message:
+          'Cannot open the Droid Control shell inside its own browser pane. Use a different local app port.',
       });
       return;
     }
@@ -203,24 +214,27 @@ export default function BrowserWorkspace() {
     }
   };
 
-  const emitDesignTranscript = useCallback((text: string, refs: DesignReference[]) => {
-    if (!requestedChatId) return;
-    const browserRefs = browserTranscriptReferencesFromDesignReferences(refs);
-    dispatch({
-      type: 'MISSION_TRANSCRIPT',
-      event: {
-        id: `local-design-${Date.now()}`,
-        missionId: requestedChatId,
-        agentSessionId: 'user',
-        role: 'orchestrator',
-        ts: Date.now(),
-        kind: 'text',
-        text,
-        author: 'user',
-        browserRefs: browserRefs.length ? browserRefs : undefined,
-      },
-    });
-  }, [dispatch, requestedChatId]);
+  const emitDesignTranscript = useCallback(
+    (text: string, refs: DesignReference[]) => {
+      if (!requestedChatId) return;
+      const browserRefs = browserTranscriptReferencesFromDesignReferences(refs);
+      dispatch({
+        type: 'MISSION_TRANSCRIPT',
+        event: {
+          id: `local-design-${Date.now()}`,
+          missionId: requestedChatId,
+          agentSessionId: 'user',
+          role: 'orchestrator',
+          ts: Date.now(),
+          kind: 'text',
+          text,
+          author: 'user',
+          browserRefs: browserRefs.length ? browserRefs : undefined,
+        },
+      });
+    },
+    [dispatch, requestedChatId],
+  );
 
   const sendPrompt = () => {
     if (!browserKey || !canSend) return;
@@ -234,30 +248,36 @@ export default function BrowserWorkspace() {
     dispatch({ type: 'SET_DESIGN_MODE', sessionId: browserKey, open: false });
   };
 
-  const handleSelection = useCallback((selection: NativeBrowserSelection) => {
-    const reference = referenceFromNativeSelection(selection);
-    setReferences([reference]);
-    if (browserKey) addDesignReference(browserKey, reference);
-  }, [browserKey]);
+  const handleSelection = useCallback(
+    (selection: NativeBrowserSelection) => {
+      const reference = referenceFromNativeSelection(selection);
+      setReferences([reference]);
+      if (browserKey) addDesignReference(browserKey, reference);
+    },
+    [browserKey],
+  );
 
   const handleLoadFailed = useCallback((failure: NativeBrowserLoadFailed) => {
     setLoadFailure(failure);
   }, []);
 
-  const handleNativePrompt = useCallback((prompt: NativeBrowserDesignPrompt) => {
-    if (!browserKey) return;
-    const text = prompt.instruction.trim();
-    if (!text) return;
-    const reference = referenceFromNativeSelection(prompt.selection);
-    const referenceId = reference.id;
-    if (!referenceId) return;
-    setReferences([reference]);
-    addDesignReference(browserKey, reference);
-    window.setTimeout(() => sendDesignPrompt(browserKey, text, [referenceId]), 0);
-    emitDesignTranscript(text, [reference]);
-    setReferences([]);
-    dispatch({ type: 'SET_DESIGN_MODE', sessionId: browserKey, open: false });
-  }, [browserKey, dispatch, emitDesignTranscript]);
+  const handleNativePrompt = useCallback(
+    (prompt: NativeBrowserDesignPrompt) => {
+      if (!browserKey) return;
+      const text = prompt.instruction.trim();
+      if (!text) return;
+      const reference = referenceFromNativeSelection(prompt.selection);
+      const referenceId = reference.id;
+      if (!referenceId) return;
+      setReferences([reference]);
+      addDesignReference(browserKey, reference);
+      window.setTimeout(() => sendDesignPrompt(browserKey, text, [referenceId]), 0);
+      emitDesignTranscript(text, [reference]);
+      setReferences([]);
+      dispatch({ type: 'SET_DESIGN_MODE', sessionId: browserKey, open: false });
+    },
+    [browserKey, dispatch, emitDesignTranscript],
+  );
 
   return (
     <div className="flex h-full min-h-0 min-w-0 flex-col bg-droid-bg">
@@ -293,7 +313,8 @@ export default function BrowserWorkspace() {
       {loadFailure && (
         <div className="flex shrink-0 items-center gap-2 border-b border-droid-border bg-red-500/10 px-4 py-2 text-[12px] text-droid-text-secondary">
           <span className="min-w-0 flex-1 truncate">
-            Could not load {loadFailure.url}{loadFailure.error ? ` (${loadFailure.error})` : ''}. Check that the server is running.
+            Could not load {loadFailure.url}
+            {loadFailure.error ? ` (${loadFailure.error})` : ''}. Check that the server is running.
           </span>
           <button
             type="button"
@@ -358,7 +379,9 @@ export default function BrowserWorkspace() {
             disabledReason={disabledReason}
             style={composerStyle}
             onInstructionChange={setInstruction}
-            onRemoveReference={(id) => setReferences((prev) => prev.filter((item) => item.id !== id))}
+            onRemoveReference={(id) =>
+              setReferences((prev) => prev.filter((item) => item.id !== id))
+            }
             onSend={sendPrompt}
           />
         )}

@@ -3,8 +3,20 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { BrowserSessionManager, type BrowserRuntime, type BrowserSessionManagerOptions } from './BrowserSessionManager.js';
-import type { BrowserBox, BrowserElementRef, BrowserScreenshotOptions, BrowserViewport, DesignAnchor, DesignAnchorDetail, ScrollDirection } from './types.js';
+import {
+  BrowserSessionManager,
+  type BrowserRuntime,
+  type BrowserSessionManagerOptions,
+} from './BrowserSessionManager.js';
+import type {
+  BrowserBox,
+  BrowserElementRef,
+  BrowserScreenshotOptions,
+  BrowserViewport,
+  DesignAnchor,
+  DesignAnchorDetail,
+  ScrollDirection,
+} from './types.js';
 
 const dataDir = mkdtempSync(join(tmpdir(), 'droid-browser-test-'));
 
@@ -127,7 +139,10 @@ test('referenceDetail returns the stored reference with detail', async () => {
   const manager = createManager();
   await manager.open({ missionId: 'm1', url: 'http://127.0.0.1:1420/' });
 
-  const reference = await manager.addReference('m1', { anchor: buttonAnchor(), detail: buttonDetail() });
+  const reference = await manager.addReference('m1', {
+    anchor: buttonAnchor(),
+    detail: buttonDetail(),
+  });
   const fetched = manager.referenceDetail('m1', reference.id);
 
   assert.equal(fetched?.detail?.selector, 'button');
@@ -156,7 +171,11 @@ test('designPrompt writes selected references and trims the instruction', async 
   await manager.open({ missionId: 'm1', url: 'http://127.0.0.1:1420/' });
   const reference = await manager.addReference('m1', { anchor: buttonAnchor() });
 
-  const result = await manager.designPrompt({ missionId: 'm1', instruction: '  Make the button clearer  ', referenceIds: [reference.id] });
+  const result = await manager.designPrompt({
+    missionId: 'm1',
+    instruction: '  Make the button clearer  ',
+    referenceIds: [reference.id],
+  });
 
   assert.equal(writtenInstruction, 'Make the button clearer');
   assert.equal(writtenReferenceCount, 1);
@@ -168,7 +187,8 @@ test('designPrompt requires a selected or sketched reference', async () => {
   await manager.open({ missionId: 'm1', url: 'http://127.0.0.1:1420/' });
 
   await assert.rejects(
-    () => manager.designPrompt({ missionId: 'm1', instruction: 'Make this clearer', referenceIds: [] }),
+    () =>
+      manager.designPrompt({ missionId: 'm1', instruction: 'Make this clearer', referenceIds: [] }),
     /Select or sketch at least one browser reference/,
   );
 });
@@ -196,9 +216,18 @@ test('open resizes an existing runtime before capture', async () => {
       return runtime;
     },
   });
-  await manager.open({ missionId: 'm1', url: 'https://example.com', viewport: { width: 1200, height: 800, deviceScaleFactor: 2 } });
+  await manager.open({
+    missionId: 'm1',
+    url: 'https://example.com',
+    viewport: { width: 1200, height: 800, deviceScaleFactor: 2 },
+  });
 
-  const state = await manager.open({ missionId: 'm1', url: 'https://example.com', viewport: { width: 524, height: 898, deviceScaleFactor: 2 }, viewportMode: 'fit' });
+  const state = await manager.open({
+    missionId: 'm1',
+    url: 'https://example.com',
+    viewport: { width: 524, height: 898, deviceScaleFactor: 2 },
+    viewportMode: 'fit',
+  });
 
   assert.deepEqual(runtime.viewport, { width: 524, height: 898, deviceScaleFactor: 2 });
   assert.deepEqual(state.viewport, { width: 524, height: 898, deviceScaleFactor: 2 });
@@ -212,7 +241,12 @@ test('open preserves existing viewport when agent omits viewport', async () => {
       return runtime;
     },
   });
-  await manager.open({ missionId: 'm1', url: 'https://example.com', viewport: { width: 820, height: 620, deviceScaleFactor: 2 }, viewportMode: 'custom' });
+  await manager.open({
+    missionId: 'm1',
+    url: 'https://example.com',
+    viewport: { width: 820, height: 620, deviceScaleFactor: 2 },
+    viewportMode: 'custom',
+  });
 
   const state = await manager.open({ missionId: 'm1', url: 'https://example.org' });
 

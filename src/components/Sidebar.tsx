@@ -2,14 +2,26 @@ import { useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
 import { useStore } from '../hooks/useStore';
 import { pickDirectory } from '../lib/desktop';
-import { Folder, MessageSquare, FolderPlus, Plus, User, Settings, ChevronRight } from 'lucide-react';
+import {
+  Folder,
+  MessageSquare,
+  FolderPlus,
+  Plus,
+  User,
+  Settings,
+  ChevronRight,
+} from 'lucide-react';
 import { buildWorkspaceSections } from '../lib/workspaces';
 import { useMissionLive } from '../hooks/useMissionLive';
 import type { MissionSummary } from '../types/bridge';
 
 function RunningGrid() {
   return (
-    <span className="grid grid-cols-3 gap-[2px] shrink-0" style={{ width: 12, height: 8 }} aria-label="running">
+    <span
+      className="grid grid-cols-3 gap-[2px] shrink-0"
+      style={{ width: 12, height: 8 }}
+      aria-label="running"
+    >
       {Array.from({ length: 6 }).map((_, i) => (
         <motion.span
           key={i}
@@ -29,7 +41,9 @@ function RunningGrid() {
 }
 
 function SessionRow({
-  mission, active, onClick,
+  mission,
+  active,
+  onClick,
 }: {
   mission: MissionSummary;
   active: boolean;
@@ -41,15 +55,17 @@ function SessionRow({
       <button
         onClick={onClick}
         className={`group w-full flex items-center gap-2.5 pl-3 pr-2 py-1.5 rounded-xl text-left transition-colors ${
-          active
-            ? 'bg-droid-elevated'
-            : 'hover:bg-droid-elevated/40'
+          active ? 'bg-droid-elevated' : 'hover:bg-droid-elevated/40'
         }`}
       >
-        <span className={`w-3 flex items-center justify-center shrink-0 ${active ? 'text-droid-text' : 'text-droid-text-secondary group-hover:text-droid-text'}`}>
+        <span
+          className={`w-3 flex items-center justify-center shrink-0 ${active ? 'text-droid-text' : 'text-droid-text-secondary group-hover:text-droid-text'}`}
+        >
           {running && <RunningGrid />}
         </span>
-        <span className={`min-w-0 flex-1 truncate text-[13px] ${active ? 'text-droid-text' : 'text-droid-text-secondary group-hover:text-droid-text'}`}>
+        <span
+          className={`min-w-0 flex-1 truncate text-[13px] ${active ? 'text-droid-text' : 'text-droid-text-secondary group-hover:text-droid-text'}`}
+        >
           {mission.title}
         </span>
       </button>
@@ -93,7 +109,9 @@ export default function Sidebar() {
   }, [state.missionOrder, state.missions]);
 
   const workspaces = useMemo(() => {
-    const missions = state.missionOrder.map((id) => state.missions[id]).filter(Boolean) as MissionSummary[];
+    const missions = state.missionOrder
+      .map((id) => state.missions[id])
+      .filter(Boolean) as MissionSummary[];
     return buildWorkspaceSections(state.workspaceCwds, missions);
   }, [state.missionOrder, state.missions, state.workspaceCwds]);
 
@@ -112,7 +130,11 @@ export default function Sidebar() {
   return (
     <aside
       className="w-[280px] h-full flex flex-col border-r border-droid-border shrink-0"
-      style={{ background: 'var(--sidebar-bg)', backdropFilter: 'var(--sidebar-blur)', WebkitBackdropFilter: 'var(--sidebar-blur)' }}
+      style={{
+        background: 'var(--sidebar-bg)',
+        backdropFilter: 'var(--sidebar-blur)',
+        WebkitBackdropFilter: 'var(--sidebar-blur)',
+      }}
     >
       {/* Draggable top strip (clears macOS traffic lights) */}
       <div data-electron-drag-region className="h-9 shrink-0" />
@@ -138,8 +160,12 @@ export default function Sidebar() {
                   onClick={() => toggleCollapse('__workspaces__')}
                   className="flex items-center gap-2 min-w-0 flex-1 text-left rounded-lg px-1 py-0.5 hover:bg-droid-elevated/40 transition-colors"
                 >
-                  <ChevronRight className={`w-3 h-3 text-droid-text-muted/70 shrink-0 transition-transform ${open ? 'rotate-90' : ''}`} />
-                  <span className="text-[11px] font-medium tracking-wide text-droid-text-muted">Workspaces</span>
+                  <ChevronRight
+                    className={`w-3 h-3 text-droid-text-muted/70 shrink-0 transition-transform ${open ? 'rotate-90' : ''}`}
+                  />
+                  <span className="text-[11px] font-medium tracking-wide text-droid-text-muted">
+                    Workspaces
+                  </span>
                 </button>
                 <button
                   onClick={pickAndChat}
@@ -161,9 +187,13 @@ export default function Sidebar() {
                             onClick={() => toggleCollapse(ws.cwd)}
                             className="flex items-center gap-2 min-w-0 flex-1 text-left rounded-lg px-1 py-0.5 hover:bg-droid-elevated/40 transition-colors"
                           >
-                            <ChevronRight className={`w-3 h-3 text-droid-text-muted/70 shrink-0 transition-transform ${wsOpen ? 'rotate-90' : ''}`} />
+                            <ChevronRight
+                              className={`w-3 h-3 text-droid-text-muted/70 shrink-0 transition-transform ${wsOpen ? 'rotate-90' : ''}`}
+                            />
                             <Folder className="w-4 h-4 text-droid-text-muted shrink-0" />
-                            <span className="min-w-0 flex-1 truncate text-[13.5px] text-droid-text">{ws.name}</span>
+                            <span className="min-w-0 flex-1 truncate text-[13.5px] text-droid-text">
+                              {ws.name}
+                            </span>
                           </button>
                           <button
                             onClick={() => startChat(ws.cwd)}
@@ -173,13 +203,17 @@ export default function Sidebar() {
                             <Plus className="w-3.5 h-3.5" />
                           </button>
                         </div>
-                        {wsOpen && <div className="mt-0.5 space-y-0.5">{ws.sessions.map(renderRow)}</div>}
+                        {wsOpen && (
+                          <div className="mt-0.5 space-y-0.5">{ws.sessions.map(renderRow)}</div>
+                        )}
                       </div>
                     );
                   })}
 
                   {workspaces.length === 0 && (
-                    <div className="px-3 py-2 text-[12px] text-droid-text-muted">No workspaces yet.</div>
+                    <div className="px-3 py-2 text-[12px] text-droid-text-muted">
+                      No workspaces yet.
+                    </div>
                   )}
 
                   <button
@@ -205,9 +239,13 @@ export default function Sidebar() {
                   onClick={() => toggleCollapse('__chats__')}
                   className="flex items-center gap-2 min-w-0 flex-1 text-left rounded-lg px-1 py-0.5 hover:bg-droid-elevated/40 transition-colors"
                 >
-                  <ChevronRight className={`w-3 h-3 text-droid-text-muted/70 shrink-0 transition-transform ${open ? 'rotate-90' : ''}`} />
+                  <ChevronRight
+                    className={`w-3 h-3 text-droid-text-muted/70 shrink-0 transition-transform ${open ? 'rotate-90' : ''}`}
+                  />
                   <MessageSquare className="w-3.5 h-3.5 text-droid-text-muted shrink-0" />
-                  <span className="text-[11px] font-medium tracking-wide text-droid-text-muted">Chats</span>
+                  <span className="text-[11px] font-medium tracking-wide text-droid-text-muted">
+                    Chats
+                  </span>
                 </button>
                 <button
                   onClick={() => startChat('')}
@@ -241,8 +279,12 @@ export default function Sidebar() {
             <User className="w-4 h-4" />
           </span>
           <span className="min-w-0 flex-1">
-            <span className="block text-[12.5px] font-semibold text-droid-text leading-tight truncate">Anas</span>
-            <span className="block text-[10.5px] text-droid-text-muted leading-tight truncate">Max Plan</span>
+            <span className="block text-[12.5px] font-semibold text-droid-text leading-tight truncate">
+              Anas
+            </span>
+            <span className="block text-[10.5px] text-droid-text-muted leading-tight truncate">
+              Max Plan
+            </span>
           </span>
           <Settings className="w-4 h-4 text-droid-text-muted shrink-0" />
         </button>

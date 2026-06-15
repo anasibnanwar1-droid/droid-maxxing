@@ -12,7 +12,9 @@ export interface WriteDesignPromptPackOptions {
   now?: () => Date;
 }
 
-export async function writeDesignPromptPack(options: WriteDesignPromptPackOptions): Promise<{ pack: DesignPromptPack; path: string }> {
+export async function writeDesignPromptPack(
+  options: WriteDesignPromptPackOptions,
+): Promise<{ pack: DesignPromptPack; path: string }> {
   const createdAt = (options.now?.() ?? new Date()).toISOString();
   const pack: DesignPromptPack = {
     missionId: options.missionId,
@@ -37,7 +39,11 @@ export function isDesignPrompt(text: string): boolean {
   return text.startsWith(DESIGN_PROMPT_HEADER);
 }
 
-export function formatDesignPrompt(packPath: string, instruction: string, references: DesignReference[]): string {
+export function formatDesignPrompt(
+  packPath: string,
+  instruction: string,
+  references: DesignReference[],
+): string {
   const first = references[0];
   return [
     DESIGN_PROMPT_HEADER,
@@ -69,20 +75,29 @@ const DESIGN_MODE_GUIDANCE = [
 // attacker-influenced via page content. Collapse control characters and
 // newlines so they cannot break out of their line and inject prompt structure.
 function sanitizeInline(value: string, max = 500): string {
-  const cleaned = value.replace(/[\u0000-\u001F\u007F]+/g, ' ').replace(/\s+/g, ' ').trim();
+  const cleaned = value
+    .replace(/[\u0000-\u001F\u007F]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
   return cleaned.length > max ? `${cleaned.slice(0, max)}…` : cleaned;
 }
 
 function formatReferenceLine(reference: DesignReference): string {
   const anchor = reference.anchor;
-  const parts = [`- ${sanitizeInline(reference.id)} (${sanitizeInline(anchor.kind)}) ${sanitizeInline(anchor.label)}`];
+  const parts = [
+    `- ${sanitizeInline(reference.id)} (${sanitizeInline(anchor.kind)}) ${sanitizeInline(anchor.label)}`,
+  ];
   if (reference.detail?.selector) {
-    parts.push(`selector=${sanitizeInline(reference.detail.selector)}${reference.detail.selectorVerified ? ' [verified]' : ''}`);
+    parts.push(
+      `selector=${sanitizeInline(reference.detail.selector)}${reference.detail.selectorVerified ? ' [verified]' : ''}`,
+    );
   }
   const source = anchor.source;
   if (source?.component) {
     const file = source.file ? sanitizeInline(source.file) : '';
-    parts.push(`component=${sanitizeInline(source.component)}${file ? ` (${file}${source.line ? `:${source.line}` : ''})` : ''}`);
+    parts.push(
+      `component=${sanitizeInline(source.component)}${file ? ` (${file}${source.line ? `:${source.line}` : ''})` : ''}`,
+    );
   }
   if (anchor.screenshotPath) parts.push(`crop=${sanitizeInline(anchor.screenshotPath)}`);
   return parts.join(' | ');

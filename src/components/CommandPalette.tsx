@@ -2,15 +2,34 @@ import { useState, useEffect, useRef } from 'react';
 import { useStore } from '../hooks/useStore';
 import { motion } from 'framer-motion';
 import {
-  Search, Plus, Folder, Settings, Zap,
-  GitBranch, Terminal, X, ArrowRight
+  Search,
+  Plus,
+  Folder,
+  Settings,
+  Zap,
+  GitBranch,
+  Terminal,
+  X,
+  ArrowRight,
 } from 'lucide-react';
 
 const commands = [
   { id: 'new-thread', label: 'New Thread', shortcut: 'Ctrl+T', icon: Plus, action: 'thread' },
   { id: 'new-mission', label: 'New Mission', shortcut: 'Ctrl+M', icon: Zap, action: 'mission' },
-  { id: 'switch-project', label: 'Switch Project', shortcut: 'Ctrl+P', icon: Folder, action: 'project' },
-  { id: 'toggle-terminal', label: 'Toggle Terminal', shortcut: 'Ctrl+`', icon: Terminal, action: 'terminal' },
+  {
+    id: 'switch-project',
+    label: 'Switch Project',
+    shortcut: 'Ctrl+P',
+    icon: Folder,
+    action: 'project',
+  },
+  {
+    id: 'toggle-terminal',
+    label: 'Toggle Terminal',
+    shortcut: 'Ctrl+`',
+    icon: Terminal,
+    action: 'terminal',
+  },
   { id: 'git-status', label: 'Git Status', shortcut: 'Ctrl+G', icon: GitBranch, action: 'git' },
   { id: 'settings', label: 'Settings', shortcut: 'Ctrl+,', icon: Settings, action: 'settings' },
 ];
@@ -29,12 +48,12 @@ export default function CommandPalette() {
     setSelected(0);
   }, [query]);
 
-  const filtered = commands.filter(c =>
-    c.label.toLowerCase().includes(query.toLowerCase()) ||
-    c.id.includes(query.toLowerCase())
+  const filtered = commands.filter(
+    (c) =>
+      c.label.toLowerCase().includes(query.toLowerCase()) || c.id.includes(query.toLowerCase()),
   );
 
-  const runCommand = (cmd: typeof commands[0]) => {
+  const runCommand = (cmd: (typeof commands)[0]) => {
     dispatch({ type: 'CLOSE_COMMAND_PALETTE' });
     switch (cmd.action) {
       case 'settings':
@@ -50,11 +69,11 @@ export default function CommandPalette() {
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'ArrowDown') {
       e.preventDefault();
-      setSelected(prev => (prev + 1) % filtered.length);
+      setSelected((prev) => (prev + 1) % filtered.length);
     }
     if (e.key === 'ArrowUp') {
       e.preventDefault();
-      setSelected(prev => (prev - 1 + filtered.length) % filtered.length);
+      setSelected((prev) => (prev - 1 + filtered.length) % filtered.length);
     }
     if (e.key === 'Enter' && filtered[selected]) {
       runCommand(filtered[selected]);
@@ -121,9 +140,7 @@ export default function CommandPalette() {
                 <Icon className="w-4 h-4 text-droid-text-muted" />
                 <span className="flex-1 text-sm text-droid-text">{cmd.label}</span>
                 <span className="text-[10px] text-droid-text-muted font-mono">{cmd.shortcut}</span>
-                {i === selected && (
-                  <ArrowRight className="w-3.5 h-3.5 text-droid-accent" />
-                )}
+                {i === selected && <ArrowRight className="w-3.5 h-3.5 text-droid-accent" />}
               </button>
             );
           })}
@@ -133,17 +150,19 @@ export default function CommandPalette() {
         <div className="flex items-center justify-between px-4 py-2 border-t border-droid-border bg-droid-surface/50">
           <div className="flex items-center gap-3 text-[10px] text-droid-text-muted">
             <span className="flex items-center gap-1">
-              <span className="px-1 py-0.5 rounded bg-droid-elevated border border-droid-border font-mono text-[9px]">↑↓</span>
+              <span className="px-1 py-0.5 rounded bg-droid-elevated border border-droid-border font-mono text-[9px]">
+                ↑↓
+              </span>
               Navigate
             </span>
             <span className="flex items-center gap-1">
-              <span className="px-1 py-0.5 rounded bg-droid-elevated border border-droid-border font-mono text-[9px]">↵</span>
+              <span className="px-1 py-0.5 rounded bg-droid-elevated border border-droid-border font-mono text-[9px]">
+                ↵
+              </span>
               Select
             </span>
           </div>
-          <div className="text-[10px] text-droid-text-muted">
-            Droid Control v0.1.0
-          </div>
+          <div className="text-[10px] text-droid-text-muted">Droid Control v0.1.0</div>
         </div>
       </motion.div>
     </motion.div>

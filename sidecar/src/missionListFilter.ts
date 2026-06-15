@@ -35,8 +35,8 @@ export function filterMissionListSummaries(
 
   return [
     ...plain.sort((a, b) => b.updatedAt - a.updatedAt).slice(0, limit),
-    ...workspaceCwds
-      .flatMap((cwd) => (grouped.get(cwd) ?? []).sort((a, b) => b.updatedAt - a.updatedAt).slice(0, limit)),
-  ]
-    .sort((a, b) => b.updatedAt - a.updatedAt);
+    ...workspaceCwds.flatMap((cwd) =>
+      (grouped.get(cwd) ?? []).sort((a, b) => b.updatedAt - a.updatedAt).slice(0, limit),
+    ),
+  ].sort((a, b) => b.updatedAt - a.updatedAt);
 }

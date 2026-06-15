@@ -3,7 +3,14 @@ import { ChevronDown, FolderOpen, FileDiff, Check } from 'lucide-react';
 import { listEditors, notify, openProject } from '../lib/desktop';
 import { toast } from '../lib/toast';
 import { EditorIcon } from './EditorIcon';
-import { EDITOR_OPTIONS, editorLabel, getDefaultEditor, setDefaultEditor, type EditorId, type EditorTarget } from '../lib/editorOpen';
+import {
+  EDITOR_OPTIONS,
+  editorLabel,
+  getDefaultEditor,
+  setDefaultEditor,
+  type EditorId,
+  type EditorTarget,
+} from '../lib/editorOpen';
 
 const TARGET_LABEL: Record<EditorTarget, string> = { codebase: 'codebase', diff: 'current diff' };
 
@@ -45,7 +52,8 @@ export default function EditorOpenMenu({
 
   // Only offer editors that are actually present on this machine. If detection
   // returns nothing (e.g. running in a browser), fall back to the full list.
-  const options = installed.length > 0 ? EDITOR_OPTIONS.filter((o) => installed.includes(o.id)) : EDITOR_OPTIONS;
+  const options =
+    installed.length > 0 ? EDITOR_OPTIONS.filter((o) => installed.includes(o.id)) : EDITOR_OPTIONS;
 
   useEffect(() => {
     let cancelled = false;
@@ -59,7 +67,9 @@ export default function EditorOpenMenu({
         setSelected(found[0]);
       }
     });
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
@@ -67,7 +77,9 @@ export default function EditorOpenMenu({
     const onDown = (e: MouseEvent) => {
       if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
     };
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
     window.addEventListener('mousedown', onDown);
     window.addEventListener('keydown', onKey);
     return () => {
@@ -96,7 +108,9 @@ export default function EditorOpenMenu({
           <button
             onClick={() => hasCwd && openCodebase(cwd)}
             disabled={!hasCwd}
-            title={hasCwd ? `Open codebase with ${editorLabel(selected)}` : 'No folder for this session'}
+            title={
+              hasCwd ? `Open codebase with ${editorLabel(selected)}` : 'No folder for this session'
+            }
             className="flex items-center pl-1.5 pr-1 py-1.5 text-droid-text-muted/80 hover:text-droid-text hover:bg-droid-elevated/60 transition-colors disabled:opacity-40 disabled:hover:bg-transparent"
           >
             <EditorIcon editor={selected} size={15} />
@@ -105,7 +119,9 @@ export default function EditorOpenMenu({
             onClick={() => setOpen((v) => !v)}
             title="Editor actions"
             className={`flex items-center pr-1.5 pl-0.5 py-1.5 transition-colors ${
-              open ? 'text-droid-text bg-droid-elevated' : 'text-droid-text-muted/80 hover:text-droid-text hover:bg-droid-elevated/60'
+              open
+                ? 'text-droid-text bg-droid-elevated'
+                : 'text-droid-text-muted/80 hover:text-droid-text hover:bg-droid-elevated/60'
             }`}
           >
             <ChevronDown className={`w-3 h-3 transition-transform ${open ? 'rotate-180' : ''}`} />
@@ -116,7 +132,9 @@ export default function EditorOpenMenu({
           onClick={() => setOpen((v) => !v)}
           title={`Open with ${editorLabel(selected)}`}
           className={`flex items-center gap-1.5 rounded-md px-1.5 py-1 text-[11.5px] transition-colors ${
-            open ? 'text-droid-text bg-droid-elevated' : 'text-droid-text-muted hover:text-droid-text hover:bg-droid-elevated/60'
+            open
+              ? 'text-droid-text bg-droid-elevated'
+              : 'text-droid-text-muted hover:text-droid-text hover:bg-droid-elevated/60'
           }`}
         >
           <EditorIcon editor={selected} size={14} />
@@ -127,7 +145,12 @@ export default function EditorOpenMenu({
 
       {open && (
         <div className="absolute right-0 top-full z-50 mt-1.5 w-52 rounded-xl border border-droid-border bg-droid-surface p-1.5 shadow-2xl shadow-black/50">
-          <MenuAction icon={<FolderOpen className="w-3.5 h-3.5" />} label="Open codebase" disabled={!hasCwd} onClick={() => run('codebase')} />
+          <MenuAction
+            icon={<FolderOpen className="w-3.5 h-3.5" />}
+            label="Open codebase"
+            disabled={!hasCwd}
+            onClick={() => run('codebase')}
+          />
           <MenuAction
             icon={<FileDiff className="w-3.5 h-3.5" />}
             label="Open current diff"
@@ -137,7 +160,9 @@ export default function EditorOpenMenu({
           />
 
           <div className="my-1.5 h-px bg-droid-border/70" />
-          <div className="px-2 pb-1 text-[10px] font-medium uppercase tracking-wider text-droid-text-muted">Default editor</div>
+          <div className="px-2 pb-1 text-[10px] font-medium uppercase tracking-wider text-droid-text-muted">
+            Default editor
+          </div>
 
           {options.map((option) => (
             <button
@@ -147,12 +172,20 @@ export default function EditorOpenMenu({
             >
               <EditorIcon editor={option.id} size={15} />
               <span className="flex-1 truncate">{option.label}</span>
-              {selected === option.id && <Check className="w-3.5 h-3.5 shrink-0" style={{ color: 'var(--droid-accent)' }} strokeWidth={3} />}
+              {selected === option.id && (
+                <Check
+                  className="w-3.5 h-3.5 shrink-0"
+                  style={{ color: 'var(--droid-accent)' }}
+                  strokeWidth={3}
+                />
+              )}
             </button>
           ))}
 
           {!hasCwd && (
-            <div className="mt-1 px-2 py-1.5 text-[11px] text-droid-text-muted">This session has no folder yet.</div>
+            <div className="mt-1 px-2 py-1.5 text-[11px] text-droid-text-muted">
+              This session has no folder yet.
+            </div>
           )}
         </div>
       )}
@@ -161,9 +194,17 @@ export default function EditorOpenMenu({
 }
 
 function MenuAction({
-  icon, label, hint, disabled, onClick,
+  icon,
+  label,
+  hint,
+  disabled,
+  onClick,
 }: {
-  icon: React.ReactNode; label: string; hint?: string; disabled?: boolean; onClick: () => void;
+  icon: React.ReactNode;
+  label: string;
+  hint?: string;
+  disabled?: boolean;
+  onClick: () => void;
 }) {
   return (
     <button

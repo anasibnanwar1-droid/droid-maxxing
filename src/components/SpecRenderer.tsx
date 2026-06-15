@@ -11,7 +11,12 @@ const EASE = [0.16, 1, 0.3, 1] as const;
 
 function parseSpecSegments(markdown: string): Segment[] {
   const segments: Segment[] = [];
-  const matches: Array<{ start: number; end: number; content: string; kind: 'svg' | 'mermaid' | 'inline' }> = [];
+  const matches: Array<{
+    start: number;
+    end: number;
+    content: string;
+    kind: 'svg' | 'mermaid' | 'inline';
+  }> = [];
 
   // Pattern 1: fenced code blocks ```svg or ```mermaid
   const codeRegex = /```(?:svg|mermaid)\n([\s\S]*?)```/g;
@@ -51,7 +56,11 @@ function parseSpecSegments(markdown: string): Segment[] {
       // Render mermaid as a styled code block until mermaid.js is added
       segments.push({ type: 'text', content: '```mermaid\n' + match.content + '\n```' });
     } else {
-      segments.push({ type: 'svg', content: match.content, source: match.kind === 'inline' ? 'inline' : 'code' });
+      segments.push({
+        type: 'svg',
+        content: match.content,
+        source: match.kind === 'inline' ? 'inline' : 'code',
+      });
     }
     last = match.end;
   }
@@ -125,7 +134,7 @@ export function SpecRenderer({ content }: { content: string }) {
           </div>
         ) : (
           <SvgVisualCard key={i} svgContent={seg.content} index={i} />
-        )
+        ),
       )}
     </div>
   );

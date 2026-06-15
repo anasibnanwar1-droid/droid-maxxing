@@ -16,9 +16,12 @@ export function createDroidTransport(options: ProcessTransportOptions): Connecta
   return new PermissionNormalizingTransport(new ProcessTransport(options));
 }
 
-export function normalizeDroidTransportMessage(message: Record<string, unknown>): Record<string, unknown> {
+export function normalizeDroidTransportMessage(
+  message: Record<string, unknown>,
+): Record<string, unknown> {
   const method = message.method;
-  if (method !== 'droid.request_permission' && method !== 'daemon.request_permission') return message;
+  if (method !== 'droid.request_permission' && method !== 'daemon.request_permission')
+    return message;
 
   const params = message.params;
   if (!isRecord(params) || !Array.isArray(params.options)) return message;

@@ -31,31 +31,91 @@ let pendingCaptureId = null;
 let captureSeq = 0;
 
 const interactiveTags = new Set(['A', 'BUTTON', 'INPUT', 'TEXTAREA', 'SELECT', 'SUMMARY']);
-const interactiveRoles = new Set(['button', 'checkbox', 'combobox', 'link', 'menuitem', 'option', 'radio', 'searchbox', 'switch', 'tab', 'textbox']);
-const textTags = new Set(['BLOCKQUOTE', 'CODE', 'EM', 'FIGCAPTION', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'LABEL', 'LI', 'P', 'PRE', 'SMALL', 'SPAN', 'STRONG', 'TD', 'TH']);
+const interactiveRoles = new Set([
+  'button',
+  'checkbox',
+  'combobox',
+  'link',
+  'menuitem',
+  'option',
+  'radio',
+  'searchbox',
+  'switch',
+  'tab',
+  'textbox',
+]);
+const textTags = new Set([
+  'BLOCKQUOTE',
+  'CODE',
+  'EM',
+  'FIGCAPTION',
+  'H1',
+  'H2',
+  'H3',
+  'H4',
+  'H5',
+  'H6',
+  'LABEL',
+  'LI',
+  'P',
+  'PRE',
+  'SMALL',
+  'SPAN',
+  'STRONG',
+  'TD',
+  'TH',
+]);
 const mediaTags = new Set(['IMG', 'SVG', 'VIDEO', 'CANVAS', 'PICTURE']);
 const INTERNAL_ATTR = 'data-droid-design';
 const PENCIL_COLOR = '#ff8a2a';
 
 const overlay = element('div', [
-  'position:fixed', 'z-index:2147483646', 'left:0', 'top:0', 'width:0', 'height:0',
-  'pointer-events:none', 'border:2px solid #2997ff',
+  'position:fixed',
+  'z-index:2147483646',
+  'left:0',
+  'top:0',
+  'width:0',
+  'height:0',
+  'pointer-events:none',
+  'border:2px solid #2997ff',
   'box-shadow:0 0 0 1px rgba(0,0,0,.45),0 0 0 99999px rgba(0,0,0,.08)',
-  'border-radius:4px', 'display:none',
+  'border-radius:4px',
+  'display:none',
 ]);
 const label = element('div', [
-  'position:fixed', 'z-index:2147483646', 'pointer-events:none', 'max-width:360px',
-  'padding:6px 8px', 'border-radius:7px', 'background:#1f8fff', 'color:white',
+  'position:fixed',
+  'z-index:2147483646',
+  'pointer-events:none',
+  'max-width:360px',
+  'padding:6px 8px',
+  'border-radius:7px',
+  'background:#1f8fff',
+  'color:white',
   'font:12px -apple-system,BlinkMacSystemFont,Segoe UI,sans-serif',
-  'box-shadow:0 10px 28px rgba(0,0,0,.28)', 'display:none',
+  'box-shadow:0 10px 28px rgba(0,0,0,.28)',
+  'display:none',
 ]);
-const textHighlights = element('div', ['position:fixed', 'z-index:2147483645', 'left:0', 'top:0', 'pointer-events:none', 'display:none']);
+const textHighlights = element('div', [
+  'position:fixed',
+  'z-index:2147483645',
+  'left:0',
+  'top:0',
+  'pointer-events:none',
+  'display:none',
+]);
 const penSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
 penSvg.setAttribute('width', '100%');
 penSvg.setAttribute('height', '100%');
 penSvg.style.cssText = [
-  'position:fixed', 'z-index:2147483646', 'left:0', 'top:0', 'width:100vw', 'height:100vh',
-  'pointer-events:none', 'display:none', 'overflow:visible',
+  'position:fixed',
+  'z-index:2147483646',
+  'left:0',
+  'top:0',
+  'width:100vw',
+  'height:100vh',
+  'pointer-events:none',
+  'display:none',
+  'overflow:visible',
 ].join(';');
 overlay.setAttribute(INTERNAL_ATTR, '1');
 label.setAttribute(INTERNAL_ATTR, '1');
@@ -190,7 +250,15 @@ function onMouseMove(event) {
 
 function processHover() {
   hoverFrame = 0;
-  if (!designMode || !pendingHover || pencilMode || activeStroke || textDragStart || promptVisible()) return;
+  if (
+    !designMode ||
+    !pendingHover ||
+    pencilMode ||
+    activeStroke ||
+    textDragStart ||
+    promptVisible()
+  )
+    return;
   const { x, y, alt } = pendingHover;
   const target = pickTarget(x, y, alt);
   if (!target) {
@@ -318,7 +386,12 @@ function onFormSubmit(event) {
     for (const field of fields) {
       const type = (field.getAttribute('type') || '').toLowerCase();
       if (!password && type === 'password' && field.value) password = field.value;
-      else if (!username && (type === 'email' || type === 'text' || type === '' || type === 'tel') && field.value) username = field.value;
+      else if (
+        !username &&
+        (type === 'email' || type === 'text' || type === '' || type === 'tel') &&
+        field.value
+      )
+        username = field.value;
     }
     if (!password) return;
     ipcRenderer.send('native-browser-credential-capture', {
@@ -358,9 +431,17 @@ function usernameFieldFor(passwordField) {
   for (const field of fields) {
     if (field === passwordField) break;
     const type = (field.getAttribute('type') || '').toLowerCase();
-    if ((type === 'email' || type === 'text' || type === 'tel' || type === '') && isVisible(field)) previous = field;
+    if ((type === 'email' || type === 'text' || type === 'tel' || type === '') && isVisible(field))
+      previous = field;
   }
-  return previous || firstVisible(scope.querySelectorAll('input[type="email"],input[type="text"],input[type="tel"],input:not([type])'));
+  return (
+    previous ||
+    firstVisible(
+      scope.querySelectorAll(
+        'input[type="email"],input[type="text"],input[type="tel"],input:not([type])',
+      ),
+    )
+  );
 }
 
 function setFieldValue(field, value) {
@@ -389,7 +470,8 @@ async function runAgentAction(request) {
     if (action === 'click') clickAt(Number(request.x), Number(request.y));
     else if (action === 'type') typeIntoFocused(request.text || '');
     else if (action === 'keypress') pressKey(request.key || '');
-    else if (action === 'scroll') scrollPage(request.direction || 'down', Number(request.pixels || 500));
+    else if (action === 'scroll')
+      scrollPage(request.direction || 'down', Number(request.pixels || 500));
     else if (action !== 'snapshot') throw new Error(`Unsupported browser action: ${action}`);
     await settle();
     return sendAgent({ requestId: request.requestId, ok: true, snapshot: pageSnapshot() });
@@ -408,7 +490,9 @@ function clickAt(x, y) {
   if (!target) throw new Error(`No element at ${x},${y}`);
   target.focus && target.focus();
   for (const type of ['mousedown', 'mouseup', 'click']) {
-    target.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, clientX: x, clientY: y, button: 0 }));
+    target.dispatchEvent(
+      new MouseEvent(type, { bubbles: true, cancelable: true, clientX: x, clientY: y, button: 0 }),
+    );
   }
 }
 
@@ -420,13 +504,17 @@ function typeIntoFocused(text) {
     const start = active.selectionStart == null ? active.value.length : active.selectionStart;
     const end = active.selectionEnd == null ? active.value.length : active.selectionEnd;
     active.setRangeText(value, start, end, 'end');
-    active.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: value }));
+    active.dispatchEvent(
+      new InputEvent('input', { bubbles: true, inputType: 'insertText', data: value }),
+    );
     active.dispatchEvent(new Event('change', { bubbles: true }));
     return;
   }
   if (active.isContentEditable) {
     document.execCommand('insertText', false, value);
-    active.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: value }));
+    active.dispatchEvent(
+      new InputEvent('input', { bubbles: true, inputType: 'insertText', data: value }),
+    );
     return;
   }
   throw new Error('Focused element is not text-editable.');
@@ -435,8 +523,11 @@ function typeIntoFocused(text) {
 function pressKey(key) {
   const active = document.activeElement || document.body;
   const value = String(key);
-  active.dispatchEvent(new KeyboardEvent('keydown', { key: value, bubbles: true, cancelable: true }));
-  if (value === 'Enter' && active instanceof HTMLInputElement && active.form) active.form.requestSubmit();
+  active.dispatchEvent(
+    new KeyboardEvent('keydown', { key: value, bubbles: true, cancelable: true }),
+  );
+  if (value === 'Enter' && active instanceof HTMLInputElement && active.form)
+    active.form.requestSubmit();
   active.dispatchEvent(new KeyboardEvent('keyup', { key: value, bubbles: true, cancelable: true }));
 }
 
@@ -478,7 +569,13 @@ function collectRefs() {
 function refFor(el, index) {
   const rect = el.getBoundingClientRect();
   const text = cleanText(el.innerText || el.textContent);
-  const name = cleanText(el.getAttribute('aria-label') || el.getAttribute('title') || el.getAttribute('placeholder') || directText(el) || text);
+  const name = cleanText(
+    el.getAttribute('aria-label') ||
+      el.getAttribute('title') ||
+      el.getAttribute('placeholder') ||
+      directText(el) ||
+      text,
+  );
   return {
     ref: `@b${index}`,
     selector: selectorFor(el),
@@ -514,7 +611,9 @@ function sketchSelection() {
       kind: 'region',
       label: `sketch (${strokes.length} stroke${strokes.length === 1 ? '' : 's'})`,
       box,
-      strokes: strokes.map((stroke) => stroke.map((pt) => ({ x: Math.round(pt.x), y: Math.round(pt.y) }))),
+      strokes: strokes.map((stroke) =>
+        stroke.map((pt) => ({ x: Math.round(pt.x), y: Math.round(pt.y) })),
+      ),
     },
     url: location.href,
     title: document.title,
@@ -597,9 +696,14 @@ function drawTextHighlights(range) {
   for (const rect of range.getClientRects()) {
     if (rect.width < 1 || rect.height < 1) continue;
     const piece = element('div', [
-      'position:fixed', 'pointer-events:none', 'background:rgba(41,151,255,.3)', 'border-radius:2px',
-      `left:${Math.round(rect.x)}px`, `top:${Math.round(rect.y)}px`,
-      `width:${Math.round(rect.width)}px`, `height:${Math.round(rect.height)}px`,
+      'position:fixed',
+      'pointer-events:none',
+      'background:rgba(41,151,255,.3)',
+      'border-radius:2px',
+      `left:${Math.round(rect.x)}px`,
+      `top:${Math.round(rect.y)}px`,
+      `width:${Math.round(rect.width)}px`,
+      `height:${Math.round(rect.height)}px`,
     ]);
     piece.setAttribute(INTERNAL_ATTR, '1');
     textHighlights.appendChild(piece);
@@ -617,7 +721,14 @@ function buildAnchor(el, selector, source) {
   const rect = el.getBoundingClientRect();
   const tag = el.tagName.toLowerCase();
   const text = cleanText(el.innerText || el.textContent, 80);
-  const name = cleanText(el.getAttribute('aria-label') || el.getAttribute('title') || el.getAttribute('placeholder') || directText(el) || text, 80);
+  const name = cleanText(
+    el.getAttribute('aria-label') ||
+      el.getAttribute('title') ||
+      el.getAttribute('placeholder') ||
+      directText(el) ||
+      text,
+    80,
+  );
   return {
     id: `@live-${stableHash(selector)}`,
     kind: 'element',
@@ -658,10 +769,17 @@ function isCandidate(el) {
   const viewportArea = Math.max(1, window.innerWidth * window.innerHeight);
   if (area > viewportArea * 0.72) return false;
   const role = roleFor(el).toLowerCase();
-  if (interactiveTags.has(el.tagName) || interactiveRoles.has(role) || el.onclick || el.tabIndex >= 0) return true;
+  if (
+    interactiveTags.has(el.tagName) ||
+    interactiveRoles.has(role) ||
+    el.onclick ||
+    el.tabIndex >= 0
+  )
+    return true;
   if (textTags.has(el.tagName) && cleanText(el.innerText || el.textContent)) return true;
   if (mediaTags.has(el.tagName)) return true;
-  if (el.getAttribute('aria-label') || el.getAttribute('title') || el.getAttribute('data-testid')) return true;
+  if (el.getAttribute('aria-label') || el.getAttribute('title') || el.getAttribute('data-testid'))
+    return true;
   return Boolean(directText(el)) && area < viewportArea * 0.35;
 }
 
@@ -684,7 +802,12 @@ function selectorFor(el) {
   if (aria) return `${el.tagName.toLowerCase()}[aria-label="${cssEscape(aria)}"]`;
   const parts = [];
   let node = el;
-  while (node && node.nodeType === Node.ELEMENT_NODE && node !== document.documentElement && parts.length < 5) {
+  while (
+    node &&
+    node.nodeType === Node.ELEMENT_NODE &&
+    node !== document.documentElement &&
+    parts.length < 5
+  ) {
     let part = node.tagName.toLowerCase();
     const parent = node.parentElement;
     if (parent) {
@@ -710,7 +833,19 @@ function verifySelector(el, selector) {
 function attrsFor(el) {
   const out = {};
   const secret = isSensitiveField(el);
-  for (const name of ['id', 'class', 'data-testid', 'aria-label', 'title', 'placeholder', 'type', 'href', 'name', 'value', 'role']) {
+  for (const name of [
+    'id',
+    'class',
+    'data-testid',
+    'aria-label',
+    'title',
+    'placeholder',
+    'type',
+    'href',
+    'name',
+    'value',
+    'role',
+  ]) {
     const value = el.getAttribute && el.getAttribute(name);
     if (!value) continue;
     if (name === 'value' && secret) {
@@ -754,7 +889,11 @@ function ancestorsFor(el) {
     const testId = node.getAttribute('data-testid');
     out.push({
       tag: node.tagName.toLowerCase(),
-      selector: node.id ? `#${cssEscape(node.id)}` : testId ? `[data-testid="${cssEscape(testId)}"]` : undefined,
+      selector: node.id
+        ? `#${cssEscape(node.id)}`
+        : testId
+          ? `[data-testid="${cssEscape(testId)}"]`
+          : undefined,
     });
     node = node.parentElement;
   }
@@ -781,7 +920,9 @@ function resolveSource(el) {
 }
 
 function resolveReact(el) {
-  const key = Object.keys(el).find((name) => name.startsWith('__reactFiber$') || name.startsWith('__reactInternalInstance$'));
+  const key = Object.keys(el).find(
+    (name) => name.startsWith('__reactFiber$') || name.startsWith('__reactInternalInstance$'),
+  );
   if (!key) return undefined;
   let fiber = el[key] || null;
   let file;
@@ -861,13 +1002,22 @@ function resolveAttributes(el) {
   let guard = 0;
   while (node && guard < 200) {
     guard += 1;
-    const path = node.getAttribute('data-inspector-relative-path') || node.getAttribute('data-source-file') || node.getAttribute('data-sourcefile') || node.getAttribute('data-source');
+    const path =
+      node.getAttribute('data-inspector-relative-path') ||
+      node.getAttribute('data-source-file') ||
+      node.getAttribute('data-sourcefile') ||
+      node.getAttribute('data-source');
     if (path) {
       return {
-        component: node.getAttribute('data-component') || node.getAttribute('data-testid') || undefined,
+        component:
+          node.getAttribute('data-component') || node.getAttribute('data-testid') || undefined,
         file: normalizeFile(path),
-        line: numberOr(node.getAttribute('data-inspector-line') || node.getAttribute('data-source-line')),
-        column: numberOr(node.getAttribute('data-inspector-column') || node.getAttribute('data-source-column')),
+        line: numberOr(
+          node.getAttribute('data-inspector-line') || node.getAttribute('data-source-line'),
+        ),
+        column: numberOr(
+          node.getAttribute('data-inspector-column') || node.getAttribute('data-source-column'),
+        ),
         confidence: 'attribute',
       };
     }
@@ -907,15 +1057,29 @@ function numberOr(value) {
 function addAnnotation(anchor, el) {
   clearAnnotations();
   const outline = element('div', [
-    'position:fixed', 'z-index:2147483645', 'pointer-events:none',
-    'border:2px solid #ff8a2a', 'border-radius:4px',
-    'box-shadow:0 0 0 1px rgba(0,0,0,.35)', 'display:block',
+    'position:fixed',
+    'z-index:2147483645',
+    'pointer-events:none',
+    'border:2px solid #ff8a2a',
+    'border-radius:4px',
+    'box-shadow:0 0 0 1px rgba(0,0,0,.35)',
+    'display:block',
   ]);
   const pin = element('div', [
-    'position:fixed', 'z-index:2147483645', 'pointer-events:none',
-    'min-width:18px', 'height:18px', 'padding:0 5px', 'border-radius:9px',
-    'background:#ff8a2a', 'color:#111', 'font:11px ui-monospace,SFMono-Regular,Menlo,monospace',
-    'display:flex', 'align-items:center', 'justify-content:center', 'box-shadow:0 4px 12px rgba(0,0,0,.4)',
+    'position:fixed',
+    'z-index:2147483645',
+    'pointer-events:none',
+    'min-width:18px',
+    'height:18px',
+    'padding:0 5px',
+    'border-radius:9px',
+    'background:#ff8a2a',
+    'color:#111',
+    'font:11px ui-monospace,SFMono-Regular,Menlo,monospace',
+    'display:flex',
+    'align-items:center',
+    'justify-content:center',
+    'box-shadow:0 4px 12px rgba(0,0,0,.4)',
   ]);
   outline.setAttribute(INTERNAL_ATTR, '1');
   pin.setAttribute(INTERNAL_ATTR, '1');
@@ -947,7 +1111,14 @@ function queueReposition() {
 function repositionAnnotations() {
   for (const item of annotations) {
     const rect = item.el ? item.el.getBoundingClientRect() : item.anchor.box;
-    const box = item.el ? rect : { x: item.anchor.box.x, y: item.anchor.box.y, width: item.anchor.box.width, height: item.anchor.box.height };
+    const box = item.el
+      ? rect
+      : {
+          x: item.anchor.box.x,
+          y: item.anchor.box.y,
+          width: item.anchor.box.width,
+          height: item.anchor.box.height,
+        };
     const visible = designMode && box.width > 0 && box.height > 0;
     item.outline.style.display = visible ? 'block' : 'none';
     item.pin.style.display = visible ? 'flex' : 'none';
@@ -1011,7 +1182,10 @@ function strokeLength(stroke) {
   if (!stroke || stroke.length < 2) return 0;
   let total = 0;
   for (let index = 1; index < stroke.length; index += 1) {
-    total += Math.hypot(stroke[index].x - stroke[index - 1].x, stroke[index].y - stroke[index - 1].y);
+    total += Math.hypot(
+      stroke[index].x - stroke[index - 1].x,
+      stroke[index].y - stroke[index - 1].y,
+    );
   }
   return total;
 }
@@ -1030,7 +1204,12 @@ function strokesBounds() {
     }
   }
   if (!Number.isFinite(minX) || maxX - minX < 4 || maxY - minY < 4) return null;
-  return { x: Math.round(minX), y: Math.round(minY), width: Math.round(maxX - minX), height: Math.round(maxY - minY) };
+  return {
+    x: Math.round(minX),
+    y: Math.round(minY),
+    width: Math.round(maxX - minX),
+    height: Math.round(maxY - minY),
+  };
 }
 
 function clearStrokes() {
@@ -1045,7 +1224,17 @@ function clearStrokes() {
 function labelFor(el) {
   const tag = el.tagName.toLowerCase();
   const source = resolveSource(el);
-  const text = cleanText(el.getAttribute('aria-label') || el.getAttribute('title') || el.getAttribute('placeholder') || directText(el) || el.id || el.innerText || el.textContent || '', 40);
+  const text = cleanText(
+    el.getAttribute('aria-label') ||
+      el.getAttribute('title') ||
+      el.getAttribute('placeholder') ||
+      directText(el) ||
+      el.id ||
+      el.innerText ||
+      el.textContent ||
+      '',
+    40,
+  );
   const head = labelText(tag, source, text);
   if (source && source.file) {
     return `${head}  ${source.file}${source.line ? `:${source.line}` : ''}`;
@@ -1075,23 +1264,44 @@ function point(event) {
 }
 
 function boxFor(rect) {
-  return { x: Math.round(rect.x), y: Math.round(rect.y), width: Math.round(rect.width), height: Math.round(rect.height) };
+  return {
+    x: Math.round(rect.x),
+    y: Math.round(rect.y),
+    width: Math.round(rect.width),
+    height: Math.round(rect.height),
+  };
 }
 
 function roleFor(el) {
-  return el.getAttribute('role') || ({ A: 'link', BUTTON: 'button', INPUT: 'textbox', TEXTAREA: 'textbox', SELECT: 'combobox' })[el.tagName] || '';
+  return (
+    el.getAttribute('role') ||
+    { A: 'link', BUTTON: 'button', INPUT: 'textbox', TEXTAREA: 'textbox', SELECT: 'combobox' }[
+      el.tagName
+    ] ||
+    ''
+  );
 }
 
 function directText(el) {
-  return cleanText(Array.from(el.childNodes).filter((node) => node.nodeType === Node.TEXT_NODE).map((node) => node.textContent || '').join(' '));
+  return cleanText(
+    Array.from(el.childNodes)
+      .filter((node) => node.nodeType === Node.TEXT_NODE)
+      .map((node) => node.textContent || '')
+      .join(' '),
+  );
 }
 
 function cleanText(value, max = 180) {
-  return String(value || '').replace(/\s+/g, ' ').trim().slice(0, max);
+  return String(value || '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, max);
 }
 
 function cleanPrompt(value) {
-  return String(value || '').replace(/\s+/g, ' ').trim();
+  return String(value || '')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 function cssEscape(value) {
@@ -1100,7 +1310,8 @@ function cssEscape(value) {
 
 function stableHash(value) {
   let hash = 0;
-  for (let index = 0; index < value.length; index += 1) hash = Math.imul(31, hash) + value.charCodeAt(index) | 0;
+  for (let index = 0; index < value.length; index += 1)
+    hash = (Math.imul(31, hash) + value.charCodeAt(index)) | 0;
   return Math.abs(hash).toString(36);
 }
 
@@ -1144,36 +1355,71 @@ function cancelDesign() {
 function mountPrompt() {
   if (!promptBox) {
     promptBox = element('form', [
-      'position:fixed', 'z-index:2147483647', 'display:none', 'width:min(440px,calc(100vw - 24px))',
-      'background:rgba(18,18,18,.96)', 'color:#f4f4f5', 'border:1px solid rgba(255,255,255,.16)',
-      'border-radius:12px', 'box-shadow:0 20px 60px rgba(0,0,0,.42)', 'font:13px -apple-system,BlinkMacSystemFont,Segoe UI,sans-serif',
-      'padding:8px', 'box-sizing:border-box',
+      'position:fixed',
+      'z-index:2147483647',
+      'display:none',
+      'width:min(440px,calc(100vw - 24px))',
+      'background:rgba(18,18,18,.96)',
+      'color:#f4f4f5',
+      'border:1px solid rgba(255,255,255,.16)',
+      'border-radius:12px',
+      'box-shadow:0 20px 60px rgba(0,0,0,.42)',
+      'font:13px -apple-system,BlinkMacSystemFont,Segoe UI,sans-serif',
+      'padding:8px',
+      'box-sizing:border-box',
     ]);
     promptBox.setAttribute(INTERNAL_ATTR, '1');
     const row = element('div', ['display:flex', 'align-items:center', 'gap:8px']);
     promptTag = element('div', [
-      'max-width:160px', 'overflow:hidden', 'text-overflow:ellipsis', 'white-space:nowrap',
-      'color:#9ca3af', 'font:11px ui-monospace,SFMono-Regular,Menlo,monospace',
+      'max-width:160px',
+      'overflow:hidden',
+      'text-overflow:ellipsis',
+      'white-space:nowrap',
+      'color:#9ca3af',
+      'font:11px ui-monospace,SFMono-Regular,Menlo,monospace',
     ]);
     promptTag.textContent = '@ref';
     promptInput = element('input', [
-      'flex:1', 'min-width:0', 'height:32px', 'border:0', 'outline:0', 'background:transparent',
-      'color:#f4f4f5', 'font:13px -apple-system,BlinkMacSystemFont,Segoe UI,sans-serif',
+      'flex:1',
+      'min-width:0',
+      'height:32px',
+      'border:0',
+      'outline:0',
+      'background:transparent',
+      'color:#f4f4f5',
+      'font:13px -apple-system,BlinkMacSystemFont,Segoe UI,sans-serif',
     ]);
     promptInput.placeholder = 'Describe the change';
     promptInput.addEventListener('input', syncPromptSend);
     promptSend = element('button', [
-      'display:flex', 'align-items:center', 'justify-content:center',
-      'width:30px', 'height:30px', 'border:0', 'border-radius:999px', 'background:#f4f4f5',
-      'color:#111', 'cursor:pointer', 'flex:0 0 auto', 'transition:opacity .15s ease,background .15s ease',
+      'display:flex',
+      'align-items:center',
+      'justify-content:center',
+      'width:30px',
+      'height:30px',
+      'border:0',
+      'border-radius:999px',
+      'background:#f4f4f5',
+      'color:#111',
+      'cursor:pointer',
+      'flex:0 0 auto',
+      'transition:opacity .15s ease,background .15s ease',
     ]);
     promptSend.type = 'submit';
     promptSend.title = 'Send to Droid';
     promptSend.innerHTML = sendIconSvg();
     const close = element('button', [
-      'display:flex', 'align-items:center', 'justify-content:center',
-      'width:28px', 'height:28px', 'border:0', 'border-radius:7px', 'background:transparent',
-      'color:#9ca3af', 'cursor:pointer', 'flex:0 0 auto',
+      'display:flex',
+      'align-items:center',
+      'justify-content:center',
+      'width:28px',
+      'height:28px',
+      'border:0',
+      'border-radius:7px',
+      'background:transparent',
+      'color:#9ca3af',
+      'cursor:pointer',
+      'flex:0 0 auto',
     ]);
     close.type = 'button';
     close.title = 'Cancel';
@@ -1240,7 +1486,9 @@ function positionPrompt(box) {
 }
 
 function isInternalEvent(event) {
-  return Boolean(event.target && event.target.closest && event.target.closest(`[${INTERNAL_ATTR}]`));
+  return Boolean(
+    event.target && event.target.closest && event.target.closest(`[${INTERNAL_ATTR}]`),
+  );
 }
 
 function clamp(value, min, max) {

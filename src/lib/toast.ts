@@ -31,7 +31,11 @@ export function dismissToast(id: number): void {
   emit();
 }
 
-export function pushToast(message: string, variant: ToastVariant = 'info', ttl = DEFAULT_TTL_MS): number {
+export function pushToast(
+  message: string,
+  variant: ToastVariant = 'info',
+  ttl = DEFAULT_TTL_MS,
+): number {
   const id = nextId++;
   toasts = [...toasts, { id, message, variant }];
   emit();

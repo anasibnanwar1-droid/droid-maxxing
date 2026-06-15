@@ -1,5 +1,10 @@
 import type { NativeBrowserSelection } from './nativeBrowser';
-import type { BrowserBox, BrowserElementRef, BrowserNativeSnapshot, DesignStrokePoint } from '../types/bridge';
+import type {
+  BrowserBox,
+  BrowserElementRef,
+  BrowserNativeSnapshot,
+  DesignStrokePoint,
+} from '../types/bridge';
 
 interface AttachIframeDesignModeOptions {
   designMode: boolean;
@@ -10,8 +15,40 @@ interface AttachIframeDesignModeOptions {
 type Point = { x: number; y: number };
 
 const INTERACTIVE_TAGS = new Set(['A', 'BUTTON', 'INPUT', 'TEXTAREA', 'SELECT', 'SUMMARY']);
-const TEXT_TAGS = new Set(['BLOCKQUOTE', 'CODE', 'EM', 'FIGCAPTION', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'LABEL', 'LI', 'P', 'PRE', 'SMALL', 'SPAN', 'STRONG', 'TD', 'TH']);
-const INTERACTIVE_ROLES = new Set(['button', 'checkbox', 'combobox', 'link', 'menuitem', 'option', 'radio', 'searchbox', 'switch', 'tab', 'textbox']);
+const TEXT_TAGS = new Set([
+  'BLOCKQUOTE',
+  'CODE',
+  'EM',
+  'FIGCAPTION',
+  'H1',
+  'H2',
+  'H3',
+  'H4',
+  'H5',
+  'H6',
+  'LABEL',
+  'LI',
+  'P',
+  'PRE',
+  'SMALL',
+  'SPAN',
+  'STRONG',
+  'TD',
+  'TH',
+]);
+const INTERACTIVE_ROLES = new Set([
+  'button',
+  'checkbox',
+  'combobox',
+  'link',
+  'menuitem',
+  'option',
+  'radio',
+  'searchbox',
+  'switch',
+  'tab',
+  'textbox',
+]);
 
 export function attachIframeDesignMode(
   iframe: HTMLIFrameElement,
@@ -46,15 +83,18 @@ export function attachIframeDesignMode(
   const svgNs = 'http://www.w3.org/2000/svg';
   const svg = doc.createElementNS(svgNs, 'svg');
   svg.id = '__droidmaxx_pencil_svg';
-  svg.setAttribute('style', [
-    'position:fixed',
-    'z-index:2147483646',
-    'left:0',
-    'top:0',
-    'width:100vw',
-    'height:100vh',
-    'pointer-events:none',
-  ].join(';'));
+  svg.setAttribute(
+    'style',
+    [
+      'position:fixed',
+      'z-index:2147483646',
+      'left:0',
+      'top:0',
+      'width:100vw',
+      'height:100vh',
+      'pointer-events:none',
+    ].join(';'),
+  );
   svg.setAttribute('width', String(win.innerWidth));
   svg.setAttribute('height', String(win.innerHeight));
 
@@ -145,7 +185,9 @@ export function attachIframeDesignMode(
         range.setEnd(second.startContainer, second.startOffset);
         text = cleanText(range.toString());
       }
-    } catch { /* fallback below */ }
+    } catch {
+      /* fallback below */
+    }
     if (!text) {
       text = cleanText(win.getSelection()?.toString() ?? '');
     }
@@ -267,7 +309,10 @@ export function attachIframeDesignMode(
   };
 }
 
-export function snapshotIframe(iframe: HTMLIFrameElement, fallbackUrl: string): BrowserNativeSnapshot {
+export function snapshotIframe(
+  iframe: HTMLIFrameElement,
+  fallbackUrl: string,
+): BrowserNativeSnapshot {
   const doc = iframe.contentDocument;
   const win = iframe.contentWindow;
   if (!doc || !win) {
@@ -305,13 +350,17 @@ export async function typeIntoIframe(iframe: HTMLIFrameElement, text: string): P
     const start = input.selectionStart ?? input.value.length;
     const end = input.selectionEnd ?? input.value.length;
     input.setRangeText(value, start, end, 'end');
-    input.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: value }));
+    input.dispatchEvent(
+      new InputEvent('input', { bubbles: true, inputType: 'insertText', data: value }),
+    );
     input.dispatchEvent(new Event('change', { bubbles: true }));
     return;
   }
   if ((el as HTMLElement).isContentEditable) {
     doc.execCommand('insertText', false, value);
-    el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: value }));
+    el.dispatchEvent(
+      new InputEvent('input', { bubbles: true, inputType: 'insertText', data: value }),
+    );
     return;
   }
   throw new Error('Focused browser element is not text-editable.');
@@ -329,7 +378,11 @@ export async function keypressIframe(iframe: HTMLIFrameElement, key: string): Pr
   el.dispatchEvent(new KeyboardEvent('keyup', { key: value, bubbles: true, cancelable: true }));
 }
 
-export async function scrollIframe(iframe: HTMLIFrameElement, direction: string, pixels = 500): Promise<void> {
+export async function scrollIframe(
+  iframe: HTMLIFrameElement,
+  direction: string,
+  pixels = 500,
+): Promise<void> {
   const win = iframe.contentWindow;
   if (!win) throw new Error('Droid Control browser page is not loaded yet.');
   const amount = Math.max(1, Math.round(pixels));
@@ -375,33 +428,56 @@ function cleanText(value: string | null | undefined): string {
 }
 
 function directText(el: Element): string {
-  return cleanText([...el.childNodes]
-    .filter((node) => node.nodeType === Node.TEXT_NODE)
-    .map((node) => node.textContent ?? '')
-    .join(' '));
+  return cleanText(
+    [...el.childNodes]
+      .filter((node) => node.nodeType === Node.TEXT_NODE)
+      .map((node) => node.textContent ?? '')
+      .join(' '),
+  );
 }
 
 function roleFor(el: Element): string {
-  return el.getAttribute('role') || ({ A: 'link', BUTTON: 'button', INPUT: 'textbox', TEXTAREA: 'textbox', SELECT: 'combobox' } as Record<string, string>)[el.tagName] || '';
+  return (
+    el.getAttribute('role') ||
+    (
+      {
+        A: 'link',
+        BUTTON: 'button',
+        INPUT: 'textbox',
+        TEXTAREA: 'textbox',
+        SELECT: 'combobox',
+      } as Record<string, string>
+    )[el.tagName] ||
+    ''
+  );
 }
 
 function isCandidate(el: Element): boolean {
   if (el === el.ownerDocument.body || el === el.ownerDocument.documentElement) return false;
   const rect = el.getBoundingClientRect();
   if (rect.width < 4 || rect.height < 4) return false;
-  const viewportArea = Math.max(1, el.ownerDocument.defaultView!.innerWidth * el.ownerDocument.defaultView!.innerHeight);
+  const viewportArea = Math.max(
+    1,
+    el.ownerDocument.defaultView!.innerWidth * el.ownerDocument.defaultView!.innerHeight,
+  );
   const area = rect.width * rect.height;
   if (area > viewportArea * 0.72) return false;
   const role = roleFor(el).toLowerCase();
   if (INTERACTIVE_TAGS.has(el.tagName) || INTERACTIVE_ROLES.has(role)) return true;
-  if (TEXT_TAGS.has(el.tagName) && cleanText((el as HTMLElement).innerText || el.textContent)) return true;
-  if (el.getAttribute('aria-label') || el.getAttribute('title') || el.getAttribute('data-testid')) return true;
+  if (TEXT_TAGS.has(el.tagName) && cleanText((el as HTMLElement).innerText || el.textContent))
+    return true;
+  if (el.getAttribute('aria-label') || el.getAttribute('title') || el.getAttribute('data-testid'))
+    return true;
   return Boolean(directText(el)) && area < viewportArea * 0.35;
 }
 
 function pickTarget(start: Element | null): Element | null {
   let node = start;
-  while (node && node.nodeType === Node.ELEMENT_NODE && node !== node.ownerDocument.documentElement) {
+  while (
+    node &&
+    node.nodeType === Node.ELEMENT_NODE &&
+    node !== node.ownerDocument.documentElement
+  ) {
     if (isCandidate(node)) return node;
     node = node.parentElement;
   }
@@ -416,7 +492,12 @@ function selectorFor(el: Element): string {
   if (aria) return `${el.tagName.toLowerCase()}[aria-label="${cssEscape(aria)}"]`;
   const parts: string[] = [];
   let node: Element | null = el;
-  while (node && node.nodeType === Node.ELEMENT_NODE && node !== el.ownerDocument.documentElement && parts.length < 5) {
+  while (
+    node &&
+    node.nodeType === Node.ELEMENT_NODE &&
+    node !== el.ownerDocument.documentElement &&
+    parts.length < 5
+  ) {
     let part = node.tagName.toLowerCase();
     const parent: Element | null = node.parentElement;
     if (parent) {
@@ -430,22 +511,35 @@ function selectorFor(el: Element): string {
 }
 
 function cssEscape(value: string): string {
-  return typeof CSS !== 'undefined' && CSS.escape ? CSS.escape(value) : value.replace(/["\\]/g, '\\$&');
+  return typeof CSS !== 'undefined' && CSS.escape
+    ? CSS.escape(value)
+    : value.replace(/["\\]/g, '\\$&');
 }
 
 function stableId(value: string): string {
   let hash = 0;
   for (let index = 0; index < value.length; index += 1) {
-    hash = Math.imul(31, hash) + value.charCodeAt(index) | 0;
+    hash = (Math.imul(31, hash) + value.charCodeAt(index)) | 0;
   }
   return `@live-${Math.abs(hash).toString(36)}`;
 }
 
-function selectionFor(win: Window, doc: Document, el: Element, strokes: DesignStrokePoint[][] = []): NativeBrowserSelection {
+function selectionFor(
+  win: Window,
+  doc: Document,
+  el: Element,
+  strokes: DesignStrokePoint[][] = [],
+): NativeBrowserSelection {
   const rect = el.getBoundingClientRect();
   const selector = selectorFor(el);
   const text = cleanText((el as HTMLElement).innerText || el.textContent);
-  const name = cleanText(el.getAttribute('aria-label') || el.getAttribute('title') || el.getAttribute('placeholder') || directText(el) || text);
+  const name = cleanText(
+    el.getAttribute('aria-label') ||
+      el.getAttribute('title') ||
+      el.getAttribute('placeholder') ||
+      directText(el) ||
+      text,
+  );
   const tag = el.tagName.toLowerCase();
   const role = roleFor(el) || undefined;
   const box = {
@@ -491,7 +585,10 @@ function ancestorsFor(el: Element): { tag: string; selector?: string }[] {
   const chain: { tag: string; selector?: string }[] = [];
   let node: Element | null = el.parentElement;
   while (node && node !== el.ownerDocument.documentElement && chain.length < 4) {
-    chain.push({ tag: node.tagName.toLowerCase(), selector: node.id ? `#${cssEscape(node.id)}` : undefined });
+    chain.push({
+      tag: node.tagName.toLowerCase(),
+      selector: node.id ? `#${cssEscape(node.id)}` : undefined,
+    });
     node = node.parentElement;
   }
   return chain;
@@ -499,14 +596,28 @@ function ancestorsFor(el: Element): { tag: string; selector?: string }[] {
 
 function labelFor(el: Element): string {
   const tag = el.tagName.toLowerCase();
-  const label = cleanText(el.getAttribute('aria-label') || el.getAttribute('title') || el.getAttribute('placeholder') || directText(el) || el.getAttribute('data-testid') || el.id || tag).slice(0, 48);
+  const label = cleanText(
+    el.getAttribute('aria-label') ||
+      el.getAttribute('title') ||
+      el.getAttribute('placeholder') ||
+      directText(el) ||
+      el.getAttribute('data-testid') ||
+      el.id ||
+      tag,
+  ).slice(0, 48);
   return `${label || tag} · ${tag}`;
 }
 
 function refFor(el: Element, index: number): BrowserElementRef {
   const rect = el.getBoundingClientRect();
   const text = cleanText((el as HTMLElement).innerText || el.textContent);
-  const name = cleanText(el.getAttribute('aria-label') || el.getAttribute('title') || el.getAttribute('placeholder') || directText(el) || text);
+  const name = cleanText(
+    el.getAttribute('aria-label') ||
+      el.getAttribute('title') ||
+      el.getAttribute('placeholder') ||
+      directText(el) ||
+      text,
+  );
   return {
     ref: `@b${index}`,
     selector: selectorFor(el),
@@ -515,7 +626,10 @@ function refFor(el: Element, index: number): BrowserElementRef {
     name: name || undefined,
     text: text || undefined,
     attributes: attrsFor(el),
-    className: typeof (el as HTMLElement).className === 'string' ? (el as HTMLElement).className.slice(0, 160) : undefined,
+    className:
+      typeof (el as HTMLElement).className === 'string'
+        ? (el as HTMLElement).className.slice(0, 160)
+        : undefined,
     box: {
       x: Math.round(rect.x),
       y: Math.round(rect.y),
@@ -528,7 +642,18 @@ function refFor(el: Element, index: number): BrowserElementRef {
 
 function attrsFor(el: Element): Record<string, string> {
   const out: Record<string, string> = {};
-  for (const name of ['id', 'class', 'data-testid', 'aria-label', 'title', 'placeholder', 'type', 'href', 'name', 'value']) {
+  for (const name of [
+    'id',
+    'class',
+    'data-testid',
+    'aria-label',
+    'title',
+    'placeholder',
+    'type',
+    'href',
+    'name',
+    'value',
+  ]) {
     const value = el.getAttribute(name);
     if (value) out[name] = value.slice(0, 160);
   }
@@ -547,7 +672,14 @@ function stylesFor(el: Element): Record<string, string> {
   };
 }
 
-function showHover(win: Window, overlay: HTMLElement, label: HTMLElement, rect: DOMRect, text: string, color = '#2997ff'): void {
+function showHover(
+  win: Window,
+  overlay: HTMLElement,
+  label: HTMLElement,
+  rect: DOMRect,
+  text: string,
+  color = '#2997ff',
+): void {
   overlay.style.display = 'block';
   overlay.style.borderColor = color;
   overlay.style.left = `${Math.round(rect.x)}px`;
@@ -575,7 +707,10 @@ function boundingBox(a: Point, b: Point) {
 }
 
 function strokesBoundingBox(strokes: DesignStrokePoint[][]): BrowserBox {
-  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  let minX = Infinity,
+    minY = Infinity,
+    maxX = -Infinity,
+    maxY = -Infinity;
   for (const stroke of strokes) {
     for (const pt of stroke) {
       if (pt.x < minX) minX = pt.x;

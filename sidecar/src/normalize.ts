@@ -71,7 +71,13 @@ export interface NormalizedEvent {
   progress?: ProgressEntry[];
   missionState?: string;
   worker?: { event: 'started' | 'completed'; workerSessionId: string; exitCode?: number };
-  subagent?: { sessionId?: string; toolUseId?: string; label?: string; prompt?: string; done?: boolean };
+  subagent?: {
+    sessionId?: string;
+    toolUseId?: string;
+    label?: string;
+    prompt?: string;
+    done?: boolean;
+  };
   tokens?: { tokensIn: number; tokensOut: number; contextTokens: number };
   done?: boolean;
 }
@@ -152,20 +158,25 @@ export function normalizeStreamEvent(
       (Number(cumulative.cacheCreationTokens ?? 0) || 0);
     const tokensOut = Number(cumulative.outputTokens ?? 0) || 0;
     const contextTokens =
-      (Number(context.inputTokens ?? 0) || 0) +
-      (Number(context.cacheReadTokens ?? 0) || 0);
+      (Number(context.inputTokens ?? 0) || 0) + (Number(context.cacheReadTokens ?? 0) || 0);
     return { tokens: { tokensIn, tokensOut, contextTokens } };
   }
 
   // ToolProgress events nest the spawned subagent's session id under `update`.
-  const update = raw.update && typeof raw.update === 'object' ? (raw.update as Record<string, unknown>) : undefined;
+  const update =
+    raw.update && typeof raw.update === 'object'
+      ? (raw.update as Record<string, unknown>)
+      : undefined;
   const subagentSessionId = str(raw.subagentSessionId) ?? str(update?.subagentSessionId);
   const eventToolUseId = toolUseIdFrom(raw.toolUseId, update?.toolUseId);
 
   if (ev.type === 'tool_progress' || raw.type === 'tool_progress') {
     // The session id arrives here; the label was captured earlier on the Task tool_call,
     // so only forward a label if these params actually carry a specific subagent name.
-    const params = update?.parameters && typeof update.parameters === 'object' ? (update.parameters as Record<string, unknown>) : {};
+    const params =
+      update?.parameters && typeof update.parameters === 'object'
+        ? (update.parameters as Record<string, unknown>)
+        : {};
     const label = str(params.subagent_type) ?? str(params.subagentType);
     const prompt = taskPrompt(params);
     if (!subagentSessionId && !label && !prompt) return null;
@@ -181,9 +192,16 @@ export function normalizeStreamEvent(
       };
     case 'tool_call':
     case 'tool_call_delta': {
-      const toolUse = (ev as { toolUse?: { id?: string; name?: string; input?: Record<string, unknown> } }).toolUse ?? {};
+      const toolUse =
+        (ev as { toolUse?: { id?: string; name?: string; input?: Record<string, unknown> } })
+          .toolUse ?? {};
       const toolUseId = toolUseIdFrom(toolUse.id, eventToolUseId);
-      const subagent = detectSubagent(toolUse.name, toolUse.input ?? {}, subagentSessionId, toolUseId);
+      const subagent = detectSubagent(
+        toolUse.name,
+        toolUse.input ?? {},
+        subagentSessionId,
+        toolUseId,
+      );
       return {
         transcript: transcript(missionId, agentSessionId, role, 'tool_call', {
           toolName: toolUse.name,
@@ -244,7 +262,8 @@ export function normalizeStreamEvent(
     case 'result':
       return { done: true };
     default:
-      if (subagentSessionId) return { subagent: { sessionId: subagentSessionId, toolUseId: eventToolUseId } };
+      if (subagentSessionId)
+        return { subagent: { sessionId: subagentSessionId, toolUseId: eventToolUseId } };
       return null;
   }
 }
@@ -259,14 +278,19 @@ export function normalizeNotification(
   const converted = convertNotificationToStreamMessage(raw);
   const messages = Array.isArray(converted) ? converted : converted ? [converted] : [];
   return messages
-    .map((message) => normalizeStreamEvent(missionId, agentSessionId, role, message as DroidStreamEvent))
+    .map((message) =>
+      normalizeStreamEvent(missionId, agentSessionId, role, message as DroidStreamEvent),
+    )
     .filter((event): event is NormalizedEvent => event !== null);
 }
 
 function extractNotification(notification: Record<string, unknown>): unknown {
-  const params = notification.params && typeof notification.params === 'object' && !Array.isArray(notification.params)
-    ? (notification.params as Record<string, unknown>)
-    : undefined;
+  const params =
+    notification.params &&
+    typeof notification.params === 'object' &&
+    !Array.isArray(notification.params)
+      ? (notification.params as Record<string, unknown>)
+      : undefined;
   if (params && 'notification' in params) return params.notification;
   if ('notification' in notification) return notification.notification;
   return notification;
@@ -382,11 +406,16 @@ export function classifyPermission(
       const [splitServer, splitTool] = rawTool.includes('___')
         ? [rawTool.slice(0, rawTool.indexOf('___')), rawTool.slice(rawTool.indexOf('___') + 3)]
         : ['', rawTool];
-      const serverName = typeof c.serverName === 'string' && c.serverName ? c.serverName : splitServer;
+      const serverName =
+        typeof c.serverName === 'string' && c.serverName ? c.serverName : splitServer;
       const toolName = splitTool;
       title = toolName
-        ? serverName ? `${serverName} · ${toolName}` : toolName
-        : serverName ? `${serverName} tool` : 'External tool';
+        ? serverName
+          ? `${serverName} · ${toolName}`
+          : toolName
+        : serverName
+          ? `${serverName} tool`
+          : 'External tool';
       detail = mcpToolDetail(c, primaryToolInput(params));
       break;
     }
@@ -417,11 +446,12 @@ export function permissionSignature(params: RequestPermissionRequestParams): str
     case 'apply_patch': {
       // Scope file-write grants to the specific path so "Always allow" cannot
       // bypass prompts for unrelated files. No identifiable path => ineligible.
-      const path = typeof c.filePath === 'string' && c.filePath
-        ? c.filePath
-        : typeof c.fileName === 'string' && c.fileName
-          ? c.fileName
-          : '';
+      const path =
+        typeof c.filePath === 'string' && c.filePath
+          ? c.filePath
+          : typeof c.fileName === 'string' && c.fileName
+            ? c.fileName
+            : '';
       return path ? `${type}::${path}` : '';
     }
     default:

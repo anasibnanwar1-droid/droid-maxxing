@@ -1,5 +1,16 @@
 import { bridge } from './bridge';
-import type { Autonomy, BrowserNativeResult, BrowserScrollDirection, BrowserViewport, BrowserViewportMode, ConfigurableAgent, DesignReference, PermissionOutcome, ReasoningEffort, SessionInteractionMode } from '../types/bridge';
+import type {
+  Autonomy,
+  BrowserNativeResult,
+  BrowserScrollDirection,
+  BrowserViewport,
+  BrowserViewportMode,
+  ConfigurableAgent,
+  DesignReference,
+  PermissionOutcome,
+  ReasoningEffort,
+  SessionInteractionMode,
+} from '../types/bridge';
 
 let refCounter = 0;
 
@@ -34,7 +45,8 @@ export const updateSessionSettings = (p: {
 }) => bridge.send({ type: 'session.updateSettings', ...p });
 
 export const listModels = () => bridge.send({ type: 'models.list' });
-export const listSkills = (sessionId?: string) => bridge.send({ type: 'catalog.skills', sessionId });
+export const listSkills = (sessionId?: string) =>
+  bridge.send({ type: 'catalog.skills', sessionId });
 export const listFactoryDefaults = () => bridge.send({ type: 'settings.defaults' });
 
 export const sendToMission = (missionId: string, text: string) =>
@@ -52,14 +64,14 @@ export const sendToAgentNow = (missionId: string, agentSessionId: string, text: 
 export const respondPermission = (
   missionId: string,
   requestId: string,
-  outcome: PermissionOutcome
+  outcome: PermissionOutcome,
 ) => bridge.send({ type: 'mission.respondPermission', missionId, requestId, outcome });
 
 export const respondQuestion = (
   missionId: string,
   requestId: string,
   cancelled: boolean,
-  answers: { index: number; question: string; answer: string }[]
+  answers: { index: number; question: string; answer: string }[],
 ) => bridge.send({ type: 'mission.respondQuestion', missionId, requestId, cancelled, answers });
 
 export const interruptMission = (missionId: string) =>
@@ -83,8 +95,11 @@ export const subscribeWorker = (missionId: string, workerSessionId: string) =>
 export const closeMission = (missionId: string) =>
   bridge.send({ type: 'mission.close', missionId });
 
-export const listMissions = (options?: { workspaceCwds?: string[]; includePlainChats?: boolean; limitPerWorkspace?: number }) =>
-  bridge.send({ type: 'mission.list', ...options });
+export const listMissions = (options?: {
+  workspaceCwds?: string[];
+  includePlainChats?: boolean;
+  limitPerWorkspace?: number;
+}) => bridge.send({ type: 'mission.list', ...options });
 
 export const loadMissionHistory = (missionId: string) =>
   bridge.send({ type: 'mission.loadHistory', missionId });
@@ -99,8 +114,12 @@ export const updateAgentSettings = (p: {
   reasoningEffort?: ReasoningEffort;
 }) => bridge.send({ type: 'settings.agent.update', ...p });
 
-export const openBrowser = (p: { missionId: string; url: string; viewport?: BrowserViewport; viewportMode?: BrowserViewportMode }) =>
-  bridge.send({ type: 'browser.open', ...p });
+export const openBrowser = (p: {
+  missionId: string;
+  url: string;
+  viewport?: BrowserViewport;
+  viewportMode?: BrowserViewportMode;
+}) => bridge.send({ type: 'browser.open', ...p });
 
 export const closeBrowser = (missionId: string) =>
   bridge.send({ type: 'browser.close', missionId });
@@ -111,11 +130,19 @@ export const reloadBrowser = (missionId: string) =>
 export const refreshBrowser = (missionId: string) =>
   bridge.send({ type: 'browser.refresh', missionId });
 
-export const resizeBrowserViewport = (p: { missionId: string; viewport: BrowserViewport; viewportMode: BrowserViewportMode }) =>
-  bridge.send({ type: 'browser.resizeViewport', ...p });
+export const resizeBrowserViewport = (p: {
+  missionId: string;
+  viewport: BrowserViewport;
+  viewportMode: BrowserViewportMode;
+}) => bridge.send({ type: 'browser.resizeViewport', ...p });
 
-export const clickBrowser = (p: { missionId: string; ref?: string; x?: number; y?: number; source?: 'agent' | 'user' }) =>
-  bridge.send({ type: 'browser.click', ...p });
+export const clickBrowser = (p: {
+  missionId: string;
+  ref?: string;
+  x?: number;
+  y?: number;
+  source?: 'agent' | 'user';
+}) => bridge.send({ type: 'browser.click', ...p });
 
 export const typeBrowser = (missionId: string, text: string) =>
   bridge.send({ type: 'browser.type', missionId, text });
@@ -123,8 +150,12 @@ export const typeBrowser = (missionId: string, text: string) =>
 export const keypressBrowser = (missionId: string, key: string) =>
   bridge.send({ type: 'browser.keypress', missionId, key });
 
-export const scrollBrowser = (p: { missionId: string; direction: BrowserScrollDirection; pixels?: number; source?: 'agent' | 'user' }) =>
-  bridge.send({ type: 'browser.scroll', ...p });
+export const scrollBrowser = (p: {
+  missionId: string;
+  direction: BrowserScrollDirection;
+  pixels?: number;
+  source?: 'agent' | 'user';
+}) => bridge.send({ type: 'browser.scroll', ...p });
 
 export const addDesignReference = (missionId: string, reference: DesignReference) =>
   bridge.send({ type: 'browser.design.addReference', missionId, reference });

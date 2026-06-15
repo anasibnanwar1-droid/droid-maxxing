@@ -1,6 +1,12 @@
 import type { BrowserNativeRequest, BrowserNativeResult } from '../protocol.js';
 import type { BrowserRuntime } from './BrowserSessionManager.js';
-import type { BrowserBox, BrowserScreenshotOptions, BrowserSnapshot, BrowserViewport, ScrollDirection } from './types.js';
+import type {
+  BrowserBox,
+  BrowserScreenshotOptions,
+  BrowserSnapshot,
+  BrowserViewport,
+  ScrollDirection,
+} from './types.js';
 
 export interface NativeBrowserRuntimeOptions {
   sessionId: string;
@@ -73,9 +79,13 @@ export class NativeBrowserRuntime implements BrowserRuntime {
     await this.send({ action: 'close' }).catch(() => {});
   }
 
-  private send(input: Omit<BrowserNativeRequest, 'requestId' | 'missionId' | 'sessionId' | 'viewport'>): Promise<BrowserNativeResult> {
+  private send(
+    input: Omit<BrowserNativeRequest, 'requestId' | 'missionId' | 'sessionId' | 'viewport'>,
+  ): Promise<BrowserNativeResult> {
     return this.options.request({
-      requestId: this.options.nextRequestId?.() ?? `native-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`,
+      requestId:
+        this.options.nextRequestId?.() ??
+        `native-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`,
       missionId: this.options.missionId,
       sessionId: this.options.sessionId,
       viewport: this.viewport,

@@ -22,7 +22,7 @@ function useActiveHeading(scrollRef: React.RefObject<HTMLDivElement | null>, hea
           setActiveId(visible[0].target.id);
         }
       },
-      { root: container, rootMargin: '-80px 0px -70% 0px', threshold: 0 }
+      { root: container, rootMargin: '-80px 0px -70% 0px', threshold: 0 },
     );
 
     headingIds.forEach((id) => {
@@ -36,7 +36,12 @@ function useActiveHeading(scrollRef: React.RefObject<HTMLDivElement | null>, hea
   return activeId;
 }
 
-export function SpecModal({ content, title, open, onClose }: {
+export function SpecModal({
+  content,
+  title,
+  open,
+  onClose,
+}: {
   content: string;
   title?: string;
   open: boolean;
@@ -106,7 +111,10 @@ export function SpecModal({ content, title, open, onClose }: {
             {/* Body */}
             <div className="flex-1 flex min-h-0 min-w-0 overflow-hidden">
               {/* Document */}
-              <div ref={scrollRef} className="flex-1 overflow-y-auto overflow-x-hidden scroll-smooth">
+              <div
+                ref={scrollRef}
+                className="flex-1 overflow-y-auto overflow-x-hidden scroll-smooth"
+              >
                 <div className="max-w-4xl mx-auto px-10 py-10 min-h-full">
                   {content ? (
                     <SpecRenderer content={content} />

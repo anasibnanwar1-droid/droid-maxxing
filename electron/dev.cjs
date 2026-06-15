@@ -5,11 +5,15 @@ const path = require('node:path');
 const electron = require('electron');
 const startUrl = process.env.ELECTRON_START_URL || 'http://127.0.0.1:1420';
 const viteTarget = new URL(startUrl);
-const vite = spawn(npmCmd(), ['run', 'dev', '--', '--host', viteTarget.hostname, '--port', viteTarget.port || '1420'], {
-  cwd: path.resolve(__dirname, '..'),
-  stdio: 'inherit',
-  env: process.env,
-});
+const vite = spawn(
+  npmCmd(),
+  ['run', 'dev', '--', '--host', viteTarget.hostname, '--port', viteTarget.port || '1420'],
+  {
+    cwd: path.resolve(__dirname, '..'),
+    stdio: 'inherit',
+    env: process.env,
+  },
+);
 
 let electronProcess = null;
 

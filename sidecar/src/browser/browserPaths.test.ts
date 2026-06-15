@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {
-  browserDesignReferenceDir,
-  isBrowserAssetPath,
-} from './browserPaths.js';
+import { browserDesignReferenceDir, isBrowserAssetPath } from './browserPaths.js';
 
 test('browser paths sanitize mission ids', () => {
-  assert.equal(browserDesignReferenceDir('mission:one', '/tmp/droid'), '/tmp/droid/design-references/mission-one');
+  assert.equal(
+    browserDesignReferenceDir('mission:one', '/tmp/droid'),
+    '/tmp/droid/design-references/mission-one',
+  );
 });
 
 test('isBrowserAssetPath allows only files below browser data root', () => {

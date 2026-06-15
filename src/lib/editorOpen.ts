@@ -6,14 +6,16 @@ export const EDITOR_OPTIONS = [
   { id: 'xcode', label: 'Xcode' },
 ] as const;
 
-export type EditorId = typeof EDITOR_OPTIONS[number]['id'];
+export type EditorId = (typeof EDITOR_OPTIONS)[number]['id'];
 export type EditorTarget = 'codebase' | 'diff';
 
 export const DEFAULT_EDITOR_STORAGE_KEY = 'droid-default-editor';
 const DEFAULT_EDITOR: EditorId = 'vscode';
 
 export function normalizeEditorId(value: unknown): EditorId {
-  return EDITOR_OPTIONS.some((option) => option.id === value) ? value as EditorId : DEFAULT_EDITOR;
+  return EDITOR_OPTIONS.some((option) => option.id === value)
+    ? (value as EditorId)
+    : DEFAULT_EDITOR;
 }
 
 export function editorLabel(value: unknown): string {

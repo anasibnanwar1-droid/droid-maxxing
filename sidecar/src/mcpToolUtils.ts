@@ -1,4 +1,6 @@
-export type ToolContent = { type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string };
+export type ToolContent =
+  | { type: 'text'; text: string }
+  | { type: 'image'; data: string; mimeType: string };
 export type ToolHandlerResult = string | { content: ToolContent[]; isError?: boolean };
 
 export function safeTool<T>(

@@ -57,7 +57,12 @@ wss.on('connection', (ws, req) => {
     try {
       cmd = JSON.parse(raw.toString()) as ClientCommand;
     } catch {
-      ws.send(JSON.stringify({ type: 'mission.error', message: 'Invalid JSON command' } satisfies ServerEvent));
+      ws.send(
+        JSON.stringify({
+          type: 'mission.error',
+          message: 'Invalid JSON command',
+        } satisfies ServerEvent),
+      );
       return;
     }
     try {

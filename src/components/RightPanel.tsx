@@ -7,8 +7,18 @@ import { environmentLabels } from '../lib/repoEnvironment';
 import { interruptAgent } from '../lib/commands';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-  GitBranch, Hash, Activity, Loader2, ChevronRight, CornerDownRight, FileDiff,
-  FolderGit, CheckCircle2, Circle, Square, FileText
+  GitBranch,
+  Hash,
+  Activity,
+  Loader2,
+  ChevronRight,
+  CornerDownRight,
+  FileDiff,
+  FolderGit,
+  CheckCircle2,
+  Circle,
+  Square,
+  FileText,
 } from 'lucide-react';
 import { openCodebase, openCurrentDiff } from './EditorOpenMenu';
 import { ModelIcon, providerOf } from './ModelIcon';
@@ -27,7 +37,13 @@ function Divider() {
 }
 
 function Row({
-  icon, label, meta, onClick, active, trailing, title,
+  icon,
+  label,
+  meta,
+  onClick,
+  active,
+  trailing,
+  title,
 }: {
   icon: React.ReactNode;
   label: string;
@@ -45,7 +61,9 @@ function Row({
         active ? 'bg-droid-elevated' : 'hover:bg-droid-elevated/50'
       }`}
     >
-      <span className="shrink-0 text-droid-text-muted group-hover:text-droid-text-secondary transition-colors">{icon}</span>
+      <span className="shrink-0 text-droid-text-muted group-hover:text-droid-text-secondary transition-colors">
+        {icon}
+      </span>
       <span className="min-w-0 flex-1 text-[13px] text-droid-text leading-snug">{label}</span>
       {meta && <span className="font-mono text-[11px] text-droid-text-muted shrink-0">{meta}</span>}
       {trailing}
@@ -54,8 +72,24 @@ function Row({
 }
 
 // Mirrors the sub-agent row design used in the left sidebar.
-function AgentRow({ label, meta, prompt, running, selected, depth, onClick, onStop }: {
-  label: string; meta?: string; prompt?: string; running: boolean; selected: boolean; depth: number; onClick: () => void; onStop?: () => void;
+function AgentRow({
+  label,
+  meta,
+  prompt,
+  running,
+  selected,
+  depth,
+  onClick,
+  onStop,
+}: {
+  label: string;
+  meta?: string;
+  prompt?: string;
+  running: boolean;
+  selected: boolean;
+  depth: number;
+  onClick: () => void;
+  onStop?: () => void;
 }) {
   return (
     <div
@@ -65,13 +99,25 @@ function AgentRow({ label, meta, prompt, running, selected, depth, onClick, onSt
       style={{ paddingLeft: 16 + depth * 14 }}
     >
       <button onClick={onClick} className="flex min-w-0 flex-1 items-start gap-1.5 text-left">
-        <CornerDownRight className={`mt-0.5 w-3 h-3 shrink-0 ${selected ? 'text-droid-accent' : 'text-droid-text-muted/60'}`} />
+        <CornerDownRight
+          className={`mt-0.5 w-3 h-3 shrink-0 ${selected ? 'text-droid-accent' : 'text-droid-text-muted/60'}`}
+        />
         <span className="min-w-0 flex-1">
-          <span className={`block truncate text-[12px] ${selected ? 'text-droid-text' : 'text-droid-text-muted group-hover:text-droid-text-secondary'}`}>
+          <span
+            className={`block truncate text-[12px] ${selected ? 'text-droid-text' : 'text-droid-text-muted group-hover:text-droid-text-secondary'}`}
+          >
             {label}
           </span>
-          {meta && <span className="mt-0.5 block truncate font-mono text-[10px] text-droid-text-muted/70">{meta}</span>}
-          {prompt && <span className="mt-0.5 block truncate text-[10.5px] text-droid-text-muted/80">{prompt}</span>}
+          {meta && (
+            <span className="mt-0.5 block truncate font-mono text-[10px] text-droid-text-muted/70">
+              {meta}
+            </span>
+          )}
+          {prompt && (
+            <span className="mt-0.5 block truncate text-[10.5px] text-droid-text-muted/80">
+              {prompt}
+            </span>
+          )}
         </span>
       </button>
       {running && <Loader2 className="w-3 h-3 shrink-0 animate-spin text-droid-accent" />}
@@ -90,8 +136,10 @@ function AgentRow({ label, meta, prompt, running, selected, depth, onClick, onSt
 }
 
 function statusIcon(status: string) {
-  if (status === 'completed') return <CheckCircle2 className="w-4 h-4" style={{ color: '#6f8f6f' }} />;
-  if (status === 'in_progress') return <Loader2 className="w-4 h-4 animate-spin" style={{ color: '#b0985f' }} />;
+  if (status === 'completed')
+    return <CheckCircle2 className="w-4 h-4" style={{ color: '#6f8f6f' }} />;
+  if (status === 'in_progress')
+    return <Loader2 className="w-4 h-4 animate-spin" style={{ color: '#b0985f' }} />;
   return <Circle className="w-4 h-4 text-droid-text-muted/50" />;
 }
 
@@ -104,10 +152,11 @@ export default function RightPanel() {
 
   // Mission control owns its own feature-based progress; for chat/spec sessions
   // we always prefer the model's own TodoWrite list as the source of truth.
-  const transcript = activeMission ? state.transcripts[activeMission.id] ?? [] : [];
+  const transcript = activeMission ? (state.transcripts[activeMission.id] ?? []) : [];
   const selectedAgent = state.selectedAgentSessionId;
   const todoResult = useMemo(() => {
-    if (!activeMission || activeMission.kind === 'mission_orchestrator') return { todos: [] as TodoItem[], foundPayload: false };
+    if (!activeMission || activeMission.kind === 'mission_orchestrator')
+      return { todos: [] as TodoItem[], foundPayload: false };
     const scoped =
       selectedAgent && selectedAgent !== 'orchestrator'
         ? transcript.filter((t) => t.agentSessionId === selectedAgent)
@@ -140,12 +189,16 @@ export default function RightPanel() {
   const progressOpen = progressManual ?? working;
 
   // Sub-agents spawned in this session (same source the sidebar uses).
-  const workers = activeMission ? state.workers[activeMission.id] ?? [] : [];
+  const workers = activeMission ? (state.workers[activeMission.id] ?? []) : [];
   const agentsRunning = workers.some((w) => w.status === 'running');
   const [agentsOpen, setAgentsOpen] = useState(true);
 
-  const modelInfo = activeMission?.modelId ? state.models.find((m) => m.id === activeMission.modelId) : undefined;
-  const modelLabel = activeMission ? (modelInfo?.displayName ?? activeMission.modelId ?? 'default') : 'default';
+  const modelInfo = activeMission?.modelId
+    ? state.models.find((m) => m.id === activeMission.modelId)
+    : undefined;
+  const modelLabel = activeMission
+    ? (modelInfo?.displayName ?? activeMission.modelId ?? 'default')
+    : 'default';
 
   return (
     <div className="shrink-0 w-[300px] pt-11 pb-3 pr-3 h-full flex items-start">
@@ -171,15 +224,27 @@ export default function RightPanel() {
                 <Row
                   icon={<GitBranch className="w-4 h-4" />}
                   label={env.branch}
-                  title={repoStatus?.repoRoot ? `${env.branch} · ${repoStatus.repoRoot}` : env.branch}
+                  title={
+                    repoStatus?.repoRoot ? `${env.branch} · ${repoStatus.repoRoot}` : env.branch
+                  }
                 />
                 <Row
                   icon={<FileDiff className="w-4 h-4" />}
                   label={env.changes}
-                  title={repoStatus ? 'Open a diff of uncommitted changes in your editor' : 'No git repository here'}
+                  title={
+                    repoStatus
+                      ? 'Open a diff of uncommitted changes in your editor'
+                      : 'No git repository here'
+                  }
                   onClick={() => openCurrentDiff(activeMission.cwd)}
                 />
-                <Row icon={<ModelIcon provider={providerOf(modelInfo, activeMission.modelId)} size={16} />} label={modelLabel} meta={activeMission.autonomy} />
+                <Row
+                  icon={
+                    <ModelIcon provider={providerOf(modelInfo, activeMission.modelId)} size={16} />
+                  }
+                  label={modelLabel}
+                  meta={activeMission.autonomy}
+                />
 
                 {/* Agents — collapsible, nested under the model */}
                 {workers.length > 0 && (
@@ -188,10 +253,16 @@ export default function RightPanel() {
                       onClick={() => setAgentsOpen((v) => !v)}
                       className="w-full flex items-center gap-1.5 px-3 py-1.5 text-left"
                     >
-                      <ChevronRight className={`w-3.5 h-3.5 text-droid-text-muted transition-transform ${agentsOpen ? 'rotate-90' : ''}`} />
+                      <ChevronRight
+                        className={`w-3.5 h-3.5 text-droid-text-muted transition-transform ${agentsOpen ? 'rotate-90' : ''}`}
+                      />
                       <span className="text-[12px] font-medium text-droid-text-muted">Agents</span>
-                      <span className="font-mono text-[11px] text-droid-text-muted/70">{workers.length}</span>
-                      {agentsRunning && <Loader2 className="ml-auto w-3 h-3 shrink-0 animate-spin text-droid-accent" />}
+                      <span className="font-mono text-[11px] text-droid-text-muted/70">
+                        {workers.length}
+                      </span>
+                      {agentsRunning && (
+                        <Loader2 className="ml-auto w-3 h-3 shrink-0 animate-spin text-droid-accent" />
+                      )}
                     </button>
                     <AnimatePresence initial={false}>
                       {agentsOpen && (
@@ -205,16 +276,29 @@ export default function RightPanel() {
                             <AgentRow
                               key={w.sessionId}
                               label={w.label ?? `Sub-agent ${i + 1}`}
-                              meta={[w.modelId ? state.models.find((m) => m.id === w.modelId)?.displayName ?? w.modelId : undefined, w.reasoningEffort].filter(Boolean).join(' · ') || undefined}
+                              meta={
+                                [
+                                  w.modelId
+                                    ? (state.models.find((m) => m.id === w.modelId)?.displayName ??
+                                      w.modelId)
+                                    : undefined,
+                                  w.reasoningEffort,
+                                ]
+                                  .filter(Boolean)
+                                  .join(' · ') || undefined
+                              }
                               prompt={w.prompt}
                               running={w.status === 'running'}
                               depth={0}
                               selected={state.selectedAgentSessionId === w.sessionId}
                               onClick={() => {
-                                const next = state.selectedAgentSessionId === w.sessionId ? null : w.sessionId;
+                                const next =
+                                  state.selectedAgentSessionId === w.sessionId ? null : w.sessionId;
                                 dispatch({ type: 'SELECT_AGENT', id: next });
                               }}
-                              onStop={() => activeMission && interruptAgent(activeMission.id, w.sessionId)}
+                              onStop={() =>
+                                activeMission && interruptAgent(activeMission.id, w.sessionId)
+                              }
                             />
                           ))}
                         </motion.div>
@@ -250,12 +334,18 @@ export default function RightPanel() {
                 className="w-full flex items-center justify-between px-3 pt-2 pb-1.5"
               >
                 <span className="flex items-center gap-1.5 text-[12.5px] font-medium text-droid-text-muted">
-                  <ChevronRight className={`w-3.5 h-3.5 transition-transform ${progressOpen ? 'rotate-90' : ''}`} />
+                  <ChevronRight
+                    className={`w-3.5 h-3.5 transition-transform ${progressOpen ? 'rotate-90' : ''}`}
+                  />
                   Progress
                 </span>
                 <span className="flex items-center gap-2">
                   {working && <Loader2 className="w-3.5 h-3.5 animate-spin text-droid-accent" />}
-                  {total > 0 && <span className="font-mono text-[11px] text-droid-text-muted">{completed}/{total}</span>}
+                  {total > 0 && (
+                    <span className="font-mono text-[11px] text-droid-text-muted">
+                      {completed}/{total}
+                    </span>
+                  )}
                 </span>
               </button>
 
@@ -301,7 +391,12 @@ export default function RightPanel() {
                             key={f.id}
                             icon={statusIcon(f.status)}
                             label={f.description}
-                            onClick={() => dispatch({ type: 'SELECT_FEATURE', id: state.selectedFeatureId === f.id ? null : f.id })}
+                            onClick={() =>
+                              dispatch({
+                                type: 'SELECT_FEATURE',
+                                id: state.selectedFeatureId === f.id ? null : f.id,
+                              })
+                            }
                             active={state.selectedFeatureId === f.id}
                           />
                         ))}
@@ -318,42 +413,55 @@ export default function RightPanel() {
 
           {/* Selected step detail */}
           <AnimatePresence>
-            {activeMission && state.selectedFeatureId && (() => {
-              const f = activeMission.features.find((x) => x.id === state.selectedFeatureId);
-              if (!f) return null;
-              return (
-                <motion.div
-                  key={f.id}
-                  initial={{ opacity: 0, height: 0 }}
-                  animate={{ opacity: 1, height: 'auto' }}
-                  exit={{ opacity: 0, height: 0 }}
-                  className="overflow-hidden"
-                >
-                  <div className="mx-3 my-1.5 rounded-xl bg-droid-elevated/50 px-3 py-2.5 space-y-2">
-                    <div className="text-[12.5px] text-droid-text leading-relaxed">{f.description}</div>
-                    {f.skillName && (
-                      <div className="flex items-center gap-2">
-                        <Hash className="w-3.5 h-3.5 text-droid-text-muted" />
-                        <span className="font-mono text-[11px] text-droid-text-secondary">{f.skillName}</span>
+            {activeMission &&
+              state.selectedFeatureId &&
+              (() => {
+                const f = activeMission.features.find((x) => x.id === state.selectedFeatureId);
+                if (!f) return null;
+                return (
+                  <motion.div
+                    key={f.id}
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: 'auto' }}
+                    exit={{ opacity: 0, height: 0 }}
+                    className="overflow-hidden"
+                  >
+                    <div className="mx-3 my-1.5 rounded-xl bg-droid-elevated/50 px-3 py-2.5 space-y-2">
+                      <div className="text-[12.5px] text-droid-text leading-relaxed">
+                        {f.description}
                       </div>
-                    )}
-                    {f.currentWorkerSessionId && (
-                      <div className="flex items-center gap-2">
-                        <Activity className="w-3.5 h-3.5 text-droid-accent" />
-                        <span className="font-mono text-[11px] text-droid-accent">{f.currentWorkerSessionId.slice(0, 12)}</span>
-                      </div>
-                    )}
-                    {f.preconditions.length > 0 && (
-                      <div className="space-y-1">
-                        {f.preconditions.map((p, i) => (
-                          <div key={i} className="text-[11.5px] text-droid-text-muted pl-3 border-l-2 border-droid-border">{p}</div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                </motion.div>
-              );
-            })()}
+                      {f.skillName && (
+                        <div className="flex items-center gap-2">
+                          <Hash className="w-3.5 h-3.5 text-droid-text-muted" />
+                          <span className="font-mono text-[11px] text-droid-text-secondary">
+                            {f.skillName}
+                          </span>
+                        </div>
+                      )}
+                      {f.currentWorkerSessionId && (
+                        <div className="flex items-center gap-2">
+                          <Activity className="w-3.5 h-3.5 text-droid-accent" />
+                          <span className="font-mono text-[11px] text-droid-accent">
+                            {f.currentWorkerSessionId.slice(0, 12)}
+                          </span>
+                        </div>
+                      )}
+                      {f.preconditions.length > 0 && (
+                        <div className="space-y-1">
+                          {f.preconditions.map((p, i) => (
+                            <div
+                              key={i}
+                              className="text-[11.5px] text-droid-text-muted pl-3 border-l-2 border-droid-border"
+                            >
+                              {p}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </motion.div>
+                );
+              })()}
           </AnimatePresence>
         </div>
       </div>

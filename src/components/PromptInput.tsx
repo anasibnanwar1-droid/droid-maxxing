@@ -3,9 +3,34 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { useStore } from '../hooks/useStore';
 import type { QueuedPrompt } from '../hooks/useStore';
 import { useMissionLive } from '../hooks/useMissionLive';
-import { sendToMission, sendToMissionNow, sendToAgent, sendToAgentNow, createMission, interruptMission, interruptAgent, compactSession, setInteractionMode, newClientRef, listSkills } from '../lib/commands';
+import {
+  sendToMission,
+  sendToMissionNow,
+  sendToAgent,
+  sendToAgentNow,
+  createMission,
+  interruptMission,
+  interruptAgent,
+  compactSession,
+  setInteractionMode,
+  newClientRef,
+  listSkills,
+} from '../lib/commands';
 import { pickDirectory, listFiles } from '../lib/desktop';
-import { ArrowUp, ChevronDown, SlidersHorizontal, Square, FileText, X, Folder, User, Box, ListPlus, GripVertical, Pencil } from 'lucide-react';
+import {
+  ArrowUp,
+  ChevronDown,
+  SlidersHorizontal,
+  Square,
+  FileText,
+  X,
+  Folder,
+  User,
+  Box,
+  ListPlus,
+  GripVertical,
+  Pencil,
+} from 'lucide-react';
 import ModelSelectorPopover from './ModelSelectorPopover';
 import PermissionInline from './PermissionInline';
 import PlanApprovalInline from './PlanApprovalInline';
@@ -15,7 +40,7 @@ import type { SkillInfo, SkillLocation } from '../types/bridge';
 const ACCENT = 'var(--droid-accent)';
 const accentMix = (pct: number) => `color-mix(in srgb, var(--droid-accent) ${pct}%, transparent)`;
 type SubmitMode = 'queue' | 'now';
-const oppositeSubmitMode = (mode: SubmitMode): SubmitMode => mode === 'queue' ? 'now' : 'queue';
+const oppositeSubmitMode = (mode: SubmitMode): SubmitMode => (mode === 'queue' ? 'now' : 'queue');
 const newQueueId = () => `q-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 
 type SlashCommand = { cmd: string; desc: string; run: () => void };
@@ -64,7 +89,10 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
   const [sendHover, setSendHover] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const pendingCaret = useRef<number | null>(null);
-  const prevLive = useRef<{ missionId: string | null; live: boolean }>({ missionId: null, live: false });
+  const prevLive = useRef<{ missionId: string | null; live: boolean }>({
+    missionId: null,
+    live: false,
+  });
 
   const activeMission = state.activeMissionId ? state.missions[state.activeMissionId] : null;
   const isLive = useMissionLive(state.activeMissionId);
@@ -76,13 +104,17 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
       ? activeMission.kind === 'spec'
       : state.specMode;
   const targetAgentSessionId =
-    activeMission?.kind !== 'mission_orchestrator' && state.selectedAgentSessionId && state.selectedAgentSessionId !== 'orchestrator'
+    activeMission?.kind !== 'mission_orchestrator' &&
+    state.selectedAgentSessionId &&
+    state.selectedAgentSessionId !== 'orchestrator'
       ? state.selectedAgentSessionId
       : null;
 
   const cwd = activeMission?.cwd ?? state.draftChat?.cwd ?? null;
   const skillsSessionId = activeMission?.id ?? null;
-  const pendingSkillsRequest = useRef<{ sessionId: string | null; requestedAt: number } | null>(null);
+  const pendingSkillsRequest = useRef<{ sessionId: string | null; requestedAt: number } | null>(
+    null,
+  );
 
   // Toggle spec mode. When a live chat session exists, switch its interaction
   // mode for real (not just the compose flag used for brand-new chats).
@@ -91,7 +123,11 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
       // Existing live chat: flip the session's real interaction mode and
       // optimistically update its kind so the toggle reflects immediately.
       const turningOn = !isSpecMode;
-      dispatch({ type: 'MISSION_SET_KIND', missionId: activeMission.id, kind: turningOn ? 'spec' : 'chat' });
+      dispatch({
+        type: 'MISSION_SET_KIND',
+        missionId: activeMission.id,
+        kind: turningOn ? 'spec' : 'chat',
+      });
       setInteractionMode(activeMission.id, turningOn ? 'spec' : 'auto');
     } else {
       // Brand-new draft chat with no session yet: just flip the compose flag.
@@ -100,11 +136,27 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
   };
 
   const slashCommands: SlashCommand[] = [
-    { cmd: '/mission', desc: 'Enter Mission Control', run: () => dispatch({ type: 'TOGGLE_MISSION_MODE' }) },
+    {
+      cmd: '/mission',
+      desc: 'Enter Mission Control',
+      run: () => dispatch({ type: 'TOGGLE_MISSION_MODE' }),
+    },
     { cmd: '/model', desc: 'Open model selector', run: () => setModelsOpen(true) },
-    { cmd: '/compact', desc: 'Compact current session', run: () => activeMission && compactSession(activeMission.id) },
-    { cmd: '/compaction', desc: 'Compact current session', run: () => activeMission && compactSession(activeMission.id) },
-    { cmd: '/compression', desc: 'Compact current session', run: () => activeMission && compactSession(activeMission.id) },
+    {
+      cmd: '/compact',
+      desc: 'Compact current session',
+      run: () => activeMission && compactSession(activeMission.id),
+    },
+    {
+      cmd: '/compaction',
+      desc: 'Compact current session',
+      run: () => activeMission && compactSession(activeMission.id),
+    },
+    {
+      cmd: '/compression',
+      desc: 'Compact current session',
+      run: () => activeMission && compactSession(activeMission.id),
+    },
     { cmd: '/spec', desc: 'Toggle spec mode', run: () => toggleSpec() },
     { cmd: '/settings', desc: 'Open settings', run: () => dispatch({ type: 'TOGGLE_SETTINGS' }) },
   ];
@@ -112,10 +164,11 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
   const trigger = useMemo(() => getTrigger(input, caret), [input, caret]);
 
   const invocableSkills = useMemo(
-    () => state.skillsSessionId === skillsSessionId
-      ? state.skills.filter((s) => s.userInvocable !== false && s.enabled !== false)
-      : [],
-    [skillsSessionId, state.skills, state.skillsSessionId]
+    () =>
+      state.skillsSessionId === skillsSessionId
+        ? state.skills.filter((s) => s.userInvocable !== false && s.enabled !== false)
+        : [],
+    [skillsSessionId, state.skills, state.skillsSessionId],
   );
 
   useEffect(() => {
@@ -132,7 +185,14 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
     if (pending?.sessionId === skillsSessionId && now - pending.requestedAt < 2_000) return;
     pendingSkillsRequest.current = { sessionId: skillsSessionId, requestedAt: now };
     listSkills(activeMission?.id);
-  }, [activeMission?.id, skillsSessionId, state.skillsSessionId, trigger?.kind, trigger?.query, trigger?.start]);
+  }, [
+    activeMission?.id,
+    skillsSessionId,
+    state.skillsSessionId,
+    trigger?.kind,
+    trigger?.query,
+    trigger?.start,
+  ]);
 
   const menuItems = useMemo<MenuItem[]>(() => {
     if (!trigger) return [];
@@ -142,7 +202,10 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
         .filter((c) => c.cmd.slice(1).toLowerCase().includes(q))
         .map((command) => ({ type: 'command', command }));
       const skills: MenuItem[] = invocableSkills
-        .filter((s) => s.name.toLowerCase().includes(q) || (s.description ?? '').toLowerCase().includes(q))
+        .filter(
+          (s) =>
+            s.name.toLowerCase().includes(q) || (s.description ?? '').toLowerCase().includes(q),
+        )
         .slice(0, 40)
         .map((skill) => ({ type: 'skill', skill }));
       return [...cmds, ...skills];
@@ -200,18 +263,27 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
     }
   }, [input]);
 
-  const missionPreview = activeMission ? activeMission.kind === 'mission_orchestrator' : state.missionMode;
+  const missionPreview = activeMission
+    ? activeMission.kind === 'mission_orchestrator'
+    : state.missionMode;
 
   // A single chat carries its own model/reasoning; only fall back to the global
   // default while composing a brand-new chat that has no session yet.
   const chatScoped = !missionPreview && !!activeMission;
-  const orchestratorModelId = chatScoped ? activeMission!.modelId : state.agentConfig.orchestrator.modelId;
+  const orchestratorModelId = chatScoped
+    ? activeMission!.modelId
+    : state.agentConfig.orchestrator.modelId;
   const orchestratorReasoning = chatScoped
-    ? activeMission!.reasoningEffort ?? state.agentConfig.orchestrator.reasoning
+    ? (activeMission!.reasoningEffort ?? state.agentConfig.orchestrator.reasoning)
     : state.agentConfig.orchestrator.reasoning;
-  const selectedModel = orchestratorModelId ? state.models.find((m) => m.id === orchestratorModelId) : undefined;
-  const selectedModelLabel = orchestratorModelId ? selectedModel?.displayName ?? orchestratorModelId : 'Default model';
-  const showReasoningBadge = !selectedModel || (selectedModel.supportedReasoningEfforts?.length ?? 0) > 0;
+  const selectedModel = orchestratorModelId
+    ? state.models.find((m) => m.id === orchestratorModelId)
+    : undefined;
+  const selectedModelLabel = orchestratorModelId
+    ? (selectedModel?.displayName ?? orchestratorModelId)
+    : 'Default model';
+  const showReasoningBadge =
+    !selectedModel || (selectedModel.supportedReasoningEfforts?.length ?? 0) > 0;
 
   const replaceTrigger = (replacement: string) => {
     if (!trigger) return;
@@ -228,7 +300,9 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
   };
 
   const selectSkill = (skill: SkillInfo) => {
-    setActiveSkills((prev) => (prev.some((s) => s.filePath === skill.filePath) ? prev : [...prev, skill]));
+    setActiveSkills((prev) =>
+      prev.some((s) => s.filePath === skill.filePath) ? prev : [...prev, skill],
+    );
     replaceTrigger('');
   };
 
@@ -246,7 +320,8 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
   const composeFrom = (text: string, skillNames: string[], files: string[]): string => {
     const parts: string[] = [];
     if (skillNames.length === 1) parts.push(`Use the "${skillNames[0]}" skill.`);
-    else if (skillNames.length > 1) parts.push(`Use these skills: ${skillNames.map((s) => `"${s}"`).join(', ')}.`);
+    else if (skillNames.length > 1)
+      parts.push(`Use these skills: ${skillNames.map((s) => `"${s}"`).join(', ')}.`);
     if (text) parts.push(text);
     let composed = parts.join('\n\n');
     if (files.length) {
@@ -257,7 +332,11 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
   };
 
   const composeText = (text: string): string =>
-    composeFrom(text, activeSkills.map((s) => s.name), attachedFiles);
+    composeFrom(
+      text,
+      activeSkills.map((s) => s.name),
+      attachedFiles,
+    );
 
   const resetAttachments = () => {
     setActiveSkills([]);
@@ -285,7 +364,13 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
 
     const skillNames = activeSkills.map((s) => s.name);
     const registerPending = (ref: string) =>
-      dispatch({ type: 'SET_PENDING_COMPOSE', clientRef: ref, text, skills: skillNames, files: [...attachedFiles] });
+      dispatch({
+        type: 'SET_PENDING_COMPOSE',
+        clientRef: ref,
+        text,
+        skills: skillNames,
+        files: [...attachedFiles],
+      });
 
     // Mission preview with no active mission: prompt is the objective.
     if (missionPreview && !activeMission) {
@@ -303,7 +388,8 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
         autonomy: 'medium',
         modelId: orchestrator.modelId,
         reasoningEffort: orchestrator.reasoning,
-        compactionModel: state.compactionModel === 'current-model' ? undefined : state.compactionModel,
+        compactionModel:
+          state.compactionModel === 'current-model' ? undefined : state.compactionModel,
         compactionTokenLimit: state.compactionTokenLimit,
         compactionTokenLimitPerModel: state.compactionTokenLimitPerModel,
         workerModel: worker.modelId,
@@ -330,7 +416,8 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
         autonomy: 'medium',
         modelId: orchestrator.modelId,
         reasoningEffort: orchestrator.reasoning,
-        compactionModel: state.compactionModel === 'current-model' ? undefined : state.compactionModel,
+        compactionModel:
+          state.compactionModel === 'current-model' ? undefined : state.compactionModel,
         compactionTokenLimit: state.compactionTokenLimit,
         compactionTokenLimitPerModel: state.compactionTokenLimitPerModel,
       });
@@ -385,7 +472,7 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
     resetAttachments();
   };
 
-  const queue: QueuedPrompt[] = activeMission ? state.promptQueue[activeMission.id] ?? [] : [];
+  const queue: QueuedPrompt[] = activeMission ? (state.promptQueue[activeMission.id] ?? []) : [];
 
   const deliverPrompt = (p: QueuedPrompt) => {
     if (!activeMission) return;
@@ -479,8 +566,11 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
     }
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      const enterMode: SubmitMode = isLive && state.liveEnterBehavior === 'interrupt' ? 'now' : 'queue';
-      void handleSubmit(isLive && (e.metaKey || e.ctrlKey) ? oppositeSubmitMode(enterMode) : enterMode);
+      const enterMode: SubmitMode =
+        isLive && state.liveEnterBehavior === 'interrupt' ? 'now' : 'queue';
+      void handleSubmit(
+        isLive && (e.metaKey || e.ctrlKey) ? oppositeSubmitMode(enterMode) : enterMode,
+      );
     }
   };
 
@@ -527,8 +617,12 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
                       }}
                       className={base}
                     >
-                      <span className="font-mono text-[12px] text-droid-text">{item.command.cmd}</span>
-                      <span className="text-[11px] text-droid-text-muted truncate">{item.command.desc}</span>
+                      <span className="font-mono text-[12px] text-droid-text">
+                        {item.command.cmd}
+                      </span>
+                      <span className="text-[11px] text-droid-text-muted truncate">
+                        {item.command.desc}
+                      </span>
                     </button>
                   );
                 }
@@ -545,9 +639,17 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
                       }}
                       className={base}
                     >
-                      <span className="text-[12px] shrink-0" style={{ color: ACCENT }}>{item.skill.name}</span>
-                      <span className="text-[11px] text-droid-text-muted truncate flex-1">{item.skill.description}</span>
-                      {added && <span className="text-[10px] shrink-0" style={{ color: ACCENT }}>added</span>}
+                      <span className="text-[12px] shrink-0" style={{ color: ACCENT }}>
+                        {item.skill.name}
+                      </span>
+                      <span className="text-[11px] text-droid-text-muted truncate flex-1">
+                        {item.skill.description}
+                      </span>
+                      {added && (
+                        <span className="text-[10px] shrink-0" style={{ color: ACCENT }}>
+                          added
+                        </span>
+                      )}
                       <span className="flex items-center gap-1 text-[10px] text-droid-text-muted/60 shrink-0">
                         <LocIcon className="w-3 h-3" />
                         {item.skill.location}
@@ -566,9 +668,17 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
                     className={base}
                   >
                     <FileText className="w-3.5 h-3.5 shrink-0 text-droid-text-muted" />
-                    <span className="text-[12px] text-droid-text shrink-0">{basename(item.path)}</span>
-                    <span className="text-[11px] text-droid-text-muted/70 truncate flex-1">{item.path}</span>
-                    {attachedFiles.includes(item.path) && <span className="text-[10px] shrink-0" style={{ color: ACCENT }}>added</span>}
+                    <span className="text-[12px] text-droid-text shrink-0">
+                      {basename(item.path)}
+                    </span>
+                    <span className="text-[11px] text-droid-text-muted/70 truncate flex-1">
+                      {item.path}
+                    </span>
+                    {attachedFiles.includes(item.path) && (
+                      <span className="text-[10px] shrink-0" style={{ color: ACCENT }}>
+                        added
+                      </span>
+                    )}
                   </button>
                 );
               })}
@@ -580,7 +690,10 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
         <PermissionInline />
 
         {missionPreview ? (
-          <div className="absolute -top-5 left-1 flex items-center gap-1.5 text-[10px] font-medium tracking-wide" style={{ color: ACCENT }}>
+          <div
+            className="absolute -top-5 left-1 flex items-center gap-1.5 text-[10px] font-medium tracking-wide"
+            style={{ color: ACCENT }}
+          >
             <span className="w-1.5 h-1.5 rounded-full" style={{ background: ACCENT }} />
             Mission preview
           </div>
@@ -611,13 +724,20 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
                   setDragOverIndex(null);
                 }}
                 className={`group flex items-start gap-2 rounded-xl border bg-droid-elevated px-2 py-1.5 transition-colors ${
-                  dragOverIndex === i && dragIndex !== null && dragIndex !== i ? 'border-droid-orange' : 'border-droid-border'
+                  dragOverIndex === i && dragIndex !== null && dragIndex !== i
+                    ? 'border-droid-orange'
+                    : 'border-droid-border'
                 }`}
               >
-                <span className="mt-0.5 cursor-grab text-droid-text-muted/60 active:cursor-grabbing" title="Drag to reorder">
+                <span
+                  className="mt-0.5 cursor-grab text-droid-text-muted/60 active:cursor-grabbing"
+                  title="Drag to reorder"
+                >
                   <GripVertical className="w-3.5 h-3.5" />
                 </span>
-                <span className="flex-1 whitespace-pre-wrap break-words text-[12px] text-droid-text-secondary">{p.text || '(empty)'}</span>
+                <span className="flex-1 whitespace-pre-wrap break-words text-[12px] text-droid-text-secondary">
+                  {p.text || '(empty)'}
+                </span>
                 <div className="flex shrink-0 items-center gap-0.5">
                   <button
                     onClick={() => editQueuedInComposer(p)}
@@ -627,7 +747,14 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
                     <Pencil className="w-3.5 h-3.5" />
                   </button>
                   <button
-                    onClick={() => activeMission && dispatch({ type: 'REMOVE_QUEUED_PROMPT', missionId: activeMission.id, id: p.id })}
+                    onClick={() =>
+                      activeMission &&
+                      dispatch({
+                        type: 'REMOVE_QUEUED_PROMPT',
+                        missionId: activeMission.id,
+                        id: p.id,
+                      })
+                    }
                     className="rounded p-1 text-droid-text-muted hover:text-droid-orange hover:bg-black/20"
                     title="Delete"
                   >
@@ -641,7 +768,14 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
 
         <div
           className={`relative bg-droid-elevated border rounded-2xl transition-colors ${missionPreview ? '' : boxBorder}`}
-          style={missionPreview ? { borderColor: accentMix(40), boxShadow: `0 0 0 1px ${accentMix(13)}, 0 10px 30px -12px ${accentMix(33)}` } : undefined}
+          style={
+            missionPreview
+              ? {
+                  borderColor: accentMix(40),
+                  boxShadow: `0 0 0 1px ${accentMix(13)}, 0 10px 30px -12px ${accentMix(33)}`,
+                }
+              : undefined
+          }
         >
           {hasChips && (
             <div className="flex flex-wrap gap-1.5 px-3 pt-3">
@@ -649,12 +783,18 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
                 <span
                   key={skill.filePath}
                   className="group flex items-center gap-1.5 pl-2 pr-1 py-1 rounded-lg text-[11px] font-medium"
-                  style={{ background: accentMix(14), color: ACCENT, boxShadow: `inset 0 0 0 1px ${accentMix(35)}` }}
+                  style={{
+                    background: accentMix(14),
+                    color: ACCENT,
+                    boxShadow: `inset 0 0 0 1px ${accentMix(35)}`,
+                  }}
                   title={skill.description ?? skill.filePath}
                 >
                   {skill.name}
                   <button
-                    onClick={() => setActiveSkills((prev) => prev.filter((s) => s.filePath !== skill.filePath))}
+                    onClick={() =>
+                      setActiveSkills((prev) => prev.filter((s) => s.filePath !== skill.filePath))
+                    }
                     className="p-0.5 rounded hover:bg-black/20 transition-colors"
                     title="Remove skill"
                   >
@@ -701,8 +841,8 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
                     : 'Direct the orchestrator…'
                   : 'Describe the mission objective…'
                 : isSpecMode
-                ? 'Describe what to build in spec mode...'
-                : 'What would you like to work on?  (/ for skills, @ for files)'
+                  ? 'Describe what to build in spec mode...'
+                  : 'What would you like to work on?  (/ for skills, @ for files)'
             }
             rows={1}
             className="w-full bg-transparent px-4 pt-3 pb-2 text-sm text-droid-text placeholder-droid-text-muted/50 resize-none focus:outline-none min-h-[44px] max-h-[200px]"
@@ -718,7 +858,11 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
                     ? 'bg-droid-bg/60 text-droid-text'
                     : 'text-droid-text-secondary hover:text-droid-text hover:bg-droid-bg/40'
                 }`}
-                title={missionPreview ? 'Configure orchestrator / worker / validator models' : 'Select chat model'}
+                title={
+                  missionPreview
+                    ? 'Configure orchestrator / worker / validator models'
+                    : 'Select chat model'
+                }
               >
                 {missionPreview ? (
                   <>
@@ -727,12 +871,19 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
                   </>
                 ) : (
                   <>
-                    <ModelIcon provider={providerOf(selectedModel, orchestratorModelId)} size={14} />
+                    <ModelIcon
+                      provider={providerOf(selectedModel, orchestratorModelId)}
+                      size={14}
+                    />
                     <span className="truncate">{selectedModelLabel}</span>
                     {showReasoningBadge && orchestratorReasoning && (
                       <span
                         className="shrink-0 px-1.5 py-0.5 rounded-md text-[9px] font-medium capitalize leading-none"
-                        style={{ color: 'var(--droid-accent)', backgroundColor: 'color-mix(in srgb, var(--droid-accent) 13%, transparent)' }}
+                        style={{
+                          color: 'var(--droid-accent)',
+                          backgroundColor:
+                            'color-mix(in srgb, var(--droid-accent) 13%, transparent)',
+                        }}
                         title={`Reasoning: ${orchestratorReasoning}`}
                       >
                         {orchestratorReasoning}
@@ -746,7 +897,12 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
               </button>
 
               <AnimatePresence>
-                {modelsOpen && <ModelSelectorPopover onClose={() => setModelsOpen(false)} singleAgent={!missionPreview} />}
+                {modelsOpen && (
+                  <ModelSelectorPopover
+                    onClose={() => setModelsOpen(false)}
+                    singleAgent={!missionPreview}
+                  />
+                )}
               </AnimatePresence>
             </div>
 
@@ -767,7 +923,12 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
 
             {isLive && !hasContent ? (
               <button
-                onClick={() => activeMission && (targetAgentSessionId ? interruptAgent(activeMission.id, targetAgentSessionId) : interruptMission(activeMission.id))}
+                onClick={() =>
+                  activeMission &&
+                  (targetAgentSessionId
+                    ? interruptAgent(activeMission.id, targetAgentSessionId)
+                    : interruptMission(activeMission.id))
+                }
                 title="Working — click to stop"
                 className="p-2 rounded-xl text-droid-bg shrink-0 transition-colors"
                 style={{ background: ACCENT }}
@@ -793,11 +954,16 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
                         { label: enterSteers ? 'Steer' : 'Queue', keys: ['⏎'] },
                         { label: enterSteers ? 'Queue' : 'Steer', keys: ['⌘', '⏎'] },
                       ].map((row) => (
-                        <div key={row.label} className="flex items-center justify-between gap-3 rounded-lg px-2 py-1 text-[12px] text-droid-text">
+                        <div
+                          key={row.label}
+                          className="flex items-center justify-between gap-3 rounded-lg px-2 py-1 text-[12px] text-droid-text"
+                        >
                           <span>{row.label}</span>
                           <span className="flex items-center gap-0.5 rounded-md bg-droid-bg/70 px-1.5 py-0.5 text-[11px] text-droid-text-secondary">
                             {row.keys.map((k) => (
-                              <kbd key={k} className="font-sans leading-none">{k}</kbd>
+                              <kbd key={k} className="font-sans leading-none">
+                                {k}
+                              </kbd>
                             ))}
                           </span>
                         </div>

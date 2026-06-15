@@ -34,7 +34,11 @@ export function readDroidCliModelCatalogCache(droidPath: string): ModelInfo[] {
 function writeDroidCliModelCatalogCache(droidPath: string, models: ModelInfo[]): void {
   try {
     mkdirSync(dirname(CACHE_PATH), { recursive: true });
-    writeFileSync(CACHE_PATH, JSON.stringify({ version: 1, droidPath, updatedAt: Date.now(), models }), 'utf8');
+    writeFileSync(
+      CACHE_PATH,
+      JSON.stringify({ version: 1, droidPath, updatedAt: Date.now(), models }),
+      'utf8',
+    );
   } catch {
     /* cache is best-effort */
   }
@@ -106,8 +110,12 @@ function parseModelLine(line: string, isCustom: boolean): ModelInfo | null {
   };
 }
 
-function parseDetailLine(line: string): Pick<ModelInfo, 'displayName' | 'supportedReasoningEfforts' | 'defaultReasoningEffort'> | null {
-  const match = line.match(/^-\s+(.+?):\s+supports reasoning:\s+\w+;\s+supported:\s+\[([^\]]*)\];\s+default:\s+(\S+)/);
+function parseDetailLine(
+  line: string,
+): Pick<ModelInfo, 'displayName' | 'supportedReasoningEfforts' | 'defaultReasoningEffort'> | null {
+  const match = line.match(
+    /^-\s+(.+?):\s+supports reasoning:\s+\w+;\s+supported:\s+\[([^\]]*)\];\s+default:\s+(\S+)/,
+  );
   if (!match) return null;
   return {
     displayName: match[1].trim(),
@@ -147,7 +155,9 @@ function modelInfoValue(value: unknown): ModelInfo | undefined {
   const displayName = stringValue(raw.displayName);
   if (!id || !displayName) return undefined;
   const supportedReasoningEfforts = Array.isArray(raw.supportedReasoningEfforts)
-    ? raw.supportedReasoningEfforts.map((item) => parseReasoning(String(item))).filter((item): item is ReasoningEffort => Boolean(item))
+    ? raw.supportedReasoningEfforts
+        .map((item) => parseReasoning(String(item)))
+        .filter((item): item is ReasoningEffort => Boolean(item))
     : undefined;
   return {
     id,
@@ -156,8 +166,12 @@ function modelInfoValue(value: unknown): ModelInfo | undefined {
     isCustom: raw.isCustom === true,
     isDefault: raw.isDefault === true,
     maxContextTokens: numberValue(raw.maxContextTokens),
-    supportedReasoningEfforts: supportedReasoningEfforts?.length ? supportedReasoningEfforts : undefined,
-    defaultReasoningEffort: raw.defaultReasoningEffort ? parseReasoning(String(raw.defaultReasoningEffort)) : undefined,
+    supportedReasoningEfforts: supportedReasoningEfforts?.length
+      ? supportedReasoningEfforts
+      : undefined,
+    defaultReasoningEffort: raw.defaultReasoningEffort
+      ? parseReasoning(String(raw.defaultReasoningEffort))
+      : undefined,
   };
 }
 
@@ -173,14 +187,22 @@ function providerFor(id: string, displayName: string, isCustom: boolean): string
   const hay = `${id} ${displayName}`.toLowerCase();
   if (isCustom) return 'custom';
   if (displayName.startsWith('Droid Core')) return 'droid-core';
-  if (hay.includes('claude') || hay.includes('opus') || hay.includes('sonnet') || hay.includes('haiku')) return 'anthropic';
+  if (
+    hay.includes('claude') ||
+    hay.includes('opus') ||
+    hay.includes('sonnet') ||
+    hay.includes('haiku')
+  )
+    return 'anthropic';
   if (hay.includes('gpt') || hay.includes('codex')) return 'openai';
   if (hay.includes('gemini')) return 'google';
   return 'factory';
 }
 
 function enrichCustomModelReasoning(models: ModelInfo[]): ModelInfo[] {
-  const baseById = new Map(models.filter((model) => !model.isCustom).map((model) => [model.id, model]));
+  const baseById = new Map(
+    models.filter((model) => !model.isCustom).map((model) => [model.id, model]),
+  );
   const customBaseById = readCustomModelBaseIds();
   return models.map((model) => {
     if (!model.isCustom || model.supportedReasoningEfforts?.length) return model;
@@ -205,7 +227,8 @@ function readCustomModelBaseIds(): Map<string, string> {
     for (const item of settings.customModels) {
       if (!item || typeof item !== 'object') continue;
       const record = item as Record<string, unknown>;
-      if (typeof record.id === 'string' && typeof record.model === 'string') map.set(record.id, record.model);
+      if (typeof record.id === 'string' && typeof record.model === 'string')
+        map.set(record.id, record.model);
     }
   } catch {
     return map;

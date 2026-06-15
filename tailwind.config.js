@@ -5,7 +5,7 @@
 const v = (name) => `color-mix(in srgb, var(${name}) calc(<alpha-value> * 100%), transparent)`;
 
 export default {
-  content: ["./index.html", "./src/**/*.{js,ts,jsx,tsx}"],
+  content: ['./index.html', './src/**/*.{js,ts,jsx,tsx}'],
   theme: {
     extend: {
       colors: {
@@ -21,7 +21,7 @@ export default {
           accent: v('--droid-accent'),
           green: v('--droid-green'),
           orange: v('--droid-orange'),
-        }
+        },
       },
       fontFamily: {
         sans: ['"SF Pro Display"', 'Inter', 'system-ui', 'sans-serif'],
@@ -46,8 +46,8 @@ export default {
           '0%, 100%': { boxShadow: '0 0 0 0 rgba(232, 168, 56, 0.3)' },
           '50%': { boxShadow: '0 0 0 4px rgba(232, 168, 56, 0)' },
         },
-      }
+      },
     },
   },
   plugins: [],
-}
+};

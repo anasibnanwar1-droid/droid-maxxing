@@ -6,15 +6,42 @@ import { isApprovalOutcome, normalizePermissionOutcome } from './permissionOutco
 test('normalizes UI and model permission aliases to Droid SDK outcomes', () => {
   assert.equal(normalizePermissionOutcome('proceed_once'), ToolConfirmationOutcome.ProceedOnce);
   assert.equal(normalizePermissionOutcome('proceed_always'), ToolConfirmationOutcome.ProceedAlways);
-  assert.equal(normalizePermissionOutcome('proceed_always_tools'), ToolConfirmationOutcome.ProceedAlways);
-  assert.equal(normalizePermissionOutcome('proceed_auto_run'), ToolConfirmationOutcome.ProceedAutoRun);
-  assert.equal(normalizePermissionOutcome('proceed_auto_run_low'), ToolConfirmationOutcome.ProceedAutoRunLow);
-  assert.equal(normalizePermissionOutcome('proceed_auto_run_medium'), ToolConfirmationOutcome.ProceedAutoRunMedium);
-  assert.equal(normalizePermissionOutcome('proceed_auto_run_high'), ToolConfirmationOutcome.ProceedAutoRunHigh);
-  assert.equal(normalizePermissionOutcome('proceed_new_session'), ToolConfirmationOutcome.ProceedNewSession);
-  assert.equal(normalizePermissionOutcome('proceed_new_session_low'), ToolConfirmationOutcome.ProceedNewSessionLow);
-  assert.equal(normalizePermissionOutcome('proceed_new_session_medium'), ToolConfirmationOutcome.ProceedNewSessionMedium);
-  assert.equal(normalizePermissionOutcome('proceed_new_session_high'), ToolConfirmationOutcome.ProceedNewSessionHigh);
+  assert.equal(
+    normalizePermissionOutcome('proceed_always_tools'),
+    ToolConfirmationOutcome.ProceedAlways,
+  );
+  assert.equal(
+    normalizePermissionOutcome('proceed_auto_run'),
+    ToolConfirmationOutcome.ProceedAutoRun,
+  );
+  assert.equal(
+    normalizePermissionOutcome('proceed_auto_run_low'),
+    ToolConfirmationOutcome.ProceedAutoRunLow,
+  );
+  assert.equal(
+    normalizePermissionOutcome('proceed_auto_run_medium'),
+    ToolConfirmationOutcome.ProceedAutoRunMedium,
+  );
+  assert.equal(
+    normalizePermissionOutcome('proceed_auto_run_high'),
+    ToolConfirmationOutcome.ProceedAutoRunHigh,
+  );
+  assert.equal(
+    normalizePermissionOutcome('proceed_new_session'),
+    ToolConfirmationOutcome.ProceedNewSession,
+  );
+  assert.equal(
+    normalizePermissionOutcome('proceed_new_session_low'),
+    ToolConfirmationOutcome.ProceedNewSessionLow,
+  );
+  assert.equal(
+    normalizePermissionOutcome('proceed_new_session_medium'),
+    ToolConfirmationOutcome.ProceedNewSessionMedium,
+  );
+  assert.equal(
+    normalizePermissionOutcome('proceed_new_session_high'),
+    ToolConfirmationOutcome.ProceedNewSessionHigh,
+  );
   assert.equal(normalizePermissionOutcome('proceed_edit'), ToolConfirmationOutcome.ProceedEdit);
   assert.equal(normalizePermissionOutcome('cancel'), ToolConfirmationOutcome.Cancel);
 });

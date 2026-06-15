@@ -34,9 +34,10 @@ export function buildWorkspaceSections(
     .map((cwd) => ({
       cwd,
       name: workspaceName(cwd),
-      sessions: maybeLimit(missions
-        .filter((mission) => mission.cwd === cwd)
-        .sort((a, b) => b.updatedAt - a.updatedAt), limit),
+      sessions: maybeLimit(
+        missions.filter((mission) => mission.cwd === cwd).sort((a, b) => b.updatedAt - a.updatedAt),
+        limit,
+      ),
     }));
 }
 
