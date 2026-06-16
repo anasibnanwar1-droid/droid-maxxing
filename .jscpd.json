@@ -1,0 +1,15 @@
+{
+  "threshold": 4,
+  "minTokens": 70,
+  "minLines": 8,
+  "reporters": ["console", "json"],
+  "output": "reports/jscpd",
+  "ignore": [
+    "**/node_modules/**",
+    "**/dist/**",
+    "**/sidecar/dist/**",
+    "**/package-lock.json",
+    "**/*.test.ts",
+    "**/*.test.tsx"
+  ]
+}

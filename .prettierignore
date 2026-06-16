@@ -6,6 +6,9 @@ sidecar/node_modules/
 src-tauri/target/
 benchmark-runs/
 benchmarks/
+reports/
+playwright-report/
+test-results/
 public/
 tools/
 package-lock.json
