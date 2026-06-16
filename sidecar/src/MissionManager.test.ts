@@ -1946,6 +1946,34 @@ test('rejects manual compaction while a live agent is streaming', async () => {
   );
 });
 
+test('rejects parent mission compaction while a live agent is streaming', async () => {
+  const { manager, session, mission, events } = streamHarness(10_000);
+  const agentSession = new FakeCompactionSession('worker-active-parent', 10_000);
+  mission.agents.set(agentSession.sessionId, {
+    session: agentSession,
+    missionId: mission.summary.id,
+    role: 'worker',
+    streaming: true,
+    pendingSends: [],
+    lastUsedAt: Date.now(),
+  });
+
+  await manager.handle({ type: 'mission.compact', missionId: mission.summary.id });
+
+  assert.equal(session.compactions, 0);
+  assert.equal(agentSession.compactions, 0);
+  assert.equal(
+    events.some(
+      (e) =>
+        e.type === 'mission.transcript' &&
+        e.event.kind === 'status' &&
+        e.event.agentSessionId === agentSession.sessionId &&
+        /cannot compact/i.test(e.event.text ?? ''),
+    ),
+    true,
+  );
+});
+
 test('manual in-place compaction advances the next daemon trigger headroom', async () => {
   const { manager, session, mission } = streamHarness(10_000);
 

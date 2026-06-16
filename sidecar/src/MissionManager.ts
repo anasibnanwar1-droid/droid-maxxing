@@ -372,7 +372,9 @@ export class MissionManager {
       case 'mission.compact': {
         const missionId = cmd.type === 'session.compact' ? cmd.sessionId : cmd.missionId;
         const mission = this.findMission(missionId);
-        const activeAgent = this.findLiveAgent(missionId);
+        const activeAgent =
+          (mission ? this.findActiveLiveAgent(mission) : undefined) ??
+          this.findLiveAgent(missionId);
         if (mission?.streaming || mission?.compacting) {
           this.emitStatus(
             missionId,
@@ -380,7 +382,7 @@ export class MissionManager {
           );
           return;
         }
-        if (activeAgent?.agent.streaming) {
+        if (activeAgent?.agent.streaming || activeAgent?.agent.compacting) {
           this.emitStatus(
             activeAgent.mission.summary.id,
             'Cannot compact while a turn is active. Try again when the model is idle.',
@@ -1100,6 +1102,15 @@ export class MissionManager {
       for (const agent of mission.agents.values()) {
         if (agent.session.sessionId === id) return { mission, agent };
       }
+    }
+    return undefined;
+  }
+
+  private findActiveLiveAgent(
+    mission: Mission,
+  ): { mission: Mission; agent: LiveAgent } | undefined {
+    for (const agent of mission.agents.values()) {
+      if (agent.streaming || agent.compacting) return { mission, agent };
     }
     return undefined;
   }
