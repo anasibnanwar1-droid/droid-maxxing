@@ -14,3 +14,7 @@ test-results/
 .env
 .env.*
 !.env.example
+
+# Ignore symlinked node_modules in linked worktrees
+node_modules
+sidecar/node_modules
