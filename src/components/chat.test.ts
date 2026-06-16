@@ -2,7 +2,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { buildFeed, groupTurns, isResultFor, MessageFeed, type FeedItem } from './chat';
+import {
+  buildFeed,
+  correlateResults,
+  groupTurns,
+  isResultFor,
+  MessageFeed,
+  type FeedItem,
+} from './chat';
 import type { TranscriptEvent } from '../types/bridge';
 
 let seq = 0;
@@ -110,6 +117,57 @@ test('#20 a TodoWrite result is correlated by toolUseId even with no toolName', 
     text: 'boom',
   });
   assert.equal(isResultFor(call, failed), false);
+});
+
+test('#20 a batched replay (calls before results) correlates each result by toolUseId', () => {
+  // Historical replay can order a whole batch of calls before their results:
+  // TodoWrite(a), Grep(b), result(a), result(b). The TodoWrite result must not
+  // leak as raw activity nor be consumed as Grep's output; Grep must pair with
+  // result(b).
+  const todoCall = ev({
+    kind: 'tool_call',
+    toolName: 'TodoWrite',
+    toolArgs: { todos: '1. [completed] a' },
+    toolUseId: 'a',
+  });
+  const grepCall = ev({
+    kind: 'tool_call',
+    toolName: 'Grep',
+    toolArgs: { pattern: 'x' },
+    toolUseId: 'b',
+  });
+  const todoResult = ev({
+    kind: 'tool_result',
+    toolName: '',
+    toolUseId: 'a',
+    text: 'TODO List Updated',
+  });
+  const grepResult = ev({ kind: 'tool_result', toolName: '', toolUseId: 'b', text: 'grep hit' });
+  const { resultByCall, consumed } = correlateResults([todoCall, grepCall, todoResult, grepResult]);
+  // Grep pairs with its own result, not the TodoWrite's.
+  assert.equal(resultByCall.get(grepCall), grepResult);
+  assert.equal(resultByCall.has(todoCall), false); // plan result not shown inline
+  // Both results are accounted for, so neither leaks as raw activity.
+  assert.equal(consumed.has(todoResult), true);
+  assert.equal(consumed.has(grepResult), true);
+});
+
+test('#20 a failed plan result in a batched group is not consumed (it must surface)', () => {
+  const todoCall = ev({
+    kind: 'tool_call',
+    toolName: 'TodoWrite',
+    toolArgs: { todos: 'x' },
+    toolUseId: 'a',
+  });
+  const failed = ev({
+    kind: 'tool_result',
+    toolName: '',
+    toolUseId: 'a',
+    isError: true,
+    text: 'boom',
+  });
+  const { consumed } = correlateResults([todoCall, grep(), failed]);
+  assert.equal(consumed.has(failed), false);
 });
 
 // ── #18: final answer always top-level, even with trailing compaction ──

@@ -376,21 +376,55 @@ export function isResultFor(call: TranscriptEvent, next: TranscriptEvent | undef
   return true;
 }
 
+// Pair each tool_call with its tool_result across the whole group. Results
+// correlate by toolUseId wherever they sit (replayed transcripts batch several
+// calls before their results, so the result is often not adjacent); id-less
+// live results fall back to the call they immediately follow. Returns the
+// inline output for non-plan calls plus the set of results already accounted
+// for, so the renderer never shows a correlated result a second time as raw
+// activity. A plan_update's own *successful* result is consumed silently (the
+// checklist conveys it); a failed one is left to surface.
+export function correlateResults(events: TranscriptEvent[]): {
+  resultByCall: Map<TranscriptEvent, TranscriptEvent>;
+  consumed: Set<TranscriptEvent>;
+} {
+  const resultByCall = new Map<TranscriptEvent, TranscriptEvent>();
+  const consumed = new Set<TranscriptEvent>();
+  const resultById = new Map<string, TranscriptEvent>();
+  for (const e of events)
+    if (e.kind === 'tool_result' && e.toolUseId) resultById.set(e.toolUseId, e);
+  for (let i = 0; i < events.length; i++) {
+    const call = events[i];
+    if (call.kind !== 'tool_call') continue;
+    let result: TranscriptEvent | undefined;
+    if (call.toolUseId) {
+      result = resultById.get(call.toolUseId);
+    } else {
+      const next = events[i + 1];
+      if (next && next.kind === 'tool_result' && !next.toolUseId) result = next;
+    }
+    if (!result || consumed.has(result)) continue;
+    if (classifyEvent(call) === 'plan_update') {
+      if (!result.isError) consumed.add(result);
+    } else {
+      resultByCall.set(call, result);
+      consumed.add(result);
+    }
+  }
+  return { resultByCall, consumed };
+}
+
 function renderToolEvents(events: TranscriptEvent[]): React.ReactNode[] {
   const nodes: React.ReactNode[] = [];
+  const { resultByCall, consumed } = correlateResults(events);
   for (let i = 0; i < events.length; i++) {
     const e = events[i];
     if (e.kind === 'tool_call') {
       if (classifyEvent(e) === 'plan_update') {
         nodes.push(<TodoChecklist key={e.id} event={e} />);
-        // A TodoWrite's own (empty) tool_result carries no payload; skip only
-        // that result, never an unrelated one that happens to follow.
-        if (isResultFor(e, events[i + 1])) i++;
         continue;
       }
-      const next = events[i + 1];
-      const result = next && next.kind === 'tool_result' ? next : undefined;
-      if (result) i++;
+      const result = resultByCall.get(e);
       const { cat, detail } = toolMeta(e.toolName, e.toolArgs);
       if (cat === 'exec') {
         const command =
@@ -413,6 +447,9 @@ function renderToolEvents(events: TranscriptEvent[]): React.ReactNode[] {
       }
       continue;
     }
+    // A result already shown as its call's inline output (or a silently consumed
+    // plan result) must not also render as raw activity.
+    if (e.kind === 'tool_result' && consumed.has(e)) continue;
     const body = stripAnsi(e.text ?? safeJson(e.toolArgs)).trimEnd();
     if (!body) continue;
     nodes.push(
@@ -585,13 +622,21 @@ function dedupePlanUpdates(events: TranscriptEvent[]): TranscriptEvent[] {
   const plans = events.filter((e) => e.kind === 'tool_call' && classifyEvent(e) === 'plan_update');
   if (plans.length <= 1) return events;
   const keepId = plans[plans.length - 1].id;
+  // toolUseIds of superseded plan calls, so their own results are dropped no
+  // matter where they sit in the group (replay batches calls before results).
+  const supersededIds = new Set(
+    plans.filter((p) => p.id !== keepId && p.toolUseId).map((p) => p.toolUseId as string),
+  );
   const out: TranscriptEvent[] = [];
   for (let j = 0; j < events.length; j++) {
     const e = events[j];
     if (e.kind === 'tool_call' && classifyEvent(e) === 'plan_update' && e.id !== keepId) {
-      // Only swallow the result if it is this plan call's own (empty) result;
-      // never drop an unrelated tool_result that happens to follow.
-      if (isResultFor(e, events[j + 1])) j++;
+      // id-less live result sits right after its call; id-correlated results are
+      // dropped by the supersededIds check below. Never drop a failed result.
+      if (!e.toolUseId && isResultFor(e, events[j + 1])) j++;
+      continue;
+    }
+    if (e.kind === 'tool_result' && !e.isError && e.toolUseId && supersededIds.has(e.toolUseId)) {
       continue;
     }
     out.push(e);
