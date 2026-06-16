@@ -415,6 +415,62 @@ test('sendNow queues during compaction instead of driving or interrupting', asyn
   );
 });
 
+test('plain interrupt stops the live turn without surfacing a stream error', async () => {
+  const events: ServerEvent[] = [];
+  const manager = new MissionManager((event) => events.push(event));
+  const session = new FakeSession('droid-stop');
+  const mission = {
+    summary: testSummary('app-stop', session.sessionId),
+    session,
+    streaming: false,
+    pendingSends: [],
+    pendingPermissions: new Map(),
+    pendingQuestions: new Map(),
+    agents: new Map(),
+    knownSubagents: new Set(),
+    completedSubagents: new Set(),
+    linkedSubagents: new Set(),
+    subagentToolUseIds: new Map(),
+    subagentSettings: new Map(),
+    pendingSubagents: [],
+    mcpServers: [],
+    compacting: false,
+  };
+  const internals = manager as unknown as {
+    history: {
+      recordEvent: () => void;
+      syncSummaries: () => void;
+      recordSubagentLink: () => void;
+      subagentLinks: () => [];
+    };
+    missions: Map<string, typeof mission>;
+  };
+  internals.history = {
+    recordEvent: () => {},
+    syncSummaries: () => {},
+    recordSubagentLink: () => {},
+    subagentLinks: () => [],
+  };
+  internals.missions.set(mission.summary.id, mission);
+
+  const firstTurn = manager.handle({
+    type: 'mission.send',
+    missionId: mission.summary.id,
+    text: 'first',
+  });
+  await waitFor(() => session.prompts.includes('first'));
+
+  await manager.handle({ type: 'mission.interrupt', missionId: mission.summary.id });
+  await firstTurn;
+
+  assert.equal(session.interrupts, 1);
+  assert.equal(mission.streaming, false);
+  assert.equal(
+    events.some((event) => event.type === 'mission.error' || event.type === 'error'),
+    false,
+  );
+});
+
 test('design turns disable TodoWrite and normal turns restore it', async () => {
   const events: ServerEvent[] = [];
   const manager = new MissionManager((event) => events.push(event));

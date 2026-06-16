@@ -1742,12 +1742,13 @@ export class MissionManager {
         this.applyEvent(appSessionId, appSessionId, 'orchestrator', ev);
     } catch (err) {
       const message = errMsg(err);
-      if (
-        mission.interruptingForSteer ||
-        isExpectedSteeringInterrupt(message, mission.pendingSends)
-      )
-        this.emitStatus(appSessionId, 'Current turn interrupted for steering.');
-      else {
+      if (message === 'interrupted') {
+        const reason =
+          mission.interruptingForSteer || mission.pendingSends.length > 0
+            ? 'Current turn interrupted for steering.'
+            : 'Current turn interrupted.';
+        this.emitStatus(appSessionId, reason);
+      } else {
         this.emitError({ missionId: appSessionId, message });
         this.patch(appSessionId, { phase: 'failed' });
       }
@@ -2662,9 +2663,13 @@ export class MissionManager {
         this.applyEvent(agent.missionId, agent.session.sessionId, agent.role, ev);
     } catch (err) {
       const message = errMsg(err);
-      if (agent.interruptingForSteer || isExpectedSteeringInterrupt(message, agent.pendingSends))
-        this.emitStatus(agent.missionId, 'Subagent turn interrupted for steering.');
-      else {
+      if (message === 'interrupted') {
+        const reason =
+          agent.interruptingForSteer || agent.pendingSends.length > 0
+            ? 'Subagent turn interrupted for steering.'
+            : 'Subagent turn interrupted.';
+        this.emitStatus(agent.missionId, reason);
+      } else {
         this.emit({
           type: 'agent.not_steerable',
           missionId: agent.missionId,
@@ -3435,10 +3440,6 @@ function shouldPreTurnAutoCompact(
   threshold: number | undefined,
 ): boolean {
   return !!snapshot && !!threshold && threshold > 0 && snapshot.used >= threshold;
-}
-
-function isExpectedSteeringInterrupt(message: string, pendingSends: string[]): boolean {
-  return message === 'interrupted' && pendingSends.length > 0;
 }
 
 function transferSetKey(set: Set<string>, from: string, to: string): void {
