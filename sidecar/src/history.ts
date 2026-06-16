@@ -352,13 +352,16 @@ export class HistoryIndex {
         updated_at INTEGER NOT NULL
       );
     `);
-    this.ensureColumn('app_sessions', 'compaction_count', 'INTEGER NOT NULL DEFAULT 0');
+    this.ensureCompactionCountColumn();
   }
 
-  private ensureColumn(table: string, column: string, definition: string): void {
-    const rows = this.db.prepare(`PRAGMA table_info(${table})`).all() as Record<string, unknown>[];
-    if (rows.some((row) => row.name === column)) return;
-    this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+  private ensureCompactionCountColumn(): void {
+    const rows = this.db.prepare('PRAGMA table_info(app_sessions)').all() as Record<
+      string,
+      unknown
+    >[];
+    if (rows.some((row) => row.name === 'compaction_count')) return;
+    this.db.exec('ALTER TABLE app_sessions ADD COLUMN compaction_count INTEGER NOT NULL DEFAULT 0');
   }
 
   syncSummaries(summaries: MissionSummary[]): void {

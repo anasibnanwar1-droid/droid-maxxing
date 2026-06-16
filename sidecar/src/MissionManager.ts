@@ -366,10 +366,21 @@ export class MissionManager {
       case 'mission.compact': {
         const missionId = cmd.type === 'session.compact' ? cmd.sessionId : cmd.missionId;
         const mission = this.findMission(missionId);
+        const activeAgent = this.findLiveAgent(missionId);
         if (mission?.streaming || mission?.compacting) {
           this.emitStatus(
             missionId,
             'Cannot compact while a turn is active. Try again when the model is idle.',
+          );
+          return;
+        }
+        if (activeAgent?.agent.streaming) {
+          this.emitStatus(
+            activeAgent.mission.summary.id,
+            'Cannot compact while a turn is active. Try again when the model is idle.',
+            undefined,
+            activeAgent.agent.session.sessionId,
+            activeAgent.agent.role,
           );
           return;
         }
@@ -881,6 +892,42 @@ export class MissionManager {
     return compactionCount;
   }
 
+  private async markMissionCompactedAndRefresh(mission: Mission): Promise<number> {
+    const compactionCount = this.markMissionCompacted(mission);
+    try {
+      const defaults = await this.getFactoryDefaults();
+      await this.applyCompactionSettingsToMission(
+        mission,
+        this.currentCompactionSettings,
+        defaults,
+      );
+    } catch (err) {
+      this.emitError({
+        missionId: mission.summary.id,
+        sessionId: mission.summary.sessionId,
+        message: `Could not refresh daemon compaction settings after compaction: ${errMsg(err)}`,
+        recoverable: true,
+      });
+    }
+    return compactionCount;
+  }
+
+  private nextCompactedSessionState(
+    summary: Pick<MissionSummary, 'sessionId' | 'compactedFromSessionIds' | 'compactionCount'>,
+  ): { compactedFromSessionIds: string[]; compactionCount: number } {
+    const compactedFromSessionIds = uniqueStrings([
+      ...(summary.compactedFromSessionIds ?? []),
+      summary.sessionId,
+    ]);
+    return {
+      compactedFromSessionIds,
+      compactionCount: Math.max(
+        this.nextCompactionCountForSummary(summary),
+        compactedFromSessionIds.length,
+      ),
+    };
+  }
+
   private compactionModelIdForSummary(
     summary: MissionSummary,
     defaults: FactoryDefaultSettings,
@@ -909,7 +956,7 @@ export class MissionManager {
   private markDaemonCompacted(appSessionId: string): void {
     const mission = this.findMission(appSessionId);
     if (!mission || mission.compacting) return;
-    this.markMissionCompacted(mission);
+    void this.markMissionCompactedAndRefresh(mission);
   }
 
   private async runtimeAgentSettings(
@@ -979,6 +1026,17 @@ export class MissionManager {
     for (const [key, mission] of this.missions) {
       if (mission.summary.sessionId === id || mission.summary.compactedFromSessionIds?.includes(id))
         return key;
+    }
+    return undefined;
+  }
+
+  private findLiveAgent(id: string): { mission: Mission; agent: LiveAgent } | undefined {
+    for (const mission of this.missions.values()) {
+      const direct = mission.agents.get(id);
+      if (direct) return { mission, agent: direct };
+      for (const agent of mission.agents.values()) {
+        if (agent.session.sessionId === id) return { mission, agent };
+      }
     }
     return undefined;
   }
@@ -1885,7 +1943,7 @@ export class MissionManager {
       if (outcome === 'stale' && swapTarget) {
         await this.recoverStaleMissionSwap(mission, swapTarget, carryover);
       } else if (outcome === 'completed' && !swapTarget) {
-        this.markMissionCompacted(mission);
+        await this.markMissionCompactedAndRefresh(mission);
       }
     } finally {
       mission.compacting = false;
@@ -1901,14 +1959,7 @@ export class MissionManager {
     carryover: UsageOffset,
   ): Promise<void> {
     const appSessionId = mission.summary.id;
-    const compactedFromSessionIds = uniqueStrings([
-      ...(mission.summary.compactedFromSessionIds ?? []),
-      mission.summary.sessionId,
-    ]);
-    const compactionCount = Math.max(
-      this.nextCompactionCountForSummary(mission.summary),
-      compactedFromSessionIds.length,
-    );
+    const compactedState = this.nextCompactedSessionState(mission.summary);
     const ref = { id: appSessionId };
     const oldSession = mission.session;
     const newSession = await this.runtime.loadSession(newSessionId, {
@@ -1935,7 +1986,7 @@ export class MissionManager {
         this.compactionModelIdForSummary(mission.summary, defaults),
         this.currentCompactionSettings,
         defaults,
-        compactionTriggerRatio(compactionCount),
+        compactionTriggerRatio(compactedState.compactionCount),
       );
     } catch (err) {
       this.emitError({
@@ -1953,8 +2004,7 @@ export class MissionManager {
     this.usageOffsets.set(appSessionId, carryover);
     this.patch(appSessionId, {
       sessionId: newSessionId,
-      compactedFromSessionIds,
-      compactionCount,
+      ...compactedState,
       tokensIn: carryover.tokensIn,
       tokensOut: carryover.tokensOut,
       contextTokens: 0,
@@ -1978,13 +2028,10 @@ export class MissionManager {
     } catch {
       /* adoption still failing; persist the new id and drop the mission below */
     }
+    const compactedState = this.nextCompactedSessionState(mission.summary);
     this.patch(appSessionId, {
       sessionId: newSessionId,
-      compactedFromSessionIds: uniqueStrings([
-        ...(mission.summary.compactedFromSessionIds ?? []),
-        mission.summary.sessionId,
-      ]),
-      compactionCount: this.nextCompactionCountForSummary(mission.summary),
+      ...compactedState,
       tokensIn: carryover.tokensIn,
       tokensOut: carryover.tokensOut,
       contextTokens: 0,

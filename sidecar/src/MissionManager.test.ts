@@ -1058,6 +1058,7 @@ class FakeCompactionSession {
   accuracy: 'exact' | 'estimated' = 'exact';
   breakdown?: unknown;
   beforeContextStats?: () => Promise<void> | void;
+  beforeCompact?: () => Promise<void> | void;
   settingsUpdates: Array<Record<string, unknown>> = [];
   notificationHandler?: (note: Record<string, unknown>) => void;
   unsubscribed = false;
@@ -1120,6 +1121,7 @@ class FakeCompactionSession {
   async compactSession(): Promise<{ newSessionId: string; removedCount: number }> {
     this.callOrder.push('compact');
     if (this.failCompaction) throw new Error('transient compaction failure');
+    await this.beforeCompact?.();
     this.compactions += 1;
     return { newSessionId: this.swapTo ?? this.sessionId, removedCount: 4 };
   }
@@ -1243,6 +1245,7 @@ test('routes daemon compacted notifications from orchestrator sessions', async (
   );
   assert.ok(transcript);
   assert.equal(mission.summary.compactionCount, 1);
+  await waitFor(() => session.callOrder.includes('compaction:340000'));
 
   await manager.handle({
     type: 'settings.compaction.update',
@@ -1358,6 +1361,33 @@ test('rejects manual compaction while streaming', async () => {
   assert.equal(hasRejection, true);
 });
 
+test('rejects manual compaction while a live agent is streaming', async () => {
+  const { manager, mission, events } = streamHarness(10_000);
+  const agentSession = new FakeCompactionSession('worker-active', 10_000);
+  mission.agents.set(agentSession.sessionId, {
+    session: agentSession,
+    missionId: mission.summary.id,
+    role: 'worker',
+    streaming: true,
+    pendingSends: [],
+    lastUsedAt: Date.now(),
+  });
+
+  await manager.handle({ type: 'session.compact', sessionId: agentSession.sessionId });
+
+  assert.equal(agentSession.compactions, 0);
+  assert.equal(
+    events.some(
+      (e) =>
+        e.type === 'mission.transcript' &&
+        e.event.kind === 'status' &&
+        e.event.agentSessionId === agentSession.sessionId &&
+        /cannot compact/i.test(e.event.text ?? ''),
+    ),
+    true,
+  );
+});
+
 test('manual in-place compaction advances the next daemon trigger headroom', async () => {
   const { manager, session, mission } = streamHarness(10_000);
 
@@ -1377,6 +1407,31 @@ test('manual in-place compaction advances the next daemon trigger headroom', asy
   assert.equal(
     session.callOrder.indexOf('compaction:153000') <
       session.callOrder.indexOf('stream:after in-place compact'),
+    true,
+  );
+});
+
+test('manual in-place compaction refreshes daemon trigger before queued send drains', async () => {
+  const { manager, session, mission } = streamHarness(10_000);
+  session.beforeCompact = () =>
+    manager.handle({
+      type: 'mission.send',
+      missionId: mission.summary.id,
+      text: 'queued during compact',
+      compactionTokenLimit: 180_000,
+      compactionTokenLimitPerModel: {},
+    });
+
+  await manager.handle({ type: 'mission.compact', missionId: mission.summary.id });
+
+  assert.equal(session.compactions, 1);
+  assert.equal(mission.summary.compactionCount, 1);
+  assert.equal(session.callOrder.includes('compaction:162000'), true);
+  assert.equal(session.callOrder.includes('compaction:153000'), true);
+  assert.equal(session.callOrder.includes('stream:queued during compact'), true);
+  assert.equal(
+    session.callOrder.indexOf('compaction:153000') <
+      session.callOrder.indexOf('stream:queued during compact'),
     true,
   );
 });
