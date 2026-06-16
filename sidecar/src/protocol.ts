@@ -87,6 +87,7 @@ export interface MissionSummary {
   id: string; // stable app conversation id
   sessionId?: string; // active Droid session id
   compactedFromSessionIds?: string[];
+  compactionCount?: number;
   missionId?: string;
   parentSessionId?: string;
   kind: SessionKind;

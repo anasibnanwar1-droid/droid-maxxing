@@ -74,6 +74,7 @@ import {
 } from './permissionOutcomes.js';
 import { filterMissionListSummaries, type MissionListFilterOptions } from './missionListFilter.js';
 import {
+  compactionTriggerRatio,
   createCompactionSettingsForModel,
   normalizeCompactionTokenLimit,
   runCompaction,
@@ -665,11 +666,13 @@ export class MissionManager {
     settings: CompactionSettingsPatch,
     defaults: FactoryDefaultSettings,
   ): Promise<void> {
+    const triggerRatio = this.compactionTriggerRatioForSummary(mission.summary);
     await this.applyDaemonCompactionSettings(
       mission.session,
       this.compactionModelIdForSummary(mission.summary, defaults),
       settings,
       defaults,
+      triggerRatio,
     );
     for (const [agentSessionId, agent] of mission.agents) {
       const configured = mission.subagentSettings.get(agentSessionId)?.modelId;
@@ -680,7 +683,13 @@ export class MissionManager {
       );
       const modelId =
         configured ?? roleDefault ?? this.compactionModelIdForSummary(mission.summary, defaults);
-      await this.applyDaemonCompactionSettings(agent.session, modelId, settings, defaults);
+      await this.applyDaemonCompactionSettings(
+        agent.session,
+        modelId,
+        settings,
+        defaults,
+        triggerRatio,
+      );
     }
   }
 
@@ -823,6 +832,7 @@ export class MissionManager {
           this.currentCompactionSettings,
           defaults,
           this.maxContextTokensForModel(nextModelId),
+          this.compactionTriggerRatioForSummary(mission.summary),
         ),
       );
     }
@@ -834,6 +844,7 @@ export class MissionManager {
     modelId: string | undefined,
     settings: CompactionSettingsPatch,
     defaults: FactoryDefaultSettings,
+    triggerRatio = compactionTriggerRatio(0),
   ): Promise<void> {
     await session.updateSettings(
       createCompactionSettingsForModel(
@@ -841,8 +852,33 @@ export class MissionManager {
         settings,
         defaults,
         this.maxContextTokensForModel(modelId),
+        triggerRatio,
       ) as never,
     );
+  }
+
+  private compactionTriggerRatioForSummary(
+    summary: Pick<MissionSummary, 'compactionCount' | 'compactedFromSessionIds'>,
+  ): number {
+    return compactionTriggerRatio(this.compactionCountForSummary(summary));
+  }
+
+  private compactionCountForSummary(
+    summary: Pick<MissionSummary, 'compactionCount' | 'compactedFromSessionIds'>,
+  ): number {
+    return Math.max(summary.compactionCount ?? 0, summary.compactedFromSessionIds?.length ?? 0);
+  }
+
+  private nextCompactionCountForSummary(
+    summary: Pick<MissionSummary, 'compactionCount' | 'compactedFromSessionIds'>,
+  ): number {
+    return this.compactionCountForSummary(summary) + 1;
+  }
+
+  private markMissionCompacted(mission: Mission): number {
+    const compactionCount = this.nextCompactionCountForSummary(mission.summary);
+    this.patch(mission.summary.id, { compactionCount });
+    return compactionCount;
   }
 
   private compactionModelIdForSummary(
@@ -862,10 +898,18 @@ export class MissionManager {
     options: { sessionCompactedOnly?: boolean } = {},
   ): () => void {
     return session.onNotification((note: Record<string, unknown>) => {
-      if (options.sessionCompactedOnly && !isSessionCompactedNotification(note)) return;
+      const sessionCompacted = isSessionCompactedNotification(note);
+      if (options.sessionCompactedOnly && !sessionCompacted) return;
+      if (sessionCompacted) this.markDaemonCompacted(appSessionId);
       for (const n of normalizeNotification(appSessionId, agentSessionId, role, note))
         this.applyNormalized(appSessionId, n);
     });
+  }
+
+  private markDaemonCompacted(appSessionId: string): void {
+    const mission = this.findMission(appSessionId);
+    if (!mission || mission.compacting) return;
+    this.markMissionCompacted(mission);
   }
 
   private async runtimeAgentSettings(
@@ -991,6 +1035,7 @@ export class MissionManager {
         id: appSessionId,
         sessionId: droidSessionId,
         compactedFromSessionIds: historical?.compactedFromSessionIds ?? [],
+        compactionCount: historical ? this.compactionCountForSummary(historical) : 0,
         missionId: classification.missionId,
         parentSessionId: classification.parentSessionId,
         kind: classification.kind,
@@ -1042,6 +1087,7 @@ export class MissionManager {
         summary.modelId,
         this.currentCompactionSettings,
         defaults,
+        this.compactionTriggerRatioForSummary(summary),
       );
       const mission: Mission = this.createLiveMission(summary, session, mcp.servers, mcp.configs);
       // Seed the spawn->worker links persisted for this mission so historical
@@ -1272,6 +1318,7 @@ export class MissionManager {
         activeCompactionSettings,
         defaults,
         this.maxContextTokensForModel(orchestratorModelId),
+        compactionTriggerRatio(0),
       );
       const { workerModelId, workerReasoningEffort, validatorModelId, validatorReasoningEffort } =
         createMissionAgentDefaultsForMode(mode, cmd, defaults);
@@ -1302,6 +1349,7 @@ export class MissionManager {
         orchestratorModelId,
         activeCompactionSettings,
         defaults,
+        compactionTriggerRatio(0),
       );
 
       const id = session.sessionId;
@@ -1836,6 +1884,8 @@ export class MissionManager {
       // Recover before later sends stream into that stale session.
       if (outcome === 'stale' && swapTarget) {
         await this.recoverStaleMissionSwap(mission, swapTarget, carryover);
+      } else if (outcome === 'completed' && !swapTarget) {
+        this.markMissionCompacted(mission);
       }
     } finally {
       mission.compacting = false;
@@ -1855,6 +1905,10 @@ export class MissionManager {
       ...(mission.summary.compactedFromSessionIds ?? []),
       mission.summary.sessionId,
     ]);
+    const compactionCount = Math.max(
+      this.nextCompactionCountForSummary(mission.summary),
+      compactedFromSessionIds.length,
+    );
     const ref = { id: appSessionId };
     const oldSession = mission.session;
     const newSession = await this.runtime.loadSession(newSessionId, {
@@ -1881,6 +1935,7 @@ export class MissionManager {
         this.compactionModelIdForSummary(mission.summary, defaults),
         this.currentCompactionSettings,
         defaults,
+        compactionTriggerRatio(compactionCount),
       );
     } catch (err) {
       this.emitError({
@@ -1899,6 +1954,7 @@ export class MissionManager {
     this.patch(appSessionId, {
       sessionId: newSessionId,
       compactedFromSessionIds,
+      compactionCount,
       tokensIn: carryover.tokensIn,
       tokensOut: carryover.tokensOut,
       contextTokens: 0,
@@ -1928,6 +1984,7 @@ export class MissionManager {
         ...(mission.summary.compactedFromSessionIds ?? []),
         mission.summary.sessionId,
       ]),
+      compactionCount: this.nextCompactionCountForSummary(mission.summary),
       tokensIn: carryover.tokensIn,
       tokensOut: carryover.tokensOut,
       contextTokens: 0,
@@ -1962,14 +2019,17 @@ export class MissionManager {
       );
       if (!result) return;
       const newSessionId = result.newSessionId || oldDroidSessionId;
-      if (newSessionId !== oldDroidSessionId && historical) {
+      if (historical) {
+        const compactionCount = this.nextCompactionCountForSummary(historical);
+        const compactedFromSessionIds =
+          newSessionId !== oldDroidSessionId
+            ? uniqueStrings([...(historical.compactedFromSessionIds ?? []), oldDroidSessionId])
+            : historical.compactedFromSessionIds;
         const updated = {
           ...historical,
           sessionId: newSessionId,
-          compactedFromSessionIds: uniqueStrings([
-            ...(historical.compactedFromSessionIds ?? []),
-            oldDroidSessionId,
-          ]),
+          compactedFromSessionIds,
+          compactionCount,
           updatedAt: Date.now(),
         };
         this.history.syncSummaries([updated]);
@@ -2147,6 +2207,7 @@ export class MissionManager {
           this.currentCompactionSettings,
           defaults,
           this.maxContextTokensForModel(nextModelId),
+          summary ? this.compactionTriggerRatioForSummary(summary) : compactionTriggerRatio(0),
         ),
       );
     }
@@ -2251,6 +2312,7 @@ export class MissionManager {
         workerModelId,
         this.currentCompactionSettings,
         defaults,
+        this.compactionTriggerRatioForSummary(mission.summary),
       );
       const agent: LiveAgent = {
         session,

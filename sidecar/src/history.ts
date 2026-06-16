@@ -269,6 +269,7 @@ export class HistoryIndex {
         app_session_id TEXT PRIMARY KEY,
         droid_session_id TEXT NOT NULL,
         previous_droid_session_ids TEXT NOT NULL DEFAULT '[]',
+        compaction_count INTEGER NOT NULL DEFAULT 0,
         kind TEXT NOT NULL,
         title TEXT NOT NULL,
         cwd TEXT,
@@ -351,6 +352,13 @@ export class HistoryIndex {
         updated_at INTEGER NOT NULL
       );
     `);
+    this.ensureColumn('app_sessions', 'compaction_count', 'INTEGER NOT NULL DEFAULT 0');
+  }
+
+  private ensureColumn(table: string, column: string, definition: string): void {
+    const rows = this.db.prepare(`PRAGMA table_info(${table})`).all() as Record<string, unknown>[];
+    if (rows.some((row) => row.name === column)) return;
+    this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
   }
 
   syncSummaries(summaries: MissionSummary[]): void {
@@ -359,6 +367,7 @@ export class HistoryIndex {
         app_session_id,
         droid_session_id,
         previous_droid_session_ids,
+        compaction_count,
         kind,
         title,
         cwd,
@@ -380,10 +389,11 @@ export class HistoryIndex {
         context_updated_at,
         max_context_tokens
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(app_session_id) DO UPDATE SET
         droid_session_id = excluded.droid_session_id,
         previous_droid_session_ids = excluded.previous_droid_session_ids,
+        compaction_count = excluded.compaction_count,
         kind = excluded.kind,
         title = excluded.title,
         cwd = excluded.cwd,
@@ -410,6 +420,7 @@ export class HistoryIndex {
         summary.id,
         summary.sessionId ?? summary.id,
         JSON.stringify(summary.compactedFromSessionIds ?? []),
+        summary.compactionCount ?? 0,
         summary.kind,
         summary.title,
         sqlValue(summary.cwd),
@@ -587,6 +598,7 @@ function summaryPatchesFromRows(
       id: appSessionId,
       sessionId: droidSessionId,
       compactedFromSessionIds: jsonStringArray(row.previous_droid_session_ids),
+      compactionCount: numberValue(row.compaction_count),
       kind: sessionKind(stringValue(row.kind)),
       title: stringValue(row.title),
       cwd: stringValue(row.cwd),

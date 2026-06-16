@@ -12,6 +12,8 @@ import {
 import {
   clampCompactionTokenLimit,
   compactionTokenLimitForModel,
+  compactionTriggerLimit,
+  compactionTriggerRatio,
   createCompactionSettingsForModel,
 } from './compaction.js';
 import type { MissionSummary, ModelInfo, ServerEvent, WorkerHistoryLink } from './protocol.js';
@@ -183,14 +185,25 @@ test('uses Factory compaction defaults when command omits them', () => {
   );
 });
 
-test('builds Droid compaction init payloads', () => {
+test('derives daemon compaction trigger headroom from visible window age', () => {
+  assert.equal(compactionTriggerRatio(0), 0.9);
+  assert.equal(compactionTriggerRatio(1), 0.85);
+  assert.equal(compactionTriggerRatio(2), 0.8);
+  assert.equal(compactionTriggerRatio(3), 0.75);
+  assert.equal(compactionTriggerRatio(12), 0.75);
+  assert.equal(compactionTriggerRatio(-1), 0.9);
+  assert.equal(compactionTriggerLimit(100_000, compactionTriggerRatio(0)), 90_000);
+  assert.equal(compactionTriggerLimit(100_000, compactionTriggerRatio(3)), 75_000);
+});
+
+test('builds Droid compaction init payloads with daemon trigger headroom', () => {
   assert.deepEqual(
     createCompactionSettingsForModel('model-a', {
       compactionTokenLimit: 200_000,
       compactionTokenLimitPerModel: { 'model-a': 150_000 },
     }),
     {
-      compactionTokenLimit: 150_000,
+      compactionTokenLimit: 135_000,
       compactionThresholdCheckEnabled: true,
     },
   );
@@ -208,7 +221,7 @@ test('caps Droid compaction limits to the selected model context window', () => 
       100_000,
     ),
     {
-      compactionTokenLimit: 100_000,
+      compactionTokenLimit: 90_000,
       compactionThresholdCheckEnabled: true,
     },
   );
@@ -592,7 +605,7 @@ test('live sessions refresh daemon compaction settings from model and limit chan
 
   assert.deepEqual(session.settingsUpdates.at(-1), {
     modelId: 'model-b',
-    compactionTokenLimit: 250_000,
+    compactionTokenLimit: 225_000,
     compactionThresholdCheckEnabled: true,
   });
 
@@ -605,7 +618,7 @@ test('live sessions refresh daemon compaction settings from model and limit chan
 
   assert.deepEqual(session.settingsUpdates.at(-1), {
     modelId: 'model-a',
-    compactionTokenLimit: 400_000,
+    compactionTokenLimit: 360_000,
     compactionThresholdCheckEnabled: true,
   });
 
@@ -617,7 +630,7 @@ test('live sessions refresh daemon compaction settings from model and limit chan
 
   assert.deepEqual(session.settingsUpdates.at(-1), {
     modelId: 'model-a',
-    compactionTokenLimit: 400_000,
+    compactionTokenLimit: 360_000,
     compactionThresholdCheckEnabled: true,
   });
 
@@ -629,7 +642,7 @@ test('live sessions refresh daemon compaction settings from model and limit chan
   });
 
   assert.deepEqual(session.settingsUpdates.at(-1), {
-    compactionTokenLimit: 150_000,
+    compactionTokenLimit: 135_000,
     compactionThresholdCheckEnabled: true,
   });
   mission.streaming = false;
@@ -643,7 +656,7 @@ test('live sessions refresh daemon compaction settings from model and limit chan
 
   assert.deepEqual(session.settingsUpdates.at(-1), {
     modelId: 'model-b',
-    compactionTokenLimit: 200_000,
+    compactionTokenLimit: 180_000,
     compactionThresholdCheckEnabled: true,
   });
 
@@ -658,11 +671,11 @@ test('live sessions refresh daemon compaction settings from model and limit chan
   assert.equal(
     session.settingsUpdates.some(
       (update) =>
-        update.compactionTokenLimit === 180_000 && update.compactionThresholdCheckEnabled === true,
+        update.compactionTokenLimit === 162_000 && update.compactionThresholdCheckEnabled === true,
     ),
     true,
   );
-  const compactionUpdateIndex = session.callOrder.lastIndexOf('compaction:180000');
+  const compactionUpdateIndex = session.callOrder.lastIndexOf('compaction:162000');
   const streamIndex = session.callOrder.indexOf('stream:existing chat turn');
   assert.equal(compactionUpdateIndex >= 0, true);
   assert.equal(streamIndex >= 0, true);
@@ -671,6 +684,71 @@ test('live sessions refresh daemon compaction settings from model and limit chan
   assert.equal(
     events.some((event) => event.type === 'mission.error' || event.type === 'error'),
     false,
+  );
+});
+
+test('resume preserves in-place compaction count for daemon trigger headroom', async () => {
+  const events: ServerEvent[] = [];
+  const manager = new MissionManager((event) => events.push(event));
+  const session = new FakeCompactionSession('droid-resume', 10_000) as FakeCompactionSession & {
+    initResult: Record<string, unknown>;
+  };
+  session.initResult = {
+    cwd: '',
+    session: { title: 'Resumed compacted session' },
+    settings: { modelId: 'model-a' },
+  };
+  const historical: MissionSummary = {
+    ...testSummary('app-resume', session.sessionId),
+    modelId: 'model-a',
+    compactionCount: 2,
+    compactedFromSessionIds: [],
+  };
+  const internals = manager as unknown as {
+    ready: boolean;
+    resolveSummary: (id: string) => MissionSummary | undefined;
+    startLocalMcpServers: () => Promise<{ servers: []; configs: [] }>;
+    getFactoryDefaults: () => Promise<{
+      modelId?: string;
+      compactionTokenLimit?: number;
+      compactionTokenLimitPerModel?: Record<string, number>;
+    }>;
+    runtime: {
+      loadSession: (id: string, handlers: unknown) => Promise<typeof session>;
+    };
+    history: {
+      syncSummaries: () => void;
+      subagentLinks: () => [];
+      summaryPatches: () => Map<string, Partial<MissionSummary>>;
+      hiddenDroidSessionIds: () => Set<string>;
+    };
+    missions: Map<string, { summary: MissionSummary; session: typeof session }>;
+  };
+  internals.ready = true;
+  internals.resolveSummary = () => historical;
+  internals.startLocalMcpServers = async () => ({ servers: [], configs: [] });
+  internals.getFactoryDefaults = async () => ({
+    modelId: 'model-a',
+    compactionTokenLimit: 180_000,
+  });
+  internals.runtime = {
+    loadSession: async () => session,
+  };
+  internals.history = {
+    syncSummaries: () => {},
+    subagentLinks: () => [],
+    summaryPatches: () => new Map(),
+    hiddenDroidSessionIds: () => new Set(),
+  };
+
+  await manager.handle({ type: 'mission.resume', sessionId: historical.id });
+
+  const live = internals.missions.get(historical.id);
+  assert.equal(live?.summary.compactionCount, 2);
+  assert.equal(session.callOrder.includes('compaction:144000'), true);
+  assert.equal(
+    events.some((event) => event.type === 'mission.created' && event.mission.compactionCount === 2),
+    true,
   );
 });
 
@@ -753,10 +831,10 @@ test('agent sends refresh daemon compaction settings before streaming', async ()
   });
 
   assert.deepEqual(agentSession.settingsUpdates.at(-1), {
-    compactionTokenLimit: 175_000,
+    compactionTokenLimit: 157_500,
     compactionThresholdCheckEnabled: true,
   });
-  const compactionUpdateIndex = agentSession.callOrder.lastIndexOf('compaction:175000');
+  const compactionUpdateIndex = agentSession.callOrder.lastIndexOf('compaction:157500');
   const streamIndex = agentSession.callOrder.indexOf('stream:worker turn');
   assert.equal(compactionUpdateIndex >= 0, true);
   assert.equal(streamIndex >= 0, true);
@@ -854,9 +932,9 @@ test('permission and question responses refresh compaction settings before conti
   });
 
   assert.deepEqual(session.callOrder, [
-    'compaction:190000',
+    'compaction:171000',
     'permission-resolved',
-    'compaction:180000',
+    'compaction:162000',
     'question-resolved',
   ]);
   assert.equal(
@@ -1093,27 +1171,51 @@ function streamHarness(used: number) {
   return { manager, session, events, mission };
 }
 
-test('routes daemon compacted notifications from orchestrator sessions', () => {
+test('routes daemon compacted notifications from orchestrator sessions', async () => {
   const events: ServerEvent[] = [];
   const manager = new MissionManager((event) => events.push(event));
   const session = new FakeCompactionSession('droid-notify', 10_000);
-  const summary = testSummary('app-notify', session.sessionId);
+  const summary = { ...testSummary('app-notify', session.sessionId), modelId: 'model-a' };
   const internals = manager as unknown as {
     createLiveMission: (
       summary: MissionSummary,
       session: FakeCompactionSession,
       mcpServers?: [],
       mcpConfigs?: [],
-    ) => { summary: MissionSummary; unsubscribe?: () => void };
+    ) => {
+      summary: MissionSummary;
+      session: FakeCompactionSession;
+      unsubscribe?: () => void;
+    };
+    getFactoryDefaults: () => Promise<{
+      modelId?: string;
+      compactionTokenLimit?: number;
+      compactionTokenLimitPerModel?: Record<string, number>;
+    }>;
     history: {
       recordEvent: () => void;
       syncSummaries: () => void;
+      summaryPatches: () => Map<string, Partial<MissionSummary>>;
+      hiddenDroidSessionIds: () => Set<string>;
+      recordSubagentLink: () => void;
+      subagentLinks: () => [];
     };
-    missions: Map<string, { summary: MissionSummary; unsubscribe?: () => void }>;
+    missions: Map<
+      string,
+      { summary: MissionSummary; session: FakeCompactionSession; unsubscribe?: () => void }
+    >;
   };
+  internals.getFactoryDefaults = async () => ({
+    modelId: 'model-a',
+    compactionTokenLimit: 400_000,
+  });
   internals.history = {
     recordEvent: () => {},
     syncSummaries: () => {},
+    summaryPatches: () => new Map(),
+    hiddenDroidSessionIds: () => new Set(),
+    recordSubagentLink: () => {},
+    subagentLinks: () => [],
   };
   const mission = internals.createLiveMission(summary, session);
   internals.missions.set(summary.id, mission);
@@ -1140,6 +1242,15 @@ test('routes daemon compacted notifications from orchestrator sessions', () => {
       event.event.text === 'Compaction complete. Removed 7 messages.',
   );
   assert.ok(transcript);
+  assert.equal(mission.summary.compactionCount, 1);
+
+  await manager.handle({
+    type: 'settings.compaction.update',
+    compactionTokenLimit: 180_000,
+    compactionTokenLimitPerModel: {},
+  });
+  assert.equal(session.callOrder.includes('compaction:153000'), true);
+
   assert.equal(session.unsubscribed, false);
   mission.unsubscribe?.();
   assert.equal(session.unsubscribed, true);
@@ -1245,6 +1356,29 @@ test('rejects manual compaction while streaming', async () => {
       /cannot compact/i.test((e as { event?: { text?: string } }).event?.text ?? ''),
   );
   assert.equal(hasRejection, true);
+});
+
+test('manual in-place compaction advances the next daemon trigger headroom', async () => {
+  const { manager, session, mission } = streamHarness(10_000);
+
+  await manager.handle({ type: 'mission.compact', missionId: mission.summary.id });
+  await manager.handle({
+    type: 'mission.send',
+    missionId: mission.summary.id,
+    text: 'after in-place compact',
+    compactionTokenLimit: 180_000,
+    compactionTokenLimitPerModel: {},
+  });
+
+  assert.equal(session.compactions, 1);
+  assert.equal(mission.summary.compactionCount, 1);
+  assert.equal(session.callOrder.includes('compaction:153000'), true);
+  assert.equal(session.callOrder.includes('stream:after in-place compact'), true);
+  assert.equal(
+    session.callOrder.indexOf('compaction:153000') <
+      session.callOrder.indexOf('stream:after in-place compact'),
+    true,
+  );
 });
 
 function orchestratorSwapHarness(used: number, swapTo: string) {
@@ -1361,7 +1495,7 @@ test('manual compaction swap reapplies default model per-model daemon settings',
   await manager.handle({ type: 'mission.compact', missionId: 'app-swap' });
 
   assert.deepEqual(swapped.settingsUpdates.at(-1), {
-    compactionTokenLimit: 150_000,
+    compactionTokenLimit: 127_500,
     compactionThresholdCheckEnabled: true,
   });
 });
@@ -1405,7 +1539,7 @@ test('manual compaction swap reapplies current live compaction settings', async 
   await manager.handle({ type: 'mission.compact', missionId: 'app-swap' });
 
   assert.deepEqual(swapped.settingsUpdates.at(-1), {
-    compactionTokenLimit: 175_000,
+    compactionTokenLimit: 148_750,
     compactionThresholdCheckEnabled: true,
   });
 });
