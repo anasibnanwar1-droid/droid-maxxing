@@ -32,6 +32,8 @@
     "profile:sidecar": "0x --output-dir reports/profiles -- node --loader tsx/esm sidecar/src/index.ts",
     "precommit": "lint-staged && npm run quality:file-size && npm run quality:tech-debt && npm run typecheck && npm run sidecar:typecheck && npm run electron:check",
     "prepare": "husky",
+    "docs:generate": "node tools/generate-docs.mjs",
+    "docs:check": "node tools/generate-docs.mjs --check && node tools/check-agents-md.mjs",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "preview": "vite preview"
