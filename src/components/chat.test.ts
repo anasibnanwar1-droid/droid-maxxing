@@ -89,6 +89,11 @@ test('#20 a TodoWrite result is correlated by toolUseId even with no toolName', 
   });
   assert.equal(isResultFor(call, result), true);
   assert.equal(isResultFor(call, unrelated), false);
+  // One-sided id (call has one, result does not) is not a confirmed match, so
+  // the call must not swallow the result — batched replays interleave several
+  // calls and results, making adjacency alone unsafe here.
+  const idlessResult = ev({ kind: 'tool_result', toolName: '', text: 'TODO List Updated' });
+  assert.equal(isResultFor(call, idlessResult), false);
   // No correlation ids on either side: fall back to the adjacent-result convention.
   const bareCall = ev({ kind: 'tool_call', toolName: 'TodoWrite', toolArgs: { todos: 'x' } });
   const bareResult = ev({ kind: 'tool_result', toolName: '', text: 'TODO List Updated' });

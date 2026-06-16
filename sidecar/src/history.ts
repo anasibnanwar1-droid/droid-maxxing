@@ -1056,6 +1056,10 @@ function parseSessionTranscript(
             toolName: stringValue(block.name),
             text: trimText(contentText),
             isError: Boolean(block.is_error ?? block.isError),
+            // Carry the originating call's id so the renderer can correlate a
+            // result to its tool_call exactly (result blocks have no name and
+            // may not be adjacent to their call after replay/batching).
+            toolUseId: stringValue(block.tool_use_id ?? block.toolUseId) || undefined,
           }),
         );
       } else if (messageRole === 'user' && role === 'orchestrator' && type === 'text') {

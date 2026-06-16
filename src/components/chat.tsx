@@ -361,16 +361,18 @@ function TodoChecklist({ event }: { event: TranscriptEvent }) {
 }
 
 // Whether `next` is the tool_result produced by the `call` event. Result events
-// frequently lack a usable `toolName` (the live SDK emits "" and history keys
-// results by toolUseId), so a plan_update reclassification of the result is not
-// reliable; correlate by toolUseId when present, otherwise fall back to the
-// adjacent-result convention every other branch in renderToolEvents uses.
+// carry no usable `toolName` (the live SDK emits "" and history reads the empty
+// result name), so classification cannot identify them; correlate by toolUseId
+// instead. When either side has an id, require an exact match so a call never
+// swallows an unrelated result (replayed transcripts batch several calls before
+// their results); fall back to adjacency only when neither side has an id (the
+// live stream emits each result immediately after its call).
 export function isResultFor(call: TranscriptEvent, next: TranscriptEvent | undefined): boolean {
   if (!next || next.kind !== 'tool_result') return false;
   // A failed result must always surface so the user sees the failure, even when
   // it correlates to the call we are otherwise hiding (e.g. a failed TodoWrite).
   if (next.isError) return false;
-  if (call.toolUseId && next.toolUseId) return next.toolUseId === call.toolUseId;
+  if (call.toolUseId || next.toolUseId) return call.toolUseId === next.toolUseId;
   return true;
 }
 
