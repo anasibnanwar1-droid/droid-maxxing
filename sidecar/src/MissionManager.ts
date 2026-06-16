@@ -1741,10 +1741,14 @@ export class MissionManager {
       for await (const ev of stream)
         this.applyEvent(appSessionId, appSessionId, 'orchestrator', ev);
     } catch (err) {
-      if (mission.interruptingForSteer)
+      const message = errMsg(err);
+      if (
+        mission.interruptingForSteer ||
+        isExpectedSteeringInterrupt(message, mission.pendingSends)
+      )
         this.emitStatus(appSessionId, 'Current turn interrupted for steering.');
       else {
-        this.emitError({ missionId: appSessionId, message: errMsg(err) });
+        this.emitError({ missionId: appSessionId, message });
         this.patch(appSessionId, { phase: 'failed' });
       }
     } finally {
@@ -2657,10 +2661,10 @@ export class MissionManager {
       for await (const ev of stream)
         this.applyEvent(agent.missionId, agent.session.sessionId, agent.role, ev);
     } catch (err) {
-      if (agent.interruptingForSteer)
+      const message = errMsg(err);
+      if (agent.interruptingForSteer || isExpectedSteeringInterrupt(message, agent.pendingSends))
         this.emitStatus(agent.missionId, 'Subagent turn interrupted for steering.');
       else {
-        const message = errMsg(err);
         this.emit({
           type: 'agent.not_steerable',
           missionId: agent.missionId,
@@ -3431,6 +3435,10 @@ function shouldPreTurnAutoCompact(
   threshold: number | undefined,
 ): boolean {
   return !!snapshot && !!threshold && threshold > 0 && snapshot.used >= threshold;
+}
+
+function isExpectedSteeringInterrupt(message: string, pendingSends: string[]): boolean {
+  return message === 'interrupted' && pendingSends.length > 0;
 }
 
 function transferSetKey(set: Set<string>, from: string, to: string): void {
