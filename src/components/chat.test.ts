@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { buildFeed, groupTurns, MessageFeed, type FeedItem } from './chat';
+import { buildFeed, groupTurns, isResultFor, MessageFeed, type FeedItem } from './chat';
 import type { TranscriptEvent } from '../types/bridge';
 
 let seq = 0;
@@ -63,6 +63,39 @@ test('#20 repeated TodoWrite calls are deduped to the latest snapshot', () => {
     plans[0].toolArgs && (plans[0].toolArgs as { todos: string }).todos,
     '1. [completed] a',
   );
+});
+
+test('#20 a TodoWrite result is correlated by toolUseId even with no toolName', () => {
+  // The live SDK emits tool_result with toolName "" and history keys results by
+  // toolUseId, so the result does not classify as plan_update; it must still be
+  // skipped (not leaked as raw "TODO List Updated" activity) via toolUseId.
+  const call = ev({
+    kind: 'tool_call',
+    toolName: 'TodoWrite',
+    toolArgs: { todos: '1. [completed] a' },
+    toolUseId: 'tu1',
+  });
+  const result = ev({
+    kind: 'tool_result',
+    toolName: '',
+    toolUseId: 'tu1',
+    text: 'TODO List Updated',
+  });
+  const unrelated = ev({
+    kind: 'tool_result',
+    toolName: '',
+    toolUseId: 'other',
+    text: 'grep output',
+  });
+  assert.equal(isResultFor(call, result), true);
+  assert.equal(isResultFor(call, unrelated), false);
+  // No correlation ids on either side: fall back to the adjacent-result convention.
+  const bareCall = ev({ kind: 'tool_call', toolName: 'TodoWrite', toolArgs: { todos: 'x' } });
+  const bareResult = ev({ kind: 'tool_result', toolName: '', text: 'TODO List Updated' });
+  assert.equal(isResultFor(bareCall, bareResult), true);
+  // A non-result neighbour is never swallowed.
+  assert.equal(isResultFor(call, asst('done')), false);
+  assert.equal(isResultFor(call, undefined), false);
 });
 
 // ── #18: final answer always top-level, even with trailing compaction ──

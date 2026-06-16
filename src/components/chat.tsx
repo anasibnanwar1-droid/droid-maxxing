@@ -360,6 +360,17 @@ function TodoChecklist({ event }: { event: TranscriptEvent }) {
   );
 }
 
+// Whether `next` is the tool_result produced by the `call` event. Result events
+// frequently lack a usable `toolName` (the live SDK emits "" and history keys
+// results by toolUseId), so a plan_update reclassification of the result is not
+// reliable; correlate by toolUseId when present, otherwise fall back to the
+// adjacent-result convention every other branch in renderToolEvents uses.
+export function isResultFor(call: TranscriptEvent, next: TranscriptEvent | undefined): boolean {
+  if (!next || next.kind !== 'tool_result') return false;
+  if (call.toolUseId && next.toolUseId) return next.toolUseId === call.toolUseId;
+  return true;
+}
+
 function renderToolEvents(events: TranscriptEvent[]): React.ReactNode[] {
   const nodes: React.ReactNode[] = [];
   for (let i = 0; i < events.length; i++) {
@@ -369,8 +380,7 @@ function renderToolEvents(events: TranscriptEvent[]): React.ReactNode[] {
         nodes.push(<TodoChecklist key={e.id} event={e} />);
         // A TodoWrite's own (empty) tool_result carries no payload; skip only
         // that result, never an unrelated one that happens to follow.
-        const next = events[i + 1];
-        if (next?.kind === 'tool_result' && classifyEvent(next) === 'plan_update') i++;
+        if (isResultFor(e, events[i + 1])) i++;
         continue;
       }
       const next = events[i + 1];
@@ -576,8 +586,7 @@ function dedupePlanUpdates(events: TranscriptEvent[]): TranscriptEvent[] {
     if (e.kind === 'tool_call' && classifyEvent(e) === 'plan_update' && e.id !== keepId) {
       // Only swallow the result if it is this plan call's own (empty) result;
       // never drop an unrelated tool_result that happens to follow.
-      const next = events[j + 1];
-      if (next?.kind === 'tool_result' && classifyEvent(next) === 'plan_update') j++;
+      if (isResultFor(e, events[j + 1])) j++;
       continue;
     }
     out.push(e);
