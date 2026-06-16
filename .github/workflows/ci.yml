@@ -106,8 +106,11 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
-          cache-dependency-path: package-lock.json
+          cache-dependency-path: |
+            package-lock.json
+            sidecar/package-lock.json
       - run: npm ci
+      - run: npm ci --prefix sidecar
       - run: npm run quality:file-size
       - run: npm run quality:tech-debt
       - run: npm run quality:boundaries

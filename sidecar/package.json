@@ -11,7 +11,7 @@
     "test": "node --import tsx --test --test-reporter=spec \"src/**/*.test.ts\"",
     "test:coverage": "node --import tsx --test --experimental-test-coverage --test-coverage-lines=74 --test-coverage-branches=69 --test-coverage-functions=56 \"src/**/*.test.ts\"",
     "test:report": "mkdir -p ../reports && node --import tsx --test --test-reporter=spec --test-reporter-destination=stdout --test-reporter=junit --test-reporter-destination=../reports/sidecar-tests.xml \"src/**/*.test.ts\"",
-    "test:flaky": "mkdir -p ../reports && node --import tsx --test --test-reporter=spec --test-rerun-failures=../reports/sidecar-reruns.json \"src/**/*.test.ts\"",
+    "test:flaky": "mkdir -p ../reports && node ../tools/run-flaky-check.mjs ../reports/sidecar-reruns.json -- node --import tsx --test --test-reporter=spec \"src/**/*.test.ts\"",
     "typecheck": "tsc --noEmit",
     "typecheck:strict": "tsc -p tsconfig.strict.json --noEmit"
   },

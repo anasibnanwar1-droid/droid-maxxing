@@ -15,7 +15,7 @@
     "test": "node --import tsx --test --test-reporter=spec \"src/**/*.test.ts\"",
     "test:coverage": "node --import tsx --test --experimental-test-coverage --test-coverage-lines=75 --test-coverage-branches=70 --test-coverage-functions=55 \"src/**/*.test.ts\"",
     "test:report": "mkdir -p reports && node --import tsx --test --test-reporter=spec --test-reporter-destination=stdout --test-reporter=junit --test-reporter-destination=reports/frontend-tests.xml \"src/**/*.test.ts\"",
-    "test:flaky": "mkdir -p reports && node --import tsx --test --test-reporter=spec --test-rerun-failures=reports/frontend-reruns.json \"src/**/*.test.ts\"",
+    "test:flaky": "mkdir -p reports && node tools/run-flaky-check.mjs reports/frontend-reruns.json -- node --import tsx --test --test-reporter=spec \"src/**/*.test.ts\"",
     "test:integration": "playwright test",
     "typecheck": "tsc --noEmit",
     "typecheck:strict": "tsc -p tsconfig.strict.json --noEmit",
