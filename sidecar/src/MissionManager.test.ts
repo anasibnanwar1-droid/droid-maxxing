@@ -1259,6 +1259,61 @@ test('routes daemon compacted notifications from orchestrator sessions', async (
   assert.equal(session.unsubscribed, true);
 });
 
+test('routes daemon compacted notifications from worker sessions to worker context', async () => {
+  const { manager, session, mission, events } = streamHarness(10_000);
+  const worker = new FakeCompactionSession('worker-notify', 12_345);
+  worker.limit = 90_000;
+  mission.summary.modelId = 'model-a';
+  mission.subagentSettings.set(worker.sessionId, { modelId: 'model-a' });
+  mission.agents.set(worker.sessionId, {
+    session: worker,
+    missionId: mission.summary.id,
+    role: 'worker',
+    streaming: false,
+    pendingSends: [],
+    lastUsedAt: Date.now(),
+  });
+  const internals = manager as unknown as {
+    getFactoryDefaults: () => Promise<{ modelId?: string; compactionTokenLimit?: number }>;
+    subscribeSessionNotifications: (
+      appSessionId: string,
+      agentSessionId: string,
+      role: 'worker',
+      session: FakeCompactionSession,
+    ) => () => void;
+  };
+  internals.getFactoryDefaults = async () => ({
+    modelId: 'model-a',
+    compactionTokenLimit: 100_000,
+  });
+  const unsubscribe = internals.subscribeSessionNotifications(
+    mission.summary.id,
+    worker.sessionId,
+    'worker',
+    worker,
+  );
+
+  worker.emitNotification({ notification: { type: 'session_compacted', removedCount: 3 } });
+
+  await waitFor(() =>
+    events.some(
+      (event) => event.type === 'context.updated' && event.sessionId === worker.sessionId,
+    ),
+  );
+  const workerContext = events.findLast(
+    (event) => event.type === 'context.updated' && event.sessionId === worker.sessionId,
+  ) as
+    | { type: 'context.updated'; stats: { used: number; remaining: number; limit: number } }
+    | undefined;
+  assert.equal(workerContext?.stats.used, 12_345);
+  assert.equal(workerContext?.stats.remaining, 87_655);
+  assert.equal(workerContext?.stats.limit, 100_000);
+  assert.equal(mission.summary.compactionCount, 1);
+  assert.equal(session.callOrder.includes('compaction:85000'), true);
+  assert.equal(worker.callOrder.includes('compaction:85000'), true);
+  unsubscribe();
+});
+
 test('does not sidecar-compact before starting a streamed turn', async () => {
   const { manager, session, events } = streamHarness(250_000);
   await manager.handle({ type: 'mission.send', missionId: 'app-stream', text: 'hello' });
@@ -1303,6 +1358,9 @@ test('settles to paused when a mid-stream paused event was ignored', async () =>
 
 test('estimated context stats prefer detailed breakdown usage', async () => {
   const { manager, session, mission, events } = streamHarness(200_000);
+  (
+    manager as unknown as { getFactoryDefaults: () => Promise<Record<string, never>> }
+  ).getFactoryDefaults = async () => ({});
   session.limit = 200_000;
   session.accuracy = 'estimated';
   session.breakdown = {
@@ -1326,6 +1384,118 @@ test('estimated context stats prefer detailed breakdown usage', async () => {
   assert.equal(contextEvent?.stats.used, 154_982);
   assert.equal(contextEvent?.stats.remaining, 45_018);
   assert.equal(contextEvent?.stats.limit, 200_000);
+});
+
+test('context stats expose the visible window instead of daemon trigger headroom', async () => {
+  const { manager, session, mission, events } = streamHarness(93_478);
+  mission.summary.modelId = 'model-a';
+  session.limit = 90_000;
+  session.accuracy = 'estimated';
+  const internals = manager as unknown as {
+    getFactoryDefaults: () => Promise<{
+      modelId?: string;
+      compactionTokenLimit?: number;
+      compactionTokenLimitPerModel?: Record<string, number>;
+    }>;
+  };
+  internals.getFactoryDefaults = async () => ({
+    modelId: 'model-a',
+    compactionTokenLimit: 100_000,
+  });
+
+  await manager.handle({
+    type: 'settings.compaction.update',
+    compactionTokenLimit: 100_000,
+    compactionTokenLimitPerModel: {},
+  });
+  await manager.handle({ type: 'mission.send', missionId: 'app-stream', text: 'hello' });
+
+  const contextEvent = events.findLast((event) => event.type === 'context.updated') as
+    | { type: 'context.updated'; stats: { used: number; remaining: number; limit: number } }
+    | undefined;
+  assert.equal(contextEvent?.stats.used, 93_478);
+  assert.equal(contextEvent?.stats.remaining, 6_522);
+  assert.equal(contextEvent?.stats.limit, 100_000);
+  assert.equal(mission.summary.maxContextTokens, 100_000);
+});
+
+test('token usage events preserve the visible context window between refreshes', async () => {
+  const { manager, session, mission, events } = streamHarness(92_000);
+  mission.summary.modelId = 'model-a';
+  mission.summary.maxContextTokens = 100_000;
+  session.limit = 90_000;
+  session.streamEvents.push({
+    type: 'session_token_usage_changed',
+    inclusiveTokenUsage: { inputTokens: 1_000, outputTokens: 100 },
+    lastCallTokenUsage: { inputTokens: 92_000 },
+  });
+  const internals = manager as unknown as {
+    cachedModels?: ModelInfo[];
+    getFactoryDefaults: () => Promise<Record<string, never>>;
+  };
+  internals.cachedModels = [
+    {
+      id: 'model-a',
+      displayName: 'Model A',
+      isDefault: true,
+      isCustom: false,
+      supportedReasoningEfforts: [],
+      maxContextTokens: 200_000,
+    },
+  ];
+  internals.getFactoryDefaults = async () => ({});
+
+  await manager.handle({ type: 'mission.send', missionId: 'app-stream', text: 'hello' });
+
+  const contextEvents = events.filter((event) => event.type === 'context.updated') as Array<{
+    type: 'context.updated';
+    stats: { used: number; remaining: number; limit: number };
+  }>;
+  assert.ok(contextEvents.length > 0);
+  assert.equal(
+    contextEvents.every((event) => event.stats.limit === 100_000),
+    true,
+  );
+  assert.equal(mission.summary.maxContextTokens, 100_000);
+});
+
+test('cleared compaction limit returns the visible context window to the model max', async () => {
+  const { manager, session, mission, events } = streamHarness(92_000);
+  mission.summary.modelId = 'model-a';
+  mission.summary.maxContextTokens = 100_000;
+  session.streamEvents.push({
+    type: 'session_token_usage_changed',
+    inclusiveTokenUsage: { inputTokens: 1_000, outputTokens: 100 },
+    lastCallTokenUsage: { inputTokens: 92_000 },
+  });
+  const internals = manager as unknown as {
+    cachedModels?: ModelInfo[];
+    getFactoryDefaults: () => Promise<Record<string, never>>;
+  };
+  internals.cachedModels = [
+    {
+      id: 'model-a',
+      displayName: 'Model A',
+      isDefault: true,
+      isCustom: false,
+      supportedReasoningEfforts: [],
+      maxContextTokens: 200_000,
+    },
+  ];
+  internals.getFactoryDefaults = async () => ({});
+
+  await manager.handle({
+    type: 'settings.compaction.update',
+    compactionTokenLimit: null,
+    compactionTokenLimitPerModel: {},
+  });
+  await manager.handle({ type: 'mission.send', missionId: 'app-stream', text: 'hello' });
+
+  const contextEvent = events.findLast((event) => event.type === 'context.updated') as
+    | { type: 'context.updated'; stats: { limit: number } }
+    | undefined;
+  assert.equal(contextEvent?.stats.limit, 200_000);
+  assert.equal(mission.summary.maxContextTokens, 200_000);
 });
 
 test('Stop during compaction drops queued sends but does not interrupt the compaction', async () => {

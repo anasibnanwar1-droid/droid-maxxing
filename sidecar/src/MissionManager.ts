@@ -74,6 +74,8 @@ import {
 } from './permissionOutcomes.js';
 import { filterMissionListSummaries, type MissionListFilterOptions } from './missionListFilter.js';
 import {
+  clampCompactionTokenLimit,
+  compactionTokenLimitForModel,
   compactionTriggerRatio,
   createCompactionSettingsForModel,
   normalizeCompactionTokenLimit,
@@ -718,13 +720,59 @@ export class MissionManager {
     }
   }
 
-  private maxContextTokensForSummary(summary: MissionSummary): number | undefined {
-    return this.maxContextTokensForModel(summary.modelId);
-  }
-
   private maxContextTokensForModel(modelId?: string): number | undefined {
     if (!modelId) return undefined;
     return this.cachedModels?.find((model) => model.id === modelId)?.maxContextTokens;
+  }
+
+  private visibleContextLimitForModel(
+    modelId: string | undefined,
+    defaults: Partial<FactoryDefaultSettings> = {},
+    fallback?: number,
+  ): number | undefined {
+    const modelMax = this.maxContextTokensForModel(modelId);
+    const configured = clampCompactionTokenLimit(
+      compactionTokenLimitForModel(modelId, this.currentCompactionSettings, defaults),
+      modelMax,
+    );
+    if (configured !== undefined) return configured;
+    if (this.compactionLimitClearedForModel(modelId)) return modelMax ?? fallback;
+    return fallback ?? modelMax;
+  }
+
+  private visibleContextLimitForSummary(
+    summary: MissionSummary,
+    defaults: Partial<FactoryDefaultSettings> = {},
+    fallback?: number,
+  ): number | undefined {
+    return this.visibleContextLimitForModel(
+      summary.modelId ?? defaults.modelId,
+      defaults,
+      fallback,
+    );
+  }
+
+  private compactionLimitClearedForModel(modelId: string | undefined): boolean {
+    const perModel = this.currentCompactionSettings.compactionTokenLimitPerModel;
+    if (modelId && normalizeCompactionTokenLimit(perModel?.[modelId]) !== undefined) return false;
+    return this.currentCompactionSettings.compactionTokenLimit === null;
+  }
+
+  private visibleContextLimitForAgent(
+    mission: Mission,
+    agent: LiveAgent,
+    defaults: Partial<FactoryDefaultSettings> = {},
+  ): number | undefined {
+    const configured = mission.subagentSettings.get(agent.session.sessionId)?.modelId;
+    const roleDefault = defaultModelForAgent(
+      agent.role === 'validator' ? 'validator' : 'worker',
+      modeForSummary(mission.summary),
+      defaults,
+    );
+    return this.visibleContextLimitForModel(
+      configured ?? roleDefault ?? mission.summary.modelId ?? defaults.modelId,
+      defaults,
+    );
   }
 
   private async updateAgentSettings(
@@ -892,7 +940,10 @@ export class MissionManager {
     return compactionCount;
   }
 
-  private async markMissionCompactedAndRefresh(mission: Mission): Promise<number> {
+  private async markMissionCompactedAndRefresh(
+    mission: Mission,
+    compacted?: { sessionId: string; session: DroidSession },
+  ): Promise<number> {
     const compactionCount = this.markMissionCompacted(mission);
     try {
       const defaults = await this.getFactoryDefaults();
@@ -901,6 +952,9 @@ export class MissionManager {
         this.currentCompactionSettings,
         defaults,
       );
+      await this.refreshContext(mission.summary.id, mission.session);
+      if (compacted && compacted.session !== mission.session)
+        await this.refreshContext(compacted.sessionId, compacted.session);
     } catch (err) {
       this.emitError({
         missionId: mission.summary.id,
@@ -947,16 +1001,20 @@ export class MissionManager {
     return session.onNotification((note: Record<string, unknown>) => {
       const sessionCompacted = isSessionCompactedNotification(note);
       if (options.sessionCompactedOnly && !sessionCompacted) return;
-      if (sessionCompacted) this.markDaemonCompacted(appSessionId);
+      if (sessionCompacted) this.markDaemonCompacted(appSessionId, agentSessionId, session);
       for (const n of normalizeNotification(appSessionId, agentSessionId, role, note))
         this.applyNormalized(appSessionId, n);
     });
   }
 
-  private markDaemonCompacted(appSessionId: string): void {
+  private markDaemonCompacted(
+    appSessionId: string,
+    agentSessionId: string,
+    session: DroidSession,
+  ): void {
     const mission = this.findMission(appSessionId);
     if (!mission || mission.compacting) return;
-    void this.markMissionCompactedAndRefresh(mission);
+    void this.markMissionCompactedAndRefresh(mission, { sessionId: agentSessionId, session });
   }
 
   private async runtimeAgentSettings(
@@ -1833,10 +1891,14 @@ export class MissionManager {
         const offset = this.usageOffsets.get(appSessionId);
         m.summary.tokensIn = n.tokens.tokensIn + (offset?.tokensIn ?? 0);
         m.summary.tokensOut = n.tokens.tokensOut + (offset?.tokensOut ?? 0);
-        const maxContextTokens = this.maxContextTokensForSummary(m.summary);
+        const snapshot = this.contextSnapshots.get(appSessionId);
+        const maxContextTokens = this.visibleContextLimitForSummary(
+          m.summary,
+          {},
+          snapshot?.limit ?? m.summary.maxContextTokens,
+        );
         if (maxContextTokens === undefined) delete m.summary.maxContextTokens;
         else m.summary.maxContextTokens = maxContextTokens;
-        const snapshot = this.contextSnapshots.get(appSessionId);
         const contextLimit = maxContextTokens ?? snapshot?.limit;
         if (isWindowTokenCount(n.tokens.contextTokens, contextLimit)) {
           m.summary.contextTokens = n.tokens.contextTokens;
@@ -2703,8 +2765,11 @@ export class MissionManager {
   private emitContextEstimate(sessionId: string, summary: MissionSummary): void {
     if (summary.contextTokens <= 0) return;
     const previous = this.contextSnapshots.get(sessionId);
-    const limit =
-      this.maxContextTokensForSummary(summary) ?? summary.maxContextTokens ?? previous?.limit;
+    const limit = this.visibleContextLimitForSummary(
+      summary,
+      {},
+      previous?.limit ?? summary.maxContextTokens,
+    );
     if (!limit || limit <= 0) return;
     const used = Math.min(summary.contextTokens, limit);
     const breakdown = previous?.breakdown
@@ -2733,13 +2798,28 @@ export class MissionManager {
     options: { persist?: boolean } = {},
   ): Promise<void> {
     try {
+      const mission = this.findMission(sessionId);
+      const liveAgent = mission ? undefined : this.findLiveAgent(sessionId);
+      const contextSessionId =
+        mission?.summary.id ?? liveAgent?.agent.session.sessionId ?? sessionId;
+      const defaults =
+        mission || liveAgent
+          ? await this.getFactoryDefaults().catch(() => ({}) as FactoryDefaultSettings)
+          : undefined;
+      const visibleLimit = mission
+        ? this.visibleContextLimitForSummary(
+            mission.summary,
+            defaults,
+            mission.summary.maxContextTokens,
+          )
+        : liveAgent
+          ? this.visibleContextLimitForAgent(liveAgent.mission, liveAgent.agent, defaults)
+          : undefined;
       const stats = await session.getContextStats();
       const breakdown = await this.readContextBreakdown(session);
-      const snapshot = contextStatsSnapshot(stats, breakdown);
-      const mission = this.findMission(sessionId);
-      const appSessionId = mission?.summary.id ?? sessionId;
-      this.contextSnapshots.set(appSessionId, snapshot);
-      this.emit({ type: 'context.updated', sessionId: appSessionId, stats: snapshot });
+      const snapshot = contextStatsSnapshot(stats, breakdown, visibleLimit);
+      this.contextSnapshots.set(contextSessionId, snapshot);
+      this.emit({ type: 'context.updated', sessionId: contextSessionId, stats: snapshot });
       if (mission) {
         const contextPatch = {
           contextTokens: snapshot.used,
@@ -2749,12 +2829,12 @@ export class MissionManager {
           contextUpdatedAt: snapshot.updatedAt,
         };
         if (options.persist === false) mission.summary = { ...mission.summary, ...contextPatch };
-        else this.patch(appSessionId, contextPatch);
-        const updated = this.findMission(appSessionId)?.summary;
+        else this.patch(contextSessionId, contextPatch);
+        const updated = this.findMission(contextSessionId)?.summary;
         if (updated) {
           this.emit({
             type: 'mission.tokens',
-            missionId: appSessionId,
+            missionId: contextSessionId,
             tokensIn: updated.tokensIn,
             tokensOut: updated.tokensOut,
             contextTokens: updated.contextTokens,
@@ -3005,21 +3085,30 @@ function arrayItems(result: unknown, key: string): unknown[] {
 function contextStatsSnapshot(
   stats: GetContextStatsResult,
   breakdown: ContextBreakdownSnapshot | undefined,
+  visibleLimit?: number,
 ): ContextStatsSnapshot {
-  const limit = stats.limit > 0 ? stats.limit : (breakdown?.contextBudget ?? stats.limit);
+  const rawLimit = stats.limit > 0 ? stats.limit : (breakdown?.contextBudget ?? stats.limit);
+  const limit = visibleLimit && visibleLimit > 0 ? visibleLimit : rawLimit;
   const breakdownUsed =
     breakdown && stats.accuracy !== 'exact' && isWindowTokenCount(breakdown.usedTokens, limit)
       ? breakdown.usedTokens
       : undefined;
   const used = breakdownUsed ?? stats.used;
-  const remaining = breakdownUsed !== undefined ? Math.max(0, limit - used) : stats.remaining;
+  const remaining = Math.max(0, limit - used);
   return {
     used,
     remaining,
     limit,
     accuracy: stats.accuracy as ContextStatsSnapshot['accuracy'],
     updatedAt: stats.updatedAt,
-    breakdown,
+    breakdown: breakdown
+      ? {
+          ...breakdown,
+          contextBudget: limit,
+          usedTokens: used,
+          freeTokens: remaining,
+        }
+      : undefined,
   };
 }
 
