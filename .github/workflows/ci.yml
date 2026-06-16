@@ -244,7 +244,6 @@ jobs:
     name: Lint (non-blocking)
     runs-on: ubuntu-latest
     timeout-minutes: 7
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -256,13 +255,29 @@ jobs:
             sidecar/package-lock.json
       - run: npm ci
       - run: npm ci --prefix sidecar
-      - run: npm run lint
+      - name: Run lint diagnostics
+        run: |
+          set +e
+          npm run lint 2>&1 | tee reports-lint.txt
+          status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ]; then
+            {
+              echo "### Lint diagnostics"
+              echo ""
+              echo "\`npm run lint\` exited with status $status. This job is informational while the lint backlog is burned down."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+          exit 0
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: lint-diagnostics
+          path: reports-lint.txt
 
   strict-typecheck:
     name: Strict typecheck (non-blocking)
     runs-on: ubuntu-latest
     timeout-minutes: 7
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -274,5 +289,28 @@ jobs:
             sidecar/package-lock.json
       - run: npm ci
       - run: npm ci --prefix sidecar
-      - run: npm run typecheck:strict
-      - run: npm run sidecar:typecheck:strict
+      - name: Run strict typecheck diagnostics
+        run: |
+          set +e
+          npm run typecheck:strict 2>&1 | tee reports-strict-frontend.txt
+          frontend_status=${PIPESTATUS[0]}
+          npm run sidecar:typecheck:strict 2>&1 | tee reports-strict-sidecar.txt
+          sidecar_status=${PIPESTATUS[0]}
+          if [ "$frontend_status" -ne 0 ] || [ "$sidecar_status" -ne 0 ]; then
+            {
+              echo "### Strict typecheck diagnostics"
+              echo ""
+              echo "\`npm run typecheck:strict\` exited with status $frontend_status."
+              echo "\`npm run sidecar:typecheck:strict\` exited with status $sidecar_status."
+              echo ""
+              echo "This job is informational while the strict-type backlog is burned down."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+          exit 0
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: strict-typecheck-diagnostics
+          path: |
+            reports-strict-frontend.txt
+            reports-strict-sidecar.txt
