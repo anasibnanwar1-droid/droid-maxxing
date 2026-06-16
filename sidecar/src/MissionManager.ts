@@ -76,6 +76,7 @@ import { filterMissionListSummaries, type MissionListFilterOptions } from './mis
 import {
   clampCompactionTokenLimit,
   compactionTokenLimitForModel,
+  compactionTriggerLimit,
   compactionTriggerRatio,
   createCompactionSettingsForModel,
   normalizeCompactionTokenLimit,
@@ -118,6 +119,7 @@ interface Mission {
   // run-status reporting only reflects subagents actually seen this session.
   linkedSubagents: Set<string>;
   subagentToolUseIds: Map<string, string>;
+  agentSessionAliases?: Map<string, string>;
   subagentSettings: Map<string, SubagentSettings>;
   pendingSubagents: PendingSubagent[];
   mcpServers: SdkMcpServer[];
@@ -1090,13 +1092,49 @@ export class MissionManager {
 
   private findLiveAgent(id: string): { mission: Mission; agent: LiveAgent } | undefined {
     for (const mission of this.missions.values()) {
-      const direct = mission.agents.get(id);
+      const resolvedId = this.resolveAgentSessionId(mission, id);
+      const direct = mission.agents.get(resolvedId);
       if (direct) return { mission, agent: direct };
       for (const agent of mission.agents.values()) {
         if (agent.session.sessionId === id) return { mission, agent };
       }
     }
     return undefined;
+  }
+
+  private resolveAgentSessionId(mission: Mission, agentSessionId: string): string {
+    const aliases = mission.agentSessionAliases;
+    if (!aliases || aliases.size === 0) return agentSessionId;
+    let resolved = agentSessionId;
+    const seen = new Set<string>();
+    while (!seen.has(resolved)) {
+      seen.add(resolved);
+      const next = aliases.get(resolved);
+      if (!next) return resolved;
+      resolved = next;
+    }
+    return resolved;
+  }
+
+  private remapAgentSessionAlias(
+    mission: Mission,
+    oldSessionId: string,
+    newSessionId: string,
+  ): void {
+    const aliases = mission.agentSessionAliases ?? new Map<string, string>();
+    mission.agentSessionAliases = aliases;
+    aliases.set(oldSessionId, newSessionId);
+    for (const [alias, target] of aliases) {
+      if (target === oldSessionId) aliases.set(alias, newSessionId);
+    }
+  }
+
+  private clearAgentSessionAliases(mission: Mission, sessionId: string): void {
+    const aliases = mission.agentSessionAliases;
+    if (!aliases) return;
+    for (const [alias, target] of aliases) {
+      if (alias === sessionId || target === sessionId) aliases.delete(alias);
+    }
   }
 
   private resolveSummary(id: string): MissionSummary | undefined {
@@ -1530,6 +1568,7 @@ export class MissionManager {
       completedSubagents: new Set(),
       linkedSubagents: new Set(),
       subagentToolUseIds: new Map(),
+      agentSessionAliases: new Map(),
       subagentSettings: new Map(),
       pendingSubagents: [],
       mcpServers,
@@ -1656,9 +1695,11 @@ export class MissionManager {
       streaming: true,
       queuedSends: mission.pendingSends.length,
     });
-    this.startContextPolling(appSessionId, mission.session);
-    await this.applyDesignToolPolicy(mission, isDesignPrompt(prompt));
     try {
+      if (!(await this.compactMissionBeforeTurnIfNeeded(mission, prompt))) return;
+      if (!this.findMission(appSessionId)) return;
+      this.startContextPolling(appSessionId, mission.session);
+      await this.applyDesignToolPolicy(mission, isDesignPrompt(prompt));
       const stream = mission.session.stream(prompt, { includePartialMessages: true });
       for await (const ev of stream)
         this.applyEvent(appSessionId, appSessionId, 'orchestrator', ev);
@@ -1829,15 +1870,20 @@ export class MissionManager {
   }
 
   private completeSubagent(mission: Mission, sessionId: string): void {
-    if (!mission.knownSubagents.has(sessionId) || mission.completedSubagents.has(sessionId)) return;
+    const resolvedSessionId = this.resolveAgentSessionId(mission, sessionId);
+    if (
+      !mission.knownSubagents.has(resolvedSessionId) ||
+      mission.completedSubagents.has(resolvedSessionId)
+    )
+      return;
     const appSessionId = mission.summary.id;
-    mission.completedSubagents.add(sessionId);
-    const settings = mission.subagentSettings.get(sessionId) ?? {};
+    mission.completedSubagents.add(resolvedSessionId);
+    const settings = mission.subagentSettings.get(resolvedSessionId) ?? {};
     this.emit({
       type: 'mission.worker',
       missionId: appSessionId,
       event: 'completed',
-      workerSessionId: sessionId,
+      workerSessionId: resolvedSessionId,
       ...settings,
     });
     this.emit({
@@ -2010,6 +2056,70 @@ export class MissionManager {
     } finally {
       mission.compacting = false;
     }
+  }
+
+  private async compactMissionBeforeTurnIfNeeded(
+    mission: Mission,
+    prompt: string,
+  ): Promise<boolean> {
+    if (mission.compacting) return true;
+    const appSessionId = mission.summary.id;
+    try {
+      const defaults = await this.getFactoryDefaults();
+      const budget = this.autoCompactionBudgetForMission(mission, defaults);
+      if (!budget) return true;
+      await this.refreshContext(appSessionId, mission.session);
+      const snapshot = this.contextSnapshots.get(appSessionId);
+      const threshold = compactionTriggerLimit(
+        budget,
+        this.compactionTriggerRatioForSummary(mission.summary),
+      );
+      if (!shouldPreTurnAutoCompact(snapshot, threshold)) return true;
+      await this.compactMission(mission, undefined, 'auto');
+      if (!this.findMission(appSessionId)) {
+        const queued = mission.pendingSends.splice(0);
+        await this.redeliverQueuedSends(appSessionId, [prompt, ...queued]);
+        return false;
+      }
+      return true;
+    } catch (err) {
+      this.emitError({
+        missionId: appSessionId,
+        sessionId: mission.summary.sessionId,
+        message: `Could not check context before starting turn: ${errMsg(err)}`,
+        recoverable: true,
+      });
+      return true;
+    }
+  }
+
+  private autoCompactionBudgetForMission(
+    mission: Mission,
+    defaults: Partial<FactoryDefaultSettings>,
+  ): number | undefined {
+    const modelId = mission.summary.modelId ?? defaults.modelId;
+    return clampCompactionTokenLimit(
+      compactionTokenLimitForModel(modelId, this.currentCompactionSettings, defaults),
+      this.maxContextTokensForModel(modelId),
+    );
+  }
+
+  private autoCompactionBudgetForAgent(
+    mission: Mission,
+    agent: LiveAgent,
+    defaults: Partial<FactoryDefaultSettings>,
+  ): number | undefined {
+    const configured = mission.subagentSettings.get(agent.session.sessionId)?.modelId;
+    const roleDefault = defaultModelForAgent(
+      agent.role === 'validator' ? 'validator' : 'worker',
+      modeForSummary(mission.summary),
+      defaults,
+    );
+    const modelId = configured ?? roleDefault ?? mission.summary.modelId ?? defaults.modelId;
+    return clampCompactionTokenLimit(
+      compactionTokenLimitForModel(modelId, this.currentCompactionSettings, defaults),
+      this.maxContextTokensForModel(modelId),
+    );
   }
 
   // Adopt the daemon's compacted backing session behind the stable app id:
@@ -2363,23 +2473,24 @@ export class MissionManager {
     const mission = this.findMission(missionId);
     if (!mission) return;
     const appSessionId = mission.summary.id;
-    if (!this.agentBelongsToMission(mission, agentSessionId)) return;
-    if (mission.agents.has(agentSessionId)) {
-      const agent = mission.agents.get(agentSessionId);
+    const resolvedAgentSessionId = this.resolveAgentSessionId(mission, agentSessionId);
+    if (!this.agentBelongsToMission(mission, resolvedAgentSessionId)) return;
+    if (mission.agents.has(resolvedAgentSessionId)) {
+      const agent = mission.agents.get(resolvedAgentSessionId);
       if (agent) agent.lastUsedAt = Date.now();
       this.emit({
         type: 'agent.updated',
         missionId: appSessionId,
-        agentSessionId,
+        agentSessionId: resolvedAgentSessionId,
         role,
         status: 'opened',
       });
       return;
     }
     try {
-      if (!(await this.ensureAgentCapacity(mission, agentSessionId))) return;
+      if (!(await this.ensureAgentCapacity(mission, resolvedAgentSessionId))) return;
       const ref = { id: appSessionId };
-      const session = await this.runtime.loadSession(agentSessionId, {
+      const session = await this.runtime.loadSession(resolvedAgentSessionId, {
         permissionHandler: this.makePermissionHandler(ref),
         askUserHandler: this.makeAskUserHandler(ref),
       });
@@ -2396,12 +2507,12 @@ export class MissionManager {
           }
         : actualSettings;
       if (resolvedSettings.modelId || resolvedSettings.reasoningEffort) {
-        mission.subagentSettings.set(agentSessionId, resolvedSettings);
+        mission.subagentSettings.set(resolvedAgentSessionId, resolvedSettings);
         this.emit({
           type: 'mission.worker',
           missionId: appSessionId,
           event: 'updated',
-          workerSessionId: agentSessionId,
+          workerSessionId: resolvedAgentSessionId,
           ...resolvedSettings,
         });
       }
@@ -2433,16 +2544,16 @@ export class MissionManager {
       };
       agent.unsubscribe = this.subscribeSessionNotifications(
         appSessionId,
-        agentSessionId,
+        resolvedAgentSessionId,
         role,
         session,
       );
-      mission.agents.set(agentSessionId, agent);
-      this.emitAgentHistory(appSessionId, agentSessionId);
+      mission.agents.set(resolvedAgentSessionId, agent);
+      this.emitAgentHistory(appSessionId, resolvedAgentSessionId);
       this.emit({
         type: 'agent.updated',
         missionId: appSessionId,
-        agentSessionId,
+        agentSessionId: resolvedAgentSessionId,
         role,
         status: 'opened',
       });
@@ -2451,7 +2562,7 @@ export class MissionManager {
         type: 'error',
         code: 'agent.open_failed',
         missionId: appSessionId,
-        sessionId: agentSessionId,
+        sessionId: resolvedAgentSessionId,
         message: errMsg(err),
       });
     }
@@ -2475,10 +2586,11 @@ export class MissionManager {
     const mission = this.findMission(missionId);
     if (!mission) return;
     const appSessionId = mission.summary.id;
-    if (!this.agentBelongsToMission(mission, agentSessionId)) return;
-    if (!mission.agents.has(agentSessionId))
-      await this.openAgent(appSessionId, agentSessionId, 'worker');
-    const agent = mission.agents.get(agentSessionId);
+    const resolvedAgentSessionId = this.resolveAgentSessionId(mission, agentSessionId);
+    if (!this.agentBelongsToMission(mission, resolvedAgentSessionId)) return;
+    if (!mission.agents.has(resolvedAgentSessionId))
+      await this.openAgent(appSessionId, resolvedAgentSessionId, 'worker');
+    const agent = mission.agents.get(resolvedAgentSessionId);
     if (!agent) return;
     await this.applySendCompactionSettings(mission, compactionSettings);
     agent.lastUsedAt = Date.now();
@@ -2500,6 +2612,8 @@ export class MissionManager {
       status: 'running',
     });
     try {
+      if (!(await this.compactAgentBeforeTurnIfNeeded(agent))) return;
+      if (!this.findLiveAgent(agent.session.sessionId)) return;
       this.startContextPolling(agent.session.sessionId, agent.session);
       const stream = agent.session.stream(text, { includePartialMessages: true });
       for await (const ev of stream)
@@ -2548,6 +2662,123 @@ export class MissionManager {
     }
   }
 
+  private async compactAgentBeforeTurnIfNeeded(agent: LiveAgent): Promise<boolean> {
+    const live = this.findLiveAgent(agent.session.sessionId);
+    if (!live) return false;
+    const { mission } = live;
+    try {
+      const defaults = await this.getFactoryDefaults();
+      const budget = this.autoCompactionBudgetForAgent(mission, agent, defaults);
+      if (!budget) return true;
+      await this.refreshContext(agent.session.sessionId, agent.session);
+      const snapshot = this.contextSnapshots.get(agent.session.sessionId);
+      const threshold = compactionTriggerLimit(
+        budget,
+        this.compactionTriggerRatioForSummary(mission.summary),
+      );
+      if (!shouldPreTurnAutoCompact(snapshot, threshold)) return true;
+      return await this.compactAgent(mission, agent);
+    } catch (err) {
+      this.emitError({
+        missionId: mission.summary.id,
+        sessionId: agent.session.sessionId,
+        message: `Could not check worker context before starting turn: ${errMsg(err)}`,
+        recoverable: true,
+      });
+      return true;
+    }
+  }
+
+  private async compactAgent(mission: Mission, agent: LiveAgent): Promise<boolean> {
+    const appSessionId = mission.summary.id;
+    let swapTarget: string | undefined;
+    const outcome = await runCompaction(
+      agent.session,
+      {
+        status: (text, ct) =>
+          this.emitStatus(appSessionId, text, ct, agent.session.sessionId, agent.role),
+        error: (message) =>
+          this.emitError({
+            missionId: appSessionId,
+            sessionId: agent.session.sessionId,
+            message: `Could not compact worker session: ${message}`,
+            recoverable: true,
+          }),
+        refresh: () => this.refreshContext(agent.session.sessionId, agent.session),
+        reload: async (newSessionId) => {
+          swapTarget = newSessionId;
+          await this.swapAgentSession(mission, agent, newSessionId);
+        },
+      },
+      { compactType: 'auto' },
+    );
+    if (outcome === 'stale' && swapTarget) {
+      try {
+        await this.swapAgentSession(mission, agent, swapTarget);
+      } catch (err) {
+        this.emitError({
+          missionId: appSessionId,
+          sessionId: agent.session.sessionId,
+          message: `Compaction moved this worker to a new session but reloading it failed: ${errMsg(err)}`,
+          recoverable: true,
+        });
+        await this.closeAgent(appSessionId, agent.session.sessionId);
+        return false;
+      }
+    }
+    if (outcome === 'completed' || (outcome === 'stale' && swapTarget))
+      await this.markMissionCompactedAndRefresh(mission, {
+        sessionId: agent.session.sessionId,
+        session: agent.session,
+      });
+    return outcome !== 'stale' || !!swapTarget;
+  }
+
+  private async swapAgentSession(
+    mission: Mission,
+    agent: LiveAgent,
+    newSessionId: string,
+  ): Promise<void> {
+    const appSessionId = mission.summary.id;
+    const oldSessionId = agent.session.sessionId;
+    const ref = { id: appSessionId };
+    const nextSession = await this.runtime.loadSession(newSessionId, {
+      permissionHandler: this.makePermissionHandler(ref),
+      askUserHandler: this.makeAskUserHandler(ref),
+    });
+    await agent.session.close().catch(() => {});
+    agent.unsubscribe?.();
+    agent.session = nextSession;
+    agent.unsubscribe = this.subscribeSessionNotifications(
+      appSessionId,
+      newSessionId,
+      agent.role,
+      nextSession,
+    );
+    mission.agents.delete(oldSessionId);
+    mission.agents.set(newSessionId, agent);
+    this.remapAgentSessionAlias(mission, oldSessionId, newSessionId);
+    transferSetKey(mission.knownSubagents, oldSessionId, newSessionId);
+    transferSetKey(mission.completedSubagents, oldSessionId, newSessionId);
+    transferSetKey(mission.linkedSubagents, oldSessionId, newSessionId);
+    transferMapKey(mission.subagentSettings, oldSessionId, newSessionId);
+    for (const [toolUseId, workerSessionId] of mission.subagentToolUseIds) {
+      if (workerSessionId === oldSessionId) mission.subagentToolUseIds.set(toolUseId, newSessionId);
+    }
+    this.emit({
+      type: 'mission.worker.rekey',
+      missionId: appSessionId,
+      oldSessionId,
+      newSessionId,
+    });
+    this.emit({
+      type: 'mission.worker',
+      missionId: appSessionId,
+      event: 'updated',
+      workerSessionId: newSessionId,
+    });
+  }
+
   private async sendAgentNow(
     missionId: string,
     agentSessionId: string,
@@ -2557,10 +2788,11 @@ export class MissionManager {
     const mission = this.findMission(missionId);
     if (!mission) return;
     const appSessionId = mission.summary.id;
-    if (!this.agentBelongsToMission(mission, agentSessionId)) return;
-    if (!mission.agents.has(agentSessionId))
-      await this.openAgent(appSessionId, agentSessionId, 'worker');
-    const agent = mission.agents.get(agentSessionId);
+    const resolvedAgentSessionId = this.resolveAgentSessionId(mission, agentSessionId);
+    if (!this.agentBelongsToMission(mission, resolvedAgentSessionId)) return;
+    if (!mission.agents.has(resolvedAgentSessionId))
+      await this.openAgent(appSessionId, resolvedAgentSessionId, 'worker');
+    const agent = mission.agents.get(resolvedAgentSessionId);
     if (!agent) return;
     await this.applySendCompactionSettings(mission, compactionSettings);
     agent.lastUsedAt = Date.now();
@@ -2580,7 +2812,7 @@ export class MissionManager {
         type: 'error',
         code: 'agent.send_now_failed',
         missionId: appSessionId,
-        sessionId: agentSessionId,
+        sessionId: resolvedAgentSessionId,
         message: `Could not interrupt subagent for steering: ${errMsg(err)}`,
       });
     }
@@ -2590,10 +2822,11 @@ export class MissionManager {
     const mission = this.findMission(missionId);
     if (!mission) return;
     const appSessionId = mission.summary.id;
-    if (!this.agentBelongsToMission(mission, agentSessionId)) return;
-    if (!mission.agents.has(agentSessionId))
-      await this.openAgent(appSessionId, agentSessionId, 'worker');
-    const agent = mission.agents.get(agentSessionId);
+    const resolvedAgentSessionId = this.resolveAgentSessionId(mission, agentSessionId);
+    if (!this.agentBelongsToMission(mission, resolvedAgentSessionId)) return;
+    if (!mission.agents.has(resolvedAgentSessionId))
+      await this.openAgent(appSessionId, resolvedAgentSessionId, 'worker');
+    const agent = mission.agents.get(resolvedAgentSessionId);
     if (!agent) return;
     agent.pendingSends = [];
     agent.lastUsedAt = Date.now();
@@ -2602,16 +2835,17 @@ export class MissionManager {
     this.emit({
       type: 'agent.updated',
       missionId: appSessionId,
-      agentSessionId,
+      agentSessionId: resolvedAgentSessionId,
       role: agent.role,
       status: 'paused',
     });
   }
 
   private agentBelongsToMission(mission: Mission, agentSessionId: string): boolean {
+    const resolvedAgentSessionId = this.resolveAgentSessionId(mission, agentSessionId);
     if (mission.summary.kind === 'mission_orchestrator') return true;
-    if (mission.knownSubagents.has(agentSessionId)) return true;
-    if (mission.linkedSubagents.has(agentSessionId)) return true;
+    if (mission.knownSubagents.has(resolvedAgentSessionId)) return true;
+    if (mission.linkedSubagents.has(resolvedAgentSessionId)) return true;
     const appSessionId = mission.summary.id;
     this.emit({
       type: 'error',
@@ -2649,9 +2883,12 @@ export class MissionManager {
 
   private async closeAgent(missionId: string, agentSessionId: string): Promise<void> {
     const mission = this.findMission(missionId);
-    const agent = mission?.agents.get(agentSessionId);
-    if (!mission || !agent) return;
-    mission.agents.delete(agentSessionId);
+    if (!mission) return;
+    const resolvedAgentSessionId = this.resolveAgentSessionId(mission, agentSessionId);
+    const agent = mission.agents.get(resolvedAgentSessionId);
+    if (!agent) return;
+    mission.agents.delete(resolvedAgentSessionId);
+    this.clearAgentSessionAliases(mission, resolvedAgentSessionId);
     this.stopContextPolling(agent.session.sessionId);
     agent.unsubscribe?.();
     try {
@@ -2663,11 +2900,13 @@ export class MissionManager {
 
   private async closeAgentWhenIdle(missionId: string, agentSessionId: string): Promise<void> {
     const mission = this.findMission(missionId);
-    const agent = mission?.agents.get(agentSessionId);
-    if (!mission || !agent) return;
+    if (!mission) return;
+    const resolvedAgentSessionId = this.resolveAgentSessionId(mission, agentSessionId);
+    const agent = mission.agents.get(resolvedAgentSessionId);
+    if (!agent) return;
     agent.closeWhenIdle = true;
     if (!agent.streaming && agent.pendingSends.length === 0)
-      await this.closeAgent(missionId, agentSessionId);
+      await this.closeAgent(missionId, resolvedAgentSessionId);
   }
 
   private async renameSession(sessionId: string, title: string): Promise<void> {
@@ -3115,6 +3354,25 @@ function contextStatsSnapshot(
 function isWindowTokenCount(value: unknown, limit: number | undefined): value is number {
   if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) return false;
   return !(limit && limit > 0) || value <= limit;
+}
+
+function shouldPreTurnAutoCompact(
+  snapshot: ContextStatsSnapshot | undefined,
+  threshold: number | undefined,
+): boolean {
+  return !!snapshot && !!threshold && threshold > 0 && snapshot.used >= threshold;
+}
+
+function transferSetKey(set: Set<string>, from: string, to: string): void {
+  if (!set.delete(from)) return;
+  set.add(to);
+}
+
+function transferMapKey<T>(map: Map<string, T>, from: string, to: string): void {
+  if (!map.has(from)) return;
+  const value = map.get(from);
+  map.delete(from);
+  if (value !== undefined) map.set(to, value);
 }
 
 function contextBreakdownSnapshot(raw: unknown): ContextBreakdownSnapshot | undefined {

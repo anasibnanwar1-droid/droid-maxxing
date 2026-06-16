@@ -1051,6 +1051,7 @@ class FakeCompactionSession {
   callOrder: string[] = [];
   compactions = 0;
   failCompaction = false;
+  usedAfterCompact?: number;
   usedAfterStream?: number;
   streamEvents: Record<string, unknown>[] = [];
   usedBeforeStreamEvent?: number;
@@ -1123,6 +1124,7 @@ class FakeCompactionSession {
     if (this.failCompaction) throw new Error('transient compaction failure');
     await this.beforeCompact?.();
     this.compactions += 1;
+    if (this.usedAfterCompact !== undefined) this.used = this.usedAfterCompact;
     return { newSessionId: this.swapTo ?? this.sessionId, removedCount: 4 };
   }
 
@@ -1159,6 +1161,7 @@ function streamHarness(used: number) {
       recordSubagentLink: () => void;
       subagentLinks: () => [];
     };
+    getFactoryDefaults: () => Promise<{ modelId?: string; compactionTokenLimit?: number }>;
     missions: Map<string, typeof mission>;
   };
   internals.history = {
@@ -1169,8 +1172,9 @@ function streamHarness(used: number) {
     recordSubagentLink: () => {},
     subagentLinks: () => [],
   };
+  internals.getFactoryDefaults = async () => ({});
   internals.missions.set(mission.summary.id, mission);
-  return { manager, session, events, mission };
+  return { manager, session, events, mission, internals };
 }
 
 test('routes daemon compacted notifications from orchestrator sessions', async () => {
@@ -1314,7 +1318,7 @@ test('routes daemon compacted notifications from worker sessions to worker conte
   unsubscribe();
 });
 
-test('does not sidecar-compact before starting a streamed turn', async () => {
+test('does not pre-turn compact without an auto-compaction budget', async () => {
   const { manager, session, events } = streamHarness(250_000);
   await manager.handle({ type: 'mission.send', missionId: 'app-stream', text: 'hello' });
   assert.equal(session.compactions, 0);
@@ -1326,23 +1330,268 @@ test('does not sidecar-compact before starting a streamed turn', async () => {
   );
 });
 
+test('pre-turn compacts once when the daemon trigger is already crossed', async () => {
+  const { manager, session, mission, events } = streamHarness(93_000);
+  session.limit = 100_000;
+  session.usedAfterCompact = 20_000;
+
+  await manager.handle({
+    type: 'mission.send',
+    missionId: 'app-stream',
+    text: 'hello',
+    compactionTokenLimit: 100_000,
+    compactionTokenLimitPerModel: {},
+  });
+
+  assert.equal(session.compactions, 1);
+  assert.equal(mission.summary.compactionCount, 1);
+  assert.deepEqual(session.prompts, ['hello']);
+  assert.equal(
+    session.callOrder.indexOf('compact') < session.callOrder.indexOf('stream:hello'),
+    true,
+  );
+  assert.equal(mission.summary.contextTokens, 20_000);
+  assert.equal(
+    events.some(
+      (event) =>
+        event.type === 'mission.transcript' &&
+        event.event.kind === 'status' &&
+        event.event.text === 'Compacting conversation...' &&
+        event.event.compactType === 'auto',
+    ),
+    true,
+  );
+});
+
+test('pre-turn stale swap redelivers the current prompt through resume', async () => {
+  const { manager, session, internals } = orchestratorSwapHarness(125_000, 'droid-new');
+  session.limit = 100_000;
+  const swapped = new FakeCompactionSession('droid-new', 10_000);
+  (swapped as unknown as { initResult: unknown }).initResult = { session: {}, settings: {} };
+  const summaries = new Map<string, MissionSummary>();
+  (
+    internals as unknown as { history: { syncSummaries: (items: MissionSummary[]) => void } }
+  ).history.syncSummaries = (items: MissionSummary[]) => {
+    for (const item of items) summaries.set(item.id, item);
+  };
+  (
+    manager as unknown as { resolveSummary: (id: string) => MissionSummary | undefined }
+  ).resolveSummary = (id: string) => summaries.get(id);
+  (manager as unknown as { ready: boolean }).ready = true;
+  let loadCalls = 0;
+  internals.runtime = {
+    loadSession: async () => {
+      loadCalls += 1;
+      if (loadCalls <= 2) throw new Error('transient load failure');
+      return swapped;
+    },
+  };
+
+  try {
+    await manager.handle({
+      type: 'mission.send',
+      missionId: 'app-swap',
+      text: 'hello after stale swap',
+      compactionTokenLimit: 100_000,
+      compactionTokenLimitPerModel: {},
+    });
+
+    assert.equal(session.prompts.includes('hello after stale swap'), false);
+    assert.equal(swapped.prompts.includes('hello after stale swap'), true);
+    assert.equal(loadCalls, 3);
+    assert.equal(internals.missions.has('app-swap'), true);
+  } finally {
+    await (manager as unknown as { closeMission: (id: string) => Promise<void> }).closeMission(
+      'app-swap',
+    );
+  }
+});
+
 test('does not treat tool_result as a safe mid-task compaction checkpoint', async () => {
-  const { manager, session } = streamHarness(150_000);
+  const { manager, session } = streamHarness(50_000);
+  session.limit = 100_000;
   session.usedBeforeStreamEvent = 250_000;
   session.streamEvents = [{ type: 'tool_result', toolName: 'Read', content: 'ok', isError: false }];
 
-  await manager.handle({ type: 'mission.send', missionId: 'app-stream', text: 'hello' });
+  await manager.handle({
+    type: 'mission.send',
+    missionId: 'app-stream',
+    text: 'hello',
+    compactionTokenLimit: 100_000,
+    compactionTokenLimitPerModel: {},
+  });
 
   assert.equal(session.compactions, 0);
   assert.deepEqual(session.prompts, ['hello']);
 });
 
 test('does not auto-compact after the final answer in the same visible turn', async () => {
-  const { manager, session } = streamHarness(150_000);
+  const { manager, session } = streamHarness(50_000);
+  session.limit = 100_000;
   session.usedAfterStream = 250_000;
-  await manager.handle({ type: 'mission.send', missionId: 'app-stream', text: 'hello' });
+  await manager.handle({
+    type: 'mission.send',
+    missionId: 'app-stream',
+    text: 'hello',
+    compactionTokenLimit: 100_000,
+    compactionTokenLimitPerModel: {},
+  });
   assert.equal(session.compactions, 0);
   assert.deepEqual(session.prompts, ['hello']);
+});
+
+test('next turn compacts when the previous final answer left context full', async () => {
+  const { manager, session } = streamHarness(50_000);
+  session.limit = 100_000;
+  session.usedAfterStream = 250_000;
+
+  await manager.handle({
+    type: 'mission.send',
+    missionId: 'app-stream',
+    text: 'first',
+    compactionTokenLimit: 100_000,
+    compactionTokenLimitPerModel: {},
+  });
+
+  session.usedAfterStream = undefined;
+  session.usedAfterCompact = 30_000;
+  await manager.handle({
+    type: 'mission.send',
+    missionId: 'app-stream',
+    text: 'second',
+    compactionTokenLimit: 100_000,
+    compactionTokenLimitPerModel: {},
+  });
+
+  assert.equal(session.compactions, 1);
+  assert.deepEqual(session.prompts, ['first', 'second']);
+  assert.equal(
+    session.callOrder.indexOf('compact') < session.callOrder.indexOf('stream:second'),
+    true,
+  );
+});
+
+test('agent pre-turn compacts once when the worker daemon trigger is already crossed', async () => {
+  const { manager, mission, events } = streamHarness(0);
+  const worker = new FakeCompactionSession('worker-full', 93_000);
+  worker.limit = 100_000;
+  worker.usedAfterCompact = 25_000;
+  mission.knownSubagents.add(worker.sessionId);
+  mission.subagentSettings.set(worker.sessionId, { modelId: 'worker-model' });
+  mission.agents.set(worker.sessionId, {
+    session: worker,
+    missionId: mission.summary.id,
+    role: 'worker',
+    streaming: false,
+    pendingSends: [],
+    lastUsedAt: Date.now(),
+  });
+
+  await manager.handle({
+    type: 'agent.send',
+    missionId: mission.summary.id,
+    agentSessionId: worker.sessionId,
+    text: 'worker turn',
+    compactionTokenLimit: 100_000,
+    compactionTokenLimitPerModel: { 'worker-model': 100_000 },
+  });
+
+  assert.equal(worker.compactions, 1);
+  assert.equal(mission.summary.compactionCount, 1);
+  assert.deepEqual(worker.prompts, ['worker turn']);
+  assert.equal(
+    worker.callOrder.indexOf('compact') < worker.callOrder.indexOf('stream:worker turn'),
+    true,
+  );
+  assert.equal(
+    events.some(
+      (event) =>
+        event.type === 'mission.transcript' &&
+        event.event.kind === 'status' &&
+        event.event.agentSessionId === worker.sessionId &&
+        event.event.text === 'Compacting conversation...' &&
+        event.event.compactType === 'auto',
+    ),
+    true,
+  );
+});
+
+test('agent pre-turn compaction rekeys a swapped worker before streaming', async () => {
+  const { manager, mission, events } = streamHarness(0);
+  const worker = new FakeCompactionSession('worker-old', 125_000, 'worker-new');
+  const swapped = new FakeCompactionSession('worker-new', 25_000);
+  worker.limit = 100_000;
+  swapped.limit = 100_000;
+  mission.knownSubagents.add(worker.sessionId);
+  mission.subagentSettings.set(worker.sessionId, { modelId: 'worker-model' });
+  mission.subagentToolUseIds.set('tool-1', worker.sessionId);
+  mission.agents.set(worker.sessionId, {
+    session: worker,
+    missionId: mission.summary.id,
+    role: 'worker',
+    streaming: false,
+    pendingSends: [],
+    lastUsedAt: Date.now(),
+  });
+  let loadCalls = 0;
+  (
+    manager as unknown as {
+      runtime: { loadSession: (id: string, handlers: unknown) => Promise<FakeCompactionSession> };
+    }
+  ).runtime = {
+    loadSession: async (id: string) => {
+      loadCalls += 1;
+      assert.equal(id, 'worker-new');
+      return swapped;
+    },
+  };
+
+  await manager.handle({
+    type: 'agent.send',
+    missionId: mission.summary.id,
+    agentSessionId: worker.sessionId,
+    text: 'worker turn',
+    compactionTokenLimit: 100_000,
+    compactionTokenLimitPerModel: { 'worker-model': 100_000 },
+  });
+
+  assert.equal(worker.compactions, 1);
+  assert.equal(mission.agents.has('worker-old'), false);
+  assert.equal(mission.agents.has('worker-new'), true);
+  assert.equal(mission.knownSubagents.has('worker-new'), true);
+  assert.equal(mission.subagentSettings.has('worker-new'), true);
+  assert.equal(mission.subagentToolUseIds.get('tool-1'), 'worker-new');
+  assert.deepEqual(swapped.prompts, ['worker turn']);
+  assert.equal(
+    events.some(
+      (event) =>
+        event.type === 'mission.worker.rekey' &&
+        event.oldSessionId === 'worker-old' &&
+        event.newSessionId === 'worker-new',
+    ),
+    true,
+  );
+  assert.equal(loadCalls, 1);
+
+  await manager.handle({
+    type: 'agent.open',
+    missionId: mission.summary.id,
+    agentSessionId: 'worker-old',
+    role: 'worker',
+  });
+  assert.equal(loadCalls, 1);
+
+  await manager.handle({
+    type: 'agent.send',
+    missionId: mission.summary.id,
+    agentSessionId: 'worker-old',
+    text: 'old id follow-up',
+    compactionTokenLimit: 100_000,
+    compactionTokenLimitPerModel: { 'worker-model': 100_000 },
+  });
+
+  assert.deepEqual(swapped.prompts, ['worker turn', 'old id follow-up']);
+  assert.equal(loadCalls, 1);
 });
 
 test('settles to paused when a mid-stream paused event was ignored', async () => {
@@ -1638,6 +1887,7 @@ function orchestratorSwapHarness(used: number, swapTo: string) {
       recordSubagentLink: () => void;
       subagentLinks: () => [];
     };
+    getFactoryDefaults: () => Promise<{ modelId?: string; compactionTokenLimit?: number }>;
     missions: Map<string, typeof mission>;
     runtime: { loadSession: (id: string, handlers: unknown) => Promise<FakeCompactionSession> };
   };
@@ -1649,6 +1899,7 @@ function orchestratorSwapHarness(used: number, swapTo: string) {
     recordSubagentLink: () => {},
     subagentLinks: () => [],
   };
+  internals.getFactoryDefaults = async () => ({});
   internals.missions.set(mission.summary.id, mission);
   return { manager, session, events, mission, internals };
 }
