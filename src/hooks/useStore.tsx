@@ -26,6 +26,7 @@ import type {
   DesignReference,
 } from '../types/bridge';
 import { addWorkspaceCwd } from '../lib/workspaces';
+import { sanitizeForLog } from '../lib/sensitiveLogRedaction';
 
 export type AgentKind = 'orchestrator' | 'worker' | 'validator';
 export type LiveEnterBehavior = 'queue' | 'interrupt';
@@ -1747,7 +1748,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const unsub = bridge.subscribe((ev) => {
-      console.log('[bridge]', ev.type, ev);
+      console.log('[bridge]', ev.type, sanitizeForLog(ev));
       const action = adaptEvent(ev);
       if (action) dispatch(action);
     });
