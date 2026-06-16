@@ -1051,9 +1051,11 @@ function baseReducer(state: AppState, action: Action): AppState {
         ? isContextWindowTokenCount(existing.contextTokens, action.stats.limit)
         : false;
       const incomingHasBreakdownUsage = hasUsableBreakdownUsage(action.stats);
+      const incomingIsExact = action.stats.accuracy === 'exact';
       const stats =
         existing?.streaming &&
         currentIsWindowUsage &&
+        !incomingIsExact &&
         !incomingHasBreakdownUsage &&
         action.stats.used < existing.contextTokens
           ? {

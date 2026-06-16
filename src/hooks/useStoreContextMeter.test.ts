@@ -38,6 +38,10 @@ function stats(used: number): ContextStatsSnapshot {
   };
 }
 
+function exactStats(used: number): ContextStatsSnapshot {
+  return { ...stats(used), accuracy: 'exact' };
+}
+
 function statsWithBreakdown(used: number, breakdownUsed: number): ContextStatsSnapshot {
   return {
     ...stats(used),
@@ -100,10 +104,31 @@ test('exact context stats replace impossible cumulative usage while streaming', 
     missions: { m1: mission(10_603_766, true) },
   } as unknown as AppState;
 
-  const next = reducer(start, { type: 'CONTEXT_UPDATED', sessionId: 'm1', stats: stats(40_000) });
+  const next = reducer(start, {
+    type: 'CONTEXT_UPDATED',
+    sessionId: 'm1',
+    stats: exactStats(40_000),
+  });
 
   assert.equal(next.missions.m1.contextTokens, 40_000);
   assert.equal(next.contextStats.m1.used, 40_000);
+});
+
+test('exact context stats can reset the meter after compaction while streaming', () => {
+  const start = {
+    ...initialState,
+    missions: { m1: mission(120_000, true) },
+  } as unknown as AppState;
+
+  const next = reducer(start, {
+    type: 'CONTEXT_UPDATED',
+    sessionId: 'm1',
+    stats: exactStats(40_000),
+  });
+
+  assert.equal(next.missions.m1.contextTokens, 40_000);
+  assert.equal(next.contextStats.m1.used, 40_000);
+  assert.equal(next.contextStats.m1.remaining, 160_000);
 });
 
 test('token updates ignore impossible context counts', () => {

@@ -1050,6 +1050,7 @@ class FakeCompactionSession {
   prompts: string[] = [];
   callOrder: string[] = [];
   compactions = 0;
+  interrupts = 0;
   failCompaction = false;
   usedAfterCompact?: number;
   usedAfterStream?: number;
@@ -1126,6 +1127,10 @@ class FakeCompactionSession {
     this.compactions += 1;
     if (this.usedAfterCompact !== undefined) this.used = this.usedAfterCompact;
     return { newSessionId: this.swapTo ?? this.sessionId, removedCount: 4 };
+  }
+
+  async interrupt(): Promise<void> {
+    this.interrupts += 1;
   }
 
   async close(): Promise<void> {}
@@ -1367,6 +1372,7 @@ test('pre-turn stale swap redelivers the current prompt through resume', async (
   const { manager, session, internals } = orchestratorSwapHarness(125_000, 'droid-new');
   session.limit = 100_000;
   const swapped = new FakeCompactionSession('droid-new', 10_000);
+  swapped.limit = 100_000;
   (swapped as unknown as { initResult: unknown }).initResult = { session: {}, settings: {} };
   const summaries = new Map<string, MissionSummary>();
   (
@@ -1399,7 +1405,10 @@ test('pre-turn stale swap redelivers the current prompt through resume', async (
     assert.equal(session.prompts.includes('hello after stale swap'), false);
     assert.equal(swapped.prompts.includes('hello after stale swap'), true);
     assert.equal(loadCalls, 3);
-    assert.equal(internals.missions.has('app-swap'), true);
+    const resumed = internals.missions.get('app-swap');
+    assert.equal(!!resumed, true);
+    assert.equal(resumed?.summary.sessionId, 'droid-new');
+    assert.equal(resumed?.summary.contextTokens, 10_000);
   } finally {
     await (manager as unknown as { closeMission: (id: string) => Promise<void> }).closeMission(
       'app-swap',
@@ -1516,12 +1525,113 @@ test('agent pre-turn compacts once when the worker daemon trigger is already cro
   );
 });
 
-test('agent pre-turn compaction rekeys a swapped worker before streaming', async () => {
-  const { manager, mission, events } = streamHarness(0);
+test('agent sendNow queues during worker pre-turn compaction without interrupting', async () => {
+  const { manager, mission } = streamHarness(0);
+  const worker = new FakeCompactionSession('worker-compacting', 93_000);
+  worker.limit = 100_000;
+  worker.usedAfterCompact = 25_000;
+  worker.beforeCompact = async () => {
+    await manager.handle({
+      type: 'agent.sendNow',
+      missionId: mission.summary.id,
+      agentSessionId: worker.sessionId,
+      text: 'urgent steer',
+      compactionTokenLimit: 100_000,
+      compactionTokenLimitPerModel: { 'worker-model': 100_000 },
+    });
+  };
+  mission.knownSubagents.add(worker.sessionId);
+  mission.subagentSettings.set(worker.sessionId, { modelId: 'worker-model' });
+  mission.agents.set(worker.sessionId, {
+    session: worker,
+    missionId: mission.summary.id,
+    role: 'worker',
+    streaming: false,
+    pendingSends: [],
+    lastUsedAt: Date.now(),
+  });
+
+  await manager.handle({
+    type: 'agent.send',
+    missionId: mission.summary.id,
+    agentSessionId: worker.sessionId,
+    text: 'worker turn',
+    compactionTokenLimit: 100_000,
+    compactionTokenLimitPerModel: { 'worker-model': 100_000 },
+  });
+
+  await waitFor(() => worker.prompts.length === 2);
+  assert.equal(worker.compactions, 1);
+  assert.equal(worker.interrupts, 0);
+  assert.deepEqual(worker.prompts, ['worker turn', 'urgent steer']);
+});
+
+test('agent interrupt during worker pre-turn compaction clears queue without interrupting', async () => {
+  const { manager, mission } = streamHarness(0);
+  const worker = new FakeCompactionSession('worker-interrupt-compact', 93_000);
+  worker.limit = 100_000;
+  worker.usedAfterCompact = 25_000;
+  worker.beforeCompact = async () => {
+    await manager.handle({
+      type: 'agent.send',
+      missionId: mission.summary.id,
+      agentSessionId: worker.sessionId,
+      text: 'queued steer',
+      compactionTokenLimit: 100_000,
+      compactionTokenLimitPerModel: { 'worker-model': 100_000 },
+    });
+    await manager.handle({
+      type: 'agent.interrupt',
+      missionId: mission.summary.id,
+      agentSessionId: worker.sessionId,
+    });
+  };
+  mission.knownSubagents.add(worker.sessionId);
+  mission.subagentSettings.set(worker.sessionId, { modelId: 'worker-model' });
+  mission.agents.set(worker.sessionId, {
+    session: worker,
+    missionId: mission.summary.id,
+    role: 'worker',
+    streaming: false,
+    pendingSends: [],
+    lastUsedAt: Date.now(),
+  });
+
+  await manager.handle({
+    type: 'agent.send',
+    missionId: mission.summary.id,
+    agentSessionId: worker.sessionId,
+    text: 'worker turn',
+    compactionTokenLimit: 100_000,
+    compactionTokenLimitPerModel: { 'worker-model': 100_000 },
+  });
+
+  assert.equal(worker.compactions, 1);
+  assert.equal(worker.interrupts, 0);
+  assert.deepEqual(worker.prompts, ['worker turn']);
+});
+
+test('agent pre-turn compaction rekeys and persists a swapped worker before streaming', async () => {
+  const { manager, mission, events, internals } = streamHarness(0);
   const worker = new FakeCompactionSession('worker-old', 125_000, 'worker-new');
   const swapped = new FakeCompactionSession('worker-new', 25_000);
+  const recordedLinks: WorkerHistoryLink[] = [];
   worker.limit = 100_000;
   swapped.limit = 100_000;
+  mission.summary.features = [
+    {
+      id: 'feature-1',
+      description: 'Build the worker task',
+      status: 'in_progress',
+      skillName: '',
+      preconditions: [],
+      expectedBehavior: [],
+      verificationSteps: [],
+      workerSessionIds: ['worker-old', 'worker-other'],
+      currentWorkerSessionId: 'worker-old',
+      completedWorkerSessionId: 'worker-old',
+    },
+  ];
   mission.knownSubagents.add(worker.sessionId);
   mission.subagentSettings.set(worker.sessionId, { modelId: 'worker-model' });
   mission.subagentToolUseIds.set('tool-1', worker.sessionId);
@@ -1533,6 +1643,29 @@ test('agent pre-turn compaction rekeys a swapped worker before streaming', async
     pendingSends: [],
     lastUsedAt: Date.now(),
   });
+  (
+    internals as unknown as {
+      history: {
+        recordSubagentLink: (
+          missionId: string,
+          toolUseId: string,
+          workerSessionId: string,
+          label?: string,
+        ) => void;
+        subagentLinks: (missionId: string) => WorkerHistoryLink[];
+      };
+    }
+  ).history.recordSubagentLink = (missionId, toolUseId, workerSessionId, label) => {
+    recordedLinks.push({ toolUseId, workerSessionId, label });
+    assert.equal(missionId, mission.summary.id);
+  };
+  (
+    internals as unknown as {
+      history: { subagentLinks: (missionId: string) => WorkerHistoryLink[] };
+    }
+  ).history.subagentLinks = () => [
+    { toolUseId: 'tool-1', workerSessionId: 'worker-old', label: 'builder' },
+  ];
   let loadCalls = 0;
   (
     manager as unknown as {
@@ -1561,6 +1694,12 @@ test('agent pre-turn compaction rekeys a swapped worker before streaming', async
   assert.equal(mission.knownSubagents.has('worker-new'), true);
   assert.equal(mission.subagentSettings.has('worker-new'), true);
   assert.equal(mission.subagentToolUseIds.get('tool-1'), 'worker-new');
+  assert.deepEqual(recordedLinks, [
+    { toolUseId: 'tool-1', workerSessionId: 'worker-new', label: 'builder' },
+  ]);
+  assert.deepEqual(mission.summary.features[0].workerSessionIds, ['worker-new', 'worker-other']);
+  assert.equal(mission.summary.features[0].currentWorkerSessionId, 'worker-new');
+  assert.equal(mission.summary.features[0].completedWorkerSessionId, 'worker-new');
   assert.deepEqual(swapped.prompts, ['worker turn']);
   assert.equal(
     events.some(

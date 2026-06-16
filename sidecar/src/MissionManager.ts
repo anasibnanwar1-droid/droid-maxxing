@@ -17,6 +17,7 @@ import { homedir, tmpdir } from 'node:os';
 import type {
   AgentRole,
   Autonomy,
+  BridgeFeature,
   BrowserNativeRequest,
   BrowserNativeResult,
   ClientCommand,
@@ -95,6 +96,7 @@ interface LiveAgent {
   missionId: string;
   role: AgentRole;
   streaming: boolean;
+  compacting?: boolean;
   pendingSends: string[];
   interruptingForSteer?: boolean;
   lastUsedAt: number;
@@ -1689,6 +1691,7 @@ export class MissionManager {
     const mission = this.findMission(missionId);
     if (!mission) return;
     const appSessionId = mission.summary.id;
+    let detached = false;
     mission.streaming = true;
     this.patch(appSessionId, {
       phase: mission.summary.kind === 'mission_orchestrator' ? 'planning' : 'running',
@@ -1696,7 +1699,10 @@ export class MissionManager {
       queuedSends: mission.pendingSends.length,
     });
     try {
-      if (!(await this.compactMissionBeforeTurnIfNeeded(mission, prompt))) return;
+      if (!(await this.compactMissionBeforeTurnIfNeeded(mission, prompt))) {
+        detached = true;
+        return;
+      }
       if (!this.findMission(appSessionId)) return;
       this.startContextPolling(appSessionId, mission.session);
       await this.applyDesignToolPolicy(mission, isDesignPrompt(prompt));
@@ -1711,6 +1717,7 @@ export class MissionManager {
         this.patch(appSessionId, { phase: 'failed' });
       }
     } finally {
+      if (detached || this.findMission(appSessionId) !== mission) return;
       this.stopContextPolling(appSessionId);
       mission.interruptingForSteer = false;
       await this.refreshContext(appSessionId, mission.session);
@@ -2594,7 +2601,7 @@ export class MissionManager {
     if (!agent) return;
     await this.applySendCompactionSettings(mission, compactionSettings);
     agent.lastUsedAt = Date.now();
-    if (agent.streaming) {
+    if (agent.streaming || agent.compacting) {
       agent.pendingSends.push(text);
       return;
     }
@@ -2640,6 +2647,8 @@ export class MissionManager {
     } finally {
       this.stopContextPolling(agent.session.sessionId);
       agent.interruptingForSteer = false;
+      agent.compacting = false;
+      if (this.findLiveAgent(agent.session.sessionId)?.agent !== agent) return;
       if (agent.pendingSends.length === 0 && agent.closeWhenIdle) {
         agent.streaming = false;
         await this.closeAgent(agent.missionId, agent.session.sessionId);
@@ -2677,7 +2686,12 @@ export class MissionManager {
         this.compactionTriggerRatioForSummary(mission.summary),
       );
       if (!shouldPreTurnAutoCompact(snapshot, threshold)) return true;
-      return await this.compactAgent(mission, agent);
+      agent.compacting = true;
+      try {
+        return await this.compactAgent(mission, agent);
+      } finally {
+        agent.compacting = false;
+      }
     } catch (err) {
       this.emitError({
         missionId: mission.summary.id,
@@ -2741,6 +2755,12 @@ export class MissionManager {
   ): Promise<void> {
     const appSessionId = mission.summary.id;
     const oldSessionId = agent.session.sessionId;
+    const labelsByToolUseId = new Map(
+      this.history
+        .subagentLinks(appSessionId)
+        .filter((link) => link.toolUseId)
+        .map((link) => [link.toolUseId as string, link.label]),
+    );
     const ref = { id: appSessionId };
     const nextSession = await this.runtime.loadSession(newSessionId, {
       permissionHandler: this.makePermissionHandler(ref),
@@ -2762,8 +2782,25 @@ export class MissionManager {
     transferSetKey(mission.completedSubagents, oldSessionId, newSessionId);
     transferSetKey(mission.linkedSubagents, oldSessionId, newSessionId);
     transferMapKey(mission.subagentSettings, oldSessionId, newSessionId);
+    const relinkedToolUseIds: string[] = [];
     for (const [toolUseId, workerSessionId] of mission.subagentToolUseIds) {
-      if (workerSessionId === oldSessionId) mission.subagentToolUseIds.set(toolUseId, newSessionId);
+      if (workerSessionId === oldSessionId) {
+        mission.subagentToolUseIds.set(toolUseId, newSessionId);
+        relinkedToolUseIds.push(toolUseId);
+      }
+    }
+    for (const toolUseId of relinkedToolUseIds) {
+      this.history.recordSubagentLink(
+        appSessionId,
+        toolUseId,
+        newSessionId,
+        labelsByToolUseId.get(toolUseId),
+      );
+    }
+    const features = remapFeatureWorkerIds(mission.summary.features, oldSessionId, newSessionId);
+    if (features) {
+      this.patch(appSessionId, { features });
+      this.emit({ type: 'mission.features', missionId: appSessionId, features });
     }
     this.emit({
       type: 'mission.worker.rekey',
@@ -2796,12 +2833,13 @@ export class MissionManager {
     if (!agent) return;
     await this.applySendCompactionSettings(mission, compactionSettings);
     agent.lastUsedAt = Date.now();
-    if (!agent.streaming) {
+    if (!agent.streaming && !agent.compacting) {
       await this.driveAgent(agent, text);
       return;
     }
     // Run next after the in-flight turn.
     agent.pendingSends.unshift(text);
+    if (agent.compacting) return;
     agent.interruptingForSteer = true;
     this.emitStatus(appSessionId, 'Steering subagent now...');
     try {
@@ -2830,6 +2868,7 @@ export class MissionManager {
     if (!agent) return;
     agent.pendingSends = [];
     agent.lastUsedAt = Date.now();
+    if (agent.compacting) return;
     await agent.session.interrupt();
     agent.streaming = false;
     this.emit({
@@ -3373,6 +3412,48 @@ function transferMapKey<T>(map: Map<string, T>, from: string, to: string): void 
   const value = map.get(from);
   map.delete(from);
   if (value !== undefined) map.set(to, value);
+}
+
+function remapFeatureWorkerIds(
+  features: BridgeFeature[],
+  oldSessionId: string,
+  newSessionId: string,
+): BridgeFeature[] | undefined {
+  let changed = false;
+  const remapId = (value?: string | null): string | null | undefined => {
+    if (value !== oldSessionId) return value;
+    changed = true;
+    return newSessionId;
+  };
+  const remapIds = (values?: string[]): string[] | undefined => {
+    if (!values) return values;
+    let changedArray = false;
+    const next = values.map((value) => {
+      if (value !== oldSessionId) return value;
+      changed = true;
+      changedArray = true;
+      return newSessionId;
+    });
+    return changedArray ? next : values;
+  };
+  const next = features.map((feature) => {
+    const workerSessionIds = remapIds(feature.workerSessionIds);
+    const currentWorkerSessionId = remapId(feature.currentWorkerSessionId);
+    const completedWorkerSessionId = remapId(feature.completedWorkerSessionId);
+    if (
+      workerSessionIds === feature.workerSessionIds &&
+      currentWorkerSessionId === feature.currentWorkerSessionId &&
+      completedWorkerSessionId === feature.completedWorkerSessionId
+    )
+      return feature;
+    return {
+      ...feature,
+      workerSessionIds,
+      currentWorkerSessionId,
+      completedWorkerSessionId,
+    };
+  });
+  return changed ? next : undefined;
 }
 
 function contextBreakdownSnapshot(raw: unknown): ContextBreakdownSnapshot | undefined {
