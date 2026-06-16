@@ -28,6 +28,7 @@
     "quality:deps": "knip --dependencies --no-config-hints && knip --directory sidecar --dependencies --no-config-hints",
     "quality:duplicates": "jscpd --config .jscpd.json",
     "quality:boundaries": "depcruise --config .dependency-cruiser.cjs src sidecar/src electron",
+    "security:audit-report": "node tools/security-audit-report.mjs",
     "analyze:bundle": "ANALYZE_BUNDLE=true vite build",
     "profile:sidecar": "0x --output-dir reports/profiles -- node --loader tsx/esm sidecar/src/index.ts",
     "precommit": "lint-staged && npm run quality:file-size && npm run quality:tech-debt && npm run typecheck && npm run sidecar:typecheck && npm run electron:check",
