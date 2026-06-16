@@ -1102,6 +1102,31 @@ test('runtime defaults preserve saved model settings when the catalog is unavail
   );
 });
 
+test('quiet defaults lookup does not surface model catalog errors', async () => {
+  const events: ServerEvent[] = [];
+  const manager = new MissionManager((event) => events.push(event));
+  const internals = manager as unknown as {
+    getFactoryDefaults: () => Promise<unknown>;
+    runtime: {
+      status: () => { mode: 'cli_auth'; droidPath: string; apiKeyConfigured: boolean };
+    };
+  };
+  internals.runtime = {
+    status: () => ({
+      mode: 'cli_auth',
+      droidPath: '/definitely/missing/droid',
+      apiKeyConfigured: false,
+    }),
+  };
+
+  await internals.getFactoryDefaults();
+
+  assert.equal(
+    events.some((event) => event.type === 'mission.error' || event.type === 'error'),
+    false,
+  );
+});
+
 class FakeCompactionSession {
   prompts: string[] = [];
   callOrder: string[] = [];

@@ -603,7 +603,7 @@ export class MissionManager {
         }
         return models;
       } catch (err) {
-        this.emitError({ message: `models.list failed: ${errMsg(err)}` });
+        if (emit) this.emitError({ message: `models.list failed: ${errMsg(err)}` });
         return null;
       } finally {
         this.modelRefresh = null;
