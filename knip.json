@@ -1,0 +1,19 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "entry": [
+    "src/main.tsx",
+    "vite.config.ts",
+    "electron/*.cjs",
+    "src/**/*.test.ts",
+    "src/**/*.test.tsx"
+  ],
+  "project": ["src/**/*.{ts,tsx}", "electron/**/*.cjs", "*.config.{js,ts}"],
+  "ignore": ["sidecar/**"],
+  "ignoreDependencies": [
+    "@types/react",
+    "@types/react-dom",
+    "autoprefixer",
+    "postcss",
+    "tailwindcss"
+  ]
+}

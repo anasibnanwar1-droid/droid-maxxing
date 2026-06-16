@@ -4,6 +4,9 @@ src-tauri/target/
 dist/
 .worktrees/
 benchmark-runs/
+reports/
+playwright-report/
+test-results/
 
 .DS_Store
 *.log

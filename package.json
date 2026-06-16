@@ -12,12 +12,26 @@
     "sidecar:build": "npm --prefix sidecar run build",
     "sidecar:test": "npm --prefix sidecar run test",
     "sidecar:typecheck": "npm --prefix sidecar run typecheck",
-    "test": "tsx --test \"src/**/*.test.ts\"",
+    "test": "node --import tsx --test --test-reporter=spec \"src/**/*.test.ts\"",
+    "test:coverage": "node --import tsx --test --experimental-test-coverage --test-coverage-lines=75 --test-coverage-branches=70 --test-coverage-functions=55 \"src/**/*.test.ts\"",
+    "test:report": "mkdir -p reports && node --import tsx --test --test-reporter=spec --test-reporter-destination=stdout --test-reporter=junit --test-reporter-destination=reports/frontend-tests.xml \"src/**/*.test.ts\"",
+    "test:flaky": "mkdir -p reports && node --import tsx --test --test-reporter=spec --test-rerun-failures=reports/frontend-reruns.json \"src/**/*.test.ts\"",
+    "test:integration": "playwright test",
     "typecheck": "tsc --noEmit",
     "typecheck:strict": "tsc -p tsconfig.strict.json --noEmit",
     "sidecar:typecheck:strict": "npm --prefix sidecar run typecheck:strict",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
+    "quality:file-size": "node tools/check-file-size.mjs",
+    "quality:tech-debt": "node tools/check-tech-debt.mjs",
+    "quality:deadcode": "knip --include files,exports,types --max-issues 100 --no-config-hints && knip --directory sidecar --include files,exports,types --max-issues 100 --no-config-hints",
+    "quality:deps": "knip --dependencies --no-config-hints && knip --directory sidecar --dependencies --no-config-hints",
+    "quality:duplicates": "jscpd --config .jscpd.json",
+    "quality:boundaries": "depcruise --config .dependency-cruiser.cjs src sidecar/src electron",
+    "analyze:bundle": "ANALYZE_BUNDLE=true vite build",
+    "profile:sidecar": "0x --output-dir reports/profiles -- node --loader tsx/esm sidecar/src/index.ts",
+    "precommit": "lint-staged && npm run quality:file-size && npm run quality:tech-debt && npm run typecheck && npm run sidecar:typecheck && npm run electron:check",
+    "prepare": "husky",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "preview": "vite preview"
@@ -33,10 +47,13 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.39.4",
+    "@playwright/test": "^1.61.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^4.3.0",
+    "0x": "^6.0.0",
     "autoprefixer": "^10.4.20",
+    "dependency-cruiser": "^17.4.3",
     "electron": "^39.2.6",
     "eslint": "^9.39.4",
     "eslint-config-prettier": "^10.1.8",
@@ -44,12 +61,25 @@
     "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-react-refresh": "^0.5.3",
     "globals": "^17.6.0",
+    "husky": "^9.1.7",
+    "jscpd": "^5.0.9",
+    "knip": "^6.16.1",
+    "lint-staged": "^17.0.7",
     "postcss": "^8.4.47",
     "prettier": "^3.8.4",
+    "rollup-plugin-visualizer": "^7.0.1",
     "tailwindcss": "^3.4.14",
     "tsx": "^4.22.4",
     "typescript": "^5.6.0",
     "typescript-eslint": "^8.61.0",
     "vite": "^6.0.0"
+  },
+  "lint-staged": {
+    "*.{ts,tsx,js,cjs,mjs}": [
+      "eslint --fix"
+    ],
+    "*.{ts,tsx,js,cjs,mjs,json,css,md,html,yml,yaml}": [
+      "prettier --write"
+    ]
   }
 }
