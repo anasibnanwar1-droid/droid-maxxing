@@ -96,6 +96,15 @@ test('#20 a TodoWrite result is correlated by toolUseId even with no toolName', 
   // A non-result neighbour is never swallowed.
   assert.equal(isResultFor(call, asst('done')), false);
   assert.equal(isResultFor(call, undefined), false);
+  // A failed result always surfaces, even when it correlates to the call.
+  const failed = ev({
+    kind: 'tool_result',
+    toolName: '',
+    toolUseId: 'tu1',
+    isError: true,
+    text: 'boom',
+  });
+  assert.equal(isResultFor(call, failed), false);
 });
 
 // ── #18: final answer always top-level, even with trailing compaction ──

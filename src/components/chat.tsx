@@ -367,6 +367,9 @@ function TodoChecklist({ event }: { event: TranscriptEvent }) {
 // adjacent-result convention every other branch in renderToolEvents uses.
 export function isResultFor(call: TranscriptEvent, next: TranscriptEvent | undefined): boolean {
   if (!next || next.kind !== 'tool_result') return false;
+  // A failed result must always surface so the user sees the failure, even when
+  // it correlates to the call we are otherwise hiding (e.g. a failed TodoWrite).
+  if (next.isError) return false;
   if (call.toolUseId && next.toolUseId) return next.toolUseId === call.toolUseId;
   return true;
 }
