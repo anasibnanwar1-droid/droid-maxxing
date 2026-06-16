@@ -226,6 +226,20 @@ jobs:
       - run: npm ci
       - run: npm run format:check
 
+  docs-check:
+    name: Documentation check
+    runs-on: ubuntu-latest
+    timeout-minutes: 7
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - run: npm ci
+      - run: npm run docs:check
+
   lint:
     name: Lint (non-blocking)
     runs-on: ubuntu-latest
