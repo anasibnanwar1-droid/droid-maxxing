@@ -119,6 +119,34 @@ test('#20 a TodoWrite result is correlated by toolUseId even with no toolName', 
   assert.equal(isResultFor(call, failed), false);
 });
 
+test('#20 dedupe drops a superseded plan result by toolUseId even when batched', () => {
+  // Replay can batch both plan calls before their results. The superseded plan
+  // (a) and its result must both be dropped by id; only the kept plan (b) and
+  // its result remain.
+  const a = ev({
+    kind: 'tool_call',
+    toolName: 'TodoWrite',
+    toolArgs: { todos: '1. [pending] a' },
+    toolUseId: 'a',
+  });
+  const b = ev({
+    kind: 'tool_call',
+    toolName: 'TodoWrite',
+    toolArgs: { todos: '1. [completed] a' },
+    toolUseId: 'b',
+  });
+  const ra = ev({ kind: 'tool_result', toolName: '', toolUseId: 'a', text: 'TODO List Updated' });
+  const rb = ev({ kind: 'tool_result', toolName: '', toolUseId: 'b', text: 'TODO List Updated' });
+  const items = buildFeed([a, b, ra, rb]);
+  const tools = items.find((it) => it.type === 'tools') as Extract<FeedItem, { type: 'tools' }>;
+  assert.ok(tools, 'expected a tools group');
+  const plans = tools.events.filter((e) => e.toolName === 'TodoWrite');
+  assert.equal(plans.length, 1);
+  assert.equal(plans[0].toolUseId, 'b');
+  const resultIds = tools.events.filter((e) => e.kind === 'tool_result').map((e) => e.toolUseId);
+  assert.deepEqual(resultIds, ['b']);
+});
+
 test('#20 a batched replay (calls before results) correlates each result by toolUseId', () => {
   // Historical replay can order a whole batch of calls before their results:
   // TodoWrite(a), Grep(b), result(a), result(b). The TodoWrite result must not
