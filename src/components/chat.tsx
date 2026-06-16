@@ -237,7 +237,7 @@ function summarizeTools(events: TranscriptEvent[]): string {
     else if (cat === 'skill') counts.step++;
     else counts.step++;
   });
-  if (onlyPlan) return counts.plan === 1 ? 'Updated plan' : 'Updated plan';
+  if (onlyPlan) return 'Updated plan';
   const parts: string[] = [];
   const add = (n: number, s: string, p: string) => {
     if (n > 0) parts.push(`${n} ${n === 1 ? s : p}`);
@@ -347,7 +347,9 @@ function TodoChecklist({ event }: { event: TranscriptEvent }) {
         <div
           key={i}
           className={`flex items-start gap-2 text-[12.5px] leading-relaxed [overflow-wrap:anywhere] ${
-            t.status === 'completed' ? 'text-droid-text-muted line-through' : 'text-droid-text-secondary'
+            t.status === 'completed'
+              ? 'text-droid-text-muted line-through'
+              : 'text-droid-text-secondary'
           }`}
         >
           <span className="select-none text-droid-text-muted">{mark[t.status]}</span>
@@ -365,8 +367,10 @@ function renderToolEvents(events: TranscriptEvent[]): React.ReactNode[] {
     if (e.kind === 'tool_call') {
       if (classifyEvent(e) === 'plan_update') {
         nodes.push(<TodoChecklist key={e.id} event={e} />);
-        // A TodoWrite tool_result carries no useful payload; skip it.
-        if (events[i + 1]?.kind === 'tool_result') i++;
+        // A TodoWrite's own (empty) tool_result carries no payload; skip only
+        // that result, never an unrelated one that happens to follow.
+        const next = events[i + 1];
+        if (next?.kind === 'tool_result' && classifyEvent(next) === 'plan_update') i++;
         continue;
       }
       const next = events[i + 1];
@@ -570,7 +574,10 @@ function dedupePlanUpdates(events: TranscriptEvent[]): TranscriptEvent[] {
   for (let j = 0; j < events.length; j++) {
     const e = events[j];
     if (e.kind === 'tool_call' && classifyEvent(e) === 'plan_update' && e.id !== keepId) {
-      if (events[j + 1]?.kind === 'tool_result') j++;
+      // Only swallow the result if it is this plan call's own (empty) result;
+      // never drop an unrelated tool_result that happens to follow.
+      const next = events[j + 1];
+      if (next?.kind === 'tool_result' && classifyEvent(next) === 'plan_update') j++;
       continue;
     }
     out.push(e);

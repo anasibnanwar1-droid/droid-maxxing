@@ -50,7 +50,8 @@ export function classifyEvent(ev: TranscriptEvent): ContentType {
     case 'tool_result':
       if (isSubagentTool(ev.toolName, ev.toolArgs)) return 'subagent_event';
       if (isTodoTool(ev.toolName)) return 'plan_update';
-      if (ev.kind === 'tool_call' && extractFileChange(ev.toolName, ev.toolArgs)) return 'file_edit';
+      if (ev.kind === 'tool_call' && extractFileChange(ev.toolName, ev.toolArgs))
+        return 'file_edit';
       return 'tool_activity';
     default:
       return 'status';
@@ -63,10 +64,4 @@ export function isChatContent(type: ContentType): boolean {
 
 export function isDiagnosticContent(type: ContentType): boolean {
   return DIAGNOSTIC_CONTENT.has(type);
-}
-
-// The terminal assistant answer of a turn. Marked by the backend (live + on
-// reload); used as a hard guard that the answer stays a top-level message.
-export function isAssistantFinal(ev: TranscriptEvent): boolean {
-  return ev.kind === 'text' && !ev.author && ev.final === true;
 }

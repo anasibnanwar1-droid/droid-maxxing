@@ -213,7 +213,6 @@ type Action =
     }
   | { type: 'CONTEXT_UPDATED'; sessionId: string; stats: ContextStatsSnapshot }
   | { type: 'MISSION_TRANSCRIPT'; event: TranscriptEvent }
-  | { type: 'TRANSCRIPT_FINALIZE'; missionId: string; eventId: string }
   | { type: 'QUEUE_PROMPT'; missionId: string; prompt: QueuedPrompt }
   | { type: 'REMOVE_QUEUED_PROMPT'; missionId: string; id: string }
   | { type: 'REORDER_QUEUE'; missionId: string; from: number; to: number }
@@ -1060,19 +1059,6 @@ function baseReducer(state: AppState, action: Action): AppState {
       };
     }
 
-    case 'TRANSCRIPT_FINALIZE': {
-      const prev = state.transcripts[action.missionId];
-      if (!prev) return state;
-      const idx = prev.findIndex((event) => event.id === action.eventId);
-      if (idx < 0 || prev[idx].final) return state;
-      const next = [...prev];
-      next[idx] = { ...next[idx], final: true };
-      return {
-        ...state,
-        transcripts: { ...state.transcripts, [action.missionId]: next },
-      };
-    }
-
     case 'QUEUE_PROMPT': {
       const prev = state.promptQueue[action.missionId] ?? [];
       return {
@@ -1696,8 +1682,6 @@ function adaptEvent(ev: ServerEvent): Action | null {
       };
     case 'mission.transcript':
       return { type: 'MISSION_TRANSCRIPT', event: ev.event };
-    case 'transcript.finalize':
-      return { type: 'TRANSCRIPT_FINALIZE', missionId: ev.missionId, eventId: ev.eventId };
     case 'mission.permission':
       return { type: 'MISSION_PERMISSION', request: ev.request };
     case 'mission.question':

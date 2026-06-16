@@ -19,8 +19,9 @@ function ev(extra: Partial<TranscriptEvent>): TranscriptEvent {
 }
 
 const userMsg = (text: string) => ev({ kind: 'text', author: 'user', text });
-const asst = (text: string, final = false) => ev({ kind: 'text', text, final });
-const todo = (todos: string) => ev({ kind: 'tool_call', toolName: 'TodoWrite', toolArgs: { todos } });
+const asst = (text: string) => ev({ kind: 'text', text });
+const todo = (todos: string) =>
+  ev({ kind: 'tool_call', toolName: 'TodoWrite', toolArgs: { todos } });
 const grep = () => ev({ kind: 'tool_call', toolName: 'Grep', toolArgs: { pattern: 'x' } });
 const compaction = () => ev({ kind: 'compaction', removedCount: 3 });
 
@@ -41,7 +42,7 @@ function workedChildren(items: FeedItem[]): FeedItem[] {
 // ── #20: TodoWrite / tool orchestration must not leak as chat ──
 
 test('#20 a TodoWrite update does not add a chat message and answer stays single', () => {
-  const events = [userMsg('do it'), todo('1. [in_progress] step'), asst('done', true)];
+  const events = [userMsg('do it'), todo('1. [in_progress] step'), asst('done')];
   const grouped = groupTurns(buildFeed(events), false);
   assert.deepEqual(topLevelAnswers(grouped), ['done']);
   // No top-level item is the TodoWrite; it lives inside Worked activity.
@@ -58,13 +59,16 @@ test('#20 repeated TodoWrite calls are deduped to the latest snapshot', () => {
   assert.ok(tools, 'expected a tools group');
   const plans = tools.events.filter((e) => e.toolName === 'TodoWrite');
   assert.equal(plans.length, 1);
-  assert.equal(plans[0].toolArgs && (plans[0].toolArgs as { todos: string }).todos, '1. [completed] a');
+  assert.equal(
+    plans[0].toolArgs && (plans[0].toolArgs as { todos: string }).todos,
+    '1. [completed] a',
+  );
 });
 
 // ── #18: final answer always top-level, even with trailing compaction ──
 
 test('#18 a final answer followed by compaction stays a top-level message', () => {
-  const events = [userMsg('q'), grep(), asst('the answer', true), compaction()];
+  const events = [userMsg('q'), grep(), asst('the answer'), compaction()];
   const grouped = groupTurns(buildFeed(events), false);
   assert.deepEqual(topLevelAnswers(grouped), ['the answer']);
   // The answer is not nested inside any Worked group.
@@ -76,7 +80,7 @@ test('#18 a final answer followed by compaction stays a top-level message', () =
 });
 
 test('#18 pre-answer work folds into Worked but the answer never does', () => {
-  const events = [userMsg('q'), grep(), asst('answer', true), compaction()];
+  const events = [userMsg('q'), grep(), asst('answer'), compaction()];
   const grouped = groupTurns(buildFeed(events), false);
   // Exactly one Worked group (the grep), and it carries no assistant message.
   const worked = grouped.filter((it) => it.type === 'worked');
@@ -85,7 +89,7 @@ test('#18 pre-answer work folds into Worked but the answer never does', () => {
 });
 
 test('#18 multiple assistant texts in a turn each stay top-level', () => {
-  const events = [userMsg('q'), asst('first'), grep(), asst('second', true)];
+  const events = [userMsg('q'), asst('first'), grep(), asst('second')];
   const grouped = groupTurns(buildFeed(events), false);
   assert.deepEqual(topLevelAnswers(grouped), ['first', 'second']);
 });
@@ -93,7 +97,7 @@ test('#18 multiple assistant texts in a turn each stay top-level', () => {
 // ── #14: spec mode must not capture normal chat responses ──
 
 test('#14 a normal assistant response still renders in chat while a spec exists', () => {
-  const events = [userMsg('hi'), asst('a perfectly normal answer', true)];
+  const events = [userMsg('hi'), asst('a perfectly normal answer')];
   const html = renderToStaticMarkup(
     createElement(MessageFeed, {
       events,
@@ -108,7 +112,7 @@ test('#14 a normal assistant response still renders in chat while a spec exists'
 
 test('#14 an assistant message that is exactly the spec text is not double-rendered in chat', () => {
   const spec = '# Specification\n\nThe one and only spec body';
-  const events = [userMsg('hi'), asst(spec, true)];
+  const events = [userMsg('hi'), asst(spec)];
   const html = renderToStaticMarkup(
     createElement(MessageFeed, { events, pending: false, specContent: spec }),
   );
