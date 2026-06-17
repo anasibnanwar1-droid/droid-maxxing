@@ -690,12 +690,12 @@ export class MissionManager {
     settings?: CompactionSettingsPatch,
   ): CompactionSettingsPatch {
     if (hasCompactionSettingsPatch(settings)) {
-      this.currentCompactionSettings = {
-        compactionTokenLimit: settings.compactionTokenLimit,
-        compactionTokenLimitPerModel: settings.compactionTokenLimitPerModel
-          ? { ...settings.compactionTokenLimitPerModel }
-          : {},
-      };
+      const next: CompactionSettingsPatch = { ...this.currentCompactionSettings };
+      if (settings.compactionTokenLimit !== undefined)
+        next.compactionTokenLimit = settings.compactionTokenLimit;
+      if (settings.compactionTokenLimitPerModel !== undefined)
+        next.compactionTokenLimitPerModel = { ...settings.compactionTokenLimitPerModel };
+      this.currentCompactionSettings = next;
     }
     return this.currentCompactionSettings;
   }
@@ -772,7 +772,7 @@ export class MissionManager {
     fallback?: number,
   ): number | undefined {
     return this.visibleContextLimitForModel(
-      summary.modelId ?? defaults.modelId,
+      this.compactionModelIdForSummary(summary, defaults),
       defaults,
       fallback,
     );
@@ -1010,7 +1010,7 @@ export class MissionManager {
 
   private compactionModelIdForSummary(
     summary: MissionSummary,
-    defaults: FactoryDefaultSettings,
+    defaults: Partial<FactoryDefaultSettings>,
   ): string | undefined {
     return (
       summary.modelId ?? defaultModelForAgent('orchestrator', modeForSummary(summary), defaults)

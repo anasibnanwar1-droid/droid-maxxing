@@ -239,6 +239,40 @@ test('disables daemon compaction threshold checks when no budget exists', () => 
   );
 });
 
+test('compaction settings patches preserve omitted fields', () => {
+  const manager = new MissionManager(() => {});
+  const internals = manager as unknown as {
+    compactionSettingsForCommand: (settings?: {
+      compactionTokenLimit?: number | null;
+      compactionTokenLimitPerModel?: Record<string, number>;
+    }) => {
+      compactionTokenLimit?: number | null;
+      compactionTokenLimitPerModel?: Record<string, number>;
+    };
+  };
+
+  assert.deepEqual(
+    internals.compactionSettingsForCommand({
+      compactionTokenLimit: null,
+      compactionTokenLimitPerModel: {},
+    }),
+    { compactionTokenLimit: null, compactionTokenLimitPerModel: {} },
+  );
+  assert.deepEqual(
+    internals.compactionSettingsForCommand({
+      compactionTokenLimitPerModel: { 'model-a': 120_000 },
+    }),
+    {
+      compactionTokenLimit: null,
+      compactionTokenLimitPerModel: { 'model-a': 120_000 },
+    },
+  );
+  assert.deepEqual(internals.compactionSettingsForCommand({ compactionTokenLimit: 200_000 }), {
+    compactionTokenLimit: 200_000,
+    compactionTokenLimitPerModel: { 'model-a': 120_000 },
+  });
+});
+
 test('withLiveWorkerStatus annotates live links and leaves historical/unknown ones untouched', () => {
   const manager = new MissionManager(() => {});
   const mission = {
@@ -741,6 +775,43 @@ test('live sessions refresh daemon compaction settings from model and limit chan
     events.some((event) => event.type === 'mission.error' || event.type === 'error'),
     false,
   );
+});
+
+test('live compaction updates preserve cleared global limits when fields are omitted', async () => {
+  const { manager, session, mission, internals } = streamHarness(10_000);
+  mission.summary.modelId = 'model-a';
+  (
+    internals as unknown as {
+      getFactoryDefaults: () => Promise<{
+        modelId?: string;
+        compactionTokenLimit?: number;
+        compactionTokenLimitPerModel?: Record<string, number>;
+      }>;
+    }
+  ).getFactoryDefaults = async () => ({
+    modelId: 'model-a',
+    compactionTokenLimit: 400_000,
+    compactionTokenLimitPerModel: {},
+  });
+
+  await manager.handle({
+    type: 'settings.compaction.update',
+    compactionTokenLimit: null,
+    compactionTokenLimitPerModel: {},
+  });
+
+  assert.deepEqual(session.settingsUpdates.at(-1), {
+    compactionThresholdCheckEnabled: false,
+  });
+
+  await manager.handle({
+    type: 'settings.compaction.update',
+    compactionTokenLimitPerModel: { 'model-b': 200_000 },
+  });
+
+  assert.deepEqual(session.settingsUpdates.at(-1), {
+    compactionThresholdCheckEnabled: false,
+  });
 });
 
 test('resume preserves in-place compaction count for daemon trigger headroom', async () => {
@@ -2097,6 +2168,38 @@ test('context stats expose the visible window instead of daemon trigger headroom
   assert.equal(contextEvent?.stats.remaining, 6_522);
   assert.equal(contextEvent?.stats.limit, 100_000);
   assert.equal(mission.summary.maxContextTokens, 100_000);
+});
+
+test('context stats use the mode default model for visible limits', async () => {
+  const { manager, session, mission, events } = streamHarness(125_000);
+  mission.summary.kind = 'spec';
+  mission.summary.modelId = undefined;
+  session.limit = 300_000;
+  const internals = manager as unknown as {
+    getFactoryDefaults: () => Promise<{
+      modelId?: string;
+      specModelId?: string;
+      compactionTokenLimitPerModel?: Record<string, number>;
+    }>;
+  };
+  internals.getFactoryDefaults = async () => ({
+    modelId: 'chat-default',
+    specModelId: 'spec-default',
+    compactionTokenLimitPerModel: {
+      'chat-default': 100_000,
+      'spec-default': 220_000,
+    },
+  });
+
+  await manager.handle({ type: 'mission.send', missionId: 'app-stream', text: 'hello' });
+
+  const contextEvent = events.findLast((event) => event.type === 'context.updated') as
+    | { type: 'context.updated'; stats: { used: number; remaining: number; limit: number } }
+    | undefined;
+  assert.equal(contextEvent?.stats.used, 125_000);
+  assert.equal(contextEvent?.stats.remaining, 95_000);
+  assert.equal(contextEvent?.stats.limit, 220_000);
+  assert.equal(mission.summary.maxContextTokens, 220_000);
 });
 
 test('token usage events preserve the visible context window between refreshes', async () => {
