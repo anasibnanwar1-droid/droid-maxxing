@@ -404,12 +404,11 @@ export function correlateResults(events: TranscriptEvent[]): {
       if (next && next.kind === 'tool_result' && !next.toolUseId) result = next;
     }
     if (!result || consumed.has(result)) continue;
-    if (classifyEvent(call) === 'plan_update') {
-      if (!result.isError) consumed.add(result);
-    } else {
-      resultByCall.set(call, result);
-      consumed.add(result);
-    }
+    // A failed result must always surface (as raw activity), so never consume it
+    // or attach it as a call's inline output — mirrors isResultFor's error guard.
+    if (result.isError) continue;
+    if (classifyEvent(call) !== 'plan_update') resultByCall.set(call, result);
+    consumed.add(result);
   }
   return { resultByCall, consumed };
 }
@@ -505,9 +504,24 @@ export function buildFeed(events: TranscriptEvent[], subagentCards = false): Fee
   const items: FeedItem[] = [];
   // toolUseId → index of its spawn item, so streaming deltas collapse into one.
   const subagentIdx = new Map<string, number>();
+  // toolUseIds of spawned subagent calls whose successful completion result must
+  // be dropped wherever it lands (history results carry no toolName and replay
+  // can batch the result away from its call), so it never leaks as raw activity.
+  const subagentResultIds = new Set<string>();
   let i = 0;
   while (i < events.length) {
     const ev = events[i];
+    // A subagent's own successful completion result is represented by its card,
+    // not as a standalone tool_result; drop it here regardless of position.
+    if (
+      ev.kind === 'tool_result' &&
+      !ev.isError &&
+      ev.toolUseId &&
+      subagentResultIds.has(ev.toolUseId)
+    ) {
+      i++;
+      continue;
+    }
     if (ev.author === 'user' || ev.kind === 'text') {
       items.push({ type: 'message', key: ev.id, event: ev });
       i++;
@@ -576,13 +590,10 @@ export function buildFeed(events: TranscriptEvent[], subagentCards = false): Fee
         // Skip the subagent's successful completion tool_result so it doesn't
         // become an orphaned "Tool result" entry in the grouping block below.
         // Keep error results so a failed spawn surfaces instead of vanishing.
-        if (
-          i < events.length &&
-          events[i].kind === 'tool_result' &&
-          events[i].toolName === ev.toolName &&
-          !events[i].isError
-        )
-          i++;
+        // Correlate by toolUseId (history results have no toolName); a result
+        // batched away from its call is dropped by the group-wide guard above.
+        if (ev.toolUseId) subagentResultIds.add(ev.toolUseId);
+        if (isResultFor(ev, events[i])) i++;
         continue;
       }
     }
@@ -591,6 +602,12 @@ export function buildFeed(events: TranscriptEvent[], subagentCards = false): Fee
       while (i < events.length) {
         const t = events[i];
         if (t.kind === 'tool_result') {
+          // A subagent's successful completion result belongs to its card, not
+          // this generic group, even when batched away from the spawn.
+          if (!t.isError && t.toolUseId && subagentResultIds.has(t.toolUseId)) {
+            i++;
+            continue;
+          }
           group.push(t);
           i++;
           continue;
