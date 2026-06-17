@@ -610,10 +610,12 @@ export function buildFeed(events: TranscriptEvent[], subagentCards = false): Fee
       while (i < events.length) {
         const t = events[i];
         if (t.kind === 'tool_result') {
+          // Any failed result breaks the group so the outer loop surfaces it as
+          // an error, regardless of tool family (the classifier invariant).
+          if (t.isError) break;
+          // A successful subagent/plan result is dropped (represented by its
+          // card or checklist, or pure noise); other results stay in the group.
           if (isCardResult(t)) {
-            // A failed subagent/plan result must break out so the outer loop can
-            // surface it as an error; a successful one is dropped (card/noise).
-            if (t.isError) break;
             i++;
             continue;
           }

@@ -223,6 +223,35 @@ test('#20 a failed non-plan tool result is never consumed so the failure surface
   assert.equal(consumed.has(failed), false);
 });
 
+test('#20 a failed ordinary tool result surfaces as an error, not folded into a group', () => {
+  // [Execute call, failed result] enters the generic grouping loop at the call;
+  // the failed result must break out and render as an error, not join the group.
+  const execCall = ev({
+    kind: 'tool_call',
+    toolName: 'Execute',
+    toolArgs: { command: 'npm test' },
+    toolUseId: 'e1',
+  });
+  const failed = ev({
+    kind: 'tool_result',
+    toolName: '',
+    toolUseId: 'e1',
+    isError: true,
+    text: 'exit code 1',
+  });
+  const items = buildFeed([execCall, failed]);
+  const toolEvents = items
+    .filter((it): it is Extract<FeedItem, { type: 'tools' }> => it.type === 'tools')
+    .flatMap((it) => it.events);
+  // The failed result is not folded into the tools group...
+  assert.equal(
+    toolEvents.some((e) => e.kind === 'tool_result'),
+    false,
+  );
+  // ...it surfaces as a standalone error.
+  assert.ok(items.some((it) => it.type === 'error' && it.event.toolUseId === 'e1'));
+});
+
 test('#20 a subagent completion result is dropped group-wide even when batched', () => {
   // Replay can place a subagent (Task) result far from its call and with no
   // toolName; it must still be folded into the card, never leak as raw activity.
