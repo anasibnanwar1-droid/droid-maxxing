@@ -178,6 +178,39 @@ test('uses per-model compaction limit ahead of global limits', () => {
   );
 });
 
+test('uses Factory per-model compaction defaults when local overrides omit the model', () => {
+  assert.equal(
+    compactionTokenLimitForModel(
+      'model-a',
+      { compactionTokenLimitPerModel: {} },
+      { compactionTokenLimitPerModel: { 'model-a': 400_000 } },
+    ),
+    400_000,
+  );
+});
+
+test('uses local global compaction limits ahead of Factory per-model defaults', () => {
+  assert.equal(
+    compactionTokenLimitForModel(
+      'model-a',
+      { compactionTokenLimit: 200_000, compactionTokenLimitPerModel: {} },
+      { compactionTokenLimitPerModel: { 'model-a': 400_000 } },
+    ),
+    200_000,
+  );
+});
+
+test('explicitly cleared global compaction limit disables Factory per-model defaults', () => {
+  assert.equal(
+    compactionTokenLimitForModel(
+      'model-a',
+      { compactionTokenLimit: null, compactionTokenLimitPerModel: {} },
+      { compactionTokenLimitPerModel: { 'model-a': 400_000 } },
+    ),
+    undefined,
+  );
+});
+
 test('uses Factory compaction defaults when command omits them', () => {
   assert.equal(
     compactionTokenLimitForModel('model-a', {}, { compactionTokenLimit: 200_000 }),
@@ -243,7 +276,7 @@ test('compaction settings patches preserve omitted fields', () => {
   const manager = new MissionManager(() => {});
   const internals = manager as unknown as {
     compactionSettingsForCommand: (settings?: {
-      compactionTokenLimit?: number | null;
+      compactionTokenLimit?: number | null | 'factory-default';
       compactionTokenLimitPerModel?: Record<string, number>;
     }) => {
       compactionTokenLimit?: number | null;
@@ -271,6 +304,10 @@ test('compaction settings patches preserve omitted fields', () => {
     compactionTokenLimit: 200_000,
     compactionTokenLimitPerModel: { 'model-a': 120_000 },
   });
+  assert.deepEqual(
+    internals.compactionSettingsForCommand({ compactionTokenLimit: 'factory-default' }),
+    { compactionTokenLimitPerModel: { 'model-a': 120_000 } },
+  );
 });
 
 test('withLiveWorkerStatus annotates live links and leaves historical/unknown ones untouched', () => {
@@ -811,6 +848,81 @@ test('live compaction updates preserve cleared global limits when fields are omi
 
   assert.deepEqual(session.settingsUpdates.at(-1), {
     compactionThresholdCheckEnabled: false,
+  });
+});
+
+test('live compaction updates restore Factory default global limits', async () => {
+  const { manager, session, mission, internals } = streamHarness(10_000);
+  mission.summary.modelId = 'model-a';
+  (
+    internals as unknown as {
+      getFactoryDefaults: () => Promise<{
+        modelId?: string;
+        compactionTokenLimit?: number;
+      }>;
+    }
+  ).getFactoryDefaults = async () => ({
+    modelId: 'model-a',
+    compactionTokenLimit: 400_000,
+  });
+
+  await manager.handle({
+    type: 'settings.compaction.update',
+    compactionTokenLimit: 200_000,
+    compactionTokenLimitPerModel: {},
+  });
+
+  assert.deepEqual(session.settingsUpdates.at(-1), {
+    compactionTokenLimit: 180_000,
+    compactionThresholdCheckEnabled: true,
+  });
+
+  await manager.handle({
+    type: 'settings.compaction.update',
+    compactionTokenLimit: 'factory-default',
+    compactionTokenLimitPerModel: {},
+  });
+
+  assert.deepEqual(session.settingsUpdates.at(-1), {
+    compactionTokenLimit: 360_000,
+    compactionThresholdCheckEnabled: true,
+  });
+});
+
+test('live compaction updates restore Factory default per-model limits', async () => {
+  const { manager, session, mission, internals } = streamHarness(10_000);
+  mission.summary.modelId = 'model-a';
+  (
+    internals as unknown as {
+      getFactoryDefaults: () => Promise<{
+        modelId?: string;
+        compactionTokenLimitPerModel?: Record<string, number>;
+      }>;
+    }
+  ).getFactoryDefaults = async () => ({
+    modelId: 'model-a',
+    compactionTokenLimitPerModel: { 'model-a': 400_000 },
+  });
+
+  await manager.handle({
+    type: 'settings.compaction.update',
+    compactionTokenLimitPerModel: { 'model-a': 200_000 },
+  });
+
+  assert.deepEqual(session.settingsUpdates.at(-1), {
+    compactionTokenLimit: 180_000,
+    compactionThresholdCheckEnabled: true,
+  });
+
+  await manager.handle({
+    type: 'settings.compaction.update',
+    compactionTokenLimit: 'factory-default',
+    compactionTokenLimitPerModel: {},
+  });
+
+  assert.deepEqual(session.settingsUpdates.at(-1), {
+    compactionTokenLimit: 360_000,
+    compactionThresholdCheckEnabled: true,
   });
 });
 
@@ -2364,6 +2476,125 @@ test('token usage events preserve the visible context window between refreshes',
   assert.equal(mission.summary.maxContextTokens, 100_000);
 });
 
+test('token usage events preserve Factory default visible limits after reset', async () => {
+  const { manager, mission, events } = streamHarness(92_000);
+  mission.summary.modelId = 'model-a';
+  mission.summary.maxContextTokens = 200_000;
+  const internals = manager as unknown as {
+    cachedModels?: ModelInfo[];
+    getFactoryDefaults: () => Promise<{
+      modelId?: string;
+      compactionTokenLimit?: number;
+    }>;
+    contextSnapshots: Map<string, unknown>;
+    applyNormalized: (
+      missionId: string,
+      event: { tokens: { tokensIn: number; tokensOut: number; contextTokens?: number } },
+    ) => void;
+  };
+  internals.cachedModels = [
+    {
+      id: 'model-a',
+      displayName: 'Model A',
+      isDefault: true,
+      isCustom: false,
+      supportedReasoningEfforts: [],
+      maxContextTokens: 1_000_000,
+    },
+  ];
+  internals.getFactoryDefaults = async () => ({
+    modelId: 'model-a',
+    compactionTokenLimit: 400_000,
+  });
+
+  await manager.handle({
+    type: 'settings.compaction.update',
+    compactionTokenLimit: 200_000,
+    compactionTokenLimitPerModel: {},
+  });
+  await manager.handle({
+    type: 'settings.compaction.update',
+    compactionTokenLimit: 'factory-default',
+    compactionTokenLimitPerModel: {},
+  });
+  internals.contextSnapshots.clear();
+
+  internals.applyNormalized('app-stream', {
+    tokens: { tokensIn: 1_000, tokensOut: 50, contextTokens: 390_000 },
+  });
+
+  const contextEvent = events.findLast((event) => event.type === 'context.updated') as
+    | { type: 'context.updated'; stats: { used: number; remaining: number; limit: number } }
+    | undefined;
+  const tokenEvent = events.findLast((event) => event.type === 'mission.tokens') as
+    | { type: 'mission.tokens'; maxContextTokens?: number }
+    | undefined;
+  assert.equal(contextEvent?.stats.used, 390_000);
+  assert.equal(contextEvent?.stats.remaining, 10_000);
+  assert.equal(contextEvent?.stats.limit, 400_000);
+  assert.equal(tokenEvent?.maxContextTokens, 400_000);
+  assert.equal(mission.summary.maxContextTokens, 400_000);
+});
+
+test('token usage events preserve Factory per-model visible limits after reset', async () => {
+  const { manager, mission, events } = streamHarness(92_000);
+  mission.summary.modelId = 'model-a';
+  mission.summary.maxContextTokens = 200_000;
+  const internals = manager as unknown as {
+    cachedModels?: ModelInfo[];
+    getFactoryDefaults: () => Promise<{
+      modelId?: string;
+      compactionTokenLimitPerModel?: Record<string, number>;
+    }>;
+    contextSnapshots: Map<string, unknown>;
+    applyNormalized: (
+      missionId: string,
+      event: { tokens: { tokensIn: number; tokensOut: number; contextTokens?: number } },
+    ) => void;
+  };
+  internals.cachedModels = [
+    {
+      id: 'model-a',
+      displayName: 'Model A',
+      isDefault: true,
+      isCustom: false,
+      supportedReasoningEfforts: [],
+      maxContextTokens: 1_000_000,
+    },
+  ];
+  internals.getFactoryDefaults = async () => ({
+    modelId: 'model-a',
+    compactionTokenLimitPerModel: { 'model-a': 400_000 },
+  });
+
+  await manager.handle({
+    type: 'settings.compaction.update',
+    compactionTokenLimitPerModel: { 'model-a': 200_000 },
+  });
+  await manager.handle({
+    type: 'settings.compaction.update',
+    compactionTokenLimit: 'factory-default',
+    compactionTokenLimitPerModel: {},
+  });
+  internals.contextSnapshots.clear();
+
+  internals.applyNormalized('app-stream', {
+    tokens: { tokensIn: 1_000, tokensOut: 50, contextTokens: 390_000 },
+  });
+
+  const contextEvent = events.findLast((event) => event.type === 'context.updated') as
+    | { type: 'context.updated'; stats: { used: number; remaining: number; limit: number } }
+    | undefined;
+  const tokenEvent = events.findLast((event) => event.type === 'mission.tokens') as
+    | { type: 'mission.tokens'; maxContextTokens?: number }
+    | undefined;
+  assert.equal(contextEvent?.stats.used, 390_000);
+  assert.equal(contextEvent?.stats.remaining, 10_000);
+  assert.equal(contextEvent?.stats.limit, 400_000);
+  assert.equal(tokenEvent?.maxContextTokens, 400_000);
+  assert.equal(mission.summary.maxContextTokens, 400_000);
+});
+
 test('cleared compaction limit returns the visible context window to the model max', async () => {
   const { manager, session, mission, events } = streamHarness(92_000);
   mission.summary.modelId = 'model-a';
@@ -2392,6 +2623,43 @@ test('cleared compaction limit returns the visible context window to the model m
   await manager.handle({
     type: 'settings.compaction.update',
     compactionTokenLimit: null,
+    compactionTokenLimitPerModel: {},
+  });
+  await manager.handle({ type: 'mission.send', missionId: 'app-stream', text: 'hello' });
+
+  const contextEvent = events.findLast((event) => event.type === 'context.updated') as
+    | { type: 'context.updated'; stats: { limit: number } }
+    | undefined;
+  assert.equal(contextEvent?.stats.limit, 200_000);
+  assert.equal(mission.summary.maxContextTokens, 200_000);
+});
+
+test('cleared per-model compaction limit returns the visible context window to the model max', async () => {
+  const { manager, mission, events } = streamHarness(92_000);
+  mission.summary.modelId = 'model-a';
+  mission.summary.maxContextTokens = 100_000;
+  const internals = manager as unknown as {
+    cachedModels?: ModelInfo[];
+    getFactoryDefaults: () => Promise<Record<string, never>>;
+  };
+  internals.cachedModels = [
+    {
+      id: 'model-a',
+      displayName: 'Model A',
+      isDefault: true,
+      isCustom: false,
+      supportedReasoningEfforts: [],
+      maxContextTokens: 200_000,
+    },
+  ];
+  internals.getFactoryDefaults = async () => ({});
+
+  await manager.handle({
+    type: 'settings.compaction.update',
+    compactionTokenLimitPerModel: { 'model-a': 100_000 },
+  });
+  await manager.handle({
+    type: 'settings.compaction.update',
     compactionTokenLimitPerModel: {},
   });
   await manager.handle({ type: 'mission.send', missionId: 'app-stream', text: 'hello' });

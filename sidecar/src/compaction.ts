@@ -32,18 +32,23 @@ export function compactionTokenLimitForModel(
   settings: CompactionTokenLimitPatch,
   defaults: CompactionDefaults = {},
 ): number | undefined {
-  const perModel =
-    settings.compactionTokenLimitPerModel !== undefined
-      ? settings.compactionTokenLimitPerModel
-      : defaults.compactionTokenLimitPerModel;
-  const modelLimit = modelId ? normalizeCompactionTokenLimit(perModel?.[modelId]) : undefined;
+  const settingsModelLimit = modelId
+    ? normalizeCompactionTokenLimit(settings.compactionTokenLimitPerModel?.[modelId])
+    : undefined;
+  if (settingsModelLimit !== undefined) return settingsModelLimit;
+
+  const settingsGlobalLimit = settings.compactionTokenLimit;
+  if (settingsGlobalLimit !== undefined)
+    return settingsGlobalLimit === null
+      ? undefined
+      : normalizeCompactionTokenLimit(settingsGlobalLimit);
+
+  const modelLimit = modelId
+    ? normalizeCompactionTokenLimit(defaults.compactionTokenLimitPerModel?.[modelId])
+    : undefined;
   if (modelLimit !== undefined) return modelLimit;
 
-  const globalLimit =
-    settings.compactionTokenLimit !== undefined
-      ? settings.compactionTokenLimit
-      : defaults.compactionTokenLimit;
-  return globalLimit === null ? undefined : normalizeCompactionTokenLimit(globalLimit);
+  return normalizeCompactionTokenLimit(defaults.compactionTokenLimit);
 }
 
 export function clampCompactionTokenLimit(

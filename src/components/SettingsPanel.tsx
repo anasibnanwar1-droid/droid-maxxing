@@ -434,6 +434,16 @@ const TOKEN_PRESETS = [
 ];
 const RECOMMENDED_LIMIT = 250_000;
 
+export function compactionSettingsForGlobalLimit(
+  limit: number | undefined,
+  compactionTokenLimitPerModel: Record<string, number>,
+): Parameters<typeof updateCompactionSettings>[0] {
+  return {
+    compactionTokenLimit: limit ?? 'factory-default',
+    compactionTokenLimitPerModel,
+  };
+}
+
 // Themed preset picker for compaction token limits. Empty/"Factory default"
 // lets Droid use its model-dependent compaction threshold.
 function TokenLimitSelect({
@@ -805,10 +815,9 @@ function GeneralSection() {
 
   const setGlobalLimit = (limit?: number) => {
     dispatch({ type: 'SET_COMPACTION_TOKEN_LIMIT_GLOBAL', limit });
-    updateCompactionSettings({
-      compactionTokenLimit: limit ?? null,
-      compactionTokenLimitPerModel: state.compactionTokenLimitPerModel,
-    });
+    updateCompactionSettings(
+      compactionSettingsForGlobalLimit(limit, state.compactionTokenLimitPerModel),
+    );
   };
 
   const setModelLimit = (modelId: string, limit?: number) => {

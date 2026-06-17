@@ -14,6 +14,10 @@ test('updateCompactionSettings preserves omitted and cleared global limits', () 
     updateCompactionSettings({ compactionTokenLimitPerModel: { 'model-a': 100_000 } });
     updateCompactionSettings({ compactionTokenLimit: null, compactionTokenLimitPerModel: {} });
     updateCompactionSettings({ compactionTokenLimit: 200_000, compactionTokenLimitPerModel: {} });
+    updateCompactionSettings({
+      compactionTokenLimit: 'factory-default',
+      compactionTokenLimitPerModel: {},
+    });
   } finally {
     bridge.send = originalSend;
   }
@@ -31,6 +35,11 @@ test('updateCompactionSettings preserves omitted and cleared global limits', () 
     {
       type: 'settings.compaction.update',
       compactionTokenLimit: 200_000,
+      compactionTokenLimitPerModel: {},
+    },
+    {
+      type: 'settings.compaction.update',
+      compactionTokenLimit: 'factory-default',
       compactionTokenLimitPerModel: {},
     },
   ]);

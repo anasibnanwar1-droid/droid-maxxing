@@ -77,7 +77,7 @@ export const listFactoryDefaults = () => {
   bridge.send({ type: 'settings.defaults' });
 };
 export const updateCompactionSettings = (p: {
-  compactionTokenLimit?: number | null;
+  compactionTokenLimit?: number | null | 'factory-default';
   compactionTokenLimitPerModel?: Record<string, number>;
 }) => {
   bridge.send({

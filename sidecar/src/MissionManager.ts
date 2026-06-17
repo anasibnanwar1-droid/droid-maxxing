@@ -185,8 +185,13 @@ interface UsageOffset {
   tokensOut: number;
 }
 
-interface CompactionSettingsPatch {
+interface CompactionSettings {
   compactionTokenLimit?: number | null;
+  compactionTokenLimitPerModel?: Record<string, number>;
+}
+
+interface CompactionSettingsPatch {
+  compactionTokenLimit?: number | null | 'factory-default';
   compactionTokenLimitPerModel?: Record<string, number>;
 }
 
@@ -240,6 +245,7 @@ export class MissionManager {
   // strand the in-progress compaction shimmer).
   private statusSeq = 0;
   private cachedModels: ModelInfo[] | null = null;
+  private cachedFactoryDefaults: FactoryDefaultSettings = {};
   private modelRefresh: Promise<ModelInfo[] | null> | null = null;
   private readonly runtime = new DroidRuntime();
   private readonly history = new HistoryIndex();
@@ -252,7 +258,7 @@ export class MissionManager {
   private readonly contextSnapshots = new Map<string, ContextStatsSnapshot>();
   private readonly contextPollers = new Map<string, ReturnType<typeof setInterval>>();
   private readonly pendingNativeBrowserRequests = new Map<string, PendingNativeBrowserRequest>();
-  private currentCompactionSettings: CompactionSettingsPatch = {};
+  private currentCompactionSettings: CompactionSettings = {};
   private readonly browsers: BrowserSessionManager;
 
   constructor(
@@ -654,7 +660,9 @@ export class MissionManager {
   private async getFactoryDefaults(): Promise<FactoryDefaultSettings> {
     const defaults = readFactoryDefaults();
     const models = await this.getModels();
-    return validateFactoryDefaults(defaults, models);
+    const safeDefaults = validateFactoryDefaults(defaults, models);
+    this.cachedFactoryDefaults = safeDefaults;
+    return safeDefaults;
   }
 
   private async emitFactoryDefaults(): Promise<void> {
@@ -662,13 +670,16 @@ export class MissionManager {
     const droidPath = this.runtime.status().droidPath;
     const models = this.cachedModels ?? mergeModelCatalog(readDroidCliModelCatalogCache(droidPath));
     if (!this.cachedModels && models.length > 0) this.cachedModels = models;
-    this.emit({ type: 'settings.defaults', defaults: startupFactoryDefaults(defaults, models) });
+    const safeDefaults = startupFactoryDefaults(defaults, models);
+    this.cachedFactoryDefaults = safeDefaults;
+    this.emit({ type: 'settings.defaults', defaults: safeDefaults });
   }
 
   private async updateLiveCompactionSettings(
     cmd: Extract<ClientCommand, { type: 'settings.compaction.update' }>,
   ): Promise<void> {
     const defaults = await this.getFactoryDefaults();
+    this.cachedFactoryDefaults = defaults;
     const settings = this.compactionSettingsForCommand(cmd);
     await Promise.all(
       [...this.missions.values()].map(async (mission) => {
@@ -686,13 +697,14 @@ export class MissionManager {
     );
   }
 
-  private compactionSettingsForCommand(
-    settings?: CompactionSettingsPatch,
-  ): CompactionSettingsPatch {
+  private compactionSettingsForCommand(settings?: CompactionSettingsPatch): CompactionSettings {
     if (hasCompactionSettingsPatch(settings)) {
-      const next: CompactionSettingsPatch = { ...this.currentCompactionSettings };
-      if (settings.compactionTokenLimit !== undefined)
+      const next: CompactionSettings = { ...this.currentCompactionSettings };
+      if (settings.compactionTokenLimit === 'factory-default') {
+        delete next.compactionTokenLimit;
+      } else if (settings.compactionTokenLimit !== undefined) {
         next.compactionTokenLimit = settings.compactionTokenLimit;
+      }
       if (settings.compactionTokenLimitPerModel !== undefined)
         next.compactionTokenLimitPerModel = { ...settings.compactionTokenLimitPerModel };
       this.currentCompactionSettings = next;
@@ -702,7 +714,7 @@ export class MissionManager {
 
   private async applyCompactionSettingsToMission(
     mission: Mission,
-    settings: CompactionSettingsPatch,
+    settings: CompactionSettings,
     defaults: FactoryDefaultSettings,
   ): Promise<void> {
     const triggerRatio = this.compactionTriggerRatioForSummary(mission.summary);
@@ -755,7 +767,7 @@ export class MissionManager {
       modelMax,
     );
     if (configured !== undefined) return configured;
-    if (this.compactionLimitClearedForModel(modelId)) return modelMax ?? fallback;
+    if (this.compactionLimitClearedForModel(modelId, defaults)) return modelMax;
     return fallback ?? modelMax;
   }
 
@@ -771,10 +783,17 @@ export class MissionManager {
     );
   }
 
-  private compactionLimitClearedForModel(modelId: string | undefined): boolean {
+  private compactionLimitClearedForModel(
+    modelId: string | undefined,
+    defaults: Partial<FactoryDefaultSettings> = {},
+  ): boolean {
     const perModel = this.currentCompactionSettings.compactionTokenLimitPerModel;
     if (modelId && normalizeCompactionTokenLimit(perModel?.[modelId]) !== undefined) return false;
-    return this.currentCompactionSettings.compactionTokenLimit === null;
+    const globalLimit = this.currentCompactionSettings.compactionTokenLimit;
+    if (normalizeCompactionTokenLimit(globalLimit) !== undefined) return false;
+    if (globalLimit === null) return true;
+    if (perModel === undefined) return false;
+    return normalizeCompactionTokenLimit(defaults.compactionTokenLimit) === undefined;
   }
 
   private modelIdForAgent(
@@ -937,7 +956,7 @@ export class MissionManager {
   private async applyDaemonCompactionSettings(
     session: DroidSession,
     modelId: string | undefined,
-    settings: CompactionSettingsPatch,
+    settings: CompactionSettings,
     defaults: FactoryDefaultSettings,
     triggerRatio = compactionTriggerRatio(0),
   ): Promise<void> {
@@ -1995,7 +2014,7 @@ export class MissionManager {
         const snapshot = this.contextSnapshots.get(appSessionId);
         const maxContextTokens = this.visibleContextLimitForSummary(
           m.summary,
-          {},
+          this.cachedFactoryDefaults,
           snapshot?.limit ?? m.summary.maxContextTokens,
         );
         if (maxContextTokens === undefined) delete m.summary.maxContextTokens;
@@ -3130,7 +3149,7 @@ export class MissionManager {
     const previous = this.contextSnapshots.get(sessionId);
     const limit = this.visibleContextLimitForSummary(
       summary,
-      {},
+      this.cachedFactoryDefaults,
       previous?.limit ?? summary.maxContextTokens,
     );
     if (!limit || limit <= 0) return;

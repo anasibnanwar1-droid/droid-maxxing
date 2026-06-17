@@ -457,7 +457,7 @@ export type ClientCommand =
   | { type: 'settings.defaults' }
   | {
       type: 'settings.compaction.update';
-      compactionTokenLimit?: number | null;
+      compactionTokenLimit?: number | null | 'factory-default';
       compactionTokenLimitPerModel?: Record<string, number>;
     }
   | {
