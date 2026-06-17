@@ -743,6 +743,11 @@ function collapseRun(run: FeedItem[]): FeedItem[] {
     } else if (it.type === 'subagent') {
       flush();
       out.push(it);
+    } else if (it.type === 'error') {
+      // A failed tool/result must stay visible after the turn completes instead
+      // of being buried in a collapsed "Worked for …" group (classifier intent).
+      flush();
+      out.push(it);
     } else if (it.type === 'status' && it.event.kind === 'compaction') {
       flush();
       out.push(it);

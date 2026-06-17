@@ -252,6 +252,29 @@ test('#20 a failed ordinary tool result surfaces as an error, not folded into a 
   assert.ok(items.some((it) => it.type === 'error' && it.event.toolUseId === 'e1'));
 });
 
+test('#20 a failed tool result stays top-level after a completed turn is grouped', () => {
+  // The grouped render path (groupTurns) must keep the error visible, not bury
+  // it in a collapsed "Worked for …" group once the turn completes.
+  const execCall = ev({
+    kind: 'tool_call',
+    toolName: 'Execute',
+    toolArgs: { command: 'npm test' },
+    toolUseId: 'e1',
+  });
+  const failed = ev({
+    kind: 'tool_result',
+    toolName: '',
+    toolUseId: 'e1',
+    isError: true,
+    text: 'exit code 1',
+  });
+  const grouped = groupTurns(buildFeed([userMsg('run tests'), execCall, failed]), false);
+  // The failure is a top-level error item, not nested inside a worked group.
+  assert.ok(grouped.some((it) => it.type === 'error' && it.event.toolUseId === 'e1'));
+  const inWorked = workedChildren(grouped).some((c) => c.type === 'error');
+  assert.equal(inWorked, false);
+});
+
 test('#20 a subagent completion result is dropped group-wide even when batched', () => {
   // Replay can place a subagent (Task) result far from its call and with no
   // toolName; it must still be folded into the card, never leak as raw activity.
