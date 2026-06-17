@@ -10,6 +10,7 @@ import {
   MessageFeed,
   type FeedItem,
 } from './chat';
+import { hasTodoPayload } from '../lib/tools';
 import type { TranscriptEvent } from '../types/bridge';
 
 let seq = 0;
@@ -149,6 +150,32 @@ test('#20 dedupe drops a superseded plan and all plan results by toolUseId even 
   assert.equal(plans[0].toolUseId, 'b');
   const resultIds = tools.events.filter((e) => e.kind === 'tool_result').map((e) => e.toolUseId);
   assert.deepEqual(resultIds, []);
+});
+
+test('#20 a payload-less partial plan delta never replaces the complete checklist', () => {
+  // A tool_call_delta normalizes as a TodoWrite tool_call with the name but no
+  // `todos` field; it must not become the kept snapshot (which would render an
+  // empty "Updated plan"). The complete checklist must remain.
+  const complete = ev({
+    kind: 'tool_call',
+    toolName: 'TodoWrite',
+    toolArgs: { todos: '1. [completed] ship it' },
+    toolUseId: 'full',
+  });
+  const partial = ev({
+    kind: 'tool_call',
+    toolName: 'TodoWrite',
+    toolArgs: {},
+    toolUseId: 'delta',
+  });
+  const items = buildFeed([complete, partial]);
+  const tools = items.find((it) => it.type === 'tools') as Extract<FeedItem, { type: 'tools' }>;
+  assert.ok(tools, 'expected a tools group');
+  const plans = tools.events.filter((e) => e.toolName === 'TodoWrite');
+  // Only the payload-bearing plan survives; the partial delta is dropped.
+  assert.equal(plans.length, 1);
+  assert.equal(plans[0].toolUseId, 'full');
+  assert.ok(hasTodoPayload(plans[0].toolArgs));
 });
 
 test('#20 a batched replay (calls before results) correlates each result by toolUseId', () => {

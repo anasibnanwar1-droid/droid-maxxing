@@ -25,6 +25,7 @@ import {
   isSubagentTool,
   subagentInfo,
   parseTodos,
+  hasTodoPayload,
 } from '../lib/tools';
 import { classifyEvent } from '../lib/transcript';
 import {
@@ -649,7 +650,15 @@ export function buildFeed(events: TranscriptEvent[], subagentCards = false): Fee
 function dedupePlanUpdates(events: TranscriptEvent[]): TranscriptEvent[] {
   const plans = events.filter((e) => e.kind === 'tool_call' && classifyEvent(e) === 'plan_update');
   if (plans.length <= 1) return events;
-  const keepId = plans[plans.length - 1].id;
+  // A partial tool_call_delta normalizes as a plan_update carrying the tool name
+  // but no `todos` payload; it must never become the kept snapshot or it would
+  // replace the complete checklist with an empty "Updated plan". Prefer the
+  // latest plan that has a real Todo payload (mirroring RightPanel), falling
+  // back to the last plan only when none carry one.
+  const withPayload = plans.filter((p) => hasTodoPayload(p.toolArgs));
+  const keepId = (
+    withPayload.length ? withPayload[withPayload.length - 1] : plans[plans.length - 1]
+  ).id;
   // toolUseIds of superseded plan calls, so their own results are dropped no
   // matter where they sit in the group (replay batches calls before results).
   const supersededIds = new Set(
