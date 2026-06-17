@@ -571,6 +571,21 @@ test('#14 an assistant message that is exactly the spec text is not double-rende
   assert.equal(occurrences, 0);
 });
 
+test('active manual compaction stays visible while pending is false', () => {
+  const html = renderToStaticMarkup(
+    createElement(MessageFeed, {
+      events: [
+        ev('u1', 'text', 'Compact this session', { author: 'user', ts: 1 }),
+        ev('c1', 'status', 'Compacting conversation...', { compactType: 'manual', ts: 2 }),
+      ],
+      pending: false,
+    }),
+  );
+
+  assert.match(html, /Compacting/);
+  assert.doesNotMatch(html, /Worked for/);
+});
+
 test('live file edits show an editing cue while pending', () => {
   const html = renderToStaticMarkup(createElement(MessageFeed, {
     events: [

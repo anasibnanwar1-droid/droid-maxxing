@@ -686,6 +686,12 @@ export class MissionManager {
         const appSessionId = mission.summary.id;
         try {
           await this.applyCompactionSettingsToMission(mission, settings, defaults);
+          await this.refreshContext(appSessionId, mission.session);
+          await Promise.all(
+            [...mission.agents.values()].map((agent) =>
+              this.refreshContext(agent.session.sessionId, agent.session),
+            ),
+          );
         } catch (err) {
           this.emitError({
             missionId: appSessionId,

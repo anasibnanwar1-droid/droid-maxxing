@@ -926,6 +926,42 @@ test('live compaction updates restore Factory default per-model limits', async (
   });
 });
 
+test('live compaction updates refresh the visible context meter immediately', async () => {
+  const { manager, session, mission, events, internals } = streamHarness(10_000);
+  mission.summary.modelId = 'model-a';
+  mission.summary.maxContextTokens = 400_000;
+  session.limit = 1_000_000;
+  (
+    internals as unknown as {
+      getFactoryDefaults: () => Promise<{
+        modelId?: string;
+        compactionTokenLimit?: number;
+      }>;
+    }
+  ).getFactoryDefaults = async () => ({
+    modelId: 'model-a',
+    compactionTokenLimit: 400_000,
+  });
+
+  await manager.handle({
+    type: 'settings.compaction.update',
+    compactionTokenLimit: 200_000,
+    compactionTokenLimitPerModel: {},
+  });
+
+  const contextEvent = events.findLast((event) => event.type === 'context.updated') as
+    | { type: 'context.updated'; stats: { used: number; remaining: number; limit: number } }
+    | undefined;
+  const tokenEvent = events.findLast((event) => event.type === 'mission.tokens') as
+    | { type: 'mission.tokens'; maxContextTokens?: number }
+    | undefined;
+  assert.equal(contextEvent?.stats.used, 10_000);
+  assert.equal(contextEvent?.stats.remaining, 190_000);
+  assert.equal(contextEvent?.stats.limit, 200_000);
+  assert.equal(tokenEvent?.maxContextTokens, 200_000);
+  assert.equal(mission.summary.maxContextTokens, 200_000);
+});
+
 test('resume preserves in-place compaction count for daemon trigger headroom', async () => {
   const events: ServerEvent[] = [];
   const manager = new MissionManager((event) => events.push(event));

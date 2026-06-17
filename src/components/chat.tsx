@@ -720,6 +720,26 @@ function isUserMessage(item: FeedItem): boolean {
   return item.type === 'message' && item.event.author === 'user';
 }
 
+function isAssistantMessage(item: FeedItem): boolean {
+  return item.type === 'message' && item.event.author !== 'user';
+}
+
+function isCompactionMetadata(item: FeedItem): boolean {
+  return (
+    item.type === 'status' &&
+    (item.event.kind === 'compaction' ||
+      (item.event.compactType !== undefined && !isCompactingStatus(item.event.text)))
+  );
+}
+
+function isCompletedCompactingStarter(item: FeedItem): boolean {
+  return (
+    item.type === 'status' &&
+    item.event.compactType !== undefined &&
+    isCompactingStatus(item.event.text)
+  );
+}
+
 // Best-effort end timestamp of a feed item, used to time the live working cue.
 function tailTimestamp(item?: FeedItem): number | undefined {
   if (!item) return undefined;
@@ -761,6 +781,7 @@ function spanOf(items: FeedItem[]): { start: number; end: number } {
 function collapseRun(run: FeedItem[]): FeedItem[] {
   if (run.length === 0) return [];
   const out: FeedItem[] = [];
+  const hasCompactionMetadata = run.some(isCompactionMetadata);
   // Fold contiguous work into "Worked for …" groups, but keep subagent spawn
   // cards at the top level so they stay visible (and navigable) after a turn.
   let buf: FeedItem[] = [];
@@ -780,26 +801,18 @@ function collapseRun(run: FeedItem[]): FeedItem[] {
     buf = [];
   };
   for (const it of run) {
-    if (it.type === 'message') {
-      // Assistant chat (user messages were already split out by groupTurns).
+    if (isCompletedCompactingStarter(it)) {
+      if (hasCompactionMetadata) continue;
       flush();
       out.push(it);
-    } else if (it.type === 'subagent') {
-      flush();
-      out.push(it);
-    } else if (it.type === 'error') {
+      continue;
+    }
+    if (it.type === 'error') {
       // A failed tool/result must stay visible after the turn completes instead
       // of being buried in a collapsed "Worked for …" group (classifier intent).
       flush();
       out.push(it);
-    } else if (it.type === 'status' && it.event.kind === 'compaction') {
-      flush();
-      out.push(it);
-    } else if (
-      it.type === 'status' &&
-      isCompactionCompleteStatus(it.event.text) &&
-      it.event.compactType === 'manual'
-    ) {
+    } else if (it.type === 'subagent' || isAssistantMessage(it) || isCompactionMetadata(it)) {
       flush();
       out.push(it);
     } else buf.push(it);
