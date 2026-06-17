@@ -1040,6 +1040,8 @@ export class MissionManager {
   ): void {
     const mission = this.findMission(appSessionId);
     if (!mission || mission.compacting) return;
+    const liveAgent = this.findLiveAgent(agentSessionId);
+    if (liveAgent?.agent.compacting) return;
     void this.markMissionCompactedAndRefresh(mission, { sessionId: agentSessionId, session });
   }
 

@@ -4,7 +4,7 @@ import { bridge } from './bridge';
 import { updateCompactionSettings } from './commands';
 import type { ClientCommand } from '../types/bridge';
 
-test('updateCompactionSettings sends null for a cleared global limit', () => {
+test('updateCompactionSettings preserves omitted and cleared global limits', () => {
   const sent: ClientCommand[] = [];
   const originalSend = bridge.send.bind(bridge);
   bridge.send = (cmd: ClientCommand) => {
@@ -12,6 +12,7 @@ test('updateCompactionSettings sends null for a cleared global limit', () => {
   };
   try {
     updateCompactionSettings({ compactionTokenLimitPerModel: { 'model-a': 100_000 } });
+    updateCompactionSettings({ compactionTokenLimit: null, compactionTokenLimitPerModel: {} });
     updateCompactionSettings({ compactionTokenLimit: 200_000, compactionTokenLimitPerModel: {} });
   } finally {
     bridge.send = originalSend;
@@ -20,8 +21,12 @@ test('updateCompactionSettings sends null for a cleared global limit', () => {
   assert.deepEqual(sent, [
     {
       type: 'settings.compaction.update',
-      compactionTokenLimit: null,
       compactionTokenLimitPerModel: { 'model-a': 100_000 },
+    },
+    {
+      type: 'settings.compaction.update',
+      compactionTokenLimit: null,
+      compactionTokenLimitPerModel: {},
     },
     {
       type: 'settings.compaction.update',

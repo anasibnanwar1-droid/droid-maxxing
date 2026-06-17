@@ -83,7 +83,6 @@ export const updateCompactionSettings = (p: {
   bridge.send({
     type: 'settings.compaction.update',
     ...p,
-    compactionTokenLimit: p.compactionTokenLimit ?? null,
   });
 };
 

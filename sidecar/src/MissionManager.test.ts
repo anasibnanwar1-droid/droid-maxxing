@@ -1404,6 +1404,39 @@ test('routes daemon compacted notifications from worker sessions to worker conte
   unsubscribe();
 });
 
+test('ignores worker daemon compacted notifications during active worker compaction', () => {
+  const { manager, mission } = streamHarness(10_000);
+  const worker = new FakeCompactionSession('worker-compacting-notify', 12_345);
+  mission.agents.set(worker.sessionId, {
+    session: worker,
+    missionId: mission.summary.id,
+    role: 'worker',
+    streaming: false,
+    compacting: true,
+    pendingSends: [],
+    lastUsedAt: Date.now(),
+  });
+  const internals = manager as unknown as {
+    subscribeSessionNotifications: (
+      appSessionId: string,
+      agentSessionId: string,
+      role: 'worker',
+      session: FakeCompactionSession,
+    ) => () => void;
+  };
+  const unsubscribe = internals.subscribeSessionNotifications(
+    mission.summary.id,
+    worker.sessionId,
+    'worker',
+    worker,
+  );
+
+  worker.emitNotification({ notification: { type: 'session_compacted', removedCount: 3 } });
+
+  assert.equal(mission.summary.compactionCount ?? 0, 0);
+  unsubscribe();
+});
+
 test('does not pre-turn compact without an auto-compaction budget', async () => {
   const { manager, session, events } = streamHarness(250_000);
   await manager.handle({ type: 'mission.send', missionId: 'app-stream', text: 'hello' });
