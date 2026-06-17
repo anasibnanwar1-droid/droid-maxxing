@@ -131,6 +131,25 @@ test('exact context stats can reset the meter after compaction while streaming',
   assert.equal(next.contextStats.m1.remaining, 160_000);
 });
 
+test('exact over-budget mission updates keep the real context usage', () => {
+  const start = {
+    ...initialState,
+    missions: { m1: mission(40_000, false) },
+  } as unknown as AppState;
+  const updated = {
+    ...mission(125_000, false),
+    maxContextTokens: 100_000,
+    contextRemainingTokens: 0,
+    contextAccuracy: 'exact' as const,
+  };
+
+  const next = reducer(start, { type: 'MISSION_UPDATED', mission: updated });
+
+  assert.equal(next.missions.m1.contextTokens, 125_000);
+  assert.equal(next.missions.m1.maxContextTokens, 100_000);
+  assert.equal(next.missions.m1.contextRemainingTokens, 0);
+});
+
 test('token updates ignore impossible context counts', () => {
   const start = {
     ...initialState,

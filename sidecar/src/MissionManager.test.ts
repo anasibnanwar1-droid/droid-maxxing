@@ -1139,9 +1139,11 @@ class FakeCompactionSession {
   usedBeforeStreamEvent?: number;
   limit = 1_000_000;
   accuracy: 'exact' | 'estimated' = 'exact';
+  beforeStream?: (prompt: string) => Promise<void> | void;
   breakdown?: unknown;
   beforeContextStats?: () => Promise<void> | void;
   beforeCompact?: () => Promise<void> | void;
+  beforeClose?: () => Promise<void> | void;
   settingsUpdates: Array<Record<string, unknown>> = [];
   notificationHandler?: (note: Record<string, unknown>) => void;
   unsubscribed = false;
@@ -1155,6 +1157,7 @@ class FakeCompactionSession {
   async *stream(prompt: string): AsyncGenerator<Record<string, unknown>, void, undefined> {
     this.callOrder.push(`stream:${prompt}`);
     this.prompts.push(prompt);
+    await this.beforeStream?.(prompt);
     for (const event of this.streamEvents) {
       if (this.usedBeforeStreamEvent !== undefined) this.used = this.usedBeforeStreamEvent;
       yield event;
@@ -1214,7 +1217,9 @@ class FakeCompactionSession {
     this.interrupts += 1;
   }
 
-  async close(): Promise<void> {}
+  async close(): Promise<void> {
+    await this.beforeClose?.();
+  }
 }
 
 function streamHarness(used: number) {
@@ -1480,6 +1485,33 @@ test('pre-turn compacts once when the daemon trigger is already crossed', async 
     ),
     true,
   );
+});
+
+test('mission pre-turn compaction budgets with the mode default model', () => {
+  const { manager, mission } = streamHarness(0);
+  mission.summary.kind = 'spec';
+  mission.summary.modelId = undefined;
+  const budget = (
+    manager as unknown as {
+      autoCompactionBudgetForMission: (
+        mission: unknown,
+        defaults: {
+          modelId?: string;
+          specModelId?: string;
+          compactionTokenLimitPerModel?: Record<string, number>;
+        },
+      ) => number | undefined;
+    }
+  ).autoCompactionBudgetForMission(mission, {
+    modelId: 'chat-default',
+    specModelId: 'spec-default',
+    compactionTokenLimitPerModel: {
+      'chat-default': 100_000,
+      'spec-default': 220_000,
+    },
+  });
+
+  assert.equal(budget, 220_000);
 });
 
 test('pre-turn stale swap redelivers the current prompt through resume', async () => {
@@ -1845,6 +1877,152 @@ test('agent pre-turn compaction rekeys and persists a swapped worker before stre
 
   assert.deepEqual(swapped.prompts, ['worker turn', 'old id follow-up']);
   assert.equal(loadCalls, 1);
+});
+
+test('agent pre-turn stale swap preserves the new worker id when reload retry fails', async () => {
+  const { manager, mission, internals } = streamHarness(0);
+  const worker = new FakeCompactionSession('worker-stale-old', 125_000, 'worker-stale-new');
+  const swapped = new FakeCompactionSession('worker-stale-new', 25_000);
+  const recordedLinks: WorkerHistoryLink[] = [];
+  worker.limit = 100_000;
+  swapped.limit = 100_000;
+  (swapped as unknown as { initResult: unknown }).initResult = { session: {}, settings: {} };
+  mission.summary.features = [
+    {
+      id: 'feature-stale',
+      description: 'Recover the worker task',
+      status: 'in_progress',
+      skillName: '',
+      preconditions: [],
+      expectedBehavior: [],
+      verificationSteps: [],
+      workerSessionIds: ['worker-stale-old'],
+      currentWorkerSessionId: 'worker-stale-old',
+    },
+  ];
+  mission.knownSubagents.add(worker.sessionId);
+  mission.subagentSettings.set(worker.sessionId, { modelId: 'worker-model' });
+  mission.subagentToolUseIds.set('tool-stale', worker.sessionId);
+  mission.agents.set(worker.sessionId, {
+    session: worker,
+    missionId: mission.summary.id,
+    role: 'worker',
+    streaming: false,
+    pendingSends: ['queued after compact'],
+    lastUsedAt: Date.now(),
+  });
+  (
+    internals as unknown as {
+      history: {
+        recordSubagentLink: (
+          missionId: string,
+          toolUseId: string,
+          workerSessionId: string,
+          label?: string,
+        ) => void;
+        subagentLinks: (missionId: string) => WorkerHistoryLink[];
+      };
+    }
+  ).history.recordSubagentLink = (missionId, toolUseId, workerSessionId, label) => {
+    recordedLinks.push({ toolUseId, workerSessionId, label });
+    assert.equal(missionId, mission.summary.id);
+  };
+  (
+    internals as unknown as {
+      history: { subagentLinks: (missionId: string) => WorkerHistoryLink[] };
+    }
+  ).history.subagentLinks = () => [
+    { toolUseId: 'tool-stale', workerSessionId: 'worker-stale-old', label: 'recoverer' },
+  ];
+  let loadCalls = 0;
+  (
+    manager as unknown as {
+      runtime: { loadSession: (id: string, handlers: unknown) => Promise<FakeCompactionSession> };
+    }
+  ).runtime = {
+    loadSession: async (id: string) => {
+      loadCalls += 1;
+      assert.equal(id, 'worker-stale-new');
+      if (loadCalls <= 2) throw new Error('reload unavailable');
+      return swapped;
+    },
+  };
+  let sentDuringClose = false;
+  let releaseConcurrentStream: (() => void) | undefined;
+  let concurrentSendError: unknown;
+  const concurrentStreamStarted = new Promise<void>((resolve) => {
+    swapped.beforeStream = async (prompt) => {
+      if (prompt !== 'old id during close') return;
+      resolve();
+      await new Promise<void>((release) => {
+        releaseConcurrentStream = release;
+      });
+    };
+  });
+  worker.beforeClose = async () => {
+    if (sentDuringClose) return;
+    sentDuringClose = true;
+    void manager
+      .handle({
+        type: 'agent.send',
+        missionId: mission.summary.id,
+        agentSessionId: 'worker-stale-old',
+        text: 'old id during close',
+        compactionTokenLimit: 100_000,
+        compactionTokenLimitPerModel: { 'worker-model': 100_000 },
+      })
+      .catch((err) => {
+        concurrentSendError = err;
+      });
+    await concurrentStreamStarted;
+  };
+
+  await manager.handle({
+    type: 'agent.send',
+    missionId: mission.summary.id,
+    agentSessionId: worker.sessionId,
+    text: 'worker turn',
+    compactionTokenLimit: 100_000,
+    compactionTokenLimitPerModel: { 'worker-model': 100_000 },
+  });
+
+  assert.equal(worker.compactions, 1);
+  assert.equal(mission.summary.compactionCount, 1);
+  assert.equal(sentDuringClose, true);
+  assert.equal(loadCalls, 3);
+  assert.equal(mission.agents.has('worker-stale-old'), false);
+  assert.equal(mission.agents.has('worker-stale-new'), true);
+  assert.equal(mission.knownSubagents.has('worker-stale-new'), true);
+  assert.equal(mission.subagentSettings.has('worker-stale-new'), true);
+  assert.equal(mission.subagentToolUseIds.get('tool-stale'), 'worker-stale-new');
+  assert.deepEqual(recordedLinks, [
+    { toolUseId: 'tool-stale', workerSessionId: 'worker-stale-new', label: 'recoverer' },
+  ]);
+  assert.deepEqual(mission.summary.features[0].workerSessionIds, ['worker-stale-new']);
+  assert.equal(mission.summary.features[0].currentWorkerSessionId, 'worker-stale-new');
+  assert.deepEqual(worker.prompts, []);
+  assert.deepEqual(swapped.prompts, ['old id during close']);
+
+  releaseConcurrentStream?.();
+  await waitFor(() => swapped.prompts.length === 3);
+  assert.equal(concurrentSendError, undefined);
+  assert.deepEqual(swapped.prompts, ['old id during close', 'worker turn', 'queued after compact']);
+
+  await manager.handle({
+    type: 'agent.send',
+    missionId: mission.summary.id,
+    agentSessionId: 'worker-stale-old',
+    text: 'old id follow-up',
+    compactionTokenLimit: 100_000,
+    compactionTokenLimitPerModel: { 'worker-model': 100_000 },
+  });
+
+  assert.deepEqual(swapped.prompts, [
+    'old id during close',
+    'worker turn',
+    'queued after compact',
+    'old id follow-up',
+  ]);
 });
 
 test('settles to paused when a mid-stream paused event was ignored', async () => {

@@ -806,7 +806,7 @@ function GeneralSection() {
   const setGlobalLimit = (limit?: number) => {
     dispatch({ type: 'SET_COMPACTION_TOKEN_LIMIT_GLOBAL', limit });
     updateCompactionSettings({
-      compactionTokenLimit: limit,
+      compactionTokenLimit: limit ?? null,
       compactionTokenLimitPerModel: state.compactionTokenLimitPerModel,
     });
   };

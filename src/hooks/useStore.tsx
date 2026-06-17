@@ -317,7 +317,18 @@ function isContextWindowTokenCount(value: unknown, limit?: number): value is num
   return value <= MAX_CONTEXT_TOKENS_WITHOUT_LIMIT;
 }
 
+function isPlausibleContextTokenCount(value: unknown): value is number {
+  return (
+    typeof value === 'number' &&
+    Number.isFinite(value) &&
+    value >= 0 &&
+    value <= MAX_CONTEXT_TOKENS_WITHOUT_LIMIT
+  );
+}
+
 function sanitizeMissionContext(mission: MissionSummary): MissionSummary {
+  if (mission.contextAccuracy === 'exact' && isPlausibleContextTokenCount(mission.contextTokens))
+    return mission;
   if (isContextWindowTokenCount(mission.contextTokens, mission.maxContextTokens)) return mission;
   return {
     ...mission,
