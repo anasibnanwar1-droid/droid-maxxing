@@ -973,6 +973,72 @@ test('agent sends refresh daemon compaction settings before streaming', async ()
   );
 });
 
+test('agent sends use mission worker model for live compaction settings', async () => {
+  const { manager, mission } = streamHarness(0);
+  const worker = new FakeCompactionSession('worker-mission-model', 10_000);
+  mission.summary.kind = 'mission_orchestrator';
+  mission.summary.modelId = 'orchestrator-model';
+  mission.summary.workerModelId = 'mission-worker';
+  mission.knownSubagents.add(worker.sessionId);
+  mission.agents.set(worker.sessionId, {
+    session: worker,
+    missionId: mission.summary.id,
+    role: 'worker',
+    streaming: false,
+    pendingSends: [],
+    lastUsedAt: Date.now(),
+  });
+  (
+    manager as unknown as {
+      getFactoryDefaults: () => Promise<{
+        modelId?: string;
+        workerModelId?: string;
+        compactionTokenLimitPerModel?: Record<string, number>;
+      }>;
+    }
+  ).getFactoryDefaults = async () => ({
+    modelId: 'orchestrator-model',
+    workerModelId: 'factory-worker',
+    compactionTokenLimitPerModel: {
+      'factory-worker': 100_000,
+      'mission-worker': 180_000,
+    },
+  });
+
+  await manager.handle({
+    type: 'agent.send',
+    missionId: mission.summary.id,
+    agentSessionId: worker.sessionId,
+    text: 'worker turn',
+    compactionTokenLimitPerModel: {
+      'factory-worker': 100_000,
+      'mission-worker': 180_000,
+    },
+  });
+
+  assert.deepEqual(worker.settingsUpdates.at(-1), {
+    compactionTokenLimit: 162_000,
+    compactionThresholdCheckEnabled: true,
+  });
+
+  mission.summary.workerModelId = undefined;
+  await manager.handle({
+    type: 'agent.send',
+    missionId: mission.summary.id,
+    agentSessionId: worker.sessionId,
+    text: 'worker default turn',
+    compactionTokenLimitPerModel: {
+      'factory-worker': 100_000,
+      'mission-worker': 180_000,
+    },
+  });
+
+  assert.deepEqual(worker.settingsUpdates.at(-1), {
+    compactionTokenLimit: 90_000,
+    compactionThresholdCheckEnabled: true,
+  });
+});
+
 test('permission and question responses refresh compaction settings before continuation', async () => {
   const events: ServerEvent[] = [];
   const manager = new MissionManager((event) => events.push(event));
@@ -1583,6 +1649,62 @@ test('mission pre-turn compaction budgets with the mode default model', () => {
   });
 
   assert.equal(budget, 220_000);
+});
+
+test('agent compaction budget and visible limit use mission validator model', () => {
+  const { manager, mission } = streamHarness(0);
+  const validator = new FakeCompactionSession('validator-budget', 0);
+  type TestAgent = {
+    session: FakeCompactionSession;
+    missionId: string;
+    role: 'validator';
+    streaming: boolean;
+    pendingSends: string[];
+    lastUsedAt: number;
+  };
+  type TestDefaults = {
+    modelId: string;
+    validatorModelId: string;
+    compactionTokenLimitPerModel: Record<string, number>;
+  };
+  const agent: TestAgent = {
+    session: validator,
+    missionId: mission.summary.id,
+    role: 'validator',
+    streaming: false,
+    pendingSends: [],
+    lastUsedAt: Date.now(),
+  };
+  mission.summary.kind = 'mission_orchestrator';
+  mission.summary.modelId = 'orchestrator-model';
+  mission.summary.validatorModelId = 'mission-validator';
+  const defaults: TestDefaults = {
+    modelId: 'orchestrator-model',
+    validatorModelId: 'factory-validator',
+    compactionTokenLimitPerModel: {
+      'factory-validator': 100_000,
+      'mission-validator': 220_000,
+    },
+  };
+  const internals = manager as unknown as {
+    autoCompactionBudgetForAgent: (
+      mission: unknown,
+      agent: TestAgent,
+      defaults: TestDefaults,
+    ) => number | undefined;
+    visibleContextLimitForAgent: (
+      mission: unknown,
+      agent: TestAgent,
+      defaults: TestDefaults,
+    ) => number | undefined;
+  };
+
+  assert.equal(internals.autoCompactionBudgetForAgent(mission, agent, defaults), 220_000);
+  assert.equal(internals.visibleContextLimitForAgent(mission, agent, defaults), 220_000);
+
+  mission.summary.validatorModelId = undefined;
+  assert.equal(internals.autoCompactionBudgetForAgent(mission, agent, defaults), 100_000);
+  assert.equal(internals.visibleContextLimitForAgent(mission, agent, defaults), 100_000);
 });
 
 test('pre-turn stale swap redelivers the current prompt through resume', async () => {

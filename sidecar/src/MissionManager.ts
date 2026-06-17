@@ -714,14 +714,7 @@ export class MissionManager {
       triggerRatio,
     );
     for (const [agentSessionId, agent] of mission.agents) {
-      const configured = mission.subagentSettings.get(agentSessionId)?.modelId;
-      const roleDefault = defaultModelForAgent(
-        agent.role === 'validator' ? 'validator' : 'worker',
-        modeForSummary(mission.summary),
-        defaults,
-      );
-      const modelId =
-        configured ?? roleDefault ?? this.compactionModelIdForSummary(mission.summary, defaults);
+      const modelId = this.modelIdForAgent(mission, agentSessionId, agent.role, defaults);
       await this.applyDaemonCompactionSettings(
         agent.session,
         modelId,
@@ -784,19 +777,36 @@ export class MissionManager {
     return this.currentCompactionSettings.compactionTokenLimit === null;
   }
 
+  private modelIdForAgent(
+    mission: Mission,
+    agentSessionId: string,
+    role: AgentRole,
+    defaults: Partial<FactoryDefaultSettings> = {},
+  ): string | undefined {
+    const configured = mission.subagentSettings.get(agentSessionId)?.modelId;
+    if (configured) return configured;
+    if (role === 'worker')
+      return (
+        mission.summary.workerModelId ??
+        defaultModelForAgent('worker', modeForSummary(mission.summary), defaults) ??
+        this.compactionModelIdForSummary(mission.summary, defaults)
+      );
+    if (role === 'validator')
+      return (
+        mission.summary.validatorModelId ??
+        defaultModelForAgent('validator', modeForSummary(mission.summary), defaults) ??
+        this.compactionModelIdForSummary(mission.summary, defaults)
+      );
+    return this.compactionModelIdForSummary(mission.summary, defaults);
+  }
+
   private visibleContextLimitForAgent(
     mission: Mission,
     agent: LiveAgent,
     defaults: Partial<FactoryDefaultSettings> = {},
   ): number | undefined {
-    const configured = mission.subagentSettings.get(agent.session.sessionId)?.modelId;
-    const roleDefault = defaultModelForAgent(
-      agent.role === 'validator' ? 'validator' : 'worker',
-      modeForSummary(mission.summary),
-      defaults,
-    );
     return this.visibleContextLimitForModel(
-      configured ?? roleDefault ?? mission.summary.modelId ?? defaults.modelId,
+      this.modelIdForAgent(mission, agent.session.sessionId, agent.role, defaults),
       defaults,
     );
   }
@@ -2154,13 +2164,7 @@ export class MissionManager {
     agent: LiveAgent,
     defaults: Partial<FactoryDefaultSettings>,
   ): number | undefined {
-    const configured = mission.subagentSettings.get(agent.session.sessionId)?.modelId;
-    const roleDefault = defaultModelForAgent(
-      agent.role === 'validator' ? 'validator' : 'worker',
-      modeForSummary(mission.summary),
-      defaults,
-    );
-    const modelId = configured ?? roleDefault ?? mission.summary.modelId ?? defaults.modelId;
+    const modelId = this.modelIdForAgent(mission, agent.session.sessionId, agent.role, defaults);
     return clampCompactionTokenLimit(
       compactionTokenLimitForModel(modelId, this.currentCompactionSettings, defaults),
       this.maxContextTokensForModel(modelId),
@@ -2562,16 +2566,7 @@ export class MissionManager {
         });
       }
       const defaults = await this.getFactoryDefaults();
-      // When the loaded agent session doesn't report its own model, fall back to
-      // the role's configured model (not the orchestrator's), so per-model limits
-      // and context-window clamps stay correct for differing worker/validator models.
-      const roleModelId =
-        role === 'worker'
-          ? mission.summary.workerModelId
-          : role === 'validator'
-            ? mission.summary.validatorModelId
-            : undefined;
-      const workerModelId = resolvedSettings.modelId ?? roleModelId ?? mission.summary.modelId;
+      const workerModelId = this.modelIdForAgent(mission, resolvedAgentSessionId, role, defaults);
       await this.applyDaemonCompactionSettings(
         session,
         workerModelId,
