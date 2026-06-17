@@ -123,10 +123,10 @@ test('#20 a TodoWrite result is correlated by toolUseId even with no toolName', 
   assert.equal(isResultFor(call, failed), false);
 });
 
-test('#20 dedupe drops a superseded plan result by toolUseId even when batched', () => {
+test('#20 dedupe drops a superseded plan and all plan results by toolUseId even when batched', () => {
   // Replay can batch both plan calls before their results. The superseded plan
-  // (a) and its result must both be dropped by id; only the kept plan (b) and
-  // its result remain.
+  // (a) is dropped, only the kept plan (b) remains, and BOTH plan results are
+  // dropped group-wide (a successful plan result is orchestration noise).
   const a = ev({
     kind: 'tool_call',
     toolName: 'TodoWrite',
@@ -148,7 +148,7 @@ test('#20 dedupe drops a superseded plan result by toolUseId even when batched',
   assert.equal(plans.length, 1);
   assert.equal(plans[0].toolUseId, 'b');
   const resultIds = tools.events.filter((e) => e.kind === 'tool_result').map((e) => e.toolUseId);
-  assert.deepEqual(resultIds, ['b']);
+  assert.deepEqual(resultIds, []);
 });
 
 test('#20 a batched replay (calls before results) correlates each result by toolUseId', () => {
@@ -282,6 +282,77 @@ test('#20 a failed subagent completion result still surfaces', () => {
     items.some((it) => it.type === 'error' && it.event.toolUseId === 'tA'),
     true,
   );
+});
+
+test('#20 a plan result does not leak when a subagent spawn splits its call and result', () => {
+  // Replay order: TodoWrite call, Task spawn, then TodoWrite result. The subagent
+  // card breaks the group, so the plan call and its result land in different
+  // groups; the result must still be dropped group-wide, never leak as activity.
+  const todoCall = ev({
+    kind: 'tool_call',
+    toolName: 'TodoWrite',
+    toolArgs: { todos: '1. [completed] a' },
+    toolUseId: 't1',
+  });
+  const taskCall = ev({
+    kind: 'tool_call',
+    toolName: 'Task',
+    toolArgs: { subagent_type: 'worker' },
+    toolUseId: 'tA',
+  });
+  const todoResult = ev({
+    kind: 'tool_result',
+    toolName: '',
+    toolUseId: 't1',
+    text: PLAN_RESULT_TEXT,
+  });
+  const items = buildFeed([todoCall, taskCall, todoResult], true);
+  const toolEvents = items
+    .filter((it): it is Extract<FeedItem, { type: 'tools' }> => it.type === 'tools')
+    .flatMap((it) => it.events);
+  // The plan result never renders as raw activity in any tools group.
+  assert.equal(
+    toolEvents.some((e) => e.kind === 'tool_result' && e.toolUseId === 't1'),
+    false,
+  );
+  // The subagent still renders as a card and the plan checklist call remains.
+  assert.ok(items.some((it) => it.type === 'subagent'));
+  assert.ok(toolEvents.some((e) => e.kind === 'tool_call' && e.toolName === 'TodoWrite'));
+});
+
+test('#20 a failed subagent result batched after another tool call surfaces as an error', () => {
+  // The failed Task result trails a Grep call, so the generic grouping loop sees
+  // it; it must break out and surface as an error, not fold into the tools group.
+  const taskCall = ev({
+    kind: 'tool_call',
+    toolName: 'Task',
+    toolArgs: { subagent_type: 'worker' },
+    toolUseId: 'tA',
+  });
+  const grepCall = ev({
+    kind: 'tool_call',
+    toolName: 'Grep',
+    toolArgs: { pattern: 'x' },
+    toolUseId: 'g',
+  });
+  const failed = ev({
+    kind: 'tool_result',
+    toolName: '',
+    toolUseId: 'tA',
+    isError: true,
+    text: 'spawn failed',
+  });
+  const items = buildFeed([taskCall, grepCall, failed], true);
+  const toolEvents = items
+    .filter((it): it is Extract<FeedItem, { type: 'tools' }> => it.type === 'tools')
+    .flatMap((it) => it.events);
+  // The failed subagent result is not folded into the generic tools group.
+  assert.equal(
+    toolEvents.some((e) => e.toolUseId === 'tA'),
+    false,
+  );
+  // It surfaces as a standalone error instead.
+  assert.ok(items.some((it) => it.type === 'error' && it.event.toolUseId === 'tA'));
 });
 
 // ── #18: final answer always top-level, even with trailing compaction ──

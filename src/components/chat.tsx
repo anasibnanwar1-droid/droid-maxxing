@@ -504,21 +504,32 @@ export function buildFeed(events: TranscriptEvent[], subagentCards = false): Fee
   const items: FeedItem[] = [];
   // toolUseId → index of its spawn item, so streaming deltas collapse into one.
   const subagentIdx = new Map<string, number>();
-  // toolUseIds of spawned subagent calls whose successful completion result must
-  // be dropped wherever it lands (history results carry no toolName and replay
-  // can batch the result away from its call), so it never leaks as raw activity.
+  // toolUseIds whose successful completion result must be dropped wherever it
+  // lands: a subagent spawn's result is represented by its card, and a plan
+  // (TodoWrite) result is pure orchestration noise. History results carry no
+  // toolName, and replay can batch a result into a different tool group than its
+  // call (e.g. a subagent spawn splits the group between a plan call and its
+  // result), so adjacency/positional checks are not enough — correlate by id
+  // across the whole feed. A *failed* such result is never dropped; it surfaces
+  // as an error instead. Pre-scanned so it works regardless of call/result order.
   const subagentResultIds = new Set<string>();
+  const planResultIds = new Set<string>();
+  for (const e of events) {
+    if (e.kind !== 'tool_call' || !e.toolUseId) continue;
+    if (subagentCards && isSubagentTool(e.toolName, e.toolArgs)) subagentResultIds.add(e.toolUseId);
+    else if (classifyEvent(e) === 'plan_update') planResultIds.add(e.toolUseId);
+  }
+  const isCardResult = (e: TranscriptEvent) =>
+    e.kind === 'tool_result' &&
+    !!e.toolUseId &&
+    (subagentResultIds.has(e.toolUseId) || planResultIds.has(e.toolUseId));
   let i = 0;
   while (i < events.length) {
     const ev = events[i];
-    // A subagent's own successful completion result is represented by its card,
-    // not as a standalone tool_result; drop it here regardless of position.
-    if (
-      ev.kind === 'tool_result' &&
-      !ev.isError &&
-      ev.toolUseId &&
-      subagentResultIds.has(ev.toolUseId)
-    ) {
+    // A successful subagent/plan completion result is already represented by its
+    // card or checklist (or is noise); drop it wherever it lands. Failed ones
+    // fall through to the error branch below so the failure still surfaces.
+    if (isCardResult(ev) && !ev.isError) {
       i++;
       continue;
     }
@@ -587,12 +598,9 @@ export function buildFeed(events: TranscriptEvent[], subagentCards = false): Fee
           items[at] = { ...cur, event: richerSubagent(cur.event, ev) };
         }
         i++;
-        // Skip the subagent's successful completion tool_result so it doesn't
-        // become an orphaned "Tool result" entry in the grouping block below.
-        // Keep error results so a failed spawn surfaces instead of vanishing.
-        // Correlate by toolUseId (history results have no toolName); a result
-        // batched away from its call is dropped by the group-wide guard above.
-        if (ev.toolUseId) subagentResultIds.add(ev.toolUseId);
+        // Advance past an adjacent successful completion result (the common live
+        // case); a result batched elsewhere is dropped by the group-wide guards.
+        // Correlate by toolUseId since history results carry no toolName.
         if (isResultFor(ev, events[i])) i++;
         continue;
       }
@@ -602,9 +610,10 @@ export function buildFeed(events: TranscriptEvent[], subagentCards = false): Fee
       while (i < events.length) {
         const t = events[i];
         if (t.kind === 'tool_result') {
-          // A subagent's successful completion result belongs to its card, not
-          // this generic group, even when batched away from the spawn.
-          if (!t.isError && t.toolUseId && subagentResultIds.has(t.toolUseId)) {
+          if (isCardResult(t)) {
+            // A failed subagent/plan result must break out so the outer loop can
+            // surface it as an error; a successful one is dropped (card/noise).
+            if (t.isError) break;
             i++;
             continue;
           }
