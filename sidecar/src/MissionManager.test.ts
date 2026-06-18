@@ -2767,6 +2767,46 @@ test('rejects manual compaction while a live agent is streaming', async () => {
   );
 });
 
+test('manual compaction of an idle live agent rekeys the live worker session', async () => {
+  const { manager, mission, internals } = streamHarness(10_000);
+  const oldWorker = new FakeCompactionSession('worker-old', 10_000, 'worker-new');
+  const newWorker = new FakeCompactionSession('worker-new', 4_000);
+  mission.agents.set(oldWorker.sessionId, {
+    session: oldWorker,
+    missionId: mission.summary.id,
+    role: 'worker',
+    streaming: false,
+    compacting: false,
+    pendingSends: [],
+    lastUsedAt: Date.now(),
+  });
+  mission.knownSubagents.add(oldWorker.sessionId);
+  (
+    internals as typeof internals & {
+      runtime: { loadSession: (id: string, handlers: unknown) => Promise<FakeCompactionSession> };
+    }
+  ).runtime = {
+    loadSession: async () => newWorker,
+  };
+
+  await manager.handle({ type: 'session.compact', sessionId: oldWorker.sessionId });
+
+  assert.equal(oldWorker.compactions, 1);
+  assert.equal(mission.agents.has(oldWorker.sessionId), false);
+  assert.equal(mission.agents.get(newWorker.sessionId)?.session, newWorker);
+
+  await manager.handle({
+    type: 'agent.send',
+    missionId: mission.summary.id,
+    agentSessionId: oldWorker.sessionId,
+    text: 'after worker compact',
+  });
+
+  await waitFor(() => newWorker.prompts.includes('after worker compact'));
+  assert.equal(newWorker.prompts.includes('after worker compact'), true);
+  assert.equal(oldWorker.prompts.includes('after worker compact'), false);
+});
+
 test('rejects parent mission compaction while a live agent is streaming', async () => {
   const { manager, session, mission, events } = streamHarness(10_000);
   const agentSession = new FakeCompactionSession('worker-active-parent', 10_000);

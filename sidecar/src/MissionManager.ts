@@ -418,6 +418,14 @@ export class MissionManager {
           );
           return;
         }
+        if (activeAgent) {
+          await this.compactLiveAgent(
+            activeAgent.mission,
+            activeAgent.agent,
+            cmd.customInstructions,
+          );
+          return;
+        }
         await this.compactSession(missionId, cmd.customInstructions, 'manual');
         // Manual compaction is a standalone command, so unlike auto-compaction
         // (which runs inside drive()'s finally and drains there) nothing else
@@ -2765,7 +2773,37 @@ export class MissionManager {
     }
   }
 
-  private async compactAgent(mission: Mission, agent: LiveAgent, text: string): Promise<boolean> {
+  private async compactLiveAgent(
+    mission: Mission,
+    agent: LiveAgent,
+    customInstructions?: string,
+  ): Promise<void> {
+    agent.compacting = true;
+    try {
+      await this.compactAgent(mission, agent, undefined, 'manual', customInstructions);
+    } finally {
+      agent.compacting = false;
+    }
+    if (this.findLiveAgent(agent.session.sessionId)?.agent !== agent) return;
+    const next = agent.pendingSends.shift();
+    if (next !== undefined) void this.driveAgent(agent, next);
+    else
+      this.emit({
+        type: 'agent.updated',
+        missionId: agent.missionId,
+        agentSessionId: agent.session.sessionId,
+        role: agent.role,
+        status: 'paused',
+      });
+  }
+
+  private async compactAgent(
+    mission: Mission,
+    agent: LiveAgent,
+    text?: string,
+    compactType: CompactType = 'auto',
+    customInstructions?: string,
+  ): Promise<boolean> {
     const appSessionId = mission.summary.id;
     let swapTarget: string | undefined;
     const outcome = await runCompaction(
@@ -2786,7 +2824,7 @@ export class MissionManager {
           await this.swapAgentSession(mission, agent, newSessionId);
         },
       },
-      { compactType: 'auto' },
+      { customInstructions, compactType },
     );
     if (outcome === 'stale' && swapTarget) {
       try {
@@ -2811,10 +2849,12 @@ export class MissionManager {
         } catch {
           /* stale transport close errors are non-fatal during recovery */
         }
-        await this.recoverAgentAndRedeliverSends(mission, agent.role, swapTarget, [
-          text,
-          ...queued,
-        ]);
+        await this.recoverAgentAndRedeliverSends(
+          mission,
+          agent.role,
+          swapTarget,
+          text === undefined ? queued : [text, ...queued],
+        );
         return false;
       }
     }
