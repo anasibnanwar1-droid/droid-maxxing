@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { compactionSettingsForGlobalLimit } from './SettingsPanel';
+import { compactionSettingsForGlobalLimit } from '../lib/compactionSettings';
 
 test('global compaction Factory default sends the Factory-default sentinel', () => {
   assert.deepEqual(compactionSettingsForGlobalLimit(undefined, { 'model-a': 100_000 }), {

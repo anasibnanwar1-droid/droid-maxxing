@@ -14,5 +14,7 @@ export function compactTargetSessionIdForMission(
   selectedAgentSessionId: string | null | undefined,
 ): string | null {
   if (!mission) return null;
-  return selectedAgentSessionIdForMission(mission, selectedAgentSessionId) ?? mission.id;
+  if (selectedAgentSessionId && selectedAgentSessionId !== 'orchestrator')
+    return selectedAgentSessionId;
+  return mission.id;
 }

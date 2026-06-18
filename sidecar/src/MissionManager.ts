@@ -1913,6 +1913,7 @@ export class MissionManager {
       role: 'worker',
       status: 'running',
     });
+    void this.openAgent(appSessionId, sessionId, 'worker', 'running', false);
   }
 
   private takePendingSubagent(mission: Mission, sub: PendingSubagent): PendingSubagent | undefined {
@@ -2472,6 +2473,8 @@ export class MissionManager {
     missionId: string,
     agentSessionId: string,
     role: AgentRole,
+    status: 'opened' | 'running' = 'opened',
+    emitHistory = true,
   ): Promise<void> {
     const mission = this.findMission(missionId);
     if (!mission) return;
@@ -2486,7 +2489,7 @@ export class MissionManager {
         missionId: appSessionId,
         agentSessionId: resolvedAgentSessionId,
         role,
-        status: 'opened',
+        status,
       });
       return;
     }
@@ -2542,13 +2545,13 @@ export class MissionManager {
         session,
       );
       mission.agents.set(resolvedAgentSessionId, agent);
-      this.emitAgentHistory(appSessionId, resolvedAgentSessionId);
+      if (emitHistory) this.emitAgentHistory(appSessionId, resolvedAgentSessionId);
       this.emit({
         type: 'agent.updated',
         missionId: appSessionId,
         agentSessionId: resolvedAgentSessionId,
         role,
-        status: 'opened',
+        status,
       });
     } catch (err) {
       this.emit({

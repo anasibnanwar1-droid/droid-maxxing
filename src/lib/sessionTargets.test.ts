@@ -27,7 +27,7 @@ test('compactTargetSessionIdForMission compacts the selected worker before the o
   );
   assert.equal(
     compactTargetSessionIdForMission({ id: 'mission-1', kind: 'mission_orchestrator' }, 'worker-1'),
-    'mission-1',
+    'worker-1',
   );
   assert.equal(compactTargetSessionIdForMission(null, 'worker-1'), null);
 });

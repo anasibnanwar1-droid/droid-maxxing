@@ -9,6 +9,7 @@ import { useOnboarding } from '../hooks/useOnboarding';
 import { getAppVersion, type AppUpdateInfo } from '../lib/onboarding';
 import { refreshAppUpdate, startAppUpdate } from '../lib/appUpdate';
 import { updateCompactionSettings } from '../lib/commands';
+import { compactionSettingsForGlobalLimit } from '../lib/compactionSettings';
 
 const PRESET_ACCENTS = [
   '#ee6018',
@@ -433,16 +434,6 @@ const TOKEN_PRESETS = [
   1_000_000,
 ];
 const RECOMMENDED_LIMIT = 250_000;
-
-export function compactionSettingsForGlobalLimit(
-  limit: number | undefined,
-  compactionTokenLimitPerModel: Record<string, number>,
-): Parameters<typeof updateCompactionSettings>[0] {
-  return {
-    compactionTokenLimit: limit ?? 'factory-default',
-    compactionTokenLimitPerModel,
-  };
-}
 
 // Themed preset picker for compaction token limits. Empty/"Factory default"
 // lets Droid use its model-dependent compaction threshold.

@@ -1186,6 +1186,43 @@ test('agent sends use mission worker model for live compaction settings', async 
   });
 });
 
+test('discovered subagents receive daemon compaction settings before manual open', async () => {
+  const { manager, session, mission, internals } = streamHarness(10_000);
+  const worker = new FakeCompactionSession('worker-discovered', 5_000) as FakeCompactionSession & {
+    initResult: Record<string, unknown>;
+  };
+  worker.initResult = { settings: { modelId: 'worker-model' } };
+  const discoveredInternals = internals as unknown as {
+    runtime: { loadSession: (id: string, handlers: unknown) => Promise<typeof worker> };
+    getFactoryDefaults: () => Promise<{ compactionTokenLimitPerModel?: Record<string, number> }>;
+  };
+  discoveredInternals.runtime = { loadSession: async () => worker };
+  discoveredInternals.getFactoryDefaults = async () => ({
+    compactionTokenLimitPerModel: { 'worker-model': 175_000 },
+  });
+  session.streamEvents = [
+    {
+      type: 'tool_progress',
+      toolUseId: 'tool-1',
+      update: {
+        subagentSessionId: worker.sessionId,
+        parameters: { subagent_type: 'worker' },
+      },
+    },
+  ];
+
+  await manager.handle({
+    type: 'mission.send',
+    missionId: mission.summary.id,
+    text: 'spawn worker',
+    compactionTokenLimitPerModel: { 'worker-model': 175_000 },
+  });
+
+  await waitFor(() => worker.callOrder.includes('compaction:175000'));
+  assert.equal(mission.agents.get(worker.sessionId)?.session, worker);
+  assert.equal(worker.notificationHandler !== undefined, true);
+});
+
 test('permission and question responses refresh compaction settings before continuation', async () => {
   const events: ServerEvent[] = [];
   const manager = new MissionManager((event) => events.push(event));
