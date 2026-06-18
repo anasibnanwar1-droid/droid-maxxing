@@ -635,6 +635,13 @@ export function buildFeed(events: TranscriptEvent[], subagentCards = false): Fee
             i++;
             continue;
           }
+          // A result already reclaimed inline by an earlier group (its call was
+          // split from it by a subagent spawn) must not be re-emitted here as
+          // raw activity, which would duplicate the output.
+          if (claimed.has(t)) {
+            i++;
+            continue;
+          }
           group.push(t);
           i++;
           continue;

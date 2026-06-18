@@ -345,6 +345,40 @@ test('#20 a tool result split from its call by a subagent spawn still pairs inli
   assert.ok(items.some((it) => it.type === 'subagent'));
 });
 
+test('#20 a reclaimed result is not re-emitted as raw activity in a later group', () => {
+  // After the Grep group reclaims result(g), a later group (started by Read)
+  // reaches result(g) in its inner loop before the outer loop does. Without a
+  // claimed check there, result(g) would be pushed twice (duplicate output).
+  const grepCall = ev({
+    kind: 'tool_call',
+    toolName: 'Grep',
+    toolArgs: { pattern: 'foo' },
+    toolUseId: 'g',
+  });
+  const taskCall = ev({
+    kind: 'tool_call',
+    toolName: 'Task',
+    toolArgs: { subagent_type: 'worker' },
+    toolUseId: 't',
+  });
+  const readCall = ev({
+    kind: 'tool_call',
+    toolName: 'Read',
+    toolArgs: { file_path: '/x' },
+    toolUseId: 'r',
+  });
+  const grepResult = ev({ kind: 'tool_result', toolName: '', toolUseId: 'g', text: 'match' });
+  const readResult = ev({ kind: 'tool_result', toolName: '', toolUseId: 'r', text: 'contents' });
+  const taskResult = ev({ kind: 'tool_result', toolName: '', toolUseId: 't', text: 'done' });
+  const items = buildFeed([grepCall, taskCall, readCall, grepResult, readResult, taskResult], true);
+  // result(g) appears in exactly one tools group, never duplicated.
+  const occurrences = items
+    .filter((it): it is Extract<FeedItem, { type: 'tools' }> => it.type === 'tools')
+    .flatMap((it) => it.events)
+    .filter((e) => e.kind === 'tool_result' && e.toolUseId === 'g').length;
+  assert.equal(occurrences, 1);
+});
+
 test('#20 a subagent completion result is dropped group-wide even when batched', () => {
   // Replay can place a subagent (Task) result far from its call and with no
   // toolName; it must still be folded into the card, never leak as raw activity.
