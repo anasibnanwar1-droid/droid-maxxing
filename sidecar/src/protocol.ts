@@ -506,7 +506,12 @@ export type ClientCommand =
       compactionTokenLimit?: number | null;
       compactionTokenLimitPerModel?: Record<string, number>;
     }
-  | { type: 'session.resume'; sessionId: string }
+  | {
+      type: 'session.resume';
+      sessionId: string;
+      compactionTokenLimit?: number | null;
+      compactionTokenLimitPerModel?: Record<string, number>;
+    }
   | { type: 'session.interrupt'; sessionId: string }
   | {
       type: 'session.updateSettings';
@@ -660,7 +665,12 @@ export type ClientCommand =
   | { type: 'browser.native.result'; result: BrowserNativeResult }
   | { type: 'spec.read'; missionId: string; path: string }
   | { type: 'sessions.list' }
-  | { type: 'mission.resume'; sessionId: string }
+  | {
+      type: 'mission.resume';
+      sessionId: string;
+      compactionTokenLimit?: number | null;
+      compactionTokenLimitPerModel?: Record<string, number>;
+    }
   | { type: 'models.list' };
 
 // ── Sidecar -> Frontend ──────────────────────────────────────────────

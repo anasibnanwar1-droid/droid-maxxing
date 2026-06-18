@@ -575,8 +575,14 @@ test('active manual compaction stays visible while pending is false', () => {
   const html = renderToStaticMarkup(
     createElement(MessageFeed, {
       events: [
-        ev('u1', 'text', 'Compact this session', { author: 'user', ts: 1 }),
-        ev('c1', 'status', 'Compacting conversation...', { compactType: 'manual', ts: 2 }),
+        ev({ id: 'u1', kind: 'text', text: 'Compact this session', author: 'user', ts: 1 }),
+        ev({
+          id: 'c1',
+          kind: 'status',
+          text: 'Compacting conversation...',
+          compactType: 'manual',
+          ts: 2,
+        }),
       ],
       pending: false,
     }),
@@ -587,17 +593,21 @@ test('active manual compaction stays visible while pending is false', () => {
 });
 
 test('live file edits show an editing cue while pending', () => {
-  const html = renderToStaticMarkup(createElement(MessageFeed, {
-    events: [
-      ev('u1', 'text', 'Update the file', { author: 'user', ts: 1 }),
-      ev('e1', 'tool_call', '', {
-        ts: 2,
-        toolName: 'edit',
-        toolArgs: { file_path: 'src/app.ts', old_string: 'old', new_string: 'new' },
-      }),
-    ],
-    pending: true,
-  }));
+  const html = renderToStaticMarkup(
+    createElement(MessageFeed, {
+      events: [
+        ev({ id: 'u1', kind: 'text', text: 'Update the file', author: 'user', ts: 1 }),
+        ev({
+          id: 'e1',
+          kind: 'tool_call',
+          ts: 2,
+          toolName: 'edit',
+          toolArgs: { file_path: 'src/app.ts', old_string: 'old', new_string: 'new' },
+        }),
+      ],
+      pending: true,
+    }),
+  );
 
   assert.match(html, /Editing/);
   assert.match(html, /src\/app\.ts/);

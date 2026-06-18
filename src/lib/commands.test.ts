@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { bridge } from './bridge';
-import { updateCompactionSettings } from './commands';
+import { resumeMission, updateCompactionSettings } from './commands';
 import type { ClientCommand } from '../types/bridge';
 
 test('updateCompactionSettings preserves omitted and cleared global limits', () => {
@@ -41,6 +41,31 @@ test('updateCompactionSettings preserves omitted and cleared global limits', () 
       type: 'settings.compaction.update',
       compactionTokenLimit: 'factory-default',
       compactionTokenLimitPerModel: {},
+    },
+  ]);
+});
+
+test('resumeMission forwards current compaction settings', () => {
+  const sent: ClientCommand[] = [];
+  const originalSend = bridge.send.bind(bridge);
+  bridge.send = (cmd: ClientCommand) => {
+    sent.push(cmd);
+  };
+  try {
+    resumeMission('session-1', {
+      compactionTokenLimit: 100_000,
+      compactionTokenLimitPerModel: { 'model-a': 80_000 },
+    });
+  } finally {
+    bridge.send = originalSend;
+  }
+
+  assert.deepEqual(sent, [
+    {
+      type: 'mission.resume',
+      sessionId: 'session-1',
+      compactionTokenLimit: 100_000,
+      compactionTokenLimitPerModel: { 'model-a': 80_000 },
     },
   ]);
 });

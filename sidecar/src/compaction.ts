@@ -13,10 +13,6 @@ export interface CompactionRuntimeSettings {
   compactionThresholdCheckEnabled?: boolean;
 }
 
-const FRESH_COMPACTION_TRIGGER_RATIO = 0.9;
-const MIN_COMPACTION_TRIGGER_RATIO = 0.75;
-const COMPACTION_TRIGGER_STEP = 0.05;
-
 type CompactionDefaults = Pick<
   FactoryDefaultSettings,
   'compactionTokenLimit' | 'compactionTokenLimitPerModel'
@@ -60,21 +56,16 @@ export function clampCompactionTokenLimit(
   return max === undefined ? limit : Math.min(limit, max);
 }
 
-export function compactionTriggerRatio(compactionCount: number): number {
-  const safeCount = Number.isFinite(compactionCount) ? Math.max(0, Math.trunc(compactionCount)) : 0;
-  const agePenalty = safeCount * COMPACTION_TRIGGER_STEP;
-  return Math.max(MIN_COMPACTION_TRIGGER_RATIO, FRESH_COMPACTION_TRIGGER_RATIO - agePenalty);
-}
-
-export function compactionTriggerLimit(
-  limit: number | undefined,
-  triggerRatio = FRESH_COMPACTION_TRIGGER_RATIO,
-): number | undefined {
-  if (limit === undefined) return undefined;
-  const safeRatio = Number.isFinite(triggerRatio)
-    ? Math.min(FRESH_COMPACTION_TRIGGER_RATIO, Math.max(MIN_COMPACTION_TRIGGER_RATIO, triggerRatio))
-    : FRESH_COMPACTION_TRIGGER_RATIO;
-  return Math.max(1, Math.floor(limit * safeRatio));
+function explicitlyDisablesCompaction(
+  modelId: string | undefined,
+  settings: CompactionTokenLimitPatch,
+): boolean {
+  if (
+    modelId &&
+    normalizeCompactionTokenLimit(settings.compactionTokenLimitPerModel?.[modelId]) !== undefined
+  )
+    return false;
+  return settings.compactionTokenLimit === null;
 }
 
 export function createCompactionSettingsForModel(
@@ -82,18 +73,16 @@ export function createCompactionSettingsForModel(
   settings: CompactionTokenLimitPatch,
   defaults: CompactionDefaults = {},
   maxContextTokens?: number,
-  triggerRatio = FRESH_COMPACTION_TRIGGER_RATIO,
 ): CompactionRuntimeSettings {
-  // The configured limit is what users see. The daemon gets an earlier trigger
-  // so long tool-heavy turns do not wait until the visible window is already full.
   const limit = clampCompactionTokenLimit(
     compactionTokenLimitForModel(modelId, settings, defaults),
     maxContextTokens,
   );
-  const triggerLimit = compactionTriggerLimit(limit, triggerRatio);
-  return triggerLimit !== undefined
-    ? { compactionTokenLimit: triggerLimit, compactionThresholdCheckEnabled: true }
-    : { compactionThresholdCheckEnabled: false };
+  if (limit !== undefined)
+    return { compactionTokenLimit: limit, compactionThresholdCheckEnabled: true };
+  if (explicitlyDisablesCompaction(modelId, settings))
+    return { compactionThresholdCheckEnabled: false };
+  return { compactionThresholdCheckEnabled: true };
 }
 
 export type CompactableSession = Pick<DroidSession, 'sessionId' | 'compactSession'>;

@@ -12,8 +12,6 @@ import {
 import {
   clampCompactionTokenLimit,
   compactionTokenLimitForModel,
-  compactionTriggerLimit,
-  compactionTriggerRatio,
   createCompactionSettingsForModel,
 } from './compaction.js';
 import type { MissionSummary, ModelInfo, ServerEvent, WorkerHistoryLink } from './protocol.js';
@@ -218,28 +216,23 @@ test('uses Factory compaction defaults when command omits them', () => {
   );
 });
 
-test('derives daemon compaction trigger headroom from visible window age', () => {
-  assert.equal(compactionTriggerRatio(0), 0.9);
-  assert.equal(compactionTriggerRatio(1), 0.85);
-  assert.equal(compactionTriggerRatio(2), 0.8);
-  assert.equal(compactionTriggerRatio(3), 0.75);
-  assert.equal(compactionTriggerRatio(12), 0.75);
-  assert.equal(compactionTriggerRatio(-1), 0.9);
-  assert.equal(compactionTriggerLimit(100_000, compactionTriggerRatio(0)), 90_000);
-  assert.equal(compactionTriggerLimit(100_000, compactionTriggerRatio(3)), 75_000);
-});
-
-test('builds Droid compaction init payloads with daemon trigger headroom', () => {
+test('builds Droid compaction payloads from the selected daemon budget', () => {
   assert.deepEqual(
     createCompactionSettingsForModel('model-a', {
       compactionTokenLimit: 200_000,
       compactionTokenLimitPerModel: { 'model-a': 150_000 },
     }),
     {
-      compactionTokenLimit: 135_000,
+      compactionTokenLimit: 150_000,
       compactionThresholdCheckEnabled: true,
     },
   );
+});
+
+test('Factory default enables daemon threshold checks without forcing a budget', () => {
+  assert.deepEqual(createCompactionSettingsForModel('model-a', {}, {}), {
+    compactionThresholdCheckEnabled: true,
+  });
 });
 
 test('caps Droid compaction limits to the selected model context window', () => {
@@ -254,13 +247,13 @@ test('caps Droid compaction limits to the selected model context window', () => 
       100_000,
     ),
     {
-      compactionTokenLimit: 90_000,
+      compactionTokenLimit: 100_000,
       compactionThresholdCheckEnabled: true,
     },
   );
 });
 
-test('disables daemon compaction threshold checks when no budget exists', () => {
+test('disables daemon compaction threshold checks when budget is explicitly off', () => {
   assert.deepEqual(
     createCompactionSettingsForModel(
       'model-a',
@@ -622,7 +615,7 @@ test('design turns disable TodoWrite and normal turns restore it', async () => {
   );
 });
 
-test('emits live daemon compaction disable payloads without a budget', () => {
+test('emits live daemon compaction disable payloads when budget is explicitly off', () => {
   assert.deepEqual(
     createCompactionSettingsForModel('model-a', {
       compactionTokenLimit: null,
@@ -732,7 +725,7 @@ test('live sessions refresh daemon compaction settings from model and limit chan
 
   assert.deepEqual(session.settingsUpdates.at(-1), {
     modelId: 'model-b',
-    compactionTokenLimit: 225_000,
+    compactionTokenLimit: 250_000,
     compactionThresholdCheckEnabled: true,
   });
 
@@ -745,7 +738,7 @@ test('live sessions refresh daemon compaction settings from model and limit chan
 
   assert.deepEqual(session.settingsUpdates.at(-1), {
     modelId: 'model-a',
-    compactionTokenLimit: 360_000,
+    compactionTokenLimit: 400_000,
     compactionThresholdCheckEnabled: true,
   });
 
@@ -757,7 +750,7 @@ test('live sessions refresh daemon compaction settings from model and limit chan
 
   assert.deepEqual(session.settingsUpdates.at(-1), {
     modelId: 'model-a',
-    compactionTokenLimit: 360_000,
+    compactionTokenLimit: 400_000,
     compactionThresholdCheckEnabled: true,
   });
 
@@ -769,7 +762,7 @@ test('live sessions refresh daemon compaction settings from model and limit chan
   });
 
   assert.deepEqual(session.settingsUpdates.at(-1), {
-    compactionTokenLimit: 135_000,
+    compactionTokenLimit: 150_000,
     compactionThresholdCheckEnabled: true,
   });
   mission.streaming = false;
@@ -783,7 +776,7 @@ test('live sessions refresh daemon compaction settings from model and limit chan
 
   assert.deepEqual(session.settingsUpdates.at(-1), {
     modelId: 'model-b',
-    compactionTokenLimit: 180_000,
+    compactionTokenLimit: 200_000,
     compactionThresholdCheckEnabled: true,
   });
 
@@ -798,11 +791,11 @@ test('live sessions refresh daemon compaction settings from model and limit chan
   assert.equal(
     session.settingsUpdates.some(
       (update) =>
-        update.compactionTokenLimit === 162_000 && update.compactionThresholdCheckEnabled === true,
+        update.compactionTokenLimit === 180_000 && update.compactionThresholdCheckEnabled === true,
     ),
     true,
   );
-  const compactionUpdateIndex = session.callOrder.lastIndexOf('compaction:162000');
+  const compactionUpdateIndex = session.callOrder.lastIndexOf('compaction:180000');
   const streamIndex = session.callOrder.indexOf('stream:existing chat turn');
   assert.equal(compactionUpdateIndex >= 0, true);
   assert.equal(streamIndex >= 0, true);
@@ -873,7 +866,7 @@ test('live compaction updates restore Factory default global limits', async () =
   });
 
   assert.deepEqual(session.settingsUpdates.at(-1), {
-    compactionTokenLimit: 180_000,
+    compactionTokenLimit: 200_000,
     compactionThresholdCheckEnabled: true,
   });
 
@@ -884,7 +877,7 @@ test('live compaction updates restore Factory default global limits', async () =
   });
 
   assert.deepEqual(session.settingsUpdates.at(-1), {
-    compactionTokenLimit: 360_000,
+    compactionTokenLimit: 400_000,
     compactionThresholdCheckEnabled: true,
   });
 });
@@ -910,7 +903,7 @@ test('live compaction updates restore Factory default per-model limits', async (
   });
 
   assert.deepEqual(session.settingsUpdates.at(-1), {
-    compactionTokenLimit: 180_000,
+    compactionTokenLimit: 200_000,
     compactionThresholdCheckEnabled: true,
   });
 
@@ -921,7 +914,7 @@ test('live compaction updates restore Factory default per-model limits', async (
   });
 
   assert.deepEqual(session.settingsUpdates.at(-1), {
-    compactionTokenLimit: 360_000,
+    compactionTokenLimit: 400_000,
     compactionThresholdCheckEnabled: true,
   });
 });
@@ -962,7 +955,7 @@ test('live compaction updates refresh the visible context meter immediately', as
   assert.equal(mission.summary.maxContextTokens, 200_000);
 });
 
-test('resume preserves in-place compaction count for daemon trigger headroom', async () => {
+test('resume refreshes daemon compaction settings with the selected budget', async () => {
   const events: ServerEvent[] = [];
   const manager = new MissionManager((event) => events.push(event));
   const session = new FakeCompactionSession('droid-resume', 10_000) as FakeCompactionSession & {
@@ -1016,11 +1009,17 @@ test('resume preserves in-place compaction count for daemon trigger headroom', a
     hiddenDroidSessionIds: () => new Set(),
   };
 
-  await manager.handle({ type: 'mission.resume', sessionId: historical.id });
+  await manager.handle({
+    type: 'mission.resume',
+    sessionId: historical.id,
+    compactionTokenLimit: 100_000,
+    compactionTokenLimitPerModel: {},
+  });
 
   const live = internals.missions.get(historical.id);
   assert.equal(live?.summary.compactionCount, 2);
-  assert.equal(session.callOrder.includes('compaction:144000'), true);
+  assert.equal(session.callOrder.includes('compaction:100000'), true);
+  assert.equal(session.callOrder.includes('compaction:144000'), false);
   assert.equal(
     events.some((event) => event.type === 'mission.created' && event.mission.compactionCount === 2),
     true,
@@ -1106,10 +1105,10 @@ test('agent sends refresh daemon compaction settings before streaming', async ()
   });
 
   assert.deepEqual(agentSession.settingsUpdates.at(-1), {
-    compactionTokenLimit: 157_500,
+    compactionTokenLimit: 175_000,
     compactionThresholdCheckEnabled: true,
   });
-  const compactionUpdateIndex = agentSession.callOrder.lastIndexOf('compaction:157500');
+  const compactionUpdateIndex = agentSession.callOrder.lastIndexOf('compaction:175000');
   const streamIndex = agentSession.callOrder.indexOf('stream:worker turn');
   assert.equal(compactionUpdateIndex >= 0, true);
   assert.equal(streamIndex >= 0, true);
@@ -1165,7 +1164,7 @@ test('agent sends use mission worker model for live compaction settings', async 
   });
 
   assert.deepEqual(worker.settingsUpdates.at(-1), {
-    compactionTokenLimit: 162_000,
+    compactionTokenLimit: 180_000,
     compactionThresholdCheckEnabled: true,
   });
 
@@ -1182,7 +1181,7 @@ test('agent sends use mission worker model for live compaction settings', async 
   });
 
   assert.deepEqual(worker.settingsUpdates.at(-1), {
-    compactionTokenLimit: 90_000,
+    compactionTokenLimit: 100_000,
     compactionThresholdCheckEnabled: true,
   });
 });
@@ -1273,9 +1272,9 @@ test('permission and question responses refresh compaction settings before conti
   });
 
   assert.deepEqual(session.callOrder, [
-    'compaction:171000',
+    'compaction:190000',
     'permission-resolved',
-    'compaction:162000',
+    'compaction:180000',
     'question-resolved',
   ]);
   assert.equal(
@@ -1625,14 +1624,14 @@ test('routes daemon compacted notifications from orchestrator sessions', async (
   );
   assert.ok(transcript);
   assert.equal(mission.summary.compactionCount, 1);
-  await waitFor(() => session.callOrder.includes('compaction:340000'));
+  await waitFor(() => session.callOrder.includes('compaction:400000'));
 
   await manager.handle({
     type: 'settings.compaction.update',
     compactionTokenLimit: 180_000,
     compactionTokenLimitPerModel: {},
   });
-  assert.equal(session.callOrder.includes('compaction:153000'), true);
+  assert.equal(session.callOrder.includes('compaction:180000'), true);
 
   assert.equal(session.unsubscribed, false);
   mission.unsubscribe?.();
@@ -1689,8 +1688,8 @@ test('routes daemon compacted notifications from worker sessions to worker conte
   assert.equal(workerContext?.stats.remaining, 87_655);
   assert.equal(workerContext?.stats.limit, 100_000);
   assert.equal(mission.summary.compactionCount, 1);
-  assert.equal(session.callOrder.includes('compaction:85000'), true);
-  assert.equal(worker.callOrder.includes('compaction:85000'), true);
+  assert.equal(session.callOrder.includes('compaction:100000'), true);
+  assert.equal(worker.callOrder.includes('compaction:100000'), true);
   unsubscribe();
 });
 
@@ -1727,22 +1726,9 @@ test('ignores worker daemon compacted notifications during active worker compact
   unsubscribe();
 });
 
-test('does not pre-turn compact without an auto-compaction budget', async () => {
-  const { manager, session, events } = streamHarness(250_000);
-  await manager.handle({ type: 'mission.send', missionId: 'app-stream', text: 'hello' });
-  assert.equal(session.compactions, 0);
-  assert.deepEqual(session.callOrder, ['stream:hello']);
-  assert.deepEqual(session.prompts, ['hello']);
-  assert.equal(
-    events.some((event) => event.type === 'mission.error' || event.type === 'error'),
-    false,
-  );
-});
-
-test('pre-turn compacts once when the daemon trigger is already crossed', async () => {
-  const { manager, session, mission, events } = streamHarness(93_000);
+test('send leaves automatic compaction to the daemon even when over budget', async () => {
+  const { manager, session, mission, events } = streamHarness(103_000);
   session.limit = 100_000;
-  session.usedAfterCompact = 20_000;
 
   await manager.handle({
     type: 'mission.send',
@@ -1752,54 +1738,22 @@ test('pre-turn compacts once when the daemon trigger is already crossed', async 
     compactionTokenLimitPerModel: {},
   });
 
-  assert.equal(session.compactions, 1);
-  assert.equal(mission.summary.compactionCount, 1);
+  assert.equal(session.compactions, 0);
+  assert.equal(mission.summary.compactionCount ?? 0, 0);
+  assert.deepEqual(session.callOrder, ['compaction:100000', 'stream:hello']);
   assert.deepEqual(session.prompts, ['hello']);
-  assert.equal(
-    session.callOrder.indexOf('compact') < session.callOrder.indexOf('stream:hello'),
-    true,
-  );
-  assert.equal(mission.summary.contextTokens, 20_000);
   assert.equal(
     events.some(
       (event) =>
         event.type === 'mission.transcript' &&
         event.event.kind === 'status' &&
-        event.event.text === 'Compacting conversation...' &&
-        event.event.compactType === 'auto',
+        event.event.text === 'Compacting conversation...',
     ),
-    true,
+    false,
   );
 });
 
-test('mission pre-turn compaction budgets with the mode default model', () => {
-  const { manager, mission } = streamHarness(0);
-  mission.summary.kind = 'spec';
-  mission.summary.modelId = undefined;
-  const budget = (
-    manager as unknown as {
-      autoCompactionBudgetForMission: (
-        mission: unknown,
-        defaults: {
-          modelId?: string;
-          specModelId?: string;
-          compactionTokenLimitPerModel?: Record<string, number>;
-        },
-      ) => number | undefined;
-    }
-  ).autoCompactionBudgetForMission(mission, {
-    modelId: 'chat-default',
-    specModelId: 'spec-default',
-    compactionTokenLimitPerModel: {
-      'chat-default': 100_000,
-      'spec-default': 220_000,
-    },
-  });
-
-  assert.equal(budget, 220_000);
-});
-
-test('agent compaction budget and visible limit use mission validator model', () => {
+test('agent visible limit uses mission validator model', () => {
   const { manager, mission } = streamHarness(0);
   const validator = new FakeCompactionSession('validator-budget', 0);
   type TestAgent = {
@@ -1835,11 +1789,6 @@ test('agent compaction budget and visible limit use mission validator model', ()
     },
   };
   const internals = manager as unknown as {
-    autoCompactionBudgetForAgent: (
-      mission: unknown,
-      agent: TestAgent,
-      defaults: TestDefaults,
-    ) => number | undefined;
     visibleContextLimitForAgent: (
       mission: unknown,
       agent: TestAgent,
@@ -1847,60 +1796,10 @@ test('agent compaction budget and visible limit use mission validator model', ()
     ) => number | undefined;
   };
 
-  assert.equal(internals.autoCompactionBudgetForAgent(mission, agent, defaults), 220_000);
   assert.equal(internals.visibleContextLimitForAgent(mission, agent, defaults), 220_000);
 
   mission.summary.validatorModelId = undefined;
-  assert.equal(internals.autoCompactionBudgetForAgent(mission, agent, defaults), 100_000);
   assert.equal(internals.visibleContextLimitForAgent(mission, agent, defaults), 100_000);
-});
-
-test('pre-turn stale swap redelivers the current prompt through resume', async () => {
-  const { manager, session, internals } = orchestratorSwapHarness(125_000, 'droid-new');
-  session.limit = 100_000;
-  const swapped = new FakeCompactionSession('droid-new', 10_000);
-  swapped.limit = 100_000;
-  (swapped as unknown as { initResult: unknown }).initResult = { session: {}, settings: {} };
-  const summaries = new Map<string, MissionSummary>();
-  (
-    internals as unknown as { history: { syncSummaries: (items: MissionSummary[]) => void } }
-  ).history.syncSummaries = (items: MissionSummary[]) => {
-    for (const item of items) summaries.set(item.id, item);
-  };
-  (
-    manager as unknown as { resolveSummary: (id: string) => MissionSummary | undefined }
-  ).resolveSummary = (id: string) => summaries.get(id);
-  (manager as unknown as { ready: boolean }).ready = true;
-  let loadCalls = 0;
-  internals.runtime = {
-    loadSession: async () => {
-      loadCalls += 1;
-      if (loadCalls <= 2) throw new Error('transient load failure');
-      return swapped;
-    },
-  };
-
-  try {
-    await manager.handle({
-      type: 'mission.send',
-      missionId: 'app-swap',
-      text: 'hello after stale swap',
-      compactionTokenLimit: 100_000,
-      compactionTokenLimitPerModel: {},
-    });
-
-    assert.equal(session.prompts.includes('hello after stale swap'), false);
-    assert.equal(swapped.prompts.includes('hello after stale swap'), true);
-    assert.equal(loadCalls, 3);
-    const resumed = internals.missions.get('app-swap');
-    assert.equal(!!resumed, true);
-    assert.equal(resumed?.summary.sessionId, 'droid-new');
-    assert.equal(resumed?.summary.contextTokens, 10_000);
-  } finally {
-    await (manager as unknown as { closeMission: (id: string) => Promise<void> }).closeMission(
-      'app-swap',
-    );
-  }
 });
 
 test('does not treat tool_result as a safe mid-task compaction checkpoint', async () => {
@@ -1936,7 +1835,7 @@ test('does not auto-compact after the final answer in the same visible turn', as
   assert.deepEqual(session.prompts, ['hello']);
 });
 
-test('next turn compacts when the previous final answer left context full', async () => {
+test('next turn still leaves automatic compaction to the daemon', async () => {
   const { manager, session } = streamHarness(50_000);
   session.limit = 100_000;
   session.usedAfterStream = 250_000;
@@ -1950,7 +1849,6 @@ test('next turn compacts when the previous final answer left context full', asyn
   });
 
   session.usedAfterStream = undefined;
-  session.usedAfterCompact = 30_000;
   await manager.handle({
     type: 'mission.send',
     missionId: 'app-stream',
@@ -1959,19 +1857,20 @@ test('next turn compacts when the previous final answer left context full', asyn
     compactionTokenLimitPerModel: {},
   });
 
-  assert.equal(session.compactions, 1);
+  assert.equal(session.compactions, 0);
   assert.deepEqual(session.prompts, ['first', 'second']);
-  assert.equal(
-    session.callOrder.indexOf('compact') < session.callOrder.indexOf('stream:second'),
-    true,
-  );
+  assert.deepEqual(session.callOrder, [
+    'compaction:100000',
+    'stream:first',
+    'compaction:100000',
+    'stream:second',
+  ]);
 });
 
-test('agent pre-turn compacts once when the worker daemon trigger is already crossed', async () => {
+test('agent send leaves automatic compaction to the daemon even when over budget', async () => {
   const { manager, mission, events } = streamHarness(0);
-  const worker = new FakeCompactionSession('worker-full', 93_000);
+  const worker = new FakeCompactionSession('worker-full', 103_000);
   worker.limit = 100_000;
-  worker.usedAfterCompact = 25_000;
   mission.knownSubagents.add(worker.sessionId);
   mission.subagentSettings.set(worker.sessionId, { modelId: 'worker-model' });
   mission.agents.set(worker.sessionId, {
@@ -1992,27 +1891,23 @@ test('agent pre-turn compacts once when the worker daemon trigger is already cro
     compactionTokenLimitPerModel: { 'worker-model': 100_000 },
   });
 
-  assert.equal(worker.compactions, 1);
-  assert.equal(mission.summary.compactionCount, 1);
+  assert.equal(worker.compactions, 0);
+  assert.equal(mission.summary.compactionCount ?? 0, 0);
   assert.deepEqual(worker.prompts, ['worker turn']);
-  assert.equal(
-    worker.callOrder.indexOf('compact') < worker.callOrder.indexOf('stream:worker turn'),
-    true,
-  );
+  assert.deepEqual(worker.callOrder, ['compaction:100000', 'stream:worker turn']);
   assert.equal(
     events.some(
       (event) =>
         event.type === 'mission.transcript' &&
         event.event.kind === 'status' &&
         event.event.agentSessionId === worker.sessionId &&
-        event.event.text === 'Compacting conversation...' &&
-        event.event.compactType === 'auto',
+        event.event.text === 'Compacting conversation...',
     ),
-    true,
+    false,
   );
 });
 
-test('agent sendNow queues during worker pre-turn compaction without interrupting', async () => {
+test('agent sendNow queues during manual worker compaction without interrupting', async () => {
   const { manager, mission } = streamHarness(0);
   const worker = new FakeCompactionSession('worker-compacting', 93_000);
   worker.limit = 100_000;
@@ -2038,22 +1933,15 @@ test('agent sendNow queues during worker pre-turn compaction without interruptin
     lastUsedAt: Date.now(),
   });
 
-  await manager.handle({
-    type: 'agent.send',
-    missionId: mission.summary.id,
-    agentSessionId: worker.sessionId,
-    text: 'worker turn',
-    compactionTokenLimit: 100_000,
-    compactionTokenLimitPerModel: { 'worker-model': 100_000 },
-  });
+  await manager.handle({ type: 'session.compact', sessionId: worker.sessionId });
 
-  await waitFor(() => worker.prompts.length === 2);
+  await waitFor(() => worker.prompts.length === 1);
   assert.equal(worker.compactions, 1);
   assert.equal(worker.interrupts, 0);
-  assert.deepEqual(worker.prompts, ['worker turn', 'urgent steer']);
+  assert.deepEqual(worker.prompts, ['urgent steer']);
 });
 
-test('agent interrupt during worker pre-turn compaction clears queue without interrupting', async () => {
+test('agent interrupt during manual worker compaction clears queue without interrupting', async () => {
   const { manager, mission } = streamHarness(0);
   const worker = new FakeCompactionSession('worker-interrupt-compact', 93_000);
   worker.limit = 100_000;
@@ -2084,21 +1972,14 @@ test('agent interrupt during worker pre-turn compaction clears queue without int
     lastUsedAt: Date.now(),
   });
 
-  await manager.handle({
-    type: 'agent.send',
-    missionId: mission.summary.id,
-    agentSessionId: worker.sessionId,
-    text: 'worker turn',
-    compactionTokenLimit: 100_000,
-    compactionTokenLimitPerModel: { 'worker-model': 100_000 },
-  });
+  await manager.handle({ type: 'session.compact', sessionId: worker.sessionId });
 
   assert.equal(worker.compactions, 1);
   assert.equal(worker.interrupts, 0);
-  assert.deepEqual(worker.prompts, ['worker turn']);
+  assert.deepEqual(worker.prompts, []);
 });
 
-test('agent pre-turn compaction rekeys and persists a swapped worker before streaming', async () => {
+test('manual worker compaction rekeys and persists a swapped worker', async () => {
   const { manager, mission, events, internals } = streamHarness(0);
   const worker = new FakeCompactionSession('worker-old', 125_000, 'worker-new');
   const swapped = new FakeCompactionSession('worker-new', 25_000);
@@ -2166,14 +2047,7 @@ test('agent pre-turn compaction rekeys and persists a swapped worker before stre
     },
   };
 
-  await manager.handle({
-    type: 'agent.send',
-    missionId: mission.summary.id,
-    agentSessionId: worker.sessionId,
-    text: 'worker turn',
-    compactionTokenLimit: 100_000,
-    compactionTokenLimitPerModel: { 'worker-model': 100_000 },
-  });
+  await manager.handle({ type: 'session.compact', sessionId: worker.sessionId });
 
   assert.equal(worker.compactions, 1);
   assert.equal(mission.agents.has('worker-old'), false);
@@ -2187,7 +2061,7 @@ test('agent pre-turn compaction rekeys and persists a swapped worker before stre
   assert.deepEqual(mission.summary.features[0].workerSessionIds, ['worker-new', 'worker-other']);
   assert.equal(mission.summary.features[0].currentWorkerSessionId, 'worker-new');
   assert.equal(mission.summary.features[0].completedWorkerSessionId, 'worker-new');
-  assert.deepEqual(swapped.prompts, ['worker turn']);
+  assert.deepEqual(swapped.prompts, []);
   assert.equal(
     events.some(
       (event) =>
@@ -2216,11 +2090,11 @@ test('agent pre-turn compaction rekeys and persists a swapped worker before stre
     compactionTokenLimitPerModel: { 'worker-model': 100_000 },
   });
 
-  assert.deepEqual(swapped.prompts, ['worker turn', 'old id follow-up']);
+  assert.deepEqual(swapped.prompts, ['old id follow-up']);
   assert.equal(loadCalls, 1);
 });
 
-test('agent pre-turn stale swap preserves the new worker id when reload retry fails', async () => {
+test('manual worker stale swap preserves the new worker id when reload retry fails', async () => {
   const { manager, mission, internals } = streamHarness(0);
   const worker = new FakeCompactionSession('worker-stale-old', 125_000, 'worker-stale-new');
   const swapped = new FakeCompactionSession('worker-stale-new', 25_000);
@@ -2318,14 +2192,7 @@ test('agent pre-turn stale swap preserves the new worker id when reload retry fa
     await concurrentStreamStarted;
   };
 
-  await manager.handle({
-    type: 'agent.send',
-    missionId: mission.summary.id,
-    agentSessionId: worker.sessionId,
-    text: 'worker turn',
-    compactionTokenLimit: 100_000,
-    compactionTokenLimitPerModel: { 'worker-model': 100_000 },
-  });
+  await manager.handle({ type: 'session.compact', sessionId: worker.sessionId });
 
   assert.equal(worker.compactions, 1);
   assert.equal(mission.summary.compactionCount, 1);
@@ -2345,9 +2212,9 @@ test('agent pre-turn stale swap preserves the new worker id when reload retry fa
   assert.deepEqual(swapped.prompts, ['old id during close']);
 
   releaseConcurrentStream?.();
-  await waitFor(() => swapped.prompts.length === 3);
+  await waitFor(() => swapped.prompts.length === 2);
   assert.equal(concurrentSendError, undefined);
-  assert.deepEqual(swapped.prompts, ['old id during close', 'worker turn', 'queued after compact']);
+  assert.deepEqual(swapped.prompts, ['old id during close', 'queued after compact']);
 
   await manager.handle({
     type: 'agent.send',
@@ -2360,7 +2227,6 @@ test('agent pre-turn stale swap preserves the new worker id when reload retry fa
 
   assert.deepEqual(swapped.prompts, [
     'old id during close',
-    'worker turn',
     'queued after compact',
     'old id follow-up',
   ]);
@@ -2407,7 +2273,7 @@ test('estimated context stats prefer detailed breakdown usage', async () => {
   assert.equal(contextEvent?.stats.limit, 200_000);
 });
 
-test('context stats expose the visible window instead of daemon trigger headroom', async () => {
+test('context stats expose the selected visible compaction budget', async () => {
   const { manager, session, mission, events } = streamHarness(93_478);
   mission.summary.modelId = 'model-a';
   session.limit = 90_000;
@@ -2835,7 +2701,7 @@ test('rejects parent mission compaction while a live agent is streaming', async 
   );
 });
 
-test('manual in-place compaction advances the next daemon trigger headroom', async () => {
+test('manual in-place compaction refreshes daemon settings before next send', async () => {
   const { manager, session, mission } = streamHarness(10_000);
 
   await manager.handle({ type: 'mission.compact', missionId: mission.summary.id });
@@ -2849,16 +2715,16 @@ test('manual in-place compaction advances the next daemon trigger headroom', asy
 
   assert.equal(session.compactions, 1);
   assert.equal(mission.summary.compactionCount, 1);
-  assert.equal(session.callOrder.includes('compaction:153000'), true);
+  assert.equal(session.callOrder.includes('compaction:180000'), true);
   assert.equal(session.callOrder.includes('stream:after in-place compact'), true);
   assert.equal(
-    session.callOrder.indexOf('compaction:153000') <
+    session.callOrder.indexOf('compaction:180000') <
       session.callOrder.indexOf('stream:after in-place compact'),
     true,
   );
 });
 
-test('manual in-place compaction refreshes daemon trigger before queued send drains', async () => {
+test('manual in-place compaction refreshes daemon settings before queued send drains', async () => {
   const { manager, session, mission } = streamHarness(10_000);
   session.beforeCompact = () =>
     manager.handle({
@@ -2873,11 +2739,10 @@ test('manual in-place compaction refreshes daemon trigger before queued send dra
 
   assert.equal(session.compactions, 1);
   assert.equal(mission.summary.compactionCount, 1);
-  assert.equal(session.callOrder.includes('compaction:162000'), true);
-  assert.equal(session.callOrder.includes('compaction:153000'), true);
+  assert.equal(session.callOrder.includes('compaction:180000'), true);
   assert.equal(session.callOrder.includes('stream:queued during compact'), true);
   assert.equal(
-    session.callOrder.indexOf('compaction:153000') <
+    session.callOrder.indexOf('compaction:180000') <
       session.callOrder.indexOf('stream:queued during compact'),
     true,
   );
@@ -2999,7 +2864,7 @@ test('manual compaction swap reapplies default model per-model daemon settings',
   await manager.handle({ type: 'mission.compact', missionId: 'app-swap' });
 
   assert.deepEqual(swapped.settingsUpdates.at(-1), {
-    compactionTokenLimit: 127_500,
+    compactionTokenLimit: 150_000,
     compactionThresholdCheckEnabled: true,
   });
 });
@@ -3043,7 +2908,7 @@ test('manual compaction swap reapplies current live compaction settings', async 
   await manager.handle({ type: 'mission.compact', missionId: 'app-swap' });
 
   assert.deepEqual(swapped.settingsUpdates.at(-1), {
-    compactionTokenLimit: 148_750,
+    compactionTokenLimit: 175_000,
     compactionThresholdCheckEnabled: true,
   });
 });

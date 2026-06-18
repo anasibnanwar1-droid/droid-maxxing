@@ -7,7 +7,6 @@ import {
   type AskUserResult,
   type DroidSession,
   type SdkMcpServer,
-  type GetContextStatsResult,
   type PermissionHandler,
   type RequestPermissionHandlerResult,
   type RequestPermissionRequestParams,
@@ -70,12 +69,14 @@ import { NativeBrowserRuntime } from './browser/NativeBrowserRuntime.js';
 import {
   boundedInt,
   contextBreakdownSnapshot,
+  contextStatsSnapshot,
   createAutonomyForCommand,
   createMissionAgentDefaultsForMode,
   createModelDefaultsForMode,
   createSessionSettingsForAgent,
   defaultModelForAgent,
   errMsg,
+  isWindowTokenCount,
   modeForSummary,
   normalizeAutonomy,
   startupFactoryDefaults,
@@ -93,8 +94,6 @@ import { filterMissionListSummaries, type MissionListFilterOptions } from './mis
 import {
   clampCompactionTokenLimit,
   compactionTokenLimitForModel,
-  compactionTriggerLimit,
-  compactionTriggerRatio,
   createCompactionSettingsForModel,
   normalizeCompactionTokenLimit,
   runCompaction,
@@ -427,10 +426,8 @@ export class MissionManager {
           return;
         }
         await this.compactSession(missionId, cmd.customInstructions, 'manual');
-        // Manual compaction is a standalone command, so unlike auto-compaction
-        // (which runs inside drive()'s finally and drains there) nothing else
-        // delivers messages queued during it. Drain one now; drive()'s finally
-        // chains the rest.
+        // Manual compaction is a standalone command. Drain one queued send now;
+        // drive()'s finally chains the rest.
         const compacted = this.findMission(missionId);
         if (compacted && !compacted.streaming && !compacted.compacting) {
           const next = compacted.pendingSends.shift();
@@ -463,7 +460,7 @@ export class MissionManager {
         return;
       case 'session.resume':
       case 'mission.resume':
-        await this.resumeMission(cmd.sessionId);
+        await this.resumeMission(cmd.sessionId, cmd);
         return;
       case 'mission.close':
         await this.closeMission(cmd.missionId);
@@ -731,23 +728,15 @@ export class MissionManager {
     settings: CompactionSettings,
     defaults: FactoryDefaultSettings,
   ): Promise<void> {
-    const triggerRatio = this.compactionTriggerRatioForSummary(mission.summary);
     await this.applyDaemonCompactionSettings(
       mission.session,
       this.compactionModelIdForSummary(mission.summary, defaults),
       settings,
       defaults,
-      triggerRatio,
     );
     for (const [agentSessionId, agent] of mission.agents) {
       const modelId = this.modelIdForAgent(mission, agentSessionId, agent.role, defaults);
-      await this.applyDaemonCompactionSettings(
-        agent.session,
-        modelId,
-        settings,
-        defaults,
-        triggerRatio,
-      );
+      await this.applyDaemonCompactionSettings(agent.session, modelId, settings, defaults);
     }
   }
 
@@ -960,7 +949,6 @@ export class MissionManager {
           this.currentCompactionSettings,
           defaults,
           this.maxContextTokensForModel(nextModelId),
-          this.compactionTriggerRatioForSummary(mission.summary),
         ),
       );
     }
@@ -972,7 +960,6 @@ export class MissionManager {
     modelId: string | undefined,
     settings: CompactionSettings,
     defaults: FactoryDefaultSettings,
-    triggerRatio = compactionTriggerRatio(0),
   ): Promise<void> {
     await session.updateSettings(
       createCompactionSettingsForModel(
@@ -980,15 +967,8 @@ export class MissionManager {
         settings,
         defaults,
         this.maxContextTokensForModel(modelId),
-        triggerRatio,
       ) as never,
     );
-  }
-
-  private compactionTriggerRatioForSummary(
-    summary: Pick<MissionSummary, 'compactionCount' | 'compactedFromSessionIds'>,
-  ): number {
-    return compactionTriggerRatio(this.compactionCountForSummary(summary));
   }
 
   private compactionCountForSummary(
@@ -1224,13 +1204,27 @@ export class MissionManager {
     );
   }
 
-  private async resumeMission(sessionId: string): Promise<void> {
+  private async resumeMission(
+    sessionId: string,
+    compactionSettings?: CompactionSettingsPatch,
+  ): Promise<void> {
     if (!this.ready) this.connect();
+    const settings = this.compactionSettingsForCommand(compactionSettings);
     const historical = this.resolveSummary(sessionId);
     const appSessionId = historical?.id ?? sessionId;
     const droidSessionId = historical?.sessionId ?? sessionId;
     const existing = this.findMission(appSessionId);
     if (existing) {
+      try {
+        const defaults = await this.getFactoryDefaults();
+        await this.applyCompactionSettingsToMission(existing, settings, defaults);
+      } catch (err) {
+        this.emitError({
+          missionId: appSessionId,
+          message: `Could not refresh daemon compaction settings before resume: ${errMsg(err)}`,
+          recoverable: true,
+        });
+      }
       this.emit({
         type: 'mission.created',
         clientRef: `resume:${appSessionId}`,
@@ -1314,13 +1308,7 @@ export class MissionManager {
         createdAt: historical?.createdAt ?? now,
         updatedAt: now,
       });
-      await this.applyDaemonCompactionSettings(
-        session,
-        summary.modelId,
-        this.currentCompactionSettings,
-        defaults,
-        this.compactionTriggerRatioForSummary(summary),
-      );
+      await this.applyDaemonCompactionSettings(session, summary.modelId, settings, defaults);
       const mission: Mission = this.createLiveMission(summary, session, mcp.servers, mcp.configs);
       // Seed the spawn->worker links persisted for this mission so historical
       // subagents are recognized (and thus openable/steerable) after a resume,
@@ -1550,7 +1538,6 @@ export class MissionManager {
         activeCompactionSettings,
         defaults,
         this.maxContextTokensForModel(orchestratorModelId),
-        compactionTriggerRatio(0),
       );
       const { workerModelId, workerReasoningEffort, validatorModelId, validatorReasoningEffort } =
         createMissionAgentDefaultsForMode(mode, cmd, defaults);
@@ -1581,7 +1568,6 @@ export class MissionManager {
         orchestratorModelId,
         activeCompactionSettings,
         defaults,
-        compactionTriggerRatio(0),
       );
 
       const id = session.sessionId;
@@ -1767,7 +1753,6 @@ export class MissionManager {
     const mission = this.findMission(missionId);
     if (!mission) return;
     const appSessionId = mission.summary.id;
-    let detached = false;
     mission.streaming = true;
     this.patch(appSessionId, {
       phase: mission.summary.kind === 'mission_orchestrator' ? 'planning' : 'running',
@@ -1775,10 +1760,6 @@ export class MissionManager {
       queuedSends: mission.pendingSends.length,
     });
     try {
-      if (!(await this.compactMissionBeforeTurnIfNeeded(mission, prompt))) {
-        detached = true;
-        return;
-      }
       if (!this.findMission(appSessionId)) return;
       this.startContextPolling(appSessionId, mission.session);
       await this.applyDesignToolPolicy(mission, isDesignPrompt(prompt));
@@ -1798,7 +1779,7 @@ export class MissionManager {
         this.patch(appSessionId, { phase: 'failed' });
       }
     } finally {
-      if (detached || this.findMission(appSessionId) !== mission) return;
+      if (this.findMission(appSessionId) !== mission) return;
       this.stopContextPolling(appSessionId);
       mission.interruptingForSteer = false;
       await this.refreshContext(appSessionId, mission.session);
@@ -2146,64 +2127,6 @@ export class MissionManager {
     }
   }
 
-  private async compactMissionBeforeTurnIfNeeded(
-    mission: Mission,
-    prompt: string,
-  ): Promise<boolean> {
-    if (mission.compacting) return true;
-    const appSessionId = mission.summary.id;
-    try {
-      const defaults = await this.getFactoryDefaults();
-      const budget = this.autoCompactionBudgetForMission(mission, defaults);
-      if (!budget) return true;
-      await this.refreshContext(appSessionId, mission.session);
-      const snapshot = this.contextSnapshots.get(appSessionId);
-      const threshold = compactionTriggerLimit(
-        budget,
-        this.compactionTriggerRatioForSummary(mission.summary),
-      );
-      if (!shouldPreTurnAutoCompact(snapshot, threshold)) return true;
-      await this.compactMission(mission, undefined, 'auto');
-      if (!this.findMission(appSessionId)) {
-        const queued = mission.pendingSends.splice(0);
-        await this.redeliverQueuedSends(appSessionId, [prompt, ...queued]);
-        return false;
-      }
-      return true;
-    } catch (err) {
-      this.emitError({
-        missionId: appSessionId,
-        sessionId: mission.summary.sessionId,
-        message: `Could not check context before starting turn: ${errMsg(err)}`,
-        recoverable: true,
-      });
-      return true;
-    }
-  }
-
-  private autoCompactionBudgetForMission(
-    mission: Mission,
-    defaults: FactoryDefaultSettings,
-  ): number | undefined {
-    const modelId = this.compactionModelIdForSummary(mission.summary, defaults);
-    return clampCompactionTokenLimit(
-      compactionTokenLimitForModel(modelId, this.currentCompactionSettings, defaults),
-      this.maxContextTokensForModel(modelId),
-    );
-  }
-
-  private autoCompactionBudgetForAgent(
-    mission: Mission,
-    agent: LiveAgent,
-    defaults: Partial<FactoryDefaultSettings>,
-  ): number | undefined {
-    const modelId = this.modelIdForAgent(mission, agent.session.sessionId, agent.role, defaults);
-    return clampCompactionTokenLimit(
-      compactionTokenLimitForModel(modelId, this.currentCompactionSettings, defaults),
-      this.maxContextTokensForModel(modelId),
-    );
-  }
-
   // Adopt the daemon's compacted backing session behind the stable app id:
   // load the new id, swap it in, retire the old session, and persist the new id
   // with carried-over usage. Throws if the new session cannot be loaded.
@@ -2240,7 +2163,6 @@ export class MissionManager {
         this.compactionModelIdForSummary(mission.summary, defaults),
         this.currentCompactionSettings,
         defaults,
-        compactionTriggerRatio(compactedState.compactionCount),
       );
     } catch (err) {
       this.emitError({
@@ -2508,7 +2430,6 @@ export class MissionManager {
           this.currentCompactionSettings,
           defaults,
           this.maxContextTokensForModel(nextModelId),
-          summary ? this.compactionTriggerRatioForSummary(summary) : compactionTriggerRatio(0),
         ),
       );
     }
@@ -2605,7 +2526,6 @@ export class MissionManager {
         workerModelId,
         this.currentCompactionSettings,
         defaults,
-        this.compactionTriggerRatioForSummary(mission.summary),
       );
       const agent: LiveAgent = {
         session,
@@ -2685,7 +2605,6 @@ export class MissionManager {
       status: 'running',
     });
     try {
-      if (!(await this.compactAgentBeforeTurnIfNeeded(agent, text))) return;
       if (!this.findLiveAgent(agent.session.sessionId)) return;
       this.startContextPolling(agent.session.sessionId, agent.session);
       const stream = agent.session.stream(text, { includePartialMessages: true });
@@ -2738,38 +2657,6 @@ export class MissionManager {
             status: 'paused',
           });
       }
-    }
-  }
-
-  private async compactAgentBeforeTurnIfNeeded(agent: LiveAgent, text: string): Promise<boolean> {
-    const live = this.findLiveAgent(agent.session.sessionId);
-    if (!live) return false;
-    const { mission } = live;
-    try {
-      const defaults = await this.getFactoryDefaults();
-      const budget = this.autoCompactionBudgetForAgent(mission, agent, defaults);
-      if (!budget) return true;
-      await this.refreshContext(agent.session.sessionId, agent.session);
-      const snapshot = this.contextSnapshots.get(agent.session.sessionId);
-      const threshold = compactionTriggerLimit(
-        budget,
-        this.compactionTriggerRatioForSummary(mission.summary),
-      );
-      if (!shouldPreTurnAutoCompact(snapshot, threshold)) return true;
-      agent.compacting = true;
-      try {
-        return await this.compactAgent(mission, agent, text);
-      } finally {
-        agent.compacting = false;
-      }
-    } catch (err) {
-      this.emitError({
-        missionId: mission.summary.id,
-        sessionId: agent.session.sessionId,
-        message: `Could not check worker context before starting turn: ${errMsg(err)}`,
-        recoverable: true,
-      });
-      return true;
     }
   }
 
@@ -3508,48 +3395,6 @@ function arrayItems(result: unknown, key: string): unknown[] {
   const value = record[key];
   if (Array.isArray(value)) return value;
   return [result];
-}
-
-function contextStatsSnapshot(
-  stats: GetContextStatsResult,
-  breakdown: ContextBreakdownSnapshot | undefined,
-  visibleLimit?: number,
-): ContextStatsSnapshot {
-  const rawLimit = stats.limit > 0 ? stats.limit : (breakdown?.contextBudget ?? stats.limit);
-  const limit = visibleLimit && visibleLimit > 0 ? visibleLimit : rawLimit;
-  const breakdownUsed =
-    breakdown && stats.accuracy !== 'exact' && isWindowTokenCount(breakdown.usedTokens, limit)
-      ? breakdown.usedTokens
-      : undefined;
-  const used = breakdownUsed ?? stats.used;
-  const remaining = Math.max(0, limit - used);
-  return {
-    used,
-    remaining,
-    limit,
-    accuracy: stats.accuracy as ContextStatsSnapshot['accuracy'],
-    updatedAt: stats.updatedAt,
-    breakdown: breakdown
-      ? {
-          ...breakdown,
-          contextBudget: limit,
-          usedTokens: used,
-          freeTokens: remaining,
-        }
-      : undefined,
-  };
-}
-
-function isWindowTokenCount(value: unknown, limit: number | undefined): value is number {
-  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) return false;
-  return !(limit && limit > 0) || value <= limit;
-}
-
-function shouldPreTurnAutoCompact(
-  snapshot: ContextStatsSnapshot | undefined,
-  threshold: number | undefined,
-): boolean {
-  return !!snapshot && !!threshold && threshold > 0 && snapshot.used >= threshold;
 }
 
 function transferSetKey(set: Set<string>, from: string, to: string): void {

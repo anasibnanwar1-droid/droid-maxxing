@@ -21,6 +21,10 @@ import { browserTranscriptReferencesFromDesignReferences } from './browser/brows
 import { pickDirectory, listFiles } from '../lib/desktop';
 import { createLocalDesignTranscriptEvent, newQueueId } from '../lib/promptQueue';
 import {
+  compactTargetSessionIdForMission,
+  selectedAgentSessionIdForMission,
+} from '../lib/sessionTargets';
+import {
   ArrowUp,
   ChevronDown,
   SlidersHorizontal,
@@ -106,12 +110,17 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
     activeMission && (activeMission.kind === 'chat' || activeMission.kind === 'spec')
       ? activeMission.kind === 'spec'
       : state.specMode;
-  const targetAgentSessionId =
-    activeMission?.kind !== 'mission_orchestrator' &&
-    state.selectedAgentSessionId &&
-    state.selectedAgentSessionId !== 'orchestrator'
-      ? state.selectedAgentSessionId
-      : null;
+  const targetAgentSessionId = selectedAgentSessionIdForMission(
+    activeMission,
+    state.selectedAgentSessionId,
+  );
+  const compactTargetSessionId = compactTargetSessionIdForMission(
+    activeMission,
+    state.selectedAgentSessionId,
+  );
+  const runCompact = () => {
+    if (compactTargetSessionId) compactSession(compactTargetSessionId);
+  };
 
   const cwd = activeMission?.cwd ?? state.draftChat?.cwd ?? null;
   const skillsSessionId = activeMission?.id ?? null;
@@ -147,18 +156,18 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
     { cmd: '/model', desc: 'Open model selector', run: () => setModelsOpen(true) },
     {
       cmd: '/compact',
-      desc: 'Compact current session',
-      run: () => activeMission && compactSession(activeMission.id),
+      desc: 'Compact selected session',
+      run: runCompact,
     },
     {
       cmd: '/compaction',
-      desc: 'Compact current session',
-      run: () => activeMission && compactSession(activeMission.id),
+      desc: 'Compact selected session',
+      run: runCompact,
     },
     {
       cmd: '/compression',
-      desc: 'Compact current session',
-      run: () => activeMission && compactSession(activeMission.id),
+      desc: 'Compact selected session',
+      run: runCompact,
     },
     { cmd: '/spec', desc: 'Toggle spec mode', run: () => toggleSpec() },
     { cmd: '/settings', desc: 'Open settings', run: () => dispatch({ type: 'TOGGLE_SETTINGS' }) },
@@ -363,7 +372,7 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
     }
 
     if (COMPACT_COMMANDS.has(text) && activeSkills.length === 0 && attachedFiles.length === 0) {
-      if (activeMission) compactSession(activeMission.id);
+      runCompact();
       setInput('');
       return;
     }

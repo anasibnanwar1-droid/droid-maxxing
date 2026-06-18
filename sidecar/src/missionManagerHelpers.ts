@@ -1,8 +1,9 @@
-import type { ContextBreakdownResult } from '@factory/droid-sdk';
+import type { ContextBreakdownResult, GetContextStatsResult } from '@factory/droid-sdk';
 import type {
   Autonomy,
   ConfigurableAgent,
   ContextBreakdownSnapshot,
+  ContextStatsSnapshot,
   FactoryDefaultSettings,
   MissionSummary,
   ModelInfo,
@@ -43,12 +44,47 @@ export function contextBreakdownSnapshot(raw: unknown): ContextBreakdownSnapshot
   };
 }
 
+export function contextStatsSnapshot(
+  stats: GetContextStatsResult,
+  breakdown: ContextBreakdownSnapshot | undefined,
+  visibleLimit?: number,
+): ContextStatsSnapshot {
+  const rawLimit = stats.limit > 0 ? stats.limit : (breakdown?.contextBudget ?? stats.limit);
+  const limit = visibleLimit && visibleLimit > 0 ? visibleLimit : rawLimit;
+  const breakdownUsed =
+    breakdown && stats.accuracy !== 'exact' && isWindowTokenCount(breakdown.usedTokens, limit)
+      ? breakdown.usedTokens
+      : undefined;
+  const used = breakdownUsed ?? stats.used;
+  const remaining = Math.max(0, limit - used);
+  return {
+    used,
+    remaining,
+    limit,
+    accuracy: stats.accuracy as ContextStatsSnapshot['accuracy'],
+    updatedAt: stats.updatedAt,
+    breakdown: breakdown
+      ? {
+          ...breakdown,
+          contextBudget: limit,
+          usedTokens: used,
+          freeTokens: remaining,
+        }
+      : undefined,
+  };
+}
+
 export function stringValue(value: unknown): string | undefined {
   return typeof value === 'string' ? value : undefined;
 }
 
 function numberValue(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+export function isWindowTokenCount(value: unknown, limit: number | undefined): value is number {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) return false;
+  return !(limit && limit > 0) || value <= limit;
 }
 
 export function boundedInt(

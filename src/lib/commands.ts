@@ -195,8 +195,8 @@ export const loadOlderMissionHistory = (missionId: string, cursor: string) => {
   bridge.send({ type: 'mission.loadHistory', missionId, cursor });
 };
 
-export const resumeMission = (sessionId: string) => {
-  bridge.send({ type: 'mission.resume', sessionId });
+export const resumeMission = (sessionId: string, compaction?: CompactionSettingsPatch) => {
+  bridge.send({ type: 'mission.resume', sessionId, ...compaction });
 };
 
 export const updateAgentSettings = (p: {
