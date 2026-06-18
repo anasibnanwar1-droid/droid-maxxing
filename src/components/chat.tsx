@@ -24,7 +24,10 @@ import {
   formatDuration,
   isSubagentTool,
   subagentInfo,
+  parseTodos,
+  hasTodoPayload,
 } from '../lib/tools';
+import { classifyEvent } from '../lib/transcript';
 import {
   richerSubagent,
   subagentLatest,
@@ -210,10 +213,20 @@ function ThinkingItem({
 function summarizeTools(events: TranscriptEvent[]): string {
   const calls = events.filter((e) => e.kind === 'tool_call');
   if (calls.length === 0) return 'Tool result';
-  const counts = { file: 0, search: 0, command: 0, page: 0, task: 0, step: 0 };
+  const counts = { file: 0, search: 0, command: 0, page: 0, task: 0, step: 0, plan: 0 };
   let onlyExec = true;
   let onlyWeb = true;
+  let onlyPlan = true;
   calls.forEach((e) => {
+    // A TodoWrite is internal plan bookkeeping, not a file/command, so it must
+    // not inflate the "Explored N files" summary (#20).
+    if (classifyEvent(e) === 'plan_update') {
+      counts.plan++;
+      onlyExec = false;
+      onlyWeb = false;
+      return;
+    }
+    onlyPlan = false;
     const { cat } = toolMeta(e.toolName, e.toolArgs);
     if (cat !== 'exec') onlyExec = false;
     if (cat !== 'web') onlyWeb = false;
@@ -225,6 +238,7 @@ function summarizeTools(events: TranscriptEvent[]): string {
     else if (cat === 'skill') counts.step++;
     else counts.step++;
   });
+  if (onlyPlan) return 'Updated plan';
   const parts: string[] = [];
   const add = (n: number, s: string, p: string) => {
     if (n > 0) parts.push(`${n} ${n === 1 ? s : p}`);
@@ -235,6 +249,7 @@ function summarizeTools(events: TranscriptEvent[]): string {
   add(counts.page, 'page', 'pages');
   add(counts.task, 'task', 'tasks');
   add(counts.step, 'step', 'steps');
+  add(counts.plan, 'plan update', 'plan updates');
   const verb = onlyExec ? 'Ran' : onlyWeb ? 'Fetched' : 'Explored';
   return `${verb} ${parts.join(', ')}`;
 }
@@ -322,14 +337,94 @@ function ToolLine({ event, output }: { event: TranscriptEvent; output?: string }
   );
 }
 
+function TodoChecklist({ event }: { event: TranscriptEvent }) {
+  const todos = parseTodos(event.toolArgs);
+  if (todos.length === 0)
+    return <div className="text-[12.5px] text-droid-text-secondary">Updated plan</div>;
+  const mark = { completed: '✓', in_progress: '◐', pending: '○' } as const;
+  return (
+    <div className="space-y-1">
+      {todos.map((t, i) => (
+        <div
+          key={i}
+          className={`flex items-start gap-2 text-[12.5px] leading-relaxed [overflow-wrap:anywhere] ${
+            t.status === 'completed'
+              ? 'text-droid-text-muted line-through'
+              : 'text-droid-text-secondary'
+          }`}
+        >
+          <span className="select-none text-droid-text-muted">{mark[t.status]}</span>
+          <span>{t.text}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// Whether `next` is the tool_result produced by the `call` event. Result events
+// carry no usable `toolName` (the live SDK emits "" and history reads the empty
+// result name), so classification cannot identify them; correlate by toolUseId
+// instead. When either side has an id, require an exact match so a call never
+// swallows an unrelated result (replayed transcripts batch several calls before
+// their results); fall back to adjacency only when neither side has an id (the
+// live stream emits each result immediately after its call).
+export function isResultFor(call: TranscriptEvent, next: TranscriptEvent | undefined): boolean {
+  if (!next || next.kind !== 'tool_result') return false;
+  // A failed result must always surface so the user sees the failure, even when
+  // it correlates to the call we are otherwise hiding (e.g. a failed TodoWrite).
+  if (next.isError) return false;
+  if (call.toolUseId || next.toolUseId) return call.toolUseId === next.toolUseId;
+  return true;
+}
+
+// Pair each tool_call with its tool_result across the whole group. Results
+// correlate by toolUseId wherever they sit (replayed transcripts batch several
+// calls before their results, so the result is often not adjacent); id-less
+// live results fall back to the call they immediately follow. Returns the
+// inline output for non-plan calls plus the set of results already accounted
+// for, so the renderer never shows a correlated result a second time as raw
+// activity. A plan_update's own *successful* result is consumed silently (the
+// checklist conveys it); a failed one is left to surface.
+export function correlateResults(events: TranscriptEvent[]): {
+  resultByCall: Map<TranscriptEvent, TranscriptEvent>;
+  consumed: Set<TranscriptEvent>;
+} {
+  const resultByCall = new Map<TranscriptEvent, TranscriptEvent>();
+  const consumed = new Set<TranscriptEvent>();
+  const resultById = new Map<string, TranscriptEvent>();
+  for (const e of events)
+    if (e.kind === 'tool_result' && e.toolUseId) resultById.set(e.toolUseId, e);
+  for (let i = 0; i < events.length; i++) {
+    const call = events[i];
+    if (call.kind !== 'tool_call') continue;
+    let result: TranscriptEvent | undefined;
+    if (call.toolUseId) {
+      result = resultById.get(call.toolUseId);
+    } else {
+      const next = events[i + 1];
+      if (next && next.kind === 'tool_result' && !next.toolUseId) result = next;
+    }
+    if (!result || consumed.has(result)) continue;
+    // A failed result must always surface (as raw activity), so never consume it
+    // or attach it as a call's inline output — mirrors isResultFor's error guard.
+    if (result.isError) continue;
+    if (classifyEvent(call) !== 'plan_update') resultByCall.set(call, result);
+    consumed.add(result);
+  }
+  return { resultByCall, consumed };
+}
+
 function renderToolEvents(events: TranscriptEvent[]): React.ReactNode[] {
   const nodes: React.ReactNode[] = [];
+  const { resultByCall, consumed } = correlateResults(events);
   for (let i = 0; i < events.length; i++) {
     const e = events[i];
     if (e.kind === 'tool_call') {
-      const next = events[i + 1];
-      const result = next && next.kind === 'tool_result' ? next : undefined;
-      if (result) i++;
+      if (classifyEvent(e) === 'plan_update') {
+        nodes.push(<TodoChecklist key={e.id} event={e} />);
+        continue;
+      }
+      const result = resultByCall.get(e);
       const { cat, detail } = toolMeta(e.toolName, e.toolArgs);
       if (cat === 'exec') {
         const command =
@@ -352,6 +447,9 @@ function renderToolEvents(events: TranscriptEvent[]): React.ReactNode[] {
       }
       continue;
     }
+    // A result already shown as its call's inline output (or a silently consumed
+    // plan result) must not also render as raw activity.
+    if (e.kind === 'tool_result' && consumed.has(e)) continue;
     const body = stripAnsi(e.text ?? safeJson(e.toolArgs)).trimEnd();
     if (!body) continue;
     nodes.push(
@@ -392,7 +490,7 @@ function ToolGroupItem({ events, active }: { events: TranscriptEvent[]; active?:
 }
 
 /* ── Feed model ── */
-type FeedItem =
+export type FeedItem =
   | { type: 'message'; key: string; event: TranscriptEvent }
   | { type: 'thinking'; key: string; event: TranscriptEvent; durationMs?: number }
   | { type: 'status'; key: string; event: TranscriptEvent }
@@ -403,13 +501,54 @@ type FeedItem =
   | { type: 'tools'; key: string; events: TranscriptEvent[] }
   | { type: 'worked'; key: string; items: FeedItem[]; durationMs: number };
 
-function buildFeed(events: TranscriptEvent[], subagentCards = false): FeedItem[] {
+export function buildFeed(events: TranscriptEvent[], subagentCards = false): FeedItem[] {
   const items: FeedItem[] = [];
   // toolUseId → index of its spawn item, so streaming deltas collapse into one.
   const subagentIdx = new Map<string, number>();
+  // toolUseIds whose successful completion result must be dropped wherever it
+  // lands: a subagent spawn's result is represented by its card, and a plan
+  // (TodoWrite) result is pure orchestration noise. History results carry no
+  // toolName, and replay can batch a result into a different tool group than its
+  // call (e.g. a subagent spawn splits the group between a plan call and its
+  // result), so adjacency/positional checks are not enough — correlate by id
+  // across the whole feed. A *failed* such result is never dropped; it surfaces
+  // as an error instead. Pre-scanned so it works regardless of call/result order.
+  const subagentResultIds = new Set<string>();
+  const planResultIds = new Set<string>();
+  for (const e of events) {
+    if (e.kind !== 'tool_call' || !e.toolUseId) continue;
+    if (subagentCards && isSubagentTool(e.toolName, e.toolArgs)) subagentResultIds.add(e.toolUseId);
+    else if (classifyEvent(e) === 'plan_update') planResultIds.add(e.toolUseId);
+  }
+  const isCardResult = (e: TranscriptEvent) =>
+    e.kind === 'tool_result' &&
+    !!e.toolUseId &&
+    (subagentResultIds.has(e.toolUseId) || planResultIds.has(e.toolUseId));
+  // toolUseId → its successful result, so a tools group can reclaim a result that
+  // a subagent spawn split away from its call (the spawn breaks the group, so the
+  // call is finalized before its result is reached). Pulled results are marked
+  // claimed and skipped when iteration later reaches them, instead of rendering
+  // as a detached raw "Tool result".
+  const resultById = new Map<string, TranscriptEvent>();
+  for (const e of events)
+    if (e.kind === 'tool_result' && e.toolUseId && !e.isError) resultById.set(e.toolUseId, e);
+  const claimed = new Set<TranscriptEvent>();
   let i = 0;
   while (i < events.length) {
     const ev = events[i];
+    // A result reclaimed by an earlier group (its call was split from it by a
+    // subagent spawn) must not also start a new group here.
+    if (ev.kind === 'tool_result' && claimed.has(ev)) {
+      i++;
+      continue;
+    }
+    // A successful subagent/plan completion result is already represented by its
+    // card or checklist (or is noise); drop it wherever it lands. Failed ones
+    // fall through to the error branch below so the failure still surfaces.
+    if (isCardResult(ev) && !ev.isError) {
+      i++;
+      continue;
+    }
     if (ev.author === 'user' || ev.kind === 'text') {
       items.push({ type: 'message', key: ev.id, event: ev });
       i++;
@@ -475,16 +614,10 @@ function buildFeed(events: TranscriptEvent[], subagentCards = false): FeedItem[]
           items[at] = { ...cur, event: richerSubagent(cur.event, ev) };
         }
         i++;
-        // Skip the subagent's successful completion tool_result so it doesn't
-        // become an orphaned "Tool result" entry in the grouping block below.
-        // Keep error results so a failed spawn surfaces instead of vanishing.
-        if (
-          i < events.length &&
-          events[i].kind === 'tool_result' &&
-          events[i].toolName === ev.toolName &&
-          !events[i].isError
-        )
-          i++;
+        // Advance past an adjacent successful completion result (the common live
+        // case); a result batched elsewhere is dropped by the group-wide guards.
+        // Correlate by toolUseId since history results carry no toolName.
+        if (isResultFor(ev, events[i])) i++;
         continue;
       }
     }
@@ -493,6 +626,22 @@ function buildFeed(events: TranscriptEvent[], subagentCards = false): FeedItem[]
       while (i < events.length) {
         const t = events[i];
         if (t.kind === 'tool_result') {
+          // Any failed result breaks the group so the outer loop surfaces it as
+          // an error, regardless of tool family (the classifier invariant).
+          if (t.isError) break;
+          // A successful subagent/plan result is dropped (represented by its
+          // card or checklist, or pure noise); other results stay in the group.
+          if (isCardResult(t)) {
+            i++;
+            continue;
+          }
+          // A result already reclaimed inline by an earlier group (its call was
+          // split from it by a subagent spawn) must not be re-emitted here as
+          // raw activity, which would duplicate the output.
+          if (claimed.has(t)) {
+            i++;
+            continue;
+          }
           group.push(t);
           i++;
           continue;
@@ -508,13 +657,63 @@ function buildFeed(events: TranscriptEvent[], subagentCards = false): FeedItem[]
         }
         break;
       }
-      if (group.length) items.push({ type: 'tools', key: group[0].id, events: group });
-      else i++;
+      if (group.length) {
+        // Reclaim any successful result whose call is in this group but was
+        // separated from it (a subagent spawn broke the group before the result
+        // was reached) so it renders inline with its call rather than as a
+        // detached raw result later. Card/plan results are intentionally left
+        // out (handled by their card/checklist or dropped as noise).
+        for (const c of group) {
+          if (c.kind !== 'tool_call' || !c.toolUseId) continue;
+          const r = resultById.get(c.toolUseId);
+          if (r && !group.includes(r) && !isCardResult(r)) {
+            group.push(r);
+            claimed.add(r);
+          }
+        }
+        items.push({ type: 'tools', key: group[0].id, events: dedupePlanUpdates(group) });
+      } else i++;
       continue;
     }
     i++;
   }
   return items;
+}
+
+// Repeated TodoWrite calls in one activity group are noise (#20): keep only the
+// latest plan snapshot and drop the superseded ones (and their empty results).
+function dedupePlanUpdates(events: TranscriptEvent[]): TranscriptEvent[] {
+  const plans = events.filter((e) => e.kind === 'tool_call' && classifyEvent(e) === 'plan_update');
+  if (plans.length <= 1) return events;
+  // A partial tool_call_delta normalizes as a plan_update carrying the tool name
+  // but no `todos` payload; it must never become the kept snapshot or it would
+  // replace the complete checklist with an empty "Updated plan". Prefer the
+  // latest plan that has a real Todo payload (mirroring RightPanel), falling
+  // back to the last plan only when none carry one.
+  const withPayload = plans.filter((p) => hasTodoPayload(p.toolArgs));
+  const keepId = (
+    withPayload.length ? withPayload[withPayload.length - 1] : plans[plans.length - 1]
+  ).id;
+  // toolUseIds of superseded plan calls, so their own results are dropped no
+  // matter where they sit in the group (replay batches calls before results).
+  const supersededIds = new Set(
+    plans.filter((p) => p.id !== keepId && p.toolUseId).map((p) => p.toolUseId as string),
+  );
+  const out: TranscriptEvent[] = [];
+  for (let j = 0; j < events.length; j++) {
+    const e = events[j];
+    if (e.kind === 'tool_call' && classifyEvent(e) === 'plan_update' && e.id !== keepId) {
+      // id-less live result sits right after its call; id-correlated results are
+      // dropped by the supersededIds check below. Never drop a failed result.
+      if (!e.toolUseId && isResultFor(e, events[j + 1])) j++;
+      continue;
+    }
+    if (e.kind === 'tool_result' && !e.isError && e.toolUseId && supersededIds.has(e.toolUseId)) {
+      continue;
+    }
+    out.push(e);
+  }
+  return out;
 }
 
 function isUserMessage(item: FeedItem): boolean {
@@ -554,22 +753,23 @@ function spanOf(items: FeedItem[]): { start: number; end: number } {
   return { start, end };
 }
 
-// Collapse a single completed assistant turn: everything except the concluding
-// message folds into a "Worked for …" group (compaction steps included). While
-// the turn is live it is never collapsed, so compaction stays visible then.
+// Collapse a completed assistant turn: thinking/tool/file activity folds into
+// "Worked for …" groups while assistant chat messages, subagent cards, and
+// compaction dividers stay top-level. Invariant (#18): an assistant message is
+// ALWAYS a top-level boundary and can never be nested inside a Worked group,
+// no matter what trailing compaction/tool status follows it.
 function collapseRun(run: FeedItem[]): FeedItem[] {
   if (run.length === 0) return [];
-  const lastItem = run[run.length - 1];
-  const conclusionIdx =
-    lastItem.type === 'message' && lastItem.event.author !== 'user' ? run.length - 1 : -1;
-
-  const work = conclusionIdx === -1 ? run : run.slice(0, conclusionIdx);
   const out: FeedItem[] = [];
   // Fold contiguous work into "Worked for …" groups, but keep subagent spawn
   // cards at the top level so they stay visible (and navigable) after a turn.
   let buf: FeedItem[] = [];
   const flush = () => {
     if (buf.length === 0) return;
+    if (buf.some((it) => it.type === 'message')) {
+      // Should never happen: assistant chat must stay top-level (#18).
+      console.warn('[transcript] assistant message folded into Worked activity group');
+    }
     const { start, end } = spanOf(buf);
     out.push({
       type: 'worked',
@@ -579,8 +779,17 @@ function collapseRun(run: FeedItem[]): FeedItem[] {
     });
     buf = [];
   };
-  for (const it of work) {
-    if (it.type === 'subagent') {
+  for (const it of run) {
+    if (it.type === 'message') {
+      // Assistant chat (user messages were already split out by groupTurns).
+      flush();
+      out.push(it);
+    } else if (it.type === 'subagent') {
+      flush();
+      out.push(it);
+    } else if (it.type === 'error') {
+      // A failed tool/result must stay visible after the turn completes instead
+      // of being buried in a collapsed "Worked for …" group (classifier intent).
       flush();
       out.push(it);
     } else if (it.type === 'status' && it.event.kind === 'compaction') {
@@ -596,13 +805,12 @@ function collapseRun(run: FeedItem[]): FeedItem[] {
     } else buf.push(it);
   }
   flush();
-  if (conclusionIdx !== -1) out.push(run[conclusionIdx]);
   return out;
 }
 
 // Fold completed assistant turns into "Worked for …" groups. The in-flight turn
 // (while pending) is left expanded so live thinking/tools/status keep streaming.
-function groupTurns(items: FeedItem[], pending: boolean): FeedItem[] {
+export function groupTurns(items: FeedItem[], pending: boolean): FeedItem[] {
   const out: FeedItem[] = [];
   let i = 0;
   while (i < items.length) {
@@ -797,7 +1005,6 @@ const FeedItemView = memo(function FeedItemView({
   onOpenSubagent,
   subagentActivity,
   liveTiming,
-  specDraft,
   specContent,
 }: {
   item: FeedItem;
@@ -807,19 +1014,16 @@ const FeedItemView = memo(function FeedItemView({
   onOpenSubagent?: (target: SubagentTarget) => void;
   subagentActivity?: (target: SubagentTarget) => SubagentActivity | undefined;
   liveTiming?: boolean;
-  specDraft?: boolean;
   specContent?: string;
 }) {
   switch (item.type) {
     case 'message': {
       if (item.event.author === 'user') return <UserBubble event={item.event} />;
       const text = item.event.text ?? '';
-      // The spec lives in the pinned card, so hide its prose: while drafting we
-      // suppress all assistant prose; afterwards only the exact spec block.
-      if (specContent) {
-        if (specDraft) return null;
-        if (text.trim() && text.trim() === specContent.trim()) return null;
-      }
+      // The spec is rendered in the pinned card. Suppress an assistant message
+      // only when it is exactly that spec text (avoid double-rendering the same
+      // plan); never hide other prose just because spec mode is active (#14).
+      if (specContent && text.trim() && text.trim() === specContent.trim()) return null;
       return (
         <div className="group/msg">
           <MessageBody text={text} />
@@ -898,7 +1102,6 @@ const FeedItemView = memo(function FeedItemView({
           onOpenDiff={onOpenDiff}
           onOpenSubagent={onOpenSubagent}
           subagentActivity={subagentActivity}
-          specDraft={specDraft}
           specContent={specContent}
         />
       );
@@ -911,14 +1114,12 @@ function WorkedGroup({
   onOpenDiff,
   onOpenSubagent,
   subagentActivity,
-  specDraft,
   specContent,
 }: {
   item: Extract<FeedItem, { type: 'worked' }>;
   onOpenDiff?: (c: FileChange) => void;
   onOpenSubagent?: (target: SubagentTarget) => void;
   subagentActivity?: (target: SubagentTarget) => SubagentActivity | undefined;
-  specDraft?: boolean;
   specContent?: string;
 }) {
   const [open, setOpen] = useState(false);
@@ -943,7 +1144,6 @@ function WorkedGroup({
               onOpenDiff={onOpenDiff}
               onOpenSubagent={onOpenSubagent}
               subagentActivity={subagentActivity}
-              specDraft={specDraft}
               specContent={specContent}
             />
           ))}
@@ -1119,7 +1319,6 @@ export function MessageFeed({
   onOpenDiff,
   onOpenSubagent,
   subagentActivity,
-  specDraft,
   specContent,
   onOpenSpecWiki,
 }: {
@@ -1128,7 +1327,6 @@ export function MessageFeed({
   onOpenDiff?: (c: FileChange) => void;
   onOpenSubagent?: (target: SubagentTarget) => void;
   subagentActivity?: (target: SubagentTarget) => SubagentActivity | undefined;
-  specDraft?: boolean;
   specContent?: string;
   onOpenSpecWiki?: () => void;
 }) {
@@ -1192,7 +1390,6 @@ export function MessageFeed({
             onOpenSubagent={onOpenSubagent}
             subagentActivity={subagentActivity}
             liveTiming={rich}
-            specDraft={specDraft}
             specContent={specContent}
           />
         </motion.div>
