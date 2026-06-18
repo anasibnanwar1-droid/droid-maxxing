@@ -524,9 +524,24 @@ export function buildFeed(events: TranscriptEvent[], subagentCards = false): Fee
     e.kind === 'tool_result' &&
     !!e.toolUseId &&
     (subagentResultIds.has(e.toolUseId) || planResultIds.has(e.toolUseId));
+  // toolUseId → its successful result, so a tools group can reclaim a result that
+  // a subagent spawn split away from its call (the spawn breaks the group, so the
+  // call is finalized before its result is reached). Pulled results are marked
+  // claimed and skipped when iteration later reaches them, instead of rendering
+  // as a detached raw "Tool result".
+  const resultById = new Map<string, TranscriptEvent>();
+  for (const e of events)
+    if (e.kind === 'tool_result' && e.toolUseId && !e.isError) resultById.set(e.toolUseId, e);
+  const claimed = new Set<TranscriptEvent>();
   let i = 0;
   while (i < events.length) {
     const ev = events[i];
+    // A result reclaimed by an earlier group (its call was split from it by a
+    // subagent spawn) must not also start a new group here.
+    if (ev.kind === 'tool_result' && claimed.has(ev)) {
+      i++;
+      continue;
+    }
     // A successful subagent/plan completion result is already represented by its
     // card or checklist (or is noise); drop it wherever it lands. Failed ones
     // fall through to the error branch below so the failure still surfaces.
@@ -635,9 +650,22 @@ export function buildFeed(events: TranscriptEvent[], subagentCards = false): Fee
         }
         break;
       }
-      if (group.length)
+      if (group.length) {
+        // Reclaim any successful result whose call is in this group but was
+        // separated from it (a subagent spawn broke the group before the result
+        // was reached) so it renders inline with its call rather than as a
+        // detached raw result later. Card/plan results are intentionally left
+        // out (handled by their card/checklist or dropped as noise).
+        for (const c of group) {
+          if (c.kind !== 'tool_call' || !c.toolUseId) continue;
+          const r = resultById.get(c.toolUseId);
+          if (r && !group.includes(r) && !isCardResult(r)) {
+            group.push(r);
+            claimed.add(r);
+          }
+        }
         items.push({ type: 'tools', key: group[0].id, events: dedupePlanUpdates(group) });
-      else i++;
+      } else i++;
       continue;
     }
     i++;

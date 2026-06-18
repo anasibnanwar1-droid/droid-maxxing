@@ -302,6 +302,49 @@ test('#20 a failed tool result stays top-level after a completed turn is grouped
   assert.equal(inWorked, false);
 });
 
+test('#20 a tool result split from its call by a subagent spawn still pairs inline', () => {
+  // A subagent spawn breaks the tools group, so a batched replay like
+  // Grep(g), Task(t), result(g), result(t) finalizes the Grep call before
+  // result(g) is reached. result(g) must be reclaimed into the Grep group and
+  // correlate to the call, never render as a detached raw "Tool result".
+  const grepCall = ev({
+    kind: 'tool_call',
+    toolName: 'Grep',
+    toolArgs: { pattern: 'foo' },
+    toolUseId: 'g',
+  });
+  const taskCall = ev({
+    kind: 'tool_call',
+    toolName: 'Task',
+    toolArgs: { subagent_type: 'worker' },
+    toolUseId: 't',
+  });
+  const grepResult = ev({ kind: 'tool_result', toolName: '', toolUseId: 'g', text: 'match' });
+  const taskResult = ev({ kind: 'tool_result', toolName: '', toolUseId: 't', text: 'done' });
+  const items = buildFeed([grepCall, taskCall, grepResult, taskResult], true);
+  // The Grep call and its result live in the same tools group...
+  const grepGroup = items.find(
+    (it): it is Extract<FeedItem, { type: 'tools' }> =>
+      it.type === 'tools' && it.events.some((e) => e.toolName === 'Grep'),
+  );
+  assert.ok(grepGroup, 'expected a tools group containing the Grep call');
+  assert.ok(grepGroup.events.some((e) => e.kind === 'tool_result' && e.toolUseId === 'g'));
+  // ...and correlate, so the result is the call's inline output.
+  const { resultByCall } = correlateResults(grepGroup.events);
+  const grepEv = grepGroup.events.find((e) => e.toolName === 'Grep')!;
+  assert.equal(resultByCall.get(grepEv)?.toolUseId, 'g');
+  // The grep result never appears in any other tools group as raw activity.
+  const detached = items
+    .filter(
+      (it): it is Extract<FeedItem, { type: 'tools' }> => it.type === 'tools' && it !== grepGroup,
+    )
+    .flatMap((it) => it.events)
+    .some((e) => e.kind === 'tool_result' && e.toolUseId === 'g');
+  assert.equal(detached, false);
+  // The subagent still renders as its own card.
+  assert.ok(items.some((it) => it.type === 'subagent'));
+});
+
 test('#20 a subagent completion result is dropped group-wide even when batched', () => {
   // Replay can place a subagent (Task) result far from its call and with no
   // toolName; it must still be folded into the card, never leak as raw activity.
