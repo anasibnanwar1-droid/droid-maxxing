@@ -1032,11 +1032,18 @@ function baseReducer(state: AppState, action: Action): AppState {
         maxContextTokens,
       );
       const nextIsWindowUsage = isContextWindowTokenCount(action.contextTokens, maxContextTokens);
+      const currentIsExactUsage =
+        existing.contextAccuracy === 'exact' &&
+        isPlausibleContextTokenCount(existing.contextTokens);
+      const nextMatchesExactUsage =
+        currentIsExactUsage && action.contextTokens === existing.contextTokens;
       const nextContextTokens = nextIsWindowUsage
         ? action.contextTokens
-        : currentIsWindowUsage
+        : nextMatchesExactUsage
           ? existing.contextTokens
-          : 0;
+          : currentIsWindowUsage
+            ? existing.contextTokens
+            : 0;
       const contextTokens =
         existing.streaming && currentIsWindowUsage && nextIsWindowUsage
           ? Math.max(existing.contextTokens, nextContextTokens)

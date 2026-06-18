@@ -150,6 +150,36 @@ test('exact over-budget mission updates keep the real context usage', () => {
   assert.equal(next.missions.m1.contextRemainingTokens, 0);
 });
 
+test('token updates preserve exact over-budget context usage', () => {
+  const start = {
+    ...initialState,
+    missions: { m1: mission(40_000, true) },
+  } as unknown as AppState;
+  const afterExactContext = reducer(start, {
+    type: 'CONTEXT_UPDATED',
+    sessionId: 'm1',
+    stats: {
+      ...exactStats(125_000),
+      limit: 100_000,
+      remaining: 0,
+    },
+  });
+
+  const next = reducer(afterExactContext, {
+    type: 'MISSION_TOKENS',
+    missionId: 'm1',
+    tokensIn: 500,
+    tokensOut: 20,
+    contextTokens: 125_000,
+    maxContextTokens: 100_000,
+  });
+
+  assert.equal(next.missions.m1.tokensIn, 500);
+  assert.equal(next.missions.m1.tokensOut, 20);
+  assert.equal(next.missions.m1.contextTokens, 125_000);
+  assert.equal(next.missions.m1.maxContextTokens, 100_000);
+});
+
 test('token updates ignore impossible context counts', () => {
   const start = {
     ...initialState,
