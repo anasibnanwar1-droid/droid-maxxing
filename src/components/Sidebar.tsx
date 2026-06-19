@@ -107,7 +107,9 @@ export default function Sidebar() {
   const { state, dispatch } = useStore();
   const activeMission = state.activeMissionId ? state.missions[state.activeMissionId] : null;
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
-  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  // How many sessions a section currently reveals; absent means the default
+  // limit. "Show more" reveals the next page rather than the whole list.
+  const [shownCount, setShownCount] = useState<Record<string, number>>({});
 
   const toggleCollapse = (key: string) =>
     setCollapsed((prev) => {
@@ -116,12 +118,14 @@ export default function Sidebar() {
       return next;
     });
 
-  const toggleExpanded = (key: string) =>
-    setExpanded((prev) => {
-      const next = new Set(prev);
-      next.has(key) ? next.delete(key) : next.add(key);
-      return next;
-    });
+  const showMore = (key: string) =>
+    setShownCount((prev) => ({
+      ...prev,
+      [key]: (prev[key] ?? SIDEBAR_VISIBLE_SESSION_LIMIT) + SIDEBAR_VISIBLE_SESSION_LIMIT,
+    }));
+
+  const showLess = (key: string) =>
+    setShownCount((prev) => ({ ...prev, [key]: SIDEBAR_VISIBLE_SESSION_LIMIT }));
 
   const startChat = (cwd: string) => dispatch({ type: 'START_CHAT', cwd });
 
@@ -169,28 +173,27 @@ export default function Sidebar() {
   // active session is always kept visible so selecting an older one never hides
   // it on the next render.
   const renderSessionList = (sectionKey: string, sessions: MissionSummary[]) => {
-    const isExpanded = expanded.has(sectionKey);
-    const collapsible = sessions.length > SIDEBAR_VISIBLE_SESSION_LIMIT;
-    let visible = isExpanded ? sessions : sessions.slice(0, SIDEBAR_VISIBLE_SESSION_LIMIT);
+    const shown = shownCount[sectionKey] ?? SIDEBAR_VISIBLE_SESSION_LIMIT;
+    let visible = sessions.slice(0, shown);
     if (
-      !isExpanded &&
       activeMission &&
       sessions.some((m) => m.id === activeMission.id) &&
       !visible.some((m) => m.id === activeMission.id)
     ) {
       visible = [...visible, state.missions[activeMission.id]];
     }
-    const hidden = sessions.length - visible.length;
+    const hasMore = shown < sessions.length;
+    const canCollapse = shown > SIDEBAR_VISIBLE_SESSION_LIMIT;
     return (
       <div className="mt-0.5 space-y-0.5">
         {visible.map(renderRow)}
-        {(isExpanded ? collapsible : hidden > 0) && (
+        {(hasMore || canCollapse) && (
           <button
-            onClick={() => toggleExpanded(sectionKey)}
+            onClick={() => (hasMore ? showMore(sectionKey) : showLess(sectionKey))}
             className="w-full flex items-center gap-2.5 pl-3 pr-2 py-1.5 rounded-xl text-left text-[12px] text-droid-text-muted hover:text-droid-text hover:bg-droid-elevated/40 transition-colors"
           >
             <span className="w-3 shrink-0" />
-            {isExpanded ? 'Show less' : `Show ${hidden} more`}
+            {hasMore ? 'Show more' : 'Show less'}
           </button>
         )}
       </div>
