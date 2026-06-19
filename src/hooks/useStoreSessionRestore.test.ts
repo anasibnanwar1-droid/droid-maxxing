@@ -207,6 +207,31 @@ test('#29 a paged replace keeps the opening prompt when a later page message rep
   );
 });
 
+test('#29 a prepend drops the optimistic echo superseded by the persisted prompt that pages in', () => {
+  // The seeded opening echo was kept above a partial page; when the real prompt
+  // arrives in an older page (different id), the prepend must drop the echo so
+  // it does not duplicate and misorder the opening prompt.
+  const seeded = {
+    ...initialState,
+    transcripts: { m1: [userEv('seed-m1', 1, 'run the build'), ev('asst', 50, 'tail')] },
+  } as unknown as AppState;
+
+  const next = reducer(seeded, {
+    type: 'MISSION_HISTORY',
+    missionId: 'm1',
+    progress: [],
+    transcripts: [userEv('real-user', 1, 'run the build'), ev('asst-old', 2, 'older reply')],
+    mode: 'prepend',
+    olderCursor: undefined,
+    hasMore: false,
+  });
+
+  assert.deepEqual(
+    next.transcripts.m1.map((e) => e.id),
+    ['real-user', 'asst-old', 'asst'],
+  );
+});
+
 test('#29 MISSION_HISTORY_FAILED records a failed restore but keeps any prior count', () => {
   const seeded = {
     ...initialState,

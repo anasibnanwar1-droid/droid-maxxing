@@ -71,6 +71,23 @@ function RestoreFailedState({ message, onRetry }: { message?: string; onRetry: (
   );
 }
 
+function RestoreFailedBanner({ message, onRetry }: { message?: string; onRetry: () => void }) {
+  return (
+    <div className="mb-4 flex flex-wrap items-center justify-center gap-2 rounded-lg border border-droid-border bg-droid-elevated/40 px-3 py-2 text-center">
+      <span className="text-[12px] text-droid-text-secondary">
+        {message ? `Couldn't load earlier messages: ${message}` : "Couldn't load earlier messages"}
+      </span>
+      <button
+        type="button"
+        onClick={onRetry}
+        className="rounded-md border border-droid-border px-2 py-0.5 text-[11px] text-droid-text-secondary transition-colors hover:bg-droid-elevated/60"
+      >
+        Retry
+      </button>
+    </div>
+  );
+}
+
 function FolderIcon() {
   return (
     <svg
@@ -357,6 +374,9 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
       >
         {activeMission && transcript.length > 0 ? (
           <div className="mx-auto min-w-0 px-6 py-6 max-w-2xl">
+            {!viewingSub && restore?.status === 'failed' && (
+              <RestoreFailedBanner message={restore.error} onRetry={retryRestore} />
+            )}
             {!viewingSub && loadingOlder && (
               <div className="mb-4 flex justify-center">
                 <span className="text-[11px] text-droid-text-muted">Loading earlier messages…</span>

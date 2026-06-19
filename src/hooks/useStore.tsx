@@ -1316,16 +1316,33 @@ function baseReducer(state: AppState, action: Action): AppState {
       // An older page prepends its events to the front of the existing scrollback
       // (deduping by id so a trimmed/overlapping boundary never doubles a message).
       if (action.mode === 'prepend') {
-        const have = new Set(existing.map((e) => e.id));
+        // Drop optimistic user echoes (seed-/local-) now superseded by the real
+        // persisted prompt arriving in this older page. They were kept above a
+        // partial page during the initial restore; without this they would
+        // duplicate and misorder the opening prompt once it pages in (their ids
+        // differ from the persisted prompt, so id-dedup alone misses them).
+        const olderUserText = new Set(
+          action.transcripts.filter((e) => e.author === 'user' && e.text).map((e) => e.text),
+        );
+        const olderLastTs =
+          action.transcripts.length > 0 ? action.transcripts[action.transcripts.length - 1].ts : 0;
+        const supersededEcho = (e: TranscriptEvent) =>
+          (e.id.startsWith('seed-') || e.id.startsWith('local-')) &&
+          e.author === 'user' &&
+          !!e.text &&
+          e.ts <= olderLastTs &&
+          olderUserText.has(e.text);
+        const kept = existing.filter((e) => !supersededEcho(e));
+        const have = new Set(kept.map((e) => e.id));
         const older = action.transcripts.filter((e) => !have.has(e.id));
-        const merged = older.length > 0 ? [...older, ...existing] : existing;
+        const changed = older.length > 0 || kept.length !== existing.length;
+        const merged = changed ? [...older, ...kept] : existing;
         const hasMore = Boolean(action.olderCursor);
         return {
           ...state,
-          transcripts:
-            older.length > 0
-              ? { ...state.transcripts, [action.missionId]: merged }
-              : state.transcripts,
+          transcripts: changed
+            ? { ...state.transcripts, [action.missionId]: merged }
+            : state.transcripts,
           historyCursor: { ...state.historyCursor, [action.missionId]: action.olderCursor },
           historyLoadingOlder: { ...state.historyLoadingOlder, [action.missionId]: false },
           sessionRestore: {
