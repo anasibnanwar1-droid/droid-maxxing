@@ -182,6 +182,31 @@ test('#29 a replace keeps an un-persisted opening prompt above the restored page
   );
 });
 
+test('#29 a paged replace keeps the opening prompt when a later page message repeats its text', () => {
+  // The newest window (olderCursor set) does not contain the opening prompt; a
+  // later message happens to repeat its text, so the older echo must not be
+  // deduped away and lost above the page.
+  const seeded = {
+    ...initialState,
+    transcripts: { m1: [userEv('seed-m1', 1, 'run the build')] },
+  } as unknown as AppState;
+
+  const next = reducer(seeded, {
+    type: 'MISSION_HISTORY',
+    missionId: 'm1',
+    progress: [],
+    transcripts: [userEv('later-user', 50, 'run the build'), ev('asst', 51, 'ok')],
+    mode: 'replace',
+    olderCursor: '0:end',
+    hasMore: true,
+  });
+
+  assert.deepEqual(
+    next.transcripts.m1.map((e) => e.id),
+    ['seed-m1', 'later-user', 'asst'],
+  );
+});
+
 test('#29 MISSION_HISTORY_FAILED records a failed restore but keeps any prior count', () => {
   const seeded = {
     ...initialState,

@@ -1344,10 +1344,12 @@ function baseReducer(state: AppState, action: Action): AppState {
       // brand-new mission carries a locally-seeded opening prompt).
       //   - Shared ids: the page wins.
       //   - Optimistic user echoes (seed-/local- ids) the page already contains
-      //     (matched by author + text, and only within the page's time range)
-      //     are dropped, so the opening prompt never double-renders once history
-      //     arrives, while a brand-new prompt sent during restore (newer than
-      //     the whole page) is kept even if it repeats earlier text.
+      //     (matched by author + text within the page's time window) are dropped
+      //     so the opening prompt never double-renders once history arrives.
+      //     Echoes newer than the whole page (a prompt sent during restore) are
+      //     kept, as are echoes older than a PARTIAL page (paged restore): there
+      //     the matching text is a later message, not this echo, so dropping it
+      //     would lose the opening prompt that belongs above the page.
       //   - Remaining live-only events keep their place by timestamp relative to
       //     the page: an un-persisted opening prompt stays above it, a just-sent
       //     prompt (reconnect race) stays below it.
@@ -1357,15 +1359,22 @@ function baseReducer(state: AppState, action: Action): AppState {
       const pageUserText = new Set(
         page.filter((e) => e.author === 'user' && e.text).map((e) => e.text),
       );
+      const firstTs = page.length > 0 ? page[0].ts : 0;
       const lastTs = page.length > 0 ? page[page.length - 1].ts : 0;
+      // A partial page (older history still pages in) does not contain anything
+      // older than firstTs, so an earlier echo must not be deduped against it.
+      // A complete page (no older cursor) spans the whole conversation, so the
+      // lower bound is relaxed to also catch a seed whose createdAt slightly
+      // predates the first persisted message.
+      const pageIsComplete = !action.olderCursor;
       const supersededEcho = (e: TranscriptEvent) =>
         (e.id.startsWith('seed-') || e.id.startsWith('local-')) &&
         e.author === 'user' &&
         !!e.text &&
         e.ts <= lastTs &&
+        (pageIsComplete || e.ts >= firstTs) &&
         pageUserText.has(e.text);
       const liveOnly = existing.filter((e) => !pageIds.has(e.id) && !supersededEcho(e));
-      const firstTs = page.length > 0 ? page[0].ts : 0;
       const before = liveOnly.filter((e) => e.ts < firstTs);
       const after = liveOnly.filter((e) => e.ts >= firstTs);
       const mergedTranscript = page.length > 0 ? [...before, ...page, ...after] : existing;
