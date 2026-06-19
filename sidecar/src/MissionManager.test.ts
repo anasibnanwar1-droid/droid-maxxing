@@ -9,11 +9,6 @@ import {
   startupFactoryDefaults,
   validateFactoryDefaults,
 } from './MissionManager.js';
-import {
-  clampCompactionTokenLimit,
-  compactionTokenLimitForModel,
-  createCompactionSettingsForModel,
-} from './compaction.js';
 import type { MissionSummary, ModelInfo, ServerEvent, WorkerHistoryLink } from './protocol.js';
 
 class FakeSession {
@@ -165,106 +160,6 @@ test('uses worker and validator defaults only for Mission Control sessions', () 
   assert.deepEqual(createMissionAgentDefaultsForMode('spec', {}, defaults), {});
 });
 
-test('uses per-model compaction limit ahead of global limits', () => {
-  assert.equal(
-    compactionTokenLimitForModel(
-      'model-b',
-      { compactionTokenLimit: 200_000, compactionTokenLimitPerModel: { 'model-b': 800_000 } },
-      { compactionTokenLimit: 100_000, compactionTokenLimitPerModel: { 'model-b': 300_000 } },
-    ),
-    800_000,
-  );
-});
-
-test('uses Factory per-model compaction defaults when local overrides omit the model', () => {
-  assert.equal(
-    compactionTokenLimitForModel(
-      'model-a',
-      { compactionTokenLimitPerModel: {} },
-      { compactionTokenLimitPerModel: { 'model-a': 400_000 } },
-    ),
-    400_000,
-  );
-});
-
-test('uses local global compaction limits ahead of Factory per-model defaults', () => {
-  assert.equal(
-    compactionTokenLimitForModel(
-      'model-a',
-      { compactionTokenLimit: 200_000, compactionTokenLimitPerModel: {} },
-      { compactionTokenLimitPerModel: { 'model-a': 400_000 } },
-    ),
-    200_000,
-  );
-});
-
-test('explicitly cleared global compaction limit disables Factory per-model defaults', () => {
-  assert.equal(
-    compactionTokenLimitForModel(
-      'model-a',
-      { compactionTokenLimit: null, compactionTokenLimitPerModel: {} },
-      { compactionTokenLimitPerModel: { 'model-a': 400_000 } },
-    ),
-    undefined,
-  );
-});
-
-test('uses Factory compaction defaults when command omits them', () => {
-  assert.equal(
-    compactionTokenLimitForModel('model-a', {}, { compactionTokenLimit: 200_000 }),
-    200_000,
-  );
-});
-
-test('builds Droid compaction payloads from the selected daemon budget', () => {
-  assert.deepEqual(
-    createCompactionSettingsForModel('model-a', {
-      compactionTokenLimit: 200_000,
-      compactionTokenLimitPerModel: { 'model-a': 150_000 },
-    }),
-    {
-      compactionTokenLimit: 150_000,
-      compactionThresholdCheckEnabled: true,
-    },
-  );
-});
-
-test('Factory default enables daemon threshold checks without forcing a budget', () => {
-  assert.deepEqual(createCompactionSettingsForModel('model-a', {}, {}), {
-    compactionThresholdCheckEnabled: true,
-  });
-});
-
-test('caps Droid compaction limits to the selected model context window', () => {
-  assert.equal(clampCompactionTokenLimit(200_000, 100_000), 100_000);
-  assert.equal(clampCompactionTokenLimit(80_000, 100_000), 80_000);
-  assert.equal(clampCompactionTokenLimit(200_000), 200_000);
-  assert.deepEqual(
-    createCompactionSettingsForModel(
-      'model-a',
-      { compactionTokenLimit: 200_000, compactionTokenLimitPerModel: { 'model-a': 150_000 } },
-      {},
-      100_000,
-    ),
-    {
-      compactionTokenLimit: 100_000,
-      compactionThresholdCheckEnabled: true,
-    },
-  );
-});
-
-test('disables daemon compaction threshold checks when budget is explicitly off', () => {
-  assert.deepEqual(
-    createCompactionSettingsForModel(
-      'model-a',
-      { compactionTokenLimit: null, compactionTokenLimitPerModel: {} },
-      {},
-      100_000,
-    ),
-    { compactionThresholdCheckEnabled: false },
-  );
-});
-
 test('compaction settings patches preserve omitted fields', () => {
   const manager = new MissionManager(() => {});
   const internals = manager as unknown as {
@@ -280,7 +175,7 @@ test('compaction settings patches preserve omitted fields', () => {
   assert.deepEqual(
     internals.compactionSettingsForCommand({
       compactionTokenLimit: null,
-      compactionTokenLimitPerModel: {},
+      compactionTokenLimitPerModel: { 'model-a': 120_000 },
     }),
     { compactionTokenLimit: null, compactionTokenLimitPerModel: {} },
   );
@@ -288,10 +183,17 @@ test('compaction settings patches preserve omitted fields', () => {
     internals.compactionSettingsForCommand({
       compactionTokenLimitPerModel: { 'model-a': 120_000 },
     }),
-    {
-      compactionTokenLimit: null,
+    { compactionTokenLimit: null, compactionTokenLimitPerModel: {} },
+  );
+  assert.deepEqual(
+    internals.compactionSettingsForCommand({ compactionTokenLimit: 'factory-default' }),
+    { compactionTokenLimitPerModel: {} },
+  );
+  assert.deepEqual(
+    internals.compactionSettingsForCommand({
       compactionTokenLimitPerModel: { 'model-a': 120_000 },
-    },
+    }),
+    { compactionTokenLimitPerModel: { 'model-a': 120_000 } },
   );
   assert.deepEqual(internals.compactionSettingsForCommand({ compactionTokenLimit: 200_000 }), {
     compactionTokenLimit: 200_000,
@@ -615,16 +517,6 @@ test('design turns disable TodoWrite and normal turns restore it', async () => {
   );
 });
 
-test('emits live daemon compaction disable payloads when budget is explicitly off', () => {
-  assert.deepEqual(
-    createCompactionSettingsForModel('model-a', {
-      compactionTokenLimit: null,
-      compactionTokenLimitPerModel: {},
-    }),
-    { compactionThresholdCheckEnabled: false },
-  );
-});
-
 test('maps mission worker settings to Droid mission settings', () => {
   assert.deepEqual(
     createSessionSettingsForAgent('worker', { modelId: 'worker-model', reasoningEffort: 'high' }),
@@ -725,7 +617,6 @@ test('live sessions refresh daemon compaction settings from model and limit chan
 
   assert.deepEqual(session.settingsUpdates.at(-1), {
     modelId: 'model-b',
-    compactionTokenLimit: 250_000,
     compactionThresholdCheckEnabled: true,
   });
 
@@ -738,7 +629,6 @@ test('live sessions refresh daemon compaction settings from model and limit chan
 
   assert.deepEqual(session.settingsUpdates.at(-1), {
     modelId: 'model-a',
-    compactionTokenLimit: 400_000,
     compactionThresholdCheckEnabled: true,
   });
 
@@ -750,7 +640,6 @@ test('live sessions refresh daemon compaction settings from model and limit chan
 
   assert.deepEqual(session.settingsUpdates.at(-1), {
     modelId: 'model-a',
-    compactionTokenLimit: 400_000,
     compactionThresholdCheckEnabled: true,
   });
 
@@ -844,7 +733,7 @@ test('live compaction updates preserve cleared global limits when fields are omi
   });
 });
 
-test('live compaction updates restore Factory default global limits', async () => {
+test('live compaction updates restore Factory default daemon policy', async () => {
   const { manager, session, mission, internals } = streamHarness(10_000);
   mission.summary.modelId = 'model-a';
   (
@@ -877,12 +766,11 @@ test('live compaction updates restore Factory default global limits', async () =
   });
 
   assert.deepEqual(session.settingsUpdates.at(-1), {
-    compactionTokenLimit: 400_000,
     compactionThresholdCheckEnabled: true,
   });
 });
 
-test('live compaction updates restore Factory default per-model limits', async () => {
+test('live compaction updates clear local per-model limits for Factory default daemon policy', async () => {
   const { manager, session, mission, internals } = streamHarness(10_000);
   mission.summary.modelId = 'model-a';
   (
@@ -914,12 +802,11 @@ test('live compaction updates restore Factory default per-model limits', async (
   });
 
   assert.deepEqual(session.settingsUpdates.at(-1), {
-    compactionTokenLimit: 400_000,
     compactionThresholdCheckEnabled: true,
   });
 });
 
-test('live compaction updates refresh the visible context meter immediately', async () => {
+test('live compaction updates refresh context without changing the context window', async () => {
   const { manager, session, mission, events, internals } = streamHarness(10_000);
   mission.summary.modelId = 'model-a';
   mission.summary.maxContextTokens = 400_000;
@@ -949,10 +836,10 @@ test('live compaction updates refresh the visible context meter immediately', as
     | { type: 'mission.tokens'; maxContextTokens?: number }
     | undefined;
   assert.equal(contextEvent?.stats.used, 10_000);
-  assert.equal(contextEvent?.stats.remaining, 190_000);
-  assert.equal(contextEvent?.stats.limit, 200_000);
-  assert.equal(tokenEvent?.maxContextTokens, 200_000);
-  assert.equal(mission.summary.maxContextTokens, 200_000);
+  assert.equal(contextEvent?.stats.remaining, 990_000);
+  assert.equal(contextEvent?.stats.limit, 1_000_000);
+  assert.equal(tokenEvent?.maxContextTokens, 1_000_000);
+  assert.equal(mission.summary.maxContextTokens, 1_000_000);
 });
 
 test('resume refreshes daemon compaction settings with the selected budget', async () => {
@@ -1023,6 +910,89 @@ test('resume refreshes daemon compaction settings with the selected budget', asy
   assert.equal(
     events.some((event) => event.type === 'mission.created' && event.mission.compactionCount === 2),
     true,
+  );
+});
+
+test('create closes an unowned session when daemon compaction setup fails', async () => {
+  const events: ServerEvent[] = [];
+  const manager = new MissionManager((event) => events.push(event));
+  const session = new FakeCompactionSession('droid-create-fail', 0);
+  session.updateSettings = async () => {
+    throw new Error('settings failed');
+  };
+  const internals = manager as unknown as {
+    ready: boolean;
+    startLocalMcpServers: () => Promise<{ servers: []; configs: [] }>;
+    getFactoryDefaults: () => Promise<{ modelId?: string; interactionMode?: 'auto' }>;
+    runtime: { createSession: (params: unknown) => Promise<typeof session> };
+    missions: Map<string, { session: typeof session }>;
+  };
+  internals.ready = true;
+  internals.startLocalMcpServers = async () => ({ servers: [], configs: [] });
+  internals.getFactoryDefaults = async () => ({ modelId: 'model-a', interactionMode: 'auto' });
+  internals.runtime = { createSession: async () => session };
+
+  await manager.handle({
+    type: 'mission.create',
+    clientRef: 'create-fail',
+    title: 'Create fail',
+    goal: 'fail during setup',
+    interactionMode: 'auto',
+    autonomy: 'low',
+  });
+
+  assert.equal(session.closes, 1);
+  assert.equal(internals.missions.has(session.sessionId), false);
+  assert.equal(
+    events.some((event) => event.type === 'mission.created'),
+    false,
+  );
+});
+
+test('resume closes an unowned session when daemon compaction setup fails', async () => {
+  const events: ServerEvent[] = [];
+  const manager = new MissionManager((event) => events.push(event));
+  const session = new FakeCompactionSession('droid-resume-fail', 0) as FakeCompactionSession & {
+    initResult: Record<string, unknown>;
+  };
+  session.initResult = { cwd: '', session: { title: 'Resume fail' }, settings: {} };
+  session.updateSettings = async () => {
+    throw new Error('settings failed');
+  };
+  const historical = testSummary('app-resume-fail', session.sessionId);
+  const internals = manager as unknown as {
+    ready: boolean;
+    resolveSummary: (id: string) => MissionSummary | undefined;
+    startLocalMcpServers: () => Promise<{ servers: []; configs: [] }>;
+    getFactoryDefaults: () => Promise<{ modelId?: string }>;
+    runtime: { loadSession: (id: string, handlers: unknown) => Promise<typeof session> };
+    history: {
+      syncSummaries: () => void;
+      subagentLinks: () => [];
+      summaryPatches: () => Map<string, Partial<MissionSummary>>;
+      hiddenDroidSessionIds: () => Set<string>;
+    };
+    missions: Map<string, { session: typeof session }>;
+  };
+  internals.ready = true;
+  internals.resolveSummary = () => historical;
+  internals.startLocalMcpServers = async () => ({ servers: [], configs: [] });
+  internals.getFactoryDefaults = async () => ({ modelId: 'model-a' });
+  internals.runtime = { loadSession: async () => session };
+  internals.history = {
+    syncSummaries: () => {},
+    subagentLinks: () => [],
+    summaryPatches: () => new Map(),
+    hiddenDroidSessionIds: () => new Set(),
+  };
+
+  await manager.handle({ type: 'mission.resume', sessionId: historical.id });
+
+  assert.equal(session.closes, 1);
+  assert.equal(internals.missions.has(historical.id), false);
+  assert.equal(
+    events.some((event) => event.type === 'mission.created'),
+    false,
   );
 });
 
@@ -1120,6 +1090,125 @@ test('agent sends refresh daemon compaction settings before streaming', async ()
   );
 });
 
+test('open agent closes an unowned worker when daemon compaction setup fails', async () => {
+  const { manager, mission, events, internals } = streamHarness(0);
+  const worker = new FakeCompactionSession('worker-open-fail', 0) as FakeCompactionSession & {
+    initResult: Record<string, unknown>;
+  };
+  worker.initResult = { settings: { modelId: 'worker-model' } };
+  worker.updateSettings = async () => {
+    throw new Error('settings failed');
+  };
+  mission.knownSubagents.add(worker.sessionId);
+  (
+    internals as typeof internals & {
+      runtime: { loadSession: (id: string, handlers: unknown) => Promise<typeof worker> };
+      getFactoryDefaults: () => Promise<{ modelId?: string; workerModelId?: string }>;
+    }
+  ).runtime = {
+    loadSession: async () => worker,
+  };
+  (
+    internals as typeof internals & {
+      getFactoryDefaults: () => Promise<{ modelId?: string; workerModelId?: string }>;
+    }
+  ).getFactoryDefaults = async () => ({ modelId: 'model-a', workerModelId: 'worker-model' });
+
+  await manager.handle({
+    type: 'agent.open',
+    missionId: mission.summary.id,
+    agentSessionId: worker.sessionId,
+    role: 'worker',
+  });
+
+  assert.equal(worker.closes, 1);
+  assert.equal(mission.agents.has(worker.sessionId), false);
+  assert.equal(
+    events.some((event) => event.type === 'error' && event.code === 'agent.open_failed'),
+    true,
+  );
+});
+
+test('subscribeWorker opens validators with mission validator daemon compaction settings', async () => {
+  const { manager, mission, internals } = streamHarness(0);
+  const validator = new FakeCompactionSession('validator-subscribe', 0) as FakeCompactionSession & {
+    initResult: Record<string, unknown>;
+  };
+  validator.initResult = { settings: {} };
+  mission.summary.kind = 'mission_orchestrator';
+  mission.summary.modelId = 'orchestrator-model';
+  mission.summary.validatorModelId = 'mission-validator';
+  mission.knownSubagents.add(validator.sessionId);
+  (
+    internals as typeof internals & {
+      runtime: { loadSession: (id: string, handlers: unknown) => Promise<typeof validator> };
+      getFactoryDefaults: () => Promise<{
+        modelId?: string;
+        validatorModelId?: string;
+      }>;
+    }
+  ).runtime = {
+    loadSession: async () => validator,
+  };
+  (
+    internals as typeof internals & {
+      getFactoryDefaults: () => Promise<{
+        modelId?: string;
+        validatorModelId?: string;
+      }>;
+    }
+  ).getFactoryDefaults = async () => ({
+    modelId: 'orchestrator-model',
+    validatorModelId: 'factory-validator',
+  });
+
+  await manager.handle({
+    type: 'settings.compaction.update',
+    compactionTokenLimitPerModel: {
+      'factory-validator': 100_000,
+      'mission-validator': 180_000,
+    },
+  });
+  await manager.handle({
+    type: 'mission.subscribeWorker',
+    missionId: mission.summary.id,
+    workerSessionId: validator.sessionId,
+    role: 'validator',
+  });
+
+  assert.deepEqual(validator.settingsUpdates.at(-1), {
+    compactionTokenLimit: 180_000,
+    compactionThresholdCheckEnabled: true,
+  });
+  assert.equal(mission.agents.get(validator.sessionId)?.role, 'validator');
+});
+
+test('agent.open coerces validators to workers outside Mission Control', async () => {
+  const { manager, mission, internals } = streamHarness(0);
+  const worker = new FakeCompactionSession('chat-validation-open', 0) as FakeCompactionSession & {
+    initResult: Record<string, unknown>;
+  };
+  worker.initResult = { settings: {} };
+  mission.summary.kind = 'chat';
+  mission.knownSubagents.add(worker.sessionId);
+  (
+    internals as typeof internals & {
+      runtime: { loadSession: (id: string, handlers: unknown) => Promise<typeof worker> };
+    }
+  ).runtime = {
+    loadSession: async () => worker,
+  };
+
+  await manager.handle({
+    type: 'agent.open',
+    missionId: mission.summary.id,
+    agentSessionId: worker.sessionId,
+    role: 'validator',
+  });
+
+  assert.equal(mission.agents.get(worker.sessionId)?.role, 'worker');
+});
+
 test('agent sends use mission worker model for live compaction settings', async () => {
   const { manager, mission } = streamHarness(0);
   const worker = new FakeCompactionSession('worker-mission-model', 10_000);
@@ -1186,6 +1275,67 @@ test('agent sends use mission worker model for live compaction settings', async 
   });
 });
 
+test('agent sends use mission validator model for live compaction settings', async () => {
+  const { manager, mission } = streamHarness(0);
+  const validator = new FakeCompactionSession('validator-mission-model', 10_000);
+  mission.summary.kind = 'mission_orchestrator';
+  mission.summary.modelId = 'orchestrator-model';
+  mission.summary.validatorModelId = 'mission-validator';
+  mission.knownSubagents.add(validator.sessionId);
+  mission.agents.set(validator.sessionId, {
+    session: validator,
+    missionId: mission.summary.id,
+    role: 'validator',
+    streaming: false,
+    pendingSends: [],
+    lastUsedAt: Date.now(),
+  });
+  (
+    manager as unknown as {
+      getFactoryDefaults: () => Promise<{
+        modelId?: string;
+        validatorModelId?: string;
+      }>;
+    }
+  ).getFactoryDefaults = async () => ({
+    modelId: 'orchestrator-model',
+    validatorModelId: 'factory-validator',
+  });
+
+  await manager.handle({
+    type: 'agent.send',
+    missionId: mission.summary.id,
+    agentSessionId: validator.sessionId,
+    text: 'validator turn',
+    compactionTokenLimitPerModel: {
+      'factory-validator': 100_000,
+      'mission-validator': 180_000,
+    },
+  });
+
+  assert.deepEqual(validator.settingsUpdates.at(-1), {
+    compactionTokenLimit: 180_000,
+    compactionThresholdCheckEnabled: true,
+  });
+
+  mission.summary.validatorModelId = undefined;
+  await manager.handle({
+    type: 'agent.send',
+    missionId: mission.summary.id,
+    agentSessionId: validator.sessionId,
+    text: 'validator default turn',
+    compactionTokenLimitPerModel: {
+      'factory-validator': 100_000,
+      'mission-validator': 180_000,
+    },
+  });
+
+  assert.deepEqual(validator.settingsUpdates.at(-1), {
+    compactionTokenLimit: 100_000,
+    compactionThresholdCheckEnabled: true,
+  });
+});
+
 test('discovered subagents receive daemon compaction settings before manual open', async () => {
   const { manager, session, mission, internals } = streamHarness(10_000);
   const worker = new FakeCompactionSession('worker-discovered', 5_000) as FakeCompactionSession & {
@@ -1194,12 +1344,10 @@ test('discovered subagents receive daemon compaction settings before manual open
   worker.initResult = { settings: { modelId: 'worker-model' } };
   const discoveredInternals = internals as unknown as {
     runtime: { loadSession: (id: string, handlers: unknown) => Promise<typeof worker> };
-    getFactoryDefaults: () => Promise<{ compactionTokenLimitPerModel?: Record<string, number> }>;
+    getFactoryDefaults: () => Promise<Record<string, never>>;
   };
   discoveredInternals.runtime = { loadSession: async () => worker };
-  discoveredInternals.getFactoryDefaults = async () => ({
-    compactionTokenLimitPerModel: { 'worker-model': 175_000 },
-  });
+  discoveredInternals.getFactoryDefaults = async () => ({});
   session.streamEvents = [
     {
       type: 'tool_progress',
@@ -1221,6 +1369,98 @@ test('discovered subagents receive daemon compaction settings before manual open
   await waitFor(() => worker.callOrder.includes('compaction:175000'));
   assert.equal(mission.agents.get(worker.sessionId)?.session, worker);
   assert.equal(worker.notificationHandler !== undefined, true);
+});
+
+test('normal Task subagents stay workers even when prompts mention validation', async () => {
+  const { manager, session, mission, internals } = streamHarness(10_000);
+  const worker = new FakeCompactionSession(
+    'worker-validation-task',
+    5_000,
+  ) as FakeCompactionSession & {
+    initResult: Record<string, unknown>;
+  };
+  worker.initResult = { settings: { modelId: 'worker-model' } };
+  const discoveredInternals = internals as unknown as {
+    runtime: { loadSession: (id: string, handlers: unknown) => Promise<typeof worker> };
+    getFactoryDefaults: () => Promise<Record<string, never>>;
+  };
+  discoveredInternals.runtime = { loadSession: async () => worker };
+  discoveredInternals.getFactoryDefaults = async () => ({});
+  session.streamEvents = [
+    {
+      type: 'tool_progress',
+      toolUseId: 'tool-validation',
+      update: {
+        subagentSessionId: worker.sessionId,
+        parameters: {
+          subagent_type: 'validation reviewer',
+          prompt: 'review the validation behavior',
+        },
+      },
+    },
+  ];
+
+  await manager.handle({
+    type: 'mission.send',
+    missionId: mission.summary.id,
+    text: 'spawn validation reviewer',
+    compactionTokenLimitPerModel: { 'worker-model': 175_000 },
+  });
+
+  await waitFor(() => worker.callOrder.includes('compaction:175000'));
+  assert.equal(mission.summary.kind, 'chat');
+  assert.equal(mission.agents.get(worker.sessionId)?.role, 'worker');
+});
+
+test('discovered validator subagents receive validator daemon compaction settings', async () => {
+  const { manager, session, mission, internals } = streamHarness(10_000);
+  const validator = new FakeCompactionSession(
+    'validator-discovered',
+    5_000,
+  ) as FakeCompactionSession & {
+    initResult: Record<string, unknown>;
+  };
+  validator.initResult = { settings: {} };
+  mission.summary.kind = 'mission_orchestrator';
+  mission.summary.modelId = 'orchestrator-model';
+  mission.summary.validatorModelId = 'mission-validator';
+  const discoveredInternals = internals as unknown as {
+    runtime: { loadSession: (id: string, handlers: unknown) => Promise<typeof validator> };
+    getFactoryDefaults: () => Promise<{ modelId?: string; validatorModelId?: string }>;
+  };
+  discoveredInternals.runtime = { loadSession: async () => validator };
+  discoveredInternals.getFactoryDefaults = async () => ({
+    modelId: 'orchestrator-model',
+    validatorModelId: 'factory-validator',
+  });
+  session.streamEvents = [
+    {
+      type: 'tool_progress',
+      toolUseId: 'tool-validator',
+      update: {
+        subagentSessionId: validator.sessionId,
+        parameters: { subagent_type: 'validator' },
+      },
+    },
+  ];
+
+  await manager.handle({
+    type: 'mission.send',
+    missionId: mission.summary.id,
+    text: 'spawn validator',
+    compactionTokenLimitPerModel: {
+      'factory-validator': 100_000,
+      'mission-validator': 180_000,
+    },
+  });
+
+  await waitFor(() => validator.callOrder.includes('compaction:180000'));
+  assert.equal(mission.agents.get(validator.sessionId)?.role, 'validator');
+  assert.deepEqual(validator.settingsUpdates.at(-1), {
+    compactionTokenLimit: 180_000,
+    compactionThresholdCheckEnabled: true,
+  });
+  assert.equal(validator.notificationHandler !== undefined, true);
 });
 
 test('permission and question responses refresh compaction settings before continuation', async () => {
@@ -1468,6 +1708,7 @@ class FakeCompactionSession {
   settingsUpdates: Array<Record<string, unknown>> = [];
   notificationHandler?: (note: Record<string, unknown>) => void;
   unsubscribed = false;
+  closes = 0;
 
   constructor(
     readonly sessionId: string,
@@ -1539,6 +1780,7 @@ class FakeCompactionSession {
   }
 
   async close(): Promise<void> {
+    this.closes += 1;
     await this.beforeClose?.();
   }
 }
@@ -1661,7 +1903,8 @@ test('routes daemon compacted notifications from orchestrator sessions', async (
   );
   assert.ok(transcript);
   assert.equal(mission.summary.compactionCount, 1);
-  await waitFor(() => session.callOrder.includes('compaction:400000'));
+  await waitFor(() => session.settingsUpdates.length > 0);
+  assert.deepEqual(session.settingsUpdates.at(-1), { compactionThresholdCheckEnabled: true });
 
   await manager.handle({
     type: 'settings.compaction.update',
@@ -1722,11 +1965,11 @@ test('routes daemon compacted notifications from worker sessions to worker conte
     | { type: 'context.updated'; stats: { used: number; remaining: number; limit: number } }
     | undefined;
   assert.equal(workerContext?.stats.used, 12_345);
-  assert.equal(workerContext?.stats.remaining, 87_655);
-  assert.equal(workerContext?.stats.limit, 100_000);
+  assert.equal(workerContext?.stats.remaining, 77_655);
+  assert.equal(workerContext?.stats.limit, 90_000);
   assert.equal(mission.summary.compactionCount, 1);
-  assert.equal(session.callOrder.includes('compaction:100000'), true);
-  assert.equal(worker.callOrder.includes('compaction:100000'), true);
+  assert.deepEqual(session.settingsUpdates.at(-1), { compactionThresholdCheckEnabled: true });
+  assert.deepEqual(worker.settingsUpdates.at(-1), { compactionThresholdCheckEnabled: true });
   unsubscribe();
 });
 
@@ -1790,7 +2033,7 @@ test('send leaves automatic compaction to the daemon even when over budget', asy
   );
 });
 
-test('agent visible limit uses mission validator model', () => {
+test('agent context window uses mission validator model', () => {
   const { manager, mission } = streamHarness(0);
   const validator = new FakeCompactionSession('validator-budget', 0);
   type TestAgent = {
@@ -1804,7 +2047,6 @@ test('agent visible limit uses mission validator model', () => {
   type TestDefaults = {
     modelId: string;
     validatorModelId: string;
-    compactionTokenLimitPerModel: Record<string, number>;
   };
   const agent: TestAgent = {
     session: validator,
@@ -1820,23 +2062,38 @@ test('agent visible limit uses mission validator model', () => {
   const defaults: TestDefaults = {
     modelId: 'orchestrator-model',
     validatorModelId: 'factory-validator',
-    compactionTokenLimitPerModel: {
-      'factory-validator': 100_000,
-      'mission-validator': 220_000,
-    },
   };
   const internals = manager as unknown as {
-    visibleContextLimitForAgent: (
+    cachedModels?: ModelInfo[];
+    contextWindowForAgent: (
       mission: unknown,
       agent: TestAgent,
       defaults: TestDefaults,
     ) => number | undefined;
   };
+  internals.cachedModels = [
+    {
+      id: 'factory-validator',
+      displayName: 'Factory Validator',
+      isDefault: false,
+      isCustom: false,
+      supportedReasoningEfforts: [],
+      maxContextTokens: 100_000,
+    },
+    {
+      id: 'mission-validator',
+      displayName: 'Mission Validator',
+      isDefault: false,
+      isCustom: false,
+      supportedReasoningEfforts: [],
+      maxContextTokens: 220_000,
+    },
+  ];
 
-  assert.equal(internals.visibleContextLimitForAgent(mission, agent, defaults), 220_000);
+  assert.equal(internals.contextWindowForAgent(mission, agent, defaults), 220_000);
 
   mission.summary.validatorModelId = undefined;
-  assert.equal(internals.visibleContextLimitForAgent(mission, agent, defaults), 100_000);
+  assert.equal(internals.contextWindowForAgent(mission, agent, defaults), 100_000);
 });
 
 test('does not treat tool_result as a safe mid-task compaction checkpoint', async () => {
@@ -2310,7 +2567,7 @@ test('estimated context stats prefer detailed breakdown usage', async () => {
   assert.equal(contextEvent?.stats.limit, 200_000);
 });
 
-test('context stats expose the selected visible compaction budget', async () => {
+test('context stats keep the daemon context window separate from the trigger budget', async () => {
   const { manager, session, mission, events } = streamHarness(93_478);
   mission.summary.modelId = 'model-a';
   session.limit = 90_000;
@@ -2338,12 +2595,12 @@ test('context stats expose the selected visible compaction budget', async () => 
     | { type: 'context.updated'; stats: { used: number; remaining: number; limit: number } }
     | undefined;
   assert.equal(contextEvent?.stats.used, 93_478);
-  assert.equal(contextEvent?.stats.remaining, 6_522);
-  assert.equal(contextEvent?.stats.limit, 100_000);
-  assert.equal(mission.summary.maxContextTokens, 100_000);
+  assert.equal(contextEvent?.stats.remaining, 0);
+  assert.equal(contextEvent?.stats.limit, 90_000);
+  assert.equal(mission.summary.maxContextTokens, 90_000);
 });
 
-test('context stats use the mode default model for visible limits', async () => {
+test('context stats use daemon limits instead of mode default trigger budgets', async () => {
   const { manager, session, mission, events } = streamHarness(125_000);
   mission.summary.kind = 'spec';
   mission.summary.modelId = undefined;
@@ -2370,12 +2627,12 @@ test('context stats use the mode default model for visible limits', async () => 
     | { type: 'context.updated'; stats: { used: number; remaining: number; limit: number } }
     | undefined;
   assert.equal(contextEvent?.stats.used, 125_000);
-  assert.equal(contextEvent?.stats.remaining, 95_000);
-  assert.equal(contextEvent?.stats.limit, 220_000);
-  assert.equal(mission.summary.maxContextTokens, 220_000);
+  assert.equal(contextEvent?.stats.remaining, 175_000);
+  assert.equal(contextEvent?.stats.limit, 300_000);
+  assert.equal(mission.summary.maxContextTokens, 300_000);
 });
 
-test('token usage events preserve the visible context window between refreshes', async () => {
+test('token usage events use model context until exact daemon stats refresh', async () => {
   const { manager, session, mission, events } = streamHarness(92_000);
   mission.summary.modelId = 'model-a';
   mission.summary.maxContextTokens = 100_000;
@@ -2409,13 +2666,14 @@ test('token usage events preserve the visible context window between refreshes',
   }>;
   assert.ok(contextEvents.length > 0);
   assert.equal(
-    contextEvents.every((event) => event.stats.limit === 100_000),
+    contextEvents.some((event) => event.stats.limit === 200_000),
     true,
   );
-  assert.equal(mission.summary.maxContextTokens, 100_000);
+  assert.equal(contextEvents.at(-1)?.stats.limit, 90_000);
+  assert.equal(mission.summary.maxContextTokens, 90_000);
 });
 
-test('token usage events preserve Factory default visible limits after reset', async () => {
+test('token usage events use model context after Factory default trigger reset', async () => {
   const { manager, mission, events } = streamHarness(92_000);
   mission.summary.modelId = 'model-a';
   mission.summary.maxContextTokens = 200_000;
@@ -2469,13 +2727,13 @@ test('token usage events preserve Factory default visible limits after reset', a
     | { type: 'mission.tokens'; maxContextTokens?: number }
     | undefined;
   assert.equal(contextEvent?.stats.used, 390_000);
-  assert.equal(contextEvent?.stats.remaining, 10_000);
-  assert.equal(contextEvent?.stats.limit, 400_000);
-  assert.equal(tokenEvent?.maxContextTokens, 400_000);
-  assert.equal(mission.summary.maxContextTokens, 400_000);
+  assert.equal(contextEvent?.stats.remaining, 610_000);
+  assert.equal(contextEvent?.stats.limit, 1_000_000);
+  assert.equal(tokenEvent?.maxContextTokens, 1_000_000);
+  assert.equal(mission.summary.maxContextTokens, 1_000_000);
 });
 
-test('token usage events preserve Factory per-model visible limits after reset', async () => {
+test('token usage events use model context after per-model trigger reset', async () => {
   const { manager, mission, events } = streamHarness(92_000);
   mission.summary.modelId = 'model-a';
   mission.summary.maxContextTokens = 200_000;
@@ -2528,16 +2786,17 @@ test('token usage events preserve Factory per-model visible limits after reset',
     | { type: 'mission.tokens'; maxContextTokens?: number }
     | undefined;
   assert.equal(contextEvent?.stats.used, 390_000);
-  assert.equal(contextEvent?.stats.remaining, 10_000);
-  assert.equal(contextEvent?.stats.limit, 400_000);
-  assert.equal(tokenEvent?.maxContextTokens, 400_000);
-  assert.equal(mission.summary.maxContextTokens, 400_000);
+  assert.equal(contextEvent?.stats.remaining, 610_000);
+  assert.equal(contextEvent?.stats.limit, 1_000_000);
+  assert.equal(tokenEvent?.maxContextTokens, 1_000_000);
+  assert.equal(mission.summary.maxContextTokens, 1_000_000);
 });
 
-test('cleared compaction limit returns the visible context window to the model max', async () => {
+test('cleared compaction limit does not change the daemon context window', async () => {
   const { manager, session, mission, events } = streamHarness(92_000);
   mission.summary.modelId = 'model-a';
   mission.summary.maxContextTokens = 100_000;
+  session.limit = 200_000;
   session.streamEvents.push({
     type: 'session_token_usage_changed',
     inclusiveTokenUsage: { inputTokens: 1_000, outputTokens: 100 },
@@ -2573,10 +2832,11 @@ test('cleared compaction limit returns the visible context window to the model m
   assert.equal(mission.summary.maxContextTokens, 200_000);
 });
 
-test('cleared per-model compaction limit returns the visible context window to the model max', async () => {
-  const { manager, mission, events } = streamHarness(92_000);
+test('cleared per-model compaction limit does not change the daemon context window', async () => {
+  const { manager, session, mission, events } = streamHarness(92_000);
   mission.summary.modelId = 'model-a';
   mission.summary.maxContextTokens = 100_000;
+  session.limit = 200_000;
   const internals = manager as unknown as {
     cachedModels?: ModelInfo[];
     getFactoryDefaults: () => Promise<Record<string, never>>;
@@ -2867,7 +3127,7 @@ test('manual compaction swap recovers when the first reload fails but a retry su
   );
 });
 
-test('manual compaction swap reapplies default model per-model daemon settings', async () => {
+test('manual compaction swap reapplies Factory default daemon policy without numeric defaults', async () => {
   const { manager, mission, internals } = orchestratorSwapHarness(10_000, 'droid-new');
   const swapped = new FakeCompactionSession('droid-new', 10_000);
   mission.summary.modelId = undefined;
@@ -2901,7 +3161,6 @@ test('manual compaction swap reapplies default model per-model daemon settings',
   await manager.handle({ type: 'mission.compact', missionId: 'app-swap' });
 
   assert.deepEqual(swapped.settingsUpdates.at(-1), {
-    compactionTokenLimit: 150_000,
     compactionThresholdCheckEnabled: true,
   });
 });

@@ -24,6 +24,7 @@ import {
   compactTargetSessionIdForMission,
   selectedAgentSessionIdForMission,
 } from '../lib/sessionTargets';
+import { effectiveCompactionSettings } from '../lib/compactionSettings';
 import {
   ArrowUp,
   ChevronDown,
@@ -350,10 +351,8 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
       attachedFiles,
     );
 
-  const compactionSettings = () => ({
-    compactionTokenLimit: state.compactionTokenLimit,
-    compactionTokenLimitPerModel: state.compactionTokenLimitPerModel,
-  });
+  const compactionSettings = () =>
+    effectiveCompactionSettings(state.compactionTokenLimit, state.compactionTokenLimitPerModel);
 
   const resetAttachments = () => {
     setActiveSkills([]);
@@ -407,8 +406,7 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
         reasoningEffort: orchestrator.reasoning,
         compactionModel:
           state.compactionModel === 'current-model' ? undefined : state.compactionModel,
-        compactionTokenLimit: state.compactionTokenLimit,
-        compactionTokenLimitPerModel: state.compactionTokenLimitPerModel,
+        ...compactionSettings(),
         workerModel: worker.modelId,
         workerReasoning: worker.reasoning,
         validatorModel: validator.modelId,
@@ -435,8 +433,7 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
         reasoningEffort: orchestrator.reasoning,
         compactionModel:
           state.compactionModel === 'current-model' ? undefined : state.compactionModel,
-        compactionTokenLimit: state.compactionTokenLimit,
-        compactionTokenLimitPerModel: state.compactionTokenLimitPerModel,
+        ...compactionSettings(),
       });
       setInput('');
       resetAttachments();

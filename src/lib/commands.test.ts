@@ -114,6 +114,21 @@ test('resumeMission forwards current compaction settings', () => {
   ]);
 });
 
+test('subscribeWorker forwards the selected agent role', () => {
+  const sent = captureCommands(() => {
+    subscribeWorker('mission-1', 'validator-1', 'validator');
+  });
+
+  assert.deepEqual(sent, [
+    {
+      type: 'mission.subscribeWorker',
+      missionId: 'mission-1',
+      workerSessionId: 'validator-1',
+      role: 'validator',
+    },
+  ]);
+});
+
 test('command wrappers send their bridge payloads', () => {
   const refA = newClientRef();
   const refB = newClientRef();
@@ -268,6 +283,12 @@ test('command wrappers send their bridge payloads', () => {
     type: 'mission.compact',
     missionId: 'mission-1',
     customInstructions: 'keep recent edits',
+  });
+  assert.deepEqual(sent[22], {
+    type: 'mission.subscribeWorker',
+    missionId: 'mission-1',
+    workerSessionId: 'worker-1',
+    role: 'worker',
   });
   assert.deepEqual(sent.at(-1), {
     type: 'browser.native.result',

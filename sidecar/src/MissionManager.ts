@@ -91,14 +91,7 @@ import {
   normalizePermissionOutcome,
 } from './permissionOutcomes.js';
 import { filterMissionListSummaries, type MissionListFilterOptions } from './missionListFilter.js';
-import {
-  clampCompactionTokenLimit,
-  compactionTokenLimitForModel,
-  createCompactionSettingsForModel,
-  normalizeCompactionTokenLimit,
-  runCompaction,
-  type CompactType,
-} from './compaction.js';
+import { createCompactionSettingsForModel, runCompaction, type CompactType } from './compaction.js';
 
 export {
   createAutonomyForCommand,
@@ -172,6 +165,7 @@ interface PendingSubagent {
   toolUseId?: string;
   label?: string;
   prompt?: string;
+  role?: 'worker' | 'validator';
 }
 
 interface SubagentSettings {
@@ -373,7 +367,7 @@ export class MissionManager {
         await this.openAgent(cmd.missionId, cmd.agentSessionId, cmd.role ?? 'worker');
         return;
       case 'mission.subscribeWorker':
-        await this.openAgent(cmd.missionId, cmd.workerSessionId, 'worker');
+        await this.openAgent(cmd.missionId, cmd.workerSessionId, cmd.role ?? 'worker');
         return;
       case 'agent.send':
         await this.sendAgent(cmd.missionId, cmd.agentSessionId, cmd.text, {
@@ -425,7 +419,7 @@ export class MissionManager {
           );
           return;
         }
-        await this.compactSession(missionId, cmd.customInstructions, 'manual');
+        await this.compactSession(missionId, cmd.customInstructions);
         // Manual compaction is a standalone command. Drain one queued send now;
         // drive()'s finally chains the rest.
         const compacted = this.findMission(missionId);
@@ -716,8 +710,11 @@ export class MissionManager {
       } else if (settings.compactionTokenLimit !== undefined) {
         next.compactionTokenLimit = settings.compactionTokenLimit;
       }
-      if (settings.compactionTokenLimitPerModel !== undefined)
+      if (next.compactionTokenLimit === null) {
+        next.compactionTokenLimitPerModel = {};
+      } else if (settings.compactionTokenLimitPerModel !== undefined) {
         next.compactionTokenLimitPerModel = { ...settings.compactionTokenLimitPerModel };
+      }
       this.currentCompactionSettings = next;
     }
     return this.currentCompactionSettings;
@@ -732,11 +729,10 @@ export class MissionManager {
       mission.session,
       this.compactionModelIdForSummary(mission.summary, defaults),
       settings,
-      defaults,
     );
     for (const [agentSessionId, agent] of mission.agents) {
       const modelId = this.modelIdForAgent(mission, agentSessionId, agent.role, defaults);
-      await this.applyDaemonCompactionSettings(agent.session, modelId, settings, defaults);
+      await this.applyDaemonCompactionSettings(agent.session, modelId, settings);
     }
   }
 
@@ -759,44 +755,33 @@ export class MissionManager {
     return this.cachedModels?.find((model) => model.id === modelId)?.maxContextTokens;
   }
 
-  private visibleContextLimitForModel(
-    modelId: string | undefined,
-    defaults: Partial<FactoryDefaultSettings> = {},
-    fallback?: number,
-  ): number | undefined {
-    const modelMax = this.maxContextTokensForModel(modelId);
-    const configured = clampCompactionTokenLimit(
-      compactionTokenLimitForModel(modelId, this.currentCompactionSettings, defaults),
-      modelMax,
-    );
-    if (configured !== undefined) return configured;
-    if (this.compactionLimitClearedForModel(modelId, defaults)) return modelMax;
-    return fallback ?? modelMax;
+  private positiveContextLimit(value?: number): number | undefined {
+    return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : undefined;
   }
 
-  private visibleContextLimitForSummary(
+  private contextWindowForModel(
+    modelId: string | undefined,
+    daemonLimit?: number,
+    fallback?: number,
+  ): number | undefined {
+    return (
+      this.positiveContextLimit(daemonLimit) ??
+      this.maxContextTokensForModel(modelId) ??
+      this.positiveContextLimit(fallback)
+    );
+  }
+
+  private contextWindowForSummary(
     summary: MissionSummary,
     defaults: Partial<FactoryDefaultSettings> = {},
+    daemonLimit?: number,
     fallback?: number,
   ): number | undefined {
-    return this.visibleContextLimitForModel(
+    return this.contextWindowForModel(
       this.compactionModelIdForSummary(summary, defaults),
-      defaults,
+      daemonLimit,
       fallback,
     );
-  }
-
-  private compactionLimitClearedForModel(
-    modelId: string | undefined,
-    defaults: Partial<FactoryDefaultSettings> = {},
-  ): boolean {
-    const perModel = this.currentCompactionSettings.compactionTokenLimitPerModel;
-    if (modelId && normalizeCompactionTokenLimit(perModel?.[modelId]) !== undefined) return false;
-    const globalLimit = this.currentCompactionSettings.compactionTokenLimit;
-    if (normalizeCompactionTokenLimit(globalLimit) !== undefined) return false;
-    if (globalLimit === null) return true;
-    if (perModel === undefined) return false;
-    return normalizeCompactionTokenLimit(defaults.compactionTokenLimit) === undefined;
   }
 
   private modelIdForAgent(
@@ -822,14 +807,15 @@ export class MissionManager {
     return this.compactionModelIdForSummary(mission.summary, defaults);
   }
 
-  private visibleContextLimitForAgent(
+  private contextWindowForAgent(
     mission: Mission,
     agent: LiveAgent,
     defaults: Partial<FactoryDefaultSettings> = {},
+    daemonLimit?: number,
   ): number | undefined {
-    return this.visibleContextLimitForModel(
+    return this.contextWindowForModel(
       this.modelIdForAgent(mission, agent.session.sessionId, agent.role, defaults),
-      defaults,
+      daemonLimit,
     );
   }
 
@@ -944,12 +930,7 @@ export class MissionManager {
         defaultModelForAgent('orchestrator', modeForSummary(mission.summary), defaults);
       Object.assign(
         next,
-        createCompactionSettingsForModel(
-          nextModelId,
-          this.currentCompactionSettings,
-          defaults,
-          this.maxContextTokensForModel(nextModelId),
-        ),
+        createCompactionSettingsForModel(nextModelId, this.currentCompactionSettings),
       );
     }
     if (Object.keys(next).length > 0) await mission.session.updateSettings(next as never);
@@ -959,16 +940,8 @@ export class MissionManager {
     session: DroidSession,
     modelId: string | undefined,
     settings: CompactionSettings,
-    defaults: FactoryDefaultSettings,
   ): Promise<void> {
-    await session.updateSettings(
-      createCompactionSettingsForModel(
-        modelId,
-        settings,
-        defaults,
-        this.maxContextTokensForModel(modelId),
-      ) as never,
-    );
+    await session.updateSettings(createCompactionSettingsForModel(modelId, settings) as never);
   }
 
   private compactionCountForSummary(
@@ -1239,6 +1212,7 @@ export class MissionManager {
     // visible chat. Mirrors create(), which sets ref.id to the app session id.
     const ref = { id: appSessionId };
     let pendingMcpServers: SdkMcpServer[] = [];
+    let pendingSession: DroidSession | undefined;
     try {
       const mcp = await this.startLocalMcpServers(ref);
       pendingMcpServers = mcp.servers;
@@ -1247,6 +1221,7 @@ export class MissionManager {
         askUserHandler: this.makeAskUserHandler(ref),
         mcpServers: mcp.configs,
       });
+      pendingSession = session;
       const init = session.initResult as InitResultLike;
       const features = (init.mission?.features ?? []).map((f) => mapFeature(f as never));
       const defaults = await this.getFactoryDefaults();
@@ -1308,7 +1283,7 @@ export class MissionManager {
         createdAt: historical?.createdAt ?? now,
         updatedAt: now,
       });
-      await this.applyDaemonCompactionSettings(session, summary.modelId, settings, defaults);
+      await this.applyDaemonCompactionSettings(session, summary.modelId, settings);
       const mission: Mission = this.createLiveMission(summary, session, mcp.servers, mcp.configs);
       // Seed the spawn->worker links persisted for this mission so historical
       // subagents are recognized (and thus openable/steerable) after a resume,
@@ -1318,6 +1293,8 @@ export class MissionManager {
         if (link.toolUseId) mission.subagentToolUseIds.set(link.toolUseId, link.workerSessionId);
       }
       this.missions.set(appSessionId, mission);
+      pendingSession = undefined;
+      pendingMcpServers = [];
       this.history.syncSummaries([summary]);
       this.emit({ type: 'mission.created', clientRef: `resume:${appSessionId}`, mission: summary });
       this.emit({ type: 'session.updated', session: summary });
@@ -1325,7 +1302,10 @@ export class MissionManager {
         this.emit({ type: 'mission.features', missionId: appSessionId, features });
       void this.refreshContext(appSessionId, session);
     } catch (err) {
-      await Promise.all(pendingMcpServers.map((server) => server.close().catch(() => {})));
+      await Promise.all([
+        ...pendingMcpServers.map((server) => server.close().catch(() => {})),
+        pendingSession?.close().catch(() => {}),
+      ]);
       this.emitError({ missionId: appSessionId, sessionId: droidSessionId, message: errMsg(err) });
     }
   }
@@ -1525,6 +1505,7 @@ export class MissionManager {
     const runtimeCwd = appCwd || homedir();
     const ref = { id: '' };
     let pendingMcpServers: SdkMcpServer[] = [];
+    let pendingSession: DroidSession | undefined;
     try {
       const defaults = await this.getFactoryDefaults();
       const mode = cmd.interactionMode ?? defaults.interactionMode ?? 'agi';
@@ -1536,8 +1517,6 @@ export class MissionManager {
       const compactionSettings = createCompactionSettingsForModel(
         orchestratorModelId,
         activeCompactionSettings,
-        defaults,
-        this.maxContextTokensForModel(orchestratorModelId),
       );
       const { workerModelId, workerReasoningEffort, validatorModelId, validatorReasoningEffort } =
         createMissionAgentDefaultsForMode(mode, cmd, defaults);
@@ -1563,11 +1542,11 @@ export class MissionManager {
         permissionHandler: this.makePermissionHandler(ref),
         askUserHandler: this.makeAskUserHandler(ref),
       });
+      pendingSession = session;
       await this.applyDaemonCompactionSettings(
         session,
         orchestratorModelId,
         activeCompactionSettings,
-        defaults,
       );
 
       const id = session.sessionId;
@@ -1604,12 +1583,17 @@ export class MissionManager {
       ref.id = id;
       const mission = this.createLiveMission(summary, session, mcp.servers, mcp.configs);
       this.missions.set(id, mission);
+      pendingSession = undefined;
+      pendingMcpServers = [];
       this.history.syncSummaries([summary]);
       this.emit({ type: 'mission.created', clientRef: cmd.clientRef, mission: summary });
       this.emit({ type: 'session.updated', session: summary });
       void this.drive(id, cmd.goal);
     } catch (err) {
-      await Promise.all(pendingMcpServers.map((server) => server.close().catch(() => {})));
+      await Promise.all([
+        ...pendingMcpServers.map((server) => server.close().catch(() => {})),
+        pendingSession?.close().catch(() => {}),
+      ]);
       this.emitError({ message: errMsg(err) });
     }
   }
@@ -1867,6 +1851,7 @@ export class MissionManager {
           toolUseId: sub.toolUseId,
           label: sub.label,
           prompt: sub.prompt,
+          role: this.roleForSubagent(mission, sub.label, sub.prompt),
         });
       }
       return;
@@ -1880,6 +1865,7 @@ export class MissionManager {
     const toolUseId = sub.toolUseId ?? pending?.toolUseId;
     const label = sub.label ?? pending?.label;
     const prompt = sub.prompt ?? pending?.prompt;
+    const role = pending?.role ?? this.roleForSubagent(mission, label, prompt);
     mission.knownSubagents.add(sessionId);
     mission.completedSubagents.delete(sessionId);
     if (toolUseId) {
@@ -1900,7 +1886,7 @@ export class MissionManager {
         id: `subagent-task-${sessionId}`,
         missionId: appSessionId,
         agentSessionId: sessionId,
-        role: 'worker',
+        role,
         ts: Date.now(),
         kind: 'status',
         text: `Task prompt\n\n${prompt}`,
@@ -1910,10 +1896,21 @@ export class MissionManager {
       type: 'agent.updated',
       missionId: appSessionId,
       agentSessionId: sessionId,
-      role: 'worker',
+      role,
       status: 'running',
     });
-    void this.openAgent(appSessionId, sessionId, 'worker', 'running', false);
+    void this.openAgent(appSessionId, sessionId, role, 'running', false);
+  }
+
+  private roleForSubagent(
+    mission: Mission,
+    ...parts: Array<string | undefined>
+  ): 'worker' | 'validator' {
+    if (mission.summary.kind !== 'mission_orchestrator') return 'worker';
+    const text = parts.filter(Boolean).join(' ').toLowerCase();
+    return text.includes('validator') || text.includes('validation') || text.includes('scrutiny')
+      ? 'validator'
+      : 'worker';
   }
 
   private takePendingSubagent(mission: Mission, sub: PendingSubagent): PendingSubagent | undefined {
@@ -1949,6 +1946,7 @@ export class MissionManager {
     const appSessionId = mission.summary.id;
     mission.completedSubagents.add(resolvedSessionId);
     const settings = mission.subagentSettings.get(resolvedSessionId) ?? {};
+    const role = mission.agents.get(resolvedSessionId)?.role ?? 'worker';
     this.emit({
       type: 'mission.worker',
       missionId: appSessionId,
@@ -1960,7 +1958,7 @@ export class MissionManager {
       type: 'agent.updated',
       missionId: appSessionId,
       agentSessionId: sessionId,
-      role: 'worker',
+      role,
       status: 'completed',
     });
     void this.closeAgentWhenIdle(appSessionId, sessionId);
@@ -2008,10 +2006,11 @@ export class MissionManager {
         m.summary.tokensIn = n.tokens.tokensIn + (offset?.tokensIn ?? 0);
         m.summary.tokensOut = n.tokens.tokensOut + (offset?.tokensOut ?? 0);
         const snapshot = this.contextSnapshots.get(appSessionId);
-        const maxContextTokens = this.visibleContextLimitForSummary(
+        const maxContextTokens = this.contextWindowForSummary(
           m.summary,
           this.cachedFactoryDefaults,
-          snapshot?.limit ?? m.summary.maxContextTokens,
+          snapshot?.limit,
+          m.summary.maxContextTokens,
         );
         if (maxContextTokens === undefined) delete m.summary.maxContextTokens;
         else m.summary.maxContextTokens = maxContextTokens;
@@ -2065,14 +2064,10 @@ export class MissionManager {
     });
   }
 
-  private async compactSession(
-    sessionId: string,
-    customInstructions?: string,
-    compactType: CompactType = 'manual',
-  ): Promise<void> {
+  private async compactSession(sessionId: string, customInstructions?: string): Promise<void> {
     const mission = this.findMission(sessionId);
     if (mission) {
-      await this.compactMission(mission, customInstructions, compactType);
+      await this.compactMission(mission, customInstructions);
       return;
     }
     await this.compactHistoricalSession(sessionId, customInstructions);
@@ -2084,7 +2079,6 @@ export class MissionManager {
   private async compactMission(
     mission: Mission,
     customInstructions: string | undefined,
-    compactType: CompactType,
   ): Promise<void> {
     const appSessionId = mission.summary.id;
     const carryover: UsageOffset = {
@@ -2113,7 +2107,7 @@ export class MissionManager {
             await this.swapMissionSession(mission, newSessionId, carryover);
           },
         },
-        { customInstructions, compactType },
+        { customInstructions, compactType: 'manual' },
       );
       // The daemon swapped to a new backing id but adopting it threw, so
       // mission.session still points at the swapped-away (now-dead) old id.
@@ -2163,7 +2157,6 @@ export class MissionManager {
         mission.session,
         this.compactionModelIdForSummary(mission.summary, defaults),
         this.currentCompactionSettings,
-        defaults,
       );
     } catch (err) {
       this.emitError({
@@ -2426,12 +2419,7 @@ export class MissionManager {
       patch.maxContextTokens = this.maxContextTokensForModel(nextModelId);
       Object.assign(
         next,
-        createCompactionSettingsForModel(
-          nextModelId,
-          this.currentCompactionSettings,
-          defaults,
-          this.maxContextTokensForModel(nextModelId),
-        ),
+        createCompactionSettingsForModel(nextModelId, this.currentCompactionSettings),
       );
     }
     if (settings.reasoningEffort) {
@@ -2472,13 +2460,17 @@ export class MissionManager {
   private async openAgent(
     missionId: string,
     agentSessionId: string,
-    role: AgentRole,
+    requestedRole: AgentRole,
     status: 'opened' | 'running' = 'opened',
     emitHistory = true,
   ): Promise<void> {
     const mission = this.findMission(missionId);
     if (!mission) return;
     const appSessionId = mission.summary.id;
+    const role: 'worker' | 'validator' =
+      mission.summary.kind === 'mission_orchestrator' && requestedRole === 'validator'
+        ? 'validator'
+        : 'worker';
     const resolvedAgentSessionId = this.resolveAgentSessionId(mission, agentSessionId);
     if (!this.agentBelongsToMission(mission, resolvedAgentSessionId)) return;
     if (mission.agents.has(resolvedAgentSessionId)) {
@@ -2493,6 +2485,7 @@ export class MissionManager {
       });
       return;
     }
+    let pendingSession: DroidSession | undefined;
     try {
       if (!(await this.ensureAgentCapacity(mission, resolvedAgentSessionId))) return;
       const ref = { id: appSessionId };
@@ -2500,6 +2493,7 @@ export class MissionManager {
         permissionHandler: this.makePermissionHandler(ref),
         askUserHandler: this.makeAskUserHandler(ref),
       });
+      pendingSession = session;
       const actualSettings = subagentSettingsFromInit(session.initResult as InitResultLike);
       // For a chat/spec subagent, fall back to the session's model when the
       // droid inherits it. Mission Control workers/validators keep their own
@@ -2528,7 +2522,6 @@ export class MissionManager {
         session,
         workerModelId,
         this.currentCompactionSettings,
-        defaults,
       );
       const agent: LiveAgent = {
         session,
@@ -2545,6 +2538,7 @@ export class MissionManager {
         session,
       );
       mission.agents.set(resolvedAgentSessionId, agent);
+      pendingSession = undefined;
       if (emitHistory) this.emitAgentHistory(appSessionId, resolvedAgentSessionId);
       this.emit({
         type: 'agent.updated',
@@ -2561,6 +2555,7 @@ export class MissionManager {
         sessionId: resolvedAgentSessionId,
         message: errMsg(err),
       });
+      await pendingSession?.close().catch(() => {});
     }
   }
 
@@ -2670,7 +2665,7 @@ export class MissionManager {
   ): Promise<void> {
     agent.compacting = true;
     try {
-      await this.compactAgent(mission, agent, undefined, 'manual', customInstructions);
+      await this.compactAgent(mission, agent, customInstructions);
     } finally {
       agent.compacting = false;
     }
@@ -2690,8 +2685,6 @@ export class MissionManager {
   private async compactAgent(
     mission: Mission,
     agent: LiveAgent,
-    text?: string,
-    compactType: CompactType = 'auto',
     customInstructions?: string,
   ): Promise<boolean> {
     const appSessionId = mission.summary.id;
@@ -2714,7 +2707,7 @@ export class MissionManager {
           await this.swapAgentSession(mission, agent, newSessionId);
         },
       },
-      { customInstructions, compactType },
+      { customInstructions, compactType: 'manual' },
     );
     if (outcome === 'stale' && swapTarget) {
       try {
@@ -2739,12 +2732,7 @@ export class MissionManager {
         } catch {
           /* stale transport close errors are non-fatal during recovery */
         }
-        await this.recoverAgentAndRedeliverSends(
-          mission,
-          agent.role,
-          swapTarget,
-          text === undefined ? queued : [text, ...queued],
-        );
+        await this.recoverAgentAndRedeliverSends(mission, agent.role, swapTarget, queued);
         return false;
       }
     }
@@ -3083,10 +3071,11 @@ export class MissionManager {
   private emitContextEstimate(sessionId: string, summary: MissionSummary): void {
     if (summary.contextTokens <= 0) return;
     const previous = this.contextSnapshots.get(sessionId);
-    const limit = this.visibleContextLimitForSummary(
+    const limit = this.contextWindowForSummary(
       summary,
       this.cachedFactoryDefaults,
-      previous?.limit ?? summary.maxContextTokens,
+      previous?.limit,
+      summary.maxContextTokens,
     );
     if (!limit || limit <= 0) return;
     const used = Math.min(summary.contextTokens, limit);
@@ -3124,18 +3113,19 @@ export class MissionManager {
         mission || liveAgent
           ? await this.getFactoryDefaults().catch(() => ({}) as FactoryDefaultSettings)
           : undefined;
-      const visibleLimit = mission
-        ? this.visibleContextLimitForSummary(
+      const fallbackLimit = mission
+        ? this.contextWindowForSummary(
             mission.summary,
             defaults,
+            undefined,
             mission.summary.maxContextTokens,
           )
         : liveAgent
-          ? this.visibleContextLimitForAgent(liveAgent.mission, liveAgent.agent, defaults)
+          ? this.contextWindowForAgent(liveAgent.mission, liveAgent.agent, defaults)
           : undefined;
       const stats = await session.getContextStats();
       const breakdown = await this.readContextBreakdown(session);
-      const snapshot = contextStatsSnapshot(stats, breakdown, visibleLimit);
+      const snapshot = contextStatsSnapshot(stats, breakdown, fallbackLimit);
       this.contextSnapshots.set(contextSessionId, snapshot);
       this.emit({ type: 'context.updated', sessionId: contextSessionId, stats: snapshot });
       if (mission) {

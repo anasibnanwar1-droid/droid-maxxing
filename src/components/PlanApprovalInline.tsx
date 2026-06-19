@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { FileText, ChevronRight } from 'lucide-react';
 import { useStore } from '../hooks/useStore';
 import { respondPermission, sendToMission, sendToMissionNow } from '../lib/commands';
+import { effectiveCompactionSettings } from '../lib/compactionSettings';
 import type { Autonomy, PermissionOutcome } from '../types/bridge';
 
 const EASE = [0.16, 1, 0.3, 1] as const;
@@ -34,10 +35,10 @@ export default function PlanApprovalInline() {
 
   const isSpec = req.kind === 'spec';
   const text = comment.trim();
-  const compactionSettings = {
-    compactionTokenLimit: state.compactionTokenLimit,
-    compactionTokenLimitPerModel: state.compactionTokenLimitPerModel,
-  };
+  const compactionSettings = effectiveCompactionSettings(
+    state.compactionTokenLimit,
+    state.compactionTokenLimitPerModel,
+  );
 
   const finish = () => dispatch({ type: 'CLEAR_PERMISSION' });
 

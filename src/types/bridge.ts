@@ -606,7 +606,12 @@ export type ClientCommand =
     }
   | { type: 'mission.interrupt'; missionId: string }
   | { type: 'mission.compact'; missionId: string; customInstructions?: string }
-  | { type: 'mission.subscribeWorker'; missionId: string; workerSessionId: string }
+  | {
+      type: 'mission.subscribeWorker';
+      missionId: string;
+      workerSessionId: string;
+      role?: 'worker' | 'validator';
+    }
   | { type: 'mission.close'; missionId: string }
   | {
       type: 'mission.list';

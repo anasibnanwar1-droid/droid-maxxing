@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useStore } from '../hooks/useStore';
 import { respondQuestion } from '../lib/commands';
+import { effectiveCompactionSettings } from '../lib/compactionSettings';
 
 const EASE = [0.16, 1, 0.3, 1] as const;
 const ACCENT = 'var(--droid-accent)';
@@ -37,10 +38,10 @@ export default function AskUserModal() {
   const answer = (answers[q.index] ?? '').trim();
   const typing = !!customOpen[q.index];
   const canAdvance = answer.length > 0;
-  const compactionSettings = {
-    compactionTokenLimit: state.compactionTokenLimit,
-    compactionTokenLimitPerModel: state.compactionTokenLimitPerModel,
-  };
+  const compactionSettings = effectiveCompactionSettings(
+    state.compactionTokenLimit,
+    state.compactionTokenLimitPerModel,
+  );
 
   const pickOption = (opt: string) => {
     setAnswers((p) => ({ ...p, [q.index]: opt }));

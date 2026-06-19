@@ -191,3 +191,20 @@ test('MISSION_WORKER_REKEY remaps mission feature worker ids and progress entrie
   assert.equal(next.progress.m1[0].workerSessionId, 'w-new');
   assert.equal(next.progress.m1[1].workerSessionId, 'w-other');
 });
+
+test('AGENT_UPDATED refreshes validator status', () => {
+  const start = {
+    ...initialState,
+    workers: { m1: [{ sessionId: 'validator-1', status: 'running', startedAt: 1 }] },
+  } as unknown as AppState;
+
+  const next = reducer(start, {
+    type: 'AGENT_UPDATED',
+    missionId: 'm1',
+    agentSessionId: 'validator-1',
+    role: 'validator',
+    status: 'paused',
+  });
+
+  assert.equal(next.workers.m1[0].status, 'paused');
+});

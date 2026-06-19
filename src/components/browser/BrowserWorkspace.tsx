@@ -9,6 +9,7 @@ import {
   resizeBrowserViewport,
   sendDesignPrompt,
 } from '../../lib/commands';
+import { effectiveCompactionSettings } from '../../lib/compactionSettings';
 import type { BrowserViewport, BrowserViewportMode, DesignReference } from '../../types/bridge';
 import type { Size } from '../canvas/canvasMath';
 import {
@@ -46,10 +47,8 @@ export default function BrowserWorkspace() {
   const missionLive = useMissionLive(requestedChatId ?? null);
   const nativeBrowser = isDesktop();
   const compactionSettings = useMemo(
-    () => ({
-      compactionTokenLimit: state.compactionTokenLimit,
-      compactionTokenLimitPerModel: state.compactionTokenLimitPerModel,
-    }),
+    () =>
+      effectiveCompactionSettings(state.compactionTokenLimit, state.compactionTokenLimitPerModel),
     [state.compactionTokenLimit, state.compactionTokenLimitPerModel],
   );
   // The native BrowserView is an OS-level layer painted above the React tree,

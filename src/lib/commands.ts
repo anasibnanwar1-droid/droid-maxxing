@@ -171,8 +171,12 @@ export const setInteractionMode = (missionId: string, mode: SessionInteractionMo
   bridge.send({ type: 'mission.setInteractionMode', missionId, mode });
 };
 
-export const subscribeWorker = (missionId: string, workerSessionId: string) => {
-  bridge.send({ type: 'mission.subscribeWorker', missionId, workerSessionId });
+export const subscribeWorker = (
+  missionId: string,
+  workerSessionId: string,
+  role: 'worker' | 'validator' = 'worker',
+) => {
+  bridge.send({ type: 'mission.subscribeWorker', missionId, workerSessionId, role });
 };
 
 export const closeMission = (missionId: string) => {

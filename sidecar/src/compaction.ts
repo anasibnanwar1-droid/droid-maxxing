@@ -1,5 +1,4 @@
 import type { DroidSession } from '@factory/droid-sdk';
-import type { FactoryDefaultSettings } from './protocol.js';
 
 export type CompactType = 'auto' | 'manual';
 
@@ -13,11 +12,6 @@ export interface CompactionRuntimeSettings {
   compactionThresholdCheckEnabled?: boolean;
 }
 
-type CompactionDefaults = Pick<
-  FactoryDefaultSettings,
-  'compactionTokenLimit' | 'compactionTokenLimitPerModel'
->;
-
 export function normalizeCompactionTokenLimit(value: unknown): number | undefined {
   if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return undefined;
   return Math.trunc(value);
@@ -26,8 +20,9 @@ export function normalizeCompactionTokenLimit(value: unknown): number | undefine
 export function compactionTokenLimitForModel(
   modelId: string | undefined,
   settings: CompactionTokenLimitPatch,
-  defaults: CompactionDefaults = {},
 ): number | undefined {
+  if (settings.compactionTokenLimit === null) return undefined;
+
   const settingsModelLimit = modelId
     ? normalizeCompactionTokenLimit(settings.compactionTokenLimitPerModel?.[modelId])
     : undefined;
@@ -38,50 +33,18 @@ export function compactionTokenLimitForModel(
     return settingsGlobalLimit === null
       ? undefined
       : normalizeCompactionTokenLimit(settingsGlobalLimit);
-
-  const modelLimit = modelId
-    ? normalizeCompactionTokenLimit(defaults.compactionTokenLimitPerModel?.[modelId])
-    : undefined;
-  if (modelLimit !== undefined) return modelLimit;
-
-  return normalizeCompactionTokenLimit(defaults.compactionTokenLimit);
-}
-
-export function clampCompactionTokenLimit(
-  limit: number | undefined,
-  maxContextTokens?: number,
-): number | undefined {
-  if (limit === undefined) return undefined;
-  const max = normalizeCompactionTokenLimit(maxContextTokens);
-  return max === undefined ? limit : Math.min(limit, max);
-}
-
-function explicitlyDisablesCompaction(
-  modelId: string | undefined,
-  settings: CompactionTokenLimitPatch,
-): boolean {
-  if (
-    modelId &&
-    normalizeCompactionTokenLimit(settings.compactionTokenLimitPerModel?.[modelId]) !== undefined
-  )
-    return false;
-  return settings.compactionTokenLimit === null;
+  return undefined;
 }
 
 export function createCompactionSettingsForModel(
   modelId: string | undefined,
   settings: CompactionTokenLimitPatch,
-  defaults: CompactionDefaults = {},
-  maxContextTokens?: number,
 ): CompactionRuntimeSettings {
-  const limit = clampCompactionTokenLimit(
-    compactionTokenLimitForModel(modelId, settings, defaults),
-    maxContextTokens,
-  );
+  if (settings.compactionTokenLimit === null) return { compactionThresholdCheckEnabled: false };
+
+  const limit = compactionTokenLimitForModel(modelId, settings);
   if (limit !== undefined)
     return { compactionTokenLimit: limit, compactionThresholdCheckEnabled: true };
-  if (explicitlyDisablesCompaction(modelId, settings))
-    return { compactionThresholdCheckEnabled: false };
   return { compactionThresholdCheckEnabled: true };
 }
 

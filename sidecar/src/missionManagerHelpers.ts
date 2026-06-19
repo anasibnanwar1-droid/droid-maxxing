@@ -47,10 +47,11 @@ export function contextBreakdownSnapshot(raw: unknown): ContextBreakdownSnapshot
 export function contextStatsSnapshot(
   stats: GetContextStatsResult,
   breakdown: ContextBreakdownSnapshot | undefined,
-  visibleLimit?: number,
+  fallbackLimit?: number,
 ): ContextStatsSnapshot {
   const rawLimit = stats.limit > 0 ? stats.limit : (breakdown?.contextBudget ?? stats.limit);
-  const limit = visibleLimit && visibleLimit > 0 ? visibleLimit : rawLimit;
+  const limit =
+    rawLimit > 0 ? rawLimit : fallbackLimit && fallbackLimit > 0 ? fallbackLimit : rawLimit;
   const breakdownUsed =
     breakdown && stats.accuracy !== 'exact' && isWindowTokenCount(breakdown.usedTokens, limit)
       ? breakdown.usedTokens

@@ -9,6 +9,13 @@ test('global compaction Factory default sends the Factory-default sentinel', () 
   });
 });
 
+test('global compaction Off clears per-model trigger hints', () => {
+  assert.deepEqual(compactionSettingsForGlobalLimit(null, { 'model-a': 100_000 }), {
+    compactionTokenLimit: null,
+    compactionTokenLimitPerModel: {},
+  });
+});
+
 test('global compaction preset sends the selected numeric limit', () => {
   assert.deepEqual(compactionSettingsForGlobalLimit(200_000, {}), {
     compactionTokenLimit: 200_000,
