@@ -108,6 +108,13 @@ export async function closeNativeBrowser(sessionId: string): Promise<void> {
   await window.droidControl!.nativeBrowserClose(sessionId);
 }
 
+// Detach every native browser view so it can never sit over the app shell's
+// recovery UI after a render error. Used by the shell error boundary.
+export async function hideAllNativeBrowsers(): Promise<void> {
+  if (!isDesktop()) return;
+  await window.droidControl!.nativeBrowserHideAll();
+}
+
 export async function reloadNativeBrowser(sessionId: string): Promise<void> {
   if (!isDesktop()) return;
   await window.droidControl!.nativeBrowserReload(sessionId);

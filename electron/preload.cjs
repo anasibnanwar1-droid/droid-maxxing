@@ -35,6 +35,7 @@ contextBridge.exposeInMainWorld('droidControl', {
   nativeBrowserSetBounds: (sessionId, bounds) =>
     ipcRenderer.invoke('native-browser-set-bounds', { sessionId, bounds }),
   nativeBrowserClose: (sessionId) => ipcRenderer.invoke('native-browser-close', { sessionId }),
+  nativeBrowserHideAll: () => ipcRenderer.invoke('native-browser-hide-all'),
   nativeBrowserReload: (sessionId) => ipcRenderer.invoke('native-browser-reload', { sessionId }),
   nativeBrowserSetDesignMode: (sessionId, active) =>
     ipcRenderer.invoke('native-browser-set-design-mode', { sessionId, active }),

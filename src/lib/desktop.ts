@@ -51,6 +51,7 @@ interface DroidControlApi {
   nativeBrowserDetach: (sessionId?: string) => Promise<void>;
   nativeBrowserSetBounds: (sessionId: string, bounds: NativeBrowserBounds) => Promise<void>;
   nativeBrowserClose: (sessionId: string) => Promise<void>;
+  nativeBrowserHideAll: () => Promise<void>;
   nativeBrowserReload: (sessionId: string) => Promise<void>;
   nativeBrowserSetDesignMode: (sessionId: string, active: boolean) => Promise<void>;
   nativeBrowserSetPencilMode: (sessionId: string, active: boolean) => Promise<void>;

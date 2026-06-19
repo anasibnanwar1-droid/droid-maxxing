@@ -81,6 +81,27 @@ function createMainWindow() {
   if (startUrl) mainWindow.loadURL(startUrl);
   else mainWindow.loadFile(path.join(appRoot(), 'dist/index.html'));
 
+  // If the renderer crashes or hangs, the native browser layer would otherwise
+  // stay painted over a blank shell. Detach it and reload the renderer, capped
+  // so a crash-on-load can't loop forever.
+  let rendererReloads = [];
+  const recoverRenderer = (reason) => {
+    console.error(`[shell] renderer ${reason}; recovering`);
+    hideAllNativeBrowsers();
+    const now = Date.now();
+    rendererReloads = rendererReloads.filter((t) => now - t < 60_000);
+    if (rendererReloads.length >= 3) {
+      console.error('[shell] too many renderer reloads in a minute; leaving as-is');
+      return;
+    }
+    rendererReloads.push(now);
+    if (isWindowUsable(mainWindow)) mainWindow.webContents.reload();
+  };
+  mainWindow.webContents.on('render-process-gone', (_event, details) =>
+    recoverRenderer(`process gone (${details?.reason ?? 'unknown'})`),
+  );
+  mainWindow.webContents.on('unresponsive', () => recoverRenderer('unresponsive'));
+
   mainWindow.on('closed', () => {
     closeAllNativeBrowsers();
     mainWindow = null;
@@ -130,6 +151,7 @@ function registerIpc() {
     setNativeBrowserBounds(sessionId, bounds),
   );
   ipcMain.handle('native-browser-close', (_event, { sessionId }) => closeNativeBrowser(sessionId));
+  ipcMain.handle('native-browser-hide-all', () => hideAllNativeBrowsers());
   ipcMain.handle('native-browser-reload', (_event, { sessionId }) =>
     reloadNativeBrowser(sessionId),
   );
@@ -1010,6 +1032,17 @@ function closeAllNativeBrowsers() {
   closeHiddenNativeBrowserWindow();
 }
 
+// Detach every native browser view from the main window without destroying it,
+// so a blanked/crashed renderer's recovery UI is never hidden behind the
+// floating browser layer. Sessions survive so normal use resumes after reload.
+function hideAllNativeBrowsers() {
+  for (const entry of [...nativeBrowsers.values()]) {
+    if (entry.hostWindow === mainWindow) removeNativeBrowserViewFromWindow(entry, entry.view);
+    entry.attached = false;
+  }
+  attachedBrowserSessionId = null;
+}
+
 function ensureHiddenNativeBrowserWindow() {
   if (isWindowUsable(hiddenNativeBrowserWindow)) return hiddenNativeBrowserWindow;
   hiddenNativeBrowserWindow = new BrowserWindow({
@@ -1154,12 +1187,33 @@ function validateUrl(value) {
   }
 }
 
+// The shell's top-left controls (window buttons, then the sidebar/browser
+// toggle cluster) must stay reachable; the native browser view may never cover
+// them. The toggle cluster starts at 92px and spans ~62px, so reserve enough
+// inset to clear it entirely. There is no full-screen browser mode today, so
+// the real pane always sits well to the right of this and is unaffected.
+const SHELL_SAFE_LEFT = 160;
+
 function normalizeBounds(bounds) {
+  const x = Math.max(0, Math.round(bounds?.x ?? 0));
+  const y = Math.max(0, Math.round(bounds?.y ?? 0));
+  const width = Math.max(1, Math.round(bounds?.width ?? 1));
+  const height = Math.max(1, Math.round(bounds?.height ?? 1));
+  return clampBoundsToShell({ x, y, width, height });
+}
+
+function clampBoundsToShell(bounds) {
+  const win = isWindowUsable(mainWindow) ? mainWindow.getContentBounds() : null;
+  if (!win) return bounds;
+  // Only a pathological full-width pane (a layout bug) trips this guard.
+  const coversShell =
+    bounds.x < SHELL_SAFE_LEFT && bounds.x + bounds.width > win.width - SHELL_SAFE_LEFT;
+  if (!coversShell) return bounds;
   return {
-    x: Math.round(bounds?.x ?? 0),
-    y: Math.round(bounds?.y ?? 0),
-    width: Math.max(1, Math.round(bounds?.width ?? 1)),
-    height: Math.max(1, Math.round(bounds?.height ?? 1)),
+    x: SHELL_SAFE_LEFT,
+    y: bounds.y,
+    width: Math.max(1, Math.min(bounds.width, win.width - SHELL_SAFE_LEFT)),
+    height: bounds.height,
   };
 }
 

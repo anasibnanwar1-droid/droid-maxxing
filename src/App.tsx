@@ -32,6 +32,8 @@ import SettingsPanel, { applyTheme, paletteForMode } from './components/Settings
 import AskUserModal from './components/AskUserModal';
 import SpecWikiModal from './components/SpecWikiModal';
 import BrowserWorkspace from './components/browser/BrowserWorkspace';
+import ErrorBoundary from './components/ErrorBoundary';
+import { recordShellDiagnostics } from './lib/diagnostics';
 import { isDesktop } from './lib/desktop';
 import { useOnboarding, shouldShowOnboarding, hasSetupBlocker } from './hooks/useOnboarding';
 import OnboardingWizard from './components/onboarding/OnboardingWizard';
@@ -120,6 +122,29 @@ export default function App() {
     }
     dispatch({ type: 'SET_RIGHT_PANEL', open });
   }, [dispatch, state.browserOpen, state.rightPanelOpen]);
+
+  // Keep a snapshot of the shell's layout/navigation state so the error
+  // boundary and main-process crash handlers can report what blanked (#38).
+  useEffect(() => {
+    recordShellDiagnostics({
+      activeMissionId: state.activeMissionId,
+      view: activeMission ? (isMissionView ? 'mission' : 'chat') : 'none',
+      sidebarCollapsed: state.sidebarCollapsed,
+      rightPanelOpen: state.rightPanelOpen,
+      browserOpen: state.browserOpen,
+      browserPaneWidth,
+      selectedAgentSessionId: state.selectedAgentSessionId,
+    });
+  }, [
+    state.activeMissionId,
+    activeMission,
+    isMissionView,
+    state.sidebarCollapsed,
+    state.rightPanelOpen,
+    state.browserOpen,
+    browserPaneWidth,
+    state.selectedAgentSessionId,
+  ]);
 
   useEffect(() => {
     applyTheme(state.theme);
@@ -464,7 +489,9 @@ function BrowserPane({
   const content = (
     <>
       <BrowserPaneResizeHandle width={width} onResize={onResize} />
-      <BrowserWorkspace />
+      <ErrorBoundary scope="pane" label="Browser">
+        <BrowserWorkspace />
+      </ErrorBoundary>
     </>
   );
 
