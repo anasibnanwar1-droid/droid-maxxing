@@ -238,8 +238,9 @@ export default function App() {
     if (state.historyLoaded[activeMission.id] || requestedHistory.current.has(activeMission.id))
       return;
     requestedHistory.current.add(activeMission.id);
+    dispatch({ type: 'SESSION_RESTORE_START', missionId: activeMission.id });
     loadMissionHistory(activeMission.id);
-  }, [activeMission, embedded, state.historyLoaded]);
+  }, [activeMission, embedded, state.historyLoaded, dispatch]);
 
   useEffect(() => {
     if (embedded || !activeMission) return;

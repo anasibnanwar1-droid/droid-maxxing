@@ -30,6 +30,7 @@ import type {
   MissionSummary,
   ModelInfo,
   PermissionKind,
+  ProgressEntry,
   ReasoningEffort,
   ServerEvent,
   SessionInteractionMode,
@@ -1025,6 +1026,30 @@ export class MissionManager {
     );
   }
 
+  // Single emit point for mission.history so every page carries restore
+  // telemetry (count + whether older history remains) the client uses to show
+  // an explicit restoring/partial/complete state.
+  private emitMissionHistory(args: {
+    missionId: string;
+    progress: ProgressEntry[];
+    transcripts: TranscriptEvent[];
+    workers?: WorkerHistoryLink[];
+    mode: 'replace' | 'prepend';
+    olderCursor?: string;
+  }): void {
+    this.emit({
+      type: 'mission.history',
+      missionId: args.missionId,
+      progress: args.progress,
+      transcripts: args.transcripts,
+      workers: args.workers,
+      mode: args.mode,
+      olderCursor: args.olderCursor,
+      loadedCount: args.transcripts.length,
+      hasMore: Boolean(args.olderCursor),
+    });
+  }
+
   private loadMissionHistory(missionId: string, cursor?: string): void {
     const summary = this.resolveSummary(missionId);
     const appSessionId = summary?.id ?? missionId;
@@ -1039,8 +1064,7 @@ export class MissionManager {
       // An older page only extends the orchestrator scrollback upward; prepend it
       // without touching the already-delivered workers/progress.
       if (cursor) {
-        this.emit({
-          type: 'mission.history',
+        this.emitMissionHistory({
           missionId: appSessionId,
           progress: [],
           transcripts,
@@ -1053,8 +1077,7 @@ export class MissionManager {
         appSessionId,
         this.history.subagentLinks(appSessionId),
       );
-      this.emit({
-        type: 'mission.history',
+      this.emitMissionHistory({
         missionId: appSessionId,
         progress: history.progress,
         transcripts,
@@ -1074,8 +1097,7 @@ export class MissionManager {
         const transcripts = window.events.map((event) => ({ ...event, missionId: appSessionId }));
         transcripts.forEach((event) => this.history.recordEvent(event));
         if (cursor) {
-          this.emit({
-            type: 'mission.history',
+          this.emitMissionHistory({
             missionId: appSessionId,
             progress: [],
             transcripts,
@@ -1088,8 +1110,7 @@ export class MissionManager {
           appSessionId,
           this.history.subagentLinks(appSessionId),
         );
-        this.emit({
-          type: 'mission.history',
+        this.emitMissionHistory({
           missionId: appSessionId,
           progress: [],
           transcripts,
@@ -1102,8 +1123,7 @@ export class MissionManager {
         // historyLoadingOlder flag clears instead of sticking and blocking all
         // further pagination.
         if (cursor) {
-          this.emit({
-            type: 'mission.history',
+          this.emitMissionHistory({
             missionId: appSessionId,
             progress: [],
             transcripts: [],
@@ -1112,7 +1132,16 @@ export class MissionManager {
           });
           return;
         }
+        // A live mission with no persisted history yet is an empty (not failed)
+        // restore; live events seed it. With no live mission to fall back on,
+        // signal a restore failure so the client can show a retry affordance
+        // instead of a silent blank transcript.
         if (!this.findMission(appSessionId)) {
+          this.emit({
+            type: 'mission.history.error',
+            missionId: appSessionId,
+            message: errMsg(err),
+          });
           this.emitError({
             missionId: appSessionId,
             sessionId: droidSessionId,

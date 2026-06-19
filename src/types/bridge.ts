@@ -124,6 +124,10 @@ export interface TranscriptEvent {
   agentSessionId: string;
   role: AgentRole;
   ts: number;
+  // Monotonic canonical order for restored orchestrator scrollback, stamped by
+  // the sidecar from the compaction-chain position. Tie-breaks equal `ts` so
+  // restored history never reorders. Live events omit it (they are newest).
+  seq?: number;
   endTs?: number;
   kind: 'text' | 'thinking' | 'tool_call' | 'tool_result' | 'error' | 'status' | 'compaction';
   text?: string;
@@ -696,7 +700,12 @@ export type ServerEvent =
       workers?: WorkerHistoryLink[];
       mode?: 'replace' | 'prepend';
       olderCursor?: string;
+      // Restore telemetry: events delivered by this page and whether older
+      // history remains to page in. Drives the explicit restore UI states.
+      loadedCount?: number;
+      hasMore?: boolean;
     }
+  | { type: 'mission.history.error'; missionId: string; message: string }
   | { type: 'sessions.history'; missions: HistoryMission[] }
   | { type: 'models.list'; models: ModelInfo[] }
   | { type: 'browser.updated'; state: BrowserState }

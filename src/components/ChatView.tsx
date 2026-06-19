@@ -4,7 +4,7 @@ import { useStore } from '../hooks/useStore';
 import { useMissionLive } from '../hooks/useMissionLive';
 import { MessageFeed, WorkingIndicator } from './chat';
 import { readFile } from '../lib/desktop';
-import { interruptAgent, loadOlderMissionHistory } from '../lib/commands';
+import { interruptAgent, loadMissionHistory, loadOlderMissionHistory } from '../lib/commands';
 import { findWorkerForTarget, resolveWorkers, subagentActivityForTarget } from '../lib/subagents';
 
 function DroidWordmark() {
@@ -40,6 +40,33 @@ function EmptyState({ folder }: { folder?: string }) {
           <span>{folder || 'anas'}</span>
         </div>
       </div>
+    </div>
+  );
+}
+
+function RestoringState({ count }: { count: number }) {
+  return (
+    <div className="flex h-full flex-col items-center justify-center gap-3 px-8 text-center">
+      <WorkingIndicator label="Restoring conversation" />
+      {count > 0 && (
+        <span className="text-[12px] text-droid-text-muted">{count} messages loaded so far</span>
+      )}
+    </div>
+  );
+}
+
+function RestoreFailedState({ message, onRetry }: { message?: string; onRetry: () => void }) {
+  return (
+    <div className="flex h-full flex-col items-center justify-center gap-3 px-8 text-center">
+      <span className="text-[13px] text-droid-text">Couldn't restore this conversation</span>
+      {message && <span className="max-w-md text-[12px] text-droid-text-muted">{message}</span>}
+      <button
+        type="button"
+        onClick={onRetry}
+        className="rounded-lg border border-droid-border px-3 py-1.5 text-[12px] text-droid-text-secondary transition-colors hover:bg-droid-elevated/60"
+      >
+        Retry
+      </button>
     </div>
   );
 }
@@ -180,6 +207,12 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
   const historyMissionId = activeMission?.id;
   const olderCursor = historyMissionId ? state.historyCursor[historyMissionId] : undefined;
   const loadingOlder = historyMissionId ? state.historyLoadingOlder[historyMissionId] : false;
+  const restore = historyMissionId ? state.sessionRestore[historyMissionId] : undefined;
+  const retryRestore = useCallback(() => {
+    if (!historyMissionId) return;
+    dispatch({ type: 'SESSION_RESTORE_START', missionId: historyMissionId });
+    loadMissionHistory(historyMissionId);
+  }, [historyMissionId, dispatch]);
   // Anchor captured when an older page is requested, used to keep the viewport
   // visually fixed once the prepended messages grow the scroll height.
   const prependAnchor = useRef<{ height: number; top: number } | null>(null);
@@ -324,6 +357,11 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
       >
         {activeMission && transcript.length > 0 ? (
           <div className="mx-auto min-w-0 px-6 py-6 max-w-2xl">
+            {!viewingSub && loadingOlder && (
+              <div className="mb-4 flex justify-center">
+                <span className="text-[11px] text-droid-text-muted">Loading earlier messages…</span>
+              </div>
+            )}
             <MessageFeed
               events={transcript}
               pending={live}
@@ -360,6 +398,10 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
               </span>
             )}
           </div>
+        ) : activeMission && restore?.status === 'failed' ? (
+          <RestoreFailedState message={restore.error} onRetry={retryRestore} />
+        ) : activeMission && restore?.status === 'loading' ? (
+          <RestoringState count={restore.loadedCount} />
         ) : (
           <EmptyState folder={draftFolder} />
         )}

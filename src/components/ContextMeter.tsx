@@ -71,12 +71,50 @@ function categoryColor(key?: string): string {
   return CATEGORY_COLORS[key] ?? 'var(--droid-text-muted)';
 }
 
+// Stabilize the displayed context usage so the meter doesn't flicker as the
+// backend interleaves estimated (per-token) and exact (per-turn) readings.
+// Exact readings are authoritative and snap; estimates only ratchet UP within a
+// compaction generation, so transient estimate noise never jerks the bar
+// backward mid-stream. A new session or a compaction (generation bump) resets
+// the floor, since compaction legitimately drops the token count.
+function useStableUsed(
+  key: string,
+  raw: number | undefined,
+  isExact: boolean,
+  generation: number,
+): number | undefined {
+  const ref = useRef<{ key: string; gen: number; value: number } | null>(null);
+  const [displayed, setDisplayed] = useState<number | undefined>(raw);
+  useEffect(() => {
+    const prev = ref.current;
+    // A new session or a compaction reset starts fresh: snap to the latest raw,
+    // which may be undefined when the new session has no stats yet. Clearing it
+    // here prevents the previous session's usage from lingering on the meter.
+    if (!prev || prev.key !== key || generation !== prev.gen) {
+      ref.current = raw === undefined ? null : { key, gen: generation, value: raw };
+      setDisplayed(raw);
+      return;
+    }
+    // Same session: a transient missing reading keeps the last value rather than
+    // flickering to empty mid-stream.
+    if (raw === undefined) return;
+    const next = isExact ? raw : Math.max(prev.value, raw);
+    if (next !== prev.value) {
+      ref.current = { key, gen: generation, value: next };
+      setDisplayed(next);
+    }
+  }, [key, raw, isExact, generation]);
+  return displayed;
+}
+
 export default function ContextMeter({
   mission,
   stats,
+  sessionKey,
 }: {
   mission: MissionSummary;
   stats?: ContextStatsSnapshot;
+  sessionKey?: string;
 }) {
   const { state, dispatch } = useStore();
   const [open, setOpen] = useState(false);
@@ -115,10 +153,14 @@ export default function ContextMeter({
       : undefined;
   const max = effectiveCompaction ?? statLimit;
 
-  const used = measured?.used;
+  const accuracy = measured?.accuracy;
+  const isEstimating = (accuracy ?? 'estimated') !== 'exact';
+  // Compaction count is the generation: a bump means context was compacted, so
+  // the stabilized usage floor must reset to the lower post-compaction reading.
+  const generation = mission.compactedFromSessionIds?.length ?? 0;
+  const used = useStableUsed(sessionKey ?? mission.id, measured?.used, !isEstimating, generation);
   const remaining =
     used !== undefined && max !== undefined ? Math.max(0, max - used) : measured?.remaining;
-  const accuracy = measured?.accuracy;
   const categories = measured?.breakdown?.categories ?? [];
   const ready = used !== undefined && max !== undefined && max > 0;
   const pct = ready ? used / max : 0;
@@ -158,7 +200,7 @@ export default function ContextMeter({
         title="Context usage"
       >
         <span className="font-mono text-[11px] text-droid-text-secondary">
-          {ready ? `${fmt(used)} / ${fmt(max)}` : 'Context ...'}
+          {ready ? `${isEstimating ? '~' : ''}${fmt(used)} / ${fmt(max)}` : 'Context ...'}
         </span>
         <Ring pct={pct} />
       </button>

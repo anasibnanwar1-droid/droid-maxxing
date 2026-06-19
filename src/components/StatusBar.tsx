@@ -146,7 +146,13 @@ export default function StatusBar() {
             {mission.compactedFromSessionIds.length === 1 ? '' : 's'}
           </span>
         ) : null}
-        {contextMission && <ContextMeter mission={contextMission} stats={contextStats} />}
+        {contextMission && (
+          <ContextMeter
+            mission={contextMission}
+            stats={contextStats}
+            sessionKey={contextSessionId}
+          />
+        )}
       </div>
     </div>
   );

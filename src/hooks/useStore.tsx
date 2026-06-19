@@ -71,6 +71,15 @@ export interface ThemeConfig {
   contrast: number;
 }
 
+export type SessionRestoreStatus = 'loading' | 'paged' | 'loaded' | 'failed';
+
+export interface SessionRestore {
+  status: SessionRestoreStatus;
+  loadedCount: number;
+  hasMore: boolean;
+  error?: string;
+}
+
 export interface AppState {
   // Connection
   connection: 'idle' | 'connecting' | 'connected' | 'error';
@@ -93,6 +102,11 @@ export interface AppState {
   // Whether an older-history page is currently in flight (prevents duplicate
   // prefetches while the user keeps scrolling up).
   historyLoadingOlder: Record<string, boolean>;
+  // Explicit transcript-restore state per mission: whether the initial replay
+  // is loading, partially loaded (older pages remain), fully loaded, or failed.
+  // Lets the chat show an honest restoring/partial/retry surface instead of a
+  // blank or silently truncated transcript (#29).
+  sessionRestore: Record<string, SessionRestore>;
   // Whether a subagent's inner transcript is currently being fetched, keyed by
   // worker session id. A worker's events only stream after its card is opened,
   // so the view shows a loading state until the first event (or the opened ack)
@@ -236,7 +250,11 @@ type Action =
       workers?: WorkerHistoryLink[];
       mode?: 'replace' | 'prepend';
       olderCursor?: string;
+      loadedCount?: number;
+      hasMore?: boolean;
     }
+  | { type: 'SESSION_RESTORE_START'; missionId: string }
+  | { type: 'MISSION_HISTORY_FAILED'; missionId: string; message: string }
   | { type: 'MISSION_HISTORY_LOADING_OLDER'; missionId: string }
   | { type: 'AGENT_HISTORY_LOADING'; agentSessionId: string; loading: boolean }
   | { type: 'CLEAR_PERMISSION' }
@@ -667,6 +685,7 @@ export const initialState: AppState = {
   historyLoaded: {},
   historyCursor: {},
   historyLoadingOlder: {},
+  sessionRestore: {},
   agentHistoryLoading: {},
   pendingPermission: null,
   pendingQuestion: null,
@@ -1261,6 +1280,37 @@ function baseReducer(state: AppState, action: Action): AppState {
         historyLoadingOlder: { ...state.historyLoadingOlder, [action.missionId]: true },
       };
 
+    case 'SESSION_RESTORE_START': {
+      const prev = state.sessionRestore[action.missionId];
+      return {
+        ...state,
+        sessionRestore: {
+          ...state.sessionRestore,
+          [action.missionId]: {
+            status: 'loading',
+            loadedCount: prev?.loadedCount ?? 0,
+            hasMore: prev?.hasMore ?? false,
+          },
+        },
+      };
+    }
+
+    case 'MISSION_HISTORY_FAILED': {
+      const prev = state.sessionRestore[action.missionId];
+      return {
+        ...state,
+        sessionRestore: {
+          ...state.sessionRestore,
+          [action.missionId]: {
+            status: 'failed',
+            loadedCount: prev?.loadedCount ?? 0,
+            hasMore: prev?.hasMore ?? false,
+            error: action.message,
+          },
+        },
+      };
+    }
+
     case 'MISSION_HISTORY': {
       const existing = state.transcripts[action.missionId] ?? [];
       // An older page prepends its events to the front of the existing scrollback
@@ -1268,22 +1318,54 @@ function baseReducer(state: AppState, action: Action): AppState {
       if (action.mode === 'prepend') {
         const have = new Set(existing.map((e) => e.id));
         const older = action.transcripts.filter((e) => !have.has(e.id));
+        const merged = older.length > 0 ? [...older, ...existing] : existing;
+        const hasMore = Boolean(action.olderCursor);
         return {
           ...state,
           transcripts:
             older.length > 0
-              ? { ...state.transcripts, [action.missionId]: [...older, ...existing] }
+              ? { ...state.transcripts, [action.missionId]: merged }
               : state.transcripts,
           historyCursor: { ...state.historyCursor, [action.missionId]: action.olderCursor },
           historyLoadingOlder: { ...state.historyLoadingOlder, [action.missionId]: false },
+          sessionRestore: {
+            ...state.sessionRestore,
+            [action.missionId]: {
+              status: hasMore ? 'paged' : 'loaded',
+              loadedCount: merged.length,
+              hasMore,
+            },
+          },
         };
       }
-      // Don't let an empty history snapshot wipe a locally-seeded transcript
-      // (e.g. a brand-new mission whose session isn't persisted to disk yet).
-      const transcripts =
-        action.transcripts.length === 0 && existing.length > 0
-          ? state.transcripts
-          : { ...state.transcripts, [action.missionId]: action.transcripts };
+      // No-clobber replace: reconcile the authoritative, correctly-ordered
+      // replay page with any live events already in state (a reconnect to a
+      // running mission can deliver live mission.transcript events first, and a
+      // brand-new mission carries a locally-seeded opening prompt).
+      //   - Shared ids: the page wins.
+      //   - Optimistic user echoes (seed-/local- ids) the page already contains
+      //     (matched by author + text) are dropped, so the opening prompt never
+      //     double-renders once history arrives.
+      //   - Remaining live-only events keep their place by timestamp relative to
+      //     the page: an un-persisted opening prompt stays above it, a just-sent
+      //     prompt (reconnect race) stays below it.
+      // The page's internal order (seq) is preserved by never re-sorting it.
+      const page = action.transcripts;
+      const pageIds = new Set(page.map((e) => e.id));
+      const pageUserText = new Set(
+        page.filter((e) => e.author === 'user' && e.text).map((e) => e.text),
+      );
+      const supersededEcho = (e: TranscriptEvent) =>
+        (e.id.startsWith('seed-') || e.id.startsWith('local-')) &&
+        e.author === 'user' &&
+        !!e.text &&
+        pageUserText.has(e.text);
+      const liveOnly = existing.filter((e) => !pageIds.has(e.id) && !supersededEcho(e));
+      const firstTs = page.length > 0 ? page[0].ts : 0;
+      const before = liveOnly.filter((e) => e.ts < firstTs);
+      const after = liveOnly.filter((e) => e.ts >= firstTs);
+      const mergedTranscript = page.length > 0 ? [...before, ...page, ...after] : existing;
+      const transcripts = { ...state.transcripts, [action.missionId]: mergedTranscript };
       // Merge the exact spawn->worker mapping from history with any live workers
       // already in state (a live mission.worker may arrive before history). Live
       // entries win; history links add missing workers and backfill toolUseId.
@@ -1322,6 +1404,7 @@ function baseReducer(state: AppState, action: Action): AppState {
         if (changed)
           workers = { ...state.workers, [action.missionId]: Array.from(bySession.values()) };
       }
+      const hasMore = Boolean(action.olderCursor);
       return {
         ...state,
         progress: { ...state.progress, [action.missionId]: action.progress },
@@ -1330,6 +1413,14 @@ function baseReducer(state: AppState, action: Action): AppState {
         historyLoaded: { ...state.historyLoaded, [action.missionId]: true },
         historyCursor: { ...state.historyCursor, [action.missionId]: action.olderCursor },
         historyLoadingOlder: { ...state.historyLoadingOlder, [action.missionId]: false },
+        sessionRestore: {
+          ...state.sessionRestore,
+          [action.missionId]: {
+            status: hasMore ? 'paged' : 'loaded',
+            loadedCount: mergedTranscript.length,
+            hasMore,
+          },
+        },
       };
     }
 
@@ -1777,7 +1868,11 @@ function adaptEvent(ev: ServerEvent): Action | null {
         workers: ev.workers,
         mode: ev.mode,
         olderCursor: ev.olderCursor,
+        loadedCount: ev.loadedCount,
+        hasMore: ev.hasMore,
       };
+    case 'mission.history.error':
+      return { type: 'MISSION_HISTORY_FAILED', missionId: ev.missionId, message: ev.message };
     case 'models.list':
       return { type: 'MODELS_LIST', models: ev.models };
     case 'context.updated':
