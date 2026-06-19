@@ -93,6 +93,11 @@ export interface AppState {
   // Whether an older-history page is currently in flight (prevents duplicate
   // prefetches while the user keeps scrolling up).
   historyLoadingOlder: Record<string, boolean>;
+  // Whether a subagent's inner transcript is currently being fetched, keyed by
+  // worker session id. A worker's events only stream after its card is opened,
+  // so the view shows a loading state until the first event (or the opened ack)
+  // arrives instead of a misleading "no activity" empty state.
+  agentHistoryLoading: Record<string, boolean>;
   pendingPermission: PermissionRequest | null;
   pendingQuestion: MissionQuestion | null;
   contextStats: Record<string, ContextStatsSnapshot>;
@@ -233,6 +238,7 @@ type Action =
       olderCursor?: string;
     }
   | { type: 'MISSION_HISTORY_LOADING_OLDER'; missionId: string }
+  | { type: 'AGENT_HISTORY_LOADING'; agentSessionId: string; loading: boolean }
   | { type: 'CLEAR_PERMISSION' }
   | { type: 'CLEAR_QUESTION' }
 
@@ -661,6 +667,7 @@ export const initialState: AppState = {
   historyLoaded: {},
   historyCursor: {},
   historyLoadingOlder: {},
+  agentHistoryLoading: {},
   pendingPermission: null,
   pendingQuestion: null,
   contextStats: {},
@@ -994,8 +1001,33 @@ function baseReducer(state: AppState, action: Action): AppState {
       };
     }
 
+    case 'AGENT_HISTORY_LOADING': {
+      if ((state.agentHistoryLoading[action.agentSessionId] ?? false) === action.loading)
+        return state;
+      return {
+        ...state,
+        agentHistoryLoading: {
+          ...state.agentHistoryLoading,
+          [action.agentSessionId]: action.loading,
+        },
+      };
+    }
+
     case 'AGENT_UPDATED': {
-      if (action.role !== 'worker' || action.status === 'opened') return state;
+      // The 'opened' ack fires after a worker's history replay completes (even
+      // when nothing was captured), so it reliably ends the loading state.
+      const base =
+        action.status === 'opened' && state.agentHistoryLoading[action.agentSessionId]
+          ? {
+              ...state,
+              agentHistoryLoading: {
+                ...state.agentHistoryLoading,
+                [action.agentSessionId]: false,
+              },
+            }
+          : state;
+      if (action.role !== 'worker' || action.status === 'opened') return base;
+      // Past this point status is running/paused/completed, so base === state.
       const prev = state.workers[action.missionId] ?? [];
       const idx = prev.findIndex((w) => w.sessionId === action.agentSessionId);
       if (idx < 0) return state;
@@ -1727,6 +1759,13 @@ function adaptEvent(ev: ServerEvent): Action | null {
       return { type: 'MISSION_QUESTION', question: ev.question };
     case 'mission.error':
       return { type: 'MISSION_ERROR', missionId: ev.missionId, message: ev.message };
+    case 'error':
+      // A failed worker open (capacity, load failure) carries the agent session
+      // id; settle its loading flag so the card stops showing "Loading …
+      // activity" forever. The mission.error companion event surfaces the toast.
+      return ev.sessionId
+        ? { type: 'AGENT_HISTORY_LOADING', agentSessionId: ev.sessionId, loading: false }
+        : null;
     case 'mission.list':
       return { type: 'MISSION_LIST', missions: ev.missions };
     case 'mission.history':

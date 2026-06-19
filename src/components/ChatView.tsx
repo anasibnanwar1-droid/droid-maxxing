@@ -352,6 +352,8 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
                 label={`${subLabel} is working`}
                 startTs={selectedWorker.startedAt}
               />
+            ) : selectedAgent && state.agentHistoryLoading[selectedAgent] ? (
+              <WorkingIndicator label={`Loading ${subLabel} activity`} />
             ) : (
               <span className="text-[13px] text-droid-text-muted">
                 No activity captured for {subLabel}.
