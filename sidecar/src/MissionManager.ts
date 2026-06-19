@@ -1132,11 +1132,25 @@ export class MissionManager {
           });
           return;
         }
-        // A live mission with no persisted history yet is an empty (not failed)
-        // restore; live events seed it. With no live mission to fall back on,
-        // signal a restore failure so the client can show a retry affordance
-        // instead of a silent blank transcript.
-        if (!this.findMission(appSessionId)) {
+        if (this.findMission(appSessionId)) {
+          // A live mission with no persisted history yet is an empty (not
+          // failed) restore; live events seed it. Answer with an empty
+          // authoritative snapshot so the client settles to a loaded state
+          // instead of hanging on "Restoring" forever.
+          this.emitMissionHistory({
+            missionId: appSessionId,
+            progress: [],
+            transcripts: [],
+            workers: this.withLiveWorkerStatus(
+              appSessionId,
+              this.history.subagentLinks(appSessionId),
+            ),
+            mode: 'replace',
+            olderCursor: undefined,
+          });
+        } else {
+          // No live mission to fall back on: signal a restore failure so the
+          // client can show a retry affordance instead of a silent blank.
           this.emit({
             type: 'mission.history.error',
             missionId: appSessionId,

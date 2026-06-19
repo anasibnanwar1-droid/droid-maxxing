@@ -1344,8 +1344,10 @@ function baseReducer(state: AppState, action: Action): AppState {
       // brand-new mission carries a locally-seeded opening prompt).
       //   - Shared ids: the page wins.
       //   - Optimistic user echoes (seed-/local- ids) the page already contains
-      //     (matched by author + text) are dropped, so the opening prompt never
-      //     double-renders once history arrives.
+      //     (matched by author + text, and only within the page's time range)
+      //     are dropped, so the opening prompt never double-renders once history
+      //     arrives, while a brand-new prompt sent during restore (newer than
+      //     the whole page) is kept even if it repeats earlier text.
       //   - Remaining live-only events keep their place by timestamp relative to
       //     the page: an un-persisted opening prompt stays above it, a just-sent
       //     prompt (reconnect race) stays below it.
@@ -1355,10 +1357,12 @@ function baseReducer(state: AppState, action: Action): AppState {
       const pageUserText = new Set(
         page.filter((e) => e.author === 'user' && e.text).map((e) => e.text),
       );
+      const lastTs = page.length > 0 ? page[page.length - 1].ts : 0;
       const supersededEcho = (e: TranscriptEvent) =>
         (e.id.startsWith('seed-') || e.id.startsWith('local-')) &&
         e.author === 'user' &&
         !!e.text &&
+        e.ts <= lastTs &&
         pageUserText.has(e.text);
       const liveOnly = existing.filter((e) => !pageIds.has(e.id) && !supersededEcho(e));
       const firstTs = page.length > 0 ? page[0].ts : 0;

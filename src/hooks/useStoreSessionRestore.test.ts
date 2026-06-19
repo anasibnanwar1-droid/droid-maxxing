@@ -136,6 +136,29 @@ test('#29 a replace drops the optimistic opening prompt the restored page alread
   );
 });
 
+test('#29 a replace keeps a new local prompt sent during restore even if it repeats earlier text', () => {
+  // User re-sends the same prompt while the initial restore is still in flight;
+  // the new local echo is newer than the whole page and must not be deduped.
+  const seeded = {
+    ...initialState,
+    transcripts: { m1: [userEv('local-1700000000000', 100, 'do it again')] },
+  } as unknown as AppState;
+
+  const next = reducer(seeded, {
+    type: 'MISSION_HISTORY',
+    missionId: 'm1',
+    progress: [],
+    transcripts: [userEv('real-user', 1, 'do it again'), ev('asst', 2, 'done')],
+    mode: 'replace',
+    hasMore: false,
+  });
+
+  assert.deepEqual(
+    next.transcripts.m1.map((e) => e.id),
+    ['real-user', 'asst', 'local-1700000000000'],
+  );
+});
+
 test('#29 a replace keeps an un-persisted opening prompt above the restored page', () => {
   // History returned assistant events but not the user message yet; the seeded
   // prompt is older than the page and must stay at the top, not slide below it.
