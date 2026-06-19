@@ -768,6 +768,21 @@ export function reducer(state: AppState, action: Action): AppState {
   return syncBrowserOpen(baseReducer(state, action));
 }
 
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+// Merge a streamed tool_call delta's args onto the accumulated args. One tool
+// call streams as many partial deltas: a Task spawn sends subagent_type and
+// description in separate deltas, and Todo/edit deltas can be payload-less or
+// carry only some fields. Replacing wholesale would drop earlier-streamed
+// fields, so shallow-merge when both are objects (latest field value wins) and
+// only fall back to a non-object/absent delta when there is nothing to merge.
+function mergeToolArgs(prev: unknown, next: unknown): unknown {
+  if (isPlainRecord(prev) && isPlainRecord(next)) return { ...prev, ...next };
+  return next ?? prev;
+}
+
 function baseReducer(state: AppState, action: Action): AppState {
   switch (action.type) {
     case 'SET_CONNECTION':
@@ -1050,6 +1065,30 @@ function baseReducer(state: AppState, action: Action): AppState {
       ) {
         const merged = [...prev];
         merged[merged.length - 1] = { ...last, text: (last.text ?? '') + ev.text, endTs: ev.ts };
+        return { ...state, transcripts: { ...state.transcripts, [mid]: merged } };
+      }
+
+      // Coalesce tool_call deltas: a single tool call streams as many partial
+      // tool_call events sharing one toolUseId. Collapse them onto the prior
+      // event (keeping its stable id, adopting the latest args) so live render
+      // matches replay's one-event-per-tool-use shape and edit stats are not
+      // inflated by counting every partial snapshot.
+      if (
+        last &&
+        !ev.author &&
+        ev.kind === 'tool_call' &&
+        last.kind === 'tool_call' &&
+        last.agentSessionId === ev.agentSessionId &&
+        !!ev.toolUseId &&
+        last.toolUseId === ev.toolUseId
+      ) {
+        const merged = [...prev];
+        merged[merged.length - 1] = {
+          ...last,
+          toolName: ev.toolName ?? last.toolName,
+          toolArgs: mergeToolArgs(last.toolArgs, ev.toolArgs),
+          endTs: ev.ts,
+        };
         return { ...state, transcripts: { ...state.transcripts, [mid]: merged } };
       }
 

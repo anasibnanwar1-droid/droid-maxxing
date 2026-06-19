@@ -570,3 +570,67 @@ test('#14 an assistant message that is exactly the spec text is not double-rende
   const occurrences = html.split('The one and only spec body').length - 1;
   assert.equal(occurrences, 0);
 });
+
+// ── #39: edit activity must not inflate when one edit streams as many calls ──
+
+const editPatch = (adds: number) =>
+  [
+    '--- a/src/x.ts',
+    '+++ b/src/x.ts',
+    '@@',
+    ...Array.from({ length: adds }, (_, n) => `+l${n}`),
+  ].join('\n');
+
+test('#39 streaming snapshots of one edit (same toolUseId) fold to one diff with latest stats', () => {
+  const events = [
+    ev({
+      kind: 'tool_call',
+      toolName: 'apply_patch',
+      toolArgs: { patch: editPatch(1) },
+      toolUseId: 'e1',
+    }),
+    ev({
+      kind: 'tool_call',
+      toolName: 'apply_patch',
+      toolArgs: { patch: editPatch(2) },
+      toolUseId: 'e1',
+    }),
+    ev({
+      kind: 'tool_call',
+      toolName: 'apply_patch',
+      toolArgs: { patch: editPatch(3) },
+      toolUseId: 'e1',
+    }),
+  ];
+  const items = buildFeed(events);
+  const diffs = items.filter((it) => it.type === 'diff' || it.type === 'diffs');
+  assert.equal(diffs.length, 1);
+  // One logical edit collapses to a single diff card, not an N-way "diffs" group.
+  const single = diffs[0] as Extract<FeedItem, { type: 'diff' }>;
+  assert.equal(single.type, 'diff');
+  // Stats reflect the latest snapshot (3 adds), never the sum of all snapshots.
+  assert.equal(single.change.added, 3);
+});
+
+test('#39 distinct edits (different toolUseIds) stay separate in the diffs group', () => {
+  const events = [
+    ev({
+      kind: 'tool_call',
+      toolName: 'apply_patch',
+      toolArgs: { patch: editPatch(2) },
+      toolUseId: 'e1',
+    }),
+    ev({
+      kind: 'tool_call',
+      toolName: 'apply_patch',
+      toolArgs: { patch: editPatch(3) },
+      toolUseId: 'e2',
+    }),
+  ];
+  const items = buildFeed(events);
+  const group = items.find((it): it is Extract<FeedItem, { type: 'diffs' }> => it.type === 'diffs');
+  assert.ok(group, 'expected a diffs group');
+  assert.equal(group.changes.length, 2);
+  const added = group.changes.reduce((s, c) => s + c.change.added, 0);
+  assert.equal(added, 5);
+});

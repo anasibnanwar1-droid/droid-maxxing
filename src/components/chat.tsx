@@ -581,7 +581,20 @@ export function buildFeed(events: TranscriptEvent[], subagentCards = false): Fee
       if (change) {
         // Fold a contiguous run of file edits into one collapsible group so a
         // large multi-file change doesn't bury the chat under dozens of cards.
-        const changes: { event: TranscriptEvent; change: FileChange }[] = [{ event: ev, change }];
+        const changes: { event: TranscriptEvent; change: FileChange }[] = [];
+        // Dedupe by toolUseId: a single edit can arrive as many streaming
+        // tool_call snapshots; counting each one inflates the diff stats and
+        // floods the group with repeated rows. Keep only the latest per call.
+        const byToolUse = new Map<string, number>();
+        const addChange = (e: TranscriptEvent, c: FileChange) => {
+          const at = e.toolUseId ? byToolUse.get(e.toolUseId) : undefined;
+          if (at != null) changes[at] = { event: e, change: c };
+          else {
+            if (e.toolUseId) byToolUse.set(e.toolUseId, changes.length);
+            changes.push({ event: e, change: c });
+          }
+        };
+        addChange(ev, change);
         i++;
         while (i < events.length) {
           const t = events[i];
@@ -596,10 +609,16 @@ export function buildFeed(events: TranscriptEvent[], subagentCards = false): Fee
           if (t.kind !== 'tool_call') break;
           const c = extractFileChange(t.toolName, t.toolArgs);
           if (!c) break;
-          changes.push({ event: t, change: c });
+          addChange(t, c);
           i++;
         }
-        if (changes.length === 1) items.push({ type: 'diff', key: ev.id, event: ev, change });
+        if (changes.length === 1)
+          items.push({
+            type: 'diff',
+            key: changes[0].event.id,
+            event: changes[0].event,
+            change: changes[0].change,
+          });
         else items.push({ type: 'diffs', key: `diffs-${ev.id}`, changes });
         continue;
       }
@@ -1154,6 +1173,7 @@ function WorkedGroup({
 }
 
 /* ── Folded run of file edits: one collapsible header over individual diffs ── */
+const MAX_DIFF_CARDS = 50;
 function DiffGroup({
   changes,
   onOpenDiff,
@@ -1165,10 +1185,15 @@ function DiffGroup({
   const added = changes.reduce((s, c) => s + c.change.added, 0);
   const removed = changes.reduce((s, c) => s + c.change.removed, 0);
   const files = new Set(changes.map((c) => c.change.path));
+  const edits = `${changes.length} ${changes.length === 1 ? 'edit' : 'edits'}`;
   const label =
     files.size <= 1
-      ? `Edited ${baseName(changes[0].change.path)} · ${changes.length} edits`
-      : `Edited ${files.size} files · ${changes.length} edits`;
+      ? `Edited ${baseName(changes[0].change.path)} · ${edits}`
+      : `Edited ${files.size} files · ${edits}`;
+  // Cap how many diff cards render at once so a genuinely large multi-edit run
+  // can't flood the feed with hundreds of cards; the rest stay summarized.
+  const shown = changes.slice(0, MAX_DIFF_CARDS);
+  const hiddenCount = changes.length - shown.length;
   return (
     <div>
       <button
@@ -1190,13 +1215,18 @@ function DiffGroup({
       </button>
       <Expand open={open}>
         <div className="mt-2 space-y-2 border-l border-droid-border pl-3">
-          {changes.map((c) => (
+          {shown.map((c) => (
             <DiffCard
               key={c.event.id}
               change={c.change}
               onOpen={onOpenDiff ? () => onOpenDiff(c.change) : undefined}
             />
           ))}
+          {hiddenCount > 0 && (
+            <div className="text-[11px] text-droid-text-muted/70">
+              +{hiddenCount} more {hiddenCount === 1 ? 'edit' : 'edits'}
+            </div>
+          )}
         </div>
       </Expand>
     </div>
