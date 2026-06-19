@@ -540,6 +540,66 @@ test('#18 multiple assistant texts in a turn each stay top-level', () => {
   assert.deepEqual(topLevelAnswers(grouped), ['first', 'second']);
 });
 
+// ── #19: a final answer split only by todo/plan reconciliation is one answer ──
+
+test('#19 a final answer split by a todo reconciliation merges into one message', () => {
+  // The model emitted its answer, updated the checklist, then finished the
+  // sentence. The checklist update must not split the final into two messages.
+  const events = [
+    userMsg('q'),
+    asst('Here is the analysis.'),
+    todo('1. [completed] done'),
+    asst('All set!'),
+  ];
+  const grouped = groupTurns(buildFeed(events), false);
+  assert.deepEqual(topLevelAnswers(grouped), ['Here is the analysis.\n\nAll set!']);
+  // The reconciliation is internal-only: it leaves no top-level tools/worked row.
+  assert.ok(!grouped.some((it) => it.type === 'tools' || it.type === 'worked'));
+});
+
+test('#19 a fragment split by a real edit stays a separate message', () => {
+  // Real file work between two assistant texts means they are genuinely distinct
+  // messages; only pure reconciliation may merge them.
+  const patch = ['--- a/src/x.ts', '+++ b/src/x.ts', '@@', '+added line'].join('\n');
+  const events = [
+    userMsg('q'),
+    asst('Working on it.'),
+    ev({ kind: 'tool_call', toolName: 'apply_patch', toolArgs: { patch }, toolUseId: 'e1' }),
+    asst('Done editing.'),
+  ];
+  const grouped = groupTurns(buildFeed(events), false);
+  assert.deepEqual(topLevelAnswers(grouped), ['Working on it.', 'Done editing.']);
+});
+
+test('#19 fragments are not merged when real tool work also sits between', () => {
+  // A reconciliation call mixed with real tool activity is not a pure checklist
+  // gap, so the two texts stay separate.
+  const events = [
+    userMsg('q'),
+    asst('Analysis:'),
+    grep(),
+    todo('1. [completed] x'),
+    asst('extra note'),
+  ];
+  const grouped = groupTurns(buildFeed(events), false);
+  assert.deepEqual(topLevelAnswers(grouped), ['Analysis:', 'extra note']);
+});
+
+test('#19 a todo reconciliation with its own id-less result still merges the answer', () => {
+  // An id-less successful TodoWrite result classifies as generic tool_activity,
+  // but the call+result group is still pure reconciliation and must merge.
+  const events = [
+    userMsg('q'),
+    asst('Here is the plan outcome.'),
+    todo('1. [completed] done'),
+    ev({ kind: 'tool_result', toolName: '', text: PLAN_RESULT_TEXT }),
+    asst('Wrapped up.'),
+  ];
+  const grouped = groupTurns(buildFeed(events), false);
+  assert.deepEqual(topLevelAnswers(grouped), ['Here is the plan outcome.\n\nWrapped up.']);
+  assert.ok(!grouped.some((it) => it.type === 'tools' || it.type === 'worked'));
+});
+
 // ── #14: spec mode must not capture normal chat responses ──
 
 test('#14 a normal assistant response still renders in chat while a spec exists', () => {
@@ -569,4 +629,26 @@ test('#14 an assistant message that is exactly the spec text is not double-rende
   // collapsed by default, hence absent here).
   const occurrences = html.split('The one and only spec body').length - 1;
   assert.equal(occurrences, 0);
+});
+
+test('#19/#14 a spec fragment split by reconciliation is not merged into prose', () => {
+  // prose -> TodoWrite reconciliation -> exact spec text. The #19 merge must NOT
+  // fold the spec fragment into the prose, or the merged row would no longer
+  // match the spec exactly and FeedItemView would render the spec body twice.
+  const spec = '# Specification\n\nThe sole spec body line';
+  const events = [
+    userMsg('draft the spec'),
+    asst('Here is the plan.'),
+    todo('1. [completed] x'),
+    asst(spec),
+  ];
+  const grouped = groupTurns(buildFeed(events), false, spec);
+  // The spec fragment stays its own top-level message (exact match, suppressible)
+  // and is never concatenated onto the prose.
+  assert.deepEqual(topLevelAnswers(grouped), ['Here is the plan.', spec]);
+  const html = renderToStaticMarkup(
+    createElement(MessageFeed, { events, pending: false, specContent: spec }),
+  );
+  assert.ok(html.includes('Here is the plan.'));
+  assert.equal(html.split('The sole spec body line').length - 1, 0);
 });

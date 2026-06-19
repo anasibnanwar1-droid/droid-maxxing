@@ -117,6 +117,11 @@ interface Mission {
   agents: Map<string, LiveAgent>;
   knownSubagents: Set<string>;
   completedSubagents: Set<string>;
+  // Session ids (orchestrator or a worker) whose current streaming turn has
+  // already produced its terminal `result`. Further model generation in the
+  // same turn is quarantined so a turn renders exactly one final response, and
+  // the set is cleared when that session's next turn starts.
+  terminalAgents: Set<string>;
   // Worker session ids tied to this mission by persisted spawn->worker links,
   // seeded on resume so historical subagents stay openable even before any live
   // spawn re-populates knownSubagents. Kept separate from knownSubagents so live
@@ -1261,6 +1266,7 @@ export class MissionManager {
       agents: new Map(),
       knownSubagents: new Set(),
       completedSubagents: new Set(),
+      terminalAgents: new Set(),
       linkedSubagents: new Set(),
       subagentToolUseIds: new Map(),
       subagentSettings: new Map(),
@@ -1374,6 +1380,7 @@ export class MissionManager {
     if (!mission) return;
     const appSessionId = mission.summary.id;
     mission.streaming = true;
+    mission.terminalAgents.delete(appSessionId);
     this.patch(appSessionId, {
       phase: mission.summary.kind === 'mission_orchestrator' ? 'planning' : 'running',
       streaming: true,
@@ -1470,6 +1477,37 @@ export class MissionManager {
   ): void {
     const n = normalizeStreamEvent(missionId, agentSessionId, role, ev);
     if (!n) return;
+    this.applyNormalizedForAgent(missionId, agentSessionId, n);
+  }
+
+  // Single live entry point that enforces per-turn terminal gating before
+  // applying a normalized event. Both the orchestrator/worker stream loops and
+  // the worker notification subscriptions route through here so post-terminal
+  // generation is dropped no matter which channel delivers it. History replay
+  // does not pass through this path (it uses emitTranscript directly).
+  private applyNormalizedForAgent(
+    missionId: string,
+    agentSessionId: string,
+    n: NonNullable<ReturnType<typeof normalizeStreamEvent>>,
+  ): void {
+    const mission = this.findMission(missionId);
+    if (mission) {
+      // The first `result` of a streaming turn is its terminal final. Mark the
+      // producing session terminal so any further model generation in the same
+      // turn is dropped, keeping one final response per turn.
+      if (n.done) {
+        mission.terminalAgents.add(agentSessionId);
+        return;
+      }
+      // After terminal, quarantine only this session's model-generated chat/tool
+      // transcript. Any side effects attached to the same event (a subagent
+      // spawn/completion, tokens, mission state) and errors still flow.
+      if (mission.terminalAgents.has(agentSessionId) && isPostTerminalGeneration(n)) {
+        const { transcript: _quarantined, ...sideEffects } = n;
+        if (hasNormalizedSideEffects(sideEffects)) this.applyNormalized(missionId, sideEffects);
+        return;
+      }
+    }
     this.applyNormalized(missionId, n);
   }
 
@@ -2085,7 +2123,7 @@ export class MissionManager {
       };
       agent.unsubscribe = session.onNotification((note: Record<string, unknown>) => {
         for (const n of normalizeNotification(appSessionId, agentSessionId, role, note))
-          this.applyNormalized(appSessionId, n);
+          this.applyNormalizedForAgent(appSessionId, agentSessionId, n);
       });
       mission.agents.set(agentSessionId, agent);
       this.emitAgentHistory(appSessionId, agentSessionId);
@@ -2136,6 +2174,7 @@ export class MissionManager {
   private async driveAgent(agent: LiveAgent, text: string): Promise<void> {
     agent.streaming = true;
     agent.lastUsedAt = Date.now();
+    this.findMission(agent.missionId)?.terminalAgents.delete(agent.session.sessionId);
     this.emit({
       type: 'agent.updated',
       missionId: agent.missionId,
@@ -2332,7 +2371,7 @@ export class MissionManager {
     agent.session = newSession;
     agent.unsubscribe = newSession.onNotification((note: Record<string, unknown>) => {
       for (const n of normalizeNotification(agent.missionId, newSessionId, agent.role, note))
-        this.applyNormalized(agent.missionId, n);
+        this.applyNormalizedForAgent(agent.missionId, newSessionId, n);
     });
     const snapshot = this.contextSnapshots.get(oldSessionId);
     this.contextSnapshots.delete(oldSessionId);
@@ -3227,4 +3266,25 @@ function uniqueStrings(values: Array<string | undefined>): string[] {
 
 function errMsg(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+// Model-generated transcript kinds that, once a turn is terminal, would form a
+// second/buried final response if appended. A failed result (isError) and
+// non-transcript signals (tokens, state, worker, subagent) are never quarantined.
+const POST_TERMINAL_GENERATION_KINDS = new Set(['text', 'thinking', 'tool_call', 'tool_result']);
+
+function isPostTerminalGeneration(
+  n: NonNullable<ReturnType<typeof normalizeStreamEvent>>,
+): boolean {
+  return (
+    !!n.transcript && !n.transcript.isError && POST_TERMINAL_GENERATION_KINDS.has(n.transcript.kind)
+  );
+}
+
+// Whether a normalized event still carries non-transcript work that must be
+// applied even when its quarantined model transcript is dropped post-terminal.
+function hasNormalizedSideEffects(
+  n: Omit<NonNullable<ReturnType<typeof normalizeStreamEvent>>, 'transcript'>,
+): boolean {
+  return !!(n.features || n.progress || n.missionState || n.worker || n.subagent || n.tokens);
 }
