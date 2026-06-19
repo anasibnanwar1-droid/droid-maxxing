@@ -1,6 +1,7 @@
 import { motion, AnimatePresence } from 'framer-motion';
 import { useStore } from '../hooks/useStore';
 import { respondPermission } from '../lib/commands';
+import { effectiveCompactionSettings } from '../lib/compactionSettings';
 import type { PermissionOutcome, PermissionKind } from '../types/bridge';
 
 const EASE = [0.16, 1, 0.3, 1] as const;
@@ -39,9 +40,13 @@ export default function PermissionInline() {
   const reason = KIND_PROMPT[req.kind];
   const subtitle =
     req.title && req.title !== 'Permission required' && req.title !== reason ? req.title : '';
+  const compactionSettings = effectiveCompactionSettings(
+    state.compactionTokenLimit,
+    state.compactionTokenLimitPerModel,
+  );
 
   const respond = (outcome: PermissionOutcome) => {
-    respondPermission(req.missionId, req.requestId, outcome);
+    respondPermission(req.missionId, req.requestId, outcome, compactionSettings);
     dispatch({ type: 'CLEAR_PERMISSION' });
   };
 

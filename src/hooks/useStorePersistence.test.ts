@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { applyFactoryCompactionDefaults, loadPersistedUiState } from './useStore';
+import { loadPersistedUiState } from './useStore';
 
 test('loadPersistedUiState returns an empty snapshot when storage is empty', () => {
   withLocalStorage(null, () => {
@@ -61,45 +61,6 @@ test('loadPersistedUiState sanitizes persisted shell fields', () => {
       });
     },
   );
-});
-
-test('factory defaults do not restore a cleared per-model compaction override', () => {
-  withLocalStorageMap({ 'droid-compaction-token-limit-per-model': '{}' }, () => {
-    assert.deepEqual(
-      applyFactoryCompactionDefaults(
-        { compactionTokenLimit: undefined, compactionTokenLimitPerModel: {} },
-        { compactionTokenLimitPerModel: { 'model-a': 100_000 } },
-      ),
-      { compactionTokenLimit: undefined, compactionTokenLimitPerModel: {} },
-    );
-  });
-});
-
-test('factory defaults do not restore a cleared global compaction token limit', () => {
-  withLocalStorageMap({ 'droid-compaction-token-limit-configured': '1' }, () => {
-    assert.deepEqual(
-      applyFactoryCompactionDefaults(
-        { compactionTokenLimit: undefined, compactionTokenLimitPerModel: {} },
-        { compactionTokenLimit: 100_000 },
-      ),
-      { compactionTokenLimit: undefined, compactionTokenLimitPerModel: {} },
-    );
-  });
-});
-
-test('factory defaults seed compaction token limits before local settings exist', () => {
-  const storage = new Map<string, string>();
-  withLocalStorageMap(storage, () => {
-    assert.deepEqual(
-      applyFactoryCompactionDefaults(
-        { compactionTokenLimit: undefined, compactionTokenLimitPerModel: {} },
-        { compactionTokenLimit: 200_000, compactionTokenLimitPerModel: { 'model-a': 100_000 } },
-      ),
-      { compactionTokenLimit: 200_000, compactionTokenLimitPerModel: { 'model-a': 100_000 } },
-    );
-    assert.equal(storage.get('droid-compaction-token-limit'), '200000');
-    assert.equal(storage.get('droid-compaction-token-limit-per-model'), '{"model-a":100000}');
-  });
 });
 
 function withLocalStorage(value: string | null, fn: () => void): void {

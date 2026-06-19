@@ -570,3 +570,46 @@ test('#14 an assistant message that is exactly the spec text is not double-rende
   const occurrences = html.split('The one and only spec body').length - 1;
   assert.equal(occurrences, 0);
 });
+
+test('active manual compaction stays visible while pending is false', () => {
+  const html = renderToStaticMarkup(
+    createElement(MessageFeed, {
+      events: [
+        ev({ id: 'u1', kind: 'text', text: 'Compact this session', author: 'user', ts: 1 }),
+        ev({
+          id: 'c1',
+          kind: 'status',
+          text: 'Compacting conversation...',
+          compactType: 'manual',
+          ts: 2,
+        }),
+      ],
+      pending: false,
+    }),
+  );
+
+  assert.match(html, /Compacting/);
+  assert.doesNotMatch(html, /Worked for/);
+});
+
+test('live file edits show an editing cue while pending', () => {
+  const html = renderToStaticMarkup(
+    createElement(MessageFeed, {
+      events: [
+        ev({ id: 'u1', kind: 'text', text: 'Update the file', author: 'user', ts: 1 }),
+        ev({
+          id: 'e1',
+          kind: 'tool_call',
+          ts: 2,
+          toolName: 'edit',
+          toolArgs: { file_path: 'src/app.ts', old_string: 'old', new_string: 'new' },
+        }),
+      ],
+      pending: true,
+    }),
+  );
+
+  assert.match(html, /Editing/);
+  assert.match(html, /src\/app\.ts/);
+  assert.doesNotMatch(html, /Worked for/);
+});

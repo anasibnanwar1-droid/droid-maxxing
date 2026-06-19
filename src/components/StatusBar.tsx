@@ -92,6 +92,10 @@ export default function StatusBar() {
         }
       : mission;
   const isMission = (mission?.features?.length ?? 0) > 0;
+  const compactionCount = Math.max(
+    mission?.compactionCount ?? 0,
+    mission?.compactedFromSessionIds?.length ?? 0,
+  );
   // Show the moment Mission mode is entered (/mission), or whenever an orchestrated mission is running.
   const on = state.missionMode || (!!mission && live && isMission);
   const [hoverKey, setHoverKey] = useState(0);
@@ -137,13 +141,13 @@ export default function StatusBar() {
             {mission.queuedSends} queued
           </span>
         ) : null}
-        {mission?.compactedFromSessionIds?.length ? (
+        {compactionCount > 0 ? (
           <span
             className="mr-2 rounded-md border border-droid-border bg-droid-elevated/70 px-1.5 py-0.5 font-mono text-[10px] text-droid-text-secondary"
             title="Times this session has been compacted"
           >
-            {mission.compactedFromSessionIds.length} compaction
-            {mission.compactedFromSessionIds.length === 1 ? '' : 's'}
+            {compactionCount} compaction
+            {compactionCount === 1 ? '' : 's'}
           </span>
         ) : null}
         {contextMission && <ContextMeter mission={contextMission} stats={contextStats} />}

@@ -720,6 +720,26 @@ function isUserMessage(item: FeedItem): boolean {
   return item.type === 'message' && item.event.author === 'user';
 }
 
+function isAssistantMessage(item: FeedItem): boolean {
+  return item.type === 'message' && item.event.author !== 'user';
+}
+
+function isCompactionMetadata(item: FeedItem): boolean {
+  return (
+    item.type === 'status' &&
+    (item.event.kind === 'compaction' ||
+      (item.event.compactType !== undefined && !isCompactingStatus(item.event.text)))
+  );
+}
+
+function isCompletedCompactingStarter(item: FeedItem): boolean {
+  return (
+    item.type === 'status' &&
+    item.event.compactType !== undefined &&
+    isCompactingStatus(item.event.text)
+  );
+}
+
 // Best-effort end timestamp of a feed item, used to time the live working cue.
 function tailTimestamp(item?: FeedItem): number | undefined {
   if (!item) return undefined;
@@ -761,6 +781,7 @@ function spanOf(items: FeedItem[]): { start: number; end: number } {
 function collapseRun(run: FeedItem[]): FeedItem[] {
   if (run.length === 0) return [];
   const out: FeedItem[] = [];
+  const hasCompactionMetadata = run.some(isCompactionMetadata);
   // Fold contiguous work into "Worked for …" groups, but keep subagent spawn
   // cards at the top level so they stay visible (and navigable) after a turn.
   let buf: FeedItem[] = [];
@@ -780,26 +801,18 @@ function collapseRun(run: FeedItem[]): FeedItem[] {
     buf = [];
   };
   for (const it of run) {
-    if (it.type === 'message') {
-      // Assistant chat (user messages were already split out by groupTurns).
+    if (isCompletedCompactingStarter(it)) {
+      if (hasCompactionMetadata) continue;
       flush();
       out.push(it);
-    } else if (it.type === 'subagent') {
-      flush();
-      out.push(it);
-    } else if (it.type === 'error') {
+      continue;
+    }
+    if (it.type === 'error') {
       // A failed tool/result must stay visible after the turn completes instead
       // of being buried in a collapsed "Worked for …" group (classifier intent).
       flush();
       out.push(it);
-    } else if (it.type === 'status' && it.event.kind === 'compaction') {
-      flush();
-      out.push(it);
-    } else if (
-      it.type === 'status' &&
-      isCompactionCompleteStatus(it.event.text) &&
-      it.event.compactType === 'manual'
-    ) {
+    } else if (it.type === 'subagent' || isAssistantMessage(it) || isCompactionMetadata(it)) {
       flush();
       out.push(it);
     } else buf.push(it);
@@ -1088,11 +1101,12 @@ const FeedItemView = memo(function FeedItemView({
       return (
         <DiffCard
           change={item.change}
+          active={live}
           onOpen={onOpenDiff ? () => onOpenDiff(item.change) : undefined}
         />
       );
     case 'diffs':
-      return <DiffGroup changes={item.changes} onOpenDiff={onOpenDiff} />;
+      return <DiffGroup changes={item.changes} active={live} onOpenDiff={onOpenDiff} />;
     case 'tools':
       return <ToolGroupItem events={item.events} active={live} />;
     case 'worked':
@@ -1156,9 +1170,11 @@ function WorkedGroup({
 /* ── Folded run of file edits: one collapsible header over individual diffs ── */
 function DiffGroup({
   changes,
+  active,
   onOpenDiff,
 }: {
   changes: { event: TranscriptEvent; change: FileChange }[];
+  active?: boolean;
   onOpenDiff?: (c: FileChange) => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -1169,6 +1185,8 @@ function DiffGroup({
     files.size <= 1
       ? `Edited ${baseName(changes[0].change.path)} · ${changes.length} edits`
       : `Edited ${files.size} files · ${changes.length} edits`;
+  const liveLabel =
+    files.size <= 1 ? `Editing ${baseName(changes[0].change.path)}` : `Editing ${files.size} files`;
   return (
     <div>
       <button
@@ -1178,8 +1196,12 @@ function DiffGroup({
         <ChevronRight
           className={`w-3 h-3 shrink-0 text-droid-text-muted/50 transition-transform duration-200 group-hover:text-droid-text-muted ${open ? 'rotate-90' : ''}`}
         />
-        <span className="min-w-0 truncate text-[13px] font-medium text-droid-text-muted group-hover:text-droid-text-secondary">
-          {label}
+        <span
+          className={`min-w-0 truncate text-[13px] font-medium ${
+            active ? 'shimmer-text' : 'text-droid-text-muted group-hover:text-droid-text-secondary'
+          }`}
+        >
+          {active ? liveLabel : label}
         </span>
         <span className="ml-auto text-[11px] font-mono shrink-0" style={{ color: '#5cc89a' }}>
           +{added}
@@ -1194,6 +1216,7 @@ function DiffGroup({
             <DiffCard
               key={c.event.id}
               change={c.change}
+              active={active}
               onOpen={onOpenDiff ? () => onOpenDiff(c.change) : undefined}
             />
           ))}
@@ -1367,7 +1390,7 @@ export function MessageFeed({
     last?.type === 'tools'
       ? 'Running'
       : last?.type === 'diff' || last?.type === 'diffs'
-        ? 'Updating files'
+        ? 'Editing files'
         : 'Working';
   const workingStart = rich ? tailTimestamp(last) : undefined;
 

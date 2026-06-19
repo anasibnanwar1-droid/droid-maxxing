@@ -1,5 +1,4 @@
 import type { DroidSession } from '@factory/droid-sdk';
-import type { FactoryDefaultSettings } from './protocol.js';
 
 export type CompactType = 'auto' | 'manual';
 
@@ -8,10 +7,10 @@ export interface CompactionTokenLimitPatch {
   compactionTokenLimitPerModel?: Record<string, number>;
 }
 
-type CompactionDefaults = Pick<
-  FactoryDefaultSettings,
-  'compactionTokenLimit' | 'compactionTokenLimitPerModel'
->;
+export interface CompactionRuntimeSettings {
+  compactionTokenLimit?: number;
+  compactionThresholdCheckEnabled?: boolean;
+}
 
 export function normalizeCompactionTokenLimit(value: unknown): number | undefined {
   if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return undefined;
@@ -21,96 +20,32 @@ export function normalizeCompactionTokenLimit(value: unknown): number | undefine
 export function compactionTokenLimitForModel(
   modelId: string | undefined,
   settings: CompactionTokenLimitPatch,
-  defaults: CompactionDefaults = {},
 ): number | undefined {
-  const perModel =
-    settings.compactionTokenLimitPerModel !== undefined
-      ? settings.compactionTokenLimitPerModel
-      : defaults.compactionTokenLimitPerModel;
-  const modelLimit = modelId ? normalizeCompactionTokenLimit(perModel?.[modelId]) : undefined;
-  if (modelLimit !== undefined) return modelLimit;
+  if (settings.compactionTokenLimit === null) return undefined;
 
-  const globalLimit =
-    settings.compactionTokenLimit !== undefined
-      ? settings.compactionTokenLimit
-      : defaults.compactionTokenLimit;
-  return globalLimit === null ? undefined : normalizeCompactionTokenLimit(globalLimit);
-}
+  const settingsModelLimit = modelId
+    ? normalizeCompactionTokenLimit(settings.compactionTokenLimitPerModel?.[modelId])
+    : undefined;
+  if (settingsModelLimit !== undefined) return settingsModelLimit;
 
-// Resume precedence: honor the limit the resumed session itself exposes
-// (per-model, then global) before falling back to the current app defaults.
-// compactionTokenLimitForModel mixes settings and defaults per tier, so a
-// default per-model limit could otherwise override a session's own saved global
-// limit; resolving the exposed settings first (with no defaults) prevents that.
-export function resumedCompactionTokenLimit(
-  modelId: string | undefined,
-  exposed: CompactionTokenLimitPatch,
-  defaults: CompactionDefaults = {},
-): number | undefined {
-  const own = compactionTokenLimitForModel(modelId, exposed);
-  return own !== undefined ? own : compactionTokenLimitForModel(modelId, {}, defaults);
-}
-
-export function clampCompactionTokenLimit(
-  limit: number | undefined,
-  maxContextTokens?: number,
-): number | undefined {
-  if (limit === undefined) return undefined;
-  const max = normalizeCompactionTokenLimit(maxContextTokens);
-  return max === undefined ? limit : Math.min(limit, max);
+  const settingsGlobalLimit = settings.compactionTokenLimit;
+  if (settingsGlobalLimit !== undefined)
+    return settingsGlobalLimit === null
+      ? undefined
+      : normalizeCompactionTokenLimit(settingsGlobalLimit);
+  return undefined;
 }
 
 export function createCompactionSettingsForModel(
   modelId: string | undefined,
   settings: CompactionTokenLimitPatch,
-  defaults: CompactionDefaults = {},
-  maxContextTokens?: number,
-): Record<string, number> {
-  const limit = clampCompactionTokenLimit(
-    compactionTokenLimitForModel(modelId, settings, defaults),
-    maxContextTokens,
-  );
-  return limit !== undefined ? { compactionTokenLimit: limit } : {};
-}
+): CompactionRuntimeSettings {
+  if (settings.compactionTokenLimit === null) return { compactionThresholdCheckEnabled: false };
 
-// Single derivation of the auto-compaction threshold, shared by mission
-// create, resume, and worker open so every session's trigger matches the
-// limit the ContextMeter shows (per-model override -> global default, clamped
-// to the model window).
-export function effectiveCompactionLimit(
-  modelId: string | undefined,
-  defaults: CompactionDefaults,
-  maxContextTokens: number | undefined,
-): number | undefined {
-  return clampCompactionTokenLimit(
-    compactionTokenLimitForModel(modelId, {}, defaults),
-    maxContextTokens,
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Unified runtime compaction layer. Every Droid session (the Mission Control
-// orchestrator and each worker/subagent alike) flows through this single path
-// after an idle turn. The daemon returns a new backing session id on success;
-// the owner adopts it via the optional `reload` hook (the orchestrator swaps
-// its backing session behind a stable app id; a worker re-keys itself to the
-// new id). A caller without a reload hook reports the swap as 'stale'.
-// ---------------------------------------------------------------------------
-
-export interface AutoCompactState {
-  compacting?: boolean;
-  effectiveCompactionTokenLimit?: number;
-}
-
-// The one threshold rule used by both the orchestrator and workers.
-export function autoCompactionDue(
-  state: AutoCompactState,
-  usedTokens: number | undefined,
-): boolean {
-  if (state.compacting) return false;
-  const limit = state.effectiveCompactionTokenLimit;
-  if (limit === undefined || limit <= 0) return false;
-  return usedTokens !== undefined && usedTokens > 0 && usedTokens >= limit;
+  const limit = compactionTokenLimitForModel(modelId, settings);
+  if (limit !== undefined)
+    return { compactionTokenLimit: limit, compactionThresholdCheckEnabled: true };
+  return { compactionThresholdCheckEnabled: true };
 }
 
 export type CompactableSession = Pick<DroidSession, 'sessionId' | 'compactSession'>;

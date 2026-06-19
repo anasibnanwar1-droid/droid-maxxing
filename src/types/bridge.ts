@@ -86,6 +86,7 @@ export interface MissionSummary {
   id: string; // stable app conversation id
   sessionId?: string; // active Droid session id
   compactedFromSessionIds?: string[];
+  compactionCount?: number;
   missionId?: string;
   parentSessionId?: string;
   kind: SessionKind;
@@ -140,9 +141,9 @@ export interface TranscriptEvent {
   browserRefs?: BrowserTranscriptReference[];
   // Frontend-only: this user message was sent while the model was already working.
   steered?: boolean;
-  // Whether a compaction status was triggered automatically (idle threshold) or
-  // manually (/compact). Manual compaction dividers are promoted to top level;
-  // auto-compaction dividers fold into "Worked for …" groups.
+  // Whether a compaction status was triggered automatically (Droid-owned
+  // threshold) or manually (/compact). Compaction metadata renders separately
+  // from assistant answers so it cannot hide final user-facing content.
   compactType?: 'auto' | 'manual';
 }
 
@@ -466,6 +467,11 @@ export type ClientCommand =
   | { type: 'catalog.mcp'; sessionId?: string }
   | { type: 'settings.defaults' }
   | {
+      type: 'settings.compaction.update';
+      compactionTokenLimit?: number | null | 'factory-default';
+      compactionTokenLimitPerModel?: Record<string, number>;
+    }
+  | {
       type: 'mission.create';
       clientRef: string;
       cwd?: string;
@@ -497,9 +503,26 @@ export type ClientCommand =
       compactionTokenLimitPerModel?: Record<string, number>;
       autonomy: Autonomy;
     }
-  | { type: 'session.send'; sessionId: string; text: string }
-  | { type: 'session.sendNow'; sessionId: string; text: string }
-  | { type: 'session.resume'; sessionId: string }
+  | {
+      type: 'session.send';
+      sessionId: string;
+      text: string;
+      compactionTokenLimit?: number | null;
+      compactionTokenLimitPerModel?: Record<string, number>;
+    }
+  | {
+      type: 'session.sendNow';
+      sessionId: string;
+      text: string;
+      compactionTokenLimit?: number | null;
+      compactionTokenLimitPerModel?: Record<string, number>;
+    }
+  | {
+      type: 'session.resume';
+      sessionId: string;
+      compactionTokenLimit?: number | null;
+      compactionTokenLimitPerModel?: Record<string, number>;
+    }
   | { type: 'session.interrupt'; sessionId: string }
   | {
       type: 'session.updateSettings';
@@ -514,26 +537,63 @@ export type ClientCommand =
   | { type: 'session.rewindInfo'; sessionId: string }
   | { type: 'session.rewind'; sessionId: string; rewindId?: string }
   | { type: 'agent.open'; missionId: string; agentSessionId: string; role?: AgentRole }
-  | { type: 'agent.send'; missionId: string; agentSessionId: string; text: string }
-  | { type: 'agent.sendNow'; missionId: string; agentSessionId: string; text: string }
+  | {
+      type: 'agent.send';
+      missionId: string;
+      agentSessionId: string;
+      text: string;
+      compactionTokenLimit?: number | null;
+      compactionTokenLimitPerModel?: Record<string, number>;
+    }
+  | {
+      type: 'agent.sendNow';
+      missionId: string;
+      agentSessionId: string;
+      text: string;
+      compactionTokenLimit?: number | null;
+      compactionTokenLimitPerModel?: Record<string, number>;
+    }
   | { type: 'agent.interrupt'; missionId: string; agentSessionId: string }
-  | { type: 'approval.respond'; missionId: string; requestId: string; outcome: PermissionOutcome }
+  | {
+      type: 'approval.respond';
+      missionId: string;
+      requestId: string;
+      outcome: PermissionOutcome;
+      compactionTokenLimit?: number | null;
+      compactionTokenLimitPerModel?: Record<string, number>;
+    }
   | {
       type: 'question.respond';
       missionId: string;
       requestId: string;
       cancelled: boolean;
       answers: { index: number; question: string; answer: string }[];
+      compactionTokenLimit?: number | null;
+      compactionTokenLimitPerModel?: Record<string, number>;
     }
   | { type: 'history.list' }
   | { type: 'history.page'; sessionId: string; cursor?: string; limit?: number }
-  | { type: 'mission.send'; missionId: string; text: string }
-  | { type: 'mission.sendNow'; missionId: string; text: string }
+  | {
+      type: 'mission.send';
+      missionId: string;
+      text: string;
+      compactionTokenLimit?: number | null;
+      compactionTokenLimitPerModel?: Record<string, number>;
+    }
+  | {
+      type: 'mission.sendNow';
+      missionId: string;
+      text: string;
+      compactionTokenLimit?: number | null;
+      compactionTokenLimitPerModel?: Record<string, number>;
+    }
   | {
       type: 'mission.respondPermission';
       missionId: string;
       requestId: string;
       outcome: PermissionOutcome;
+      compactionTokenLimit?: number | null;
+      compactionTokenLimitPerModel?: Record<string, number>;
     }
   | {
       type: 'mission.respondQuestion';
@@ -541,10 +601,17 @@ export type ClientCommand =
       requestId: string;
       cancelled: boolean;
       answers: { index: number; question: string; answer: string }[];
+      compactionTokenLimit?: number | null;
+      compactionTokenLimitPerModel?: Record<string, number>;
     }
   | { type: 'mission.interrupt'; missionId: string }
   | { type: 'mission.compact'; missionId: string; customInstructions?: string }
-  | { type: 'mission.subscribeWorker'; missionId: string; workerSessionId: string }
+  | {
+      type: 'mission.subscribeWorker';
+      missionId: string;
+      workerSessionId: string;
+      role?: 'worker' | 'validator';
+    }
   | { type: 'mission.close'; missionId: string }
   | {
       type: 'mission.list';
@@ -608,10 +675,17 @@ export type ClientCommand =
       missionId: string;
       instruction: string;
       referenceIds: string[];
+      compactionTokenLimit?: number | null;
+      compactionTokenLimitPerModel?: Record<string, number>;
     }
   | { type: 'browser.native.result'; result: BrowserNativeResult }
   | { type: 'sessions.list' }
-  | { type: 'mission.resume'; sessionId: string }
+  | {
+      type: 'mission.resume';
+      sessionId: string;
+      compactionTokenLimit?: number | null;
+      compactionTokenLimitPerModel?: Record<string, number>;
+    }
   | { type: 'models.list' };
 
 export type ServerEvent =

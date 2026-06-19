@@ -28,6 +28,8 @@ interface AgentEntry {
   role: 'orchestrator' | 'worker' | 'validator';
 }
 
+type SubAgentRole = 'worker' | 'validator';
+
 interface RoleAgent {
   role: AgentRole;
   sessionId: string | null;
@@ -59,7 +61,7 @@ const accentMix = (pct: number) => `color-mix(in srgb, var(--droid-accent) ${pct
 
 /* ════════════════════════ chat ════════════════════════ */
 
-function featureAgentRole(feature: BridgeFeature): AgentEntry['role'] {
+function featureAgentRole(feature: BridgeFeature): SubAgentRole {
   const text = `${feature.id} ${feature.skillName} ${feature.description}`.toLowerCase();
   return text.includes('validator') || text.includes('validation') || text.includes('scrutiny')
     ? 'validator'
@@ -922,6 +924,31 @@ export default function MissionControl() {
     [missionWorkers, allTx],
   );
 
+  const workerRoles = useMemo(() => {
+    const map = new Map<string, SubAgentRole>();
+    features.forEach((f) => {
+      const role = featureAgentRole(f);
+      f.workerSessionIds?.forEach((id) => map.set(id, role));
+      if (f.currentWorkerSessionId) map.set(f.currentWorkerSessionId, role);
+      if (f.completedWorkerSessionId) map.set(f.completedWorkerSessionId, role);
+    });
+    progress.forEach((entry) => {
+      if (entry.workerSessionId && !map.has(entry.workerSessionId))
+        map.set(entry.workerSessionId, 'worker');
+    });
+    return map;
+  }, [features, progress]);
+
+  const selectAgent = useCallback(
+    (id: string) => {
+      if (mission && id !== 'orchestrator') {
+        subscribeWorker(mission.id, id, workerRoles.get(id) ?? 'worker');
+      }
+      setViewedAgent(id);
+    },
+    [mission, workerRoles],
+  );
+
   // Click a spawn name in the orchestrator transcript → focus that worker.
   // Mission orchestrators are skipped by App's subscribe effect, so open the
   // worker session here to load its history/live events before switching.
@@ -929,10 +956,9 @@ export default function MissionControl() {
     (target: { toolUseId?: string; label?: string }) => {
       const worker = findWorkerForTarget(resolvedWorkers, target);
       if (!worker || !mission) return;
-      subscribeWorker(mission.id, worker.sessionId);
-      setViewedAgent(worker.sessionId);
+      selectAgent(worker.sessionId);
     },
-    [resolvedWorkers, mission],
+    [resolvedWorkers, mission, selectAgent],
   );
 
   const subagentActivity = useCallback(
@@ -980,21 +1006,6 @@ export default function MissionControl() {
               ? 'Awaiting start'
               : 'Idle'
     : 'Idle';
-
-  const workerRoles = useMemo(() => {
-    const map = new Map<string, AgentEntry['role']>();
-    features.forEach((f) => {
-      const role = featureAgentRole(f);
-      f.workerSessionIds?.forEach((id) => map.set(id, role));
-      if (f.currentWorkerSessionId) map.set(f.currentWorkerSessionId, role);
-      if (f.completedWorkerSessionId) map.set(f.completedWorkerSessionId, role);
-    });
-    progress.forEach((entry) => {
-      if (entry.workerSessionId && !map.has(entry.workerSessionId))
-        map.set(entry.workerSessionId, 'worker');
-    });
-    return map;
-  }, [features, progress]);
 
   // Stable 1-based numbering for every worker session id ever seen (so labels don't reshuffle).
   const workerNumber = useMemo(() => {
@@ -1093,7 +1104,12 @@ export default function MissionControl() {
   const selectFeature = (f: BridgeFeature) => {
     setSelectedFeatureId(f.id);
     const session = f.currentWorkerSessionId ?? f.completedWorkerSessionId ?? null;
-    setViewedAgent(session ?? 'orchestrator');
+    if (session && mission) {
+      subscribeWorker(mission.id, session, featureAgentRole(f));
+      setViewedAgent(session);
+    } else {
+      setViewedAgent('orchestrator');
+    }
     setFocusOpen(true);
   };
 
@@ -1198,7 +1214,7 @@ export default function MissionControl() {
                   progress={progress}
                   viewedAgent={viewedAgent}
                   activeAgentId={activeAgentId}
-                  onSelectAgent={setViewedAgent}
+                  onSelectAgent={selectAgent}
                 />
               </div>
             </motion.aside>
@@ -1231,7 +1247,7 @@ export default function MissionControl() {
               viewedAgent={viewedAgent}
               activeAgentId={activeAgentId}
               onSelectAgent={(id) => {
-                setViewedAgent(id);
+                selectAgent(id);
                 setExpanded(null);
               }}
               big

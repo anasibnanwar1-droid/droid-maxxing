@@ -8,6 +8,11 @@ import type { ModelInfo } from '../types/bridge';
 import { useOnboarding } from '../hooks/useOnboarding';
 import { getAppVersion, type AppUpdateInfo } from '../lib/onboarding';
 import { refreshAppUpdate, startAppUpdate } from '../lib/appUpdate';
+import { updateCompactionSettings } from '../lib/commands';
+import {
+  compactionSettingsForGlobalLimit,
+  type CompactionTokenLimitSelection,
+} from '../lib/compactionSettings';
 
 const PRESET_ACCENTS = [
   '#ee6018',
@@ -433,16 +438,18 @@ const TOKEN_PRESETS = [
 ];
 const RECOMMENDED_LIMIT = 250_000;
 
-// Themed preset picker for compaction token limits. Empty/"Factory default"
-// lets Droid use its model-dependent compaction threshold.
+// Themed preset picker for daemon auto-compaction trigger hints.
+// Factory default keeps the daemon's own policy.
 function TokenLimitSelect({
   value,
   onSelect,
   width = 'w-40',
+  includeOff = true,
 }: {
-  value?: number;
-  onSelect: (n?: number) => void;
+  value: CompactionTokenLimitSelection;
+  onSelect: (n: CompactionTokenLimitSelection) => void;
   width?: string;
+  includeOff?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -463,14 +470,15 @@ function TokenLimitSelect({
     };
   }, [open]);
 
-  const label = value === undefined ? 'Factory default' : formatTokenLimit(value);
+  const label =
+    value === undefined ? 'Factory default' : value === null ? 'Off' : formatTokenLimit(value);
 
-  const choose = (n?: number) => {
+  const choose = (n: CompactionTokenLimitSelection) => {
     onSelect(n);
     setOpen(false);
   };
 
-  const Row = ({ n, l, sub }: { n?: number; l: string; sub?: string }) => {
+  const Row = ({ n, l, sub }: { n: CompactionTokenLimitSelection; l: string; sub?: string }) => {
     const active = value === n;
     return (
       <button
@@ -511,7 +519,8 @@ function TokenLimitSelect({
       {open && (
         <div className="absolute right-0 top-full z-50 mt-1.5 w-64 rounded-xl border border-droid-border bg-droid-surface p-2 shadow-2xl shadow-black/50">
           <div className="max-h-72 overflow-y-auto space-y-0.5">
-            <Row l="Factory default" sub="model-dependent" />
+            <Row n={undefined} l="Factory default" sub="daemon policy" />
+            {includeOff && <Row n={null} l="Off" sub="disabled" />}
             {TOKEN_PRESETS.map((n) => (
               <Row
                 key={n}
@@ -522,8 +531,7 @@ function TokenLimitSelect({
             ))}
           </div>
           <p className="mt-2 border-t border-droid-border px-1.5 pt-2 text-[10.5px] leading-[1.5] text-droid-text-muted">
-            If a model's context window is lower than the selected value, the session starts with
-            the lower effective limit.
+            This changes when the daemon auto-compacts. It does not change the model context window.
           </p>
         </div>
       )}
@@ -802,18 +810,29 @@ function GeneralSection() {
     dispatch({ type: 'SET_COMPACTION_MODEL_GLOBAL', compactionModel: value });
   };
 
-  const setGlobalLimit = (limit?: number) => {
+  const setGlobalLimit = (limit: CompactionTokenLimitSelection) => {
     dispatch({ type: 'SET_COMPACTION_TOKEN_LIMIT_GLOBAL', limit });
+    updateCompactionSettings(
+      compactionSettingsForGlobalLimit(limit, state.compactionTokenLimitPerModel),
+    );
   };
 
   const setModelLimit = (modelId: string, limit?: number) => {
+    const next = { ...state.compactionTokenLimitPerModel };
+    if (limit === undefined) delete next[modelId];
+    else next[modelId] = limit;
     dispatch({ type: 'SET_COMPACTION_TOKEN_LIMIT_FOR_MODEL', modelId, limit });
+    updateCompactionSettings({
+      compactionTokenLimit: state.compactionTokenLimit,
+      compactionTokenLimitPerModel: next,
+    });
   };
 
   const overrideEntries = Object.entries(state.compactionTokenLimitPerModel);
   const availableForOverride = state.models.filter(
     (m) => !(m.id in state.compactionTokenLimitPerModel),
   );
+  const overridesDisabled = state.compactionTokenLimit === null;
   const modelLabel = (id: string) => state.models.find((m) => m.id === id)?.displayName ?? id;
 
   return (
@@ -855,7 +874,7 @@ function GeneralSection() {
         </SettingRow>
         <SettingRow
           label="Token limit"
-          description="Compact once a conversation passes this size. Empty uses Factory's model-dependent default."
+          description="Sets the daemon auto-compaction trigger hint. Factory default keeps the daemon policy."
         >
           <TokenLimitSelect value={state.compactionTokenLimit} onSelect={setGlobalLimit} />
         </SettingRow>
@@ -864,57 +883,72 @@ function GeneralSection() {
       {/* Per-model token limits */}
       <GroupLabel>Per-model token limits</GroupLabel>
       <p className="text-[12px] text-droid-text-muted mb-3">
-        Override the default compaction limit for specific models.
+        Optional daemon trigger hints for specific models.
       </p>
       <div className="rounded-xl border border-droid-border bg-droid-surface p-3">
-        {overrideEntries.length === 0 && (
+        {overridesDisabled ? (
           <div className="text-[12px] text-droid-text-muted px-1 py-1.5">
-            No overrides — every model uses the default limit.
+            Auto-compaction is off. Per-model hints are disabled.
           </div>
-        )}
+        ) : overrideEntries.length === 0 ? (
+          <div className="text-[12px] text-droid-text-muted px-1 py-1.5">
+            No overrides — every model uses the daemon default.
+          </div>
+        ) : null}
 
-        <div className="space-y-1.5">
-          {overrideEntries.map(([id, limit]) => (
-            <div
-              key={id}
-              className="flex items-center gap-2.5 rounded-lg border border-droid-border bg-droid-bg/40 px-2.5 py-2"
-            >
-              <ModelIcon
-                provider={providerOf(
-                  state.models.find((m) => m.id === id),
-                  id,
-                )}
-                size={16}
-              />
-              <span className="text-[12px] text-droid-text truncate flex-1">{modelLabel(id)}</span>
-              <TokenLimitSelect value={limit} onSelect={(n) => setModelLimit(id, n)} width="w-32" />
-              <button
-                onClick={() => setModelLimit(id, undefined)}
-                className="p-1 rounded-md text-droid-text-muted hover:text-droid-text hover:bg-droid-elevated transition-colors shrink-0"
-                title="Remove override"
-              >
-                <X className="w-3.5 h-3.5" />
-              </button>
+        {!overridesDisabled && (
+          <>
+            <div className="space-y-1.5">
+              {overrideEntries.map(([id, limit]) => (
+                <div
+                  key={id}
+                  className="flex items-center gap-2.5 rounded-lg border border-droid-border bg-droid-bg/40 px-2.5 py-2"
+                >
+                  <ModelIcon
+                    provider={providerOf(
+                      state.models.find((m) => m.id === id),
+                      id,
+                    )}
+                    size={16}
+                  />
+                  <span className="text-[12px] text-droid-text truncate flex-1">
+                    {modelLabel(id)}
+                  </span>
+                  <TokenLimitSelect
+                    value={limit}
+                    onSelect={(n) => setModelLimit(id, typeof n === 'number' ? n : undefined)}
+                    width="w-32"
+                    includeOff={false}
+                  />
+                  <button
+                    onClick={() => setModelLimit(id, undefined)}
+                    className="p-1 rounded-md text-droid-text-muted hover:text-droid-text hover:bg-droid-elevated transition-colors shrink-0"
+                    title="Remove override"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
 
-        {availableForOverride.length > 0 && (
-          <div className="mt-2.5">
-            <Dropdown
-              value=""
-              placeholder="Add a model override…"
-              triggerIcon={<Plus className="w-3.5 h-3.5 text-droid-text-muted" />}
-              width="w-full"
-              align="left"
-              options={availableForOverride.map((m) => ({
-                value: m.id,
-                label: m.displayName,
-                icon: <ModelIcon provider={providerOf(m, m.id)} size={16} />,
-              }))}
-              onChange={(id) => setModelLimit(id, state.compactionTokenLimit ?? 200_000)}
-            />
-          </div>
+            {availableForOverride.length > 0 && (
+              <div className="mt-2.5">
+                <Dropdown
+                  value=""
+                  placeholder="Add a model override…"
+                  triggerIcon={<Plus className="w-3.5 h-3.5 text-droid-text-muted" />}
+                  width="w-full"
+                  align="left"
+                  options={availableForOverride.map((m) => ({
+                    value: m.id,
+                    label: m.displayName,
+                    icon: <ModelIcon provider={providerOf(m, m.id)} size={16} />,
+                  }))}
+                  onChange={(id) => setModelLimit(id, state.compactionTokenLimit ?? 200_000)}
+                />
+              </div>
+            )}
+          </>
         )}
       </div>
     </div>

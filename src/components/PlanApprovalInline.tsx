@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { FileText, ChevronRight } from 'lucide-react';
 import { useStore } from '../hooks/useStore';
 import { respondPermission, sendToMission, sendToMissionNow } from '../lib/commands';
+import { effectiveCompactionSettings } from '../lib/compactionSettings';
 import type { Autonomy, PermissionOutcome } from '../types/bridge';
 
 const EASE = [0.16, 1, 0.3, 1] as const;
@@ -34,6 +35,10 @@ export default function PlanApprovalInline() {
 
   const isSpec = req.kind === 'spec';
   const text = comment.trim();
+  const compactionSettings = effectiveCompactionSettings(
+    state.compactionTokenLimit,
+    state.compactionTokenLimitPerModel,
+  );
 
   const finish = () => dispatch({ type: 'CLEAR_PERMISSION' });
 
@@ -43,17 +48,17 @@ export default function PlanApprovalInline() {
     const outcome: PermissionOutcome = isSpec
       ? AUTONOMY.find((a) => a.value === autonomy)!.outcome
       : 'proceed_once';
-    respondPermission(req.missionId, req.requestId, outcome);
+    respondPermission(req.missionId, req.requestId, outcome, compactionSettings);
     if (isSpec) dispatch({ type: 'MISSION_SET_KIND', missionId: req.missionId, kind: 'chat' });
-    if (text) sendToMissionNow(req.missionId, text);
+    if (text) sendToMissionNow(req.missionId, text, compactionSettings);
     finish();
   };
 
   // Keep iterating: reject the plan and (optionally) hand the comment back as a
   // normal message so planning continues with the feedback.
   const iterate = () => {
-    respondPermission(req.missionId, req.requestId, 'cancel');
-    if (text) sendToMission(req.missionId, text);
+    respondPermission(req.missionId, req.requestId, 'cancel', compactionSettings);
+    if (text) sendToMission(req.missionId, text, compactionSettings);
     finish();
   };
 

@@ -27,6 +27,7 @@ import type {
 } from '../types/bridge';
 import { addWorkspaceCwd } from '../lib/workspaces';
 import { sanitizeForLog } from '../lib/sensitiveLogRedaction';
+import type { CompactionTokenLimitSelection } from '../lib/compactionSettings';
 
 export type AgentKind = 'orchestrator' | 'worker' | 'validator';
 export type LiveEnterBehavior = 'queue' | 'interrupt';
@@ -144,9 +145,9 @@ export interface AppState {
   // each session's active model; otherwise a specific model id.
   compactionModel: string;
 
-  // Global default compaction token limit applied to every session. Undefined
-  // means "use the Factory/default model context window".
-  compactionTokenLimit?: number;
+  // Global daemon auto-compaction trigger applied to every session.
+  // Undefined keeps Factory daemon defaults; null disables daemon threshold checks.
+  compactionTokenLimit: CompactionTokenLimitSelection;
   // Per-model overrides for the compaction token limit, keyed by model id.
   compactionTokenLimitPerModel: Record<string, number>;
   liveEnterBehavior: LiveEnterBehavior;
@@ -269,7 +270,7 @@ type Action =
   | { type: 'MISSION_SET_MODEL'; missionId: string; modelId?: string }
   | { type: 'MISSION_SET_REASONING'; missionId: string; reasoning: ReasoningEffort }
   | { type: 'SET_COMPACTION_MODEL_GLOBAL'; compactionModel: string }
-  | { type: 'SET_COMPACTION_TOKEN_LIMIT_GLOBAL'; limit?: number }
+  | { type: 'SET_COMPACTION_TOKEN_LIMIT_GLOBAL'; limit: CompactionTokenLimitSelection }
   | { type: 'SET_COMPACTION_TOKEN_LIMIT_FOR_MODEL'; modelId: string; limit?: number }
   | { type: 'SET_LIVE_ENTER_BEHAVIOR'; behavior: LiveEnterBehavior };
 
@@ -290,6 +291,7 @@ const defaultTheme: ThemeConfig = {
 
 const AGENT_CONFIG_STORAGE_KEY = 'droid-agent-config-v2';
 const OLD_AGENT_CONFIG_STORAGE_KEYS = ['droid-agent-config'];
+const MAX_CONTEXT_TOKENS_WITHOUT_LIMIT = 2_000_000;
 const defaultAgentConfig: AgentConfig = {
   orchestrator: { modelId: undefined, reasoning: 'high' },
   worker: { modelId: undefined, reasoning: 'medium' },
@@ -307,6 +309,42 @@ function isReasoningEffort(value: unknown): value is ReasoningEffort {
     value === 'xhigh' ||
     value === 'max' ||
     value === 'dynamic'
+  );
+}
+
+function isContextWindowTokenCount(value: unknown, limit?: number): value is number {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) return false;
+  if (limit && limit > 0) return value <= limit;
+  return value <= MAX_CONTEXT_TOKENS_WITHOUT_LIMIT;
+}
+
+function isPlausibleContextTokenCount(value: unknown): value is number {
+  return (
+    typeof value === 'number' &&
+    Number.isFinite(value) &&
+    value >= 0 &&
+    value <= MAX_CONTEXT_TOKENS_WITHOUT_LIMIT
+  );
+}
+
+function sanitizeMissionContext(mission: MissionSummary): MissionSummary {
+  if (mission.contextAccuracy === 'exact' && isPlausibleContextTokenCount(mission.contextTokens))
+    return mission;
+  if (isContextWindowTokenCount(mission.contextTokens, mission.maxContextTokens)) return mission;
+  return {
+    ...mission,
+    contextTokens: 0,
+    contextRemainingTokens: mission.maxContextTokens,
+    contextAccuracy: undefined,
+    contextUpdatedAt: undefined,
+  };
+}
+
+function hasUsableBreakdownUsage(stats: ContextStatsSnapshot): boolean {
+  return (
+    stats.accuracy !== 'exact' &&
+    stats.breakdown !== undefined &&
+    isContextWindowTokenCount(stats.breakdown.usedTokens, stats.limit)
   );
 }
 
@@ -368,7 +406,6 @@ function saveAgentConfig(config: AgentConfig): AgentConfig {
 // for compaction across every session.
 const COMPACTION_MODEL_STORAGE_KEY = 'droid-compaction-model';
 const COMPACTION_TOKEN_LIMIT_STORAGE_KEY = 'droid-compaction-token-limit';
-const COMPACTION_TOKEN_LIMIT_CONFIGURED_STORAGE_KEY = 'droid-compaction-token-limit-configured';
 const COMPACTION_TOKEN_LIMIT_PER_MODEL_STORAGE_KEY = 'droid-compaction-token-limit-per-model';
 const LIVE_ENTER_BEHAVIOR_STORAGE_KEY = 'droid-live-enter-behavior';
 const WORKSPACES_STORAGE_KEY = 'droid-workspaces';
@@ -411,44 +448,32 @@ function saveCompactionModel(value: string): string {
   return value;
 }
 
-// Only positive finite integers are valid token limits; anything else is
-// treated as "unset" (fall back to the model's default context window).
+// Only positive finite integers are valid token limits; anything else keeps the
+// Factory daemon's default auto-compaction trigger.
 function normalizeTokenLimit(value: unknown): number | undefined {
   const n = typeof value === 'number' ? value : Number(value);
   if (!Number.isFinite(n) || n <= 0) return undefined;
   return Math.floor(n);
 }
 
-function loadCompactionTokenLimit(): number | undefined {
+function loadCompactionTokenLimit(): CompactionTokenLimitSelection {
   try {
-    return normalizeTokenLimit(getLocalStorage()?.getItem(COMPACTION_TOKEN_LIMIT_STORAGE_KEY));
+    const raw = getLocalStorage()?.getItem(COMPACTION_TOKEN_LIMIT_STORAGE_KEY);
+    if (raw === 'off') return null;
+    return normalizeTokenLimit(raw);
   } catch {
     return undefined;
   }
 }
 
-function hasStoredCompactionTokenLimit(): boolean {
-  try {
-    const storage = getLocalStorage();
-    return (
-      storage?.getItem(COMPACTION_TOKEN_LIMIT_STORAGE_KEY) !== null ||
-      storage?.getItem(COMPACTION_TOKEN_LIMIT_CONFIGURED_STORAGE_KEY) === '1'
-    );
-  } catch {
-    return false;
-  }
-}
-
 function saveCompactionTokenLimit(
-  value?: number,
-  options: { userConfigured?: boolean } = {},
-): number | undefined {
+  value: CompactionTokenLimitSelection,
+): CompactionTokenLimitSelection {
   try {
     const storage = getLocalStorage();
     if (value === undefined) storage?.removeItem(COMPACTION_TOKEN_LIMIT_STORAGE_KEY);
+    else if (value === null) storage?.setItem(COMPACTION_TOKEN_LIMIT_STORAGE_KEY, 'off');
     else storage?.setItem(COMPACTION_TOKEN_LIMIT_STORAGE_KEY, String(value));
-    if (options.userConfigured ?? true)
-      storage?.setItem(COMPACTION_TOKEN_LIMIT_CONFIGURED_STORAGE_KEY, '1');
   } catch {
     /* ignore */
   }
@@ -471,14 +496,6 @@ function loadCompactionTokenLimitPerModel(): Record<string, number> {
   }
 }
 
-function hasStoredCompactionTokenLimitPerModel(): boolean {
-  try {
-    return getLocalStorage()?.getItem(COMPACTION_TOKEN_LIMIT_PER_MODEL_STORAGE_KEY) !== null;
-  } catch {
-    return false;
-  }
-}
-
 function saveCompactionTokenLimitPerModel(value: Record<string, number>): Record<string, number> {
   try {
     getLocalStorage()?.setItem(COMPACTION_TOKEN_LIMIT_PER_MODEL_STORAGE_KEY, JSON.stringify(value));
@@ -486,40 +503,6 @@ function saveCompactionTokenLimitPerModel(value: Record<string, number>): Record
     /* ignore */
   }
   return value;
-}
-
-function normalizeTokenLimitRecord(
-  value: Record<string, number> | undefined,
-): Record<string, number> {
-  return Object.fromEntries(
-    Object.entries(value ?? {})
-      .map(([id, limit]) => [id, normalizeTokenLimit(limit)])
-      .filter((entry): entry is [string, number] => entry[1] !== undefined),
-  );
-}
-
-export function applyFactoryCompactionDefaults(
-  state: Pick<AppState, 'compactionTokenLimit' | 'compactionTokenLimitPerModel'>,
-  defaults: Pick<FactoryDefaultSettings, 'compactionTokenLimit' | 'compactionTokenLimitPerModel'>,
-): Pick<AppState, 'compactionTokenLimit' | 'compactionTokenLimitPerModel'> {
-  const hasLocalLimit = hasStoredCompactionTokenLimit();
-  const hasLocalPerModel = hasStoredCompactionTokenLimitPerModel();
-  const defaultLimit = normalizeTokenLimit(defaults.compactionTokenLimit);
-  const defaultPerModel = normalizeTokenLimitRecord(defaults.compactionTokenLimitPerModel);
-
-  const compactionTokenLimit = hasLocalLimit ? state.compactionTokenLimit : defaultLimit;
-  const compactionTokenLimitPerModel = hasLocalPerModel
-    ? state.compactionTokenLimitPerModel
-    : defaultPerModel;
-
-  if (!hasLocalLimit && compactionTokenLimit !== undefined) {
-    saveCompactionTokenLimit(compactionTokenLimit, { userConfigured: false });
-  }
-  if (!hasLocalPerModel && Object.keys(defaultPerModel).length > 0) {
-    saveCompactionTokenLimitPerModel(defaultPerModel);
-  }
-
-  return { compactionTokenLimit, compactionTokenLimitPerModel };
 }
 
 function normalizeLiveEnterBehavior(value: unknown): LiveEnterBehavior {
@@ -648,6 +631,7 @@ function applyMissionOverride(
 }
 
 const persistedUiState = loadPersistedUiState();
+const persistedCompactionTokenLimit = loadCompactionTokenLimit();
 
 export const initialState: AppState = {
   connection: 'idle',
@@ -688,8 +672,9 @@ export const initialState: AppState = {
   selectedAgentSessionId: persistedUiState.selectedAgentSessionId ?? null,
   models: [],
   compactionModel: loadCompactionModel(),
-  compactionTokenLimit: loadCompactionTokenLimit(),
-  compactionTokenLimitPerModel: loadCompactionTokenLimitPerModel(),
+  compactionTokenLimit: persistedCompactionTokenLimit,
+  compactionTokenLimitPerModel:
+    persistedCompactionTokenLimit === null ? {} : loadCompactionTokenLimitPerModel(),
   liveEnterBehavior: loadLiveEnterBehavior(),
   missionSettingOverrides: {},
   skills: [],
@@ -774,6 +759,9 @@ function baseReducer(state: AppState, action: Action): AppState {
       return { ...state, connection: action.status, connectionError: action.message };
 
     case 'MISSION_CREATED': {
+      const mission = sanitizeMissionContext(
+        applyMissionOverride(action.mission, state.missionSettingOverrides[action.mission.id]),
+      );
       const order = state.missionOrder.includes(action.mission.id)
         ? state.missionOrder
         : [action.mission.id, ...state.missionOrder];
@@ -807,13 +795,7 @@ function baseReducer(state: AppState, action: Action): AppState {
 
       const next = {
         ...state,
-        missions: {
-          ...state.missions,
-          [action.mission.id]: applyMissionOverride(
-            action.mission,
-            state.missionSettingOverrides[action.mission.id],
-          ),
-        },
+        missions: { ...state.missions, [mission.id]: mission },
         missionOrder: order,
         transcripts,
         activeMissionId: action.mission.id,
@@ -833,9 +815,8 @@ function baseReducer(state: AppState, action: Action): AppState {
       };
 
     case 'MISSION_UPDATED': {
-      const m = applyMissionOverride(
-        action.mission,
-        state.missionSettingOverrides[action.mission.id],
+      const m = sanitizeMissionContext(
+        applyMissionOverride(action.mission, state.missionSettingOverrides[action.mission.id]),
       );
       return {
         ...state,
@@ -980,7 +961,7 @@ function baseReducer(state: AppState, action: Action): AppState {
     }
 
     case 'AGENT_UPDATED': {
-      if (action.role !== 'worker' || action.status === 'opened') return state;
+      if (action.role === 'orchestrator' || action.status === 'opened') return state;
       const prev = state.workers[action.missionId] ?? [];
       const idx = prev.findIndex((w) => w.sessionId === action.agentSessionId);
       if (idx < 0) return state;
@@ -993,6 +974,28 @@ function baseReducer(state: AppState, action: Action): AppState {
       const mid = action.missionId;
       const existing = state.missions[mid];
       if (!existing) return state;
+      const maxContextTokens = action.maxContextTokens ?? existing.maxContextTokens;
+      const currentIsWindowUsage = isContextWindowTokenCount(
+        existing.contextTokens,
+        maxContextTokens,
+      );
+      const nextIsWindowUsage = isContextWindowTokenCount(action.contextTokens, maxContextTokens);
+      const currentIsExactUsage =
+        existing.contextAccuracy === 'exact' &&
+        isPlausibleContextTokenCount(existing.contextTokens);
+      const nextMatchesExactUsage =
+        currentIsExactUsage && action.contextTokens === existing.contextTokens;
+      const nextContextTokens = nextIsWindowUsage
+        ? action.contextTokens
+        : nextMatchesExactUsage
+          ? existing.contextTokens
+          : currentIsWindowUsage
+            ? existing.contextTokens
+            : 0;
+      const contextTokens =
+        existing.streaming && currentIsWindowUsage && nextIsWindowUsage
+          ? Math.max(existing.contextTokens, nextContextTokens)
+          : nextContextTokens;
       return {
         ...state,
         missions: {
@@ -1001,8 +1004,8 @@ function baseReducer(state: AppState, action: Action): AppState {
             ...existing,
             tokensIn: action.tokensIn,
             tokensOut: action.tokensOut,
-            contextTokens: action.contextTokens,
-            maxContextTokens: action.maxContextTokens ?? existing.maxContextTokens,
+            contextTokens,
+            maxContextTokens,
           },
         },
       };
@@ -1010,19 +1013,43 @@ function baseReducer(state: AppState, action: Action): AppState {
 
     case 'CONTEXT_UPDATED': {
       const existing = state.missions[action.sessionId];
+      const currentIsWindowUsage = existing
+        ? isContextWindowTokenCount(existing.contextTokens, action.stats.limit)
+        : false;
+      const incomingHasBreakdownUsage = hasUsableBreakdownUsage(action.stats);
+      const incomingIsExact = action.stats.accuracy === 'exact';
+      const stats =
+        existing?.streaming &&
+        currentIsWindowUsage &&
+        !incomingIsExact &&
+        !incomingHasBreakdownUsage &&
+        action.stats.used < existing.contextTokens
+          ? {
+              ...action.stats,
+              used: existing.contextTokens,
+              remaining: Math.max(0, action.stats.limit - existing.contextTokens),
+              breakdown: action.stats.breakdown
+                ? {
+                    ...action.stats.breakdown,
+                    usedTokens: existing.contextTokens,
+                    freeTokens: Math.max(0, action.stats.limit - existing.contextTokens),
+                  }
+                : undefined,
+            }
+          : action.stats;
       return {
         ...state,
-        contextStats: { ...state.contextStats, [action.sessionId]: action.stats },
+        contextStats: { ...state.contextStats, [action.sessionId]: stats },
         missions: existing
           ? {
               ...state.missions,
               [action.sessionId]: {
                 ...existing,
-                contextTokens: action.stats.used,
-                contextRemainingTokens: action.stats.remaining,
-                maxContextTokens: action.stats.limit,
-                contextAccuracy: action.stats.accuracy,
-                contextUpdatedAt: action.stats.updatedAt,
+                contextTokens: stats.used,
+                contextRemainingTokens: stats.remaining,
+                maxContextTokens: stats.limit,
+                contextAccuracy: stats.accuracy,
+                contextUpdatedAt: stats.updatedAt,
               },
             }
           : state.missions,
@@ -1161,7 +1188,9 @@ function baseReducer(state: AppState, action: Action): AppState {
     case 'MISSION_LIST': {
       const map: Record<string, MissionSummary> = { ...state.missions };
       for (const m of action.missions) {
-        map[m.id] = applyMissionOverride(m, state.missionSettingOverrides[m.id]);
+        map[m.id] = sanitizeMissionContext(
+          applyMissionOverride(m, state.missionSettingOverrides[m.id]),
+        );
       }
       const order = [...new Set([...action.missions.map((m) => m.id), ...state.missionOrder])]
         .filter((id) => map[id])
@@ -1451,15 +1480,9 @@ function baseReducer(state: AppState, action: Action): AppState {
         state.models,
       );
 
-      // Seed Factory defaults only before local compaction settings exist. An
-      // explicit clear stores an empty local value and must not resurrect
-      // Factory's old per-model/default threshold on the next defaults event.
-      const compactionDefaults = applyFactoryCompactionDefaults(state, action.defaults);
-
       return {
         ...state,
         agentConfig: saveAgentConfig(next),
-        ...compactionDefaults,
       };
     }
 
@@ -1518,8 +1541,12 @@ function baseReducer(state: AppState, action: Action): AppState {
     }
 
     case 'SET_COMPACTION_TOKEN_LIMIT_GLOBAL': {
-      const limit = normalizeTokenLimit(action.limit);
+      const limit = action.limit === null ? null : normalizeTokenLimit(action.limit);
       saveCompactionTokenLimit(limit);
+      if (limit === null) {
+        saveCompactionTokenLimitPerModel({});
+        return { ...state, compactionTokenLimit: null, compactionTokenLimitPerModel: {} };
+      }
       return { ...state, compactionTokenLimit: limit };
     }
 

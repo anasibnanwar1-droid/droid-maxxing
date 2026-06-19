@@ -21,6 +21,11 @@ import { browserTranscriptReferencesFromDesignReferences } from './browser/brows
 import { pickDirectory, listFiles } from '../lib/desktop';
 import { createLocalDesignTranscriptEvent, newQueueId } from '../lib/promptQueue';
 import {
+  compactTargetSessionIdForMission,
+  selectedAgentSessionIdForMission,
+} from '../lib/sessionTargets';
+import { effectiveCompactionSettings } from '../lib/compactionSettings';
+import {
   ArrowUp,
   ChevronDown,
   SlidersHorizontal,
@@ -106,12 +111,17 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
     activeMission && (activeMission.kind === 'chat' || activeMission.kind === 'spec')
       ? activeMission.kind === 'spec'
       : state.specMode;
-  const targetAgentSessionId =
-    activeMission?.kind !== 'mission_orchestrator' &&
-    state.selectedAgentSessionId &&
-    state.selectedAgentSessionId !== 'orchestrator'
-      ? state.selectedAgentSessionId
-      : null;
+  const targetAgentSessionId = selectedAgentSessionIdForMission(
+    activeMission,
+    state.selectedAgentSessionId,
+  );
+  const compactTargetSessionId = compactTargetSessionIdForMission(
+    activeMission,
+    state.selectedAgentSessionId,
+  );
+  const runCompact = () => {
+    if (compactTargetSessionId) compactSession(compactTargetSessionId);
+  };
 
   const cwd = activeMission?.cwd ?? state.draftChat?.cwd ?? null;
   const skillsSessionId = activeMission?.id ?? null;
@@ -147,18 +157,18 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
     { cmd: '/model', desc: 'Open model selector', run: () => setModelsOpen(true) },
     {
       cmd: '/compact',
-      desc: 'Compact current session',
-      run: () => activeMission && compactSession(activeMission.id),
+      desc: 'Compact selected session',
+      run: runCompact,
     },
     {
       cmd: '/compaction',
-      desc: 'Compact current session',
-      run: () => activeMission && compactSession(activeMission.id),
+      desc: 'Compact selected session',
+      run: runCompact,
     },
     {
       cmd: '/compression',
-      desc: 'Compact current session',
-      run: () => activeMission && compactSession(activeMission.id),
+      desc: 'Compact selected session',
+      run: runCompact,
     },
     { cmd: '/spec', desc: 'Toggle spec mode', run: () => toggleSpec() },
     { cmd: '/settings', desc: 'Open settings', run: () => dispatch({ type: 'TOGGLE_SETTINGS' }) },
@@ -341,6 +351,9 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
       attachedFiles,
     );
 
+  const compactionSettings = () =>
+    effectiveCompactionSettings(state.compactionTokenLimit, state.compactionTokenLimitPerModel);
+
   const resetAttachments = () => {
     setActiveSkills([]);
     setAttachedFiles([]);
@@ -358,7 +371,7 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
     }
 
     if (COMPACT_COMMANDS.has(text) && activeSkills.length === 0 && attachedFiles.length === 0) {
-      if (activeMission) compactSession(activeMission.id);
+      runCompact();
       setInput('');
       return;
     }
@@ -393,8 +406,7 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
         reasoningEffort: orchestrator.reasoning,
         compactionModel:
           state.compactionModel === 'current-model' ? undefined : state.compactionModel,
-        compactionTokenLimit: state.compactionTokenLimit,
-        compactionTokenLimitPerModel: state.compactionTokenLimitPerModel,
+        ...compactionSettings(),
         workerModel: worker.modelId,
         workerReasoning: worker.reasoning,
         validatorModel: validator.modelId,
@@ -421,8 +433,7 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
         reasoningEffort: orchestrator.reasoning,
         compactionModel:
           state.compactionModel === 'current-model' ? undefined : state.compactionModel,
-        compactionTokenLimit: state.compactionTokenLimit,
-        compactionTokenLimitPerModel: state.compactionTokenLimitPerModel,
+        ...compactionSettings(),
       });
       setInput('');
       resetAttachments();
@@ -463,10 +474,11 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
 
     try {
       if (targetAgentSessionId) {
-        if (mode === 'now') sendToAgentNow(activeMission.id, targetAgentSessionId, composed);
-        else sendToAgent(activeMission.id, targetAgentSessionId, composed);
-      } else if (mode === 'now') sendToMissionNow(activeMission.id, composed);
-      else sendToMission(activeMission.id, composed);
+        if (mode === 'now')
+          sendToAgentNow(activeMission.id, targetAgentSessionId, composed, compactionSettings());
+        else sendToAgent(activeMission.id, targetAgentSessionId, composed, compactionSettings());
+      } else if (mode === 'now') sendToMissionNow(activeMission.id, composed, compactionSettings());
+      else sendToMission(activeMission.id, composed, compactionSettings());
     } catch (err) {
       console.error('[PromptInput] sendToMission failed:', err);
     }
@@ -481,7 +493,7 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
     if (!activeMission) return;
     if (p.design) {
       try {
-        sendDesignPrompt(p.design.browserKey, p.text, p.design.referenceIds);
+        sendDesignPrompt(p.design.browserKey, p.text, p.design.referenceIds, compactionSettings());
       } catch (err) {
         console.error('[PromptInput] queued design send failed:', err);
         return;
@@ -496,7 +508,7 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
     }
     const composed = composeFrom(p.text, p.skills, p.files);
     try {
-      sendToMission(activeMission.id, composed);
+      sendToMission(activeMission.id, composed, compactionSettings());
     } catch (err) {
       // Keep the prompt staged and skip the transcript echo so a send failure
       // neither loses queued input nor leaves a duplicate user message behind.

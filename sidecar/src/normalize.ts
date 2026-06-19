@@ -78,7 +78,7 @@ export interface NormalizedEvent {
     prompt?: string;
     done?: boolean;
   };
-  tokens?: { tokensIn: number; tokensOut: number; contextTokens: number };
+  tokens?: { tokensIn: number; tokensOut: number; contextTokens?: number };
   done?: boolean;
 }
 
@@ -151,14 +151,15 @@ export function normalizeStreamEvent(
   if (raw.type === 'token_usage_update' || raw.type === 'session_token_usage_changed') {
     const e = raw as Record<string, Record<string, unknown> | undefined>;
     const cumulative = e.inclusiveTokenUsage ?? e.tokenUsage ?? e;
-    const context = e.lastCallTokenUsage ?? e.tokenUsage ?? e;
+    const context = e.lastCallTokenUsage;
     const tokensIn =
       (Number(cumulative.inputTokens ?? 0) || 0) +
       (Number(cumulative.cacheReadTokens ?? 0) || 0) +
       (Number(cumulative.cacheCreationTokens ?? 0) || 0);
     const tokensOut = Number(cumulative.outputTokens ?? 0) || 0;
-    const contextTokens =
-      (Number(context.inputTokens ?? 0) || 0) + (Number(context.cacheReadTokens ?? 0) || 0);
+    const contextTokens = context
+      ? (Number(context.inputTokens ?? 0) || 0) + (Number(context.cacheReadTokens ?? 0) || 0)
+      : undefined;
     return { tokens: { tokensIn, tokensOut, contextTokens } };
   }
 
@@ -262,6 +263,16 @@ export function normalizeStreamEvent(
           exitCode: ev.exitCode,
         },
       };
+    case 'working_state_changed': {
+      const state = (ev as { state?: string }).state;
+      if (state !== 'compacting_conversation') return null;
+      return {
+        transcript: transcript(missionId, agentSessionId, role, 'status', {
+          text: 'Compacting conversation...',
+          compactType: 'auto',
+        }),
+      };
+    }
     case 'result':
       return { done: true };
     default:
@@ -278,6 +289,8 @@ export function normalizeNotification(
   notification: Record<string, unknown>,
 ): NormalizedEvent[] {
   const raw = extractNotification(notification);
+  const direct = normalizeRawNotification(missionId, agentSessionId, role, raw);
+  if (direct) return [direct];
   const converted = convertNotificationToStreamMessage(raw);
   const messages = Array.isArray(converted) ? converted : converted ? [converted] : [];
   return messages
@@ -285,6 +298,30 @@ export function normalizeNotification(
       normalizeStreamEvent(missionId, agentSessionId, role, message as DroidStreamEvent),
     )
     .filter((event): event is NormalizedEvent => event !== null);
+}
+
+export function isSessionCompactedNotification(notification: Record<string, unknown>): boolean {
+  const raw = extractNotification(notification);
+  if (!raw || typeof raw !== 'object') return false;
+  return (raw as Record<string, unknown>).type === 'session_compacted';
+}
+
+function normalizeRawNotification(
+  missionId: string,
+  agentSessionId: string,
+  role: AgentRole,
+  raw: unknown,
+): NormalizedEvent | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const record = raw as Record<string, unknown>;
+  if (record.type !== 'session_compacted') return null;
+  const removed = Number(record.removedCount ?? 0) || 0;
+  return {
+    transcript: transcript(missionId, agentSessionId, role, 'status', {
+      text: `Compaction complete. Removed ${removed} messages.`,
+      compactType: 'auto',
+    }),
+  };
 }
 
 function extractNotification(notification: Record<string, unknown>): unknown {
