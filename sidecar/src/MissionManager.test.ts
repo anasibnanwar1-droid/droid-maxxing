@@ -1584,3 +1584,26 @@ test('manual compaction swap that never reloads re-delivers sends queued during 
     false,
   );
 });
+
+// ── #30/#17: opening a worker always settles its loading state ──
+
+test('#30/#17 opening a worker on a non-live mission settles loading with an honest open', async () => {
+  const events: ServerEvent[] = [];
+  const manager = new MissionManager((event) => events.push(event));
+  // No mission is registered, so openAgent cannot resume one. It must still ack
+  // 'opened' (honest empty) so the worker card stops loading forever instead of
+  // hanging on the optimistic loading flag the client set before subscribing.
+  await manager.handle({
+    type: 'mission.subscribeWorker',
+    missionId: 'ghost-mission',
+    workerSessionId: 'w1',
+  });
+  assert.ok(
+    events.some(
+      (e) =>
+        e.type === 'agent.updated' &&
+        (e as { agentSessionId?: string }).agentSessionId === 'w1' &&
+        (e as { status?: string }).status === 'opened',
+    ),
+  );
+});

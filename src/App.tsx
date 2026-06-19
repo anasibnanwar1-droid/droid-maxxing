@@ -246,8 +246,12 @@ export default function App() {
     if (activeMission.kind === 'mission_orchestrator') return;
     const agentSessionId = state.selectedAgentSessionId;
     if (!agentSessionId || agentSessionId === 'orchestrator') return;
+    // A worker's inner events only stream once we subscribe, so mark its
+    // transcript as loading until the backend replays history and acks with
+    // 'opened'. This keeps the card honest instead of flashing "no activity".
+    dispatch({ type: 'AGENT_HISTORY_LOADING', agentSessionId, loading: true });
     subscribeWorker(activeMission.id, agentSessionId);
-  }, [activeMission?.id, embedded, state.selectedAgentSessionId]);
+  }, [activeMission?.id, embedded, state.selectedAgentSessionId, dispatch]);
 
   // Keyboard shortcuts
   useEffect(() => {

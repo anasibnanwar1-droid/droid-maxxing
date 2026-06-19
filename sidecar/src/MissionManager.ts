@@ -2015,9 +2015,24 @@ export class MissionManager {
     role: AgentRole,
   ): Promise<void> {
     const mission = this.findMission(missionId);
-    if (!mission) return;
+    if (!mission) {
+      // No live mission to open against (e.g. a not-yet-resumed/historical
+      // session). Settle the worker's loading state with an honest empty open
+      // instead of leaving its card spinning forever.
+      this.emit({ type: 'agent.updated', missionId, agentSessionId, role, status: 'opened' });
+      return;
+    }
     const appSessionId = mission.summary.id;
-    if (!this.agentBelongsToMission(mission, agentSessionId)) return;
+    if (!this.agentBelongsToMission(mission, agentSessionId)) {
+      this.emit({
+        type: 'agent.updated',
+        missionId: appSessionId,
+        agentSessionId,
+        role,
+        status: 'opened',
+      });
+      return;
+    }
     if (mission.agents.has(agentSessionId)) {
       const agent = mission.agents.get(agentSessionId);
       if (agent) agent.lastUsedAt = Date.now();
@@ -2505,6 +2520,9 @@ export class MissionManager {
     }
     this.emitError({
       missionId: mission.summary.id,
+      // Scope to the requested worker so its loading state settles, not just the
+      // mission-level toast.
+      sessionId: requestedAgentSessionId,
       message: `Open live agent transport limit reached (${MAX_OPEN_AGENT_TRANSPORTS}). Wait for one running worker view to finish before opening another live worker view.`,
     });
     return false;
