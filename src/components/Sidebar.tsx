@@ -182,7 +182,9 @@ export default function Sidebar() {
     ) {
       visible = [...visible, state.missions[activeMission.id]];
     }
-    const hasMore = shown < sessions.length;
+    // Derive from what is actually rendered: keeping the active session visible
+    // can already surface every row, in which case "Show more" would be a no-op.
+    const hasMore = visible.length < sessions.length;
     const canCollapse = shown > SIDEBAR_VISIBLE_SESSION_LIMIT;
     return (
       <div className="mt-0.5 space-y-0.5">
