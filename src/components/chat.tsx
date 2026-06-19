@@ -772,14 +772,59 @@ function spanOf(items: FeedItem[]): { start: number; end: number } {
   return { start, end };
 }
 
+// A folded activity item that is purely todo/plan reconciliation (no real tool
+// work). Used to decide whether two assistant text fragments are actually one
+// final answer split by an internal checklist update. The group must contain a
+// plan update and otherwise hold only its own successful results: an id-less
+// TodoWrite result classifies as generic tool_activity, so accepting successful
+// results keeps `assistant -> TodoWrite -> result -> assistant` a single answer,
+// while a failed result keeps the messages distinct so the failure surfaces.
+function isReconciliationItem(it: FeedItem): boolean {
+  if (it.type !== 'tools') return false;
+  let hasPlan = false;
+  for (const e of it.events) {
+    if (classifyEvent(e) === 'plan_update') {
+      hasPlan = true;
+      continue;
+    }
+    if (e.kind === 'tool_result' && !e.isError) continue;
+    return false;
+  }
+  return hasPlan;
+}
+
+// Join a trailing assistant fragment back onto the running final answer.
+function mergeAssistantMessages(
+  prev: Extract<FeedItem, { type: 'message' }>,
+  next: Extract<FeedItem, { type: 'message' }>,
+): Extract<FeedItem, { type: 'message' }> {
+  const text = [prev.event.text ?? '', next.event.text ?? '']
+    .map((t) => t.trim())
+    .filter(Boolean)
+    .join('\n\n');
+  return {
+    ...prev,
+    event: {
+      ...prev.event,
+      text,
+      endTs: next.event.endTs ?? next.event.ts ?? prev.event.endTs,
+    },
+  };
+}
+
 // Collapse a completed assistant turn: thinking/tool/file activity folds into
 // "Worked for …" groups while assistant chat messages, subagent cards, and
 // compaction dividers stay top-level. Invariant (#18): an assistant message is
 // ALWAYS a top-level boundary and can never be nested inside a Worked group,
 // no matter what trailing compaction/tool status follows it.
-function collapseRun(run: FeedItem[]): FeedItem[] {
+function collapseRun(run: FeedItem[], specContent?: string): FeedItem[] {
   if (run.length === 0) return [];
   const out: FeedItem[] = [];
+  // A fragment equal to the pinned spec is suppressed by FeedItemView only when
+  // its whole text matches the spec, so it must never be merged into prose (that
+  // would defeat the match and render the spec body twice).
+  const spec = specContent?.trim();
+  const isSpecBody = (text: string | undefined) => !!spec && (text ?? '').trim() === spec;
   // Fold contiguous work into "Worked for …" groups, but keep subagent spawn
   // cards at the top level so they stay visible (and navigable) after a turn.
   let buf: FeedItem[] = [];
@@ -801,6 +846,25 @@ function collapseRun(run: FeedItem[]): FeedItem[] {
   for (const it of run) {
     if (it.type === 'message') {
       // Assistant chat (user messages were already split out by groupTurns).
+      // #19: when only a todo/plan reconciliation separates this fragment from
+      // the running answer, the model emitted its answer, updated the checklist,
+      // then finished the sentence, so it's one final response. Merge the
+      // fragments and drop the internal reconciliation so the turn renders a
+      // single final answer instead of burying it behind a "Worked" group.
+      const prev = out[out.length - 1];
+      if (
+        it.event.author !== 'user' &&
+        !isSpecBody(it.event.text) &&
+        buf.length > 0 &&
+        buf.every(isReconciliationItem) &&
+        prev?.type === 'message' &&
+        prev.event.author !== 'user' &&
+        !isSpecBody(prev.event.text)
+      ) {
+        out[out.length - 1] = mergeAssistantMessages(prev, it);
+        buf = [];
+        continue;
+      }
       flush();
       out.push(it);
     } else if (it.type === 'subagent') {
@@ -829,7 +893,7 @@ function collapseRun(run: FeedItem[]): FeedItem[] {
 
 // Fold completed assistant turns into "Worked for …" groups. The in-flight turn
 // (while pending) is left expanded so live thinking/tools/status keep streaming.
-export function groupTurns(items: FeedItem[], pending: boolean): FeedItem[] {
+export function groupTurns(items: FeedItem[], pending: boolean, specContent?: string): FeedItem[] {
   const out: FeedItem[] = [];
   let i = 0;
   while (i < items.length) {
@@ -845,7 +909,7 @@ export function groupTurns(items: FeedItem[], pending: boolean): FeedItem[] {
     }
     const isLastRun = i >= items.length;
     if (isLastRun && pending) out.push(...run);
-    else out.push(...collapseRun(run));
+    else out.push(...collapseRun(run, specContent));
   }
   return out;
 }
@@ -1365,8 +1429,8 @@ export function MessageFeed({
   // prop, so its feed renders exactly as before.
   const rich = !!onOpenSubagent;
   const items = useMemo(
-    () => groupTurns(buildFeed(events, rich), pending),
-    [events, pending, rich],
+    () => groupTurns(buildFeed(events, rich), pending, specContent),
+    [events, pending, rich, specContent],
   );
   const lastIdx = items.length - 1;
   const last = items[lastIdx];

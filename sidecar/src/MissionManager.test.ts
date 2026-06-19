@@ -436,6 +436,7 @@ test('worker compaction re-keys to the new backing id and emits a rekey event (n
     agents: new Map<string, typeof agent>([['worker-old', agent]]),
     knownSubagents: new Set(['worker-old']),
     completedSubagents: new Set<string>(),
+    terminalAgents: new Set<string>(),
     linkedSubagents: new Set<string>(),
     subagentToolUseIds: new Map([['tool-cmp', 'worker-old']]),
     subagentSettings: new Map<string, { modelId?: string }>(),
@@ -511,6 +512,7 @@ test('sendNow interrupts the live turn and prioritizes the steering prompt', asy
     agents: new Map(),
     knownSubagents: new Set(),
     completedSubagents: new Set(),
+    terminalAgents: new Set(),
     linkedSubagents: new Set(),
     subagentToolUseIds: new Map(),
     subagentSettings: new Map(),
@@ -571,6 +573,7 @@ test('sendNow queues during compaction instead of driving or interrupting', asyn
     agents: new Map(),
     knownSubagents: new Set(),
     completedSubagents: new Set(),
+    terminalAgents: new Set(),
     linkedSubagents: new Set(),
     subagentToolUseIds: new Map(),
     subagentSettings: new Map(),
@@ -635,6 +638,7 @@ test('design turns disable TodoWrite and normal turns restore it', async () => {
     agents: new Map(),
     knownSubagents: new Set(),
     completedSubagents: new Set(),
+    terminalAgents: new Set(),
     linkedSubagents: new Set(),
     subagentToolUseIds: new Map(),
     subagentSettings: new Map(),
@@ -900,6 +904,7 @@ function autoCompactHarness(used: number, effectiveCompactionTokenLimit?: number
     agents: new Map(),
     knownSubagents: new Set(),
     completedSubagents: new Set(),
+    terminalAgents: new Set(),
     linkedSubagents: new Set(),
     subagentToolUseIds: new Map(),
     subagentSettings: new Map(),
@@ -1365,6 +1370,7 @@ test('rekeyAgentSession remaps worker ids inside mission summary features', asyn
     agents: new Map<string, typeof agent>([['worker-old', agent]]),
     knownSubagents: new Set(['worker-old']),
     completedSubagents: new Set<string>(),
+    terminalAgents: new Set<string>(),
     linkedSubagents: new Set<string>(),
     subagentToolUseIds: new Map<string, string>(),
     subagentSettings: new Map<string, { modelId?: string }>(),
@@ -1407,6 +1413,7 @@ function orchestratorSwapHarness(used: number, limit: number, swapTo: string) {
     agents: new Map(),
     knownSubagents: new Set<string>(),
     completedSubagents: new Set<string>(),
+    terminalAgents: new Set<string>(),
     linkedSubagents: new Set<string>(),
     subagentToolUseIds: new Map(),
     subagentSettings: new Map(),
@@ -1606,4 +1613,195 @@ test('#30/#17 opening a worker on a non-live mission settles loading with an hon
         (e as { status?: string }).status === 'opened',
     ),
   );
+});
+
+// ── #19: a turn ends at its first terminal result; later generation is dropped ──
+
+// Yields a scripted list of raw SDK stream events per turn so a full drive()
+// can exercise the terminal-enforcement path.
+class FakeScriptedSession {
+  prompts: string[] = [];
+  constructor(
+    readonly sessionId: string,
+    private readonly turns: Record<string, unknown>[][],
+  ) {}
+  async *stream(prompt: string): AsyncGenerator<Record<string, unknown>, void, undefined> {
+    this.prompts.push(prompt);
+    for (const ev of this.turns.shift() ?? []) yield ev;
+  }
+  async updateSettings(): Promise<void> {}
+  async getContextStats(): Promise<{
+    used: number;
+    remaining: number;
+    limit: number;
+    accuracy: 'exact';
+    updatedAt: string;
+  }> {
+    return {
+      used: 0,
+      remaining: 100_000,
+      limit: 100_000,
+      accuracy: 'exact',
+      updatedAt: new Date().toISOString(),
+    };
+  }
+}
+
+function terminalHarness(turns: Record<string, unknown>[][]) {
+  const events: ServerEvent[] = [];
+  const manager = new MissionManager((event) => events.push(event));
+  const session = new FakeScriptedSession('droid-term', turns);
+  const mission = {
+    summary: testSummary('app-term', session.sessionId),
+    session,
+    streaming: false,
+    pendingSends: [] as string[],
+    pendingPermissions: new Map(),
+    pendingQuestions: new Map(),
+    agents: new Map(),
+    knownSubagents: new Set(),
+    completedSubagents: new Set(),
+    terminalAgents: new Set<string>(),
+    linkedSubagents: new Set(),
+    subagentToolUseIds: new Map(),
+    subagentSettings: new Map(),
+    pendingSubagents: [],
+    mcpServers: [],
+    compacting: false,
+  };
+  const internals = manager as unknown as {
+    history: {
+      recordEvent: () => void;
+      syncSummaries: () => void;
+      recordSubagentLink: () => void;
+      subagentLinks: () => [];
+    };
+    missions: Map<string, typeof mission>;
+    applyEvent: (
+      missionId: string,
+      agentSessionId: string,
+      role: string,
+      ev: Record<string, unknown>,
+    ) => void;
+    applyNormalizedForAgent: (
+      missionId: string,
+      agentSessionId: string,
+      n: { transcript?: Record<string, unknown>; done?: boolean; subagent?: unknown },
+    ) => void;
+  };
+  internals.history = {
+    recordEvent: () => {},
+    syncSummaries: () => {},
+    recordSubagentLink: () => {},
+    subagentLinks: () => [],
+  };
+  internals.missions.set(mission.summary.id, mission);
+  const transcriptTexts = () =>
+    events
+      .filter((e) => e.type === 'mission.transcript')
+      .map((e) => (e as { event: { text?: string } }).event.text);
+  return { manager, events, mission, internals, session, transcriptTexts };
+}
+
+test('#19 a turn keeps its pre-terminal answer but drops generation after the result', async () => {
+  const { manager, mission, transcriptTexts } = terminalHarness([
+    [
+      { type: 'assistant_text_delta', text: 'final answer' },
+      { type: 'result' },
+      { type: 'assistant_text_delta', text: 'leaked tail' },
+      { type: 'tool_call', toolUse: { id: 'late', name: 'Grep', input: { pattern: 'x' } } },
+    ],
+    [{ type: 'assistant_text_delta', text: 'second turn answer' }],
+  ]);
+
+  await manager.handle({ type: 'mission.send', missionId: 'app-term', text: 'first' });
+  await waitFor(() => mission.streaming === false && transcriptTexts().includes('final answer'));
+
+  // The pre-terminal answer is kept; post-terminal generation is quarantined.
+  assert.ok(transcriptTexts().includes('final answer'));
+  assert.ok(!transcriptTexts().includes('leaked tail'));
+  // The session is flagged terminal for this turn.
+  assert.ok(mission.terminalAgents.has('app-term'));
+
+  // The next turn resets the flag so its answer flows again.
+  await manager.handle({ type: 'mission.send', missionId: 'app-term', text: 'second' });
+  await waitFor(() => transcriptTexts().includes('second turn answer'));
+  assert.ok(!mission.terminalAgents.has('app-term'));
+});
+
+test('#19 terminal enforcement is scoped per agent session', () => {
+  const { mission, internals, transcriptTexts } = terminalHarness([]);
+  // The orchestrator turn is terminal, but a worker on the same mission is not.
+  mission.terminalAgents.add('app-term');
+  internals.applyEvent('app-term', 'worker-1', 'worker', {
+    type: 'assistant_text_delta',
+    text: 'worker still talking',
+  });
+  internals.applyEvent('app-term', 'app-term', 'orchestrator', {
+    type: 'assistant_text_delta',
+    text: 'orchestrator blocked',
+  });
+  assert.ok(transcriptTexts().includes('worker still talking'));
+  assert.ok(!transcriptTexts().includes('orchestrator blocked'));
+});
+
+test('#19 a failed result after the terminal result still surfaces', () => {
+  const { internals, transcriptTexts } = terminalHarness([]);
+  internals.applyEvent('app-term', 'app-term', 'orchestrator', { type: 'result' });
+  // A failed tool result is not model "generation"; it must surface post-terminal.
+  internals.applyEvent('app-term', 'app-term', 'orchestrator', {
+    type: 'tool_result',
+    toolName: 'Execute',
+    content: 'boom',
+    isError: true,
+  });
+  assert.ok(transcriptTexts().includes('boom'));
+});
+
+test('#19 a post-terminal subagent spawn keeps its worker signal, drops only the tool transcript', () => {
+  const { events, internals } = terminalHarness([]);
+  internals.applyEvent('app-term', 'app-term', 'orchestrator', { type: 'result' });
+  internals.applyEvent('app-term', 'app-term', 'orchestrator', {
+    type: 'tool_call',
+    subagentSessionId: 'w1',
+    toolUse: { id: 'tA', name: 'Task', input: { subagent_type: 'worker', prompt: 'go' } },
+  });
+  // The subagent side effect still flows (worker started)...
+  assert.ok(
+    events.some(
+      (e) =>
+        e.type === 'mission.worker' &&
+        (e as { event?: string }).event === 'started' &&
+        (e as { workerSessionId?: string }).workerSessionId === 'w1',
+    ),
+  );
+  // ...but the orchestrator's own Task tool_call transcript is quarantined.
+  assert.ok(
+    !events.some(
+      (e) =>
+        e.type === 'mission.transcript' &&
+        (e as { event?: { kind?: string; toolName?: string } }).event?.kind === 'tool_call' &&
+        (e as { event?: { toolName?: string } }).event?.toolName === 'Task',
+    ),
+  );
+});
+
+test('#19 post-terminal generation is dropped on the shared agent entry (notification path)', () => {
+  const { mission, internals, transcriptTexts } = terminalHarness([]);
+  // Worker notifications now route through applyNormalizedForAgent, so a late
+  // text delta for a terminal worker is quarantined here too, not just on the
+  // stream loop.
+  mission.terminalAgents.add('w1');
+  internals.applyNormalizedForAgent('app-term', 'w1', {
+    transcript: {
+      id: 'late-1',
+      missionId: 'app-term',
+      agentSessionId: 'w1',
+      role: 'worker',
+      ts: 1,
+      kind: 'text',
+      text: 'late worker tail',
+    },
+  });
+  assert.ok(!transcriptTexts().includes('late worker tail'));
 });
