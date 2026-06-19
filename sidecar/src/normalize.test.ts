@@ -87,6 +87,35 @@ test('captures Task prompt metadata before the subagent session id exists', () =
   assert.equal(normalized?.transcript?.toolUseId, 'tool-1');
 });
 
+test('stamps toolUseId on ordinary (non-subagent) tool_call transcripts', () => {
+  const normalized = normalizeStreamEvent('mission-1', 'mission-1', 'orchestrator', {
+    type: 'tool_call',
+    toolUse: {
+      id: 'edit-1',
+      name: 'edit',
+      input: { path: 'src/app.ts', old_string: 'a', new_string: 'b' },
+    },
+  } as never);
+
+  assert.equal(normalized?.subagent, undefined);
+  assert.equal(normalized?.transcript?.kind, 'tool_call');
+  assert.equal(normalized?.transcript?.toolUseId, 'edit-1');
+});
+
+test('stamps toolUseId on ordinary (non-subagent) tool_result transcripts', () => {
+  const normalized = normalizeStreamEvent('mission-1', 'mission-1', 'orchestrator', {
+    type: 'tool_result',
+    toolName: 'edit',
+    toolUseId: 'edit-1',
+    content: 'ok',
+    isError: false,
+  } as never);
+
+  assert.equal(normalized?.subagent, undefined);
+  assert.equal(normalized?.transcript?.kind, 'tool_result');
+  assert.equal(normalized?.transcript?.toolUseId, 'edit-1');
+});
+
 test('captures subagent session ids from Task progress events', () => {
   const normalized = normalizeStreamEvent('mission-1', 'mission-1', 'orchestrator', {
     type: 'tool_progress',
