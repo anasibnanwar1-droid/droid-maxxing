@@ -48,11 +48,13 @@ function UnifiedLine({ line }: { line: DiffLine }) {
   );
 }
 
-function SplitCell({ line }: { line: DiffLine | null }) {
+function SplitCell({ line, side }: { line: DiffLine | null; side: 'left' | 'right' }) {
   if (!line) return <div className="flex flex-1 bg-droid-bg/30" />;
   return (
     <div className="flex min-w-0 flex-1" style={{ background: BG[line.type] }}>
-      <Gutter value={line.type === 'add' ? line.newLine : line.oldLine} />
+      {/* The left pane is the old file, the right pane the new one; a context
+          row carries both numbers, so pick by side rather than by line type. */}
+      <Gutter value={side === 'left' ? line.oldLine : line.newLine} />
       <span
         className="w-4 shrink-0 select-none text-center"
         style={{ color: lineColor(line.type) }}
@@ -92,9 +94,9 @@ export function DiffBody({
           {view === 'split'
             ? toSplitRows(hunk.lines).map((row, ri) => (
                 <div key={ri} className="flex">
-                  <SplitCell line={row.left} />
+                  <SplitCell line={row.left} side="left" />
                   <div className="w-px shrink-0 bg-droid-border" />
-                  <SplitCell line={row.right} />
+                  <SplitCell line={row.right} side="right" />
                 </div>
               ))
             : hunk.lines.map((line, li) => <UnifiedLine key={li} line={line} />)}

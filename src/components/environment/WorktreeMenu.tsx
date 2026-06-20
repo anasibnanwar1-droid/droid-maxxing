@@ -27,9 +27,17 @@ export function WorktreeMenu({
   );
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState('');
-  const [base, setBase] = useState<string>(env?.branch ?? env?.defaultBranch ?? 'main');
+  const defaultBase = env?.branch ?? env?.defaultBranch ?? 'main';
+  const [base, setBase] = useState<string>(defaultBase);
   const [pickingBase, setPickingBase] = useState(false);
   const [busy, setBusy] = useState(false);
+
+  // The create form is opened on demand; seed its base from the current branch
+  // each time so a useState-once default doesn't go stale after branch changes.
+  const startCreating = () => {
+    setBase(defaultBase);
+    setCreating(true);
+  };
 
   const current = worktrees.find((w) => w.isCurrent);
   const others = worktrees.filter((w) => !w.isCurrent && !w.bare);
@@ -221,7 +229,7 @@ export function WorktreeMenu({
               </div>
             ) : (
               <button
-                onClick={() => setCreating(true)}
+                onClick={startCreating}
                 className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[12.5px] text-droid-text transition-colors hover:bg-droid-elevated/60"
               >
                 <Plus className="h-3.5 w-3.5 shrink-0 text-droid-text-muted" />

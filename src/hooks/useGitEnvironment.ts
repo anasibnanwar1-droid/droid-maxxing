@@ -26,6 +26,10 @@ export function useGitEnvironment(cwd: string, diffMode: DiffStatMode): GitEnvir
   const [diffStat, setDiffStat] = useState<GitDiffStat | null>(null);
   const [loading, setLoading] = useState(false);
   const reqRef = useRef(0);
+  // diffStat is written by both the full refresh and the mode-only effect;
+  // a shared counter makes the most recently issued fetch the winner so a slow
+  // full refresh cannot overwrite a newer mode change with the old mode's counts.
+  const diffReqRef = useRef(0);
   const modeRef = useRef(diffMode);
   modeRef.current = diffMode;
 
@@ -38,6 +42,7 @@ export function useGitEnvironment(cwd: string, diffMode: DiffStatMode): GitEnvir
       return;
     }
     const id = ++reqRef.current;
+    const diffId = ++diffReqRef.current;
     setLoading(true);
     Promise.all([
       getGitEnvironment(cwd),
@@ -50,7 +55,7 @@ export function useGitEnvironment(cwd: string, diffMode: DiffStatMode): GitEnvir
         setEnv(nextEnv);
         setBranches(nextBranches);
         setWorktrees(nextWorktrees);
-        setDiffStat(nextDiff);
+        if (diffId === diffReqRef.current) setDiffStat(nextDiff);
         setLoading(false);
       })
       .catch(() => {
@@ -67,13 +72,10 @@ export function useGitEnvironment(cwd: string, diffMode: DiffStatMode): GitEnvir
   // Refetch only the diff stat when the selected mode changes.
   useEffect(() => {
     if (!cwd) return;
-    let cancelled = false;
+    const diffId = ++diffReqRef.current;
     void getGitDiffStat(cwd, diffMode).then((next) => {
-      if (!cancelled) setDiffStat(next);
+      if (diffId === diffReqRef.current) setDiffStat(next);
     });
-    return () => {
-      cancelled = true;
-    };
   }, [cwd, diffMode]);
 
   return { env, branches, worktrees, diffStat, loading, refresh };

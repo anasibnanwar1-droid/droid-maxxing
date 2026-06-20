@@ -195,9 +195,15 @@ export function ReviewPanel({ cwd, onClose }: { cwd: string; onClose: () => void
                 )}
               </div>
               <DiffBody
-                diff={review.fileDiff?.diff ?? ''}
+                diff={
+                  review.fileDiff?.path === review.selectedPath ? (review.fileDiff?.diff ?? '') : ''
+                }
                 view={state.diffView}
-                binary={review.fileDiff?.binary}
+                binary={
+                  review.fileDiff?.path === review.selectedPath
+                    ? review.fileDiff?.binary
+                    : undefined
+                }
               />
             </>
           ) : (

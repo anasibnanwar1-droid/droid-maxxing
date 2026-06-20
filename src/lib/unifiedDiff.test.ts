@@ -31,6 +31,29 @@ test('parseUnifiedDiff counts and numbers lines', () => {
   assert.equal(typeof add?.newLine, 'number');
 });
 
+test('parseUnifiedDiff ignores the trailing-newline artifact', () => {
+  const diff = ['@@ -1,2 +1,2 @@', ' keep', '-old', '+new', ''].join('\n');
+  const parsed = parseUnifiedDiff(diff);
+  const lines = parsed.hunks[0].lines;
+  // keep(ctx), old(del), new(add) — no phantom blank ctx row from the final ''.
+  assert.equal(lines.length, 3);
+  assert.equal(lines[lines.length - 1].type, 'add');
+  assert.equal(parsed.additions, 1);
+  assert.equal(parsed.deletions, 1);
+});
+
+test('toSplitRows context after an insertion carries divergent old/new numbers', () => {
+  const diff = ['@@ -1,2 +1,3 @@', ' a', '+inserted', ' b'].join('\n');
+  const parsed = parseUnifiedDiff(diff);
+  const rows = toSplitRows(parsed.hunks[0].lines);
+  const tail = rows[rows.length - 1];
+  // Context line 'b' is old line 2 but new line 3; the split view's right pane
+  // must render newLine (3), not oldLine (2).
+  assert.equal(tail.left?.oldLine, 2);
+  assert.equal(tail.right?.newLine, 3);
+  assert.notEqual(tail.left?.oldLine, tail.right?.newLine);
+});
+
 test('parseUnifiedDiff flags binary patches', () => {
   const parsed = parseUnifiedDiff('Binary files a/x.png and b/x.png differ');
   assert.equal(parsed.binary, true);

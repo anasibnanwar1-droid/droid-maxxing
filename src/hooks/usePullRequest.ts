@@ -39,6 +39,15 @@ export function usePullRequest(
     });
   }, [enabled, cwd, branch]);
 
+  // Drop the previous session's PR the moment cwd/branch changes so the panel
+  // never shows or acts on a stale PR while the new detection is in flight.
+  useEffect(() => {
+    setPr(null);
+    setChecks([]);
+    setComments([]);
+    setLoadingDetail(false);
+  }, [cwd, branch]);
+
   useEffect(() => {
     detect();
     if (!enabled) return;
