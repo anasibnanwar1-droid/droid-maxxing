@@ -306,9 +306,14 @@ async function diffStat(dir, options = {}) {
   const defaultRef = await defaultBaseRef(root);
   let base = null;
   if (defaultRef) base = await tryRun(root, ['merge-base', defaultRef, 'HEAD']);
+  // An unborn repo (no commits yet) has no HEAD, so diffing against it errors;
+  // compare the index instead so staged + untracked files still get counted.
+  const hasHead = !!(await tryRun(root, ['rev-parse', '--verify', '--quiet', 'HEAD']));
 
   if (mode === 'uncommitted') {
-    const tracked = parseNumstat(await runSoft(root, ['diff', '--numstat', 'HEAD']));
+    const tracked = parseNumstat(
+      await runSoft(root, ['diff', '--numstat', hasHead ? 'HEAD' : '--cached']),
+    );
     const untracked = await untrackedAdditions(root);
     return {
       mode,
@@ -326,7 +331,7 @@ async function diffStat(dir, options = {}) {
   }
 
   // worktree total: everything since base, including the working tree.
-  const range = base || 'HEAD';
+  const range = base || (hasHead ? 'HEAD' : '--cached');
   const tracked = parseNumstat(await runSoft(root, ['diff', '--numstat', range]));
   const untracked = await untrackedAdditions(root);
   return {
@@ -366,6 +371,32 @@ async function checkout(dir, { ref, allowDirty = false } = {}) {
   if (!root) return { ok: false, reason: 'not_a_repo' };
   if (!ref) return { ok: false, reason: 'invalid_name' };
   if (!allowDirty && (await isDirty(root))) return { ok: false, reason: 'dirty' };
+
+  // When the caller picks a remote-tracking ref (e.g. `origin/feature`), switch
+  // to the matching local branch, creating it as a tracking branch from that
+  // exact remote when absent. This avoids the ambiguity of stripping the remote
+  // prefix client-side, which breaks with multiple remotes sharing a name.
+  const slash = ref.indexOf('/');
+  const maybeRemote = slash > 0 ? ref.slice(0, slash) : null;
+  if (maybeRemote) {
+    const remotes = await listRemotes(root);
+    if (remotes.includes(maybeRemote)) {
+      const local = ref.slice(slash + 1);
+      const hasLocal = await tryRun(root, [
+        'rev-parse',
+        '--verify',
+        '--quiet',
+        `refs/heads/${local}`,
+      ]);
+      try {
+        await run(root, hasLocal ? ['switch', local] : ['switch', '--track', ref]);
+        return { ok: true, environment: await environment(root) };
+      } catch (err) {
+        return { ok: false, reason: 'git_error', message: err.message };
+      }
+    }
+  }
+
   try {
     await run(root, ['switch', ref]);
     return { ok: true, environment: await environment(root) };
@@ -596,7 +627,9 @@ async function scopeRange(root, scope) {
     if (scope === 'branch') {
       return { args: base ? [`${base}...HEAD`] : null, base, includeUntracked: false };
     }
-    return { args: [base || 'HEAD'], base, includeUntracked: true };
+    // Unborn repo: diff the index rather than a nonexistent HEAD.
+    const hasHead = await tryRun(root, ['rev-parse', '--verify', '--quiet', 'HEAD']);
+    return { args: [base || (hasHead ? 'HEAD' : '--cached')], base, includeUntracked: true };
   }
   if (scope === 'last_turn') {
     const entry = turnBaselines.get(root);
@@ -619,8 +652,8 @@ async function diffFiles(dir, options = {}) {
   const { args, base, includeUntracked, priorUntracked } = await scopeRange(root, scope);
   if (!args) return { mode: scope, base: null, files: [] };
   const [numstat, nameStatus] = await Promise.all([
-    runSoft(root, ['diff', ...args, '--numstat']),
-    runSoft(root, ['diff', ...args, '--name-status']),
+    runSoft(root, ['diff', ...args, '--numstat']).catch(() => ''),
+    runSoft(root, ['diff', ...args, '--name-status']).catch(() => ''),
   ]);
   const files = parseDiffFileList(numstat, nameStatus);
   if (includeUntracked) {

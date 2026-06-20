@@ -34,8 +34,10 @@ export function CreatePrSheet({
   const doCreate = async () => {
     if (!title.trim()) return;
     setBusy(true);
-    if (!env?.upstream) {
-      const pushed = await gitPush(cwd, { setUpstream: true });
+    // Push when there is no upstream yet, or when the local branch is ahead, so
+    // gh opens the PR from the latest commits instead of a stale remote tip.
+    if (!env?.upstream || (env?.ahead ?? 0) > 0) {
+      const pushed = await gitPush(cwd, { setUpstream: !env?.upstream });
       if (!pushed.ok) {
         setBusy(false);
         toast.error(pushed.message || 'Could not push branch');

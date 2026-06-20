@@ -29,11 +29,13 @@ export function usePullRequest(
   const detailReq = useRef(0);
 
   const detect = useCallback(() => {
+    // Bump first so any in-flight detection from a prior cwd/branch (or before
+    // it was disabled) can no longer resolve and restore a stale PR.
+    const id = ++detectReq.current;
     if (!enabled || !cwd) {
       setPr(null);
       return;
     }
-    const id = ++detectReq.current;
     void detectPullRequest(cwd, branch ?? undefined).then((next) => {
       if (id === detectReq.current) setPr(next);
     });

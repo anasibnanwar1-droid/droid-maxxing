@@ -370,6 +370,9 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
     if (missionPreview && !activeMission) {
       const dir = state.draftChat?.cwd ?? (await pickDirectory());
       if (!dir) return;
+      // Snapshot the tree before the agent's first turn so the Review "Last
+      // turn" scope only attributes changes this session actually makes.
+      await markGitTurnStart(dir);
       const { orchestrator, worker, validator } = state.agentConfig;
       const clientRef = newClientRef();
       registerPending(clientRef);
@@ -398,12 +401,14 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
 
     // Draft/default chat: first message creates the session. No workspace is required.
     if (!activeMission) {
+      const dir = state.draftChat?.cwd ?? '';
+      if (dir) await markGitTurnStart(dir);
       const { orchestrator } = state.agentConfig;
       const clientRef = newClientRef();
       registerPending(clientRef);
       createMission({
         clientRef,
-        cwd: state.draftChat?.cwd ?? '',
+        cwd: dir,
         title: (text || activeSkills[0]?.name || 'Chat').slice(0, 48),
         goal: composed,
         interactionMode: isSpecMode ? 'spec' : 'auto',
