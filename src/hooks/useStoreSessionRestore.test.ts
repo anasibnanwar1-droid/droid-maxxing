@@ -232,6 +232,74 @@ test('#29 a prepend drops the optimistic echo superseded by the persisted prompt
   );
 });
 
+test('#29 a replace drops a live event that duplicates a replayed one by content', () => {
+  // Reconnect race: the live event has a transient id and receipt-time ts while
+  // its persisted twin in the page has a session id and SDK ts, so neither id
+  // nor ts match; the content signature must still collapse the duplicate.
+  const seeded = {
+    ...initialState,
+    transcripts: { m1: [ev('live-9', 1005, 'all done')] },
+  } as unknown as AppState;
+
+  const next = reducer(seeded, {
+    type: 'MISSION_HISTORY',
+    missionId: 'm1',
+    progress: [],
+    transcripts: [userEv('real-user', 1, 'go'), ev('sess:1:0:text', 1000, 'all done')],
+    mode: 'replace',
+    hasMore: false,
+  });
+
+  assert.deepEqual(
+    next.transcripts.m1.map((e) => e.id),
+    ['real-user', 'sess:1:0:text'],
+  );
+});
+
+test('#29 a replace keeps a genuinely repeated live message the page only contains once', () => {
+  // Two live "ok" events but the page persisted only one; consume-once dedup
+  // drops the duplicate and keeps the genuinely new occurrence.
+  const seeded = {
+    ...initialState,
+    transcripts: { m1: [ev('live-1', 1000, 'ok'), ev('live-2', 2000, 'ok')] },
+  } as unknown as AppState;
+
+  const next = reducer(seeded, {
+    type: 'MISSION_HISTORY',
+    missionId: 'm1',
+    progress: [],
+    transcripts: [ev('sess:1:0:text', 990, 'ok')],
+    mode: 'replace',
+    hasMore: false,
+  });
+
+  assert.deepEqual(
+    next.transcripts.m1.map((e) => e.id),
+    ['sess:1:0:text', 'live-2'],
+  );
+});
+
+test('#29 an empty replace keeps live progress instead of clearing it', () => {
+  // A live mission with no persisted history answers with an empty replace; that
+  // must not wipe progress already delivered by live events.
+  const seeded = {
+    ...initialState,
+    progress: { m1: [{ type: 'feature', timestamp: '2026-01-01T00:00:00Z', title: 'work' }] },
+  } as unknown as AppState;
+
+  const next = reducer(seeded, {
+    type: 'MISSION_HISTORY',
+    missionId: 'm1',
+    progress: [],
+    transcripts: [],
+    mode: 'replace',
+    hasMore: false,
+  });
+
+  assert.equal(next.progress.m1.length, 1);
+  assert.equal(next.progress.m1[0].title, 'work');
+});
+
 test('#29 MISSION_HISTORY_FAILED records a failed restore but keeps any prior count', () => {
   const seeded = {
     ...initialState,

@@ -1367,6 +1367,12 @@ function baseReducer(state: AppState, action: Action): AppState {
       //     kept, as are echoes older than a PARTIAL page (paged restore): there
       //     the matching text is a later message, not this echo, so dropping it
       //     would lose the opening prompt that belongs above the page.
+      //   - Live events that duplicate a replayed one by content are dropped:
+      //     live ids are transient (nextId) and live ts is receipt-time, so a
+      //     reconnect-race event and its persisted twin share neither id nor ts
+      //     and would otherwise both render. They are matched by a content
+      //     signature (toolUseId for tools, else author/role+kind+text) consumed
+      //     once per page occurrence so a genuinely repeated message is kept.
       //   - Remaining live-only events keep their place by timestamp relative to
       //     the page: an un-persisted opening prompt stays above it, a just-sent
       //     prompt (reconnect race) stays below it.
@@ -1391,7 +1397,30 @@ function baseReducer(state: AppState, action: Action): AppState {
         e.ts <= lastTs &&
         (pageIsComplete || e.ts >= firstTs) &&
         pageUserText.has(e.text);
-      const liveOnly = existing.filter((e) => !pageIds.has(e.id) && !supersededEcho(e));
+      const contentSig = (e: TranscriptEvent) =>
+        e.toolUseId
+          ? `tool:${e.kind}:${e.toolUseId}`
+          : `${e.author ?? e.role}:${e.kind}:${e.text ?? ''}`;
+      const pageSig = new Map<string, number>();
+      for (const e of page) {
+        const k = contentSig(e);
+        pageSig.set(k, (pageSig.get(k) ?? 0) + 1);
+      }
+      const isReplayedDuplicate = (e: TranscriptEvent) => {
+        // Optimistic user echoes are governed solely by supersededEcho above; do
+        // not let content-dedup drop one the echo logic intentionally keeps.
+        if (e.id.startsWith('seed-') || e.id.startsWith('local-')) return false;
+        const k = contentSig(e);
+        const n = pageSig.get(k);
+        if (n && n > 0) {
+          pageSig.set(k, n - 1);
+          return true;
+        }
+        return false;
+      };
+      const liveOnly = existing.filter(
+        (e) => !pageIds.has(e.id) && !supersededEcho(e) && !isReplayedDuplicate(e),
+      );
       const before = liveOnly.filter((e) => e.ts < firstTs);
       const after = liveOnly.filter((e) => e.ts >= firstTs);
       const mergedTranscript = page.length > 0 ? [...before, ...page, ...after] : existing;
@@ -1435,9 +1464,14 @@ function baseReducer(state: AppState, action: Action): AppState {
           workers = { ...state.workers, [action.missionId]: Array.from(bySession.values()) };
       }
       const hasMore = Boolean(action.olderCursor);
+      // An empty restore (e.g. a live mission with no persisted history yet)
+      // must not wipe progress already delivered by live events; only adopt the
+      // replayed progress when it actually carries entries.
+      const existingProgress = state.progress[action.missionId] ?? [];
+      const mergedProgress = action.progress.length > 0 ? action.progress : existingProgress;
       return {
         ...state,
-        progress: { ...state.progress, [action.missionId]: action.progress },
+        progress: { ...state.progress, [action.missionId]: mergedProgress },
         transcripts,
         workers,
         historyLoaded: { ...state.historyLoaded, [action.missionId]: true },
