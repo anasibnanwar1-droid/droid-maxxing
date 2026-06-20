@@ -1,75 +1,27 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useStore } from '../hooks/useStore';
 import { parseTodos, isTodoTool, hasTodoPayload, type TodoItem } from '../lib/tools';
 import { useMissionLive } from '../hooks/useMissionLive';
-import { useRepoStatus } from '../hooks/useRepoStatus';
-import { environmentLabels } from '../lib/repoEnvironment';
+import { useGitEnvironment } from '../hooks/useGitEnvironment';
+import { usePullRequest } from '../hooks/usePullRequest';
 import { interruptAgent } from '../lib/commands';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-  GitBranch,
   Hash,
   Activity,
   Loader2,
   ChevronRight,
   CornerDownRight,
-  FileDiff,
-  FolderGit,
   CheckCircle2,
   Circle,
   Square,
   FileText,
 } from 'lucide-react';
-import { openCodebase, openCurrentDiff } from './EditorOpenMenu';
 import { ModelIcon, providerOf } from './ModelIcon';
-
-function SectionHeader({ label, trailing }: { label: string; trailing?: React.ReactNode }) {
-  return (
-    <div className="flex items-center justify-between px-3 pt-4 pb-1.5">
-      <span className="text-[12.5px] font-medium text-droid-text-muted">{label}</span>
-      {trailing}
-    </div>
-  );
-}
-
-function Divider() {
-  return <div className="mx-3 my-1.5 h-px bg-droid-border/70" />;
-}
-
-function Row({
-  icon,
-  label,
-  meta,
-  onClick,
-  active,
-  trailing,
-  title,
-}: {
-  icon: React.ReactNode;
-  label: string;
-  meta?: string;
-  onClick?: () => void;
-  active?: boolean;
-  trailing?: React.ReactNode;
-  title?: string;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      title={title}
-      className={`group w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left transition-colors ${
-        active ? 'bg-droid-elevated' : 'hover:bg-droid-elevated/50'
-      }`}
-    >
-      <span className="shrink-0 text-droid-text-muted group-hover:text-droid-text-secondary transition-colors">
-        {icon}
-      </span>
-      <span className="min-w-0 flex-1 text-[13px] text-droid-text leading-snug">{label}</span>
-      {meta && <span className="font-mono text-[11px] text-droid-text-muted shrink-0">{meta}</span>}
-      {trailing}
-    </button>
-  );
-}
+import { Row, SectionHeader, Divider } from './environment/primitives';
+import { EnvironmentSection } from './environment/EnvironmentSection';
+import { PullRequestPanel } from './environment/PullRequestPanel';
+import type { DiffStatMode } from '../types/vcs';
 
 // Mirrors the sub-agent row design used in the left sidebar.
 function AgentRow({
@@ -147,8 +99,21 @@ export default function RightPanel() {
   const { state, dispatch } = useStore();
   const activeMission = state.activeMissionId ? state.missions[state.activeMissionId] : null;
   const features = activeMission?.features ?? [];
-  const repoStatus = useRepoStatus(activeMission?.cwd ?? '');
-  const env = environmentLabels(activeMission?.cwd ?? '', repoStatus);
+  const cwd = activeMission?.cwd ?? '';
+
+  const [diffMode, setDiffMode] = useState<DiffStatMode>('worktree');
+  const [view, setView] = useState<'context' | 'pr'>('context');
+  const git = useGitEnvironment(cwd, diffMode);
+  const isGitHub = !!git.env?.isGitHub;
+  const pr = usePullRequest(cwd, git.env?.branch ?? null, {
+    enabled: isGitHub,
+    active: view === 'pr',
+  });
+
+  // A PR view belongs to one session; reset it when the active session changes.
+  useEffect(() => {
+    setView('context');
+  }, [activeMission?.id]);
 
   // Mission control owns its own feature-based progress; for chat/spec sessions
   // we always prefer the model's own TodoWrite list as the source of truth.
@@ -209,34 +174,36 @@ export default function RightPanel() {
           {working && <Loader2 className="w-4 h-4 animate-spin text-droid-accent" />}
         </div>
 
-        <div className="flex-1 min-h-0 overflow-y-auto px-1.5 pb-2">
-          {/* Environment */}
-          {activeMission && (
-            <div>
-              <SectionHeader label="Environment" />
+        {view === 'pr' && pr.pr ? (
+          <div className="min-h-0 flex-1">
+            <PullRequestPanel
+              cwd={cwd}
+              pr={pr.pr}
+              checks={pr.checks}
+              comments={pr.comments}
+              loadingDetail={pr.loadingDetail}
+              onBack={() => setView('context')}
+              onRefresh={pr.refresh}
+            />
+          </div>
+        ) : (
+          <div className="flex-1 min-h-0 overflow-y-auto px-1.5 pb-2">
+            {/* Environment */}
+            {activeMission && (
               <div>
-                <Row
-                  icon={<FolderGit className="w-4 h-4" />}
-                  label={env.location}
-                  title={repoStatus?.repoRoot ?? activeMission.cwd}
-                  onClick={() => openCodebase(activeMission.cwd)}
-                />
-                <Row
-                  icon={<GitBranch className="w-4 h-4" />}
-                  label={env.branch}
-                  title={
-                    repoStatus?.repoRoot ? `${env.branch} · ${repoStatus.repoRoot}` : env.branch
-                  }
-                />
-                <Row
-                  icon={<FileDiff className="w-4 h-4" />}
-                  label={env.changes}
-                  title={
-                    repoStatus
-                      ? 'Open a diff of uncommitted changes in your editor'
-                      : 'No git repository here'
-                  }
-                  onClick={() => openCurrentDiff(activeMission.cwd)}
+                <SectionHeader label="Environment" />
+                <EnvironmentSection
+                  cwd={activeMission.cwd}
+                  env={git.env}
+                  branches={git.branches}
+                  worktrees={git.worktrees}
+                  diffStat={git.diffStat}
+                  diffMode={diffMode}
+                  onDiffModeChange={setDiffMode}
+                  refresh={git.refresh}
+                  live={working}
+                  pr={pr.pr}
+                  onOpenPr={() => setView('pr')}
                 />
                 <Row
                   icon={
@@ -307,163 +274,163 @@ export default function RightPanel() {
                   </div>
                 )}
               </div>
-            </div>
-          )}
+            )}
 
-          {/* Spec — opens the full wiki reader for missions that produced one */}
-          {activeMission && state.missionSpecs[activeMission.id] && (
-            <div>
-              <Divider />
-              <button
-                onClick={() => dispatch({ type: 'SPEC_OPEN_WIKI', missionId: activeMission.id })}
-                className="w-full flex items-center gap-1.5 px-3 pt-2 pb-1.5 text-[12.5px] font-medium text-droid-text-muted hover:text-droid-text transition-colors"
-              >
-                <FileText className="w-3.5 h-3.5" />
-                Spec
-                <ChevronRight className="w-3.5 h-3.5 ml-auto" />
-              </button>
-            </div>
-          )}
+            {/* Spec — opens the full wiki reader for missions that produced one */}
+            {activeMission && state.missionSpecs[activeMission.id] && (
+              <div>
+                <Divider />
+                <button
+                  onClick={() => dispatch({ type: 'SPEC_OPEN_WIKI', missionId: activeMission.id })}
+                  className="w-full flex items-center gap-1.5 px-3 pt-2 pb-1.5 text-[12.5px] font-medium text-droid-text-muted hover:text-droid-text transition-colors"
+                >
+                  <FileText className="w-3.5 h-3.5" />
+                  Spec
+                  <ChevronRight className="w-3.5 h-3.5 ml-auto" />
+                </button>
+              </div>
+            )}
 
-          {/* Progress (collapsible) — under Environment */}
-          {activeMission && (
-            <div>
-              <Divider />
-              <button
-                onClick={() => setProgressManual(!progressOpen)}
-                className="w-full flex items-center justify-between px-3 pt-2 pb-1.5"
-              >
-                <span className="flex items-center gap-1.5 text-[12.5px] font-medium text-droid-text-muted">
-                  <ChevronRight
-                    className={`w-3.5 h-3.5 transition-transform ${progressOpen ? 'rotate-90' : ''}`}
-                  />
-                  Progress
-                </span>
-                <span className="flex items-center gap-2">
-                  {working && <Loader2 className="w-3.5 h-3.5 animate-spin text-droid-accent" />}
-                  {total > 0 && (
-                    <span className="font-mono text-[11px] text-droid-text-muted">
-                      {completed}/{total}
-                    </span>
-                  )}
-                </span>
-              </button>
-
-              <AnimatePresence initial={false}>
-                {progressOpen && (
-                  <motion.div
-                    initial={{ height: 0, opacity: 0 }}
-                    animate={{ height: 'auto', opacity: 1 }}
-                    exit={{ height: 0, opacity: 0 }}
-                    className="overflow-hidden"
-                  >
+            {/* Progress (collapsible) — under Environment */}
+            {activeMission && (
+              <div>
+                <Divider />
+                <button
+                  onClick={() => setProgressManual(!progressOpen)}
+                  className="w-full flex items-center justify-between px-3 pt-2 pb-1.5"
+                >
+                  <span className="flex items-center gap-1.5 text-[12.5px] font-medium text-droid-text-muted">
+                    <ChevronRight
+                      className={`w-3.5 h-3.5 transition-transform ${progressOpen ? 'rotate-90' : ''}`}
+                    />
+                    Progress
+                  </span>
+                  <span className="flex items-center gap-2">
+                    {working && <Loader2 className="w-3.5 h-3.5 animate-spin text-droid-accent" />}
                     {total > 0 && (
-                      <div className="px-3 pt-1 pb-2">
-                        <div className="h-1.5 bg-droid-border/50 rounded-full overflow-hidden">
-                          <motion.div
-                            className="h-full rounded-full bg-droid-accent"
-                            initial={false}
-                            animate={{ width: `${pct}%` }}
-                            transition={{ duration: 0.5, ease: 'easeOut' }}
-                          />
-                        </div>
-                      </div>
+                      <span className="font-mono text-[11px] text-droid-text-muted">
+                        {completed}/{total}
+                      </span>
                     )}
-                    {useTodos
-                      ? todos.map((t, i) => (
-                          <div key={i} className="flex items-start gap-2.5 px-3 py-1.5">
-                            <span className="mt-0.5 shrink-0">{statusIcon(t.status)}</span>
-                            <span
-                              className={`text-[12.5px] leading-snug ${
-                                t.status === 'completed'
-                                  ? 'text-droid-text-muted line-through'
-                                  : t.status === 'in_progress'
-                                    ? 'text-droid-text'
-                                    : 'text-droid-text-secondary'
-                              }`}
-                            >
-                              {t.text}
+                  </span>
+                </button>
+
+                <AnimatePresence initial={false}>
+                  {progressOpen && (
+                    <motion.div
+                      initial={{ height: 0, opacity: 0 }}
+                      animate={{ height: 'auto', opacity: 1 }}
+                      exit={{ height: 0, opacity: 0 }}
+                      className="overflow-hidden"
+                    >
+                      {total > 0 && (
+                        <div className="px-3 pt-1 pb-2">
+                          <div className="h-1.5 bg-droid-border/50 rounded-full overflow-hidden">
+                            <motion.div
+                              className="h-full rounded-full bg-droid-accent"
+                              initial={false}
+                              animate={{ width: `${pct}%` }}
+                              transition={{ duration: 0.5, ease: 'easeOut' }}
+                            />
+                          </div>
+                        </div>
+                      )}
+                      {useTodos
+                        ? todos.map((t, i) => (
+                            <div key={i} className="flex items-start gap-2.5 px-3 py-1.5">
+                              <span className="mt-0.5 shrink-0">{statusIcon(t.status)}</span>
+                              <span
+                                className={`text-[12.5px] leading-snug ${
+                                  t.status === 'completed'
+                                    ? 'text-droid-text-muted line-through'
+                                    : t.status === 'in_progress'
+                                      ? 'text-droid-text'
+                                      : 'text-droid-text-secondary'
+                                }`}
+                              >
+                                {t.text}
+                              </span>
+                            </div>
+                          ))
+                        : features.map((f) => (
+                            <Row
+                              key={f.id}
+                              icon={statusIcon(f.status)}
+                              label={f.description}
+                              onClick={() =>
+                                dispatch({
+                                  type: 'SELECT_FEATURE',
+                                  id: state.selectedFeatureId === f.id ? null : f.id,
+                                })
+                              }
+                              active={state.selectedFeatureId === f.id}
+                            />
+                          ))}
+                      {total === 0 && (
+                        <div className="px-3 py-1.5 text-[12px] text-droid-text-muted">
+                          {working ? 'Working…' : 'No steps yet'}
+                        </div>
+                      )}
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+            )}
+
+            {/* Selected step detail */}
+            <AnimatePresence>
+              {activeMission &&
+                state.selectedFeatureId &&
+                (() => {
+                  const f = activeMission.features.find((x) => x.id === state.selectedFeatureId);
+                  if (!f) return null;
+                  return (
+                    <motion.div
+                      key={f.id}
+                      initial={{ opacity: 0, height: 0 }}
+                      animate={{ opacity: 1, height: 'auto' }}
+                      exit={{ opacity: 0, height: 0 }}
+                      className="overflow-hidden"
+                    >
+                      <div className="mx-3 my-1.5 rounded-xl bg-droid-elevated/50 px-3 py-2.5 space-y-2">
+                        <div className="text-[12.5px] text-droid-text leading-relaxed">
+                          {f.description}
+                        </div>
+                        {f.skillName && (
+                          <div className="flex items-center gap-2">
+                            <Hash className="w-3.5 h-3.5 text-droid-text-muted" />
+                            <span className="font-mono text-[11px] text-droid-text-secondary">
+                              {f.skillName}
                             </span>
                           </div>
-                        ))
-                      : features.map((f) => (
-                          <Row
-                            key={f.id}
-                            icon={statusIcon(f.status)}
-                            label={f.description}
-                            onClick={() =>
-                              dispatch({
-                                type: 'SELECT_FEATURE',
-                                id: state.selectedFeatureId === f.id ? null : f.id,
-                              })
-                            }
-                            active={state.selectedFeatureId === f.id}
-                          />
-                        ))}
-                    {total === 0 && (
-                      <div className="px-3 py-1.5 text-[12px] text-droid-text-muted">
-                        {working ? 'Working…' : 'No steps yet'}
+                        )}
+                        {f.currentWorkerSessionId && (
+                          <div className="flex items-center gap-2">
+                            <Activity className="w-3.5 h-3.5 text-droid-accent" />
+                            <span className="font-mono text-[11px] text-droid-accent">
+                              {f.currentWorkerSessionId.slice(0, 12)}
+                            </span>
+                          </div>
+                        )}
+                        {f.preconditions.length > 0 && (
+                          <div className="space-y-1">
+                            {f.preconditions.map((p, i) => (
+                              <div
+                                key={i}
+                                className="text-[11.5px] text-droid-text-muted pl-3 border-l-2 border-droid-border"
+                              >
+                                {p}
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </div>
-                    )}
-                  </motion.div>
-                )}
-              </AnimatePresence>
-            </div>
-          )}
-
-          {/* Selected step detail */}
-          <AnimatePresence>
-            {activeMission &&
-              state.selectedFeatureId &&
-              (() => {
-                const f = activeMission.features.find((x) => x.id === state.selectedFeatureId);
-                if (!f) return null;
-                return (
-                  <motion.div
-                    key={f.id}
-                    initial={{ opacity: 0, height: 0 }}
-                    animate={{ opacity: 1, height: 'auto' }}
-                    exit={{ opacity: 0, height: 0 }}
-                    className="overflow-hidden"
-                  >
-                    <div className="mx-3 my-1.5 rounded-xl bg-droid-elevated/50 px-3 py-2.5 space-y-2">
-                      <div className="text-[12.5px] text-droid-text leading-relaxed">
-                        {f.description}
-                      </div>
-                      {f.skillName && (
-                        <div className="flex items-center gap-2">
-                          <Hash className="w-3.5 h-3.5 text-droid-text-muted" />
-                          <span className="font-mono text-[11px] text-droid-text-secondary">
-                            {f.skillName}
-                          </span>
-                        </div>
-                      )}
-                      {f.currentWorkerSessionId && (
-                        <div className="flex items-center gap-2">
-                          <Activity className="w-3.5 h-3.5 text-droid-accent" />
-                          <span className="font-mono text-[11px] text-droid-accent">
-                            {f.currentWorkerSessionId.slice(0, 12)}
-                          </span>
-                        </div>
-                      )}
-                      {f.preconditions.length > 0 && (
-                        <div className="space-y-1">
-                          {f.preconditions.map((p, i) => (
-                            <div
-                              key={i}
-                              className="text-[11.5px] text-droid-text-muted pl-3 border-l-2 border-droid-border"
-                            >
-                              {p}
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  </motion.div>
-                );
-              })()}
-          </AnimatePresence>
-        </div>
+                    </motion.div>
+                  );
+                })()}
+            </AnimatePresence>
+          </div>
+        )}
       </div>
     </div>
   );
