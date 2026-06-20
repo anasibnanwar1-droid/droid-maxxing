@@ -16,6 +16,8 @@ const fs = require('node:fs');
 const fsp = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
+const gitVcs = require('./git.cjs');
+const githubVcs = require('./github.cjs');
 
 const APP_NAME = 'Droid Control';
 const BRIDGE_PORT = Number(process.env.BRIDGE_PORT ?? 8765);
@@ -109,6 +111,42 @@ function registerIpc() {
   ipcMain.handle('open-project', (_event, { dir, editor, target }) =>
     openProject(dir, editor, target),
   );
+
+  ipcMain.handle('git-environment', (_event, { dir }) => gitVcs.environment(dir));
+  ipcMain.handle('git-branches', (_event, { dir }) => gitVcs.branches(dir));
+  ipcMain.handle('git-worktrees', (_event, { dir }) => gitVcs.worktrees(dir));
+  ipcMain.handle('git-diff-stat', (_event, { dir, options }) => gitVcs.diffStat(dir, options));
+  ipcMain.handle('git-create-branch', (_event, { dir, options }) =>
+    gitVcs.createBranch(dir, options),
+  );
+  ipcMain.handle('git-checkout', (_event, { dir, options }) => gitVcs.checkout(dir, options));
+  ipcMain.handle('git-create-worktree', (_event, { dir, options }) =>
+    gitVcs.createWorktree(dir, options),
+  );
+  ipcMain.handle('git-remove-worktree', (_event, { dir, options }) =>
+    gitVcs.removeWorktree(dir, options),
+  );
+  ipcMain.handle('git-stage-all', (_event, { dir }) => gitVcs.stageAll(dir));
+  ipcMain.handle('git-commit', (_event, { dir, options }) => gitVcs.commit(dir, options));
+  ipcMain.handle('git-push', (_event, { dir, options }) => gitVcs.push(dir, options));
+
+  ipcMain.handle('github-available', () => githubVcs.available());
+  ipcMain.handle('github-detect-pr', (_event, { dir, options }) =>
+    githubVcs.detectPr(dir, options),
+  );
+  ipcMain.handle('github-pr-checks', (_event, { dir, options }) =>
+    githubVcs.prChecks(dir, options),
+  );
+  ipcMain.handle('github-pr-comments', (_event, { dir, options }) =>
+    githubVcs.prComments(dir, options),
+  );
+  ipcMain.handle('github-create-pr', (_event, { dir, options }) =>
+    githubVcs.createPr(dir, options),
+  );
+  ipcMain.handle('github-post-comment', (_event, { dir, options }) =>
+    githubVcs.postComment(dir, options),
+  );
+
   ipcMain.handle('onboarding-get', getOnboarding);
   ipcMain.handle('onboarding-set', (_event, { patch }) => setOnboarding(patch));
   ipcMain.handle('app-version', () => app.getVersion());

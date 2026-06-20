@@ -8,7 +8,7 @@
     "build": "tsc && vite build && npm run sidecar:build && npm run electron:check",
     "electron": "npm run electron:dev",
     "electron:dev": "npm run sidecar:build && node electron/dev.cjs",
-    "electron:check": "node --check electron/main.cjs && node --check electron/preload.cjs && node --check electron/nativeBrowserPreload.cjs && node --check electron/dev.cjs",
+    "electron:check": "node --check electron/main.cjs && node --check electron/preload.cjs && node --check electron/nativeBrowserPreload.cjs && node --check electron/dev.cjs && node --check electron/git.cjs && node --check electron/github.cjs",
     "sidecar:build": "npm --prefix sidecar run build",
     "sidecar:test": "npm --prefix sidecar run test",
     "sidecar:typecheck": "npm --prefix sidecar run typecheck",
