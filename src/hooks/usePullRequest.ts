@@ -42,8 +42,11 @@ export function usePullRequest(
   }, [enabled, cwd, branch]);
 
   // Drop the previous session's PR the moment cwd/branch changes so the panel
-  // never shows or acts on a stale PR while the new detection is in flight.
+  // never shows or acts on a stale PR while the new detection is in flight. Bump
+  // detailReq too, so an in-flight checks/comments fetch for the old PR can no
+  // longer resolve and repopulate stale details under the newly detected PR.
   useEffect(() => {
+    detailReq.current++;
     setPr(null);
     setChecks([]);
     setComments([]);

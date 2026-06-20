@@ -32,6 +32,7 @@ export function useReviewDiff(
   const [version, setVersion] = useState(0);
   const listReq = useRef(0);
   const diffReq = useRef(0);
+  const diffKey = useRef('');
 
   const loadList = useCallback(() => {
     if (!cwd || !enabled) {
@@ -68,6 +69,14 @@ export function useReviewDiff(
     if (!cwd || !enabled || !selectedPath) {
       setFileDiff(null);
       return;
+    }
+    // Drop the prior scope/file's diff so a stale one is never shown while the
+    // newly scoped diff loads (the same path can exist in multiple scopes). Skip
+    // this on poll refreshes (version bumps) to avoid flicker.
+    const key = `${cwd}\u0000${scope}\u0000${selectedPath}`;
+    if (diffKey.current !== key) {
+      diffKey.current = key;
+      setFileDiff(null);
     }
     const id = ++diffReq.current;
     setLoadingDiff(true);

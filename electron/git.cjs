@@ -389,7 +389,22 @@ async function checkout(dir, { ref, allowDirty = false } = {}) {
         `refs/heads/${local}`,
       ]);
       try {
-        await run(root, hasLocal ? ['switch', local] : ['switch', '--track', ref]);
+        if (hasLocal) {
+          await run(root, ['switch', local]);
+          // The user picked a specific remote ref; if the existing local branch
+          // tracks a different one, repoint its upstream to honor that choice.
+          const current = await tryRun(root, [
+            'rev-parse',
+            '--abbrev-ref',
+            '--symbolic-full-name',
+            `${local}@{upstream}`,
+          ]);
+          if (current !== ref) {
+            await run(root, ['branch', `--set-upstream-to=${ref}`, local]).catch(() => {});
+          }
+        } else {
+          await run(root, ['switch', '--track', ref]);
+        }
         return { ok: true, environment: await environment(root) };
       } catch (err) {
         return { ok: false, reason: 'git_error', message: err.message };
@@ -503,15 +518,32 @@ async function commit(dir, { message, all = true } = {}) {
   }
 }
 
-async function push(dir, { remote = 'origin', branch, setUpstream = false, force = false } = {}) {
+async function push(dir, { remote, branch, setUpstream = false, force = false } = {}) {
   const root = await repoRootOf(dir);
   if (!root) return { ok: false, reason: 'not_a_repo' };
   const target = branch || (await tryRun(root, ['rev-parse', '--abbrev-ref', 'HEAD']));
   if (!target || target === 'HEAD') return { ok: false, reason: 'detached' };
+  // Honor the branch's configured upstream so a non-origin or differently-named
+  // tracking ref is never clobbered. Only fall back to an explicit/origin remote
+  // when setting upstream, when the caller overrides it, or when none is set.
+  const upstream =
+    setUpstream || remote || branch
+      ? null
+      : await tryRun(root, [
+          'rev-parse',
+          '--abbrev-ref',
+          '--symbolic-full-name',
+          `${target}@{upstream}`,
+        ]);
   const args = ['push'];
   if (setUpstream) args.push('--set-upstream');
   if (force) args.push('--force-with-lease');
-  args.push(remote, target);
+  if (upstream && upstream.includes('/')) {
+    const sep = upstream.indexOf('/');
+    args.push(upstream.slice(0, sep), `${target}:${upstream.slice(sep + 1)}`);
+  } else {
+    args.push(remote || 'origin', target);
+  }
   try {
     const output = await run(root, args, { timeout: PUSH_TIMEOUT });
     return { ok: true, output, environment: await environment(root) };
