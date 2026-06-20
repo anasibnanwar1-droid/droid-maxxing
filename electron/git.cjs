@@ -63,7 +63,10 @@ function parseAheadBehind(out) {
     .trim()
     .split(/\s+/)
     .map((n) => Number.parseInt(n, 10));
-  return { ahead: Number.isFinite(ahead) ? ahead : 0, behind: Number.isFinite(behind) ? behind : 0 };
+  return {
+    ahead: Number.isFinite(ahead) ? ahead : 0,
+    behind: Number.isFinite(behind) ? behind : 0,
+  };
 }
 
 // Parse `%(upstream:track)` like "[ahead 2, behind 1]" → { ahead, behind }.
@@ -96,7 +99,8 @@ function parseWorktrees(stdout, currentRoot) {
     };
     for (const line of block.split('\n')) {
       if (line.startsWith('worktree ')) entry.path = line.slice('worktree '.length).trim();
-      else if (line.startsWith('HEAD ')) entry.head = line.slice('HEAD '.length).trim().slice(0, 12);
+      else if (line.startsWith('HEAD '))
+        entry.head = line.slice('HEAD '.length).trim().slice(0, 12);
       else if (line.startsWith('branch '))
         entry.branch = line.slice('branch '.length).replace('refs/heads/', '').trim();
       else if (line === 'bare') entry.bare = true;
@@ -186,7 +190,12 @@ async function environment(dir) {
   let ahead = 0;
   let behind = 0;
   if (upstream) {
-    const counts = await tryRun(root, ['rev-list', '--left-right', '--count', `${upstream}...HEAD`]);
+    const counts = await tryRun(root, [
+      'rev-list',
+      '--left-right',
+      '--count',
+      `${upstream}...HEAD`,
+    ]);
     ({ ahead, behind } = parseAheadBehind(counts));
   }
   const defaultRef = await defaultBaseRef(root);
@@ -238,12 +247,21 @@ async function branches(dir) {
         subject: subject || '',
       };
     });
-  const remoteOut = await tryRun(root, ['for-each-ref', '--format=%(refname:short)', 'refs/remotes']);
+  const remoteOut = await tryRun(root, [
+    'for-each-ref',
+    '--format=%(refname:short)',
+    'refs/remotes',
+  ]);
   const remote = String(remoteOut || '')
     .split('\n')
     .filter((name) => name && !name.endsWith('/HEAD'))
     .map((name) => ({ name }));
-  return { current: current === 'HEAD' ? null : current, detached: current === 'HEAD', local, remote };
+  return {
+    current: current === 'HEAD' ? null : current,
+    detached: current === 'HEAD',
+    local,
+    remote,
+  };
 }
 
 async function worktrees(dir) {
@@ -447,11 +465,202 @@ async function push(dir, { remote = 'origin', branch, setUpstream = false, force
   }
 }
 
+// ---- Review tab: per-file diffs across review scopes ----------------------
+
+const EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
+const REVIEW_SCOPES = ['unstaged', 'staged', 'commit', 'branch', 'worktree', 'last_turn'];
+
+// Per-worktree baseline captured at the start of an agent turn so the
+// "Last turn" scope can diff the working tree against that point in time.
+const turnBaselines = new Map();
+
+function normalizeScope(value) {
+  return REVIEW_SCOPES.includes(value) ? value : 'unstaged';
+}
+
+function statusLabel(letter) {
+  switch ((letter || '')[0]) {
+    case 'A':
+      return 'added';
+    case 'D':
+      return 'deleted';
+    case 'R':
+      return 'renamed';
+    case 'C':
+      return 'copied';
+    case 'T':
+      return 'type';
+    default:
+      return 'modified';
+  }
+}
+
+// Recover the post-rename path from numstat/name-status fields, handling both
+// the `old => new` and `dir/{old => new}/file` rename encodings.
+function renameTarget(field) {
+  const value = String(field || '');
+  if (!value.includes(' => ')) return value;
+  const open = value.indexOf('{');
+  const close = value.indexOf('}');
+  if (open !== -1 && close > open) {
+    const pre = value.slice(0, open);
+    const inner = value.slice(open + 1, close);
+    const post = value.slice(close + 1);
+    const next = inner.split(' => ')[1] ?? inner;
+    return (pre + next + post).replace(/\/{2,}/g, '/');
+  }
+  return value.slice(value.indexOf(' => ') + 4);
+}
+
+function parseDiffFileList(numstatOut, nameStatusOut) {
+  const counts = new Map();
+  for (const line of String(numstatOut || '').split('\n')) {
+    if (!line.trim()) continue;
+    const parts = line.split('\t');
+    if (parts.length < 3) continue;
+    const [add, del] = parts;
+    const target = renameTarget(parts.slice(2).join('\t'));
+    counts.set(target, {
+      additions: add === '-' ? 0 : Number.parseInt(add, 10) || 0,
+      deletions: del === '-' ? 0 : Number.parseInt(del, 10) || 0,
+      binary: add === '-' && del === '-',
+    });
+  }
+  const files = [];
+  const seen = new Set();
+  for (const line of String(nameStatusOut || '').split('\n')) {
+    if (!line.trim()) continue;
+    const parts = line.split('\t');
+    const target = renameTarget(parts.slice(1).join('\t'));
+    if (!target) continue;
+    const c = counts.get(target) || { additions: 0, deletions: 0, binary: false };
+    files.push({ path: target, status: statusLabel(parts[0]), ...c });
+    seen.add(target);
+  }
+  for (const [target, c] of counts) {
+    if (!seen.has(target)) files.push({ path: target, status: 'modified', ...c });
+  }
+  return files;
+}
+
+async function untrackedFileList(root) {
+  const listing = await tryRun(root, ['ls-files', '--others', '--exclude-standard']);
+  const names = String(listing || '')
+    .split('\n')
+    .filter(Boolean)
+    .slice(0, UNTRACKED_FILE_CAP);
+  const out = [];
+  for (const rel of names) {
+    let additions = 0;
+    let binary = false;
+    try {
+      const stat = await fsp.stat(path.join(root, rel));
+      if (stat.isFile() && stat.size <= UNTRACKED_BYTE_CAP) {
+        const buf = await fsp.readFile(path.join(root, rel));
+        if (buf.includes(0)) binary = true;
+        else {
+          const text = buf.toString('utf8');
+          additions =
+            text.length === 0 ? 0 : text.split('\n').length - (text.endsWith('\n') ? 1 : 0);
+        }
+      } else if (stat.size > UNTRACKED_BYTE_CAP) {
+        binary = true;
+      }
+    } catch {
+      // ignore unreadable entries
+    }
+    out.push({ path: rel, additions, binary });
+  }
+  return out;
+}
+
+// Resolve a review scope to the `git diff` arguments, the base ref it compares
+// against, and whether untracked working-tree files should be folded in.
+async function scopeRange(root, scope) {
+  if (scope === 'staged') return { args: ['--cached'], base: null, includeUntracked: false };
+  if (scope === 'commit') {
+    const hasParent = await tryRun(root, ['rev-parse', '--verify', '--quiet', 'HEAD~1']);
+    return {
+      args: hasParent ? ['HEAD~1', 'HEAD'] : [EMPTY_TREE, 'HEAD'],
+      base: hasParent ? 'HEAD~1' : null,
+      includeUntracked: false,
+    };
+  }
+  if (scope === 'branch' || scope === 'worktree') {
+    const defaultRef = await defaultBaseRef(root);
+    const base = defaultRef ? await tryRun(root, ['merge-base', defaultRef, 'HEAD']) : null;
+    if (scope === 'branch') {
+      return { args: base ? [`${base}...HEAD`] : null, base, includeUntracked: false };
+    }
+    return { args: [base || 'HEAD'], base, includeUntracked: true };
+  }
+  if (scope === 'last_turn') {
+    const baseline = turnBaselines.get(root) || 'HEAD';
+    return { args: [baseline], base: baseline, includeUntracked: true };
+  }
+  // unstaged (working tree vs index)
+  return { args: [], base: null, includeUntracked: true };
+}
+
+async function diffFiles(dir, options = {}) {
+  const scope = normalizeScope(options.mode);
+  const root = await repoRootOf(dir);
+  if (!root) return { mode: scope, base: null, files: [] };
+  const { args, base, includeUntracked } = await scopeRange(root, scope);
+  if (!args) return { mode: scope, base: null, files: [] };
+  const [numstat, nameStatus] = await Promise.all([
+    runSoft(root, ['diff', ...args, '--numstat']),
+    runSoft(root, ['diff', ...args, '--name-status']),
+  ]);
+  const files = parseDiffFileList(numstat, nameStatus);
+  if (includeUntracked) {
+    for (const u of await untrackedFileList(root)) {
+      if (!files.some((f) => f.path === u.path)) {
+        files.push({
+          path: u.path,
+          status: 'untracked',
+          additions: u.additions,
+          deletions: 0,
+          binary: u.binary,
+        });
+      }
+    }
+  }
+  files.sort((a, b) => a.path.localeCompare(b.path));
+  return { mode: scope, base: base || null, files };
+}
+
+async function fileDiff(dir, options = {}) {
+  const scope = normalizeScope(options.mode);
+  const file = options.path;
+  const root = await repoRootOf(dir);
+  if (!root || !file) return { path: file || null, diff: '', binary: false };
+  const { args, includeUntracked } = await scopeRange(root, scope);
+  if (!args) return { path: file, diff: '', binary: false };
+  let out = await runSoft(root, ['diff', ...args, '--', file]).catch(() => '');
+  if (!out && includeUntracked) {
+    out = await runSoft(root, ['diff', '--no-index', '--', os.devNull, file]).catch(() => '');
+  }
+  return { path: file, diff: out, binary: /^Binary files /m.test(out) };
+}
+
+async function markTurnStart(dir) {
+  const root = await repoRootOf(dir);
+  if (!root) return { ok: false };
+  let baseline = await tryRun(root, ['stash', 'create']);
+  if (!baseline) baseline = await tryRun(root, ['rev-parse', 'HEAD']);
+  if (baseline) turnBaselines.set(root, baseline);
+  return { ok: !!baseline, baseline: baseline || null };
+}
+
 module.exports = {
   environment,
   branches,
   worktrees,
   diffStat,
+  diffFiles,
+  fileDiff,
+  markTurnStart,
   createBranch,
   checkout,
   createWorktree,
@@ -462,6 +671,9 @@ module.exports = {
   // exported for reuse/inspection
   parseWorktrees,
   parseNumstat,
+  parseDiffFileList,
+  renameTarget,
+  statusLabel,
   parseTrack,
   parseAheadBehind,
   baseKindOf,

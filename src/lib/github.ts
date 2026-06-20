@@ -2,24 +2,12 @@ import { isDesktop } from './desktop';
 import type {
   CreatePrOptions,
   CreatePrResult,
-  GithubAvailability,
   PostCommentResult,
   PrCheck,
   PrChecksResult,
   PrCommentsResult,
   PullRequest,
 } from '../types/vcs';
-
-const UNAVAILABLE: GithubAvailability = { installed: false, authenticated: false };
-
-export async function getGithubAvailability(): Promise<GithubAvailability> {
-  if (!isDesktop()) return UNAVAILABLE;
-  try {
-    return await window.droidControl!.githubAvailable();
-  } catch {
-    return UNAVAILABLE;
-  }
-}
 
 export async function detectPullRequest(dir: string, branch?: string): Promise<PullRequest | null> {
   if (!isDesktop() || !dir) return null;

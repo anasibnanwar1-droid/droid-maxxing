@@ -29,9 +29,11 @@ import type {
 import { addWorkspaceCwd } from '../lib/workspaces';
 import { sanitizeForLog } from '../lib/sensitiveLogRedaction';
 import { composePrompt } from '../lib/composePrompt';
+import type { DiffScope } from '../types/vcs';
 
 export type AgentKind = 'orchestrator' | 'worker' | 'validator';
 export type LiveEnterBehavior = 'queue' | 'interrupt';
+export type DiffViewMode = 'unified' | 'split';
 
 export interface WorkerInfo extends WorkerSummary {
   startedAt: number;
@@ -125,6 +127,11 @@ export interface AppState {
 
   // UI flags
   rightPanelOpen: boolean;
+  // The Review diff tab: a wide right-side pane, opened from the Context panel's
+  // changes button. Scope + view mode persist; open state is per-session.
+  reviewOpen: boolean;
+  reviewScope: DiffScope;
+  diffView: DiffViewMode;
   sidebarCollapsed: boolean;
   specMode: boolean;
   settingsOpen: boolean;
@@ -261,6 +268,9 @@ type Action =
   // UI
   | { type: 'SET_ACTIVE_MISSION'; id: string | null }
   | { type: 'SET_RIGHT_PANEL'; open: boolean }
+  | { type: 'SET_REVIEW_OPEN'; open: boolean }
+  | { type: 'SET_REVIEW_SCOPE'; scope: DiffScope }
+  | { type: 'SET_DIFF_VIEW'; mode: DiffViewMode }
   | { type: 'TOGGLE_COMMAND_PALETTE' }
   | { type: 'CLOSE_COMMAND_PALETTE' }
   | { type: 'SET_CONTEXT_METER_OPEN'; open: boolean }
@@ -393,6 +403,8 @@ const COMPACTION_TOKEN_LIMIT_STORAGE_KEY = 'droid-compaction-token-limit';
 const COMPACTION_TOKEN_LIMIT_CONFIGURED_STORAGE_KEY = 'droid-compaction-token-limit-configured';
 const COMPACTION_TOKEN_LIMIT_PER_MODEL_STORAGE_KEY = 'droid-compaction-token-limit-per-model';
 const LIVE_ENTER_BEHAVIOR_STORAGE_KEY = 'droid-live-enter-behavior';
+const DIFF_VIEW_STORAGE_KEY = 'droid-diff-view';
+const REVIEW_SCOPE_STORAGE_KEY = 'droid-review-scope';
 const WORKSPACES_STORAGE_KEY = 'droid-workspaces';
 const UI_STATE_STORAGE_KEY = 'droid-ui-state-v1';
 const BROWSER_VIEWPORT_MODES = new Set<BrowserViewportMode>([
@@ -583,6 +595,52 @@ function saveLiveEnterBehavior(value: LiveEnterBehavior): LiveEnterBehavior {
   return behavior;
 }
 
+const REVIEW_SCOPES: DiffScope[] = [
+  'unstaged',
+  'staged',
+  'commit',
+  'branch',
+  'worktree',
+  'last_turn',
+];
+
+function loadDiffView(): DiffViewMode {
+  try {
+    return getLocalStorage()?.getItem(DIFF_VIEW_STORAGE_KEY) === 'split' ? 'split' : 'unified';
+  } catch {
+    return 'unified';
+  }
+}
+
+function saveDiffView(value: DiffViewMode): DiffViewMode {
+  const mode = value === 'split' ? 'split' : 'unified';
+  try {
+    getLocalStorage()?.setItem(DIFF_VIEW_STORAGE_KEY, mode);
+  } catch {
+    /* ignore */
+  }
+  return mode;
+}
+
+function loadReviewScope(): DiffScope {
+  try {
+    const raw = getLocalStorage()?.getItem(REVIEW_SCOPE_STORAGE_KEY) as DiffScope | null;
+    return raw && REVIEW_SCOPES.includes(raw) ? raw : 'unstaged';
+  } catch {
+    return 'unstaged';
+  }
+}
+
+function saveReviewScope(value: DiffScope): DiffScope {
+  const scope = REVIEW_SCOPES.includes(value) ? value : 'unstaged';
+  try {
+    getLocalStorage()?.setItem(REVIEW_SCOPE_STORAGE_KEY, scope);
+  } catch {
+    /* ignore */
+  }
+  return scope;
+}
+
 function loadWorkspaceCwds(): string[] {
   try {
     const raw = getLocalStorage()?.getItem(WORKSPACES_STORAGE_KEY);
@@ -731,6 +789,9 @@ export const initialState: AppState = {
   compactionTokenLimit: loadCompactionTokenLimit(),
   compactionTokenLimitPerModel: loadCompactionTokenLimitPerModel(),
   liveEnterBehavior: loadLiveEnterBehavior(),
+  reviewOpen: false,
+  reviewScope: loadReviewScope(),
+  diffView: loadDiffView(),
   missionSettingOverrides: {},
   skills: [],
   skillsSessionId: undefined,
@@ -1509,6 +1570,15 @@ function baseReducer(state: AppState, action: Action): AppState {
 
     case 'SET_RIGHT_PANEL':
       return { ...state, rightPanelOpen: action.open };
+
+    case 'SET_REVIEW_OPEN':
+      return { ...state, reviewOpen: action.open };
+
+    case 'SET_REVIEW_SCOPE':
+      return { ...state, reviewScope: saveReviewScope(action.scope) };
+
+    case 'SET_DIFF_VIEW':
+      return { ...state, diffView: saveDiffView(action.mode) };
 
     case 'TOGGLE_COMMAND_PALETTE':
       return { ...state, commandPaletteOpen: !state.commandPaletteOpen };

@@ -3,7 +3,10 @@ import type {
   CommitOptions,
   CreateBranchOptions,
   CreateWorktreeOptions,
+  DiffFileList,
+  DiffScope,
   DiffStatMode,
+  FileDiffResult,
   GitActionResult,
   GitBranchList,
   GitDiffStat,
@@ -48,6 +51,37 @@ export async function getGitDiffStat(dir: string, mode: DiffStatMode): Promise<G
     return await window.droidControl!.gitDiffStat(dir, { mode });
   } catch {
     return null;
+  }
+}
+
+export async function getGitDiffFiles(dir: string, mode: DiffScope): Promise<DiffFileList> {
+  if (!isDesktop() || !dir) return { mode, base: null, files: [] };
+  try {
+    return await window.droidControl!.gitDiffFiles(dir, { mode });
+  } catch {
+    return { mode, base: null, files: [] };
+  }
+}
+
+export async function getGitFileDiff(
+  dir: string,
+  mode: DiffScope,
+  path: string,
+): Promise<FileDiffResult> {
+  if (!isDesktop() || !dir) return { path, diff: '', binary: false };
+  try {
+    return await window.droidControl!.gitFileDiff(dir, { mode, path });
+  } catch {
+    return { path, diff: '', binary: false };
+  }
+}
+
+export async function markGitTurnStart(dir: string): Promise<void> {
+  if (!isDesktop() || !dir) return;
+  try {
+    await window.droidControl!.gitMarkTurnStart(dir);
+  } catch {
+    // best-effort baseline; the Last turn scope falls back to HEAD
   }
 }
 

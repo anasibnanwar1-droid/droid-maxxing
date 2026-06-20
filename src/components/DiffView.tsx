@@ -3,10 +3,10 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { ChevronRight } from 'lucide-react';
 import type { FileChange, DiffOp } from '../lib/diff';
 
-const ADD_BG = 'rgba(74, 158, 122, 0.14)';
-const DEL_BG = 'rgba(255, 93, 46, 0.13)';
-const ADD_FG = '#5cc89a';
-const DEL_FG = '#ff7a5c';
+const ADD_BG = 'var(--diff-add-bg)';
+const DEL_BG = 'var(--diff-del-bg)';
+const ADD_FG = 'var(--diff-add-fg)';
+const DEL_FG = 'var(--diff-del-fg)';
 
 function DiffLines({ ops }: { ops: DiffOp[] }) {
   return (
