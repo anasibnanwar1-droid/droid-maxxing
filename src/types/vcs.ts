@@ -4,6 +4,37 @@
 
 export type DiffStatMode = 'worktree' | 'branch' | 'uncommitted';
 
+export type DiffScope = 'unstaged' | 'staged' | 'commit' | 'branch' | 'worktree' | 'last_turn';
+
+export type DiffFileStatus =
+  | 'added'
+  | 'modified'
+  | 'deleted'
+  | 'renamed'
+  | 'copied'
+  | 'type'
+  | 'untracked';
+
+export interface DiffFile {
+  path: string;
+  status: DiffFileStatus;
+  additions: number;
+  deletions: number;
+  binary: boolean;
+}
+
+export interface DiffFileList {
+  mode: DiffScope;
+  base: string | null;
+  files: DiffFile[];
+}
+
+export interface FileDiffResult {
+  path: string | null;
+  diff: string;
+  binary: boolean;
+}
+
 export interface GitEnvironment {
   isRepo: boolean;
   repoRoot?: string | null;
@@ -94,8 +125,6 @@ export interface PushOptions {
   setUpstream?: boolean;
   force?: boolean;
 }
-
-export type PrState = 'open' | 'closed' | 'merged';
 
 export interface PullRequest {
   number: number;

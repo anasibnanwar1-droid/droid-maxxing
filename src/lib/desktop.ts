@@ -18,7 +18,10 @@ import type {
   CreatePrOptions,
   CreatePrResult,
   CreateWorktreeOptions,
+  DiffFileList,
+  DiffScope,
   DiffStatMode,
+  FileDiffResult,
   GitActionResult,
   GitBranchList,
   GitDiffStat,
@@ -53,6 +56,9 @@ interface DroidControlApi {
   gitBranches: (dir: string) => Promise<GitBranchList>;
   gitWorktrees: (dir: string) => Promise<GitWorktree[]>;
   gitDiffStat: (dir: string, options: { mode: DiffStatMode }) => Promise<GitDiffStat>;
+  gitDiffFiles: (dir: string, options: { mode: DiffScope }) => Promise<DiffFileList>;
+  gitFileDiff: (dir: string, options: { mode: DiffScope; path: string }) => Promise<FileDiffResult>;
+  gitMarkTurnStart: (dir: string) => Promise<{ ok: boolean; baseline?: string | null }>;
   gitCreateBranch: (dir: string, options: CreateBranchOptions) => Promise<GitActionResult>;
   gitCheckout: (
     dir: string,

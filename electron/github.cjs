@@ -131,7 +131,8 @@ async function prComments(dir, { prNumber } = {}) {
   if (prNumber == null) return { ok: false, reason: 'missing_pr', comments: [] };
   const res = await gh(dir, ['pr', 'view', String(prNumber), '--json', 'comments,reviews']);
   if (res.spawnFailed) return { ok: false, reason: 'gh_unavailable', comments: [] };
-  if (res.code !== 0) return { ok: false, reason: 'gh_error', message: res.stderr.trim(), comments: [] };
+  if (res.code !== 0)
+    return { ok: false, reason: 'gh_error', message: res.stderr.trim(), comments: [] };
   const data = parseJson(res.stdout, { comments: [], reviews: [] });
   const comments = (data.comments || []).map((c, i) => ({
     id: `comment-${i}-${c.createdAt || ''}`,
