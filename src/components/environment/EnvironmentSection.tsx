@@ -32,6 +32,7 @@ export function EnvironmentSection({
   live,
   pr,
   onOpenPr,
+  onOpenReview,
 }: {
   cwd: string;
   env: GitEnvironment | null;
@@ -44,6 +45,7 @@ export function EnvironmentSection({
   live: boolean;
   pr: PullRequest | null;
   onOpenPr: () => void;
+  onOpenReview: () => void;
 }) {
   const location = basename(env?.repoRoot ?? env?.worktreePath ?? cwd) || 'No folder';
   const isRepo = !!env?.isRepo;
@@ -75,6 +77,7 @@ export function EnvironmentSection({
             mode={diffMode}
             defaultBranch={env?.defaultBranch}
             onModeChange={onDiffModeChange}
+            onOpenReview={onOpenReview}
           />
           <GitActionsBar
             cwd={cwd}

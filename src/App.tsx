@@ -23,6 +23,7 @@ import ChatView from './components/ChatView';
 import MissionControl from './components/MissionControl';
 import PromptInput from './components/PromptInput';
 import RightPanel from './components/RightPanel';
+import { ReviewPanel } from './components/environment/ReviewPanel';
 import EditorOpenMenu from './components/EditorOpenMenu';
 import Toaster from './components/Toaster';
 import { useRepoStatus } from './hooks/useRepoStatus';
@@ -77,7 +78,8 @@ export default function App() {
   // The view is a real mission only when the active session is a mission orchestrator,
   // not merely because the global mission-compose flag is on.
   const isMissionView = !!activeMission && activeMission.kind === 'mission_orchestrator';
-  const showBrowserPane = !embedded && state.browserOpen && !showWizard;
+  const showReviewPane = !embedded && state.reviewOpen && !!activeMission && !isMissionView;
+  const showBrowserPane = !embedded && state.browserOpen && !showWizard && !showReviewPane;
   const nativeBrowserPane = showBrowserPane && isDesktop();
   const focused = isMissionView;
   // A normal/spec session only has something worth showing once a message has
@@ -91,7 +93,7 @@ export default function App() {
   // the main scroll area), so the page scrollbar stays pinned to the window's
   // right edge instead of sliding inward and looking like a divider.
   const rightPanelVisible =
-    !focused && !showBrowserPane && state.rightPanelOpen && hasSessionContent;
+    !focused && !showBrowserPane && !showReviewPane && state.rightPanelOpen && hasSessionContent;
   const requestedHistory = useRef(new Set<string>());
   const [browserPaneWidth, setBrowserPaneWidth] = useState(() => initialBrowserPaneWidth());
   const setStoredBrowserPaneWidth = useCallback((width: number) => {
@@ -124,6 +126,11 @@ export default function App() {
   useEffect(() => {
     applyTheme(state.theme);
   }, [state.theme]);
+
+  // The Review pane belongs to one session; close it when switching missions.
+  useEffect(() => {
+    dispatch({ type: 'SET_REVIEW_OPEN', open: false });
+  }, [activeMission?.id, dispatch]);
 
   useEffect(() => {
     if (state.theme.mode !== 'system') return;
@@ -356,6 +363,24 @@ export default function App() {
                   width={browserPaneWidth}
                   onResize={setStoredBrowserPaneWidth}
                 />
+              )}
+            </AnimatePresence>
+
+            <AnimatePresence initial={false}>
+              {showReviewPane && activeMission && (
+                <motion.aside
+                  key="review-pane"
+                  initial={{ width: 0, opacity: 0 }}
+                  animate={{ width: '58%', opacity: 1 }}
+                  exit={{ width: 0, opacity: 0 }}
+                  transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
+                  className="relative h-full shrink-0 min-w-[460px] overflow-hidden border-l border-droid-border bg-droid-bg shadow-[-24px_0_60px_rgba(0,0,0,0.18)]"
+                >
+                  <ReviewPanel
+                    cwd={activeMission.cwd}
+                    onClose={() => dispatch({ type: 'SET_REVIEW_OPEN', open: false })}
+                  />
+                </motion.aside>
               )}
             </AnimatePresence>
           </div>

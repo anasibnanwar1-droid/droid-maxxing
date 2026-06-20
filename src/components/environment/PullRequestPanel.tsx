@@ -20,8 +20,8 @@ function relativeTime(iso: string | null): string {
   return `${Math.round(hours / 24)}d ago`;
 }
 
-const ADD_COLOR = '#3fb950';
-const DEL_COLOR = '#f85149';
+const ADD_COLOR = 'var(--diff-add-fg)';
+const DEL_COLOR = 'var(--diff-del-fg)';
 
 function ChecksBlock({ checks }: { checks: PrCheck[] }) {
   const summary = checksSummary(checks);

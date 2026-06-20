@@ -1,4 +1,4 @@
-import { useStore, type LiveEnterBehavior } from '../hooks/useStore';
+import { useStore, type DiffViewMode, type LiveEnterBehavior } from '../hooks/useStore';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ChevronLeft, ChevronDown, Search, Sun, Moon, Monitor, Check, X, Plus } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
@@ -836,6 +836,24 @@ function GeneralSection() {
             onChange={(behavior) =>
               dispatch({ type: 'SET_LIVE_ENTER_BEHAVIOR', behavior: behavior as LiveEnterBehavior })
             }
+          />
+        </SettingRow>
+      </div>
+
+      <GroupLabel>Diff display</GroupLabel>
+      <div className="rounded-xl border border-droid-border bg-droid-surface divide-y divide-droid-border mb-8">
+        <SettingRow
+          label="Diff view"
+          description="How file diffs render in the Review tab — one column or side-by-side."
+        >
+          <Dropdown
+            value={state.diffView}
+            width="w-44"
+            options={[
+              { value: 'unified', label: 'Unified' },
+              { value: 'split', label: 'Split' },
+            ]}
+            onChange={(mode) => dispatch({ type: 'SET_DIFF_VIEW', mode: mode as DiffViewMode })}
           />
         </SettingRow>
       </div>
