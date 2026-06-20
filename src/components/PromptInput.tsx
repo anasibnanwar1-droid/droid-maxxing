@@ -40,6 +40,7 @@ import ModelSelectorPopover from './ModelSelectorPopover';
 import PermissionInline from './PermissionInline';
 import PlanApprovalInline from './PlanApprovalInline';
 import { ModelIcon, providerOf } from './ModelIcon';
+import { StartInPicker } from './environment/StartInPicker';
 import type { SkillInfo, SkillLocation } from '../types/bridge';
 
 const ACCENT = 'var(--droid-accent)';
@@ -936,6 +937,13 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
             >
               <span>{isSpecMode ? 'Spec' : 'Chat'}</span>
             </button>
+
+            {!activeMission && !missionPreview && (
+              <>
+                <div className="h-4 w-px bg-droid-border/50 shrink-0" />
+                <StartInPicker />
+              </>
+            )}
 
             <div className="flex-1 min-w-0" />
 

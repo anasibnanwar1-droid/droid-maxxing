@@ -138,7 +138,7 @@ export interface AppState {
   contextMeterOpen: boolean;
   theme: ThemeConfig;
   missionMode: boolean;
-  draftChat: { cwd: string } | null;
+  draftChat: { cwd: string; branch?: string } | null;
   workspaceCwds: string[];
   // Derived (synced by the reducer): whether the browser pane is open for the
   // *currently active* session. Source of truth is `browserOpenKeys`.
@@ -272,7 +272,7 @@ type Action =
   | { type: 'MISSION_SET_KIND'; missionId: string; kind: SessionKind }
   | { type: 'TOGGLE_SETTINGS' }
   | { type: 'TOGGLE_MISSION_MODE' }
-  | { type: 'START_CHAT'; cwd: string }
+  | { type: 'START_CHAT'; cwd: string; branch?: string }
   | { type: 'ADD_WORKSPACE'; cwd: string }
   | { type: 'TOGGLE_BROWSER' }
   | { type: 'SET_BROWSER_OPEN'; open: boolean }
@@ -1590,7 +1590,7 @@ function baseReducer(state: AppState, action: Action): AppState {
     case 'START_CHAT':
       return {
         ...state,
-        draftChat: { cwd: action.cwd },
+        draftChat: { cwd: action.cwd, branch: action.branch },
         activeMissionId: null,
         missionMode: false,
       };
