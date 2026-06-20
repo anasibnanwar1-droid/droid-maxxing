@@ -17,7 +17,12 @@ export interface ReviewDiffState {
 
 // Drives the Review tab: keeps the scoped file list fresh (light polling so the
 // view tracks the agent's edits) and lazily loads the selected file's diff.
-export function useReviewDiff(cwd: string, scope: DiffScope, enabled: boolean): ReviewDiffState {
+export function useReviewDiff(
+  cwd: string,
+  scope: DiffScope,
+  enabled: boolean,
+  ignoreWhitespace = false,
+): ReviewDiffState {
   const [files, setFiles] = useState<DiffFile[]>([]);
   const [base, setBase] = useState<string | null>(null);
   const [loadingList, setLoadingList] = useState(false);
@@ -66,7 +71,7 @@ export function useReviewDiff(cwd: string, scope: DiffScope, enabled: boolean): 
     }
     const id = ++diffReq.current;
     setLoadingDiff(true);
-    getGitFileDiff(cwd, scope, selectedPath)
+    getGitFileDiff(cwd, scope, selectedPath, ignoreWhitespace)
       .then((res) => {
         if (id !== diffReq.current) return;
         setFileDiff(res);
@@ -75,7 +80,7 @@ export function useReviewDiff(cwd: string, scope: DiffScope, enabled: boolean): 
       .catch(() => {
         if (id === diffReq.current) setLoadingDiff(false);
       });
-  }, [cwd, scope, selectedPath, enabled, version]);
+  }, [cwd, scope, selectedPath, enabled, version, ignoreWhitespace]);
 
   return {
     files,

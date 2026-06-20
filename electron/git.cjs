@@ -712,11 +712,21 @@ async function fileDiff(dir, options = {}) {
   if (!root || !file) return { path: file || null, diff: '', binary: false };
   const { args, includeUntracked } = await scopeRange(root, scope);
   if (!args) return { path: file, diff: '', binary: false };
-  let out = await runSoft(root, ['diff', ...args, '--', file]).catch(() => '');
+  const ws = options.ignoreWhitespace ? ['-w'] : [];
+  let out = await runSoft(root, ['diff', ...ws, ...args, '--', file]).catch(() => '');
   // Untracked files (incl. preexisting ones the agent edited) have no tree-side
-  // to diff against, so render their full current content via --no-index.
+  // to diff against, so render their full current content via --no-index. Gate
+  // this on the file actually being untracked: with -w a tracked file can yield
+  // an empty diff (whitespace-only edits), which must not be shown as brand new.
   if (!out && includeUntracked) {
-    out = await runSoft(root, ['diff', '--no-index', '--', os.devNull, file]).catch(() => '');
+    const tracked = await run(root, ['ls-files', '--error-unmatch', '--', file])
+      .then(() => true)
+      .catch(() => false);
+    if (!tracked) {
+      out = await runSoft(root, ['diff', ...ws, '--no-index', '--', os.devNull, file]).catch(
+        () => '',
+      );
+    }
   }
   return { path: file, diff: out, binary: /^Binary files /m.test(out) };
 }
