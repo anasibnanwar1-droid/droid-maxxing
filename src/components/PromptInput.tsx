@@ -452,7 +452,9 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
       },
     });
 
-    if (activeMission.cwd) void markGitTurnStart(activeMission.cwd);
+    // Capture the last-turn baseline before the agent can touch the tree;
+    // a fire-and-forget call here races the first edit and corrupts the diff.
+    if (activeMission.cwd) await markGitTurnStart(activeMission.cwd);
 
     try {
       if (targetAgentSessionId) {
@@ -470,7 +472,7 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
 
   const queue: QueuedPrompt[] = activeMission ? (state.promptQueue[activeMission.id] ?? []) : [];
 
-  const deliverPrompt = (p: QueuedPrompt) => {
+  const deliverPrompt = async (p: QueuedPrompt) => {
     if (!activeMission) return;
     if (p.design) {
       try {
@@ -488,7 +490,7 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
       return;
     }
     const composed = composeFrom(p.text, p.skills, p.files);
-    if (activeMission.cwd) void markGitTurnStart(activeMission.cwd);
+    if (activeMission.cwd) await markGitTurnStart(activeMission.cwd);
     try {
       sendToMission(activeMission.id, composed);
     } catch (err) {
@@ -523,7 +525,7 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
     // missions mid-turn must not drain a different mission's queue.
     if (prev.live && !isLive && activeMission && prev.missionId === activeMission.id) {
       const next = (state.promptQueue[activeMission.id] ?? [])[0];
-      if (next) deliverPrompt(next);
+      if (next) void deliverPrompt(next);
     }
     prevLive.current = { missionId: activeMission?.id ?? null, live: isLive };
     // eslint-disable-next-line react-hooks/exhaustive-deps

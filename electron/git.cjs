@@ -531,7 +531,11 @@ function parseDiffFileList(numstatOut, nameStatusOut) {
   for (const line of String(nameStatusOut || '').split('\n')) {
     if (!line.trim()) continue;
     const parts = line.split('\t');
-    const target = renameTarget(parts.slice(1).join('\t'));
+    // Renames/copies are reported tab-separated as `R<score>\told\tnew`, so the
+    // post-change path is the final field; every other status carries one path.
+    const target = /^[RC]/.test(parts[0])
+      ? parts[parts.length - 1]
+      : renameTarget(parts.slice(1).join('\t'));
     if (!target) continue;
     const c = counts.get(target) || { additions: 0, deletions: 0, binary: false };
     files.push({ path: target, status: statusLabel(parts[0]), ...c });
@@ -595,8 +599,14 @@ async function scopeRange(root, scope) {
     return { args: [base || 'HEAD'], base, includeUntracked: true };
   }
   if (scope === 'last_turn') {
-    const baseline = turnBaselines.get(root) || 'HEAD';
-    return { args: [baseline], base: baseline, includeUntracked: true };
+    const entry = turnBaselines.get(root);
+    const baseline = entry?.baseline || 'HEAD';
+    return {
+      args: [baseline],
+      base: baseline,
+      includeUntracked: true,
+      priorUntracked: entry?.priorUntracked ?? null,
+    };
   }
   // unstaged (working tree vs index)
   return { args: [], base: null, includeUntracked: true };
@@ -606,7 +616,7 @@ async function diffFiles(dir, options = {}) {
   const scope = normalizeScope(options.mode);
   const root = await repoRootOf(dir);
   if (!root) return { mode: scope, base: null, files: [] };
-  const { args, base, includeUntracked } = await scopeRange(root, scope);
+  const { args, base, includeUntracked, priorUntracked } = await scopeRange(root, scope);
   if (!args) return { mode: scope, base: null, files: [] };
   const [numstat, nameStatus] = await Promise.all([
     runSoft(root, ['diff', ...args, '--numstat']),
@@ -615,6 +625,7 @@ async function diffFiles(dir, options = {}) {
   const files = parseDiffFileList(numstat, nameStatus);
   if (includeUntracked) {
     for (const u of await untrackedFileList(root)) {
+      if (priorUntracked && priorUntracked.has(u.path)) continue;
       if (!files.some((f) => f.path === u.path)) {
         files.push({
           path: u.path,
@@ -635,10 +646,10 @@ async function fileDiff(dir, options = {}) {
   const file = options.path;
   const root = await repoRootOf(dir);
   if (!root || !file) return { path: file || null, diff: '', binary: false };
-  const { args, includeUntracked } = await scopeRange(root, scope);
+  const { args, includeUntracked, priorUntracked } = await scopeRange(root, scope);
   if (!args) return { path: file, diff: '', binary: false };
   let out = await runSoft(root, ['diff', ...args, '--', file]).catch(() => '');
-  if (!out && includeUntracked) {
+  if (!out && includeUntracked && !(priorUntracked && priorUntracked.has(file))) {
     out = await runSoft(root, ['diff', '--no-index', '--', os.devNull, file]).catch(() => '');
   }
   return { path: file, diff: out, binary: /^Binary files /m.test(out) };
@@ -649,7 +660,16 @@ async function markTurnStart(dir) {
   if (!root) return { ok: false };
   let baseline = await tryRun(root, ['stash', 'create']);
   if (!baseline) baseline = await tryRun(root, ['rev-parse', 'HEAD']);
-  if (baseline) turnBaselines.set(root, baseline);
+  // `git stash create` captures tracked changes but omits untracked files, while
+  // the last-turn diff folds in every current untracked file. Snapshot the
+  // untracked set now so files that predate the turn are not later misreported
+  // as agent-created changes.
+  const priorUntracked = new Set(
+    String((await tryRun(root, ['ls-files', '--others', '--exclude-standard'])) || '')
+      .split('\n')
+      .filter(Boolean),
+  );
+  if (baseline) turnBaselines.set(root, { baseline, priorUntracked });
   return { ok: !!baseline, baseline: baseline || null };
 }
 

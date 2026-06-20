@@ -52,6 +52,10 @@ export function parseUnifiedDiff(diff: string): ParsedDiff {
       continue;
     }
     if (!current) continue; // file headers before the first hunk
+    // A trailing newline makes split('\n') yield a final '' that is not a diff
+    // line (real blank context lines arrive as a single space); skip it so the
+    // last hunk does not gain a phantom blank context row.
+    if (raw === '') continue;
     if (raw.startsWith('\\')) {
       current.lines.push({ type: 'meta', text: raw.slice(1).trim(), oldLine: null, newLine: null });
       continue;

@@ -436,27 +436,32 @@ export default function App() {
         </button>
       </div>
 
-      <div
-        data-electron-drag-region
-        className="absolute top-0 right-0 h-9 z-40 flex items-center gap-1 pr-3"
-      >
-        {activeMission?.cwd && !state.browserOpen && (
-          <EditorOpenMenu cwd={activeMission.cwd} hasRepo={!!repoStatus} variant="toolbar" />
-        )}
-        {canToggleContext && !state.browserOpen && (
-          <button
-            onClick={toggleRightPanel}
-            className={`p-1.5 rounded-md transition-colors ${
-              state.rightPanelOpen
-                ? 'text-droid-text bg-droid-elevated'
-                : 'text-droid-text-muted/70 hover:text-droid-text hover:bg-droid-elevated/60'
-            }`}
-            title="Toggle panel (Cmd+\\)"
-          >
-            <ContextListIcon className="w-4 h-4" />
-          </button>
-        )}
-      </div>
+      {/* The Review pane owns the top-right corner (its own refresh/close live
+          there), so suppress this floating toolbar while it is open; an empty
+          drag region would otherwise sit over and swallow those controls. */}
+      {!showReviewPane && (
+        <div
+          data-electron-drag-region
+          className="absolute top-0 right-0 h-9 z-40 flex items-center gap-1 pr-3"
+        >
+          {activeMission?.cwd && !state.browserOpen && (
+            <EditorOpenMenu cwd={activeMission.cwd} hasRepo={!!repoStatus} variant="toolbar" />
+          )}
+          {canToggleContext && !state.browserOpen && (
+            <button
+              onClick={toggleRightPanel}
+              className={`p-1.5 rounded-md transition-colors ${
+                state.rightPanelOpen
+                  ? 'text-droid-text bg-droid-elevated'
+                  : 'text-droid-text-muted/70 hover:text-droid-text hover:bg-droid-elevated/60'
+              }`}
+              title="Toggle panel (Cmd+\\)"
+            >
+              <ContextListIcon className="w-4 h-4" />
+            </button>
+          )}
+        </div>
+      )}
 
       {state.commandPaletteOpen && <CommandPalette />}
       {state.settingsOpen && <SettingsPanel />}

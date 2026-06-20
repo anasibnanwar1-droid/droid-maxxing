@@ -84,7 +84,7 @@ export function EnvironmentSection({
             env={env}
             branches={branches}
             isGitHub={isGitHub}
-            hasPr={!!pr && prKind(pr) === 'open'}
+            hasPr={!!pr && (prKind(pr) === 'open' || prKind(pr) === 'draft')}
             onChanged={refresh}
           />
 
