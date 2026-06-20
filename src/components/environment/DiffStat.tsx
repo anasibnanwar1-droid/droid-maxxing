@@ -1,6 +1,6 @@
-import { useCallback, useState } from 'react';
+import { useRef, useState } from 'react';
 import { Check, ChevronDown, FileDiff } from 'lucide-react';
-import { usePopover } from './usePopover';
+import { Popover } from './Popover';
 import { DIFF_MODES, diffModeLabel } from '../../lib/git';
 import type { DiffStatMode, GitDiffStat } from '../../types/vcs';
 
@@ -23,17 +23,15 @@ export function DiffStat({
   onOpenReview: () => void;
 }) {
   const [open, setOpen] = useState(false);
-  const ref = usePopover<HTMLDivElement>(
-    open,
-    useCallback(() => setOpen(false), []),
-  );
+  const anchorRef = useRef<HTMLDivElement>(null);
   const additions = stat?.additions ?? 0;
   const deletions = stat?.deletions ?? 0;
   const clean = additions === 0 && deletions === 0;
 
   return (
-    <div className="relative" ref={ref}>
+    <>
       <div
+        ref={anchorRef}
         className={`group flex items-center rounded-lg transition-colors ${
           open ? 'bg-droid-elevated' : 'hover:bg-droid-elevated/50'
         }`}
@@ -69,8 +67,14 @@ export function DiffStat({
         </button>
       </div>
 
-      {open && (
-        <div className="absolute right-2 top-full z-50 mt-1 w-56 rounded-xl border border-droid-border bg-droid-surface p-1.5 shadow-2xl shadow-black/50">
+      <Popover
+        open={open}
+        onClose={() => setOpen(false)}
+        anchorRef={anchorRef}
+        align="right"
+        width={224}
+      >
+        <div className="p-1.5">
           {DIFF_MODES.map((option) => (
             <button
               key={option}
@@ -91,7 +95,7 @@ export function DiffStat({
             </button>
           ))}
         </div>
-      )}
-    </div>
+      </Popover>
+    </>
   );
 }
