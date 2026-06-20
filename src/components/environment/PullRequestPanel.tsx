@@ -119,7 +119,9 @@ export function PullRequestPanel({
 
   const submit = async () => {
     const body = draft.trim();
-    if (!body) return;
+    // Guard re-entry: the Cmd/Ctrl+Enter shortcut can fire again while a post is
+    // in flight even though the button is disabled, which would double-post.
+    if (!body || posting) return;
     setPosting(true);
     const res = await postPrComment(cwd, pr.number, body);
     setPosting(false);

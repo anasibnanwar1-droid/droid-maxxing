@@ -193,11 +193,10 @@ export function BranchMenu({
               </div>
             )}
             {remote.map((b) => {
-              const localRef = b.name.split('/').slice(1).join('/') || b.name;
               return (
                 <button
                   key={b.name}
-                  onClick={() => doCheckout(localRef)}
+                  onClick={() => doCheckout(b.name)}
                   className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left transition-colors hover:bg-droid-elevated/60"
                 >
                   <GitBranch className="h-3.5 w-3.5 shrink-0 text-droid-text-muted/70" />
