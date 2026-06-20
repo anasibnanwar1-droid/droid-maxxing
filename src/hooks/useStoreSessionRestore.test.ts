@@ -256,6 +256,38 @@ test('#29 a replace drops a live event that duplicates a replayed one by content
   );
 });
 
+test('#29 a replace keeps a live event from a different worker with identical text', () => {
+  // Same role/kind/text but a different agentSessionId is a distinct worker's
+  // output; scoping the signature by agentSessionId must not drop it.
+  const liveFromWorkerB: TranscriptEvent = {
+    id: 'live-b',
+    missionId: 'm1',
+    agentSessionId: 'worker-b',
+    role: 'orchestrator',
+    kind: 'text',
+    text: 'all done',
+    ts: 1005,
+  };
+  const seeded = {
+    ...initialState,
+    transcripts: { m1: [liveFromWorkerB] },
+  } as unknown as AppState;
+
+  const next = reducer(seeded, {
+    type: 'MISSION_HISTORY',
+    missionId: 'm1',
+    progress: [],
+    transcripts: [ev('sess:1:0:text', 1000, 'all done')],
+    mode: 'replace',
+    hasMore: false,
+  });
+
+  assert.deepEqual(
+    next.transcripts.m1.map((e) => e.id),
+    ['sess:1:0:text', 'live-b'],
+  );
+});
+
 test('#29 a replace keeps a genuinely repeated live message the page only contains once', () => {
   // Two live "ok" events but the page persisted only one; consume-once dedup
   // drops the duplicate and keeps the genuinely new occurrence.

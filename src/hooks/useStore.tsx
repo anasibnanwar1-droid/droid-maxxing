@@ -1371,8 +1371,10 @@ function baseReducer(state: AppState, action: Action): AppState {
       //     live ids are transient (nextId) and live ts is receipt-time, so a
       //     reconnect-race event and its persisted twin share neither id nor ts
       //     and would otherwise both render. They are matched by a content
-      //     signature (toolUseId for tools, else author/role+kind+text) consumed
-      //     once per page occurrence so a genuinely repeated message is kept.
+      //     signature (agentSessionId + toolUseId for tools, else
+      //     agentSessionId + author/role + kind + text) consumed once per page
+      //     occurrence so a genuinely repeated message is kept. Scoping by
+      //     agentSessionId stops one worker's output from masking another's.
       //   - Remaining live-only events keep their place by timestamp relative to
       //     the page: an un-persisted opening prompt stays above it, a just-sent
       //     prompt (reconnect race) stays below it.
@@ -1399,8 +1401,8 @@ function baseReducer(state: AppState, action: Action): AppState {
         pageUserText.has(e.text);
       const contentSig = (e: TranscriptEvent) =>
         e.toolUseId
-          ? `tool:${e.kind}:${e.toolUseId}`
-          : `${e.author ?? e.role}:${e.kind}:${e.text ?? ''}`;
+          ? `tool:${e.agentSessionId}:${e.kind}:${e.toolUseId}`
+          : `${e.agentSessionId}:${e.author ?? e.role}:${e.kind}:${e.text ?? ''}`;
       const pageSig = new Map<string, number>();
       for (const e of page) {
         const k = contentSig(e);
