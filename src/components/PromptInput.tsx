@@ -94,6 +94,7 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
   const [sendHover, setSendHover] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const submittingRef = useRef(false);
   const pendingCaret = useRef<number | null>(null);
   const prevLive = useRef<{ missionId: string | null; live: boolean }>({
     missionId: null,
@@ -337,7 +338,20 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
     setAttachedFiles([]);
   };
 
+  // Re-entry guard: a send awaits markGitTurnStart before the input is cleared,
+  // so without this a second Enter/click during that window would resend the
+  // same payload (and create a duplicate mission/turn).
   const handleSubmit = async (mode: SubmitMode = 'queue') => {
+    if (submittingRef.current) return;
+    submittingRef.current = true;
+    try {
+      await runSubmit(mode);
+    } finally {
+      submittingRef.current = false;
+    }
+  };
+
+  const runSubmit = async (mode: SubmitMode = 'queue') => {
     const text = input.trim();
     const hasPayload = text || activeSkills.length > 0 || attachedFiles.length > 0;
     if (!hasPayload) return;

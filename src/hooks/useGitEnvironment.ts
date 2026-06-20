@@ -35,6 +35,10 @@ export function useGitEnvironment(cwd: string, diffMode: DiffStatMode): GitEnvir
 
   const refresh = useCallback(() => {
     if (!cwd) {
+      // Bump both counters so any in-flight load from the previous cwd can no
+      // longer resolve and repopulate the panel with stale repo data.
+      ++reqRef.current;
+      ++diffReqRef.current;
       setEnv(null);
       setBranches(null);
       setWorktrees([]);

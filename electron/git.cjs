@@ -422,6 +422,29 @@ function defaultWorktreeLocation(root, branch) {
   return path.join(root, '.worktrees', sanitizeSegment(branch) || 'worktree');
 }
 
+// Default worktrees live under `<repo>/.worktrees`. Add that path to the repo's
+// local exclude file (not a tracked `.gitignore`) so creating one does not leave
+// the original checkout dirty and trip the dirty-tree guards / status counts.
+async function ensureDefaultWorktreeIgnored(root) {
+  try {
+    const rel = await tryRun(root, ['rev-parse', '--git-common-dir']);
+    if (!rel) return;
+    const excludePath = path.join(path.resolve(root, rel), 'info', 'exclude');
+    let contents = '';
+    try {
+      contents = await fsp.readFile(excludePath, 'utf8');
+    } catch {
+      // exclude file may not exist yet
+    }
+    if (/^\/?\.worktrees\/?$/m.test(contents)) return;
+    await fsp.mkdir(path.dirname(excludePath), { recursive: true });
+    const prefix = contents && !contents.endsWith('\n') ? '\n' : '';
+    await fsp.appendFile(excludePath, `${prefix}/.worktrees/\n`);
+  } catch {
+    // best effort: never block worktree creation on the ignore write
+  }
+}
+
 async function createWorktree(dir, { branch, base, newBranch = false, location } = {}) {
   const root = await repoRootOf(dir);
   if (!root) return { ok: false, reason: 'not_a_repo' };
@@ -429,6 +452,7 @@ async function createWorktree(dir, { branch, base, newBranch = false, location }
   const target = location ? expandHome(location) : defaultWorktreeLocation(root, branch);
   if (fs.existsSync(target)) return { ok: false, reason: 'exists', path: target };
   try {
+    if (!location) await ensureDefaultWorktreeIgnored(root);
     await fsp.mkdir(path.dirname(target), { recursive: true });
     const args = newBranch
       ? ['worktree', 'add', '-b', branch, target, ...(base ? [base] : [])]
@@ -588,8 +612,10 @@ async function untrackedFileList(root) {
   for (const rel of names) {
     let additions = 0;
     let binary = false;
+    let sig = null;
     try {
       const stat = await fsp.stat(path.join(root, rel));
+      sig = `${stat.size}:${stat.mtimeMs}`;
       if (stat.isFile() && stat.size <= UNTRACKED_BYTE_CAP) {
         const buf = await fsp.readFile(path.join(root, rel));
         if (buf.includes(0)) binary = true;
@@ -604,7 +630,7 @@ async function untrackedFileList(root) {
     } catch {
       // ignore unreadable entries
     }
-    out.push({ path: rel, additions, binary });
+    out.push({ path: rel, additions, binary, sig });
   }
   return out;
 }
@@ -658,7 +684,12 @@ async function diffFiles(dir, options = {}) {
   const files = parseDiffFileList(numstat, nameStatus);
   if (includeUntracked) {
     for (const u of await untrackedFileList(root)) {
-      if (priorUntracked && priorUntracked.has(u.path)) continue;
+      if (priorUntracked) {
+        const priorSig = priorUntracked.get(u.path);
+        // Hide files that predate the turn only when byte-for-byte unchanged;
+        // surface preexisting untracked files the agent edited this turn.
+        if (priorSig !== undefined && priorSig === u.sig) continue;
+      }
       if (!files.some((f) => f.path === u.path)) {
         files.push({
           path: u.path,
@@ -679,13 +710,24 @@ async function fileDiff(dir, options = {}) {
   const file = options.path;
   const root = await repoRootOf(dir);
   if (!root || !file) return { path: file || null, diff: '', binary: false };
-  const { args, includeUntracked, priorUntracked } = await scopeRange(root, scope);
+  const { args, includeUntracked } = await scopeRange(root, scope);
   if (!args) return { path: file, diff: '', binary: false };
   let out = await runSoft(root, ['diff', ...args, '--', file]).catch(() => '');
-  if (!out && includeUntracked && !(priorUntracked && priorUntracked.has(file))) {
+  // Untracked files (incl. preexisting ones the agent edited) have no tree-side
+  // to diff against, so render their full current content via --no-index.
+  if (!out && includeUntracked) {
     out = await runSoft(root, ['diff', '--no-index', '--', os.devNull, file]).catch(() => '');
   }
   return { path: file, diff: out, binary: /^Binary files /m.test(out) };
+}
+
+async function fileSignature(root, rel) {
+  try {
+    const s = await fsp.stat(path.join(root, rel));
+    return `${s.size}:${s.mtimeMs}`;
+  } catch {
+    return null;
+  }
 }
 
 async function markTurnStart(dir) {
@@ -694,14 +736,16 @@ async function markTurnStart(dir) {
   let baseline = await tryRun(root, ['stash', 'create']);
   if (!baseline) baseline = await tryRun(root, ['rev-parse', 'HEAD']);
   // `git stash create` captures tracked changes but omits untracked files, while
-  // the last-turn diff folds in every current untracked file. Snapshot the
-  // untracked set now so files that predate the turn are not later misreported
-  // as agent-created changes.
-  const priorUntracked = new Set(
-    String((await tryRun(root, ['ls-files', '--others', '--exclude-standard'])) || '')
-      .split('\n')
-      .filter(Boolean),
-  );
+  // the last-turn diff folds in every current untracked file. Snapshot each
+  // preexisting untracked path with a size+mtime signature so files that predate
+  // the turn are hidden, while edits the agent makes to them still surface.
+  const priorNames = String(
+    (await tryRun(root, ['ls-files', '--others', '--exclude-standard'])) || '',
+  )
+    .split('\n')
+    .filter(Boolean);
+  const priorUntracked = new Map();
+  for (const rel of priorNames) priorUntracked.set(rel, await fileSignature(root, rel));
   if (baseline) turnBaselines.set(root, { baseline, priorUntracked });
   return { ok: !!baseline, baseline: baseline || null };
 }
