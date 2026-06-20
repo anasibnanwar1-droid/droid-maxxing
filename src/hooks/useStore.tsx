@@ -784,6 +784,11 @@ function migrateBrowserStateByMission<T>(
 
 // Re-derive `browserOpen` from the per-session open set and the active session.
 // Applied after every reducer pass so the convenience flag never goes stale.
+// How close in time a live event and a restored page entry must be to count as
+// the same (persisted) event. A twin is logged within moments of the live emit,
+// while a coincidental same-text repeat is typically much further apart.
+const REPLAY_DEDUP_TOLERANCE_MS = 5_000;
+
 function syncBrowserOpen(state: AppState): AppState {
   const key = activeBrowserKey(state);
   const open = key ? Boolean(state.browserOpenKeys[key]) : false;
@@ -1403,19 +1408,37 @@ function baseReducer(state: AppState, action: Action): AppState {
         e.toolUseId
           ? `tool:${e.agentSessionId}:${e.kind}:${e.toolUseId}`
           : `${e.agentSessionId}:${e.author ?? e.role}:${e.kind}:${e.text ?? ''}`;
-      const pageSig = new Map<string, number>();
+      // Index page entries by content signature -> their timestamps so a live
+      // event is matched to the persisted twin nearest in time rather than to
+      // any same-text occurrence anywhere in restored history.
+      const pageSig = new Map<string, number[]>();
       for (const e of page) {
         const k = contentSig(e);
-        pageSig.set(k, (pageSig.get(k) ?? 0) + 1);
+        const at = pageSig.get(k);
+        if (at) at.push(e.ts);
+        else pageSig.set(k, [e.ts]);
       }
       const isReplayedDuplicate = (e: TranscriptEvent) => {
         // Optimistic user echoes are governed solely by supersededEcho above; do
         // not let content-dedup drop one the echo logic intentionally keeps.
         if (e.id.startsWith('seed-') || e.id.startsWith('local-')) return false;
-        const k = contentSig(e);
-        const n = pageSig.get(k);
-        if (n && n > 0) {
-          pageSig.set(k, n - 1);
+        const at = pageSig.get(contentSig(e));
+        if (!at || at.length === 0) return false;
+        // A persisted twin is logged within moments of the live event; a page
+        // entry far from this event's time is a different occurrence (e.g. a
+        // repeated "ok"). Consume only the closest twin within tolerance so a
+        // brand-new live output that merely repeats old text is never dropped.
+        let bestIdx = -1;
+        let bestDiff = Infinity;
+        for (let i = 0; i < at.length; i++) {
+          const diff = Math.abs(at[i] - e.ts);
+          if (diff < bestDiff) {
+            bestDiff = diff;
+            bestIdx = i;
+          }
+        }
+        if (bestIdx >= 0 && bestDiff <= REPLAY_DEDUP_TOLERANCE_MS) {
+          at.splice(bestIdx, 1);
           return true;
         }
         return false;

@@ -288,6 +288,29 @@ test('#29 a replace keeps a live event from a different worker with identical te
   );
 });
 
+test('#29 a replace keeps a new live event that only matches an OLD restored message by text', () => {
+  // During reconnect a fresh "ok" arrives well after the snapshot; it must not
+  // be consumed by an older restored "ok" from the same agent.
+  const seeded = {
+    ...initialState,
+    transcripts: { m1: [ev('live-new', 100000, 'ok')] },
+  } as unknown as AppState;
+
+  const next = reducer(seeded, {
+    type: 'MISSION_HISTORY',
+    missionId: 'm1',
+    progress: [],
+    transcripts: [ev('sess:1:0:text', 1000, 'ok'), ev('sess:2:0:text', 1001, 'later')],
+    mode: 'replace',
+    hasMore: false,
+  });
+
+  assert.deepEqual(
+    next.transcripts.m1.map((e) => e.id),
+    ['sess:1:0:text', 'sess:2:0:text', 'live-new'],
+  );
+});
+
 test('#29 a replace keeps a genuinely repeated live message the page only contains once', () => {
   // Two live "ok" events but the page persisted only one; consume-once dedup
   // drops the duplicate and keeps the genuinely new occurrence.
