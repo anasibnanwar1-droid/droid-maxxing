@@ -1,8 +1,8 @@
 import { useCallback, useState } from 'react';
-import { Check, ChevronDown, Columns2, ExternalLink, Loader2, Plus } from 'lucide-react';
+import { Check, ChevronDown, Columns2, ExternalLink, Loader2, Plus, Trash2 } from 'lucide-react';
 import { usePopover } from './usePopover';
 import { useStore } from '../../hooks/useStore';
-import { createGitWorktree, worktreeName } from '../../lib/git';
+import { createGitWorktree, removeGitWorktree, worktreeName } from '../../lib/git';
 import { toast } from '../../lib/toast';
 import type { GitBranchList, GitEnvironment, GitWorktree } from '../../types/vcs';
 
@@ -38,6 +38,18 @@ export function WorktreeMenu({
     dispatch({ type: 'ADD_WORKSPACE', cwd: path });
     dispatch({ type: 'START_CHAT', cwd: path });
     setOpen(false);
+  };
+
+  const removeWorktree = async (path: string) => {
+    const res = await removeGitWorktree(cwd, { path });
+    if (res.ok) {
+      toast.success('Worktree removed');
+      onChanged();
+    } else if (res.reason === 'git_error') {
+      toast.error('Worktree has changes — commit or discard first');
+    } else {
+      toast.error(res.message || 'Could not remove worktree');
+    }
   };
 
   const doCreate = async () => {
@@ -120,18 +132,29 @@ export function WorktreeMenu({
               </div>
             )}
             {others.map((w) => (
-              <button
+              <div
                 key={w.path}
-                onClick={() => w.path && openInNewChat(w.path)}
-                title="Open this worktree in a new chat"
-                className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left transition-colors hover:bg-droid-elevated/60"
+                className="group flex items-center gap-2 px-2.5 py-1.5 transition-colors hover:bg-droid-elevated/60"
               >
-                <Columns2 className="h-3.5 w-3.5 shrink-0 text-droid-text-muted" />
-                <span className="min-w-0 flex-1 truncate text-[12.5px] text-droid-text-secondary">
-                  {worktreeName(w)}
-                </span>
-                <ExternalLink className="h-3.5 w-3.5 shrink-0 text-droid-text-muted/60" />
-              </button>
+                <button
+                  onClick={() => w.path && openInNewChat(w.path)}
+                  title="Open this worktree in a new chat"
+                  className="flex min-w-0 flex-1 items-center gap-2 text-left"
+                >
+                  <Columns2 className="h-3.5 w-3.5 shrink-0 text-droid-text-muted" />
+                  <span className="min-w-0 flex-1 truncate text-[12.5px] text-droid-text-secondary">
+                    {worktreeName(w)}
+                  </span>
+                  <ExternalLink className="h-3.5 w-3.5 shrink-0 text-droid-text-muted/60" />
+                </button>
+                <button
+                  onClick={() => w.path && void removeWorktree(w.path)}
+                  title="Remove worktree"
+                  className="shrink-0 rounded p-1 text-droid-text-muted/0 transition-colors group-hover:text-droid-text-muted hover:!text-droid-orange"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              </div>
             ))}
           </div>
 

@@ -41,38 +41,24 @@ export const GitPullRequestIcon = (props: IconProps) => (
   />
 );
 
-export const GitMergeIcon = (props: IconProps) => (
+const GitMergeIcon = (props: IconProps) => (
   <Octicon
     {...props}
     path="M5.45 5.154A4.25 4.25 0 0 0 9.25 7.5h1.378a2.251 2.251 0 1 1 0 1.5H9.25A5.734 5.734 0 0 1 5 7.123v3.505a2.25 2.25 0 1 1-1.5 0V5.372a2.25 2.25 0 1 1 1.95-.218ZM4.25 13.5a.75.75 0 1 0 0-1.5.75.75 0 0 0 0 1.5Zm8.5-4.5a.75.75 0 1 0 0-1.5.75.75 0 0 0 0 1.5ZM5 3.25a.75.75 0 1 0 0 .005V3.25Z"
   />
 );
 
-export const GitPullRequestClosedIcon = (props: IconProps) => (
+const GitPullRequestClosedIcon = (props: IconProps) => (
   <Octicon
     {...props}
     path="M3.25 1A2.25 2.25 0 0 1 4 5.372v5.256a2.251 2.251 0 1 1-1.5 0V5.372A2.251 2.251 0 0 1 3.25 1Zm9.5 5.5a.75.75 0 0 1 .75.75v3.378a2.251 2.251 0 1 1-1.5 0V7.25a.75.75 0 0 1 .75-.75Zm-2.03-5.273a.75.75 0 0 1 1.06 0l.97.97.97-.97a.748.748 0 0 1 1.265.332.75.75 0 0 1-.205.729l-.97.97.97.97a.751.751 0 0 1-.018 1.042.751.751 0 0 1-1.042.018l-.97-.97-.97.97a.749.749 0 0 1-1.275-.326.749.749 0 0 1 .215-.734l.97-.97-.97-.97a.75.75 0 0 1 0-1.06ZM2.5 3.25a.75.75 0 1 0 1.5 0 .75.75 0 0 0-1.5 0ZM3.25 12a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Zm9.5 0a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Z"
   />
 );
 
-export const GitPullRequestDraftIcon = (props: IconProps) => (
+const GitPullRequestDraftIcon = (props: IconProps) => (
   <Octicon
     {...props}
     path="M3.25 1A2.25 2.25 0 0 1 4 5.372v5.256a2.251 2.251 0 1 1-1.5 0V5.372A2.251 2.251 0 0 1 3.25 1Zm9.5 14a2.25 2.25 0 1 1 0-4.5 2.25 2.25 0 0 1 0 4.5ZM2.5 3.25a.75.75 0 1 0 1.5 0 .75.75 0 0 0-1.5 0ZM3.25 12a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Zm9.5 0a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5ZM14 7.5a1.25 1.25 0 1 1-2.5 0 1.25 1.25 0 0 1 2.5 0Zm0-4.25a1.25 1.25 0 1 1-2.5 0 1.25 1.25 0 0 1 2.5 0Z"
-  />
-);
-
-export const MarkGithubIcon = (props: IconProps) => (
-  <Octicon
-    {...props}
-    path="M6.766 11.328c-2.063-.25-3.516-1.734-3.516-3.656 0-.781.281-1.625.75-2.188-.203-.515-.172-1.609.063-2.062.625-.078 1.468.25 1.968.703.594-.187 1.219-.281 1.985-.281.765 0 1.39.094 1.953.265.484-.437 1.344-.765 1.969-.687.218.422.25 1.515.046 2.047.5.593.766 1.39.766 2.203 0 1.922-1.453 3.375-3.547 3.64.531.344.89 1.094.89 1.954v1.625c0 .468.391.734.86.547C13.781 14.359 16 11.53 16 8.03 16 3.61 12.406 0 7.984 0 3.563 0 0 3.61 0 8.031a7.88 7.88 0 0 0 5.172 7.422c.422.156.828-.125.828-.547v-1.25c-.219.094-.5.156-.75.156-1.031 0-1.64-.562-2.078-1.609-.172-.422-.36-.672-.719-.719-.187-.015-.25-.093-.25-.187 0-.188.313-.328.625-.328.453 0 .844.281 1.25.86.313.452.64.655 1.031.655s.641-.14 1-.5c.266-.265.47-.5.657-.656"
-  />
-);
-
-export const GitBranchIcon = (props: IconProps) => (
-  <Octicon
-    {...props}
-    path="M9.5 3.25a2.25 2.25 0 1 1 3 2.122V6A2.5 2.5 0 0 1 10 8.5H6a1 1 0 0 0-1 1v1.128a2.251 2.251 0 1 1-1.5 0V5.372a2.25 2.25 0 1 1 1.5 0v1.836A2.493 2.493 0 0 1 6 7h4a1 1 0 0 0 1-1v-.628A2.25 2.25 0 0 1 9.5 3.25Zm-6 0a.75.75 0 1 0 1.5 0 .75.75 0 0 0-1.5 0Zm8.25-.75a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5ZM4.25 12a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Z"
   />
 );
 
@@ -94,33 +80,44 @@ const DotFillIcon = (props: IconProps) => (
   <Octicon {...props} path="M8 4a4 4 0 1 1 0 8 4 4 0 0 1 0-8Z" />
 );
 
-// GitHub's status palette.
+// GitHub's PR-state palette. Open/closed reuse the shared diff green/red so the
+// whole app speaks one color language; merged/draft keep GitHub's purple/gray.
 const PR_COLORS: Record<PrKind, string> = {
-  open: '#3fb950',
+  open: 'var(--diff-add-fg)',
   draft: '#848d97',
   merged: '#a371f7',
-  closed: '#f85149',
+  closed: 'var(--diff-del-fg)',
 };
 
 export function PrStateIcon({ kind, size = 16 }: { kind: PrKind; size?: number }) {
-  const color = PR_COLORS[kind];
-  if (kind === 'merged') return <GitMergeIcon size={size} title="Merged" />;
-  if (kind === 'closed') return <GitPullRequestClosedIcon size={size} title="Closed" />;
-  if (kind === 'draft') return <GitPullRequestDraftIcon size={size} title="Draft" />;
+  if (kind === 'merged')
+    return (
+      <span style={{ color: PR_COLORS.merged }}>
+        <GitMergeIcon size={size} title="Merged" />
+      </span>
+    );
+  if (kind === 'closed')
+    return (
+      <span style={{ color: PR_COLORS.closed }}>
+        <GitPullRequestClosedIcon size={size} title="Closed" />
+      </span>
+    );
+  if (kind === 'draft')
+    return (
+      <span style={{ color: PR_COLORS.draft }}>
+        <GitPullRequestDraftIcon size={size} title="Draft" />
+      </span>
+    );
   return (
-    <span style={{ color }}>
+    <span style={{ color: PR_COLORS.open }}>
       <GitPullRequestIcon size={size} title="Open" />
     </span>
   );
 }
 
-export function prStateColor(kind: PrKind): string {
-  return PR_COLORS[kind];
-}
-
 const CHECK_COLORS: Record<CheckStatus, string> = {
-  success: '#3fb950',
-  failure: '#f85149',
+  success: 'var(--diff-add-fg)',
+  failure: 'var(--diff-del-fg)',
   pending: '#d29922',
   neutral: '#848d97',
 };
@@ -136,8 +133,4 @@ export function CheckStatusIcon({ status, size = 14 }: { status: CheckStatus; si
       <DotFillIcon size={size} title={status === 'pending' ? 'Pending' : 'Neutral'} />
     );
   return <span style={{ color }}>{icon}</span>;
-}
-
-export function checkStatusColor(status: CheckStatus): string {
-  return CHECK_COLORS[status];
 }

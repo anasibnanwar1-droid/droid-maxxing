@@ -19,6 +19,7 @@ import {
 } from '../lib/commands';
 import { browserTranscriptReferencesFromDesignReferences } from './browser/browserTranscriptReferences';
 import { pickDirectory, listFiles } from '../lib/desktop';
+import { markGitTurnStart } from '../lib/git';
 import { createLocalDesignTranscriptEvent, newQueueId } from '../lib/promptQueue';
 import { composePrompt } from '../lib/composePrompt';
 import {
@@ -451,6 +452,8 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
       },
     });
 
+    if (activeMission.cwd) void markGitTurnStart(activeMission.cwd);
+
     try {
       if (targetAgentSessionId) {
         if (mode === 'now') sendToAgentNow(activeMission.id, targetAgentSessionId, composed);
@@ -485,6 +488,7 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
       return;
     }
     const composed = composeFrom(p.text, p.skills, p.files);
+    if (activeMission.cwd) void markGitTurnStart(activeMission.cwd);
     try {
       sendToMission(activeMission.id, composed);
     } catch (err) {

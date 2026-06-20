@@ -4,21 +4,23 @@ import { usePopover } from './usePopover';
 import { DIFF_MODES, diffModeLabel } from '../../lib/git';
 import type { DiffStatMode, GitDiffStat } from '../../types/vcs';
 
-const ADD_COLOR = '#3fb950';
-const DEL_COLOR = '#f85149';
+const ADD_COLOR = 'var(--diff-add-fg)';
+const DEL_COLOR = 'var(--diff-del-fg)';
 
-// The "changes summed up" row. Shows additions/deletions with a subtle dropdown
-// to switch between the worktree total, the branch vs origin, and uncommitted.
+// The "changes summed up" row. The main button opens the full Review tab; a
+// trailing caret switches what the meter sums (worktree / branch / uncommitted).
 export function DiffStat({
   stat,
   mode,
   defaultBranch,
   onModeChange,
+  onOpenReview,
 }: {
   stat: GitDiffStat | null;
   mode: DiffStatMode;
   defaultBranch?: string | null;
   onModeChange: (mode: DiffStatMode) => void;
+  onOpenReview: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const ref = usePopover<HTMLDivElement>(
@@ -31,33 +33,41 @@ export function DiffStat({
 
   return (
     <div className="relative" ref={ref}>
-      <button
-        onClick={() => setOpen((v) => !v)}
-        title="Change which changes are summed"
-        className={`group flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left transition-colors ${
+      <div
+        className={`group flex items-center rounded-lg transition-colors ${
           open ? 'bg-droid-elevated' : 'hover:bg-droid-elevated/50'
         }`}
       >
-        <span className="shrink-0 text-droid-text-muted transition-colors group-hover:text-droid-text-secondary">
-          <FileDiff className="h-4 w-4" />
-        </span>
-        <span className="flex min-w-0 flex-1 items-center gap-1 text-[13px] leading-snug text-droid-text">
-          <span className="truncate">{diffModeLabel(mode, defaultBranch)}</span>
-          <ChevronDown
-            className={`h-3 w-3 shrink-0 text-droid-text-muted/50 transition-transform ${open ? 'rotate-180' : ''}`}
-          />
-        </span>
-        <span className="shrink-0 font-mono text-[11px]">
-          {clean ? (
-            <span className="text-droid-text-muted">Clean</span>
-          ) : (
-            <>
-              <span style={{ color: ADD_COLOR }}>+{additions.toLocaleString()}</span>{' '}
-              <span style={{ color: DEL_COLOR }}>-{deletions.toLocaleString()}</span>
-            </>
-          )}
-        </span>
-      </button>
+        <button
+          onClick={onOpenReview}
+          title="Open the full diff review"
+          className="flex min-w-0 flex-1 items-center gap-3 rounded-l-lg px-3 py-2 text-left"
+        >
+          <span className="shrink-0 text-droid-text-muted transition-colors group-hover:text-droid-text-secondary">
+            <FileDiff className="h-4 w-4" />
+          </span>
+          <span className="min-w-0 flex-1 truncate text-[13px] leading-snug text-droid-text">
+            {diffModeLabel(mode, defaultBranch)}
+          </span>
+          <span className="shrink-0 font-mono text-[11px]">
+            {clean ? (
+              <span className="text-droid-text-muted">Clean</span>
+            ) : (
+              <>
+                <span style={{ color: ADD_COLOR }}>+{additions.toLocaleString()}</span>{' '}
+                <span style={{ color: DEL_COLOR }}>-{deletions.toLocaleString()}</span>
+              </>
+            )}
+          </span>
+        </button>
+        <button
+          onClick={() => setOpen((v) => !v)}
+          title="Change which changes are summed"
+          className="shrink-0 rounded-r-lg px-1.5 py-2 text-droid-text-muted/60 hover:text-droid-text"
+        >
+          <ChevronDown className={`h-3.5 w-3.5 transition-transform ${open ? 'rotate-180' : ''}`} />
+        </button>
+      </div>
 
       {open && (
         <div className="absolute right-2 top-full z-50 mt-1 w-56 rounded-xl border border-droid-border bg-droid-surface p-1.5 shadow-2xl shadow-black/50">

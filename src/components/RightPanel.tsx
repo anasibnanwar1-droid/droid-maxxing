@@ -204,6 +204,7 @@ export default function RightPanel() {
                   live={working}
                   pr={pr.pr}
                   onOpenPr={() => setView('pr')}
+                  onOpenReview={() => dispatch({ type: 'SET_REVIEW_OPEN', open: true })}
                 />
                 <Row
                   icon={
