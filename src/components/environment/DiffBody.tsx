@@ -24,12 +24,13 @@ function Gutter({ value }: { value: number | null }) {
   );
 }
 
-function UnifiedLine({ line }: { line: DiffLine }) {
+function UnifiedLine({ line, wrap }: { line: DiffLine; wrap: boolean }) {
+  const textClass = wrap ? 'whitespace-pre-wrap break-all' : 'whitespace-pre';
   if (line.type === 'meta') {
     return (
       <div className="flex text-droid-text-muted/60">
         <span className="w-20 shrink-0" />
-        <span className="whitespace-pre px-2 italic">{line.text}</span>
+        <span className={`${textClass} px-2 italic`}>{line.text}</span>
       </div>
     );
   }
@@ -43,13 +44,24 @@ function UnifiedLine({ line }: { line: DiffLine }) {
       >
         {SIGN[line.type]}
       </span>
-      <span className="whitespace-pre px-1 text-droid-text-secondary">{line.text || ' '}</span>
+      <span className={`${textClass} min-w-0 flex-1 px-1 text-droid-text-secondary`}>
+        {line.text || ' '}
+      </span>
     </div>
   );
 }
 
-function SplitCell({ line, side }: { line: DiffLine | null; side: 'left' | 'right' }) {
+function SplitCell({
+  line,
+  side,
+  wrap,
+}: {
+  line: DiffLine | null;
+  side: 'left' | 'right';
+  wrap: boolean;
+}) {
   if (!line) return <div className="flex flex-1 bg-droid-bg/30" />;
+  const textClass = wrap ? 'whitespace-pre-wrap break-all' : 'whitespace-pre';
   return (
     <div className="flex min-w-0 flex-1" style={{ background: BG[line.type] }}>
       {/* The left pane is the old file, the right pane the new one; a context
@@ -61,7 +73,9 @@ function SplitCell({ line, side }: { line: DiffLine | null; side: 'left' | 'righ
       >
         {SIGN[line.type]}
       </span>
-      <span className="whitespace-pre px-1 text-droid-text-secondary">{line.text || ' '}</span>
+      <span className={`${textClass} min-w-0 flex-1 px-1 text-droid-text-secondary`}>
+        {line.text || ' '}
+      </span>
     </div>
   );
 }
@@ -70,10 +84,12 @@ export function DiffBody({
   diff,
   view,
   binary,
+  wrap = false,
 }: {
   diff: string;
   view: DiffViewMode;
   binary?: boolean;
+  wrap?: boolean;
 }) {
   const parsed = useMemo(() => parseUnifiedDiff(diff), [diff]);
 
@@ -94,12 +110,12 @@ export function DiffBody({
           {view === 'split'
             ? toSplitRows(hunk.lines).map((row, ri) => (
                 <div key={ri} className="flex">
-                  <SplitCell line={row.left} side="left" />
+                  <SplitCell line={row.left} side="left" wrap={wrap} />
                   <div className="w-px shrink-0 bg-droid-border" />
-                  <SplitCell line={row.right} side="right" />
+                  <SplitCell line={row.right} side="right" wrap={wrap} />
                 </div>
               ))
-            : hunk.lines.map((line, li) => <UnifiedLine key={li} line={line} />)}
+            : hunk.lines.map((line, li) => <UnifiedLine key={li} line={line} wrap={wrap} />)}
         </div>
       ))}
     </div>

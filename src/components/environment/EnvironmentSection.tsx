@@ -1,4 +1,4 @@
-import { ChevronRight, FolderGit } from 'lucide-react';
+import { ChevronRight, Folders } from 'lucide-react';
 import { Row } from './primitives';
 import { DiffStat } from './DiffStat';
 import { BranchMenu } from './BranchMenu';
@@ -54,7 +54,7 @@ export function EnvironmentSection({
   return (
     <div>
       <Row
-        icon={<FolderGit className="h-4 w-4" />}
+        icon={<Folders className="h-4 w-4" />}
         label={location}
         title={env?.repoRoot ?? cwd}
         onClick={() => openCodebase(cwd)}

@@ -67,10 +67,11 @@ export async function getGitFileDiff(
   dir: string,
   mode: DiffScope,
   path: string,
+  ignoreWhitespace = false,
 ): Promise<FileDiffResult> {
   if (!isDesktop() || !dir) return { path, diff: '', binary: false };
   try {
-    return await window.droidControl!.gitFileDiff(dir, { mode, path });
+    return await window.droidControl!.gitFileDiff(dir, { mode, path, ignoreWhitespace });
   } catch {
     return { path, diff: '', binary: false };
   }
