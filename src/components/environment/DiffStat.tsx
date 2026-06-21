@@ -24,6 +24,9 @@ export function DiffStat({
 }) {
   const [open, setOpen] = useState(false);
   const anchorRef = useRef<HTMLDivElement>(null);
+  // The label switches modes instantly, but `stat` lags until the async refetch
+  // resolves. Only trust the counts once they belong to the selected mode.
+  const ready = !!stat && stat.mode === mode;
   const additions = stat?.additions ?? 0;
   const deletions = stat?.deletions ?? 0;
   const clean = additions === 0 && deletions === 0;
@@ -48,7 +51,9 @@ export function DiffStat({
             {diffModeLabel(mode, defaultBranch)}
           </span>
           <span className="shrink-0 font-mono text-[11px]">
-            {clean ? (
+            {!ready ? (
+              <span className="text-droid-text-muted/60">…</span>
+            ) : clean ? (
               <span className="text-droid-text-muted">Clean</span>
             ) : (
               <>

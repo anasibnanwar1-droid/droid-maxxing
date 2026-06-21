@@ -70,7 +70,10 @@ export function StartInBar() {
   const isRepo = !!env?.isRepo;
   const base = env?.branch ?? env?.defaultBranch ?? 'main';
   const localWorktrees = worktrees.filter((w) => !w.bare && w.path);
-  const currentWt = localWorktrees.find((w) => w.path === cwd && w.path !== repoRoot);
+  // Match on the resolved worktree root, not the raw draft cwd, so a chat whose
+  // cwd is a subdirectory of a worktree still maps to that worktree.
+  const currentWtPath = env?.worktreePath ?? cwd;
+  const currentWt = localWorktrees.find((w) => w.path === currentWtPath && w.path !== repoRoot);
   const onLocal = !currentWt;
 
   const startIn = (path: string, branch?: string) => {
@@ -192,7 +195,7 @@ export function StartInBar() {
                     <span className="min-w-0 flex-1 truncate text-[12.5px] text-droid-text-secondary">
                       {worktreeName(w)}
                     </span>
-                    {cwd === w.path && (
+                    {currentWtPath === w.path && (
                       <Check
                         className="h-3.5 w-3.5 shrink-0"
                         style={{ color: 'var(--droid-accent)' }}

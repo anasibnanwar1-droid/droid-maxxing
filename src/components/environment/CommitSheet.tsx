@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Loader2 } from 'lucide-react';
 import { gitCommit } from '../../lib/git';
 import { toast } from '../../lib/toast';
@@ -8,21 +8,29 @@ export function CommitSheet({ cwd, onDone }: { cwd: string; onDone: () => void }
   const [message, setMessage] = useState('');
   const [stageAll, setStageAll] = useState(true);
   const [busy, setBusy] = useState(false);
+  const busyRef = useRef(false);
 
   const doCommit = async () => {
     const text = message.trim();
-    if (!text) return;
+    // busyRef guards against a second Cmd/Ctrl+Enter (the button is disabled,
+    // but the keyboard shortcut isn't) firing a duplicate in-flight commit.
+    if (!text || busyRef.current) return;
+    busyRef.current = true;
     setBusy(true);
-    const res = await gitCommit(cwd, { message: text, all: stageAll });
-    setBusy(false);
-    if (res.ok) {
-      toast.success(`Committed ${res.head ?? ''}`.trim());
-      setMessage('');
-      onDone();
-    } else if (res.reason === 'nothing_to_commit') {
-      toast.info('Nothing to commit');
-    } else {
-      toast.error(res.message || 'Commit failed');
+    try {
+      const res = await gitCommit(cwd, { message: text, all: stageAll });
+      if (res.ok) {
+        toast.success(`Committed ${res.head ?? ''}`.trim());
+        setMessage('');
+        onDone();
+      } else if (res.reason === 'nothing_to_commit') {
+        toast.info('Nothing to commit');
+      } else {
+        toast.error(res.message || 'Commit failed');
+      }
+    } finally {
+      busyRef.current = false;
+      setBusy(false);
     }
   };
 
