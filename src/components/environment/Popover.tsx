@@ -29,7 +29,12 @@ export function Popover({
   children: ReactNode;
 }) {
   const panelRef = useRef<HTMLDivElement>(null);
-  const [pos, setPos] = useState<{ top: number; left: number; maxHeight: number } | null>(null);
+  const [pos, setPos] = useState<{
+    top?: number;
+    bottom?: number;
+    left: number;
+    maxHeight: number;
+  } | null>(null);
 
   useLayoutEffect(() => {
     if (!open) return;
@@ -40,9 +45,19 @@ export function Popover({
       const r = anchor.getBoundingClientRect();
       const rawLeft = align === 'right' ? r.right - width : r.left;
       const left = Math.min(Math.max(margin, rawLeft), window.innerWidth - width - margin);
-      const top = r.bottom + 4;
-      const maxHeight = Math.max(160, window.innerHeight - top - margin);
-      setPos({ top, left, maxHeight });
+      const spaceBelow = window.innerHeight - r.bottom - margin;
+      const spaceAbove = r.top - margin;
+      // Flip above the anchor when there isn't enough room below (e.g. the
+      // composer pickers sit at the bottom of the window).
+      if (spaceBelow < 240 && spaceAbove > spaceBelow) {
+        setPos({
+          bottom: window.innerHeight - r.top + 4,
+          left,
+          maxHeight: Math.max(160, spaceAbove),
+        });
+      } else {
+        setPos({ top: r.bottom + 4, left, maxHeight: Math.max(160, spaceBelow) });
+      }
     };
     update();
     window.addEventListener('scroll', update, true);
@@ -75,7 +90,14 @@ export function Popover({
   return createPortal(
     <div
       ref={panelRef}
-      style={{ position: 'fixed', top: pos.top, left: pos.left, width, maxHeight: pos.maxHeight }}
+      style={{
+        position: 'fixed',
+        top: pos.top,
+        bottom: pos.bottom,
+        left: pos.left,
+        width,
+        maxHeight: pos.maxHeight,
+      }}
       className={`z-[1000] flex flex-col overflow-hidden rounded-xl border border-droid-border bg-droid-surface shadow-2xl shadow-black/50 ${className}`}
     >
       {children}
