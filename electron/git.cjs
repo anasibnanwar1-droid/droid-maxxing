@@ -464,8 +464,15 @@ async function createWorktree(dir, { branch, base, newBranch = false, location }
   const root = await repoRootOf(dir);
   if (!root) return { ok: false, reason: 'not_a_repo' };
   if (!validBranchName(branch)) return { ok: false, reason: 'invalid_name' };
-  const target = location ? expandHome(location) : defaultWorktreeLocation(root, branch);
-  if (fs.existsSync(target)) return { ok: false, reason: 'exists', path: target };
+  let target = location ? expandHome(location) : defaultWorktreeLocation(root, branch);
+  if (location) {
+    if (fs.existsSync(target)) return { ok: false, reason: 'exists', path: target };
+  } else {
+    // Default-location worktrees auto-suffix so a second worktree for the same
+    // branch (or a leftover directory) never collides — keeps the flow workable.
+    const baseTarget = target;
+    for (let n = 2; fs.existsSync(target); n++) target = `${baseTarget}-${n}`;
+  }
   try {
     if (!location) await ensureDefaultWorktreeIgnored(root);
     await fsp.mkdir(path.dirname(target), { recursive: true });
