@@ -71,12 +71,30 @@ const PR_FIELDS = [
 ].join(',');
 
 async function detectPr(dir, { branch } = {}) {
-  const args = ['pr', 'view'];
-  if (branch) args.push(branch);
-  args.push('--json', PR_FIELDS);
-  const res = await gh(dir, args);
-  if (res.code !== 0) return null; // no PR for this branch, or gh unavailable
-  const pr = parseJson(res.stdout, null);
+  let pr;
+  if (branch) {
+    // `gh pr view <branch>` treats a numeric branch name (e.g. "123") as a PR
+    // number; filtering by `--head` matches the branch name unambiguously.
+    const res = await gh(dir, [
+      'pr',
+      'list',
+      '--head',
+      branch,
+      '--state',
+      'all',
+      '--limit',
+      '1',
+      '--json',
+      PR_FIELDS,
+    ]);
+    if (res.code !== 0) return null; // gh unavailable
+    const list = parseJson(res.stdout, null);
+    pr = Array.isArray(list) && list.length > 0 ? list[0] : null;
+  } else {
+    const res = await gh(dir, ['pr', 'view', '--json', PR_FIELDS]);
+    if (res.code !== 0) return null; // no PR for the current branch, or gh unavailable
+    pr = parseJson(res.stdout, null);
+  }
   if (!pr || typeof pr.number !== 'number') return null;
   return {
     number: pr.number,

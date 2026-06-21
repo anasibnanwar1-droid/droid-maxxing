@@ -1162,6 +1162,16 @@ function WorktreesSection() {
 
   const linked = repos.flatMap((r) => r.worktrees.filter((w) => !w.isMain));
 
+  // Worktrees a chat currently runs in must not be removable — deleting the
+  // session's cwd would break its subsequent agent and git operations.
+  const inUseCwds = new Set<string>();
+  for (const m of Object.values(state.missions)) if (m.cwd) inUseCwds.add(m.cwd);
+  if (state.draftChat?.cwd) inUseCwds.add(state.draftChat.cwd);
+  const isInUse = (wtPath: string) => {
+    const prefix = wtPath.endsWith('/') ? wtPath : `${wtPath}/`;
+    return [...inUseCwds].some((c) => c === wtPath || c.startsWith(prefix));
+  };
+
   return (
     <div className="max-w-2xl mx-auto">
       <div className="mb-4 flex items-start justify-between gap-3">
@@ -1208,7 +1218,14 @@ function WorktreesSection() {
                       </div>
                       <div className="truncate text-[11px] text-droid-text-muted">{w.path}</div>
                     </div>
-                    {!w.isMain && (
+                    {w.isMain ? null : w.path && isInUse(w.path) ? (
+                      <span
+                        title="A chat is currently using this worktree"
+                        className="shrink-0 rounded bg-droid-elevated px-1.5 py-0.5 text-[10px] text-droid-text-muted"
+                      >
+                        in use
+                      </span>
+                    ) : (
                       <button
                         onClick={() => w.path && void remove(repo.root, w.path)}
                         disabled={removing === w.path}
