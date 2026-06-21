@@ -32,6 +32,7 @@ export function useGitEnvironment(cwd: string, diffMode: DiffStatMode): GitEnvir
   const diffReqRef = useRef(0);
   const modeRef = useRef(diffMode);
   modeRef.current = diffMode;
+  const loadedCwdRef = useRef('');
 
   const refresh = useCallback(() => {
     if (!cwd) {
@@ -39,11 +40,22 @@ export function useGitEnvironment(cwd: string, diffMode: DiffStatMode): GitEnvir
       // longer resolve and repopulate the panel with stale repo data.
       ++reqRef.current;
       ++diffReqRef.current;
+      loadedCwdRef.current = '';
       setEnv(null);
       setBranches(null);
       setWorktrees([]);
       setDiffStat(null);
       return;
+    }
+    if (loadedCwdRef.current !== cwd) {
+      // cwd switched: drop the prior repo's data right away so stale env,
+      // branches, worktrees, or diff counts are neither shown nor acted on
+      // while the new environment loads. Polls (same cwd) skip this.
+      loadedCwdRef.current = cwd;
+      setEnv(null);
+      setBranches(null);
+      setWorktrees([]);
+      setDiffStat(null);
     }
     const id = ++reqRef.current;
     const diffId = ++diffReqRef.current;

@@ -78,8 +78,13 @@ export default function App() {
   // The view is a real mission only when the active session is a mission orchestrator,
   // not merely because the global mission-compose flag is on.
   const isMissionView = !!activeMission && activeMission.kind === 'mission_orchestrator';
-  const showReviewPane = !embedded && state.reviewOpen && !!activeMission && !isMissionView;
-  const showBrowserPane = !embedded && state.browserOpen && !showWizard && !showReviewPane;
+  // The browser pane must win over Review: a browser tool request only flips
+  // browserOpen, and BrowserWorkspace (which registers the controller) lives
+  // inside this pane. If Review suppressed it, the controller would never mount
+  // and the tool call would time out until Review was closed by hand.
+  const showBrowserPane = !embedded && state.browserOpen && !showWizard;
+  const showReviewPane =
+    !embedded && state.reviewOpen && !!activeMission && !isMissionView && !showBrowserPane;
   const nativeBrowserPane = showBrowserPane && isDesktop();
   const focused = isMissionView;
   // A normal/spec session only has something worth showing once a message has

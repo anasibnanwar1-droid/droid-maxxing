@@ -474,7 +474,11 @@ async function createWorktree(dir, { branch, base, newBranch = false, location }
     for (let n = 2; fs.existsSync(target); n++) target = `${baseTarget}-${n}`;
   }
   try {
-    if (!location) await ensureDefaultWorktreeIgnored(root);
+    // Ignore `.worktrees/` whenever the target lives there, even if the caller
+    // passed the default path explicitly as `location` — otherwise it would
+    // surface as untracked in the original checkout.
+    const defaultRoot = path.join(root, '.worktrees') + path.sep;
+    if (path.resolve(target).startsWith(defaultRoot)) await ensureDefaultWorktreeIgnored(root);
     await fsp.mkdir(path.dirname(target), { recursive: true });
     const args = newBranch
       ? ['worktree', 'add', '-b', branch, target, ...(base ? [base] : [])]

@@ -38,6 +38,7 @@ export function StartBranchMenu({
   const [query, setQuery] = useState('');
   const [pending, setPending] = useState<{ branch: string; remote: boolean } | null>(null);
   const [path, setPath] = useState('');
+  const [defaultPath, setDefaultPath] = useState('');
   const [creatingNew, setCreatingNew] = useState(false);
   const [newName, setNewName] = useState('');
   const [busy, setBusy] = useState(false);
@@ -83,18 +84,26 @@ export function StartBranchMenu({
       return;
     }
     setPending({ branch, remote });
-    setPath(`${repoRoot}/.worktrees/${branch.replace(/[^\w.-]+/g, '-')}`);
+    const localName = remote ? stripRemote(branch) : branch;
+    const def = `${repoRoot}/.worktrees/${localName.replace(/[^\w.-]+/g, '-')}`;
+    setDefaultPath(def);
+    setPath(def);
   };
 
   const confirmCreate = async () => {
     if (!pending) return;
     setBusy(true);
     const localName = pending.remote ? stripRemote(pending.branch) : pending.branch;
+    const trimmed = path.trim();
     const res = await createGitWorktree(cwd, {
       branch: localName,
-      base: pending.remote ? `origin/${stripRemote(pending.branch)}` : undefined,
+      // Use the selected remote ref verbatim so upstream/foo doesn't silently
+      // become origin/foo (or fail when only one remote has the branch).
+      base: pending.remote ? pending.branch : undefined,
       newBranch: pending.remote,
-      location: path.trim() || undefined,
+      // Leave location unset when the default path is unchanged so the backend
+      // can auto-suffix collisions and add `.worktrees/` to the repo's exclude.
+      location: trimmed && trimmed !== defaultPath ? trimmed : undefined,
     });
     setBusy(false);
     if (res.ok && res.path) {
