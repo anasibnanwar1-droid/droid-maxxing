@@ -27,6 +27,7 @@ import type {
 } from '../types/bridge';
 import { addWorkspaceCwd } from '../lib/workspaces';
 import { sanitizeForLog } from '../lib/sensitiveLogRedaction';
+import { composePrompt } from '../lib/composePrompt';
 
 export type AgentKind = 'orchestrator' | 'worker' | 'validator';
 export type LiveEnterBehavior = 'queue' | 'interrupt';
@@ -789,6 +790,16 @@ function migrateBrowserStateByMission<T>(
 // while a coincidental same-text repeat is typically much further apart.
 const REPLAY_DEDUP_TOLERANCE_MS = 5_000;
 
+// An optimistic user echo stores the raw input, but history persists the
+// composed prompt (raw text plus skill/file context). Match against both so a
+// skill/file prompt is recognized as superseded instead of duplicating.
+function echoMatchesPersisted(e: TranscriptEvent, persisted: Set<string | undefined>): boolean {
+  if (!e.text) return false;
+  if (persisted.has(e.text)) return true;
+  const composed = composePrompt(e.text, e.skills ?? [], e.files ?? []);
+  return composed !== e.text && persisted.has(composed);
+}
+
 function syncBrowserOpen(state: AppState): AppState {
   const key = activeBrowserKey(state);
   const open = key ? Boolean(state.browserOpenKeys[key]) : false;
@@ -1336,7 +1347,7 @@ function baseReducer(state: AppState, action: Action): AppState {
           e.author === 'user' &&
           !!e.text &&
           e.ts <= olderLastTs &&
-          olderUserText.has(e.text);
+          echoMatchesPersisted(e, olderUserText);
         const kept = existing.filter((e) => !supersededEcho(e));
         const have = new Set(kept.map((e) => e.id));
         const older = action.transcripts.filter((e) => !have.has(e.id));
@@ -1403,11 +1414,19 @@ function baseReducer(state: AppState, action: Action): AppState {
         !!e.text &&
         e.ts <= lastTs &&
         (pageIsComplete || e.ts >= firstTs) &&
-        pageUserText.has(e.text);
+        echoMatchesPersisted(e, pageUserText);
+      // Live orchestrator events carry agentSessionId = appSessionId while the
+      // restored history canonicalizes it to 'orchestrator' (mirroring the
+      // sidecar). Normalize so a reconnect-race twin matches instead of both the
+      // live and persisted copy surviving and duplicating main-agent output.
+      const sessionKey = (e: TranscriptEvent) =>
+        e.role === 'orchestrator' && e.agentSessionId !== 'user'
+          ? 'orchestrator'
+          : e.agentSessionId;
       const contentSig = (e: TranscriptEvent) =>
         e.toolUseId
-          ? `tool:${e.agentSessionId}:${e.kind}:${e.toolUseId}`
-          : `${e.agentSessionId}:${e.author ?? e.role}:${e.kind}:${e.text ?? ''}`;
+          ? `tool:${sessionKey(e)}:${e.kind}:${e.toolUseId}`
+          : `${sessionKey(e)}:${e.author ?? e.role}:${e.kind}:${e.text ?? ''}`;
       // Index page entries by content signature -> their timestamps so a live
       // event is matched to the persisted twin nearest in time rather than to
       // any same-text occurrence anywhere in restored history.
@@ -1428,10 +1447,16 @@ function baseReducer(state: AppState, action: Action): AppState {
         // entry far from this event's time is a different occurrence (e.g. a
         // repeated "ok"). Consume only the closest twin within tolerance so a
         // brand-new live output that merely repeats old text is never dropped.
+        // Streamed text/thinking keep the first-chunk ts but advance endTs, while
+        // history timestamps near completion, so compare against the whole live
+        // [ts, endTs] span rather than just the start.
+        const lo = Math.min(e.ts, e.endTs ?? e.ts);
+        const hi = Math.max(e.ts, e.endTs ?? e.ts);
         let bestIdx = -1;
         let bestDiff = Infinity;
         for (let i = 0; i < at.length; i++) {
-          const diff = Math.abs(at[i] - e.ts);
+          const t = at[i];
+          const diff = t < lo ? lo - t : t > hi ? t - hi : 0;
           if (diff < bestDiff) {
             bestDiff = diff;
             bestIdx = i;

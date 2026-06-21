@@ -393,6 +393,8 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
               }
             />
           </div>
+        ) : activeMission && restore?.status === 'failed' ? (
+          <RestoreFailedState message={restore.error} onRetry={retryRestore} />
         ) : activeMission && viewingSub ? (
           <div className="mx-auto flex h-full max-w-2xl flex-col items-center justify-center gap-4 px-8 text-center">
             {selectedWorker?.prompt && (
@@ -418,8 +420,6 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
               </span>
             )}
           </div>
-        ) : activeMission && restore?.status === 'failed' ? (
-          <RestoreFailedState message={restore.error} onRetry={retryRestore} />
         ) : activeMission && restore?.status === 'loading' ? (
           <RestoringState count={restore.loadedCount} />
         ) : (

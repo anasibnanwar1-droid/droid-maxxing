@@ -263,7 +263,7 @@ test('#29 a replace keeps a live event from a different worker with identical te
     id: 'live-b',
     missionId: 'm1',
     agentSessionId: 'worker-b',
-    role: 'orchestrator',
+    role: 'worker',
     kind: 'text',
     text: 'all done',
     ts: 1005,
@@ -331,6 +331,108 @@ test('#29 a replace keeps a genuinely repeated live message the page only contai
   assert.deepEqual(
     next.transcripts.m1.map((e) => e.id),
     ['sess:1:0:text', 'live-2'],
+  );
+});
+
+test('#29 a replace dedups a live orchestrator event against its persisted twin', () => {
+  // Live orchestrator events carry agentSessionId = appSessionId while history
+  // canonicalizes it to 'orchestrator'; the normalized signature must still
+  // match so the twin is not duplicated.
+  const liveOrch: TranscriptEvent = {
+    id: 'live-orch',
+    missionId: 'm1',
+    agentSessionId: 'm1',
+    role: 'orchestrator',
+    kind: 'text',
+    text: 'done',
+    ts: 1002,
+  };
+  const seeded = {
+    ...initialState,
+    transcripts: { m1: [liveOrch] },
+  } as unknown as AppState;
+
+  const next = reducer(seeded, {
+    type: 'MISSION_HISTORY',
+    missionId: 'm1',
+    progress: [],
+    transcripts: [ev('sess:1:0:text', 1000, 'done')],
+    mode: 'replace',
+    hasMore: false,
+  });
+
+  assert.deepEqual(
+    next.transcripts.m1.map((e) => e.id),
+    ['sess:1:0:text'],
+  );
+});
+
+test('#29 a replace dedups a long-streamed live event whose start is outside tolerance', () => {
+  // Streamed text keeps the first-chunk ts but advances endTs; history is
+  // timestamped near completion, so matching must use the live [ts, endTs] span.
+  const streamed: TranscriptEvent = {
+    id: 'live-stream',
+    missionId: 'm1',
+    agentSessionId: 'orchestrator',
+    role: 'orchestrator',
+    kind: 'text',
+    text: 'long answer',
+    ts: 1000,
+    endTs: 30000,
+  };
+  const seeded = {
+    ...initialState,
+    transcripts: { m1: [streamed] },
+  } as unknown as AppState;
+
+  const next = reducer(seeded, {
+    type: 'MISSION_HISTORY',
+    missionId: 'm1',
+    progress: [],
+    transcripts: [ev('sess:1:0:text', 29900, 'long answer')],
+    mode: 'replace',
+    hasMore: false,
+  });
+
+  assert.deepEqual(
+    next.transcripts.m1.map((e) => e.id),
+    ['sess:1:0:text'],
+  );
+});
+
+test('#29 a replace supersedes a skill/file echo whose persisted prompt is composed', () => {
+  // The optimistic echo holds raw input plus skill/file metadata; history stores
+  // the composed prompt, so dedup must recompose to recognize it.
+  const echo: TranscriptEvent = {
+    id: 'local-1',
+    missionId: 'm1',
+    agentSessionId: 'user',
+    role: 'orchestrator',
+    kind: 'text',
+    text: 'fix the bug',
+    ts: 500,
+    author: 'user',
+    skills: ['debugger'],
+    files: ['src/a.ts'],
+  };
+  const composed = 'Use the "debugger" skill.\n\nfix the bug\n\n@src/a.ts';
+  const seeded = {
+    ...initialState,
+    transcripts: { m1: [echo] },
+  } as unknown as AppState;
+
+  const next = reducer(seeded, {
+    type: 'MISSION_HISTORY',
+    missionId: 'm1',
+    progress: [],
+    transcripts: [userEv('sess:1:0:text', 1000, composed)],
+    mode: 'replace',
+    hasMore: false,
+  });
+
+  assert.deepEqual(
+    next.transcripts.m1.map((e) => e.id),
+    ['sess:1:0:text'],
   );
 });
 

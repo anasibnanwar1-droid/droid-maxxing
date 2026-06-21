@@ -1156,10 +1156,14 @@ export class MissionManager {
             missionId: appSessionId,
             message: errMsg(err),
           });
+          // Recoverable: a restore failure surfaces a toast and the retry
+          // affordance (via mission.history.error) but must not mark the session
+          // phase failed, so a later successful retry restores it intact.
           this.emitError({
             missionId: appSessionId,
             sessionId: droidSessionId,
             message: errMsg(err),
+            recoverable: true,
           });
         }
       }
