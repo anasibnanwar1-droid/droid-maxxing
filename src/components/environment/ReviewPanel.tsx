@@ -380,12 +380,18 @@ export function ReviewPanel({ cwd, onClose }: { cwd: string; onClose: () => void
                   <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-droid-text-muted" />
                 )}
               </div>
-              <DiffBody
-                diff={showDiff ? (review.fileDiff?.diff ?? '') : ''}
-                view={state.diffView}
-                binary={showDiff ? review.fileDiff?.binary : undefined}
-                wrap={wrap}
-              />
+              {showDiff ? (
+                <DiffBody
+                  diff={review.fileDiff?.diff ?? ''}
+                  view={state.diffView}
+                  binary={review.fileDiff?.binary}
+                  wrap={wrap}
+                />
+              ) : (
+                <div className="flex h-full items-center justify-center gap-2 text-[12.5px] text-droid-text-muted">
+                  <Loader2 className="h-4 w-4 animate-spin" /> Loading diff…
+                </div>
+              )}
             </>
           ) : (
             <div className="flex h-full items-center justify-center text-[12.5px] text-droid-text-muted">

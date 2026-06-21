@@ -92,6 +92,9 @@ export function toSplitRows(lines: DiffLine[]): SplitRow[] {
       continue;
     }
     if (line.type === 'meta') {
+      // Keep meta markers (e.g. "\ No newline at end of file") so split view
+      // renders them full-width instead of silently dropping them.
+      rows.push({ left: line, right: null });
       i += 1;
       continue;
     }

@@ -63,11 +63,20 @@ test('parseUnifiedDiff flags binary patches', () => {
 test('toSplitRows pairs deletions with additions', () => {
   const parsed = parseUnifiedDiff(SAMPLE);
   const rows = toSplitRows(parsed.hunks[0].lines);
-  // ctx "keep", paired del/add, lone add, ctx "tail"
+  // ctx "keep", paired del/add, lone add, ctx "tail", trailing meta marker
   assert.equal(rows[0].left?.type, 'ctx');
   assert.equal(rows[1].left?.type, 'del');
   assert.equal(rows[1].right?.type, 'add');
   assert.equal(rows[2].left, null);
   assert.equal(rows[2].right?.type, 'add');
-  assert.equal(rows[rows.length - 1].right?.type, 'ctx');
+  assert.equal(rows[rows.length - 2].right?.type, 'ctx');
+});
+
+test('toSplitRows preserves meta markers as left-only rows', () => {
+  const parsed = parseUnifiedDiff(SAMPLE);
+  const rows = toSplitRows(parsed.hunks[0].lines);
+  const meta = rows.find((r) => r.left?.type === 'meta');
+  assert.ok(meta, 'meta row should be kept in split view');
+  assert.equal(meta?.right, null);
+  assert.match(meta?.left?.text ?? '', /No newline at end of file/);
 });

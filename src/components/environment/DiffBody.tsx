@@ -108,13 +108,17 @@ export function DiffBody({
             {hunk.header}
           </div>
           {view === 'split'
-            ? toSplitRows(hunk.lines).map((row, ri) => (
-                <div key={ri} className="flex">
-                  <SplitCell line={row.left} side="left" wrap={wrap} />
-                  <div className="w-px shrink-0 bg-droid-border" />
-                  <SplitCell line={row.right} side="right" wrap={wrap} />
-                </div>
-              ))
+            ? toSplitRows(hunk.lines).map((row, ri) =>
+                row.left?.type === 'meta' ? (
+                  <UnifiedLine key={ri} line={row.left} wrap={wrap} />
+                ) : (
+                  <div key={ri} className="flex">
+                    <SplitCell line={row.left} side="left" wrap={wrap} />
+                    <div className="w-px shrink-0 bg-droid-border" />
+                    <SplitCell line={row.right} side="right" wrap={wrap} />
+                  </div>
+                ),
+              )
             : hunk.lines.map((line, li) => <UnifiedLine key={li} line={line} wrap={wrap} />)}
         </div>
       ))}

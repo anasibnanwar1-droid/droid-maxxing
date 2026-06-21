@@ -471,6 +471,11 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
       },
     });
 
+    // Clear the composer now (before any await) so a prompt the user starts
+    // typing during the git-baseline delay below is never wiped out.
+    setInput('');
+    resetAttachments();
+
     // Capture the last-turn baseline before the agent can touch the tree;
     // a fire-and-forget call here races the first edit and corrupts the diff.
     if (activeMission.cwd) await markGitTurnStart(activeMission.cwd);
@@ -484,9 +489,6 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
     } catch (err) {
       console.error('[PromptInput] sendToMission failed:', err);
     }
-
-    setInput('');
-    resetAttachments();
   };
 
   const queue: QueuedPrompt[] = activeMission ? (state.promptQueue[activeMission.id] ?? []) : [];
