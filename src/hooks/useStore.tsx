@@ -130,8 +130,9 @@ export interface AppState {
   // UI flags
   rightPanelOpen: boolean;
   // The Review diff tab: a wide right-side pane, opened from the Context panel's
-  // changes button. Scope + view mode persist; open state is per-session.
-  reviewOpen: boolean;
+  // changes button. Scope + view mode persist; open state is per-session — we
+  // track the mission it was opened for so switching chats doesn't carry it over.
+  reviewOpenMissionId: string | null;
   reviewScope: DiffScope;
   diffView: DiffViewMode;
   sidebarCollapsed: boolean;
@@ -776,7 +777,7 @@ export const initialState: AppState = {
   compactionTokenLimit: loadCompactionTokenLimit(),
   compactionTokenLimitPerModel: loadCompactionTokenLimitPerModel(),
   liveEnterBehavior: loadLiveEnterBehavior(),
-  reviewOpen: false,
+  reviewOpenMissionId: null,
   reviewScope: loadReviewScope(),
   diffView: loadDiffView(),
   missionSettingOverrides: {},
@@ -1617,7 +1618,9 @@ function baseReducer(state: AppState, action: Action): AppState {
       return { ...state, rightPanelOpen: action.open };
 
     case 'SET_REVIEW_OPEN':
-      return { ...state, reviewOpen: action.open };
+      // Scope the open state to the active mission so it never leaks into the
+      // next chat; switching back to this mission restores it.
+      return { ...state, reviewOpenMissionId: action.open ? state.activeMissionId : null };
 
     case 'SET_REVIEW_SCOPE':
       return { ...state, reviewScope: saveReviewScope(action.scope) };

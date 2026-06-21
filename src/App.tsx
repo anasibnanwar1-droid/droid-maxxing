@@ -83,8 +83,8 @@ export default function App() {
   // inside this pane. If Review suppressed it, the controller would never mount
   // and the tool call would time out until Review was closed by hand.
   const showBrowserPane = !embedded && state.browserOpen && !showWizard;
-  const showReviewPane =
-    !embedded && state.reviewOpen && !!activeMission && !isMissionView && !showBrowserPane;
+  const reviewOpen = !!activeMission && state.reviewOpenMissionId === activeMission.id;
+  const showReviewPane = !embedded && reviewOpen && !isMissionView && !showBrowserPane;
   const nativeBrowserPane = showBrowserPane && isDesktop();
   const focused = isMissionView;
   // A normal/spec session only has something worth showing once a message has
