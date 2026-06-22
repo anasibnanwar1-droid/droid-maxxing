@@ -1,4 +1,4 @@
-import { useMemo, useState, memo, useEffect } from 'react';
+import { useMemo, useState, memo, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   ChevronRight,
@@ -1102,6 +1102,54 @@ const MessageBody = memo(function MessageBody({ text }: { text: string }) {
   );
 });
 
+interface FeedItemViewProps {
+  item: FeedItem;
+  live: boolean;
+  compacting?: boolean;
+  onOpenDiff?: (c: FileChange) => void;
+  onOpenSubagent?: (target: SubagentTarget) => void;
+  subagentActivity?: (target: SubagentTarget) => SubagentActivity | undefined;
+  liveTiming?: boolean;
+  specContent?: string;
+}
+
+// Two feed items render identically when they wrap the same underlying transcript
+// event objects. The store keeps prior events referentially stable and only swaps
+// the streaming tail event for a new object, so this ref check is enough: every
+// other FeedItem field (diff stats, durations, summaries) is a pure function of
+// these events.
+export function sameFeedEvents(a: FeedItem, b: FeedItem): boolean {
+  if (a.type !== b.type || a.key !== b.key) return false;
+  if (a.type === 'tools' && b.type === 'tools') {
+    return a.events.length === b.events.length && a.events.every((e, i) => e === b.events[i]);
+  }
+  if (a.type === 'diffs' && b.type === 'diffs') {
+    return (
+      a.changes.length === b.changes.length &&
+      a.changes.every((c, i) => c.event === b.changes[i].event)
+    );
+  }
+  // message | thinking | status | error | diff | subagent each carry one event.
+  return (a as { event: TranscriptEvent }).event === (b as { event: TranscriptEvent }).event;
+}
+
+// Lets memo skip the many static items while a response streams, re-rendering
+// only the growing tail. Subagent and worked items surface live, cross-transcript
+// state (running timers, latest line), so they always re-render to stay current.
+function feedItemPropsEqual(prev: FeedItemViewProps, next: FeedItemViewProps): boolean {
+  if (next.item.type === 'subagent' || next.item.type === 'worked') return false;
+  return (
+    prev.live === next.live &&
+    prev.compacting === next.compacting &&
+    prev.liveTiming === next.liveTiming &&
+    prev.specContent === next.specContent &&
+    prev.onOpenDiff === next.onOpenDiff &&
+    prev.onOpenSubagent === next.onOpenSubagent &&
+    prev.subagentActivity === next.subagentActivity &&
+    sameFeedEvents(prev.item, next.item)
+  );
+}
+
 const FeedItemView = memo(function FeedItemView({
   item,
   live,
@@ -1111,16 +1159,7 @@ const FeedItemView = memo(function FeedItemView({
   subagentActivity,
   liveTiming,
   specContent,
-}: {
-  item: FeedItem;
-  live: boolean;
-  compacting?: boolean;
-  onOpenDiff?: (c: FileChange) => void;
-  onOpenSubagent?: (target: SubagentTarget) => void;
-  subagentActivity?: (target: SubagentTarget) => SubagentActivity | undefined;
-  liveTiming?: boolean;
-  specContent?: string;
-}) {
+}: FeedItemViewProps) {
   switch (item.type) {
     case 'message': {
       if (item.event.author === 'user') return <UserBubble event={item.event} />;
@@ -1211,7 +1250,7 @@ const FeedItemView = memo(function FeedItemView({
         />
       );
   }
-});
+}, feedItemPropsEqual);
 
 /* ── Worked-for group: a completed turn's steps folded into one disclosure ── */
 function WorkedGroup({
@@ -1450,6 +1489,31 @@ export function MessageFeed({
   // chat/spec feed (which supplies onOpenSubagent). Mission Control omits the
   // prop, so its feed renders exactly as before.
   const rich = !!onOpenSubagent;
+
+  // The parent rebuilds these callbacks every streaming token (they close over
+  // the growing transcript). Wrap them in stable identities that read the latest
+  // version through a ref, so the memoized FeedItemView can actually skip
+  // unchanged items instead of re-rendering the whole feed on every token. Keep
+  // them undefined when the parent supplies no handler, so absent affordances
+  // (e.g. non-clickable diffs in the chat feed) stay absent.
+  const cbRef = useRef({ onOpenDiff, onOpenSubagent, subagentActivity });
+  cbRef.current = { onOpenDiff, onOpenSubagent, subagentActivity };
+  const hasOpenDiff = !!onOpenDiff;
+  const hasSubagentActivity = !!subagentActivity;
+  const stableOnOpenDiff = useMemo(
+    () => (hasOpenDiff ? (c: FileChange) => cbRef.current.onOpenDiff?.(c) : undefined),
+    [hasOpenDiff],
+  );
+  const stableOnOpenSubagent = useMemo(
+    () => (rich ? (t: SubagentTarget) => cbRef.current.onOpenSubagent?.(t) : undefined),
+    [rich],
+  );
+  const stableSubagentActivity = useMemo(
+    () =>
+      hasSubagentActivity ? (t: SubagentTarget) => cbRef.current.subagentActivity?.(t) : undefined,
+    [hasSubagentActivity],
+  );
+
   const items = useMemo(
     () => groupTurns(buildFeed(events, rich), pending, specContent),
     [events, pending, rich, specContent],
@@ -1502,9 +1566,9 @@ export function MessageFeed({
             item={item}
             live={pending && idx === lastIdx}
             compacting={compacting && idx === lastIdx}
-            onOpenDiff={onOpenDiff}
-            onOpenSubagent={onOpenSubagent}
-            subagentActivity={subagentActivity}
+            onOpenDiff={stableOnOpenDiff}
+            onOpenSubagent={stableOnOpenSubagent}
+            subagentActivity={stableSubagentActivity}
             liveTiming={rich}
             specContent={specContent}
           />
