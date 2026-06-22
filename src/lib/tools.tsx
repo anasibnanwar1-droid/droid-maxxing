@@ -145,3 +145,21 @@ export function formatDuration(ms: number): string {
   const rem = s % 60;
   return rem ? `${m}m ${rem}s` : `${m}m`;
 }
+
+// The history reader appends a "[truncated N chars]" sentinel when a single
+// message exceeds its per-event cap. Split that tail off so the body renders as
+// normal prose and the cut can be shown as a quiet note instead of raw text.
+const TRUNCATION_RE = /\n*\[truncated (\d+) chars\]\s*$/;
+
+export function parseTruncatedTail(text: string): { body: string; truncatedChars: number | null } {
+  const m = TRUNCATION_RE.exec(text);
+  if (!m) return { body: text, truncatedChars: null };
+  return { body: text.slice(0, m.index).trimEnd(), truncatedChars: Number(m[1]) };
+}
+
+// Compact character count for the truncation note: 1252663 -> "1.3M", 8200 -> "8.2k".
+export function formatCharCount(n: number): string {
+  if (n >= 1_000_000) return `${+(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${+(n / 1_000).toFixed(1)}k`;
+  return String(n);
+}

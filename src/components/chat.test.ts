@@ -11,7 +11,7 @@ import {
   MessageFeed,
   type FeedItem,
 } from './chat';
-import { hasTodoPayload } from '../lib/tools';
+import { hasTodoPayload, parseTruncatedTail, formatCharCount } from '../lib/tools';
 import type { TranscriptEvent } from '../types/bridge';
 
 let seq = 0;
@@ -781,4 +781,32 @@ test('#19/#14 a spec fragment split by reconciliation is not merged into prose',
   );
   assert.ok(html.includes('Here is the plan.'));
   assert.equal(html.split('The sole spec body line').length - 1, 0);
+});
+
+test('parseTruncatedTail splits the history truncation sentinel from the body', () => {
+  const { body, truncatedChars } = parseTruncatedTail('Answer text.\n\n[truncated 1252663 chars]');
+  assert.equal(body, 'Answer text.');
+  assert.equal(truncatedChars, 1252663);
+});
+
+test('parseTruncatedTail leaves untruncated text untouched', () => {
+  const { body, truncatedChars } = parseTruncatedTail('Just a normal answer.');
+  assert.equal(body, 'Just a normal answer.');
+  assert.equal(truncatedChars, null);
+});
+
+test('formatCharCount renders compact, trimmed magnitudes', () => {
+  assert.equal(formatCharCount(1252663), '1.3M');
+  assert.equal(formatCharCount(5_000_000), '5M');
+  assert.equal(formatCharCount(8200), '8.2k');
+  assert.equal(formatCharCount(1000), '1k');
+  assert.equal(formatCharCount(742), '742');
+});
+
+test('MessageFeed renders a truncated answer as a note, not raw sentinel text', () => {
+  const events = [userMsg('hi'), asst('Big answer body.\n\n[truncated 2048 chars]')];
+  const html = renderToStaticMarkup(createElement(MessageFeed, { events, pending: false }));
+  assert.ok(html.includes('Big answer body.'));
+  assert.ok(html.includes('2k more characters truncated'));
+  assert.equal(html.includes('[truncated'), false);
 });
