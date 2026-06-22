@@ -384,12 +384,16 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
     if (missionPreview && !activeMission) {
       const dir = state.draftChat?.cwd ?? (await pickDirectory());
       if (!dir) return;
-      // Snapshot the tree before the agent's first turn so the Review "Last
-      // turn" scope only attributes changes this session actually makes.
-      await markGitTurnStart(dir);
       const { orchestrator, worker, validator } = state.agentConfig;
       const clientRef = newClientRef();
       registerPending(clientRef);
+      // Clear the composer before the git-baseline await below so a prompt the
+      // user starts typing during that delay is never wiped by a late clear.
+      setInput('');
+      resetAttachments();
+      // Snapshot the tree before the agent's first turn so the Review "Last
+      // turn" scope only attributes changes this session actually makes.
+      await markGitTurnStart(dir);
       createMission({
         clientRef,
         cwd: dir,
@@ -408,18 +412,19 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
         validatorModel: validator.modelId,
         validatorReasoning: validator.reasoning,
       });
-      setInput('');
-      resetAttachments();
       return;
     }
 
     // Draft/default chat: first message creates the session. No workspace is required.
     if (!activeMission) {
       const dir = state.draftChat?.cwd ?? '';
-      if (dir) await markGitTurnStart(dir);
       const { orchestrator } = state.agentConfig;
       const clientRef = newClientRef();
       registerPending(clientRef);
+      // Clear before the baseline await (see above) so fast typing isn't lost.
+      setInput('');
+      resetAttachments();
+      if (dir) await markGitTurnStart(dir);
       createMission({
         clientRef,
         cwd: dir,
@@ -434,8 +439,6 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
         compactionTokenLimit: state.compactionTokenLimit,
         compactionTokenLimitPerModel: state.compactionTokenLimitPerModel,
       });
-      setInput('');
-      resetAttachments();
       return;
     }
 

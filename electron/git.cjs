@@ -137,10 +137,11 @@ async function repoRootOf(dir) {
   return top || null;
 }
 
-async function defaultBaseRef(root) {
-  const head = await tryRun(root, ['symbolic-ref', '--quiet', 'refs/remotes/origin/HEAD']);
+async function defaultBaseRef(root, remote = 'origin') {
+  if (!remote) return null;
+  const head = await tryRun(root, ['symbolic-ref', '--quiet', `refs/remotes/${remote}/HEAD`]);
   if (head) return head.replace('refs/remotes/', '');
-  for (const candidate of ['origin/main', 'origin/master']) {
+  for (const candidate of [`${remote}/main`, `${remote}/master`]) {
     if (await tryRun(root, ['rev-parse', '--verify', '--quiet', candidate])) return candidate;
   }
   return null;
@@ -150,6 +151,17 @@ async function listRemotes(root) {
   return String((await tryRun(root, ['remote'])) || '')
     .split('\n')
     .filter(Boolean);
+}
+
+// The remote to read base/GitHub metadata from. Prefer `origin`, otherwise the
+// sole/first remote, so repos cloned as `upstream` (or any name) still resolve.
+function pickPrimaryRemote(remotes) {
+  if (remotes.includes('origin')) return 'origin';
+  return remotes[0] || null;
+}
+
+async function resolveBaseRef(root) {
+  return defaultBaseRef(root, pickPrimaryRemote(await listRemotes(root)));
 }
 
 // Which remote a brand-new branch should publish to. Prefer an explicit
@@ -190,13 +202,12 @@ async function rememberBase(root, branch, base) {
 async function environment(dir) {
   const root = await repoRootOf(dir);
   if (!root) return { isRepo: false };
-  const [branch, head, upstream, commonDir, gitDir, remoteUrl] = await Promise.all([
+  const [branch, head, upstream, commonDir, gitDir] = await Promise.all([
     tryRun(root, ['rev-parse', '--abbrev-ref', 'HEAD']),
     tryRun(root, ['rev-parse', '--short', 'HEAD']),
     tryRun(root, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}']),
     tryRun(root, ['rev-parse', '--git-common-dir']),
     tryRun(root, ['rev-parse', '--git-dir']),
-    tryRun(root, ['remote', 'get-url', 'origin']),
   ]);
   // `rev-parse --abbrev-ref HEAD` returns "HEAD" when detached and fails on an
   // unborn branch (no commits yet). `symbolic-ref --short HEAD` still resolves
@@ -216,8 +227,10 @@ async function environment(dir) {
     ]);
     ({ ahead, behind } = parseAheadBehind(counts));
   }
-  const defaultRef = await defaultBaseRef(root);
   const remotes = await listRemotes(root);
+  const primaryRemote = pickPrimaryRemote(remotes);
+  const remoteUrl = primaryRemote ? await tryRun(root, ['remote', 'get-url', primaryRemote]) : null;
+  const defaultRef = await defaultBaseRef(root, primaryRemote);
   const base = (detached ? null : (await storedBase(root, branchName)) || upstream) || null;
   const isLinkedWorktree =
     !!commonDir && !!gitDir && path.resolve(root, commonDir) !== path.resolve(root, gitDir);
@@ -234,7 +247,7 @@ async function environment(dir) {
     baseKind: baseKindOf(base, remotes),
     ahead,
     behind,
-    defaultBranch: defaultRef ? defaultRef.replace(/^origin\//, '') : null,
+    defaultBranch: defaultRef ? defaultRef.replace(/^[^/]+\//, '') : null,
     defaultRef,
     remoteUrl: remoteUrl || null,
     isGitHub: !!remoteUrl && /github\.com/i.test(remoteUrl),
@@ -321,7 +334,7 @@ async function diffStat(dir, options = {}) {
     : 'worktree';
   const root = await repoRootOf(dir);
   if (!root) return { mode, base: null, additions: 0, deletions: 0, files: 0 };
-  const defaultRef = await defaultBaseRef(root);
+  const defaultRef = await resolveBaseRef(root);
   let base = null;
   if (defaultRef) base = await tryRun(root, ['merge-base', defaultRef, 'HEAD']);
   // An unborn repo (no commits yet) has no HEAD, so diffing against it errors;
@@ -709,7 +722,7 @@ async function scopeRange(root, scope) {
     };
   }
   if (scope === 'branch' || scope === 'worktree') {
-    const defaultRef = await defaultBaseRef(root);
+    const defaultRef = await resolveBaseRef(root);
     const base = defaultRef ? await tryRun(root, ['merge-base', defaultRef, 'HEAD']) : null;
     if (scope === 'branch') {
       return { args: base ? [`${base}...HEAD`] : null, base, includeUntracked: false };

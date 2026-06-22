@@ -24,7 +24,7 @@ import type { GitWorktree } from '../types/vcs';
 import { useOnboarding } from '../hooks/useOnboarding';
 import { getAppVersion, type AppUpdateInfo } from '../lib/onboarding';
 import { refreshAppUpdate, startAppUpdate } from '../lib/appUpdate';
-import { getGitWorktrees, removeGitWorktree, worktreeName } from '../lib/git';
+import { getGitWorktrees, isWorktreeInUse, removeGitWorktree, worktreeName } from '../lib/git';
 import { workspaceName } from '../lib/workspaces';
 import { toast } from '../lib/toast';
 
@@ -1164,13 +1164,10 @@ function WorktreesSection() {
 
   // Worktrees a chat currently runs in must not be removable — deleting the
   // session's cwd would break its subsequent agent and git operations.
-  const inUseCwds = new Set<string>();
-  for (const m of Object.values(state.missions)) if (m.cwd) inUseCwds.add(m.cwd);
-  if (state.draftChat?.cwd) inUseCwds.add(state.draftChat.cwd);
-  const isInUse = (wtPath: string) => {
-    const prefix = wtPath.endsWith('/') ? wtPath : `${wtPath}/`;
-    return [...inUseCwds].some((c) => c === wtPath || c.startsWith(prefix));
-  };
+  const sessionCwds = [
+    ...Object.values(state.missions).map((m) => m.cwd),
+    state.draftChat?.cwd ?? '',
+  ];
 
   return (
     <div className="max-w-2xl mx-auto">
@@ -1218,7 +1215,7 @@ function WorktreesSection() {
                       </div>
                       <div className="truncate text-[11px] text-droid-text-muted">{w.path}</div>
                     </div>
-                    {w.isMain ? null : w.path && isInUse(w.path) ? (
+                    {w.isMain ? null : w.path && isWorktreeInUse(w.path, sessionCwds) ? (
                       <span
                         title="A chat is currently using this worktree"
                         className="shrink-0 rounded bg-droid-elevated px-1.5 py-0.5 text-[10px] text-droid-text-muted"

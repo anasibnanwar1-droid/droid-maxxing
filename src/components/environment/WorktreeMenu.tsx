@@ -2,7 +2,7 @@ import { useRef, useState } from 'react';
 import { Check, ChevronDown, Columns2, ExternalLink, Loader2, Plus, Trash2 } from 'lucide-react';
 import { Popover } from './Popover';
 import { useStore } from '../../hooks/useStore';
-import { createGitWorktree, removeGitWorktree, worktreeName } from '../../lib/git';
+import { createGitWorktree, isWorktreeInUse, removeGitWorktree, worktreeName } from '../../lib/git';
 import { toast } from '../../lib/toast';
 import type { GitBranchList, GitEnvironment, GitWorktree } from '../../types/vcs';
 
@@ -19,7 +19,7 @@ export function WorktreeMenu({
   branches: GitBranchList | null;
   onChanged: () => void;
 }) {
-  const { dispatch } = useStore();
+  const { state, dispatch } = useStore();
   const [open, setOpen] = useState(false);
   const anchorRef = useRef<HTMLButtonElement>(null);
   const [creating, setCreating] = useState(false);
@@ -38,6 +38,10 @@ export function WorktreeMenu({
 
   const current = worktrees.find((w) => w.isCurrent);
   const others = worktrees.filter((w) => !w.isCurrent && !w.bare);
+  const sessionCwds = [
+    ...Object.values(state.missions).map((m) => m.cwd),
+    state.draftChat?.cwd ?? '',
+  ];
 
   const openInNewChat = (path: string) => {
     dispatch({ type: 'ADD_WORKSPACE', cwd: path });
@@ -158,13 +162,22 @@ export function WorktreeMenu({
                 </span>
                 <ExternalLink className="h-3.5 w-3.5 shrink-0 text-droid-text-muted/60" />
               </button>
-              <button
-                onClick={() => w.path && void removeWorktree(w.path)}
-                title="Remove worktree"
-                className="shrink-0 rounded p-1 text-droid-text-muted/0 transition-colors group-hover:text-droid-text-muted hover:!text-droid-orange"
-              >
-                <Trash2 className="h-3.5 w-3.5" />
-              </button>
+              {w.path && isWorktreeInUse(w.path, sessionCwds) ? (
+                <span
+                  title="A chat is currently using this worktree"
+                  className="shrink-0 rounded bg-droid-elevated px-1.5 py-0.5 text-[10px] text-droid-text-muted"
+                >
+                  in use
+                </span>
+              ) : (
+                <button
+                  onClick={() => w.path && void removeWorktree(w.path)}
+                  title="Remove worktree"
+                  className="shrink-0 rounded p-1 text-droid-text-muted/0 transition-colors group-hover:text-droid-text-muted hover:!text-droid-orange"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              )}
             </div>
           ))}
         </div>

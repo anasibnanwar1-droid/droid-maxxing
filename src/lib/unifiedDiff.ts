@@ -98,14 +98,27 @@ export function toSplitRows(lines: DiffLine[]): SplitRow[] {
       i += 1;
       continue;
     }
+    // A replacement run can be interrupted by "\ No newline at end of file"
+    // markers (git emits one after the last deleted line and one after the last
+    // added line). Collect those aside so the del/add lines still pair up.
     const dels: DiffLine[] = [];
     const adds: DiffLine[] = [];
-    while (i < lines.length && lines[i].type === 'del') dels.push(lines[i++]);
-    while (i < lines.length && lines[i].type === 'add') adds.push(lines[i++]);
+    const metas: DiffLine[] = [];
+    while (i < lines.length && (lines[i].type === 'del' || lines[i].type === 'meta')) {
+      if (lines[i].type === 'meta') metas.push(lines[i]);
+      else dels.push(lines[i]);
+      i += 1;
+    }
+    while (i < lines.length && (lines[i].type === 'add' || lines[i].type === 'meta')) {
+      if (lines[i].type === 'meta') metas.push(lines[i]);
+      else adds.push(lines[i]);
+      i += 1;
+    }
     const rowCount = Math.max(dels.length, adds.length);
     for (let k = 0; k < rowCount; k++) {
       rows.push({ left: dels[k] ?? null, right: adds[k] ?? null });
     }
+    for (const m of metas) rows.push({ left: m, right: null });
   }
   return rows;
 }
