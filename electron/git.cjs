@@ -152,6 +152,18 @@ async function listRemotes(root) {
     .filter(Boolean);
 }
 
+// Which remote a brand-new branch should publish to. Prefer an explicit
+// push default, then `origin`, then the sole remote — never blindly assume
+// `origin` exists, so repos cloned from `upstream` (or any other name) work.
+async function defaultPushRemote(root) {
+  const configured = await tryRun(root, ['config', '--get', 'remote.pushDefault']);
+  if (configured) return configured;
+  const remotes = await listRemotes(root);
+  if (remotes.includes('origin')) return 'origin';
+  if (remotes.length === 1) return remotes[0];
+  return 'origin';
+}
+
 // A base ref is "remote" when its first path segment names a configured remote
 // (e.g. "origin/main"); otherwise it is a local branch (e.g. "dev").
 function baseKindOf(baseRef, remotes) {
@@ -186,7 +198,13 @@ async function environment(dir) {
     tryRun(root, ['rev-parse', '--git-dir']),
     tryRun(root, ['remote', 'get-url', 'origin']),
   ]);
-  const detached = !branch || branch === 'HEAD';
+  // `rev-parse --abbrev-ref HEAD` returns "HEAD" when detached and fails on an
+  // unborn branch (no commits yet). `symbolic-ref --short HEAD` still resolves
+  // the branch name before the first commit, so only a real detached HEAD
+  // (where it also fails) is reported as detached.
+  const branchName =
+    branch && branch !== 'HEAD' ? branch : await tryRun(root, ['symbolic-ref', '--short', 'HEAD']);
+  const detached = !branchName;
   let ahead = 0;
   let behind = 0;
   if (upstream) {
@@ -200,7 +218,7 @@ async function environment(dir) {
   }
   const defaultRef = await defaultBaseRef(root);
   const remotes = await listRemotes(root);
-  const base = (detached ? null : (await storedBase(root, branch)) || upstream) || null;
+  const base = (detached ? null : (await storedBase(root, branchName)) || upstream) || null;
   const isLinkedWorktree =
     !!commonDir && !!gitDir && path.resolve(root, commonDir) !== path.resolve(root, gitDir);
   return {
@@ -208,7 +226,7 @@ async function environment(dir) {
     repoRoot: root,
     worktreePath: root,
     isLinkedWorktree,
-    branch: detached ? null : branch,
+    branch: detached ? null : branchName,
     detached,
     head: head || null,
     upstream: upstream || null,
@@ -553,7 +571,7 @@ async function push(dir, { remote, branch, setUpstream = false, force = false } 
     const sep = upstream.indexOf('/');
     args.push(upstream.slice(0, sep), `${target}:${upstream.slice(sep + 1)}`);
   } else {
-    args.push(remote || 'origin', target);
+    args.push(remote || (await defaultPushRemote(root)), target);
   }
   try {
     const output = await run(root, args, { timeout: PUSH_TIMEOUT });

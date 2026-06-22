@@ -29,7 +29,11 @@ export function DiffStat({
   const ready = !!stat && stat.mode === mode;
   const additions = stat?.additions ?? 0;
   const deletions = stat?.deletions ?? 0;
-  const clean = additions === 0 && deletions === 0;
+  const files = stat?.files ?? 0;
+  // Renames, binary edits, and empty-file adds change files without a line
+  // delta, so a zero +/- doesn't mean clean — fall back to the file count.
+  const clean = files === 0 && additions === 0 && deletions === 0;
+  const noLineDelta = additions === 0 && deletions === 0;
 
   return (
     <>
@@ -55,6 +59,10 @@ export function DiffStat({
               <span className="text-droid-text-muted/60">…</span>
             ) : clean ? (
               <span className="text-droid-text-muted">Clean</span>
+            ) : noLineDelta ? (
+              <span className="text-droid-text-secondary">
+                {files.toLocaleString()} file{files === 1 ? '' : 's'}
+              </span>
             ) : (
               <>
                 <span style={{ color: ADD_COLOR }}>+{additions.toLocaleString()}</span>{' '}
