@@ -2,7 +2,7 @@ import { useRef, useEffect, useLayoutEffect, useMemo, useState, useCallback } fr
 import { GripVertical, ChevronRight, Square } from 'lucide-react';
 import { useStore } from '../hooks/useStore';
 import { useMissionLive } from '../hooks/useMissionLive';
-import { MessageFeed, WorkingIndicator } from './chat';
+import { MessageFeed, WorkingIndicator, UserBubble } from './chat';
 import { readFile } from '../lib/desktop';
 import { interruptAgent, loadMissionHistory, loadOlderMissionHistory } from '../lib/commands';
 import { findWorkerForTarget, resolveWorkers, subagentActivityForTarget } from '../lib/subagents';
@@ -288,6 +288,12 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
   const live = useMissionLive(activeMission?.id ?? null);
   const draftFolder = state.draftChat?.cwd.split('/').filter(Boolean).pop();
 
+  // Between pressing send on a fresh chat and MISSION_CREATED arriving (the
+  // sidecar spawns the session, ~1-2s), there is no active mission yet. Show the
+  // user's message immediately with a starting cue instead of a blank screen;
+  // the real feed (which seeds the same message) takes over once it exists.
+  const startingCompose = !activeMission ? Object.values(state.pendingCompose).at(-1) : undefined;
+
   const isSpec = activeMission?.kind === 'spec';
   const capturedPlan = activeMission ? state.specPlans[activeMission.id] : undefined;
   const storedSpec = activeMission ? state.missionSpecs[activeMission.id] : undefined;
@@ -437,6 +443,13 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
           </div>
         ) : activeMission && restore?.status === 'loading' ? (
           <RestoringState count={restore.loadedCount} />
+        ) : startingCompose ? (
+          <div className="mx-auto min-w-0 max-w-2xl px-6 py-6">
+            <UserBubble event={startingCompose} />
+            <div className="mt-4">
+              <WorkingIndicator label="Starting chat" />
+            </div>
+          </div>
         ) : (
           <EmptyState folder={draftFolder} />
         )}

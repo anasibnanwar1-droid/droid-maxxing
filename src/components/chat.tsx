@@ -990,7 +990,11 @@ function BrowserReferenceChip({ reference }: { reference: BrowserTranscriptRefer
   );
 }
 
-function UserBubble({ event }: { event: TranscriptEvent }) {
+export function UserBubble({
+  event,
+}: {
+  event: Pick<TranscriptEvent, 'text' | 'skills' | 'files' | 'browserRefs' | 'steered'>;
+}) {
   const skills = event.skills ?? [];
   const files = event.files ?? [];
   const browserRefs = event.browserRefs ?? [];
