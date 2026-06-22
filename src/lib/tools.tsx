@@ -158,8 +158,12 @@ export function parseTruncatedTail(text: string): { body: string; truncatedChars
 }
 
 // Compact character count for the truncation note: 1252663 -> "1.3M", 8200 -> "8.2k".
+function compactMagnitude(n: number, divisor: number, suffix: string): string {
+  return `${(n / divisor).toFixed(1).replace(/\.0$/, '')}${suffix}`;
+}
+
 export function formatCharCount(n: number): string {
-  if (n >= 1_000_000) return `${+(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${+(n / 1_000).toFixed(1)}k`;
+  if (n >= 1_000_000) return compactMagnitude(n, 1_000_000, 'M');
+  if (n >= 1_000) return compactMagnitude(n, 1_000, 'k');
   return String(n);
 }
