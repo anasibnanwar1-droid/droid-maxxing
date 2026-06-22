@@ -5,6 +5,7 @@ import {
   baseDescriptor,
   checkoutBlockReason,
   diffModeLabel,
+  isWorktreeInUse,
   worktreeName,
   worktreeSwitchBlockReason,
 } from './git';
@@ -56,4 +57,20 @@ test('checkoutBlockReason prioritizes the live agent over a dirty tree', () => {
   assert.equal(checkoutBlockReason({ live: true, dirty: true }), 'live');
   assert.equal(checkoutBlockReason({ live: false, dirty: true }), 'dirty');
   assert.equal(checkoutBlockReason({ live: false, dirty: false }), null);
+});
+
+test('isWorktreeInUse matches the root and subdirectories, not sibling prefixes', () => {
+  const wt = '/repo/.worktrees/feature';
+  assert.equal(isWorktreeInUse(wt, [wt]), true);
+  assert.equal(isWorktreeInUse(wt, ['/repo/.worktrees/feature/src']), true);
+  // a sibling that merely shares the name prefix must not match
+  assert.equal(isWorktreeInUse(wt, ['/repo/.worktrees/feature-2']), false);
+  assert.equal(isWorktreeInUse(wt, []), false);
+  assert.equal(isWorktreeInUse('', [wt]), false);
+});
+
+test('isWorktreeInUse tolerates separator, trailing-slash, and case differences', () => {
+  assert.equal(isWorktreeInUse('/repo/.worktrees/feature/', ['/repo/.worktrees/feature']), true);
+  assert.equal(isWorktreeInUse('C:\\repo\\wt', ['C:/repo/wt/src']), true);
+  assert.equal(isWorktreeInUse('/Repo/WT', ['/repo/wt']), true);
 });
