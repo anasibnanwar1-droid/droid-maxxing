@@ -22,6 +22,8 @@ import {
   safeJson,
   stripAnsi,
   formatDuration,
+  formatCharCount,
+  parseTruncatedTail,
   isSubagentTool,
   subagentInfo,
   parseTodos,
@@ -1063,10 +1065,29 @@ const InlineSpecCard = memo(function InlineSpecCard({
   );
 });
 
+/* ── Quiet note shown where an over-long message was cut by the history cap ── */
+function TruncationNote({ chars }: { chars: number }) {
+  return (
+    <div className="mt-2 flex items-center gap-2.5 text-[11px] text-droid-text-muted/80">
+      <span className="h-px flex-1 bg-droid-border" />
+      <span className="shrink-0">{formatCharCount(chars)} more characters truncated</span>
+      <span className="h-px flex-1 bg-droid-border" />
+    </div>
+  );
+}
+
 /* ── Assistant message body: interleaves Markdown with <json-render> blocks ── */
 const MessageBody = memo(function MessageBody({ text }: { text: string }) {
-  if (!hasJsonRender(text)) return <Markdown>{text}</Markdown>;
-  const segments = splitJsonRender(text);
+  const { body, truncatedChars } = parseTruncatedTail(text);
+  const note = truncatedChars != null ? <TruncationNote chars={truncatedChars} /> : null;
+  if (!hasJsonRender(body))
+    return (
+      <>
+        <Markdown>{body}</Markdown>
+        {note}
+      </>
+    );
+  const segments = splitJsonRender(body);
   return (
     <>
       {segments.map((seg, i) =>
@@ -1076,6 +1097,7 @@ const MessageBody = memo(function MessageBody({ text }: { text: string }) {
           <Markdown key={i}>{seg.value}</Markdown>
         ) : null,
       )}
+      {note}
     </>
   );
 });
