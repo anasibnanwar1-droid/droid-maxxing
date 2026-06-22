@@ -8,6 +8,7 @@ import {
   correlateResults,
   groupTurns,
   isResultFor,
+  sameFeedEvents,
   MessageFeed,
   type FeedItem,
 } from './chat';
@@ -809,4 +810,29 @@ test('MessageFeed renders a truncated answer as a note, not raw sentinel text', 
   assert.ok(html.includes('Big answer body.'));
   assert.ok(html.includes('2k more characters truncated'));
   assert.equal(html.includes('[truncated'), false);
+});
+
+test('sameFeedEvents skips stable items and flags the streaming tail', () => {
+  const prior = userMsg('hi');
+  const tail = asst('Answer so far');
+  const feed1 = buildFeed([prior, tail]);
+  // Mirror the store's immutable tail growth: prior events keep their ref, only
+  // the last event becomes a new object with appended text.
+  const grown = { ...tail, text: 'Answer so far and then some more' };
+  const feed2 = buildFeed([prior, grown]);
+  assert.equal(sameFeedEvents(feed1[0], feed2[0]), true); // unchanged prior item
+  assert.equal(sameFeedEvents(feed1[1], feed2[1]), false); // growing tail item
+});
+
+test('sameFeedEvents compares grouped tool runs by underlying event refs', () => {
+  const a = grep();
+  const b = grep();
+  const g1 = buildFeed([a, b]).find((it) => it.type === 'tools');
+  const g2 = buildFeed([a, b]).find((it) => it.type === 'tools');
+  assert.ok(g1 && g2);
+  assert.equal(sameFeedEvents(g1!, g2!), true);
+  // A different second tool event breaks the run's identity.
+  const g3 = buildFeed([a, grep()]).find((it) => it.type === 'tools');
+  assert.ok(g3);
+  assert.equal(sameFeedEvents(g1!, g3!), false);
 });
