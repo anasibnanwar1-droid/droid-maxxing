@@ -1982,7 +1982,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const unsub = bridge.subscribe((ev) => {
-      console.log('[bridge]', ev.type, sanitizeForLog(ev));
+      // Verbose per-event logging runs on every streaming token and eagerly
+      // deep-clones + redacts the whole event, so keep it to dev builds only;
+      // production strips this branch entirely.
+      if (import.meta.env.DEV) console.log('[bridge]', ev.type, sanitizeForLog(ev));
       const action = adaptEvent(ev);
       if (action) dispatch(action);
     });
