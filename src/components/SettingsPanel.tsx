@@ -1180,7 +1180,10 @@ export function applyTheme(theme: ReturnType<typeof useStore>['state']['theme'])
   const root = document.documentElement;
   root.style.setProperty('--droid-bg', theme.bg);
   root.style.setProperty('--droid-surface', theme.surface);
-  root.style.setProperty('--droid-elevated', adjustColor(theme.surface, 6));
+  // Lift elevated surfaces (cards, input bar, active rows) clearly above the
+  // base so the neutral tonal hierarchy stays visible, especially in monochrome
+  // (white-accent) themes where elevation, not hue, carries the structure.
+  root.style.setProperty('--droid-elevated', adjustColor(theme.surface, 13));
   // Soften resting borders by blending toward the background so panel/section
   // separators read as gentle hairlines rather than hard lines. Dark themes need
   // a stronger blend: at low luminance the same edge reads as a harsh outline, so

@@ -21,6 +21,7 @@ export default {
           accent: v('--droid-accent'),
           green: v('--droid-green'),
           orange: v('--droid-orange'),
+          red: v('--droid-red'),
         },
       },
       fontFamily: {
