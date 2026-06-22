@@ -3,6 +3,7 @@ import { Check, ChevronDown, Columns2, ExternalLink, Loader2, Plus, Trash2 } fro
 import { Popover } from './Popover';
 import { useStore } from '../../hooks/useStore';
 import { createGitWorktree, isWorktreeInUse, removeGitWorktree, worktreeName } from '../../lib/git';
+import { activeSessionCwds } from '../../lib/missions';
 import { toast } from '../../lib/toast';
 import type { GitBranchList, GitEnvironment, GitWorktree } from '../../types/vcs';
 
@@ -38,10 +39,11 @@ export function WorktreeMenu({
 
   const current = worktrees.find((w) => w.isCurrent);
   const others = worktrees.filter((w) => !w.isCurrent && !w.bare);
-  const sessionCwds = [
-    ...Object.values(state.missions).map((m) => m.cwd),
-    state.draftChat?.cwd ?? '',
-  ];
+  const sessionCwds = activeSessionCwds({
+    missions: Object.values(state.missions),
+    activeMissionId: state.activeMissionId,
+    draftCwd: state.draftChat?.cwd,
+  });
 
   const openInNewChat = (path: string) => {
     dispatch({ type: 'ADD_WORKSPACE', cwd: path });

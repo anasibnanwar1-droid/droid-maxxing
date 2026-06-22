@@ -158,14 +158,30 @@ export function worktreeName(worktree: Pick<GitWorktree, 'path' | 'branch'>): st
   return segments[segments.length - 1] ?? 'worktree';
 }
 
-// A worktree is "in use" when an open chat or the current draft runs in it (its
-// cwd is the worktree root or a subdirectory). Removing such a worktree would
-// delete an active session's working directory.
+// Normalize a filesystem path for comparison: unify separators, collapse
+// duplicate/trailing slashes, and fold case. Case folding errs toward treating
+// paths as equal so the in-use guard never *under*-matches and exposes a remove
+// action for a directory a session is actually running in.
+function normalizePath(p: string): string {
+  return p
+    .replace(/\\/g, '/')
+    .replace(/\/{2,}/g, '/')
+    .replace(/\/+$/, '')
+    .toLowerCase();
+}
+
+// A worktree is "in use" when an active/live session runs in it (its cwd is the
+// worktree root or a subdirectory). Removing such a worktree would delete that
+// session's working directory out from under it.
 export function isWorktreeInUse(worktreePath: string, sessionCwds: Iterable<string>): boolean {
   if (!worktreePath) return false;
-  const prefix = worktreePath.endsWith('/') ? worktreePath : `${worktreePath}/`;
+  const root = normalizePath(worktreePath);
+  if (!root) return false;
+  const prefix = `${root}/`;
   for (const cwd of sessionCwds) {
-    if (cwd && (cwd === worktreePath || cwd.startsWith(prefix))) return true;
+    if (!cwd) continue;
+    const normalized = normalizePath(cwd);
+    if (normalized === root || normalized.startsWith(prefix)) return true;
   }
   return false;
 }

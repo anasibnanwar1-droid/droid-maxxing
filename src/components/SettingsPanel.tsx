@@ -25,6 +25,7 @@ import { useOnboarding } from '../hooks/useOnboarding';
 import { getAppVersion, type AppUpdateInfo } from '../lib/onboarding';
 import { refreshAppUpdate, startAppUpdate } from '../lib/appUpdate';
 import { getGitWorktrees, isWorktreeInUse, removeGitWorktree, worktreeName } from '../lib/git';
+import { activeSessionCwds } from '../lib/missions';
 import { workspaceName } from '../lib/workspaces';
 import { toast } from '../lib/toast';
 
@@ -1162,12 +1163,14 @@ function WorktreesSection() {
 
   const linked = repos.flatMap((r) => r.worktrees.filter((w) => !w.isMain));
 
-  // Worktrees a chat currently runs in must not be removable — deleting the
-  // session's cwd would break its subsequent agent and git operations.
-  const sessionCwds = [
-    ...Object.values(state.missions).map((m) => m.cwd),
-    state.draftChat?.cwd ?? '',
-  ];
+  // Worktrees an active/live chat runs in must not be removable — deleting the
+  // session's cwd would break its subsequent agent and git operations. Idle
+  // historical chats are excluded so their old worktrees can still be cleaned up.
+  const sessionCwds = activeSessionCwds({
+    missions: Object.values(state.missions),
+    activeMissionId: state.activeMissionId,
+    draftCwd: state.draftChat?.cwd,
+  });
 
   return (
     <div className="max-w-2xl mx-auto">
