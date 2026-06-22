@@ -9,7 +9,7 @@ import {
   __resolveColorForTest as resolveColor,
   __renderBudgetForTest as renderBudget,
   __MAX_NODES_FOR_TEST as MAX_NODES,
-  __statusMetaForTest as statusMeta,
+  __statusColorForTest as statusColor,
 } from './JsonRender';
 
 test('plain text yields a single markdown segment', () => {
@@ -65,7 +65,7 @@ test('resolveColor maps themed names and accepts safe literals', () => {
   assert.equal(resolveColor('green'), 'var(--droid-green)');
   assert.equal(resolveColor('#ff8800'), '#ff8800');
   assert.equal(resolveColor('rgb(10, 20, 30)'), 'rgb(10, 20, 30)');
-  assert.equal(resolveColor('red'), '#d0584e');
+  assert.equal(resolveColor('red'), 'var(--droid-red)');
   assert.equal(resolveColor('teal'), 'teal');
 });
 
@@ -91,14 +91,13 @@ test('render budget caps an exponential shared-child DAG', () => {
   assert.ok(count <= MAX_NODES, `expanded ${count} nodes, expected <= ${MAX_NODES}`);
 });
 
-test('statusMeta resolves real statuses and falls back for prototype keys', () => {
-  assert.ok(statusMeta('success').Icon, 'known status keeps its icon');
+test('statusColor resolves real statuses and falls back for prototype keys', () => {
+  assert.equal(statusColor('success'), 'var(--droid-green)');
+  assert.equal(statusColor('error'), 'var(--droid-red)');
   // A model-supplied prototype key must not resolve through Object.prototype to
-  // a meta without an Icon (which would crash React rendering <undefined />).
+  // a truthy value; it falls back to the neutral muted tone.
   for (const key of ['constructor', 'toString', 'hasOwnProperty', '__proto__']) {
-    const meta = statusMeta(key);
-    assert.ok(meta && meta.Icon, `${key} falls back to a meta with an icon`);
-    assert.equal(meta.color, statusMeta('info').color);
+    assert.equal(statusColor(key), 'var(--droid-text-muted)');
   }
 });
 
