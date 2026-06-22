@@ -281,18 +281,14 @@ export default function Sidebar() {
                   })}
 
                   {workspaces.length === 0 && (
-                    <div className="px-3 py-2 text-[12px] text-droid-text-muted">
-                      No workspaces yet.
-                    </div>
+                    <button
+                      onClick={pickAndChat}
+                      className="group w-full flex items-center gap-2.5 px-2 py-1.5 rounded-lg text-left text-droid-text-muted hover:text-droid-text hover:bg-droid-elevated/40 transition-colors"
+                    >
+                      <FolderPlus className="w-4 h-4 shrink-0" />
+                      <span className="text-[13.5px]">Open workspace</span>
+                    </button>
                   )}
-
-                  <button
-                    onClick={pickAndChat}
-                    className="group w-full flex items-center gap-2.5 px-2 py-1.5 rounded-lg text-left text-droid-text-muted hover:text-droid-text hover:bg-droid-elevated/40 transition-colors"
-                  >
-                    <FolderPlus className="w-4 h-4 shrink-0" />
-                    <span className="text-[13.5px]">Open Workspace</span>
-                  </button>
                 </div>
               )}
             </div>
@@ -316,13 +312,6 @@ export default function Sidebar() {
                   <span className="text-[11px] font-medium tracking-wide text-droid-text-muted">
                     Chats
                   </span>
-                </button>
-                <button
-                  onClick={() => startChat('')}
-                  title="New chat"
-                  className="p-0.5 rounded-md text-droid-text-muted hover:text-droid-text hover:bg-droid-elevated/60 transition-colors shrink-0"
-                >
-                  <Plus className="w-3.5 h-3.5" />
                 </button>
               </div>
               {open &&
