@@ -28,6 +28,15 @@ function assistant(text: string): string {
   });
 }
 
+function assistantAt(text: string, ts: number): string {
+  return JSON.stringify({
+    type: 'message',
+    id: `${text}-id`,
+    timestamp: new Date(ts).toISOString(),
+    message: { role: 'assistant', content: [{ type: 'text', text }] },
+  });
+}
+
 function compactionState(removedCount: number): string {
   clock += 1000;
   return JSON.stringify({
@@ -114,6 +123,37 @@ test('cursor pages older history across the chain with no gaps or duplicates', (
     'a2-1',
     'a2-2',
   ]);
+});
+
+test('replayed events carry a monotonically increasing seq across the chain', () => {
+  const chain = seedChain();
+  const { events } = loadMissionTranscriptWindow('m', chain, { limit: 100 });
+
+  assert.ok(
+    events.every((e) => typeof e.seq === 'number'),
+    'every replayed event must be stamped with a seq',
+  );
+  for (let i = 1; i < events.length; i++) {
+    assert.ok(events[i].seq! > events[i - 1].seq!, `seq must increase at index ${i}`);
+  }
+});
+
+test('equal-timestamp events keep chain order via seq, not wall-clock', () => {
+  // All three share one ts, so only seq disambiguates their order.
+  writeSession('eqts', [
+    assistantAt('first', 5000),
+    assistantAt('second', 5000),
+    assistantAt('third', 5000),
+  ]);
+  const { events } = loadMissionTranscriptWindow('m', ['eqts'], { limit: 100 });
+  const texts = events.filter((e) => e.kind === 'text');
+
+  assert.deepEqual(
+    texts.map((e) => e.text),
+    ['first', 'second', 'third'],
+  );
+  assert.equal(texts[0].ts, texts[2].ts);
+  assert.ok(texts[0].seq! < texts[1].seq! && texts[1].seq! < texts[2].seq!);
 });
 
 test('an oversized compacted segment still surfaces its divider (read from the head)', () => {

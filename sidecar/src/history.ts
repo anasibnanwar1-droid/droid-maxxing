@@ -125,6 +125,10 @@ const MAX_WORKER_EVENTS = 3_000;
 // How many orchestrator scrollback events to load per page (initial open and
 // each lazy older-page fetch). Bounds work for very long, multi-compaction chats.
 const DEFAULT_HISTORY_WINDOW = 400;
+// Per-segment span used to derive a global monotonic `seq` from a chain index +
+// in-segment position. Must exceed any single segment's windowed item count;
+// oversized files are tail-windowed at SESSION_*_BYTES, far below this.
+const SEQ_SEGMENT_STRIDE = 1_000_000;
 const MAX_SESSION_BYTES = 5_000_000;
 const SESSION_START_BYTES = 256_000;
 
@@ -639,6 +643,16 @@ function definedPatch(patch: Partial<MissionSummary>): Partial<MissionSummary> {
   ) as Partial<MissionSummary>;
 }
 
+// Order merged transcript events chronologically, tie-breaking by the
+// chain-derived `seq` so equal-`ts` events keep a deterministic order. Events
+// without a seq (live, or workers) sort after same-`ts` orchestrator events.
+function byChronology(a: TranscriptEvent, b: TranscriptEvent): number {
+  if (a.ts !== b.ts) return a.ts - b.ts;
+  const as = a.seq ?? Number.POSITIVE_INFINITY;
+  const bs = b.seq ?? Number.POSITIVE_INFINITY;
+  return as - bs;
+}
+
 export function hydrateHistoricalMission(
   missionId: string,
   opts: { cursor?: string; limit?: number } = {},
@@ -678,7 +692,7 @@ export function hydrateHistoricalMission(
       ? workerEvents.slice(workerEvents.length - MAX_WORKER_EVENTS)
       : workerEvents;
 
-  const transcripts = [...window.events, ...cappedWorkers].sort((a, b) => a.ts - b.ts);
+  const transcripts = [...window.events, ...cappedWorkers].sort(byChronology);
   return { progress, transcripts, olderCursor: window.olderCursor };
 }
 
@@ -821,7 +835,11 @@ export function loadMissionTranscriptWindow(
     let start = ci === startIdx ? Math.min(end, items.length) : items.length;
     while (start > 0 && picked.length < limit) {
       start--;
-      picked.push(items[start]);
+      // Chain-derived monotonic order: older segments (lower ci) and earlier
+      // positions sort first, independent of wall-clock ts. SEQ_SEGMENT_STRIDE
+      // exceeds any single segment's windowed item count, so the global order
+      // is preserved across pages without re-reading older segments.
+      picked.push({ ...items[start], seq: ci * SEQ_SEGMENT_STRIDE + start });
     }
     if (picked.length >= limit) {
       if (start > 0) olderCursor = `${ci}:${start}`;

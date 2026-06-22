@@ -27,6 +27,7 @@ import type {
 } from '../types/bridge';
 import { addWorkspaceCwd } from '../lib/workspaces';
 import { sanitizeForLog } from '../lib/sensitiveLogRedaction';
+import { composePrompt } from '../lib/composePrompt';
 
 export type AgentKind = 'orchestrator' | 'worker' | 'validator';
 export type LiveEnterBehavior = 'queue' | 'interrupt';
@@ -71,6 +72,15 @@ export interface ThemeConfig {
   contrast: number;
 }
 
+export type SessionRestoreStatus = 'loading' | 'paged' | 'loaded' | 'failed';
+
+export interface SessionRestore {
+  status: SessionRestoreStatus;
+  loadedCount: number;
+  hasMore: boolean;
+  error?: string;
+}
+
 export interface AppState {
   // Connection
   connection: 'idle' | 'connecting' | 'connected' | 'error';
@@ -93,6 +103,11 @@ export interface AppState {
   // Whether an older-history page is currently in flight (prevents duplicate
   // prefetches while the user keeps scrolling up).
   historyLoadingOlder: Record<string, boolean>;
+  // Explicit transcript-restore state per mission: whether the initial replay
+  // is loading, partially loaded (older pages remain), fully loaded, or failed.
+  // Lets the chat show an honest restoring/partial/retry surface instead of a
+  // blank or silently truncated transcript (#29).
+  sessionRestore: Record<string, SessionRestore>;
   // Whether a subagent's inner transcript is currently being fetched, keyed by
   // worker session id. A worker's events only stream after its card is opened,
   // so the view shows a loading state until the first event (or the opened ack)
@@ -236,7 +251,11 @@ type Action =
       workers?: WorkerHistoryLink[];
       mode?: 'replace' | 'prepend';
       olderCursor?: string;
+      loadedCount?: number;
+      hasMore?: boolean;
     }
+  | { type: 'SESSION_RESTORE_START'; missionId: string }
+  | { type: 'MISSION_HISTORY_FAILED'; missionId: string; message: string }
   | { type: 'MISSION_HISTORY_LOADING_OLDER'; missionId: string }
   | { type: 'AGENT_HISTORY_LOADING'; agentSessionId: string; loading: boolean }
   | { type: 'CLEAR_PERMISSION' }
@@ -667,6 +686,7 @@ export const initialState: AppState = {
   historyLoaded: {},
   historyCursor: {},
   historyLoadingOlder: {},
+  sessionRestore: {},
   agentHistoryLoading: {},
   pendingPermission: null,
   pendingQuestion: null,
@@ -765,6 +785,21 @@ function migrateBrowserStateByMission<T>(
 
 // Re-derive `browserOpen` from the per-session open set and the active session.
 // Applied after every reducer pass so the convenience flag never goes stale.
+// How close in time a live event and a restored page entry must be to count as
+// the same (persisted) event. A twin is logged within moments of the live emit,
+// while a coincidental same-text repeat is typically much further apart.
+const REPLAY_DEDUP_TOLERANCE_MS = 5_000;
+
+// An optimistic user echo stores the raw input, but history persists the
+// composed prompt (raw text plus skill/file context). Match against both so a
+// skill/file prompt is recognized as superseded instead of duplicating.
+function echoMatchesPersisted(e: TranscriptEvent, persisted: Set<string | undefined>): boolean {
+  if (!e.text) return false;
+  if (persisted.has(e.text)) return true;
+  const composed = composePrompt(e.text, e.skills ?? [], e.files ?? []);
+  return composed !== e.text && persisted.has(composed);
+}
+
 function syncBrowserOpen(state: AppState): AppState {
   const key = activeBrowserKey(state);
   const open = key ? Boolean(state.browserOpenKeys[key]) : false;
@@ -1261,29 +1296,185 @@ function baseReducer(state: AppState, action: Action): AppState {
         historyLoadingOlder: { ...state.historyLoadingOlder, [action.missionId]: true },
       };
 
+    case 'SESSION_RESTORE_START': {
+      const prev = state.sessionRestore[action.missionId];
+      return {
+        ...state,
+        sessionRestore: {
+          ...state.sessionRestore,
+          [action.missionId]: {
+            status: 'loading',
+            loadedCount: prev?.loadedCount ?? 0,
+            hasMore: prev?.hasMore ?? false,
+          },
+        },
+      };
+    }
+
+    case 'MISSION_HISTORY_FAILED': {
+      const prev = state.sessionRestore[action.missionId];
+      return {
+        ...state,
+        sessionRestore: {
+          ...state.sessionRestore,
+          [action.missionId]: {
+            status: 'failed',
+            loadedCount: prev?.loadedCount ?? 0,
+            hasMore: prev?.hasMore ?? false,
+            error: action.message,
+          },
+        },
+      };
+    }
+
     case 'MISSION_HISTORY': {
       const existing = state.transcripts[action.missionId] ?? [];
       // An older page prepends its events to the front of the existing scrollback
       // (deduping by id so a trimmed/overlapping boundary never doubles a message).
       if (action.mode === 'prepend') {
-        const have = new Set(existing.map((e) => e.id));
+        // Drop optimistic user echoes (seed-/local-) now superseded by the real
+        // persisted prompt arriving in this older page. They were kept above a
+        // partial page during the initial restore; without this they would
+        // duplicate and misorder the opening prompt once it pages in (their ids
+        // differ from the persisted prompt, so id-dedup alone misses them).
+        const olderUserText = new Set(
+          action.transcripts.filter((e) => e.author === 'user' && e.text).map((e) => e.text),
+        );
+        const olderLastTs =
+          action.transcripts.length > 0 ? action.transcripts[action.transcripts.length - 1].ts : 0;
+        const supersededEcho = (e: TranscriptEvent) =>
+          (e.id.startsWith('seed-') || e.id.startsWith('local-')) &&
+          e.author === 'user' &&
+          !!e.text &&
+          e.ts <= olderLastTs &&
+          echoMatchesPersisted(e, olderUserText);
+        const kept = existing.filter((e) => !supersededEcho(e));
+        const have = new Set(kept.map((e) => e.id));
         const older = action.transcripts.filter((e) => !have.has(e.id));
+        const changed = older.length > 0 || kept.length !== existing.length;
+        const merged = changed ? [...older, ...kept] : existing;
+        const hasMore = Boolean(action.olderCursor);
         return {
           ...state,
-          transcripts:
-            older.length > 0
-              ? { ...state.transcripts, [action.missionId]: [...older, ...existing] }
-              : state.transcripts,
+          transcripts: changed
+            ? { ...state.transcripts, [action.missionId]: merged }
+            : state.transcripts,
           historyCursor: { ...state.historyCursor, [action.missionId]: action.olderCursor },
           historyLoadingOlder: { ...state.historyLoadingOlder, [action.missionId]: false },
+          sessionRestore: {
+            ...state.sessionRestore,
+            [action.missionId]: {
+              status: hasMore ? 'paged' : 'loaded',
+              loadedCount: merged.length,
+              hasMore,
+            },
+          },
         };
       }
-      // Don't let an empty history snapshot wipe a locally-seeded transcript
-      // (e.g. a brand-new mission whose session isn't persisted to disk yet).
-      const transcripts =
-        action.transcripts.length === 0 && existing.length > 0
-          ? state.transcripts
-          : { ...state.transcripts, [action.missionId]: action.transcripts };
+      // No-clobber replace: reconcile the authoritative, correctly-ordered
+      // replay page with any live events already in state (a reconnect to a
+      // running mission can deliver live mission.transcript events first, and a
+      // brand-new mission carries a locally-seeded opening prompt).
+      //   - Shared ids: the page wins.
+      //   - Optimistic user echoes (seed-/local- ids) the page already contains
+      //     (matched by author + text within the page's time window) are dropped
+      //     so the opening prompt never double-renders once history arrives.
+      //     Echoes newer than the whole page (a prompt sent during restore) are
+      //     kept, as are echoes older than a PARTIAL page (paged restore): there
+      //     the matching text is a later message, not this echo, so dropping it
+      //     would lose the opening prompt that belongs above the page.
+      //   - Live events that duplicate a replayed one by content are dropped:
+      //     live ids are transient (nextId) and live ts is receipt-time, so a
+      //     reconnect-race event and its persisted twin share neither id nor ts
+      //     and would otherwise both render. They are matched by a content
+      //     signature (agentSessionId + toolUseId for tools, else
+      //     agentSessionId + author/role + kind + text) consumed once per page
+      //     occurrence so a genuinely repeated message is kept. Scoping by
+      //     agentSessionId stops one worker's output from masking another's.
+      //   - Remaining live-only events keep their place by timestamp relative to
+      //     the page: an un-persisted opening prompt stays above it, a just-sent
+      //     prompt (reconnect race) stays below it.
+      // The page's internal order (seq) is preserved by never re-sorting it.
+      const page = action.transcripts;
+      const pageIds = new Set(page.map((e) => e.id));
+      const pageUserText = new Set(
+        page.filter((e) => e.author === 'user' && e.text).map((e) => e.text),
+      );
+      const firstTs = page.length > 0 ? page[0].ts : 0;
+      const lastTs = page.length > 0 ? page[page.length - 1].ts : 0;
+      // A partial page (older history still pages in) does not contain anything
+      // older than firstTs, so an earlier echo must not be deduped against it.
+      // A complete page (no older cursor) spans the whole conversation, so the
+      // lower bound is relaxed to also catch a seed whose createdAt slightly
+      // predates the first persisted message.
+      const pageIsComplete = !action.olderCursor;
+      const supersededEcho = (e: TranscriptEvent) =>
+        (e.id.startsWith('seed-') || e.id.startsWith('local-')) &&
+        e.author === 'user' &&
+        !!e.text &&
+        e.ts <= lastTs &&
+        (pageIsComplete || e.ts >= firstTs) &&
+        echoMatchesPersisted(e, pageUserText);
+      // Live orchestrator events carry agentSessionId = appSessionId while the
+      // restored history canonicalizes it to 'orchestrator' (mirroring the
+      // sidecar). Normalize so a reconnect-race twin matches instead of both the
+      // live and persisted copy surviving and duplicating main-agent output.
+      const sessionKey = (e: TranscriptEvent) =>
+        e.role === 'orchestrator' && e.agentSessionId !== 'user'
+          ? 'orchestrator'
+          : e.agentSessionId;
+      const contentSig = (e: TranscriptEvent) =>
+        e.toolUseId
+          ? `tool:${sessionKey(e)}:${e.kind}:${e.toolUseId}`
+          : `${sessionKey(e)}:${e.author ?? e.role}:${e.kind}:${e.text ?? ''}`;
+      // Index page entries by content signature -> their timestamps so a live
+      // event is matched to the persisted twin nearest in time rather than to
+      // any same-text occurrence anywhere in restored history.
+      const pageSig = new Map<string, number[]>();
+      for (const e of page) {
+        const k = contentSig(e);
+        const at = pageSig.get(k);
+        if (at) at.push(e.ts);
+        else pageSig.set(k, [e.ts]);
+      }
+      const isReplayedDuplicate = (e: TranscriptEvent) => {
+        // Optimistic user echoes are governed solely by supersededEcho above; do
+        // not let content-dedup drop one the echo logic intentionally keeps.
+        if (e.id.startsWith('seed-') || e.id.startsWith('local-')) return false;
+        const at = pageSig.get(contentSig(e));
+        if (!at || at.length === 0) return false;
+        // A persisted twin is logged within moments of the live event; a page
+        // entry far from this event's time is a different occurrence (e.g. a
+        // repeated "ok"). Consume only the closest twin within tolerance so a
+        // brand-new live output that merely repeats old text is never dropped.
+        // Streamed text/thinking keep the first-chunk ts but advance endTs, while
+        // history timestamps near completion, so compare against the whole live
+        // [ts, endTs] span rather than just the start.
+        const lo = Math.min(e.ts, e.endTs ?? e.ts);
+        const hi = Math.max(e.ts, e.endTs ?? e.ts);
+        let bestIdx = -1;
+        let bestDiff = Infinity;
+        for (let i = 0; i < at.length; i++) {
+          const t = at[i];
+          const diff = t < lo ? lo - t : t > hi ? t - hi : 0;
+          if (diff < bestDiff) {
+            bestDiff = diff;
+            bestIdx = i;
+          }
+        }
+        if (bestIdx >= 0 && bestDiff <= REPLAY_DEDUP_TOLERANCE_MS) {
+          at.splice(bestIdx, 1);
+          return true;
+        }
+        return false;
+      };
+      const liveOnly = existing.filter(
+        (e) => !pageIds.has(e.id) && !supersededEcho(e) && !isReplayedDuplicate(e),
+      );
+      const before = liveOnly.filter((e) => e.ts < firstTs);
+      const after = liveOnly.filter((e) => e.ts >= firstTs);
+      const mergedTranscript = page.length > 0 ? [...before, ...page, ...after] : existing;
+      const transcripts = { ...state.transcripts, [action.missionId]: mergedTranscript };
       // Merge the exact spawn->worker mapping from history with any live workers
       // already in state (a live mission.worker may arrive before history). Live
       // entries win; history links add missing workers and backfill toolUseId.
@@ -1322,14 +1513,28 @@ function baseReducer(state: AppState, action: Action): AppState {
         if (changed)
           workers = { ...state.workers, [action.missionId]: Array.from(bySession.values()) };
       }
+      const hasMore = Boolean(action.olderCursor);
+      // An empty restore (e.g. a live mission with no persisted history yet)
+      // must not wipe progress already delivered by live events; only adopt the
+      // replayed progress when it actually carries entries.
+      const existingProgress = state.progress[action.missionId] ?? [];
+      const mergedProgress = action.progress.length > 0 ? action.progress : existingProgress;
       return {
         ...state,
-        progress: { ...state.progress, [action.missionId]: action.progress },
+        progress: { ...state.progress, [action.missionId]: mergedProgress },
         transcripts,
         workers,
         historyLoaded: { ...state.historyLoaded, [action.missionId]: true },
         historyCursor: { ...state.historyCursor, [action.missionId]: action.olderCursor },
         historyLoadingOlder: { ...state.historyLoadingOlder, [action.missionId]: false },
+        sessionRestore: {
+          ...state.sessionRestore,
+          [action.missionId]: {
+            status: hasMore ? 'paged' : 'loaded',
+            loadedCount: mergedTranscript.length,
+            hasMore,
+          },
+        },
       };
     }
 
@@ -1777,7 +1982,11 @@ function adaptEvent(ev: ServerEvent): Action | null {
         workers: ev.workers,
         mode: ev.mode,
         olderCursor: ev.olderCursor,
+        loadedCount: ev.loadedCount,
+        hasMore: ev.hasMore,
       };
+    case 'mission.history.error':
+      return { type: 'MISSION_HISTORY_FAILED', missionId: ev.missionId, message: ev.message };
     case 'models.list':
       return { type: 'MODELS_LIST', models: ev.models };
     case 'context.updated':
