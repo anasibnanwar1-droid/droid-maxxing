@@ -54,6 +54,24 @@ test('toSplitRows context after an insertion carries divergent old/new numbers',
   assert.notEqual(tail.left?.oldLine, tail.right?.newLine);
 });
 
+test('toSplitRows pairs a no-newline replacement across meta markers', () => {
+  const diff = [
+    '@@ -1 +1 @@',
+    '-old',
+    '\\ No newline at end of file',
+    '+new',
+    '\\ No newline at end of file',
+  ].join('\n');
+  const parsed = parseUnifiedDiff(diff);
+  const rows = toSplitRows(parsed.hunks[0].lines);
+  const paired = rows.find((r) => r.left?.type === 'del' && r.right?.type === 'add');
+  assert.ok(paired, 'the replacement should sit on a single paired row');
+  assert.equal(paired?.left?.text, 'old');
+  assert.equal(paired?.right?.text, 'new');
+  // the no-newline markers are preserved, not dropped
+  assert.ok(rows.some((r) => r.left?.type === 'meta'));
+});
+
 test('parseUnifiedDiff flags binary patches', () => {
   const parsed = parseUnifiedDiff('Binary files a/x.png and b/x.png differ');
   assert.equal(parsed.binary, true);

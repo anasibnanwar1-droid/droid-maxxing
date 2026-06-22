@@ -158,6 +158,18 @@ export function worktreeName(worktree: Pick<GitWorktree, 'path' | 'branch'>): st
   return segments[segments.length - 1] ?? 'worktree';
 }
 
+// A worktree is "in use" when an open chat or the current draft runs in it (its
+// cwd is the worktree root or a subdirectory). Removing such a worktree would
+// delete an active session's working directory.
+export function isWorktreeInUse(worktreePath: string, sessionCwds: Iterable<string>): boolean {
+  if (!worktreePath) return false;
+  const prefix = worktreePath.endsWith('/') ? worktreePath : `${worktreePath}/`;
+  for (const cwd of sessionCwds) {
+    if (cwd && (cwd === worktreePath || cwd.startsWith(prefix))) return true;
+  }
+  return false;
+}
+
 export function aheadBehindLabel(ahead = 0, behind = 0): string | null {
   const parts: string[] = [];
   if (ahead > 0) parts.push(`↑${ahead}`);
