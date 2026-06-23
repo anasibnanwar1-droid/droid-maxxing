@@ -386,7 +386,18 @@ async function diffStat(dir, options = {}) {
 }
 
 function validBranchName(name) {
-  return typeof name === 'string' && name.length > 0 && !/[\s~^:?*[\\]/.test(name);
+  if (typeof name !== 'string' || name.length === 0) return false;
+  if (name === '@' || name.endsWith('.') || name.includes('..') || name.includes('@{')) {
+    return false;
+  }
+  // Forbidden characters per `git check-ref-format`: whitespace and ~ ^ : ? * [ \.
+  // Forward slashes ARE allowed so hierarchical names like "feature/foo" work.
+  if (/[\s~^:?*[\\]/.test(name)) return false;
+  // Each slash-separated component must be non-empty (no leading/trailing slash
+  // or "//"), must not begin with ".", and must not end with ".lock".
+  return name
+    .split('/')
+    .every((seg) => seg.length > 0 && !seg.startsWith('.') && !seg.endsWith('.lock'));
 }
 
 async function createBranch(dir, { name, base, checkout = true } = {}) {
@@ -836,6 +847,11 @@ async function markTurnStart(dir) {
   if (!root) return { ok: false };
   let baseline = await tryRun(root, ['stash', 'create']);
   if (!baseline) baseline = await tryRun(root, ['rev-parse', 'HEAD']);
+  // Unborn repo (no commits yet): `stash create` and `rev-parse HEAD` both fail,
+  // so capture the current index as a tree object instead. Diffing against it
+  // (the empty tree when nothing is staged) makes the agent's first-turn work
+  // show up once it commits, rather than falling back to a no-op `HEAD` diff.
+  if (!baseline) baseline = await tryRun(root, ['write-tree']);
   // `git stash create` captures tracked changes but omits untracked files, while
   // the last-turn diff folds in every current untracked file. Snapshot each
   // preexisting untracked path with a size+mtime signature so files that predate
