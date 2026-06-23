@@ -978,6 +978,52 @@ test('changing the orchestrator model re-applies daemon compaction for the resol
   });
 });
 
+test('applying a queued orchestrator model change re-asserts daemon compaction for the resolved model', async () => {
+  const { manager, session } = orchestratorSwapHarness(10_000, 'droid-new');
+  (
+    manager as unknown as { getFactoryDefaults: () => Promise<Record<string, unknown>> }
+  ).getFactoryDefaults = async () => ({
+    modelId: 'default-model',
+    compactionTokenLimitPerModel: { 'default-model': 120_000 },
+  });
+  const internals = manager as unknown as {
+    pendingAgentSettings: Map<string, Record<string, { modelId?: string | null }>>;
+    applyPendingSessionSettings: (id: string) => Promise<boolean>;
+  };
+  // A reset-to-Default queued while the session was historical and applied here
+  // right before the next send (not via the live settings.agent.update path).
+  internals.pendingAgentSettings.set('app-swap', { orchestrator: { modelId: null } });
+
+  const ok = await internals.applyPendingSessionSettings('app-swap');
+  assert.equal(ok, true);
+  // The resolved default model's per-model trigger is re-asserted; without this
+  // the queued switch would silently drop to a no-limit daemon trigger.
+  assert.deepEqual(session.settingsUpdates.at(-1), {
+    compactionThresholdCheckEnabled: true,
+    compactionTokenLimit: 120_000,
+  });
+});
+
+test('a queued reasoning-only change does not re-assert daemon compaction', async () => {
+  const { manager, session } = orchestratorSwapHarness(10_000, 'droid-new');
+  (
+    manager as unknown as { getFactoryDefaults: () => Promise<Record<string, unknown>> }
+  ).getFactoryDefaults = async () => ({ modelId: 'default-model' });
+  const internals = manager as unknown as {
+    pendingAgentSettings: Map<string, Record<string, { reasoningEffort?: string }>>;
+    applyPendingSessionSettings: (id: string) => Promise<boolean>;
+  };
+  internals.pendingAgentSettings.set('app-swap', { orchestrator: { reasoningEffort: 'high' } });
+
+  await internals.applyPendingSessionSettings('app-swap');
+  // No model change means the model-derived trigger is unchanged, so the only
+  // settings push is the reasoning update, not a compaction re-assert.
+  assert.equal(
+    session.settingsUpdates.some((u) => 'compactionThresholdCheckEnabled' in u),
+    false,
+  );
+});
+
 test('manual compaction swap that never reloads re-delivers sends queued during compaction', async () => {
   const { manager, session, events, mission, internals } = orchestratorSwapHarness(
     10_000,
@@ -1024,6 +1070,52 @@ test('manual compaction swap that never reloads re-delivers sends queued during 
     events.some((e) => e.type === 'mission.error'),
     false,
   );
+});
+
+test('manual compaction that fails to reload still counts the compaction before dropping the mission', async () => {
+  const { manager, mission, internals } = orchestratorSwapHarness(10_000, 'droid-new');
+  internals.runtime = {
+    loadSession: async () => {
+      throw new Error('permanent load failure');
+    },
+  };
+  (manager as unknown as { closeMission: (id: string) => Promise<void> }).closeMission = async (
+    id: string,
+  ) => {
+    internals.missions.delete(id);
+  };
+  await manager.handle({ type: 'mission.compact', missionId: 'app-swap' });
+  // Adoption never succeeds, so the live mission is dropped, but the compaction
+  // still happened: persist the new backing id AND bump the count so a later
+  // resume keeps the right context-meter generation instead of a stale one.
+  assert.equal(mission.summary.sessionId, 'droid-new');
+  assert.equal(mission.summary.compactionCount, 1);
+});
+
+test('compacting a historical session bumps the persisted compaction count', async () => {
+  const synced: MissionSummary[] = [];
+  const manager = new MissionManager(() => {});
+  const internals = manager as unknown as {
+    history: { syncSummaries: (s: MissionSummary[]) => void };
+    resolveSummary: (id: string) => MissionSummary | undefined;
+    withSession: <T>(
+      id: string,
+      fn: (s: { compactSession: () => Promise<unknown> }) => Promise<T>,
+    ) => Promise<T>;
+    compactHistoricalSession: (id: string, instructions?: string) => Promise<void>;
+  };
+  const historical = { ...testSummary('app-hist', 'hist-old'), compactionCount: 2 };
+  internals.history = { syncSummaries: (s: MissionSummary[]) => synced.push(...s) } as never;
+  internals.resolveSummary = () => historical;
+  internals.withSession = async (_id, fn) =>
+    fn({ compactSession: async () => ({ newSessionId: 'hist-new', removedCount: 5 }) });
+
+  await internals.compactHistoricalSession('hist-old');
+
+  const updated = synced.find((s) => s.sessionId === 'hist-new');
+  // The minted id is persisted with an incremented count so the monotonic
+  // MAX(...) upsert can't leave a compacted historical conversation undercounted.
+  assert.equal(updated?.compactionCount, 3);
 });
 
 // ── #30/#17: opening a worker always settles its loading state ──

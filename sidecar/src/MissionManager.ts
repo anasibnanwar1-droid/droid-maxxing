@@ -765,18 +765,38 @@ export class MissionManager {
     if (!mission || !pending) return true;
     try {
       let patch: Partial<MissionSummary> = {};
+      let orchestratorModelChanged = false;
+      let orchestratorModelId: string | undefined;
       for (const [agent, settings] of Object.entries(pending) as [
         ConfigurableAgent,
         AgentSettingPatch,
       ][]) {
-        await this.applyAgentSessionSettings(
-          mission,
-          agent,
-          await this.runtimeAgentSettings(mission, agent, settings),
-        );
+        const resolved = await this.runtimeAgentSettings(mission, agent, settings);
+        await this.applyAgentSessionSettings(mission, agent, resolved);
+        if (agent === 'orchestrator' && settings.modelId !== undefined) {
+          orchestratorModelChanged = true;
+          orchestratorModelId = resolved.modelId ?? undefined;
+        }
         patch = { ...patch, ...this.summaryPatchForAgent(agent, settings) };
       }
       this.patch(appSessionId, patch);
+      if (orchestratorModelChanged) {
+        // Applying a queued orchestrator model switch (e.g. a resumed session's
+        // reset-to-Default) right before send changes the model-derived
+        // auto-compaction trigger, so re-assert the daemon settings for the
+        // applied model. Using the resolved model id keeps a reset-to-Default
+        // from dropping the real default model's per-model limit and
+        // context-window clamp (loadSession-style settings are not re-applied).
+        await this.enableDaemonCompaction(
+          mission.session,
+          daemonCompactionSettings(
+            orchestratorModelId,
+            {},
+            await this.getFactoryDefaults(),
+            this.maxContextTokensForModel(orchestratorModelId),
+          ),
+        );
+      }
       return true;
     } catch (err) {
       this.emitError({
@@ -1956,6 +1976,11 @@ export class MissionManager {
         ...(mission.summary.compactedFromSessionIds ?? []),
         mission.summary.sessionId,
       ]),
+      // The compaction succeeded even though adoption failed, so bump the count
+      // here: closeMission drops the live mission below, which makes the caller
+      // skip its post-swap increment and would otherwise resume with a stale
+      // generation key.
+      compactionCount: (mission.summary.compactionCount ?? 0) + 1,
       tokensIn: carryover.tokensIn,
       tokensOut: carryover.tokensOut,
       contextTokens: 0,
@@ -1998,6 +2023,10 @@ export class MissionManager {
             ...(historical.compactedFromSessionIds ?? []),
             oldDroidSessionId,
           ]),
+          // Bump the count like the live path: syncSummaries keeps MAX(stored,
+          // incoming), so leaving it unchanged would let the monotonic upsert
+          // permanently undercount a compacted historical conversation.
+          compactionCount: (historical.compactionCount ?? 0) + 1,
           updatedAt: Date.now(),
         };
         this.history.syncSummaries([updated]);
