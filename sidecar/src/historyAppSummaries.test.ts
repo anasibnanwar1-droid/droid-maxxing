@@ -159,3 +159,17 @@ test('loadHistoricalSessions returns every session when no limit is requested', 
 
   assert.equal(rows.filter((row) => row.summary.cwd === cwd).length, 7);
 });
+
+test('syncSummaries persists the compaction count across reload', () => {
+  const index = new HistoryIndex();
+  const compacted = summary('compaction-count-session', '');
+  compacted.compactionCount = 3;
+  index.syncSummaries([compacted, summary('never-compacted-session', '')]);
+  const patches = index.summaryPatches();
+  index.close();
+
+  // A compacted session keeps its count; an untouched one reports no count
+  // (treated as zero) rather than a forced 0 that would clobber live state.
+  assert.equal(patches.get('compaction-count-session')?.compactionCount, 3);
+  assert.equal(patches.get('never-compacted-session')?.compactionCount, undefined);
+});

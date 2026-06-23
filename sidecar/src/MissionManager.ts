@@ -657,6 +657,21 @@ export class MissionManager {
             });
         }
         if (mission && missionId && cmd.agent === 'orchestrator') {
+          // A model switch changes the model-derived auto-compaction trigger, so
+          // re-assert the daemon settings for the new model (loadSession-style
+          // settings are not re-applied automatically).
+          if (cmd.modelId !== undefined) {
+            const nextModelId = mission.summary.modelId;
+            await this.enableDaemonCompaction(
+              mission.session,
+              daemonCompactionSettings(
+                nextModelId,
+                {},
+                await this.getFactoryDefaults(),
+                this.maxContextTokensForModel(nextModelId),
+              ),
+            );
+          }
           await this.refreshContext(missionId, mission.session);
         }
       }
@@ -897,18 +912,25 @@ export class MissionManager {
       // The SDK does not persist compaction settings across loadSession, so
       // re-assert daemon-owned auto-compaction on resume. Honor a limit the
       // resumed session exposes, else fall back to current app defaults.
+      const resumeModelWindow = this.maxContextTokensForModel(summary.modelId);
       await this.enableDaemonCompaction(
         session,
-        daemonCompactionSettings(summary.modelId, {
-          compactionTokenLimit: resumedCompactionTokenLimit(
-            summary.modelId,
-            {
-              compactionTokenLimit: init.settings?.compactionTokenLimit,
-              compactionTokenLimitPerModel: init.settings?.compactionTokenLimitPerModel,
-            },
-            defaults,
-          ),
-        }),
+        daemonCompactionSettings(
+          summary.modelId,
+          {
+            compactionTokenLimit: resumedCompactionTokenLimit(
+              summary.modelId,
+              {
+                compactionTokenLimit: init.settings?.compactionTokenLimit,
+                compactionTokenLimitPerModel: init.settings?.compactionTokenLimitPerModel,
+              },
+              defaults,
+              resumeModelWindow,
+            ),
+          },
+          defaults,
+          resumeModelWindow,
+        ),
       );
       // Seed the spawn->worker links persisted for this mission so historical
       // subagents are recognized (and thus openable/steerable) after a resume,
@@ -1180,7 +1202,12 @@ export class MissionManager {
       const compactionModel = cmd.compactionModel ?? defaults.compactionModel ?? 'current-model';
       // Optional auto-compaction trigger hint; the daemon's threshold check is
       // enabled unconditionally at init (see createInitializeSessionParams).
-      const compactionTokenLimit = compactionTokenLimitForModel(orchestratorModelId, cmd, defaults);
+      const compactionTokenLimit = compactionTokenLimitForModel(
+        orchestratorModelId,
+        cmd,
+        defaults,
+        this.maxContextTokensForModel(orchestratorModelId),
+      );
       const { workerModelId, workerReasoningEffort, validatorModelId, validatorReasoningEffort } =
         createMissionAgentDefaultsForMode(mode, cmd, defaults);
       const mcp = await this.startLocalMcpServers(ref);
@@ -1873,7 +1900,12 @@ export class MissionManager {
     );
     await this.enableDaemonCompaction(
       mission.session,
-      daemonCompactionSettings(mission.summary.modelId, {}, await this.getFactoryDefaults()),
+      daemonCompactionSettings(
+        mission.summary.modelId,
+        {},
+        await this.getFactoryDefaults(),
+        this.maxContextTokensForModel(mission.summary.modelId),
+      ),
     );
     // The replacement session starts with default tool settings, so the cached
     // design-tool policy no longer reflects reality. Clear it so the next turn
@@ -2215,7 +2247,12 @@ export class MissionManager {
       // place just like the orchestrator.
       await this.enableDaemonCompaction(
         session,
-        daemonCompactionSettings(workerModelId, {}, defaults),
+        daemonCompactionSettings(
+          workerModelId,
+          {},
+          defaults,
+          this.maxContextTokensForModel(workerModelId),
+        ),
       );
       agent.unsubscribe = session.onNotification((note: Record<string, unknown>) => {
         const compacted = readSessionCompacted(note);

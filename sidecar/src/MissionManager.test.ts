@@ -202,6 +202,46 @@ test('daemon compaction settings omit the token limit when settings clear it', (
   );
 });
 
+test('compaction limit is capped to the model context window', () => {
+  // A trigger above the window can never fire before the window fills, so it is
+  // clamped down to the window.
+  assert.equal(
+    compactionTokenLimitForModel('model-a', { compactionTokenLimit: 500_000 }, {}, 190_000),
+    190_000,
+  );
+  // A per-model override above the window is clamped too.
+  assert.equal(
+    compactionTokenLimitForModel(
+      'model-a',
+      { compactionTokenLimitPerModel: { 'model-a': 900_000 } },
+      {},
+      190_000,
+    ),
+    190_000,
+  );
+  // A limit at or below the window is left untouched.
+  assert.equal(
+    compactionTokenLimitForModel('model-a', { compactionTokenLimit: 120_000 }, {}, 190_000),
+    120_000,
+  );
+});
+
+test('daemon and resume settings clamp the token limit to the model window', () => {
+  assert.deepEqual(
+    daemonCompactionSettings('model-a', { compactionTokenLimit: 500_000 }, {}, 190_000),
+    { compactionThresholdCheckEnabled: true, compactionTokenLimit: 190_000 },
+  );
+  assert.equal(
+    resumedCompactionTokenLimit(
+      'model-a',
+      { compactionTokenLimit: 500_000, compactionTokenLimitPerModel: undefined },
+      {},
+      190_000,
+    ),
+    190_000,
+  );
+});
+
 test('resume threshold honors an init-exposed compaction limit ahead of current defaults', () => {
   // When the resumed SDK init settings expose a compactionTokenLimit, it wins
   // over the current Factory defaults.

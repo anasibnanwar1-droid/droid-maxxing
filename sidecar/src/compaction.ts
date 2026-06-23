@@ -30,35 +30,47 @@ export function normalizeCompactionTokenLimit(value: unknown): number | undefine
   return Math.trunc(value);
 }
 
+// A trigger above the model's context window can never fire before the window
+// fills, so cap it to the window when the window is known.
+function clampToWindow(limit: number | undefined, modelWindow?: number): number | undefined {
+  if (limit === undefined) return undefined;
+  return modelWindow && modelWindow > 0 ? Math.min(limit, modelWindow) : limit;
+}
+
 // Resolve the user's optional auto-compaction trigger for a model: a per-model
 // override wins over the global limit, with the same precedence applied to app
-// defaults. Undefined means "let the daemon use its own model-aware default".
+// defaults, capped to the model context window. Undefined means "let the daemon
+// use its own model-aware default".
 export function compactionTokenLimitForModel(
   modelId: string | undefined,
   settings: CompactionTokenLimitPatch,
   defaults: CompactionDefaults = {},
+  modelWindow?: number,
 ): number | undefined {
   const perModel = settings.compactionTokenLimitPerModel ?? defaults.compactionTokenLimitPerModel;
   const modelLimit = modelId ? normalizeCompactionTokenLimit(perModel?.[modelId]) : undefined;
-  if (modelLimit !== undefined) return modelLimit;
+  if (modelLimit !== undefined) return clampToWindow(modelLimit, modelWindow);
 
   const globalLimit =
     settings.compactionTokenLimit !== undefined
       ? settings.compactionTokenLimit
       : defaults.compactionTokenLimit;
-  return globalLimit === null ? undefined : normalizeCompactionTokenLimit(globalLimit);
+  return globalLimit === null
+    ? undefined
+    : clampToWindow(normalizeCompactionTokenLimit(globalLimit), modelWindow);
 }
 
 // Resume precedence: honor the limit the resumed session itself exposes before
 // falling back to current app defaults, so a default per-model limit can't
-// override a session's own saved global limit.
+// override a session's own saved global limit. Capped to the model window.
 export function resumedCompactionTokenLimit(
   modelId: string | undefined,
   exposed: CompactionTokenLimitPatch,
   defaults: CompactionDefaults = {},
+  modelWindow?: number,
 ): number | undefined {
-  const own = compactionTokenLimitForModel(modelId, exposed);
-  return own ?? compactionTokenLimitForModel(modelId, {}, defaults);
+  const own = compactionTokenLimitForModel(modelId, exposed, {}, modelWindow);
+  return own ?? compactionTokenLimitForModel(modelId, {}, defaults, modelWindow);
 }
 
 // Settings handed to every session (orchestrator, chat, worker, validator,
@@ -75,8 +87,14 @@ export function daemonCompactionSettings(
   modelId: string | undefined,
   settings: CompactionTokenLimitPatch,
   defaults: CompactionDefaults = {},
+  modelWindow?: number,
 ): DaemonCompactionSettings {
-  const compactionTokenLimit = compactionTokenLimitForModel(modelId, settings, defaults);
+  const compactionTokenLimit = compactionTokenLimitForModel(
+    modelId,
+    settings,
+    defaults,
+    modelWindow,
+  );
   return compactionTokenLimit !== undefined
     ? { compactionThresholdCheckEnabled: true, compactionTokenLimit }
     : { compactionThresholdCheckEnabled: true };

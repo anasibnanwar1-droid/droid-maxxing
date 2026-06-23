@@ -133,18 +133,28 @@ export default function ContextMeter({
           updatedAt: mission.contextUpdatedAt,
         }
       : undefined);
-  const modelWindow =
+  // When a worker is selected its stats flow in here, but `mission` is still the
+  // orchestrator summary; a worker may run a different model, so derive the
+  // window/marker/generation from the session actually shown rather than the
+  // orchestrator's model.
+  const isOrchestratorView = !sessionKey || sessionKey === mission.id;
+  const catalogWindow =
     mission.maxContextTokens && mission.maxContextTokens > 0 ? mission.maxContextTokens : undefined;
-  const statLimit = measured?.limit && measured.limit > 0 ? measured.limit : modelWindow;
-
+  const statLimit = measured?.limit && measured.limit > 0 ? measured.limit : undefined;
   // Measure usage against the real model context window (the standard
-  // denominator). The daemon auto-compacts before the window fills; surface that
-  // trigger as a separate "Compacts at" marker (per-model override -> global
-  // default, capped to the window) rather than as the denominator.
-  const compactionLimit =
+  // denominator). The orchestrator catalog window is known before the first
+  // stats arrive; a worker reports its own window via stats.limit.
+  const modelWindow = isOrchestratorView ? (catalogWindow ?? statLimit) : statLimit;
+
+  // The daemon auto-compacts before the window fills; surface that trigger as a
+  // separate "Compacts at" marker (per-model override -> global default, capped
+  // to the window). It uses the orchestrator's configured model, so it is only
+  // meaningful for the orchestrator's own session.
+  const orchestratorCompactionLimit =
     mission.modelId && state.compactionTokenLimitPerModel[mission.modelId] !== undefined
       ? state.compactionTokenLimitPerModel[mission.modelId]
       : state.compactionTokenLimit;
+  const compactionLimit = isOrchestratorView ? orchestratorCompactionLimit : undefined;
   const effectiveCompaction =
     compactionLimit && compactionLimit > 0
       ? modelWindow
@@ -157,8 +167,10 @@ export default function ContextMeter({
   const isEstimating = (accuracy ?? 'estimated') !== 'exact';
   // Compaction count is the generation: the daemon compacts in place (same
   // session id), so a bump is the only signal that context dropped. It resets
-  // the stabilized usage floor to the lower post-compaction reading.
-  const generation = mission.compactionCount ?? 0;
+  // the stabilized usage floor to the lower post-compaction reading. It is
+  // tracked for the orchestrator only; a worker uses a neutral generation so an
+  // orchestrator compaction never resets the worker meter.
+  const generation = isOrchestratorView ? (mission.compactionCount ?? 0) : 0;
   const used = useStableUsed(sessionKey ?? mission.id, measured?.used, !isEstimating, generation);
   const remaining =
     used !== undefined && max !== undefined ? Math.max(0, max - used) : measured?.remaining;
