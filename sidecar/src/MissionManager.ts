@@ -638,11 +638,16 @@ export class MissionManager {
       }
       if (cmd.missionId) this.rememberPendingAgentSettings(cmd);
       const missionId = mission?.summary.id ?? cmd.missionId;
+      // The model runtimeAgentSettings actually applies to the session (a reset
+      // to Default resolves to the real default model); reused below to keep the
+      // daemon auto-compaction trigger aligned with the live model.
+      let appliedModelId: string | undefined;
       if (mission) {
         const settings = await this.runtimeAgentSettings(mission, cmd.agent, {
           modelId: cmd.modelId,
           reasoningEffort: cmd.reasoningEffort,
         });
+        appliedModelId = settings.modelId ?? undefined;
         await this.applyAgentSessionSettings(mission, cmd.agent, settings);
       }
       if (cmd.missionId) {
@@ -658,17 +663,18 @@ export class MissionManager {
         }
         if (mission && missionId && cmd.agent === 'orchestrator') {
           // A model switch changes the model-derived auto-compaction trigger, so
-          // re-assert the daemon settings for the new model (loadSession-style
-          // settings are not re-applied automatically).
+          // re-assert the daemon settings for the applied model (loadSession-style
+          // settings are not re-applied automatically). Using the resolved
+          // appliedModelId keeps a reset-to-Default from dropping the real
+          // model's per-model limit and context-window clamp.
           if (cmd.modelId !== undefined) {
-            const nextModelId = mission.summary.modelId;
             await this.enableDaemonCompaction(
               mission.session,
               daemonCompactionSettings(
-                nextModelId,
+                appliedModelId,
                 {},
                 await this.getFactoryDefaults(),
-                this.maxContextTokensForModel(nextModelId),
+                this.maxContextTokensForModel(appliedModelId),
               ),
             );
           }
@@ -905,6 +911,9 @@ export class MissionManager {
         contextAccuracy: historical?.contextAccuracy,
         contextUpdatedAt: historical?.contextUpdatedAt,
         maxContextTokens: historical?.maxContextTokens ?? this.maxContextTokensForModel(modelId),
+        // Preserve the persisted compaction count so resuming a compacted
+        // conversation keeps the StatusBar/ContextMeter generation intact.
+        compactionCount: historical?.compactionCount,
         createdAt: historical?.createdAt ?? now,
         updatedAt: now,
       });
@@ -913,22 +922,24 @@ export class MissionManager {
       // re-assert daemon-owned auto-compaction on resume. Honor a limit the
       // resumed session exposes, else fall back to current app defaults.
       const resumeModelWindow = this.maxContextTokensForModel(summary.modelId);
+      // resumedCompactionTokenLimit already resolves the effective limit (the
+      // resumed session's exposed value before current defaults), so pass empty
+      // defaults here to keep a current per-model default from overriding it.
+      const resumedLimit = resumedCompactionTokenLimit(
+        summary.modelId,
+        {
+          compactionTokenLimit: init.settings?.compactionTokenLimit,
+          compactionTokenLimitPerModel: init.settings?.compactionTokenLimitPerModel,
+        },
+        defaults,
+        resumeModelWindow,
+      );
       await this.enableDaemonCompaction(
         session,
         daemonCompactionSettings(
           summary.modelId,
-          {
-            compactionTokenLimit: resumedCompactionTokenLimit(
-              summary.modelId,
-              {
-                compactionTokenLimit: init.settings?.compactionTokenLimit,
-                compactionTokenLimitPerModel: init.settings?.compactionTokenLimitPerModel,
-              },
-              defaults,
-              resumeModelWindow,
-            ),
-          },
-          defaults,
+          { compactionTokenLimit: resumedLimit },
+          {},
           resumeModelWindow,
         ),
       );

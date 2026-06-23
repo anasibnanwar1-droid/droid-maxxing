@@ -242,6 +242,28 @@ test('daemon and resume settings clamp the token limit to the model window', () 
   );
 });
 
+test('daemon settings keep an already-resolved limit when defaults are not reapplied', () => {
+  // The resume path resolves the effective limit via resumedCompactionTokenLimit
+  // first, then passes empty defaults so a current per-model default cannot
+  // override it.
+  assert.deepEqual(
+    daemonCompactionSettings('model-a', { compactionTokenLimit: 120_000 }, {}, 190_000),
+    { compactionThresholdCheckEnabled: true, compactionTokenLimit: 120_000 },
+  );
+  // Re-supplying defaults with a per-model entry would override the resolved
+  // value, which is exactly the regression the resume call avoids by passing {}.
+  assert.deepEqual(
+    daemonCompactionSettings(
+      'model-a',
+      { compactionTokenLimit: 120_000 },
+      {
+        compactionTokenLimitPerModel: { 'model-a': 200_000 },
+      },
+    ),
+    { compactionThresholdCheckEnabled: true, compactionTokenLimit: 200_000 },
+  );
+});
+
 test('resume threshold honors an init-exposed compaction limit ahead of current defaults', () => {
   // When the resumed SDK init settings expose a compactionTokenLimit, it wins
   // over the current Factory defaults.
@@ -919,6 +941,41 @@ test('manual compaction adopts the daemon-minted session id and counts the compa
     events.some((e) => e.type === 'mission.error'),
     false,
   );
+});
+
+test('changing the orchestrator model re-applies daemon compaction for the resolved model', async () => {
+  const { manager, session } = orchestratorSwapHarness(10_000, 'droid-new');
+  (
+    manager as unknown as { getFactoryDefaults: () => Promise<Record<string, unknown>> }
+  ).getFactoryDefaults = async () => ({
+    modelId: 'default-model',
+    compactionTokenLimitPerModel: { 'model-x': 150_000, 'default-model': 120_000 },
+  });
+
+  // Switching to a concrete model re-asserts that model's per-model trigger.
+  await manager.handle({
+    type: 'settings.agent.update',
+    agent: 'orchestrator',
+    missionId: 'app-swap',
+    modelId: 'model-x',
+  });
+  assert.deepEqual(session.settingsUpdates.at(-1), {
+    compactionThresholdCheckEnabled: true,
+    compactionTokenLimit: 150_000,
+  });
+
+  // Resetting to Default clears summary.modelId; the daemon trigger must follow
+  // the resolved default model's per-model limit, not drop to a no-limit trigger.
+  await manager.handle({
+    type: 'settings.agent.update',
+    agent: 'orchestrator',
+    missionId: 'app-swap',
+    modelId: null,
+  });
+  assert.deepEqual(session.settingsUpdates.at(-1), {
+    compactionThresholdCheckEnabled: true,
+    compactionTokenLimit: 120_000,
+  });
 });
 
 test('manual compaction swap that never reloads re-delivers sends queued during compaction', async () => {

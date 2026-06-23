@@ -359,6 +359,7 @@ export class HistoryIndex {
     // CREATE TABLE IF NOT EXISTS does not add columns to databases created by an
     // earlier schema, so add newer columns defensively for existing indexes.
     this.ensureColumn('app_sessions', 'compaction_count', 'INTEGER NOT NULL DEFAULT 0');
+    this.backfillCompactionCount();
   }
 
   private ensureColumn(table: string, column: string, definition: string): void {
@@ -366,6 +367,27 @@ export class HistoryIndex {
       this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
     } catch {
       // The column already exists on databases created with the current schema.
+    }
+  }
+
+  // Before the in-place compaction counter existed, each compaction minted a new
+  // backing session id appended to previous_droid_session_ids. Seed legacy rows
+  // that predate the counter (still at 0 but with prior session ids) from that
+  // history so previously compacted conversations keep their displayed count.
+  // Guarded so it only touches those rows and is a no-op on later startups.
+  private backfillCompactionCount(): void {
+    const rows = this.db
+      .prepare(
+        "SELECT app_session_id, previous_droid_session_ids FROM app_sessions WHERE compaction_count = 0 AND previous_droid_session_ids != '[]'",
+      )
+      .all() as Record<string, unknown>[];
+    const update = this.db.prepare(
+      'UPDATE app_sessions SET compaction_count = ? WHERE app_session_id = ?',
+    );
+    for (const row of rows) {
+      const count = jsonStringArray(row.previous_droid_session_ids).length;
+      const id = stringValue(row.app_session_id);
+      if (count > 0 && id) update.run(count, id);
     }
   }
 
@@ -421,7 +443,7 @@ export class HistoryIndex {
         context_accuracy = excluded.context_accuracy,
         context_updated_at = excluded.context_updated_at,
         max_context_tokens = excluded.max_context_tokens,
-        compaction_count = excluded.compaction_count
+        compaction_count = MAX(compaction_count, excluded.compaction_count)
     `);
     for (const summary of summaries) {
       stmt.run(
@@ -448,6 +470,9 @@ export class HistoryIndex {
         sqlValue(summary.contextAccuracy),
         sqlValue(summary.contextUpdatedAt),
         sqlValue(summary.maxContextTokens),
+        // The count only ever grows; the ON CONFLICT clause keeps the larger of
+        // the stored and incoming values so a summary rebuilt without the count
+        // (e.g. a partial sync) can't reset a persisted count back to zero.
         summary.compactionCount ?? 0,
       );
     }

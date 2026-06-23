@@ -173,3 +173,32 @@ test('syncSummaries persists the compaction count across reload', () => {
   assert.equal(patches.get('compaction-count-session')?.compactionCount, 3);
   assert.equal(patches.get('never-compacted-session')?.compactionCount, undefined);
 });
+
+test('syncSummaries does not reset a stored compaction count to zero', () => {
+  const index = new HistoryIndex();
+  index.syncSummaries([{ ...summary('counted-session', ''), compactionCount: 5 }]);
+  // A later summary rebuilt without the count (e.g. a partial resume sync) must
+  // not erase the persisted value.
+  index.syncSummaries([summary('counted-session', '')]);
+  const patches = index.summaryPatches();
+  index.close();
+
+  assert.equal(patches.get('counted-session')?.compactionCount, 5);
+});
+
+test('migration backfills a legacy compaction count from previous session ids', () => {
+  // Persisted before the in-place counter existed: prior (compacted-away)
+  // session ids but no recorded count.
+  const first = new HistoryIndex();
+  first.syncSummaries([
+    { ...summary('legacy-compacted', ''), compactedFromSessionIds: ['old-1', 'old-2'] },
+  ]);
+  first.close();
+
+  // Reopening runs the migration backfill, seeding the count from the id history.
+  const reopened = new HistoryIndex();
+  const patches = reopened.summaryPatches();
+  reopened.close();
+
+  assert.equal(patches.get('legacy-compacted')?.compactionCount, 2);
+});
