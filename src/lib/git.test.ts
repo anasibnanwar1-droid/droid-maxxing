@@ -10,10 +10,13 @@ import {
   worktreeSwitchBlockReason,
 } from './git';
 
-test('diffModeLabel names each mode, using the default branch for the branch mode', () => {
+test('diffModeLabel shows the effective base ref for the branch mode', () => {
   assert.equal(diffModeLabel('worktree'), 'Worktree');
   assert.equal(diffModeLabel('uncommitted'), 'Uncommitted');
-  assert.equal(diffModeLabel('branch', 'develop'), 'Branch vs origin/develop');
+  // The caller passes the full base ref, so a stored develop base or a
+  // non-origin primary remote is reflected verbatim instead of forced to origin.
+  assert.equal(diffModeLabel('branch', 'origin/develop'), 'Branch vs origin/develop');
+  assert.equal(diffModeLabel('branch', 'upstream/main'), 'Branch vs upstream/main');
   assert.equal(diffModeLabel('branch', null), 'Branch vs origin/main');
 });
 

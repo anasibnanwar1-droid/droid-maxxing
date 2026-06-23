@@ -242,7 +242,15 @@ async function environment(dir) {
   const primaryRemote = pickPrimaryRemote(remotes);
   const remoteUrl = primaryRemote ? await tryRun(root, ['remote', 'get-url', primaryRemote]) : null;
   const defaultRef = await defaultBaseRef(root, primaryRemote);
-  const base = (detached ? null : (await storedBase(root, branchName)) || upstream) || null;
+  const storedBaseRef = detached ? null : await storedBase(root, branchName);
+  const base = storedBaseRef || upstream || null;
+  // The ref diffs and Review scopes actually compare against (mirrors
+  // effectiveBaseRef): the branch's verified stored base, else the default
+  // branch ref. Exposed so the UI label matches the diff that is shown.
+  const diffBaseRef =
+    storedBaseRef && (await tryRun(root, ['rev-parse', '--verify', '--quiet', storedBaseRef]))
+      ? storedBaseRef
+      : defaultRef;
   const isLinkedWorktree =
     !!commonDir && !!gitDir && path.resolve(root, commonDir) !== path.resolve(root, gitDir);
   return {
@@ -260,6 +268,7 @@ async function environment(dir) {
     behind,
     defaultBranch: defaultRef ? defaultRef.replace(/^[^/]+\//, '') : null,
     defaultRef,
+    diffBaseRef: diffBaseRef || null,
     remoteUrl: remoteUrl || null,
     isGitHub: !!remoteUrl && /github\.com/i.test(remoteUrl),
   };
