@@ -12,13 +12,13 @@ const DEL_COLOR = 'var(--diff-del-fg)';
 export function DiffStat({
   stat,
   mode,
-  defaultBranch,
+  baseRef,
   onModeChange,
   onOpenReview,
 }: {
   stat: GitDiffStat | null;
   mode: DiffStatMode;
-  defaultBranch?: string | null;
+  baseRef?: string | null;
   onModeChange: (mode: DiffStatMode) => void;
   onOpenReview: () => void;
 }) {
@@ -52,7 +52,7 @@ export function DiffStat({
             <FileDiff className="h-4 w-4" />
           </span>
           <span className="min-w-0 flex-1 truncate text-[13px] leading-snug text-droid-text">
-            {diffModeLabel(mode, defaultBranch)}
+            {diffModeLabel(mode, baseRef)}
           </span>
           <span className="shrink-0 font-mono text-[11px]">
             {!ready ? (
@@ -97,7 +97,7 @@ export function DiffStat({
               }}
               className="flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left text-[12.5px] text-droid-text-secondary transition-colors hover:bg-droid-elevated/60 hover:text-droid-text"
             >
-              <span className="flex-1 truncate">{diffModeLabel(option, defaultBranch)}</span>
+              <span className="flex-1 truncate">{diffModeLabel(option, baseRef)}</span>
               {option === mode && (
                 <Check
                   className="h-3.5 w-3.5 shrink-0"

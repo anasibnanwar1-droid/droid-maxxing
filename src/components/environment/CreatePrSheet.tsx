@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { ChevronDown, Loader2 } from 'lucide-react';
 import { createPullRequest } from '../../lib/github';
-import { gitPush } from '../../lib/git';
+import { baseDescriptor, gitPush } from '../../lib/git';
 import { openExternal } from '../../lib/onboarding';
 import { toast } from '../../lib/toast';
 import type { GitBranchList, GitEnvironment } from '../../types/vcs';
@@ -19,17 +19,21 @@ export function CreatePrSheet({
   branches: GitBranchList | null;
   onDone: () => void;
 }) {
+  // Default the PR base to the branch's recorded base (e.g. a branch cut from
+  // `develop` targets develop), falling back to the repo's default branch.
+  const recordedBase = baseDescriptor(env)?.shortName;
   const [title, setTitle] = useState(env?.branch ?? '');
   const [body, setBody] = useState('');
-  const [base, setBase] = useState(env?.defaultBranch ?? 'main');
+  const [base, setBase] = useState(recordedBase ?? env?.defaultBranch ?? 'main');
   const [draft, setDraft] = useState(false);
   const [pickingBase, setPickingBase] = useState(false);
   const [busy, setBusy] = useState(false);
 
   const baseOptions = [
+    recordedBase,
     env?.defaultBranch ?? 'main',
     ...(branches?.remote ?? []).map((b) => b.name.split('/').slice(1).join('/') || b.name),
-  ].filter((value, index, all) => value && all.indexOf(value) === index);
+  ].filter((value, index, all): value is string => !!value && all.indexOf(value) === index);
 
   const doCreate = async () => {
     if (!title.trim()) return;

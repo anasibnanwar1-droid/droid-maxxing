@@ -132,8 +132,8 @@ export async function gitPush(dir: string, options: PushOptions): Promise<GitAct
 
 // ---- Pure helpers (unit-tested) -------------------------------------------
 
-export function diffModeLabel(mode: DiffStatMode, defaultBranch?: string | null): string {
-  if (mode === 'branch') return `Branch vs origin/${defaultBranch || 'main'}`;
+export function diffModeLabel(mode: DiffStatMode, baseRef?: string | null): string {
+  if (mode === 'branch') return `Branch vs ${baseRef || 'origin/main'}`;
   if (mode === 'uncommitted') return 'Uncommitted';
   return 'Worktree';
 }
