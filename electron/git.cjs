@@ -190,6 +190,17 @@ function storedBase(root, branch) {
   return tryRun(root, ['config', `branch.${branch}.droidcontrolBase`]);
 }
 
+// The ref the current branch was forked from: the user's chosen base (persisted
+// at creation), verified to still exist, else the repo's default branch. Diffs
+// and Review scopes compare against this so a branch cut from `develop` is not
+// measured against main (which would surface unrelated changes).
+async function effectiveBaseRef(root) {
+  const branch = await tryRun(root, ['symbolic-ref', '--short', 'HEAD']);
+  const stored = branch ? await storedBase(root, branch) : null;
+  if (stored && (await tryRun(root, ['rev-parse', '--verify', '--quiet', stored]))) return stored;
+  return resolveBaseRef(root);
+}
+
 async function rememberBase(root, branch, base) {
   if (!branch || !base) return;
   try {
@@ -334,7 +345,7 @@ async function diffStat(dir, options = {}) {
     : 'worktree';
   const root = await repoRootOf(dir);
   if (!root) return { mode, base: null, additions: 0, deletions: 0, files: 0 };
-  const defaultRef = await resolveBaseRef(root);
+  const defaultRef = await effectiveBaseRef(root);
   let base = null;
   if (defaultRef) base = await tryRun(root, ['merge-base', defaultRef, 'HEAD']);
   // An unborn repo (no commits yet) has no HEAD, so diffing against it errors;
@@ -565,9 +576,10 @@ async function push(dir, { remote, branch, setUpstream = false, force = false } 
   if (!root) return { ok: false, reason: 'not_a_repo' };
   const target = branch || (await tryRun(root, ['rev-parse', '--abbrev-ref', 'HEAD']));
   if (!target || target === 'HEAD') return { ok: false, reason: 'detached' };
-  // Honor the branch's configured upstream so a non-origin or differently-named
-  // tracking ref is never clobbered. Only fall back to an explicit/origin remote
-  // when setting upstream, when the caller overrides it, or when none is set.
+  // Honor the branch's configured upstream so a non-origin tracking ref is never
+  // clobbered — but only when it names the *same* branch. A branch cut from
+  // origin/main tracks origin/main as its base, and pushing `feature:main` there
+  // would publish feature commits straight onto main.
   const upstream =
     setUpstream || remote || branch
       ? null
@@ -577,12 +589,17 @@ async function push(dir, { remote, branch, setUpstream = false, force = false } 
           '--symbolic-full-name',
           `${target}@{upstream}`,
         ]);
+  const sameNameUpstream =
+    upstream && upstream.includes('/') && upstream.slice(upstream.indexOf('/') + 1) === target
+      ? upstream
+      : null;
   const args = ['push'];
-  if (setUpstream) args.push('--set-upstream');
+  // Publish under the branch's own name when the tracked upstream is really a
+  // base ref (different name), and repoint tracking so later pushes stay correct.
+  if (setUpstream || (upstream && !sameNameUpstream)) args.push('--set-upstream');
   if (force) args.push('--force-with-lease');
-  if (upstream && upstream.includes('/')) {
-    const sep = upstream.indexOf('/');
-    args.push(upstream.slice(0, sep), `${target}:${upstream.slice(sep + 1)}`);
+  if (sameNameUpstream) {
+    args.push(sameNameUpstream.slice(0, sameNameUpstream.indexOf('/')), target);
   } else {
     args.push(remote || (await defaultPushRemote(root)), target);
   }
@@ -722,7 +739,7 @@ async function scopeRange(root, scope) {
     };
   }
   if (scope === 'branch' || scope === 'worktree') {
-    const defaultRef = await resolveBaseRef(root);
+    const defaultRef = await effectiveBaseRef(root);
     const base = defaultRef ? await tryRun(root, ['merge-base', defaultRef, 'HEAD']) : null;
     if (scope === 'branch') {
       return { args: base ? [`${base}...HEAD`] : null, base, includeUntracked: false };
