@@ -137,13 +137,12 @@ export default function StatusBar() {
             {mission.queuedSends} queued
           </span>
         ) : null}
-        {mission?.compactedFromSessionIds?.length ? (
+        {mission?.compactionCount ? (
           <span
             className="mr-2 rounded-md border border-droid-border bg-droid-elevated/70 px-1.5 py-0.5 font-mono text-[10px] text-droid-text-secondary"
-            title="Times this session has been compacted"
+            title="Times this conversation has been compacted"
           >
-            {mission.compactedFromSessionIds.length} compaction
-            {mission.compactedFromSessionIds.length === 1 ? '' : 's'}
+            {mission.compactionCount} compaction{mission.compactionCount === 1 ? '' : 's'}
           </span>
         ) : null}
         {contextMission && (

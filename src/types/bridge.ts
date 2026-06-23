@@ -86,6 +86,10 @@ export interface MissionSummary {
   id: string; // stable app conversation id
   sessionId?: string; // active Droid session id
   compactedFromSessionIds?: string[];
+  // Monotonic count of compactions (daemon auto + manual) for this conversation.
+  // The daemon compacts in place without changing sessionId, so the client uses
+  // this as a generation key to reset the context meter's high-water mark.
+  compactionCount?: number;
   missionId?: string;
   parentSessionId?: string;
   kind: SessionKind;
@@ -144,9 +148,9 @@ export interface TranscriptEvent {
   browserRefs?: BrowserTranscriptReference[];
   // Frontend-only: this user message was sent while the model was already working.
   steered?: boolean;
-  // Whether a compaction status was triggered automatically (idle threshold) or
-  // manually (/compact). Manual compaction dividers are promoted to top level;
-  // auto-compaction dividers fold into "Worked for …" groups.
+  // Whether a compaction was triggered automatically (the daemon's in-place
+  // threshold compaction) or manually (/compact). Both render as top-level
+  // 'compaction' dividers; compactType only selects the label.
   compactType?: 'auto' | 'manual';
 }
 
@@ -676,9 +680,6 @@ export type ServerEvent =
       reasoningEffort?: ReasoningEffort;
       toolUseId?: string;
     }
-  // A worker compacted and the daemon swapped its backing session id; remap any
-  // state keyed by the old worker session id (worker list, transcripts, selection).
-  | { type: 'mission.worker.rekey'; missionId: string; oldSessionId: string; newSessionId: string }
   | {
       type: 'mission.tokens';
       missionId: string;

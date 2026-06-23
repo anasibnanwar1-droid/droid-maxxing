@@ -1146,7 +1146,12 @@ const FeedItemView = memo(function FeedItemView({
     case 'status': {
       const text = item.event.text ?? '';
       if (item.event.kind === 'compaction')
-        return <CompactionDivider compactType="auto" removedCount={item.event.removedCount} />;
+        return (
+          <CompactionDivider
+            compactType={item.event.compactType ?? 'auto'}
+            removedCount={item.event.removedCount}
+          />
+        );
       if (compacting) return <CompactingIndicator />;
       if (isCompactionCompleteStatus(text))
         return <CompactionDivider compactType={item.event.compactType} />;

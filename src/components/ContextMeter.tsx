@@ -137,10 +137,10 @@ export default function ContextMeter({
     mission.maxContextTokens && mission.maxContextTokens > 0 ? mission.maxContextTokens : undefined;
   const statLimit = measured?.limit && measured.limit > 0 ? measured.limit : modelWindow;
 
-  // The conversation compacts once it passes the configured token limit, so the
-  // meter measures usage against that threshold (per-model override -> global
-  // default), capped to the model window. Falls back to observed/model context
-  // size when the app lets Factory use its model-dependent default.
+  // Measure usage against the real model context window (the standard
+  // denominator). The daemon auto-compacts before the window fills; surface that
+  // trigger as a separate "Compacts at" marker (per-model override -> global
+  // default, capped to the window) rather than as the denominator.
   const compactionLimit =
     mission.modelId && state.compactionTokenLimitPerModel[mission.modelId] !== undefined
       ? state.compactionTokenLimitPerModel[mission.modelId]
@@ -151,13 +151,14 @@ export default function ContextMeter({
         ? Math.min(compactionLimit, modelWindow)
         : compactionLimit
       : undefined;
-  const max = effectiveCompaction ?? statLimit;
+  const max = modelWindow ?? statLimit;
 
   const accuracy = measured?.accuracy;
   const isEstimating = (accuracy ?? 'estimated') !== 'exact';
-  // Compaction count is the generation: a bump means context was compacted, so
-  // the stabilized usage floor must reset to the lower post-compaction reading.
-  const generation = mission.compactedFromSessionIds?.length ?? 0;
+  // Compaction count is the generation: the daemon compacts in place (same
+  // session id), so a bump is the only signal that context dropped. It resets
+  // the stabilized usage floor to the lower post-compaction reading.
+  const generation = mission.compactionCount ?? 0;
   const used = useStableUsed(sessionKey ?? mission.id, measured?.used, !isEstimating, generation);
   const remaining =
     used !== undefined && max !== undefined ? Math.max(0, max - used) : measured?.remaining;

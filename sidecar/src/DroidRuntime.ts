@@ -164,6 +164,10 @@ export function createInitializeSessionParams(
   if (options.modelId) params.modelId = options.modelId;
   if (options.reasoningEffort) params.reasoningEffort = mapReasoning(options.reasoningEffort);
   if (options.compactionModel) params.compactionModel = options.compactionModel;
+  // The daemon owns automatic compaction; turn it on for every session we create
+  // (always on, no off switch). The optional token limit only tunes the trigger;
+  // when absent the daemon uses its own model-aware default.
+  params.compactionThresholdCheckEnabled = true;
   if (options.compactionTokenLimit !== undefined)
     params.compactionTokenLimit = options.compactionTokenLimit;
   if (options.specModeModelId) params.specModeModelId = options.specModeModelId;

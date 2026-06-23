@@ -87,6 +87,10 @@ export interface MissionSummary {
   id: string; // stable app conversation id
   sessionId?: string; // active Droid session id
   compactedFromSessionIds?: string[];
+  // Monotonic count of compactions (daemon auto + manual) for this conversation.
+  // The daemon compacts in place without changing sessionId, so the client uses
+  // this as a generation key to reset the context meter's high-water mark.
+  compactionCount?: number;
   missionId?: string;
   parentSessionId?: string;
   kind: SessionKind;
@@ -664,10 +668,6 @@ export type ServerEvent =
       reasoningEffort?: ReasoningEffort;
       toolUseId?: string;
     }
-  // A worker compacted and the daemon swapped its backing session id. The
-  // worker stays alive under the new id; clients must remap any state keyed by
-  // the old worker session id (worker list, transcript events, selection).
-  | { type: 'mission.worker.rekey'; missionId: string; oldSessionId: string; newSessionId: string }
   | {
       type: 'mission.tokens';
       missionId: string;
