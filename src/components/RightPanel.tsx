@@ -201,7 +201,7 @@ export default function RightPanel() {
                   diffMode={diffMode}
                   onDiffModeChange={setDiffMode}
                   refresh={git.refresh}
-                  live={working}
+                  live={working || agentsRunning}
                   pr={pr.pr}
                   onOpenPr={() => setView('pr')}
                   onOpenReview={() => dispatch({ type: 'SET_REVIEW_OPEN', open: true })}

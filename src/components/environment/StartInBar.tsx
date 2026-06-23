@@ -55,7 +55,9 @@ export function StartInBar() {
   const { state, dispatch } = useStore();
   const draft = state.draftChat;
   const cwd = draft?.cwd ?? '';
-  const { env, branches, worktrees, diffStat, refresh } = useGitEnvironment(cwd, 'worktree');
+  // 'uncommitted' so the branch-switch warning counts only working-tree changes
+  // that a checkout would carry over — not committed work, which stays put.
+  const { env, branches, worktrees, diffStat, refresh } = useGitEnvironment(cwd, 'uncommitted');
 
   const [repoOpen, setRepoOpen] = useState(false);
   const [locOpen, setLocOpen] = useState(false);
