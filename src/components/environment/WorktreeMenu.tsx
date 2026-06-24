@@ -1,5 +1,5 @@
-import { useRef, useState } from 'react';
-import { Check, ChevronDown, Columns2, ExternalLink, Loader2, Plus, Trash2 } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { Check, ChevronDown, Columns2, ExternalLink, Loader2, Plus, Trash2, X } from 'lucide-react';
 import { Popover } from './Popover';
 import { useStore } from '../../hooks/useStore';
 import { createGitWorktree, isWorktreeInUse, removeGitWorktree, worktreeName } from '../../lib/git';
@@ -29,6 +29,13 @@ export function WorktreeMenu({
   const [base, setBase] = useState<string>(defaultBase);
   const [pickingBase, setPickingBase] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [confirming, setConfirming] = useState<string | null>(null);
+
+  // Drop any armed removal confirmation when the menu closes so reopening never
+  // shows a stale confirm affordance.
+  useEffect(() => {
+    if (!open) setConfirming(null);
+  }, [open]);
 
   // The create form is opened on demand; seed its base from the current branch
   // each time so a useState-once default doesn't go stale after branch changes.
@@ -178,9 +185,29 @@ export function WorktreeMenu({
                 >
                   in use
                 </span>
+              ) : confirming === w.path ? (
+                <div className="flex shrink-0 items-center gap-0.5">
+                  <button
+                    onClick={() => {
+                      setConfirming(null);
+                      if (w.path) void removeWorktree(w.path);
+                    }}
+                    title="Confirm removal"
+                    className="rounded p-1 text-droid-orange hover:bg-droid-orange/15"
+                  >
+                    <Check className="h-3.5 w-3.5" strokeWidth={3} />
+                  </button>
+                  <button
+                    onClick={() => setConfirming(null)}
+                    title="Cancel"
+                    className="rounded p-1 text-droid-text-muted hover:bg-droid-elevated"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </div>
               ) : (
                 <button
-                  onClick={() => w.path && void removeWorktree(w.path)}
+                  onClick={() => w.path && setConfirming(w.path)}
                   title="Remove worktree"
                   className="shrink-0 rounded p-1 text-droid-text-muted/0 transition-colors group-hover:text-droid-text-muted hover:!text-droid-orange"
                 >

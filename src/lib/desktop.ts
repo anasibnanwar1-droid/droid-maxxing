@@ -75,6 +75,7 @@ interface DroidControlApi {
   gitStageAll: (dir: string) => Promise<GitActionResult>;
   gitCommit: (dir: string, options: CommitOptions) => Promise<GitActionResult>;
   gitPush: (dir: string, options: PushOptions) => Promise<GitActionResult>;
+  gitFetch: (dir: string) => Promise<GitActionResult>;
   githubAvailable: () => Promise<GithubAvailability>;
   githubDetectPr: (dir: string, options: { branch?: string }) => Promise<PullRequest | null>;
   githubPrChecks: (dir: string, options: { prNumber: number }) => Promise<PrChecksResult>;

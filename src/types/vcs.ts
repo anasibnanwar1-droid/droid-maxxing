@@ -4,7 +4,14 @@
 
 export type DiffStatMode = 'worktree' | 'branch' | 'uncommitted';
 
-export type DiffScope = 'unstaged' | 'staged' | 'commit' | 'branch' | 'worktree' | 'last_turn';
+export type DiffScope =
+  | 'unstaged'
+  | 'staged'
+  | 'uncommitted'
+  | 'commit'
+  | 'branch'
+  | 'worktree'
+  | 'last_turn';
 
 export type DiffFileStatus =
   | 'added'

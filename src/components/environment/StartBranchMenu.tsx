@@ -2,6 +2,7 @@ import { useMemo, useState, type RefObject } from 'react';
 import { Check, ChevronLeft, GitBranch, Loader2, Plus, Search } from 'lucide-react';
 import { Popover } from './Popover';
 import { checkoutGitBranch, createGitWorktree } from '../../lib/git';
+import { useGitFetchOnOpen } from '../../hooks/useGitFetchOnOpen';
 import { toast } from '../../lib/toast';
 import type { GitBranchList, GitEnvironment, GitWorktree } from '../../types/vcs';
 
@@ -42,6 +43,7 @@ export function StartBranchMenu({
   const [creatingNew, setCreatingNew] = useState(false);
   const [newName, setNewName] = useState('');
   const [busy, setBusy] = useState(false);
+  const fetching = useGitFetchOnOpen(open, cwd, onRefresh);
 
   const repoRoot = env?.repoRoot ?? cwd;
   const current = env?.branch ?? null;
@@ -205,6 +207,9 @@ export function StartBranchMenu({
               placeholder="Search branches"
               className="w-full bg-transparent text-[12px] text-droid-text placeholder:text-droid-text-muted/70 focus:outline-none"
             />
+            {fetching && (
+              <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-droid-accent" />
+            )}
           </div>
           <div className="max-h-[280px] overflow-y-auto py-1">
             <div className="px-2.5 pb-1 pt-1.5 text-[10px] font-medium uppercase tracking-wider text-droid-text-muted">

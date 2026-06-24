@@ -10,6 +10,7 @@ const fsp = require('node:fs/promises');
 
 const DEFAULT_TIMEOUT = 6000;
 const PUSH_TIMEOUT = 45000;
+const FETCH_TIMEOUT = 30000;
 const MAX_BUFFER = 16 * 1024 * 1024;
 const UNTRACKED_FILE_CAP = 1000;
 const UNTRACKED_BYTE_CAP = 1024 * 1024;
@@ -304,7 +305,10 @@ async function branches(dir) {
   ]);
   const remote = String(remoteOut || '')
     .split('\n')
-    .filter((name) => name && !name.endsWith('/HEAD'))
+    // Drop the remote HEAD pointer: refs/remotes/origin/HEAD shortens to either
+    // `origin/HEAD` or the bare remote name `origin` (no slash), and `git fetch`
+    // now creates it by default. Real tracking branches are always `remote/branch`.
+    .filter((name) => name && name.includes('/') && !name.endsWith('/HEAD'))
     .map((name) => ({ name }));
   return {
     current: current === 'HEAD' ? null : current,
@@ -630,10 +634,34 @@ async function push(dir, { remote, branch, setUpstream = false, force = false } 
   }
 }
 
+// Best-effort refresh of remote-tracking refs so newly pushed branches appear
+// without leaving the app. A no-remote repo is a success no-op; network/auth
+// failures are reported but never throw, since callers fetch opportunistically.
+async function fetchRemotes(dir) {
+  const root = await repoRootOf(dir);
+  if (!root) return { ok: false, reason: 'not_a_repo' };
+  const remotes = await listRemotes(root);
+  if (!remotes.length) return { ok: true };
+  try {
+    await run(root, ['fetch', '--all', '--prune'], { timeout: FETCH_TIMEOUT });
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, reason: 'git_error', message: err.message };
+  }
+}
+
 // ---- Review tab: per-file diffs across review scopes ----------------------
 
 const EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
-const REVIEW_SCOPES = ['unstaged', 'staged', 'commit', 'branch', 'worktree', 'last_turn'];
+const REVIEW_SCOPES = [
+  'unstaged',
+  'staged',
+  'uncommitted',
+  'commit',
+  'branch',
+  'worktree',
+  'last_turn',
+];
 
 // Per-worktree baseline captured at the start of an agent turn so the
 // "Last turn" scope can diff the working tree against that point in time.
@@ -749,6 +777,12 @@ async function untrackedFileList(root) {
 // against, and whether untracked working-tree files should be folded in.
 async function scopeRange(root, scope) {
   if (scope === 'staged') return { args: ['--cached'], base: null, includeUntracked: false };
+  if (scope === 'uncommitted') {
+    // Everything not yet committed: working tree vs HEAD (staged + unstaged)
+    // plus untracked files. Mirrors the Context panel's "Uncommitted" stat.
+    const hasHead = await tryRun(root, ['rev-parse', '--verify', '--quiet', 'HEAD']);
+    return { args: [hasHead ? 'HEAD' : '--cached'], base: null, includeUntracked: true };
+  }
   if (scope === 'commit') {
     const hasParent = await tryRun(root, ['rev-parse', '--verify', '--quiet', 'HEAD~1']);
     return {
@@ -908,6 +942,7 @@ module.exports = {
   stageAll,
   commit,
   push,
+  fetchRemotes,
   // exported for reuse/inspection
   parseWorktrees,
   parseNumstat,

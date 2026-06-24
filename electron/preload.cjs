@@ -33,6 +33,7 @@ contextBridge.exposeInMainWorld('droidControl', {
   gitStageAll: (dir) => ipcRenderer.invoke('git-stage-all', { dir }),
   gitCommit: (dir, options) => ipcRenderer.invoke('git-commit', { dir, options }),
   gitPush: (dir, options) => ipcRenderer.invoke('git-push', { dir, options }),
+  gitFetch: (dir) => ipcRenderer.invoke('git-fetch', { dir }),
 
   githubAvailable: () => ipcRenderer.invoke('github-available'),
   githubDetectPr: (dir, options) => ipcRenderer.invoke('github-detect-pr', { dir, options }),

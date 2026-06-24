@@ -132,6 +132,7 @@ function registerIpc() {
   ipcMain.handle('git-stage-all', (_event, { dir }) => gitVcs.stageAll(dir));
   ipcMain.handle('git-commit', (_event, { dir, options }) => gitVcs.commit(dir, options));
   ipcMain.handle('git-push', (_event, { dir, options }) => gitVcs.push(dir, options));
+  ipcMain.handle('git-fetch', (_event, { dir }) => gitVcs.fetchRemotes(dir));
 
   ipcMain.handle('github-available', () => githubVcs.available());
   ipcMain.handle('github-detect-pr', (_event, { dir, options }) =>

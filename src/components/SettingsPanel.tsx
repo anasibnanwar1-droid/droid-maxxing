@@ -1122,6 +1122,7 @@ function WorktreesSection() {
   const [repos, setRepos] = useState<RepoWorktrees[]>([]);
   const [loading, setLoading] = useState(false);
   const [removing, setRemoving] = useState<string | null>(null);
+  const [confirming, setConfirming] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -1225,9 +1226,28 @@ function WorktreesSection() {
                       >
                         in use
                       </span>
+                    ) : confirming === w.path ? (
+                      <div className="flex shrink-0 items-center gap-1.5">
+                        <span className="text-[11px] text-droid-text-muted">Remove?</span>
+                        <button
+                          onClick={() => {
+                            setConfirming(null);
+                            if (w.path) void remove(repo.root, w.path);
+                          }}
+                          className="rounded-md px-2 py-1 text-[11px] font-medium text-red-400 hover:bg-droid-elevated"
+                        >
+                          Remove
+                        </button>
+                        <button
+                          onClick={() => setConfirming(null)}
+                          className="rounded-md px-2 py-1 text-[11px] text-droid-text-muted hover:bg-droid-elevated"
+                        >
+                          Cancel
+                        </button>
+                      </div>
                     ) : (
                       <button
-                        onClick={() => w.path && void remove(repo.root, w.path)}
+                        onClick={() => w.path && setConfirming(w.path)}
                         disabled={removing === w.path}
                         title="Remove worktree"
                         className="flex shrink-0 items-center rounded-md p-1.5 text-droid-text-muted transition-colors hover:bg-droid-elevated hover:text-red-400 disabled:opacity-40"

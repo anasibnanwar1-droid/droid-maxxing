@@ -599,6 +599,7 @@ function saveLiveEnterBehavior(value: LiveEnterBehavior): LiveEnterBehavior {
 const REVIEW_SCOPES: DiffScope[] = [
   'unstaged',
   'staged',
+  'uncommitted',
   'commit',
   'branch',
   'worktree',
