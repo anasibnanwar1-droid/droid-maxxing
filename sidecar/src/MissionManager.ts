@@ -1865,8 +1865,10 @@ export class MissionManager {
       const result = await runManualCompaction(mission.session, customInstructions);
       if (!result) {
         // The daemon reported nothing to compact: leave the conversation exactly
-        // as-is (no backing-id swap, no divider, no count bump). The finally
-        // clears `compacting`, removing the in-progress indicator.
+        // as-is (no backing-id swap, no divider, no count bump), but emit a
+        // terminal status so the chat's "Compacting…" shimmer (driven by the
+        // latest status line) stops instead of hanging indefinitely.
+        this.emitStatus(appSessionId, 'Nothing to compact.', compactType);
         return;
       }
       const { newSessionId, removedCount } = result;
@@ -2206,7 +2208,29 @@ export class MissionManager {
       return activeSession;
     });
     if (mission) this.patch(appSessionId, patch);
-    if (mission && session) await this.refreshContext(appSessionId, session);
+    if (mission && session) {
+      if (settings.modelId !== undefined) {
+        // A model switch changes the model-derived auto-compaction trigger, and
+        // the SDK does not re-apply loadSession-style settings, so re-assert the
+        // daemon compaction for the resolved model. A reset-to-Default
+        // (modelId: null) resolves to the session's real default model, keeping
+        // its per-model limit and context-window clamp.
+        const defaults = await this.getFactoryDefaults();
+        const effectiveModelId =
+          settings.modelId ??
+          defaultModelForAgent('orchestrator', modeForSummary(mission.summary), defaults);
+        await this.enableDaemonCompaction(
+          session,
+          daemonCompactionSettings(
+            effectiveModelId,
+            {},
+            defaults,
+            this.maxContextTokensForModel(effectiveModelId),
+          ),
+        );
+      }
+      await this.refreshContext(appSessionId, session);
+    }
   }
 
   private async interrupt(missionId: string): Promise<void> {

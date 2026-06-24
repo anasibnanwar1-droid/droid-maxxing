@@ -113,6 +113,12 @@ export interface AppState {
   pendingPermission: PermissionRequest | null;
   pendingQuestion: MissionQuestion | null;
   contextStats: Record<string, ContextStatsSnapshot>;
+  // Live count of in-place compactions seen per agent session id (keyed by the
+  // compaction divider's agentSessionId). The orchestrator uses the persisted
+  // summary.compactionCount; a selected worker has no summary counter, so this
+  // is the generation that resets its context meter's high-water mark when the
+  // worker auto-compacts in place under the same session id.
+  compactionGenerations: Record<string, number>;
   specPlans: Record<string, string>; // latest ExitSpecMode plan per session
   // Persisted spec per mission (file path + rendered content). Survives exiting
   // spec mode so the inline card, mermaid, and the wiki reader stay available.
@@ -686,6 +692,7 @@ export const initialState: AppState = {
   pendingPermission: null,
   pendingQuestion: null,
   contextStats: {},
+  compactionGenerations: {},
   specPlans: {},
   missionSpecs: {},
   specWikiMissionId: null,
@@ -1083,6 +1090,21 @@ function baseReducer(state: AppState, action: Action): AppState {
           endTs: ev.ts,
         };
         return { ...state, transcripts: { ...state.transcripts, [mid]: merged } };
+      }
+
+      // A compaction divider signals an in-place compaction for its session;
+      // bump that session's generation so the context meter resets its
+      // high-water mark (the orchestrator also has summary.compactionCount, but
+      // a selected worker relies solely on this).
+      if (ev.kind === 'compaction' && ev.agentSessionId) {
+        return {
+          ...state,
+          transcripts: { ...state.transcripts, [mid]: [...prev, ev] },
+          compactionGenerations: {
+            ...state.compactionGenerations,
+            [ev.agentSessionId]: (state.compactionGenerations[ev.agentSessionId] ?? 0) + 1,
+          },
+        };
       }
 
       return {

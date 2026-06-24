@@ -995,6 +995,39 @@ test('manual compaction is a no-op when the daemon reports nothing to compact', 
     events.some((e) => e.type === 'mission.error'),
     false,
   );
+  // A terminal status must close out the "Compacting…" shimmer, which the chat
+  // derives from the latest status line; otherwise it hangs indefinitely.
+  assert.equal(
+    events.some(
+      (e) =>
+        e.type === 'mission.transcript' &&
+        (e as { event?: { kind?: string; text?: string } }).event?.kind === 'status' &&
+        (e as { event?: { text?: string } }).event?.text === 'Nothing to compact.',
+    ),
+    true,
+  );
+});
+
+test('session.updateSettings re-applies daemon compaction for the switched model', async () => {
+  const { manager, session } = orchestratorSwapHarness(10_000, 'droid-new');
+  (
+    manager as unknown as { getFactoryDefaults: () => Promise<Record<string, unknown>> }
+  ).getFactoryDefaults = async () => ({
+    compactionTokenLimitPerModel: { 'model-x': 150_000 },
+  });
+
+  await manager.handle({
+    type: 'session.updateSettings',
+    sessionId: 'app-swap',
+    modelId: 'model-x',
+  });
+
+  // Switching the session model must re-assert the daemon trigger for that
+  // model; without it the session keeps the previous model's threshold.
+  assert.deepEqual(session.settingsUpdates.at(-1), {
+    compactionThresholdCheckEnabled: true,
+    compactionTokenLimit: 150_000,
+  });
 });
 
 test('a worker auto-compaction during an orchestrator manual compaction still reflects', async () => {

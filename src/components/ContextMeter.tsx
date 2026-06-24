@@ -167,10 +167,14 @@ export default function ContextMeter({
   const isEstimating = (accuracy ?? 'estimated') !== 'exact';
   // Compaction count is the generation: the daemon compacts in place (same
   // session id), so a bump is the only signal that context dropped. It resets
-  // the stabilized usage floor to the lower post-compaction reading. It is
-  // tracked for the orchestrator only; a worker uses a neutral generation so an
-  // orchestrator compaction never resets the worker meter.
-  const generation = isOrchestratorView ? (mission.compactionCount ?? 0) : 0;
+  // the stabilized usage floor to the lower post-compaction reading. The
+  // orchestrator uses its persisted summary count; a selected worker uses its
+  // own per-session compaction generation, so a worker auto-compaction resets
+  // the worker meter (without an orchestrator compaction ever resetting it).
+  const workerGeneration = sessionKey ? state.compactionGenerations[sessionKey] : undefined;
+  const generation = isOrchestratorView
+    ? (mission.compactionCount ?? 0)
+    : (workerGeneration ?? 0);
   const used = useStableUsed(sessionKey ?? mission.id, measured?.used, !isEstimating, generation);
   const remaining =
     used !== undefined && max !== undefined ? Math.max(0, max - used) : measured?.remaining;
