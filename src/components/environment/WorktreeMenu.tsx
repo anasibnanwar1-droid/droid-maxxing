@@ -50,6 +50,7 @@ export function WorktreeMenu({
     missions: Object.values(state.missions),
     activeMissionId: state.activeMissionId,
     draftCwd: state.draftChat?.cwd,
+    workers: state.workers,
   });
 
   const openInNewChat = (path: string) => {

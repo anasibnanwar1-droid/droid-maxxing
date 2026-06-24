@@ -34,3 +34,22 @@ test('activeSessionCwds includes the draft, the active chat, and live missions o
   // an idle historical chat does not pin its worktree
   assert.equal(cwds.includes('/repo/c'), false);
 });
+
+test('activeSessionCwds pins an idle mission that still has a running worker', () => {
+  const missions = [
+    mission({ id: 'idle', cwd: '/repo/idle', phase: 'completed' }),
+    mission({ id: 'done', cwd: '/repo/done', phase: 'completed' }),
+  ];
+  const cwds = activeSessionCwds({
+    missions,
+    activeMissionId: null,
+    workers: {
+      idle: [{ status: 'completed' }, { status: 'running' }],
+      done: [{ status: 'completed' }, { status: 'paused' }],
+    },
+  });
+  // the worker is still running in the idle mission's cwd, so it must stay pinned
+  assert.equal(cwds.includes('/repo/idle'), true);
+  // no running worker (only completed/paused) leaves the worktree removable
+  assert.equal(cwds.includes('/repo/done'), false);
+});

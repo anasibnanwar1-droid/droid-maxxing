@@ -11,6 +11,9 @@ const fsp = require('node:fs/promises');
 const DEFAULT_TIMEOUT = 6000;
 const PUSH_TIMEOUT = 45000;
 const FETCH_TIMEOUT = 30000;
+// Commits run user pre-commit / commit-msg hooks (linters, formatters, tests),
+// which routinely take far longer than the default read-command budget.
+const COMMIT_TIMEOUT = 120000;
 const MAX_BUFFER = 16 * 1024 * 1024;
 const UNTRACKED_FILE_CAP = 1000;
 const UNTRACKED_BYTE_CAP = 1024 * 1024;
@@ -361,12 +364,13 @@ async function diffStat(dir, options = {}) {
   let base = null;
   if (defaultRef) base = await tryRun(root, ['merge-base', defaultRef, 'HEAD']);
   // An unborn repo (no commits yet) has no HEAD, so diffing against it errors;
-  // compare the index instead so staged + untracked files still get counted.
+  // compare against the empty tree so the current working contents of tracked
+  // files (and untracked files) are counted, not just the staged copy.
   const hasHead = !!(await tryRun(root, ['rev-parse', '--verify', '--quiet', 'HEAD']));
 
   if (mode === 'uncommitted') {
     const tracked = parseNumstat(
-      await runSoft(root, ['diff', '--numstat', hasHead ? 'HEAD' : '--cached']),
+      await runSoft(root, ['diff', '--numstat', hasHead ? 'HEAD' : EMPTY_TREE]),
     );
     const untracked = await untrackedAdditions(root);
     return {
@@ -385,7 +389,7 @@ async function diffStat(dir, options = {}) {
   }
 
   // worktree total: everything since base, including the working tree.
-  const range = base || (hasHead ? 'HEAD' : '--cached');
+  const range = base || (hasHead ? 'HEAD' : EMPTY_TREE);
   const tracked = parseNumstat(await runSoft(root, ['diff', '--numstat', range]));
   const untracked = await untrackedAdditions(root);
   return {
@@ -600,10 +604,10 @@ async function commit(dir, { message, all = true } = {}) {
   if (!root) return { ok: false, reason: 'not_a_repo' };
   if (!message || !message.trim()) return { ok: false, reason: 'empty_message' };
   try {
-    if (all) await run(root, ['add', '-A']);
+    if (all) await run(root, ['add', '-A'], { timeout: COMMIT_TIMEOUT });
     const staged = await tryRun(root, ['diff', '--cached', '--name-only']);
     if (!staged) return { ok: false, reason: 'nothing_to_commit' };
-    await run(root, ['commit', '-m', message]);
+    await run(root, ['commit', '-m', message], { timeout: COMMIT_TIMEOUT });
     const head = await tryRun(root, ['rev-parse', '--short', 'HEAD']);
     return { ok: true, head };
   } catch (err) {
@@ -638,11 +642,13 @@ async function push(dir, { remote, branch, setUpstream = false, force = false } 
   // base ref (different name), and repoint tracking so later pushes stay correct.
   if (setUpstream || (upstream && !sameNameUpstream)) args.push('--set-upstream');
   if (force) args.push('--force-with-lease');
-  if (sameNameUpstream) {
-    args.push(sameNameUpstream.slice(0, sameNameUpstream.indexOf('/')), target);
-  } else {
-    args.push(remote || (await defaultPushRemote(root)), target);
-  }
+  const pushRemote = sameNameUpstream
+    ? sameNameUpstream.slice(0, sameNameUpstream.indexOf('/'))
+    : remote || (await defaultPushRemote(root));
+  // Push a fully-qualified refspec after `--` so a branch literally named like a
+  // flag (e.g. `--mirror`) can never be parsed as a push option and, say, mirror
+  // every ref. The destination keeps the branch's own name on the remote.
+  args.push('--', pushRemote, `refs/heads/${target}:refs/heads/${target}`);
   try {
     const output = await run(root, args, { timeout: PUSH_TIMEOUT });
     return { ok: true, output, environment: await environment(root) };
@@ -798,7 +804,7 @@ async function scopeRange(root, scope) {
     // Everything not yet committed: working tree vs HEAD (staged + unstaged)
     // plus untracked files. Mirrors the Context panel's "Uncommitted" stat.
     const hasHead = await tryRun(root, ['rev-parse', '--verify', '--quiet', 'HEAD']);
-    return { args: [hasHead ? 'HEAD' : '--cached'], base: null, includeUntracked: true };
+    return { args: [hasHead ? 'HEAD' : EMPTY_TREE], base: null, includeUntracked: true };
   }
   if (scope === 'commit') {
     const hasParent = await tryRun(root, ['rev-parse', '--verify', '--quiet', 'HEAD~1']);
