@@ -130,6 +130,15 @@ export async function gitPush(dir: string, options: PushOptions): Promise<GitAct
   return window.droidControl!.gitPush(dir, options);
 }
 
+export async function gitFetch(dir: string): Promise<GitActionResult> {
+  if (!isDesktop() || !dir) return failure('not_desktop');
+  try {
+    return await window.droidControl!.gitFetch(dir);
+  } catch {
+    return failure('git_error');
+  }
+}
+
 // ---- Pure helpers (unit-tested) -------------------------------------------
 
 export function diffModeLabel(mode: DiffStatMode, baseRef?: string | null): string {
@@ -191,21 +200,4 @@ export function aheadBehindLabel(ahead = 0, behind = 0): string | null {
   if (ahead > 0) parts.push(`↑${ahead}`);
   if (behind > 0) parts.push(`↓${behind}`);
   return parts.length ? parts.join(' ') : null;
-}
-
-// A live session must never hop worktrees (it would desync the agent's cwd).
-// Returns the reason switching is blocked, or null when it is allowed.
-export function worktreeSwitchBlockReason(opts: { hasActiveSession: boolean }): string | null {
-  return opts.hasActiveSession ? 'active_session' : null;
-}
-
-// Guard an in-place branch checkout: blocked while the agent is working or the
-// tree is dirty (the caller may re-run with allowDirty after confirmation).
-export function checkoutBlockReason(opts: {
-  live: boolean;
-  dirty: boolean;
-}): 'live' | 'dirty' | null {
-  if (opts.live) return 'live';
-  if (opts.dirty) return 'dirty';
-  return null;
 }

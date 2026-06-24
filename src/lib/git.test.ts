@@ -3,11 +3,9 @@ import assert from 'node:assert';
 import {
   aheadBehindLabel,
   baseDescriptor,
-  checkoutBlockReason,
   diffModeLabel,
   isWorktreeInUse,
   worktreeName,
-  worktreeSwitchBlockReason,
 } from './git';
 
 test('diffModeLabel shows the effective base ref for the branch mode', () => {
@@ -49,17 +47,6 @@ test('aheadBehindLabel renders only the non-zero sides', () => {
   assert.equal(aheadBehindLabel(3, 0), '↑3');
   assert.equal(aheadBehindLabel(0, 4), '↓4');
   assert.equal(aheadBehindLabel(0, 0), null);
-});
-
-test('worktreeSwitchBlockReason blocks switching during an active session', () => {
-  assert.equal(worktreeSwitchBlockReason({ hasActiveSession: true }), 'active_session');
-  assert.equal(worktreeSwitchBlockReason({ hasActiveSession: false }), null);
-});
-
-test('checkoutBlockReason prioritizes the live agent over a dirty tree', () => {
-  assert.equal(checkoutBlockReason({ live: true, dirty: true }), 'live');
-  assert.equal(checkoutBlockReason({ live: false, dirty: true }), 'dirty');
-  assert.equal(checkoutBlockReason({ live: false, dirty: false }), null);
 });
 
 test('isWorktreeInUse matches the root and subdirectories, not sibling prefixes', () => {
