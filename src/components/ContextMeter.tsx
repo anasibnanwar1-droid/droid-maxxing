@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { AnimatePresence, motion } from 'framer-motion';
 import { X } from 'lucide-react';
 import { useStore } from '../hooks/useStore';
+import { compactsAtMarker } from '../lib/contextMeter';
 import type { ContextStatsSnapshot, MissionSummary } from '../types/bridge';
 
 const EASE = [0.16, 1, 0.3, 1] as const;
@@ -147,20 +148,19 @@ export default function ContextMeter({
   const modelWindow = isOrchestratorView ? (catalogWindow ?? statLimit) : statLimit;
 
   // The daemon auto-compacts before the window fills; surface that trigger as a
-  // separate "Compacts at" marker (per-model override -> global default, capped
-  // to the window). It uses the orchestrator's configured model, so it is only
-  // meaningful for the orchestrator's own session.
-  const orchestratorCompactionLimit =
-    mission.modelId && state.compactionTokenLimitPerModel[mission.modelId] !== undefined
-      ? state.compactionTokenLimitPerModel[mission.modelId]
-      : state.compactionTokenLimit;
-  const compactionLimit = isOrchestratorView ? orchestratorCompactionLimit : undefined;
-  const effectiveCompaction =
-    compactionLimit && compactionLimit > 0
-      ? modelWindow
-        ? Math.min(compactionLimit, modelWindow)
-        : compactionLimit
-      : undefined;
+  // separate "Compacts at" marker. It uses the orchestrator's model, so it is
+  // only meaningful for the orchestrator's own session; a reset-to-Default
+  // mission resolves to the configured orchestrator default so the marker still
+  // tracks the active model's per-model trigger.
+  const effectiveCompaction = isOrchestratorView
+    ? compactsAtMarker(
+        mission.modelId,
+        state.agentConfig.orchestrator.modelId,
+        state.compactionTokenLimitPerModel,
+        state.compactionTokenLimit,
+        modelWindow,
+      )
+    : undefined;
   const max = modelWindow ?? statLimit;
 
   const accuracy = measured?.accuracy;

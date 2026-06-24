@@ -151,7 +151,13 @@ export interface ManualCompaction {
 export async function runManualCompaction(
   session: CompactableSession,
   customInstructions?: string,
-): Promise<ManualCompaction> {
-  const result = await session.compactSession(customInstructions ? { customInstructions } : {});
+): Promise<ManualCompaction | null> {
+  // The SDK types compactSession() as non-null, but it returns null at runtime
+  // when there is nothing left to compact (the same guard compactHistoricalSession
+  // relies on), so treat the result as nullable before dereferencing it.
+  const result = (await session.compactSession(
+    customInstructions ? { customInstructions } : {},
+  )) as ManualCompaction | null;
+  if (!result) return null;
   return { newSessionId: result.newSessionId, removedCount: result.removedCount };
 }

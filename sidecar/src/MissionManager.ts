@@ -1361,8 +1361,10 @@ export class MissionManager {
   // Reflect the daemon's in-place auto-compaction quietly: bump compactionCount
   // (only for the orchestrator chat) so the context meter resets its high-water
   // mark and visibly drops, drop one small top-level line, and refresh context.
-  // Manual /compact runs its own reflection while `mission.compacting` is set,
-  // so skip then to avoid double counting.
+  // Manual /compact on the orchestrator runs its own reflection while
+  // `mission.compacting` is set, so suppress only the orchestrator's own daemon
+  // notification then to avoid double counting; a worker auto-compacting in the
+  // same window is unrelated and must still surface its divider and refresh.
   private handleSessionCompacted(
     appSessionId: string,
     agentSessionId: string,
@@ -1371,7 +1373,7 @@ export class MissionManager {
     info: SessionCompacted,
   ): void {
     const mission = this.findMission(appSessionId);
-    if (mission?.compacting) return;
+    if (role === 'orchestrator' && mission?.compacting) return;
     if (role === 'orchestrator' && mission) {
       this.patch(appSessionId, { compactionCount: (mission.summary.compactionCount ?? 0) + 1 });
     }
@@ -1860,10 +1862,14 @@ export class MissionManager {
     mission.compacting = true;
     this.emitStatus(appSessionId, 'Compacting conversation...', compactType);
     try {
-      const { newSessionId, removedCount } = await runManualCompaction(
-        mission.session,
-        customInstructions,
-      );
+      const result = await runManualCompaction(mission.session, customInstructions);
+      if (!result) {
+        // The daemon reported nothing to compact: leave the conversation exactly
+        // as-is (no backing-id swap, no divider, no count bump). The finally
+        // clears `compacting`, removing the in-progress indicator.
+        return;
+      }
+      const { newSessionId, removedCount } = result;
       if (newSessionId && newSessionId !== mission.summary.sessionId) {
         try {
           await this.swapMissionSession(mission, newSessionId, carryover);
@@ -1929,13 +1935,34 @@ export class MissionManager {
       appSessionId,
       'orchestrator',
     );
+    // Re-assert daemon compaction on the swapped backing session as on resume:
+    // resolve the effective model (a reset-to-Default mission has no modelId, so
+    // fall back to the default for its mode) and honor any limit the new session
+    // exposes before current app defaults, so the swapped session keeps the same
+    // trigger it ran with before compacting instead of silently dropping to a
+    // different threshold.
+    const swapDefaults = await this.getFactoryDefaults();
+    const swapModelId =
+      mission.summary.modelId ??
+      defaultModelForAgent('orchestrator', modeForSummary(mission.summary), swapDefaults);
+    const swapModelWindow = this.maxContextTokensForModel(swapModelId);
+    const swapInit = mission.session.initResult as InitResultLike | undefined;
+    const swapLimit = resumedCompactionTokenLimit(
+      swapModelId,
+      {
+        compactionTokenLimit: swapInit?.settings?.compactionTokenLimit,
+        compactionTokenLimitPerModel: swapInit?.settings?.compactionTokenLimitPerModel,
+      },
+      swapDefaults,
+      swapModelWindow,
+    );
     await this.enableDaemonCompaction(
       mission.session,
       daemonCompactionSettings(
-        mission.summary.modelId,
+        swapModelId,
+        { compactionTokenLimit: swapLimit },
         {},
-        await this.getFactoryDefaults(),
-        this.maxContextTokensForModel(mission.summary.modelId),
+        swapModelWindow,
       ),
     );
     // The replacement session starts with default tool settings, so the cached

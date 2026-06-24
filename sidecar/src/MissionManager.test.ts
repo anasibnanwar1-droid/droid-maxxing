@@ -733,6 +733,8 @@ class FakeCompactionSession {
   prompts: string[] = [];
   compactions = 0;
   failCompaction = false;
+  noopCompaction = false;
+  initResult: unknown = undefined;
   settingsUpdates: Array<Record<string, unknown>> = [];
 
   constructor(
@@ -769,8 +771,9 @@ class FakeCompactionSession {
     };
   }
 
-  async compactSession(): Promise<{ newSessionId: string; removedCount: number }> {
+  async compactSession(): Promise<{ newSessionId: string; removedCount: number } | null> {
     if (this.failCompaction) throw new Error('transient compaction failure');
+    if (this.noopCompaction) return null;
     this.compactions += 1;
     return { newSessionId: this.swapTo ?? this.sessionId, removedCount: 4 };
   }
@@ -939,6 +942,133 @@ test('manual compaction adopts the daemon-minted session id and counts the compa
   assert.equal(internals.missions.has('app-swap'), true);
   assert.equal(
     events.some((e) => e.type === 'mission.error'),
+    false,
+  );
+});
+
+test('manual compaction preserves the compaction trigger the swapped session exposes', async () => {
+  const { manager, mission, internals } = orchestratorSwapHarness(120_000, 'droid-new');
+  const swapped = new FakeCompactionSession('droid-new', 10_000);
+  // The new backing session exposes the same global trigger the chat ran with.
+  swapped.initResult = { settings: { compactionTokenLimit: 55_000 } };
+  internals.runtime = { loadSession: async () => swapped };
+  (
+    manager as unknown as { getFactoryDefaults: () => Promise<Record<string, unknown>> }
+  ).getFactoryDefaults = async () => ({ compactionTokenLimit: 999_000 });
+
+  await manager.handle({ type: 'mission.compact', missionId: 'app-swap' });
+
+  // The swapped session re-asserts daemon compaction honoring the limit it
+  // exposes (55_000), not the current global default (999_000), so adopting the
+  // new backing id can't silently change the threshold.
+  assert.equal(mission.summary.sessionId, 'droid-new');
+  assert.deepEqual(swapped.settingsUpdates.at(-1), {
+    compactionThresholdCheckEnabled: true,
+    compactionTokenLimit: 55_000,
+  });
+});
+
+test('manual compaction is a no-op when the daemon reports nothing to compact', async () => {
+  const { manager, events, mission, session } = orchestratorSwapHarness(10_000, 'droid-new');
+  session.noopCompaction = true;
+  (
+    manager as unknown as { getFactoryDefaults: () => Promise<Record<string, unknown>> }
+  ).getFactoryDefaults = async () => ({});
+
+  await manager.handle({ type: 'mission.compact', missionId: 'app-swap' });
+
+  // compactSession() returned null: leave the conversation untouched, with no
+  // backing-id swap, no count bump, no divider, and no error surfaced.
+  assert.equal(mission.session.sessionId, 'droid-old');
+  assert.equal(mission.summary.sessionId, 'droid-old');
+  assert.equal(mission.summary.compactionCount ?? 0, 0);
+  assert.equal(session.compactions, 0);
+  assert.equal(
+    events.some(
+      (e) =>
+        e.type === 'mission.transcript' &&
+        (e as { event?: { kind?: string } }).event?.kind === 'compaction',
+    ),
+    false,
+  );
+  assert.equal(
+    events.some((e) => e.type === 'mission.error'),
+    false,
+  );
+});
+
+test('a worker auto-compaction during an orchestrator manual compaction still reflects', async () => {
+  const events: ServerEvent[] = [];
+  const manager = new MissionManager((event) => events.push(event));
+  const session = {
+    sessionId: 'worker-droid',
+    async getContextStats() {
+      return {
+        used: 5_000,
+        remaining: 995_000,
+        limit: 1_000_000,
+        accuracy: 'exact' as const,
+        updatedAt: new Date().toISOString(),
+      };
+    },
+  };
+  const mission = {
+    summary: testSummary('app-mc', 'orch-droid'),
+    session,
+    compacting: true,
+  };
+  const internals = manager as unknown as {
+    history: {
+      recordEvent: () => void;
+      syncSummaries: () => void;
+      summaryPatches: () => Map<string, unknown>;
+      hiddenDroidSessionIds: () => Set<string>;
+    };
+    missions: Map<string, typeof mission>;
+    handleSessionCompacted: (
+      appId: string,
+      agentId: string,
+      role: 'orchestrator' | 'worker',
+      s: typeof session,
+      info: { removedCount: number },
+    ) => void;
+  };
+  internals.history = {
+    recordEvent: () => {},
+    syncSummaries: () => {},
+    summaryPatches: () => new Map(),
+    hiddenDroidSessionIds: () => new Set(),
+  };
+  internals.missions.set('app-mc', mission);
+
+  // The orchestrator is mid manual compaction (mission.compacting). A worker
+  // auto-compacting in the same window is unrelated and must still surface its
+  // divider, without bumping the orchestrator generation counter.
+  internals.handleSessionCompacted('app-mc', 'worker-droid', 'worker', session, {
+    removedCount: 7,
+  });
+  const workerDivider = events.find(
+    (e) =>
+      e.type === 'mission.transcript' &&
+      (e as { event?: { kind?: string } }).event?.kind === 'compaction',
+  ) as { event?: { compactType?: string; removedCount?: number; role?: string } } | undefined;
+  assert.equal(workerDivider?.event?.compactType, 'auto');
+  assert.equal(workerDivider?.event?.removedCount, 7);
+  assert.equal(workerDivider?.event?.role, 'worker');
+  assert.equal(mission.summary.compactionCount ?? 0, 0);
+
+  // The orchestrator's own daemon notification is still suppressed while its
+  // manual compaction owns the reflection.
+  events.length = 0;
+  internals.handleSessionCompacted('app-mc', 'orch-droid', 'orchestrator', session, {
+    removedCount: 3,
+  });
+  assert.equal(
+    events.some(
+      (e) =>
+        e.type === 'mission.transcript' &&
+        (e as { event?: { kind?: string } }).event?.kind === 'compaction',
+    ),
     false,
   );
 });
