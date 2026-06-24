@@ -399,6 +399,9 @@ async function diffStat(dir, options = {}) {
 
 function validBranchName(name) {
   if (typeof name !== 'string' || name.length === 0) return false;
+  // A leading dash makes git parse the name as an option (e.g. `-D` would turn
+  // `git branch -D <base>` into a branch deletion), so reject it outright.
+  if (name.startsWith('-')) return false;
   if (name === '@' || name.endsWith('.') || name.includes('..') || name.includes('@{')) {
     return false;
   }
@@ -417,8 +420,9 @@ async function createBranch(dir, { name, base, checkout = true } = {}) {
   if (!root) return { ok: false, reason: 'not_a_repo' };
   if (!validBranchName(name)) return { ok: false, reason: 'invalid_name' };
   try {
-    if (checkout) await run(root, ['switch', '-c', name, ...(base ? [base] : [])]);
-    else await run(root, ['branch', name, ...(base ? [base] : [])]);
+    // `--` ends option parsing so a base ref can never be read as a flag.
+    if (checkout) await run(root, ['switch', '-c', name, ...(base ? ['--', base] : [])]);
+    else await run(root, ['branch', '--', name, ...(base ? [base] : [])]);
     await rememberBase(root, name, base);
     return { ok: true, environment: await environment(root) };
   } catch (err) {
@@ -436,6 +440,19 @@ async function checkout(dir, { ref, allowDirty = false } = {}) {
   if (!root) return { ok: false, reason: 'not_a_repo' };
   if (!ref) return { ok: false, reason: 'invalid_name' };
   if (!allowDirty && (await isDirty(root))) return { ok: false, reason: 'dirty' };
+
+  // An exact local branch wins over remote-prefix handling: a branch literally
+  // named `origin/foo` must be checked out as-is, not treated as the remote ref
+  // and collapsed to `foo`.
+  const exactLocal = await tryRun(root, ['rev-parse', '--verify', '--quiet', `refs/heads/${ref}`]);
+  if (exactLocal) {
+    try {
+      await run(root, ['switch', ref]);
+      return { ok: true, environment: await environment(root) };
+    } catch (err) {
+      return { ok: false, reason: 'git_error', message: err.message };
+    }
+  }
 
   // When the caller picks a remote-tracking ref (e.g. `origin/feature`), switch
   // to the matching local branch, creating it as a tracking branch from that
