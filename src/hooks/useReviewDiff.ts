@@ -71,9 +71,10 @@ export function useReviewDiff(
       return;
     }
     // Drop the prior scope/file's diff so a stale one is never shown while the
-    // newly scoped diff loads (the same path can exist in multiple scopes). Skip
-    // this on poll refreshes (version bumps) to avoid flicker.
-    const key = `${cwd}\u0000${scope}\u0000${selectedPath}`;
+    // newly scoped diff loads (the same path can exist in multiple scopes, and
+    // toggling whitespace refetches the same path). Skip this on poll refreshes
+    // (version bumps) to avoid flicker.
+    const key = `${cwd}\u0000${scope}\u0000${selectedPath}\u0000${ignoreWhitespace}`;
     if (diffKey.current !== key) {
       diffKey.current = key;
       setFileDiff(null);
