@@ -1,6 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { classifyEvent, isChatContent, isDiagnosticContent } from './transcript';
+import {
+  classifyEvent,
+  isChatContent,
+  isDiagnosticContent,
+  isVisibleFeedEvent,
+} from './transcript';
 import type { TranscriptEvent } from '../types/bridge';
 
 function ev(extra: Partial<TranscriptEvent>): TranscriptEvent {
@@ -64,6 +69,25 @@ test('errors and failed tool results classify as error', () => {
     classifyEvent(ev({ kind: 'tool_result', toolName: 'Execute', isError: true })),
     'error',
   );
+});
+
+test('isVisibleFeedEvent keeps compaction dividers (and every transcript kind) in the feed', () => {
+  // Regression guard for #18: daemon/manual compaction dividers must survive the
+  // Mission Control feed filter, not only chat/tool/status events.
+  assert.equal(isVisibleFeedEvent(ev({ kind: 'compaction', removedCount: 3 })), true);
+  for (const kind of [
+    'text',
+    'thinking',
+    'tool_call',
+    'tool_result',
+    'status',
+    'error',
+    'compaction',
+  ] as const) {
+    assert.equal(isVisibleFeedEvent(ev({ kind })), true);
+  }
+  assert.equal(isVisibleFeedEvent(ev({ kind: 'text', author: 'user' })), true);
+  assert.equal(isVisibleFeedEvent(ev({ kind: 'tool_result', isError: true })), true);
 });
 
 test('chat vs diagnostic partitioning', () => {

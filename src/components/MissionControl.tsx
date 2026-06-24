@@ -44,6 +44,7 @@ import type {
   Autonomy,
 } from '../types/bridge';
 import { extractFileChange, type FileChange } from '../lib/diff';
+import { isVisibleFeedEvent } from '../lib/transcript';
 import { environmentLabels } from '../lib/repoEnvironment';
 import { DiffFull } from './DiffView';
 import { ModelIcon, providerOf } from './ModelIcon';
@@ -1067,20 +1068,11 @@ export default function MissionControl() {
   if (!mission) return null;
 
   const onOrchestrator = viewedAgent === 'orchestrator';
-  const visible = (t: TranscriptEvent) =>
-    t.author === 'user' ||
-    t.kind === 'text' ||
-    t.kind === 'thinking' ||
-    t.kind === 'tool_call' ||
-    t.kind === 'tool_result' ||
-    t.kind === 'status' ||
-    t.kind === 'error' ||
-    t.isError;
   const events = (
     onOrchestrator
       ? allTx.filter((t) => t.role === 'orchestrator')
       : allTx.filter((t) => t.agentSessionId === viewedAgent)
-  ).filter(visible);
+  ).filter(isVisibleFeedEvent);
 
   const selectFeature = (f: BridgeFeature) => {
     setSelectedFeatureId(f.id);
