@@ -50,9 +50,6 @@ export interface GitEnvironment {
   behind?: number;
   defaultBranch?: string | null;
   defaultRef?: string | null;
-  // The ref branch/worktree diffs are actually computed against (stored base or
-  // the default branch ref); used so the UI label matches the shown diff.
-  diffBaseRef?: string | null;
   remoteUrl?: string | null;
   isGitHub?: boolean;
 }

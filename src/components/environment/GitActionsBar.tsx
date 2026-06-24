@@ -4,7 +4,6 @@ import { GitCommitIcon, GitPullRequestIcon } from './GithubIcons';
 import { CommitSheet } from './CommitSheet';
 import { CreatePrSheet } from './CreatePrSheet';
 import { gitPush } from '../../lib/git';
-import { aheadBehindLabel } from '../../lib/git';
 import { toast } from '../../lib/toast';
 import type { GitBranchList, GitEnvironment } from '../../types/vcs';
 
@@ -70,7 +69,9 @@ export function GitActionsBar({
     onChanged();
   };
 
-  const ahead = aheadBehindLabel(env?.ahead ?? 0, env?.behind ?? 0);
+  // Only commits ahead of upstream are publishable; a behind-only branch has
+  // nothing to push, so the label must not surface the behind count.
+  const aheadCount = env?.ahead ?? 0;
 
   return (
     <div className="px-1.5 pt-1">
@@ -89,7 +90,7 @@ export function GitActionsBar({
               <Upload className="h-3.5 w-3.5" />
             )
           }
-          label={ahead ? `Push ${ahead}` : 'Push'}
+          label={aheadCount > 0 ? `Push ↑${aheadCount}` : 'Push'}
           disabled={pushing || !!env?.detached}
           onClick={() => void doPush()}
         />

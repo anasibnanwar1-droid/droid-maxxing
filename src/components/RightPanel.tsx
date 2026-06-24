@@ -22,6 +22,7 @@ import { Row, SectionHeader, Divider } from './environment/primitives';
 import { EnvironmentSection } from './environment/EnvironmentSection';
 import { PullRequestPanel } from './environment/PullRequestPanel';
 import type { DiffStatMode } from '../types/vcs';
+import { diffModeToReviewScope } from '../lib/reviewScopes';
 
 // Mirrors the sub-agent row design used in the left sidebar.
 function AgentRow({
@@ -204,7 +205,10 @@ export default function RightPanel() {
                   live={working || agentsRunning}
                   pr={pr.pr}
                   onOpenPr={() => setView('pr')}
-                  onOpenReview={() => dispatch({ type: 'SET_REVIEW_OPEN', open: true })}
+                  onOpenReview={() => {
+                    dispatch({ type: 'SET_REVIEW_SCOPE', scope: diffModeToReviewScope(diffMode) });
+                    dispatch({ type: 'SET_REVIEW_OPEN', open: true });
+                  }}
                 />
                 <Row
                   icon={
