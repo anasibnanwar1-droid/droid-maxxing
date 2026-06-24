@@ -1171,6 +1171,7 @@ function WorktreesSection() {
     missions: Object.values(state.missions),
     activeMissionId: state.activeMissionId,
     draftCwd: state.draftChat?.cwd,
+    workers: state.workers,
   });
 
   return (

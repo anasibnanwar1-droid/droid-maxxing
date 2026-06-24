@@ -496,6 +496,11 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
 
   const queue: QueuedPrompt[] = activeMission ? (state.promptQueue[activeMission.id] ?? []) : [];
 
+  // Mirror the live queue so an async delivery can re-check membership after an
+  // await, even though deliverPrompt closes over a stale render snapshot.
+  const promptQueueRef = useRef(state.promptQueue);
+  promptQueueRef.current = state.promptQueue;
+
   const deliverPrompt = async (p: QueuedPrompt) => {
     if (!activeMission) return;
     if (p.design) {
@@ -515,6 +520,11 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
     }
     const composed = composeFrom(p.text, p.skills, p.files);
     if (activeMission.cwd) await markGitTurnStart(activeMission.cwd);
+    // The queue stays editable while markGitTurnStart runs; if the user deleted
+    // or edited this item meanwhile it is no longer queued (editing removes it
+    // and reloads the composer), so don't send a stale copy.
+    const stillQueued = (promptQueueRef.current[activeMission.id] ?? []).some((q) => q.id === p.id);
+    if (!stillQueued) return;
     try {
       sendToMission(activeMission.id, composed);
     } catch (err) {
