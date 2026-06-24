@@ -5,7 +5,9 @@ import {
   createMissionAgentDefaultsForMode,
   createModelDefaultsForMode,
   createSessionSettingsForAgent,
+  defaultModelForAgent,
   MissionManager,
+  modeForSummary,
   startupFactoryDefaults,
   validateFactoryDefaults,
 } from './MissionManager.js';
@@ -15,7 +17,13 @@ import {
   readSessionCompacted,
   resumedCompactionTokenLimit,
 } from './compaction.js';
-import type { MissionSummary, ModelInfo, ServerEvent, WorkerHistoryLink } from './protocol.js';
+import type {
+  FactoryDefaultSettings,
+  MissionSummary,
+  ModelInfo,
+  ServerEvent,
+  WorkerHistoryLink,
+} from './protocol.js';
 
 class FakeSession {
   prompts: string[] = [];
@@ -319,6 +327,50 @@ test('resume threshold falls back to current defaults when init omits a compacti
       { compactionTokenLimitPerModel: { 'model-a': 175_000 } },
     ),
     175_000,
+  );
+});
+
+test('resume/swap compaction model resolves the mode-specific default for a reset-to-Default session', () => {
+  // A reset-to-Default session exposes no explicit model, so reasserting daemon
+  // compaction must resolve the session mode's default model (spec / mission
+  // orchestrator differ from the global chat default) for the right per-model
+  // trigger and window. This is the resolution the resume and swap reasserts use
+  // via defaultModelForAgent('orchestrator', modeForSummary(summary), defaults).
+  const defaults = {
+    modelId: 'chat-default',
+    specModelId: 'spec-default',
+    missionOrchestratorModelId: 'mission-default',
+  } as FactoryDefaultSettings;
+  assert.equal(
+    defaultModelForAgent(
+      'orchestrator',
+      modeForSummary({ kind: 'spec' } as MissionSummary),
+      defaults,
+    ),
+    'spec-default',
+  );
+  assert.equal(
+    defaultModelForAgent(
+      'orchestrator',
+      modeForSummary({ kind: 'mission_orchestrator' } as MissionSummary),
+      defaults,
+    ),
+    'mission-default',
+  );
+  assert.equal(
+    defaultModelForAgent(
+      'orchestrator',
+      modeForSummary({ kind: 'chat' } as MissionSummary),
+      defaults,
+    ),
+    'chat-default',
+  );
+  // Falls back to the global default when the mode default is unset.
+  assert.equal(
+    defaultModelForAgent('orchestrator', modeForSummary({ kind: 'spec' } as MissionSummary), {
+      modelId: 'chat-default',
+    } as FactoryDefaultSettings),
+    'chat-default',
   );
 });
 

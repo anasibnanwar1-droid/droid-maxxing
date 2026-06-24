@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { AnimatePresence, motion } from 'framer-motion';
 import { X } from 'lucide-react';
 import { useStore } from '../hooks/useStore';
-import { compactsAtMarker } from '../lib/contextMeter';
+import { compactsAtMarker, orchestratorDefaultModelId } from '../lib/contextMeter';
 import type { ContextStatsSnapshot, MissionSummary } from '../types/bridge';
 
 const EASE = [0.16, 1, 0.3, 1] as const;
@@ -150,12 +150,17 @@ export default function ContextMeter({
   // The daemon auto-compacts before the window fills; surface that trigger as a
   // separate "Compacts at" marker. It uses the orchestrator's model, so it is
   // only meaningful for the orchestrator's own session; a reset-to-Default
-  // mission resolves to the configured orchestrator default so the marker still
-  // tracks the active model's per-model trigger.
+  // session resolves to its mode's default (spec / mission orchestrator differ
+  // from the chat default) so the marker still tracks the active model's
+  // per-model trigger.
   const effectiveCompaction = isOrchestratorView
     ? compactsAtMarker(
         mission.modelId,
-        state.agentConfig.orchestrator.modelId,
+        orchestratorDefaultModelId(mission.kind, {
+          chat: state.agentConfig.orchestrator.modelId,
+          spec: state.specModelId,
+          missionOrchestrator: state.missionOrchestratorModelId,
+        }),
         state.compactionTokenLimitPerModel,
         state.compactionTokenLimit,
         modelWindow,
@@ -172,9 +177,7 @@ export default function ContextMeter({
   // own per-session compaction generation, so a worker auto-compaction resets
   // the worker meter (without an orchestrator compaction ever resetting it).
   const workerGeneration = sessionKey ? state.compactionGenerations[sessionKey] : undefined;
-  const generation = isOrchestratorView
-    ? (mission.compactionCount ?? 0)
-    : (workerGeneration ?? 0);
+  const generation = isOrchestratorView ? (mission.compactionCount ?? 0) : (workerGeneration ?? 0);
   const used = useStableUsed(sessionKey ?? mission.id, measured?.used, !isEstimating, generation);
   const remaining =
     used !== undefined && max !== undefined ? Math.max(0, max - used) : measured?.remaining;

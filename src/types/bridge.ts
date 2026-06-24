@@ -252,6 +252,7 @@ export interface FactoryDefaultSettings {
   autonomy?: Autonomy;
   specModelId?: string;
   specReasoningEffort?: ReasoningEffort;
+  missionOrchestratorModelId?: string;
   workerModelId?: string;
   workerReasoningEffort?: ReasoningEffort;
   validatorModelId?: string;

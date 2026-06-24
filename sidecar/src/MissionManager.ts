@@ -941,12 +941,23 @@ export class MissionManager {
       // The SDK does not persist compaction settings across loadSession, so
       // re-assert daemon-owned auto-compaction on resume. Honor a limit the
       // resumed session exposes, else fall back to current app defaults.
-      const resumeModelWindow = this.maxContextTokensForModel(summary.modelId);
+      //
+      // Resolve the model the daemon actually compacts against: an explicit or
+      // historical model wins, but a reset-to-Default session must fall back to
+      // its mode's default (the spec / mission-orchestrator defaults differ from
+      // the global default) so the per-model trigger and window are correct.
+      // summary.modelId can't be used here because it already collapses the
+      // no-model case onto the global default.
+      const resumeModelId =
+        init.settings?.modelId ??
+        historical?.modelId ??
+        defaultModelForAgent('orchestrator', modeForSummary(summary), defaults);
+      const resumeModelWindow = this.maxContextTokensForModel(resumeModelId);
       // resumedCompactionTokenLimit already resolves the effective limit (the
       // resumed session's exposed value before current defaults), so pass empty
       // defaults here to keep a current per-model default from overriding it.
       const resumedLimit = resumedCompactionTokenLimit(
-        summary.modelId,
+        resumeModelId,
         {
           compactionTokenLimit: init.settings?.compactionTokenLimit,
           compactionTokenLimitPerModel: init.settings?.compactionTokenLimitPerModel,
@@ -957,7 +968,7 @@ export class MissionManager {
       await this.enableDaemonCompaction(
         session,
         daemonCompactionSettings(
-          summary.modelId,
+          resumeModelId,
           { compactionTokenLimit: resumedLimit },
           {},
           resumeModelWindow,
@@ -3242,7 +3253,7 @@ function modelDefaultForMode(
   return defaults.modelId;
 }
 
-function defaultModelForAgent(
+export function defaultModelForAgent(
   agent: ConfigurableAgent,
   mode: SessionInteractionMode,
   defaults: FactoryDefaultSettings,
@@ -3252,7 +3263,7 @@ function defaultModelForAgent(
   return modelDefaultForMode(mode, defaults);
 }
 
-function modeForSummary(summary: MissionSummary): SessionInteractionMode {
+export function modeForSummary(summary: MissionSummary): SessionInteractionMode {
   if (summary.kind === 'spec') return 'spec';
   if (summary.kind === 'mission_orchestrator') return 'agi';
   return 'auto';

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { compactsAtMarker } from './contextMeter';
+import { compactsAtMarker, orchestratorDefaultModelId } from './contextMeter';
 
 test('per-model override wins over the global default', () => {
   assert.equal(
@@ -46,4 +46,27 @@ test('caps the trigger to the model context window', () => {
 test('hides the marker when no limit is configured', () => {
   assert.equal(compactsAtMarker(undefined, undefined, {}, undefined, 100_000), undefined);
   assert.equal(compactsAtMarker('model-x', 'default-model', {}, 0, 100_000), undefined);
+});
+
+test('orchestratorDefaultModelId resolves the mode-specific default', () => {
+  // Regression guard for #18: spec / mission-orchestrator sessions resolve their
+  // own default models, so the marker must follow the mode's default rather than
+  // always using the chat (orchestrator) default.
+  const defaults = {
+    chat: 'chat-default',
+    spec: 'spec-default',
+    missionOrchestrator: 'mission-default',
+  };
+  assert.equal(orchestratorDefaultModelId('spec', defaults), 'spec-default');
+  assert.equal(orchestratorDefaultModelId('mission_orchestrator', defaults), 'mission-default');
+  assert.equal(orchestratorDefaultModelId('chat', defaults), 'chat-default');
+});
+
+test('orchestratorDefaultModelId falls back to the chat default when a mode default is unset', () => {
+  assert.equal(orchestratorDefaultModelId('spec', { chat: 'chat-default' }), 'chat-default');
+  assert.equal(
+    orchestratorDefaultModelId('mission_orchestrator', { chat: 'chat-default' }),
+    'chat-default',
+  );
+  assert.equal(orchestratorDefaultModelId('spec', { chat: undefined }), undefined);
 });

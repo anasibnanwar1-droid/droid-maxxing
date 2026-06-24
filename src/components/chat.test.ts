@@ -4,6 +4,7 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import {
   buildFeed,
+  compactionDividerLabel,
   correlateResults,
   groupTurns,
   isResultFor,
@@ -512,6 +513,27 @@ test('#20 a failed subagent result batched after another tool call surfaces as a
 });
 
 // ── #18: final answer always top-level, even with trailing compaction ──
+
+test('#18 compactionDividerLabel keeps the manual label when a removed count is present', () => {
+  // A real /compact emits compactType:'manual' with a removed count; the divider
+  // must keep the manual "Session compacted" wording, not fall back to the
+  // generic auto-compaction label.
+  assert.equal(
+    compactionDividerLabel('manual', 4),
+    'Session compacted · 4 earlier messages summarized',
+  );
+  assert.equal(
+    compactionDividerLabel('manual', 1),
+    'Session compacted · 1 earlier message summarized',
+  );
+  assert.equal(compactionDividerLabel('manual'), 'Session compacted');
+  assert.equal(
+    compactionDividerLabel('auto', 9),
+    'Context compacted · 9 earlier messages summarized',
+  );
+  assert.equal(compactionDividerLabel('auto'), 'Context automatically compacted');
+  assert.equal(compactionDividerLabel(undefined, 0), 'Context automatically compacted');
+});
 
 test('#18 a final answer followed by compaction stays a top-level message', () => {
   const events = [userMsg('q'), grep(), asst('the answer'), compaction()];

@@ -92,6 +92,23 @@ export function CompactingIndicator() {
 }
 
 /* ── Compaction divider — persistent marker once compaction has completed ── */
+// Build the divider label. A manual compaction keeps its "Session compacted"
+// wording even when a removed-message count is present (manual events carry
+// both compactType:'manual' and a count), so /compact is never mislabeled as a
+// generic auto compaction.
+export function compactionDividerLabel(
+  compactType?: 'auto' | 'manual',
+  removedCount?: number,
+): string {
+  const summarized =
+    removedCount && removedCount > 0
+      ? ` · ${removedCount.toLocaleString()} earlier message${removedCount === 1 ? '' : 's'} summarized`
+      : '';
+  if (compactType === 'manual') return `Session compacted${summarized}`;
+  if (summarized) return `Context compacted${summarized}`;
+  return 'Context automatically compacted';
+}
+
 export function CompactionDivider({
   compactType,
   removedCount,
@@ -100,12 +117,7 @@ export function CompactionDivider({
   removedCount?: number;
 }) {
   const manual = compactType === 'manual';
-  const label =
-    removedCount && removedCount > 0
-      ? `Context compacted · ${removedCount.toLocaleString()} earlier message${removedCount === 1 ? '' : 's'} summarized`
-      : manual
-        ? 'Session compacted'
-        : 'Context automatically compacted';
+  const label = compactionDividerLabel(compactType, removedCount);
   return (
     <div
       className={`flex items-center gap-3 py-1 ${manual ? 'text-droid-text-secondary' : 'text-droid-text-muted'}`}
