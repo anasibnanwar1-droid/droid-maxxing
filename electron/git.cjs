@@ -243,11 +243,11 @@ async function environment(dir) {
   const remoteUrl = primaryRemote ? await tryRun(root, ['remote', 'get-url', primaryRemote]) : null;
   const defaultRef = await defaultBaseRef(root, primaryRemote);
   const storedBaseRef = detached ? null : await storedBase(root, branchName);
-  const base = storedBaseRef || upstream || null;
-  // The ref diffs and Review scopes actually compare against (mirrors
-  // effectiveBaseRef): the branch's verified stored base, else the default
-  // branch ref. Exposed so the UI label matches the diff that is shown.
-  const diffBaseRef =
+  // The ref this branch forks from and is diffed against (mirrors
+  // effectiveBaseRef): its verified stored base, otherwise the default branch
+  // ref. Upstream is the push target (often the branch's own remote ref), not a
+  // base, so it is intentionally not used here.
+  const base =
     storedBaseRef && (await tryRun(root, ['rev-parse', '--verify', '--quiet', storedBaseRef]))
       ? storedBaseRef
       : defaultRef;
@@ -262,13 +262,12 @@ async function environment(dir) {
     detached,
     head: head || null,
     upstream: upstream || null,
-    base,
+    base: base || null,
     baseKind: baseKindOf(base, remotes),
     ahead,
     behind,
     defaultBranch: defaultRef ? defaultRef.replace(/^[^/]+\//, '') : null,
     defaultRef,
-    diffBaseRef: diffBaseRef || null,
     remoteUrl: remoteUrl || null,
     isGitHub: !!remoteUrl && /github\.com/i.test(remoteUrl),
   };
@@ -816,6 +815,19 @@ async function diffFiles(dir, options = {}) {
   return { mode: scope, base: base || null, files };
 }
 
+// Resolve the pre-rename path for a file within a diff range. Uses the same
+// detection as the file list (parseDiffFileList), so it only reports an old
+// path when the list already classified the file as a rename/copy.
+async function renameSource(root, args, file) {
+  const out = await runSoft(root, ['diff', ...args, '--name-status']).catch(() => '');
+  for (const line of String(out).split('\n')) {
+    if (!line.trim()) continue;
+    const parts = line.split('\t');
+    if (/^[RC]/.test(parts[0]) && parts[parts.length - 1] === file) return parts[1];
+  }
+  return null;
+}
+
 async function fileDiff(dir, options = {}) {
   const scope = normalizeScope(options.mode);
   const file = options.path;
@@ -824,7 +836,12 @@ async function fileDiff(dir, options = {}) {
   const { args, includeUntracked } = await scopeRange(root, scope);
   if (!args) return { path: file, diff: '', binary: false };
   const ws = options.ignoreWhitespace ? ['-w'] : [];
-  let out = await runSoft(root, ['diff', ...ws, ...args, '--', file]).catch(() => '');
+  // A rename restricted to just the new path can't be paired with its deleted
+  // source, so git would render the whole file as newly added. Diff both paths
+  // with rename detection on so the rename/edit hunk shows instead.
+  const renameOld = await renameSource(root, args, file);
+  const pathSpec = renameOld ? ['-M', '--', renameOld, file] : ['--', file];
+  let out = await runSoft(root, ['diff', ...ws, ...args, ...pathSpec]).catch(() => '');
   // Untracked files (incl. preexisting ones the agent edited) have no tree-side
   // to diff against, so render their full current content via --no-index. Gate
   // this on the file actually being untracked: with -w a tracked file can yield

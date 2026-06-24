@@ -124,7 +124,9 @@ export function StartBranchMenu({
     const res = await checkoutGitBranch(cwd, { ref: pending.branch });
     setBusy(false);
     if (res.ok) {
-      onStartIn(repoRoot, stripRemote(pending.branch));
+      // Only a remote ref carries a remote prefix to strip; a local branch like
+      // `feature/foo` must be recorded verbatim, not collapsed to `foo`.
+      onStartIn(repoRoot, pending.remote ? stripRemote(pending.branch) : pending.branch);
       onRefresh();
       close();
     } else if (res.reason === 'dirty') {

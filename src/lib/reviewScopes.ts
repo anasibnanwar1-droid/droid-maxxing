@@ -1,4 +1,4 @@
-import type { DiffFileStatus, DiffScope } from '../types/vcs';
+import type { DiffFileStatus, DiffScope, DiffStatMode } from '../types/vcs';
 
 export interface ReviewScopeOption {
   scope: DiffScope;
@@ -18,6 +18,16 @@ export const REVIEW_SCOPE_OPTIONS: ReviewScopeOption[] = [
 
 export function reviewScopeLabel(scope: DiffScope): string {
   return REVIEW_SCOPE_OPTIONS.find((o) => o.scope === scope)?.label ?? 'Changes';
+}
+
+// The review scope whose file list matches a Context-panel diff summary, so
+// opening Review from a summary shows the same files. `worktree`/`branch` share
+// ranges with their scopes exactly; `uncommitted` has no exact scope, so the
+// closest (working tree changes) is used.
+export function diffModeToReviewScope(mode: DiffStatMode): DiffScope {
+  if (mode === 'branch') return 'branch';
+  if (mode === 'worktree') return 'worktree';
+  return 'unstaged';
 }
 
 const STATUS_SYMBOL: Record<DiffFileStatus, string> = {

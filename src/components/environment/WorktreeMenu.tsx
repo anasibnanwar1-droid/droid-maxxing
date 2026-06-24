@@ -164,7 +164,14 @@ export function WorktreeMenu({
                 </span>
                 <ExternalLink className="h-3.5 w-3.5 shrink-0 text-droid-text-muted/60" />
               </button>
-              {w.path && isWorktreeInUse(w.path, sessionCwds) ? (
+              {w.isMain ? (
+                <span
+                  title="The repository's main worktree can't be removed"
+                  className="shrink-0 rounded bg-droid-elevated px-1.5 py-0.5 text-[10px] text-droid-text-muted"
+                >
+                  main
+                </span>
+              ) : w.path && isWorktreeInUse(w.path, sessionCwds) ? (
                 <span
                   title="A chat is currently using this worktree"
                   className="shrink-0 rounded bg-droid-elevated px-1.5 py-0.5 text-[10px] text-droid-text-muted"

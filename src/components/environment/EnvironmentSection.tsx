@@ -75,7 +75,7 @@ export function EnvironmentSection({
           <DiffStat
             stat={diffStat}
             mode={diffMode}
-            baseRef={env?.diffBaseRef ?? env?.defaultRef}
+            baseRef={env?.base ?? env?.defaultRef}
             onModeChange={onDiffModeChange}
             onOpenReview={onOpenReview}
           />
