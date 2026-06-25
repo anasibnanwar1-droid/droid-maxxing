@@ -462,12 +462,16 @@ async function checkout(dir, { ref, allowDirty = false } = {}) {
   // to the matching local branch, creating it as a tracking branch from that
   // exact remote when absent. This avoids the ambiguity of stripping the remote
   // prefix client-side, which breaks with multiple remotes sharing a name.
-  const slash = ref.indexOf('/');
-  const maybeRemote = slash > 0 ? ref.slice(0, slash) : null;
-  if (maybeRemote) {
+  if (ref.includes('/')) {
+    // Remote names can themselves contain "/" (e.g. "foo/bar"), so match `ref`
+    // against the configured remotes and prefer the longest match rather than
+    // assuming the remote is the text before the first slash.
     const remotes = await listRemotes(root);
-    if (remotes.includes(maybeRemote)) {
-      const local = ref.slice(slash + 1);
+    const matchedRemote = remotes
+      .filter((r) => ref.startsWith(`${r}/`) && ref.length > r.length + 1)
+      .sort((a, b) => b.length - a.length)[0];
+    if (matchedRemote) {
+      const local = ref.slice(matchedRemote.length + 1);
       const hasLocal = await tryRun(root, [
         'rev-parse',
         '--verify',
@@ -489,7 +493,10 @@ async function checkout(dir, { ref, allowDirty = false } = {}) {
             await run(root, ['branch', `--set-upstream-to=${ref}`, '--', local]).catch(() => {});
           }
         } else {
-          await run(root, ['switch', '--track', '--', ref]);
+          // Name the new branch after the part *following* the matched remote.
+          // A bare `git switch --track <ref>` derives the name by stripping only
+          // the first path component, which is wrong for slash-named remotes.
+          await run(root, ['switch', '-c', local, '--track', '--', ref]);
         }
         return { ok: true, environment: await environment(root) };
       } catch (err) {

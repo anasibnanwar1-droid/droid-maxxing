@@ -520,11 +520,17 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
     }
     const composed = composeFrom(p.text, p.skills, p.files);
     if (activeMission.cwd) await markGitTurnStart(activeMission.cwd);
-    // The queue stays editable while markGitTurnStart runs; if the user deleted
-    // or edited this item meanwhile it is no longer queued (editing removes it
-    // and reloads the composer), so don't send a stale copy.
-    const stillQueued = (promptQueueRef.current[activeMission.id] ?? []).some((q) => q.id === p.id);
-    if (!stillQueued) return;
+    // The queue stays editable while markGitTurnStart runs, so re-resolve the
+    // head afterwards instead of trusting the captured prompt: honor deletes and
+    // edits (both remove the item) and reorders by always delivering whatever is
+    // now first. If the head changed, restart delivery with the current head so
+    // the visible queue order is never violated.
+    const head = (promptQueueRef.current[activeMission.id] ?? [])[0];
+    if (!head) return;
+    if (head.id !== p.id) {
+      void deliverPrompt(head);
+      return;
+    }
     try {
       sendToMission(activeMission.id, composed);
     } catch (err) {
