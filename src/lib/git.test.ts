@@ -5,6 +5,7 @@ import {
   baseDescriptor,
   diffModeLabel,
   isWorktreeInUse,
+  stripRemotePrefix,
   worktreeName,
 } from './git';
 
@@ -18,12 +19,37 @@ test('diffModeLabel shows the effective base ref for the branch mode', () => {
   assert.equal(diffModeLabel('branch', null), 'Branch vs origin/main');
 });
 
+test('stripRemotePrefix drops the matched remote, including slash-containing names', () => {
+  assert.equal(stripRemotePrefix('origin/main', ['origin']), 'main');
+  // a remote whose name itself contains a slash: strip the whole "foo/bar/"
+  assert.equal(stripRemotePrefix('foo/bar/feature', ['foo/bar', 'origin']), 'feature');
+  // prefer the longest matching remote when names overlap
+  assert.equal(stripRemotePrefix('foo/bar/feature', ['foo', 'foo/bar']), 'feature');
+  // local refs (no matching remote) and empty remote lists are returned as-is
+  assert.equal(stripRemotePrefix('dev', ['origin']), 'dev');
+  assert.equal(stripRemotePrefix('feature/x', ['origin']), 'feature/x');
+  assert.equal(stripRemotePrefix('origin/main', []), 'origin/main');
+});
+
 test('baseDescriptor strips the remote prefix and reports the kind', () => {
-  assert.deepEqual(baseDescriptor({ isRepo: true, base: 'origin/main', baseKind: 'remote' }), {
-    ref: 'origin/main',
-    shortName: 'main',
-    kind: 'remote',
-  });
+  assert.deepEqual(
+    baseDescriptor({ isRepo: true, base: 'origin/main', baseKind: 'remote', remotes: ['origin'] }),
+    {
+      ref: 'origin/main',
+      shortName: 'main',
+      kind: 'remote',
+    },
+  );
+  // a slash-containing remote still resolves to the bare branch name
+  assert.deepEqual(
+    baseDescriptor({
+      isRepo: true,
+      base: 'foo/bar/main',
+      baseKind: 'remote',
+      remotes: ['foo/bar'],
+    }),
+    { ref: 'foo/bar/main', shortName: 'main', kind: 'remote' },
+  );
   assert.deepEqual(baseDescriptor({ isRepo: true, base: 'dev', baseKind: 'local' }), {
     ref: 'dev',
     shortName: 'dev',

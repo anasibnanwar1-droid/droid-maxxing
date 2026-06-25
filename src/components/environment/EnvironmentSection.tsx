@@ -33,6 +33,7 @@ export function EnvironmentSection({
   pr,
   onOpenPr,
   onOpenReview,
+  onPrCreated,
 }: {
   cwd: string;
   env: GitEnvironment | null;
@@ -46,6 +47,7 @@ export function EnvironmentSection({
   pr: PullRequest | null;
   onOpenPr: () => void;
   onOpenReview: () => void;
+  onPrCreated?: () => void;
 }) {
   const location = basename(env?.repoRoot ?? env?.worktreePath ?? cwd) || 'No folder';
   const isRepo = !!env?.isRepo;
@@ -86,6 +88,7 @@ export function EnvironmentSection({
             isGitHub={isGitHub}
             hasPr={!!pr && (prKind(pr) === 'open' || prKind(pr) === 'draft')}
             onChanged={refresh}
+            onPrCreated={onPrCreated}
           />
 
           {pr && (

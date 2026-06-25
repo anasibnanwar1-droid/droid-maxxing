@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { ChevronDown, Loader2 } from 'lucide-react';
 import { createPullRequest } from '../../lib/github';
-import { baseDescriptor, gitPush } from '../../lib/git';
+import { baseDescriptor, gitPush, stripRemotePrefix } from '../../lib/git';
 import { openExternal } from '../../lib/onboarding';
 import { toast } from '../../lib/toast';
 import type { GitBranchList, GitEnvironment } from '../../types/vcs';
@@ -13,11 +13,16 @@ export function CreatePrSheet({
   env,
   branches,
   onDone,
+  onCreated,
 }: {
   cwd: string;
   env: GitEnvironment | null;
   branches: GitBranchList | null;
   onDone: () => void;
+  // Fired after a PR is successfully opened so the parent can re-detect it
+  // immediately instead of waiting for the next poll (which would keep the
+  // "Open PR" affordance visible and allow a duplicate attempt).
+  onCreated?: () => void;
 }) {
   // Default the PR base to the branch's recorded base (e.g. a branch cut from
   // `develop` targets develop), falling back to the repo's default branch.
@@ -32,7 +37,7 @@ export function CreatePrSheet({
   const baseOptions = [
     recordedBase,
     env?.defaultBranch ?? 'main',
-    ...(branches?.remote ?? []).map((b) => b.name.split('/').slice(1).join('/') || b.name),
+    ...(branches?.remote ?? []).map((b) => stripRemotePrefix(b.name, env?.remotes)),
   ].filter((value, index, all): value is string => !!value && all.indexOf(value) === index);
 
   const doCreate = async () => {
@@ -53,6 +58,7 @@ export function CreatePrSheet({
     if (res.ok) {
       toast.success(`Opened PR #${res.number ?? ''}`.trim());
       if (res.url) void openExternal(res.url);
+      onCreated?.();
       onDone();
     } else if (res.reason === 'gh_unavailable') {
       toast.error('GitHub CLI not available');

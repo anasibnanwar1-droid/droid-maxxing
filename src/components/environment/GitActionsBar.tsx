@@ -46,6 +46,7 @@ export function GitActionsBar({
   isGitHub,
   hasPr,
   onChanged,
+  onPrCreated,
 }: {
   cwd: string;
   env: GitEnvironment | null;
@@ -53,6 +54,7 @@ export function GitActionsBar({
   isGitHub: boolean;
   hasPr: boolean;
   onChanged: () => void;
+  onPrCreated?: () => void;
 }) {
   const [sheet, setSheet] = useState<Sheet>('none');
   const [pushing, setPushing] = useState(false);
@@ -121,6 +123,7 @@ export function GitActionsBar({
             cwd={cwd}
             env={env}
             branches={branches}
+            onCreated={onPrCreated}
             onDone={() => {
               setSheet('none');
               onChanged();
