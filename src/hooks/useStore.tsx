@@ -170,6 +170,11 @@ export interface AppState {
   // Default session of that mode. Undefined falls back to the chat default.
   specModelId?: string;
   missionOrchestratorModelId?: string;
+  // The global Factory default model. agentConfig.orchestrator.modelId is
+  // undefined when the user picks the UI "Default" model, so the context meter
+  // resolves the real chat default model (the one the daemon actually runs)
+  // from this to keep the per-model "Compacts at" trigger correct.
+  defaultModelId?: string;
 
   // Global compaction model applied to every session. 'current-model' = use
   // each session's active model; otherwise a specific model id.
@@ -1693,6 +1698,7 @@ function baseReducer(state: AppState, action: Action): AppState {
         agentConfig: saveAgentConfig(next),
         specModelId: action.defaults.specModelId,
         missionOrchestratorModelId: action.defaults.missionOrchestratorModelId,
+        defaultModelId: action.defaults.modelId,
         ...compactionDefaults,
       };
     }

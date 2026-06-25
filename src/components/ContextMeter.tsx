@@ -157,7 +157,7 @@ export default function ContextMeter({
     ? compactsAtMarker(
         mission.modelId,
         orchestratorDefaultModelId(mission.kind, {
-          chat: state.agentConfig.orchestrator.modelId,
+          chat: state.agentConfig.orchestrator.modelId ?? state.defaultModelId,
           spec: state.specModelId,
           missionOrchestrator: state.missionOrchestratorModelId,
         }),
