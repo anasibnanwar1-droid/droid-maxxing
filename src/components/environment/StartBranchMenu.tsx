@@ -1,15 +1,10 @@
 import { useMemo, useState, type RefObject } from 'react';
 import { Check, ChevronLeft, GitBranch, Loader2, Plus, Search } from 'lucide-react';
 import { Popover } from './Popover';
-import { checkoutGitBranch, createGitWorktree } from '../../lib/git';
+import { checkoutGitBranch, createGitWorktree, stripRemotePrefix } from '../../lib/git';
 import { useGitFetchOnOpen } from '../../hooks/useGitFetchOnOpen';
 import { toast } from '../../lib/toast';
 import type { GitBranchList, GitEnvironment, GitWorktree } from '../../types/vcs';
-
-function stripRemote(ref: string): string {
-  const slash = ref.indexOf('/');
-  return slash >= 0 ? ref.slice(slash + 1) : ref;
-}
 
 export function StartBranchMenu({
   open,
@@ -70,10 +65,10 @@ export function StartBranchMenu({
         return b.committerDate - a.committerDate;
       });
     const remotes = (branches?.remote ?? [])
-      .filter((r) => !localNames.has(stripRemote(r.name)))
+      .filter((r) => !localNames.has(stripRemotePrefix(r.name, env?.remotes)))
       .filter((r) => !q || r.name.toLowerCase().includes(q));
     return { locals, remotes };
-  }, [branches, query, current]);
+  }, [branches, query, current, env?.remotes]);
 
   const worktreeFor = (branch: string) =>
     worktrees.find((w) => w.branch === branch && w.path && !w.bare);
@@ -86,7 +81,7 @@ export function StartBranchMenu({
       return;
     }
     setPending({ branch, remote });
-    const localName = remote ? stripRemote(branch) : branch;
+    const localName = remote ? stripRemotePrefix(branch, env?.remotes) : branch;
     const def = `${repoRoot}/.worktrees/${localName.replace(/[^\w.-]+/g, '-')}`;
     setDefaultPath(def);
     setPath(def);
@@ -95,7 +90,9 @@ export function StartBranchMenu({
   const confirmCreate = async () => {
     if (!pending) return;
     setBusy(true);
-    const localName = pending.remote ? stripRemote(pending.branch) : pending.branch;
+    const localName = pending.remote
+      ? stripRemotePrefix(pending.branch, env?.remotes)
+      : pending.branch;
     const trimmed = path.trim();
     const res = await createGitWorktree(cwd, {
       branch: localName,
@@ -128,7 +125,10 @@ export function StartBranchMenu({
     if (res.ok) {
       // Only a remote ref carries a remote prefix to strip; a local branch like
       // `feature/foo` must be recorded verbatim, not collapsed to `foo`.
-      onStartIn(repoRoot, pending.remote ? stripRemote(pending.branch) : pending.branch);
+      onStartIn(
+        repoRoot,
+        pending.remote ? stripRemotePrefix(pending.branch, env?.remotes) : pending.branch,
+      );
       onRefresh();
       close();
     } else if (res.reason === 'dirty') {

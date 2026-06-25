@@ -661,18 +661,20 @@ async function push(dir, { remote, branch, setUpstream = false, force = false } 
           '--symbolic-full-name',
           `${target}@{upstream}`,
         ]);
-  const sameNameUpstream =
-    upstream && upstream.includes('/') && upstream.slice(upstream.indexOf('/') + 1) === target
-      ? upstream
-      : null;
+  // The upstream names the *same* branch only when, after stripping its
+  // (possibly slash-containing) remote name, the remainder equals the local
+  // branch. Resolve the remote by configured name rather than the first slash so
+  // a branch tracking `foo/bar/feature` on remote `foo/bar` is recognized and
+  // pushed back to that remote instead of falling through to the default.
+  const remotes = upstream ? await listRemotes(root) : [];
+  const upstreamRemote = upstream ? matchRemote(upstream, remotes) : null;
+  const sameNameUpstream = !!upstreamRemote && stripRemotePrefix(upstream, remotes) === target;
   const args = ['push'];
   // Publish under the branch's own name when the tracked upstream is really a
   // base ref (different name), and repoint tracking so later pushes stay correct.
   if (setUpstream || (upstream && !sameNameUpstream)) args.push('--set-upstream');
   if (force) args.push('--force-with-lease');
-  const pushRemote = sameNameUpstream
-    ? sameNameUpstream.slice(0, sameNameUpstream.indexOf('/'))
-    : remote || (await defaultPushRemote(root));
+  const pushRemote = sameNameUpstream ? upstreamRemote : remote || (await defaultPushRemote(root));
   // Push a fully-qualified refspec after `--` so a branch literally named like a
   // flag (e.g. `--mirror`) can never be parsed as a push option and, say, mirror
   // every ref. The destination keeps the branch's own name on the remote.
