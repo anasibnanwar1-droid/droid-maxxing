@@ -451,7 +451,7 @@ async function checkout(dir, { ref, allowDirty = false } = {}) {
   const exactLocal = await tryRun(root, ['rev-parse', '--verify', '--quiet', `refs/heads/${ref}`]);
   if (exactLocal) {
     try {
-      await run(root, ['switch', ref]);
+      await run(root, ['switch', '--', ref]);
       return { ok: true, environment: await environment(root) };
     } catch (err) {
       return { ok: false, reason: 'git_error', message: err.message };
@@ -476,7 +476,7 @@ async function checkout(dir, { ref, allowDirty = false } = {}) {
       ]);
       try {
         if (hasLocal) {
-          await run(root, ['switch', local]);
+          await run(root, ['switch', '--', local]);
           // The user picked a specific remote ref; if the existing local branch
           // tracks a different one, repoint its upstream to honor that choice.
           const current = await tryRun(root, [
@@ -486,10 +486,10 @@ async function checkout(dir, { ref, allowDirty = false } = {}) {
             `${local}@{upstream}`,
           ]);
           if (current !== ref) {
-            await run(root, ['branch', `--set-upstream-to=${ref}`, local]).catch(() => {});
+            await run(root, ['branch', `--set-upstream-to=${ref}`, '--', local]).catch(() => {});
           }
         } else {
-          await run(root, ['switch', '--track', ref]);
+          await run(root, ['switch', '--track', '--', ref]);
         }
         return { ok: true, environment: await environment(root) };
       } catch (err) {
@@ -499,12 +499,16 @@ async function checkout(dir, { ref, allowDirty = false } = {}) {
   }
 
   try {
-    await run(root, ['switch', ref]);
+    await run(root, ['switch', '--', ref]);
     return { ok: true, environment: await environment(root) };
   } catch (err) {
-    // `switch` refuses detached refs; fall back to checkout for tags/sha.
+    // `switch` refuses non-branch refs, so detach for tags/sha. `--detach`
+    // avoids `checkout`'s pathspec mode (`git checkout -- x` restores a file
+    // named x instead of switching), and `--` keeps a ref that looks like a
+    // flag (e.g. `-f`) from being parsed as an option and silently discarding
+    // working-tree changes.
     try {
-      await run(root, ['checkout', ref]);
+      await run(root, ['switch', '--detach', '--', ref]);
       return { ok: true, environment: await environment(root) };
     } catch {
       return { ok: false, reason: 'git_error', message: err.message };
