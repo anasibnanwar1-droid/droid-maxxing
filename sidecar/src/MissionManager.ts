@@ -883,7 +883,10 @@ export class MissionManager {
         historical?.workspaceKind === 'none'
           ? ''
           : stringValue(init.cwd) || stringValue(init.session?.cwd) || historical?.cwd || '';
-      const modelId = init.settings?.modelId ?? historical?.modelId ?? defaults.modelId;
+      const modelId =
+        init.settings?.modelId ??
+        historical?.modelId ??
+        defaultModelForAgent('orchestrator', modeForKind(classification.kind), defaults);
       const summary = this.applyPendingSettingsToSummary({
         id: appSessionId,
         sessionId: droidSessionId,
@@ -942,17 +945,15 @@ export class MissionManager {
       // re-assert daemon-owned auto-compaction on resume. Honor a limit the
       // resumed session exposes, else fall back to current app defaults.
       //
-      // Resolve the model the daemon actually compacts against: an explicit or
-      // historical model wins, but a reset-to-Default session must fall back to
-      // its mode's default (the spec / mission-orchestrator defaults differ from
-      // the global default) so the per-model trigger and window are correct.
-      // summary.modelId can't be used here because it already collapses the
-      // no-model case onto the global default.
+      // Compact against the same model and window the resumed summary resolved
+      // to, so the daemon trigger never diverges from what the meter shows. The
+      // summary's modelId already resolves an explicit/historical model, falling
+      // back to the mode's default (spec / mission-orchestrator defaults differ
+      // from the global default); pending settings can further override it.
       const resumeModelId =
-        init.settings?.modelId ??
-        historical?.modelId ??
-        defaultModelForAgent('orchestrator', modeForSummary(summary), defaults);
-      const resumeModelWindow = this.maxContextTokensForModel(resumeModelId);
+        summary.modelId ?? defaultModelForAgent('orchestrator', modeForSummary(summary), defaults);
+      const resumeModelWindow =
+        summary.maxContextTokens ?? this.maxContextTokensForModel(resumeModelId);
       // resumedCompactionTokenLimit already resolves the effective limit (the
       // resumed session's exposed value before current defaults), so pass empty
       // defaults here to keep a current per-model default from overriding it.
@@ -2196,12 +2197,27 @@ export class MissionManager {
     const mission = this.findMission(sessionId);
     const historical = this.resolveSummary(sessionId);
     const appSessionId = mission?.summary.id ?? historical?.id ?? sessionId;
+    const summaryForMode = mission?.summary ?? historical;
     const patch: Partial<MissionSummary> = {};
     const next: Record<string, unknown> = {};
+    let defaults: FactoryDefaultSettings | undefined;
+    let effectiveModelId: string | undefined;
     if (settings.modelId !== undefined) {
-      if (settings.modelId) next.modelId = settings.modelId;
+      // Resolve a reset-to-Default (modelId: null) to the session mode's real
+      // default model and apply it explicitly. Omitting it would leave the SDK
+      // running the previous model while we re-assert compaction for the
+      // default, so the live session model and its compaction trigger diverge.
+      defaults = await this.getFactoryDefaults();
+      effectiveModelId =
+        settings.modelId ??
+        (summaryForMode
+          ? defaultModelForAgent('orchestrator', modeForSummary(summaryForMode), defaults)
+          : defaults.modelId);
+      if (effectiveModelId) next.modelId = effectiveModelId;
+      // Keep "Default" (undefined) in the summary for a reset so the UI still
+      // tracks the default, but clamp the window to the model actually applied.
       patch.modelId = settings.modelId ?? undefined;
-      patch.maxContextTokens = this.maxContextTokensForModel(settings.modelId ?? undefined);
+      patch.maxContextTokens = this.maxContextTokensForModel(effectiveModelId);
     }
     if (settings.reasoningEffort) {
       next.reasoningEffort = settings.reasoningEffort;
@@ -2220,16 +2236,10 @@ export class MissionManager {
     });
     if (mission) this.patch(appSessionId, patch);
     if (mission && session) {
-      if (settings.modelId !== undefined) {
+      if (settings.modelId !== undefined && defaults) {
         // A model switch changes the model-derived auto-compaction trigger, and
         // the SDK does not re-apply loadSession-style settings, so re-assert the
-        // daemon compaction for the resolved model. A reset-to-Default
-        // (modelId: null) resolves to the session's real default model, keeping
-        // its per-model limit and context-window clamp.
-        const defaults = await this.getFactoryDefaults();
-        const effectiveModelId =
-          settings.modelId ??
-          defaultModelForAgent('orchestrator', modeForSummary(mission.summary), defaults);
+        // daemon compaction for the same model just applied to the session.
         await this.enableDaemonCompaction(
           session,
           daemonCompactionSettings(
@@ -3263,10 +3273,14 @@ export function defaultModelForAgent(
   return modelDefaultForMode(mode, defaults);
 }
 
-export function modeForSummary(summary: MissionSummary): SessionInteractionMode {
-  if (summary.kind === 'spec') return 'spec';
-  if (summary.kind === 'mission_orchestrator') return 'agi';
+export function modeForKind(kind: MissionSummary['kind']): SessionInteractionMode {
+  if (kind === 'spec') return 'spec';
+  if (kind === 'mission_orchestrator') return 'agi';
   return 'auto';
+}
+
+export function modeForSummary(summary: MissionSummary): SessionInteractionMode {
+  return modeForKind(summary.kind);
 }
 
 function reasoningDefaultForMode(

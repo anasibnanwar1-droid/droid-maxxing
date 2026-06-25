@@ -7,6 +7,7 @@ import {
   createSessionSettingsForAgent,
   defaultModelForAgent,
   MissionManager,
+  modeForKind,
   modeForSummary,
   startupFactoryDefaults,
   validateFactoryDefaults,
@@ -372,6 +373,12 @@ test('resume/swap compaction model resolves the mode-specific default for a rese
     } as FactoryDefaultSettings),
     'chat-default',
   );
+  // The resume summary modelId resolves the same mode default straight from the
+  // classification kind (before a summary exists), so modeForKind must agree
+  // with modeForSummary for every kind.
+  for (const kind of ['spec', 'mission_orchestrator', 'chat'] as const) {
+    assert.equal(modeForKind(kind), modeForSummary({ kind } as MissionSummary));
+  }
 });
 
 test('readSessionCompacted ignores notifications that are not session_compacted', () => {
@@ -1076,6 +1083,35 @@ test('session.updateSettings re-applies daemon compaction for the switched model
 
   // Switching the session model must re-assert the daemon trigger for that
   // model; without it the session keeps the previous model's threshold.
+  assert.deepEqual(session.settingsUpdates.at(-1), {
+    compactionThresholdCheckEnabled: true,
+    compactionTokenLimit: 150_000,
+  });
+});
+
+test('session.updateSettings reset-to-Default applies the resolved default model to the live session', async () => {
+  const { manager, session } = orchestratorSwapHarness(10_000, 'droid-new');
+  (
+    manager as unknown as { getFactoryDefaults: () => Promise<Record<string, unknown>> }
+  ).getFactoryDefaults = async () => ({
+    modelId: 'chat-default',
+    compactionTokenLimitPerModel: { 'chat-default': 150_000 },
+  });
+
+  await manager.handle({
+    type: 'session.updateSettings',
+    sessionId: 'app-swap',
+    modelId: null,
+  });
+
+  // A reset-to-Default (modelId: null) must actually reset the live session
+  // model to the mode's resolved default, not just re-assert compaction - else
+  // the SDK keeps running the previous model while its compaction trigger is
+  // configured for the default, and the two diverge.
+  assert.ok(
+    session.settingsUpdates.some((u) => u.modelId === 'chat-default'),
+    'expected the resolved default model to be applied to the live session',
+  );
   assert.deepEqual(session.settingsUpdates.at(-1), {
     compactionThresholdCheckEnabled: true,
     compactionTokenLimit: 150_000,

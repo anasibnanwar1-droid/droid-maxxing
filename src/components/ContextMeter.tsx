@@ -152,12 +152,15 @@ export default function ContextMeter({
   // only meaningful for the orchestrator's own session; a reset-to-Default
   // session resolves to its mode's default (spec / mission orchestrator differ
   // from the chat default) so the marker still tracks the active model's
-  // per-model trigger.
+  // per-model trigger. A reset-to-Default chat tracks the Factory default
+  // (defaultModelId) - the model the live session actually runs - not the
+  // user's separate new-chat orchestrator override (agentConfig.orchestrator),
+  // which only seeds models for chats created afterward.
   const effectiveCompaction = isOrchestratorView
     ? compactsAtMarker(
         mission.modelId,
         orchestratorDefaultModelId(mission.kind, {
-          chat: state.agentConfig.orchestrator.modelId ?? state.defaultModelId,
+          chat: state.defaultModelId,
           spec: state.specModelId,
           missionOrchestrator: state.missionOrchestratorModelId,
         }),
