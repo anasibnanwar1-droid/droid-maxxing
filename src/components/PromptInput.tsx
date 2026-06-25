@@ -501,38 +501,35 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
   const promptQueueRef = useRef(state.promptQueue);
   promptQueueRef.current = state.promptQueue;
 
-  const deliverPrompt = async (p: QueuedPrompt) => {
+  const deliverPrompt = async () => {
     if (!activeMission) return;
-    if (p.design) {
+    // Capture the Last-turn git baseline before sending ANY prompt (design
+    // included) so the Review tab diffs the turn from the right starting point.
+    if (activeMission.cwd) await markGitTurnStart(activeMission.cwd);
+    // The queue stays editable while that runs, so deliver whatever is now at
+    // the head: this honors deletes and edits (both remove the item) as well as
+    // reorders, and never sends a stale prompt out of the visible order.
+    const head = (promptQueueRef.current[activeMission.id] ?? [])[0];
+    if (!head) return;
+
+    if (head.design) {
       try {
-        sendDesignPrompt(p.design.browserKey, p.text, p.design.referenceIds);
+        sendDesignPrompt(head.design.browserKey, head.text, head.design.referenceIds);
       } catch (err) {
         console.error('[PromptInput] queued design send failed:', err);
         return;
       }
-      const browserRefs = browserTranscriptReferencesFromDesignReferences(p.design.references);
+      const browserRefs = browserTranscriptReferencesFromDesignReferences(head.design.references);
       dispatch({
         type: 'MISSION_TRANSCRIPT',
-        event: createLocalDesignTranscriptEvent(activeMission.id, p.text, browserRefs),
+        event: createLocalDesignTranscriptEvent(activeMission.id, head.text, browserRefs),
       });
-      dispatch({ type: 'REMOVE_QUEUED_PROMPT', missionId: activeMission.id, id: p.id });
+      dispatch({ type: 'REMOVE_QUEUED_PROMPT', missionId: activeMission.id, id: head.id });
       return;
     }
-    const composed = composeFrom(p.text, p.skills, p.files);
-    if (activeMission.cwd) await markGitTurnStart(activeMission.cwd);
-    // The queue stays editable while markGitTurnStart runs, so re-resolve the
-    // head afterwards instead of trusting the captured prompt: honor deletes and
-    // edits (both remove the item) and reorders by always delivering whatever is
-    // now first. If the head changed, restart delivery with the current head so
-    // the visible queue order is never violated.
-    const head = (promptQueueRef.current[activeMission.id] ?? [])[0];
-    if (!head) return;
-    if (head.id !== p.id) {
-      void deliverPrompt(head);
-      return;
-    }
+
     try {
-      sendToMission(activeMission.id, composed);
+      sendToMission(activeMission.id, composeFrom(head.text, head.skills, head.files));
     } catch (err) {
       // Keep the prompt staged and skip the transcript echo so a send failure
       // neither loses queued input nor leaves a duplicate user message behind.
@@ -548,13 +545,13 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
         role: 'orchestrator',
         ts: Date.now(),
         kind: 'text',
-        text: p.text,
+        text: head.text,
         author: 'user',
-        skills: p.skills,
-        files: p.files,
+        skills: head.skills,
+        files: head.files,
       },
     });
-    dispatch({ type: 'REMOVE_QUEUED_PROMPT', missionId: activeMission.id, id: p.id });
+    dispatch({ type: 'REMOVE_QUEUED_PROMPT', missionId: activeMission.id, id: head.id });
   };
 
   // When the current turn finishes, deliver the next staged prompt. Delivering
@@ -565,7 +562,7 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
     // missions mid-turn must not drain a different mission's queue.
     if (prev.live && !isLive && activeMission && prev.missionId === activeMission.id) {
       const next = (state.promptQueue[activeMission.id] ?? [])[0];
-      if (next) void deliverPrompt(next);
+      if (next) void deliverPrompt();
     }
     prevLive.current = { missionId: activeMission?.id ?? null, live: isLive };
     // eslint-disable-next-line react-hooks/exhaustive-deps

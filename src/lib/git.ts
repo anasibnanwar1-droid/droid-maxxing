@@ -149,6 +149,16 @@ export function diffModeLabel(mode: DiffStatMode, baseRef?: string | null): stri
 
 export const DIFF_MODES: DiffStatMode[] = ['worktree', 'branch', 'uncommitted'];
 
+// Strip the leading "<remote>/" from a remote-tracking ref. Remote names can
+// themselves contain "/", so match against the configured remotes and prefer
+// the longest match rather than assuming the remote is the first path segment.
+export function stripRemotePrefix(ref: string, remotes: string[] | undefined | null): string {
+  const matched = (remotes ?? [])
+    .filter((r) => ref === r || ref.startsWith(`${r}/`))
+    .sort((a, b) => b.length - a.length)[0];
+  return matched && ref.length > matched.length + 1 ? ref.slice(matched.length + 1) : ref;
+}
+
 // Describe the ref a branch/worktree was created from so the UI can show "main"
 // with a local/remote badge regardless of the remote's name.
 export function baseDescriptor(
@@ -156,8 +166,7 @@ export function baseDescriptor(
 ): { ref: string; shortName: string; kind: 'local' | 'remote' } | null {
   if (!env?.base) return null;
   const kind = env.baseKind === 'remote' ? 'remote' : 'local';
-  const shortName =
-    kind === 'remote' ? env.base.split('/').slice(1).join('/') || env.base : env.base;
+  const shortName = kind === 'remote' ? stripRemotePrefix(env.base, env.remotes) : env.base;
   return { ref: env.base, shortName, kind };
 }
 

@@ -180,11 +180,30 @@ async function defaultPushRemote(root) {
   return 'origin';
 }
 
-// A base ref is "remote" when its first path segment names a configured remote
-// (e.g. "origin/main"); otherwise it is a local branch (e.g. "dev").
+// Remote names may themselves contain "/" (e.g. "foo/bar"), so resolve the
+// owning remote by testing each configured name and preferring the longest
+// match, rather than assuming the remote is the text before the first slash.
+function matchRemote(ref, remotes) {
+  if (!ref) return null;
+  return (
+    (remotes || [])
+      .filter((r) => ref === r || ref.startsWith(`${r}/`))
+      .sort((a, b) => b.length - a.length)[0] || null
+  );
+}
+
+// Drop the leading "<remote>/" from a remote-tracking ref (e.g. "origin/main"
+// -> "main"), leaving local refs and bare remote names untouched.
+function stripRemotePrefix(ref, remotes) {
+  const r = matchRemote(ref, remotes);
+  return r && ref.length > r.length + 1 ? ref.slice(r.length + 1) : ref;
+}
+
+// A base ref is "remote" when it lives under a configured remote (e.g.
+// "origin/main"); otherwise it is a local branch (e.g. "dev").
 function baseKindOf(baseRef, remotes) {
   if (!baseRef) return null;
-  return remotes.includes(baseRef.split('/')[0]) ? 'remote' : 'local';
+  return matchRemote(baseRef, remotes) ? 'remote' : 'local';
 }
 
 // Git does not record the local branch a new branch forked from, so we persist
@@ -270,8 +289,9 @@ async function environment(dir) {
     baseKind: baseKindOf(base, remotes),
     ahead,
     behind,
-    defaultBranch: defaultRef ? defaultRef.replace(/^[^/]+\//, '') : null,
+    defaultBranch: defaultRef ? stripRemotePrefix(defaultRef, remotes) : null,
     defaultRef,
+    remotes,
     remoteUrl: remoteUrl || null,
     isGitHub: !!remoteUrl && /github\.com/i.test(remoteUrl),
   };
@@ -463,14 +483,11 @@ async function checkout(dir, { ref, allowDirty = false } = {}) {
   // exact remote when absent. This avoids the ambiguity of stripping the remote
   // prefix client-side, which breaks with multiple remotes sharing a name.
   if (ref.includes('/')) {
-    // Remote names can themselves contain "/" (e.g. "foo/bar"), so match `ref`
-    // against the configured remotes and prefer the longest match rather than
-    // assuming the remote is the text before the first slash.
+    // Resolve the owning remote by configured name (remotes may contain "/"),
+    // requiring at least one branch segment after it.
     const remotes = await listRemotes(root);
-    const matchedRemote = remotes
-      .filter((r) => ref.startsWith(`${r}/`) && ref.length > r.length + 1)
-      .sort((a, b) => b.length - a.length)[0];
-    if (matchedRemote) {
+    const matchedRemote = matchRemote(ref, remotes);
+    if (matchedRemote && ref.length > matchedRemote.length + 1) {
       const local = ref.slice(matchedRemote.length + 1);
       const hasLocal = await tryRun(root, [
         'rev-parse',
@@ -986,5 +1003,7 @@ module.exports = {
   parseTrack,
   parseAheadBehind,
   baseKindOf,
+  matchRemote,
+  stripRemotePrefix,
   defaultWorktreeLocation,
 };

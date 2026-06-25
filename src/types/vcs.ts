@@ -57,6 +57,7 @@ export interface GitEnvironment {
   behind?: number;
   defaultBranch?: string | null;
   defaultRef?: string | null;
+  remotes?: string[];
   remoteUrl?: string | null;
   isGitHub?: boolean;
 }

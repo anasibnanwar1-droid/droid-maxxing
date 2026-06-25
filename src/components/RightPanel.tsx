@@ -209,6 +209,7 @@ export default function RightPanel() {
                     dispatch({ type: 'SET_REVIEW_SCOPE', scope: diffModeToReviewScope(diffMode) });
                     dispatch({ type: 'SET_REVIEW_OPEN', open: true });
                   }}
+                  onPrCreated={pr.refresh}
                 />
                 <Row
                   icon={
