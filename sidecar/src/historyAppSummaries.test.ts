@@ -116,7 +116,7 @@ test('loadHistoricalSessions keeps a rekeyed worker hidden under its superseded 
   writeSession('worker-new', cwd, { callingSessionId: 'rekey-parent', callingToolUseId: 'tool-r' });
   const index = new HistoryIndex();
   index.recordSubagentLink('rekey-parent', 'tool-r', 'worker-old', 'builder');
-  // Worker compaction rekeys the spawn, repointing the link at the new id.
+  // A manual/legacy backing-session swap repoints the link at the new id.
   index.recordSubagentLink('rekey-parent', 'tool-r', 'worker-new', 'builder');
   index.close();
 
@@ -126,6 +126,29 @@ test('loadHistoricalSessions keeps a rekeyed worker hidden under its superseded 
   assert.deepEqual(
     rows.map((row) => row.summary.id),
     ['rekey-parent'],
+  );
+});
+
+test('loadHistoricalSessions hides the current manual-compaction backing session', () => {
+  const cwd = join(home, 'workspace-manual-compact');
+  writeSession('app-chat', cwd);
+  writeSession('manual-backing-current', cwd, { parent: 'app-chat' });
+  const index = new HistoryIndex();
+  index.syncSummaries([
+    {
+      ...summary('app-chat', cwd),
+      sessionId: 'manual-backing-current',
+      compactedFromSessionIds: ['app-chat'],
+      compactionCount: 1,
+    },
+  ]);
+  index.close();
+
+  const rows = loadHistoricalSessions({ workspaceCwds: [cwd] });
+
+  assert.deepEqual(
+    rows.map((row) => row.summary.id),
+    ['app-chat'],
   );
 });
 
@@ -158,4 +181,47 @@ test('loadHistoricalSessions returns every session when no limit is requested', 
   const rows = loadHistoricalSessions({ workspaceCwds: [cwd] });
 
   assert.equal(rows.filter((row) => row.summary.cwd === cwd).length, 7);
+});
+
+test('syncSummaries persists the compaction count across reload', () => {
+  const index = new HistoryIndex();
+  const compacted = summary('compaction-count-session', '');
+  compacted.compactionCount = 3;
+  index.syncSummaries([compacted, summary('never-compacted-session', '')]);
+  const patches = index.summaryPatches();
+  index.close();
+
+  // A compacted session keeps its count; an untouched one reports no count
+  // (treated as zero) rather than a forced 0 that would clobber live state.
+  assert.equal(patches.get('compaction-count-session')?.compactionCount, 3);
+  assert.equal(patches.get('never-compacted-session')?.compactionCount, undefined);
+});
+
+test('syncSummaries does not reset a stored compaction count to zero', () => {
+  const index = new HistoryIndex();
+  index.syncSummaries([{ ...summary('counted-session', ''), compactionCount: 5 }]);
+  // A later summary rebuilt without the count (e.g. a partial resume sync) must
+  // not erase the persisted value.
+  index.syncSummaries([summary('counted-session', '')]);
+  const patches = index.summaryPatches();
+  index.close();
+
+  assert.equal(patches.get('counted-session')?.compactionCount, 5);
+});
+
+test('migration backfills a legacy compaction count from previous session ids', () => {
+  // Persisted before the in-place counter existed: prior (compacted-away)
+  // session ids but no recorded count.
+  const first = new HistoryIndex();
+  first.syncSummaries([
+    { ...summary('legacy-compacted', ''), compactedFromSessionIds: ['old-1', 'old-2'] },
+  ]);
+  first.close();
+
+  // Reopening runs the migration backfill, seeding the count from the id history.
+  const reopened = new HistoryIndex();
+  const patches = reopened.summaryPatches();
+  reopened.close();
+
+  assert.equal(patches.get('legacy-compacted')?.compactionCount, 2);
 });

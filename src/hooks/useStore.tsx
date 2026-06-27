@@ -47,6 +47,7 @@ export interface QueuedPrompt {
   text: string;
   skills: string[];
   files: string[];
+  agentSessionId?: string;
   design?: QueuedDesignContext;
 }
 
@@ -93,9 +94,6 @@ export interface AppState {
   transcripts: Record<string, TranscriptEvent[]>;
   progress: Record<string, ProgressEntry[]>;
   workers: Record<string, WorkerInfo[]>; // subagents spawned per mission
-  // old worker session id -> new id, recorded on worker-compaction rekeys so
-  // views holding a worker id in local state can follow it to the new session.
-  workerRekeys: Record<string, string>;
   historyLoaded: Record<string, boolean>;
   // Cursor for the next older page of orchestrator scrollback per mission;
   // undefined/absent once the oldest compaction segment has been loaded.
@@ -116,6 +114,11 @@ export interface AppState {
   pendingPermission: PermissionRequest | null;
   pendingQuestion: MissionQuestion | null;
   contextStats: Record<string, ContextStatsSnapshot>;
+  // Live count of compactions seen per agent session id (keyed by the
+  // compaction divider's agentSessionId). The orchestrator uses the persisted
+  // summary.compactionCount; a selected worker has no summary counter, so this
+  // is the generation that resets its context meter's high-water mark.
+  compactionGenerations: Record<string, number>;
   specPlans: Record<string, string>; // latest ExitSpecMode plan per session
   // Persisted spec per mission (file path + rendered content). Survives exiting
   // spec mode so the inline card, mermaid, and the wiki reader stay available.
@@ -160,14 +163,25 @@ export interface AppState {
   models: ModelInfo[];
   agentConfig: AgentConfig;
 
+  // Mode-specific orchestrator default models from Factory defaults. The
+  // agentConfig.orchestrator.modelId covers chat sessions, but spec and mission
+  // orchestrator sessions resolve their own defaults. Undefined falls back to
+  // the chat default.
+  specModelId?: string;
+  missionOrchestratorModelId?: string;
+  // The global Factory default model. agentConfig.orchestrator.modelId is
+  // undefined when the user picks the UI "Default" model, so the app resolves
+  // the real chat default model from this.
+  defaultModelId?: string;
+
   // Global compaction model applied to every session. 'current-model' = use
   // each session's active model; otherwise a specific model id.
   compactionModel: string;
 
-  // Global default compaction token limit applied to every session. Undefined
-  // means "use the Factory/default model context window".
+  // Optional user-visible compaction trigger/window. Undefined means use the
+  // Factory default policy for the selected model.
   compactionTokenLimit?: number;
-  // Per-model overrides for the compaction token limit, keyed by model id.
+  // Per-model context-window overrides, keyed by model id.
   compactionTokenLimitPerModel: Record<string, number>;
   liveEnterBehavior: LiveEnterBehavior;
 
@@ -222,7 +236,6 @@ type Action =
       role: AgentKind;
       status: 'opened' | 'running' | 'paused' | 'completed';
     }
-  | { type: 'MISSION_WORKER_REKEY'; missionId: string; oldSessionId: string; newSessionId: string }
   | {
       type: 'MISSION_TOKENS';
       missionId: string;
@@ -392,9 +405,9 @@ function saveAgentConfig(config: AgentConfig): AgentConfig {
 // whatever model it is currently using; otherwise a specific model id is used
 // for compaction across every session.
 const COMPACTION_MODEL_STORAGE_KEY = 'droid-compaction-model';
-const COMPACTION_TOKEN_LIMIT_STORAGE_KEY = 'droid-compaction-token-limit';
-const COMPACTION_TOKEN_LIMIT_CONFIGURED_STORAGE_KEY = 'droid-compaction-token-limit-configured';
-const COMPACTION_TOKEN_LIMIT_PER_MODEL_STORAGE_KEY = 'droid-compaction-token-limit-per-model';
+const CONTEXT_WINDOW_STORAGE_KEY = 'droid-context-window';
+const CONTEXT_WINDOW_CONFIGURED_STORAGE_KEY = 'droid-context-window-configured';
+const CONTEXT_WINDOW_PER_MODEL_STORAGE_KEY = 'droid-context-window-per-model';
 const LIVE_ENTER_BEHAVIOR_STORAGE_KEY = 'droid-live-enter-behavior';
 const WORKSPACES_STORAGE_KEY = 'droid-workspaces';
 const UI_STATE_STORAGE_KEY = 'droid-ui-state-v1';
@@ -436,8 +449,8 @@ function saveCompactionModel(value: string): string {
   return value;
 }
 
-// Only positive finite integers are valid token limits; anything else is
-// treated as "unset" (fall back to the model's default context window).
+// Only positive finite integers are valid context-window values; anything else
+// is treated as "unset" (let the daemon use its default compaction policy).
 function normalizeTokenLimit(value: unknown): number | undefined {
   const n = typeof value === 'number' ? value : Number(value);
   if (!Number.isFinite(n) || n <= 0) return undefined;
@@ -446,7 +459,7 @@ function normalizeTokenLimit(value: unknown): number | undefined {
 
 function loadCompactionTokenLimit(): number | undefined {
   try {
-    return normalizeTokenLimit(getLocalStorage()?.getItem(COMPACTION_TOKEN_LIMIT_STORAGE_KEY));
+    return normalizeTokenLimit(getLocalStorage()?.getItem(CONTEXT_WINDOW_STORAGE_KEY));
   } catch {
     return undefined;
   }
@@ -456,8 +469,8 @@ function hasStoredCompactionTokenLimit(): boolean {
   try {
     const storage = getLocalStorage();
     return (
-      storage?.getItem(COMPACTION_TOKEN_LIMIT_STORAGE_KEY) !== null ||
-      storage?.getItem(COMPACTION_TOKEN_LIMIT_CONFIGURED_STORAGE_KEY) === '1'
+      storage?.getItem(CONTEXT_WINDOW_STORAGE_KEY) !== null ||
+      storage?.getItem(CONTEXT_WINDOW_CONFIGURED_STORAGE_KEY) === '1'
     );
   } catch {
     return false;
@@ -470,10 +483,10 @@ function saveCompactionTokenLimit(
 ): number | undefined {
   try {
     const storage = getLocalStorage();
-    if (value === undefined) storage?.removeItem(COMPACTION_TOKEN_LIMIT_STORAGE_KEY);
-    else storage?.setItem(COMPACTION_TOKEN_LIMIT_STORAGE_KEY, String(value));
+    if (value === undefined) storage?.removeItem(CONTEXT_WINDOW_STORAGE_KEY);
+    else storage?.setItem(CONTEXT_WINDOW_STORAGE_KEY, String(value));
     if (options.userConfigured ?? true)
-      storage?.setItem(COMPACTION_TOKEN_LIMIT_CONFIGURED_STORAGE_KEY, '1');
+      storage?.setItem(CONTEXT_WINDOW_CONFIGURED_STORAGE_KEY, '1');
   } catch {
     /* ignore */
   }
@@ -482,7 +495,7 @@ function saveCompactionTokenLimit(
 
 function loadCompactionTokenLimitPerModel(): Record<string, number> {
   try {
-    const raw = getLocalStorage()?.getItem(COMPACTION_TOKEN_LIMIT_PER_MODEL_STORAGE_KEY);
+    const raw = getLocalStorage()?.getItem(CONTEXT_WINDOW_PER_MODEL_STORAGE_KEY);
     if (!raw) return {};
     const parsed = JSON.parse(raw) as Record<string, unknown>;
     const out: Record<string, number> = {};
@@ -498,7 +511,7 @@ function loadCompactionTokenLimitPerModel(): Record<string, number> {
 
 function hasStoredCompactionTokenLimitPerModel(): boolean {
   try {
-    return getLocalStorage()?.getItem(COMPACTION_TOKEN_LIMIT_PER_MODEL_STORAGE_KEY) !== null;
+    return getLocalStorage()?.getItem(CONTEXT_WINDOW_PER_MODEL_STORAGE_KEY) !== null;
   } catch {
     return false;
   }
@@ -506,43 +519,22 @@ function hasStoredCompactionTokenLimitPerModel(): boolean {
 
 function saveCompactionTokenLimitPerModel(value: Record<string, number>): Record<string, number> {
   try {
-    getLocalStorage()?.setItem(COMPACTION_TOKEN_LIMIT_PER_MODEL_STORAGE_KEY, JSON.stringify(value));
+    getLocalStorage()?.setItem(CONTEXT_WINDOW_PER_MODEL_STORAGE_KEY, JSON.stringify(value));
   } catch {
     /* ignore */
   }
   return value;
 }
 
-function normalizeTokenLimitRecord(
-  value: Record<string, number> | undefined,
-): Record<string, number> {
-  return Object.fromEntries(
-    Object.entries(value ?? {})
-      .map(([id, limit]) => [id, normalizeTokenLimit(limit)])
-      .filter((entry): entry is [string, number] => entry[1] !== undefined),
-  );
-}
-
 export function applyFactoryCompactionDefaults(
   state: Pick<AppState, 'compactionTokenLimit' | 'compactionTokenLimitPerModel'>,
-  defaults: Pick<FactoryDefaultSettings, 'compactionTokenLimit' | 'compactionTokenLimitPerModel'>,
+  _defaults: Pick<FactoryDefaultSettings, 'compactionTokenLimit' | 'compactionTokenLimitPerModel'>,
 ): Pick<AppState, 'compactionTokenLimit' | 'compactionTokenLimitPerModel'> {
   const hasLocalLimit = hasStoredCompactionTokenLimit();
   const hasLocalPerModel = hasStoredCompactionTokenLimitPerModel();
-  const defaultLimit = normalizeTokenLimit(defaults.compactionTokenLimit);
-  const defaultPerModel = normalizeTokenLimitRecord(defaults.compactionTokenLimitPerModel);
 
-  const compactionTokenLimit = hasLocalLimit ? state.compactionTokenLimit : defaultLimit;
-  const compactionTokenLimitPerModel = hasLocalPerModel
-    ? state.compactionTokenLimitPerModel
-    : defaultPerModel;
-
-  if (!hasLocalLimit && compactionTokenLimit !== undefined) {
-    saveCompactionTokenLimit(compactionTokenLimit, { userConfigured: false });
-  }
-  if (!hasLocalPerModel && Object.keys(defaultPerModel).length > 0) {
-    saveCompactionTokenLimitPerModel(defaultPerModel);
-  }
+  const compactionTokenLimit = hasLocalLimit ? state.compactionTokenLimit : undefined;
+  const compactionTokenLimitPerModel = hasLocalPerModel ? state.compactionTokenLimitPerModel : {};
 
   return { compactionTokenLimit, compactionTokenLimitPerModel };
 }
@@ -682,7 +674,6 @@ export const initialState: AppState = {
   transcripts: {},
   progress: {},
   workers: {},
-  workerRekeys: {},
   historyLoaded: {},
   historyCursor: {},
   historyLoadingOlder: {},
@@ -691,6 +682,7 @@ export const initialState: AppState = {
   pendingPermission: null,
   pendingQuestion: null,
   contextStats: {},
+  compactionGenerations: {},
   specPlans: {},
   missionSpecs: {},
   specWikiMissionId: null,
@@ -967,75 +959,6 @@ function baseReducer(state: AppState, action: Action): AppState {
       return { ...state, workers: { ...state.workers, [mid]: next } };
     }
 
-    case 'MISSION_WORKER_REKEY': {
-      const { missionId: mid, oldSessionId, newSessionId } = action;
-      if (oldSessionId === newSessionId) return state;
-      const workers = (state.workers[mid] ?? []).map((w) =>
-        w.sessionId === oldSessionId ? { ...w, sessionId: newSessionId } : w,
-      );
-      const missionTranscripts = state.transcripts[mid];
-      const transcripts = missionTranscripts
-        ? {
-            ...state.transcripts,
-            [mid]: missionTranscripts.map((ev) =>
-              ev.agentSessionId === oldSessionId ? { ...ev, agentSessionId: newSessionId } : ev,
-            ),
-          }
-        : state.transcripts;
-      const oldStats = state.contextStats[oldSessionId];
-      let contextStats = state.contextStats;
-      if (oldStats) {
-        const { [oldSessionId]: _dropped, ...rest } = state.contextStats;
-        // The backend refreshes context for the new id (post-compaction, lower
-        // usage) before emitting this rekey, so prefer any fresh new-id stats
-        // already in the store; only carry the old snapshot over as a bridge
-        // when the new id has none yet. Overwriting would show stale usage.
-        contextStats =
-          rest[newSessionId] !== undefined ? rest : { ...rest, [newSessionId]: oldStats };
-      }
-      // Mission features reference workers by session id (feature focus + worker
-      // role/numbering), so follow the compacted worker to its new backing id.
-      const existingMission = state.missions[mid];
-      let missions = state.missions;
-      if (existingMission) {
-        const remapId = (id?: string | null) => (id === oldSessionId ? newSessionId : id);
-        const features = existingMission.features.map((f) => ({
-          ...f,
-          workerSessionIds: f.workerSessionIds?.map((id) =>
-            id === oldSessionId ? newSessionId : id,
-          ),
-          currentWorkerSessionId: remapId(f.currentWorkerSessionId),
-          completedWorkerSessionId: remapId(f.completedWorkerSessionId),
-        }));
-        missions = { ...state.missions, [mid]: { ...existingMission, features } };
-      }
-      // Progress entries tag the worker that produced them; keep them aligned too.
-      const missionProgress = state.progress[mid];
-      const progress = missionProgress
-        ? {
-            ...state.progress,
-            [mid]: missionProgress.map((p) =>
-              p.workerSessionId === oldSessionId ? { ...p, workerSessionId: newSessionId } : p,
-            ),
-          }
-        : state.progress;
-      return {
-        ...state,
-        missions,
-        workers: { ...state.workers, [mid]: workers },
-        transcripts,
-        progress,
-        contextStats,
-        // Record the remap so views holding this id in local state (e.g. Mission
-        // Control's viewedAgent) can follow the worker to its new session.
-        workerRekeys: { ...state.workerRekeys, [oldSessionId]: newSessionId },
-        selectedAgentSessionId:
-          state.selectedAgentSessionId === oldSessionId
-            ? newSessionId
-            : state.selectedAgentSessionId,
-      };
-    }
-
     case 'AGENT_HISTORY_LOADING': {
       if ((state.agentHistoryLoading[action.agentSessionId] ?? false) === action.loading)
         return state;
@@ -1075,6 +998,14 @@ function baseReducer(state: AppState, action: Action): AppState {
       const mid = action.missionId;
       const existing = state.missions[mid];
       if (!existing) return state;
+      const maxContextTokens = action.maxContextTokens ?? existing.maxContextTokens;
+      let contextTokens = action.contextTokens;
+      if (maxContextTokens && maxContextTokens > 0 && action.contextTokens > maxContextTokens) {
+        contextTokens =
+          existing.contextAccuracy === 'exact' && existing.contextTokens > maxContextTokens
+            ? existing.contextTokens
+            : Math.min(existing.contextTokens, maxContextTokens);
+      }
       return {
         ...state,
         missions: {
@@ -1083,8 +1014,8 @@ function baseReducer(state: AppState, action: Action): AppState {
             ...existing,
             tokensIn: action.tokensIn,
             tokensOut: action.tokensOut,
-            contextTokens: action.contextTokens,
-            maxContextTokens: action.maxContextTokens ?? existing.maxContextTokens,
+            contextTokens,
+            maxContextTokens,
           },
         },
       };
@@ -1157,6 +1088,21 @@ function baseReducer(state: AppState, action: Action): AppState {
           endTs: ev.ts,
         };
         return { ...state, transcripts: { ...state.transcripts, [mid]: merged } };
+      }
+
+      // A compaction divider signals an in-place compaction for its session;
+      // bump that session's generation so the context meter resets its
+      // high-water mark (the orchestrator also has summary.compactionCount, but
+      // a selected worker relies solely on this).
+      if (ev.kind === 'compaction' && ev.agentSessionId) {
+        return {
+          ...state,
+          transcripts: { ...state.transcripts, [mid]: [...prev, ev] },
+          compactionGenerations: {
+            ...state.compactionGenerations,
+            [ev.agentSessionId]: (state.compactionGenerations[ev.agentSessionId] ?? 0) + 1,
+          },
+        };
       }
 
       return {
@@ -1735,6 +1681,9 @@ function baseReducer(state: AppState, action: Action): AppState {
       return {
         ...state,
         agentConfig: saveAgentConfig(next),
+        specModelId: action.defaults.specModelId,
+        missionOrchestratorModelId: action.defaults.missionOrchestratorModelId,
+        defaultModelId: action.defaults.modelId,
         ...compactionDefaults,
       };
     }
@@ -1931,13 +1880,6 @@ function adaptEvent(ev: ServerEvent): Action | null {
         modelId: ev.modelId,
         reasoningEffort: ev.reasoningEffort,
         toolUseId: ev.toolUseId,
-      };
-    case 'mission.worker.rekey':
-      return {
-        type: 'MISSION_WORKER_REKEY',
-        missionId: ev.missionId,
-        oldSessionId: ev.oldSessionId,
-        newSessionId: ev.newSessionId,
       };
     case 'agent.updated':
       return {

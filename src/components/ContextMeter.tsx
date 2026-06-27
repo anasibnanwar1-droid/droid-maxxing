@@ -77,34 +77,71 @@ function categoryColor(key?: string): string {
 // compaction generation, so transient estimate noise never jerks the bar
 // backward mid-stream. A new session or a compaction (generation bump) resets
 // the floor, since compaction legitimately drops the token count.
+export interface StableUsedState {
+  key: string;
+  gen: number;
+  value: number;
+  stamp?: string;
+  waitingForFresh?: boolean;
+}
+
+export function nextStableUsedState(
+  prev: StableUsedState | null,
+  key: string,
+  raw: number | undefined,
+  isExact: boolean,
+  generation: number,
+  stamp?: string,
+): { state: StableUsedState | null; displayed?: number; displayChanged: boolean } {
+  if (!prev || prev.key !== key) {
+    return {
+      state: raw === undefined ? null : { key, gen: generation, value: raw, stamp },
+      displayed: raw,
+      displayChanged: true,
+    };
+  }
+  if (generation !== prev.gen) {
+    return {
+      state: { key, gen: generation, value: 0, stamp: prev.stamp, waitingForFresh: true },
+      displayed: undefined,
+      displayChanged: true,
+    };
+  }
+  if (raw === undefined) return { state: prev, displayChanged: false };
+  if (prev.waitingForFresh && prev.stamp !== undefined && stamp === prev.stamp)
+    return { state: prev, displayChanged: false };
+  const next = isExact || prev.waitingForFresh ? raw : Math.max(prev.value, raw);
+  if (next === prev.value && !prev.waitingForFresh) return { state: prev, displayChanged: false };
+  return {
+    state: { key, gen: generation, value: next, stamp },
+    displayed: next,
+    displayChanged: true,
+  };
+}
+
 function useStableUsed(
   key: string,
   raw: number | undefined,
   isExact: boolean,
   generation: number,
+  stamp?: string,
 ): number | undefined {
-  const ref = useRef<{ key: string; gen: number; value: number } | null>(null);
+  const ref = useRef<StableUsedState | null>(null);
   const [displayed, setDisplayed] = useState<number | undefined>(raw);
   useEffect(() => {
-    const prev = ref.current;
-    // A new session or a compaction reset starts fresh: snap to the latest raw,
-    // which may be undefined when the new session has no stats yet. Clearing it
-    // here prevents the previous session's usage from lingering on the meter.
-    if (!prev || prev.key !== key || generation !== prev.gen) {
-      ref.current = raw === undefined ? null : { key, gen: generation, value: raw };
-      setDisplayed(raw);
-      return;
-    }
-    // Same session: a transient missing reading keeps the last value rather than
-    // flickering to empty mid-stream.
-    if (raw === undefined) return;
-    const next = isExact ? raw : Math.max(prev.value, raw);
-    if (next !== prev.value) {
-      ref.current = { key, gen: generation, value: next };
-      setDisplayed(next);
-    }
-  }, [key, raw, isExact, generation]);
+    const next = nextStableUsedState(ref.current, key, raw, isExact, generation, stamp);
+    ref.current = next.state;
+    if (next.displayChanged) setDisplayed(next.displayed);
+  }, [key, raw, isExact, generation, stamp]);
   return displayed;
+}
+
+export function contextMeterMax(
+  isOrchestratorView: boolean,
+  summaryLimit?: number,
+  statsLimit?: number,
+): number | undefined {
+  return isOrchestratorView ? (summaryLimit ?? statsLimit) : statsLimit;
 }
 
 export default function ContextMeter({
@@ -133,34 +170,46 @@ export default function ContextMeter({
           updatedAt: mission.contextUpdatedAt,
         }
       : undefined);
-  const modelWindow =
+  // When a worker is selected its stats flow in here, but `mission` is still the
+  // orchestrator summary; a worker may run a different model, so prefer the live
+  // stats denominator whenever the daemon reports one.
+  const isOrchestratorView = !sessionKey || sessionKey === mission.id;
+  const catalogWindow =
     mission.maxContextTokens && mission.maxContextTokens > 0 ? mission.maxContextTokens : undefined;
-  const statLimit = measured?.limit && measured.limit > 0 ? measured.limit : modelWindow;
-
-  // The conversation compacts once it passes the configured token limit, so the
-  // meter measures usage against that threshold (per-model override -> global
-  // default), capped to the model window. Falls back to observed/model context
-  // size when the app lets Factory use its model-dependent default.
-  const compactionLimit =
-    mission.modelId && state.compactionTokenLimitPerModel[mission.modelId] !== undefined
-      ? state.compactionTokenLimitPerModel[mission.modelId]
-      : state.compactionTokenLimit;
-  const effectiveCompaction =
-    compactionLimit && compactionLimit > 0
-      ? modelWindow
-        ? Math.min(compactionLimit, modelWindow)
-        : compactionLimit
-      : undefined;
-  const max = effectiveCompaction ?? statLimit;
+  const statLimit = measured?.limit && measured.limit > 0 ? measured.limit : undefined;
+  // The orchestrator summary already carries Droid Control's selected context
+  // window. Raw daemon stats can expose the lower auto-compaction trigger after a
+  // compact/reload, so they must not repaint the user-facing denominator.
+  const modelWindow = contextMeterMax(isOrchestratorView, catalogWindow, statLimit);
+  const max = modelWindow ?? statLimit;
 
   const accuracy = measured?.accuracy;
   const isEstimating = (accuracy ?? 'estimated') !== 'exact';
-  // Compaction count is the generation: a bump means context was compacted, so
-  // the stabilized usage floor must reset to the lower post-compaction reading.
-  const generation = mission.compactedFromSessionIds?.length ?? 0;
-  const used = useStableUsed(sessionKey ?? mission.id, measured?.used, !isEstimating, generation);
+  // Compaction count is the generation: the daemon compacts in place (same
+  // session id), so a bump is the only signal that context dropped. It resets
+  // the stabilized usage floor to the lower post-compaction reading. The
+  // orchestrator uses its persisted summary count; a selected worker uses its
+  // own per-session compaction generation, so a worker auto-compaction resets
+  // the worker meter (without an orchestrator compaction ever resetting it).
+  const workerGeneration = sessionKey ? state.compactionGenerations[sessionKey] : undefined;
+  const generation = isOrchestratorView ? (mission.compactionCount ?? 0) : (workerGeneration ?? 0);
+  const rawUsed =
+    isEstimating && measured?.used !== undefined && max !== undefined
+      ? Math.min(measured.used, max)
+      : measured?.used;
+  const used = useStableUsed(
+    sessionKey ?? mission.id,
+    rawUsed,
+    !isEstimating,
+    generation,
+    measured?.updatedAt,
+  );
   const remaining =
-    used !== undefined && max !== undefined ? Math.max(0, max - used) : measured?.remaining;
+    measured?.accuracy === 'exact'
+      ? measured.remaining
+      : used !== undefined && max !== undefined
+        ? Math.max(0, max - used)
+        : measured?.remaining;
   const categories = measured?.breakdown?.categories ?? [];
   const ready = used !== undefined && max !== undefined && max > 0;
   const pct = ready ? used / max : 0;
@@ -258,15 +307,8 @@ export default function ContextMeter({
                 {remaining !== undefined && (
                   <Row color="var(--droid-text-muted)" label="Window free" value={remaining} />
                 )}
-                {effectiveCompaction !== undefined && (
-                  <Row
-                    color="var(--droid-orange)"
-                    label="Compacts at"
-                    value={effectiveCompaction}
-                  />
-                )}
                 {modelWindow !== undefined && (
-                  <Row color="var(--droid-text-muted)" label="Model window" value={modelWindow} />
+                  <Row color="var(--droid-text-muted)" label="Context window" value={modelWindow} />
                 )}
                 <Row
                   color="var(--droid-text-muted)"

@@ -92,6 +92,23 @@ export function CompactingIndicator() {
 }
 
 /* ── Compaction divider — persistent marker once compaction has completed ── */
+// Build the divider label. A manual compaction keeps its "Session compacted"
+// wording even when a removed-message count is present (manual events carry
+// both compactType:'manual' and a count), so /compact is never mislabeled as a
+// generic auto compaction.
+export function compactionDividerLabel(
+  compactType?: 'auto' | 'manual',
+  removedCount?: number,
+): string {
+  const summarized =
+    removedCount && removedCount > 0
+      ? ` · ${removedCount.toLocaleString()} earlier message${removedCount === 1 ? '' : 's'} summarized`
+      : '';
+  if (compactType === 'manual') return `Session compacted${summarized}`;
+  if (summarized) return `Context compacted${summarized}`;
+  return 'Context automatically compacted';
+}
+
 export function CompactionDivider({
   compactType,
   removedCount,
@@ -100,12 +117,7 @@ export function CompactionDivider({
   removedCount?: number;
 }) {
   const manual = compactType === 'manual';
-  const label =
-    removedCount && removedCount > 0
-      ? `Context compacted · ${removedCount.toLocaleString()} earlier message${removedCount === 1 ? '' : 's'} summarized`
-      : manual
-        ? 'Session compacted'
-        : 'Context automatically compacted';
+  const label = compactionDividerLabel(compactType, removedCount);
   return (
     <div
       className={`flex items-center gap-3 py-1 ${manual ? 'text-droid-text-secondary' : 'text-droid-text-muted'}`}
@@ -127,12 +139,6 @@ export function CompactionDivider({
 export function isCompactingStatus(text?: string): boolean {
   const t = text ?? '';
   return /compacting/i.test(t) && !/complete/i.test(t);
-}
-
-// A status line that signals compaction finished.
-export function isCompactionCompleteStatus(text?: string): boolean {
-  const t = text ?? '';
-  return /compact/i.test(t) && /complete/i.test(t);
 }
 
 /* ── Subtle expand affordance ── */
@@ -878,13 +884,6 @@ function collapseRun(run: FeedItem[], specContent?: string): FeedItem[] {
     } else if (it.type === 'status' && it.event.kind === 'compaction') {
       flush();
       out.push(it);
-    } else if (
-      it.type === 'status' &&
-      isCompactionCompleteStatus(it.event.text) &&
-      it.event.compactType === 'manual'
-    ) {
-      flush();
-      out.push(it);
     } else buf.push(it);
   }
   flush();
@@ -1146,10 +1145,13 @@ const FeedItemView = memo(function FeedItemView({
     case 'status': {
       const text = item.event.text ?? '';
       if (item.event.kind === 'compaction')
-        return <CompactionDivider compactType="auto" removedCount={item.event.removedCount} />;
+        return (
+          <CompactionDivider
+            compactType={item.event.compactType ?? 'auto'}
+            removedCount={item.event.removedCount}
+          />
+        );
       if (compacting) return <CompactingIndicator />;
-      if (isCompactionCompleteStatus(text))
-        return <CompactionDivider compactType={item.event.compactType} />;
       return live ? (
         <span className="shimmer-text text-[13px] font-medium">{text}</span>
       ) : (
@@ -1410,6 +1412,7 @@ function SubagentLine({
 export function MessageFeed({
   events,
   pending,
+  compacting: externalCompacting = false,
   onOpenDiff,
   onOpenSubagent,
   subagentActivity,
@@ -1418,6 +1421,7 @@ export function MessageFeed({
 }: {
   events: TranscriptEvent[];
   pending: boolean;
+  compacting?: boolean;
   onOpenDiff?: (c: FileChange) => void;
   onOpenSubagent?: (target: SubagentTarget) => void;
   subagentActivity?: (target: SubagentTarget) => SubagentActivity | undefined;
@@ -1438,7 +1442,8 @@ export function MessageFeed({
 
   // Compaction is in progress when the latest status line announces it and no
   // completion line has arrived yet. Drives the centered "Compacting…" shimmer.
-  const compacting = last?.type === 'status' && isCompactingStatus(last.event.text);
+  const tailCompacting = last?.type === 'status' && isCompactingStatus(last.event.text);
+  const compacting = externalCompacting || tailCompacting;
 
   // A subagent line self-indicates only while it is still running (it shows its
   // own "Running … <timer>"). Once it completes, the orchestrator may still be
@@ -1456,7 +1461,8 @@ export function MessageFeed({
       last.type === 'status' ||
       (last.type === 'subagent' && lastSubagentRunning) ||
       (last.type === 'message' && last.event.author !== 'user'));
-  const showWorking = pending && !tailSelfIndicates;
+  const showCompacting = compacting && !tailCompacting;
+  const showWorking = pending && !compacting && !tailSelfIndicates;
   const workingLabel =
     last?.type === 'tools'
       ? 'Running'
@@ -1489,7 +1495,11 @@ export function MessageFeed({
         </motion.div>
       ))}
 
-      {showWorking && <WorkingIndicator label={workingLabel} startTs={workingStart} />}
+      {showCompacting ? (
+        <CompactingIndicator />
+      ) : (
+        showWorking && <WorkingIndicator label={workingLabel} startTs={workingStart} />
+      )}
     </div>
   );
 }

@@ -4,6 +4,7 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import {
   buildFeed,
+  compactionDividerLabel,
   correlateResults,
   groupTurns,
   isResultFor,
@@ -513,6 +514,27 @@ test('#20 a failed subagent result batched after another tool call surfaces as a
 
 // ── #18: final answer always top-level, even with trailing compaction ──
 
+test('#18 compactionDividerLabel keeps the manual label when a removed count is present', () => {
+  // A real /compact emits compactType:'manual' with a removed count; the divider
+  // must keep the manual "Session compacted" wording, not fall back to the
+  // generic auto-compaction label.
+  assert.equal(
+    compactionDividerLabel('manual', 4),
+    'Session compacted · 4 earlier messages summarized',
+  );
+  assert.equal(
+    compactionDividerLabel('manual', 1),
+    'Session compacted · 1 earlier message summarized',
+  );
+  assert.equal(compactionDividerLabel('manual'), 'Session compacted');
+  assert.equal(
+    compactionDividerLabel('auto', 9),
+    'Context compacted · 9 earlier messages summarized',
+  );
+  assert.equal(compactionDividerLabel('auto'), 'Context automatically compacted');
+  assert.equal(compactionDividerLabel(undefined, 0), 'Context automatically compacted');
+});
+
 test('#18 a final answer followed by compaction stays a top-level message', () => {
   const events = [userMsg('q'), grep(), asst('the answer'), compaction()];
   const grouped = groupTurns(buildFeed(events), false);
@@ -538,6 +560,36 @@ test('#18 multiple assistant texts in a turn each stay top-level', () => {
   const events = [userMsg('q'), asst('first'), grep(), asst('second')];
   const grouped = groupTurns(buildFeed(events), false);
   assert.deepEqual(topLevelAnswers(grouped), ['first', 'second']);
+});
+
+test('#18 a compaction divider reflects its compactType (manual vs auto)', () => {
+  // Automatic compaction and manual /compact both arrive as kind:'compaction'
+  // dividers; the render must use event.compactType rather than assuming
+  // 'auto', so a manual divider is not mislabeled.
+  const render = (compactType: 'auto' | 'manual') =>
+    renderToStaticMarkup(
+      createElement(MessageFeed, {
+        events: [userMsg('q'), asst('done'), ev({ kind: 'compaction', compactType })],
+        pending: false,
+      }),
+    );
+  const manualHtml = render('manual');
+  assert.ok(manualHtml.includes('Session compacted'));
+  assert.ok(!manualHtml.includes('Context automatically compacted'));
+  const autoHtml = render('auto');
+  assert.ok(autoHtml.includes('Context automatically compacted'));
+});
+
+test('#18 an explicit compacting state shows even when the tail is not a compaction status', () => {
+  const html = renderToStaticMarkup(
+    createElement(MessageFeed, {
+      events: [userMsg('q'), grep()],
+      pending: true,
+      compacting: true,
+    }),
+  );
+
+  assert.ok(html.includes('Compacting'));
 });
 
 // ── #19: a final answer split only by todo/plan reconciliation is one answer ──

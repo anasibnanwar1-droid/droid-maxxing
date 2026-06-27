@@ -57,6 +57,11 @@ export const listSkills = (sessionId?: string) =>
   bridge.send({ type: 'catalog.skills', sessionId });
 export const listFactoryDefaults = () => bridge.send({ type: 'settings.defaults' });
 
+export const updateCompactionSettings = (p: {
+  compactionTokenLimit?: number | null;
+  compactionTokenLimitPerModel?: Record<string, number>;
+}) => bridge.send({ type: 'settings.compaction.update', ...p });
+
 export const sendToMission = (missionId: string, text: string) =>
   bridge.send({ type: 'mission.send', missionId, text });
 
@@ -68,6 +73,12 @@ export const sendToAgent = (missionId: string, agentSessionId: string, text: str
 
 export const sendToAgentNow = (missionId: string, agentSessionId: string, text: string) =>
   bridge.send({ type: 'agent.sendNow', missionId, agentSessionId, text });
+
+export const openAgent = (
+  missionId: string,
+  agentSessionId: string,
+  role: 'worker' | 'validator' | 'orchestrator' = 'worker',
+) => bridge.send({ type: 'agent.open', missionId, agentSessionId, role });
 
 export const respondPermission = (
   missionId: string,
@@ -85,8 +96,11 @@ export const respondQuestion = (
 export const interruptMission = (missionId: string) =>
   bridge.send({ type: 'mission.interrupt', missionId });
 
-export const compactSession = (missionId: string, customInstructions?: string) =>
-  bridge.send({ type: 'mission.compact', missionId, customInstructions });
+export const compactSession = (
+  missionId: string,
+  customInstructions?: string,
+  agentSessionId?: string,
+) => bridge.send({ type: 'mission.compact', missionId, customInstructions, agentSessionId });
 
 export const interruptAgent = (missionId: string, agentSessionId: string) =>
   bridge.send({ type: 'agent.interrupt', missionId, agentSessionId });

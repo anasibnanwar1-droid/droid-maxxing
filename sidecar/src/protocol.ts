@@ -87,6 +87,11 @@ export interface MissionSummary {
   id: string; // stable app conversation id
   sessionId?: string; // active Droid session id
   compactedFromSessionIds?: string[];
+  // Monotonic count of compactions (auto + manual) for this conversation. The
+  // app keeps the visible chat stable across backing-session swaps, so the
+  // client uses this as a generation key to reset the context meter's high-water
+  // mark.
+  compactionCount?: number;
   missionId?: string;
   parentSessionId?: string;
   kind: SessionKind;
@@ -105,6 +110,7 @@ export interface MissionSummary {
   autonomy: Autonomy;
   phase: MissionPhase;
   streaming?: boolean; // true while a turn is actively generating
+  compacting?: boolean; // true while a manual/auto compaction is active
   queuedSends?: number;
   proposal?: string; // markdown plan from propose_mission
   features: BridgeFeature[];
@@ -456,6 +462,11 @@ export type ClientCommand =
   | { type: 'catalog.mcp'; sessionId?: string }
   | { type: 'settings.defaults' }
   | {
+      type: 'settings.compaction.update';
+      compactionTokenLimit?: number | null;
+      compactionTokenLimitPerModel?: Record<string, number>;
+    }
+  | {
       type: 'mission.create';
       clientRef: string;
       cwd?: string;
@@ -533,7 +544,12 @@ export type ClientCommand =
       answers: { index: number; question: string; answer: string }[];
     }
   | { type: 'mission.interrupt'; missionId: string }
-  | { type: 'mission.compact'; missionId: string; customInstructions?: string }
+  | {
+      type: 'mission.compact';
+      missionId: string;
+      customInstructions?: string;
+      agentSessionId?: string;
+    }
   | { type: 'mission.subscribeWorker'; missionId: string; workerSessionId: string }
   | { type: 'mission.close'; missionId: string }
   | {
@@ -664,10 +680,6 @@ export type ServerEvent =
       reasoningEffort?: ReasoningEffort;
       toolUseId?: string;
     }
-  // A worker compacted and the daemon swapped its backing session id. The
-  // worker stays alive under the new id; clients must remap any state keyed by
-  // the old worker session id (worker list, transcript events, selection).
-  | { type: 'mission.worker.rekey'; missionId: string; oldSessionId: string; newSessionId: string }
   | {
       type: 'mission.tokens';
       missionId: string;

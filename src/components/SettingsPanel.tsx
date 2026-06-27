@@ -433,8 +433,8 @@ const TOKEN_PRESETS = [
 ];
 const RECOMMENDED_LIMIT = 250_000;
 
-// Themed preset picker for compaction token limits. Empty/"Factory default"
-// lets Droid use its model-dependent compaction threshold.
+// Themed preset picker for the context window. Empty/"Factory default" lets
+// Droid Control use Factory's model-dependent policy.
 function TokenLimitSelect({
   value,
   onSelect,
@@ -522,8 +522,8 @@ function TokenLimitSelect({
             ))}
           </div>
           <p className="mt-2 border-t border-droid-border px-1.5 pt-2 text-[10.5px] leading-[1.5] text-droid-text-muted">
-            If a model's context window is lower than the selected value, the session starts with
-            the lower effective limit.
+            If a model's maximum context is lower than the selected value, the session uses that
+            model maximum.
           </p>
         </div>
       )}
@@ -854,22 +854,22 @@ function GeneralSection() {
           />
         </SettingRow>
         <SettingRow
-          label="Token limit"
-          description="Compact once a conversation passes this size. Empty uses Factory's model-dependent default."
+          label="Context window"
+          description="Displayed context budget for the session; Factory compacts before it fills."
         >
           <TokenLimitSelect value={state.compactionTokenLimit} onSelect={setGlobalLimit} />
         </SettingRow>
       </div>
 
-      {/* Per-model token limits */}
-      <GroupLabel>Per-model token limits</GroupLabel>
+      {/* Per-model context windows */}
+      <GroupLabel>Per-model context windows</GroupLabel>
       <p className="text-[12px] text-droid-text-muted mb-3">
-        Override the default compaction limit for specific models.
+        Override the context window for specific models.
       </p>
       <div className="rounded-xl border border-droid-border bg-droid-surface p-3">
         {overrideEntries.length === 0 && (
           <div className="text-[12px] text-droid-text-muted px-1 py-1.5">
-            No overrides — every model uses the default limit.
+            No overrides — every model uses the default context window.
           </div>
         )}
 

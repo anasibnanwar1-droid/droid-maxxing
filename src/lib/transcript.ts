@@ -58,6 +58,24 @@ export function classifyEvent(ev: TranscriptEvent): ContentType {
   }
 }
 
+// Whether Mission Control passes a transcript event through to the feed. An
+// explicit allowlist (an unrecognized future kind stays hidden until reviewed)
+// that must include 'compaction' so the top-level daemon/manual compaction
+// dividers are not silently filtered out of the Mission Control feed.
+export function isVisibleFeedEvent(ev: TranscriptEvent): boolean {
+  return (
+    ev.author === 'user' ||
+    ev.kind === 'text' ||
+    ev.kind === 'thinking' ||
+    ev.kind === 'tool_call' ||
+    ev.kind === 'tool_result' ||
+    ev.kind === 'status' ||
+    ev.kind === 'error' ||
+    ev.kind === 'compaction' ||
+    Boolean(ev.isError)
+  );
+}
+
 export function isChatContent(type: ContentType): boolean {
   return CHAT_CONTENT.has(type);
 }

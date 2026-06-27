@@ -2,7 +2,7 @@ import { useRef, useEffect, useLayoutEffect, useMemo, useState, useCallback } fr
 import { GripVertical, ChevronRight, Square } from 'lucide-react';
 import { useStore } from '../hooks/useStore';
 import { useMissionLive } from '../hooks/useMissionLive';
-import { MessageFeed, WorkingIndicator } from './chat';
+import { CompactingIndicator, MessageFeed, WorkingIndicator } from './chat';
 import { readFile } from '../lib/desktop';
 import { interruptAgent, loadMissionHistory, loadOlderMissionHistory } from '../lib/commands';
 import { findWorkerForTarget, resolveWorkers, subagentActivityForTarget } from '../lib/subagents';
@@ -352,10 +352,13 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
               ? {
                   label: subLabel,
                   meta: subMeta || undefined,
-                  running: selectedWorker?.status === 'running',
+                  running: selectedWorker?.status === 'running' && !activeMission.compacting,
                   onBack: () => dispatch({ type: 'SELECT_AGENT', id: null }),
                   onStop:
-                    activeMission && selectedAgent && selectedWorker?.status === 'running'
+                    activeMission &&
+                    selectedAgent &&
+                    selectedWorker?.status === 'running' &&
+                    !activeMission.compacting
                       ? () => interruptAgent(activeMission.id, selectedAgent)
                       : undefined,
                 }
@@ -385,6 +388,7 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
             <MessageFeed
               events={transcript}
               pending={live}
+              compacting={!!activeMission.compacting && !viewingSub}
               onOpenSubagent={openSubagent}
               subagentActivity={subagentActivity}
               specContent={specContent}
@@ -407,7 +411,9 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
                 </div>
               </div>
             )}
-            {selectedWorker?.status === 'running' ? (
+            {activeMission.compacting ? (
+              <CompactingIndicator />
+            ) : selectedWorker?.status === 'running' ? (
               <WorkingIndicator
                 label={`${subLabel} is working`}
                 startTs={selectedWorker.startedAt}

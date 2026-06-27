@@ -160,12 +160,14 @@ export function loadHistoricalMissions(options: HistoricalSummaryFilter = {}): H
 export function loadHistoricalSessions(options: HistoricalSummaryFilter = {}): HistoricalMission[] {
   const rows: HistoricalMission[] = [];
   const cached = readStoredSummaryPatches();
+  const hiddenDroidSessionIds = readHiddenDroidSessionIds();
   const linkedWorkerIds = readLinkedWorkerSessionIds();
   const workspaceCwds = options.workspaceCwds
     ? new Set(options.workspaceCwds.filter(Boolean))
     : null;
   if (workspaceCwds && workspaceCwds.size === 0 && !options.includePlainChats) return [];
   for (const [sessionId, path] of buildSessionIndex()) {
+    if (hiddenDroidSessionIds.has(sessionId)) continue;
     const start = readSessionStart(path);
     const classification = classifyStoredSession(start, linkedWorkerIds.has(sessionId));
     if (!classification) continue;
@@ -292,7 +294,8 @@ export class HistoryIndex {
         context_remaining_tokens INTEGER,
         context_accuracy TEXT,
         context_updated_at TEXT,
-        max_context_tokens INTEGER
+        max_context_tokens INTEGER,
+        compaction_count INTEGER NOT NULL DEFAULT 0
       );
       CREATE TABLE IF NOT EXISTS agent_sessions (
         session_id TEXT PRIMARY KEY,
@@ -355,6 +358,39 @@ export class HistoryIndex {
         updated_at INTEGER NOT NULL
       );
     `);
+    // CREATE TABLE IF NOT EXISTS does not add columns to databases created by an
+    // earlier schema, so add newer columns defensively for existing indexes.
+    this.ensureColumn('app_sessions', 'compaction_count', 'INTEGER NOT NULL DEFAULT 0');
+    this.backfillCompactionCount();
+  }
+
+  private ensureColumn(table: string, column: string, definition: string): void {
+    try {
+      this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+    } catch {
+      // The column already exists on databases created with the current schema.
+    }
+  }
+
+  // Before the in-place compaction counter existed, each compaction minted a new
+  // backing session id appended to previous_droid_session_ids. Seed legacy rows
+  // that predate the counter (still at 0 but with prior session ids) from that
+  // history so previously compacted conversations keep their displayed count.
+  // Guarded so it only touches those rows and is a no-op on later startups.
+  private backfillCompactionCount(): void {
+    const rows = this.db
+      .prepare(
+        "SELECT app_session_id, previous_droid_session_ids FROM app_sessions WHERE compaction_count = 0 AND previous_droid_session_ids != '[]'",
+      )
+      .all() as Record<string, unknown>[];
+    const update = this.db.prepare(
+      'UPDATE app_sessions SET compaction_count = ? WHERE app_session_id = ?',
+    );
+    for (const row of rows) {
+      const count = jsonStringArray(row.previous_droid_session_ids).length;
+      const id = stringValue(row.app_session_id);
+      if (count > 0 && id) update.run(count, id);
+    }
   }
 
   syncSummaries(summaries: MissionSummary[]): void {
@@ -382,9 +418,10 @@ export class HistoryIndex {
         context_remaining_tokens,
         context_accuracy,
         context_updated_at,
-        max_context_tokens
+        max_context_tokens,
+        compaction_count
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(app_session_id) DO UPDATE SET
         droid_session_id = excluded.droid_session_id,
         previous_droid_session_ids = excluded.previous_droid_session_ids,
@@ -407,7 +444,8 @@ export class HistoryIndex {
         context_remaining_tokens = excluded.context_remaining_tokens,
         context_accuracy = excluded.context_accuracy,
         context_updated_at = excluded.context_updated_at,
-        max_context_tokens = excluded.max_context_tokens
+        max_context_tokens = excluded.max_context_tokens,
+        compaction_count = MAX(compaction_count, excluded.compaction_count)
     `);
     for (const summary of summaries) {
       stmt.run(
@@ -434,6 +472,10 @@ export class HistoryIndex {
         sqlValue(summary.contextAccuracy),
         sqlValue(summary.contextUpdatedAt),
         sqlValue(summary.maxContextTokens),
+        // The count only ever grows; the ON CONFLICT clause keeps the larger of
+        // the stored and incoming values so a summary rebuilt without the count
+        // (e.g. a partial sync) can't reset a persisted count back to zero.
+        summary.compactionCount ?? 0,
       );
     }
   }
@@ -445,16 +487,11 @@ export class HistoryIndex {
 
   hiddenDroidSessionIds(): Set<string> {
     const rows = this.db
-      .prepare('SELECT app_session_id, previous_droid_session_ids FROM app_sessions')
+      .prepare(
+        'SELECT app_session_id, droid_session_id, previous_droid_session_ids FROM app_sessions',
+      )
       .all() as Record<string, unknown>[];
-    const hidden = new Set<string>();
-    for (const row of rows) {
-      const appSessionId = stringValue(row.app_session_id);
-      for (const droidSessionId of jsonStringArray(row.previous_droid_session_ids)) {
-        if (droidSessionId && droidSessionId !== appSessionId) hidden.add(droidSessionId);
-      }
-    }
-    return hidden;
+    return hiddenDroidSessionIdsFromRows(rows);
   }
 
   recordEvent(event: TranscriptEvent): void {
@@ -579,6 +616,29 @@ function readStoredSummaryPatches(): Map<string, Partial<MissionSummary>> {
   }
 }
 
+function readHiddenDroidSessionIds(): Set<string> {
+  const path = join(homedir(), '.factory', 'droid-control', 'index.sqlite');
+  if (!existsSync(path)) return new Set();
+  let db: DatabaseSync;
+  try {
+    db = new DatabaseSync(path);
+  } catch {
+    return new Set();
+  }
+  try {
+    const rows = db
+      .prepare(
+        'SELECT app_session_id, droid_session_id, previous_droid_session_ids FROM app_sessions',
+      )
+      .all() as Record<string, unknown>[];
+    return hiddenDroidSessionIdsFromRows(rows);
+  } catch {
+    return new Set();
+  } finally {
+    db.close();
+  }
+}
+
 function summaryPatchesFromRows(
   rows: Record<string, unknown>[],
 ): Map<string, Partial<MissionSummary>> {
@@ -610,12 +670,27 @@ function summaryPatchesFromRows(
       contextAccuracy: contextAccuracy(row.context_accuracy),
       contextUpdatedAt: stringValue(row.context_updated_at),
       maxContextTokens: numberValue(row.max_context_tokens),
+      compactionCount: numberValue(row.compaction_count) || undefined,
       updatedAt: numberValue(row.updated_at),
     };
     patches.set(appSessionId, patch);
     patches.set(droidSessionId, patch);
   }
   return patches;
+}
+
+function hiddenDroidSessionIdsFromRows(rows: Record<string, unknown>[]): Set<string> {
+  const hidden = new Set<string>();
+  for (const row of rows) {
+    const appSessionId = stringValue(row.app_session_id);
+    const currentDroidSessionId = stringValue(row.droid_session_id);
+    if (currentDroidSessionId && currentDroidSessionId !== appSessionId)
+      hidden.add(currentDroidSessionId);
+    for (const droidSessionId of jsonStringArray(row.previous_droid_session_ids)) {
+      if (droidSessionId && droidSessionId !== appSessionId) hidden.add(droidSessionId);
+    }
+  }
+  return hidden;
 }
 
 export function applyCachedSummary(
@@ -663,10 +738,10 @@ export function hydrateHistoricalMission(
   const { summary, progress, state, features } = loadHistoricalMission(dir);
   const sessionIndex = buildSessionIndex();
 
-  // The orchestrator backing session is rekeyed on every compaction, so the
-  // full conversation is spread across a CHAIN of session files. Resolve that
-  // chain (oldest -> newest) from the persisted app-session row; replaying only
-  // the latest segment is what made compacted chats lose their scrollback.
+  // Manual compactSession() can mint a new backing session id. Resolve that
+  // legacy/manual chain (oldest -> newest) from the persisted app-session row;
+  // replaying only the latest segment is what made compacted chats lose their
+  // scrollback.
   const chain = orchestratorChain(summary, sessionIndex);
   const window = loadMissionTranscriptWindow(summary.id, chain, opts);
 

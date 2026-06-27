@@ -132,18 +132,26 @@ export default function StatusBar() {
       </AnimatePresence>
 
       <div className="absolute right-3 top-0 bottom-0 flex items-center">
+        {mission?.compacting ? (
+          <span
+            className="mr-2 inline-flex items-center gap-1.5 rounded-md border border-droid-accent/30 bg-droid-accent/10 px-1.5 py-0.5 font-mono text-[10px] text-droid-accent"
+            title="Factory is compacting this conversation"
+          >
+            <span className="h-1.5 w-1.5 rounded-full bg-droid-accent animate-pulse" />
+            compacting
+          </span>
+        ) : null}
         {mission?.queuedSends ? (
           <span className="mr-2 rounded-md border border-droid-border bg-droid-elevated/70 px-1.5 py-0.5 font-mono text-[10px] text-droid-text-secondary">
             {mission.queuedSends} queued
           </span>
         ) : null}
-        {mission?.compactedFromSessionIds?.length ? (
+        {mission?.compactionCount ? (
           <span
             className="mr-2 rounded-md border border-droid-border bg-droid-elevated/70 px-1.5 py-0.5 font-mono text-[10px] text-droid-text-secondary"
-            title="Times this session has been compacted"
+            title="Times this conversation has been compacted"
           >
-            {mission.compactedFromSessionIds.length} compaction
-            {mission.compactedFromSessionIds.length === 1 ? '' : 's'}
+            {mission.compactionCount} compaction{mission.compactionCount === 1 ? '' : 's'}
           </span>
         ) : null}
         {contextMission && (

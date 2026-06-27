@@ -10,6 +10,7 @@ import {
   loadMissionHistory,
   sendNativeBrowserResult,
   subscribeWorker,
+  updateCompactionSettings,
 } from './lib/commands';
 import { isEmbedded } from './lib/embed';
 import { getApiKey } from './lib/desktop';
@@ -149,6 +150,14 @@ export default function App() {
     // latest few and reveals the rest behind "Show more" rather than capping.
     listMissions({ workspaceCwds: state.workspaceCwds, includePlainChats: true });
   }, [embedded, state.workspaceCwds]);
+
+  useEffect(() => {
+    if (embedded || state.connection !== 'connected') return;
+    updateCompactionSettings({
+      compactionTokenLimit: state.compactionTokenLimit ?? null,
+      compactionTokenLimitPerModel: state.compactionTokenLimitPerModel,
+    });
+  }, [embedded, state.connection, state.compactionTokenLimit, state.compactionTokenLimitPerModel]);
 
   // Post-onboarding launch tasks: silent CLI update + non-blocking app update
   // check. Runs once, only after the first-run tour is complete.

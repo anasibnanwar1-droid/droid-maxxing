@@ -86,6 +86,11 @@ export interface MissionSummary {
   id: string; // stable app conversation id
   sessionId?: string; // active Droid session id
   compactedFromSessionIds?: string[];
+  // Monotonic count of compactions (auto + manual) for this conversation. The
+  // app keeps the visible chat stable across backing-session swaps, so the
+  // client uses this as a generation key to reset the context meter's high-water
+  // mark.
+  compactionCount?: number;
   missionId?: string;
   parentSessionId?: string;
   kind: SessionKind;
@@ -104,6 +109,7 @@ export interface MissionSummary {
   autonomy: Autonomy;
   phase: MissionPhase;
   streaming?: boolean;
+  compacting?: boolean;
   queuedSends?: number;
   proposal?: string;
   features: BridgeFeature[];
@@ -144,9 +150,8 @@ export interface TranscriptEvent {
   browserRefs?: BrowserTranscriptReference[];
   // Frontend-only: this user message was sent while the model was already working.
   steered?: boolean;
-  // Whether a compaction status was triggered automatically (idle threshold) or
-  // manually (/compact). Manual compaction dividers are promoted to top level;
-  // auto-compaction dividers fold into "Worked for …" groups.
+  // Whether Factory compaction was triggered automatically by the live usage
+  // policy or manually by /compact. Both render as top-level compaction dividers.
   compactType?: 'auto' | 'manual';
 }
 
@@ -248,6 +253,7 @@ export interface FactoryDefaultSettings {
   autonomy?: Autonomy;
   specModelId?: string;
   specReasoningEffort?: ReasoningEffort;
+  missionOrchestratorModelId?: string;
   workerModelId?: string;
   workerReasoningEffort?: ReasoningEffort;
   validatorModelId?: string;
@@ -470,6 +476,11 @@ export type ClientCommand =
   | { type: 'catalog.mcp'; sessionId?: string }
   | { type: 'settings.defaults' }
   | {
+      type: 'settings.compaction.update';
+      compactionTokenLimit?: number | null;
+      compactionTokenLimitPerModel?: Record<string, number>;
+    }
+  | {
       type: 'mission.create';
       clientRef: string;
       cwd?: string;
@@ -547,7 +558,12 @@ export type ClientCommand =
       answers: { index: number; question: string; answer: string }[];
     }
   | { type: 'mission.interrupt'; missionId: string }
-  | { type: 'mission.compact'; missionId: string; customInstructions?: string }
+  | {
+      type: 'mission.compact';
+      missionId: string;
+      customInstructions?: string;
+      agentSessionId?: string;
+    }
   | { type: 'mission.subscribeWorker'; missionId: string; workerSessionId: string }
   | { type: 'mission.close'; missionId: string }
   | {
@@ -676,9 +692,6 @@ export type ServerEvent =
       reasoningEffort?: ReasoningEffort;
       toolUseId?: string;
     }
-  // A worker compacted and the daemon swapped its backing session id; remap any
-  // state keyed by the old worker session id (worker list, transcripts, selection).
-  | { type: 'mission.worker.rekey'; missionId: string; oldSessionId: string; newSessionId: string }
   | {
       type: 'mission.tokens';
       missionId: string;
