@@ -47,6 +47,7 @@ export interface QueuedPrompt {
   text: string;
   skills: string[];
   files: string[];
+  agentSessionId?: string;
   design?: QueuedDesignContext;
 }
 
@@ -113,11 +114,10 @@ export interface AppState {
   pendingPermission: PermissionRequest | null;
   pendingQuestion: MissionQuestion | null;
   contextStats: Record<string, ContextStatsSnapshot>;
-  // Live count of in-place compactions seen per agent session id (keyed by the
+  // Live count of compactions seen per agent session id (keyed by the
   // compaction divider's agentSessionId). The orchestrator uses the persisted
   // summary.compactionCount; a selected worker has no summary counter, so this
-  // is the generation that resets its context meter's high-water mark when the
-  // worker auto-compacts in place under the same session id.
+  // is the generation that resets its context meter's high-water mark.
   compactionGenerations: Record<string, number>;
   specPlans: Record<string, string>; // latest ExitSpecMode plan per session
   // Persisted spec per mission (file path + rendered content). Survives exiting
@@ -165,25 +165,23 @@ export interface AppState {
 
   // Mode-specific orchestrator default models from Factory defaults. The
   // agentConfig.orchestrator.modelId covers chat sessions, but spec and mission
-  // orchestrator sessions resolve their own defaults; the context meter needs
-  // these to show the right per-model "Compacts at" trigger for a reset-to-
-  // Default session of that mode. Undefined falls back to the chat default.
+  // orchestrator sessions resolve their own defaults. Undefined falls back to
+  // the chat default.
   specModelId?: string;
   missionOrchestratorModelId?: string;
   // The global Factory default model. agentConfig.orchestrator.modelId is
-  // undefined when the user picks the UI "Default" model, so the context meter
-  // resolves the real chat default model (the one the daemon actually runs)
-  // from this to keep the per-model "Compacts at" trigger correct.
+  // undefined when the user picks the UI "Default" model, so the app resolves
+  // the real chat default model from this.
   defaultModelId?: string;
 
   // Global compaction model applied to every session. 'current-model' = use
   // each session's active model; otherwise a specific model id.
   compactionModel: string;
 
-  // Global default compaction token limit applied to every session. Undefined
-  // means "use the Factory/default model context window".
+  // Optional user-visible compaction trigger/window. Undefined means use the
+  // Factory default policy for the selected model.
   compactionTokenLimit?: number;
-  // Per-model overrides for the compaction token limit, keyed by model id.
+  // Per-model context-window overrides, keyed by model id.
   compactionTokenLimitPerModel: Record<string, number>;
   liveEnterBehavior: LiveEnterBehavior;
 
@@ -407,9 +405,9 @@ function saveAgentConfig(config: AgentConfig): AgentConfig {
 // whatever model it is currently using; otherwise a specific model id is used
 // for compaction across every session.
 const COMPACTION_MODEL_STORAGE_KEY = 'droid-compaction-model';
-const COMPACTION_TOKEN_LIMIT_STORAGE_KEY = 'droid-compaction-token-limit';
-const COMPACTION_TOKEN_LIMIT_CONFIGURED_STORAGE_KEY = 'droid-compaction-token-limit-configured';
-const COMPACTION_TOKEN_LIMIT_PER_MODEL_STORAGE_KEY = 'droid-compaction-token-limit-per-model';
+const CONTEXT_WINDOW_STORAGE_KEY = 'droid-context-window';
+const CONTEXT_WINDOW_CONFIGURED_STORAGE_KEY = 'droid-context-window-configured';
+const CONTEXT_WINDOW_PER_MODEL_STORAGE_KEY = 'droid-context-window-per-model';
 const LIVE_ENTER_BEHAVIOR_STORAGE_KEY = 'droid-live-enter-behavior';
 const WORKSPACES_STORAGE_KEY = 'droid-workspaces';
 const UI_STATE_STORAGE_KEY = 'droid-ui-state-v1';
@@ -451,8 +449,8 @@ function saveCompactionModel(value: string): string {
   return value;
 }
 
-// Only positive finite integers are valid token limits; anything else is
-// treated as "unset" (fall back to the model's default context window).
+// Only positive finite integers are valid context-window values; anything else
+// is treated as "unset" (let the daemon use its default compaction policy).
 function normalizeTokenLimit(value: unknown): number | undefined {
   const n = typeof value === 'number' ? value : Number(value);
   if (!Number.isFinite(n) || n <= 0) return undefined;
@@ -461,7 +459,7 @@ function normalizeTokenLimit(value: unknown): number | undefined {
 
 function loadCompactionTokenLimit(): number | undefined {
   try {
-    return normalizeTokenLimit(getLocalStorage()?.getItem(COMPACTION_TOKEN_LIMIT_STORAGE_KEY));
+    return normalizeTokenLimit(getLocalStorage()?.getItem(CONTEXT_WINDOW_STORAGE_KEY));
   } catch {
     return undefined;
   }
@@ -471,8 +469,8 @@ function hasStoredCompactionTokenLimit(): boolean {
   try {
     const storage = getLocalStorage();
     return (
-      storage?.getItem(COMPACTION_TOKEN_LIMIT_STORAGE_KEY) !== null ||
-      storage?.getItem(COMPACTION_TOKEN_LIMIT_CONFIGURED_STORAGE_KEY) === '1'
+      storage?.getItem(CONTEXT_WINDOW_STORAGE_KEY) !== null ||
+      storage?.getItem(CONTEXT_WINDOW_CONFIGURED_STORAGE_KEY) === '1'
     );
   } catch {
     return false;
@@ -485,10 +483,10 @@ function saveCompactionTokenLimit(
 ): number | undefined {
   try {
     const storage = getLocalStorage();
-    if (value === undefined) storage?.removeItem(COMPACTION_TOKEN_LIMIT_STORAGE_KEY);
-    else storage?.setItem(COMPACTION_TOKEN_LIMIT_STORAGE_KEY, String(value));
+    if (value === undefined) storage?.removeItem(CONTEXT_WINDOW_STORAGE_KEY);
+    else storage?.setItem(CONTEXT_WINDOW_STORAGE_KEY, String(value));
     if (options.userConfigured ?? true)
-      storage?.setItem(COMPACTION_TOKEN_LIMIT_CONFIGURED_STORAGE_KEY, '1');
+      storage?.setItem(CONTEXT_WINDOW_CONFIGURED_STORAGE_KEY, '1');
   } catch {
     /* ignore */
   }
@@ -497,7 +495,7 @@ function saveCompactionTokenLimit(
 
 function loadCompactionTokenLimitPerModel(): Record<string, number> {
   try {
-    const raw = getLocalStorage()?.getItem(COMPACTION_TOKEN_LIMIT_PER_MODEL_STORAGE_KEY);
+    const raw = getLocalStorage()?.getItem(CONTEXT_WINDOW_PER_MODEL_STORAGE_KEY);
     if (!raw) return {};
     const parsed = JSON.parse(raw) as Record<string, unknown>;
     const out: Record<string, number> = {};
@@ -513,7 +511,7 @@ function loadCompactionTokenLimitPerModel(): Record<string, number> {
 
 function hasStoredCompactionTokenLimitPerModel(): boolean {
   try {
-    return getLocalStorage()?.getItem(COMPACTION_TOKEN_LIMIT_PER_MODEL_STORAGE_KEY) !== null;
+    return getLocalStorage()?.getItem(CONTEXT_WINDOW_PER_MODEL_STORAGE_KEY) !== null;
   } catch {
     return false;
   }
@@ -521,43 +519,22 @@ function hasStoredCompactionTokenLimitPerModel(): boolean {
 
 function saveCompactionTokenLimitPerModel(value: Record<string, number>): Record<string, number> {
   try {
-    getLocalStorage()?.setItem(COMPACTION_TOKEN_LIMIT_PER_MODEL_STORAGE_KEY, JSON.stringify(value));
+    getLocalStorage()?.setItem(CONTEXT_WINDOW_PER_MODEL_STORAGE_KEY, JSON.stringify(value));
   } catch {
     /* ignore */
   }
   return value;
 }
 
-function normalizeTokenLimitRecord(
-  value: Record<string, number> | undefined,
-): Record<string, number> {
-  return Object.fromEntries(
-    Object.entries(value ?? {})
-      .map(([id, limit]) => [id, normalizeTokenLimit(limit)])
-      .filter((entry): entry is [string, number] => entry[1] !== undefined),
-  );
-}
-
 export function applyFactoryCompactionDefaults(
   state: Pick<AppState, 'compactionTokenLimit' | 'compactionTokenLimitPerModel'>,
-  defaults: Pick<FactoryDefaultSettings, 'compactionTokenLimit' | 'compactionTokenLimitPerModel'>,
+  _defaults: Pick<FactoryDefaultSettings, 'compactionTokenLimit' | 'compactionTokenLimitPerModel'>,
 ): Pick<AppState, 'compactionTokenLimit' | 'compactionTokenLimitPerModel'> {
   const hasLocalLimit = hasStoredCompactionTokenLimit();
   const hasLocalPerModel = hasStoredCompactionTokenLimitPerModel();
-  const defaultLimit = normalizeTokenLimit(defaults.compactionTokenLimit);
-  const defaultPerModel = normalizeTokenLimitRecord(defaults.compactionTokenLimitPerModel);
 
-  const compactionTokenLimit = hasLocalLimit ? state.compactionTokenLimit : defaultLimit;
-  const compactionTokenLimitPerModel = hasLocalPerModel
-    ? state.compactionTokenLimitPerModel
-    : defaultPerModel;
-
-  if (!hasLocalLimit && compactionTokenLimit !== undefined) {
-    saveCompactionTokenLimit(compactionTokenLimit, { userConfigured: false });
-  }
-  if (!hasLocalPerModel && Object.keys(defaultPerModel).length > 0) {
-    saveCompactionTokenLimitPerModel(defaultPerModel);
-  }
+  const compactionTokenLimit = hasLocalLimit ? state.compactionTokenLimit : undefined;
+  const compactionTokenLimitPerModel = hasLocalPerModel ? state.compactionTokenLimitPerModel : {};
 
   return { compactionTokenLimit, compactionTokenLimitPerModel };
 }
@@ -1021,6 +998,14 @@ function baseReducer(state: AppState, action: Action): AppState {
       const mid = action.missionId;
       const existing = state.missions[mid];
       if (!existing) return state;
+      const maxContextTokens = action.maxContextTokens ?? existing.maxContextTokens;
+      let contextTokens = action.contextTokens;
+      if (maxContextTokens && maxContextTokens > 0 && action.contextTokens > maxContextTokens) {
+        contextTokens =
+          existing.contextAccuracy === 'exact' && existing.contextTokens > maxContextTokens
+            ? existing.contextTokens
+            : Math.min(existing.contextTokens, maxContextTokens);
+      }
       return {
         ...state,
         missions: {
@@ -1029,8 +1014,8 @@ function baseReducer(state: AppState, action: Action): AppState {
             ...existing,
             tokensIn: action.tokensIn,
             tokensOut: action.tokensOut,
-            contextTokens: action.contextTokens,
-            maxContextTokens: action.maxContextTokens ?? existing.maxContextTokens,
+            contextTokens,
+            maxContextTokens,
           },
         },
       };

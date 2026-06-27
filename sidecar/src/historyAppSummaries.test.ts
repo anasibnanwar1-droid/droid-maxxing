@@ -116,7 +116,7 @@ test('loadHistoricalSessions keeps a rekeyed worker hidden under its superseded 
   writeSession('worker-new', cwd, { callingSessionId: 'rekey-parent', callingToolUseId: 'tool-r' });
   const index = new HistoryIndex();
   index.recordSubagentLink('rekey-parent', 'tool-r', 'worker-old', 'builder');
-  // Worker compaction rekeys the spawn, repointing the link at the new id.
+  // A manual/legacy backing-session swap repoints the link at the new id.
   index.recordSubagentLink('rekey-parent', 'tool-r', 'worker-new', 'builder');
   index.close();
 
@@ -126,6 +126,29 @@ test('loadHistoricalSessions keeps a rekeyed worker hidden under its superseded 
   assert.deepEqual(
     rows.map((row) => row.summary.id),
     ['rekey-parent'],
+  );
+});
+
+test('loadHistoricalSessions hides the current manual-compaction backing session', () => {
+  const cwd = join(home, 'workspace-manual-compact');
+  writeSession('app-chat', cwd);
+  writeSession('manual-backing-current', cwd, { parent: 'app-chat' });
+  const index = new HistoryIndex();
+  index.syncSummaries([
+    {
+      ...summary('app-chat', cwd),
+      sessionId: 'manual-backing-current',
+      compactedFromSessionIds: ['app-chat'],
+      compactionCount: 1,
+    },
+  ]);
+  index.close();
+
+  const rows = loadHistoricalSessions({ workspaceCwds: [cwd] });
+
+  assert.deepEqual(
+    rows.map((row) => row.summary.id),
+    ['app-chat'],
   );
 });
 

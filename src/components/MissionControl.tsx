@@ -1,7 +1,7 @@
 import { useRef, useEffect, useMemo, useState, useCallback } from 'react';
 import { useStore } from '../hooks/useStore';
 import { useRepoStatus } from '../hooks/useRepoStatus';
-import { interruptMission, setMissionAutonomy, subscribeWorker } from '../lib/commands';
+import { interruptMission, openAgent, setMissionAutonomy, subscribeWorker } from '../lib/commands';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   FileDiff,
@@ -71,6 +71,7 @@ function ChatArea({
   events,
   live,
   pending,
+  compacting,
   onOpenDiff,
   onOpenSubagent,
   subagentActivity,
@@ -79,6 +80,7 @@ function ChatArea({
   events: TranscriptEvent[];
   live: boolean;
   pending: boolean;
+  compacting?: boolean;
   onOpenDiff?: (c: FileChange) => void;
   onOpenSubagent?: (target: { toolUseId?: string; label?: string }) => void;
   subagentActivity?: (target: { toolUseId?: string; label?: string }) =>
@@ -118,6 +120,7 @@ function ChatArea({
         <MessageFeed
           events={renderEvents}
           pending={pending}
+          compacting={compacting}
           onOpenDiff={onOpenDiff}
           onOpenSubagent={onOpenSubagent}
           subagentActivity={subagentActivity}
@@ -893,7 +896,7 @@ function FeatureFocus({
 /* ════════════════════════ main ════════════════════════ */
 
 export default function MissionControl() {
-  const { state } = useStore();
+  const { state, dispatch } = useStore();
   const mission = state.activeMissionId ? state.missions[state.activeMissionId] : null;
   const [viewedAgent, setViewedAgent] = useState<string>('orchestrator');
   const [selectedFeatureId, setSelectedFeatureId] = useState<string | null>(null);
@@ -924,8 +927,9 @@ export default function MissionControl() {
       if (!worker || !mission) return;
       subscribeWorker(mission.id, worker.sessionId);
       setViewedAgent(worker.sessionId);
+      dispatch({ type: 'SELECT_AGENT', id: worker.sessionId });
     },
-    [resolvedWorkers, mission],
+    [resolvedWorkers, mission, dispatch],
   );
 
   const subagentActivity = useCallback(
@@ -959,7 +963,9 @@ export default function MissionControl() {
         mission.phase,
       )
     : true;
-  const isLive = !inactive && (phaseLive || Date.now() - lastChangeRef.current < 1500);
+  const missionCompacting = !!mission?.compacting;
+  const isLive =
+    !inactive && (missionCompacting || phaseLive || Date.now() - lastChangeRef.current < 1500);
   const phaseLabel = mission
     ? mission.phase === 'completed'
       ? 'Completed'
@@ -1067,6 +1073,18 @@ export default function MissionControl() {
 
   if (!mission) return null;
 
+  const selectLiveAgent = (id: string) => {
+    setViewedAgent(id);
+    dispatch({ type: 'SELECT_AGENT', id: id === 'orchestrator' ? null : id });
+    if (id === 'orchestrator') return;
+    const role =
+      roleAgents.find((entry) => entry.sessionId === id || entry.subAgents.some((w) => w.id === id))
+        ?.role ??
+      workerRoles.get(id) ??
+      'worker';
+    openAgent(mission.id, id, role);
+  };
+
   const onOrchestrator = viewedAgent === 'orchestrator';
   const events = (
     onOrchestrator
@@ -1077,7 +1095,7 @@ export default function MissionControl() {
   const selectFeature = (f: BridgeFeature) => {
     setSelectedFeatureId(f.id);
     const session = f.currentWorkerSessionId ?? f.completedWorkerSessionId ?? null;
-    setViewedAgent(session ?? 'orchestrator');
+    selectLiveAgent(session ?? 'orchestrator');
     setFocusOpen(true);
   };
 
@@ -1126,7 +1144,11 @@ export default function MissionControl() {
           >
             <h1 className="text-[14px] font-medium text-droid-text truncate">{mission.title}</h1>
             <div className="flex items-center gap-2 shrink-0">
-              {isLive ? (
+              {missionCompacting ? (
+                <span className="shimmer-text text-[11.5px] font-medium leading-none">
+                  Compacting conversation
+                </span>
+              ) : isLive ? (
                 <>
                   <span className="shimmer-text text-[11.5px] font-medium leading-none">
                     {activeAgentLabel} working
@@ -1155,6 +1177,7 @@ export default function MissionControl() {
               events={events}
               live={isLive}
               pending={isLive && viewedAgent === activeAgentId}
+              compacting={!!mission.compacting && onOrchestrator}
               onOpenDiff={setOpenDiff}
               onOpenSubagent={onOrchestrator ? openSubagent : undefined}
               subagentActivity={onOrchestrator ? subagentActivity : undefined}
@@ -1182,7 +1205,7 @@ export default function MissionControl() {
                   progress={progress}
                   viewedAgent={viewedAgent}
                   activeAgentId={activeAgentId}
-                  onSelectAgent={setViewedAgent}
+                  onSelectAgent={selectLiveAgent}
                 />
               </div>
             </motion.aside>
@@ -1215,7 +1238,7 @@ export default function MissionControl() {
               viewedAgent={viewedAgent}
               activeAgentId={activeAgentId}
               onSelectAgent={(id) => {
-                setViewedAgent(id);
+                selectLiveAgent(id);
                 setExpanded(null);
               }}
               big

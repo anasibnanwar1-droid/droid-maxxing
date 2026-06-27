@@ -86,9 +86,10 @@ export interface MissionSummary {
   id: string; // stable app conversation id
   sessionId?: string; // active Droid session id
   compactedFromSessionIds?: string[];
-  // Monotonic count of compactions (daemon auto + manual) for this conversation.
-  // The daemon compacts in place without changing sessionId, so the client uses
-  // this as a generation key to reset the context meter's high-water mark.
+  // Monotonic count of compactions (auto + manual) for this conversation. The
+  // app keeps the visible chat stable across backing-session swaps, so the
+  // client uses this as a generation key to reset the context meter's high-water
+  // mark.
   compactionCount?: number;
   missionId?: string;
   parentSessionId?: string;
@@ -108,6 +109,7 @@ export interface MissionSummary {
   autonomy: Autonomy;
   phase: MissionPhase;
   streaming?: boolean;
+  compacting?: boolean;
   queuedSends?: number;
   proposal?: string;
   features: BridgeFeature[];
@@ -148,9 +150,8 @@ export interface TranscriptEvent {
   browserRefs?: BrowserTranscriptReference[];
   // Frontend-only: this user message was sent while the model was already working.
   steered?: boolean;
-  // Whether a compaction was triggered automatically (the daemon's in-place
-  // threshold compaction) or manually (/compact). Both render as top-level
-  // 'compaction' dividers; compactType only selects the label.
+  // Whether Factory compaction was triggered automatically by the live usage
+  // policy or manually by /compact. Both render as top-level compaction dividers.
   compactType?: 'auto' | 'manual';
 }
 
@@ -475,6 +476,11 @@ export type ClientCommand =
   | { type: 'catalog.mcp'; sessionId?: string }
   | { type: 'settings.defaults' }
   | {
+      type: 'settings.compaction.update';
+      compactionTokenLimit?: number | null;
+      compactionTokenLimitPerModel?: Record<string, number>;
+    }
+  | {
       type: 'mission.create';
       clientRef: string;
       cwd?: string;
@@ -552,7 +558,12 @@ export type ClientCommand =
       answers: { index: number; question: string; answer: string }[];
     }
   | { type: 'mission.interrupt'; missionId: string }
-  | { type: 'mission.compact'; missionId: string; customInstructions?: string }
+  | {
+      type: 'mission.compact';
+      missionId: string;
+      customInstructions?: string;
+      agentSessionId?: string;
+    }
   | { type: 'mission.subscribeWorker'; missionId: string; workerSessionId: string }
   | { type: 'mission.close'; missionId: string }
   | {

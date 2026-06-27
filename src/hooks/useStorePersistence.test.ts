@@ -64,7 +64,7 @@ test('loadPersistedUiState sanitizes persisted shell fields', () => {
 });
 
 test('factory defaults do not restore a cleared per-model compaction override', () => {
-  withLocalStorageMap({ 'droid-compaction-token-limit-per-model': '{}' }, () => {
+  withLocalStorageMap({ 'droid-context-window-per-model': '{}' }, () => {
     assert.deepEqual(
       applyFactoryCompactionDefaults(
         { compactionTokenLimit: undefined, compactionTokenLimitPerModel: {} },
@@ -76,7 +76,7 @@ test('factory defaults do not restore a cleared per-model compaction override', 
 });
 
 test('factory defaults do not restore a cleared global compaction token limit', () => {
-  withLocalStorageMap({ 'droid-compaction-token-limit-configured': '1' }, () => {
+  withLocalStorageMap({ 'droid-context-window-configured': '1' }, () => {
     assert.deepEqual(
       applyFactoryCompactionDefaults(
         { compactionTokenLimit: undefined, compactionTokenLimitPerModel: {} },
@@ -87,7 +87,19 @@ test('factory defaults do not restore a cleared global compaction token limit', 
   });
 });
 
-test('factory defaults seed compaction token limits before local settings exist', () => {
+test('legacy compaction trigger storage is not restored as a context window', () => {
+  withLocalStorageMap({ 'droid-compaction-token-limit': '90000' }, () => {
+    assert.deepEqual(
+      applyFactoryCompactionDefaults(
+        { compactionTokenLimit: undefined, compactionTokenLimitPerModel: {} },
+        { compactionTokenLimit: 200_000 },
+      ),
+      { compactionTokenLimit: undefined, compactionTokenLimitPerModel: {} },
+    );
+  });
+});
+
+test('factory defaults do not become explicit context-window settings', () => {
   const storage = new Map<string, string>();
   withLocalStorageMap(storage, () => {
     assert.deepEqual(
@@ -95,10 +107,10 @@ test('factory defaults seed compaction token limits before local settings exist'
         { compactionTokenLimit: undefined, compactionTokenLimitPerModel: {} },
         { compactionTokenLimit: 200_000, compactionTokenLimitPerModel: { 'model-a': 100_000 } },
       ),
-      { compactionTokenLimit: 200_000, compactionTokenLimitPerModel: { 'model-a': 100_000 } },
+      { compactionTokenLimit: undefined, compactionTokenLimitPerModel: {} },
     );
-    assert.equal(storage.get('droid-compaction-token-limit'), '200000');
-    assert.equal(storage.get('droid-compaction-token-limit-per-model'), '{"model-a":100000}');
+    assert.equal(storage.get('droid-context-window'), undefined);
+    assert.equal(storage.get('droid-context-window-per-model'), undefined);
   });
 });
 

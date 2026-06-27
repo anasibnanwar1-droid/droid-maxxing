@@ -562,10 +562,10 @@ test('#18 multiple assistant texts in a turn each stay top-level', () => {
   assert.deepEqual(topLevelAnswers(grouped), ['first', 'second']);
 });
 
-test('#18 a compaction divider reflects its compactType (manual vs daemon auto)', () => {
-  // Daemon in-place compaction (auto) and manual /compact both arrive as
-  // kind:'compaction' dividers; the render must use event.compactType rather
-  // than assuming 'auto', so a manual divider is not mislabeled.
+test('#18 a compaction divider reflects its compactType (manual vs auto)', () => {
+  // Automatic compaction and manual /compact both arrive as kind:'compaction'
+  // dividers; the render must use event.compactType rather than assuming
+  // 'auto', so a manual divider is not mislabeled.
   const render = (compactType: 'auto' | 'manual') =>
     renderToStaticMarkup(
       createElement(MessageFeed, {
@@ -578,6 +578,18 @@ test('#18 a compaction divider reflects its compactType (manual vs daemon auto)'
   assert.ok(!manualHtml.includes('Context automatically compacted'));
   const autoHtml = render('auto');
   assert.ok(autoHtml.includes('Context automatically compacted'));
+});
+
+test('#18 an explicit compacting state shows even when the tail is not a compaction status', () => {
+  const html = renderToStaticMarkup(
+    createElement(MessageFeed, {
+      events: [userMsg('q'), grep()],
+      pending: true,
+      compacting: true,
+    }),
+  );
+
+  assert.ok(html.includes('Compacting'));
 });
 
 // ── #19: a final answer split only by todo/plan reconciliation is one answer ──

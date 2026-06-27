@@ -1,17 +1,12 @@
-import type { DroidSession } from '@factory/droid-sdk';
-import type { FactoryDefaultSettings } from './protocol.js';
+import type { ContextStatsSnapshot, FactoryDefaultSettings } from './protocol.js';
 
-// Daemon-owned compaction.
+// Factory compaction policy helpers.
 //
-// Factory's daemon performs threshold-based auto-compaction itself, mid-turn and
-// in place: it emits a `session_compacted` notification that carries NO
-// replacement session id, so the session id we hold stays valid and the chat is
-// unchanged across any number of automatic compactions. The app only (a) turns
-// that on for every session and (b) reflects it.
-//
-// The single exception is the user-triggered `compactSession()` RPC behind the
-// manual "Compact now" action, which mints a new session id (like forkSession);
-// the caller adopts it behind the stable app id so the visible chat is unchanged.
+// The Factory runtime owns compaction implementation: hooks, safe boundaries,
+// anchored/delta summarization, and compacted session records. Droid Control
+// configures native threshold checks, reflects Factory notifications in the UI,
+// and uses Factory's compactSession() RPC when an active turn must be compacted
+// near the selected context window.
 
 export type CompactType = 'auto' | 'manual';
 
@@ -19,6 +14,26 @@ export interface CompactionTokenLimitPatch {
   compactionTokenLimit?: number | null;
   compactionTokenLimitPerModel?: Record<string, number>;
 }
+
+export function mergeCompactionSettings(
+  current: CompactionTokenLimitPatch,
+  patch: CompactionTokenLimitPatch,
+): CompactionTokenLimitPatch {
+  const next = { ...current };
+  if ('compactionTokenLimit' in patch) {
+    if (patch.compactionTokenLimit === null || patch.compactionTokenLimit === undefined)
+      delete next.compactionTokenLimit;
+    else next.compactionTokenLimit = patch.compactionTokenLimit;
+  }
+  if ('compactionTokenLimitPerModel' in patch) {
+    const perModel = patch.compactionTokenLimitPerModel;
+    if (!perModel || Object.keys(perModel).length === 0) delete next.compactionTokenLimitPerModel;
+    else next.compactionTokenLimitPerModel = perModel;
+  }
+  return next;
+}
+
+export const DAEMON_COMPACTION_TRIGGER_RATIO = 1;
 
 type CompactionDefaults = Pick<
   FactoryDefaultSettings,
@@ -30,17 +45,17 @@ export function normalizeCompactionTokenLimit(value: unknown): number | undefine
   return Math.trunc(value);
 }
 
-// A trigger above the model's context window can never fire before the window
-// fills, so cap it to the window when the window is known.
+// A configured context window above the model's real window is impossible, so
+// cap it to the window when the window is known.
 function clampToWindow(limit: number | undefined, modelWindow?: number): number | undefined {
   if (limit === undefined) return undefined;
   return modelWindow && modelWindow > 0 ? Math.min(limit, modelWindow) : limit;
 }
 
-// Resolve the user's optional auto-compaction trigger for a model: a per-model
-// override wins over the global limit, with the same precedence applied to app
-// defaults, capped to the model context window. Undefined means "let the daemon
-// use its own model-aware default".
+// Resolve the user's optional context window for a model: a per-model override
+// wins over the global window, with the same precedence applied to app defaults,
+// capped to the model's real context window. Undefined means "let the daemon use
+// its own model-aware default".
 export function compactionTokenLimitForModel(
   modelId: string | undefined,
   settings: CompactionTokenLimitPatch,
@@ -60,9 +75,63 @@ export function compactionTokenLimitForModel(
     : clampToWindow(normalizeCompactionTokenLimit(globalLimit), modelWindow);
 }
 
-// Resume precedence: honor the limit the resumed session itself exposes before
-// falling back to current app defaults, so a default per-model limit can't
-// override a session's own saved global limit. Capped to the model window.
+export function selectedContextWindowForModel(
+  modelId: string | undefined,
+  settings: CompactionTokenLimitPatch,
+  defaults: CompactionDefaults = {},
+  modelWindow?: number,
+): number | undefined {
+  return (
+    compactionTokenLimitForModel(modelId, settings, defaults, modelWindow) ??
+    normalizeCompactionTokenLimit(modelWindow)
+  );
+}
+
+export function contextStatsWithWindow(
+  stats: ContextStatsSnapshot,
+  contextWindow: number | undefined,
+): ContextStatsSnapshot {
+  const limit = normalizeCompactionTokenLimit(contextWindow);
+  if (limit === undefined) return stats;
+  const remaining = Math.max(0, limit - stats.used);
+  return {
+    ...stats,
+    remaining,
+    limit,
+    breakdown: stats.breakdown
+      ? { ...stats.breakdown, contextBudget: limit, usedTokens: stats.used, freeTokens: remaining }
+      : undefined,
+  };
+}
+
+export function fallbackAutoCompactionDue(stats: ContextStatsSnapshot): boolean {
+  return stats.accuracy === 'exact' && stats.limit > 0 && stats.used >= stats.limit;
+}
+
+export function daemonCompactionTriggerForWindow(
+  contextWindow: number | undefined,
+  modelWindow?: number,
+): number | undefined {
+  const window = clampToWindow(normalizeCompactionTokenLimit(contextWindow), modelWindow);
+  if (window === undefined) return undefined;
+  return Math.max(1, Math.floor(window * DAEMON_COMPACTION_TRIGGER_RATIO));
+}
+
+export function daemonCompactionTriggerForModel(
+  modelId: string | undefined,
+  settings: CompactionTokenLimitPatch,
+  defaults: CompactionDefaults = {},
+  modelWindow?: number,
+): number | undefined {
+  return daemonCompactionTriggerForWindow(
+    compactionTokenLimitForModel(modelId, settings, defaults, modelWindow),
+    modelWindow,
+  );
+}
+
+// Resume precedence for Factory/default behavior: honor the daemon trigger the
+// resumed session itself exposes before falling back to current app defaults.
+// Callers with an explicit Droid Control context window should use that first.
 export function resumedCompactionTokenLimit(
   modelId: string | undefined,
   exposed: CompactionTokenLimitPatch,
@@ -70,14 +139,11 @@ export function resumedCompactionTokenLimit(
   modelWindow?: number,
 ): number | undefined {
   const own = compactionTokenLimitForModel(modelId, exposed, {}, modelWindow);
-  return own ?? compactionTokenLimitForModel(modelId, {}, defaults, modelWindow);
+  return own ?? daemonCompactionTriggerForModel(modelId, {}, defaults, modelWindow);
 }
 
-// Settings handed to every session (orchestrator, chat, worker, validator,
-// subagent) so the daemon owns auto-compaction uniformly. Threshold-based
-// auto-compaction is ALWAYS on — there is no off switch. The only knob is the
-// optional trigger size, omitted so the daemon picks a model-aware default
-// unless the user set one.
+// Settings handed to Factory sessions. A numeric value is the trigger; omitting
+// it keeps Factory's own model-aware default policy enabled.
 export interface DaemonCompactionSettings {
   compactionThresholdCheckEnabled: true;
   compactionTokenLimit?: number;
@@ -89,7 +155,7 @@ export function daemonCompactionSettings(
   defaults: CompactionDefaults = {},
   modelWindow?: number,
 ): DaemonCompactionSettings {
-  const compactionTokenLimit = compactionTokenLimitForModel(
+  const compactionTokenLimit = daemonCompactionTriggerForModel(
     modelId,
     settings,
     defaults,
@@ -100,10 +166,18 @@ export function daemonCompactionSettings(
     : { compactionThresholdCheckEnabled: true };
 }
 
-// A daemon `session_compacted` notification — the in-place auto-compaction
-// signal. The SDK does not convert it to a stream message, so it is read from
-// the raw notification delivered to `session.onNotification`. It carries no
-// replacement session id by design: auto-compaction keeps the same session.
+export function daemonCompactionSettingsForTrigger(
+  compactionTokenLimit: number | undefined,
+): DaemonCompactionSettings {
+  const normalized = normalizeCompactionTokenLimit(compactionTokenLimit);
+  return normalized !== undefined
+    ? { compactionThresholdCheckEnabled: true, compactionTokenLimit: normalized }
+    : { compactionThresholdCheckEnabled: true };
+}
+
+// A `session_compacted` notification from Factory. Some runtimes can emit this
+// while compacting; the SDK does not convert it to a stream message, so read it
+// from raw notifications.
 export interface SessionCompacted {
   summaryId?: string;
   removedCount: number;
@@ -138,26 +212,29 @@ function unwrapNotification(notification: unknown): Record<string, unknown> | nu
     : null;
 }
 
-// Manual "Compact now": the single caller of compactSession(). Returns the new
-// backing session id the daemon minted so the caller can adopt it behind the
-// stable app id.
-export type CompactableSession = Pick<DroidSession, 'sessionId' | 'compactSession'>;
+// Call Factory's real compactSession() RPC. The daemon owns the compaction
+// semantics; callers only decide whether a user/manual or active-turn fallback
+// should ask Factory to compact this session now.
+export interface CompactableSession {
+  sessionId: string;
+  compactSession(params?: { customInstructions?: string }): Promise<unknown>;
+}
 
-export interface ManualCompaction {
+export interface FactoryCompaction {
   newSessionId: string;
   removedCount: number;
 }
 
-export async function runManualCompaction(
+export async function runFactoryCompaction(
   session: CompactableSession,
   customInstructions?: string,
-): Promise<ManualCompaction | null> {
+): Promise<FactoryCompaction | null> {
   // The SDK types compactSession() as non-null, but it returns null at runtime
   // when there is nothing left to compact (the same guard compactHistoricalSession
   // relies on), so treat the result as nullable before dereferencing it.
   const result = (await session.compactSession(
     customInstructions ? { customInstructions } : {},
-  )) as ManualCompaction | null;
+  )) as FactoryCompaction | null;
   if (!result) return null;
   return { newSessionId: result.newSessionId, removedCount: result.removedCount };
 }

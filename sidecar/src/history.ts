@@ -160,12 +160,14 @@ export function loadHistoricalMissions(options: HistoricalSummaryFilter = {}): H
 export function loadHistoricalSessions(options: HistoricalSummaryFilter = {}): HistoricalMission[] {
   const rows: HistoricalMission[] = [];
   const cached = readStoredSummaryPatches();
+  const hiddenDroidSessionIds = readHiddenDroidSessionIds();
   const linkedWorkerIds = readLinkedWorkerSessionIds();
   const workspaceCwds = options.workspaceCwds
     ? new Set(options.workspaceCwds.filter(Boolean))
     : null;
   if (workspaceCwds && workspaceCwds.size === 0 && !options.includePlainChats) return [];
   for (const [sessionId, path] of buildSessionIndex()) {
+    if (hiddenDroidSessionIds.has(sessionId)) continue;
     const start = readSessionStart(path);
     const classification = classifyStoredSession(start, linkedWorkerIds.has(sessionId));
     if (!classification) continue;
@@ -485,16 +487,11 @@ export class HistoryIndex {
 
   hiddenDroidSessionIds(): Set<string> {
     const rows = this.db
-      .prepare('SELECT app_session_id, previous_droid_session_ids FROM app_sessions')
+      .prepare(
+        'SELECT app_session_id, droid_session_id, previous_droid_session_ids FROM app_sessions',
+      )
       .all() as Record<string, unknown>[];
-    const hidden = new Set<string>();
-    for (const row of rows) {
-      const appSessionId = stringValue(row.app_session_id);
-      for (const droidSessionId of jsonStringArray(row.previous_droid_session_ids)) {
-        if (droidSessionId && droidSessionId !== appSessionId) hidden.add(droidSessionId);
-      }
-    }
-    return hidden;
+    return hiddenDroidSessionIdsFromRows(rows);
   }
 
   recordEvent(event: TranscriptEvent): void {
@@ -619,6 +616,29 @@ function readStoredSummaryPatches(): Map<string, Partial<MissionSummary>> {
   }
 }
 
+function readHiddenDroidSessionIds(): Set<string> {
+  const path = join(homedir(), '.factory', 'droid-control', 'index.sqlite');
+  if (!existsSync(path)) return new Set();
+  let db: DatabaseSync;
+  try {
+    db = new DatabaseSync(path);
+  } catch {
+    return new Set();
+  }
+  try {
+    const rows = db
+      .prepare(
+        'SELECT app_session_id, droid_session_id, previous_droid_session_ids FROM app_sessions',
+      )
+      .all() as Record<string, unknown>[];
+    return hiddenDroidSessionIdsFromRows(rows);
+  } catch {
+    return new Set();
+  } finally {
+    db.close();
+  }
+}
+
 function summaryPatchesFromRows(
   rows: Record<string, unknown>[],
 ): Map<string, Partial<MissionSummary>> {
@@ -657,6 +677,20 @@ function summaryPatchesFromRows(
     patches.set(droidSessionId, patch);
   }
   return patches;
+}
+
+function hiddenDroidSessionIdsFromRows(rows: Record<string, unknown>[]): Set<string> {
+  const hidden = new Set<string>();
+  for (const row of rows) {
+    const appSessionId = stringValue(row.app_session_id);
+    const currentDroidSessionId = stringValue(row.droid_session_id);
+    if (currentDroidSessionId && currentDroidSessionId !== appSessionId)
+      hidden.add(currentDroidSessionId);
+    for (const droidSessionId of jsonStringArray(row.previous_droid_session_ids)) {
+      if (droidSessionId && droidSessionId !== appSessionId) hidden.add(droidSessionId);
+    }
+  }
+  return hidden;
 }
 
 export function applyCachedSummary(
@@ -704,10 +738,10 @@ export function hydrateHistoricalMission(
   const { summary, progress, state, features } = loadHistoricalMission(dir);
   const sessionIndex = buildSessionIndex();
 
-  // The orchestrator backing session is rekeyed on every compaction, so the
-  // full conversation is spread across a CHAIN of session files. Resolve that
-  // chain (oldest -> newest) from the persisted app-session row; replaying only
-  // the latest segment is what made compacted chats lose their scrollback.
+  // Manual compactSession() can mint a new backing session id. Resolve that
+  // legacy/manual chain (oldest -> newest) from the persisted app-session row;
+  // replaying only the latest segment is what made compacted chats lose their
+  // scrollback.
   const chain = orchestratorChain(summary, sessionIndex);
   const window = loadMissionTranscriptWindow(summary.id, chain, opts);
 

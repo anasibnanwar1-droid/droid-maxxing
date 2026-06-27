@@ -100,6 +100,7 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
 
   const activeMission = state.activeMissionId ? state.missions[state.activeMissionId] : null;
   const isLive = useMissionLive(state.activeMissionId);
+  const missionCompacting = !!activeMission?.compacting;
   // For an existing chat session the mode is whatever the session actually is
   // (so a chat reopened in spec mode shows Spec); only fall back to the global
   // compose flag while drafting a brand-new chat.
@@ -108,11 +109,13 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
       ? activeMission.kind === 'spec'
       : state.specMode;
   const targetAgentSessionId =
-    activeMission?.kind !== 'mission_orchestrator' &&
-    state.selectedAgentSessionId &&
-    state.selectedAgentSessionId !== 'orchestrator'
+    activeMission && state.selectedAgentSessionId && state.selectedAgentSessionId !== 'orchestrator'
       ? state.selectedAgentSessionId
       : null;
+  const compactSelectedSession = () => {
+    if (activeMission)
+      compactSession(activeMission.id, undefined, targetAgentSessionId ?? undefined);
+  };
 
   const cwd = activeMission?.cwd ?? state.draftChat?.cwd ?? null;
   const skillsSessionId = activeMission?.id ?? null;
@@ -149,17 +152,17 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
     {
       cmd: '/compact',
       desc: 'Compact current session',
-      run: () => activeMission && compactSession(activeMission.id),
+      run: compactSelectedSession,
     },
     {
       cmd: '/compaction',
       desc: 'Compact current session',
-      run: () => activeMission && compactSession(activeMission.id),
+      run: compactSelectedSession,
     },
     {
       cmd: '/compression',
       desc: 'Compact current session',
-      run: () => activeMission && compactSession(activeMission.id),
+      run: compactSelectedSession,
     },
     { cmd: '/spec', desc: 'Toggle spec mode', run: () => toggleSpec() },
     { cmd: '/settings', desc: 'Open settings', run: () => dispatch({ type: 'TOGGLE_SETTINGS' }) },
@@ -347,7 +350,7 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
     }
 
     if (COMPACT_COMMANDS.has(text) && activeSkills.length === 0 && attachedFiles.length === 0) {
-      if (activeMission) compactSession(activeMission.id);
+      compactSelectedSession();
       setInput('');
       return;
     }
@@ -420,13 +423,21 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
 
     if (!activeMission) return;
 
+    const submitMode: SubmitMode = missionCompacting ? 'queue' : mode;
+
     // Model is working and the user chose to queue: stage the prompt locally.
     // It is held client-side and delivered automatically when the turn finishes.
-    if (isLive && mode === 'queue' && !targetAgentSessionId) {
+    if (isLive && submitMode === 'queue') {
       dispatch({
         type: 'QUEUE_PROMPT',
         missionId: activeMission.id,
-        prompt: { id: newQueueId(), text, skills: skillNames, files: [...attachedFiles] },
+        prompt: {
+          id: newQueueId(),
+          text,
+          skills: skillNames,
+          files: [...attachedFiles],
+          agentSessionId: targetAgentSessionId ?? undefined,
+        },
       });
       setInput('');
       resetAttachments();
@@ -446,15 +457,15 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
         author: 'user',
         skills: activeSkills.map((s) => s.name),
         files: [...attachedFiles],
-        steered: isLive && mode === 'now',
+        steered: isLive && submitMode === 'now',
       },
     });
 
     try {
       if (targetAgentSessionId) {
-        if (mode === 'now') sendToAgentNow(activeMission.id, targetAgentSessionId, composed);
+        if (submitMode === 'now') sendToAgentNow(activeMission.id, targetAgentSessionId, composed);
         else sendToAgent(activeMission.id, targetAgentSessionId, composed);
-      } else if (mode === 'now') sendToMissionNow(activeMission.id, composed);
+      } else if (submitMode === 'now') sendToMissionNow(activeMission.id, composed);
       else sendToMission(activeMission.id, composed);
     } catch (err) {
       console.error('[PromptInput] sendToMission failed:', err);
@@ -485,7 +496,8 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
     }
     const composed = composeFrom(p.text, p.skills, p.files);
     try {
-      sendToMission(activeMission.id, composed);
+      if (p.agentSessionId) sendToAgent(activeMission.id, p.agentSessionId, composed);
+      else sendToMission(activeMission.id, composed);
     } catch (err) {
       // Keep the prompt staged and skip the transcript echo so a send failure
       // neither loses queued input nor leaves a duplicate user message behind.
@@ -497,8 +509,8 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
       event: {
         id: `local-${Date.now()}`,
         missionId: activeMission.id,
-        agentSessionId: 'user',
-        role: 'orchestrator',
+        agentSessionId: p.agentSessionId ?? 'user',
+        role: p.agentSessionId ? 'worker' : 'orchestrator',
         ts: Date.now(),
         kind: 'text',
         text: p.text,
@@ -574,9 +586,11 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       const enterMode: SubmitMode =
-        isLive && state.liveEnterBehavior === 'interrupt' ? 'now' : 'queue';
+        isLive && state.liveEnterBehavior === 'interrupt' && !missionCompacting ? 'now' : 'queue';
       void handleSubmit(
-        isLive && (e.metaKey || e.ctrlKey) ? oppositeSubmitMode(enterMode) : enterMode,
+        isLive && (e.metaKey || e.ctrlKey) && !missionCompacting
+          ? oppositeSubmitMode(enterMode)
+          : enterMode,
       );
     }
   };
@@ -586,7 +600,7 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
     : 'border-droid-border focus-within:border-droid-border-hover';
 
   const hasChips = activeSkills.length > 0 || attachedFiles.length > 0;
-  const enterSteers = state.liveEnterBehavior === 'interrupt';
+  const enterSteers = state.liveEnterBehavior === 'interrupt' && !missionCompacting;
   const idleSendTooltip = 'Enter: send\nShift+Enter: newline';
   const hasContent = input.trim().length > 0 || activeSkills.length > 0 || attachedFiles.length > 0;
 
@@ -852,15 +866,17 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
             onSelect={(e) => syncCaret(e.currentTarget)}
             onKeyDown={handleKeyDown}
             placeholder={
-              missionPreview
-                ? activeMission
-                  ? targetAgentSessionId
-                    ? 'Steer the selected subagent…'
-                    : 'Direct the orchestrator…'
-                  : 'Describe the mission objective…'
-                : isSpecMode
-                  ? 'Describe what to build in spec mode...'
-                  : 'What would you like to work on?  (/ for skills, @ for files)'
+              missionCompacting
+                ? 'Compacting conversation...'
+                : missionPreview
+                  ? activeMission
+                    ? targetAgentSessionId
+                      ? 'Steer the selected subagent…'
+                      : 'Direct the orchestrator…'
+                    : 'Describe the mission objective…'
+                  : isSpecMode
+                    ? 'Describe what to build in spec mode...'
+                    : 'What would you like to work on?  (/ for skills, @ for files)'
             }
             rows={1}
             className="w-full bg-transparent px-4 pt-3 pb-2 text-sm text-droid-text placeholder-droid-text-muted/50 resize-none focus:outline-none min-h-[44px] max-h-[200px]"
@@ -926,6 +942,16 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
 
             <div className="h-4 w-px bg-droid-border/50 shrink-0" />
 
+            {missionCompacting && (
+              <span
+                className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-droid-accent/30 bg-droid-accent/10 px-2 py-1 text-[11px] font-medium text-droid-accent"
+                title="Factory is compacting this conversation before continuing"
+              >
+                <span className="h-1.5 w-1.5 rounded-full bg-droid-accent animate-pulse" />
+                Compacting
+              </span>
+            )}
+
             <button
               onClick={toggleSpec}
               className={`flex items-center gap-1.5 px-2 py-1 rounded-lg text-[11px] transition-colors shrink-0 ${
@@ -939,7 +965,15 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
 
             <div className="flex-1 min-w-0" />
 
-            {isLive && !hasContent ? (
+            {missionCompacting ? (
+              <button
+                disabled
+                title="Compacting; new messages will queue after it finishes"
+                className="p-2 rounded-xl text-droid-accent bg-droid-accent/10 shrink-0 cursor-wait"
+              >
+                <span className="block h-3.5 w-3.5 rounded-full border-2 border-current border-t-transparent animate-spin" />
+              </button>
+            ) : isLive && !hasContent ? (
               <button
                 onClick={() =>
                   activeMission &&
