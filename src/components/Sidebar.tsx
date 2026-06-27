@@ -1,10 +1,9 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
 import { useStore } from '../hooks/useStore';
 import { pickDirectory } from '../lib/desktop';
 import {
   Folder,
-  MessageSquare,
   FolderPlus,
   Plus,
   User,
@@ -12,6 +11,7 @@ import {
   ChevronRight,
   ArrowUpCircle,
   Loader2,
+  SquarePen,
 } from 'lucide-react';
 import {
   buildWorkspaceSections,
@@ -20,6 +20,7 @@ import {
 } from '../lib/workspaces';
 import { useMissionLive } from '../hooks/useMissionLive';
 import { useAppUpdate } from '../lib/appUpdate';
+import { formatRelativeTime } from '../lib/time';
 import type { MissionSummary } from '../types/bridge';
 
 // Shown in the title-bar strip when a newer DROIDEX build is available.
@@ -33,7 +34,7 @@ function UpdatePill() {
       }}
       disabled={downloading}
       title={`Update to ${update.latest} and restart`}
-      className="no-drag flex items-center gap-1.5 h-6 px-2 rounded-full bg-droid-accent text-white text-[11px] font-medium hover:opacity-90 transition-opacity disabled:opacity-60"
+      className="no-drag flex items-center gap-1.5 h-6 px-2 rounded-full bg-droid-accent text-droid-bg text-[11px] font-medium hover:opacity-90 transition-opacity disabled:opacity-60"
     >
       {downloading ? (
         <Loader2 className="w-3 h-3 animate-spin" />
@@ -45,25 +46,29 @@ function UpdatePill() {
   );
 }
 
-function RunningGrid() {
+// Simple, smooth ring spinner shown on the left of a row while its model works.
+function WorkingSpinner() {
   return (
     <span
-      className="grid grid-cols-3 gap-[2px] shrink-0"
-      style={{ width: 12, height: 8 }}
-      aria-label="running"
-    >
-      {Array.from({ length: 6 }).map((_, i) => (
+      className="w-3 h-3 rounded-full border-[1.5px] border-droid-text-muted/30 border-t-droid-text animate-spin"
+      style={{ animationDuration: '1.5s' }}
+      aria-label="working"
+    />
+  );
+}
+
+// Typing-style animated ellipsis shown where the timestamp sits while the model
+// is generating, so an in-flight turn reads as "working…" at a glance.
+function WorkingDots() {
+  return (
+    <span className="flex items-center gap-[3px]" aria-label="working">
+      {[0, 1, 2].map((i) => (
         <motion.span
           key={i}
-          className="rounded-[1px]"
-          style={{ width: 2.5, height: 2.5, background: 'currentColor' }}
-          animate={{ opacity: [0.2, 1, 0.2] }}
-          transition={{
-            duration: 1.1,
-            repeat: Infinity,
-            ease: 'easeInOut',
-            delay: ((i % 3) + Math.floor(i / 3)) * 0.12,
-          }}
+          className="rounded-full bg-current"
+          style={{ width: 3, height: 3 }}
+          animate={{ opacity: [0.25, 1, 0.25], y: [1, -1.5, 1] }}
+          transition={{ duration: 0.9, repeat: Infinity, ease: 'easeInOut', delay: i * 0.16 }}
         />
       ))}
     </span>
@@ -73,31 +78,57 @@ function RunningGrid() {
 function SessionRow({
   mission,
   active,
+  unread,
+  now,
   onClick,
 }: {
   mission: MissionSummary;
   active: boolean;
+  unread: boolean;
+  now: number;
   onClick: () => void;
 }) {
   const running = useMissionLive(mission.id);
+  const timeLabel = formatRelativeTime(mission.updatedAt, now);
   return (
     <div>
       <button
         onClick={onClick}
         className={`group w-full flex items-center gap-2.5 pl-3 pr-2 py-1.5 rounded-xl text-left transition-colors ${
-          active ? 'bg-droid-elevated' : 'hover:bg-droid-elevated/40'
+          active ? 'bg-droid-active' : 'hover:bg-droid-elevated/40'
         }`}
       >
         <span
           className={`w-3 flex items-center justify-center shrink-0 ${active ? 'text-droid-text' : 'text-droid-text-secondary group-hover:text-droid-text'}`}
         >
-          {running && <RunningGrid />}
+          {running && <WorkingSpinner />}
         </span>
         <span
-          className={`min-w-0 flex-1 truncate text-[13px] ${active ? 'text-droid-text' : 'text-droid-text-secondary group-hover:text-droid-text'}`}
+          className={`min-w-0 flex-1 truncate text-[13px] ${
+            active
+              ? 'text-droid-text'
+              : unread
+                ? 'text-droid-text font-semibold'
+                : 'text-droid-text-secondary group-hover:text-droid-text'
+          }`}
         >
           {mission.title}
         </span>
+        {running ? (
+          <span className="shrink-0 text-droid-text-secondary">
+            <WorkingDots />
+          </span>
+        ) : (
+          timeLabel && (
+            <span
+              className={`shrink-0 text-[10.5px] tabular-nums ${
+                unread ? 'text-droid-text font-medium' : 'text-droid-text-muted'
+              }`}
+            >
+              {timeLabel}
+            </span>
+          )
+        )}
       </button>
     </div>
   );
@@ -107,7 +138,17 @@ export default function Sidebar() {
   const { state, dispatch } = useStore();
   const activeMission = state.activeMissionId ? state.missions[state.activeMissionId] : null;
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
-  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  // Per-section count of rows to show; grows by SIDEBAR_VISIBLE_SESSION_LIMIT on
+  // each "Show more" so long lists page in (5 + 5 + 5...) rather than loading all.
+  const [shownCount, setShownCount] = useState<Map<string, number>>(new Map());
+
+  // Re-render on a slow cadence so relative timestamps ("23m") stay fresh while
+  // the window sits idle; activity already triggers its own renders.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 30_000);
+    return () => clearInterval(timer);
+  }, []);
 
   const toggleCollapse = (key: string) =>
     setCollapsed((prev) => {
@@ -116,12 +157,24 @@ export default function Sidebar() {
       return next;
     });
 
-  const toggleExpanded = (key: string) =>
-    setExpanded((prev) => {
-      const next = new Set(prev);
-      next.has(key) ? next.delete(key) : next.add(key);
+  const visibleCountFor = (key: string) => shownCount.get(key) ?? SIDEBAR_VISIBLE_SESSION_LIMIT;
+
+  const showMore = (key: string) =>
+    setShownCount((prev) =>
+      new Map(prev).set(key, visibleCountFor(key) + SIDEBAR_VISIBLE_SESSION_LIMIT),
+    );
+
+  const showLess = (key: string) =>
+    setShownCount((prev) => {
+      const next = new Map(prev);
+      next.delete(key);
       return next;
     });
+
+  // A session reads as unread when the model has newer activity than the last
+  // time the user opened it. The active session is always considered read.
+  const isUnread = (m: MissionSummary) =>
+    m.id !== state.activeMissionId && m.updatedAt > (state.missionLastSeen[m.id] ?? m.updatedAt);
 
   const startChat = (cwd: string) => dispatch({ type: 'START_CHAT', cwd });
 
@@ -158,6 +211,8 @@ export default function Sidebar() {
       key={m.id}
       mission={m}
       active={state.activeMissionId === m.id}
+      unread={isUnread(m)}
+      now={now}
       onClick={() => {
         dispatch({ type: 'SET_ACTIVE_MISSION', id: m.id });
         dispatch({ type: 'SELECT_AGENT', id: null });
@@ -169,29 +224,42 @@ export default function Sidebar() {
   // active session is always kept visible so selecting an older one never hides
   // it on the next render.
   const renderSessionList = (sectionKey: string, sessions: MissionSummary[]) => {
-    const isExpanded = expanded.has(sectionKey);
-    const collapsible = sessions.length > SIDEBAR_VISIBLE_SESSION_LIMIT;
-    let visible = isExpanded ? sessions : sessions.slice(0, SIDEBAR_VISIBLE_SESSION_LIMIT);
+    const total = sessions.length;
+    const count = Math.min(visibleCountFor(sectionKey), total);
+    let visible = sessions.slice(0, count);
+    // Keep the active session visible even if it sits below the paged window so
+    // selecting an older chat never hides it on the next render.
     if (
-      !isExpanded &&
       activeMission &&
       sessions.some((m) => m.id === activeMission.id) &&
       !visible.some((m) => m.id === activeMission.id)
     ) {
       visible = [...visible, state.missions[activeMission.id]];
     }
-    const hidden = sessions.length - visible.length;
+    const remaining = total - count;
+    const isExpanded = count > SIDEBAR_VISIBLE_SESSION_LIMIT;
     return (
       <div className="mt-0.5 space-y-0.5">
         {visible.map(renderRow)}
-        {(isExpanded ? collapsible : hidden > 0) && (
-          <button
-            onClick={() => toggleExpanded(sectionKey)}
-            className="w-full flex items-center gap-2.5 pl-3 pr-2 py-1.5 rounded-xl text-left text-[12px] text-droid-text-muted hover:text-droid-text hover:bg-droid-elevated/40 transition-colors"
-          >
-            <span className="w-3 shrink-0" />
-            {isExpanded ? 'Show less' : `Show ${hidden} more`}
-          </button>
+        {(remaining > 0 || isExpanded) && (
+          <div className="flex items-center gap-3 pl-3 pr-2 pt-0.5">
+            {remaining > 0 && (
+              <button
+                onClick={() => showMore(sectionKey)}
+                className="text-[12px] text-droid-text-muted hover:text-droid-text transition-colors"
+              >
+                Show more
+              </button>
+            )}
+            {isExpanded && (
+              <button
+                onClick={() => showLess(sectionKey)}
+                className="text-[12px] text-droid-text-muted hover:text-droid-text transition-colors"
+              >
+                Show less
+              </button>
+            )}
+          </div>
         )}
       </div>
     );
@@ -211,12 +279,12 @@ export default function Sidebar() {
         <UpdatePill />
       </div>
 
-      <div className="px-2 pb-2">
+      <div className="px-2 pb-1.5">
         <button
           onClick={newChat}
-          className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-[13px] font-medium text-droid-text bg-droid-elevated/70 hover:bg-droid-elevated transition-colors"
+          className="group w-full flex items-center gap-2.5 px-2.5 py-2 rounded-xl text-[13px] font-medium text-droid-text hover:bg-droid-elevated transition-colors"
         >
-          <Plus className="w-4 h-4 shrink-0" />
+          <SquarePen className="w-[18px] h-[18px] shrink-0 text-droid-text-secondary transition-colors group-hover:text-droid-text" />
           New chat
         </button>
       </div>
@@ -308,7 +376,6 @@ export default function Sidebar() {
                   <ChevronRight
                     className={`w-3 h-3 text-droid-text-muted/70 shrink-0 transition-transform ${open ? 'rotate-90' : ''}`}
                   />
-                  <MessageSquare className="w-3.5 h-3.5 text-droid-text-muted shrink-0" />
                   <span className="text-[11px] font-medium tracking-wide text-droid-text-muted">
                     Chats
                   </span>

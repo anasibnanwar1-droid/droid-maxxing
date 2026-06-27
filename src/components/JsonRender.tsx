@@ -112,9 +112,9 @@ function mergedProps(el: RawElement): Record<string, unknown> {
   return { ...rest, ...(props && typeof props === 'object' ? props : {}) };
 }
 
-// Semantic status → themed color. Errors map to the fixed danger red; the rest
-// follow the accent-derived palette, so callouts/timelines stay on-theme and
-// collapse to neutral tones in monochrome (white-accent) mode.
+// Semantic status → themed color. success/warning/error use the fixed semantic
+// green/amber/red so they always read by hue, even in monochrome; only info
+// follows the neutral accent so it stays part of the monochrome UI chrome.
 const STATUS_COLOR: Record<string, string> = {
   success: 'var(--droid-green)',
   error: 'var(--droid-red)',
@@ -156,7 +156,7 @@ function BoxEl({ props, children }: { props: Record<string, unknown>; children: 
 function TextEl({ props }: { props: Record<string, unknown> }) {
   return (
     <span
-      className="text-[13px] leading-relaxed [overflow-wrap:anywhere]"
+      className="text-[13px] leading-relaxed break-words"
       style={{ color: resolveColor(props.color), fontWeight: props.bold ? 600 : undefined }}
     >
       {asString(props.text)}
@@ -173,7 +173,7 @@ function HeadingEl({ props }: { props: Record<string, unknown> }) {
       : level === 'h3'
         ? 'text-[13.5px] font-semibold text-droid-text-secondary'
         : 'text-[15px] font-semibold';
-  return <div className={`${cls} text-droid-text [overflow-wrap:anywhere]`}>{text}</div>;
+  return <div className={`${cls} text-droid-text break-words`}>{text}</div>;
 }
 
 function DividerEl({ props }: { props: Record<string, unknown> }) {
@@ -255,7 +255,7 @@ function TableEl({ props }: { props: Record<string, unknown> }) {
             {cols.map((c, i) => (
               <th
                 key={i}
-                className="border-b border-droid-border text-left font-medium px-2.5 py-1.5"
+                className="border-b border-droid-border text-left align-top font-medium whitespace-nowrap px-2.5 py-1.5"
                 style={{ color: headerColor ?? 'var(--droid-text)', width: asNumber(c.width) }}
               >
                 {asString(c.header ?? c.key)}
@@ -269,7 +269,7 @@ function TableEl({ props }: { props: Record<string, unknown> }) {
               {cols.map((c, ci) => (
                 <td
                   key={ci}
-                  className="border-t border-droid-border text-droid-text-secondary px-2.5 py-1.5"
+                  className="border-t border-droid-border align-top text-droid-text-secondary first:whitespace-nowrap first:pr-4 first:font-medium first:text-droid-text px-2.5 py-1.5"
                 >
                   {asString(r[asString(c.key)])}
                 </td>
@@ -332,9 +332,7 @@ function KeyValueEl({ props }: { props: Record<string, unknown> }) {
   return (
     <div className="flex items-baseline gap-2 text-[13px]">
       <span className="text-droid-text-muted">{asString(props.label)}</span>
-      <span className="text-droid-text font-medium [overflow-wrap:anywhere]">
-        {asString(props.value)}
-      </span>
+      <span className="text-droid-text font-medium break-words">{asString(props.value)}</span>
     </div>
   );
 }
@@ -406,14 +404,14 @@ function CalloutEl({ props, children }: { props: Record<string, unknown>; childr
   return (
     <div className="w-full rounded-xl border border-droid-border bg-droid-elevated px-4 py-3">
       {title && (
-        <div className="flex items-center gap-2 text-[13px] font-semibold text-droid-text [overflow-wrap:anywhere]">
+        <div className="flex items-center gap-2 text-[13px] font-semibold text-droid-text break-words">
           <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: color }} />
           {title}
         </div>
       )}
       {content && (
         <div
-          className={`text-[12.5px] leading-relaxed text-droid-text-secondary [overflow-wrap:anywhere] ${title ? `mt-1.5 ${indent}` : ''}`}
+          className={`text-[12.5px] leading-relaxed text-droid-text-secondary break-words ${title ? `mt-1.5 ${indent}` : ''}`}
         >
           {content}
         </div>
@@ -559,7 +557,7 @@ export const JsonRender = memo(function JsonRender({ source }: { source: string 
   const tree = renderNode(parsed.root, parsed, new Set(), 0, { count: 0 });
   if (tree == null) return <ErrorFallback raw={source.trim()} />;
 
-  return <div className="my-2.5 w-full max-w-full [overflow-wrap:anywhere]">{tree}</div>;
+  return <div className="my-2.5 w-full max-w-full break-words">{tree}</div>;
 });
 
 /* ── splitting helper for message bodies ── */

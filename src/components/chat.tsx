@@ -22,7 +22,6 @@ import {
   safeJson,
   stripAnsi,
   formatDuration,
-  formatCharCount,
   parseTruncatedTail,
   isSubagentTool,
   subagentInfo,
@@ -79,6 +78,38 @@ export function WorkingIndicator({
       {label}
       {suffix}…
     </span>
+  );
+}
+
+/* ── Loading skeleton — animated neutral shimmer blocks that stand in for an
+   assistant reply while a transcript restores or a fresh turn spins up. Tones
+   come only from the grayscale token scale (see .skeleton-block in index.css). ── */
+function SkeletonLine({ width }: { width: string }) {
+  return <div className="skeleton-block h-3" style={{ width }} />;
+}
+
+export function ChatSkeleton() {
+  return (
+    <div className="space-y-2.5" aria-hidden="true">
+      <SkeletonLine width="92%" />
+      <SkeletonLine width="84%" />
+      <SkeletonLine width="67%" />
+    </div>
+  );
+}
+
+// A couple of stacked reply blocks so a restoring conversation reads like
+// content is streaming in, not like an empty or broken view.
+export function TranscriptSkeleton() {
+  return (
+    <div className="space-y-8" aria-hidden="true">
+      <ChatSkeleton />
+      <div className="space-y-2.5">
+        <SkeletonLine width="38%" />
+        <SkeletonLine width="88%" />
+        <SkeletonLine width="74%" />
+      </div>
+    </div>
   );
 }
 
@@ -191,7 +222,7 @@ function ThinkingItem({
         )}
       </button>
       <Expand open={active ? true : open}>
-        <div className="mt-2 pl-[18px] text-[12.5px] text-droid-text-muted/55 leading-[1.7] whitespace-pre-wrap [overflow-wrap:anywhere]">
+        <div className="mt-2 pl-[18px] text-[12.5px] text-droid-text-muted/55 leading-[1.7] whitespace-pre-wrap break-words">
           {text}
           {active && <StreamingCaret />}
         </div>
@@ -292,12 +323,12 @@ function CommandCard({
         <CopyButton text={out ? `${command}\n\n${out}` : command} />
       </div>
       <div className="px-3 py-2.5 font-mono text-[11.5px] leading-[1.6]">
-        <div className="flex gap-1.5 [overflow-wrap:anywhere]">
+        <div className="flex gap-1.5 break-words">
           <span className="select-none text-droid-text-muted/70">$</span>
           <span className="whitespace-pre-wrap text-droid-text-secondary">{command}</span>
         </div>
         {out && (
-          <pre className="mt-2 max-h-56 overflow-auto whitespace-pre-wrap text-[11px] leading-[1.55] text-droid-text-muted/80 [overflow-wrap:anywhere]">
+          <pre className="mt-2 max-h-56 overflow-auto whitespace-pre-wrap text-[11px] leading-[1.55] text-droid-text-muted/80 break-words">
             {out}
           </pre>
         )}
@@ -311,7 +342,7 @@ function ToolLine({ event, output }: { event: TranscriptEvent; output?: string }
   const out = output ? stripAnsi(output).trimEnd() : '';
   return (
     <div>
-      <div className="text-[12.5px] leading-relaxed [overflow-wrap:anywhere]">
+      <div className="text-[12.5px] leading-relaxed break-words">
         <span className="text-droid-text-secondary">{CAT_LABEL[cat]}</span>
         {(detail || event.toolName) && (
           <span className="ml-1.5 font-mono text-[11.5px] text-droid-text-muted">
@@ -320,7 +351,7 @@ function ToolLine({ event, output }: { event: TranscriptEvent; output?: string }
         )}
       </div>
       {cat === 'other' && out && (
-        <pre className="mt-1.5 max-h-44 overflow-auto rounded-md bg-droid-bg/50 px-2.5 py-2 text-[11px] leading-relaxed font-mono text-droid-text-muted/80 whitespace-pre-wrap [overflow-wrap:anywhere]">
+        <pre className="mt-1.5 max-h-44 overflow-auto rounded-md bg-droid-bg/50 px-2.5 py-2 text-[11px] leading-relaxed font-mono text-droid-text-muted/80 whitespace-pre-wrap break-words">
           {out}
         </pre>
       )}
@@ -338,7 +369,7 @@ function TodoChecklist({ event }: { event: TranscriptEvent }) {
       {todos.map((t, i) => (
         <div
           key={i}
-          className={`flex items-start gap-2 text-[12.5px] leading-relaxed [overflow-wrap:anywhere] ${
+          className={`flex items-start gap-2 text-[12.5px] leading-relaxed break-words ${
             t.status === 'completed'
               ? 'text-droid-text-muted line-through'
               : 'text-droid-text-secondary'
@@ -446,7 +477,7 @@ function renderToolEvents(events: TranscriptEvent[]): React.ReactNode[] {
     nodes.push(
       <pre
         key={e.id}
-        className="max-h-48 overflow-auto rounded-md bg-droid-bg/50 px-2.5 py-2 text-[11px] leading-relaxed font-mono text-droid-text-muted/80 whitespace-pre-wrap [overflow-wrap:anywhere]"
+        className="max-h-48 overflow-auto rounded-md bg-droid-bg/50 px-2.5 py-2 text-[11px] leading-relaxed font-mono text-droid-text-muted/80 whitespace-pre-wrap break-words"
       >
         {body}
       </pre>,
@@ -1044,7 +1075,7 @@ export function UserBubble({
         </div>
       )}
       {event.text && (
-        <div className="max-w-[80%] rounded-2xl rounded-br-sm bg-droid-elevated px-4 py-2.5 text-[14px] leading-relaxed text-droid-text whitespace-pre-wrap [overflow-wrap:anywhere]">
+        <div className="max-w-[80%] rounded-2xl rounded-br-sm bg-droid-elevated px-4 py-2.5 text-[14px] leading-relaxed text-droid-text whitespace-pre-wrap break-words">
           {event.text}
         </div>
       )}
@@ -1113,28 +1144,12 @@ const InlineSpecCard = memo(function InlineSpecCard({
   );
 });
 
-/* ── Quiet note shown where an over-long message was cut by the history cap ── */
-function TruncationNote({ chars }: { chars: number }) {
-  return (
-    <div className="mt-2 flex items-center gap-2.5 text-[11px] text-droid-text-muted/80">
-      <span className="h-px flex-1 bg-droid-border" />
-      <span className="shrink-0">{formatCharCount(chars)} more characters truncated</span>
-      <span className="h-px flex-1 bg-droid-border" />
-    </div>
-  );
-}
-
 /* ── Assistant message body: interleaves Markdown with <json-render> blocks ── */
 const MessageBody = memo(function MessageBody({ text }: { text: string }) {
-  const { body, truncatedChars } = parseTruncatedTail(text);
-  const note = truncatedChars != null ? <TruncationNote chars={truncatedChars} /> : null;
-  if (!hasJsonRender(body))
-    return (
-      <>
-        <Markdown>{body}</Markdown>
-        {note}
-      </>
-    );
+  // Strip the history "[truncated N chars]" sentinel so the raw marker never
+  // shows; the cut itself is intentionally not surfaced.
+  const { body } = parseTruncatedTail(text);
+  if (!hasJsonRender(body)) return <Markdown>{body}</Markdown>;
   const segments = splitJsonRender(body);
   return (
     <>
@@ -1145,7 +1160,6 @@ const MessageBody = memo(function MessageBody({ text }: { text: string }) {
           <Markdown key={i}>{seg.value}</Markdown>
         ) : null,
       )}
-      {note}
     </>
   );
 });
@@ -1267,7 +1281,7 @@ const FeedItemView = memo(function FeedItemView({
       return live ? (
         <span className="shimmer-text text-[13px] font-medium">{text}</span>
       ) : (
-        <span className="block text-[13px] text-droid-text-muted leading-relaxed [overflow-wrap:anywhere]">
+        <span className="block text-[13px] text-droid-text-muted leading-relaxed break-words">
           {text}
         </span>
       );
@@ -1275,7 +1289,7 @@ const FeedItemView = memo(function FeedItemView({
     case 'error':
       return (
         <div
-          className="text-[13px] leading-relaxed whitespace-pre-wrap [overflow-wrap:anywhere]"
+          className="text-[13px] leading-relaxed whitespace-pre-wrap break-words"
           style={{ color: ACCENT }}
         >
           {item.event.text}
@@ -1566,12 +1580,12 @@ function SubagentLine({
       <Expand open={open}>
         <div className="mt-2 pl-[18px]">
           {description && (
-            <div className="text-[12.5px] text-droid-text-muted/70 leading-relaxed [overflow-wrap:anywhere]">
+            <div className="text-[12.5px] text-droid-text-muted/70 leading-relaxed break-words">
               {description}
             </div>
           )}
           {latest && (
-            <div className="mt-1.5 text-[12.5px] leading-relaxed [overflow-wrap:anywhere]">
+            <div className="mt-1.5 text-[12.5px] leading-relaxed break-words">
               <span
                 className={
                   running ? 'shimmer-text font-medium' : 'text-droid-text-secondary font-medium'

@@ -7,14 +7,25 @@
     --droid-bg: #0a0a0a;
     --droid-surface: #111111;
     --droid-elevated: #1e1e1e;
+    /* One step above elevated: the lightest neutral, for selected/active rows so
+       the surface ramp reads bg < surface < elevated < active. */
+    --droid-active: #292929;
     --droid-border: #161616;
     --droid-border-hover: #222222;
     --droid-text: #ededed;
     --droid-text-secondary: #9a9a9a;
     --droid-text-muted: #5c5c5c;
-    --droid-accent: #ee6018;
-    --droid-green: #6a8a6a;
-    --droid-orange: #b06a4a;
+    /* Accent defaults to a theme-matched neutral (near-white in dark, near-black
+       in light) so the UI reads as a monochrome tonal scale rather than a fixed
+       hue. applyTheme overrides this from the active theme; users can still pick
+       a colored accent from Appearance. */
+    --droid-accent: #f2f2f2;
+    /* Fixed semantic status colors: success green, warning amber, and danger red
+       stay vivid across every theme (including monochrome) so diffs, status, and
+       callouts always read by hue. The neutral accent governs UI chrome only and
+       must never tint these signals. */
+    --droid-green: #4fae82;
+    --droid-orange: #d9913a;
     /* Standard diff colors (GitHub-style), shared by every diff surface. */
     --diff-add-fg: #3fb950;
     --diff-add-bg: rgba(46, 160, 67, 0.15);
@@ -109,7 +120,7 @@
   }
 
   ::selection {
-    background: rgba(255, 93, 46, 0.25);
+    background: color-mix(in srgb, var(--droid-accent) 22%, transparent);
   }
 
   @keyframes shimmer {
@@ -133,6 +144,36 @@
     background-clip: text;
     color: transparent;
     animation: shimmer 1.8s linear infinite;
+  }
+
+  /* Skeleton placeholder: a neutral block with a lighter highlight sweeping
+     across, built only from the grayscale token scale so it matches every theme
+     (subtle gray on dark, subtle dark on light). */
+  @keyframes skeleton-sweep {
+    0% {
+      background-position: 200% 0;
+    }
+    100% {
+      background-position: -200% 0;
+    }
+  }
+
+  .skeleton-block {
+    background: linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--droid-text) 6%, var(--droid-surface)) 25%,
+      color-mix(in srgb, var(--droid-text) 13%, var(--droid-surface)) 50%,
+      color-mix(in srgb, var(--droid-text) 6%, var(--droid-surface)) 75%
+    );
+    background-size: 200% 100%;
+    animation: skeleton-sweep 1.6s ease-in-out infinite;
+    border-radius: 6px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .skeleton-block {
+      animation: none;
+    }
   }
 }
 

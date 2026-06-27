@@ -102,6 +102,10 @@ export interface AppState {
   missions: Record<string, MissionSummary>;
   missionOrder: string[];
   activeMissionId: string | null;
+  // missionId -> last time the user viewed it. A session reads as "unread" when
+  // its updatedAt (latest model activity) is newer than this. Internal only:
+  // surfaced as a bold row in the sidebar, never shown as a timestamp.
+  missionLastSeen: Record<string, number>;
   transcripts: Record<string, TranscriptEvent[]>;
   progress: Record<string, ProgressEntry[]>;
   workers: Record<string, WorkerInfo[]>; // subagents spawned per mission
@@ -326,7 +330,7 @@ type Action =
 
 const defaultTheme: ThemeConfig = {
   mode: 'dark',
-  accent: '#ee6018',
+  accent: '#f2f2f2',
   bg: '#0a0a0a',
   fg: '#ededed',
   surface: '#111111',
@@ -367,10 +371,29 @@ function getLocalStorage(): Storage | undefined {
   return descriptor && 'value' in descriptor ? (descriptor.value as Storage) : undefined;
 }
 
+// Accents that shipped as the old fixed-orange default. A saved theme still
+// carrying one of these was never deliberately colored by the user, so migrate
+// it to a theme-matched neutral and let the monochrome scale show through.
+const LEGACY_DEFAULT_ACCENTS = new Set(['#ee6018', '#ff5d2e']);
+
+function neutralAccentFor(bg: string): string {
+  const r = parseInt(bg.slice(1, 3), 16);
+  const g = parseInt(bg.slice(3, 5), 16);
+  const b = parseInt(bg.slice(5, 7), 16);
+  const lum = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+  return Number.isFinite(lum) && lum >= 0.4 ? '#1a1a1a' : '#f2f2f2';
+}
+
 function loadTheme(): ThemeConfig {
   try {
     const saved = getLocalStorage()?.getItem('droid-theme');
-    if (saved) return { ...defaultTheme, ...JSON.parse(saved) };
+    if (saved) {
+      const merged = { ...defaultTheme, ...JSON.parse(saved) };
+      if (LEGACY_DEFAULT_ACCENTS.has(String(merged.accent).toLowerCase())) {
+        merged.accent = neutralAccentFor(merged.bg);
+      }
+      return merged;
+    }
   } catch {
     /* ignore */
   }
@@ -422,6 +445,7 @@ const LIVE_ENTER_BEHAVIOR_STORAGE_KEY = 'droid-live-enter-behavior';
 const DIFF_VIEW_STORAGE_KEY = 'droid-diff-view';
 const REVIEW_SCOPE_STORAGE_KEY = 'droid-review-scope';
 const WORKSPACES_STORAGE_KEY = 'droid-workspaces';
+const MISSION_LAST_SEEN_STORAGE_KEY = 'droid-mission-last-seen-v1';
 const UI_STATE_STORAGE_KEY = 'droid-ui-state-v1';
 const BROWSER_VIEWPORT_MODES = new Set<BrowserViewportMode>([
   'fit',
@@ -588,6 +612,29 @@ function savePersistedUiState(state: AppState): void {
   }
 }
 
+function loadMissionLastSeen(): Record<string, number> {
+  try {
+    const raw = getLocalStorage()?.getItem(MISSION_LAST_SEEN_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const out: Record<string, number> = {};
+    for (const [id, value] of Object.entries(parsed)) {
+      if (typeof value === 'number' && Number.isFinite(value)) out[id] = value;
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+function saveMissionLastSeen(map: Record<string, number>): void {
+  try {
+    getLocalStorage()?.setItem(MISSION_LAST_SEEN_STORAGE_KEY, JSON.stringify(map));
+  } catch {
+    /* ignore */
+  }
+}
+
 function sanitizeAgentConfig(config: AgentConfig, models: ModelInfo[]): AgentConfig {
   if (models.length === 0) return config;
   return {
@@ -633,6 +680,7 @@ export const initialState: AppState = {
   missions: {},
   missionOrder: [],
   activeMissionId: persistedUiState.activeMissionId ?? null,
+  missionLastSeen: loadMissionLastSeen(),
   transcripts: {},
   progress: {},
   workers: {},
@@ -834,6 +882,11 @@ function baseReducer(state: AppState, action: Action): AppState {
         activeMissionId: action.mission.id,
         draftChat: null,
         pendingCompose,
+        // A chat you just started is, by definition, already seen.
+        missionLastSeen: {
+          ...state.missionLastSeen,
+          [action.mission.id]: action.mission.updatedAt,
+        },
       };
       return next;
     }
@@ -1172,10 +1225,18 @@ function baseReducer(state: AppState, action: Action): AppState {
       const order = [...new Set([...action.missions.map((m) => m.id), ...state.missionOrder])]
         .filter((id) => map[id])
         .sort((a, b) => map[b].updatedAt - map[a].updatedAt);
+      // Seed last-seen for sessions this client has never tracked so existing
+      // history is not retroactively marked unread; only activity that arrives
+      // after this point (a newer updatedAt) flips a row to unread.
+      const seededLastSeen = { ...state.missionLastSeen };
+      for (const m of action.missions) {
+        if (seededLastSeen[m.id] === undefined) seededLastSeen[m.id] = m.updatedAt;
+      }
       return {
         ...state,
         missions: map,
         missionOrder: order,
+        missionLastSeen: seededLastSeen,
         // Carry any pre-upgrade browser panes from the old session-id key to the
         // stable mission id so a re-keyed/compacted session keeps its open pane.
         browsers: migrateBrowserStateByMission(state.browsers, action.missions, (b, id) => ({
@@ -1444,13 +1505,24 @@ function baseReducer(state: AppState, action: Action): AppState {
     case 'CLEAR_QUESTION':
       return { ...state, pendingQuestion: null };
 
-    case 'SET_ACTIVE_MISSION':
+    case 'SET_ACTIVE_MISSION': {
+      // Stamp "seen now" on both the session being left (so responses received
+      // while it was open count as read) and the one being opened (clears its
+      // unread state immediately).
+      const now = Date.now();
+      const missionLastSeen = { ...state.missionLastSeen };
+      if (state.activeMissionId && state.missions[state.activeMissionId]) {
+        missionLastSeen[state.activeMissionId] = now;
+      }
+      if (action.id) missionLastSeen[action.id] = now;
       return {
         ...state,
         activeMissionId: action.id,
+        missionLastSeen,
         draftChat: null,
         selectedAgentSessionId: null,
       };
+    }
 
     case 'SET_RIGHT_PANEL':
       return { ...state, rightPanelOpen: action.open };
@@ -1958,7 +2030,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     savePersistedUiState(state);
+    saveMissionLastSeen(state.missionLastSeen);
   }, [
+    state.missionLastSeen,
     state.activeMissionId,
     state.browserOpenKeys,
     state.browsers,

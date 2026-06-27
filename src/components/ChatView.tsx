@@ -2,7 +2,13 @@ import { useRef, useEffect, useLayoutEffect, useMemo, useState, useCallback } fr
 import { GripVertical, ChevronRight, Square } from 'lucide-react';
 import { useStore } from '../hooks/useStore';
 import { useMissionLive } from '../hooks/useMissionLive';
-import { MessageFeed, WorkingIndicator, UserBubble } from './chat';
+import {
+  MessageFeed,
+  WorkingIndicator,
+  UserBubble,
+  ChatSkeleton,
+  TranscriptSkeleton,
+} from './chat';
 import { readFile } from '../lib/desktop';
 import { interruptAgent, loadMissionHistory, loadOlderMissionHistory } from '../lib/commands';
 import { findWorkerForTarget, resolveWorkers, subagentActivityForTarget } from '../lib/subagents';
@@ -45,13 +51,13 @@ function EmptyState({ folder }: { folder?: string }) {
   );
 }
 
-function RestoringState({ count }: { count: number }) {
+// While a conversation restores we show an animated placeholder instead of a
+// "Restoring…" label, so switching chats feels like content loading in (the way
+// most chat apps do) rather than a blank or busy screen.
+function RestoringState() {
   return (
-    <div className="flex h-full flex-col items-center justify-center gap-3 px-8 text-center">
-      <WorkingIndicator label="Restoring conversation" />
-      {count > 0 && (
-        <span className="text-[12px] text-droid-text-muted">{count} messages loaded so far</span>
-      )}
+    <div className="mx-auto min-w-0 max-w-2xl px-6 py-6">
+      <TranscriptSkeleton />
     </div>
   );
 }
@@ -423,7 +429,7 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
                 <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-droid-text-muted">
                   Task
                 </div>
-                <div className="text-[12.5px] leading-relaxed text-droid-text-secondary whitespace-pre-wrap [overflow-wrap:anywhere]">
+                <div className="text-[12.5px] leading-relaxed text-droid-text-secondary whitespace-pre-wrap break-words">
                   {selectedWorker.prompt}
                 </div>
               </div>
@@ -442,12 +448,12 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
             )}
           </div>
         ) : activeMission && restore?.status === 'loading' ? (
-          <RestoringState count={restore.loadedCount} />
+          <RestoringState />
         ) : startingCompose ? (
           <div className="mx-auto min-w-0 max-w-2xl px-6 py-6">
             <UserBubble event={startingCompose} />
-            <div className="mt-4">
-              <WorkingIndicator label="Starting chat" />
+            <div className="mt-5">
+              <ChatSkeleton />
             </div>
           </div>
         ) : (

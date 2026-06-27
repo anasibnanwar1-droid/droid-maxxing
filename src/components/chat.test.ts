@@ -12,7 +12,7 @@ import {
   MessageFeed,
   type FeedItem,
 } from './chat';
-import { hasTodoPayload, parseTruncatedTail, formatCharCount } from '../lib/tools';
+import { hasTodoPayload, parseTruncatedTail } from '../lib/tools';
 import type { TranscriptEvent } from '../types/bridge';
 
 let seq = 0;
@@ -796,20 +796,12 @@ test('parseTruncatedTail leaves untruncated text untouched', () => {
   assert.equal(truncatedChars, null);
 });
 
-test('formatCharCount renders compact, trimmed magnitudes', () => {
-  assert.equal(formatCharCount(1252663), '1.3M');
-  assert.equal(formatCharCount(5_000_000), '5M');
-  assert.equal(formatCharCount(8200), '8.2k');
-  assert.equal(formatCharCount(1000), '1k');
-  assert.equal(formatCharCount(742), '742');
-});
-
-test('MessageFeed renders a truncated answer as a note, not raw sentinel text', () => {
+test('MessageFeed strips the truncation sentinel and shows no truncation note', () => {
   const events = [userMsg('hi'), asst('Big answer body.\n\n[truncated 2048 chars]')];
   const html = renderToStaticMarkup(createElement(MessageFeed, { events, pending: false }));
   assert.ok(html.includes('Big answer body.'));
-  assert.ok(html.includes('2k more characters truncated'));
   assert.equal(html.includes('[truncated'), false);
+  assert.equal(html.includes('characters truncated'), false);
 });
 
 test('sameFeedEvents skips stable items and flags the streaming tail', () => {

@@ -224,7 +224,7 @@ function SvgCodeBlock({ content }: { content: string }) {
 function MarkdownImpl({ children, specMode }: { children: string; specMode?: boolean }) {
   return (
     <div
-      className={`text-droid-text [overflow-wrap:anywhere] ${specMode ? 'text-[15px] leading-[1.8] space-y-5' : 'text-[13.5px] leading-[1.7] space-y-3'}`}
+      className={`text-droid-text break-words ${specMode ? 'text-[15px] leading-[1.8] space-y-5' : 'text-[13.5px] leading-[1.7] space-y-3'}`}
     >
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
@@ -329,7 +329,7 @@ function MarkdownImpl({ children, specMode }: { children: string; specMode?: boo
             if (inline)
               return (
                 <code
-                  className={`font-mono px-1.5 py-0.5 rounded-md bg-droid-elevated/70 text-droid-text [overflow-wrap:anywhere] ${specMode ? 'text-[13px]' : 'text-[12px]'}`}
+                  className={`font-mono px-1.5 py-0.5 rounded-md bg-droid-elevated/70 text-droid-text break-words ${specMode ? 'text-[13px]' : 'text-[12px]'}`}
                 >
                   {children}
                 </code>
@@ -385,14 +385,14 @@ function MarkdownImpl({ children, specMode }: { children: string; specMode?: boo
           thead: ({ children }) => <thead className="bg-droid-elevated/25">{children}</thead>,
           th: ({ children }) => (
             <th
-              className={`border-b border-droid-border text-left font-medium text-droid-text ${specMode ? 'px-3.5 py-2.5' : 'px-2.5 py-1.5'}`}
+              className={`border-b border-droid-border text-left align-top font-medium whitespace-nowrap text-droid-text ${specMode ? 'px-3.5 py-2.5' : 'px-2.5 py-1.5'}`}
             >
               {children}
             </th>
           ),
           td: ({ children }) => (
             <td
-              className={`border-t border-droid-border text-droid-text-secondary ${specMode ? 'px-3.5 py-2.5' : 'px-2.5 py-1.5'}`}
+              className={`border-t border-droid-border align-top text-droid-text-secondary first:whitespace-nowrap first:pr-4 first:font-medium first:text-droid-text ${specMode ? 'px-3.5 py-2.5' : 'px-2.5 py-1.5'}`}
             >
               {children}
             </td>
