@@ -439,15 +439,28 @@ function validBranchName(name) {
     .every((seg) => seg.length > 0 && !seg.startsWith('.') && !seg.endsWith('.lock'));
 }
 
+// True only when `ref` resolves to a real commit object. Guards against passing
+// an unborn branch name (valid as a symbolic ref but not yet an object) or any
+// other unresolvable ref to git as a fork base.
+async function resolvesToCommit(root, ref) {
+  if (!ref) return false;
+  return !!(await tryRun(root, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`]));
+}
+
 async function createBranch(dir, { name, base, checkout = true } = {}) {
   const root = await repoRootOf(dir);
   if (!root) return { ok: false, reason: 'not_a_repo' };
   if (!validBranchName(name)) return { ok: false, reason: 'invalid_name' };
+  // Only fork from a base that resolves to a commit. In an unborn repo the
+  // current branch (e.g. "main") exists as a symbolic ref but is not yet a valid
+  // object, so passing it to git would fail; drop it and start the new branch
+  // from the unborn HEAD instead.
+  const baseRef = (await resolvesToCommit(root, base)) ? base : null;
   try {
     // `--` ends option parsing so a base ref can never be read as a flag.
-    if (checkout) await run(root, ['switch', '-c', name, ...(base ? ['--', base] : [])]);
-    else await run(root, ['branch', '--', name, ...(base ? [base] : [])]);
-    await rememberBase(root, name, base);
+    if (checkout) await run(root, ['switch', '-c', name, ...(baseRef ? ['--', baseRef] : [])]);
+    else await run(root, ['branch', '--', name, ...(baseRef ? [baseRef] : [])]);
+    await rememberBase(root, name, baseRef);
     return { ok: true, environment: await environment(root) };
   } catch (err) {
     return { ok: false, reason: 'git_error', message: err.message };
@@ -594,11 +607,16 @@ async function createWorktree(dir, { branch, base, newBranch = false, location }
     const defaultRoot = path.join(root, '.worktrees') + path.sep;
     if (path.resolve(target).startsWith(defaultRoot)) await ensureDefaultWorktreeIgnored(root);
     await fsp.mkdir(path.dirname(target), { recursive: true });
+    // Only fork a new worktree branch from a base that resolves to a commit
+    // (mirrors createBranch); an unborn base ref would fail.
+    const baseRef = newBranch && (await resolvesToCommit(root, base)) ? base : null;
+    // `--` ends option parsing so a user-editable target path (e.g. a relative
+    // `-wt`) or ref can never be read as a git option.
     const args = newBranch
-      ? ['worktree', 'add', '-b', branch, target, ...(base ? [base] : [])]
-      : ['worktree', 'add', target, branch];
+      ? ['worktree', 'add', '-b', branch, '--', target, ...(baseRef ? [baseRef] : [])]
+      : ['worktree', 'add', '--', target, branch];
     await run(root, args, { timeout: PUSH_TIMEOUT });
-    if (newBranch) await rememberBase(root, branch, base);
+    if (newBranch) await rememberBase(root, branch, baseRef);
     return { ok: true, path: target, branch };
   } catch (err) {
     return { ok: false, reason: 'git_error', message: err.message };
@@ -759,36 +777,57 @@ function renameTarget(field) {
 }
 
 function parseDiffFileList(numstatOut, nameStatusOut) {
-  const counts = new Map();
+  // name-status is authoritative for paths and statuses. Renames/copies are
+  // reported tab-separated as `R<score>\told\tnew`, so the post-change path is
+  // the final field; every other status carries a single, literal path that is
+  // never arrow-encoded and so must NOT be rename-decoded.
+  const files = [];
+  const byPath = new Map();
+  const renameTargets = new Set();
+  for (const line of String(nameStatusOut || '').split('\n')) {
+    if (!line.trim()) continue;
+    const parts = line.split('\t');
+    const isRename = /^[RC]/.test(parts[0]);
+    const target = isRename ? parts[parts.length - 1] : parts.slice(1).join('\t');
+    if (!target) continue;
+    if (isRename) renameTargets.add(target);
+    const file = {
+      path: target,
+      status: statusLabel(parts[0]),
+      additions: 0,
+      deletions: 0,
+      binary: false,
+    };
+    files.push(file);
+    byPath.set(target, file);
+  }
+  // numstat uses the `old => new` / `dir/{old => new}` arrow for renames, so
+  // decode it — but only when the decoded path is a known rename target. A
+  // literal filename that merely contains ` => ` is kept verbatim rather than
+  // mistaken for a rename.
   for (const line of String(numstatOut || '').split('\n')) {
     if (!line.trim()) continue;
     const parts = line.split('\t');
     if (parts.length < 3) continue;
     const [add, del] = parts;
-    const target = renameTarget(parts.slice(2).join('\t'));
-    counts.set(target, {
+    const raw = parts.slice(2).join('\t');
+    const decoded = renameTarget(raw);
+    const target = decoded !== raw && renameTargets.has(decoded) ? decoded : raw;
+    const counts = {
       additions: add === '-' ? 0 : Number.parseInt(add, 10) || 0,
       deletions: del === '-' ? 0 : Number.parseInt(del, 10) || 0,
       binary: add === '-' && del === '-',
-    });
-  }
-  const files = [];
-  const seen = new Set();
-  for (const line of String(nameStatusOut || '').split('\n')) {
-    if (!line.trim()) continue;
-    const parts = line.split('\t');
-    // Renames/copies are reported tab-separated as `R<score>\told\tnew`, so the
-    // post-change path is the final field; every other status carries one path.
-    const target = /^[RC]/.test(parts[0])
-      ? parts[parts.length - 1]
-      : renameTarget(parts.slice(1).join('\t'));
-    if (!target) continue;
-    const c = counts.get(target) || { additions: 0, deletions: 0, binary: false };
-    files.push({ path: target, status: statusLabel(parts[0]), ...c });
-    seen.add(target);
-  }
-  for (const [target, c] of counts) {
-    if (!seen.has(target)) files.push({ path: target, status: 'modified', ...c });
+    };
+    const existing = byPath.get(target);
+    if (existing) {
+      existing.additions = counts.additions;
+      existing.deletions = counts.deletions;
+      existing.binary = counts.binary;
+    } else {
+      const file = { path: target, status: 'modified', ...counts };
+      files.push(file);
+      byPath.set(target, file);
+    }
   }
   return files;
 }
@@ -850,9 +889,10 @@ async function scopeRange(root, scope) {
     if (scope === 'branch') {
       return { args: base ? [`${base}...HEAD`] : null, base, includeUntracked: false };
     }
-    // Unborn repo: diff the index rather than a nonexistent HEAD.
+    // Unborn repo: diff the whole working tree against the empty tree (mirrors
+    // diffStat) so unstaged tracked edits show, not just the index.
     const hasHead = await tryRun(root, ['rev-parse', '--verify', '--quiet', 'HEAD']);
-    return { args: [base || (hasHead ? 'HEAD' : '--cached')], base, includeUntracked: true };
+    return { args: [base || (hasHead ? 'HEAD' : EMPTY_TREE)], base, includeUntracked: true };
   }
   if (scope === 'last_turn') {
     const entry = turnBaselines.get(root);
