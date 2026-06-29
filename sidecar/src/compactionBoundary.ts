@@ -18,20 +18,33 @@ export function toolUseIdOf(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value.trim() : undefined;
 }
 
+// Reserved placeholder for a committed tool_call we could not key (no usable
+// tool-use id). Real ids are non-empty trimmed strings, so this null-prefixed
+// sentinel cannot collide. It keeps the in-flight set non-empty so a sibling
+// tool's result is never mistaken for a safe boundary while the unkeyed tool is
+// still running.
+const UNKEYED_TOOL = '\u0000unkeyed-tool';
+
 // Maintain the per-turn set of tool calls that have started but not yet returned
 // a result, keyed by the SDK's stable tool-use id. A tool is "in flight" from
 // its first tool_call (or streaming delta) until its tool_result, including the
-// Task tool while a subagent runs. The set is meant to be local to one drive
-// turn, so it cannot leak across turns; ids are reliably present, and a missing
-// id simply leaves the boundary unconfirmed (the caller waits rather than risk
-// an unsafe interrupt), which the next turn's pre-turn check would still catch.
+// Task tool while a subagent runs. The set is local to one drive turn, so it
+// cannot leak across turns. A committed tool_call we cannot key still counts as
+// in flight via an unkeyed sentinel, so a parallel sibling's result cannot fire
+// a boundary mid-tool; we cannot match its result, so boundaries simply stay
+// unsafe for the rest of the turn (the next turn's pre-turn check still
+// compacts). Streaming deltas can legitimately arrive before the id, so they
+// never set the sentinel.
 export function updateToolsInFlight(inFlight: Set<string>, ev: StreamToolEvent): void {
   const type = ev.type;
   if (type === 'tool_call' || type === 'tool_call_delta') {
     const id = toolUseIdOf(ev.toolUse?.id) ?? toolUseIdOf(ev.toolUseId);
     if (id) inFlight.add(id);
+    else if (type === 'tool_call') inFlight.add(UNKEYED_TOOL);
   } else if (type === 'tool_result') {
-    const id = toolUseIdOf(ev.toolUseId);
+    // Results may carry the id under either field; read it symmetrically with
+    // the tool_call so a parallel tool is reliably cleared.
+    const id = toolUseIdOf(ev.toolUseId) ?? toolUseIdOf(ev.toolUse?.id);
     if (id) inFlight.delete(id);
   }
 }

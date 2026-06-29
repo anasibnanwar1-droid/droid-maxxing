@@ -39,14 +39,36 @@ test('updateToolsInFlight tracks parallel tools independently', () => {
   assert.equal(inFlight.size, 0);
 });
 
-test('updateToolsInFlight ignores events without a usable id', () => {
+test('updateToolsInFlight resolves a tool_result that carries its id under toolUse.id', () => {
   const inFlight = new Set<string>();
+  updateToolsInFlight(inFlight, { type: 'tool_call', toolUse: { id: 't1' } });
+  // Some results carry the id under toolUse.id rather than toolUseId; the read
+  // is symmetric so the in-flight tool is still cleared.
+  updateToolsInFlight(inFlight, { type: 'tool_result', toolUse: { id: 't1' } });
+  assert.equal(inFlight.size, 0);
+});
+
+test('a streaming delta without an id yet does not block a boundary', () => {
+  const inFlight = new Set<string>();
+  // A partial tool_call_delta before its id streams in must not be treated as a
+  // tracked in-flight tool (the id arrives on a later delta or the committed call).
+  updateToolsInFlight(inFlight, { type: 'tool_call_delta' });
+  assert.equal(isSafeCompactionBoundary({ type: 'tool_result', toolUseId: 't1' }, inFlight), true);
+});
+
+test('a committed id-less tool_call blocks a parallel sibling boundary', () => {
+  const inFlight = new Set<string>();
+  // A committed tool_call we cannot key is still a tool in flight, so a parallel
+  // keyed sibling resolving must NOT be mistaken for a safe boundary.
   updateToolsInFlight(inFlight, { type: 'tool_call' });
-  updateToolsInFlight(inFlight, { type: 'tool_call', toolUse: { id: '   ' } });
-  assert.equal(inFlight.size, 0);
-  // A result we never saw a call for is a harmless no-op delete.
+  updateToolsInFlight(inFlight, { type: 'tool_call', toolUse: { id: 'sibling' } });
+  updateToolsInFlight(inFlight, { type: 'tool_result', toolUseId: 'sibling' });
+  assert.equal(
+    isSafeCompactionBoundary({ type: 'tool_result', toolUseId: 'sibling' }, inFlight),
+    false,
+  );
+  // A result we never saw a keyed call for is a harmless no-op delete.
   updateToolsInFlight(inFlight, { type: 'tool_result', toolUseId: 'ghost' });
-  assert.equal(inFlight.size, 0);
 });
 
 test('updateToolsInFlight ignores non-tool events', () => {
