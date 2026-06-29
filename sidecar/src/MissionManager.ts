@@ -2502,6 +2502,14 @@ export class MissionManager {
     this.contextPollers.delete(sessionId);
   }
 
+  private findLiveAgentBySession(sessionId: string): LiveAgent | undefined {
+    for (const mission of this.missions.values()) {
+      const agent = mission.agents.get(sessionId);
+      if (agent) return agent;
+    }
+    return undefined;
+  }
+
   async refreshContext(
     sessionId: string,
     session: DroidSession,
@@ -2519,6 +2527,15 @@ export class MissionManager {
       // saturation latch and let auto-compaction resume normally.
       if (mission?.compactionSaturated && usageBelowTrigger(mission, snapshot.used, snapshot.limit))
         mission.compactionSaturated = false;
+      // Workers are not missions, so findMission misses them; clear the worker's
+      // own saturation latch on the same sub-trigger reading (only scan when this
+      // refresh is not for an orchestrator session).
+      const liveAgent = mission ? undefined : this.findLiveAgentBySession(sessionId);
+      if (
+        liveAgent?.compactionSaturated &&
+        usageBelowTrigger(liveAgent, snapshot.used, snapshot.limit)
+      )
+        liveAgent.compactionSaturated = false;
       if (mission) {
         const contextPatch = {
           contextTokens: snapshot.used,

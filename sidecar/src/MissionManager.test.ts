@@ -627,6 +627,35 @@ test('worker notification subscription drops events while a compaction interrupt
   assert.equal(applied, 1);
 });
 
+test('refreshContext clears a saturated worker latch once its context fits again', async () => {
+  const manager = new MissionManager(() => {});
+  const session = new FakeCompactionSession('worker-1', 10_000);
+  const agent = {
+    session,
+    missionId: 'app-sat',
+    role: 'worker' as const,
+    streaming: false,
+    pendingSends: [] as string[],
+    lastUsedAt: Date.now(),
+    effectiveCompactionTokenLimit: 200_000,
+    compactionSaturated: true,
+  };
+  const mission = {
+    summary: testSummary('app-sat', 'droid-sat'),
+    agents: new Map<string, typeof agent>([['worker-1', agent]]),
+  };
+  const internals = manager as unknown as {
+    missions: Map<string, typeof mission>;
+    refreshContext: (id: string, s: FakeCompactionSession) => Promise<void>;
+  };
+  internals.missions.set('app-sat', mission);
+
+  // refreshContext only receives a session id; findMission misses the worker, so
+  // the latch must clear via the cross-mission live-agent lookup.
+  await internals.refreshContext('worker-1', session);
+  assert.equal(agent.compactionSaturated, false);
+});
+
 test('withLiveWorkerStatus leaves links untouched for historical (non-live) missions', () => {
   const manager = new MissionManager(() => {});
   const internals = manager as unknown as {
