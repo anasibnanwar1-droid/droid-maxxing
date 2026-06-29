@@ -401,7 +401,7 @@ test('rekeyAgentSession adopts the swapped worker id across all mission state', 
     };
     contextSnapshots: Map<string, unknown>;
     missions: Map<string, typeof mission>;
-    rekeyAgentSession: (a: typeof agent, newId: string) => Promise<void>;
+    compaction: { rekeyAgentSession: (a: typeof agent, newId: string) => Promise<void> };
   };
   internals.runtime = { loadSession: async () => newSession };
   internals.history = {
@@ -414,7 +414,7 @@ test('rekeyAgentSession adopts the swapped worker id across all mission state', 
   internals.contextSnapshots.set('worker-old', { used: 5 });
   internals.missions.set('app-rk', mission);
 
-  await internals.rekeyAgentSession(agent, 'worker-new');
+  await internals.compaction.rekeyAgentSession(agent, 'worker-new');
 
   assert.equal(agent.session.sessionId, 'worker-new');
   assert.equal(unsubscribed, 1);
@@ -469,7 +469,7 @@ test('worker compaction re-keys to the new backing id and emits a rekey event (n
       recordSubagentLink: () => void;
     };
     missions: Map<string, typeof mission>;
-    compactAgent: (a: typeof agent, t: 'auto' | 'manual') => Promise<string>;
+    compaction: { compactAgent: (a: typeof agent, t: 'auto' | 'manual') => Promise<string> };
   };
   internals.runtime = { loadSession: async () => newSession };
   internals.history = {
@@ -480,7 +480,7 @@ test('worker compaction re-keys to the new backing id and emits a rekey event (n
   };
   internals.missions.set('app-cmp', mission);
 
-  const outcome = await internals.compactAgent(agent, 'auto');
+  const outcome = await internals.compaction.compactAgent(agent, 'auto');
 
   // The swap is adopted in place: completed (not stale), worker stays alive.
   assert.equal(outcome, 'completed');
@@ -2158,13 +2158,13 @@ test('rekeyAgentSession remaps worker ids inside mission summary features', asyn
     history: { subagentLinks: () => WorkerHistoryLink[]; recordSubagentLink: () => void };
     contextSnapshots: Map<string, unknown>;
     missions: Map<string, typeof mission>;
-    rekeyAgentSession: (a: typeof agent, newId: string) => Promise<void>;
+    compaction: { rekeyAgentSession: (a: typeof agent, newId: string) => Promise<void> };
   };
   internals.runtime = { loadSession: async () => newSession };
   internals.history = { subagentLinks: () => [], recordSubagentLink: () => {} };
   internals.missions.set('app-feat', mission);
 
-  await internals.rekeyAgentSession(agent, 'worker-new');
+  await internals.compaction.rekeyAgentSession(agent, 'worker-new');
 
   const [f1, f2, f3] = mission.summary.features;
   // Old worker id is rewritten everywhere it is pinned (focus + numbering)...
