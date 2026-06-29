@@ -388,6 +388,7 @@ test('rekeyAgentSession adopts the swapped worker id across all mission state', 
     agents: new Map<string, typeof agent>([['worker-old', agent]]),
     knownSubagents: new Set(['worker-old']),
     completedSubagents: new Set<string>(),
+    terminalAgents: new Set<string>(),
     linkedSubagents: new Set(['worker-old']),
     subagentToolUseIds: new Map([['tool-rk', 'worker-old']]),
     subagentSettings: new Map([['worker-old', { modelId: 'm-worker' }]]),
@@ -506,6 +507,66 @@ test('worker compaction re-keys to the new backing id and emits a rekey event (n
     events.some((e) => e.type === 'mission.error'),
     false,
   );
+});
+
+test('worker compaction re-applies the worker model so it does not revert to the CLI default', async () => {
+  const events: ServerEvent[] = [];
+  const manager = new MissionManager((event) => events.push(event));
+  const oldSession = new FakeCompactionSession('worker-old', 900_000, 'worker-new');
+  const newSession = new FakeCompactionSession('worker-new', 10_000);
+  const agent = {
+    session: oldSession,
+    missionId: 'app-wm',
+    role: 'worker' as const,
+    streaming: false,
+    pendingSends: [] as string[],
+    lastUsedAt: Date.now(),
+    unsubscribe: () => {},
+    effectiveCompactionTokenLimit: 200_000,
+  };
+  const mission = {
+    summary: testSummary('app-wm', 'droid-wm'),
+    agents: new Map<string, typeof agent>([['worker-old', agent]]),
+    knownSubagents: new Set(['worker-old']),
+    completedSubagents: new Set<string>(),
+    terminalAgents: new Set<string>(),
+    linkedSubagents: new Set<string>(),
+    subagentToolUseIds: new Map<string, string>(),
+    subagentSettings: new Map<string, { modelId?: string; reasoningEffort?: string }>([
+      ['worker-old', { modelId: 'custom:glm-5.2', reasoningEffort: 'high' }],
+    ]),
+  };
+  const internals = manager as unknown as {
+    runtime: { loadSession: (id: string, handlers: unknown) => Promise<FakeCompactionSession> };
+    history: {
+      recordEvent: () => void;
+      syncSummaries: () => void;
+      subagentLinks: () => WorkerHistoryLink[];
+      recordSubagentLink: () => void;
+    };
+    missions: Map<string, typeof mission>;
+    compaction: { compactAgent: (a: typeof agent, t: 'auto' | 'manual') => Promise<string> };
+  };
+  internals.runtime = { loadSession: async () => newSession };
+  internals.history = {
+    recordEvent: () => {},
+    syncSummaries: () => {},
+    subagentLinks: () => [],
+    recordSubagentLink: () => {},
+  };
+  internals.missions.set('app-wm', mission);
+
+  const outcome = await internals.compaction.compactAgent(agent, 'auto');
+
+  assert.equal(outcome, 'completed');
+  assert.equal(agent.session.sessionId, 'worker-new');
+  // The worker's selected model + reasoning are re-applied to the compacted
+  // session: loadSession cannot carry them, so without this the worker would
+  // silently fall back to the daemon's CLI-default model.
+  const applied = newSession.settingsUpdates.find((u) => 'modelId' in u);
+  assert.ok(applied, 'expected updateSettings to re-apply the worker model after the swap');
+  assert.equal(applied?.modelId, 'custom:glm-5.2');
+  assert.equal(applied?.reasoningEffort, 'high');
 });
 
 test('withLiveWorkerStatus leaves links untouched for historical (non-live) missions', () => {

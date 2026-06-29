@@ -485,6 +485,9 @@ export class MissionCompaction {
       if (mission.completedSubagents.delete(oldSessionId))
         mission.completedSubagents.add(newSessionId);
       if (mission.linkedSubagents.delete(oldSessionId)) mission.linkedSubagents.add(newSessionId);
+      // terminalAgents is keyed by session id; remap it too so the post-terminal
+      // generation guard keeps recognizing this worker after the swap.
+      if (mission.terminalAgents.delete(oldSessionId)) mission.terminalAgents.add(newSessionId);
       const settings = mission.subagentSettings.get(oldSessionId);
       if (settings) {
         mission.subagentSettings.delete(oldSessionId);
@@ -492,7 +495,51 @@ export class MissionCompaction {
       }
       this.persistWorkerSwap(mission, oldSessionId, newSessionId);
     }
+    // loadSession brings the compacted worker up on the daemon's CLI-default
+    // model; re-apply its selected model so compaction never silently downgrades
+    // the worker (mirrors reapplyModelSettingsAfterSwap for the orchestrator).
+    await this.reapplyAgentModelAfterSwap(agent);
     await oldSession.close().catch(() => {});
+  }
+
+  // Worker counterpart of reapplyModelSettingsAfterSwap: re-apply the worker's
+  // selected model + reasoning directly to its freshly loaded compacted session.
+  // Source is the worker's stored per-session settings, falling back to the
+  // mission's role default (worker/validator) and then the orchestrator model.
+  // Best-effort: a transient failure must not abandon an otherwise-live worker.
+  private async reapplyAgentModelAfterSwap(agent: LiveAgent): Promise<void> {
+    const mission = this.host.findMission(agent.missionId);
+    if (!mission) return;
+    const s = mission.summary;
+    const stored = mission.subagentSettings.get(agent.session.sessionId);
+    const roleModelId =
+      agent.role === 'worker'
+        ? s.workerModelId
+        : agent.role === 'validator'
+          ? s.validatorModelId
+          : undefined;
+    const roleReasoning =
+      agent.role === 'worker'
+        ? s.workerReasoningEffort
+        : agent.role === 'validator'
+          ? s.validatorReasoningEffort
+          : undefined;
+    const modelId = stored?.modelId ?? roleModelId ?? s.modelId;
+    const reasoningEffort = stored?.reasoningEffort ?? roleReasoning ?? s.reasoningEffort;
+    const next: Record<string, unknown> = {};
+    if (modelId) next.modelId = modelId;
+    if (reasoningEffort !== undefined) next.reasoningEffort = reasoningEffort;
+    if (Object.keys(next).length === 0) return;
+    try {
+      await agent.session.updateSettings(next as never);
+    } catch (err) {
+      this.host.emitError({
+        missionId: agent.missionId,
+        sessionId: agent.session.sessionId,
+        message: `Compaction kept this subagent but could not re-apply its model (${errMsg(err)}); reselect it from the model picker if it changed.`,
+        recoverable: true,
+      });
+    }
   }
 
   // Persist a worker's compaction swap to the durable spawn link and the mission
