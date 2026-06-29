@@ -137,10 +137,11 @@ export default function ContextMeter({
     mission.maxContextTokens && mission.maxContextTokens > 0 ? mission.maxContextTokens : undefined;
   const statLimit = measured?.limit && measured.limit > 0 ? measured.limit : modelWindow;
 
-  // The conversation compacts once it passes the configured token limit, so the
-  // meter measures usage against that threshold (per-model override -> global
-  // default), capped to the model window. Falls back to observed/model context
-  // size when the app lets Factory use its model-dependent default.
+  // The meter measures usage against the configured context window (per-model
+  // override -> global default), capped to the model window, falling back to the
+  // observed/model context size when Factory's model-dependent default is used.
+  // Auto-compaction triggers internally before this window fills; that trigger
+  // is intentionally not surfaced here so the displayed window stays stable.
   const compactionLimit =
     mission.modelId && state.compactionTokenLimitPerModel[mission.modelId] !== undefined
       ? state.compactionTokenLimitPerModel[mission.modelId]
@@ -257,13 +258,6 @@ export default function ContextMeter({
                 {ready && <Row color="var(--droid-accent)" label="Window used" value={used} />}
                 {remaining !== undefined && (
                   <Row color="var(--droid-text-muted)" label="Window free" value={remaining} />
-                )}
-                {effectiveCompaction !== undefined && (
-                  <Row
-                    color="var(--droid-orange)"
-                    label="Compacts at"
-                    value={effectiveCompaction}
-                  />
                 )}
                 {modelWindow !== undefined && (
                   <Row color="var(--droid-text-muted)" label="Model window" value={modelWindow} />

@@ -13,8 +13,10 @@ import {
   clampCompactionTokenLimit,
   compactionTokenLimitForModel,
   createCompactionSettingsForModel,
+  effectiveCompactionLimit,
   resumedCompactionTokenLimit,
 } from './compaction.js';
+import { RESUME_NUDGE } from './autoCompaction.js';
 import type {
   BridgeFeature,
   MissionSummary,
@@ -198,6 +200,23 @@ test('uses Factory compaction defaults when command omits them', () => {
     compactionTokenLimitForModel('model-a', {}, { compactionTokenLimit: 200_000 }),
     200_000,
   );
+});
+
+test('effectiveCompactionLimit falls back to the model window when no explicit limit is set', () => {
+  // No explicit limit -> the auto-compaction trigger basis is the model window
+  // (compact at ~90% of it) rather than undefined (which disables compaction).
+  assert.equal(effectiveCompactionLimit('model-a', {}, 200_000), 200_000);
+  // An explicit limit still wins and is clamped to the window.
+  assert.equal(
+    effectiveCompactionLimit('model-a', { compactionTokenLimit: 100_000 }, 200_000),
+    100_000,
+  );
+  assert.equal(
+    effectiveCompactionLimit('model-a', { compactionTokenLimit: 500_000 }, 200_000),
+    200_000,
+  );
+  // Unknown window and no explicit limit -> nothing to trigger on.
+  assert.equal(effectiveCompactionLimit('model-a', {}, undefined), undefined);
 });
 
 test('builds Droid compaction init payloads', () => {
@@ -923,6 +942,7 @@ function autoCompactHarness(used: number, effectiveCompactionTokenLimit?: number
       subagentLinks: () => [];
     };
     missions: Map<string, typeof mission>;
+    contextSnapshots: Map<string, { used: number; limit?: number }>;
   };
   internals.history = {
     recordEvent: () => {},
@@ -932,6 +952,11 @@ function autoCompactHarness(used: number, effectiveCompactionTokenLimit?: number
     recordSubagentLink: () => {},
     subagentLinks: () => [],
   };
+  // The orchestrator trigger reads the getContextStats snapshot (kept fresh by
+  // the context poller / post-turn refresh), the same source as the meter. Seed
+  // it so the idle pre-turn check sees the usage the fake reports.
+  mission.summary.contextTokens = used;
+  internals.contextSnapshots.set('app-compact', { used });
   internals.missions.set(mission.summary.id, mission);
   return { manager, session, events, mission };
 }
@@ -1018,6 +1043,128 @@ test('does not auto-compact when effectiveCompactionTokenLimit is unset', async 
   assert.equal(session.compactions, 0);
 });
 
+// getContextStats stays LOW (below the trigger), but the stream emits a
+// token-usage event whose contextTokens is cache-inflated far over the window.
+// The trigger and meter must read getContextStats only and ignore it, otherwise
+// the inflated value re-crosses the trigger between polls and loops compaction.
+class FakeInflatedTokenSession {
+  prompts: string[] = [];
+  compactions = 0;
+  interrupts = 0;
+
+  constructor(readonly sessionId: string) {}
+
+  async *stream(prompt: string): AsyncGenerator<Record<string, unknown>, void, undefined> {
+    this.prompts.push(prompt);
+    yield {
+      type: 'token_usage_update',
+      inclusiveTokenUsage: { inputTokens: 5_000, outputTokens: 1_000 },
+      lastCallTokenUsage: { inputTokens: 0, cacheReadTokens: 250_000 },
+    };
+    yield { type: 'result' };
+  }
+
+  async interrupt(): Promise<void> {
+    this.interrupts += 1;
+  }
+
+  async updateSettings(): Promise<void> {}
+
+  onNotification(): () => void {
+    return () => {};
+  }
+
+  async getContextStats(): Promise<{
+    used: number;
+    remaining: number;
+    limit: number;
+    accuracy: 'exact';
+    updatedAt: string;
+  }> {
+    return {
+      used: 40_000,
+      remaining: 960_000,
+      limit: 1_000_000,
+      accuracy: 'exact',
+      updatedAt: new Date().toISOString(),
+    };
+  }
+
+  async compactSession(): Promise<{ newSessionId: string; removedCount: number }> {
+    this.compactions += 1;
+    return { newSessionId: this.sessionId, removedCount: 4 };
+  }
+
+  async close(): Promise<void> {}
+}
+
+function inflatedTokenHarness() {
+  const events: ServerEvent[] = [];
+  const manager = new MissionManager((event) => events.push(event));
+  const session = new FakeInflatedTokenSession('droid-inflated');
+  const mission = {
+    summary: testSummary('app-inflated', session.sessionId),
+    session,
+    streaming: false,
+    pendingSends: [] as string[],
+    pendingPermissions: new Map(),
+    pendingQuestions: new Map(),
+    agents: new Map(),
+    knownSubagents: new Set<string>(),
+    completedSubagents: new Set<string>(),
+    terminalAgents: new Set<string>(),
+    linkedSubagents: new Set<string>(),
+    subagentToolUseIds: new Map(),
+    subagentSettings: new Map(),
+    pendingSubagents: [],
+    mcpServers: [],
+    effectiveCompactionTokenLimit: 200_000,
+    compacting: false,
+  };
+  const internals = manager as unknown as {
+    history: {
+      recordEvent: () => void;
+      syncSummaries: () => void;
+      summaryPatches: () => Map<string, unknown>;
+      hiddenDroidSessionIds: () => Set<string>;
+      recordSubagentLink: () => void;
+      subagentLinks: () => [];
+    };
+    missions: Map<string, typeof mission>;
+    contextSnapshots: Map<string, { used: number; limit?: number }>;
+  };
+  internals.history = {
+    recordEvent: () => {},
+    syncSummaries: () => {},
+    summaryPatches: () => new Map(),
+    hiddenDroidSessionIds: () => new Set(),
+    recordSubagentLink: () => {},
+    subagentLinks: () => [],
+  };
+  internals.contextSnapshots.set('app-inflated', { used: 40_000, limit: 1_000_000 });
+  internals.missions.set(mission.summary.id, mission);
+  return { manager, session, events };
+}
+
+test('a cache-inflated token-usage event never moves the trigger or compacts (meter uses getContextStats only)', async () => {
+  const { manager, session, events } = inflatedTokenHarness();
+  await manager.handle({ type: 'mission.send', missionId: 'app-inflated', text: 'go' });
+  await waitFor(() => events.some((e) => e.type === 'context.updated'));
+  // The inflated 250k token event must not trigger a compaction or interrupt.
+  assert.equal(session.compactions, 0);
+  assert.equal(session.interrupts, 0);
+  // Every context reading reflects the accurate getContextStats value (~40k),
+  // never the cache-inflated 250k the old estimate path leaked into the meter.
+  const contextUpdates = events.filter(
+    (e): e is Extract<ServerEvent, { type: 'context.updated' }> => e.type === 'context.updated',
+  );
+  assert.ok(contextUpdates.length > 0);
+  assert.equal(
+    contextUpdates.every((e) => e.stats.used <= 50_000),
+    true,
+  );
+});
+
 test('rejects manual compaction while streaming', async () => {
   const { manager, mission, events } = autoCompactHarness(250_000, 200_000);
   mission.streaming = true;
@@ -1033,6 +1180,630 @@ test('rejects manual compaction while streaming', async () => {
       /cannot compact/i.test((e as { event?: { text?: string } }).event?.text ?? ''),
   );
   assert.equal(hasRejection, true);
+});
+
+test('a user prompt sent while over the trigger compacts first then runs the user prompt, not a hidden continue', async () => {
+  const { manager, session } = autoCompactHarness(250_000, 200_000);
+  await manager.handle({
+    type: 'mission.send',
+    missionId: 'app-compact',
+    text: 'real user prompt',
+  });
+  assert.equal(session.compactions, 1);
+  // The user's prompt drives the post-compaction turn; it is never dropped nor
+  // replaced by the synthetic resume nudge.
+  assert.equal(session.prompts.includes('real user prompt'), true);
+  assert.equal(session.prompts.includes(RESUME_NUDGE), false);
+});
+
+test('does not compact after a turn that ends over the trigger (no post-turn compaction)', async () => {
+  const { manager, session } = autoCompactHarness(250_000, 200_000);
+  // The session was under the trigger when the prompt arrived (no pre-turn
+  // compaction); the fake then reports usage over the trigger as the turn ends.
+  (manager as unknown as { contextSnapshots: Map<string, { used: number }> }).contextSnapshots.set(
+    'app-compact',
+    { used: 10_000 },
+  );
+  await manager.handle({ type: 'mission.send', missionId: 'app-compact', text: 'hello' });
+  // No post-turn compaction after a final answer: it waits for the next prompt.
+  assert.equal(session.compactions, 0);
+  assert.equal(session.prompts.includes(RESUME_NUDGE), false);
+});
+
+// Simulates a long, still-working turn: it bumps usage over the trigger, yields
+// one no-op event so the drive loop runs its between-events compaction check,
+// then waits to be interrupted. A resumed turn (the hidden nudge) does no work.
+class FakeMidTurnSession {
+  prompts: string[] = [];
+  interrupts = 0;
+  compactions = 0;
+  // Only the first real turn is the long one that crosses the trigger and waits
+  // to be interrupted; resumed/steered turns complete immediately.
+  armed = true;
+  interrupted = false;
+  onTurnStart?: () => void;
+  private release?: () => void;
+
+  constructor(readonly sessionId: string) {}
+
+  async *stream(prompt: string): AsyncGenerator<Record<string, unknown>, void, undefined> {
+    this.prompts.push(prompt);
+    if (prompt === RESUME_NUDGE || !this.armed) return;
+    this.armed = false;
+    this.onTurnStart?.();
+    // A completed step (tool_result with no tool left in flight) is the only safe
+    // boundary the client may interrupt on for compaction.
+    yield { type: 'tool_result', toolName: 'Read', toolUseId: 'm1', content: 'data' };
+    // The interrupt can land while we are paused at the yield (before `release`
+    // is set), so check the flag before awaiting to avoid blocking forever.
+    if (!this.interrupted) {
+      await new Promise<void>((resolve) => {
+        this.release = resolve;
+      });
+    }
+    throw new Error('interrupted');
+  }
+
+  async interrupt(): Promise<void> {
+    this.interrupts += 1;
+    this.interrupted = true;
+    this.release?.();
+  }
+
+  async updateSettings(): Promise<void> {}
+
+  onNotification(): () => void {
+    return () => {};
+  }
+
+  async getContextStats(): Promise<{
+    used: number;
+    remaining: number;
+    limit: number;
+    accuracy: 'exact';
+    updatedAt: string;
+  }> {
+    return {
+      used: 250_000,
+      remaining: 750_000,
+      limit: 1_000_000,
+      accuracy: 'exact',
+      updatedAt: new Date().toISOString(),
+    };
+  }
+
+  async compactSession(): Promise<{ newSessionId: string; removedCount: number }> {
+    this.compactions += 1;
+    return { newSessionId: this.sessionId, removedCount: 4 };
+  }
+
+  async close(): Promise<void> {}
+}
+
+function midTurnHarness() {
+  const events: ServerEvent[] = [];
+  const manager = new MissionManager((event) => events.push(event));
+  const session = new FakeMidTurnSession('droid-mid');
+  const mission = {
+    summary: testSummary('app-mid', session.sessionId),
+    session,
+    streaming: false,
+    pendingSends: [] as string[],
+    pendingPermissions: new Map(),
+    pendingQuestions: new Map(),
+    agents: new Map(),
+    knownSubagents: new Set<string>(),
+    completedSubagents: new Set<string>(),
+    terminalAgents: new Set<string>(),
+    linkedSubagents: new Set<string>(),
+    subagentToolUseIds: new Map(),
+    subagentSettings: new Map(),
+    pendingSubagents: [],
+    mcpServers: [],
+    effectiveCompactionTokenLimit: 200_000,
+    compacting: false,
+    autoContinueCount: undefined as number | undefined,
+  };
+  const internals = manager as unknown as {
+    history: {
+      recordEvent: () => void;
+      syncSummaries: () => void;
+      summaryPatches: () => Map<string, unknown>;
+      hiddenDroidSessionIds: () => Set<string>;
+      recordSubagentLink: () => void;
+      subagentLinks: () => [];
+    };
+    missions: Map<string, typeof mission>;
+    contextSnapshots: Map<string, { used: number; limit?: number }>;
+  };
+  internals.history = {
+    recordEvent: () => {},
+    syncSummaries: () => {},
+    summaryPatches: () => new Map(),
+    hiddenDroidSessionIds: () => new Set(),
+    recordSubagentLink: () => {},
+    subagentLinks: () => [],
+  };
+  // The trigger reads the getContextStats snapshot. Seed it under the trigger so
+  // pre-turn compaction does NOT fire, then have onTurnStart push it over the
+  // trigger synchronously so the in-flight turn is interrupted mid-stream.
+  internals.contextSnapshots.set('app-mid', { used: 10_000, limit: 1_000_000 });
+  session.onTurnStart = () => {
+    internals.contextSnapshots.set('app-mid', { used: 250_000, limit: 1_000_000 });
+  };
+  internals.missions.set(mission.summary.id, mission);
+  return { manager, session, events, mission };
+}
+
+test('mid-task: crossing the trigger interrupts, compacts, then resumes invisibly with the nudge', async () => {
+  const { manager, session, mission, events } = midTurnHarness();
+  await manager.handle({ type: 'mission.send', missionId: 'app-mid', text: 'go' });
+  // We interrupted the in-flight turn exactly once and compacted at that boundary.
+  assert.equal(session.interrupts, 1);
+  assert.equal(session.compactions, 1);
+  // The task resumes on its own with the hidden nudge (long-horizon continuation).
+  await waitFor(() => session.prompts.includes(RESUME_NUDGE));
+  assert.deepEqual(session.prompts, ['go', RESUME_NUDGE]);
+  assert.equal(mission.autoContinueCount, 1);
+  // The interruption/compaction never surfaces as a turn failure.
+  assert.equal(
+    events.some((e) => e.type === 'mission.error'),
+    false,
+  );
+});
+
+// A turn that crosses the trigger WHILE a tool is in flight. The interrupt must
+// wait for the tool's result (the safe boundary) and never fire mid-tool, so a
+// file write / shell command is never cancelled underneath the model.
+class FakeToolBoundarySession {
+  prompts: string[] = [];
+  interrupts = 0;
+  compactions = 0;
+  armed = true;
+  interrupted = false;
+  // Flips true the moment the tool_result is emitted; interrupt() snapshots it
+  // so the test can prove the interrupt landed at/after the result, not mid-tool.
+  resultEmitted = false;
+  interruptedAfterResult = false;
+  onTurnStart?: () => void;
+  private release?: () => void;
+
+  constructor(readonly sessionId: string) {}
+
+  async *stream(prompt: string): AsyncGenerator<Record<string, unknown>, void, undefined> {
+    this.prompts.push(prompt);
+    if (prompt === RESUME_NUDGE || !this.armed) return;
+    this.armed = false;
+    // Push usage over the trigger before any tool starts, so the only thing
+    // holding the interrupt back is the in-flight tool, not the threshold.
+    this.onTurnStart?.();
+    yield { type: 'tool_call', toolUse: { id: 't1', name: 'edit_file' } };
+    yield { type: 'tool_call_delta', toolUse: { id: 't1' } };
+    // Still mid-tool and over the trigger: a correct client does NOT interrupt.
+    yield { type: 'thinking_text_delta', text: 'working' };
+    if (this.interrupted) throw new Error('interrupted mid-tool');
+    // Tool finishes -> safe boundary. The interrupt is expected on/after this.
+    this.resultEmitted = true;
+    yield { type: 'tool_result', toolName: 'edit_file', toolUseId: 't1', content: 'ok' };
+    if (!this.interrupted) {
+      await new Promise<void>((resolve) => {
+        this.release = resolve;
+      });
+    }
+    throw new Error('interrupted');
+  }
+
+  async interrupt(): Promise<void> {
+    this.interrupts += 1;
+    this.interrupted = true;
+    this.interruptedAfterResult = this.resultEmitted;
+    this.release?.();
+  }
+
+  async updateSettings(): Promise<void> {}
+
+  onNotification(): () => void {
+    return () => {};
+  }
+
+  async getContextStats(): Promise<{
+    used: number;
+    remaining: number;
+    limit: number;
+    accuracy: 'exact';
+    updatedAt: string;
+  }> {
+    return {
+      used: 250_000,
+      remaining: 750_000,
+      limit: 1_000_000,
+      accuracy: 'exact',
+      updatedAt: new Date().toISOString(),
+    };
+  }
+
+  async compactSession(): Promise<{ newSessionId: string; removedCount: number }> {
+    this.compactions += 1;
+    return { newSessionId: this.sessionId, removedCount: 4 };
+  }
+
+  async close(): Promise<void> {}
+}
+
+function toolBoundaryHarness() {
+  const events: ServerEvent[] = [];
+  const manager = new MissionManager((event) => events.push(event));
+  const session = new FakeToolBoundarySession('droid-tool');
+  const mission = {
+    summary: testSummary('app-tool', session.sessionId),
+    session,
+    streaming: false,
+    pendingSends: [] as string[],
+    pendingPermissions: new Map(),
+    pendingQuestions: new Map(),
+    agents: new Map(),
+    knownSubagents: new Set<string>(),
+    completedSubagents: new Set<string>(),
+    terminalAgents: new Set<string>(),
+    linkedSubagents: new Set<string>(),
+    subagentToolUseIds: new Map(),
+    subagentSettings: new Map(),
+    pendingSubagents: [],
+    mcpServers: [],
+    effectiveCompactionTokenLimit: 200_000,
+    compacting: false,
+    autoContinueCount: undefined as number | undefined,
+  };
+  const internals = manager as unknown as {
+    history: {
+      recordEvent: () => void;
+      syncSummaries: () => void;
+      summaryPatches: () => Map<string, unknown>;
+      hiddenDroidSessionIds: () => Set<string>;
+      recordSubagentLink: () => void;
+      subagentLinks: () => [];
+    };
+    missions: Map<string, typeof mission>;
+    contextSnapshots: Map<string, { used: number; limit?: number }>;
+  };
+  internals.history = {
+    recordEvent: () => {},
+    syncSummaries: () => {},
+    summaryPatches: () => new Map(),
+    hiddenDroidSessionIds: () => new Set(),
+    recordSubagentLink: () => {},
+    subagentLinks: () => [],
+  };
+  // Seed under the trigger so pre-turn compaction does NOT fire; onTurnStart
+  // pushes it over the trigger synchronously while a tool is in flight.
+  internals.contextSnapshots.set('app-tool', { used: 10_000, limit: 1_000_000 });
+  session.onTurnStart = () => {
+    internals.contextSnapshots.set('app-tool', { used: 250_000, limit: 1_000_000 });
+  };
+  internals.missions.set(mission.summary.id, mission);
+  return { manager, session, events };
+}
+
+test('mid-task: an over-trigger turn waits for the in-flight tool result before interrupting (never mid-tool)', async () => {
+  const { manager, session, events } = toolBoundaryHarness();
+  await manager.handle({ type: 'mission.send', missionId: 'app-tool', text: 'go' });
+  // Exactly one interrupt, and it landed at the safe boundary: the tool_result
+  // was already emitted when interrupt() fired, so no tool was cancelled mid-run.
+  assert.equal(session.interrupts, 1);
+  assert.equal(session.interruptedAfterResult, true);
+  // It compacted at that boundary and resumed the long-horizon task invisibly.
+  assert.equal(session.compactions, 1);
+  await waitFor(() => session.prompts.includes(RESUME_NUDGE));
+  assert.equal(
+    events.some((e) => e.type === 'mission.error'),
+    false,
+  );
+});
+
+test('mid-task: a user prompt queued during the compaction wins over the hidden continue', async () => {
+  const { manager, session, mission } = midTurnHarness();
+  // Queue a real user prompt before the turn is interrupted/compacted, mirroring
+  // a user typing while we compact mid-task.
+  mission.pendingSends.push('user steered');
+  await manager.handle({ type: 'mission.send', missionId: 'app-mid', text: 'go' });
+  await waitFor(() => session.prompts.includes('user steered'));
+  // The queued user prompt drives the post-compaction turn; the hidden nudge is
+  // never sent, and the counter resets because real user input was delivered.
+  assert.equal(session.prompts.includes(RESUME_NUDGE), false);
+  assert.equal(session.prompts.includes('user steered'), true);
+  assert.equal(mission.autoContinueCount, 0);
+});
+
+// Unlike FakeMidTurnSession (which throws on interrupt), the real SDK reacts to
+// interrupt() by cancelling in-flight tools (emitting "Tool execution cancelled
+// by user" errors) and then closing the turn with a terminal `result`. That
+// terminal would mark the turn finished (wasTerminal) and skip compaction, and
+// the cancellation errors would leak to the UI. This fake reproduces that exact
+// tail so the regression is covered.
+class FakeCancelTerminalSession {
+  prompts: string[] = [];
+  interrupts = 0;
+  compactions = 0;
+  armed = true;
+  interrupted = false;
+  onTurnStart?: () => void;
+  private release?: () => void;
+
+  constructor(readonly sessionId: string) {}
+
+  async *stream(prompt: string): AsyncGenerator<Record<string, unknown>, void, undefined> {
+    this.prompts.push(prompt);
+    if (prompt === RESUME_NUDGE || !this.armed) return;
+    this.armed = false;
+    this.onTurnStart?.();
+    // Interrupt lands on this completed-step boundary; the cancellation tail
+    // below (errors + a terminal result) must then be dropped, not surfaced.
+    yield { type: 'tool_result', toolName: 'Read', toolUseId: 'r1', content: 'data' };
+    if (!this.interrupted) {
+      await new Promise<void>((resolve) => {
+        this.release = resolve;
+      });
+    }
+    // The SDK's reaction to interrupt(): cancellations, then a terminal result.
+    yield { type: 'error', message: 'Tool execution cancelled by user' };
+    yield {
+      type: 'tool_result',
+      toolName: 'Read',
+      content: 'Tool execution cancelled by user',
+      isError: true,
+    };
+    yield { type: 'result' };
+  }
+
+  async interrupt(): Promise<void> {
+    this.interrupts += 1;
+    this.interrupted = true;
+    this.release?.();
+  }
+
+  async updateSettings(): Promise<void> {}
+
+  onNotification(): () => void {
+    return () => {};
+  }
+
+  async getContextStats(): Promise<{
+    used: number;
+    remaining: number;
+    limit: number;
+    accuracy: 'exact';
+    updatedAt: string;
+  }> {
+    return {
+      used: 250_000,
+      remaining: 750_000,
+      limit: 1_000_000,
+      accuracy: 'exact',
+      updatedAt: new Date().toISOString(),
+    };
+  }
+
+  async compactSession(): Promise<{ newSessionId: string; removedCount: number }> {
+    this.compactions += 1;
+    return { newSessionId: this.sessionId, removedCount: 4 };
+  }
+
+  async close(): Promise<void> {}
+}
+
+function cancelTerminalHarness() {
+  const events: ServerEvent[] = [];
+  const manager = new MissionManager((event) => events.push(event));
+  const session = new FakeCancelTerminalSession('droid-cancel');
+  const mission = {
+    summary: testSummary('app-cancel', session.sessionId),
+    session,
+    streaming: false,
+    pendingSends: [] as string[],
+    pendingPermissions: new Map(),
+    pendingQuestions: new Map(),
+    agents: new Map(),
+    knownSubagents: new Set<string>(),
+    completedSubagents: new Set<string>(),
+    terminalAgents: new Set<string>(),
+    linkedSubagents: new Set<string>(),
+    subagentToolUseIds: new Map(),
+    subagentSettings: new Map(),
+    pendingSubagents: [],
+    mcpServers: [],
+    effectiveCompactionTokenLimit: 200_000,
+    compacting: false,
+    autoContinueCount: undefined as number | undefined,
+  };
+  const internals = manager as unknown as {
+    history: {
+      recordEvent: () => void;
+      syncSummaries: () => void;
+      summaryPatches: () => Map<string, unknown>;
+      hiddenDroidSessionIds: () => Set<string>;
+      recordSubagentLink: () => void;
+      subagentLinks: () => [];
+    };
+    missions: Map<string, typeof mission>;
+    contextSnapshots: Map<string, { used: number; limit?: number }>;
+  };
+  internals.history = {
+    recordEvent: () => {},
+    syncSummaries: () => {},
+    summaryPatches: () => new Map(),
+    hiddenDroidSessionIds: () => new Set(),
+    recordSubagentLink: () => {},
+    subagentLinks: () => [],
+  };
+  internals.contextSnapshots.set('app-cancel', { used: 10_000, limit: 1_000_000 });
+  session.onTurnStart = () => {
+    internals.contextSnapshots.set('app-cancel', { used: 250_000, limit: 1_000_000 });
+  };
+  internals.missions.set(mission.summary.id, mission);
+  return { manager, session, events, mission };
+}
+
+test('mid-task: an interrupt that ends with cancellations and a terminal result still compacts and drops the noise', async () => {
+  const { manager, session, events } = cancelTerminalHarness();
+  await manager.handle({ type: 'mission.send', missionId: 'app-cancel', text: 'go' });
+  assert.equal(session.interrupts, 1);
+  // The interrupt's terminal result must NOT skip compaction (the bug).
+  assert.equal(session.compactions, 1);
+  // It resumes invisibly despite the terminal result that closed the cut-off turn.
+  await waitFor(() => session.prompts.includes(RESUME_NUDGE));
+  assert.deepEqual(session.prompts, ['go', RESUME_NUDGE]);
+  // The cancelled-tool errors produced by our own interrupt never reach the UI.
+  assert.equal(
+    events.some((e) => JSON.stringify(e).includes('cancelled by user')),
+    false,
+  );
+  assert.equal(
+    events.some((e) => e.type === 'mission.error'),
+    false,
+  );
+});
+
+// A model/task whose compacted summary is itself near the window: getContextStats
+// stays over the trigger after every compaction. Both the first turn and the
+// resumed turn stream and cross the trigger, so without the saturation latch this
+// loops forever (compact -> resume -> immediately compact again).
+class FakeSaturatedSession {
+  prompts: string[] = [];
+  interrupts = 0;
+  compactions = 0;
+  armed = true;
+  interrupted = false;
+  onTurnStart?: () => void;
+  private release?: () => void;
+
+  constructor(readonly sessionId: string) {}
+
+  async *stream(prompt: string): AsyncGenerator<Record<string, unknown>, void, undefined> {
+    this.prompts.push(prompt);
+    this.onTurnStart?.();
+    // Completed-step boundary: the first turn is interrupted here; the resumed
+    // turn reaches the same boundary but must NOT be interrupted (saturated).
+    yield { type: 'tool_result', toolName: 'Read', toolUseId: 's1', content: 'data' };
+    if (this.armed) {
+      // The first turn is the long one: block until the compaction interrupt
+      // lands, then abort the stream the way the SDK does.
+      this.armed = false;
+      if (!this.interrupted) {
+        await new Promise<void>((resolve) => {
+          this.release = resolve;
+        });
+      }
+      throw new Error('interrupted');
+    }
+    // The resumed turn must NOT be interrupted again (saturated); let it finish.
+    yield { type: 'result' };
+  }
+
+  async interrupt(): Promise<void> {
+    this.interrupts += 1;
+    this.interrupted = true;
+    this.release?.();
+  }
+
+  async updateSettings(): Promise<void> {}
+
+  onNotification(): () => void {
+    return () => {};
+  }
+
+  async getContextStats(): Promise<{
+    used: number;
+    remaining: number;
+    limit: number;
+    accuracy: 'exact';
+    updatedAt: string;
+  }> {
+    return {
+      used: 250_000,
+      remaining: 750_000,
+      limit: 1_000_000,
+      accuracy: 'exact',
+      updatedAt: new Date().toISOString(),
+    };
+  }
+
+  async compactSession(): Promise<{ newSessionId: string; removedCount: number }> {
+    this.compactions += 1;
+    return { newSessionId: this.sessionId, removedCount: 4 };
+  }
+
+  async close(): Promise<void> {}
+}
+
+function saturatedHarness() {
+  const events: ServerEvent[] = [];
+  const manager = new MissionManager((event) => events.push(event));
+  const session = new FakeSaturatedSession('droid-sat');
+  const mission = {
+    summary: testSummary('app-sat', session.sessionId),
+    session,
+    streaming: false,
+    pendingSends: [] as string[],
+    pendingPermissions: new Map(),
+    pendingQuestions: new Map(),
+    agents: new Map(),
+    knownSubagents: new Set<string>(),
+    completedSubagents: new Set<string>(),
+    terminalAgents: new Set<string>(),
+    linkedSubagents: new Set<string>(),
+    subagentToolUseIds: new Map(),
+    subagentSettings: new Map(),
+    pendingSubagents: [],
+    mcpServers: [],
+    effectiveCompactionTokenLimit: 200_000,
+    compacting: false,
+    autoContinueCount: undefined as number | undefined,
+    compactionSaturated: undefined as boolean | undefined,
+  };
+  const internals = manager as unknown as {
+    history: {
+      recordEvent: () => void;
+      syncSummaries: () => void;
+      summaryPatches: () => Map<string, unknown>;
+      hiddenDroidSessionIds: () => Set<string>;
+      recordSubagentLink: () => void;
+      subagentLinks: () => [];
+    };
+    missions: Map<string, typeof mission>;
+    contextSnapshots: Map<string, { used: number; limit?: number }>;
+  };
+  internals.history = {
+    recordEvent: () => {},
+    syncSummaries: () => {},
+    summaryPatches: () => new Map(),
+    hiddenDroidSessionIds: () => new Set(),
+    recordSubagentLink: () => {},
+    subagentLinks: () => [],
+  };
+  internals.contextSnapshots.set('app-sat', { used: 10_000, limit: 1_000_000 });
+  session.onTurnStart = () => {
+    internals.contextSnapshots.set('app-sat', { used: 250_000, limit: 1_000_000 });
+  };
+  internals.missions.set(mission.summary.id, mission);
+  return { manager, session, events, mission };
+}
+
+test('mid-task: a compaction that cannot get under the trigger latches and stops looping', async () => {
+  const { manager, session, mission, events } = saturatedHarness();
+  await manager.handle({ type: 'mission.send', missionId: 'app-sat', text: 'go' });
+  // It resumes once after the single compaction...
+  await waitFor(() => session.prompts.includes(RESUME_NUDGE));
+  // ...and the resumed turn runs to completion without re-compacting.
+  await waitFor(() => mission.streaming === false && session.prompts.length === 2);
+  assert.equal(session.compactions, 1);
+  assert.equal(session.interrupts, 1);
+  assert.deepEqual(session.prompts, ['go', RESUME_NUDGE]);
+  // The latch is set and the user is told why automatic compaction paused.
+  assert.equal(mission.compactionSaturated, true);
+  assert.equal(
+    events.some((e) => JSON.stringify(e).includes('could not be reduced further')),
+    true,
+  );
 });
 
 function workerAutoCompactHarness(workerUsed: number, workerLimit?: number, swapTo?: string) {
@@ -1066,6 +1837,13 @@ function workerAutoCompactHarness(workerUsed: number, workerLimit?: number, swap
     compacting: false,
     effectiveCompactionTokenLimit: workerLimit,
   });
+  // The worker trigger reads contextSnapshots (kept fresh by the poller / a
+  // post-turn refresh). Seed it so the idle pre-turn check sees the usage the
+  // fake worker session reports via getContextStats.
+  (manager as unknown as { contextSnapshots: Map<string, { used: number }> }).contextSnapshots.set(
+    'worker-compact',
+    { used: workerUsed },
+  );
   return { manager, events, mission, workerSession, swappedSession, orchestratorSession };
 }
 
@@ -1435,6 +2213,7 @@ function orchestratorSwapHarness(used: number, limit: number, swapTo: string) {
     };
     missions: Map<string, typeof mission>;
     runtime: { loadSession: (id: string, handlers: unknown) => Promise<FakeCompactionSession> };
+    contextSnapshots: Map<string, { used: number; limit?: number }>;
   };
   internals.history = {
     recordEvent: () => {},
@@ -1444,6 +2223,10 @@ function orchestratorSwapHarness(used: number, limit: number, swapTo: string) {
     recordSubagentLink: () => {},
     subagentLinks: () => [],
   };
+  // The idle pre-turn trigger reads the getContextStats snapshot; seed it to the
+  // usage the fake reports so the over-trigger send compacts before driving.
+  mission.summary.contextTokens = used;
+  internals.contextSnapshots.set('app-swap', { used });
   internals.missions.set(mission.summary.id, mission);
   return { manager, session, events, mission, internals };
 }
@@ -1480,6 +2263,24 @@ test('orchestrator compaction swap recovers when the first reload fails but a re
     events.some((e) => e.type === 'mission.error'),
     false,
   );
+});
+
+test('compaction swap re-applies the session model so it does not revert to the CLI default', async () => {
+  const { manager, mission, internals } = orchestratorSwapHarness(250_000, 200_000, 'droid-new');
+  // The user picked a specific model + reasoning for this session.
+  mission.summary.modelId = 'custom:glm-5.2';
+  mission.summary.reasoningEffort = 'high';
+  const swapped = new FakeCompactionSession('droid-new', 10_000);
+  internals.runtime = { loadSession: async () => swapped };
+  await manager.handle({ type: 'mission.send', missionId: 'app-swap', text: 'go' });
+  // The compacted session adopted the new backing id...
+  assert.equal(mission.session.sessionId, 'droid-new');
+  // ...and the selected model was re-applied to it (loadSession cannot carry the
+  // model, so without this it would silently revert to the daemon default).
+  const applied = swapped.settingsUpdates.find((u) => 'modelId' in u);
+  assert.ok(applied, 'expected updateSettings to re-apply the model after the swap');
+  assert.equal(applied?.modelId, 'custom:glm-5.2');
+  assert.equal(applied?.reasoningEffort, 'high');
 });
 
 test('orchestrator compaction swap that never reloads drops the mission and re-delivers queued sends through resume', async () => {
@@ -1538,9 +2339,13 @@ test('orchestrator compaction swap that never reloads drops the mission and re-d
   // ...the queued send is NOT discarded: it re-resumes and drives the new session...
   await waitFor(() => resumed.prompts.includes('queued-after-recovery'));
   assert.equal(resumeCalls >= 1, true);
-  // ...and it never streamed into the dead old session.
+  // ...and neither prompt streamed into the dead old session. Pre-turn compaction
+  // parks the triggering prompt, so a stale swap re-delivers both the queued send
+  // and the triggering prompt to the resumed (live) session, never the dead one.
   assert.equal(session.prompts.includes('queued-after-recovery'), false);
-  assert.equal(session.prompts.includes('go'), true);
+  assert.equal(session.prompts.includes('go'), false);
+  await waitFor(() => resumed.prompts.includes('go'));
+  assert.equal(resumed.prompts.includes('go'), true);
 });
 
 test('manual compaction swap that never reloads re-delivers sends queued during compaction', async () => {
