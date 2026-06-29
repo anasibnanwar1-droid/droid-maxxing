@@ -116,6 +116,10 @@ export interface LiveAgent {
   // at a level it cannot reduce; cleared by real user input or when usage later
   // falls below the trigger.
   compactionSaturated?: boolean;
+  // Set transiently when a compaction swap went stale (the daemon swapped to a
+  // new backing id but adoption failed) so the caller can re-deliver a queued
+  // pre-turn prompt against the persisted new id instead of dropping it.
+  swappedToSessionId?: string;
 }
 
 export interface Mission {
@@ -2139,7 +2143,7 @@ export class MissionManager {
     }
   }
 
-  private async sendAgent(missionId: string, agentSessionId: string, text: string): Promise<void> {
+  async sendAgent(missionId: string, agentSessionId: string, text: string): Promise<void> {
     const mission = this.findMission(missionId);
     if (!mission) return;
     const appSessionId = mission.summary.id;

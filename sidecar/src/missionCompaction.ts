@@ -331,14 +331,25 @@ export class MissionCompaction {
     agent.pendingSends.push(text);
     const outcome = await this.compactAgent(agent, 'auto');
     if (outcome === 'stale') {
+      const missionId = agent.missionId;
+      // Capture the queued prompt(s) before teardown and the persisted new id so
+      // the steering prompt is re-delivered against the live (compacted) session
+      // instead of being silently dropped with the dead-id worker.
+      const swappedTo = agent.swappedToSessionId;
+      const queued = agent.pendingSends.splice(0);
       this.host.emitError({
         sessionId: agent.session.sessionId,
-        missionId: agent.missionId,
-        message:
-          'Subagent compaction swapped sessions but could not be adopted; closing the subagent. Re-open it to continue.',
+        missionId,
+        message: swappedTo
+          ? 'Subagent compaction swapped sessions but could not be adopted in place; re-delivering your message to the compacted subagent.'
+          : 'Subagent compaction swapped sessions but could not be adopted; closing the subagent. Re-open it to continue.',
         recoverable: true,
       });
-      await this.host.closeAgent(agent.missionId, agent.session.sessionId);
+      await this.host.closeAgent(missionId, agent.session.sessionId);
+      if (swappedTo) {
+        for (const queuedText of queued)
+          await this.host.sendAgent(missionId, swappedTo, queuedText);
+      }
       return true;
     }
     const next = agent.pendingSends.shift();
@@ -349,6 +360,10 @@ export class MissionCompaction {
   async compactAgent(agent: LiveAgent, compactType: CompactType): Promise<CompactionOutcome> {
     const agentSessionId = agent.session.sessionId;
     agent.compacting = true;
+    // Reset the transient swap target so a caller reading it after a 'stale'
+    // outcome only ever sees this run's new id (set by recoverStaleAgentSwap),
+    // never a leftover from an earlier compaction.
+    agent.swappedToSessionId = undefined;
     // Remembers the daemon's new backing id (set by the reload hook before it
     // adopts the swap) so a reload failure that returns 'stale' can still
     // recover the new id instead of losing it, mirroring the orchestrator's
@@ -451,6 +466,9 @@ export class MissionCompaction {
     const mission = this.host.findMission(agent.missionId);
     if (mission) this.persistWorkerSwap(mission, oldSessionId, newSessionId);
     this.emitWorkerRekey(agent.missionId, oldSessionId, newSessionId);
+    // Surface the persisted new id so a pre-turn caller can re-deliver a queued
+    // prompt against it after tearing down the dead-id worker.
+    agent.swappedToSessionId = newSessionId;
     return 'stale';
   }
 

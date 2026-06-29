@@ -656,6 +656,72 @@ test('refreshContext clears a saturated worker latch once its context fits again
   assert.equal(agent.compactionSaturated, false);
 });
 
+test('a stale worker pre-turn compaction re-delivers the queued prompt to the swapped session', async () => {
+  const events: ServerEvent[] = [];
+  const manager = new MissionManager((event) => events.push(event));
+  const oldSession = new FakeCompactionSession('worker-old', 900_000, 'worker-new');
+  const agent = {
+    session: oldSession,
+    missionId: 'app-redel',
+    role: 'worker' as const,
+    streaming: false,
+    pendingSends: [] as string[],
+    lastUsedAt: Date.now(),
+    unsubscribe: () => {},
+    effectiveCompactionTokenLimit: 200_000,
+  };
+  const mission = {
+    summary: testSummary('app-redel', 'droid-redel'),
+    agents: new Map<string, typeof agent>([['worker-old', agent]]),
+    knownSubagents: new Set(['worker-old']),
+    completedSubagents: new Set<string>(),
+    terminalAgents: new Set<string>(),
+    linkedSubagents: new Set(['worker-old']),
+    subagentToolUseIds: new Map<string, string>([['tool-redel', 'worker-old']]),
+    subagentSettings: new Map<string, { modelId?: string }>(),
+  };
+  const redelivered: Array<{ missionId: string; sessionId: string; text: string }> = [];
+  const internals = manager as unknown as {
+    runtime: { loadSession: () => Promise<never> };
+    history: {
+      recordEvent: () => void;
+      syncSummaries: () => void;
+      subagentLinks: () => WorkerHistoryLink[];
+      recordSubagentLink: () => void;
+    };
+    contextSnapshots: Map<string, { used: number; limit: number }>;
+    missions: Map<string, typeof mission>;
+    sendAgent: (m: string, s: string, t: string) => Promise<void>;
+    compaction: { compactAgentBeforeTurnIfDue: (a: typeof agent, t: string) => Promise<boolean> };
+  };
+  // Adoption fails on every load, so the swap goes stale (daemon swapped to
+  // worker-new but it could not be adopted in place).
+  internals.runtime = {
+    loadSession: async () => {
+      throw new Error('adoption failed');
+    },
+  };
+  internals.history = {
+    recordEvent: () => {},
+    syncSummaries: () => {},
+    subagentLinks: () => [],
+    recordSubagentLink: () => {},
+  };
+  internals.contextSnapshots.set('worker-old', { used: 900_000, limit: 1_000_000 });
+  internals.missions.set('app-redel', mission);
+  internals.sendAgent = async (m, s, t) => {
+    redelivered.push({ missionId: m, sessionId: s, text: t });
+  };
+
+  const handled = await internals.compaction.compactAgentBeforeTurnIfDue(agent, 'steer me');
+  assert.equal(handled, true);
+  // The dead-id worker is torn down, but the steering prompt is re-delivered to
+  // the persisted (compacted) session id rather than silently dropped.
+  assert.deepEqual(redelivered, [
+    { missionId: 'app-redel', sessionId: 'worker-new', text: 'steer me' },
+  ]);
+});
+
 test('withLiveWorkerStatus leaves links untouched for historical (non-live) missions', () => {
   const manager = new MissionManager(() => {});
   const internals = manager as unknown as {
