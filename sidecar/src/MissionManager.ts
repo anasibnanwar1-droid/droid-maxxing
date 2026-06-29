@@ -2103,6 +2103,10 @@ export class MissionManager {
         ),
       };
       agent.unsubscribe = session.onNotification((note: Record<string, unknown>) => {
+        // Drop tail notifications while a compaction interrupt is armed: a
+        // terminal event delivered here would mark the worker terminal and make
+        // the pending compaction skip (mirrors the driveAgent stream-loop guard).
+        if (agent.interruptingForCompaction) return;
         for (const n of normalizeNotification(appSessionId, agentSessionId, role, note))
           this.applyNormalizedForAgent(appSessionId, agentSessionId, n);
       });

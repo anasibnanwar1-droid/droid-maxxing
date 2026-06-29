@@ -472,6 +472,9 @@ export class MissionCompaction {
     agent.unsubscribe?.();
     agent.session = newSession;
     agent.unsubscribe = newSession.onNotification((note: Record<string, unknown>) => {
+      // Same compaction-armed drop-guard as the openAgent subscription: a
+      // terminal tail event here must not mark the worker terminal mid-swap.
+      if (agent.interruptingForCompaction) return;
       for (const n of normalizeNotification(agent.missionId, newSessionId, agent.role, note))
         this.host.applyNormalizedForAgent(agent.missionId, newSessionId, n);
     });

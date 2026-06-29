@@ -71,12 +71,16 @@ class FakeSession {
 class FakeAgentSession {
   closed = false;
   notify?: (note: Record<string, unknown>) => void;
+  settingsUpdates: Array<Record<string, unknown>> = [];
   constructor(readonly sessionId: string) {}
   onNotification(cb: (note: Record<string, unknown>) => void): () => void {
     this.notify = cb;
     return () => {
       this.notify = undefined;
     };
+  }
+  async updateSettings(params: Record<string, unknown>): Promise<void> {
+    this.settingsUpdates.push(params);
   }
   async close(): Promise<void> {
     this.closed = true;
@@ -567,6 +571,60 @@ test('worker compaction re-applies the worker model so it does not revert to the
   assert.ok(applied, 'expected updateSettings to re-apply the worker model after the swap');
   assert.equal(applied?.modelId, 'custom:glm-5.2');
   assert.equal(applied?.reasoningEffort, 'high');
+});
+
+test('worker notification subscription drops events while a compaction interrupt is armed', async () => {
+  const manager = new MissionManager(() => {});
+  const oldSession = new FakeAgentSession('worker-old');
+  const newSession = new FakeAgentSession('worker-new');
+  const agent = {
+    session: oldSession,
+    missionId: 'app-guard',
+    role: 'worker' as const,
+    streaming: false,
+    pendingSends: [] as string[],
+    lastUsedAt: Date.now(),
+    interruptingForCompaction: false,
+    unsubscribe: () => {},
+  };
+  const mission = {
+    summary: testSummary('app-guard', 'droid-guard'),
+    agents: new Map<string, typeof agent>([['worker-old', agent]]),
+    knownSubagents: new Set(['worker-old']),
+    completedSubagents: new Set<string>(),
+    terminalAgents: new Set<string>(),
+    linkedSubagents: new Set<string>(),
+    subagentToolUseIds: new Map<string, string>(),
+    subagentSettings: new Map<string, { modelId?: string }>(),
+  };
+  let applied = 0;
+  const internals = manager as unknown as {
+    runtime: { loadSession: (id: string, h: unknown) => Promise<FakeAgentSession> };
+    history: { subagentLinks: () => WorkerHistoryLink[]; recordSubagentLink: () => void };
+    contextSnapshots: Map<string, unknown>;
+    missions: Map<string, typeof mission>;
+    applyNormalizedForAgent: (m: string, s: string, n: unknown) => void;
+    compaction: { rekeyAgentSession: (a: typeof agent, id: string) => Promise<void> };
+  };
+  internals.runtime = { loadSession: async () => newSession };
+  internals.history = { subagentLinks: () => [], recordSubagentLink: () => {} };
+  internals.missions.set('app-guard', mission);
+  internals.applyNormalizedForAgent = () => {
+    applied += 1;
+  };
+
+  await internals.compaction.rekeyAgentSession(agent, 'worker-new');
+  assert.ok(newSession.notify, 'expected the worker notification subscription to be registered');
+
+  const note = { type: 'assistant_text_delta', messageId: 'm1', blockIndex: 0, textDelta: 'hi' };
+  // Disarmed: the tail event flows through to the shared agent entry.
+  newSession.notify?.(note);
+  assert.equal(applied, 1);
+  // Armed for compaction: the event is dropped before it can mark the worker
+  // terminal and make the pending compaction skip.
+  agent.interruptingForCompaction = true;
+  newSession.notify?.(note);
+  assert.equal(applied, 1);
 });
 
 test('withLiveWorkerStatus leaves links untouched for historical (non-live) missions', () => {
