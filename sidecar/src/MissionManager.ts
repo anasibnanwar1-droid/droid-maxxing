@@ -972,7 +972,7 @@ export class MissionManager {
         session,
         mcp.servers,
         // Fall back to the model's context window when no explicit limit was
-        // persisted, so a resumed session also auto-compacts at ~90%.
+        // persisted, so a resumed session also auto-compacts at ~80%.
         resumeCompactionLimit ?? this.maxContextTokensForSummary(summary),
         mcp.configs,
       );
@@ -1312,7 +1312,7 @@ export class MissionManager {
         session,
         mcp.servers,
         // Trigger basis: an explicit per-session/default compaction limit if set,
-        // otherwise the model's context window (compact at ~90% of the window).
+        // otherwise the model's context window (compact at ~80% of the window).
         compactionSettings.compactionTokenLimit ??
           this.maxContextTokensForModel(orchestratorModelId),
         mcp.configs,
@@ -1539,10 +1539,22 @@ export class MissionManager {
           live.autoContinueCount = 0;
           live.compactionSaturated = false;
           void this.drive(appSessionId, next);
-        } else if (compacted === 'completed' && canAutoContinue(live.autoContinueCount)) {
-          // We compacted mid-task; resume invisibly so the long-horizon task
-          // continues across the context boundary (the nudge is suppressed from
-          // the transcript, leaving only the compaction divider visible).
+        } else if (
+          compacted !== undefined &&
+          compacted !== 'stale' &&
+          canAutoContinue(live.autoContinueCount)
+        ) {
+          // We interrupted this turn at a safe boundary to compact, so its
+          // in-flight work was aborted. Resume invisibly whenever the session is
+          // still usable - not only on 'completed' but also 'noop' (nothing to
+          // compact) and 'failed' (transient compaction error) - otherwise the
+          // interrupted task would stall until the user manually nudged it. A
+          // 'noop' latches the saturation guard first so the resumed turn runs
+          // to completion instead of re-interrupting into another no-op loop
+          // ('stale' is handled above, where the live mission was dropped). The
+          // nudge is suppressed from the transcript, leaving only the compaction
+          // divider visible.
+          if (compacted === 'noop') live.compactionSaturated = true;
           live.autoContinueCount = (live.autoContinueCount ?? 0) + 1;
           void this.drive(appSessionId, RESUME_NUDGE);
         }
@@ -2266,9 +2278,15 @@ export class MissionManager {
             agent.autoContinueCount = 0;
             agent.compactionSaturated = false;
             void this.driveAgent(agent, next);
-          } else if (compacted === 'completed' && canAutoContinue(agent.autoContinueCount)) {
-            // We compacted this worker mid-task; resume it invisibly so its
-            // long-horizon work continues across the context boundary.
+          } else if (compacted !== undefined && canAutoContinue(agent.autoContinueCount)) {
+            // We interrupted this worker turn to compact, so its in-flight work
+            // was aborted. Resume invisibly whenever the session is still usable
+            // ('stale' is handled above) - not only on 'completed' but also
+            // 'noop' (nothing to compact) and 'failed' (transient error) -
+            // otherwise the interrupted work would stall until the next send. A
+            // 'noop' latches saturation first so the resume runs to completion
+            // rather than re-interrupting into another no-op loop.
+            if (compacted === 'noop') agent.compactionSaturated = true;
             agent.autoContinueCount = (agent.autoContinueCount ?? 0) + 1;
             void this.driveAgent(agent, RESUME_NUDGE);
           } else {

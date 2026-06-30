@@ -208,7 +208,7 @@ test('uses Factory compaction defaults when command omits them', () => {
 
 test('effectiveCompactionLimit falls back to the model window when no explicit limit is set', () => {
   // No explicit limit -> the auto-compaction trigger basis is the model window
-  // (compact at ~90% of it) rather than undefined (which disables compaction).
+  // (compact at ~80% of it) rather than undefined (which disables compaction).
   assert.equal(effectiveCompactionLimit('model-a', {}, 200_000), 200_000);
   // An explicit limit still wins and is clamped to the window.
   assert.equal(
@@ -1431,6 +1431,9 @@ class FakeMidTurnSession {
   prompts: string[] = [];
   interrupts = 0;
   compactions = 0;
+  // Controls what the daemon reports for the mid-task compaction so the resume
+  // path can be exercised for each non-stale outcome.
+  compactBehavior: 'completed' | 'noop' | 'failed' = 'completed';
   // Only the first real turn is the long one that crosses the trigger and waits
   // to be interrupted; resumed/steered turns complete immediately.
   armed = true;
@@ -1486,8 +1489,13 @@ class FakeMidTurnSession {
     };
   }
 
-  async compactSession(): Promise<{ newSessionId: string; removedCount: number }> {
+  async compactSession(): Promise<{ newSessionId: string; removedCount: number } | null> {
     this.compactions += 1;
+    // 'failed' models a transient compaction error; 'noop' models the daemon
+    // finding nothing to compact. In both the session stays usable, so the
+    // interrupted turn must still resume rather than silently stall.
+    if (this.compactBehavior === 'failed') throw new Error('compaction failed transiently');
+    if (this.compactBehavior === 'noop') return null;
     return { newSessionId: this.sessionId, removedCount: 4 };
   }
 
@@ -1500,6 +1508,7 @@ function midTurnHarness() {
   const session = new FakeMidTurnSession('droid-mid');
   const mission = {
     summary: testSummary('app-mid', session.sessionId),
+    compactionSaturated: false as boolean | undefined,
     session,
     streaming: false,
     pendingSends: [] as string[],
@@ -1564,6 +1573,110 @@ test('mid-task: crossing the trigger interrupts, compacts, then resumes invisibl
     events.some((e) => e.type === 'mission.error'),
     false,
   );
+});
+
+test('mid-task: a no-op compaction still resumes the interrupted turn and latches saturation', async () => {
+  const { manager, session, mission } = midTurnHarness();
+  session.compactBehavior = 'noop';
+  await manager.handle({ type: 'mission.send', missionId: 'app-mid', text: 'go' });
+  // We interrupted the in-flight turn and asked the daemon to compact; it found
+  // nothing to compact, but the aborted turn must not be left to stall.
+  assert.equal(session.interrupts, 1);
+  assert.equal(session.compactions, 1);
+  await waitFor(() => session.prompts.includes(RESUME_NUDGE));
+  assert.deepEqual(session.prompts, ['go', RESUME_NUDGE]);
+  assert.equal(mission.autoContinueCount, 1);
+  // A no-op latches the saturation guard so the resume runs to completion rather
+  // than re-interrupting into another no-op compaction.
+  assert.equal(mission.compactionSaturated, true);
+});
+
+test('mid-task: a transient compaction failure still resumes the interrupted turn', async () => {
+  const { manager, session, mission } = midTurnHarness();
+  session.compactBehavior = 'failed';
+  await manager.handle({ type: 'mission.send', missionId: 'app-mid', text: 'go' });
+  assert.equal(session.interrupts, 1);
+  assert.equal(session.compactions, 1);
+  // The session is still usable after a transient failure, so the aborted turn
+  // resumes instead of stalling.
+  await waitFor(() => session.prompts.includes(RESUME_NUDGE));
+  assert.deepEqual(session.prompts, ['go', RESUME_NUDGE]);
+  assert.equal(mission.autoContinueCount, 1);
+  // A transient failure does NOT latch saturation; the next over-trigger turn
+  // may try to compact again.
+  assert.notEqual(mission.compactionSaturated, true);
+});
+
+// Drives a worker session directly through the mid-task interrupt path (not the
+// pre-turn send path), reusing the armed/interrupt FakeMidTurnSession so the
+// worker counterpart of the orchestrator resume gate can be exercised.
+function workerMidTurnHarness() {
+  const events: ServerEvent[] = [];
+  const manager = new MissionManager((event) => events.push(event));
+  const session = new FakeMidTurnSession('worker-mid');
+  const agent = {
+    session,
+    missionId: 'app-wmid',
+    role: 'worker' as const,
+    streaming: false,
+    pendingSends: [] as string[],
+    lastUsedAt: Date.now(),
+    compacting: false,
+    effectiveCompactionTokenLimit: 200_000,
+    autoContinueCount: undefined as number | undefined,
+    compactionSaturated: false as boolean | undefined,
+  };
+  const mission = {
+    summary: testSummary('app-wmid', 'droid-wmid'),
+    agents: new Map<string, typeof agent>([['worker-mid', agent]]),
+    terminalAgents: new Set<string>(),
+    knownSubagents: new Set<string>(['worker-mid']),
+    completedSubagents: new Set<string>(),
+    linkedSubagents: new Set<string>(['worker-mid']),
+    subagentToolUseIds: new Map<string, string>(),
+    subagentSettings: new Map(),
+  };
+  const internals = manager as unknown as {
+    history: {
+      recordEvent: () => void;
+      syncSummaries: () => void;
+      summaryPatches: () => Map<string, unknown>;
+      hiddenDroidSessionIds: () => Set<string>;
+      recordSubagentLink: () => void;
+      subagentLinks: () => [];
+    };
+    missions: Map<string, typeof mission>;
+    contextSnapshots: Map<string, { used: number; limit?: number }>;
+    driveAgent: (a: typeof agent, t: string) => Promise<void>;
+  };
+  internals.history = {
+    recordEvent: () => {},
+    syncSummaries: () => {},
+    summaryPatches: () => new Map(),
+    hiddenDroidSessionIds: () => new Set(),
+    recordSubagentLink: () => {},
+    subagentLinks: () => [],
+  };
+  internals.contextSnapshots.set('worker-mid', { used: 10_000, limit: 1_000_000 });
+  session.onTurnStart = () => {
+    internals.contextSnapshots.set('worker-mid', { used: 250_000, limit: 1_000_000 });
+  };
+  internals.missions.set('app-wmid', mission);
+  return { session, agent, events, internals };
+}
+
+test('mid-task worker: a no-op compaction still resumes the interrupted turn and latches saturation', async () => {
+  const { session, agent, internals } = workerMidTurnHarness();
+  session.compactBehavior = 'noop';
+  await internals.driveAgent(agent, 'go');
+  // The worker turn was interrupted and compaction found nothing to compact, but
+  // the aborted work must still resume rather than leaving the worker stalled.
+  assert.equal(session.interrupts, 1);
+  assert.equal(session.compactions, 1);
+  await waitFor(() => session.prompts.includes(RESUME_NUDGE));
+  assert.deepEqual(session.prompts, ['go', RESUME_NUDGE]);
+  assert.equal(agent.autoContinueCount, 1);
+  assert.equal(agent.compactionSaturated, true);
 });
 
 // A turn that crosses the trigger WHILE a tool is in flight. The interrupt must

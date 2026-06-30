@@ -78,7 +78,7 @@ export function createCompactionSettingsForModel(
 // limit the ContextMeter shows (per-model override -> global default, clamped
 // to the model window). When no explicit compaction limit is configured the
 // trigger falls back to the model's context window, so auto-compaction fires at
-// ~90% of the window by default instead of being disabled (which would let the
+// ~80% of the window by default instead of being disabled (which would let the
 // session grow until it dies at the hard limit).
 export function effectiveCompactionLimit(
   modelId: string | undefined,
