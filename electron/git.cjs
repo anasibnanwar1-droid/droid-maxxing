@@ -17,6 +17,12 @@ const COMMIT_TIMEOUT = 120000;
 const MAX_BUFFER = 16 * 1024 * 1024;
 const UNTRACKED_FILE_CAP = 1000;
 const UNTRACKED_BYTE_CAP = 1024 * 1024;
+// The well-known SHA of git's empty tree, used as the left side when diffing an
+// unborn branch (no HEAD) so first-turn work still shows up.
+const EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
+// Upper bound on repo-keyed caches (turn baselines, untracked scans) so a
+// long-lived session that touches many repositories can't grow them unbounded.
+const MAX_REPO_CACHE = 64;
 
 function expandHome(value) {
   const str = String(value || '');
@@ -43,6 +49,16 @@ function runSoft(cwd, args, { timeout = DEFAULT_TIMEOUT } = {}) {
       else resolve(String(stdout));
     });
   });
+}
+
+// Set a value in a repo-keyed cache, evicting the oldest entry once the cap is
+// hit. Map preserves insertion order, so the first key is the oldest.
+function setRepoCache(map, key, value) {
+  if (!map.has(key) && map.size >= MAX_REPO_CACHE) {
+    const oldest = map.keys().next().value;
+    if (oldest !== undefined) map.delete(oldest);
+  }
+  map.set(key, value);
 }
 
 async function tryRun(cwd, args, opts) {
@@ -348,28 +364,66 @@ async function worktrees(dir) {
   return parseWorktrees(out, root);
 }
 
-async function untrackedAdditions(root) {
+// Untracked-file content cache keyed by repo root, reused across the 6s poll so
+// unchanged files are not re-read every cycle. Each file is keyed by a
+// size+mtime signature; any edit invalidates it. The per-root map is rebuilt
+// from each scan, so vanished files drop out and growth stays bounded.
+const untrackedScanCache = new Map();
+
+// Scan untracked (but not ignored) files once, returning a line-addition count,
+// binary flag, and size+mtime signature per file. Per-file results are memoized
+// by signature so file contents are not re-read when nothing changed.
+async function scanUntracked(root) {
   const listing = await tryRun(root, ['ls-files', '--others', '--exclude-standard']);
-  const files = String(listing || '')
+  const names = String(listing || '')
     .split('\n')
     .filter(Boolean)
     .slice(0, UNTRACKED_FILE_CAP);
-  let additions = 0;
-  for (const rel of files) {
+  const prior = untrackedScanCache.get(root) || new Map();
+  const next = new Map();
+  const out = [];
+  for (const rel of names) {
+    let entry = { path: rel, additions: 0, binary: false, sig: null };
     try {
       const full = path.join(root, rel);
       const stat = await fsp.stat(full);
-      if (!stat.isFile() || stat.size > UNTRACKED_BYTE_CAP) continue;
-      const buf = await fsp.readFile(full);
-      if (buf.includes(0)) continue; // binary
-      const text = buf.toString('utf8');
-      if (text.length === 0) continue;
-      additions += text.endsWith('\n') ? text.split('\n').length - 1 : text.split('\n').length;
+      const sig = `${stat.size}:${stat.mtimeMs}`;
+      const cached = prior.get(rel);
+      if (cached && cached.sig === sig) {
+        entry = { path: rel, additions: cached.additions, binary: cached.binary, sig };
+      } else {
+        let additions = 0;
+        let binary = false;
+        if (stat.isFile() && stat.size <= UNTRACKED_BYTE_CAP) {
+          const buf = await fsp.readFile(full);
+          if (buf.includes(0)) binary = true;
+          else {
+            const text = buf.toString('utf8');
+            additions =
+              text.length === 0 ? 0 : text.split('\n').length - (text.endsWith('\n') ? 1 : 0);
+          }
+        } else if (stat.size > UNTRACKED_BYTE_CAP) {
+          binary = true;
+        }
+        entry = { path: rel, additions, binary, sig };
+      }
     } catch {
-      // ignore unreadable files
+      // ignore unreadable entries
+    }
+    out.push(entry);
+    if (entry.sig) {
+      next.set(rel, { additions: entry.additions, binary: entry.binary, sig: entry.sig });
     }
   }
-  return { additions, files: files.length };
+  setRepoCache(untrackedScanCache, root, next);
+  return out;
+}
+
+async function untrackedAdditions(root) {
+  const entries = await scanUntracked(root);
+  let additions = 0;
+  for (const e of entries) if (!e.binary) additions += e.additions;
+  return { additions, files: entries.length };
 }
 
 // mode: 'worktree' (branch + uncommitted vs base), 'branch' (committed vs base),
@@ -429,9 +483,10 @@ function validBranchName(name) {
   if (name === '@' || name.endsWith('.') || name.includes('..') || name.includes('@{')) {
     return false;
   }
-  // Forbidden characters per `git check-ref-format`: whitespace and ~ ^ : ? * [ \.
-  // Forward slashes ARE allowed so hierarchical names like "feature/foo" work.
-  if (/[\s~^:?*[\\]/.test(name)) return false;
+  // Forbidden characters per `git check-ref-format`: whitespace, the C0 control
+  // characters and DEL (\x00-\x1f, \x7f), and ~ ^ : ? * [ \. Forward slashes ARE
+  // allowed so hierarchical names like "feature/foo" work.
+  if (/[\s~^:?*[\\\x00-\x1f\x7f]/.test(name)) return false;
   // Each slash-separated component must be non-empty (no leading/trailing slash
   // or "//"), must not begin with ".", and must not end with ".lock".
   return name
@@ -627,7 +682,13 @@ async function removeWorktree(dir, { path: target, force = false } = {}) {
   const root = await repoRootOf(dir);
   if (!root) return { ok: false, reason: 'not_a_repo' };
   try {
-    await run(root, ['worktree', 'remove', ...(force ? ['--force'] : []), expandHome(target)]);
+    await run(root, [
+      'worktree',
+      'remove',
+      ...(force ? ['--force'] : []),
+      '--',
+      expandHome(target),
+    ]);
     return { ok: true };
   } catch (err) {
     return { ok: false, reason: 'git_error', message: err.message };
@@ -723,7 +784,9 @@ async function fetchRemotes(dir) {
 
 // ---- Review tab: per-file diffs across review scopes ----------------------
 
-const EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
+// Mirror of DIFF_SCOPES in src/types/vcs.ts. The Electron process can't import
+// that frontend module, so this list is kept in sync by hand; vcs.ts is the
+// canonical source the UI and persisted state validate against.
 const REVIEW_SCOPES = [
   'unstaged',
   'staged',
@@ -833,36 +896,7 @@ function parseDiffFileList(numstatOut, nameStatusOut) {
 }
 
 async function untrackedFileList(root) {
-  const listing = await tryRun(root, ['ls-files', '--others', '--exclude-standard']);
-  const names = String(listing || '')
-    .split('\n')
-    .filter(Boolean)
-    .slice(0, UNTRACKED_FILE_CAP);
-  const out = [];
-  for (const rel of names) {
-    let additions = 0;
-    let binary = false;
-    let sig = null;
-    try {
-      const stat = await fsp.stat(path.join(root, rel));
-      sig = `${stat.size}:${stat.mtimeMs}`;
-      if (stat.isFile() && stat.size <= UNTRACKED_BYTE_CAP) {
-        const buf = await fsp.readFile(path.join(root, rel));
-        if (buf.includes(0)) binary = true;
-        else {
-          const text = buf.toString('utf8');
-          additions =
-            text.length === 0 ? 0 : text.split('\n').length - (text.endsWith('\n') ? 1 : 0);
-        }
-      } else if (stat.size > UNTRACKED_BYTE_CAP) {
-        binary = true;
-      }
-    } catch {
-      // ignore unreadable entries
-    }
-    out.push({ path: rel, additions, binary, sig });
-  }
-  return out;
+  return scanUntracked(root);
 }
 
 // Resolve a review scope to the `git diff` arguments, the base ref it compares
@@ -1016,7 +1050,7 @@ async function markTurnStart(dir) {
     .filter(Boolean);
   const priorUntracked = new Map();
   for (const rel of priorNames) priorUntracked.set(rel, await fileSignature(root, rel));
-  if (baseline) turnBaselines.set(root, { baseline, priorUntracked });
+  if (baseline) setRepoCache(turnBaselines, root, { baseline, priorUntracked });
   return { ok: !!baseline, baseline: baseline || null };
 }
 

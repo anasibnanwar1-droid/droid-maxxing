@@ -28,7 +28,7 @@ import type {
 import { addWorkspaceCwd } from '../lib/workspaces';
 import { sanitizeForLog } from '../lib/sensitiveLogRedaction';
 import { composePrompt } from '../lib/composePrompt';
-import type { DiffScope } from '../types/vcs';
+import { DIFF_SCOPES, type DiffScope } from '../types/vcs';
 
 export type AgentKind = 'orchestrator' | 'worker' | 'validator';
 export type LiveEnterBehavior = 'queue' | 'interrupt';
@@ -582,16 +582,6 @@ function saveLiveEnterBehavior(value: LiveEnterBehavior): LiveEnterBehavior {
   return behavior;
 }
 
-const REVIEW_SCOPES: DiffScope[] = [
-  'unstaged',
-  'staged',
-  'uncommitted',
-  'commit',
-  'branch',
-  'worktree',
-  'last_turn',
-];
-
 function loadDiffView(): DiffViewMode {
   try {
     return getLocalStorage()?.getItem(DIFF_VIEW_STORAGE_KEY) === 'split' ? 'split' : 'unified';
@@ -613,14 +603,14 @@ function saveDiffView(value: DiffViewMode): DiffViewMode {
 function loadReviewScope(): DiffScope {
   try {
     const raw = getLocalStorage()?.getItem(REVIEW_SCOPE_STORAGE_KEY) as DiffScope | null;
-    return raw && REVIEW_SCOPES.includes(raw) ? raw : 'unstaged';
+    return raw && DIFF_SCOPES.includes(raw) ? raw : 'unstaged';
   } catch {
     return 'unstaged';
   }
 }
 
 function saveReviewScope(value: DiffScope): DiffScope {
-  const scope = REVIEW_SCOPES.includes(value) ? value : 'unstaged';
+  const scope = DIFF_SCOPES.includes(value) ? value : 'unstaged';
   try {
     getLocalStorage()?.setItem(REVIEW_SCOPE_STORAGE_KEY, scope);
   } catch {
