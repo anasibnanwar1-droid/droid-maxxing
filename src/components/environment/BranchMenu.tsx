@@ -39,11 +39,18 @@ export function BranchMenu({
     };
   }, [branches, query]);
 
+  const close = () => {
+    setOpen(false);
+    setDirtyRef(null);
+    setQuery('');
+    setCreating(false);
+    setNewName('');
+  };
+
   const finish = (res: GitActionResult, label: string) => {
     if (res.ok) {
       toast.success(`Switched to ${label}`);
-      setOpen(false);
-      setDirtyRef(null);
+      close();
       onChanged();
     } else if (res.reason === 'dirty') {
       setDirtyRef(label);
@@ -79,9 +86,7 @@ export function BranchMenu({
       const res = await createGitBranch(cwd, { name, base: current ?? undefined, checkout: true });
       if (res.ok) {
         toast.success(`Created and checked out ${name}`);
-        setCreating(false);
-        setNewName('');
-        setOpen(false);
+        close();
         onChanged();
       } else {
         toast.error(res.message || 'Could not create branch');
@@ -95,7 +100,7 @@ export function BranchMenu({
     <>
       <button
         ref={anchorRef}
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => (open ? close() : setOpen(true))}
         title={current ? `On branch ${current}` : 'Detached HEAD'}
         className={`group flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left transition-colors ${
           open ? 'bg-droid-elevated' : 'hover:bg-droid-elevated/50'
@@ -112,13 +117,7 @@ export function BranchMenu({
         />
       </button>
 
-      <Popover
-        open={open}
-        onClose={() => setOpen(false)}
-        anchorRef={anchorRef}
-        align="right"
-        width={288}
-      >
+      <Popover open={open} onClose={close} anchorRef={anchorRef} align="right" width={288}>
         <div className="flex shrink-0 items-center gap-2 border-b border-droid-border/70 px-2.5 py-2">
           <Search className="h-3.5 w-3.5 shrink-0 text-droid-text-muted" />
           <input

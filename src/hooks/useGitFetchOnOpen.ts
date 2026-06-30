@@ -12,7 +12,12 @@ export function useGitFetchOnOpen(open: boolean, cwd: string, onFetched: () => v
   cbRef.current = onFetched;
 
   useEffect(() => {
-    if (!open || !cwd) return;
+    if (!open || !cwd) {
+      // Closing (or losing the cwd) mid-fetch must clear the in-flight flag; the
+      // prior run's cleanup cancels its .then, so nothing else will reset it.
+      setFetching(false);
+      return;
+    }
     let cancelled = false;
     setFetching(true);
     void gitFetch(cwd).then((res) => {

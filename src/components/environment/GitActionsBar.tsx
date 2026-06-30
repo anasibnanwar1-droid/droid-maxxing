@@ -62,13 +62,19 @@ export function GitActionsBar({
   const toggle = (next: Sheet) => setSheet((cur) => (cur === next ? 'none' : next));
 
   const doPush = async () => {
+    if (pushing) return;
     setPushing(true);
-    const res = await gitPush(cwd, { setUpstream: !env?.upstream });
-    setPushing(false);
-    if (res.ok) toast.success('Pushed to remote');
-    else if (res.reason === 'detached') toast.error('Detached HEAD — checkout a branch first');
-    else toast.error(res.message || 'Push failed');
-    onChanged();
+    try {
+      const res = await gitPush(cwd, { setUpstream: !env?.upstream });
+      if (res.ok) toast.success('Pushed to remote');
+      else if (res.reason === 'detached') toast.error('Detached HEAD — checkout a branch first');
+      else toast.error(res.message || 'Push failed');
+      onChanged();
+    } catch {
+      toast.error('Push failed');
+    } finally {
+      setPushing(false);
+    }
   };
 
   // Only commits ahead of upstream are publishable; a behind-only branch has
