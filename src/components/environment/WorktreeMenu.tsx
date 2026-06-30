@@ -73,7 +73,7 @@ export function WorktreeMenu({
 
   const doCreate = async () => {
     const branch = name.trim();
-    if (!branch) return;
+    if (!branch || busy) return;
     setBusy(true);
     const res = await createGitWorktree(cwd, { branch, base, newBranch: true });
     setBusy(false);
