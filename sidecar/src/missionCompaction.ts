@@ -126,7 +126,13 @@ export class MissionCompaction {
       // Recover before later sends stream into that stale session, and report
       // 'stale' so callers never auto-resume into a possibly-dead session.
       if (outcome === 'stale' && swapTarget) {
-        return await this.recoverStaleMissionSwap(mission, swapTarget, carryover);
+        const recovered = await this.recoverStaleMissionSwap(mission, swapTarget, carryover);
+        // A retry that adopts the swap in place is a real completed compaction,
+        // so latch saturation just like the normal completed path; otherwise a
+        // still-over-trigger compacted session would trigger one redundant
+        // compaction on the next turn before the latch is set.
+        if (recovered === 'completed') this.updateCompactionSaturation(mission, compactType);
+        return recovered;
       }
       if (outcome === 'completed') this.updateCompactionSaturation(mission, compactType);
       return outcome;
@@ -437,7 +443,12 @@ export class MissionCompaction {
       // Recover so the new id isn't lost: otherwise queued sends and future
       // re-opens would target the dead old id.
       if (outcome === 'stale' && swapTarget) {
-        return await this.recoverStaleAgentSwap(agent, agentSessionId, swapTarget);
+        const recovered = await this.recoverStaleAgentSwap(agent, agentSessionId, swapTarget);
+        // A retry that adopts the swap in place is a real completed compaction,
+        // so latch saturation just like the normal completed path (mirrors
+        // compactMission) instead of leaving the next turn to re-compact.
+        if (recovered === 'completed') this.updateAgentCompactionSaturation(agent, compactType);
+        return recovered;
       }
       if (outcome === 'completed') this.updateAgentCompactionSaturation(agent, compactType);
       return outcome;

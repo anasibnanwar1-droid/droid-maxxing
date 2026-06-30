@@ -2850,6 +2850,64 @@ test('compaction swap re-applies the session autonomy so it does not revert to t
   assert.equal(applied?.autonomyLevel, 'high');
 });
 
+test('orchestrator stale-swap recovery success latches saturation when still over the trigger', async () => {
+  const { manager, mission, internals } = orchestratorSwapHarness(250_000, 200_000, 'droid-new');
+  // The in-band adoption fails (load 1 throws) but recoverStaleMissionSwap's
+  // retry adopts a compacted session that still reports over-trigger usage.
+  const swapped = new FakeCompactionSession('droid-new', 250_000);
+  let loadCalls = 0;
+  internals.runtime = {
+    loadSession: async () => {
+      loadCalls += 1;
+      if (loadCalls === 1) throw new Error('transient load failure');
+      return swapped;
+    },
+  };
+  const outcome = await (
+    manager as unknown as {
+      compaction: {
+        compactMission: (m: typeof mission, ci: string | undefined, t: string) => Promise<string>;
+      };
+    }
+  ).compaction.compactMission(mission, undefined, 'auto');
+  assert.equal(outcome, 'completed');
+  assert.equal(loadCalls, 2);
+  // A retry that adopts the swap in place is a real completed compaction, so the
+  // saturation latch is set just like the normal completed path; the old early
+  // return skipped it and left the next turn to trigger one redundant compaction.
+  assert.equal((mission as { compactionSaturated?: boolean }).compactionSaturated, true);
+});
+
+test('worker stale-swap recovery success latches saturation when still over the trigger', async () => {
+  const { manager, mission } = workerAutoCompactHarness(250_000, 200_000, 'worker-new');
+  const agent = mission.agents.get('worker-compact')!;
+  // recoverStaleAgentSwap is the retry after the in-band rekey failed: throw
+  // once, then adopt a compacted session that still reports over-trigger usage.
+  const swapped = new FakeCompactionSession('worker-new', 250_000);
+  let loadCalls = 0;
+  (
+    manager as unknown as {
+      runtime: { loadSession: (id: string, h: unknown) => Promise<FakeCompactionSession> };
+    }
+  ).runtime = {
+    loadSession: async () => {
+      loadCalls += 1;
+      if (loadCalls === 1) throw new Error('transient load failure');
+      return swapped;
+    },
+  };
+  const outcome = await (
+    manager as unknown as {
+      compaction: { compactAgent: (a: typeof agent, t: string) => Promise<string> };
+    }
+  ).compaction.compactAgent(agent, 'auto');
+  assert.equal(outcome, 'completed');
+  assert.equal(loadCalls, 2);
+  // Mirrors the orchestrator: a recovered-completed worker compaction latches
+  // saturation rather than leaving the worker to re-compact on its next turn.
+  assert.equal((agent as { compactionSaturated?: boolean }).compactionSaturated, true);
+});
+
 // ── #30/#17: opening a worker always settles its loading state ──
 
 test('#30/#17 opening a worker on a non-live mission settles loading with an honest open', async () => {
