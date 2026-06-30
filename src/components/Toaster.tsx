@@ -21,9 +21,10 @@ export default function Toaster() {
   useEffect(() => subscribeToasts(setToasts), []);
 
   // Anchored bottom-right, clear of the centered composer and the status bar so
-  // notifications stay fully visible. Newest sits closest to the corner.
+  // notifications stay fully visible. Newest sits closest to the corner. Sits
+  // above popovers (z-1000) so a toast fired while a menu is open stays visible.
   return (
-    <div className="pointer-events-none fixed bottom-11 right-4 z-[200] flex flex-col items-end gap-2">
+    <div className="pointer-events-none fixed bottom-11 right-4 z-[1100] flex flex-col items-end gap-2">
       <AnimatePresence initial={false}>
         {toasts.map((t) => {
           const Icon = ICON[t.variant];
