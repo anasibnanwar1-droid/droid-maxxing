@@ -2258,17 +2258,27 @@ export class MissionManager {
         agent.streaming = false;
         if (compacted === 'stale') {
           // The daemon swapped this worker to a new backing session but adopting
-          // it failed, so agent.session now points at a dead id. Tear the worker
-          // down instead of draining queued sends into a stale session; a later
-          // open/send re-creates it against the live session.
+          // it failed, so agent.session now points at a dead id. Capture the
+          // queued sends and the persisted new id BEFORE teardown, then close the
+          // dead-id worker and re-deliver each queued prompt against the live
+          // (compacted) session (mirrors the pre-turn stale path). Without this,
+          // prompts queued while this worker streamed during the compaction
+          // window would be silently lost.
+          const missionId = agent.missionId;
+          const swappedTo = agent.swappedToSessionId;
+          const queued = agent.pendingSends.splice(0);
           this.emitError({
             sessionId: agent.session.sessionId,
-            missionId: agent.missionId,
-            message:
-              'Subagent compaction swapped sessions but could not be adopted; closing the subagent. Re-open it to continue.',
+            missionId,
+            message: swappedTo
+              ? 'Subagent compaction swapped sessions but could not be adopted in place; re-delivering queued messages to the compacted subagent.'
+              : 'Subagent compaction swapped sessions but could not be adopted; closing the subagent. Re-open it to continue.',
             recoverable: true,
           });
-          await this.closeAgent(agent.missionId, agent.session.sessionId);
+          await this.closeAgent(missionId, agent.session.sessionId);
+          if (swappedTo) {
+            for (const queuedText of queued) await this.sendAgent(missionId, swappedTo, queuedText);
+          }
         } else {
           // agent.session stays usable ('completed' re-keyed it in place via the
           // reload hook; a transient 'failed'/no-compaction left it valid).
@@ -2317,8 +2327,11 @@ export class MissionManager {
     const agent = mission.agents.get(agentSessionId);
     if (!agent) return;
     agent.lastUsedAt = Date.now();
-    // Real user input resets the hidden self-driving cap.
+    // Real user input resets the hidden self-driving cap and the compaction
+    // saturation latch (a fresh task is a new chance to compact usefully),
+    // matching sendAgent and the orchestrator's sendNow.
     agent.autoContinueCount = 0;
+    agent.compactionSaturated = false;
     if (!agent.streaming && !agent.compacting) {
       if (await this.compaction.compactAgentBeforeTurnIfDue(agent, text)) return;
       await this.driveAgent(agent, text);

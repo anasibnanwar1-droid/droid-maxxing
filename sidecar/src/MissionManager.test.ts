@@ -1434,6 +1434,9 @@ class FakeMidTurnSession {
   // Controls what the daemon reports for the mid-task compaction so the resume
   // path can be exercised for each non-stale outcome.
   compactBehavior: 'completed' | 'noop' | 'failed' = 'completed';
+  // When set, a completed compaction reports a swapped backing id (drives the
+  // adopt-in-place / stale-recovery path).
+  swapTo?: string;
   // Only the first real turn is the long one that crosses the trigger and waits
   // to be interrupted; resumed/steered turns complete immediately.
   armed = true;
@@ -1496,7 +1499,7 @@ class FakeMidTurnSession {
     // interrupted turn must still resume rather than silently stall.
     if (this.compactBehavior === 'failed') throw new Error('compaction failed transiently');
     if (this.compactBehavior === 'noop') return null;
-    return { newSessionId: this.sessionId, removedCount: 4 };
+    return { newSessionId: this.swapTo ?? this.sessionId, removedCount: 4 };
   }
 
   async close(): Promise<void> {}
@@ -1677,6 +1680,57 @@ test('mid-task worker: a no-op compaction still resumes the interrupted turn and
   assert.deepEqual(session.prompts, ['go', RESUME_NUDGE]);
   assert.equal(agent.autoContinueCount, 1);
   assert.equal(agent.compactionSaturated, true);
+});
+
+test('mid-task worker: a stale compaction swap re-delivers queued sends to the swapped session', async () => {
+  const { session, agent, internals } = workerMidTurnHarness();
+  // The daemon swaps this worker to a new backing id during the mid-task
+  // compaction, but adopting it fails (loadSession throws), leaving agent.session
+  // pointing at the dead id.
+  session.swapTo = 'worker-mid-new';
+  agent.pendingSends.push('queued-during');
+  const redelivered: Array<{ sessionId: string; text: string }> = [];
+  const ext = internals as unknown as {
+    runtime: { loadSession: () => Promise<never> };
+    sendAgent: (missionId: string, sessionId: string, text: string) => Promise<void>;
+  };
+  ext.runtime = {
+    loadSession: async () => {
+      throw new Error('adoption failed');
+    },
+  };
+  ext.sendAgent = async (_missionId, sessionId, text) => {
+    redelivered.push({ sessionId, text });
+  };
+  await internals.driveAgent(agent, 'go');
+  assert.equal(session.interrupts, 1);
+  assert.equal(session.compactions, 1);
+  // The dead-id worker is torn down, but the prompt queued while it streamed
+  // during the compaction window is re-delivered to the persisted (compacted)
+  // session id rather than silently dropped.
+  assert.deepEqual(redelivered, [{ sessionId: 'worker-mid-new', text: 'queued-during' }]);
+});
+
+test('sendAgentNow clears the worker compaction saturation latch on a real steer', async () => {
+  const { manager, mission } = workerAutoCompactHarness(150_000, 200_000);
+  const agent = mission.agents.get('worker-compact') as {
+    compactionSaturated?: boolean;
+    compacting?: boolean;
+    pendingSends: string[];
+  };
+  // Latched after a no-op compaction; a real steer is a fresh chance to compact
+  // usefully. Mark it compacting so sendNow queues (never interrupts a
+  // compaction) yet still clears the latch before returning.
+  agent.compactionSaturated = true;
+  agent.compacting = true;
+  await manager.handle({
+    type: 'agent.sendNow',
+    missionId: 'app-compact',
+    agentSessionId: 'worker-compact',
+    text: 'steer',
+  });
+  assert.equal(agent.compactionSaturated, false);
+  assert.equal(agent.pendingSends.includes('steer'), true);
 });
 
 // A turn that crosses the trigger WHILE a tool is in flight. The interrupt must
@@ -2722,6 +2776,78 @@ test('manual compaction swap that never reloads re-delivers sends queued during 
     events.some((e) => e.type === 'mission.error'),
     false,
   );
+});
+
+test('orchestrator stale-swap recovery reports completed on retry success so the turn resumes', async () => {
+  const { manager, mission, internals } = orchestratorSwapHarness(250_000, 200_000, 'droid-new');
+  // recoverStaleMissionSwap IS the retry after the in-band adoption failed, so
+  // here the reload succeeds and the swap is adopted in place.
+  const swapped = new FakeCompactionSession('droid-new', 10_000);
+  internals.runtime = { loadSession: async () => swapped };
+  const outcome = await (
+    manager as unknown as {
+      compaction: {
+        recoverStaleMissionSwap: (
+          m: typeof mission,
+          id: string,
+          c: { tokensIn: number; tokensOut: number },
+        ) => Promise<string>;
+      };
+    }
+  ).compaction.recoverStaleMissionSwap(mission, 'droid-new', { tokensIn: 0, tokensOut: 0 });
+  // Adopting the swap on retry leaves the mission live on the compacted session,
+  // so it must report 'completed'. Returning 'stale' (the old behavior) skipped
+  // the auto-resume in drive()'s finally and silently stalled the turn.
+  assert.equal(outcome, 'completed');
+  assert.equal(mission.session.sessionId, 'droid-new');
+  assert.equal(internals.missions.has('app-swap'), true);
+});
+
+test('orchestrator stale-swap recovery reports stale and drops the mission when it never reloads', async () => {
+  const { manager, mission, internals } = orchestratorSwapHarness(250_000, 200_000, 'droid-new');
+  internals.runtime = {
+    loadSession: async () => {
+      throw new Error('permanent load failure');
+    },
+  };
+  let closedId: string | undefined;
+  (manager as unknown as { closeMission: (id: string) => Promise<void> }).closeMission = async (
+    id: string,
+  ) => {
+    closedId = id;
+    internals.missions.delete(id);
+  };
+  const outcome = await (
+    manager as unknown as {
+      compaction: {
+        recoverStaleMissionSwap: (
+          m: typeof mission,
+          id: string,
+          c: { tokensIn: number; tokensOut: number },
+        ) => Promise<string>;
+      };
+    }
+  ).compaction.recoverStaleMissionSwap(mission, 'droid-new', { tokensIn: 0, tokensOut: 0 });
+  // Only after the mission is torn down does it report 'stale' (the next send
+  // re-resumes against the persisted compacted id).
+  assert.equal(outcome, 'stale');
+  assert.equal(closedId, 'app-swap');
+  assert.equal(mission.summary.sessionId, 'droid-new');
+});
+
+test('compaction swap re-applies the session autonomy so it does not revert to the daemon default', async () => {
+  const { manager, mission, internals } = orchestratorSwapHarness(250_000, 200_000, 'droid-new');
+  // The user runs this mission at high autonomy.
+  mission.summary.autonomy = 'high';
+  const swapped = new FakeCompactionSession('droid-new', 10_000);
+  internals.runtime = { loadSession: async () => swapped };
+  await manager.handle({ type: 'mission.send', missionId: 'app-swap', text: 'go' });
+  assert.equal(mission.session.sessionId, 'droid-new');
+  // loadSession cannot carry autonomy, so without re-applying it the compacted
+  // session would silently fall back to the daemon-default autonomy.
+  const applied = swapped.settingsUpdates.find((u) => 'autonomyLevel' in u);
+  assert.ok(applied, 'expected updateSettings to re-apply autonomy after the swap');
+  assert.equal(applied?.autonomyLevel, 'high');
 });
 
 // ── #30/#17: opening a worker always settles its loading state ──

@@ -126,8 +126,7 @@ export class MissionCompaction {
       // Recover before later sends stream into that stale session, and report
       // 'stale' so callers never auto-resume into a possibly-dead session.
       if (outcome === 'stale' && swapTarget) {
-        await this.recoverStaleMissionSwap(mission, swapTarget, carryover);
-        return 'stale';
+        return await this.recoverStaleMissionSwap(mission, swapTarget, carryover);
       }
       if (outcome === 'completed') this.updateCompactionSaturation(mission, compactType);
       return outcome;
@@ -186,6 +185,12 @@ export class MissionCompaction {
     if (orchestrator.modelId !== undefined) next.modelId = orchestrator.modelId;
     if (orchestrator.reasoningEffort !== undefined)
       next.reasoningEffort = orchestrator.reasoningEffort;
+    // loadSession also drops the session's autonomy (its params are sessionId +
+    // mcpServers only), exactly like the model and reasoning effort, so an
+    // autonomous long-horizon mission would silently revert to the daemon
+    // default after an invisible compaction swap. Re-apply it from the summary,
+    // which setAutonomy / updateSessionSettings keep as the source of truth.
+    if (s.autonomy) next.autonomyLevel = s.autonomy;
     if (Object.keys(missionSettings).length > 0) next.missionSettings = missionSettings;
     if (Object.keys(next).length === 0) return;
     try {
@@ -247,16 +252,22 @@ export class MissionCompaction {
   // failed to adopt the new one (mission.session is now a dead id). Retry the
   // adoption once for a transient failure; if it still fails, persist the new
   // id and drop the live mission so the next send re-resumes against the live
-  // (compacted) session instead of streaming into the dead one.
+  // (compacted) session instead of streaming into the dead one. Returns the
+  // recovered outcome: 'completed' when the retry adopts the swap in place (the
+  // mission is live again, so the caller should auto-resume), 'stale' only after
+  // the mission is dropped (mirrors the worker recoverStaleAgentSwap contract).
   async recoverStaleMissionSwap(
     mission: Mission,
     newSessionId: string,
     carryover: UsageOffset,
-  ): Promise<void> {
+  ): Promise<CompactionOutcome> {
     const appSessionId = mission.summary.id;
     try {
       await this.swapMissionSession(mission, newSessionId, carryover);
-      return;
+      // Retry adopted the swap: the mission stays live on the compacted session,
+      // so report success. Returning 'stale' here (the old behavior) skipped the
+      // auto-resume in drive()'s finally and left the turn silently stalled.
+      return 'completed';
     } catch {
       /* adoption still failing; persist the new id and drop the mission below */
     }
@@ -283,6 +294,7 @@ export class MissionCompaction {
         'Compaction moved this conversation to a new session but reloading it failed; it will reload on your next message.',
       recoverable: true,
     });
+    return 'stale';
   }
 
   // Compacting a session that is not currently loaded (e.g. from the sidebar
@@ -297,19 +309,32 @@ export class MissionCompaction {
       );
       if (!result) return;
       const newSessionId = result.newSessionId || oldDroidSessionId;
-      if (newSessionId !== oldDroidSessionId && historical) {
-        const updated = {
-          ...historical,
-          sessionId: newSessionId,
-          compactedFromSessionIds: uniqueStrings([
-            ...(historical.compactedFromSessionIds ?? []),
-            oldDroidSessionId,
-          ]),
-          updatedAt: Date.now(),
-        };
-        this.host.history.syncSummaries([updated]);
-        this.host.emit({ type: 'mission.updated', mission: updated });
-        this.host.emit({ type: 'session.updated', session: updated });
+      if (newSessionId !== oldDroidSessionId) {
+        if (historical) {
+          const updated = {
+            ...historical,
+            sessionId: newSessionId,
+            compactedFromSessionIds: uniqueStrings([
+              ...(historical.compactedFromSessionIds ?? []),
+              oldDroidSessionId,
+            ]),
+            updatedAt: Date.now(),
+          };
+          this.host.history.syncSummaries([updated]);
+          this.host.emit({ type: 'mission.updated', mission: updated });
+          this.host.emit({ type: 'session.updated', session: updated });
+        } else {
+          // The daemon swapped to a new backing id but there is no local summary
+          // to persist it onto, so the old id is now dead and a later resume
+          // would target it. Surface it instead of dropping the new id silently.
+          this.host.emitError({
+            sessionId: newSessionId,
+            missionId: sessionId,
+            message:
+              'Compaction moved this session to a new id but there was no local record to update; reopen it from history to continue from the compacted state.',
+            recoverable: true,
+          });
+        }
       }
     } catch (err) {
       this.host.emitError({
