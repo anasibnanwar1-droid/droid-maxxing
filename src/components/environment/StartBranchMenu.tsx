@@ -140,7 +140,7 @@ export function StartBranchMenu({
 
   const createNewBranch = async () => {
     const branch = newName.trim();
-    if (!branch) return;
+    if (!branch || busy) return;
     setBusy(true);
     const res = await createGitWorktree(cwd, { branch, base, newBranch: true });
     setBusy(false);
