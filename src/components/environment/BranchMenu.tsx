@@ -53,34 +53,41 @@ export function BranchMenu({
   };
 
   const doCheckout = async (refName: string, allowDirty = false) => {
+    if (busy) return;
     if (live) {
       toast.error('Stop the agent before switching branches');
       return;
     }
     setBusy(true);
-    const res = await checkoutGitBranch(cwd, { ref: refName, allowDirty });
-    setBusy(false);
-    finish(res, refName);
+    try {
+      const res = await checkoutGitBranch(cwd, { ref: refName, allowDirty });
+      finish(res, refName);
+    } finally {
+      setBusy(false);
+    }
   };
 
   const doCreate = async () => {
     const name = newName.trim();
-    if (!name) return;
+    if (!name || busy) return;
     if (live) {
       toast.error('Stop the agent before creating a branch');
       return;
     }
     setBusy(true);
-    const res = await createGitBranch(cwd, { name, base: current ?? undefined, checkout: true });
-    setBusy(false);
-    if (res.ok) {
-      toast.success(`Created and checked out ${name}`);
-      setCreating(false);
-      setNewName('');
-      setOpen(false);
-      onChanged();
-    } else {
-      toast.error(res.message || 'Could not create branch');
+    try {
+      const res = await createGitBranch(cwd, { name, base: current ?? undefined, checkout: true });
+      if (res.ok) {
+        toast.success(`Created and checked out ${name}`);
+        setCreating(false);
+        setNewName('');
+        setOpen(false);
+        onChanged();
+      } else {
+        toast.error(res.message || 'Could not create branch');
+      }
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -132,7 +139,8 @@ export function BranchMenu({
             <span className="flex-1">Uncommitted changes.</span>
             <button
               onClick={() => doCheckout(dirtyRef, true)}
-              className="rounded-md bg-droid-orange/20 px-2 py-0.5 text-[11px] font-medium text-droid-orange hover:bg-droid-orange/30"
+              disabled={busy}
+              className="rounded-md bg-droid-orange/20 px-2 py-0.5 text-[11px] font-medium text-droid-orange hover:bg-droid-orange/30 disabled:opacity-40"
             >
               Switch anyway
             </button>
@@ -149,7 +157,8 @@ export function BranchMenu({
               <button
                 key={b.name}
                 onClick={() => !b.current && doCheckout(b.name)}
-                className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left transition-colors hover:bg-droid-elevated/60"
+                disabled={busy || fetching}
+                className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left transition-colors hover:bg-droid-elevated/60 disabled:cursor-default"
               >
                 <GitBranch className="h-3.5 w-3.5 shrink-0 text-droid-text-muted" />
                 <span className="min-w-0 flex-1 truncate text-[12.5px] text-droid-text">
@@ -179,7 +188,8 @@ export function BranchMenu({
               <button
                 key={b.name}
                 onClick={() => doCheckout(b.name)}
-                className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left transition-colors hover:bg-droid-elevated/60"
+                disabled={busy || fetching}
+                className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left transition-colors hover:bg-droid-elevated/60 disabled:cursor-default"
               >
                 <GitBranch className="h-3.5 w-3.5 shrink-0 text-droid-text-muted/70" />
                 <span className="min-w-0 flex-1 truncate text-[12.5px] text-droid-text-secondary">
@@ -203,9 +213,10 @@ export function BranchMenu({
               />
               <button
                 onClick={() => void doCreate()}
-                disabled={!newName.trim()}
-                className="shrink-0 rounded-md bg-droid-accent/15 px-2 py-1 text-[11px] font-medium text-droid-accent disabled:opacity-40"
+                disabled={!newName.trim() || busy}
+                className="flex shrink-0 items-center gap-1 rounded-md bg-droid-accent/15 px-2 py-1 text-[11px] font-medium text-droid-accent disabled:opacity-40"
               >
+                {busy && <Loader2 className="h-3 w-3 animate-spin" />}
                 Create
               </button>
             </div>
