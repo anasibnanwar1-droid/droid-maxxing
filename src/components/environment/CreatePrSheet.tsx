@@ -41,29 +41,33 @@ export function CreatePrSheet({
   ].filter((value, index, all): value is string => !!value && all.indexOf(value) === index);
 
   const doCreate = async () => {
-    if (!title.trim()) return;
+    if (!title.trim() || busy) return;
     setBusy(true);
-    // Push when there is no upstream yet, or when the local branch is ahead, so
-    // gh opens the PR from the latest commits instead of a stale remote tip.
-    if (!env?.upstream || (env?.ahead ?? 0) > 0) {
-      const pushed = await gitPush(cwd, { setUpstream: !env?.upstream });
-      if (!pushed.ok) {
-        setBusy(false);
-        toast.error(pushed.message || 'Could not push branch');
-        return;
+    try {
+      // Push when there is no upstream yet, or when the local branch is ahead, so
+      // gh opens the PR from the latest commits instead of a stale remote tip.
+      if (!env?.upstream || (env?.ahead ?? 0) > 0) {
+        const pushed = await gitPush(cwd, { setUpstream: !env?.upstream });
+        if (!pushed.ok) {
+          toast.error(pushed.message || 'Could not push branch');
+          return;
+        }
       }
-    }
-    const res = await createPullRequest(cwd, { title: title.trim(), body, base, draft });
-    setBusy(false);
-    if (res.ok) {
-      toast.success(`Opened PR #${res.number ?? ''}`.trim());
-      if (res.url) void openExternal(res.url);
-      onCreated?.();
-      onDone();
-    } else if (res.reason === 'gh_unavailable') {
-      toast.error('GitHub CLI not available');
-    } else {
-      toast.error(res.message || 'Could not open PR');
+      const res = await createPullRequest(cwd, { title: title.trim(), body, base, draft });
+      if (res.ok) {
+        toast.success(`Opened PR #${res.number ?? ''}`.trim());
+        if (res.url) void openExternal(res.url);
+        onCreated?.();
+        onDone();
+      } else if (res.reason === 'gh_unavailable') {
+        toast.error('GitHub CLI not available');
+      } else {
+        toast.error(res.message || 'Could not open PR');
+      }
+    } catch {
+      toast.error('Could not open PR');
+    } finally {
+      setBusy(false);
     }
   };
 

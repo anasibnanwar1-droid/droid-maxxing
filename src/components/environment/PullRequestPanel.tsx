@@ -123,14 +123,19 @@ export function PullRequestPanel({
     // in flight even though the button is disabled, which would double-post.
     if (!body || posting) return;
     setPosting(true);
-    const res = await postPrComment(cwd, pr.number, body);
-    setPosting(false);
-    if (res.ok) {
-      toast.success('Comment posted');
-      setDraft('');
-      onRefresh();
-    } else {
-      toast.error(res.message || 'Could not post comment');
+    try {
+      const res = await postPrComment(cwd, pr.number, body);
+      if (res.ok) {
+        toast.success('Comment posted');
+        setDraft('');
+        onRefresh();
+      } else {
+        toast.error(res.message || 'Could not post comment');
+      }
+    } catch {
+      toast.error('Could not post comment');
+    } finally {
+      setPosting(false);
     }
   };
 
