@@ -45,7 +45,7 @@ export function WorktreeMenu({
   };
 
   const current = worktrees.find((w) => w.isCurrent);
-  const others = worktrees.filter((w) => !w.isCurrent && !w.bare);
+  const others = worktrees.filter((w) => !w.isCurrent && !w.bare && w.path);
   const sessionCwds = activeSessionCwds({
     missions: Object.values(state.missions),
     activeMissionId: state.activeMissionId,
