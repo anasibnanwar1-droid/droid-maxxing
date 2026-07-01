@@ -440,6 +440,39 @@ test('rekeyAgentSession adopts the swapped worker id across all mission state', 
   ]);
 });
 
+test('persistWorkerSwap carries per-session model settings to the new id (stale-recovery path)', async () => {
+  const manager = new MissionManager(() => {});
+  const mission = {
+    summary: testSummary('app-psw', 'droid-psw'),
+    agents: new Map(),
+    knownSubagents: new Set(['worker-old']),
+    completedSubagents: new Set<string>(),
+    terminalAgents: new Set<string>(),
+    linkedSubagents: new Set(['worker-old']),
+    subagentToolUseIds: new Map<string, string>(),
+    // The user picked a specific model for this worker.
+    subagentSettings: new Map<string, { modelId?: string }>([
+      ['worker-old', { modelId: 'm-pick' }],
+    ]),
+  };
+  const internals = manager as unknown as {
+    history: { subagentLinks: () => WorkerHistoryLink[] };
+    missions: Map<string, typeof mission>;
+    compaction: { persistWorkerSwap: (m: typeof mission, oldId: string, newId: string) => void };
+  };
+  internals.history = { subagentLinks: () => [] };
+  internals.missions.set('app-psw', mission);
+
+  // The double-failure recovery path persists the swap without a successful
+  // rekey (which is what would otherwise have moved subagentSettings).
+  internals.compaction.persistWorkerSwap(mission, 'worker-old', 'worker-new');
+
+  // Without the fix the new id has no stored settings and a re-opened worker
+  // silently reverts to the role-default model instead of the user's pick.
+  assert.equal(mission.subagentSettings.get('worker-new')?.modelId, 'm-pick');
+  assert.equal(mission.subagentSettings.has('worker-old'), false);
+});
+
 test('worker compaction re-keys to the new backing id and emits a rekey event (not stale)', async () => {
   const events: ServerEvent[] = [];
   const manager = new MissionManager((event) => events.push(event));

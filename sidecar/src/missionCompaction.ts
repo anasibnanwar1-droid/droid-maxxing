@@ -613,6 +613,17 @@ export class MissionCompaction {
     // keep it idempotent when the rekey path already moved them.
     if (mission.knownSubagents.delete(oldSessionId)) mission.knownSubagents.add(newSessionId);
     if (mission.linkedSubagents.delete(oldSessionId)) mission.linkedSubagents.add(newSessionId);
+    // Carry the worker's per-session model/reasoning to the new id too. The
+    // in-place rekey already moved this, but the stale-recovery path runs
+    // persistWorkerSwap WITHOUT a successful rekey, so without this a re-opened
+    // worker would read no stored settings for the new id and silently revert to
+    // the role-default model instead of the user-picked one. Idempotent: a no-op
+    // once the rekey path already moved it.
+    const settings = mission.subagentSettings.get(oldSessionId);
+    if (settings) {
+      mission.subagentSettings.delete(oldSessionId);
+      mission.subagentSettings.set(newSessionId, settings);
+    }
     // Re-point any spawn link for this worker at the new id (preserving its
     // label) so a later resume seeds linkedSubagents with the compacted id.
     const labelByToolUseId = new Map(

@@ -1458,6 +1458,8 @@ export class MissionManager {
     const mission = this.findMission(missionId);
     if (!mission) return;
     const appSessionId = mission.summary.id;
+    // Must be set synchronously before the first await: a concurrent sendNow
+    // relies on this flag to queue+interrupt instead of racing a second turn.
     mission.streaming = true;
     mission.terminalAgents.delete(appSessionId);
     this.patch(appSessionId, {
