@@ -28,6 +28,7 @@ import type {
 import { mapFeature } from './normalize.js';
 import { designPromptDisplayFromText } from './browser/designPromptDisplay.js';
 import { normalizeCompactionTokenLimit } from './compaction.js';
+import { isSyntheticResume } from './autoCompaction.js';
 
 interface StoredMissionState {
   missionId?: string;
@@ -1084,7 +1085,9 @@ function parseSessionTranscript(
         const rawText = trimText(stringValue(block.text) || '');
         const display = designPromptDisplayFromText(rawText);
         const text = display?.text ?? rawText;
-        if (text && !isSystemText(text)) {
+        // Drop the hidden auto-compaction resume nudge so a reloaded transcript
+        // shows only the compaction divider, never a "continue" the user never typed.
+        if (text && !isSystemText(text) && !isSyntheticResume(text)) {
           events.push(
             event(missionId, 'user', 'orchestrator', messageId, index, ts, 'text', {
               text,

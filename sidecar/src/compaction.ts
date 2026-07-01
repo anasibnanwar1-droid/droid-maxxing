@@ -76,16 +76,20 @@ export function createCompactionSettingsForModel(
 // Single derivation of the auto-compaction threshold, shared by mission
 // create, resume, and worker open so every session's trigger matches the
 // limit the ContextMeter shows (per-model override -> global default, clamped
-// to the model window).
+// to the model window). When no explicit compaction limit is configured the
+// trigger falls back to the model's context window, so auto-compaction fires at
+// ~80% of the window by default instead of being disabled (which would let the
+// session grow until it dies at the hard limit).
 export function effectiveCompactionLimit(
   modelId: string | undefined,
   defaults: CompactionDefaults,
   maxContextTokens: number | undefined,
 ): number | undefined {
-  return clampCompactionTokenLimit(
+  const explicit = clampCompactionTokenLimit(
     compactionTokenLimitForModel(modelId, {}, defaults),
     maxContextTokens,
   );
+  return explicit ?? normalizeCompactionTokenLimit(maxContextTokens);
 }
 
 // ---------------------------------------------------------------------------
@@ -97,20 +101,17 @@ export function effectiveCompactionLimit(
 // new id). A caller without a reload hook reports the swap as 'stale'.
 // ---------------------------------------------------------------------------
 
+// Shared shape consumed by the auto-compaction policy (see autoCompaction.ts),
+// carried by both the orchestrator Mission and worker LiveAgent. The decision
+// of *when* to compact lives in autoCompaction.ts so this module stays focused
+// on the compaction mechanism itself.
 export interface AutoCompactState {
   compacting?: boolean;
   effectiveCompactionTokenLimit?: number;
-}
-
-// The one threshold rule used by both the orchestrator and workers.
-export function autoCompactionDue(
-  state: AutoCompactState,
-  usedTokens: number | undefined,
-): boolean {
-  if (state.compacting) return false;
-  const limit = state.effectiveCompactionTokenLimit;
-  if (limit === undefined || limit <= 0) return false;
-  return usedTokens !== undefined && usedTokens > 0 && usedTokens >= limit;
+  // Latched once a completed compaction leaves usage still at/above the trigger
+  // (the summary itself is near the window). While set, the auto-compaction
+  // policy stays paused so it cannot loop at a level it is unable to reduce.
+  compactionSaturated?: boolean;
 }
 
 export type CompactableSession = Pick<DroidSession, 'sessionId' | 'compactSession'>;
@@ -175,11 +176,11 @@ export async function runCompaction(
     const removedCount = result.removedCount ?? 0;
     if (result.newSessionId && result.newSessionId !== session.sessionId) {
       if (!sink.reload) {
-        // The owner keeps a stable session id (workers) and cannot adopt a
-        // swapped backing id without re-keying. Surface it and signal the
-        // session is now stale so the caller can recover.
+        // This caller has no reload hook to adopt a swapped backing id, so it
+        // cannot follow the session swap. Surface it and signal the session is
+        // now stale so the caller can recover.
         sink.error(
-          `daemon returned a new backing session (${result.newSessionId}); subagent sessions must compact in place to keep handoff addressing stable`,
+          `daemon returned a new backing session (${result.newSessionId}) but this caller has no reload hook to adopt it; continuing on the current session`,
         );
         sink.status(
           'Compaction could not finish; continuing with the current conversation.',

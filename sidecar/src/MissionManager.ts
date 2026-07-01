@@ -74,16 +74,16 @@ import {
 } from './permissionOutcomes.js';
 import { filterMissionListSummaries, type MissionListFilterOptions } from './missionListFilter.js';
 import {
-  autoCompactionDue,
   clampCompactionTokenLimit,
   createCompactionSettingsForModel,
   effectiveCompactionLimit,
   normalizeCompactionTokenLimit,
   resumedCompactionTokenLimit,
-  runCompaction,
-  type CompactionOutcome,
   type CompactType,
 } from './compaction.js';
+import { canAutoContinue, RESUME_NUDGE, usageBelowTrigger } from './autoCompaction.js';
+import { isSafeCompactionBoundary, updateToolsInFlight } from './compactionBoundary.js';
+import { MissionCompaction } from './missionCompaction.js';
 
 type Emit = (event: ServerEvent) => void;
 
@@ -91,13 +91,19 @@ interface MissionManagerOptions {
   assetUrlFor?: (path: string) => string;
 }
 
-interface LiveAgent {
+export interface LiveAgent {
   session: DroidSession;
   missionId: string;
   role: AgentRole;
   streaming: boolean;
   pendingSends: string[];
   interruptingForSteer?: boolean;
+  // Set when Droid Control itself interrupts an in-flight turn to compact at a
+  // safe boundary (distinct from a user steer). Gates the hidden auto-resume.
+  interruptingForCompaction?: boolean;
+  // Consecutive hidden auto-continues since the last real user prompt; caps the
+  // self-driving loop so compaction-driven resumes can't run away on cost.
+  autoContinueCount?: number;
   lastUsedAt: number;
   closeWhenIdle?: boolean;
   unsubscribe?: () => void;
@@ -105,14 +111,29 @@ interface LiveAgent {
   // layer as the orchestrator, in-place and scoped to their own session.
   compacting?: boolean;
   effectiveCompactionTokenLimit?: number;
+  // Latched when a completed compaction left usage still at/above the trigger
+  // (the summary itself is near the window). Stops auto-compaction from looping
+  // at a level it cannot reduce; cleared by real user input or when usage later
+  // falls below the trigger.
+  compactionSaturated?: boolean;
+  // Set transiently when a compaction swap went stale (the daemon swapped to a
+  // new backing id but adoption failed) so the caller can re-deliver a queued
+  // pre-turn prompt against the persisted new id instead of dropping it.
+  swappedToSessionId?: string;
 }
 
-interface Mission {
+export interface Mission {
   summary: MissionSummary;
   session: DroidSession;
   streaming: boolean;
   pendingSends: string[];
   interruptingForSteer?: boolean;
+  // Set when Droid Control itself interrupts an in-flight turn to compact at a
+  // safe boundary (distinct from a user steer). Gates the hidden auto-resume.
+  interruptingForCompaction?: boolean;
+  // Consecutive hidden auto-continues since the last real user prompt; caps the
+  // self-driving loop so compaction-driven resumes can't run away on cost.
+  autoContinueCount?: number;
   pendingPermissions: Map<string, PendingPermission>;
   pendingQuestions: Map<string, (r: AskUserResult) => void>;
   agents: Map<string, LiveAgent>;
@@ -145,9 +166,14 @@ interface Mission {
   compacting?: boolean;
   // The effective compaction token limit computed at creation/resume time,
   // matching the threshold the ContextMeter shows (per-model → global default,
-  // clamped to model window). Stored so maybeAutoCompact doesn't re-derive it
+  // clamped to model window). Stored so the trigger check doesn't re-derive it
   // from defaults that may have drifted since session creation.
   effectiveCompactionTokenLimit?: number;
+  // Latched when a completed compaction left usage still at/above the trigger
+  // (the summary itself is near the window, so compacting again cannot drop
+  // below it). Stops auto-compaction from looping at a level it cannot reduce;
+  // cleared by real user input or when usage later falls below the trigger.
+  compactionSaturated?: boolean;
 }
 
 interface PendingPermission {
@@ -172,7 +198,7 @@ export interface AgentSettingPatch {
   reasoningEffort?: ReasoningEffort;
 }
 
-interface UsageOffset {
+export interface UsageOffset {
   tokensIn: number;
   tokensOut: number;
 }
@@ -215,21 +241,22 @@ export class MissionManager {
   private statusSeq = 0;
   private cachedModels: ModelInfo[] | null = null;
   private modelRefresh: Promise<ModelInfo[] | null> | null = null;
-  private readonly runtime = new DroidRuntime();
-  private readonly history = new HistoryIndex();
+  readonly runtime = new DroidRuntime();
+  readonly history = new HistoryIndex();
   private readonly missions = new Map<string, Mission>();
   private readonly pendingAgentSettings = new Map<
     string,
     Partial<Record<ConfigurableAgent, AgentSettingPatch>>
   >();
-  private readonly usageOffsets = new Map<string, UsageOffset>();
-  private readonly contextSnapshots = new Map<string, ContextStatsSnapshot>();
+  readonly usageOffsets = new Map<string, UsageOffset>();
+  readonly contextSnapshots = new Map<string, ContextStatsSnapshot>();
   private readonly contextPollers = new Map<string, ReturnType<typeof setInterval>>();
   private readonly pendingNativeBrowserRequests = new Map<string, PendingNativeBrowserRequest>();
   private readonly browsers: BrowserSessionManager;
+  private readonly compaction = new MissionCompaction(this);
 
   constructor(
-    private readonly emit: Emit,
+    readonly emit: Emit,
     options: MissionManagerOptions = {},
   ) {
     this.browsers = new BrowserSessionManager({
@@ -808,7 +835,7 @@ export class MissionManager {
     }
   }
 
-  private findMission(id: string): Mission | undefined {
+  findMission(id: string): Mission | undefined {
     return (
       this.missions.get(id) ??
       [...this.missions.values()].find(
@@ -828,7 +855,7 @@ export class MissionManager {
     return undefined;
   }
 
-  private resolveSummary(id: string): MissionSummary | undefined {
+  resolveSummary(id: string): MissionSummary | undefined {
     return this.listAllSummaries().find(
       (summary) =>
         summary.id === id ||
@@ -944,7 +971,9 @@ export class MissionManager {
         summary,
         session,
         mcp.servers,
-        resumeCompactionLimit,
+        // Fall back to the model's context window when no explicit limit was
+        // persisted, so a resumed session also auto-compacts at ~80%.
+        resumeCompactionLimit ?? this.maxContextTokensForSummary(summary),
         mcp.configs,
       );
       // Seed the spawn->worker links persisted for this mission so historical
@@ -1282,7 +1311,10 @@ export class MissionManager {
         summary,
         session,
         mcp.servers,
-        compactionSettings.compactionTokenLimit,
+        // Trigger basis: an explicit per-session/default compaction limit if set,
+        // otherwise the model's context window (compact at ~80% of the window).
+        compactionSettings.compactionTokenLimit ??
+          this.maxContextTokensForModel(orchestratorModelId),
         mcp.configs,
       );
       this.missions.set(id, mission);
@@ -1325,7 +1357,7 @@ export class MissionManager {
     };
   }
 
-  private makePermissionHandler(ref: { id: string }): PermissionHandler {
+  makePermissionHandler(ref: { id: string }): PermissionHandler {
     return (params: RequestPermissionRequestParams) =>
       new Promise<RequestPermissionHandlerResult>((resolve) => {
         const mission = this.findMission(ref.id);
@@ -1354,7 +1386,7 @@ export class MissionManager {
       });
   }
 
-  private makeAskUserHandler(ref: { id: string }): AskUserHandler {
+  makeAskUserHandler(ref: { id: string }): AskUserHandler {
     return (params: AskUserRequestParams) =>
       new Promise<AskUserResult>((resolve) => {
         const mission = this.findMission(ref.id);
@@ -1422,10 +1454,12 @@ export class MissionManager {
     resolver({ cancelled, answers });
   }
 
-  private async drive(missionId: string, prompt: string): Promise<void> {
+  async drive(missionId: string, prompt: string): Promise<void> {
     const mission = this.findMission(missionId);
     if (!mission) return;
     const appSessionId = mission.summary.id;
+    // Must be set synchronously before the first await: a concurrent sendNow
+    // relies on this flag to queue+interrupt instead of racing a second turn.
     mission.streaming = true;
     mission.terminalAgents.delete(appSessionId);
     this.patch(appSessionId, {
@@ -1435,35 +1469,97 @@ export class MissionManager {
     });
     this.startContextPolling(appSessionId, mission.session);
     await this.applyDesignToolPolicy(mission, isDesignPrompt(prompt));
+    // Tool calls started but not yet resulted this turn, keyed by tool-use id.
+    // Gates the compaction interrupt so it never fires mid-tool (see
+    // interruptForCompactionIfDue). Local to this turn so it cannot leak.
+    const toolsInFlight = new Set<string>();
     try {
       const stream = mission.session.stream(prompt, { includePartialMessages: true });
-      for await (const ev of stream)
-        this.applyEvent(appSessionId, appSessionId, 'orchestrator', ev);
+      for await (const ev of stream) {
+        // Once a compaction interrupt is armed, stop applying this turn's events.
+        // interrupt() cancels in-flight tools (which would otherwise surface as
+        // "Tool execution cancelled by user" errors) and makes the SDK emit a
+        // terminal result; applying that result would wrongly mark the turn
+        // finished and skip compaction. We compact and resume in `finally`, so
+        // these tail events are noise to drop.
+        if (!mission.interruptingForCompaction) {
+          this.applyEvent(appSessionId, appSessionId, 'orchestrator', ev);
+        }
+        updateToolsInFlight(toolsInFlight, ev);
+        // Only cut the turn off for compaction at a completed step (a tool_result
+        // that leaves no tool in flight), never mid-tool, mid-reasoning, or
+        // mid-response. Use the getContextStats snapshot (same source as the
+        // meter), never the per-call token-usage value, which includes cache
+        // reads and over-reports.
+        if (isSafeCompactionBoundary(ev, toolsInFlight)) {
+          const snap = this.contextSnapshots.get(appSessionId);
+          this.compaction.interruptForCompactionIfDue(mission, snap?.used, snap?.limit);
+        }
+      }
     } catch (err) {
-      if (mission.interruptingForSteer)
+      if (mission.interruptingForCompaction) {
+        // Expected: we cut the turn off at a safe boundary to compact. The
+        // compaction and the invisible resume run in `finally`; surface nothing.
+      } else if (mission.interruptingForSteer) {
         this.emitStatus(appSessionId, 'Current turn interrupted for steering.');
-      else {
+      } else {
         this.emitError({ missionId: appSessionId, message: errMsg(err) });
         this.patch(appSessionId, { phase: 'failed' });
       }
     } finally {
       this.stopContextPolling(appSessionId);
+      const forCompaction = mission.interruptingForCompaction === true;
+      // Captured before compaction: a turn that already produced its final answer
+      // must neither compact nor auto-resume (it waits for the next user prompt).
+      const wasTerminal = mission.terminalAgents.has(appSessionId);
       mission.interruptingForSteer = false;
-      // Keep streaming=true while refreshContext / maybeAutoCompact are in flight
-      // so concurrent sends queue instead of racing a second drive().
+      // Keep streaming=true while refreshContext / compaction are in flight so
+      // concurrent sends queue instead of racing a second drive().
       await this.refreshContext(appSessionId, mission.session);
-      await this.maybeAutoCompact(appSessionId);
+      // Compact ONLY when we interrupted this turn to compact and it did not end
+      // with a final answer. There is no post-turn compaction after a natural
+      // finish: an idle, over-budget session simply waits for the next prompt.
+      const compacted =
+        forCompaction && !wasTerminal
+          ? await this.compaction.compactMission(mission, undefined, 'auto')
+          : undefined;
+      mission.interruptingForCompaction = false;
       mission.streaming = false;
-      if (!this.findMission(appSessionId)) {
-        // maybeAutoCompact's stale-swap recovery can drop the live mission. A
-        // drive() against the now-missing mission would silently discard the
-        // queued sends, so re-deliver them through the resume path instead.
+      const live = this.findMission(appSessionId);
+      if (!live) {
+        // Stale-swap recovery dropped the live mission. A drive() against the
+        // now-missing mission would silently discard the queued sends, so
+        // re-deliver them through the resume path instead.
         const queued = mission.pendingSends.splice(0);
         if (queued.length > 0) void this.redeliverQueuedSends(appSessionId, queued);
       } else {
-        const next = mission.pendingSends.shift();
-        this.patch(appSessionId, { streaming: false, queuedSends: mission.pendingSends.length });
-        if (next !== undefined) void this.drive(appSessionId, next);
+        const next = live.pendingSends.shift();
+        this.patch(appSessionId, { streaming: false, queuedSends: live.pendingSends.length });
+        if (next !== undefined) {
+          // A real queued user prompt always wins over a hidden resume, so the
+          // user's message is never dropped or silently turned into "continue".
+          live.autoContinueCount = 0;
+          live.compactionSaturated = false;
+          void this.drive(appSessionId, next);
+        } else if (
+          compacted !== undefined &&
+          compacted !== 'stale' &&
+          canAutoContinue(live.autoContinueCount)
+        ) {
+          // We interrupted this turn at a safe boundary to compact, so its
+          // in-flight work was aborted. Resume invisibly whenever the session is
+          // still usable - not only on 'completed' but also 'noop' (nothing to
+          // compact) and 'failed' (transient compaction error) - otherwise the
+          // interrupted task would stall until the user manually nudged it. A
+          // 'noop' latches the saturation guard first so the resumed turn runs
+          // to completion instead of re-interrupting into another no-op loop
+          // ('stale' is handled above, where the live mission was dropped). The
+          // nudge is suppressed from the transcript, leaving only the compaction
+          // divider visible.
+          if (compacted === 'noop') live.compactionSaturated = true;
+          live.autoContinueCount = (live.autoContinueCount ?? 0) + 1;
+          void this.drive(appSessionId, RESUME_NUDGE);
+        }
       }
     }
   }
@@ -1472,7 +1568,7 @@ export class MissionManager {
   // recovery dropped the live mission. send() re-resumes the mission from the
   // persisted (compacted) backing id; delivering sequentially resumes it once and
   // preserves prompt order rather than racing multiple resumes.
-  private async redeliverQueuedSends(missionId: string, queued: string[]): Promise<void> {
+  async redeliverQueuedSends(missionId: string, queued: string[]): Promise<void> {
     for (const text of queued) {
       try {
         await this.send(missionId, text);
@@ -1483,16 +1579,6 @@ export class MissionManager {
         });
       }
     }
-  }
-
-  // The SDK exposes manual compaction only; auto-compaction is the client's job
-  // (the CLI runs its own loop). After each idle orchestrator turn we compact
-  // once the context window crosses the effective limit stored on the Mission
-  // at creation time (matching the threshold the ContextMeter shows).
-  private async maybeAutoCompact(appSessionId: string): Promise<void> {
-    const mission = this.findMission(appSessionId);
-    if (!mission || !autoCompactionDue(mission, mission.summary.contextTokens)) return;
-    await this.compactMission(mission, undefined, 'auto');
   }
 
   // Design turns are a single focused task (extra prompts queue), so the model
@@ -1532,7 +1618,7 @@ export class MissionManager {
   // the worker notification subscriptions route through here so post-terminal
   // generation is dropped no matter which channel delivers it. History replay
   // does not pass through this path (it uses emitTranscript directly).
-  private applyNormalizedForAgent(
+  applyNormalizedForAgent(
     missionId: string,
     agentSessionId: string,
     n: NonNullable<ReturnType<typeof normalizeStreamEvent>>,
@@ -1713,11 +1799,14 @@ export class MissionManager {
         const offset = this.usageOffsets.get(appSessionId);
         m.summary.tokensIn = n.tokens.tokensIn + (offset?.tokensIn ?? 0);
         m.summary.tokensOut = n.tokens.tokensOut + (offset?.tokensOut ?? 0);
-        m.summary.contextTokens = n.tokens.contextTokens;
+        // Deliberately do NOT derive live context usage from token-usage events.
+        // Their contextTokens includes cache-read tokens and over-reports the
+        // real window usage several-fold, so the meter and the compaction
+        // trigger read getContextStats only (poller + post-turn refresh), the
+        // daemon's authoritative context size.
         const maxContextTokens = this.maxContextTokensForSummary(m.summary);
         if (maxContextTokens === undefined) delete m.summary.maxContextTokens;
         else m.summary.maxContextTokens = maxContextTokens;
-        this.emitContextEstimate(appSessionId, m.summary);
         this.emit({
           type: 'mission.tokens',
           missionId: appSessionId,
@@ -1736,7 +1825,7 @@ export class MissionManager {
     this.emit({ type: 'event.appended', event });
   }
 
-  private emitStatus(
+  emitStatus(
     missionId: string,
     text: string,
     compactType?: CompactType,
@@ -1762,175 +1851,10 @@ export class MissionManager {
   ): Promise<void> {
     const mission = this.findMission(sessionId);
     if (mission) {
-      await this.compactMission(mission, customInstructions, compactType);
+      await this.compaction.compactMission(mission, customInstructions, compactType);
       return;
     }
-    await this.compactHistoricalSession(sessionId, customInstructions);
-  }
-
-  // Orchestrator (live chat) compaction. Runs the shared in-place path; if the
-  // daemon returns a new backing id the `reload` hook swaps the session while
-  // keeping the stable app id (summary.id) so the visible chat is unchanged.
-  private async compactMission(
-    mission: Mission,
-    customInstructions: string | undefined,
-    compactType: CompactType,
-  ): Promise<void> {
-    const appSessionId = mission.summary.id;
-    const carryover: UsageOffset = {
-      tokensIn: mission.summary.tokensIn ?? 0,
-      tokensOut: mission.summary.tokensOut ?? 0,
-    };
-    mission.compacting = true;
-    // Remembers the daemon's new backing id so a reload failure can be recovered
-    // after runCompaction returns 'stale' (the hook sets it before adopting).
-    let swapTarget: string | undefined;
-    try {
-      const outcome = await runCompaction(
-        mission.session,
-        {
-          status: (text, ct) => this.emitStatus(appSessionId, text, ct),
-          error: (message) =>
-            this.emitError({
-              sessionId: mission.summary.sessionId,
-              missionId: appSessionId,
-              message: `Could not compact session: ${message}`,
-              recoverable: true,
-            }),
-          refresh: () => this.refreshContext(appSessionId, mission.session),
-          reload: async (newSessionId) => {
-            swapTarget = newSessionId;
-            await this.swapMissionSession(mission, newSessionId, carryover);
-          },
-        },
-        { customInstructions, compactType },
-      );
-      // The daemon swapped to a new backing id but adopting it threw, so
-      // mission.session still points at the swapped-away (now-dead) old id.
-      // Recover before later sends stream into that stale session.
-      if (outcome === 'stale' && swapTarget) {
-        await this.recoverStaleMissionSwap(mission, swapTarget, carryover);
-      }
-    } finally {
-      mission.compacting = false;
-    }
-  }
-
-  // Adopt the daemon's compacted backing session behind the stable app id:
-  // load the new id, swap it in, retire the old session, and persist the new id
-  // with carried-over usage. Throws if the new session cannot be loaded.
-  private async swapMissionSession(
-    mission: Mission,
-    newSessionId: string,
-    carryover: UsageOffset,
-  ): Promise<void> {
-    const appSessionId = mission.summary.id;
-    const compactedFromSessionIds = uniqueStrings([
-      ...(mission.summary.compactedFromSessionIds ?? []),
-      mission.summary.sessionId,
-    ]);
-    const ref = { id: appSessionId };
-    const oldSession = mission.session;
-    mission.session = await this.runtime.loadSession(newSessionId, {
-      permissionHandler: this.makePermissionHandler(ref),
-      askUserHandler: this.makeAskUserHandler(ref),
-      // Re-attach the same local MCP servers (still running) so the swapped
-      // session keeps browser tools on subsequent turns.
-      mcpServers: mission.mcpConfigs,
-    });
-    // The replacement session starts with default tool settings, so the cached
-    // design-tool policy no longer reflects reality. Clear it so the next turn
-    // re-synchronizes disabledToolIds.
-    mission.todoDisabledForDesign = undefined;
-    await oldSession.close().catch(() => {});
-    this.usageOffsets.set(appSessionId, carryover);
-    this.patch(appSessionId, {
-      sessionId: newSessionId,
-      compactedFromSessionIds,
-      tokensIn: carryover.tokensIn,
-      tokensOut: carryover.tokensOut,
-      contextTokens: 0,
-    });
-  }
-
-  // Recovery for an orchestrator compaction that swapped backing sessions but
-  // failed to adopt the new one (mission.session is now a dead id). Retry the
-  // adoption once for a transient failure; if it still fails, persist the new
-  // id and drop the live mission so the next send re-resumes against the live
-  // (compacted) session instead of streaming into the dead one.
-  private async recoverStaleMissionSwap(
-    mission: Mission,
-    newSessionId: string,
-    carryover: UsageOffset,
-  ): Promise<void> {
-    const appSessionId = mission.summary.id;
-    try {
-      await this.swapMissionSession(mission, newSessionId, carryover);
-      return;
-    } catch {
-      /* adoption still failing; persist the new id and drop the mission below */
-    }
-    this.patch(appSessionId, {
-      sessionId: newSessionId,
-      compactedFromSessionIds: uniqueStrings([
-        ...(mission.summary.compactedFromSessionIds ?? []),
-        mission.summary.sessionId,
-      ]),
-      tokensIn: carryover.tokensIn,
-      tokensOut: carryover.tokensOut,
-      contextTokens: 0,
-    });
-    await this.closeMission(appSessionId);
-    // closeMission clears the usage offset for this app id, so seed it AFTER the
-    // teardown: when the next message re-resumes against the compacted backing
-    // session (whose token counts restart low), the carried-over totals are
-    // added back instead of the displayed usage collapsing to the new segment.
-    this.usageOffsets.set(appSessionId, carryover);
-    this.emitError({
-      missionId: appSessionId,
-      sessionId: newSessionId,
-      message:
-        'Compaction moved this conversation to a new session but reloading it failed; it will reload on your next message.',
-      recoverable: true,
-    });
-  }
-
-  // Compacting a session that is not currently loaded (e.g. from the sidebar
-  // history). There is no live session to refresh; the swapped backing id is
-  // persisted to history so the next resume continues from the compacted state.
-  private async compactHistoricalSession(
-    sessionId: string,
-    customInstructions?: string,
-  ): Promise<void> {
-    const historical = this.resolveSummary(sessionId);
-    const oldDroidSessionId = historical?.sessionId ?? sessionId;
-    try {
-      const result = await this.withSession(sessionId, (session) =>
-        session.compactSession(customInstructions ? { customInstructions } : {}),
-      );
-      if (!result) return;
-      const newSessionId = result.newSessionId || oldDroidSessionId;
-      if (newSessionId !== oldDroidSessionId && historical) {
-        const updated = {
-          ...historical,
-          sessionId: newSessionId,
-          compactedFromSessionIds: uniqueStrings([
-            ...(historical.compactedFromSessionIds ?? []),
-            oldDroidSessionId,
-          ]),
-          updatedAt: Date.now(),
-        };
-        this.history.syncSummaries([updated]);
-        this.emit({ type: 'mission.updated', mission: updated });
-        this.emit({ type: 'session.updated', session: updated });
-      }
-    } catch (err) {
-      this.emitError({
-        sessionId: oldDroidSessionId,
-        missionId: historical?.id ?? sessionId,
-        message: `Could not compact session: ${errMsg(err)}`,
-      });
-    }
+    await this.compaction.compactHistoricalSession(sessionId, customInstructions);
   }
 
   private async send(missionId: string, text: string): Promise<void> {
@@ -1945,11 +1869,19 @@ export class MissionManager {
     }
     const appSessionId = mission.summary.id;
     if (!(await this.applyPendingSessionSettings(appSessionId))) return;
+    // Real user input resets the hidden self-driving cap and the compaction
+    // saturation latch (a fresh request is a new chance to compact usefully).
+    mission.autoContinueCount = 0;
+    mission.compactionSaturated = false;
     if (mission.streaming || mission.compacting) {
       mission.pendingSends.push(text);
       this.patch(appSessionId, { queuedSends: mission.pendingSends.length });
       return;
     }
+    // Compact first if the idle session is already over the trigger, so the
+    // prompt runs against a compacted session. The prompt is queued inside so a
+    // session swap never drops it; it is never turned into a hidden "continue".
+    if (await this.compaction.compactBeforeTurnIfDue(mission, appSessionId, text)) return;
     await this.drive(appSessionId, text);
   }
 
@@ -1965,7 +1897,12 @@ export class MissionManager {
     }
     const appSessionId = mission.summary.id;
     if (!(await this.applyPendingSessionSettings(appSessionId))) return;
+    // Real user input resets the hidden self-driving cap and the compaction
+    // saturation latch (a fresh request is a new chance to compact usefully).
+    mission.autoContinueCount = 0;
+    mission.compactionSaturated = false;
     if (!mission.streaming && !mission.compacting) {
+      if (await this.compaction.compactBeforeTurnIfDue(mission, appSessionId, text)) return;
       await this.drive(appSessionId, text);
       return;
     }
@@ -2072,7 +2009,7 @@ export class MissionManager {
     if (mission) this.patch(appSessionId, patch);
     if (mission && settings.modelId !== undefined) {
       // The model drives the auto-compaction threshold; recompute it so this
-      // path doesn't leave maybeAutoCompact using the old limit.
+      // path doesn't leave the trigger check using the old limit.
       await this.recomputeOrchestratorCompactionLimit(mission);
     }
     if (mission && session) await this.refreshContext(appSessionId, session);
@@ -2184,6 +2121,10 @@ export class MissionManager {
         ),
       };
       agent.unsubscribe = session.onNotification((note: Record<string, unknown>) => {
+        // Drop tail notifications while a compaction interrupt is armed: a
+        // terminal event delivered here would mark the worker terminal and make
+        // the pending compaction skip (mirrors the driveAgent stream-loop guard).
+        if (agent.interruptingForCompaction) return;
         for (const n of normalizeNotification(appSessionId, agentSessionId, role, note))
           this.applyNormalizedForAgent(appSessionId, agentSessionId, n);
       });
@@ -2216,7 +2157,7 @@ export class MissionManager {
     }
   }
 
-  private async sendAgent(missionId: string, agentSessionId: string, text: string): Promise<void> {
+  async sendAgent(missionId: string, agentSessionId: string, text: string): Promise<void> {
     const mission = this.findMission(missionId);
     if (!mission) return;
     const appSessionId = mission.summary.id;
@@ -2226,14 +2167,19 @@ export class MissionManager {
     const agent = mission.agents.get(agentSessionId);
     if (!agent) return;
     agent.lastUsedAt = Date.now();
+    // Real input resets the hidden self-driving cap and the compaction
+    // saturation latch (a fresh task is a new chance to compact usefully).
+    agent.autoContinueCount = 0;
+    agent.compactionSaturated = false;
     if (agent.streaming || agent.compacting) {
       agent.pendingSends.push(text);
       return;
     }
+    if (await this.compaction.compactAgentBeforeTurnIfDue(agent, text)) return;
     await this.driveAgent(agent, text);
   }
 
-  private async driveAgent(agent: LiveAgent, text: string): Promise<void> {
+  async driveAgent(agent: LiveAgent, text: string): Promise<void> {
     agent.streaming = true;
     agent.lastUsedAt = Date.now();
     this.findMission(agent.missionId)?.terminalAgents.delete(agent.session.sessionId);
@@ -2245,14 +2191,33 @@ export class MissionManager {
       status: 'running',
     });
     this.startContextPolling(agent.session.sessionId, agent.session);
+    // See the orchestrator loop: per-turn in-flight tool ids gating the
+    // compaction interrupt so it never fires mid-tool.
+    const toolsInFlight = new Set<string>();
     try {
       const stream = agent.session.stream(text, { includePartialMessages: true });
-      for await (const ev of stream)
-        this.applyEvent(agent.missionId, agent.session.sessionId, agent.role, ev);
+      for await (const ev of stream) {
+        // Once a compaction interrupt is armed, drop this turn's tail events:
+        // interrupt() cancellations and the resulting terminal would otherwise
+        // surface as errors and skip compaction (see the orchestrator loop).
+        if (!agent.interruptingForCompaction) {
+          this.applyEvent(agent.missionId, agent.session.sessionId, agent.role, ev);
+        }
+        updateToolsInFlight(toolsInFlight, ev);
+        // Same safe-boundary compaction interrupt as the orchestrator (only at a
+        // completed step, never mid-tool/reasoning/response), scoped to this
+        // worker's own session so its long-horizon work survives the window.
+        if (isSafeCompactionBoundary(ev, toolsInFlight)) {
+          const snap = this.contextSnapshots.get(agent.session.sessionId);
+          this.compaction.interruptForCompactionIfDue(agent, snap?.used, snap?.limit);
+        }
+      }
     } catch (err) {
-      if (agent.interruptingForSteer)
+      if (agent.interruptingForCompaction) {
+        // Expected: we cut the worker turn off at a safe boundary to compact.
+      } else if (agent.interruptingForSteer) {
         this.emitStatus(agent.missionId, 'Subagent turn interrupted for steering.');
-      else {
+      } else {
         const message = errMsg(err);
         this.emit({
           type: 'agent.not_steerable',
@@ -2270,38 +2235,73 @@ export class MissionManager {
       }
     } finally {
       this.stopContextPolling(agent.session.sessionId);
+      const forCompaction = agent.interruptingForCompaction === true;
+      // A worker turn that already produced its final answer must not compact or
+      // auto-resume; it waits for the next send (no post-turn compaction).
+      const wasTerminal =
+        this.findMission(agent.missionId)?.terminalAgents.has(agent.session.sessionId) === true;
       agent.interruptingForSteer = false;
-      if (agent.pendingSends.length === 0 && agent.closeWhenIdle) {
+      if (!forCompaction && agent.pendingSends.length === 0 && agent.closeWhenIdle) {
+        agent.interruptingForCompaction = false;
         agent.streaming = false;
         await this.closeAgent(agent.missionId, agent.session.sessionId);
       } else {
-        // Refresh + auto-compact while streaming stays true so concurrent sends
-        // queue instead of racing a second driveAgent(). Compaction is scoped to
-        // this worker's own session/history (and may re-key it to a new id).
+        // Refresh + (conditional) compaction while streaming stays true so
+        // concurrent sends queue instead of racing a second driveAgent().
         await this.refreshContext(agent.session.sessionId, agent.session);
-        const outcome = await this.maybeAutoCompactAgent(agent);
+        // Compact ONLY when we interrupted this worker turn to compact and it did
+        // not end with a final answer. No post-turn compaction after a natural
+        // finish: an idle, over-budget worker waits for its next send.
+        const compacted =
+          forCompaction && !wasTerminal
+            ? await this.compaction.compactAgent(agent, 'auto')
+            : undefined;
+        agent.interruptingForCompaction = false;
         agent.streaming = false;
-        if (outcome === 'stale') {
+        if (compacted === 'stale') {
           // The daemon swapped this worker to a new backing session but adopting
-          // it failed, so agent.session now points at a dead id. Tear the worker
-          // down instead of draining queued sends into a stale session; a later
-          // open/send re-creates it against the live session.
+          // it failed, so agent.session now points at a dead id. Capture the
+          // queued sends and the persisted new id BEFORE teardown, then close the
+          // dead-id worker and re-deliver each queued prompt against the live
+          // (compacted) session (mirrors the pre-turn stale path). Without this,
+          // prompts queued while this worker streamed during the compaction
+          // window would be silently lost.
+          const missionId = agent.missionId;
+          const swappedTo = agent.swappedToSessionId;
+          const queued = agent.pendingSends.splice(0);
           this.emitError({
             sessionId: agent.session.sessionId,
-            missionId: agent.missionId,
-            message:
-              'Subagent compaction swapped sessions but could not be adopted; closing the subagent. Re-open it to continue.',
+            missionId,
+            message: swappedTo
+              ? 'Subagent compaction swapped sessions but could not be adopted in place; re-delivering queued messages to the compacted subagent.'
+              : 'Subagent compaction swapped sessions but could not be adopted; closing the subagent. Re-open it to continue.',
             recoverable: true,
           });
-          await this.closeAgent(agent.missionId, agent.session.sessionId);
+          await this.closeAgent(missionId, agent.session.sessionId);
+          if (swappedTo) {
+            for (const queuedText of queued) await this.sendAgent(missionId, swappedTo, queuedText);
+          }
         } else {
-          // Compaction is applied in place: 'completed' re-keys the worker to the
-          // daemon's new backing session (via the reload hook) and a transient
-          // 'failed' leaves the current session valid. Either way agent.session
-          // stays usable, so drain queued sends against it normally.
+          // agent.session stays usable ('completed' re-keyed it in place via the
+          // reload hook; a transient 'failed'/no-compaction left it valid).
           const next = agent.pendingSends.shift();
-          if (next !== undefined) void this.driveAgent(agent, next);
-          else
+          if (next !== undefined) {
+            // A real queued user prompt always wins over a hidden resume.
+            agent.autoContinueCount = 0;
+            agent.compactionSaturated = false;
+            void this.driveAgent(agent, next);
+          } else if (compacted !== undefined && canAutoContinue(agent.autoContinueCount)) {
+            // We interrupted this worker turn to compact, so its in-flight work
+            // was aborted. Resume invisibly whenever the session is still usable
+            // ('stale' is handled above) - not only on 'completed' but also
+            // 'noop' (nothing to compact) and 'failed' (transient error) -
+            // otherwise the interrupted work would stall until the next send. A
+            // 'noop' latches saturation first so the resume runs to completion
+            // rather than re-interrupting into another no-op loop.
+            if (compacted === 'noop') agent.compactionSaturated = true;
+            agent.autoContinueCount = (agent.autoContinueCount ?? 0) + 1;
+            void this.driveAgent(agent, RESUME_NUDGE);
+          } else {
             this.emit({
               type: 'agent.updated',
               missionId: agent.missionId,
@@ -2309,205 +2309,9 @@ export class MissionManager {
               role: agent.role,
               status: 'paused',
             });
+          }
         }
       }
-    }
-  }
-
-  // Workers compact their own session through the shared compaction path. The
-  // daemon swaps to a new backing id on success, which the reload hook adopts
-  // in place (re-keying the worker) so the worker stays alive and addressable.
-  // Returns the compaction outcome (or undefined when no compaction was
-  // attempted) so the caller can recover on a transient failure.
-  private async maybeAutoCompactAgent(agent: LiveAgent): Promise<CompactionOutcome | undefined> {
-    const used = this.contextSnapshots.get(agent.session.sessionId)?.used;
-    if (!autoCompactionDue(agent, used)) return undefined;
-    return this.compactAgent(agent, 'auto');
-  }
-
-  private async compactAgent(
-    agent: LiveAgent,
-    compactType: CompactType,
-  ): Promise<CompactionOutcome> {
-    const agentSessionId = agent.session.sessionId;
-    agent.compacting = true;
-    // Remembers the daemon's new backing id (set by the reload hook before it
-    // adopts the swap) so a reload failure that returns 'stale' can still
-    // recover the new id instead of losing it, mirroring the orchestrator's
-    // swapTarget / recoverStaleMissionSwap path.
-    let swapTarget: string | undefined;
-    try {
-      const outcome = await runCompaction(
-        agent.session,
-        {
-          // Status lines stay keyed by the worker's original id so they land on
-          // the worker the client is still showing; the rekey event below moves
-          // that transcript to the new id afterwards.
-          status: (text, ct) =>
-            this.emitStatus(agent.missionId, text, ct, agentSessionId, agent.role),
-          error: (message) =>
-            this.emitError({
-              sessionId: agentSessionId,
-              missionId: agent.missionId,
-              message: `Could not compact subagent: ${message}`,
-              recoverable: true,
-            }),
-          // After a swap the snapshot must live under the worker's current id so
-          // the next auto-compaction check reads the right usage.
-          refresh: () => this.refreshContext(agent.session.sessionId, agent.session),
-          // The daemon swaps to a new backing session id on a successful
-          // compaction. Adopt it in place (re-key all maps and re-subscribe)
-          // so the worker stays alive and queued sends keep flowing rather than
-          // the session being treated as stale and torn down.
-          reload: async (newSessionId) => {
-            swapTarget = newSessionId;
-            await this.rekeyAgentSession(agent, newSessionId);
-          },
-        },
-        { compactType },
-      );
-      // In-place adoption succeeded: tell clients to remap state from the old id
-      // to the new one. Emitted after runCompaction so all old-id-keyed
-      // transcript/status events are flushed first.
-      if (agent.session.sessionId !== agentSessionId) {
-        this.emitWorkerRekey(agent.missionId, agentSessionId, agent.session.sessionId);
-        return outcome;
-      }
-      // The daemon swapped to a new backing id but adopting it threw, so
-      // agent.session still points at the swapped-away (now-dead) old id.
-      // Recover so the new id isn't lost: otherwise queued sends and future
-      // re-opens would target the dead old id.
-      if (outcome === 'stale' && swapTarget) {
-        return await this.recoverStaleAgentSwap(agent, agentSessionId, swapTarget);
-      }
-      return outcome;
-    } finally {
-      agent.compacting = false;
-    }
-  }
-
-  private emitWorkerRekey(missionId: string, oldSessionId: string, newSessionId: string): void {
-    this.emit({ type: 'mission.worker.rekey', missionId, oldSessionId, newSessionId });
-  }
-
-  // Recovery for a worker compaction that swapped backing sessions but failed to
-  // adopt the new one (agent.session is now a dead id). Retry the adoption once
-  // for a transient load failure; if it still fails, persist the new id to the
-  // durable spawn link and mission features so a later re-open/resume targets
-  // the live (compacted) session, then report 'stale' so the caller tears down
-  // the dead-id worker instead of draining sends into it.
-  private async recoverStaleAgentSwap(
-    agent: LiveAgent,
-    oldSessionId: string,
-    newSessionId: string,
-  ): Promise<CompactionOutcome> {
-    try {
-      await this.rekeyAgentSession(agent, newSessionId);
-      this.emitWorkerRekey(agent.missionId, oldSessionId, agent.session.sessionId);
-      return 'completed';
-    } catch {
-      /* adoption still failing; persist the new id below so re-open hits it */
-    }
-    const mission = this.findMission(agent.missionId);
-    if (mission) this.persistWorkerSwap(mission, oldSessionId, newSessionId);
-    this.emitWorkerRekey(agent.missionId, oldSessionId, newSessionId);
-    return 'stale';
-  }
-
-  // Adopt a worker's swapped backing session id (returned by the daemon on a
-  // successful compaction) in place: load the new session, move every map/set
-  // keyed by the old id, re-subscribe notifications, and persist the updated
-  // spawn links so a later resume points at the compacted session. Loading runs
-  // first so a failure leaves the old (still valid) session untouched; the
-  // synchronous re-keying that follows cannot throw.
-  private async rekeyAgentSession(agent: LiveAgent, newSessionId: string): Promise<void> {
-    const oldSessionId = agent.session.sessionId;
-    if (newSessionId === oldSessionId) return;
-    const ref = { id: agent.missionId };
-    const newSession = await this.runtime.loadSession(newSessionId, {
-      permissionHandler: this.makePermissionHandler(ref),
-      askUserHandler: this.makeAskUserHandler(ref),
-    });
-    const oldSession = agent.session;
-    agent.unsubscribe?.();
-    agent.session = newSession;
-    agent.unsubscribe = newSession.onNotification((note: Record<string, unknown>) => {
-      for (const n of normalizeNotification(agent.missionId, newSessionId, agent.role, note))
-        this.applyNormalizedForAgent(agent.missionId, newSessionId, n);
-    });
-    const snapshot = this.contextSnapshots.get(oldSessionId);
-    this.contextSnapshots.delete(oldSessionId);
-    if (snapshot) this.contextSnapshots.set(newSessionId, snapshot);
-    const mission = this.findMission(agent.missionId);
-    if (mission) {
-      if (mission.agents.delete(oldSessionId)) mission.agents.set(newSessionId, agent);
-      if (mission.knownSubagents.delete(oldSessionId)) mission.knownSubagents.add(newSessionId);
-      if (mission.completedSubagents.delete(oldSessionId))
-        mission.completedSubagents.add(newSessionId);
-      if (mission.linkedSubagents.delete(oldSessionId)) mission.linkedSubagents.add(newSessionId);
-      const settings = mission.subagentSettings.get(oldSessionId);
-      if (settings) {
-        mission.subagentSettings.delete(oldSessionId);
-        mission.subagentSettings.set(newSessionId, settings);
-      }
-      this.persistWorkerSwap(mission, oldSessionId, newSessionId);
-    }
-    await oldSession.close().catch(() => {});
-  }
-
-  // Persist a worker's compaction swap to the durable spawn link and the mission
-  // summary features so a later resume or re-open targets the compacted id (not
-  // the dead old one). Shared by the in-place rekey and the stale-swap recovery
-  // (which runs this even when the new session could not be loaded, so the new
-  // id survives in history and the worker is re-openable).
-  private persistWorkerSwap(mission: Mission, oldSessionId: string, newSessionId: string): void {
-    // Authorize the new id for live agent.open/agent.send immediately. When
-    // rekeyAgentSession succeeds it has already swapped these sets; but the
-    // stale-recovery path runs persistWorkerSwap WITHOUT a successful rekey, so
-    // without this the rekeyed id is in neither set and every open/send fails
-    // with agent.not_in_session until the mission is reloaded. delete() guards
-    // keep it idempotent when the rekey path already moved them.
-    if (mission.knownSubagents.delete(oldSessionId)) mission.knownSubagents.add(newSessionId);
-    if (mission.linkedSubagents.delete(oldSessionId)) mission.linkedSubagents.add(newSessionId);
-    // Re-point any spawn link for this worker at the new id (preserving its
-    // label) so a later resume seeds linkedSubagents with the compacted id.
-    const labelByToolUseId = new Map(
-      this.history.subagentLinks(mission.summary.id).map((l) => [l.toolUseId, l.label]),
-    );
-    for (const [toolUseId, sid] of mission.subagentToolUseIds) {
-      if (sid !== oldSessionId) continue;
-      mission.subagentToolUseIds.set(toolUseId, newSessionId);
-      this.history.recordSubagentLink(
-        mission.summary.id,
-        toolUseId,
-        newSessionId,
-        labelByToolUseId.get(toolUseId),
-      );
-    }
-    // Mission features pin workers by session id (feature focus + worker
-    // numbering). Remap them on the summary too, so a later mission.list/
-    // mission.updated (which re-emits summary.features) can't overwrite the
-    // client's rekey with the dead id and make feature-focused views unopenable.
-    const features = mission.summary.features;
-    if (features?.length) {
-      mission.summary.features = features.map((f) =>
-        f.currentWorkerSessionId === oldSessionId ||
-        f.completedWorkerSessionId === oldSessionId ||
-        f.workerSessionIds?.includes(oldSessionId)
-          ? {
-              ...f,
-              workerSessionIds: f.workerSessionIds?.map((id) =>
-                id === oldSessionId ? newSessionId : id,
-              ),
-              currentWorkerSessionId:
-                f.currentWorkerSessionId === oldSessionId ? newSessionId : f.currentWorkerSessionId,
-              completedWorkerSessionId:
-                f.completedWorkerSessionId === oldSessionId
-                  ? newSessionId
-                  : f.completedWorkerSessionId,
-            }
-          : f,
-      );
     }
   }
 
@@ -2525,7 +2329,13 @@ export class MissionManager {
     const agent = mission.agents.get(agentSessionId);
     if (!agent) return;
     agent.lastUsedAt = Date.now();
+    // Real user input resets the hidden self-driving cap and the compaction
+    // saturation latch (a fresh task is a new chance to compact usefully),
+    // matching sendAgent and the orchestrator's sendNow.
+    agent.autoContinueCount = 0;
+    agent.compactionSaturated = false;
     if (!agent.streaming && !agent.compacting) {
+      if (await this.compaction.compactAgentBeforeTurnIfDue(agent, text)) return;
       await this.driveAgent(agent, text);
       return;
     }
@@ -2614,7 +2424,7 @@ export class MissionManager {
     return false;
   }
 
-  private async closeAgent(missionId: string, agentSessionId: string): Promise<void> {
+  async closeAgent(missionId: string, agentSessionId: string): Promise<void> {
     const mission = this.findMission(missionId);
     const agent = mission?.agents.get(agentSessionId);
     if (!mission || !agent) return;
@@ -2644,7 +2454,7 @@ export class MissionManager {
     if (appSessionId) this.patch(appSessionId, { title });
   }
 
-  private async withSession<T>(
+  async withSession<T>(
     sessionId: string,
     fn: (session: DroidSession) => Promise<T>,
   ): Promise<T | undefined> {
@@ -2729,34 +2539,15 @@ export class MissionManager {
     this.contextPollers.delete(sessionId);
   }
 
-  private emitContextEstimate(sessionId: string, summary: MissionSummary): void {
-    if (summary.contextTokens <= 0) return;
-    const previous = this.contextSnapshots.get(sessionId);
-    const limit =
-      this.maxContextTokensForSummary(summary) ?? summary.maxContextTokens ?? previous?.limit;
-    if (!limit || limit <= 0) return;
-    const used = Math.min(summary.contextTokens, limit);
-    const breakdown = previous?.breakdown
-      ? {
-          ...previous.breakdown,
-          contextBudget: limit,
-          usedTokens: used,
-          freeTokens: Math.max(0, limit - used),
-        }
-      : undefined;
-    const snapshot: ContextStatsSnapshot = {
-      used,
-      remaining: Math.max(0, limit - used),
-      limit,
-      accuracy: previous?.accuracy ?? 'estimated',
-      updatedAt: new Date().toISOString(),
-      breakdown,
-    };
-    this.contextSnapshots.set(sessionId, snapshot);
-    this.emit({ type: 'context.updated', sessionId, stats: snapshot });
+  private findLiveAgentBySession(sessionId: string): LiveAgent | undefined {
+    for (const mission of this.missions.values()) {
+      const agent = mission.agents.get(sessionId);
+      if (agent) return agent;
+    }
+    return undefined;
   }
 
-  private async refreshContext(
+  async refreshContext(
     sessionId: string,
     session: DroidSession,
     options: { persist?: boolean } = {},
@@ -2769,6 +2560,19 @@ export class MissionManager {
       const appSessionId = mission?.summary.id ?? sessionId;
       this.contextSnapshots.set(appSessionId, snapshot);
       this.emit({ type: 'context.updated', sessionId: appSessionId, stats: snapshot });
+      // A genuine sub-trigger reading means the context fits again, so lift any
+      // saturation latch and let auto-compaction resume normally.
+      if (mission?.compactionSaturated && usageBelowTrigger(mission, snapshot.used, snapshot.limit))
+        mission.compactionSaturated = false;
+      // Workers are not missions, so findMission misses them; clear the worker's
+      // own saturation latch on the same sub-trigger reading (only scan when this
+      // refresh is not for an orchestrator session).
+      const liveAgent = mission ? undefined : this.findLiveAgentBySession(sessionId);
+      if (
+        liveAgent?.compactionSaturated &&
+        usageBelowTrigger(liveAgent, snapshot.used, snapshot.limit)
+      )
+        liveAgent.compactionSaturated = false;
       if (mission) {
         const contextPatch = {
           contextTokens: snapshot.used,
@@ -2824,7 +2628,7 @@ export class MissionManager {
     }
   }
 
-  private async closeMission(missionId: string): Promise<void> {
+  async closeMission(missionId: string): Promise<void> {
     const key = this.findMissionKey(missionId);
     if (!key) return;
     const mission = this.missions.get(key);
@@ -2857,7 +2661,7 @@ export class MissionManager {
     this.emitMissionList();
   }
 
-  private patch(missionId: string, partial: Partial<MissionSummary>): void {
+  patch(missionId: string, partial: Partial<MissionSummary>): void {
     const key = this.findMissionKey(missionId);
     const mission = key ? this.missions.get(key) : undefined;
     if (!mission) return;
@@ -2867,7 +2671,7 @@ export class MissionManager {
     this.emit({ type: 'session.updated', session: mission.summary });
   }
 
-  private emitError(error: {
+  emitError(error: {
     code?: string;
     sessionId?: string;
     missionId?: string;
@@ -3325,11 +3129,11 @@ function reasoningDefaultForMode(
   return defaults.reasoningEffort;
 }
 
-function uniqueStrings(values: Array<string | undefined>): string[] {
+export function uniqueStrings(values: Array<string | undefined>): string[] {
   return [...new Set(values.filter((value): value is string => Boolean(value)))];
 }
 
-function errMsg(err: unknown): string {
+export function errMsg(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 

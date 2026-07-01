@@ -13,8 +13,10 @@ import {
   clampCompactionTokenLimit,
   compactionTokenLimitForModel,
   createCompactionSettingsForModel,
+  effectiveCompactionLimit,
   resumedCompactionTokenLimit,
 } from './compaction.js';
+import { RESUME_NUDGE } from './autoCompaction.js';
 import type {
   BridgeFeature,
   MissionSummary,
@@ -69,12 +71,16 @@ class FakeSession {
 class FakeAgentSession {
   closed = false;
   notify?: (note: Record<string, unknown>) => void;
+  settingsUpdates: Array<Record<string, unknown>> = [];
   constructor(readonly sessionId: string) {}
   onNotification(cb: (note: Record<string, unknown>) => void): () => void {
     this.notify = cb;
     return () => {
       this.notify = undefined;
     };
+  }
+  async updateSettings(params: Record<string, unknown>): Promise<void> {
+    this.settingsUpdates.push(params);
   }
   async close(): Promise<void> {
     this.closed = true;
@@ -198,6 +204,23 @@ test('uses Factory compaction defaults when command omits them', () => {
     compactionTokenLimitForModel('model-a', {}, { compactionTokenLimit: 200_000 }),
     200_000,
   );
+});
+
+test('effectiveCompactionLimit falls back to the model window when no explicit limit is set', () => {
+  // No explicit limit -> the auto-compaction trigger basis is the model window
+  // (compact at ~80% of it) rather than undefined (which disables compaction).
+  assert.equal(effectiveCompactionLimit('model-a', {}, 200_000), 200_000);
+  // An explicit limit still wins and is clamped to the window.
+  assert.equal(
+    effectiveCompactionLimit('model-a', { compactionTokenLimit: 100_000 }, 200_000),
+    100_000,
+  );
+  assert.equal(
+    effectiveCompactionLimit('model-a', { compactionTokenLimit: 500_000 }, 200_000),
+    200_000,
+  );
+  // Unknown window and no explicit limit -> nothing to trigger on.
+  assert.equal(effectiveCompactionLimit('model-a', {}, undefined), undefined);
 });
 
 test('builds Droid compaction init payloads', () => {
@@ -369,6 +392,7 @@ test('rekeyAgentSession adopts the swapped worker id across all mission state', 
     agents: new Map<string, typeof agent>([['worker-old', agent]]),
     knownSubagents: new Set(['worker-old']),
     completedSubagents: new Set<string>(),
+    terminalAgents: new Set<string>(),
     linkedSubagents: new Set(['worker-old']),
     subagentToolUseIds: new Map([['tool-rk', 'worker-old']]),
     subagentSettings: new Map([['worker-old', { modelId: 'm-worker' }]]),
@@ -382,7 +406,7 @@ test('rekeyAgentSession adopts the swapped worker id across all mission state', 
     };
     contextSnapshots: Map<string, unknown>;
     missions: Map<string, typeof mission>;
-    rekeyAgentSession: (a: typeof agent, newId: string) => Promise<void>;
+    compaction: { rekeyAgentSession: (a: typeof agent, newId: string) => Promise<void> };
   };
   internals.runtime = { loadSession: async () => newSession };
   internals.history = {
@@ -395,7 +419,7 @@ test('rekeyAgentSession adopts the swapped worker id across all mission state', 
   internals.contextSnapshots.set('worker-old', { used: 5 });
   internals.missions.set('app-rk', mission);
 
-  await internals.rekeyAgentSession(agent, 'worker-new');
+  await internals.compaction.rekeyAgentSession(agent, 'worker-new');
 
   assert.equal(agent.session.sessionId, 'worker-new');
   assert.equal(unsubscribed, 1);
@@ -414,6 +438,39 @@ test('rekeyAgentSession adopts the swapped worker id across all mission state', 
   assert.deepEqual(recorded, [
     { toolUseId: 'tool-rk', workerSessionId: 'worker-new', label: 'Builder' },
   ]);
+});
+
+test('persistWorkerSwap carries per-session model settings to the new id (stale-recovery path)', async () => {
+  const manager = new MissionManager(() => {});
+  const mission = {
+    summary: testSummary('app-psw', 'droid-psw'),
+    agents: new Map(),
+    knownSubagents: new Set(['worker-old']),
+    completedSubagents: new Set<string>(),
+    terminalAgents: new Set<string>(),
+    linkedSubagents: new Set(['worker-old']),
+    subagentToolUseIds: new Map<string, string>(),
+    // The user picked a specific model for this worker.
+    subagentSettings: new Map<string, { modelId?: string }>([
+      ['worker-old', { modelId: 'm-pick' }],
+    ]),
+  };
+  const internals = manager as unknown as {
+    history: { subagentLinks: () => WorkerHistoryLink[] };
+    missions: Map<string, typeof mission>;
+    compaction: { persistWorkerSwap: (m: typeof mission, oldId: string, newId: string) => void };
+  };
+  internals.history = { subagentLinks: () => [] };
+  internals.missions.set('app-psw', mission);
+
+  // The double-failure recovery path persists the swap without a successful
+  // rekey (which is what would otherwise have moved subagentSettings).
+  internals.compaction.persistWorkerSwap(mission, 'worker-old', 'worker-new');
+
+  // Without the fix the new id has no stored settings and a re-opened worker
+  // silently reverts to the role-default model instead of the user's pick.
+  assert.equal(mission.subagentSettings.get('worker-new')?.modelId, 'm-pick');
+  assert.equal(mission.subagentSettings.has('worker-old'), false);
 });
 
 test('worker compaction re-keys to the new backing id and emits a rekey event (not stale)', async () => {
@@ -450,7 +507,7 @@ test('worker compaction re-keys to the new backing id and emits a rekey event (n
       recordSubagentLink: () => void;
     };
     missions: Map<string, typeof mission>;
-    compactAgent: (a: typeof agent, t: 'auto' | 'manual') => Promise<string>;
+    compaction: { compactAgent: (a: typeof agent, t: 'auto' | 'manual') => Promise<string> };
   };
   internals.runtime = { loadSession: async () => newSession };
   internals.history = {
@@ -461,7 +518,7 @@ test('worker compaction re-keys to the new backing id and emits a rekey event (n
   };
   internals.missions.set('app-cmp', mission);
 
-  const outcome = await internals.compactAgent(agent, 'auto');
+  const outcome = await internals.compaction.compactAgent(agent, 'auto');
 
   // The swap is adopted in place: completed (not stale), worker stays alive.
   assert.equal(outcome, 'completed');
@@ -487,6 +544,215 @@ test('worker compaction re-keys to the new backing id and emits a rekey event (n
     events.some((e) => e.type === 'mission.error'),
     false,
   );
+});
+
+test('worker compaction re-applies the worker model so it does not revert to the CLI default', async () => {
+  const events: ServerEvent[] = [];
+  const manager = new MissionManager((event) => events.push(event));
+  const oldSession = new FakeCompactionSession('worker-old', 900_000, 'worker-new');
+  const newSession = new FakeCompactionSession('worker-new', 10_000);
+  const agent = {
+    session: oldSession,
+    missionId: 'app-wm',
+    role: 'worker' as const,
+    streaming: false,
+    pendingSends: [] as string[],
+    lastUsedAt: Date.now(),
+    unsubscribe: () => {},
+    effectiveCompactionTokenLimit: 200_000,
+  };
+  const mission = {
+    summary: testSummary('app-wm', 'droid-wm'),
+    agents: new Map<string, typeof agent>([['worker-old', agent]]),
+    knownSubagents: new Set(['worker-old']),
+    completedSubagents: new Set<string>(),
+    terminalAgents: new Set<string>(),
+    linkedSubagents: new Set<string>(),
+    subagentToolUseIds: new Map<string, string>(),
+    subagentSettings: new Map<string, { modelId?: string; reasoningEffort?: string }>([
+      ['worker-old', { modelId: 'custom:glm-5.2', reasoningEffort: 'high' }],
+    ]),
+  };
+  const internals = manager as unknown as {
+    runtime: { loadSession: (id: string, handlers: unknown) => Promise<FakeCompactionSession> };
+    history: {
+      recordEvent: () => void;
+      syncSummaries: () => void;
+      subagentLinks: () => WorkerHistoryLink[];
+      recordSubagentLink: () => void;
+    };
+    missions: Map<string, typeof mission>;
+    compaction: { compactAgent: (a: typeof agent, t: 'auto' | 'manual') => Promise<string> };
+  };
+  internals.runtime = { loadSession: async () => newSession };
+  internals.history = {
+    recordEvent: () => {},
+    syncSummaries: () => {},
+    subagentLinks: () => [],
+    recordSubagentLink: () => {},
+  };
+  internals.missions.set('app-wm', mission);
+
+  const outcome = await internals.compaction.compactAgent(agent, 'auto');
+
+  assert.equal(outcome, 'completed');
+  assert.equal(agent.session.sessionId, 'worker-new');
+  // The worker's selected model + reasoning are re-applied to the compacted
+  // session: loadSession cannot carry them, so without this the worker would
+  // silently fall back to the daemon's CLI-default model.
+  const applied = newSession.settingsUpdates.find((u) => 'modelId' in u);
+  assert.ok(applied, 'expected updateSettings to re-apply the worker model after the swap');
+  assert.equal(applied?.modelId, 'custom:glm-5.2');
+  assert.equal(applied?.reasoningEffort, 'high');
+});
+
+test('worker notification subscription drops events while a compaction interrupt is armed', async () => {
+  const manager = new MissionManager(() => {});
+  const oldSession = new FakeAgentSession('worker-old');
+  const newSession = new FakeAgentSession('worker-new');
+  const agent = {
+    session: oldSession,
+    missionId: 'app-guard',
+    role: 'worker' as const,
+    streaming: false,
+    pendingSends: [] as string[],
+    lastUsedAt: Date.now(),
+    interruptingForCompaction: false,
+    unsubscribe: () => {},
+  };
+  const mission = {
+    summary: testSummary('app-guard', 'droid-guard'),
+    agents: new Map<string, typeof agent>([['worker-old', agent]]),
+    knownSubagents: new Set(['worker-old']),
+    completedSubagents: new Set<string>(),
+    terminalAgents: new Set<string>(),
+    linkedSubagents: new Set<string>(),
+    subagentToolUseIds: new Map<string, string>(),
+    subagentSettings: new Map<string, { modelId?: string }>(),
+  };
+  let applied = 0;
+  const internals = manager as unknown as {
+    runtime: { loadSession: (id: string, h: unknown) => Promise<FakeAgentSession> };
+    history: { subagentLinks: () => WorkerHistoryLink[]; recordSubagentLink: () => void };
+    contextSnapshots: Map<string, unknown>;
+    missions: Map<string, typeof mission>;
+    applyNormalizedForAgent: (m: string, s: string, n: unknown) => void;
+    compaction: { rekeyAgentSession: (a: typeof agent, id: string) => Promise<void> };
+  };
+  internals.runtime = { loadSession: async () => newSession };
+  internals.history = { subagentLinks: () => [], recordSubagentLink: () => {} };
+  internals.missions.set('app-guard', mission);
+  internals.applyNormalizedForAgent = () => {
+    applied += 1;
+  };
+
+  await internals.compaction.rekeyAgentSession(agent, 'worker-new');
+  assert.ok(newSession.notify, 'expected the worker notification subscription to be registered');
+
+  const note = { type: 'assistant_text_delta', messageId: 'm1', blockIndex: 0, textDelta: 'hi' };
+  // Disarmed: the tail event flows through to the shared agent entry.
+  newSession.notify?.(note);
+  assert.equal(applied, 1);
+  // Armed for compaction: the event is dropped before it can mark the worker
+  // terminal and make the pending compaction skip.
+  agent.interruptingForCompaction = true;
+  newSession.notify?.(note);
+  assert.equal(applied, 1);
+});
+
+test('refreshContext clears a saturated worker latch once its context fits again', async () => {
+  const manager = new MissionManager(() => {});
+  const session = new FakeCompactionSession('worker-1', 10_000);
+  const agent = {
+    session,
+    missionId: 'app-sat',
+    role: 'worker' as const,
+    streaming: false,
+    pendingSends: [] as string[],
+    lastUsedAt: Date.now(),
+    effectiveCompactionTokenLimit: 200_000,
+    compactionSaturated: true,
+  };
+  const mission = {
+    summary: testSummary('app-sat', 'droid-sat'),
+    agents: new Map<string, typeof agent>([['worker-1', agent]]),
+  };
+  const internals = manager as unknown as {
+    missions: Map<string, typeof mission>;
+    refreshContext: (id: string, s: FakeCompactionSession) => Promise<void>;
+  };
+  internals.missions.set('app-sat', mission);
+
+  // refreshContext only receives a session id; findMission misses the worker, so
+  // the latch must clear via the cross-mission live-agent lookup.
+  await internals.refreshContext('worker-1', session);
+  assert.equal(agent.compactionSaturated, false);
+});
+
+test('a stale worker pre-turn compaction re-delivers the queued prompt to the swapped session', async () => {
+  const events: ServerEvent[] = [];
+  const manager = new MissionManager((event) => events.push(event));
+  const oldSession = new FakeCompactionSession('worker-old', 900_000, 'worker-new');
+  const agent = {
+    session: oldSession,
+    missionId: 'app-redel',
+    role: 'worker' as const,
+    streaming: false,
+    pendingSends: [] as string[],
+    lastUsedAt: Date.now(),
+    unsubscribe: () => {},
+    effectiveCompactionTokenLimit: 200_000,
+  };
+  const mission = {
+    summary: testSummary('app-redel', 'droid-redel'),
+    agents: new Map<string, typeof agent>([['worker-old', agent]]),
+    knownSubagents: new Set(['worker-old']),
+    completedSubagents: new Set<string>(),
+    terminalAgents: new Set<string>(),
+    linkedSubagents: new Set(['worker-old']),
+    subagentToolUseIds: new Map<string, string>([['tool-redel', 'worker-old']]),
+    subagentSettings: new Map<string, { modelId?: string }>(),
+  };
+  const redelivered: Array<{ missionId: string; sessionId: string; text: string }> = [];
+  const internals = manager as unknown as {
+    runtime: { loadSession: () => Promise<never> };
+    history: {
+      recordEvent: () => void;
+      syncSummaries: () => void;
+      subagentLinks: () => WorkerHistoryLink[];
+      recordSubagentLink: () => void;
+    };
+    contextSnapshots: Map<string, { used: number; limit: number }>;
+    missions: Map<string, typeof mission>;
+    sendAgent: (m: string, s: string, t: string) => Promise<void>;
+    compaction: { compactAgentBeforeTurnIfDue: (a: typeof agent, t: string) => Promise<boolean> };
+  };
+  // Adoption fails on every load, so the swap goes stale (daemon swapped to
+  // worker-new but it could not be adopted in place).
+  internals.runtime = {
+    loadSession: async () => {
+      throw new Error('adoption failed');
+    },
+  };
+  internals.history = {
+    recordEvent: () => {},
+    syncSummaries: () => {},
+    subagentLinks: () => [],
+    recordSubagentLink: () => {},
+  };
+  internals.contextSnapshots.set('worker-old', { used: 900_000, limit: 1_000_000 });
+  internals.missions.set('app-redel', mission);
+  internals.sendAgent = async (m, s, t) => {
+    redelivered.push({ missionId: m, sessionId: s, text: t });
+  };
+
+  const handled = await internals.compaction.compactAgentBeforeTurnIfDue(agent, 'steer me');
+  assert.equal(handled, true);
+  // The dead-id worker is torn down, but the steering prompt is re-delivered to
+  // the persisted (compacted) session id rather than silently dropped.
+  assert.deepEqual(redelivered, [
+    { missionId: 'app-redel', sessionId: 'worker-new', text: 'steer me' },
+  ]);
 });
 
 test('withLiveWorkerStatus leaves links untouched for historical (non-live) missions', () => {
@@ -923,6 +1189,7 @@ function autoCompactHarness(used: number, effectiveCompactionTokenLimit?: number
       subagentLinks: () => [];
     };
     missions: Map<string, typeof mission>;
+    contextSnapshots: Map<string, { used: number; limit?: number }>;
   };
   internals.history = {
     recordEvent: () => {},
@@ -932,6 +1199,11 @@ function autoCompactHarness(used: number, effectiveCompactionTokenLimit?: number
     recordSubagentLink: () => {},
     subagentLinks: () => [],
   };
+  // The orchestrator trigger reads the getContextStats snapshot (kept fresh by
+  // the context poller / post-turn refresh), the same source as the meter. Seed
+  // it so the idle pre-turn check sees the usage the fake reports.
+  mission.summary.contextTokens = used;
+  internals.contextSnapshots.set('app-compact', { used });
   internals.missions.set(mission.summary.id, mission);
   return { manager, session, events, mission };
 }
@@ -1018,6 +1290,128 @@ test('does not auto-compact when effectiveCompactionTokenLimit is unset', async 
   assert.equal(session.compactions, 0);
 });
 
+// getContextStats stays LOW (below the trigger), but the stream emits a
+// token-usage event whose contextTokens is cache-inflated far over the window.
+// The trigger and meter must read getContextStats only and ignore it, otherwise
+// the inflated value re-crosses the trigger between polls and loops compaction.
+class FakeInflatedTokenSession {
+  prompts: string[] = [];
+  compactions = 0;
+  interrupts = 0;
+
+  constructor(readonly sessionId: string) {}
+
+  async *stream(prompt: string): AsyncGenerator<Record<string, unknown>, void, undefined> {
+    this.prompts.push(prompt);
+    yield {
+      type: 'token_usage_update',
+      inclusiveTokenUsage: { inputTokens: 5_000, outputTokens: 1_000 },
+      lastCallTokenUsage: { inputTokens: 0, cacheReadTokens: 250_000 },
+    };
+    yield { type: 'result' };
+  }
+
+  async interrupt(): Promise<void> {
+    this.interrupts += 1;
+  }
+
+  async updateSettings(): Promise<void> {}
+
+  onNotification(): () => void {
+    return () => {};
+  }
+
+  async getContextStats(): Promise<{
+    used: number;
+    remaining: number;
+    limit: number;
+    accuracy: 'exact';
+    updatedAt: string;
+  }> {
+    return {
+      used: 40_000,
+      remaining: 960_000,
+      limit: 1_000_000,
+      accuracy: 'exact',
+      updatedAt: new Date().toISOString(),
+    };
+  }
+
+  async compactSession(): Promise<{ newSessionId: string; removedCount: number }> {
+    this.compactions += 1;
+    return { newSessionId: this.sessionId, removedCount: 4 };
+  }
+
+  async close(): Promise<void> {}
+}
+
+function inflatedTokenHarness() {
+  const events: ServerEvent[] = [];
+  const manager = new MissionManager((event) => events.push(event));
+  const session = new FakeInflatedTokenSession('droid-inflated');
+  const mission = {
+    summary: testSummary('app-inflated', session.sessionId),
+    session,
+    streaming: false,
+    pendingSends: [] as string[],
+    pendingPermissions: new Map(),
+    pendingQuestions: new Map(),
+    agents: new Map(),
+    knownSubagents: new Set<string>(),
+    completedSubagents: new Set<string>(),
+    terminalAgents: new Set<string>(),
+    linkedSubagents: new Set<string>(),
+    subagentToolUseIds: new Map(),
+    subagentSettings: new Map(),
+    pendingSubagents: [],
+    mcpServers: [],
+    effectiveCompactionTokenLimit: 200_000,
+    compacting: false,
+  };
+  const internals = manager as unknown as {
+    history: {
+      recordEvent: () => void;
+      syncSummaries: () => void;
+      summaryPatches: () => Map<string, unknown>;
+      hiddenDroidSessionIds: () => Set<string>;
+      recordSubagentLink: () => void;
+      subagentLinks: () => [];
+    };
+    missions: Map<string, typeof mission>;
+    contextSnapshots: Map<string, { used: number; limit?: number }>;
+  };
+  internals.history = {
+    recordEvent: () => {},
+    syncSummaries: () => {},
+    summaryPatches: () => new Map(),
+    hiddenDroidSessionIds: () => new Set(),
+    recordSubagentLink: () => {},
+    subagentLinks: () => [],
+  };
+  internals.contextSnapshots.set('app-inflated', { used: 40_000, limit: 1_000_000 });
+  internals.missions.set(mission.summary.id, mission);
+  return { manager, session, events };
+}
+
+test('a cache-inflated token-usage event never moves the trigger or compacts (meter uses getContextStats only)', async () => {
+  const { manager, session, events } = inflatedTokenHarness();
+  await manager.handle({ type: 'mission.send', missionId: 'app-inflated', text: 'go' });
+  await waitFor(() => events.some((e) => e.type === 'context.updated'));
+  // The inflated 250k token event must not trigger a compaction or interrupt.
+  assert.equal(session.compactions, 0);
+  assert.equal(session.interrupts, 0);
+  // Every context reading reflects the accurate getContextStats value (~40k),
+  // never the cache-inflated 250k the old estimate path leaked into the meter.
+  const contextUpdates = events.filter(
+    (e): e is Extract<ServerEvent, { type: 'context.updated' }> => e.type === 'context.updated',
+  );
+  assert.ok(contextUpdates.length > 0);
+  assert.equal(
+    contextUpdates.every((e) => e.stats.used <= 50_000),
+    true,
+  );
+});
+
 test('rejects manual compaction while streaming', async () => {
   const { manager, mission, events } = autoCompactHarness(250_000, 200_000);
   mission.streaming = true;
@@ -1033,6 +1427,797 @@ test('rejects manual compaction while streaming', async () => {
       /cannot compact/i.test((e as { event?: { text?: string } }).event?.text ?? ''),
   );
   assert.equal(hasRejection, true);
+});
+
+test('a user prompt sent while over the trigger compacts first then runs the user prompt, not a hidden continue', async () => {
+  const { manager, session } = autoCompactHarness(250_000, 200_000);
+  await manager.handle({
+    type: 'mission.send',
+    missionId: 'app-compact',
+    text: 'real user prompt',
+  });
+  assert.equal(session.compactions, 1);
+  // The user's prompt drives the post-compaction turn; it is never dropped nor
+  // replaced by the synthetic resume nudge.
+  assert.equal(session.prompts.includes('real user prompt'), true);
+  assert.equal(session.prompts.includes(RESUME_NUDGE), false);
+});
+
+test('does not compact after a turn that ends over the trigger (no post-turn compaction)', async () => {
+  const { manager, session } = autoCompactHarness(250_000, 200_000);
+  // The session was under the trigger when the prompt arrived (no pre-turn
+  // compaction); the fake then reports usage over the trigger as the turn ends.
+  (manager as unknown as { contextSnapshots: Map<string, { used: number }> }).contextSnapshots.set(
+    'app-compact',
+    { used: 10_000 },
+  );
+  await manager.handle({ type: 'mission.send', missionId: 'app-compact', text: 'hello' });
+  // No post-turn compaction after a final answer: it waits for the next prompt.
+  assert.equal(session.compactions, 0);
+  assert.equal(session.prompts.includes(RESUME_NUDGE), false);
+});
+
+// Simulates a long, still-working turn: it bumps usage over the trigger, yields
+// one no-op event so the drive loop runs its between-events compaction check,
+// then waits to be interrupted. A resumed turn (the hidden nudge) does no work.
+class FakeMidTurnSession {
+  prompts: string[] = [];
+  interrupts = 0;
+  compactions = 0;
+  // Controls what the daemon reports for the mid-task compaction so the resume
+  // path can be exercised for each non-stale outcome.
+  compactBehavior: 'completed' | 'noop' | 'failed' = 'completed';
+  // When set, a completed compaction reports a swapped backing id (drives the
+  // adopt-in-place / stale-recovery path).
+  swapTo?: string;
+  // Only the first real turn is the long one that crosses the trigger and waits
+  // to be interrupted; resumed/steered turns complete immediately.
+  armed = true;
+  interrupted = false;
+  onTurnStart?: () => void;
+  private release?: () => void;
+
+  constructor(readonly sessionId: string) {}
+
+  async *stream(prompt: string): AsyncGenerator<Record<string, unknown>, void, undefined> {
+    this.prompts.push(prompt);
+    if (prompt === RESUME_NUDGE || !this.armed) return;
+    this.armed = false;
+    this.onTurnStart?.();
+    // A completed step (tool_result with no tool left in flight) is the only safe
+    // boundary the client may interrupt on for compaction.
+    yield { type: 'tool_result', toolName: 'Read', toolUseId: 'm1', content: 'data' };
+    // The interrupt can land while we are paused at the yield (before `release`
+    // is set), so check the flag before awaiting to avoid blocking forever.
+    if (!this.interrupted) {
+      await new Promise<void>((resolve) => {
+        this.release = resolve;
+      });
+    }
+    throw new Error('interrupted');
+  }
+
+  async interrupt(): Promise<void> {
+    this.interrupts += 1;
+    this.interrupted = true;
+    this.release?.();
+  }
+
+  async updateSettings(): Promise<void> {}
+
+  onNotification(): () => void {
+    return () => {};
+  }
+
+  async getContextStats(): Promise<{
+    used: number;
+    remaining: number;
+    limit: number;
+    accuracy: 'exact';
+    updatedAt: string;
+  }> {
+    return {
+      used: 250_000,
+      remaining: 750_000,
+      limit: 1_000_000,
+      accuracy: 'exact',
+      updatedAt: new Date().toISOString(),
+    };
+  }
+
+  async compactSession(): Promise<{ newSessionId: string; removedCount: number } | null> {
+    this.compactions += 1;
+    // 'failed' models a transient compaction error; 'noop' models the daemon
+    // finding nothing to compact. In both the session stays usable, so the
+    // interrupted turn must still resume rather than silently stall.
+    if (this.compactBehavior === 'failed') throw new Error('compaction failed transiently');
+    if (this.compactBehavior === 'noop') return null;
+    return { newSessionId: this.swapTo ?? this.sessionId, removedCount: 4 };
+  }
+
+  async close(): Promise<void> {}
+}
+
+function midTurnHarness() {
+  const events: ServerEvent[] = [];
+  const manager = new MissionManager((event) => events.push(event));
+  const session = new FakeMidTurnSession('droid-mid');
+  const mission = {
+    summary: testSummary('app-mid', session.sessionId),
+    compactionSaturated: false as boolean | undefined,
+    session,
+    streaming: false,
+    pendingSends: [] as string[],
+    pendingPermissions: new Map(),
+    pendingQuestions: new Map(),
+    agents: new Map(),
+    knownSubagents: new Set<string>(),
+    completedSubagents: new Set<string>(),
+    terminalAgents: new Set<string>(),
+    linkedSubagents: new Set<string>(),
+    subagentToolUseIds: new Map(),
+    subagentSettings: new Map(),
+    pendingSubagents: [],
+    mcpServers: [],
+    effectiveCompactionTokenLimit: 200_000,
+    compacting: false,
+    autoContinueCount: undefined as number | undefined,
+  };
+  const internals = manager as unknown as {
+    history: {
+      recordEvent: () => void;
+      syncSummaries: () => void;
+      summaryPatches: () => Map<string, unknown>;
+      hiddenDroidSessionIds: () => Set<string>;
+      recordSubagentLink: () => void;
+      subagentLinks: () => [];
+    };
+    missions: Map<string, typeof mission>;
+    contextSnapshots: Map<string, { used: number; limit?: number }>;
+  };
+  internals.history = {
+    recordEvent: () => {},
+    syncSummaries: () => {},
+    summaryPatches: () => new Map(),
+    hiddenDroidSessionIds: () => new Set(),
+    recordSubagentLink: () => {},
+    subagentLinks: () => [],
+  };
+  // The trigger reads the getContextStats snapshot. Seed it under the trigger so
+  // pre-turn compaction does NOT fire, then have onTurnStart push it over the
+  // trigger synchronously so the in-flight turn is interrupted mid-stream.
+  internals.contextSnapshots.set('app-mid', { used: 10_000, limit: 1_000_000 });
+  session.onTurnStart = () => {
+    internals.contextSnapshots.set('app-mid', { used: 250_000, limit: 1_000_000 });
+  };
+  internals.missions.set(mission.summary.id, mission);
+  return { manager, session, events, mission };
+}
+
+test('mid-task: crossing the trigger interrupts, compacts, then resumes invisibly with the nudge', async () => {
+  const { manager, session, mission, events } = midTurnHarness();
+  await manager.handle({ type: 'mission.send', missionId: 'app-mid', text: 'go' });
+  // We interrupted the in-flight turn exactly once and compacted at that boundary.
+  assert.equal(session.interrupts, 1);
+  assert.equal(session.compactions, 1);
+  // The task resumes on its own with the hidden nudge (long-horizon continuation).
+  await waitFor(() => session.prompts.includes(RESUME_NUDGE));
+  assert.deepEqual(session.prompts, ['go', RESUME_NUDGE]);
+  assert.equal(mission.autoContinueCount, 1);
+  // The interruption/compaction never surfaces as a turn failure.
+  assert.equal(
+    events.some((e) => e.type === 'mission.error'),
+    false,
+  );
+});
+
+test('mid-task: a no-op compaction still resumes the interrupted turn and latches saturation', async () => {
+  const { manager, session, mission } = midTurnHarness();
+  session.compactBehavior = 'noop';
+  await manager.handle({ type: 'mission.send', missionId: 'app-mid', text: 'go' });
+  // We interrupted the in-flight turn and asked the daemon to compact; it found
+  // nothing to compact, but the aborted turn must not be left to stall.
+  assert.equal(session.interrupts, 1);
+  assert.equal(session.compactions, 1);
+  await waitFor(() => session.prompts.includes(RESUME_NUDGE));
+  assert.deepEqual(session.prompts, ['go', RESUME_NUDGE]);
+  assert.equal(mission.autoContinueCount, 1);
+  // A no-op latches the saturation guard so the resume runs to completion rather
+  // than re-interrupting into another no-op compaction.
+  assert.equal(mission.compactionSaturated, true);
+});
+
+test('mid-task: a transient compaction failure still resumes the interrupted turn', async () => {
+  const { manager, session, mission } = midTurnHarness();
+  session.compactBehavior = 'failed';
+  await manager.handle({ type: 'mission.send', missionId: 'app-mid', text: 'go' });
+  assert.equal(session.interrupts, 1);
+  assert.equal(session.compactions, 1);
+  // The session is still usable after a transient failure, so the aborted turn
+  // resumes instead of stalling.
+  await waitFor(() => session.prompts.includes(RESUME_NUDGE));
+  assert.deepEqual(session.prompts, ['go', RESUME_NUDGE]);
+  assert.equal(mission.autoContinueCount, 1);
+  // A transient failure does NOT latch saturation; the next over-trigger turn
+  // may try to compact again.
+  assert.notEqual(mission.compactionSaturated, true);
+});
+
+// Drives a worker session directly through the mid-task interrupt path (not the
+// pre-turn send path), reusing the armed/interrupt FakeMidTurnSession so the
+// worker counterpart of the orchestrator resume gate can be exercised.
+function workerMidTurnHarness() {
+  const events: ServerEvent[] = [];
+  const manager = new MissionManager((event) => events.push(event));
+  const session = new FakeMidTurnSession('worker-mid');
+  const agent = {
+    session,
+    missionId: 'app-wmid',
+    role: 'worker' as const,
+    streaming: false,
+    pendingSends: [] as string[],
+    lastUsedAt: Date.now(),
+    compacting: false,
+    effectiveCompactionTokenLimit: 200_000,
+    autoContinueCount: undefined as number | undefined,
+    compactionSaturated: false as boolean | undefined,
+  };
+  const mission = {
+    summary: testSummary('app-wmid', 'droid-wmid'),
+    agents: new Map<string, typeof agent>([['worker-mid', agent]]),
+    terminalAgents: new Set<string>(),
+    knownSubagents: new Set<string>(['worker-mid']),
+    completedSubagents: new Set<string>(),
+    linkedSubagents: new Set<string>(['worker-mid']),
+    subagentToolUseIds: new Map<string, string>(),
+    subagentSettings: new Map(),
+  };
+  const internals = manager as unknown as {
+    history: {
+      recordEvent: () => void;
+      syncSummaries: () => void;
+      summaryPatches: () => Map<string, unknown>;
+      hiddenDroidSessionIds: () => Set<string>;
+      recordSubagentLink: () => void;
+      subagentLinks: () => [];
+    };
+    missions: Map<string, typeof mission>;
+    contextSnapshots: Map<string, { used: number; limit?: number }>;
+    driveAgent: (a: typeof agent, t: string) => Promise<void>;
+  };
+  internals.history = {
+    recordEvent: () => {},
+    syncSummaries: () => {},
+    summaryPatches: () => new Map(),
+    hiddenDroidSessionIds: () => new Set(),
+    recordSubagentLink: () => {},
+    subagentLinks: () => [],
+  };
+  internals.contextSnapshots.set('worker-mid', { used: 10_000, limit: 1_000_000 });
+  session.onTurnStart = () => {
+    internals.contextSnapshots.set('worker-mid', { used: 250_000, limit: 1_000_000 });
+  };
+  internals.missions.set('app-wmid', mission);
+  return { session, agent, events, internals };
+}
+
+test('mid-task worker: a no-op compaction still resumes the interrupted turn and latches saturation', async () => {
+  const { session, agent, internals } = workerMidTurnHarness();
+  session.compactBehavior = 'noop';
+  await internals.driveAgent(agent, 'go');
+  // The worker turn was interrupted and compaction found nothing to compact, but
+  // the aborted work must still resume rather than leaving the worker stalled.
+  assert.equal(session.interrupts, 1);
+  assert.equal(session.compactions, 1);
+  await waitFor(() => session.prompts.includes(RESUME_NUDGE));
+  assert.deepEqual(session.prompts, ['go', RESUME_NUDGE]);
+  assert.equal(agent.autoContinueCount, 1);
+  assert.equal(agent.compactionSaturated, true);
+});
+
+test('mid-task worker: a stale compaction swap re-delivers queued sends to the swapped session', async () => {
+  const { session, agent, internals } = workerMidTurnHarness();
+  // The daemon swaps this worker to a new backing id during the mid-task
+  // compaction, but adopting it fails (loadSession throws), leaving agent.session
+  // pointing at the dead id.
+  session.swapTo = 'worker-mid-new';
+  agent.pendingSends.push('queued-during');
+  const redelivered: Array<{ sessionId: string; text: string }> = [];
+  const ext = internals as unknown as {
+    runtime: { loadSession: () => Promise<never> };
+    sendAgent: (missionId: string, sessionId: string, text: string) => Promise<void>;
+  };
+  ext.runtime = {
+    loadSession: async () => {
+      throw new Error('adoption failed');
+    },
+  };
+  ext.sendAgent = async (_missionId, sessionId, text) => {
+    redelivered.push({ sessionId, text });
+  };
+  await internals.driveAgent(agent, 'go');
+  assert.equal(session.interrupts, 1);
+  assert.equal(session.compactions, 1);
+  // The dead-id worker is torn down, but the prompt queued while it streamed
+  // during the compaction window is re-delivered to the persisted (compacted)
+  // session id rather than silently dropped.
+  assert.deepEqual(redelivered, [{ sessionId: 'worker-mid-new', text: 'queued-during' }]);
+});
+
+test('sendAgentNow clears the worker compaction saturation latch on a real steer', async () => {
+  const { manager, mission } = workerAutoCompactHarness(150_000, 200_000);
+  const agent = mission.agents.get('worker-compact') as {
+    compactionSaturated?: boolean;
+    compacting?: boolean;
+    pendingSends: string[];
+  };
+  // Latched after a no-op compaction; a real steer is a fresh chance to compact
+  // usefully. Mark it compacting so sendNow queues (never interrupts a
+  // compaction) yet still clears the latch before returning.
+  agent.compactionSaturated = true;
+  agent.compacting = true;
+  await manager.handle({
+    type: 'agent.sendNow',
+    missionId: 'app-compact',
+    agentSessionId: 'worker-compact',
+    text: 'steer',
+  });
+  assert.equal(agent.compactionSaturated, false);
+  assert.equal(agent.pendingSends.includes('steer'), true);
+});
+
+// A turn that crosses the trigger WHILE a tool is in flight. The interrupt must
+// wait for the tool's result (the safe boundary) and never fire mid-tool, so a
+// file write / shell command is never cancelled underneath the model.
+class FakeToolBoundarySession {
+  prompts: string[] = [];
+  interrupts = 0;
+  compactions = 0;
+  armed = true;
+  interrupted = false;
+  // Flips true the moment the tool_result is emitted; interrupt() snapshots it
+  // so the test can prove the interrupt landed at/after the result, not mid-tool.
+  resultEmitted = false;
+  interruptedAfterResult = false;
+  onTurnStart?: () => void;
+  private release?: () => void;
+
+  constructor(readonly sessionId: string) {}
+
+  async *stream(prompt: string): AsyncGenerator<Record<string, unknown>, void, undefined> {
+    this.prompts.push(prompt);
+    if (prompt === RESUME_NUDGE || !this.armed) return;
+    this.armed = false;
+    // Push usage over the trigger before any tool starts, so the only thing
+    // holding the interrupt back is the in-flight tool, not the threshold.
+    this.onTurnStart?.();
+    yield { type: 'tool_call', toolUse: { id: 't1', name: 'edit_file' } };
+    yield { type: 'tool_call_delta', toolUse: { id: 't1' } };
+    // Still mid-tool and over the trigger: a correct client does NOT interrupt.
+    yield { type: 'thinking_text_delta', text: 'working' };
+    if (this.interrupted) throw new Error('interrupted mid-tool');
+    // Tool finishes -> safe boundary. The interrupt is expected on/after this.
+    this.resultEmitted = true;
+    yield { type: 'tool_result', toolName: 'edit_file', toolUseId: 't1', content: 'ok' };
+    if (!this.interrupted) {
+      await new Promise<void>((resolve) => {
+        this.release = resolve;
+      });
+    }
+    throw new Error('interrupted');
+  }
+
+  async interrupt(): Promise<void> {
+    this.interrupts += 1;
+    this.interrupted = true;
+    this.interruptedAfterResult = this.resultEmitted;
+    this.release?.();
+  }
+
+  async updateSettings(): Promise<void> {}
+
+  onNotification(): () => void {
+    return () => {};
+  }
+
+  async getContextStats(): Promise<{
+    used: number;
+    remaining: number;
+    limit: number;
+    accuracy: 'exact';
+    updatedAt: string;
+  }> {
+    return {
+      used: 250_000,
+      remaining: 750_000,
+      limit: 1_000_000,
+      accuracy: 'exact',
+      updatedAt: new Date().toISOString(),
+    };
+  }
+
+  async compactSession(): Promise<{ newSessionId: string; removedCount: number }> {
+    this.compactions += 1;
+    return { newSessionId: this.sessionId, removedCount: 4 };
+  }
+
+  async close(): Promise<void> {}
+}
+
+function toolBoundaryHarness() {
+  const events: ServerEvent[] = [];
+  const manager = new MissionManager((event) => events.push(event));
+  const session = new FakeToolBoundarySession('droid-tool');
+  const mission = {
+    summary: testSummary('app-tool', session.sessionId),
+    session,
+    streaming: false,
+    pendingSends: [] as string[],
+    pendingPermissions: new Map(),
+    pendingQuestions: new Map(),
+    agents: new Map(),
+    knownSubagents: new Set<string>(),
+    completedSubagents: new Set<string>(),
+    terminalAgents: new Set<string>(),
+    linkedSubagents: new Set<string>(),
+    subagentToolUseIds: new Map(),
+    subagentSettings: new Map(),
+    pendingSubagents: [],
+    mcpServers: [],
+    effectiveCompactionTokenLimit: 200_000,
+    compacting: false,
+    autoContinueCount: undefined as number | undefined,
+  };
+  const internals = manager as unknown as {
+    history: {
+      recordEvent: () => void;
+      syncSummaries: () => void;
+      summaryPatches: () => Map<string, unknown>;
+      hiddenDroidSessionIds: () => Set<string>;
+      recordSubagentLink: () => void;
+      subagentLinks: () => [];
+    };
+    missions: Map<string, typeof mission>;
+    contextSnapshots: Map<string, { used: number; limit?: number }>;
+  };
+  internals.history = {
+    recordEvent: () => {},
+    syncSummaries: () => {},
+    summaryPatches: () => new Map(),
+    hiddenDroidSessionIds: () => new Set(),
+    recordSubagentLink: () => {},
+    subagentLinks: () => [],
+  };
+  // Seed under the trigger so pre-turn compaction does NOT fire; onTurnStart
+  // pushes it over the trigger synchronously while a tool is in flight.
+  internals.contextSnapshots.set('app-tool', { used: 10_000, limit: 1_000_000 });
+  session.onTurnStart = () => {
+    internals.contextSnapshots.set('app-tool', { used: 250_000, limit: 1_000_000 });
+  };
+  internals.missions.set(mission.summary.id, mission);
+  return { manager, session, events };
+}
+
+test('mid-task: an over-trigger turn waits for the in-flight tool result before interrupting (never mid-tool)', async () => {
+  const { manager, session, events } = toolBoundaryHarness();
+  await manager.handle({ type: 'mission.send', missionId: 'app-tool', text: 'go' });
+  // Exactly one interrupt, and it landed at the safe boundary: the tool_result
+  // was already emitted when interrupt() fired, so no tool was cancelled mid-run.
+  assert.equal(session.interrupts, 1);
+  assert.equal(session.interruptedAfterResult, true);
+  // It compacted at that boundary and resumed the long-horizon task invisibly.
+  assert.equal(session.compactions, 1);
+  await waitFor(() => session.prompts.includes(RESUME_NUDGE));
+  assert.equal(
+    events.some((e) => e.type === 'mission.error'),
+    false,
+  );
+});
+
+test('mid-task: a user prompt queued during the compaction wins over the hidden continue', async () => {
+  const { manager, session, mission } = midTurnHarness();
+  // Queue a real user prompt before the turn is interrupted/compacted, mirroring
+  // a user typing while we compact mid-task.
+  mission.pendingSends.push('user steered');
+  await manager.handle({ type: 'mission.send', missionId: 'app-mid', text: 'go' });
+  await waitFor(() => session.prompts.includes('user steered'));
+  // The queued user prompt drives the post-compaction turn; the hidden nudge is
+  // never sent, and the counter resets because real user input was delivered.
+  assert.equal(session.prompts.includes(RESUME_NUDGE), false);
+  assert.equal(session.prompts.includes('user steered'), true);
+  assert.equal(mission.autoContinueCount, 0);
+});
+
+// Unlike FakeMidTurnSession (which throws on interrupt), the real SDK reacts to
+// interrupt() by cancelling in-flight tools (emitting "Tool execution cancelled
+// by user" errors) and then closing the turn with a terminal `result`. That
+// terminal would mark the turn finished (wasTerminal) and skip compaction, and
+// the cancellation errors would leak to the UI. This fake reproduces that exact
+// tail so the regression is covered.
+class FakeCancelTerminalSession {
+  prompts: string[] = [];
+  interrupts = 0;
+  compactions = 0;
+  armed = true;
+  interrupted = false;
+  onTurnStart?: () => void;
+  private release?: () => void;
+
+  constructor(readonly sessionId: string) {}
+
+  async *stream(prompt: string): AsyncGenerator<Record<string, unknown>, void, undefined> {
+    this.prompts.push(prompt);
+    if (prompt === RESUME_NUDGE || !this.armed) return;
+    this.armed = false;
+    this.onTurnStart?.();
+    // Interrupt lands on this completed-step boundary; the cancellation tail
+    // below (errors + a terminal result) must then be dropped, not surfaced.
+    yield { type: 'tool_result', toolName: 'Read', toolUseId: 'r1', content: 'data' };
+    if (!this.interrupted) {
+      await new Promise<void>((resolve) => {
+        this.release = resolve;
+      });
+    }
+    // The SDK's reaction to interrupt(): cancellations, then a terminal result.
+    yield { type: 'error', message: 'Tool execution cancelled by user' };
+    yield {
+      type: 'tool_result',
+      toolName: 'Read',
+      content: 'Tool execution cancelled by user',
+      isError: true,
+    };
+    yield { type: 'result' };
+  }
+
+  async interrupt(): Promise<void> {
+    this.interrupts += 1;
+    this.interrupted = true;
+    this.release?.();
+  }
+
+  async updateSettings(): Promise<void> {}
+
+  onNotification(): () => void {
+    return () => {};
+  }
+
+  async getContextStats(): Promise<{
+    used: number;
+    remaining: number;
+    limit: number;
+    accuracy: 'exact';
+    updatedAt: string;
+  }> {
+    return {
+      used: 250_000,
+      remaining: 750_000,
+      limit: 1_000_000,
+      accuracy: 'exact',
+      updatedAt: new Date().toISOString(),
+    };
+  }
+
+  async compactSession(): Promise<{ newSessionId: string; removedCount: number }> {
+    this.compactions += 1;
+    return { newSessionId: this.sessionId, removedCount: 4 };
+  }
+
+  async close(): Promise<void> {}
+}
+
+function cancelTerminalHarness() {
+  const events: ServerEvent[] = [];
+  const manager = new MissionManager((event) => events.push(event));
+  const session = new FakeCancelTerminalSession('droid-cancel');
+  const mission = {
+    summary: testSummary('app-cancel', session.sessionId),
+    session,
+    streaming: false,
+    pendingSends: [] as string[],
+    pendingPermissions: new Map(),
+    pendingQuestions: new Map(),
+    agents: new Map(),
+    knownSubagents: new Set<string>(),
+    completedSubagents: new Set<string>(),
+    terminalAgents: new Set<string>(),
+    linkedSubagents: new Set<string>(),
+    subagentToolUseIds: new Map(),
+    subagentSettings: new Map(),
+    pendingSubagents: [],
+    mcpServers: [],
+    effectiveCompactionTokenLimit: 200_000,
+    compacting: false,
+    autoContinueCount: undefined as number | undefined,
+  };
+  const internals = manager as unknown as {
+    history: {
+      recordEvent: () => void;
+      syncSummaries: () => void;
+      summaryPatches: () => Map<string, unknown>;
+      hiddenDroidSessionIds: () => Set<string>;
+      recordSubagentLink: () => void;
+      subagentLinks: () => [];
+    };
+    missions: Map<string, typeof mission>;
+    contextSnapshots: Map<string, { used: number; limit?: number }>;
+  };
+  internals.history = {
+    recordEvent: () => {},
+    syncSummaries: () => {},
+    summaryPatches: () => new Map(),
+    hiddenDroidSessionIds: () => new Set(),
+    recordSubagentLink: () => {},
+    subagentLinks: () => [],
+  };
+  internals.contextSnapshots.set('app-cancel', { used: 10_000, limit: 1_000_000 });
+  session.onTurnStart = () => {
+    internals.contextSnapshots.set('app-cancel', { used: 250_000, limit: 1_000_000 });
+  };
+  internals.missions.set(mission.summary.id, mission);
+  return { manager, session, events, mission };
+}
+
+test('mid-task: an interrupt that ends with cancellations and a terminal result still compacts and drops the noise', async () => {
+  const { manager, session, events } = cancelTerminalHarness();
+  await manager.handle({ type: 'mission.send', missionId: 'app-cancel', text: 'go' });
+  assert.equal(session.interrupts, 1);
+  // The interrupt's terminal result must NOT skip compaction (the bug).
+  assert.equal(session.compactions, 1);
+  // It resumes invisibly despite the terminal result that closed the cut-off turn.
+  await waitFor(() => session.prompts.includes(RESUME_NUDGE));
+  assert.deepEqual(session.prompts, ['go', RESUME_NUDGE]);
+  // The cancelled-tool errors produced by our own interrupt never reach the UI.
+  assert.equal(
+    events.some((e) => JSON.stringify(e).includes('cancelled by user')),
+    false,
+  );
+  assert.equal(
+    events.some((e) => e.type === 'mission.error'),
+    false,
+  );
+});
+
+// A model/task whose compacted summary is itself near the window: getContextStats
+// stays over the trigger after every compaction. Both the first turn and the
+// resumed turn stream and cross the trigger, so without the saturation latch this
+// loops forever (compact -> resume -> immediately compact again).
+class FakeSaturatedSession {
+  prompts: string[] = [];
+  interrupts = 0;
+  compactions = 0;
+  armed = true;
+  interrupted = false;
+  onTurnStart?: () => void;
+  private release?: () => void;
+
+  constructor(readonly sessionId: string) {}
+
+  async *stream(prompt: string): AsyncGenerator<Record<string, unknown>, void, undefined> {
+    this.prompts.push(prompt);
+    this.onTurnStart?.();
+    // Completed-step boundary: the first turn is interrupted here; the resumed
+    // turn reaches the same boundary but must NOT be interrupted (saturated).
+    yield { type: 'tool_result', toolName: 'Read', toolUseId: 's1', content: 'data' };
+    if (this.armed) {
+      // The first turn is the long one: block until the compaction interrupt
+      // lands, then abort the stream the way the SDK does.
+      this.armed = false;
+      if (!this.interrupted) {
+        await new Promise<void>((resolve) => {
+          this.release = resolve;
+        });
+      }
+      throw new Error('interrupted');
+    }
+    // The resumed turn must NOT be interrupted again (saturated); let it finish.
+    yield { type: 'result' };
+  }
+
+  async interrupt(): Promise<void> {
+    this.interrupts += 1;
+    this.interrupted = true;
+    this.release?.();
+  }
+
+  async updateSettings(): Promise<void> {}
+
+  onNotification(): () => void {
+    return () => {};
+  }
+
+  async getContextStats(): Promise<{
+    used: number;
+    remaining: number;
+    limit: number;
+    accuracy: 'exact';
+    updatedAt: string;
+  }> {
+    return {
+      used: 250_000,
+      remaining: 750_000,
+      limit: 1_000_000,
+      accuracy: 'exact',
+      updatedAt: new Date().toISOString(),
+    };
+  }
+
+  async compactSession(): Promise<{ newSessionId: string; removedCount: number }> {
+    this.compactions += 1;
+    return { newSessionId: this.sessionId, removedCount: 4 };
+  }
+
+  async close(): Promise<void> {}
+}
+
+function saturatedHarness() {
+  const events: ServerEvent[] = [];
+  const manager = new MissionManager((event) => events.push(event));
+  const session = new FakeSaturatedSession('droid-sat');
+  const mission = {
+    summary: testSummary('app-sat', session.sessionId),
+    session,
+    streaming: false,
+    pendingSends: [] as string[],
+    pendingPermissions: new Map(),
+    pendingQuestions: new Map(),
+    agents: new Map(),
+    knownSubagents: new Set<string>(),
+    completedSubagents: new Set<string>(),
+    terminalAgents: new Set<string>(),
+    linkedSubagents: new Set<string>(),
+    subagentToolUseIds: new Map(),
+    subagentSettings: new Map(),
+    pendingSubagents: [],
+    mcpServers: [],
+    effectiveCompactionTokenLimit: 200_000,
+    compacting: false,
+    autoContinueCount: undefined as number | undefined,
+    compactionSaturated: undefined as boolean | undefined,
+  };
+  const internals = manager as unknown as {
+    history: {
+      recordEvent: () => void;
+      syncSummaries: () => void;
+      summaryPatches: () => Map<string, unknown>;
+      hiddenDroidSessionIds: () => Set<string>;
+      recordSubagentLink: () => void;
+      subagentLinks: () => [];
+    };
+    missions: Map<string, typeof mission>;
+    contextSnapshots: Map<string, { used: number; limit?: number }>;
+  };
+  internals.history = {
+    recordEvent: () => {},
+    syncSummaries: () => {},
+    summaryPatches: () => new Map(),
+    hiddenDroidSessionIds: () => new Set(),
+    recordSubagentLink: () => {},
+    subagentLinks: () => [],
+  };
+  internals.contextSnapshots.set('app-sat', { used: 10_000, limit: 1_000_000 });
+  session.onTurnStart = () => {
+    internals.contextSnapshots.set('app-sat', { used: 250_000, limit: 1_000_000 });
+  };
+  internals.missions.set(mission.summary.id, mission);
+  return { manager, session, events, mission };
+}
+
+test('mid-task: a compaction that cannot get under the trigger latches and stops looping', async () => {
+  const { manager, session, mission, events } = saturatedHarness();
+  await manager.handle({ type: 'mission.send', missionId: 'app-sat', text: 'go' });
+  // It resumes once after the single compaction...
+  await waitFor(() => session.prompts.includes(RESUME_NUDGE));
+  // ...and the resumed turn runs to completion without re-compacting.
+  await waitFor(() => mission.streaming === false && session.prompts.length === 2);
+  assert.equal(session.compactions, 1);
+  assert.equal(session.interrupts, 1);
+  assert.deepEqual(session.prompts, ['go', RESUME_NUDGE]);
+  // The latch is set and the user is told why automatic compaction paused.
+  assert.equal(mission.compactionSaturated, true);
+  assert.equal(
+    events.some((e) => JSON.stringify(e).includes('could not be reduced further')),
+    true,
+  );
 });
 
 function workerAutoCompactHarness(workerUsed: number, workerLimit?: number, swapTo?: string) {
@@ -1066,6 +2251,13 @@ function workerAutoCompactHarness(workerUsed: number, workerLimit?: number, swap
     compacting: false,
     effectiveCompactionTokenLimit: workerLimit,
   });
+  // The worker trigger reads contextSnapshots (kept fresh by the poller / a
+  // post-turn refresh). Seed it so the idle pre-turn check sees the usage the
+  // fake worker session reports via getContextStats.
+  (manager as unknown as { contextSnapshots: Map<string, { used: number }> }).contextSnapshots.set(
+    'worker-compact',
+    { used: workerUsed },
+  );
   return { manager, events, mission, workerSession, swappedSession, orchestratorSession };
 }
 
@@ -1380,13 +2572,13 @@ test('rekeyAgentSession remaps worker ids inside mission summary features', asyn
     history: { subagentLinks: () => WorkerHistoryLink[]; recordSubagentLink: () => void };
     contextSnapshots: Map<string, unknown>;
     missions: Map<string, typeof mission>;
-    rekeyAgentSession: (a: typeof agent, newId: string) => Promise<void>;
+    compaction: { rekeyAgentSession: (a: typeof agent, newId: string) => Promise<void> };
   };
   internals.runtime = { loadSession: async () => newSession };
   internals.history = { subagentLinks: () => [], recordSubagentLink: () => {} };
   internals.missions.set('app-feat', mission);
 
-  await internals.rekeyAgentSession(agent, 'worker-new');
+  await internals.compaction.rekeyAgentSession(agent, 'worker-new');
 
   const [f1, f2, f3] = mission.summary.features;
   // Old worker id is rewritten everywhere it is pinned (focus + numbering)...
@@ -1435,6 +2627,7 @@ function orchestratorSwapHarness(used: number, limit: number, swapTo: string) {
     };
     missions: Map<string, typeof mission>;
     runtime: { loadSession: (id: string, handlers: unknown) => Promise<FakeCompactionSession> };
+    contextSnapshots: Map<string, { used: number; limit?: number }>;
   };
   internals.history = {
     recordEvent: () => {},
@@ -1444,6 +2637,10 @@ function orchestratorSwapHarness(used: number, limit: number, swapTo: string) {
     recordSubagentLink: () => {},
     subagentLinks: () => [],
   };
+  // The idle pre-turn trigger reads the getContextStats snapshot; seed it to the
+  // usage the fake reports so the over-trigger send compacts before driving.
+  mission.summary.contextTokens = used;
+  internals.contextSnapshots.set('app-swap', { used });
   internals.missions.set(mission.summary.id, mission);
   return { manager, session, events, mission, internals };
 }
@@ -1480,6 +2677,24 @@ test('orchestrator compaction swap recovers when the first reload fails but a re
     events.some((e) => e.type === 'mission.error'),
     false,
   );
+});
+
+test('compaction swap re-applies the session model so it does not revert to the CLI default', async () => {
+  const { manager, mission, internals } = orchestratorSwapHarness(250_000, 200_000, 'droid-new');
+  // The user picked a specific model + reasoning for this session.
+  mission.summary.modelId = 'custom:glm-5.2';
+  mission.summary.reasoningEffort = 'high';
+  const swapped = new FakeCompactionSession('droid-new', 10_000);
+  internals.runtime = { loadSession: async () => swapped };
+  await manager.handle({ type: 'mission.send', missionId: 'app-swap', text: 'go' });
+  // The compacted session adopted the new backing id...
+  assert.equal(mission.session.sessionId, 'droid-new');
+  // ...and the selected model was re-applied to it (loadSession cannot carry the
+  // model, so without this it would silently revert to the daemon default).
+  const applied = swapped.settingsUpdates.find((u) => 'modelId' in u);
+  assert.ok(applied, 'expected updateSettings to re-apply the model after the swap');
+  assert.equal(applied?.modelId, 'custom:glm-5.2');
+  assert.equal(applied?.reasoningEffort, 'high');
 });
 
 test('orchestrator compaction swap that never reloads drops the mission and re-delivers queued sends through resume', async () => {
@@ -1538,9 +2753,13 @@ test('orchestrator compaction swap that never reloads drops the mission and re-d
   // ...the queued send is NOT discarded: it re-resumes and drives the new session...
   await waitFor(() => resumed.prompts.includes('queued-after-recovery'));
   assert.equal(resumeCalls >= 1, true);
-  // ...and it never streamed into the dead old session.
+  // ...and neither prompt streamed into the dead old session. Pre-turn compaction
+  // parks the triggering prompt, so a stale swap re-delivers both the queued send
+  // and the triggering prompt to the resumed (live) session, never the dead one.
   assert.equal(session.prompts.includes('queued-after-recovery'), false);
-  assert.equal(session.prompts.includes('go'), true);
+  assert.equal(session.prompts.includes('go'), false);
+  await waitFor(() => resumed.prompts.includes('go'));
+  assert.equal(resumed.prompts.includes('go'), true);
 });
 
 test('manual compaction swap that never reloads re-delivers sends queued during compaction', async () => {
@@ -1590,6 +2809,136 @@ test('manual compaction swap that never reloads re-delivers sends queued during 
     events.some((e) => e.type === 'mission.error'),
     false,
   );
+});
+
+test('orchestrator stale-swap recovery reports completed on retry success so the turn resumes', async () => {
+  const { manager, mission, internals } = orchestratorSwapHarness(250_000, 200_000, 'droid-new');
+  // recoverStaleMissionSwap IS the retry after the in-band adoption failed, so
+  // here the reload succeeds and the swap is adopted in place.
+  const swapped = new FakeCompactionSession('droid-new', 10_000);
+  internals.runtime = { loadSession: async () => swapped };
+  const outcome = await (
+    manager as unknown as {
+      compaction: {
+        recoverStaleMissionSwap: (
+          m: typeof mission,
+          id: string,
+          c: { tokensIn: number; tokensOut: number },
+        ) => Promise<string>;
+      };
+    }
+  ).compaction.recoverStaleMissionSwap(mission, 'droid-new', { tokensIn: 0, tokensOut: 0 });
+  // Adopting the swap on retry leaves the mission live on the compacted session,
+  // so it must report 'completed'. Returning 'stale' (the old behavior) skipped
+  // the auto-resume in drive()'s finally and silently stalled the turn.
+  assert.equal(outcome, 'completed');
+  assert.equal(mission.session.sessionId, 'droid-new');
+  assert.equal(internals.missions.has('app-swap'), true);
+});
+
+test('orchestrator stale-swap recovery reports stale and drops the mission when it never reloads', async () => {
+  const { manager, mission, internals } = orchestratorSwapHarness(250_000, 200_000, 'droid-new');
+  internals.runtime = {
+    loadSession: async () => {
+      throw new Error('permanent load failure');
+    },
+  };
+  let closedId: string | undefined;
+  (manager as unknown as { closeMission: (id: string) => Promise<void> }).closeMission = async (
+    id: string,
+  ) => {
+    closedId = id;
+    internals.missions.delete(id);
+  };
+  const outcome = await (
+    manager as unknown as {
+      compaction: {
+        recoverStaleMissionSwap: (
+          m: typeof mission,
+          id: string,
+          c: { tokensIn: number; tokensOut: number },
+        ) => Promise<string>;
+      };
+    }
+  ).compaction.recoverStaleMissionSwap(mission, 'droid-new', { tokensIn: 0, tokensOut: 0 });
+  // Only after the mission is torn down does it report 'stale' (the next send
+  // re-resumes against the persisted compacted id).
+  assert.equal(outcome, 'stale');
+  assert.equal(closedId, 'app-swap');
+  assert.equal(mission.summary.sessionId, 'droid-new');
+});
+
+test('compaction swap re-applies the session autonomy so it does not revert to the daemon default', async () => {
+  const { manager, mission, internals } = orchestratorSwapHarness(250_000, 200_000, 'droid-new');
+  // The user runs this mission at high autonomy.
+  mission.summary.autonomy = 'high';
+  const swapped = new FakeCompactionSession('droid-new', 10_000);
+  internals.runtime = { loadSession: async () => swapped };
+  await manager.handle({ type: 'mission.send', missionId: 'app-swap', text: 'go' });
+  assert.equal(mission.session.sessionId, 'droid-new');
+  // loadSession cannot carry autonomy, so without re-applying it the compacted
+  // session would silently fall back to the daemon-default autonomy.
+  const applied = swapped.settingsUpdates.find((u) => 'autonomyLevel' in u);
+  assert.ok(applied, 'expected updateSettings to re-apply autonomy after the swap');
+  assert.equal(applied?.autonomyLevel, 'high');
+});
+
+test('orchestrator stale-swap recovery success latches saturation when still over the trigger', async () => {
+  const { manager, mission, internals } = orchestratorSwapHarness(250_000, 200_000, 'droid-new');
+  // The in-band adoption fails (load 1 throws) but recoverStaleMissionSwap's
+  // retry adopts a compacted session that still reports over-trigger usage.
+  const swapped = new FakeCompactionSession('droid-new', 250_000);
+  let loadCalls = 0;
+  internals.runtime = {
+    loadSession: async () => {
+      loadCalls += 1;
+      if (loadCalls === 1) throw new Error('transient load failure');
+      return swapped;
+    },
+  };
+  const outcome = await (
+    manager as unknown as {
+      compaction: {
+        compactMission: (m: typeof mission, ci: string | undefined, t: string) => Promise<string>;
+      };
+    }
+  ).compaction.compactMission(mission, undefined, 'auto');
+  assert.equal(outcome, 'completed');
+  assert.equal(loadCalls, 2);
+  // A retry that adopts the swap in place is a real completed compaction, so the
+  // saturation latch is set just like the normal completed path; the old early
+  // return skipped it and left the next turn to trigger one redundant compaction.
+  assert.equal((mission as { compactionSaturated?: boolean }).compactionSaturated, true);
+});
+
+test('worker stale-swap recovery success latches saturation when still over the trigger', async () => {
+  const { manager, mission } = workerAutoCompactHarness(250_000, 200_000, 'worker-new');
+  const agent = mission.agents.get('worker-compact')!;
+  // recoverStaleAgentSwap is the retry after the in-band rekey failed: throw
+  // once, then adopt a compacted session that still reports over-trigger usage.
+  const swapped = new FakeCompactionSession('worker-new', 250_000);
+  let loadCalls = 0;
+  (
+    manager as unknown as {
+      runtime: { loadSession: (id: string, h: unknown) => Promise<FakeCompactionSession> };
+    }
+  ).runtime = {
+    loadSession: async () => {
+      loadCalls += 1;
+      if (loadCalls === 1) throw new Error('transient load failure');
+      return swapped;
+    },
+  };
+  const outcome = await (
+    manager as unknown as {
+      compaction: { compactAgent: (a: typeof agent, t: string) => Promise<string> };
+    }
+  ).compaction.compactAgent(agent, 'auto');
+  assert.equal(outcome, 'completed');
+  assert.equal(loadCalls, 2);
+  // Mirrors the orchestrator: a recovered-completed worker compaction latches
+  // saturation rather than leaving the worker to re-compact on its next turn.
+  assert.equal((agent as { compactionSaturated?: boolean }).compactionSaturated, true);
 });
 
 // ── #30/#17: opening a worker always settles its loading state ──
