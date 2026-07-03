@@ -1,8 +1,10 @@
-import { useCallback, useRef, useState, type RefObject } from 'react';
+import { useCallback, useEffect, useRef, useState, type RefObject } from 'react';
 import {
   AlignLeft,
   Check,
   ChevronDown,
+  ChevronsDownUp,
+  ChevronsUpDown,
   Columns2,
   Copy,
   Eye,
@@ -18,10 +20,11 @@ import {
 } from 'lucide-react';
 import { usePopover } from './usePopover';
 import { Popover } from './Popover';
-import { DiffBody } from './DiffBody';
+import { DiffFileSection } from './DiffFileSection';
 import { CommitSheet } from './CommitSheet';
 import { CreatePrSheet } from './CreatePrSheet';
 import { useReviewDiff } from '../../hooks/useReviewDiff';
+import { useReviewFileDiffs } from '../../hooks/useReviewFileDiffs';
 import { useGitEnvironment } from '../../hooks/useGitEnvironment';
 import { useStore } from '../../hooks/useStore';
 import { toast } from '../../lib/toast';
@@ -203,6 +206,11 @@ function FileRow({
   );
 }
 
+// Below this many files a scope loads fully expanded (GitHub-style); larger
+// changesets start collapsed so the view stays snappy and the user expands what
+// they want to read.
+const AUTO_EXPAND_MAX = 25;
+
 export function ReviewPanel({ cwd, onClose }: { cwd: string; onClose: () => void }) {
   const { state } = useStore();
   const [filesOpen, setFilesOpen] = useState(true);
@@ -211,27 +219,90 @@ export function ReviewPanel({ cwd, onClose }: { cwd: string; onClose: () => void
   const [commitOpen, setCommitOpen] = useState(false);
   const [prOpen, setPrOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [activePath, setActivePath] = useState<string | null>(null);
   const commitRef = useRef<HTMLButtonElement>(null);
   const prRef = useRef<HTMLButtonElement>(null);
   const moreRef = useRef<HTMLButtonElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const sectionRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+  const seen = useRef<Set<string>>(new Set());
 
-  const review = useReviewDiff(cwd, state.reviewScope, true, hideWhitespace);
+  const review = useReviewDiff(cwd, state.reviewScope, true);
+  const { entries: diffEntries, ensure } = useReviewFileDiffs(
+    cwd,
+    state.reviewScope,
+    hideWhitespace,
+    review.signature,
+  );
   const git = useGitEnvironment(cwd, 'worktree');
   const isGitHub = !!git.env?.isGitHub;
-  const showDiff = review.fileDiff?.path === review.selectedPath;
   const totalAdd = review.files.reduce((sum, f) => sum + f.additions, 0);
   const totalDel = review.files.reduce((sum, f) => sum + f.deletions, 0);
+  const allExpanded = review.files.length > 0 && review.files.every((f) => expanded.has(f.path));
+
+  const filesRef = useRef(review.files);
+  filesRef.current = review.files;
+
+  // Reconcile the expanded set with the current file list: keep choices for
+  // files that still exist, auto-expand newly seen files (small changesets
+  // only), and forget files that vanished. Keyed on the content signature so an
+  // idle poll returning the same list is a no-op.
+  useEffect(() => {
+    const paths = filesRef.current.map((f) => f.path);
+    const present = new Set(paths);
+    setExpanded((cur) => {
+      const next = new Set<string>();
+      for (const p of cur) if (present.has(p)) next.add(p);
+      if (paths.length <= AUTO_EXPAND_MAX) {
+        for (const p of paths) if (!seen.current.has(p)) next.add(p);
+      }
+      return next;
+    });
+    seen.current = present;
+    setActivePath((cur) => (cur && present.has(cur) ? cur : (paths[0] ?? null)));
+  }, [review.signature]);
+
+  // Fetch the diff for every open section; ensure() is a no-op for diffs
+  // already loaded this generation, so this only does work for freshly opened
+  // files or after the signature invalidates the cache.
+  useEffect(() => {
+    expanded.forEach((p) => ensure(p));
+  }, [expanded, review.signature, ensure]);
 
   const afterAction = () => {
     git.refresh();
     review.refresh();
   };
 
+  const toggle = useCallback((path: string) => {
+    setActivePath(path);
+    setExpanded((cur) => {
+      const next = new Set(cur);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      return next;
+    });
+  }, []);
+
+  const toggleAll = () => {
+    setExpanded(allExpanded ? new Set() : new Set(review.files.map((f) => f.path)));
+  };
+
+  const jumpTo = (path: string) => {
+    setActivePath(path);
+    setExpanded((cur) => (cur.has(path) ? cur : new Set(cur).add(path)));
+    requestAnimationFrame(() =>
+      sectionRefs.current.get(path)?.scrollIntoView({ block: 'start', behavior: 'smooth' }),
+    );
+  };
+
   const copyPatch = () => {
     setMoreOpen(false);
-    const diff = showDiff ? (review.fileDiff?.diff ?? '') : '';
+    const path = activePath ?? review.files[0]?.path ?? null;
+    const diff = path ? (diffEntries[path]?.diff ?? '') : '';
     if (!diff) {
-      toast.info('No diff to copy');
+      toast.info('Open a file to copy its diff');
       return;
     }
     void navigator.clipboard
@@ -265,6 +336,11 @@ export function ReviewPanel({ cwd, onClose }: { cwd: string; onClose: () => void
           />
         )}
         <ViewToggle />
+        <ToolbarButton
+          icon={allExpanded ? ChevronsDownUp : ChevronsUpDown}
+          title={allExpanded ? 'Collapse all files' : 'Expand all files'}
+          onClick={toggleAll}
+        />
         <ToolbarButton
           icon={filesOpen ? PanelLeftClose : PanelLeftOpen}
           title={filesOpen ? 'Hide file list' : 'Show file list'}
@@ -360,8 +436,8 @@ export function ReviewPanel({ cwd, onClose }: { cwd: string; onClose: () => void
                   <FileRow
                     key={file.path}
                     file={file}
-                    selected={review.selectedPath === file.path}
-                    onSelect={() => review.setSelectedPath(file.path)}
+                    selected={activePath === file.path}
+                    onSelect={() => jumpTo(file.path)}
                   />
                 ))
               )}
@@ -369,34 +445,34 @@ export function ReviewPanel({ cwd, onClose }: { cwd: string; onClose: () => void
           </div>
         )}
 
-        <div className="min-h-0 min-w-0 flex-1 overflow-auto">
-          {review.selectedPath ? (
-            <>
-              <div className="sticky top-0 z-10 flex items-center gap-2 border-b border-droid-border bg-droid-bg/95 px-3 py-1.5 backdrop-blur">
-                <span className="truncate font-mono text-[12px] text-droid-text-secondary">
-                  {review.selectedPath}
-                </span>
-                {review.loadingDiff && (
-                  <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-droid-text-muted" />
-                )}
-              </div>
-              {showDiff ? (
-                <DiffBody
-                  diff={review.fileDiff?.diff ?? ''}
-                  view={state.diffView}
-                  binary={review.fileDiff?.binary}
-                  wrap={wrap}
-                />
+        <div ref={scrollRef} className="min-h-0 min-w-0 flex-1 overflow-auto">
+          {review.files.length === 0 ? (
+            <div className="flex h-full items-center justify-center gap-2 text-[12.5px] text-droid-text-muted">
+              {review.loadingList ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" /> Loading…
+                </>
               ) : (
-                <div className="flex h-full items-center justify-center gap-2 text-[12.5px] text-droid-text-muted">
-                  <Loader2 className="h-4 w-4 animate-spin" /> Loading diff…
-                </div>
+                'No changes in this scope'
               )}
-            </>
-          ) : (
-            <div className="flex h-full items-center justify-center text-[12.5px] text-droid-text-muted">
-              Select a file to view its diff
             </div>
+          ) : (
+            review.files.map((file) => (
+              <DiffFileSection
+                key={file.path}
+                file={file}
+                open={expanded.has(file.path)}
+                active={activePath === file.path}
+                entry={diffEntries[file.path]}
+                view={state.diffView}
+                wrap={wrap}
+                onToggle={() => toggle(file.path)}
+                innerRef={(el) => {
+                  if (el) sectionRefs.current.set(file.path, el);
+                  else sectionRefs.current.delete(file.path);
+                }}
+              />
+            ))
           )}
         </div>
       </div>
