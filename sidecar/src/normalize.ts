@@ -273,6 +273,29 @@ export function normalizeStreamEvent(
   }
 }
 
+// Daemon auto-compaction runs in place (same session id) and announces itself
+// only through raw notifications: a `droid_working_state_changed` to
+// `compacting_conversation` when it starts and a `session_compacted` when it
+// finishes. Neither survives convertNotificationToStreamMessage as a usable
+// stream event, so callers detect them here before the generic conversion.
+export interface CompactionNotification {
+  kind: 'started' | 'completed';
+  removedCount: number;
+}
+
+export function extractCompactionNotification(
+  notification: Record<string, unknown>,
+): CompactionNotification | null {
+  const raw = extractNotification(notification);
+  if (!raw || typeof raw !== 'object') return null;
+  const note = raw as Record<string, unknown>;
+  if (note.type === 'droid_working_state_changed' && note.newState === 'compacting_conversation')
+    return { kind: 'started', removedCount: 0 };
+  if (note.type === 'session_compacted')
+    return { kind: 'completed', removedCount: Number(note.removedCount ?? 0) || 0 };
+  return null;
+}
+
 export function normalizeNotification(
   missionId: string,
   agentSessionId: string,

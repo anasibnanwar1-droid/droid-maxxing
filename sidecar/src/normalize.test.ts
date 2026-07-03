@@ -3,9 +3,55 @@ import test from 'node:test';
 import {
   classifyPermission,
   confirmationType,
+  extractCompactionNotification,
   permissionSignature,
   normalizeStreamEvent,
 } from './normalize.js';
+
+test('extractCompactionNotification detects the daemon compaction start', () => {
+  assert.deepEqual(
+    extractCompactionNotification({
+      params: {
+        notification: { type: 'droid_working_state_changed', newState: 'compacting_conversation' },
+      },
+    }),
+    { kind: 'started', removedCount: 0 },
+  );
+});
+
+test('extractCompactionNotification detects the compaction completion with removed count', () => {
+  assert.deepEqual(
+    extractCompactionNotification({
+      params: {
+        notification: { type: 'session_compacted', summaryId: 's1', removedCount: 42 },
+      },
+    }),
+    { kind: 'completed', removedCount: 42 },
+  );
+  // A missing or malformed count falls back to zero instead of NaN.
+  assert.deepEqual(
+    extractCompactionNotification({
+      params: { notification: { type: 'session_compacted', summaryId: 's1' } },
+    }),
+    { kind: 'completed', removedCount: 0 },
+  );
+});
+
+test('extractCompactionNotification ignores unrelated notifications', () => {
+  assert.equal(
+    extractCompactionNotification({
+      params: { notification: { type: 'droid_working_state_changed', newState: 'thinking' } },
+    }),
+    null,
+  );
+  assert.equal(
+    extractCompactionNotification({
+      params: { notification: { type: 'message', role: 'assistant' } },
+    }),
+    null,
+  );
+  assert.equal(extractCompactionNotification({}), null);
+});
 
 test('classifyPermission reads the SDK toolUses shape for MCP tools', () => {
   const params = {

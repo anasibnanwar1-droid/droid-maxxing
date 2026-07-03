@@ -93,9 +93,6 @@ export interface AppState {
   transcripts: Record<string, TranscriptEvent[]>;
   progress: Record<string, ProgressEntry[]>;
   workers: Record<string, WorkerInfo[]>; // subagents spawned per mission
-  // old worker session id -> new id, recorded on worker-compaction rekeys so
-  // views holding a worker id in local state can follow it to the new session.
-  workerRekeys: Record<string, string>;
   historyLoaded: Record<string, boolean>;
   // Cursor for the next older page of orchestrator scrollback per mission;
   // undefined/absent once the oldest compaction segment has been loaded.
@@ -222,7 +219,6 @@ type Action =
       role: AgentKind;
       status: 'opened' | 'running' | 'paused' | 'completed';
     }
-  | { type: 'MISSION_WORKER_REKEY'; missionId: string; oldSessionId: string; newSessionId: string }
   | {
       type: 'MISSION_TOKENS';
       missionId: string;
@@ -682,7 +678,6 @@ export const initialState: AppState = {
   transcripts: {},
   progress: {},
   workers: {},
-  workerRekeys: {},
   historyLoaded: {},
   historyCursor: {},
   historyLoadingOlder: {},
@@ -965,75 +960,6 @@ function baseReducer(state: AppState, action: Action): AppState {
         ];
       }
       return { ...state, workers: { ...state.workers, [mid]: next } };
-    }
-
-    case 'MISSION_WORKER_REKEY': {
-      const { missionId: mid, oldSessionId, newSessionId } = action;
-      if (oldSessionId === newSessionId) return state;
-      const workers = (state.workers[mid] ?? []).map((w) =>
-        w.sessionId === oldSessionId ? { ...w, sessionId: newSessionId } : w,
-      );
-      const missionTranscripts = state.transcripts[mid];
-      const transcripts = missionTranscripts
-        ? {
-            ...state.transcripts,
-            [mid]: missionTranscripts.map((ev) =>
-              ev.agentSessionId === oldSessionId ? { ...ev, agentSessionId: newSessionId } : ev,
-            ),
-          }
-        : state.transcripts;
-      const oldStats = state.contextStats[oldSessionId];
-      let contextStats = state.contextStats;
-      if (oldStats) {
-        const { [oldSessionId]: _dropped, ...rest } = state.contextStats;
-        // The backend refreshes context for the new id (post-compaction, lower
-        // usage) before emitting this rekey, so prefer any fresh new-id stats
-        // already in the store; only carry the old snapshot over as a bridge
-        // when the new id has none yet. Overwriting would show stale usage.
-        contextStats =
-          rest[newSessionId] !== undefined ? rest : { ...rest, [newSessionId]: oldStats };
-      }
-      // Mission features reference workers by session id (feature focus + worker
-      // role/numbering), so follow the compacted worker to its new backing id.
-      const existingMission = state.missions[mid];
-      let missions = state.missions;
-      if (existingMission) {
-        const remapId = (id?: string | null) => (id === oldSessionId ? newSessionId : id);
-        const features = existingMission.features.map((f) => ({
-          ...f,
-          workerSessionIds: f.workerSessionIds?.map((id) =>
-            id === oldSessionId ? newSessionId : id,
-          ),
-          currentWorkerSessionId: remapId(f.currentWorkerSessionId),
-          completedWorkerSessionId: remapId(f.completedWorkerSessionId),
-        }));
-        missions = { ...state.missions, [mid]: { ...existingMission, features } };
-      }
-      // Progress entries tag the worker that produced them; keep them aligned too.
-      const missionProgress = state.progress[mid];
-      const progress = missionProgress
-        ? {
-            ...state.progress,
-            [mid]: missionProgress.map((p) =>
-              p.workerSessionId === oldSessionId ? { ...p, workerSessionId: newSessionId } : p,
-            ),
-          }
-        : state.progress;
-      return {
-        ...state,
-        missions,
-        workers: { ...state.workers, [mid]: workers },
-        transcripts,
-        progress,
-        contextStats,
-        // Record the remap so views holding this id in local state (e.g. Mission
-        // Control's viewedAgent) can follow the worker to its new session.
-        workerRekeys: { ...state.workerRekeys, [oldSessionId]: newSessionId },
-        selectedAgentSessionId:
-          state.selectedAgentSessionId === oldSessionId
-            ? newSessionId
-            : state.selectedAgentSessionId,
-      };
     }
 
     case 'AGENT_HISTORY_LOADING': {
@@ -1931,13 +1857,6 @@ function adaptEvent(ev: ServerEvent): Action | null {
         modelId: ev.modelId,
         reasoningEffort: ev.reasoningEffort,
         toolUseId: ev.toolUseId,
-      };
-    case 'mission.worker.rekey':
-      return {
-        type: 'MISSION_WORKER_REKEY',
-        missionId: ev.missionId,
-        oldSessionId: ev.oldSessionId,
-        newSessionId: ev.newSessionId,
       };
     case 'agent.updated':
       return {

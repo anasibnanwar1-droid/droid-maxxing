@@ -676,9 +676,6 @@ export type ServerEvent =
       reasoningEffort?: ReasoningEffort;
       toolUseId?: string;
     }
-  // A worker compacted and the daemon swapped its backing session id; remap any
-  // state keyed by the old worker session id (worker list, transcripts, selection).
-  | { type: 'mission.worker.rekey'; missionId: string; oldSessionId: string; newSessionId: string }
   | {
       type: 'mission.tokens';
       missionId: string;

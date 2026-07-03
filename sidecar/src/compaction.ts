@@ -88,30 +88,30 @@ export function effectiveCompactionLimit(
   );
 }
 
-// ---------------------------------------------------------------------------
-// Unified runtime compaction layer. Every Droid session (the Mission Control
-// orchestrator and each worker/subagent alike) flows through this single path
-// after an idle turn. The daemon returns a new backing session id on success;
-// the owner adopts it via the optional `reload` hook (the orchestrator swaps
-// its backing session behind a stable app id; a worker re-keys itself to the
-// new id). A caller without a reload hook reports the swap as 'stale'.
-// ---------------------------------------------------------------------------
-
-export interface AutoCompactState {
-  compacting?: boolean;
-  effectiveCompactionTokenLimit?: number;
+// Settings pushed to a live daemon session so its own threshold check runs
+// auto-compaction in place (same session id) when usage crosses the limit.
+// Sent on resume and worker open; mission create passes the same fields
+// through initialize_session instead.
+export interface DaemonCompactionSettings {
+  compactionThresholdCheckEnabled: boolean;
+  compactionTokenLimit?: number;
 }
 
-// The one threshold rule used by both the orchestrator and workers.
-export function autoCompactionDue(
-  state: AutoCompactState,
-  usedTokens: number | undefined,
-): boolean {
-  if (state.compacting) return false;
-  const limit = state.effectiveCompactionTokenLimit;
-  if (limit === undefined || limit <= 0) return false;
-  return usedTokens !== undefined && usedTokens > 0 && usedTokens >= limit;
+export function daemonCompactionSettings(limit: number | undefined): DaemonCompactionSettings {
+  const settings: DaemonCompactionSettings = { compactionThresholdCheckEnabled: true };
+  if (limit !== undefined) settings.compactionTokenLimit = limit;
+  return settings;
 }
+
+// ---------------------------------------------------------------------------
+// Manual compaction layer (the /compact command and the session.compact RPC).
+// The daemon returns a new backing session id on success; the owner adopts it
+// via the optional `reload` hook (the orchestrator swaps its backing session
+// behind a stable app id). A caller without a reload hook reports the swap as
+// 'stale'. Automatic compaction never flows through here: the daemon's own
+// threshold check compacts in place and announces itself through the
+// compacting_conversation / session_compacted notifications.
+// ---------------------------------------------------------------------------
 
 export type CompactableSession = Pick<DroidSession, 'sessionId' | 'compactSession'>;
 
@@ -122,8 +122,8 @@ export interface CompactionSink {
   // Re-read context stats so the meter reflects the compacted window.
   refresh(): Promise<void>;
   // Invoked only when the SDK returns a different backing session id. The owner
-  // adopts it here (the orchestrator swaps its backing session; a worker
-  // re-keys itself). Omitted only by callers that cannot adopt a swap.
+  // adopts it here (the orchestrator swaps its backing session behind a stable
+  // app id). Omitted only by callers that cannot adopt a swap.
   reload?: (newSessionId: string, removedCount: number) => Promise<void>;
 }
 
@@ -175,11 +175,11 @@ export async function runCompaction(
     const removedCount = result.removedCount ?? 0;
     if (result.newSessionId && result.newSessionId !== session.sessionId) {
       if (!sink.reload) {
-        // The owner keeps a stable session id (workers) and cannot adopt a
-        // swapped backing id without re-keying. Surface it and signal the
-        // session is now stale so the caller can recover.
+        // The owner keeps a stable session id and cannot adopt a swapped
+        // backing id. Surface it and signal the session is now stale so the
+        // caller can recover.
         sink.error(
-          `daemon returned a new backing session (${result.newSessionId}); subagent sessions must compact in place to keep handoff addressing stable`,
+          `daemon returned a new backing session (${result.newSessionId}) that this caller cannot adopt`,
         );
         sink.status(
           'Compaction could not finish; continuing with the current conversation.',
