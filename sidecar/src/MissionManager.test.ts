@@ -16,12 +16,7 @@ import {
   daemonCompactionSettings,
   resumedCompactionTokenLimit,
 } from './compaction.js';
-import type {
-  MissionSummary,
-  ModelInfo,
-  ServerEvent,
-  WorkerHistoryLink,
-} from './protocol.js';
+import type { MissionSummary, ModelInfo, ServerEvent, WorkerHistoryLink } from './protocol.js';
 
 class FakeSession {
   prompts: string[] = [];
@@ -1007,6 +1002,24 @@ function orchestratorSwapHarness(used: number, swapTo: string) {
   internals.missions.set(mission.summary.id, mission);
   return { manager, session, events, mission, internals };
 }
+
+test('orchestrator compaction swap re-enables daemon auto-compaction on the new session', async () => {
+  const { manager, mission, internals } = orchestratorSwapHarness(250_000, 'droid-new');
+  const swapped = new FakeCompactionSession('droid-new', 10_000);
+  internals.runtime = { loadSession: async () => swapped };
+  (
+    manager as unknown as { getFactoryDefaults: () => Promise<{ compactionTokenLimit: number }> }
+  ).getFactoryDefaults = async () => ({ compactionTokenLimit: 150_000 });
+
+  await manager.handle({ type: 'mission.compact', missionId: 'app-swap' });
+
+  assert.equal(mission.session.sessionId, 'droid-new');
+  // Settings live on the daemon session, not the persisted file, so the swap
+  // must re-push the threshold check with the ContextMeter limit.
+  assert.deepEqual(swapped.settingsUpdates, [
+    { compactionThresholdCheckEnabled: true, compactionTokenLimit: 150_000 },
+  ]);
+});
 
 test('orchestrator compaction swap recovers when the first reload fails but a retry succeeds', async () => {
   const { manager, session, events, mission, internals } = orchestratorSwapHarness(

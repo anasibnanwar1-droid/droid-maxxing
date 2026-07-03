@@ -1867,6 +1867,10 @@ export class MissionManager {
       mcpServers: mission.mcpConfigs,
     });
     this.subscribeOrchestratorCompaction(mission);
+    // Settings live on the daemon session, not the persisted file, so the
+    // replacement session starts without the auto-compaction threshold check.
+    // Re-push it; a failure must not turn a successful swap into a stale one.
+    await this.recomputeOrchestratorCompactionLimit(mission).catch(() => {});
     // The replacement session starts with default tool settings, so the cached
     // design-tool policy no longer reflects reality. Clear it so the next turn
     // re-synchronizes disabledToolIds.
