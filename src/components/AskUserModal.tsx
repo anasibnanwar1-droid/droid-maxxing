@@ -6,7 +6,7 @@ import { respondQuestion } from '../lib/commands';
 const EASE = [0.16, 1, 0.3, 1] as const;
 const ACCENT = 'var(--droid-accent)';
 
-export default function AskUserModal() {
+export default function AskUserModal({ inline = false }: { inline?: boolean } = {}) {
   const { state, dispatch } = useStore();
   const question = state.pendingQuestion;
 
@@ -72,7 +72,11 @@ export default function AskUserModal() {
         animate={{ y: 0, opacity: 1 }}
         exit={{ y: 24, opacity: 0 }}
         transition={{ duration: 0.26, ease: EASE }}
-        className="absolute bottom-0 left-0 right-0 z-[70] border-t border-droid-border bg-droid-surface shadow-[0_-12px_40px_rgba(0,0,0,0.45)]"
+        className={
+          inline
+            ? 'max-h-[55vh] overflow-y-auto border-t border-droid-border bg-droid-surface'
+            : 'absolute bottom-0 left-0 right-0 z-[70] border-t border-droid-border bg-droid-surface shadow-[0_-12px_40px_rgba(0,0,0,0.45)]'
+        }
       >
         <div className="px-5 pt-4 pb-3">
           {/* Question */}

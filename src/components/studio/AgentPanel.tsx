@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Blocks, MessageSquare, Palette } from 'lucide-react';
 import { useStore } from '../../hooks/useStore';
 import { interruptMission } from '../../lib/commands';
+import AskUserModal from '../AskUserModal';
 import { useStudioCanvas, type StudioLeftTab } from './StudioCanvasContext';
 import { useDesignSession } from './useDesignSession';
 import StudioComposer, { type SendOptions } from './StudioComposer';
@@ -58,6 +59,9 @@ export default function AgentPanel({ cwd }: { cwd: string }) {
               <ThreadBody messages={[]} onPickSuggestion={setText} />
             )}
           </div>
+          {/* The agent's clarifying question, docked inline above the composer
+              (not the full-screen global modal). */}
+          {state.pendingQuestion?.missionId === sessionId && <AskUserModal inline />}
           <StudioComposer
             text={text}
             onTextChange={setText}

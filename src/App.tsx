@@ -76,7 +76,7 @@ const UTILITY_PANE_WIDTH_STORAGE_KEY = 'droid-utility-pane-width';
 
 export default function App() {
   const { state, dispatch } = useStore();
-  const { designDispatch } = useDesignStore();
+  const { design, designDispatch } = useDesignStore();
   const embedded = isEmbedded();
   const onboard = useOnboarding();
   const [forceWizard, setForceWizard] = useState(false);
@@ -532,7 +532,7 @@ export default function App() {
                 </motion.div>
               )}
             </AnimatePresence>
-            {state.pendingQuestion && <AskUserModal />}
+            {state.pendingQuestion && !design.studioOpen && <AskUserModal />}
           </div>
         </main>
 
