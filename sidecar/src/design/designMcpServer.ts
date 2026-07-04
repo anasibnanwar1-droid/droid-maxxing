@@ -9,7 +9,17 @@ import { scanComponentRegistry } from './registryScan.js';
 import { nearestPaletteColor } from './tokens.js';
 import { DESIGN_GUIDELINES } from './guidelines.js';
 
-export function createDesignMcpServer(cwdForTool: () => string | undefined) {
+export type DesignPreviewFn = (input: {
+  cwd: string;
+  path?: string;
+  prototypeId?: string;
+  name?: string;
+}) => Promise<{ ok: true; url: string; name: string } | { ok: false; error: string }>;
+
+export function createDesignMcpServer(
+  cwdForTool: () => string | undefined,
+  preview?: DesignPreviewFn,
+) {
   const cwd = () => {
     const value = cwdForTool();
     if (!value) throw new Error('Design tools need a mission with a workspace folder.');
@@ -138,6 +148,38 @@ export function createDesignMcpServer(cwdForTool: () => string | undefined) {
             guidance: prototypePromptGuidance(cwd()),
             prototypes: prototypes.map(({ html: _html, ...info }) => info),
           });
+        }),
+      ),
+      tool(
+        'design_preview',
+        [
+          'Show an HTML page you wrote on the Studio canvas — this is how you present design work to the user.',
+          'Do NOT open a native/system browser (browser_open) for design previews; the user is watching the canvas.',
+          'Pass the path to a self-contained .html file in the workspace, or the id of a saved prototype (see design_prototypes). It renders as a live canvas frame and reloads in place when you preview the same target again.',
+        ].join(' '),
+        {
+          path: z
+            .string()
+            .optional()
+            .describe('Path to a self-contained .html file in the workspace to render on the canvas.'),
+          prototypeId: z
+            .string()
+            .optional()
+            .describe('Id of a saved prototype (from design_prototypes) to render on the canvas.'),
+          name: z.string().optional().describe('Optional label for the canvas frame.'),
+        },
+        safeTool(async (input) => {
+          if (!preview) {
+            return jsonResult({ ok: false, error: 'Canvas preview is not available in this session.' });
+          }
+          return jsonResult(
+            await preview({
+              cwd: cwd(),
+              path: input.path,
+              prototypeId: input.prototypeId,
+              name: input.name,
+            }),
+          );
         }),
       ),
       tool(

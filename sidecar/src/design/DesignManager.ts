@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join, resolve, sep } from 'node:path';
 import type { BrowserSessionManager } from '../browser/BrowserSessionManager.js';
 import { VIEWPORT_PRESETS } from '../browser/BrowserSessionManager.js';
 import type { BrowserViewportMode } from '../browser/types.js';
@@ -228,6 +228,55 @@ export class DesignManager {
     await this.options.previewServer.start();
     const url = this.options.previewServer.register(id, dir);
     this.options.emit({ type: 'design.preview', cwd, id, name: 'Brand guidelines', url });
+  }
+
+  // Render an agent-authored HTML file or saved prototype onto the Studio canvas.
+  // This is how the design agent shows work — never a native browser window. The
+  // HTML is copied into an isolated temp dir and served on the preview port, so a
+  // stable per-target id reloads the same canvas frame instead of piling up frames.
+  async renderPreview(input: {
+    cwd: string;
+    path?: string;
+    prototypeId?: string;
+    name?: string;
+  }): Promise<{ ok: true; url: string; name: string } | { ok: false; error: string }> {
+    const { cwd } = input;
+    if (!cwd) return { ok: false, error: 'No workspace folder for this session.' };
+    let html: string;
+    let key: string;
+    let label = input.name?.trim() || 'Preview';
+    try {
+      if (input.prototypeId) {
+        const proto = listPrototypes(cwd).find((entry) => entry.id === input.prototypeId);
+        if (!proto) return { ok: false, error: `No prototype ${input.prototypeId}.` };
+        html = proto.html;
+        key = `proto:${proto.id}`;
+        if (!input.name?.trim()) label = proto.name;
+      } else if (input.path?.trim()) {
+        const abs = resolve(cwd, input.path.trim());
+        if (abs !== cwd && !abs.startsWith(cwd + sep)) {
+          return { ok: false, error: 'That path is outside the workspace.' };
+        }
+        if (!/\.html?$/i.test(abs)) {
+          return { ok: false, error: 'Only .html files can be previewed on the canvas.' };
+        }
+        html = await readFile(abs, 'utf8');
+        key = `file:${abs}`;
+        if (!input.name?.trim()) label = basename(abs);
+      } else {
+        return { ok: false, error: 'Pass a path or a prototypeId to preview.' };
+      }
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : 'Could not read the file.' };
+    }
+    const id = `preview-${createHash('sha1').update(`${cwd} ${key}`).digest('hex').slice(0, 12)}`;
+    const dir = join(tmpdir(), 'droidex-preview', id);
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, 'index.html'), html, 'utf8');
+    await this.options.previewServer.start();
+    const url = this.options.previewServer.register(id, dir);
+    this.options.emit({ type: 'design.preview', cwd, id, name: label, url });
+    return { ok: true, url, name: label };
   }
 
   private emitDnaState(cwd: string): void {
