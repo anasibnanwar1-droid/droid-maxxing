@@ -60,14 +60,18 @@ export function WorktreeMenu({
   };
 
   const removeWorktree = async (path: string) => {
-    const res = await removeGitWorktree(cwd, { path });
-    if (res.ok) {
-      toast.success('Worktree removed');
-      onChanged();
-    } else if (res.reason === 'git_error') {
-      toast.error('Worktree has changes — commit or discard first');
-    } else {
-      toast.error(res.message || 'Could not remove worktree');
+    try {
+      const res = await removeGitWorktree(cwd, { path });
+      if (res.ok) {
+        toast.success('Worktree removed');
+        onChanged();
+      } else if (res.reason === 'git_error') {
+        toast.error('Worktree has changes — commit or discard first');
+      } else {
+        toast.error(res.message || 'Could not remove worktree');
+      }
+    } catch {
+      toast.error('Could not remove worktree');
     }
   };
 
@@ -75,18 +79,23 @@ export function WorktreeMenu({
     const branch = name.trim();
     if (!branch || busy) return;
     setBusy(true);
-    const res = await createGitWorktree(cwd, { branch, base, newBranch: true });
-    setBusy(false);
-    if (res.ok && res.path) {
-      toast.success(`Created worktree ${branch}`);
-      setCreating(false);
-      setName('');
-      onChanged();
-      openInNewChat(res.path);
-    } else if (res.reason === 'exists') {
-      toast.error('A worktree already exists at that path');
-    } else {
-      toast.error(res.message || 'Could not create worktree');
+    try {
+      const res = await createGitWorktree(cwd, { branch, base, newBranch: true });
+      if (res.ok && res.path) {
+        toast.success(`Created worktree ${branch}`);
+        setCreating(false);
+        setName('');
+        onChanged();
+        openInNewChat(res.path);
+      } else if (res.reason === 'exists') {
+        toast.error('A worktree already exists at that path');
+      } else {
+        toast.error(res.message || 'Could not create worktree');
+      }
+    } catch {
+      toast.error('Could not create worktree');
+    } finally {
+      setBusy(false);
     }
   };
 
