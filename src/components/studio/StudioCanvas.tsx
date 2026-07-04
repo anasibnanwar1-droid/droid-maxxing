@@ -90,6 +90,19 @@ export default function StudioCanvas({ onRequestAddFrame }: { onRequestAddFrame:
 
   useEffect(() => stopAnimation, [stopAnimation]);
 
+  // Esc leaves interact mode. Capture phase + stopPropagation so it doesn't also
+  // close the whole studio (whose Esc listener sits on window in the bubble phase).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && studio.interactingFrameId) {
+        e.stopPropagation();
+        studioDispatch({ type: 'SET_INTERACTING', id: null });
+      }
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [studio.interactingFrameId, studioDispatch]);
+
   const localPoint = useCallback((clientX: number, clientY: number): Point => {
     const rect = rootRef.current?.getBoundingClientRect();
     return { x: clientX - (rect?.left ?? 0), y: clientY - (rect?.top ?? 0) };
@@ -141,6 +154,12 @@ export default function StudioCanvas({ onRequestAddFrame }: { onRequestAddFrame:
 
   const onPointerDown = (e: ReactPointerEvent) => {
     stopAnimation();
+    // A click on empty canvas exits interact mode (clicks on the frame itself go
+    // to the live app, not here).
+    if (studio.interactingFrameId) {
+      studioDispatch({ type: 'SET_INTERACTING', id: null });
+      return;
+    }
     if (e.button === 1 || wantsPan) {
       drag.current = {
         mode: 'pan',

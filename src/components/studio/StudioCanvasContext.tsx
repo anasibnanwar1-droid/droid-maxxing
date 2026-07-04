@@ -45,6 +45,12 @@ export interface StudioSelection {
   line?: number;
 }
 
+export interface StudioSettings {
+  // Double-click a frame to interact with the live app inside it (scroll/click),
+  // instead of the frame only being a selectable preview.
+  interactOnDoubleClick: boolean;
+}
+
 export interface StudioCanvasState {
   view: CanvasView;
   tool: StudioTool;
@@ -53,6 +59,9 @@ export interface StudioCanvasState {
   frames: StudioFrame[];
   selectedFrameIds: string[];
   selection: StudioSelection[];
+  settings: StudioSettings;
+  // The frame currently in interactive mode (its iframe receives pointer events).
+  interactingFrameId: string | null;
 }
 
 export type StudioCanvasAction =
@@ -60,6 +69,8 @@ export type StudioCanvasAction =
   | { type: 'SET_TOOL'; tool: StudioTool }
   | { type: 'SET_LEFT_TAB'; tab: StudioLeftTab }
   | { type: 'SET_DEFAULT_MODE'; mode: BrowserViewportMode }
+  | { type: 'SET_SETTING'; key: keyof StudioSettings; value: boolean }
+  | { type: 'SET_INTERACTING'; id: string | null }
   | { type: 'ADD_FRAME'; frame: NewFrame }
   | { type: 'UPDATE_FRAME'; id: string; patch: Partial<StudioFrame> }
   | { type: 'MOVE_FRAME'; id: string; x: number; y: number }
@@ -136,6 +147,8 @@ const initialState: StudioCanvasState = {
   frames: [],
   selectedFrameIds: [],
   selection: [],
+  settings: { interactOnDoubleClick: true },
+  interactingFrameId: null,
 };
 
 function reducer(state: StudioCanvasState, action: StudioCanvasAction): StudioCanvasState {
@@ -148,6 +161,10 @@ function reducer(state: StudioCanvasState, action: StudioCanvasAction): StudioCa
       return { ...state, leftTab: action.tab };
     case 'SET_DEFAULT_MODE':
       return { ...state, defaultMode: action.mode };
+    case 'SET_SETTING':
+      return { ...state, settings: { ...state.settings, [action.key]: action.value } };
+    case 'SET_INTERACTING':
+      return { ...state, interactingFrameId: action.id };
     case 'ADD_FRAME': {
       const mode = action.frame.mode ?? state.defaultMode;
       const pos =
@@ -186,6 +203,8 @@ function reducer(state: StudioCanvasState, action: StudioCanvasAction): StudioCa
         frames: state.frames.filter((f) => f.id !== action.id),
         selectedFrameIds: state.selectedFrameIds.filter((id) => id !== action.id),
         selection: state.selection.filter((s) => s.frameId !== action.id),
+        interactingFrameId:
+          state.interactingFrameId === action.id ? null : state.interactingFrameId,
       };
     case 'SELECT_FRAMES':
       return { ...state, selectedFrameIds: action.ids };

@@ -1,6 +1,7 @@
 import { Laptop, Monitor, Smartphone, Tablet, X } from 'lucide-react';
 import type { BrowserViewportMode } from '../../types/bridge';
 import { useStudioCanvas } from './StudioCanvasContext';
+import StudioSettingsMenu from './StudioSettingsMenu';
 
 const VIEWPORTS: { mode: BrowserViewportMode; icon: typeof Monitor; label: string }[] = [
   { mode: 'desktop', icon: Monitor, label: 'Desktop' },
@@ -75,6 +76,7 @@ export default function TopBar({
             </button>
           ))}
         </div>
+        <StudioSettingsMenu />
         <button
           onClick={onClose}
           title="Close studio (Esc)"

@@ -9,7 +9,8 @@ import { useStudioCanvas, sizeOf, type StudioFrame } from './StudioCanvasContext
  * the pan/zoom transform, so this stays pixel-crisp and hot-reloads on its own.
  */
 export default function StudioFrameBody({ frame }: { frame: StudioFrame }) {
-  const { studioDispatch } = useStudioCanvas();
+  const { studio, studioDispatch } = useStudioCanvas();
+  const interacting = studio.interactingFrameId === frame.id;
   const size = sizeOf(frame);
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -49,7 +50,13 @@ export default function StudioFrameBody({ frame }: { frame: StudioFrame }) {
       animate={{ opacity: 1, scale: 1 }}
       transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
       className="absolute overflow-hidden rounded-[10px] bg-white shadow-[0_24px_80px_-24px_rgba(0,0,0,0.75),0_2px_8px_rgba(0,0,0,0.4)]"
-      style={{ left: frame.x, top: frame.y, width: size.width, height: size.height }}
+      style={{
+        left: frame.x,
+        top: frame.y,
+        width: size.width,
+        height: size.height,
+        pointerEvents: interacting ? 'auto' : 'none',
+      }}
     >
       {hasUrl ? (
         <iframe

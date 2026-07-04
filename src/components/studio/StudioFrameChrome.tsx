@@ -1,6 +1,6 @@
 import { useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { Copy, Monitor, Smartphone, Tablet, Trash2 } from 'lucide-react';
+import { Copy, Monitor, Play, Smartphone, Tablet, Trash2, X } from 'lucide-react';
 import type { BrowserViewportMode } from '../../types/bridge';
 import {
   sizeOf,
@@ -45,7 +45,8 @@ export default function StudioFrameChrome({
   selected: boolean;
   onDuplicate: (frame: StudioFrame) => void;
 }) {
-  const { studioDispatch } = useStudioCanvas();
+  const { studio, studioDispatch } = useStudioCanvas();
+  const interacting = studio.interactingFrameId === frame.id;
   const [hovered, setHovered] = useState(false);
   const [editing, setEditing] = useState(false);
   // `zoom` is captured at drag-start so a mid-drag zoom can't skew the delta.
@@ -100,8 +101,9 @@ export default function StudioFrameChrome({
       <div
         className="pointer-events-none absolute -inset-[1.5px] rounded-[11px] transition-colors duration-150"
         style={{
-          boxShadow:
-            frame.status === 'building'
+          boxShadow: interacting
+            ? '0 0 0 2px #ee6018, 0 0 28px -2px rgba(238,96,24,0.6)'
+            : frame.status === 'building'
               ? '0 0 0 1.5px #ee6018, 0 0 22px -2px rgba(238,96,24,0.55)'
               : `0 0 0 1.5px ${ringColor}`,
         }}
@@ -178,6 +180,12 @@ export default function StudioFrameChrome({
                 return <Icon className="h-3.5 w-3.5" />;
               })()}
             </ToolbarButton>
+            <ToolbarButton
+              label="Interact"
+              onClick={() => { studioDispatch({ type: 'SET_INTERACTING', id: frame.id }); }}
+            >
+              <Play className="h-3.5 w-3.5" />
+            </ToolbarButton>
             <ToolbarButton label="Duplicate" onClick={() => { onDuplicate(frame); }}>
               <Copy className="h-3.5 w-3.5" />
             </ToolbarButton>
@@ -192,16 +200,38 @@ export default function StudioFrameChrome({
         )}
       </AnimatePresence>
 
-      {/* Body hit area — captures select/drag only in the Select tool so the live
-          app stays interactive under Hand and default tools. */}
-      {tool === 'select' && (
+      {/* Body hit area — captures select/drag only in the Select tool, and only
+          when not interacting so clicks reach the live app. Double-click enters
+          interact mode (configurable in Studio settings). */}
+      {tool === 'select' && !interacting && (
         <div
           className="absolute inset-0"
           style={{ pointerEvents: 'auto', cursor: active ? 'grab' : 'default' }}
           onPointerDown={beginDrag}
           onPointerMove={onDragMove}
           onPointerUp={(e) => { endDrag(e, e.shiftKey); }}
+          onDoubleClick={() => {
+            if (studio.settings.interactOnDoubleClick)
+              studioDispatch({ type: 'SET_INTERACTING', id: frame.id });
+          }}
         />
+      )}
+
+      {/* Interacting badge — exit back to canvas gestures */}
+      {interacting && (
+        <div
+          className="pointer-events-auto absolute left-1/2 flex -translate-x-1/2 items-center gap-1.5 rounded-full border border-[#ee6018]/40 bg-[#0d0d0d]/90 px-2.5 py-1 text-[11px] text-white/85 shadow-lg backdrop-blur"
+          style={{ top: rect.height + 8 }}
+        >
+          <span className="h-1.5 w-1.5 rounded-full bg-[#ee6018]" />
+          Interacting
+          <button
+            onClick={() => { studioDispatch({ type: 'SET_INTERACTING', id: null }); }}
+            className="ml-0.5 text-white/50 transition-colors hover:text-white"
+          >
+            <X className="h-3 w-3" />
+          </button>
+        </div>
       )}
     </div>
   );
