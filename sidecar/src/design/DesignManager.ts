@@ -1,7 +1,13 @@
+import { createHash } from 'node:crypto';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { BrowserSessionManager } from '../browser/BrowserSessionManager.js';
 import { VIEWPORT_PRESETS } from '../browser/BrowserSessionManager.js';
 import type { BrowserViewportMode } from '../browser/types.js';
 import type { ClientCommand, ServerEvent } from '../protocol.js';
+import { renderBrandBook } from './brandBook.js';
+import type { PreviewServer } from './previewServer.js';
 import { dnaFilePath, readDnaState, writeDnaFile } from './dnaFiles.js';
 import { getDnaLibrary, listDnaLibraries } from './dnaLibraries.js';
 import { scanRepoForDna } from './dnaScan.js';
@@ -24,6 +30,7 @@ export interface DesignManagerOptions {
   emit: (event: ServerEvent) => void;
   browsers: BrowserSessionManager;
   sendPrompt: (missionId: string, prompt: string) => Promise<void>;
+  previewServer: PreviewServer;
 }
 
 type DesignCommand = Extract<ClientCommand, { type: `design.${string}` }>;
@@ -191,7 +198,36 @@ export class DesignManager {
         this.options.emit({ type: 'design.git.committed', cwd: cmd.cwd, ...result });
         return;
       }
+      case 'design.preview.render': {
+        await this.renderBrandBookPreview(cmd.cwd);
+        return;
+      }
     }
+  }
+
+  // Render the project's DNA into a designed brand-guidelines page, serve it from
+  // an isolated temp dir (never the project tree — no dev-server watchers touched),
+  // and hand the studio a URL to render as a canvas frame.
+  private async renderBrandBookPreview(cwd: string): Promise<void> {
+    const state = readDnaState(cwd);
+    if (!state.tokens) {
+      throw new Error(
+        'No design tokens yet — run the DNA intake (interview or scan) before generating a brand book.',
+      );
+    }
+    const html = renderBrandBook({
+      cwd,
+      tokens: state.tokens,
+      designMd: state.design.content,
+      motionMd: state.motion.content,
+    });
+    const id = `brand-${createHash('sha1').update(cwd).digest('hex').slice(0, 12)}`;
+    const dir = join(tmpdir(), 'droidex-preview', id);
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, 'index.html'), html, 'utf8');
+    await this.options.previewServer.start();
+    const url = this.options.previewServer.register(id, dir);
+    this.options.emit({ type: 'design.preview', cwd, id, name: 'Brand guidelines', url });
   }
 
   private emitDnaState(cwd: string): void {

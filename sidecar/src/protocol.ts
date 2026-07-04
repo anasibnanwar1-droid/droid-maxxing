@@ -732,6 +732,7 @@ export type ClientCommand =
       note?: string;
     }
   | { type: 'design.git.commit'; cwd: string; message: string }
+  | { type: 'design.preview.render'; cwd: string }
   | { type: 'spec.read'; appSessionId: string; path: string };
 
 export type ChildUpdatedEvent =
@@ -881,4 +882,5 @@ export type ServerEvent =
   | { type: 'design.prototypes.state'; cwd: string; prototypes: PrototypeInfo[] }
   | { type: 'design.registry.state'; cwd: string; components: ComponentRegistryEntry[] }
   | { type: 'design.git.committed'; cwd: string; ok: boolean; sha?: string; error?: string }
+  | { type: 'design.preview'; cwd: string; id: string; name: string; url: string }
   | { type: 'design.error'; cwd?: string; message: string };
