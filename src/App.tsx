@@ -32,6 +32,8 @@ import { useRepoStatus } from './hooks/useRepoStatus';
 import CommandPalette from './components/CommandPalette';
 import SettingsPanel from './components/SettingsPanel';
 import { applyTheme, paletteForMode } from './lib/theme';
+import DesignStudio from './components/design/DesignStudio';
+import { useDesignStore } from './hooks/useDesignStore';
 import AskUserModal from './components/AskUserModal';
 import SpecWikiModal from './components/SpecWikiModal';
 import { BrowserFocusWorkspace } from './components/browser/BrowserFocusWorkspace';
@@ -74,6 +76,7 @@ const UTILITY_PANE_WIDTH_STORAGE_KEY = 'droid-utility-pane-width';
 
 export default function App() {
   const { state, dispatch } = useStore();
+  const { designDispatch } = useDesignStore();
   const embedded = isEmbedded();
   const onboard = useOnboarding();
   const [forceWizard, setForceWizard] = useState(false);
@@ -320,6 +323,11 @@ export default function App() {
           return;
         }
       }
+      if (e.shiftKey && e.key.toLowerCase() === 'd') {
+        e.preventDefault();
+        designDispatch({ type: 'OPEN_STUDIO' });
+        return;
+      }
       switch (e.key.toLowerCase()) {
         case 'k':
           e.preventDefault();
@@ -341,7 +349,7 @@ export default function App() {
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [dispatch, openUtilityTool, toggleUtilityPane]);
+  }, [dispatch, designDispatch, openUtilityTool, toggleUtilityPane]);
 
   const setupBlocker =
     !showWizard &&
@@ -600,6 +608,7 @@ export default function App() {
 
       {state.commandPaletteOpen && <CommandPalette />}
       {state.settingsOpen && <SettingsPanel />}
+      <DesignStudio />
       <SpecWikiModal />
       <Toaster />
 

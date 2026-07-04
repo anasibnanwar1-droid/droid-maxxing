@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
 import { useStore } from '../hooks/useStore';
+import { useDesignStore } from '../hooks/useDesignStore';
 import { pickDirectory } from '../lib/desktop';
 import {
   Folder,
   FolderPlus,
   Plus,
+  PenTool,
   Settings,
   ChevronRight,
   ArrowUpCircle,
@@ -133,6 +135,7 @@ function SessionRow({
 
 export default function Sidebar() {
   const { state, dispatch } = useStore();
+  const { designDispatch } = useDesignStore();
   const activeSession = state.activeAppSessionId ? state.sessions[state.activeAppSessionId] : null;
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   // Per-section count of rows to show; grows by SIDEBAR_VISIBLE_SESSION_LIMIT on
@@ -286,6 +289,16 @@ export default function Sidebar() {
         >
           <SquarePen className="w-[18px] h-[18px] shrink-0 text-droid-text-secondary transition-colors group-hover:text-droid-text" />
           New chat
+        </button>
+        <button
+          onClick={() => {
+            designDispatch({ type: 'OPEN_STUDIO' });
+          }}
+          className="group w-full flex items-center gap-2.5 px-2.5 py-2 rounded-xl text-[13px] font-medium text-droid-text hover:bg-droid-elevated transition-colors"
+          title="Open Design Studio (Cmd+Shift+D)"
+        >
+          <PenTool className="w-[18px] h-[18px] shrink-0 text-droid-text-secondary transition-colors group-hover:text-droid-text" />
+          Design Studio
         </button>
       </div>
 

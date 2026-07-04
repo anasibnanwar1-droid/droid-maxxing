@@ -1,0 +1,315 @@
+import { useEffect, useRef, useState } from 'react';
+import { AnimatePresence, motion } from 'framer-motion';
+import { ArrowUp, AtSign, ChevronDown, Copy, ImagePlus, X } from 'lucide-react';
+import { useStudioCanvas } from './StudioCanvasContext';
+import StudioModelPicker from './StudioModelPicker';
+import { useImageAttachments } from './useImageAttachments';
+
+export interface SendOptions {
+  modelId?: string;
+  count: number;
+  images?: string[];
+}
+
+const COUNTS = [1, 2, 3, 4];
+
+/** Compact host label for a frame chip, e.g. "localhost:5173". */
+function frameHost(url: string): string {
+  try {
+    return new URL(url).host || url;
+  } catch {
+    return url;
+  }
+}
+
+/**
+ * The composer — the primary way to author designs. References resolved from the
+ * canvas ride along as chips; the count selector is the fan-out control that
+ * asks for N directions at once.
+ */
+export default function StudioComposer({
+  text,
+  onTextChange,
+  onSend,
+  disabledReason,
+}: {
+  text: string;
+  onTextChange: (value: string) => void;
+  onSend: (instruction: string, opts: SendOptions) => void;
+  disabledReason?: string;
+}) {
+  const { studio, studioDispatch } = useStudioCanvas();
+  const [modelId, setModelId] = useState<string | undefined>(undefined);
+  const [count, setCount] = useState(1);
+  const [countOpen, setCountOpen] = useState(false);
+  const taRef = useRef<HTMLTextAreaElement>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const { images, addFiles, onPaste, remove: removeImage, clear: clearImages } =
+    useImageAttachments();
+
+  const selectedFrame =
+    studio.selectedFrameIds.length === 1
+      ? studio.frames.find((f) => f.id === studio.selectedFrameIds[0])
+      : undefined;
+  const chips = studio.selection;
+  const canSend = text.trim().length > 0 || images.length > 0;
+
+  const grow = () => {
+    const ta = taRef.current;
+    if (!ta) return;
+    ta.style.height = 'auto';
+    ta.style.height = `${Math.min(ta.scrollHeight, 200)}px`;
+  };
+
+  // Keep height in sync when the text is set externally (e.g. a suggestion).
+  useEffect(grow, [text]);
+
+  const submit = () => {
+    if (!canSend) return;
+    onSend(text.trim(), { modelId, count, images: images.length > 0 ? images : undefined });
+    onTextChange('');
+    clearImages();
+    if (taRef.current) taRef.current.style.height = 'auto';
+  };
+
+  return (
+    <div className="px-3 pb-3">
+      <div className="rounded-2xl border border-white/[0.08] bg-[#141414] shadow-[0_10px_40px_-12px_rgba(0,0,0,0.6)] transition-colors focus-within:border-white/[0.16]">
+        {/* Reference chips + attached images */}
+        {(chips.length > 0 || selectedFrame || images.length > 0) && (
+          <div className="flex flex-wrap items-center gap-1.5 px-3 pt-3">
+            {selectedFrame && (
+              <Chip
+                label={selectedFrame.name}
+                sub={frameHost(selectedFrame.url)}
+                kind="frame"
+                onRemove={() => studioDispatch({ type: 'SELECT_FRAMES', ids: [] })}
+              />
+            )}
+            {chips.map((c) => (
+              <Chip
+                key={c.id}
+                label={c.label}
+                sub={c.tag}
+                kind="element"
+                onRemove={() => { studioDispatch({ type: 'REMOVE_SELECTION', id: c.id }); }}
+              />
+            ))}
+            {images.map((src, i) => (
+              <span key={i} className="group relative">
+                <img
+                  src={src}
+                  alt="attachment"
+                  className="h-10 w-10 rounded-md object-cover ring-1 ring-white/10"
+                />
+                <button
+                  onClick={() => removeImage(i)}
+                  className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-black/85 text-white/70 opacity-0 transition-opacity group-hover:opacity-100"
+                >
+                  <X className="h-2.5 w-2.5" />
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
+
+        <textarea
+          ref={taRef}
+          value={text}
+          onChange={(e) => {
+            onTextChange(e.target.value);
+            grow();
+          }}
+          onPaste={onPaste}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+              e.preventDefault();
+              submit();
+            }
+          }}
+          rows={1}
+          placeholder="Ask for a design, paste an image, @ or select on canvas to reference designs."
+          className="max-h-[200px] w-full resize-none bg-transparent px-3.5 pt-3 pb-2 text-[13.5px] leading-relaxed text-white/90 placeholder:text-white/30 focus:outline-none"
+        />
+
+        <div className="flex items-center justify-between gap-2 px-2.5 pb-2.5">
+          <div className="flex items-center gap-0.5">
+            <input
+              ref={fileRef}
+              type="file"
+              accept="image/*"
+              multiple
+              className="hidden"
+              onChange={(e) => {
+                if (e.target.files) addFiles(e.target.files);
+                e.target.value = '';
+              }}
+            />
+            <IconChip title="Attach an image" onClick={() => fileRef.current?.click()}>
+              <ImagePlus className="h-4 w-4" />
+            </IconChip>
+            <IconChip title="Mention a component or frame">
+              <AtSign className="h-4 w-4" />
+            </IconChip>
+          </div>
+
+          <div className="flex items-center gap-1.5">
+            {/* Model selector — fed by the real Droid CLI catalog */}
+            <StudioModelPicker value={modelId} onChange={setModelId} />
+            {/* Generation-count fan-out */}
+            <Selector
+              open={countOpen}
+              setOpen={setCountOpen}
+              value={`${count}×`}
+              onPick={(v) => { setCount(Number(v.replace('×', ''))); }}
+              options={COUNTS.map((c) => `${c}×`)}
+              width="w-24"
+              icon={<Copy className="h-3 w-3" />}
+              align="right"
+              hint="directions"
+            />
+
+            <button
+              onClick={submit}
+              disabled={!canSend}
+              title={disabledReason ?? 'Send (Enter)'}
+              className={`flex h-8 w-8 items-center justify-center rounded-xl transition-all duration-150 ${
+                canSend
+                  ? 'bg-[#ee6018] text-black shadow-[0_0_18px_-4px_rgba(238,96,24,0.7)] hover:bg-[#ff6a1e] active:scale-95 active:bg-[#dd5812]'
+                  : 'cursor-not-allowed bg-white/[0.03] text-white/25'
+              }`}
+            >
+              <ArrowUp className="h-4 w-4" strokeWidth={2.5} />
+            </button>
+          </div>
+        </div>
+      </div>
+      {disabledReason && (
+        <div className="px-2 pt-1.5 text-[11px] text-white/35">{disabledReason}</div>
+      )}
+    </div>
+  );
+}
+
+function Chip({
+  label,
+  sub,
+  kind,
+  onRemove,
+}: {
+  label: string;
+  sub?: string;
+  kind: 'frame' | 'element';
+  onRemove?: () => void;
+}) {
+  // Element references read as "hot" (ready to act on); frame chips stay muted
+  // context so the two never blur together.
+  const style =
+    kind === 'frame'
+      ? 'rounded-md border border-white/10 bg-white/[0.04] px-1.5 py-0.5 text-[11px] text-white/65'
+      : 'rounded-lg border-[1.5px] border-[#ee6018]/40 bg-[#ee6018]/[0.12] px-2 py-0.5 text-[11.5px] font-medium text-[#f0a060]';
+  return (
+    <span className={`inline-flex items-center gap-1 ${style}`}>
+      <span className="max-w-[140px] truncate">{label}</span>
+      {sub && <span className="font-mono text-[9.5px] opacity-60">{sub}</span>}
+      {onRemove && (
+        <button onClick={onRemove} className="opacity-60 transition-opacity hover:opacity-100">
+          <X className="h-2.5 w-2.5" />
+        </button>
+      )}
+    </span>
+  );
+}
+
+function IconChip({
+  children,
+  title,
+  onClick,
+}: {
+  children: React.ReactNode;
+  title: string;
+  onClick?: () => void;
+}) {
+  return (
+    <button
+      title={title}
+      onClick={onClick}
+      className="flex h-8 w-8 items-center justify-center rounded-lg text-white/40 transition-colors hover:bg-white/[0.06] hover:text-white/80"
+    >
+      {children}
+    </button>
+  );
+}
+
+function Selector({
+  open,
+  setOpen,
+  value,
+  onPick,
+  options,
+  width,
+  icon,
+  align = 'left',
+  hint,
+}: {
+  open: boolean;
+  setOpen: (v: boolean) => void;
+  value: string;
+  onPick: (v: string) => void;
+  options: string[];
+  width: string;
+  icon?: React.ReactNode;
+  align?: 'left' | 'right';
+  hint?: string;
+}) {
+  return (
+    <div className="relative">
+      <button
+        onClick={() => { setOpen(!open); }}
+        className="flex items-center gap-1.5 rounded-lg border border-white/[0.08] bg-white/[0.03] px-2 py-1.5 text-[11.5px] text-white/65 transition-colors hover:border-white/15 hover:text-white/90"
+      >
+        {icon}
+        {value}
+        <ChevronDown className="h-3 w-3 opacity-60" />
+      </button>
+      <AnimatePresence>
+        {open && (
+          <>
+            <div className="fixed inset-0 z-10" onClick={() => { setOpen(false); }} />
+            <motion.div
+              initial={{ opacity: 0, y: 6, scale: 0.98 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 6, scale: 0.98 }}
+              transition={{ type: 'spring', damping: 24, stiffness: 340 }}
+              className={`absolute bottom-full z-20 mb-1.5 ${width} overflow-hidden rounded-xl border border-white/10 bg-[#1a1a1a] p-1 shadow-2xl ${
+                align === 'right' ? 'right-0' : 'left-0'
+              }`}
+            >
+              {hint && (
+                <div className="mb-1 border-b border-white/[0.06] px-2 pb-1.5 pt-0.5 font-mono text-[9.5px] uppercase tracking-wider text-white/30">
+                  {hint}
+                </div>
+              )}
+              {options.map((o) => (
+                <button
+                  key={o}
+                  onClick={() => {
+                    onPick(o);
+                    setOpen(false);
+                  }}
+                  className={`flex w-full items-center justify-between rounded-lg px-2 py-1.5 text-left text-[12px] transition-colors ${
+                    o === value
+                      ? 'bg-[#ee6018]/12 text-[#f08a52]'
+                      : 'text-white/70 hover:bg-white/[0.06]'
+                  }`}
+                >
+                  {o}
+                </button>
+              ))}
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
