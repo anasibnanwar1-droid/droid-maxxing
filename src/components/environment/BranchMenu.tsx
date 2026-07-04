@@ -23,6 +23,10 @@ export function BranchMenu({
   const anchorRef = useRef<HTMLButtonElement>(null);
   const [query, setQuery] = useState('');
   const [busy, setBusy] = useState(false);
+  // Synchronous re-entry guard: `busy` state only updates on the next render, so
+  // a same-tick second trigger (the create input's Enter isn't disabled) would
+  // slip past a `busy` check and launch a duplicate git operation.
+  const busyRef = useRef(false);
   const [dirtyRef, setDirtyRef] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState('');
@@ -60,27 +64,30 @@ export function BranchMenu({
   };
 
   const doCheckout = async (refName: string, allowDirty = false) => {
-    if (busy) return;
+    if (busyRef.current) return;
     if (live) {
       toast.error('Stop the agent before switching branches');
       return;
     }
+    busyRef.current = true;
     setBusy(true);
     try {
       const res = await checkoutGitBranch(cwd, { ref: refName, allowDirty });
       finish(res, refName);
     } finally {
+      busyRef.current = false;
       setBusy(false);
     }
   };
 
   const doCreate = async () => {
     const name = newName.trim();
-    if (!name || busy) return;
+    if (!name || busyRef.current) return;
     if (live) {
       toast.error('Stop the agent before creating a branch');
       return;
     }
+    busyRef.current = true;
     setBusy(true);
     try {
       const res = await createGitBranch(cwd, { name, base: current ?? undefined, checkout: true });
@@ -92,6 +99,7 @@ export function BranchMenu({
         toast.error(res.message || 'Could not create branch');
       }
     } finally {
+      busyRef.current = false;
       setBusy(false);
     }
   };

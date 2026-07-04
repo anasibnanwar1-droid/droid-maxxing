@@ -45,6 +45,9 @@ export function useGitEnvironment(cwd: string, diffMode: DiffStatMode): GitEnvir
       setBranches(null);
       setWorktrees([]);
       setDiffStat(null);
+      // No fetch will run to clear this, and the 6s poll keeps hitting this
+      // branch while cwd stays empty, so drop the flag here or it sticks true.
+      setLoading(false);
       return;
     }
     if (loadedCwdRef.current !== cwd) {

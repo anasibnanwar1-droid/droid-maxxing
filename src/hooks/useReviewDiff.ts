@@ -24,8 +24,13 @@ export function useReviewDiff(cwd: string, scope: DiffScope, enabled: boolean): 
 
   const loadList = useCallback(() => {
     if (!cwd || !enabled) {
+      // Bump the request id so an in-flight load from the previous cwd can't
+      // resolve and repopulate the list with stale files, and clear the loading
+      // flag since no fetch will complete to do it.
+      ++listReq.current;
       setFiles([]);
       setBase(null);
+      setLoadingList(false);
       return;
     }
     const id = ++listReq.current;

@@ -713,6 +713,12 @@ async function commit(dir, { message, all = true } = {}) {
   try {
     if (all) await run(root, ['add', '-A'], { timeout: COMMIT_TIMEOUT });
     const staged = await tryRun(root, ['diff', '--cached', '--name-only']);
+    // tryRun returns null on a git failure and '' when nothing is staged; only
+    // the empty string means "nothing to commit" — a null is a real error (e.g.
+    // a locked or corrupt index) and must not be reported as an empty staging.
+    if (staged === null) {
+      return { ok: false, reason: 'git_error', message: 'Failed to read staged files' };
+    }
     if (!staged) return { ok: false, reason: 'nothing_to_commit' };
     await run(root, ['commit', '-m', message], { timeout: COMMIT_TIMEOUT });
     const head = await tryRun(root, ['rev-parse', '--short', 'HEAD']);
