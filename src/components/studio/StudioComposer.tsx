@@ -151,28 +151,10 @@ export default function StudioComposer({
           className="max-h-[200px] w-full resize-none bg-transparent px-3.5 pt-3 pb-2 text-[13.5px] leading-relaxed text-droid-text placeholder:text-droid-text-muted focus:outline-none"
         />
 
-        <div className="flex items-center justify-between gap-2 px-2.5 pb-2.5">
-          <div className="flex items-center gap-0.5">
-            <input
-              ref={fileRef}
-              type="file"
-              accept="image/*"
-              multiple
-              className="hidden"
-              onChange={(e) => {
-                if (e.target.files) addFiles(e.target.files);
-                e.target.value = '';
-              }}
-            />
-            <IconChip title="Attach an image" onClick={() => fileRef.current?.click()}>
-              <ImagePlus className="h-4 w-4" />
-            </IconChip>
-            <IconChip title="Mention a component or frame">
-              <AtSign className="h-4 w-4" />
-            </IconChip>
-          </div>
-
-          <div className="flex min-w-0 items-center gap-1.5">
+        {/* Controls: selectors wrap onto their own line so a long model name
+            never collides with the fan-out/send in the narrow 336px column. */}
+        <div className="space-y-1.5 px-2.5 pb-2.5 pt-1">
+          <div className="flex flex-wrap items-center gap-1.5">
             {/* Model selector — fed by the real Droid CLI catalog */}
             <StudioModelPicker value={modelId} onChange={setModelId} />
             {/* Reasoning effort — shown when the picked model exposes a choice */}
@@ -185,7 +167,7 @@ export default function StudioComposer({
                 options={efforts}
                 width="w-32"
                 icon={<Gauge className="h-3 w-3" />}
-                align="right"
+                align="left"
                 hint="reasoning"
               />
             )}
@@ -198,9 +180,31 @@ export default function StudioComposer({
               options={COUNTS.map((c) => `${c}×`)}
               width="w-24"
               icon={<Copy className="h-3 w-3" />}
-              align="right"
+              align="left"
               hint="directions"
             />
+          </div>
+
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-0.5">
+              <input
+                ref={fileRef}
+                type="file"
+                accept="image/*"
+                multiple
+                className="hidden"
+                onChange={(e) => {
+                  if (e.target.files) addFiles(e.target.files);
+                  e.target.value = '';
+                }}
+              />
+              <IconChip title="Attach an image" onClick={() => fileRef.current?.click()}>
+                <ImagePlus className="h-4 w-4" />
+              </IconChip>
+              <IconChip title="Mention a component or frame">
+                <AtSign className="h-4 w-4" />
+              </IconChip>
+            </div>
 
             {streaming ? (
               <button
