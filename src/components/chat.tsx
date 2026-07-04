@@ -793,6 +793,57 @@ function isUserMessage(item: FeedItem): boolean {
   return item.type === 'message' && item.event.author === 'user';
 }
 
+// One-line preview of a message for the conversation timeline tooltip.
+function turnLabel(text?: string): string {
+  if (!text) return 'Message';
+  const firstLine = text
+    .trim()
+    .split('\n')
+    .find((line) => line.trim().length > 0);
+  const clean = (firstLine ?? text).replace(/\s+/g, ' ').trim();
+  if (!clean) return 'Message';
+  return clean.length > 80 ? `${clean.slice(0, 80)}…` : clean;
+}
+
+export interface ConversationAnchor {
+  id: string;
+  label: string;
+}
+
+// One anchor per turn: the turn's final model response (its summary). The id is
+// the feed item key, which MessageFeed also stamps onto the rendered row so the
+// timeline can scroll to it.
+function finalResponseAnchorsFromItems(items: FeedItem[]): ConversationAnchor[] {
+  const out: ConversationAnchor[] = [];
+  let pendingKey: string | null = null;
+  let pendingText: string | undefined;
+  const flush = () => {
+    if (pendingKey !== null) out.push({ id: pendingKey, label: turnLabel(pendingText) });
+    pendingKey = null;
+    pendingText = undefined;
+  };
+  for (const it of items) {
+    if (isUserMessage(it)) {
+      flush();
+    } else if (it.type === 'message' && it.event.author !== 'user') {
+      pendingKey = it.key;
+      pendingText = it.event.text;
+    }
+  }
+  flush();
+  return out;
+}
+
+// Public helper so the chat view can derive the same anchors MessageFeed stamps.
+export function conversationAnchors(
+  events: TranscriptEvent[],
+  rich: boolean,
+  pending: boolean,
+  specContent?: string,
+): ConversationAnchor[] {
+  return finalResponseAnchorsFromItems(groupTurns(buildFeed(events, rich), pending, specContent));
+}
+
 // Best-effort end timestamp of a feed item, used to time the live working cue.
 function tailTimestamp(item?: FeedItem): number | undefined {
   if (!item) return undefined;
@@ -1175,6 +1226,7 @@ interface FeedItemViewProps {
   subagentActivity?: (target: SubagentTarget) => SubagentActivity | undefined;
   liveTiming?: boolean;
   specContent?: string;
+  isFinalResponse?: boolean;
 }
 
 // Two feed items render identically when they wrap the same underlying transcript
@@ -1208,6 +1260,7 @@ function feedItemPropsEqual(prev: FeedItemViewProps, next: FeedItemViewProps): b
     prev.liveTiming === next.liveTiming &&
     prev.specContent === next.specContent &&
     prev.cwd === next.cwd &&
+    prev.isFinalResponse === next.isFinalResponse &&
     prev.onOpenDiff === next.onOpenDiff &&
     prev.onOpenReviewFile === next.onOpenReviewFile &&
     prev.onOpenSubagent === next.onOpenSubagent &&
@@ -1227,6 +1280,7 @@ const FeedItemView = memo(function FeedItemView({
   subagentActivity,
   liveTiming,
   specContent,
+  isFinalResponse,
 }: FeedItemViewProps) {
   switch (item.type) {
     case 'message': {
@@ -1242,6 +1296,7 @@ const FeedItemView = memo(function FeedItemView({
           {live ? (
             <StreamingCaret />
           ) : (
+            isFinalResponse &&
             text.trim() && (
               <div className="mt-1.5 -ml-1 opacity-0 group-hover/msg:opacity-100 focus-within:opacity-100 transition-opacity">
                 <CopyButton text={text} />
@@ -1682,6 +1737,14 @@ export function MessageFeed({
     () => groupTurns(buildFeed(events, rich), pending, specContent, changes),
     [events, pending, rich, changes, specContent],
   );
+
+  // The conversation timeline anchors a dot on each turn's final model response.
+  // Stamp those rows so the rail (driven by the same data) can scroll to them.
+  const finalResponseKeys = useMemo(
+    () => new Set(finalResponseAnchorsFromItems(items).map((a) => a.id)),
+    [items],
+  );
+
   const lastIdx = items.length - 1;
   const last = items[lastIdx];
   const showSpecCard = (specContent?.length ?? 0) > 0;
@@ -1722,6 +1785,7 @@ export function MessageFeed({
       {items.map((item, idx) => (
         <motion.div
           key={item.key}
+          {...(finalResponseKeys.has(item.key) ? { 'data-anchor-id': item.key } : {})}
           initial={{ opacity: 0, y: 4 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.2, ease: EASE }}
@@ -1737,6 +1801,7 @@ export function MessageFeed({
             subagentActivity={stableSubagentActivity}
             liveTiming={rich}
             specContent={specContent}
+            isFinalResponse={finalResponseKeys.has(item.key)}
           />
         </motion.div>
       ))}

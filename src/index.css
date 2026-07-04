@@ -119,6 +119,14 @@
     background: #3a3a3c;
   }
 
+  .no-scrollbar {
+    scrollbar-width: none;
+  }
+
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+
   ::selection {
     background: color-mix(in srgb, var(--droid-accent) 22%, transparent);
   }

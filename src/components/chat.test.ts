@@ -5,6 +5,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import {
   buildFeed,
   collectTurnFiles,
+  conversationAnchors,
   correlateResults,
   groupTurns,
   isResultFor,
@@ -64,6 +65,23 @@ test('#20 a TodoWrite update does not add a chat message and answer stays single
   assert.ok(planAtTop); // sanity: message exists
   const inWorked = workedChildren(grouped).some((c) => c.type === 'tools');
   assert.ok(inWorked, 'TodoWrite activity should be inside the Worked group');
+});
+
+test('conversation timeline anchors one dot per turn final model response', () => {
+  const events = [
+    userMsg('first question'),
+    grep(),
+    asst('first answer'),
+    userMsg('second question'),
+    todo('1. [in_progress] x'),
+    asst('second answer'),
+  ];
+  const anchors = conversationAnchors(events, true, false);
+  assert.equal(anchors.length, 2);
+  assert.deepEqual(
+    anchors.map((a) => a.label),
+    ['first answer', 'second answer'],
+  );
 });
 
 test('#20 repeated TodoWrite calls are deduped to the latest snapshot', () => {

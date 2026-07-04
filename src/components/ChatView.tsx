@@ -8,11 +8,13 @@ import {
   UserBubble,
   ChatSkeleton,
   TranscriptSkeleton,
+  conversationAnchors,
 } from './chat';
 import { readFile } from '../lib/desktop';
 import { interruptAgent, loadMissionHistory, loadOlderMissionHistory } from '../lib/commands';
 import { findWorkerForTarget, resolveWorkers, subagentActivityForTarget } from '../lib/subagents';
 import type { FileChange } from '../lib/diff';
+import { ConversationTimeline } from './ConversationTimeline';
 
 function DroidWordmark() {
   return (
@@ -252,6 +254,9 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
   // visually fixed once the prepended messages grow the scroll height.
   const prependAnchor = useRef<{ height: number; top: number } | null>(null);
   const PREFETCH_PX = 800;
+  // Auto-page older history until the conversation timeline has at least this
+  // many anchors (or the chain ends); the rest fills in as the user scrolls up.
+  const TIMELINE_TARGET_ANCHORS = 12;
 
   // Only auto-scroll when the user is already pinned to the bottom; if they've
   // scrolled up to read, leave their position alone while the model responds.
@@ -365,6 +370,26 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
     dispatch({ type: 'SPEC_SET', missionId, path, title, content: specContent });
   }, [missionId, specContent, hasFileSpec, fileSpec, storedSpec?.path, dispatch]);
 
+  // Dots for the conversation timeline: one per turn's final model response,
+  // derived from the same feed the transcript renders so the rail stays in sync.
+  const timelineAnchors = useMemo(
+    () => (viewingSub ? [] : conversationAnchors(transcript, true, live, specContent)),
+    [transcript, viewingSub, live, specContent],
+  );
+
+  // Old/large chats restore only a recent window, which can hold too few final
+  // responses for the rail to be useful. Page older history in (via the same
+  // prepend-stable path as scroll prefetch) until there are enough anchors or
+  // the compaction chain is exhausted, so the timeline works on any chat.
+  useEffect(() => {
+    if (viewingSub || !historyMissionId || !olderCursor || loadingOlder) return;
+    if (timelineAnchors.length >= TIMELINE_TARGET_ANCHORS) return;
+    const el = scrollRef.current;
+    if (el) prependAnchor.current = { height: el.scrollHeight, top: el.scrollTop };
+    dispatch({ type: 'MISSION_HISTORY_LOADING_OLDER', missionId: historyMissionId });
+    loadOlderMissionHistory(historyMissionId, olderCursor);
+  }, [viewingSub, historyMissionId, olderCursor, loadingOlder, timelineAnchors.length, dispatch]);
+
   return (
     <div className="flex-1 min-h-0 min-w-0 flex flex-col overflow-hidden">
       {activeMission && (
@@ -387,78 +412,85 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
           }
         />
       )}
-      <div
-        ref={scrollRef}
-        onScroll={onScroll}
-        className="flex-1 min-h-0 min-w-0 overflow-y-auto overflow-x-hidden"
-        style={{
-          paddingRight: rightInset ? 312 : undefined,
-          transition: 'padding-right 0.2s ease',
-        }}
-      >
-        {activeMission && transcript.length > 0 ? (
-          <div className="mx-auto min-w-0 px-6 py-6 max-w-2xl">
-            {!viewingSub && restore?.status === 'failed' && (
-              <RestoreFailedBanner message={restore.error} onRetry={retryRestore} />
-            )}
-            {!viewingSub && loadingOlder && (
-              <div className="mb-4 flex justify-center">
-                <span className="text-[11px] text-droid-text-muted">Loading earlier messages…</span>
-              </div>
-            )}
-            <MessageFeed
-              events={transcript}
-              pending={live}
-              cwd={activeMission.cwd}
-              onOpenDiff={openDiff}
-              onOpenReviewFile={openReviewFile}
-              onOpenSubagent={openSubagent}
-              subagentActivity={subagentActivity}
-              specContent={specContent}
-              onOpenSpecWiki={
-                missionId ? () => dispatch({ type: 'SPEC_OPEN_WIKI', missionId }) : undefined
-              }
-            />
-          </div>
-        ) : activeMission && restore?.status === 'failed' ? (
-          <RestoreFailedState message={restore.error} onRetry={retryRestore} />
-        ) : activeMission && viewingSub ? (
-          <div className="mx-auto flex h-full max-w-2xl flex-col items-center justify-center gap-4 px-8 text-center">
-            {selectedWorker?.prompt && (
-              <div className="max-w-lg rounded-xl bg-droid-elevated/40 px-4 py-3 text-left">
-                <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-droid-text-muted">
-                  Task
-                </div>
-                <div className="text-[12.5px] leading-relaxed text-droid-text-secondary whitespace-pre-wrap break-words">
-                  {selectedWorker.prompt}
-                </div>
-              </div>
-            )}
-            {selectedWorker?.status === 'running' ? (
-              <WorkingIndicator
-                label={`${subLabel} is working`}
-                startTs={selectedWorker.startedAt}
-              />
-            ) : selectedAgent && state.agentHistoryLoading[selectedAgent] ? (
-              <WorkingIndicator label={`Loading ${subLabel} activity`} />
-            ) : (
-              <span className="text-[13px] text-droid-text-muted">
-                No activity captured for {subLabel}.
-              </span>
-            )}
-          </div>
-        ) : activeMission && restore?.status === 'loading' ? (
-          <RestoringState />
-        ) : startingCompose ? (
-          <div className="mx-auto min-w-0 max-w-2xl px-6 py-6">
-            <UserBubble event={startingCompose} />
-            <div className="mt-5">
-              <ChatSkeleton />
-            </div>
-          </div>
-        ) : (
-          <EmptyState folder={draftFolder} />
+      <div className="relative flex-1 min-h-0 min-w-0 flex flex-col">
+        {activeMission && timelineAnchors.length >= 2 && (
+          <ConversationTimeline scrollRef={scrollRef} anchors={timelineAnchors} />
         )}
+        <div
+          ref={scrollRef}
+          onScroll={onScroll}
+          className="flex-1 min-h-0 min-w-0 overflow-y-auto overflow-x-hidden"
+          style={{
+            paddingRight: rightInset ? 312 : undefined,
+            transition: 'padding-right 0.2s ease',
+          }}
+        >
+          {activeMission && transcript.length > 0 ? (
+            <div className="mx-auto min-w-0 px-6 py-6 max-w-2xl">
+              {!viewingSub && restore?.status === 'failed' && (
+                <RestoreFailedBanner message={restore.error} onRetry={retryRestore} />
+              )}
+              {!viewingSub && loadingOlder && (
+                <div className="mb-4 flex justify-center">
+                  <span className="text-[11px] text-droid-text-muted">
+                    Loading earlier messages…
+                  </span>
+                </div>
+              )}
+              <MessageFeed
+                events={transcript}
+                pending={live}
+                cwd={activeMission.cwd}
+                onOpenDiff={openDiff}
+                onOpenReviewFile={openReviewFile}
+                onOpenSubagent={openSubagent}
+                subagentActivity={subagentActivity}
+                specContent={specContent}
+                onOpenSpecWiki={
+                  missionId ? () => dispatch({ type: 'SPEC_OPEN_WIKI', missionId }) : undefined
+                }
+              />
+            </div>
+          ) : activeMission && restore?.status === 'failed' ? (
+            <RestoreFailedState message={restore.error} onRetry={retryRestore} />
+          ) : activeMission && viewingSub ? (
+            <div className="mx-auto flex h-full max-w-2xl flex-col items-center justify-center gap-4 px-8 text-center">
+              {selectedWorker?.prompt && (
+                <div className="max-w-lg rounded-xl bg-droid-elevated/40 px-4 py-3 text-left">
+                  <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-droid-text-muted">
+                    Task
+                  </div>
+                  <div className="text-[12.5px] leading-relaxed text-droid-text-secondary whitespace-pre-wrap break-words">
+                    {selectedWorker.prompt}
+                  </div>
+                </div>
+              )}
+              {selectedWorker?.status === 'running' ? (
+                <WorkingIndicator
+                  label={`${subLabel} is working`}
+                  startTs={selectedWorker.startedAt}
+                />
+              ) : selectedAgent && state.agentHistoryLoading[selectedAgent] ? (
+                <WorkingIndicator label={`Loading ${subLabel} activity`} />
+              ) : (
+                <span className="text-[13px] text-droid-text-muted">
+                  No activity captured for {subLabel}.
+                </span>
+              )}
+            </div>
+          ) : activeMission && restore?.status === 'loading' ? (
+            <RestoringState />
+          ) : startingCompose ? (
+            <div className="mx-auto min-w-0 max-w-2xl px-6 py-6">
+              <UserBubble event={startingCompose} />
+              <div className="mt-5">
+                <ChatSkeleton />
+              </div>
+            </div>
+          ) : (
+            <EmptyState folder={draftFolder} />
+          )}
+        </div>
       </div>
     </div>
   );
