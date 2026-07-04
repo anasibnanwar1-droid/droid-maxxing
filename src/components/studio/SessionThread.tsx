@@ -1,5 +1,6 @@
 import { Loader2, Wrench } from 'lucide-react';
 import type { TranscriptEvent } from '../../types/bridge';
+import { Markdown } from '../Markdown';
 
 /**
  * Renders a design session's live transcript in the studio thread — user turns,
@@ -43,8 +44,8 @@ function Turn({ e }: { e: TranscriptEvent }) {
   switch (e.kind) {
     case 'text':
       return e.text?.trim() ? (
-        <div className="max-w-[94%] whitespace-pre-wrap text-[13px] leading-relaxed text-droid-text-secondary">
-          {e.text}
+        <div className="max-w-full text-droid-text-secondary">
+          <Markdown>{e.text}</Markdown>
         </div>
       ) : null;
     case 'thinking':
