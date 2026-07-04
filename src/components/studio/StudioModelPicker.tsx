@@ -49,10 +49,10 @@ export default function StudioModelPicker({
   }, [models, query]);
 
   return (
-    <div className="relative" ref={ref}>
+    <div className="relative min-w-0" ref={ref}>
       <button
         onClick={() => setOpen((v) => !v)}
-        className="flex items-center gap-1.5 rounded-lg border border-droid-border bg-white/[0.03] px-2 py-1.5 text-[11.5px] text-droid-text-secondary transition-colors hover:border-droid-border hover:text-droid-text"
+        className="flex min-w-0 items-center gap-1.5 rounded-lg border border-droid-border bg-white/[0.03] px-2 py-1.5 text-[11.5px] text-droid-text-secondary transition-colors hover:border-droid-border hover:text-droid-text"
       >
         <ModelIcon provider={providerOf(selected)} size={13} />
         <span className="max-w-[110px] truncate">{label}</span>

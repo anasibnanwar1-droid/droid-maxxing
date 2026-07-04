@@ -1,12 +1,15 @@
 import { useEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { ArrowUp, AtSign, ChevronDown, Copy, ImagePlus, X } from 'lucide-react';
+import { ArrowUp, AtSign, ChevronDown, Copy, Gauge, ImagePlus, Square, X } from 'lucide-react';
+import { useStore } from '../../hooks/useStore';
 import { useStudioCanvas } from './StudioCanvasContext';
 import StudioModelPicker from './StudioModelPicker';
 import { useImageAttachments } from './useImageAttachments';
+import type { ReasoningEffort } from '../../types/bridge';
 
 export interface SendOptions {
   modelId?: string;
+  reasoningEffort?: ReasoningEffort;
   count: number;
   images?: string[];
 }
@@ -32,14 +35,21 @@ export default function StudioComposer({
   onTextChange,
   onSend,
   disabledReason,
+  streaming,
+  onStop,
 }: {
   text: string;
   onTextChange: (value: string) => void;
   onSend: (instruction: string, opts: SendOptions) => void;
   disabledReason?: string;
+  streaming?: boolean;
+  onStop?: () => void;
 }) {
   const { studio, studioDispatch } = useStudioCanvas();
+  const { state } = useStore();
   const [modelId, setModelId] = useState<string | undefined>(undefined);
+  const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort | undefined>(undefined);
+  const [reasoningOpen, setReasoningOpen] = useState(false);
   const [count, setCount] = useState(1);
   const [countOpen, setCountOpen] = useState(false);
   const taRef = useRef<HTMLTextAreaElement>(null);
@@ -53,6 +63,8 @@ export default function StudioComposer({
       : undefined;
   const chips = studio.selection;
   const canSend = text.trim().length > 0 || images.length > 0;
+  const selectedModel = modelId ? state.models.find((m) => m.id === modelId) : undefined;
+  const efforts = selectedModel?.supportedReasoningEfforts ?? [];
 
   const grow = () => {
     const ta = taRef.current;
@@ -63,10 +75,17 @@ export default function StudioComposer({
 
   // Keep height in sync when the text is set externally (e.g. a suggestion).
   useEffect(grow, [text]);
+  // A newly picked model may not support the current effort — fall back to its default.
+  useEffect(() => { setReasoningEffort(undefined); }, [modelId]);
 
   const submit = () => {
     if (!canSend) return;
-    onSend(text.trim(), { modelId, count, images: images.length > 0 ? images : undefined });
+    onSend(text.trim(), {
+      modelId,
+      reasoningEffort,
+      count,
+      images: images.length > 0 ? images : undefined,
+    });
     onTextChange('');
     clearImages();
     if (taRef.current) taRef.current.style.height = 'auto';
@@ -153,9 +172,23 @@ export default function StudioComposer({
             </IconChip>
           </div>
 
-          <div className="flex items-center gap-1.5">
+          <div className="flex min-w-0 items-center gap-1.5">
             {/* Model selector — fed by the real Droid CLI catalog */}
             <StudioModelPicker value={modelId} onChange={setModelId} />
+            {/* Reasoning effort — shown when the picked model exposes a choice */}
+            {efforts.length > 1 && (
+              <Selector
+                open={reasoningOpen}
+                setOpen={setReasoningOpen}
+                value={reasoningEffort ?? selectedModel?.defaultReasoningEffort ?? 'auto'}
+                onPick={(v) => { setReasoningEffort(v as ReasoningEffort); }}
+                options={efforts}
+                width="w-32"
+                icon={<Gauge className="h-3 w-3" />}
+                align="right"
+                hint="reasoning"
+              />
+            )}
             {/* Generation-count fan-out */}
             <Selector
               open={countOpen}
@@ -169,18 +202,28 @@ export default function StudioComposer({
               hint="directions"
             />
 
-            <button
-              onClick={submit}
-              disabled={!canSend}
-              title={disabledReason ?? 'Send (Enter)'}
-              className={`flex h-8 w-8 items-center justify-center rounded-xl transition-all duration-150 ${
-                canSend
-                  ? 'bg-[#ee6018] text-black shadow-[0_0_18px_-4px_rgba(238,96,24,0.7)] hover:bg-[#ff6a1e] active:scale-95 active:bg-[#dd5812]'
-                  : 'cursor-not-allowed bg-white/[0.03] text-droid-text-muted'
-              }`}
-            >
-              <ArrowUp className="h-4 w-4" strokeWidth={2.5} />
-            </button>
+            {streaming ? (
+              <button
+                onClick={() => onStop?.()}
+                title="Working — click to stop"
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-[#ee6018] text-black shadow-[0_0_18px_-4px_rgba(238,96,24,0.7)] transition-all duration-150 hover:bg-[#ff6a1e] active:scale-95"
+              >
+                <Square className="h-3.5 w-3.5" fill="currentColor" strokeWidth={0} />
+              </button>
+            ) : (
+              <button
+                onClick={submit}
+                disabled={!canSend}
+                title={disabledReason ?? 'Send (Enter)'}
+                className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-xl transition-all duration-150 ${
+                  canSend
+                    ? 'bg-[#ee6018] text-black shadow-[0_0_18px_-4px_rgba(238,96,24,0.7)] hover:bg-[#ff6a1e] active:scale-95 active:bg-[#dd5812]'
+                    : 'cursor-not-allowed bg-white/[0.03] text-droid-text-muted'
+                }`}
+              >
+                <ArrowUp className="h-4 w-4" strokeWidth={2.5} />
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -263,7 +306,7 @@ function Selector({
   hint?: string;
 }) {
   return (
-    <div className="relative">
+    <div className="relative shrink-0">
       <button
         onClick={() => { setOpen(!open); }}
         className="flex items-center gap-1.5 rounded-lg border border-droid-border bg-white/[0.03] px-2 py-1.5 text-[11.5px] text-droid-text-secondary transition-colors hover:border-droid-border hover:text-droid-text"

@@ -1,6 +1,7 @@
 import { useStore } from '../../hooks/useStore';
 import { useDesignStore } from '../../hooks/useDesignStore';
 import { createMission, newClientRef, sendToMission } from '../../lib/commands';
+import type { ReasoningEffort } from '../../types/bridge';
 
 /**
  * The project's design session — a normal chat (interactionMode 'auto', never
@@ -14,7 +15,7 @@ export function useDesignSession(cwd: string) {
   const sessionId = design.sessions[cwd] || null;
   const transcript = sessionId ? (state.transcripts[sessionId] ?? []) : [];
 
-  const send = (text: string, modelId?: string) => {
+  const send = (text: string, modelId?: string, reasoningEffort?: ReasoningEffort) => {
     if (!text.trim()) return;
     if (sessionId) {
       sendToMission(sessionId, text);
@@ -30,6 +31,7 @@ export function useDesignSession(cwd: string) {
       interactionMode: 'auto',
       autonomy: 'medium',
       modelId,
+      reasoningEffort,
     });
   };
 

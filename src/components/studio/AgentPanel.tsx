@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Blocks, MessageSquare, Palette } from 'lucide-react';
 import { useStore } from '../../hooks/useStore';
+import { interruptMission } from '../../lib/commands';
 import { useStudioCanvas, type StudioLeftTab } from './StudioCanvasContext';
 import { useDesignSession } from './useDesignSession';
 import StudioComposer, { type SendOptions } from './StudioComposer';
@@ -24,7 +25,7 @@ export default function AgentPanel({ cwd }: { cwd: string }) {
   const streaming = !!(sessionId && state.missions[sessionId]?.streaming);
 
   const handleSubmit = (instruction: string, opts: SendOptions) => {
-    send(instruction, opts.modelId);
+    send(instruction, opts.modelId, opts.reasoningEffort);
   };
 
   return (
@@ -57,7 +58,13 @@ export default function AgentPanel({ cwd }: { cwd: string }) {
               <ThreadBody messages={[]} onPickSuggestion={setText} />
             )}
           </div>
-          <StudioComposer text={text} onTextChange={setText} onSend={handleSubmit} />
+          <StudioComposer
+            text={text}
+            onTextChange={setText}
+            onSend={handleSubmit}
+            streaming={streaming}
+            onStop={() => { if (sessionId) interruptMission(sessionId); }}
+          />
         </>
       )}
 
