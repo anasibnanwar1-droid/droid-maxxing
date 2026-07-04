@@ -292,7 +292,8 @@ export class HistoryIndex {
         context_remaining_tokens INTEGER,
         context_accuracy TEXT,
         context_updated_at TEXT,
-        max_context_tokens INTEGER
+        max_context_tokens INTEGER,
+        auto_compactions INTEGER
       );
       CREATE TABLE IF NOT EXISTS agent_sessions (
         session_id TEXT PRIMARY KEY,
@@ -355,6 +356,13 @@ export class HistoryIndex {
         updated_at INTEGER NOT NULL
       );
     `);
+    // Databases created before the column existed; ADD COLUMN throws when it
+    // is already present, so the failure is the idempotence check.
+    try {
+      this.db.exec('ALTER TABLE app_sessions ADD COLUMN auto_compactions INTEGER');
+    } catch {
+      /* column already exists */
+    }
   }
 
   syncSummaries(summaries: MissionSummary[]): void {
@@ -382,9 +390,10 @@ export class HistoryIndex {
         context_remaining_tokens,
         context_accuracy,
         context_updated_at,
-        max_context_tokens
+        max_context_tokens,
+        auto_compactions
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(app_session_id) DO UPDATE SET
         droid_session_id = excluded.droid_session_id,
         previous_droid_session_ids = excluded.previous_droid_session_ids,
@@ -407,7 +416,8 @@ export class HistoryIndex {
         context_remaining_tokens = excluded.context_remaining_tokens,
         context_accuracy = excluded.context_accuracy,
         context_updated_at = excluded.context_updated_at,
-        max_context_tokens = excluded.max_context_tokens
+        max_context_tokens = excluded.max_context_tokens,
+        auto_compactions = excluded.auto_compactions
     `);
     for (const summary of summaries) {
       stmt.run(
@@ -434,6 +444,7 @@ export class HistoryIndex {
         sqlValue(summary.contextAccuracy),
         sqlValue(summary.contextUpdatedAt),
         sqlValue(summary.maxContextTokens),
+        sqlValue(summary.autoCompactions),
       );
     }
   }
@@ -610,6 +621,7 @@ function summaryPatchesFromRows(
       contextAccuracy: contextAccuracy(row.context_accuracy),
       contextUpdatedAt: stringValue(row.context_updated_at),
       maxContextTokens: numberValue(row.max_context_tokens),
+      autoCompactions: numberValue(row.auto_compactions),
       updatedAt: numberValue(row.updated_at),
     };
     patches.set(appSessionId, patch);

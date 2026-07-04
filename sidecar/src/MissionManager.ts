@@ -1757,6 +1757,10 @@ export class MissionManager {
     const session = mission.session;
     mission.unsubscribe?.();
     mission.unsubscribe = session.onNotification((note: Record<string, unknown>) => {
+      // The daemon emits the same compacting/compacted notifications during a
+      // manual compactSession RPC; runCompaction owns that path's statuses and
+      // refresh, so reacting here too would duplicate them.
+      if (mission.compacting) return;
       const appSessionId = mission.summary.id;
       this.handleCompactionNotification(appSessionId, appSessionId, 'orchestrator', session, note);
     });
@@ -1825,6 +1829,7 @@ export class MissionManager {
     compactType: CompactType,
   ): Promise<void> {
     const appSessionId = mission.summary.id;
+    const preCompactSessionId = mission.summary.sessionId;
     const carryover: UsageOffset = {
       tokensIn: mission.summary.tokensIn ?? 0,
       tokensOut: mission.summary.tokensOut ?? 0,
@@ -1845,7 +1850,23 @@ export class MissionManager {
               message: `Could not compact session: ${message}`,
               recoverable: true,
             }),
-          refresh: () => this.refreshContext(appSessionId, mission.session),
+          refresh: () => {
+            // The pre-compaction exact reading would otherwise override the
+            // refreshed estimate; and when the daemon compacted in place (no
+            // swap, so no compactedFromSessionIds bump) the meter's ratchet
+            // needs the generation counter to move to accept the lower value.
+            const live = this.findMission(appSessionId);
+            if (live) {
+              this.patch(appSessionId, {
+                contextTokens: 0,
+                contextAccuracy: undefined,
+                ...(live.summary.sessionId === preCompactSessionId
+                  ? { autoCompactions: (live.summary.autoCompactions ?? 0) + 1 }
+                  : {}),
+              });
+            }
+            return this.refreshContext(appSessionId, mission.session);
+          },
           reload: async (newSessionId) => {
             swapTarget = newSessionId;
             await this.swapMissionSession(mission, newSessionId, carryover);

@@ -72,6 +72,19 @@ test('loadHistoricalSessions applies app summaries before plain chat filtering',
   assert.equal(rows[0].summary.workspaceKind, 'none');
 });
 
+test('syncSummaries persists autoCompactions and loadHistoricalSessions restores it', () => {
+  const cwd = join(home, 'workspace-autocompact');
+  writeSession('autocompact-chat', cwd);
+  const index = new HistoryIndex();
+  index.syncSummaries([{ ...summary('autocompact-chat', cwd), autoCompactions: 3 }]);
+  index.close();
+
+  const rows = loadHistoricalSessions({ workspaceCwds: [cwd] });
+
+  const row = rows.find((r) => r.summary.id === 'autocompact-chat');
+  assert.equal(row?.summary.autoCompactions, 3);
+});
+
 test('loadHistoricalSessions hides a Task-spawned subagent that has a persisted worker link', () => {
   const cwd = join(home, 'workspace-subagent');
   writeSession('real-session', cwd);
