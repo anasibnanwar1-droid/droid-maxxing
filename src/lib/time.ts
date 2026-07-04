@@ -15,5 +15,5 @@ export function formatRelativeTime(ts: number, now: number = Date.now()): string
   if (wk < 5) return `${String(wk)}w`;
   const mo = Math.floor(day / 30);
   if (mo < 12) return `${String(mo)}mo`;
-  return `${String(Math.floor(day / 365))}y`;
+  return `${String(Math.max(1, Math.floor(day / 365)))}y`;
 }

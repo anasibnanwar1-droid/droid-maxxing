@@ -1299,7 +1299,7 @@ const FeedItemView = memo(function FeedItemView({
             isFinalResponse &&
             text.trim() && (
               <div className="mt-1.5 -ml-1 opacity-0 group-hover/msg:opacity-100 focus-within:opacity-100 transition-opacity">
-                <CopyButton text={text} />
+                <CopyButton text={parseTruncatedTail(text).body} />
               </div>
             )
           )}

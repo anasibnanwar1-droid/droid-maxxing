@@ -375,6 +375,7 @@ function getLocalStorage(): Storage | undefined {
 // carrying one of these was never deliberately colored by the user, so migrate
 // it to a theme-matched neutral and let the monochrome scale show through.
 const LEGACY_DEFAULT_ACCENTS = new Set(['#ee6018', '#ff5d2e']);
+const THEME_ACCENT_MIGRATED_KEY = 'droid-theme-accent-migrated';
 
 function neutralAccentFor(bg: string): string {
   const r = parseInt(bg.slice(1, 3), 16);
@@ -386,14 +387,21 @@ function neutralAccentFor(bg: string): string {
 
 function loadTheme(): ThemeConfig {
   try {
-    const saved = getLocalStorage()?.getItem('droid-theme');
-    if (saved) {
-      const merged = { ...defaultTheme, ...JSON.parse(saved) };
-      if (LEGACY_DEFAULT_ACCENTS.has(String(merged.accent).toLowerCase())) {
-        merged.accent = neutralAccentFor(merged.bg);
+    const storage = getLocalStorage();
+    const saved = storage?.getItem('droid-theme');
+    const theme = saved ? { ...defaultTheme, ...JSON.parse(saved) } : defaultTheme;
+    // One-time migration: a saved accent still carrying an old fixed-orange
+    // default was never deliberately chosen, so neutralize it once. Keying off a
+    // persisted flag (not the accent value) lets a user later pick that same
+    // orange from the preset palette and have the choice stick across reloads.
+    if (storage && storage.getItem(THEME_ACCENT_MIGRATED_KEY) !== '1') {
+      if (saved && LEGACY_DEFAULT_ACCENTS.has(String(theme.accent).toLowerCase())) {
+        theme.accent = neutralAccentFor(theme.bg);
+        storage.setItem('droid-theme', JSON.stringify(theme));
       }
-      return merged;
+      storage.setItem(THEME_ACCENT_MIGRATED_KEY, '1');
     }
+    return theme;
   } catch {
     /* ignore */
   }
