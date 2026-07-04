@@ -157,8 +157,13 @@ export function normalizeStreamEvent(
       (Number(cumulative.cacheReadTokens ?? 0) || 0) +
       (Number(cumulative.cacheCreationTokens ?? 0) || 0);
     const tokensOut = Number(cumulative.outputTokens ?? 0) || 0;
+    // Mirror the daemon's compaction threshold count (last call's input +
+    // output + cacheRead) so the meter measures with the same stick that
+    // decides when auto-compaction fires.
     const contextTokens =
-      (Number(context.inputTokens ?? 0) || 0) + (Number(context.cacheReadTokens ?? 0) || 0);
+      (Number(context.inputTokens ?? 0) || 0) +
+      (Number(context.outputTokens ?? 0) || 0) +
+      (Number(context.cacheReadTokens ?? 0) || 0);
     return { tokens: { tokensIn, tokensOut, contextTokens } };
   }
 

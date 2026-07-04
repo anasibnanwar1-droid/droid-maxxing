@@ -929,6 +929,7 @@ export class MissionManager {
         contextRemainingTokens: historical?.contextRemainingTokens,
         contextAccuracy: historical?.contextAccuracy,
         contextUpdatedAt: historical?.contextUpdatedAt,
+        autoCompactions: historical?.autoCompactions,
         maxContextTokens: historical?.maxContextTokens ?? this.maxContextTokensForModel(modelId),
         createdAt: historical?.createdAt ?? now,
         updatedAt: now,
@@ -1701,6 +1702,12 @@ export class MissionManager {
         m.summary.tokensIn = n.tokens.tokensIn + (offset?.tokensIn ?? 0);
         m.summary.tokensOut = n.tokens.tokensOut + (offset?.tokensOut ?? 0);
         m.summary.contextTokens = n.tokens.contextTokens;
+        // Provider-reported usage of the last call is exactly what the daemon's
+        // compaction threshold checks, so it is the authoritative reading.
+        if (n.tokens.contextTokens > 0) {
+          m.summary.contextAccuracy = 'exact';
+          m.summary.contextUpdatedAt = new Date().toISOString();
+        }
         const maxContextTokens = this.maxContextTokensForSummary(m.summary);
         if (maxContextTokens === undefined) delete m.summary.maxContextTokens;
         else m.summary.maxContextTokens = maxContextTokens;
@@ -1779,6 +1786,19 @@ export class MissionManager {
       agentSessionId,
       role,
     );
+    // In-place compaction keeps the session id, so the meter's ratchet only
+    // resets when the generation counter moves; also drop the pre-compaction
+    // exact reading so the refreshed estimate is not overridden by stale usage.
+    if (agentSessionId === missionId) {
+      const mission = this.findMission(missionId);
+      if (mission) {
+        this.patch(missionId, {
+          contextTokens: 0,
+          contextAccuracy: undefined,
+          autoCompactions: (mission.summary.autoCompactions ?? 0) + 1,
+        });
+      }
+    }
     void this.refreshContext(agentSessionId, session).catch(() => {});
     return true;
   }
@@ -2568,7 +2588,7 @@ export class MissionManager {
       used,
       remaining: Math.max(0, limit - used),
       limit,
-      accuracy: previous?.accuracy ?? 'estimated',
+      accuracy: summary.contextAccuracy ?? previous?.accuracy ?? 'estimated',
       updatedAt: new Date().toISOString(),
       breakdown,
     };
@@ -2584,9 +2604,33 @@ export class MissionManager {
     try {
       const stats = await session.getContextStats();
       const breakdown = await this.readContextBreakdown(session);
-      const snapshot = contextStatsSnapshot(stats, breakdown);
+      let snapshot = contextStatsSnapshot(stats, breakdown);
       const mission = this.findMission(sessionId);
       const appSessionId = mission?.summary.id ?? sessionId;
+      // The daemon's get_context_stats is a chars/4 estimate that over-counts;
+      // when a provider-reported reading exists it matches the compaction
+      // threshold count exactly, so it wins over the estimate. The stats call
+      // still supplies the limit and breakdown.
+      const exact =
+        mission?.summary.contextAccuracy === 'exact' && mission.summary.contextTokens > 0
+          ? mission.summary.contextTokens
+          : undefined;
+      if (exact !== undefined && snapshot.limit > 0) {
+        const used = Math.min(exact, snapshot.limit);
+        snapshot = {
+          ...snapshot,
+          used,
+          remaining: Math.max(0, snapshot.limit - used),
+          accuracy: 'exact',
+          breakdown: snapshot.breakdown
+            ? {
+                ...snapshot.breakdown,
+                usedTokens: used,
+                freeTokens: Math.max(0, snapshot.limit - used),
+              }
+            : undefined,
+        };
+      }
       this.contextSnapshots.set(appSessionId, snapshot);
       this.emit({ type: 'context.updated', sessionId: appSessionId, stats: snapshot });
       if (mission) {

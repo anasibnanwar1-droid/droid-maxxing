@@ -157,7 +157,9 @@ export default function ContextMeter({
   const isEstimating = (accuracy ?? 'estimated') !== 'exact';
   // Compaction count is the generation: a bump means context was compacted, so
   // the stabilized usage floor must reset to the lower post-compaction reading.
-  const generation = mission.compactedFromSessionIds?.length ?? 0;
+  // In-place daemon compactions keep the session id, so they count separately.
+  const generation =
+    (mission.compactedFromSessionIds?.length ?? 0) + (mission.autoCompactions ?? 0);
   const used = useStableUsed(sessionKey ?? mission.id, measured?.used, !isEstimating, generation);
   const remaining =
     used !== undefined && max !== undefined ? Math.max(0, max - used) : measured?.remaining;

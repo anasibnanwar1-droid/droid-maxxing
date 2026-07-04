@@ -53,6 +53,32 @@ test('extractCompactionNotification ignores unrelated notifications', () => {
   assert.equal(extractCompactionNotification({}), null);
 });
 
+test('token usage maps context to the daemon threshold formula (in + out + cacheRead)', () => {
+  const normalized = normalizeStreamEvent('mission-1', 'mission-1', 'orchestrator', {
+    type: 'session_token_usage_changed',
+    inclusiveTokenUsage: {
+      inputTokens: 100,
+      outputTokens: 40,
+      cacheReadTokens: 30,
+      cacheCreationTokens: 20,
+    },
+    lastCallTokenUsage: {
+      inputTokens: 10,
+      outputTokens: 4,
+      cacheReadTokens: 3,
+      cacheCreationTokens: 2,
+    },
+  } as never);
+
+  // The daemon's compaction threshold checks last-call input + output +
+  // cacheRead (never cacheCreation), so the meter must count the same way.
+  assert.deepEqual(normalized?.tokens, {
+    tokensIn: 150,
+    tokensOut: 40,
+    contextTokens: 17,
+  });
+});
+
 test('classifyPermission reads the SDK toolUses shape for MCP tools', () => {
   const params = {
     options: [{ value: 'proceed_once', label: 'Allow once' }],

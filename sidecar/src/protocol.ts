@@ -115,6 +115,9 @@ export interface MissionSummary {
   contextAccuracy?: 'exact' | 'estimated';
   contextUpdatedAt?: string;
   maxContextTokens?: number;
+  // In-place daemon auto-compactions completed on this session; the UI uses it
+  // (plus the swap chain length) as the compaction generation for meter resets.
+  autoCompactions?: number;
   createdAt: number;
   updatedAt: number;
 }

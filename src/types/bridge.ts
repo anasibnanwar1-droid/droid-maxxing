@@ -114,6 +114,8 @@ export interface MissionSummary {
   contextAccuracy?: 'exact' | 'estimated';
   contextUpdatedAt?: string;
   maxContextTokens?: number;
+  // In-place daemon auto-compactions; part of the meter's compaction generation.
+  autoCompactions?: number;
   createdAt: number;
   updatedAt: number;
 }

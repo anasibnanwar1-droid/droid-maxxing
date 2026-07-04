@@ -794,9 +794,14 @@ function compactionDividerEvent(
 // it instead of silently dropping the boundary.
 function segmentItems(missionId: string, sessionId: string, path: string): TranscriptEvent[] {
   const items: TranscriptEvent[] = [];
+  const parsed = parseSessionTranscript(missionId, sessionId, path, 'orchestrator');
+  // The head read backstops oversized files whose leading compaction_state was
+  // tail-windowed away; when the parse already replayed that same record as a
+  // divider, adding the head copy would duplicate it.
   const comp = readCompactionState(path);
-  if (comp) items.push(compactionDividerEvent(missionId, sessionId, comp));
-  items.push(...parseSessionTranscript(missionId, sessionId, path, 'orchestrator'));
+  if (comp && !parsed.some((e) => e.kind === 'compaction' && e.ts === comp.ts))
+    items.push(compactionDividerEvent(missionId, sessionId, comp));
+  items.push(...parsed);
   return items;
 }
 
@@ -1031,6 +1036,20 @@ function parseSessionTranscript(
     );
   }
   for (const line of sessionLines.rows) {
+    // In-place daemon auto-compaction appends a compaction_state marker to the
+    // SAME session file, so a mid-file record marks a summarize-away boundary
+    // that must replay as a divider (leading records are handled by the
+    // segment's head read, which segmentItems dedupes against).
+    if (line.type === 'compaction_state') {
+      const raw = line as Record<string, unknown>;
+      const ts = dateMs(stringValue(raw.timestamp)) || 0;
+      events.push(
+        event(missionId, sessionId, role, line.id || `compaction-${ts}`, 0, ts, 'compaction', {
+          removedCount: numberValue(raw.removedCount),
+        }),
+      );
+      continue;
+    }
     if (line.type !== 'message' || !('message' in line)) continue;
     const message = line.message;
     const content = Array.isArray(message?.content) ? message.content : [];

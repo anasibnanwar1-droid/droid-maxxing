@@ -194,6 +194,30 @@ test('an in-place-compacted single segment still surfaces its divider', () => {
   assert.equal(events.find((e) => e.kind === 'text')?.text, 'after');
 });
 
+test('a mid-file compaction_state (in-place auto-compaction) replays as a divider in position', () => {
+  // The daemon's auto-compaction appends the marker to the SAME session file,
+  // so it lands between messages instead of at the head.
+  writeSession('midfile', [
+    assistant('before-1'),
+    assistant('before-2'),
+    compactionState(86),
+    assistant('after-1'),
+  ]);
+  const { events } = loadMissionTranscriptWindow('m', ['midfile'], { limit: 100 });
+
+  const kinds = events.map((e) => (e.kind === 'compaction' ? `divider:${e.removedCount}` : e.text));
+  assert.deepEqual(kinds, ['before-1', 'before-2', 'divider:86', 'after-1']);
+});
+
+test('a leading compaction_state yields exactly one divider (head read deduped)', () => {
+  writeSession('leadonly', [compactionState(11), assistant('m1')]);
+  const { events } = loadMissionTranscriptWindow('m', ['leadonly'], { limit: 100 });
+
+  const dividers = events.filter((e) => e.kind === 'compaction');
+  assert.equal(dividers.length, 1);
+  assert.equal(dividers[0].removedCount, 11);
+});
+
 test('resolveSessionChain rebuilds the chain from the persisted app-session row', () => {
   // Plain chats have no mission dir, so the chain must come from the sqlite
   // app-session row (original + previous backing ids + current), oldest first.
