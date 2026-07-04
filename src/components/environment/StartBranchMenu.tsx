@@ -123,10 +123,13 @@ export function StartBranchMenu({
     const res = await checkoutGitBranch(cwd, { ref: pending.branch });
     setBusy(false);
     if (res.ok) {
+      // Start where the checkout actually happened. checkoutGitBranch runs in
+      // `cwd`, so a linked worktree (cwd !== repoRoot) must start in that
+      // worktree, not the main repo root which is still on its own branch.
       // Only a remote ref carries a remote prefix to strip; a local branch like
       // `feature/foo` must be recorded verbatim, not collapsed to `foo`.
       onStartIn(
-        repoRoot,
+        cwd,
         pending.remote ? stripRemotePrefix(pending.branch, env?.remotes) : pending.branch,
       );
       onRefresh();
