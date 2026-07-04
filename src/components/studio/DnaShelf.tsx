@@ -3,10 +3,12 @@ import { Check, MessagesSquare, RefreshCw, ScanLine } from 'lucide-react';
 import { useDesignStore } from '../../hooks/useDesignStore';
 import { applyDnaLibrary, scanDesignDna, writeDesignDna } from '../../lib/commands';
 import type { DnaLibrarySummary } from '../../types/bridge';
+import { useStudioCanvas } from './StudioCanvasContext';
+import { useDesignSession } from './useDesignSession';
 import { FontLine, Header, Swatches } from './DnaPrimitives';
 import DnaDraftProposal from './DnaDraftProposal';
 import DnaInterview from './DnaInterview';
-import { toBriefMarkdown } from './designBrief';
+import { authoringInstruction, toBriefMarkdown } from './designBrief';
 import MotionPreview from './MotionPreview';
 
 /**
@@ -22,6 +24,8 @@ export default function DnaShelf({ cwd }: { cwd: string }) {
   const hasCurrent = !!dna?.design.exists;
   const currentColors = dna?.tokens ? Object.values(dna.tokens.colors) : [];
 
+  const { studioDispatch } = useStudioCanvas();
+  const { send } = useDesignSession(cwd);
   const [dismissed, setDismissed] = useState<string | null>(null);
   const [scanning, setScanning] = useState(false);
   const [interview, setInterview] = useState(false);
@@ -73,7 +77,12 @@ export default function DnaShelf({ cwd }: { cwd: string }) {
           <DnaInterview
             onClose={() => setInterview(false)}
             onComplete={(brief) => {
+              // Write the intake to DESIGN.md (the agent reads it), then hand off
+              // to the design session to author the full system, and switch to the
+              // Agent tab so the user watches it work.
               writeDesignDna(cwd, 'design', toBriefMarkdown(brief));
+              send(authoringInstruction());
+              studioDispatch({ type: 'SET_LEFT_TAB', tab: 'agent' });
               setInterview(false);
             }}
           />

@@ -47,6 +47,10 @@ export type StudioTab = 'dna' | 'validator' | 'library' | 'prototypes' | 'compon
 export interface DesignState {
   studioOpen: boolean;
   studioTab: StudioTab;
+  // The project design session (a normal chat, never a mission orchestrator),
+  // keyed by cwd; `expected` correlates our createMission clientRef to a cwd.
+  sessions: Record<string, string>;
+  expected: Record<string, string>;
   // All design data is project-scoped, keyed by the mission cwd.
   dna: Record<string, DnaState>;
   drafts: Record<string, DnaDraft>;
@@ -68,11 +72,14 @@ export type DesignAction =
   | { type: 'SET_TAB'; tab: StudioTab }
   | { type: 'CLEAR_ERROR' }
   | { type: 'CLEAR_GIT_RESULT'; cwd: string }
+  | { type: 'EXPECT_SESSION'; clientRef: string; cwd: string }
   | { type: 'BRIDGE_EVENT'; event: ServerEvent };
 
 const initialState: DesignState = {
   studioOpen: false,
   studioTab: 'dna',
+  sessions: {},
+  expected: {},
   dna: {},
   drafts: {},
   libraries: [],
@@ -142,6 +149,12 @@ function applyEvent(state: DesignState, ev: ServerEvent): DesignState {
       };
     case 'design.error':
       return { ...state, lastError: { cwd: ev.cwd, message: ev.message } };
+    case 'mission.created': {
+      // A design session we started (correlated by clientRef) has an id now.
+      const cwd = state.expected[ev.clientRef];
+      if (!cwd) return state;
+      return { ...state, sessions: { ...state.sessions, [cwd]: ev.mission.id } };
+    }
     default:
       return state;
   }
@@ -163,6 +176,11 @@ function reducer(state: DesignState, action: DesignAction): DesignState {
       delete gitResults[action.cwd];
       return { ...state, gitResults };
     }
+    case 'EXPECT_SESSION':
+      return {
+        ...state,
+        expected: { ...state.expected, [action.clientRef]: action.cwd },
+      };
     case 'BRIDGE_EVENT':
       return applyEvent(state, action.event);
   }
@@ -178,7 +196,8 @@ export function DesignStoreProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const unsub = bridge.subscribe((ev) => {
-      if (ev.type.startsWith('design.')) designDispatch({ type: 'BRIDGE_EVENT', event: ev });
+      if (ev.type.startsWith('design.') || ev.type === 'mission.created')
+        designDispatch({ type: 'BRIDGE_EVENT', event: ev });
     });
     return () => {
       unsub();

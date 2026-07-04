@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
 import { listDnaLibraries, readDesignDna, scanComponentRegistry } from '../../lib/commands';
 import { useStudioCanvas, type StudioTool } from './StudioCanvasContext';
-import type { SendOptions } from './StudioComposer';
 import AgentPanel from './AgentPanel';
 import TopBar from './TopBar';
 import ToolRail from './ToolRail';
@@ -59,18 +58,9 @@ export default function StudioShell({
     return () => { window.removeEventListener('keydown', onKey); };
   }, [studioDispatch]);
 
-  // M1 stages the brief + references locally on the thread. Wiring it to a real
-  // design-generation session (its own session, never the mission orchestrator)
-  // is M4 — routing it through the mission pipeline here is what made Mission
-  // Control surface under the studio, so M1 deliberately does not.
-  const handleSubmit = (_instruction: string, _opts: SendOptions) => {
-    void _instruction;
-    void _opts;
-  };
-
   return (
     <div className="flex h-full w-full bg-droid-bg">
-      <AgentPanel cwd={cwd} onSubmit={handleSubmit} />
+      <AgentPanel cwd={cwd} />
 
       <div className="relative flex min-w-0 flex-1 flex-col">
         <TopBar projectName={projectName} cwd={cwd} onClose={onClose} />
