@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
-import { Loader2, TriangleAlert } from 'lucide-react';
+import { Loader2, ShieldAlert, TriangleAlert } from 'lucide-react';
+import { isSelfBrowserUrl } from '../browser/browserUrlSafety';
 import { useStudioCanvas, sizeOf, type StudioFrame } from './StudioCanvasContext';
 
 /**
@@ -16,13 +17,19 @@ export default function StudioFrameBody({ frame }: { frame: StudioFrame }) {
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
   const hasUrl = !!frame.url && frame.url !== 'about:blank';
+  const appOrigin = typeof window === 'undefined' ? undefined : window.location.origin;
+  // A frame pointed at the app's own origin would recursively embed the whole app
+  // (studio included) — nested dev-server/HMR clients pile up until the machine
+  // chokes (a CPU/wakeup storm). Refuse to render it, exactly as the browser pane
+  // blocks opening the app inside its own pane.
+  const isSelf = hasUrl && isSelfBrowserUrl(frame.url, appOrigin);
 
   // Guard against a frame that never fires load (offline dev server): fail after
   // a grace period so the frame shows an honest error instead of a forever spin.
   // The timer is cleared the moment the iframe loads so a live frame never flips
   // to failed.
   useEffect(() => {
-    if (!hasUrl) return;
+    if (!hasUrl || isSelf) return;
     studioDispatch({ type: 'UPDATE_FRAME', id: frame.id, patch: { status: 'loading' } });
     timerRef.current = setTimeout(() => {
       studioDispatch({
@@ -34,14 +41,18 @@ export default function StudioFrameBody({ frame }: { frame: StudioFrame }) {
     return () => {
       if (timerRef.current) clearTimeout(timerRef.current);
     };
-  }, [frame.id, frame.url, hasUrl, reloadKey, studioDispatch]);
+  }, [frame.id, frame.url, hasUrl, isSelf, reloadKey, studioDispatch]);
 
   const handleLoaded = () => {
     if (timerRef.current) {
       clearTimeout(timerRef.current);
       timerRef.current = null;
     }
-    studioDispatch({ type: 'UPDATE_FRAME', id: frame.id, patch: { status: 'ready', error: undefined } });
+    // Skip the dispatch if already ready — a hot-reloading app fires onLoad
+    // repeatedly, and re-dispatching churns the whole canvas each time.
+    if (frame.status !== 'ready') {
+      studioDispatch({ type: 'UPDATE_FRAME', id: frame.id, patch: { status: 'ready', error: undefined } });
+    }
   };
 
   return (
@@ -58,20 +69,23 @@ export default function StudioFrameBody({ frame }: { frame: StudioFrame }) {
         pointerEvents: interacting ? 'auto' : 'none',
       }}
     >
-      {hasUrl ? (
+      {isSelf ? (
+        <SelfEmbedError url={frame.url} />
+      ) : hasUrl ? (
         <iframe
           key={reloadKey}
           ref={iframeRef}
           title={frame.name}
           src={frame.url}
           className="h-full w-full border-0 bg-white"
+          sandbox="allow-forms allow-modals allow-popups allow-popups-to-escape-sandbox allow-same-origin allow-scripts"
           onLoad={handleLoaded}
         />
       ) : (
         <EmptyFrame />
       )}
 
-      {frame.status === 'loading' && hasUrl && (
+      {!isSelf && frame.status === 'loading' && hasUrl && (
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-[#0a0a0a]/70 backdrop-blur-sm">
           <div className="flex items-center gap-2 text-[13px] text-droid-text-secondary">
             <Loader2 className="h-4 w-4 animate-spin" />
@@ -80,7 +94,7 @@ export default function StudioFrameBody({ frame }: { frame: StudioFrame }) {
         </div>
       )}
 
-      {frame.status === 'failed' && (
+      {!isSelf && frame.status === 'failed' && (
         <FailedFrame
           url={frame.url}
           error={frame.error}
@@ -91,6 +105,20 @@ export default function StudioFrameBody({ frame }: { frame: StudioFrame }) {
         />
       )}
     </motion.div>
+  );
+}
+
+function SelfEmbedError({ url }: { url: string }) {
+  return (
+    <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-droid-surface px-8 text-center">
+      <ShieldAlert className="h-6 w-6 text-[#ee6018]" />
+      <div className="text-[14px] font-medium text-droid-text">Can’t embed this app in itself</div>
+      <div className="max-w-[300px] font-mono text-[11px] leading-relaxed text-droid-text-muted">
+        {url} is DROIDEX’s own address. Rendering it here would nest the app inside
+        itself and spike your CPU. Point the frame at your project’s dev server on a
+        different port.
+      </div>
+    </div>
   );
 }
 

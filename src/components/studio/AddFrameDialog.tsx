@@ -3,6 +3,7 @@ import { motion } from 'framer-motion';
 import { Laptop, Monitor, Ruler, Smartphone, Tablet } from 'lucide-react';
 import type { BrowserViewportMode } from '../../types/bridge';
 import { normalizeUrl } from '../browser/browserViewport';
+import { isSelfBrowserUrl } from '../browser/browserUrlSafety';
 import { useStudioCanvas } from './StudioCanvasContext';
 
 const VIEWPORTS: { mode: BrowserViewportMode; icon: typeof Monitor; label: string }[] = [
@@ -23,9 +24,15 @@ export default function AddFrameDialog({ onClose }: { onClose: () => void }) {
   const [mode, setMode] = useState<BrowserViewportMode>(studio.defaultMode);
   const [w, setW] = useState(1024);
   const [h, setH] = useState(720);
+  const [error, setError] = useState<string | null>(null);
 
   const submit = () => {
     const normalized = normalizeUrl(url || QUICK_PORTS[0]);
+    const appOrigin = typeof window === 'undefined' ? undefined : window.location.origin;
+    if (isSelfBrowserUrl(normalized, appOrigin)) {
+      setError("That's DROIDEX's own address — embedding it would nest the app in itself and spike your CPU. Use your project's dev-server port.");
+      return;
+    }
     const custom = mode === 'custom';
     studioDispatch({
       type: 'ADD_FRAME',
@@ -66,11 +73,17 @@ export default function AddFrameDialog({ onClose }: { onClose: () => void }) {
             <input
               autoFocus
               value={url}
-              onChange={(e) => { setUrl(e.target.value); }}
+              onChange={(e) => {
+                setUrl(e.target.value);
+                if (error) setError(null);
+              }}
               onKeyDown={(e) => e.key === 'Enter' && submit()}
               placeholder="localhost:5173/dashboard"
-              className="w-full rounded-lg border border-droid-border bg-droid-surface px-3 py-2 font-mono text-[12.5px] text-droid-text placeholder:text-droid-text-muted focus:border-[#ee6018]/50 focus:outline-none"
+              className={`w-full rounded-lg border bg-droid-surface px-3 py-2 font-mono text-[12.5px] text-droid-text placeholder:text-droid-text-muted focus:outline-none ${
+                error ? 'border-[#c0563a]/60' : 'border-droid-border focus:border-[#ee6018]/50'
+              }`}
             />
+            {error && <div className="mt-1.5 text-[11px] leading-snug text-[#e0806a]">{error}</div>}
             <div className="mt-2 flex gap-1.5">
               {QUICK_PORTS.map((p) => (
                 <button

@@ -93,6 +93,7 @@ export interface NewFrame {
 }
 
 const GAP = 96; // world-space gutter between auto-placed frames
+const MAX_FRAMES = 24; // guard against runaway frame creation pegging the machine
 
 export function frameSize(mode: BrowserViewportMode): { width: number; height: number } {
   const preset = PRESET_VIEWPORTS[mode] ?? FIT_FALLBACK_VIEWPORT;
@@ -166,6 +167,7 @@ function reducer(state: StudioCanvasState, action: StudioCanvasAction): StudioCa
     case 'SET_INTERACTING':
       return { ...state, interactingFrameId: action.id };
     case 'ADD_FRAME': {
+      if (state.frames.length >= MAX_FRAMES) return state;
       const mode = action.frame.mode ?? state.defaultMode;
       const pos =
         action.frame.x != null && action.frame.y != null
