@@ -7,6 +7,7 @@ import { listPrototypes, prototypePromptGuidance } from './prototypes.js';
 import { getLibraryItem, listLibraryItems } from './referenceLibrary.js';
 import { scanComponentRegistry } from './registryScan.js';
 import { nearestPaletteColor } from './tokens.js';
+import { DESIGN_GUIDELINES } from './guidelines.js';
 
 export function createDesignMcpServer(cwdForTool: () => string | undefined) {
   const cwd = () => {
@@ -37,6 +38,15 @@ export function createDesignMcpServer(cwdForTool: () => string | undefined) {
             tokens: state.tokens,
           });
         }),
+      ),
+      tool(
+        'design_guidelines',
+        [
+          'How to work in Design Mode for this project: operating scope, design-system enforcement, the light/dark theme policy, anti-slop craft rules, and code-quality expectations.',
+          'Read this at the start of a design turn and follow it; pair it with design_dna / design_system for the actual token values.',
+        ].join(' '),
+        {},
+        safeTool(async () => jsonResult({ ok: true, guidelines: DESIGN_GUIDELINES })),
       ),
       tool(
         'design_system',
