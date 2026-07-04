@@ -90,6 +90,9 @@ export interface NewFrame {
   height?: number;
   x?: number;
   y?: number;
+  // Optional stable id (e.g. a preview): re-adding an existing id is a no-op so
+  // regenerated previews update in place instead of duplicating.
+  id?: string;
 }
 
 const GAP = 96; // world-space gutter between auto-placed frames
@@ -167,6 +170,7 @@ function reducer(state: StudioCanvasState, action: StudioCanvasAction): StudioCa
     case 'SET_INTERACTING':
       return { ...state, interactingFrameId: action.id };
     case 'ADD_FRAME': {
+      if (action.frame.id && state.frames.some((f) => f.id === action.frame.id)) return state;
       if (state.frames.length >= MAX_FRAMES) return state;
       const mode = action.frame.mode ?? state.defaultMode;
       const pos =
@@ -174,7 +178,7 @@ function reducer(state: StudioCanvasState, action: StudioCanvasAction): StudioCa
           ? { x: action.frame.x, y: action.frame.y }
           : autoPosition(state.frames);
       const frame: StudioFrame = {
-        id: newFrameId(),
+        id: action.frame.id ?? newFrameId(),
         name: action.frame.name,
         url: action.frame.url,
         mode,

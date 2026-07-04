@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { listDnaLibraries, readDesignDna, scanComponentRegistry } from '../../lib/commands';
 import { useStudioCanvas, type StudioTool } from './StudioCanvasContext';
+import { usePreviewFrames } from './usePreviewFrames';
 import AgentPanel from './AgentPanel';
 import TopBar from './TopBar';
 import ToolRail from './ToolRail';
@@ -25,6 +26,7 @@ export default function StudioShell({
   const { studioDispatch } = useStudioCanvas();
   const [addFrameOpen, setAddFrameOpen] = useState(false);
   const projectName = cwd.split('/').pop() || 'project';
+  usePreviewFrames(cwd);
 
   // Pull project-scoped design data so Components and Libraries have content.
   useEffect(() => {

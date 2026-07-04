@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
-import { Check, MessagesSquare, RefreshCw, ScanLine } from 'lucide-react';
+import { BookOpen, Check, MessagesSquare, RefreshCw, ScanLine } from 'lucide-react';
 import { useDesignStore } from '../../hooks/useDesignStore';
-import { applyDnaLibrary, scanDesignDna, writeDesignDna } from '../../lib/commands';
+import { applyDnaLibrary, renderDesignPreview, scanDesignDna, writeDesignDna } from '../../lib/commands';
 import type { DnaLibrarySummary } from '../../types/bridge';
 import { useStudioCanvas } from './StudioCanvasContext';
 import { useDesignSession } from './useDesignSession';
@@ -106,6 +106,15 @@ export default function DnaShelf({ cwd }: { cwd: string }) {
               </div>
             )}
             {dna?.tokens?.fonts && <FontLine fonts={dna.tokens.fonts} />}
+            {dna?.tokens && (
+              <button
+                onClick={() => renderDesignPreview(cwd)}
+                className="mt-3 inline-flex items-center gap-1.5 rounded-lg bg-[#ee6018] px-3 py-1.5 text-[12px] font-medium text-black transition-colors hover:bg-[#ff6a1e]"
+              >
+                <BookOpen className="h-3.5 w-3.5" />
+                Generate brand book
+              </button>
+            )}
           </div>
         ) : (
           <IntakeCta scanning={scanning} onScan={scan} onInterview={() => setInterview(true)} />

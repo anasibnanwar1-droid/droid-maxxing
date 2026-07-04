@@ -51,6 +51,8 @@ export interface DesignState {
   // keyed by cwd; `expected` correlates our createMission clientRef to a cwd.
   sessions: Record<string, string>;
   expected: Record<string, string>;
+  // Latest brand-book / design preview per cwd (served by the preview harness).
+  previews: Record<string, { id: string; name: string; url: string }>;
   // All design data is project-scoped, keyed by the mission cwd.
   dna: Record<string, DnaState>;
   drafts: Record<string, DnaDraft>;
@@ -80,6 +82,7 @@ const initialState: DesignState = {
   studioTab: 'dna',
   sessions: {},
   expected: {},
+  previews: {},
   dna: {},
   drafts: {},
   libraries: [],
@@ -146,6 +149,11 @@ function applyEvent(state: DesignState, ev: ServerEvent): DesignState {
           ...state.gitResults,
           [ev.cwd]: { ok: ev.ok, sha: ev.sha, error: ev.error },
         },
+      };
+    case 'design.preview':
+      return {
+        ...state,
+        previews: { ...state.previews, [ev.cwd]: { id: ev.id, name: ev.name, url: ev.url } },
       };
     case 'design.error':
       return { ...state, lastError: { cwd: ev.cwd, message: ev.message } };

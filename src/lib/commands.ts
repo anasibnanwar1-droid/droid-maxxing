@@ -280,3 +280,6 @@ export const requestDesignSwap = (p: {
 
 export const commitDesignChange = (cwd: string, message: string) =>
   bridge.send({ type: 'design.git.commit', cwd, message });
+
+export const renderDesignPreview = (cwd: string) =>
+  bridge.send({ type: 'design.preview.render', cwd });
