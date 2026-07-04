@@ -27,7 +27,7 @@ export function createDesignMcpServer(
   };
 
   return createSdkMcpServer({
-    name: 'droidmaxx-design',
+    name: 'droidex-design',
     version: '0.1.0',
     tools: [
       tool(

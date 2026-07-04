@@ -6,7 +6,7 @@ import type { BrowserSessionManager } from './BrowserSessionManager.js';
 test('browser MCP server exposes agent-facing names and typed inputs', () => {
   const server = createBrowserMcpServer({} as BrowserSessionManager, () => 'm1');
 
-  assert.equal(server.name, 'droidmaxx-browser');
+  assert.equal(server.name, 'droidex-browser');
   assert.deepEqual(
     server.tools.map((tool) => tool.name),
     [
