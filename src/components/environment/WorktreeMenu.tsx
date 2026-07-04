@@ -29,6 +29,10 @@ export function WorktreeMenu({
   const [base, setBase] = useState<string>(defaultBase);
   const [pickingBase, setPickingBase] = useState(false);
   const [busy, setBusy] = useState(false);
+  // Synchronous re-entry guard: `busy` state only updates on the next render, so
+  // a second Enter fired in the same tick (the input's keydown isn't disabled)
+  // would slip past a `busy` check and launch a duplicate git operation.
+  const busyRef = useRef(false);
   const [confirming, setConfirming] = useState<string | null>(null);
 
   // Drop any armed removal confirmation when the menu closes so reopening never
@@ -77,7 +81,8 @@ export function WorktreeMenu({
 
   const doCreate = async () => {
     const branch = name.trim();
-    if (!branch || busy) return;
+    if (!branch || busyRef.current) return;
+    busyRef.current = true;
     setBusy(true);
     try {
       const res = await createGitWorktree(cwd, { branch, base, newBranch: true });
@@ -95,6 +100,7 @@ export function WorktreeMenu({
     } catch {
       toast.error('Could not create worktree');
     } finally {
+      busyRef.current = false;
       setBusy(false);
     }
   };

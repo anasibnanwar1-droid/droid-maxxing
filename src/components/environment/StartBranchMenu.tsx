@@ -1,4 +1,4 @@
-import { useMemo, useState, type RefObject } from 'react';
+import { useMemo, useRef, useState, type RefObject } from 'react';
 import { Check, ChevronLeft, GitBranch, Loader2, Plus, Search } from 'lucide-react';
 import { Popover } from './Popover';
 import { checkoutGitBranch, createGitWorktree, stripRemotePrefix } from '../../lib/git';
@@ -38,6 +38,10 @@ export function StartBranchMenu({
   const [creatingNew, setCreatingNew] = useState(false);
   const [newName, setNewName] = useState('');
   const [busy, setBusy] = useState(false);
+  // Synchronous re-entry guard: `busy` state only updates on the next render, so
+  // a second Enter fired in the same tick (the input's keydown isn't disabled)
+  // would slip past a `busy` check and launch a duplicate git operation.
+  const busyRef = useRef(false);
   const fetching = useGitFetchOnOpen(open, cwd, onRefresh);
 
   const repoRoot = env?.repoRoot ?? cwd;
@@ -88,7 +92,8 @@ export function StartBranchMenu({
   };
 
   const confirmCreate = async () => {
-    if (!pending || busy) return;
+    if (!pending || busyRef.current) return;
+    busyRef.current = true;
     setBusy(true);
     const localName = pending.remote
       ? stripRemotePrefix(pending.branch, env?.remotes)
@@ -118,12 +123,14 @@ export function StartBranchMenu({
     } catch {
       toast.error('Could not create worktree');
     } finally {
+      busyRef.current = false;
       setBusy(false);
     }
   };
 
   const checkoutLocally = async () => {
-    if (!pending || busy) return;
+    if (!pending || busyRef.current) return;
+    busyRef.current = true;
     setBusy(true);
     try {
       const res = await checkoutGitBranch(cwd, { ref: pending.branch });
@@ -147,13 +154,15 @@ export function StartBranchMenu({
     } catch {
       toast.error('Could not checkout');
     } finally {
+      busyRef.current = false;
       setBusy(false);
     }
   };
 
   const createNewBranch = async () => {
     const branch = newName.trim();
-    if (!branch || busy) return;
+    if (!branch || busyRef.current) return;
+    busyRef.current = true;
     setBusy(true);
     try {
       const res = await createGitWorktree(cwd, { branch, base, newBranch: true });
@@ -170,6 +179,7 @@ export function StartBranchMenu({
     } catch {
       toast.error('Could not create worktree');
     } finally {
+      busyRef.current = false;
       setBusy(false);
     }
   };
