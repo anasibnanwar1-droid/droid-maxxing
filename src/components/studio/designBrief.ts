@@ -65,8 +65,9 @@ export function toBriefMarkdown(brief: DesignBrief): string {
   return [
     '# Design DNA',
     '',
-    "Captured from a design intake. This is the intent every agent should honor before",
-    "designing or building for this project — the user's taste, direction, and hard limits.",
+    "Living intent for this workspace, captured from a design intake. Read it to understand the",
+    "user's taste and direction — treat it as guidance, not a rigid lock, and keep it updated as",
+    'their instructions evolve, so future turns and production builds stay true to what they want.',
     '',
     ...(sections.length > 0 ? sections : ['## Brief', '', '- (interview skipped)', '']),
     '## Themes',
