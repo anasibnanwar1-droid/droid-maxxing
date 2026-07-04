@@ -38,19 +38,37 @@ function briefLines(brief: DesignBrief): string {
     .join('\n');
 }
 
-/** The DESIGN.md seed written right after the interview — captures intent as the
- *  contract, so the project has a DNA immediately; the agent elevates it. */
+function sectionMd(title: string, ids: string[], brief: DesignBrief): string {
+  const lines = ids
+    .map((id) => {
+      const q = INTERVIEW_QUESTIONS.find((x) => x.id === id);
+      return q ? line(q, brief[id]) : undefined;
+    })
+    .filter(Boolean);
+  if (lines.length === 0) return '';
+  return [`## ${title}`, '', ...lines, ''].join('\n');
+}
+
+/** The DESIGN.md seed written right after the interview — the user's intent as
+ *  structured guidance every agent reads (via design_dna) before designing or
+ *  building, so taste, direction, and hard limits are honored. The agent elevates
+ *  this into the full token/motion/brand system. */
 export function toBriefMarkdown(brief: DesignBrief): string {
+  const sections = [
+    sectionMd('Product', ['product', 'audience'], brief),
+    sectionMd('Taste & voice', ['mood', 'voice'], brief),
+    sectionMd('Visual direction', ['color', 'typography', 'density'], brief),
+    sectionMd('Motion', ['motion'], brief),
+    sectionMd('References', ['references'], brief),
+    sectionMd('Never do', ['avoid'], brief),
+  ].filter(Boolean);
   return [
     '# Design DNA',
     '',
-    'Captured from a design intake interview. This is the brief the agent uses to',
-    'author the full visual system (tokens, motion, and brand guidelines).',
+    "Captured from a design intake. This is the intent every agent should honor before",
+    "designing or building for this project — the user's taste, direction, and hard limits.",
     '',
-    '## Brief',
-    '',
-    briefLines(brief) || '- (interview skipped)',
-    '',
+    ...(sections.length > 0 ? sections : ['## Brief', '', '- (interview skipped)', '']),
     '## Themes',
     '',
     '- Light and dark are a user preference. Define tokens for both; never hardcode one.',
