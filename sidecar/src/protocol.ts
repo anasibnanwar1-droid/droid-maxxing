@@ -1,6 +1,32 @@
 // Bridge protocol shared between the Node sidecar and the React frontend.
 // The frontend keeps a mirror copy at src/types/bridge.ts — keep them in sync.
 
+import type {
+  AuditElement,
+  ComponentRegistryEntry,
+  DesignLibraryItem,
+  DesignTokens,
+  DnaDraft,
+  DnaLibrarySummary,
+  DnaState,
+  PrototypeInfo,
+  ValidatorConfig,
+  ValidatorReport,
+} from './design/types.js';
+
+export type {
+  AuditElement,
+  ComponentRegistryEntry,
+  DesignLibraryItem,
+  DesignTokens,
+  DnaDraft,
+  DnaLibrarySummary,
+  DnaState,
+  PrototypeInfo,
+  ValidatorConfig,
+  ValidatorReport,
+} from './design/types.js';
+
 export type SessionPhase =
   | 'intake'
   | 'planning'
@@ -380,7 +406,8 @@ export type BrowserNativeAction =
   | 'console'
   | 'capture'
   | 'close'
-  | 'fillCredentials';
+  | 'fillCredentials'
+  | 'audit';
 
 export interface BrowserNativeRequest {
   requestId: string;
@@ -414,8 +441,25 @@ export interface BrowserNativeResult {
   networkEvents?: BrowserNetworkEvent[];
   consoleEvents?: BrowserConsoleEvent[];
   image?: string;
+  audit?: AuditElement[];
   error?: string;
 }
+
+// ── Design platform ──────────────────────────────────────────────────
+
+export interface DesignSwapTarget {
+  label: string;
+  selector?: string;
+  file?: string;
+  line?: number;
+  component?: string;
+}
+
+export type DesignSwapReplacementRef =
+  | { kind: 'component'; name: string; file: string }
+  | { kind: 'reference'; id: string };
+
+export type DesignSwapStrategy = 'preserve-api' | 'exact-copy';
 
 export interface ElementSource {
   framework?: 'react' | 'vue' | 'svelte' | 'unknown';
@@ -656,6 +700,38 @@ export type ClientCommand =
       referenceIds: string[];
     }
   | { type: 'browser.native.result'; result: BrowserNativeResult }
+  | { type: 'design.dna.read'; cwd: string }
+  | { type: 'design.dna.write'; cwd: string; file: 'design' | 'motion'; content: string }
+  | { type: 'design.dna.scan'; cwd: string }
+  | { type: 'design.dna.libraries' }
+  | { type: 'design.dna.applyLibrary'; cwd: string; libraryId: string }
+  | { type: 'design.validator.readConfig'; cwd: string }
+  | { type: 'design.validator.writeConfig'; cwd: string; config: ValidatorConfig }
+  | { type: 'design.validator.run'; cwd: string; missionId: string }
+  | { type: 'design.validator.fix'; cwd: string; missionId: string }
+  | { type: 'design.library.list'; cwd: string }
+  | {
+      type: 'design.library.save';
+      cwd: string;
+      missionId: string;
+      referenceId: string;
+      name?: string;
+      note?: string;
+    }
+  | { type: 'design.library.delete'; cwd: string; id: string }
+  | { type: 'design.library.extract'; cwd: string; id: string }
+  | { type: 'design.prototypes.list'; cwd: string }
+  | { type: 'design.registry.scan'; cwd: string }
+  | {
+      type: 'design.swap';
+      cwd: string;
+      missionId: string;
+      target: DesignSwapTarget;
+      replacement: DesignSwapReplacementRef;
+      strategy: DesignSwapStrategy;
+      note?: string;
+    }
+  | { type: 'design.git.commit'; cwd: string; message: string }
   | { type: 'spec.read'; appSessionId: string; path: string };
 
 export type ChildUpdatedEvent =
@@ -777,4 +853,32 @@ export type ServerEvent =
   | { type: 'browser.updated'; state: BrowserState }
   | { type: 'browser.native.request'; request: BrowserNativeRequest }
   | { type: 'browser.closed'; appSessionId: string }
-  | { type: 'browser.error'; appSessionId?: string; message: string };
+  | { type: 'browser.error'; appSessionId?: string; message: string }
+  | { type: 'design.dna.state'; state: DnaState }
+  | { type: 'design.dna.draft'; draft: DnaDraft }
+  | { type: 'design.dna.libraries'; libraries: DnaLibrarySummary[] }
+  | { type: 'design.validator.config'; cwd: string; config: ValidatorConfig }
+  | {
+      type: 'design.validator.status';
+      cwd: string;
+      missionId?: string;
+      status: 'running' | 'done' | 'failed';
+      pageId?: string;
+      viewport?: string;
+      completed?: number;
+      total?: number;
+      error?: string;
+    }
+  | { type: 'design.validator.report'; report: ValidatorReport }
+  | { type: 'design.library.state'; cwd: string; items: DesignLibraryItem[] }
+  | {
+      type: 'design.library.extracted';
+      cwd: string;
+      id: string;
+      tokens: Partial<DesignTokens>;
+      summary: string;
+    }
+  | { type: 'design.prototypes.state'; cwd: string; prototypes: PrototypeInfo[] }
+  | { type: 'design.registry.state'; cwd: string; components: ComponentRegistryEntry[] }
+  | { type: 'design.git.committed'; cwd: string; ok: boolean; sha?: string; error?: string }
+  | { type: 'design.error'; cwd?: string; message: string };

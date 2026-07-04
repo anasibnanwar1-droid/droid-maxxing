@@ -515,7 +515,9 @@ async function runAgentAction(request) {
     else if (action === 'keypress') pressKey(request.key || '');
     else if (action === 'scroll')
       scrollPage(request.direction || 'down', Number(request.pixels || 500));
-    else if (action !== 'snapshot') throw new Error(`Unsupported browser action: ${action}`);
+    else if (action === 'audit') {
+      return sendAgent({ requestId: request.requestId, ok: true, audit: collectAudit() });
+    } else if (action !== 'snapshot') throw new Error(`Unsupported browser action: ${action}`);
     await settle();
     return sendAgent({ requestId: request.requestId, ok: true, snapshot: pageSnapshot() });
   } catch (err) {
@@ -627,6 +629,49 @@ function collectRefs() {
   }
   return refs;
 }
+
+/* eslint-disable no-undef -- browser-context globals, same as the rest of this file */
+// Style audit sample for the design validator: unlike collectRefs (interaction
+// targets, capped low), this walks every visible rendered element so token
+// drift in decorative markup is caught too.
+function collectAudit() {
+  const out = [];
+  const root = document.body || document.documentElement;
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+  let node = root;
+  while (node && out.length < 600) {
+    const entry = auditEntryFor(node);
+    if (entry) out.push(entry);
+    node = walker.nextNode();
+  }
+  return out;
+}
+
+function auditEntryFor(el) {
+  if (!el || el.nodeType !== Node.ELEMENT_NODE) return null;
+  const tag = el.tagName.toLowerCase();
+  if (tag === 'script' || tag === 'style' || tag === 'link' || tag === 'meta' || tag === 'svg')
+    return null;
+  const rect = el.getBoundingClientRect();
+  if (rect.width < 4 || rect.height < 4) return null;
+  const style = getComputedStyle(el);
+  if (style.visibility === 'hidden' || style.display === 'none') return null;
+  return {
+    selector: selectorFor(el),
+    tag,
+    label: cleanText(el.getAttribute('aria-label') || directText(el), 60) || undefined,
+    box: boxFor(rect),
+    styles: {
+      color: style.color,
+      backgroundColor: style.backgroundColor,
+      fontFamily: style.fontFamily,
+      fontSize: style.fontSize,
+      borderRadius: style.borderRadius,
+      paddingTop: style.paddingTop,
+    },
+  };
+}
+/* eslint-enable no-undef */
 
 function refFor(el) {
   const rect = el.getBoundingClientRect();

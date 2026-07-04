@@ -39,12 +39,21 @@ export function isDesignPrompt(text: string): boolean {
   return text.startsWith(DESIGN_PROMPT_HEADER);
 }
 
+export interface DesignPromptContext {
+  // Extra lines injected after the guidance block, e.g. project DNA file
+  // pointers produced by the design manager. Must already be sanitized.
+  dnaLines?: string[];
+}
+
 export function formatDesignPrompt(
   packPath: string,
   instruction: string,
   references: DesignReference[],
+  context?: DesignPromptContext,
 ): string {
   const first = references[0];
+  const dnaBlock =
+    context?.dnaLines && context.dnaLines.length > 0 ? [...context.dnaLines, ''] : [];
   return [
     DESIGN_PROMPT_HEADER,
     `- URL: ${sanitizeInline(first?.url ?? 'about:blank')}`,
@@ -57,6 +66,7 @@ export function formatDesignPrompt(
     '',
     DESIGN_MODE_GUIDANCE,
     '',
+    ...dnaBlock,
     'User instruction:',
     instruction,
   ].join('\n');
@@ -68,13 +78,15 @@ export function formatDesignPrompt(
 const DESIGN_MODE_GUIDANCE = [
   'How to work in Design Mode:',
   '- Scope: change only the design/UI of the referenced elements and the code that renders them. Do not modify backend, data models, APIs, or business logic, and do not spawn subagents to do so. If the requested result truly needs a backend or data change, stop and tell the user exactly what is needed and why, then wait for their go-ahead. Stay on design until the user says otherwise.',
-  '- Before writing code, pick one clear visual idea. Avoid AI slop: purple gradients, Inter/Roboto/Arial defaults, generic cards, sparkles, emoji icons, glassmorphism/glow. Use real content, ASCII punctuation, no em dashes. Vary the style to fit this product rather than reusing one default look.',
+  '- Design system: follow the project Design DNA. Use token names, never raw values that duplicate a token, and never invent tokens or component names. When you need an exact token value, look it up on demand with the design_dna / design_system MCP tool instead of guessing. Respect MOTION.md for every transition, hover, and press, and honor the reduced-motion policy.',
+  '- Craft: pick one clear visual idea before writing code. Avoid AI slop: purple gradients, Inter/Roboto/Arial defaults, generic cards, sparkles, emoji icons, glassmorphism/glow. Use real content and ASCII punctuation, no em dashes. Vary the style to fit this product rather than reusing one default look.',
+  '- Code quality: ship production-grade, integration-safe code. Keep files small and single-responsibility (no god files; aim under ~500 lines), name things clearly, and reuse existing components and patterns (check design_component_registry) before writing new ones.',
 ].join('\n');
 
 // Page-derived strings (labels, selectors, component names, paths) are
 // attacker-influenced via page content. Collapse control characters and
 // newlines so they cannot break out of their line and inject prompt structure.
-function sanitizeInline(value: string, max = 500): string {
+export function sanitizeInline(value: string, max = 500): string {
   const cleaned = value
     .replace(/[\u0000-\u001F\u007F]+/g, ' ')
     .replace(/\s+/g, ' ')

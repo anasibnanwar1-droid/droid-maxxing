@@ -7,11 +7,15 @@ import type {
   BrowserViewportMode,
   ConfigurableSessionRole,
   DesignReference,
+  DesignSwapReplacementRef,
+  DesignSwapStrategy,
+  DesignSwapTarget,
   InstallChannel,
   PermissionOutcome,
   ReasoningEffort,
   SessionInteractionMode,
   SessionPurpose,
+  ValidatorConfig,
 } from '../types/bridge';
 
 let refCounter = 0;
@@ -219,3 +223,60 @@ export const sendDesignPrompt = (
 
 export const sendNativeBrowserResult = (result: BrowserNativeResult) =>
   bridge.send({ type: 'browser.native.result', result });
+
+export const readDesignDna = (cwd: string) => bridge.send({ type: 'design.dna.read', cwd });
+
+export const writeDesignDna = (cwd: string, file: 'design' | 'motion', content: string) =>
+  bridge.send({ type: 'design.dna.write', cwd, file, content });
+
+export const scanDesignDna = (cwd: string) => bridge.send({ type: 'design.dna.scan', cwd });
+
+export const listDnaLibraries = () => bridge.send({ type: 'design.dna.libraries' });
+
+export const applyDnaLibrary = (cwd: string, libraryId: string) =>
+  bridge.send({ type: 'design.dna.applyLibrary', cwd, libraryId });
+
+export const readValidatorConfig = (cwd: string) =>
+  bridge.send({ type: 'design.validator.readConfig', cwd });
+
+export const writeValidatorConfig = (cwd: string, config: ValidatorConfig) =>
+  bridge.send({ type: 'design.validator.writeConfig', cwd, config });
+
+export const runValidator = (cwd: string, missionId: string) =>
+  bridge.send({ type: 'design.validator.run', cwd, missionId });
+
+export const fixValidatorFindings = (cwd: string, missionId: string) =>
+  bridge.send({ type: 'design.validator.fix', cwd, missionId });
+
+export const listDesignLibrary = (cwd: string) => bridge.send({ type: 'design.library.list', cwd });
+
+export const saveDesignLibraryItem = (p: {
+  cwd: string;
+  missionId: string;
+  referenceId: string;
+  name?: string;
+  note?: string;
+}) => bridge.send({ type: 'design.library.save', ...p });
+
+export const deleteDesignLibraryItem = (cwd: string, id: string) =>
+  bridge.send({ type: 'design.library.delete', cwd, id });
+
+export const extractDesignLibraryTokens = (cwd: string, id: string) =>
+  bridge.send({ type: 'design.library.extract', cwd, id });
+
+export const listPrototypes = (cwd: string) => bridge.send({ type: 'design.prototypes.list', cwd });
+
+export const scanComponentRegistry = (cwd: string) =>
+  bridge.send({ type: 'design.registry.scan', cwd });
+
+export const requestDesignSwap = (p: {
+  cwd: string;
+  missionId: string;
+  target: DesignSwapTarget;
+  replacement: DesignSwapReplacementRef;
+  strategy: DesignSwapStrategy;
+  note?: string;
+}) => bridge.send({ type: 'design.swap', ...p });
+
+export const commitDesignChange = (cwd: string, message: string) =>
+  bridge.send({ type: 'design.git.commit', cwd, message });

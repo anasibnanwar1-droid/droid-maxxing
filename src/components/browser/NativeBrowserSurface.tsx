@@ -500,6 +500,7 @@ async function performNativeRequest(
       inspection: result.inspection,
       networkEvents: result.networkEvents,
       consoleEvents: result.consoleEvents,
+      audit: result.audit,
       error: result.error,
     };
   } catch (err) {

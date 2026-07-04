@@ -1,4 +1,5 @@
 import type { BrowserNativeRequest, BrowserNativeResult } from '../protocol.js';
+import type { AuditElement } from '../design/types.js';
 import type { BrowserRuntime } from './BrowserSessionManager.js';
 import type {
   BrowserBox,
@@ -123,6 +124,12 @@ export class NativeBrowserRuntime implements BrowserRuntime {
 
   async fillCredentials(): Promise<BrowserSnapshot> {
     return this.snapshotFrom(await this.send({ action: 'fillCredentials' }));
+  }
+
+  async audit(): Promise<AuditElement[]> {
+    const result = await this.send({ action: 'audit' });
+    if (!result.ok) throw new Error(result.error ?? 'Native browser audit failed.');
+    return result.audit ?? [];
   }
 
   async close(): Promise<void> {

@@ -1,5 +1,6 @@
 import { isDesktop } from './desktop';
 import type {
+  AuditElement,
   BrowserBox,
   BrowserConsoleEvent,
   BrowserElementInspection,
@@ -77,6 +78,7 @@ export interface NativeBrowserAgentResult {
   inspection?: BrowserElementInspection;
   networkEvents?: BrowserNetworkEvent[];
   consoleEvents?: BrowserConsoleEvent[];
+  audit?: AuditElement[];
   error?: string;
 }
 
