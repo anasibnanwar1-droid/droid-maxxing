@@ -74,7 +74,7 @@ export default function StudioComposer({
 
   return (
     <div className="px-3 pb-3">
-      <div className="rounded-2xl border border-white/[0.08] bg-[#141414] shadow-[0_10px_40px_-12px_rgba(0,0,0,0.6)] transition-colors focus-within:border-white/[0.16]">
+      <div className="rounded-2xl border border-droid-border bg-droid-elevated shadow-[0_10px_40px_-12px_rgba(0,0,0,0.6)] transition-colors focus-within:border-droid-border">
         {/* Reference chips + attached images */}
         {(chips.length > 0 || selectedFrame || images.length > 0) && (
           <div className="flex flex-wrap items-center gap-1.5 px-3 pt-3">
@@ -104,7 +104,7 @@ export default function StudioComposer({
                 />
                 <button
                   onClick={() => removeImage(i)}
-                  className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-black/85 text-white/70 opacity-0 transition-opacity group-hover:opacity-100"
+                  className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-black/85 text-droid-text-secondary opacity-0 transition-opacity group-hover:opacity-100"
                 >
                   <X className="h-2.5 w-2.5" />
                 </button>
@@ -129,7 +129,7 @@ export default function StudioComposer({
           }}
           rows={1}
           placeholder="Ask for a design, paste an image, @ or select on canvas to reference designs."
-          className="max-h-[200px] w-full resize-none bg-transparent px-3.5 pt-3 pb-2 text-[13.5px] leading-relaxed text-white/90 placeholder:text-white/30 focus:outline-none"
+          className="max-h-[200px] w-full resize-none bg-transparent px-3.5 pt-3 pb-2 text-[13.5px] leading-relaxed text-droid-text placeholder:text-droid-text-muted focus:outline-none"
         />
 
         <div className="flex items-center justify-between gap-2 px-2.5 pb-2.5">
@@ -176,7 +176,7 @@ export default function StudioComposer({
               className={`flex h-8 w-8 items-center justify-center rounded-xl transition-all duration-150 ${
                 canSend
                   ? 'bg-[#ee6018] text-black shadow-[0_0_18px_-4px_rgba(238,96,24,0.7)] hover:bg-[#ff6a1e] active:scale-95 active:bg-[#dd5812]'
-                  : 'cursor-not-allowed bg-white/[0.03] text-white/25'
+                  : 'cursor-not-allowed bg-white/[0.03] text-droid-text-muted'
               }`}
             >
               <ArrowUp className="h-4 w-4" strokeWidth={2.5} />
@@ -185,7 +185,7 @@ export default function StudioComposer({
         </div>
       </div>
       {disabledReason && (
-        <div className="px-2 pt-1.5 text-[11px] text-white/35">{disabledReason}</div>
+        <div className="px-2 pt-1.5 text-[11px] text-droid-text-muted">{disabledReason}</div>
       )}
     </div>
   );
@@ -206,7 +206,7 @@ function Chip({
   // context so the two never blur together.
   const style =
     kind === 'frame'
-      ? 'rounded-md border border-white/10 bg-white/[0.04] px-1.5 py-0.5 text-[11px] text-white/65'
+      ? 'rounded-md border border-droid-border bg-white/[0.04] px-1.5 py-0.5 text-[11px] text-droid-text-secondary'
       : 'rounded-lg border-[1.5px] border-[#ee6018]/40 bg-[#ee6018]/[0.12] px-2 py-0.5 text-[11.5px] font-medium text-[#f0a060]';
   return (
     <span className={`inline-flex items-center gap-1 ${style}`}>
@@ -234,7 +234,7 @@ function IconChip({
     <button
       title={title}
       onClick={onClick}
-      className="flex h-8 w-8 items-center justify-center rounded-lg text-white/40 transition-colors hover:bg-white/[0.06] hover:text-white/80"
+      className="flex h-8 w-8 items-center justify-center rounded-lg text-droid-text-muted transition-colors hover:bg-white/[0.06] hover:text-droid-text"
     >
       {children}
     </button>
@@ -266,7 +266,7 @@ function Selector({
     <div className="relative">
       <button
         onClick={() => { setOpen(!open); }}
-        className="flex items-center gap-1.5 rounded-lg border border-white/[0.08] bg-white/[0.03] px-2 py-1.5 text-[11.5px] text-white/65 transition-colors hover:border-white/15 hover:text-white/90"
+        className="flex items-center gap-1.5 rounded-lg border border-droid-border bg-white/[0.03] px-2 py-1.5 text-[11.5px] text-droid-text-secondary transition-colors hover:border-droid-border hover:text-droid-text"
       >
         {icon}
         {value}
@@ -281,12 +281,12 @@ function Selector({
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, y: 6, scale: 0.98 }}
               transition={{ type: 'spring', damping: 24, stiffness: 340 }}
-              className={`absolute bottom-full z-20 mb-1.5 ${width} overflow-hidden rounded-xl border border-white/10 bg-[#1a1a1a] p-1 shadow-2xl ${
+              className={`absolute bottom-full z-20 mb-1.5 ${width} overflow-hidden rounded-xl border border-droid-border bg-droid-elevated p-1 shadow-2xl ${
                 align === 'right' ? 'right-0' : 'left-0'
               }`}
             >
               {hint && (
-                <div className="mb-1 border-b border-white/[0.06] px-2 pb-1.5 pt-0.5 font-mono text-[9.5px] uppercase tracking-wider text-white/30">
+                <div className="mb-1 border-b border-droid-border px-2 pb-1.5 pt-0.5 font-mono text-[9.5px] uppercase tracking-wider text-droid-text-muted">
                   {hint}
                 </div>
               )}
@@ -300,7 +300,7 @@ function Selector({
                   className={`flex w-full items-center justify-between rounded-lg px-2 py-1.5 text-left text-[12px] transition-colors ${
                     o === value
                       ? 'bg-[#ee6018]/12 text-[#f08a52]'
-                      : 'text-white/70 hover:bg-white/[0.06]'
+                      : 'text-droid-text-secondary hover:bg-white/[0.06]'
                   }`}
                 >
                   {o}

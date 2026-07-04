@@ -16,7 +16,7 @@ export default function StudioSettingsMenu() {
       <button
         onClick={() => setOpen((v) => !v)}
         title="Studio settings"
-        className="no-drag flex h-7 w-7 items-center justify-center rounded-md text-white/45 transition-colors hover:bg-white/10 hover:text-white"
+        className="no-drag flex h-7 w-7 items-center justify-center rounded-md text-droid-text-muted transition-colors hover:bg-white/10 hover:text-droid-text"
       >
         <Settings2 className="h-4 w-4" />
       </button>
@@ -29,9 +29,9 @@ export default function StudioSettingsMenu() {
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, y: 6, scale: 0.98 }}
               transition={{ type: 'spring', damping: 24, stiffness: 340 }}
-              className="no-drag absolute right-0 top-full z-40 mt-1.5 w-64 rounded-xl border border-white/10 bg-[#1a1a1a] p-1.5 shadow-2xl"
+              className="no-drag absolute right-0 top-full z-40 mt-1.5 w-64 rounded-xl border border-droid-border bg-droid-elevated p-1.5 shadow-2xl"
             >
-              <div className="px-2 pb-1.5 pt-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-white/35">
+              <div className="px-2 pb-1.5 pt-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-droid-text-muted">
                 Settings
               </div>
               <Toggle
@@ -65,8 +65,8 @@ function Toggle({
       className="flex w-full items-start gap-2 rounded-lg px-2 py-2 text-left transition-colors hover:bg-white/[0.04]"
     >
       <div className="min-w-0 flex-1">
-        <div className="text-[12.5px] text-white/85">{label}</div>
-        <div className="mt-0.5 text-[11px] leading-snug text-white/40">{hint}</div>
+        <div className="text-[12.5px] text-droid-text">{label}</div>
+        <div className="mt-0.5 text-[11px] leading-snug text-droid-text-muted">{hint}</div>
       </div>
       <span
         className="mt-0.5 flex h-5 w-9 shrink-0 items-center rounded-full p-0.5 transition-colors"

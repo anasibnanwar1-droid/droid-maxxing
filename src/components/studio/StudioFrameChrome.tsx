@@ -140,20 +140,20 @@ export default function StudioFrameChrome({
               if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
               if (e.key === 'Escape') setEditing(false);
             }}
-            className="w-44 rounded-lg border border-white/20 bg-[#0d0d0d] px-2 py-1 text-[12.5px] text-white outline-none transition-colors focus:border-[#ee6018]/60 focus:bg-[#111]"
+            className="w-44 rounded-lg border border-droid-border bg-droid-surface px-2 py-1 text-[12.5px] text-droid-text outline-none transition-colors focus:border-[#ee6018]/60 focus:bg-droid-surface"
           />
         ) : (
           <button
             onDoubleClick={() => { setEditing(true); }}
             className={`max-w-[220px] cursor-grab truncate text-[12.5px] font-medium leading-none transition-colors ${
-              selected ? 'text-white' : 'text-white/60 hover:text-white/90'
+              selected ? 'text-droid-text' : 'text-droid-text-secondary hover:text-droid-text'
             }`}
             title="Double-click to rename"
           >
             {frame.name}
           </button>
         )}
-        <span className="shrink-0 font-mono text-[10.5px] tracking-tight text-white/30">
+        <span className="shrink-0 font-mono text-[10.5px] tracking-tight text-droid-text-muted">
           {size.width}×{size.height}
         </span>
         {frame.agentLabel && (
@@ -171,7 +171,7 @@ export default function StudioFrameChrome({
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 6, scale: 0.96 }}
             transition={{ type: 'spring', damping: 22, stiffness: 320 }}
-            className="pointer-events-auto absolute right-0 flex items-center gap-0.5 rounded-lg border border-white/[0.06] border-t-[#ee6018]/25 bg-[#0d0d0d]/85 px-1 py-1 shadow-xl backdrop-blur-lg"
+            className="pointer-events-auto absolute right-0 flex items-center gap-0.5 rounded-lg border border-droid-border border-t-[#ee6018]/25 bg-droid-surface/85 px-1 py-1 shadow-xl backdrop-blur-lg"
             style={{ top: -headerScaledOffset - 6 }}
           >
             <ToolbarButton label="Viewport" onClick={cycleViewport}>
@@ -220,14 +220,14 @@ export default function StudioFrameChrome({
       {/* Interacting badge — exit back to canvas gestures */}
       {interacting && (
         <div
-          className="pointer-events-auto absolute left-1/2 flex -translate-x-1/2 items-center gap-1.5 rounded-full border border-[#ee6018]/40 bg-[#0d0d0d]/90 px-2.5 py-1 text-[11px] text-white/85 shadow-lg backdrop-blur"
+          className="pointer-events-auto absolute left-1/2 flex -translate-x-1/2 items-center gap-1.5 rounded-full border border-[#ee6018]/40 bg-droid-surface/90 px-2.5 py-1 text-[11px] text-droid-text shadow-lg backdrop-blur"
           style={{ top: rect.height + 8 }}
         >
           <span className="h-1.5 w-1.5 rounded-full bg-[#ee6018]" />
           Interacting
           <button
             onClick={() => { studioDispatch({ type: 'SET_INTERACTING', id: null }); }}
-            className="ml-0.5 text-white/50 transition-colors hover:text-white"
+            className="ml-0.5 text-droid-text-muted transition-colors hover:text-droid-text"
           >
             <X className="h-3 w-3" />
           </button>
@@ -254,8 +254,8 @@ function ToolbarButton({
       onClick={onClick}
       className={`flex h-6 w-6 items-center justify-center rounded-md transition-colors ${
         danger
-          ? 'text-white/50 hover:bg-[#c0563a]/15 hover:text-[#e0806a]'
-          : 'text-white/55 hover:bg-white/10 hover:text-white'
+          ? 'text-droid-text-muted hover:bg-[#c0563a]/15 hover:text-[#e0806a]'
+          : 'text-droid-text-secondary hover:bg-white/10 hover:text-droid-text'
       }`}
     >
       {children}

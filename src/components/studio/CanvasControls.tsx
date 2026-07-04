@@ -48,18 +48,18 @@ export default function CanvasControls({
     <div className="pointer-events-none absolute bottom-4 right-4 flex items-center gap-2">
       <button
         onClick={onRequestAddFrame}
-        className="pointer-events-auto flex items-center gap-1.5 rounded-full border border-white/10 bg-[#141414]/90 px-3 py-1.5 text-[12px] text-white/70 shadow-lg backdrop-blur transition-colors hover:border-[#ee6018]/50 hover:text-white"
+        className="pointer-events-auto flex items-center gap-1.5 rounded-full border border-droid-border bg-droid-elevated/90 px-3 py-1.5 text-[12px] text-droid-text-secondary shadow-lg backdrop-blur transition-colors hover:border-[#ee6018]/50 hover:text-droid-text"
       >
         <Plus className="h-3.5 w-3.5" />
         Add frame
       </button>
-      <div className="pointer-events-auto flex items-center gap-0.5 rounded-full border border-white/10 bg-[#141414]/90 p-0.5 shadow-lg backdrop-blur">
+      <div className="pointer-events-auto flex items-center gap-0.5 rounded-full border border-droid-border bg-droid-elevated/90 p-0.5 shadow-lg backdrop-blur">
         <HudButton label="Zoom out" onClick={() => { zoomStep(0.8); }}>
           <Minus className="h-3.5 w-3.5" />
         </HudButton>
         <button
           onClick={() => { zoomStep(1 / view.zoom); }}
-          className="min-w-[48px] rounded-full px-2 py-1 text-center font-mono text-[11.5px] text-white/70 transition-colors hover:text-white"
+          className="min-w-[48px] rounded-full px-2 py-1 text-center font-mono text-[11.5px] text-droid-text-secondary transition-colors hover:text-droid-text"
           title="Reset to 100%"
         >
           {Math.round(view.zoom * 100)}%
@@ -89,7 +89,7 @@ function HudButton({
     <button
       title={label}
       onClick={onClick}
-      className="flex h-7 w-7 items-center justify-center rounded-full text-white/60 transition-colors hover:bg-white/10 hover:text-white"
+      className="flex h-7 w-7 items-center justify-center rounded-full text-droid-text-secondary transition-colors hover:bg-white/10 hover:text-droid-text"
     >
       {children}
     </button>

@@ -62,7 +62,7 @@ export default function DnaShelf({ cwd }: { cwd: string }) {
               <button
                 onClick={scan}
                 title="Re-scan the codebase"
-                className="flex h-6 w-6 items-center justify-center rounded-md text-white/35 transition-colors hover:bg-white/[0.06] hover:text-white/70"
+                className="flex h-6 w-6 items-center justify-center rounded-md text-droid-text-muted transition-colors hover:bg-white/[0.06] hover:text-droid-text-secondary"
               >
                 <RefreshCw className={`h-3 w-3 ${scanning ? 'animate-spin' : ''}`} />
               </button>
@@ -79,12 +79,12 @@ export default function DnaShelf({ cwd }: { cwd: string }) {
           />
         )}
         {hasCurrent ? (
-          <div className="rounded-xl border border-white/[0.07] bg-white/[0.02] p-3">
+          <div className="rounded-xl border border-droid-border bg-white/[0.02] p-3">
             <div className="flex items-center justify-between">
-              <span className="text-[12.5px] font-medium text-white/85">Design DNA</span>
+              <span className="text-[12.5px] font-medium text-droid-text">Design DNA</span>
               <div className="flex items-center gap-2 font-mono text-[10px]">
                 <span className="text-[#6a8a6a]">design</span>
-                <span className={dna?.motion.exists ? 'text-[#6a8a6a]' : 'text-white/25'}>
+                <span className={dna?.motion.exists ? 'text-[#6a8a6a]' : 'text-droid-text-muted'}>
                   {dna?.motion.exists ? 'motion' : 'no motion'}
                 </span>
               </div>
@@ -92,7 +92,7 @@ export default function DnaShelf({ cwd }: { cwd: string }) {
             {currentColors.length > 0 ? (
               <Swatches colors={currentColors} />
             ) : (
-              <div className="mt-2 text-[11.5px] text-white/40">
+              <div className="mt-2 text-[11.5px] text-droid-text-muted">
                 DESIGN.md is present. Add a token block to unlock validation.
               </div>
             )}
@@ -115,7 +115,7 @@ export default function DnaShelf({ cwd }: { cwd: string }) {
             <LibraryCard key={lib.id} lib={lib} onApply={() => applyDnaLibrary(cwd, lib.id)} />
           ))}
           {libraries.length === 0 && (
-            <div className="text-[11.5px] text-white/35">Loading curated systems…</div>
+            <div className="text-[11.5px] text-droid-text-muted">Loading curated systems…</div>
           )}
         </div>
       </div>
@@ -133,10 +133,10 @@ function IntakeCta({
   onInterview: () => void;
 }) {
   return (
-    <div className="rounded-xl border border-dashed border-white/[0.12] bg-white/[0.01] p-4 text-center">
-      <MessagesSquare className="mx-auto h-5 w-5 text-white/30" />
-      <div className="mt-2 text-[12.5px] font-medium text-white/80">Give this project a DNA</div>
-      <div className="mt-1 text-[11.5px] leading-relaxed text-white/40">
+    <div className="rounded-xl border border-dashed border-droid-border bg-white/[0.01] p-4 text-center">
+      <MessagesSquare className="mx-auto h-5 w-5 text-droid-text-muted" />
+      <div className="mt-2 text-[12.5px] font-medium text-droid-text">Give this project a DNA</div>
+      <div className="mt-1 text-[11.5px] leading-relaxed text-droid-text-muted">
         Answer a short design interview and the agent authors your tokens, motion, and a real brand
         guide — or scan the codebase, or start from a system below.
       </div>
@@ -151,7 +151,7 @@ function IntakeCta({
         <button
           onClick={onScan}
           disabled={scanning}
-          className="inline-flex items-center gap-1.5 rounded-lg border border-white/12 px-3 py-1.5 text-[12px] text-white/70 transition-colors hover:border-white/25 hover:text-white disabled:opacity-60"
+          className="inline-flex items-center gap-1.5 rounded-lg border border-droid-border px-3 py-1.5 text-[12px] text-droid-text-secondary transition-colors hover:border-droid-border hover:text-droid-text disabled:opacity-60"
         >
           <ScanLine className="h-3.5 w-3.5" />
           {scanning ? 'Scanning…' : 'Scan'}
@@ -163,15 +163,15 @@ function IntakeCta({
 
 function LibraryCard({ lib, onApply }: { lib: DnaLibrarySummary; onApply: () => void }) {
   return (
-    <div className="group rounded-xl border border-white/[0.06] bg-white/[0.02] p-3 transition-colors hover:border-white/12">
+    <div className="group rounded-xl border border-droid-border bg-white/[0.02] p-3 transition-colors hover:border-droid-border">
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
-          <div className="text-[12.5px] font-medium text-white/85">{lib.name}</div>
-          <div className="mt-0.5 truncate text-[11px] text-white/45">{lib.tagline}</div>
+          <div className="text-[12.5px] font-medium text-droid-text">{lib.name}</div>
+          <div className="mt-0.5 truncate text-[11px] text-droid-text-muted">{lib.tagline}</div>
         </div>
         <button
           onClick={onApply}
-          className="flex shrink-0 items-center gap-1 rounded-md border border-white/10 px-2 py-1 text-[11px] text-white/60 opacity-0 transition-all group-hover:opacity-100 hover:border-[#ee6018]/50 hover:text-white"
+          className="flex shrink-0 items-center gap-1 rounded-md border border-droid-border px-2 py-1 text-[11px] text-droid-text-secondary opacity-0 transition-all group-hover:opacity-100 hover:border-[#ee6018]/50 hover:text-droid-text"
         >
           <Check className="h-3 w-3" />
           Apply

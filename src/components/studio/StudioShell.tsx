@@ -69,7 +69,7 @@ export default function StudioShell({
   };
 
   return (
-    <div className="flex h-full w-full bg-[#080808]">
+    <div className="flex h-full w-full bg-droid-bg">
       <AgentPanel cwd={cwd} onSubmit={handleSubmit} />
 
       <div className="relative flex min-w-0 flex-1 flex-col">

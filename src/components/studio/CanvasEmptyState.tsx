@@ -16,24 +16,24 @@ export default function CanvasEmptyState({ onAddFrame }: { onAddFrame: () => voi
       >
         <div className="relative mb-7">
           <div className="absolute -inset-10 rounded-full bg-[#ee6018]/12 blur-3xl" />
-          <div className="relative flex h-16 w-16 items-center justify-center rounded-2xl border border-white/10 bg-gradient-to-b from-white/[0.08] to-transparent">
-            <StudioMark className="h-8 w-8 text-white/70" />
+          <div className="relative flex h-16 w-16 items-center justify-center rounded-2xl border border-droid-border bg-gradient-to-b from-white/[0.08] to-transparent">
+            <StudioMark className="h-8 w-8 text-droid-text-secondary" />
           </div>
         </div>
-        <h2 className="text-[17px] font-medium tracking-tight text-white/90">
+        <h2 className="text-[17px] font-medium tracking-tight text-droid-text">
           A canvas for directions, not documents
         </h2>
-        <p className="mt-2 text-[13px] leading-relaxed text-white/45">
+        <p className="mt-2 text-[13px] leading-relaxed text-droid-text-muted">
           Describe a screen in the composer and the agent designs it into a live frame — or drop
           in a running route to start from what already ships.
         </p>
         <button
           onClick={onAddFrame}
-          className="mt-6 rounded-lg border border-white/12 bg-white/[0.04] px-4 py-2 text-[13px] text-white/80 transition-colors hover:border-[#ee6018]/50 hover:bg-[#ee6018]/[0.08] hover:text-white"
+          className="mt-6 rounded-lg border border-droid-border bg-white/[0.04] px-4 py-2 text-[13px] text-droid-text transition-colors hover:border-[#ee6018]/50 hover:bg-[#ee6018]/[0.08] hover:text-droid-text"
         >
           Add a live frame
         </button>
-        <div className="mt-4 font-mono text-[11px] text-white/25">
+        <div className="mt-4 font-mono text-[11px] text-droid-text-muted">
           ⌘⇧D to toggle · space-drag to pan · ⌘-scroll to zoom
         </div>
       </motion.div>

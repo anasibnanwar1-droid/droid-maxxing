@@ -36,9 +36,9 @@ export default function InterviewQuestionCard({
 
   return (
     <div>
-      <h2 className="text-[20px] font-medium tracking-tight text-white/90">{question.title}</h2>
+      <h2 className="text-[20px] font-medium tracking-tight text-droid-text">{question.title}</h2>
       {question.subtitle && (
-        <p className="mt-1.5 text-[13px] leading-relaxed text-white/45">{question.subtitle}</p>
+        <p className="mt-1.5 text-[13px] leading-relaxed text-droid-text-muted">{question.subtitle}</p>
       )}
 
       {question.options.length > 0 && (
@@ -51,8 +51,8 @@ export default function InterviewQuestionCard({
                 onClick={() => toggle(o.value)}
                 className={`rounded-full border px-3.5 py-1.5 text-[13px] transition-colors ${
                   on
-                    ? 'border-[#ee6018]/60 bg-[#ee6018]/15 text-white'
-                    : 'border-white/12 text-white/60 hover:border-white/25 hover:text-white/90'
+                    ? 'border-[#ee6018]/60 bg-[#ee6018]/15 text-droid-text'
+                    : 'border-droid-border text-droid-text-secondary hover:border-droid-border hover:text-droid-text'
                 }`}
               >
                 {o.label}
@@ -78,7 +78,7 @@ export default function InterviewQuestionCard({
           }}
           rows={question.allowImages ? 3 : 2}
           placeholder={question.placeholder}
-          className="mt-4 w-full resize-none rounded-xl border border-white/10 bg-white/[0.02] px-3.5 py-2.5 text-[13.5px] leading-relaxed text-white/90 placeholder:text-white/30 focus:border-[#ee6018]/40 focus:outline-none"
+          className="mt-4 w-full resize-none rounded-xl border border-droid-border bg-white/[0.02] px-3.5 py-2.5 text-[13.5px] leading-relaxed text-droid-text placeholder:text-droid-text-muted focus:border-[#ee6018]/40 focus:outline-none"
         />
       )}
 
@@ -107,7 +107,7 @@ export default function InterviewQuestionCard({
                   onClick={() =>
                     onChange({ ...answer, images: answer.images.filter((_, j) => j !== i) })
                   }
-                  className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-black/85 text-white/70 opacity-0 transition-opacity group-hover:opacity-100"
+                  className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-black/85 text-droid-text-secondary opacity-0 transition-opacity group-hover:opacity-100"
                 >
                   <X className="h-3 w-3" />
                 </button>
@@ -115,7 +115,7 @@ export default function InterviewQuestionCard({
             ))}
             <button
               onClick={() => fileRef.current?.click()}
-              className="flex h-16 w-16 flex-col items-center justify-center gap-1 rounded-lg border border-dashed border-white/15 text-white/35 transition-colors hover:border-[#ee6018]/50 hover:text-white/70"
+              className="flex h-16 w-16 flex-col items-center justify-center gap-1 rounded-lg border border-dashed border-droid-border text-droid-text-muted transition-colors hover:border-[#ee6018]/50 hover:text-droid-text-secondary"
             >
               <ImagePlus className="h-4 w-4" />
               <span className="text-[9px]">paste</span>

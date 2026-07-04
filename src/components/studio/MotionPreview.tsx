@@ -33,7 +33,7 @@ export default function MotionPreview({ colors }: { colors?: Record<string, stri
         <motion.div
           whileHover={{ y: -3, boxShadow: '0 12px 28px -8px rgba(0,0,0,0.6)' }}
           transition={{ duration: 0.22, ease: EASE }}
-          className="flex h-10 w-24 items-center justify-center rounded-lg border border-white/10 text-[11px]"
+          className="flex h-10 w-24 items-center justify-center rounded-lg border border-droid-border text-[11px]"
           style={{ backgroundColor: surface, color: text }}
         >
           Card
@@ -69,7 +69,7 @@ export default function MotionPreview({ colors }: { colors?: Record<string, stri
           ))}
           <button
             onClick={() => setReplay((r) => r + 1)}
-            className="ml-1 text-[10px] text-white/35 transition-colors hover:text-white/70"
+            className="ml-1 text-[10px] text-droid-text-muted transition-colors hover:text-droid-text-secondary"
           >
             replay
           </button>
@@ -81,9 +81,9 @@ export default function MotionPreview({ colors }: { colors?: Record<string, stri
 
 function Cell({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div className="flex h-[76px] flex-col items-center justify-center gap-2 rounded-xl border border-white/[0.06] bg-white/[0.015]">
+    <div className="flex h-[76px] flex-col items-center justify-center gap-2 rounded-xl border border-droid-border bg-white/[0.015]">
       {children}
-      <span className="font-mono text-[9px] uppercase tracking-wider text-white/30">{label}</span>
+      <span className="font-mono text-[9px] uppercase tracking-wider text-droid-text-muted">{label}</span>
     </div>
   );
 }

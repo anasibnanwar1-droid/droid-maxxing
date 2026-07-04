@@ -51,11 +51,11 @@ export default function AddFrameDialog({ onClose }: { onClose: () => void }) {
         animate={{ opacity: 1, scale: 1, y: 0 }}
         transition={{ duration: 0.16, ease: [0.16, 1, 0.3, 1] }}
         onClick={(e) => { e.stopPropagation(); }}
-        className="w-[420px] overflow-hidden rounded-2xl border border-white/10 bg-[#141414] shadow-2xl"
+        className="w-[420px] overflow-hidden rounded-2xl border border-droid-border bg-droid-elevated shadow-2xl"
       >
         <div className="px-5 pb-1 pt-5">
-          <h2 className="text-[15px] font-medium tracking-tight text-white/90">Add a live frame</h2>
-          <p className="mt-1 text-[12px] text-white/45">
+          <h2 className="text-[15px] font-medium tracking-tight text-droid-text">Add a live frame</h2>
+          <p className="mt-1 text-[12px] text-droid-text-muted">
             Point it at a route on your running dev server. It renders live and hot-reloads.
           </p>
         </div>
@@ -69,14 +69,14 @@ export default function AddFrameDialog({ onClose }: { onClose: () => void }) {
               onChange={(e) => { setUrl(e.target.value); }}
               onKeyDown={(e) => e.key === 'Enter' && submit()}
               placeholder="localhost:5173/dashboard"
-              className="w-full rounded-lg border border-white/10 bg-[#0d0d0d] px-3 py-2 font-mono text-[12.5px] text-white/90 placeholder:text-white/25 focus:border-[#ee6018]/50 focus:outline-none"
+              className="w-full rounded-lg border border-droid-border bg-droid-surface px-3 py-2 font-mono text-[12.5px] text-droid-text placeholder:text-droid-text-muted focus:border-[#ee6018]/50 focus:outline-none"
             />
             <div className="mt-2 flex gap-1.5">
               {QUICK_PORTS.map((p) => (
                 <button
                   key={p}
                   onClick={() => { setUrl(p); }}
-                  className="rounded-md border border-white/[0.08] px-2 py-1 font-mono text-[10.5px] text-white/45 transition-colors hover:border-white/20 hover:text-white/75"
+                  className="rounded-md border border-droid-border px-2 py-1 font-mono text-[10.5px] text-droid-text-muted transition-colors hover:border-droid-border hover:text-droid-text-secondary"
                 >
                   {p}
                 </button>
@@ -91,7 +91,7 @@ export default function AddFrameDialog({ onClose }: { onClose: () => void }) {
               onChange={(e) => { setName(e.target.value); }}
               onKeyDown={(e) => e.key === 'Enter' && submit()}
               placeholder="Dashboard"
-              className="w-full rounded-lg border border-white/10 bg-[#0d0d0d] px-3 py-2 text-[12.5px] text-white/90 placeholder:text-white/25 focus:border-[#ee6018]/50 focus:outline-none"
+              className="w-full rounded-lg border border-droid-border bg-droid-surface px-3 py-2 text-[12.5px] text-droid-text placeholder:text-droid-text-muted focus:border-[#ee6018]/50 focus:outline-none"
             />
           </div>
 
@@ -104,8 +104,8 @@ export default function AddFrameDialog({ onClose }: { onClose: () => void }) {
                   onClick={() => { setMode(v.mode); }}
                   className={`flex flex-1 flex-col items-center gap-1 rounded-lg border py-2 text-[11px] transition-colors ${
                     mode === v.mode
-                      ? 'border-[#ee6018]/50 bg-[#ee6018]/10 text-white'
-                      : 'border-white/[0.08] text-white/45 hover:border-white/15 hover:text-white/75'
+                      ? 'border-[#ee6018]/50 bg-[#ee6018]/10 text-droid-text'
+                      : 'border-droid-border text-droid-text-muted hover:border-droid-border hover:text-droid-text-secondary'
                   }`}
                 >
                   <v.icon className="h-4 w-4" />
@@ -116,18 +116,18 @@ export default function AddFrameDialog({ onClose }: { onClose: () => void }) {
             {mode === 'custom' && (
               <div className="mt-2 flex items-center gap-2">
                 <SizeInput label="W" value={w} onChange={setW} />
-                <span className="text-white/30">×</span>
+                <span className="text-droid-text-muted">×</span>
                 <SizeInput label="H" value={h} onChange={setH} />
-                <span className="font-mono text-[10.5px] text-white/30">px</span>
+                <span className="font-mono text-[10.5px] text-droid-text-muted">px</span>
               </div>
             )}
           </div>
         </div>
 
-        <div className="flex justify-end gap-2 border-t border-white/[0.06] px-5 py-3">
+        <div className="flex justify-end gap-2 border-t border-droid-border px-5 py-3">
           <button
             onClick={onClose}
-            className="rounded-lg px-3 py-1.5 text-[12.5px] text-white/55 transition-colors hover:text-white/85"
+            className="rounded-lg px-3 py-1.5 text-[12.5px] text-droid-text-secondary transition-colors hover:text-droid-text"
           >
             Cancel
           </button>
@@ -145,7 +145,7 @@ export default function AddFrameDialog({ onClose }: { onClose: () => void }) {
 
 function Label({ children }: { children: React.ReactNode }) {
   return (
-    <div className="pb-1.5 text-[10.5px] font-semibold uppercase tracking-[0.14em] text-white/40">
+    <div className="pb-1.5 text-[10.5px] font-semibold uppercase tracking-[0.14em] text-droid-text-muted">
       {children}
     </div>
   );
@@ -161,13 +161,13 @@ function SizeInput({
   onChange: (n: number) => void;
 }) {
   return (
-    <div className="flex flex-1 items-center gap-1.5 rounded-lg border border-white/10 bg-[#0d0d0d] px-2.5 py-1.5 focus-within:border-[#ee6018]/50">
-      <span className="font-mono text-[10.5px] text-white/35">{label}</span>
+    <div className="flex flex-1 items-center gap-1.5 rounded-lg border border-droid-border bg-droid-surface px-2.5 py-1.5 focus-within:border-[#ee6018]/50">
+      <span className="font-mono text-[10.5px] text-droid-text-muted">{label}</span>
       <input
         type="number"
         value={value}
         onChange={(e) => onChange(Number(e.target.value))}
-        className="w-full bg-transparent font-mono text-[12.5px] text-white/90 focus:outline-none"
+        className="w-full bg-transparent font-mono text-[12.5px] text-droid-text focus:outline-none"
       />
     </div>
   );

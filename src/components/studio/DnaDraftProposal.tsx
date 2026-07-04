@@ -29,8 +29,8 @@ export default function DnaDraftProposal({
         <div className="flex items-center gap-2">
           <ScanLine className="h-4 w-4 text-[#ee6018]" />
           <div>
-            <div className="text-[12.5px] font-medium text-white/90">Proposed from your code</div>
-            <div className="mt-0.5 font-mono text-[10px] text-white/40">
+            <div className="text-[12.5px] font-medium text-droid-text">Proposed from your code</div>
+            <div className="mt-0.5 font-mono text-[10px] text-droid-text-muted">
               {draft.sources.length} source{draft.sources.length === 1 ? '' : 's'} scanned
             </div>
           </div>
@@ -38,7 +38,7 @@ export default function DnaDraftProposal({
         <button
           onClick={onDismiss}
           title="Dismiss"
-          className="flex h-6 w-6 items-center justify-center rounded-md text-white/40 transition-colors hover:bg-white/[0.06] hover:text-white/80"
+          className="flex h-6 w-6 items-center justify-center rounded-md text-droid-text-muted transition-colors hover:bg-white/[0.06] hover:text-droid-text"
         >
           <X className="h-3.5 w-3.5" />
         </button>
@@ -51,7 +51,7 @@ export default function DnaDraftProposal({
       {draft.sources.length > 0 && (
         <div className="mt-2.5 space-y-0.5">
           {draft.sources.slice(0, 3).map((s) => (
-            <div key={s} className="truncate font-mono text-[10px] text-white/30">
+            <div key={s} className="truncate font-mono text-[10px] text-droid-text-muted">
               {s}
             </div>
           ))}
@@ -68,7 +68,7 @@ export default function DnaDraftProposal({
         </button>
         <button
           onClick={onDismiss}
-          className="rounded-lg px-3 py-1.5 text-[12px] text-white/55 transition-colors hover:text-white/85"
+          className="rounded-lg px-3 py-1.5 text-[12px] text-droid-text-secondary transition-colors hover:text-droid-text"
         >
           Not now
         </button>

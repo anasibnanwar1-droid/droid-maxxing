@@ -27,7 +27,7 @@ export default function ToolRail({ onRequestAddFrame }: { onRequestAddFrame: () 
   const setTool = (tool: StudioTool) => { studioDispatch({ type: 'SET_TOOL', tool }); };
 
   return (
-    <div className="flex flex-col items-center gap-1 rounded-2xl border border-white/[0.08] bg-[#111]/85 p-1.5 shadow-[0_16px_40px_-12px_rgba(0,0,0,0.7)] backdrop-blur">
+    <div className="flex flex-col items-center gap-1 rounded-2xl border border-droid-border bg-droid-surface/85 p-1.5 shadow-[0_16px_40px_-12px_rgba(0,0,0,0.7)] backdrop-blur">
       {PRIMARY.map((t) => (
         <RailButton
           key={t.id}
@@ -86,14 +86,14 @@ function RailButton({
       className={`group relative flex h-9 w-9 items-center justify-center rounded-xl transition-all duration-150 ${
         active
           ? 'bg-[#ee6018]/15 text-[#ee6018] shadow-[inset_0_0_0_1px_rgba(238,96,24,0.4)]'
-          : 'text-white/50 hover:bg-white/[0.06] hover:text-white/90'
+          : 'text-droid-text-muted hover:bg-white/[0.06] hover:text-droid-text'
       }`}
     >
       {children}
-      <span className="pointer-events-none absolute left-full ml-3 flex items-center gap-1.5 whitespace-nowrap rounded-md border border-white/10 bg-[#1a1a1a] px-2 py-1 text-[11px] text-white/80 opacity-0 shadow-xl transition-opacity delay-200 duration-150 group-hover:opacity-100">
+      <span className="pointer-events-none absolute left-full ml-3 flex items-center gap-1.5 whitespace-nowrap rounded-md border border-droid-border bg-droid-elevated px-2 py-1 text-[11px] text-droid-text opacity-0 shadow-xl transition-opacity delay-200 duration-150 group-hover:opacity-100">
         {label}
         {shortcut && (
-          <kbd className="rounded bg-white/10 px-1 font-mono text-[10px] text-white/60">
+          <kbd className="rounded bg-white/10 px-1 font-mono text-[10px] text-droid-text-secondary">
             {shortcut}
           </kbd>
         )}

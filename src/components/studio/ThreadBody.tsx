@@ -32,13 +32,13 @@ export default function ThreadBody({
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.35, ease: [0.16, 1, 0.3, 1] }}
         >
-          <div className="mb-3 flex h-9 w-9 items-center justify-center rounded-xl border border-white/10 bg-gradient-to-b from-white/[0.06] to-transparent">
-            <StudioMark className="h-4 w-4 text-white/70" />
+          <div className="mb-3 flex h-9 w-9 items-center justify-center rounded-xl border border-droid-border bg-gradient-to-b from-white/[0.06] to-transparent">
+            <StudioMark className="h-4 w-4 text-droid-text-secondary" />
           </div>
-          <h3 className="text-[15px] font-medium tracking-tight text-white/90">
+          <h3 className="text-[15px] font-medium tracking-tight text-droid-text">
             Start a direction
           </h3>
-          <p className="mt-1 text-[12.5px] leading-relaxed text-white/40">
+          <p className="mt-1 text-[12.5px] leading-relaxed text-droid-text-muted">
             Describe what you want to see. The agent designs it into a live frame on the canvas,
             working from your project’s design DNA.
           </p>
@@ -50,10 +50,10 @@ export default function ThreadBody({
                 animate={{ opacity: 1, x: 0 }}
                 transition={{ delay: 0.06 * i + 0.1, duration: 0.3 }}
                 onClick={() => { onPickSuggestion(s); }}
-                className="group flex w-full items-center justify-between gap-2 rounded-lg border border-white/[0.06] bg-white/[0.02] px-3 py-2 text-left text-[12.5px] text-white/60 transition-colors hover:border-white/12 hover:bg-white/[0.04] hover:text-white/90"
+                className="group flex w-full items-center justify-between gap-2 rounded-lg border border-droid-border bg-white/[0.02] px-3 py-2 text-left text-[12.5px] text-droid-text-secondary transition-colors hover:border-droid-border hover:bg-white/[0.04] hover:text-droid-text"
               >
                 <span className="truncate">{s}</span>
-                <ArrowUpRight className="h-3.5 w-3.5 shrink-0 text-white/25 transition-colors group-hover:text-[#ee6018]" />
+                <ArrowUpRight className="h-3.5 w-3.5 shrink-0 text-droid-text-muted transition-colors group-hover:text-[#ee6018]" />
               </motion.button>
             ))}
           </div>
@@ -80,7 +80,7 @@ export default function ThreadBody({
               </div>
             )}
             {m.text && (
-              <div className="rounded-2xl rounded-br-md bg-[#ee6018]/12 px-3.5 py-2 text-[13px] leading-relaxed text-white/90">
+              <div className="rounded-2xl rounded-br-md bg-[#ee6018]/12 px-3.5 py-2 text-[13px] leading-relaxed text-droid-text">
                 {m.text}
               </div>
             )}
@@ -89,14 +89,14 @@ export default function ThreadBody({
           <div key={m.id} className="max-w-[92%]">
             <div className="mb-1 flex items-center gap-1.5">
               <span className="h-1.5 w-1.5 rounded-full bg-[#ee6018]" />
-              <span className="font-mono text-[10px] uppercase tracking-wider text-white/40">
+              <span className="font-mono text-[10px] uppercase tracking-wider text-droid-text-muted">
                 agent
               </span>
             </div>
-            <div className="rounded-2xl rounded-tl-md border border-white/[0.07] bg-white/[0.02] px-3.5 py-2 text-[13px] leading-relaxed text-white/75">
+            <div className="rounded-2xl rounded-tl-md border border-droid-border bg-white/[0.02] px-3.5 py-2 text-[13px] leading-relaxed text-droid-text-secondary">
               {m.text}
               {m.status && (
-                <span className="ml-1 inline-block animate-pulse font-mono text-[11px] text-white/40">
+                <span className="ml-1 inline-block animate-pulse font-mono text-[11px] text-droid-text-muted">
                   {m.status}
                 </span>
               )}

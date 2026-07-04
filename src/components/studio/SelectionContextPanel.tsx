@@ -10,7 +10,7 @@ const STATUS_LABEL: Record<StudioFrame['status'], string> = {
   failed: 'failed',
 };
 const STATUS_TONE: Record<StudioFrame['status'], string> = {
-  loading: 'text-white/50',
+  loading: 'text-droid-text-muted',
   building: 'text-[#ee6018]',
   ready: 'text-[#7aa37a]',
   failed: 'text-[#c0563a]',
@@ -39,7 +39,7 @@ export default function SelectionContextPanel() {
       animate={{ opacity: 1, x: 0 }}
       exit={{ opacity: 0, x: 16 }}
       transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
-      className="pointer-events-auto absolute right-4 top-4 z-20 w-[264px] overflow-hidden rounded-2xl border border-white/[0.08] bg-[#111]/95 shadow-[0_24px_60px_-20px_rgba(0,0,0,0.8)] backdrop-blur-xl"
+      className="pointer-events-auto absolute right-4 top-4 z-20 w-[264px] overflow-hidden rounded-2xl border border-droid-border bg-droid-surface/95 shadow-[0_24px_60px_-20px_rgba(0,0,0,0.8)] backdrop-blur-xl"
     >
       {frame ? (
         <>
@@ -47,7 +47,7 @@ export default function SelectionContextPanel() {
             onClick={() => setCollapsed((v) => !v)}
             className="flex w-full items-center gap-2 px-4 py-3 text-left"
           >
-            <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-white/90">
+            <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-droid-text">
               {frame.name}
             </span>
             <motion.span
@@ -62,7 +62,7 @@ export default function SelectionContextPanel() {
               {STATUS_LABEL[frame.status]}
             </motion.span>
             <ChevronDown
-              className={`h-3.5 w-3.5 text-white/35 transition-transform ${
+              className={`h-3.5 w-3.5 text-droid-text-muted transition-transform ${
                 collapsed ? '' : 'rotate-180'
               }`}
             />
@@ -76,7 +76,7 @@ export default function SelectionContextPanel() {
                 transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
                 className="overflow-hidden"
               >
-                <div className="space-y-2.5 border-t border-white/[0.06] px-4 py-3">
+                <div className="space-y-2.5 border-t border-droid-border px-4 py-3">
                   <DetailRow label="kind" value={frame.kind} />
                   <DetailRow
                     label="viewport"
@@ -87,7 +87,7 @@ export default function SelectionContextPanel() {
               </motion.div>
             )}
           </AnimatePresence>
-          <div className="flex items-center gap-1 border-t border-white/[0.06] px-3 py-2">
+          <div className="flex items-center gap-1 border-t border-droid-border px-3 py-2">
             <Action
               icon={<RotateCw className="h-3.5 w-3.5" />}
               label="Reload"
@@ -119,20 +119,20 @@ export default function SelectionContextPanel() {
           </div>
         </>
       ) : (
-        <div className="px-4 py-3 text-[12px] text-white/55">
+        <div className="px-4 py-3 text-[12px] text-droid-text-secondary">
           {studio.selectedFrameIds.length} frames selected
         </div>
       )}
 
       {elements.length > 0 && (
-        <div className="border-t border-white/[0.06] px-4 py-3">
-          <div className="pb-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-white/35">
+        <div className="border-t border-droid-border px-4 py-3">
+          <div className="pb-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-droid-text-muted">
             references
           </div>
           {elements.map((el) => (
             <div key={el.id} className="flex items-center gap-1.5 py-0.5">
-              <span className="truncate text-[12px] text-white/70">{el.label}</span>
-              {el.tag && <span className="font-mono text-[10px] text-white/35">{el.tag}</span>}
+              <span className="truncate text-[12px] text-droid-text-secondary">{el.label}</span>
+              {el.tag && <span className="font-mono text-[10px] text-droid-text-muted">{el.tag}</span>}
             </div>
           ))}
         </div>
@@ -154,11 +154,11 @@ function DetailRow({
 }) {
   return (
     <div className="flex items-start gap-3">
-      <span className="w-16 shrink-0 pt-px text-[10.5px] font-medium uppercase tracking-wide text-white/30">
+      <span className="w-16 shrink-0 pt-px text-[10.5px] font-medium uppercase tracking-wide text-droid-text-muted">
         {label}
       </span>
       <span
-        className={`min-w-0 flex-1 text-[12px] text-white/75 ${mono ? 'font-mono text-[11px]' : ''} ${
+        className={`min-w-0 flex-1 text-[12px] text-droid-text-secondary ${mono ? 'font-mono text-[11px]' : ''} ${
           wrap ? 'break-all' : 'truncate'
         }`}
       >
@@ -185,8 +185,8 @@ function Action({
       title={label}
       className={`flex flex-1 flex-col items-center gap-1 rounded-lg py-1.5 text-[10px] transition-colors ${
         danger
-          ? 'text-white/45 hover:bg-[#c0563a]/15 hover:text-[#e0806a]'
-          : 'text-white/55 hover:bg-white/[0.06] hover:text-white/90'
+          ? 'text-droid-text-muted hover:bg-[#c0563a]/15 hover:text-[#e0806a]'
+          : 'text-droid-text-secondary hover:bg-white/[0.06] hover:text-droid-text'
       }`}
     >
       {icon}

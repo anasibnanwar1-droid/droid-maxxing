@@ -244,7 +244,7 @@ export default function StudioCanvas({ onRequestAddFrame }: { onRequestAddFrame:
   return (
     <div
       ref={rootRef}
-      className="relative h-full w-full overflow-hidden bg-[#080808] select-none"
+      className="relative h-full w-full overflow-hidden bg-droid-bg select-none"
       style={{ cursor }}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
@@ -255,7 +255,7 @@ export default function StudioCanvas({ onRequestAddFrame }: { onRequestAddFrame:
         className="pointer-events-none absolute inset-0"
         style={{
           backgroundImage:
-            'radial-gradient(circle, rgba(255,255,255,0.055) 1px, transparent 1px)',
+            'radial-gradient(circle, color-mix(in srgb, var(--droid-text) 7%, transparent) 1px, transparent 1px)',
           backgroundSize: `${gridSize}px ${gridSize}px`,
           backgroundPosition: `${view.pan.x}px ${view.pan.y}px`,
           opacity: Math.min(1, 0.35 + view.zoom * 0.4),

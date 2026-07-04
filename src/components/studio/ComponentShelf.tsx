@@ -42,21 +42,21 @@ export default function ComponentShelf({ cwd }: { cwd: string }) {
                   },
                 }); }
               }
-              className="group flex w-full items-start gap-2.5 rounded-lg border border-white/[0.05] bg-white/[0.02] px-2.5 py-2 text-left transition-colors hover:border-white/12 hover:bg-white/[0.04]"
+              className="group flex w-full items-start gap-2.5 rounded-lg border border-droid-border bg-white/[0.02] px-2.5 py-2 text-left transition-colors hover:border-droid-border hover:bg-white/[0.04]"
             >
-              <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-gradient-to-b from-white/[0.08] to-transparent text-white/50 group-hover:text-[#ee6018]">
+              <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-gradient-to-b from-white/[0.08] to-transparent text-droid-text-muted group-hover:text-[#ee6018]">
                 <Blocks className="h-3.5 w-3.5" />
               </div>
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-1.5">
-                  <span className="truncate text-[12.5px] font-medium text-white/85">
+                  <span className="truncate text-[12.5px] font-medium text-droid-text">
                     {c.name}
                   </span>
-                  <span className="shrink-0 rounded bg-white/[0.06] px-1 py-px font-mono text-[9px] uppercase tracking-wide text-white/40">
+                  <span className="shrink-0 rounded bg-white/[0.06] px-1 py-px font-mono text-[9px] uppercase tracking-wide text-droid-text-muted">
                     {c.exportKind}
                   </span>
                 </div>
-                <div className="truncate font-mono text-[10.5px] text-white/35">
+                <div className="truncate font-mono text-[10.5px] text-droid-text-muted">
                   {shortFile(c.file)}:{c.line}
                 </div>
               </div>
@@ -80,15 +80,15 @@ function SectionHeader({
   return (
     <div className="flex items-center justify-between pb-2 pt-1">
       <div className="flex items-baseline gap-2">
-        <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-white/45">
+        <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-droid-text-muted">
           {title}
         </span>
-        {count > 0 && <span className="font-mono text-[10.5px] text-white/30">{count}</span>}
+        {count > 0 && <span className="font-mono text-[10.5px] text-droid-text-muted">{count}</span>}
       </div>
       <button
         onClick={onRefresh}
         title="Rescan components"
-        className="flex h-6 w-6 items-center justify-center rounded-md text-white/35 transition-colors hover:bg-white/[0.06] hover:text-white/70"
+        className="flex h-6 w-6 items-center justify-center rounded-md text-droid-text-muted transition-colors hover:bg-white/[0.06] hover:text-droid-text-secondary"
       >
         <RefreshCw className="h-3 w-3" />
       </button>
@@ -99,14 +99,14 @@ function SectionHeader({
 function EmptyShelf({ onScan }: { onScan: () => void }) {
   return (
     <div className="mt-6 flex flex-col items-center px-4 text-center">
-      <Blocks className="h-6 w-6 text-white/20" />
-      <div className="mt-2 text-[12.5px] text-white/55">No components indexed yet</div>
-      <div className="mt-1 text-[11.5px] leading-relaxed text-white/35">
+      <Blocks className="h-6 w-6 text-droid-text-muted" />
+      <div className="mt-2 text-[12.5px] text-droid-text-secondary">No components indexed yet</div>
+      <div className="mt-1 text-[11.5px] leading-relaxed text-droid-text-muted">
         Scan the repo to pull in exported components with their source locations.
       </div>
       <button
         onClick={onScan}
-        className="mt-3 rounded-md border border-white/12 px-3 py-1.5 text-[12px] text-white/70 transition-colors hover:border-[#ee6018]/50 hover:text-white"
+        className="mt-3 rounded-md border border-droid-border px-3 py-1.5 text-[12px] text-droid-text-secondary transition-colors hover:border-[#ee6018]/50 hover:text-droid-text"
       >
         Scan components
       </button>

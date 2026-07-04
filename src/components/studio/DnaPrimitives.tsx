@@ -5,7 +5,7 @@
 export function Header({ title, action }: { title: string; action?: React.ReactNode }) {
   return (
     <div className="flex items-center justify-between pb-2 pt-1">
-      <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-white/45">
+      <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-droid-text-muted">
         {title}
       </span>
       {action}
@@ -37,7 +37,7 @@ export function FontLine({ fonts }: { fonts: { sans?: string; display?: string; 
       {names.map((n) => (
         <span
           key={n}
-          className="rounded bg-white/[0.05] px-1.5 py-0.5 font-mono text-[10px] text-white/50"
+          className="rounded bg-white/[0.05] px-1.5 py-0.5 font-mono text-[10px] text-droid-text-muted"
         >
           {family(n)}
         </span>
@@ -53,7 +53,7 @@ export function TypeScale({ scale }: { scale: number[] }) {
       {scale.slice(0, 7).map((s, i) => (
         <span
           key={`${s}-${i}`}
-          className="shrink-0 leading-none text-white/70"
+          className="shrink-0 leading-none text-droid-text-secondary"
           style={{ fontSize: Math.max(9, Math.min(22, s)) }}
           title={`${s}px`}
         >

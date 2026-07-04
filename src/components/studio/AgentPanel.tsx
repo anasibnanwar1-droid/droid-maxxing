@@ -43,7 +43,7 @@ export default function AgentPanel({
   };
 
   return (
-    <div className="flex h-full w-[336px] shrink-0 flex-col border-r border-white/[0.06] bg-[#0c0c0c]">
+    <div className="flex h-full w-[336px] shrink-0 flex-col border-r border-droid-border bg-droid-surface">
       <div data-electron-drag-region className="h-11 shrink-0" />
 
       {/* Tabs */}
@@ -54,8 +54,8 @@ export default function AgentPanel({
             onClick={() => { studioDispatch({ type: 'SET_LEFT_TAB', tab: t.id }); }}
             className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[12px] transition-colors ${
               tab === t.id
-                ? 'bg-white/[0.07] text-white'
-                : 'text-white/45 hover:text-white/75'
+                ? 'bg-white/[0.07] text-droid-text'
+                : 'text-droid-text-muted hover:text-droid-text-secondary'
             }`}
           >
             <t.icon className="h-3.5 w-3.5" />
@@ -98,12 +98,12 @@ function ThreadHeader({ onNew }: { onNew: () => void }) {
   return (
     <div className="flex items-center justify-between px-4 pb-2">
       <div className="flex items-center gap-1.5">
-        <span className="text-[12.5px] font-medium text-white/80">Untitled thread</span>
+        <span className="text-[12.5px] font-medium text-droid-text">Untitled thread</span>
       </div>
       <button
         onClick={onNew}
         title="New thread"
-        className="flex h-6 w-6 items-center justify-center rounded-md text-white/45 transition-colors hover:bg-white/[0.06] hover:text-white"
+        className="flex h-6 w-6 items-center justify-center rounded-md text-droid-text-muted transition-colors hover:bg-white/[0.06] hover:text-droid-text"
       >
         <Plus className="h-4 w-4" />
       </button>

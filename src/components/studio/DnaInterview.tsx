@@ -31,18 +31,18 @@ export default function DnaInterview({
   const next = () => (last ? onComplete(brief) : setStep((s) => Math.min(total - 1, s + 1)));
 
   return (
-    <div className="fixed inset-0 z-[70] flex flex-col bg-[#070707]/97 backdrop-blur-xl">
+    <div className="fixed inset-0 z-[70] flex flex-col bg-droid-bg/97 backdrop-blur-xl">
       <div data-electron-drag-region className="flex h-11 shrink-0 items-center justify-between px-4">
         <div className="flex items-center gap-2">
-          <StudioMark className="h-3.5 w-3.5 text-white/70" />
-          <span className="text-[12.5px] font-medium text-white/80">Design intake</span>
-          <span className="font-mono text-[11px] text-white/35">
+          <StudioMark className="h-3.5 w-3.5 text-droid-text-secondary" />
+          <span className="text-[12.5px] font-medium text-droid-text">Design intake</span>
+          <span className="font-mono text-[11px] text-droid-text-muted">
             {step + 1}/{total}
           </span>
         </div>
         <button
           onClick={onClose}
-          className="no-drag flex h-7 w-7 items-center justify-center rounded-md text-white/45 transition-colors hover:bg-white/10 hover:text-white"
+          className="no-drag flex h-7 w-7 items-center justify-center rounded-md text-droid-text-muted transition-colors hover:bg-white/10 hover:text-droid-text"
         >
           <X className="h-4 w-4" />
         </button>
@@ -78,11 +78,11 @@ export default function DnaInterview({
         </div>
       </div>
 
-      <div className="flex items-center justify-between border-t border-white/[0.06] px-6 py-3.5">
+      <div className="flex items-center justify-between border-t border-droid-border px-6 py-3.5">
         <button
           onClick={back}
           disabled={step === 0}
-          className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[12.5px] text-white/50 transition-colors hover:text-white/85 disabled:opacity-30"
+          className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[12.5px] text-droid-text-muted transition-colors hover:text-droid-text disabled:opacity-30"
         >
           <ArrowLeft className="h-3.5 w-3.5" />
           Back
@@ -92,7 +92,7 @@ export default function DnaInterview({
           {!last && (
             <button
               onClick={() => setStep((s) => Math.min(total - 1, s + 1))}
-              className="rounded-lg px-3 py-1.5 text-[12.5px] text-white/40 transition-colors hover:text-white/70"
+              className="rounded-lg px-3 py-1.5 text-[12.5px] text-droid-text-muted transition-colors hover:text-droid-text-secondary"
             >
               Skip
             </button>

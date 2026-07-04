@@ -73,7 +73,7 @@ export default function StudioFrameBody({ frame }: { frame: StudioFrame }) {
 
       {frame.status === 'loading' && hasUrl && (
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-[#0a0a0a]/70 backdrop-blur-sm">
-          <div className="flex items-center gap-2 text-[13px] text-white/70">
+          <div className="flex items-center gap-2 text-[13px] text-droid-text-secondary">
             <Loader2 className="h-4 w-4 animate-spin" />
             <span className="font-mono">connecting…</span>
           </div>
@@ -96,9 +96,9 @@ export default function StudioFrameBody({ frame }: { frame: StudioFrame }) {
 
 function EmptyFrame() {
   return (
-    <div className="flex h-full w-full items-center justify-center bg-[#0d0d0d]">
+    <div className="flex h-full w-full items-center justify-center bg-droid-surface">
       <div className="text-center">
-        <div className="font-mono text-[13px] uppercase tracking-[0.2em] text-white/25">
+        <div className="font-mono text-[13px] uppercase tracking-[0.2em] text-droid-text-muted">
           no source
         </div>
       </div>
@@ -116,16 +116,16 @@ function FailedFrame({
   onRetry: () => void;
 }) {
   return (
-    <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-[#0d0d0d] px-8 text-center">
+    <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-droid-surface px-8 text-center">
       <TriangleAlert className="h-6 w-6 text-[#ee6018]" />
-      <div className="text-[14px] font-medium text-white/80">This frame couldn’t load</div>
-      <div className="max-w-[280px] font-mono text-[11px] leading-relaxed text-white/40">
+      <div className="text-[14px] font-medium text-droid-text">This frame couldn’t load</div>
+      <div className="max-w-[280px] font-mono text-[11px] leading-relaxed text-droid-text-muted">
         {error ?? 'The dev server did not respond.'}
-        <div className="mt-1 truncate text-white/30">{url}</div>
+        <div className="mt-1 truncate text-droid-text-muted">{url}</div>
       </div>
       <button
         onClick={onRetry}
-        className="mt-1 rounded-md border border-white/15 px-3 py-1 text-[12px] text-white/70 transition-colors hover:border-[#ee6018]/60 hover:text-white"
+        className="mt-1 rounded-md border border-droid-border px-3 py-1 text-[12px] text-droid-text-secondary transition-colors hover:border-[#ee6018]/60 hover:text-droid-text"
       >
         Retry
       </button>
