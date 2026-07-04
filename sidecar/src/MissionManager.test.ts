@@ -934,6 +934,51 @@ test('daemon compaction notifications surface start and completion statuses', as
   assert.equal(session.compactions, 0);
 });
 
+test('a worker in-place compaction bumps the worker snapshot generation, not the mission summary', async () => {
+  const { manager, session, events, mission } = compactionHarness(10_000);
+  const internals = manager as unknown as CompactionNotificationInternals;
+
+  const handled = internals.handleCompactionNotification(
+    'app-compact',
+    'worker-1',
+    'worker',
+    session,
+    {
+      params: { notification: { type: 'session_compacted', summaryId: 's1', removedCount: 5 } },
+    },
+  );
+  assert.equal(handled, true);
+  // The post-compaction context refresh is fire-and-forget.
+  await new Promise((resolve) => setImmediate(resolve));
+
+  const ctx = events.find(
+    (e) => e.type === 'context.updated' && (e as { sessionId?: string }).sessionId === 'worker-1',
+  ) as { stats: { compactions?: number } } | undefined;
+  assert.equal(ctx?.stats.compactions, 1);
+  assert.equal(mission.summary.autoCompactions ?? 0, 0);
+});
+
+test('worker token readings never mark the mission summary exact; orchestrator readings do', () => {
+  const { manager, mission } = compactionHarness(10_000);
+  const internals = manager as unknown as {
+    applyNormalizedForAgent: (
+      missionId: string,
+      agentSessionId: string,
+      n: { tokens: { tokensIn: number; tokensOut: number; contextTokens: number } },
+    ) => void;
+  };
+
+  internals.applyNormalizedForAgent('app-compact', 'worker-1', {
+    tokens: { tokensIn: 5, tokensOut: 2, contextTokens: 7 },
+  });
+  assert.equal(mission.summary.contextAccuracy, undefined);
+
+  internals.applyNormalizedForAgent('app-compact', 'app-compact', {
+    tokens: { tokensIn: 5, tokensOut: 2, contextTokens: 7 },
+  });
+  assert.equal(mission.summary.contextAccuracy, 'exact');
+});
+
 test('non-compaction notifications are ignored by the compaction handler', () => {
   const { manager, session, events } = compactionHarness(10_000);
   const internals = manager as unknown as CompactionNotificationInternals;

@@ -218,6 +218,10 @@ export class MissionManager {
   >();
   private readonly usageOffsets = new Map<string, UsageOffset>();
   private readonly contextSnapshots = new Map<string, ContextStatsSnapshot>();
+  // In-place compactions completed per worker session; carried on that
+  // session's context snapshots so the meter's ratchet resets (workers have no
+  // summary-level generation counter of their own).
+  private readonly agentCompactions = new Map<string, number>();
   private readonly contextPollers = new Map<string, ReturnType<typeof setInterval>>();
   private readonly pendingNativeBrowserRequests = new Map<string, PendingNativeBrowserRequest>();
   private readonly browsers: BrowserSessionManager;
@@ -1539,11 +1543,12 @@ export class MissionManager {
       // spawn/completion, tokens, mission state) and errors still flow.
       if (mission.terminalAgents.has(agentSessionId) && isPostTerminalGeneration(n)) {
         const { transcript: _quarantined, ...sideEffects } = n;
-        if (hasNormalizedSideEffects(sideEffects)) this.applyNormalized(missionId, sideEffects);
+        if (hasNormalizedSideEffects(sideEffects))
+          this.applyNormalized(missionId, sideEffects, agentSessionId);
         return;
       }
     }
-    this.applyNormalized(missionId, n);
+    this.applyNormalized(missionId, n, agentSessionId);
   }
 
   private applySubagent(
@@ -1664,6 +1669,7 @@ export class MissionManager {
   private applyNormalized(
     missionId: string,
     n: NonNullable<ReturnType<typeof normalizeStreamEvent>>,
+    agentSessionId?: string,
   ): void {
     if (n.transcript) this.emitTranscript(n.transcript);
     if (n.features) {
@@ -1704,7 +1710,12 @@ export class MissionManager {
         m.summary.contextTokens = n.tokens.contextTokens;
         // Provider-reported usage of the last call is exactly what the daemon's
         // compaction threshold checks, so it is the authoritative reading.
-        if (n.tokens.contextTokens > 0) {
+        // Worker turns route through here too (they clobber the running totals
+        // by design), but a worker reading must never become the orchestrator
+        // summary's exact context or refreshContext would pin the mission
+        // meter to the worker's usage.
+        const fromOrchestrator = agentSessionId === undefined || agentSessionId === missionId;
+        if (fromOrchestrator && n.tokens.contextTokens > 0) {
           m.summary.contextAccuracy = 'exact';
           m.summary.contextUpdatedAt = new Date().toISOString();
         }
@@ -1802,6 +1813,13 @@ export class MissionManager {
           autoCompactions: (mission.summary.autoCompactions ?? 0) + 1,
         });
       }
+    } else {
+      // Worker in-place compaction: the ratchet reset travels on the worker's
+      // own context snapshots instead of the mission summary.
+      this.agentCompactions.set(
+        agentSessionId,
+        (this.agentCompactions.get(agentSessionId) ?? 0) + 1,
+      );
     }
     void this.refreshContext(agentSessionId, session).catch(() => {});
     return true;
@@ -2480,6 +2498,7 @@ export class MissionManager {
     const agent = mission?.agents.get(agentSessionId);
     if (!mission || !agent) return;
     mission.agents.delete(agentSessionId);
+    this.agentCompactions.delete(agentSessionId);
     this.stopContextPolling(agent.session.sessionId);
     agent.unsubscribe?.();
     try {
@@ -2652,6 +2671,10 @@ export class MissionManager {
             : undefined,
         };
       }
+      // Worker sessions have no mission summary to carry a compaction
+      // generation, so the snapshot carries it for the meter's ratchet reset.
+      if (!mission)
+        snapshot = { ...snapshot, compactions: this.agentCompactions.get(sessionId) ?? 0 };
       this.contextSnapshots.set(appSessionId, snapshot);
       this.emit({ type: 'context.updated', sessionId: appSessionId, stats: snapshot });
       if (mission) {

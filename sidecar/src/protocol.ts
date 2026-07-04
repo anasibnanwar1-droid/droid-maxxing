@@ -251,6 +251,9 @@ export interface ContextStatsSnapshot {
   accuracy: 'exact' | 'estimated';
   updatedAt: string;
   breakdown?: ContextBreakdownSnapshot;
+  // In-place compactions completed on this agent session; set for worker
+  // snapshots (missions carry their generation on the summary instead).
+  compactions?: number;
 }
 
 export interface ContextBreakdownCategory {
