@@ -968,15 +968,20 @@ test('worker token readings never mark the mission summary exact; orchestrator r
     ) => void;
   };
 
-  internals.applyNormalizedForAgent('app-compact', 'worker-1', {
-    tokens: { tokensIn: 5, tokensOut: 2, contextTokens: 7 },
-  });
-  assert.equal(mission.summary.contextAccuracy, undefined);
-
   internals.applyNormalizedForAgent('app-compact', 'app-compact', {
-    tokens: { tokensIn: 5, tokensOut: 2, contextTokens: 7 },
+    tokens: { tokensIn: 5, tokensOut: 2, contextTokens: 9 },
   });
   assert.equal(mission.summary.contextAccuracy, 'exact');
+  assert.equal(mission.summary.contextTokens, 9);
+
+  // A later worker turn must not clobber the orchestrator's context reading
+  // (value or accuracy); only the running totals move.
+  internals.applyNormalizedForAgent('app-compact', 'worker-1', {
+    tokens: { tokensIn: 50, tokensOut: 20, contextTokens: 70 },
+  });
+  assert.equal(mission.summary.contextTokens, 9);
+  assert.equal(mission.summary.contextAccuracy, 'exact');
+  assert.equal(mission.summary.tokensIn, 50);
 });
 
 test('non-compaction notifications are ignored by the compaction handler', () => {

@@ -1707,22 +1707,26 @@ export class MissionManager {
         const offset = this.usageOffsets.get(appSessionId);
         m.summary.tokensIn = n.tokens.tokensIn + (offset?.tokensIn ?? 0);
         m.summary.tokensOut = n.tokens.tokensOut + (offset?.tokensOut ?? 0);
-        m.summary.contextTokens = n.tokens.contextTokens;
-        // Provider-reported usage of the last call is exactly what the daemon's
-        // compaction threshold checks, so it is the authoritative reading.
-        // Worker turns route through here too (they clobber the running totals
-        // by design), but a worker reading must never become the orchestrator
-        // summary's exact context or refreshContext would pin the mission
-        // meter to the worker's usage.
+        // The summary's context reading belongs to the orchestrator session
+        // only. Worker turns still update the running totals above, but their
+        // context usage must never land on the summary: it would repaint the
+        // mission meter with the worker's window, and a leftover 'exact'
+        // marker would make refreshContext pin the meter there. Workers get
+        // their own context.updated snapshots keyed by their session id.
         const fromOrchestrator = agentSessionId === undefined || agentSessionId === missionId;
-        if (fromOrchestrator && n.tokens.contextTokens > 0) {
-          m.summary.contextAccuracy = 'exact';
-          m.summary.contextUpdatedAt = new Date().toISOString();
+        if (fromOrchestrator) {
+          m.summary.contextTokens = n.tokens.contextTokens;
+          // Provider-reported usage of the last call is exactly what the
+          // daemon's compaction threshold checks: the authoritative reading.
+          if (n.tokens.contextTokens > 0) {
+            m.summary.contextAccuracy = 'exact';
+            m.summary.contextUpdatedAt = new Date().toISOString();
+          }
+          const maxContextTokens = this.maxContextTokensForSummary(m.summary);
+          if (maxContextTokens === undefined) delete m.summary.maxContextTokens;
+          else m.summary.maxContextTokens = maxContextTokens;
+          this.emitContextEstimate(appSessionId, m.summary);
         }
-        const maxContextTokens = this.maxContextTokensForSummary(m.summary);
-        if (maxContextTokens === undefined) delete m.summary.maxContextTokens;
-        else m.summary.maxContextTokens = maxContextTokens;
-        this.emitContextEstimate(appSessionId, m.summary);
         this.emit({
           type: 'mission.tokens',
           missionId: appSessionId,
