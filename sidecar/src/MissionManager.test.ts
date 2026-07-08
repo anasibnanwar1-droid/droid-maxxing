@@ -14,6 +14,7 @@ import {
   compactionTokenLimitForModel,
   createCompactionSettingsForModel,
   daemonCompactionSettings,
+  resolvedCompactionTokenLimit,
   resumedCompactionTokenLimit,
 } from './compaction.js';
 import type { MissionSummary, ModelInfo, ServerEvent, WorkerHistoryLink } from './protocol.js';
@@ -279,6 +280,57 @@ test('resume threshold falls back to current defaults when init omits a compacti
     resumedCompactionTokenLimit(
       'model-a',
       { compactionTokenLimit: undefined, compactionTokenLimitPerModel: undefined },
+      { compactionTokenLimitPerModel: { 'model-a': 175_000 } },
+    ),
+    175_000,
+  );
+});
+
+test('a UI settings snapshot outranks session-exposed limits and CLI defaults', () => {
+  // Per-model UI override wins for its model...
+  assert.equal(
+    resolvedCompactionTokenLimit(
+      'model-a',
+      { compactionTokenLimit: 200_000, compactionTokenLimitPerModel: { 'model-a': 120_000 } },
+      { compactionTokenLimit: 400_000 },
+      { compactionTokenLimit: 300_000 },
+    ),
+    120_000,
+  );
+  // ...while other models follow the UI's global limit.
+  assert.equal(
+    resolvedCompactionTokenLimit(
+      'model-b',
+      { compactionTokenLimit: 200_000, compactionTokenLimitPerModel: { 'model-a': 120_000 } },
+      { compactionTokenLimit: 400_000 },
+      { compactionTokenLimit: 300_000 },
+    ),
+    200_000,
+  );
+});
+
+test('a UI-cleared global limit yields the daemon default instead of CLI defaults', () => {
+  assert.equal(
+    resolvedCompactionTokenLimit(
+      'model-a',
+      { compactionTokenLimit: null, compactionTokenLimitPerModel: {} },
+      {},
+      { compactionTokenLimit: 300_000, compactionTokenLimitPerModel: { 'model-a': 150_000 } },
+    ),
+    undefined,
+  );
+});
+
+test('without any UI signal the resolver follows exposed limits, then CLI defaults', () => {
+  assert.equal(
+    resolvedCompactionTokenLimit('model-a', {}, { compactionTokenLimit: 400_000 }, {}),
+    400_000,
+  );
+  assert.equal(
+    resolvedCompactionTokenLimit(
+      'model-a',
+      {},
+      {},
       { compactionTokenLimitPerModel: { 'model-a': 175_000 } },
     ),
     175_000,
@@ -567,13 +619,28 @@ test('maps mission worker settings to Droid mission settings', () => {
   );
 });
 
-test('maps orchestrator model changes with current compaction limits', () => {
+test('maps orchestrator model changes and mirrors the spec-mode model', () => {
+  // Spec-mode turns run on specModeModelId, so a model change must update both
+  // or spec sessions keep generating with the previously selected model.
   assert.deepEqual(
     createSessionSettingsForAgent('orchestrator', {
       modelId: 'model-b',
     }),
     {
       modelId: 'model-b',
+      specModeModelId: 'model-b',
+    },
+  );
+  assert.deepEqual(
+    createSessionSettingsForAgent('orchestrator', {
+      modelId: 'model-b',
+      reasoningEffort: 'high',
+    }),
+    {
+      modelId: 'model-b',
+      specModeModelId: 'model-b',
+      reasoningEffort: 'high',
+      specModeReasoningEffort: 'high',
     },
   );
 });
@@ -927,7 +994,8 @@ test('daemon compaction notifications surface start and completion statuses', as
     )
     .map((e) => (e as { event: { text: string; compactType?: string } }).event);
   assert.ok(statuses.some((s) => /Compacting conversation/i.test(s.text)));
-  assert.ok(statuses.some((s) => /Compaction complete.*12/i.test(s.text)));
+  // The completion line stays terse: no removed-count noise in the transcript.
+  assert.ok(statuses.some((s) => s.text === 'Compaction complete.'));
   // Both surface as auto so the UI folds them into the auto-compaction divider.
   assert.ok(statuses.every((s) => s.compactType === 'auto'));
   // The daemon compacts in place: no swap, no session id change, no compact RPC.

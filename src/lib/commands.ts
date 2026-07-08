@@ -125,6 +125,13 @@ export const updateAgentSettings = (p: {
   reasoningEffort?: ReasoningEffort;
 }) => bridge.send({ type: 'settings.agent.update', ...p });
 
+// Snapshot semantics: always sends both fields so the sidecar can distinguish
+// "cleared" (null) from "never configured" and retune every live session.
+export const updateCompactionSettings = (p: {
+  compactionTokenLimit: number | null;
+  compactionTokenLimitPerModel: Record<string, number>;
+}) => bridge.send({ type: 'settings.compaction.update', ...p });
+
 export const openBrowser = (p: {
   missionId: string;
   url: string;

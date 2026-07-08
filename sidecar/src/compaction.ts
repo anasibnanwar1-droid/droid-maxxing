@@ -73,19 +73,22 @@ export function createCompactionSettingsForModel(
   return limit !== undefined ? { compactionTokenLimit: limit } : {};
 }
 
-// Single derivation of the auto-compaction threshold, shared by mission
-// create, resume, and worker open so every session's trigger matches the
-// limit the ContextMeter shows (per-model override -> global default, clamped
-// to the model window).
-export function effectiveCompactionLimit(
+// Single derivation of the auto-compaction threshold, shared by resume,
+// model change, worker open, and settings changes so every session's trigger
+// matches the limit the ContextMeter shows. Precedence: the UI settings
+// snapshot when it carries any signal (per-model override -> global, where an
+// explicit null global means "cleared: use the daemon's model default"),
+// otherwise the session's own exposed limit, then CLI-file defaults.
+export function resolvedCompactionTokenLimit(
   modelId: string | undefined,
+  ui: CompactionTokenLimitPatch,
+  exposed: CompactionTokenLimitPatch,
   defaults: CompactionDefaults,
-  maxContextTokens: number | undefined,
 ): number | undefined {
-  return clampCompactionTokenLimit(
-    compactionTokenLimitForModel(modelId, {}, defaults),
-    maxContextTokens,
-  );
+  const uiLimit = compactionTokenLimitForModel(modelId, ui);
+  if (uiLimit !== undefined) return uiLimit;
+  if (ui.compactionTokenLimit !== undefined) return undefined;
+  return resumedCompactionTokenLimit(modelId, exposed, defaults);
 }
 
 // Settings pushed to a live daemon session so its own threshold check runs
@@ -194,10 +197,7 @@ export async function runCompaction(
       sessionUsable = true;
     }
     await sink.refresh();
-    sink.status(
-      `Compaction complete. Removed ${removedCount.toLocaleString()} messages.`,
-      compactType,
-    );
+    sink.status('Compaction complete.', compactType);
     return 'completed';
   } catch (err) {
     sink.error(err instanceof Error ? err.message : String(err));

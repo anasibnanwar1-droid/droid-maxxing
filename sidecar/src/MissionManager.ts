@@ -78,10 +78,10 @@ import {
   clampCompactionTokenLimit,
   createCompactionSettingsForModel,
   daemonCompactionSettings,
-  effectiveCompactionLimit,
   normalizeCompactionTokenLimit,
-  resumedCompactionTokenLimit,
+  resolvedCompactionTokenLimit,
   runCompaction,
+  type CompactionTokenLimitPatch,
   type CompactType,
 } from './compaction.js';
 
@@ -216,6 +216,10 @@ export class MissionManager {
     string,
     Partial<Record<ConfigurableAgent, AgentSettingPatch>>
   >();
+  // Latest compaction limit snapshot pushed by the app UI. It outranks CLI
+  // defaults so resume, model changes, and worker opens all follow the limits
+  // the Settings panel shows.
+  private uiCompactionSettings: CompactionTokenLimitPatch = {};
   private readonly usageOffsets = new Map<string, UsageOffset>();
   private readonly contextSnapshots = new Map<string, ContextStatsSnapshot>();
   // In-place compactions completed per worker session; carried on that
@@ -405,6 +409,9 @@ export class MissionManager {
         return;
       case 'settings.agent.update':
         await this.updateAgentSettings(cmd);
+        return;
+      case 'settings.compaction.update':
+        await this.updateCompactionSettings(cmd);
         return;
       case 'mission.setAutonomy':
         await this.setAutonomy(cmd.missionId, cmd.autonomy);
@@ -742,10 +749,56 @@ export class MissionManager {
     const modelId =
       mission.summary.modelId ??
       defaultModelForAgent('orchestrator', modeForSummary(mission.summary), defaults);
-    await this.enableDaemonAutoCompaction(
-      mission.session,
-      effectiveCompactionLimit(modelId, defaults, this.maxContextTokensForModel(modelId)),
+    await this.enableDaemonAutoCompaction(mission.session, await this.compactionLimit(modelId));
+  }
+
+  // The one derivation every live-session path shares: UI snapshot first, then
+  // an optional session-exposed limit, then CLI defaults, clamped to the
+  // model's context window.
+  private async compactionLimit(
+    modelId: string | undefined,
+    exposed: CompactionTokenLimitPatch = {},
+  ): Promise<number | undefined> {
+    const defaults = await this.getFactoryDefaults();
+    return clampCompactionTokenLimit(
+      resolvedCompactionTokenLimit(modelId, this.uiCompactionSettings, exposed, defaults),
+      this.maxContextTokensForModel(modelId),
     );
+  }
+
+  private agentModelId(
+    mission: Mission,
+    agentSessionId: string,
+    role: AgentRole,
+  ): string | undefined {
+    let roleModelId: string | undefined;
+    if (role === 'worker') roleModelId = mission.summary.workerModelId;
+    else if (role === 'validator') roleModelId = mission.summary.validatorModelId;
+    return (
+      mission.subagentSettings.get(agentSessionId)?.modelId ??
+      roleModelId ??
+      mission.summary.modelId
+    );
+  }
+
+  private async updateCompactionSettings(
+    cmd: Extract<ClientCommand, { type: 'settings.compaction.update' }>,
+  ): Promise<void> {
+    const next: CompactionTokenLimitPatch = {};
+    if (cmd.compactionTokenLimit !== undefined)
+      next.compactionTokenLimit = cmd.compactionTokenLimit;
+    if (cmd.compactionTokenLimitPerModel !== undefined)
+      next.compactionTokenLimitPerModel = cmd.compactionTokenLimitPerModel;
+    this.uiCompactionSettings = next;
+    // Retune every live session (orchestrators and opened agents) so concurrent
+    // chats on different models each follow their own effective limit.
+    for (const mission of this.missions.values()) {
+      await this.recomputeOrchestratorCompactionLimit(mission);
+      for (const [agentSessionId, agent] of mission.agents) {
+        const modelId = this.agentModelId(mission, agentSessionId, agent.role);
+        await this.enableDaemonAutoCompaction(agent.session, await this.compactionLimit(modelId));
+      }
+    }
   }
 
   // Best effort: turn on the daemon's own threshold check so it compacts the
@@ -938,20 +991,13 @@ export class MissionManager {
         createdAt: historical?.createdAt ?? now,
         updatedAt: now,
       });
-      // Auto-compaction threshold after resume: the SDK does not persist a
-      // per-session compactionTokenLimit, so honor one only if the resumed init
-      // settings expose it; otherwise the threshold follows current app defaults.
-      const resumeCompactionLimit = clampCompactionTokenLimit(
-        resumedCompactionTokenLimit(
-          summary.modelId,
-          {
-            compactionTokenLimit: init.settings?.compactionTokenLimit,
-            compactionTokenLimitPerModel: init.settings?.compactionTokenLimitPerModel,
-          },
-          defaults,
-        ),
-        this.maxContextTokensForSummary(summary),
-      );
+      // Auto-compaction threshold after resume: the current UI settings
+      // snapshot wins; failing that, honor a limit the resumed init settings
+      // expose, then CLI-file defaults.
+      const resumeCompactionLimit = await this.compactionLimit(summary.modelId, {
+        compactionTokenLimit: init.settings?.compactionTokenLimit,
+        compactionTokenLimitPerModel: init.settings?.compactionTokenLimitPerModel,
+      });
       await this.enableDaemonAutoCompaction(session, resumeCompactionLimit);
       const mission: Mission = this.createLiveMission(summary, session, mcp.servers, mcp.configs);
       this.subscribeOrchestratorCompaction(mission);
@@ -1225,7 +1271,15 @@ export class MissionManager {
       const compactionModel = cmd.compactionModel ?? defaults.compactionModel ?? 'current-model';
       const compactionSettings = createCompactionSettingsForModel(
         orchestratorModelId,
-        cmd,
+        {
+          compactionTokenLimit:
+            cmd.compactionTokenLimit !== undefined
+              ? cmd.compactionTokenLimit
+              : this.uiCompactionSettings.compactionTokenLimit,
+          compactionTokenLimitPerModel:
+            cmd.compactionTokenLimitPerModel ??
+            this.uiCompactionSettings.compactionTokenLimitPerModel,
+        },
         defaults,
         this.maxContextTokensForModel(orchestratorModelId),
       );
@@ -1239,9 +1293,17 @@ export class MissionManager {
         modelId: orchestratorModelId,
         autonomyLevel: autonomy,
         reasoningEffort: orchestratorReasoning,
-        specModeModelId: mode === 'spec' ? orchestratorModelId : defaults.specModelId,
+        // The chat shows one model; when the user picked one explicitly, spec
+        // turns must run on it too (spec mode uses specModeModelId), otherwise
+        // fall back to the CLI's spec defaults.
+        specModeModelId:
+          mode === 'spec' || cmd.modelId || cmd.reasoningEffort
+            ? orchestratorModelId
+            : defaults.specModelId,
         specModeReasoningEffort:
-          mode === 'spec' ? orchestratorReasoning : defaults.specReasoningEffort,
+          mode === 'spec' || cmd.modelId || cmd.reasoningEffort
+            ? orchestratorReasoning
+            : defaults.specReasoningEffort,
         decompSessionType: mode === 'agi' ? DecompSessionType.Orchestrator : undefined,
         workerModelId,
         workerReasoningEffort,
@@ -1798,13 +1860,7 @@ export class MissionManager {
       this.emitStatus(missionId, 'Compacting conversation...', 'auto', agentSessionId, role);
       return true;
     }
-    this.emitStatus(
-      missionId,
-      `Compaction complete. Removed ${compaction.removedCount.toLocaleString()} messages.`,
-      'auto',
-      agentSessionId,
-      role,
-    );
+    this.emitStatus(missionId, 'Compaction complete.', 'auto', agentSessionId, role);
     // In-place compaction keeps the session id, so the meter's ratchet only
     // resets when the generation counter moves; also drop the pre-compaction
     // exact reading so the refreshed estimate is not overridden by stale usage.
@@ -2120,6 +2176,7 @@ export class MissionManager {
     try {
       if (mode === 'spec') {
         await mission.session.enterSpecMode();
+        await this.alignSpecModeModel(mission);
       } else {
         await mission.session.updateSettings({ interactionMode: DroidInteractionMode.Auto });
       }
@@ -2129,6 +2186,21 @@ export class MissionManager {
         missionId: appSessionId,
         message: `Could not switch interaction mode: ${errMsg(err)}`,
       });
+    }
+  }
+
+  // Best effort: spec-mode turns run on specModeModelId, which the daemon may
+  // have seeded from the CLI spec default at create time. Align it with the
+  // chat's visible model so toggling into spec never switches models silently.
+  private async alignSpecModeModel(mission: Mission): Promise<void> {
+    const { modelId, reasoningEffort } = mission.summary;
+    if (!modelId) return;
+    const specSettings: Record<string, unknown> = { specModeModelId: modelId };
+    if (reasoningEffort) specSettings.specModeReasoningEffort = reasoningEffort;
+    try {
+      await mission.session.updateSettings(specSettings as never);
+    } catch {
+      /* older daemons may reject the setting; spec mode still works on its default model */
     }
   }
 
@@ -2146,12 +2218,28 @@ export class MissionManager {
     const patch: Partial<MissionSummary> = {};
     const next: Record<string, unknown> = {};
     if (settings.modelId !== undefined) {
-      if (settings.modelId) next.modelId = settings.modelId;
+      // A null model means "reset to Default". The daemon has no such notion,
+      // so resolve the actual default and push it; silently dropping the update
+      // would leave the daemon generating with the previously selected model.
+      // specModeModelId mirrors it because spec-mode turns run on that setting.
+      const summaryForMode = mission?.summary ?? historical;
+      const effectiveModelId =
+        settings.modelId ??
+        defaultModelForAgent(
+          'orchestrator',
+          summaryForMode ? modeForSummary(summaryForMode) : 'auto',
+          await this.getFactoryDefaults(),
+        );
+      if (effectiveModelId) {
+        next.modelId = effectiveModelId;
+        next.specModeModelId = effectiveModelId;
+      }
       patch.modelId = settings.modelId ?? undefined;
       patch.maxContextTokens = this.maxContextTokensForModel(settings.modelId ?? undefined);
     }
     if (settings.reasoningEffort) {
       next.reasoningEffort = settings.reasoningEffort;
+      next.specModeReasoningEffort = settings.reasoningEffort;
       patch.reasoningEffort = settings.reasoningEffort;
     }
     if (settings.autonomy) {
@@ -2255,28 +2343,15 @@ export class MissionManager {
           ...resolvedSettings,
         });
       }
-      const defaults = await this.getFactoryDefaults();
       // When the loaded agent session doesn't report its own model, fall back to
       // the role's configured model (not the orchestrator's), so per-model limits
       // and context-window clamps stay correct for differing worker/validator models.
-      const roleModelId =
-        role === 'worker'
-          ? mission.summary.workerModelId
-          : role === 'validator'
-            ? mission.summary.validatorModelId
-            : undefined;
-      const workerModelId = resolvedSettings.modelId ?? roleModelId ?? mission.summary.modelId;
+      const workerModelId =
+        resolvedSettings.modelId ?? this.agentModelId(mission, agentSessionId, role);
       // Workers auto-compact in place via the daemon's own threshold check,
       // using the worker model's effective limit (so differing worker/validator
       // models keep their own thresholds).
-      await this.enableDaemonAutoCompaction(
-        session,
-        effectiveCompactionLimit(
-          workerModelId,
-          defaults,
-          this.maxContextTokensForModel(workerModelId),
-        ),
-      );
+      await this.enableDaemonAutoCompaction(session, await this.compactionLimit(workerModelId));
       const agent: LiveAgent = {
         session,
         missionId: appSessionId,
@@ -3067,8 +3142,17 @@ export function createSessionSettingsForAgent(
 ): Record<string, unknown> {
   const next: Record<string, unknown> = {};
   if (agent === 'orchestrator') {
-    if (settings.modelId) next.modelId = settings.modelId;
-    if (settings.reasoningEffort !== undefined) next.reasoningEffort = settings.reasoningEffort;
+    // Spec-mode turns run on specModeModelId, so keep it in lockstep with the
+    // chat's single visible model; otherwise a spec session keeps generating
+    // with the model selected at create time (or the CLI spec default).
+    if (settings.modelId) {
+      next.modelId = settings.modelId;
+      next.specModeModelId = settings.modelId;
+    }
+    if (settings.reasoningEffort !== undefined) {
+      next.reasoningEffort = settings.reasoningEffort;
+      next.specModeReasoningEffort = settings.reasoningEffort;
+    }
     return next;
   }
 

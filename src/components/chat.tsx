@@ -92,20 +92,9 @@ export function CompactingIndicator() {
 }
 
 /* ── Compaction divider — persistent marker once compaction has completed ── */
-export function CompactionDivider({
-  compactType,
-  removedCount,
-}: {
-  compactType?: 'auto' | 'manual';
-  removedCount?: number;
-}) {
+export function CompactionDivider({ compactType }: { compactType?: 'auto' | 'manual' }) {
   const manual = compactType === 'manual';
-  const label =
-    removedCount && removedCount > 0
-      ? `Context compacted · ${removedCount.toLocaleString()} earlier message${removedCount === 1 ? '' : 's'} summarized`
-      : manual
-        ? 'Session compacted'
-        : 'Context automatically compacted';
+  const label = manual ? 'Session compacted' : 'Context automatically compacted';
   return (
     <div
       className={`flex items-center gap-3 py-1 ${manual ? 'text-droid-text-secondary' : 'text-droid-text-muted'}`}
@@ -1145,8 +1134,7 @@ const FeedItemView = memo(function FeedItemView({
       );
     case 'status': {
       const text = item.event.text ?? '';
-      if (item.event.kind === 'compaction')
-        return <CompactionDivider compactType="auto" removedCount={item.event.removedCount} />;
+      if (item.event.kind === 'compaction') return <CompactionDivider compactType="auto" />;
       if (compacting) return <CompactingIndicator />;
       if (isCompactionCompleteStatus(text))
         return <CompactionDivider compactType={item.event.compactType} />;

@@ -1,5 +1,6 @@
 import { createContext, useContext, useReducer, ReactNode, useEffect } from 'react';
 import { bridge } from '../lib/bridge';
+import { updateCompactionSettings } from '../lib/commands';
 import {
   clearDesignMode,
   setDesignMode,
@@ -1951,6 +1952,17 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     state.sidebarCollapsed,
     state.specMode,
   ]);
+
+  // Keep the sidecar's compaction-limit snapshot in sync so live sessions,
+  // resumes, and model changes all follow these limits. The bridge queues
+  // commands until the socket opens, so the mount-time push is safe, and the
+  // FACTORY_DEFAULTS seed re-fires this effect with the merged values.
+  useEffect(() => {
+    updateCompactionSettings({
+      compactionTokenLimit: state.compactionTokenLimit ?? null,
+      compactionTokenLimitPerModel: state.compactionTokenLimitPerModel,
+    });
+  }, [state.compactionTokenLimit, state.compactionTokenLimitPerModel]);
 
   useEffect(() => {
     const unsub = bridge.subscribe((ev) => {

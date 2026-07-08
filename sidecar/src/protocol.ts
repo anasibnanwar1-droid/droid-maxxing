@@ -556,6 +556,14 @@ export type ClientCommand =
       modelId?: string | null;
       reasoningEffort?: ReasoningEffort;
     }
+  | {
+      // Snapshot of the app's compaction limit settings (global + per-model).
+      // A null global limit means the user cleared it (use the daemon's
+      // model-dependent default rather than any CLI-file value).
+      type: 'settings.compaction.update';
+      compactionTokenLimit?: number | null;
+      compactionTokenLimitPerModel?: Record<string, number>;
+    }
   | { type: 'mission.setAutonomy'; missionId: string; autonomy: Autonomy }
   | { type: 'mission.setInteractionMode'; missionId: string; mode: SessionInteractionMode }
   | {

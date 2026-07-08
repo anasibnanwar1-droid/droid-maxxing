@@ -569,6 +569,11 @@ export type ClientCommand =
       modelId?: string | null;
       reasoningEffort?: ReasoningEffort;
     }
+  | {
+      type: 'settings.compaction.update';
+      compactionTokenLimit?: number | null;
+      compactionTokenLimitPerModel?: Record<string, number>;
+    }
   | { type: 'mission.setAutonomy'; missionId: string; autonomy: Autonomy }
   | { type: 'mission.setInteractionMode'; missionId: string; mode: SessionInteractionMode }
   | {
