@@ -357,11 +357,14 @@ export class HistoryIndex {
       );
     `);
     // Databases created before the column existed; ADD COLUMN throws when it
-    // is already present, so the failure is the idempotence check.
+    // is already present, so that failure is the idempotence check. Anything
+    // else (locked db, I/O error) must surface, or the missing column only
+    // shows up later as a confusing "no such column" from syncSummaries.
     try {
       this.db.exec('ALTER TABLE app_sessions ADD COLUMN auto_compactions INTEGER');
-    } catch {
-      /* column already exists */
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (!/duplicate column/i.test(message)) throw err;
     }
   }
 

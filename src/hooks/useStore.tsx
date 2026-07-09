@@ -1956,10 +1956,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   // Keep the sidecar's compaction-limit snapshot in sync so live sessions,
   // resumes, and model changes all follow these limits. The bridge queues
   // commands until the socket opens, so the mount-time push is safe, and the
-  // FACTORY_DEFAULTS seed re-fires this effect with the merged values.
+  // FACTORY_DEFAULTS seed re-fires this effect with the merged values. An
+  // undefined limit only means "cleared" when the user actually stored one;
+  // on a cold mount the field is omitted so the sidecar keeps following
+  // CLI-file defaults instead of treating first launch as an explicit clear.
   useEffect(() => {
     updateCompactionSettings({
-      compactionTokenLimit: state.compactionTokenLimit ?? null,
+      compactionTokenLimit:
+        state.compactionTokenLimit ?? (hasStoredCompactionTokenLimit() ? null : undefined),
       compactionTokenLimitPerModel: state.compactionTokenLimitPerModel,
     });
   }, [state.compactionTokenLimit, state.compactionTokenLimitPerModel]);
