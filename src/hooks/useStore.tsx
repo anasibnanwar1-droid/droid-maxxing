@@ -817,8 +817,14 @@ function sanitizeAgentConfig(config: AgentConfig, models: ModelInfo[]): AgentCon
 
 function sanitizeAgent(config: AgentModelConfig, models: ModelInfo[]): AgentModelConfig {
   if (!config.modelId) return config;
+  // Empty catalog (still loading / failed refresh) must never wipe a user pick —
+  // that was the "model picker stuck on default" bug: MODELS_LIST with [] or a
+  // catalog missing a custom GLM id cleared orchestrator.modelId back to Default.
+  if (models.length === 0) return config;
   const model = models.find((item) => item.id === config.modelId);
-  if (!model) return { modelId: undefined, reasoning: config.reasoning };
+  // Unknown id (custom model not yet in the CLI help parse, race, etc.): keep it.
+  // The runtime accepts any modelId the droid CLI knows; the UI should not second-guess.
+  if (!model) return config;
   const supported = model.supportedReasoningEfforts;
   if (supported?.length && !supported.includes(config.reasoning)) {
     return { modelId: config.modelId, reasoning: model.defaultReasoningEffort ?? supported[0] };
