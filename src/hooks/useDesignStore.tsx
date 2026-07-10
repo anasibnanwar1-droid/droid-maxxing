@@ -93,6 +93,8 @@ export type DesignAction =
   // Adopt an existing normal chat as the design session for this cwd (e.g. when
   // the user opens the studio with a chat already selected).
   | { type: 'ADOPT_SESSION'; cwd: string; missionId: string }
+  // Switch the active design thread for a cwd (or clear it to start a new one).
+  | { type: 'SET_SESSION'; cwd: string; missionId: string | null }
   | { type: 'BRIDGE_EVENT'; event: ServerEvent };
 
 const initialState: DesignState = {
@@ -235,6 +237,18 @@ function reducer(state: DesignState, action: DesignAction): DesignState {
         ...state,
         sessions: { ...state.sessions, [action.cwd]: action.missionId },
       };
+    case 'SET_SESSION': {
+      if (action.missionId == null) {
+        if (!(action.cwd in state.sessions)) return state;
+        const sessions = { ...state.sessions };
+        delete sessions[action.cwd];
+        return { ...state, sessions };
+      }
+      return {
+        ...state,
+        sessions: { ...state.sessions, [action.cwd]: action.missionId },
+      };
+    }
     case 'BRIDGE_EVENT':
       return applyEvent(state, action.event);
   }

@@ -1,7 +1,9 @@
+import type { MutableRefObject } from 'react';
 import { Laptop, Monitor, Smartphone, Tablet, X } from 'lucide-react';
 import type { BrowserViewportMode } from '../../types/bridge';
-import { useStudioCanvas } from './StudioCanvasContext';
+import { useStudioCanvas, type StudioCanvasState } from './StudioCanvasContext';
 import StudioSettingsMenu from './StudioSettingsMenu';
+import ThreadHistoryMenu from './ThreadHistoryMenu';
 
 const VIEWPORTS: { mode: BrowserViewportMode; icon: typeof Monitor; label: string }[] = [
   { mode: 'desktop', icon: Monitor, label: 'Desktop' },
@@ -14,10 +16,12 @@ export default function TopBar({
   projectName,
   cwd,
   onClose,
+  canvasCache,
 }: {
   projectName: string;
   cwd: string;
   onClose: () => void;
+  canvasCache: MutableRefObject<Record<string, StudioCanvasState>>;
 }) {
   const { studio, studioDispatch } = useStudioCanvas();
   const selectedIds = studio.selectedFrameIds;
@@ -76,6 +80,7 @@ export default function TopBar({
             </button>
           ))}
         </div>
+        <ThreadHistoryMenu cwd={cwd} canvasCache={canvasCache} />
         <StudioSettingsMenu />
         <button
           onClick={onClose}

@@ -1,6 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { listDnaLibraries, readDesignDna, scanComponentRegistry } from '../../lib/commands';
-import { useStudioCanvas, type StudioTool } from './StudioCanvasContext';
+import {
+  useStudioCanvas,
+  type StudioCanvasState,
+  type StudioTool,
+} from './StudioCanvasContext';
 import { usePreviewFrames } from './usePreviewFrames';
 import AgentPanel from './AgentPanel';
 import TopBar from './TopBar';
@@ -25,6 +29,8 @@ export default function StudioShell({
 }) {
   const { studioDispatch } = useStudioCanvas();
   const [addFrameOpen, setAddFrameOpen] = useState(false);
+  // Per-thread canvas snapshots: switching history restores what was left open.
+  const canvasCache = useRef<Record<string, StudioCanvasState>>({});
   const projectName = cwd.split('/').pop() || 'project';
   usePreviewFrames(cwd);
 
@@ -57,7 +63,9 @@ export default function StudioShell({
       }
     };
     window.addEventListener('keydown', onKey);
-    return () => { window.removeEventListener('keydown', onKey); };
+    return () => {
+      window.removeEventListener('keydown', onKey);
+    };
   }, [studioDispatch]);
 
   return (
@@ -65,17 +73,36 @@ export default function StudioShell({
       <AgentPanel cwd={cwd} />
 
       <div className="relative flex min-w-0 flex-1 flex-col">
-        <TopBar projectName={projectName} cwd={cwd} onClose={onClose} />
+        <TopBar
+          projectName={projectName}
+          cwd={cwd}
+          onClose={onClose}
+          canvasCache={canvasCache}
+        />
         <div className="relative min-h-0 flex-1">
-          <StudioCanvas onRequestAddFrame={() => { setAddFrameOpen(true); }} />
+          <StudioCanvas
+            onRequestAddFrame={() => {
+              setAddFrameOpen(true);
+            }}
+          />
 
           <div className="absolute left-3 top-1/2 z-20 -translate-y-1/2">
-            <ToolRail onRequestAddFrame={() => { setAddFrameOpen(true); }} />
+            <ToolRail
+              onRequestAddFrame={() => {
+                setAddFrameOpen(true);
+              }}
+            />
           </div>
 
           <SelectionContextPanel />
 
-          {addFrameOpen && <AddFrameDialog onClose={() => { setAddFrameOpen(false); }} />}
+          {addFrameOpen && (
+            <AddFrameDialog
+              onClose={() => {
+                setAddFrameOpen(false);
+              }}
+            />
+          )}
         </div>
       </div>
     </div>

@@ -79,7 +79,9 @@ export type StudioCanvasAction =
   | { type: 'TOGGLE_FRAME'; id: string; additive: boolean }
   | { type: 'ADD_SELECTION'; selection: StudioSelection; additive: boolean }
   | { type: 'REMOVE_SELECTION'; id: string }
-  | { type: 'CLEAR_SELECTION' };
+  | { type: 'CLEAR_SELECTION' }
+  // Restore a snapshot when switching design threads (per-thread canvas).
+  | { type: 'HYDRATE'; state: StudioCanvasState };
 
 export interface NewFrame {
   name: string;
@@ -233,9 +235,29 @@ function reducer(state: StudioCanvasState, action: StudioCanvasAction): StudioCa
       return { ...state, selection: state.selection.filter((s) => s.id !== action.id) };
     case 'CLEAR_SELECTION':
       return { ...state, selection: [] };
+    case 'HYDRATE':
+      return {
+        ...action.state,
+        // Always drop interactive mode on restore — the iframe needs a fresh attach.
+        interactingFrameId: null,
+      };
     default:
       return state;
   }
+}
+
+export function emptyStudioCanvasState(): StudioCanvasState {
+  return {
+    view: { ...DEFAULT_VIEW },
+    tool: 'select',
+    leftTab: 'agent',
+    defaultMode: 'desktop',
+    frames: [],
+    selectedFrameIds: [],
+    selection: [],
+    settings: { interactOnDoubleClick: true },
+    interactingFrameId: null,
+  };
 }
 
 const StudioCanvasContext = createContext<{
