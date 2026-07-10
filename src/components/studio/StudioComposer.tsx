@@ -37,6 +37,9 @@ export default function StudioComposer({
   disabledReason,
   streaming,
   onStop,
+  sessionModelId,
+  sessionReasoning,
+  onModelChange,
 }: {
   text: string;
   onTextChange: (value: string) => void;
@@ -44,11 +47,17 @@ export default function StudioComposer({
   disabledReason?: string;
   streaming?: boolean;
   onStop?: () => void;
+  /** Live session model (when a design chat already exists). */
+  sessionModelId?: string;
+  sessionReasoning?: ReasoningEffort;
+  /** Apply model/reasoning immediately to the live design session. */
+  onModelChange?: (modelId?: string, reasoningEffort?: ReasoningEffort) => void;
 }) {
   const { studio, studioDispatch } = useStudioCanvas();
   const { state } = useStore();
-  const [modelId, setModelId] = useState<string | undefined>(undefined);
-  const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort | undefined>(undefined);
+  // Local picks for a brand-new chat; once a session exists, prefer its model.
+  const [localModelId, setLocalModelId] = useState<string | undefined>(undefined);
+  const [localReasoning, setLocalReasoning] = useState<ReasoningEffort | undefined>(undefined);
   const [reasoningOpen, setReasoningOpen] = useState(false);
   const [count, setCount] = useState(1);
   const [countOpen, setCountOpen] = useState(false);
@@ -56,6 +65,9 @@ export default function StudioComposer({
   const fileRef = useRef<HTMLInputElement>(null);
   const { images, addFiles, onPaste, remove: removeImage, clear: clearImages } =
     useImageAttachments();
+
+  const modelId = sessionModelId ?? localModelId;
+  const reasoningEffort = sessionReasoning ?? localReasoning;
 
   const selectedFrame =
     studio.selectedFrameIds.length === 1
@@ -75,8 +87,17 @@ export default function StudioComposer({
 
   // Keep height in sync when the text is set externally (e.g. a suggestion).
   useEffect(grow, [text]);
-  // A newly picked model may not support the current effort — fall back to its default.
-  useEffect(() => { setReasoningEffort(undefined); }, [modelId]);
+
+  const pickModel = (next?: string) => {
+    setLocalModelId(next);
+    setLocalReasoning(undefined);
+    onModelChange?.(next, undefined);
+  };
+
+  const pickReasoning = (next: ReasoningEffort) => {
+    setLocalReasoning(next);
+    onModelChange?.(modelId, next);
+  };
 
   const submit = () => {
     if (!canSend) return;
@@ -156,14 +177,14 @@ export default function StudioComposer({
         <div className="space-y-1.5 px-2.5 pb-2.5 pt-1">
           <div className="flex flex-wrap items-center gap-1.5">
             {/* Model selector — fed by the real Droid CLI catalog */}
-            <StudioModelPicker value={modelId} onChange={setModelId} />
+            <StudioModelPicker value={modelId} onChange={pickModel} />
             {/* Reasoning effort — shown when the picked model exposes a choice */}
             {efforts.length > 1 && (
               <Selector
                 open={reasoningOpen}
                 setOpen={setReasoningOpen}
                 value={reasoningEffort ?? selectedModel?.defaultReasoningEffort ?? 'auto'}
-                onPick={(v) => { setReasoningEffort(v as ReasoningEffort); }}
+                onPick={(v) => { pickReasoning(v as ReasoningEffort); }}
                 options={efforts}
                 width="w-32"
                 icon={<Gauge className="h-3 w-3" />}

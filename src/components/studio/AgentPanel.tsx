@@ -22,7 +22,8 @@ export default function AgentPanel({ cwd }: { cwd: string }) {
   const { studio, studioDispatch } = useStudioCanvas();
   const [text, setText] = useState('');
   const tab = studio.leftTab;
-  const { sessionId, transcript, send } = useDesignSession(cwd);
+  const { sessionId, transcript, send, setModel, modelId, reasoningEffort } =
+    useDesignSession(cwd);
   const streaming = !!(sessionId && state.missions[sessionId]?.streaming);
 
   const handleSubmit = (instruction: string, opts: SendOptions) => {
@@ -68,6 +69,9 @@ export default function AgentPanel({ cwd }: { cwd: string }) {
             onSend={handleSubmit}
             streaming={streaming}
             onStop={() => { if (sessionId) interruptMission(sessionId); }}
+            sessionModelId={modelId}
+            sessionReasoning={reasoningEffort}
+            onModelChange={setModel}
           />
         </>
       )}
