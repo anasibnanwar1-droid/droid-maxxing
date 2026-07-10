@@ -1,8 +1,26 @@
 import { useEffect, useState } from 'react';
-import { BookOpen, Check, MessagesSquare, RefreshCw, ScanLine } from 'lucide-react';
+import {
+  BookOpen,
+  Check,
+  MessagesSquare,
+  RefreshCw,
+  Save,
+  ScanLine,
+  Trash2,
+} from 'lucide-react';
 import { useDesignStore } from '../../hooks/useDesignStore';
-import { applyDnaLibrary, renderDesignPreview, scanDesignDna, writeDesignDna } from '../../lib/commands';
-import type { DnaLibrarySummary } from '../../types/bridge';
+import {
+  applyDnaLibrary,
+  applySavedDna,
+  deleteSavedDna,
+  finalizeDesignDna,
+  listSavedDna,
+  readDesignDna,
+  renderDesignPreview,
+  scanDesignDna,
+  writeDesignDna,
+} from '../../lib/commands';
+import type { DnaLibrarySummary, SavedDnaEntry } from '../../types/bridge';
 import { useStudioCanvas } from './StudioCanvasContext';
 import { useDesignSession } from './useDesignSession';
 import { FontLine, Header, Swatches } from './DnaPrimitives';
@@ -21,14 +39,18 @@ export default function DnaShelf({ cwd }: { cwd: string }) {
   const dna = design.dna[cwd];
   const draft = design.drafts[cwd];
   const libraries = design.libraries;
+  const saved = design.savedDna[cwd] ?? [];
+  const activeId = design.activeDnaId[cwd] ?? dna?.activeSavedId ?? null;
   const hasCurrent = !!dna?.design.exists;
   const currentColors = dna?.tokens ? Object.values(dna.tokens.colors) : [];
 
   const { studioDispatch } = useStudioCanvas();
-  const { send } = useDesignSession(cwd);
+  const { send, sessionId } = useDesignSession(cwd);
   const [dismissed, setDismissed] = useState<string | null>(null);
   const [scanning, setScanning] = useState(false);
   const [interview, setInterview] = useState(false);
+  const [finalizing, setFinalizing] = useState(false);
+  const [finalizeName, setFinalizeName] = useState('');
   const showDraft = !!draft && dismissed !== draft.content;
 
   // Clear the scanning state once a fresh draft lands for this project.
@@ -36,10 +58,42 @@ export default function DnaShelf({ cwd }: { cwd: string }) {
     if (draft) setScanning(false);
   }, [draft?.content]);
 
+  // Pull saved directions + current DNA whenever this shelf mounts for a cwd.
+  useEffect(() => {
+    if (!cwd) return;
+    readDesignDna(cwd);
+    listSavedDna(cwd);
+  }, [cwd]);
+
+  // When the design session goes idle, re-read DNA — the agent may have written
+  // DESIGN.md via file tools (not design.dna.write), so the shelf would otherwise
+  // stay stale ("doesn't come as selected").
+  const streaming = !!(sessionId && design.sessions[cwd]); // session exists; streaming checked via store in AgentPanel
+  useEffect(() => {
+    if (!cwd || !sessionId) return;
+    // Soft re-fetch on session attach; AgentPanel's streaming edge is the real
+    // idle signal, but a mount refresh already covers most cases.
+    const t = setTimeout(() => readDesignDna(cwd), 400);
+    return () => clearTimeout(t);
+  }, [cwd, sessionId, streaming]);
+
   const scan = () => {
     setScanning(true);
     setDismissed(null);
     scanDesignDna(cwd);
+  };
+
+  const openFinalize = () => {
+    const fallback =
+      cwd.split(/[/\\]/).filter(Boolean).pop()?.replace(/[-_]+/g, ' ') ?? 'Direction';
+    setFinalizeName(fallback);
+    setFinalizing(true);
+  };
+
+  const commitFinalize = () => {
+    const name = finalizeName.trim() || 'Direction';
+    finalizeDesignDna(cwd, name, { source: 'manual' });
+    setFinalizing(false);
   };
 
   return (
@@ -107,13 +161,49 @@ export default function DnaShelf({ cwd }: { cwd: string }) {
             )}
             {dna?.tokens?.fonts && <FontLine fonts={dna.tokens.fonts} />}
             {dna?.tokens && (
-              <button
-                onClick={() => renderDesignPreview(cwd)}
-                className="mt-3 inline-flex items-center gap-1.5 rounded-lg bg-[#ee6018] px-3 py-1.5 text-[12px] font-medium text-black transition-colors hover:bg-[#ff6a1e]"
-              >
-                <BookOpen className="h-3.5 w-3.5" />
-                Generate brand book
-              </button>
+              <div className="mt-3 flex flex-wrap items-center gap-1.5">
+                <button
+                  onClick={() => renderDesignPreview(cwd)}
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-[#ee6018] px-3 py-1.5 text-[12px] font-medium text-black transition-colors hover:bg-[#ff6a1e]"
+                >
+                  <BookOpen className="h-3.5 w-3.5" />
+                  Generate brand book
+                </button>
+                <button
+                  onClick={openFinalize}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-droid-border px-3 py-1.5 text-[12px] text-droid-text-secondary transition-colors hover:border-[#ee6018]/50 hover:text-droid-text"
+                >
+                  <Save className="h-3.5 w-3.5" />
+                  Keep this direction
+                </button>
+              </div>
+            )}
+            {finalizing && (
+              <div className="mt-3 flex items-center gap-1.5 rounded-lg border border-droid-border bg-droid-elevated p-2">
+                <input
+                  autoFocus
+                  value={finalizeName}
+                  onChange={(e) => setFinalizeName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') commitFinalize();
+                    if (e.key === 'Escape') setFinalizing(false);
+                  }}
+                  placeholder="Name this direction"
+                  className="min-w-0 flex-1 bg-transparent px-1.5 text-[12.5px] text-droid-text placeholder:text-droid-text-muted focus:outline-none"
+                />
+                <button
+                  onClick={commitFinalize}
+                  className="rounded-md bg-[#ee6018] px-2.5 py-1 text-[11.5px] font-medium text-black"
+                >
+                  Save
+                </button>
+                <button
+                  onClick={() => setFinalizing(false)}
+                  className="rounded-md px-2 py-1 text-[11.5px] text-droid-text-muted hover:text-droid-text"
+                >
+                  Cancel
+                </button>
+              </div>
             )}
           </div>
         ) : (
@@ -125,6 +215,23 @@ export default function DnaShelf({ cwd }: { cwd: string }) {
         <Header title="Motion" />
         <MotionPreview colors={dna?.tokens?.colors} />
       </div>
+
+      {saved.length > 0 && (
+        <div>
+          <Header title="Your directions" />
+          <div className="space-y-2">
+            {saved.map((entry) => (
+              <SavedDnaCard
+                key={entry.id}
+                entry={entry}
+                selected={activeId === entry.id}
+                onApply={() => applySavedDna(cwd, entry.id)}
+                onDelete={() => deleteSavedDna(cwd, entry.id)}
+              />
+            ))}
+          </div>
+        </div>
+      )}
 
       <div>
         <Header title="Starting points" />
@@ -197,6 +304,64 @@ function LibraryCard({ lib, onApply }: { lib: DnaLibrarySummary; onApply: () => 
       </div>
       <Swatches colors={lib.colors} />
       {lib.fonts.length > 0 && <FontLine fonts={{ sans: lib.fonts[0], display: lib.fonts[1] }} />}
+    </div>
+  );
+}
+
+function SavedDnaCard({
+  entry,
+  selected,
+  onApply,
+  onDelete,
+}: {
+  entry: SavedDnaEntry;
+  selected: boolean;
+  onApply: () => void;
+  onDelete: () => void;
+}) {
+  const colors = Object.values(entry.tokens.colors ?? {}).slice(0, 8);
+  return (
+    <div
+      className={`group rounded-xl border p-3 transition-colors ${
+        selected
+          ? 'border-[#ee6018]/50 bg-[#ee6018]/[0.08]'
+          : 'border-droid-border bg-white/[0.02] hover:border-droid-border'
+      }`}
+    >
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <div className="flex items-center gap-1.5">
+            <span className="text-[12.5px] font-medium text-droid-text">{entry.name}</span>
+            {selected && (
+              <span className="rounded-full bg-[#ee6018]/20 px-1.5 py-0.5 text-[9.5px] font-medium uppercase tracking-wide text-[#f0a060]">
+                Selected
+              </span>
+            )}
+          </div>
+          {entry.tagline && (
+            <div className="mt-0.5 truncate text-[11px] text-droid-text-muted">{entry.tagline}</div>
+          )}
+        </div>
+        <div className="flex shrink-0 items-center gap-1">
+          {!selected && (
+            <button
+              onClick={onApply}
+              className="flex items-center gap-1 rounded-md border border-droid-border px-2 py-1 text-[11px] text-droid-text-secondary opacity-0 transition-all group-hover:opacity-100 hover:border-[#ee6018]/50 hover:text-droid-text"
+            >
+              <Check className="h-3 w-3" />
+              Apply
+            </button>
+          )}
+          <button
+            onClick={onDelete}
+            title="Remove saved direction"
+            className="flex h-6 w-6 items-center justify-center rounded-md text-droid-text-muted opacity-0 transition-all group-hover:opacity-100 hover:bg-white/[0.06] hover:text-[#e0806a]"
+          >
+            <Trash2 className="h-3 w-3" />
+          </button>
+        </div>
+      </div>
+      {colors.length > 0 && <Swatches colors={colors} />}
     </div>
   );
 }

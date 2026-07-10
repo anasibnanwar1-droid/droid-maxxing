@@ -236,6 +236,32 @@ export const listDnaLibraries = () => bridge.send({ type: 'design.dna.libraries'
 export const applyDnaLibrary = (cwd: string, libraryId: string) =>
   bridge.send({ type: 'design.dna.applyLibrary', cwd, libraryId });
 
+export const finalizeDesignDna = (
+  cwd: string,
+  name: string,
+  opts?: {
+    tagline?: string;
+    source?: 'scan' | 'interview' | 'library' | 'manual';
+    sourceLibraryId?: string;
+  },
+) =>
+  bridge.send({
+    type: 'design.dna.finalize',
+    cwd,
+    name,
+    tagline: opts?.tagline,
+    source: opts?.source ?? 'manual',
+    sourceLibraryId: opts?.sourceLibraryId,
+  });
+
+export const listSavedDna = (cwd: string) => bridge.send({ type: 'design.dna.savedList', cwd });
+
+export const applySavedDna = (cwd: string, id: string) =>
+  bridge.send({ type: 'design.dna.savedApply', cwd, id });
+
+export const deleteSavedDna = (cwd: string, id: string) =>
+  bridge.send({ type: 'design.dna.savedDelete', cwd, id });
+
 export const readValidatorConfig = (cwd: string) =>
   bridge.send({ type: 'design.validator.readConfig', cwd });
 

@@ -15,6 +15,7 @@ import type {
   DnaLibrarySummary,
   DnaState,
   PrototypeInfo,
+  SavedDnaEntry,
   ServerEvent,
   ValidatorConfig,
   ValidatorReport,
@@ -57,6 +58,9 @@ export interface DesignState {
   dna: Record<string, DnaState>;
   drafts: Record<string, DnaDraft>;
   libraries: DnaLibrarySummary[];
+  // User-finalized DNA directions (Libraries tab), keyed by cwd.
+  savedDna: Record<string, SavedDnaEntry[]>;
+  activeDnaId: Record<string, string | null>;
   validatorConfigs: Record<string, ValidatorConfig>;
   validatorRuns: Record<string, ValidatorRunStatus>;
   reports: Record<string, ValidatorReport>;
@@ -75,6 +79,9 @@ export type DesignAction =
   | { type: 'CLEAR_ERROR' }
   | { type: 'CLEAR_GIT_RESULT'; cwd: string }
   | { type: 'EXPECT_SESSION'; clientRef: string; cwd: string }
+  // Adopt an existing normal chat as the design session for this cwd (e.g. when
+  // the user opens the studio with a chat already selected).
+  | { type: 'ADOPT_SESSION'; cwd: string; missionId: string }
   | { type: 'BRIDGE_EVENT'; event: ServerEvent };
 
 const initialState: DesignState = {
@@ -86,6 +93,8 @@ const initialState: DesignState = {
   dna: {},
   drafts: {},
   libraries: [],
+  savedDna: {},
+  activeDnaId: {},
   validatorConfigs: {},
   validatorRuns: {},
   reports: {},
@@ -105,6 +114,12 @@ function applyEvent(state: DesignState, ev: ServerEvent): DesignState {
       return { ...state, drafts: { ...state.drafts, [ev.draft.cwd]: ev.draft } };
     case 'design.dna.libraries':
       return { ...state, libraries: ev.libraries };
+    case 'design.dna.saved':
+      return {
+        ...state,
+        savedDna: { ...state.savedDna, [ev.cwd]: ev.items },
+        activeDnaId: { ...state.activeDnaId, [ev.cwd]: ev.activeId },
+      };
     case 'design.validator.config':
       return {
         ...state,
@@ -188,6 +203,11 @@ function reducer(state: DesignState, action: DesignAction): DesignState {
       return {
         ...state,
         expected: { ...state.expected, [action.clientRef]: action.cwd },
+      };
+    case 'ADOPT_SESSION':
+      return {
+        ...state,
+        sessions: { ...state.sessions, [action.cwd]: action.missionId },
       };
     case 'BRIDGE_EVENT':
       return applyEvent(state, action.event);
