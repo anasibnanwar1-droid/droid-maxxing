@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { useStore } from '../../hooks/useStore';
 import { useDesignStore } from '../../hooks/useDesignStore';
+import { prepareDesignWorkspace } from '../../lib/commands';
 import { StudioCanvasProvider } from '../studio/StudioCanvasContext';
 import StudioShell from '../studio/StudioShell';
 import StudioMark from '../studio/StudioMark';
@@ -10,12 +11,20 @@ import StudioMark from '../studio/StudioMark';
  * DROIDEX Studio — a full-screen, agent-native design surface: an infinite live
  * canvas of frames with a project agent chat. Opened via the Sidebar entry or
  * ⌘⇧D; closed with Escape. State lives in a self-contained canvas context.
+ *
+ * The studio resolves an isolated design workspace (git worktree on
+ * droidex/design when possible) so the agent never writes into the live tree
+ * the user's dev server is watching.
  */
 export default function DesignStudio() {
   const { state, dispatch } = useStore();
   const { design, designDispatch } = useDesignStore();
   const activeMission = state.activeMissionId ? state.missions[state.activeMissionId] : null;
-  const cwd = activeMission?.cwd ?? state.workspaceCwds[0] ?? '';
+  // Live project path (the user's open workspace / active chat).
+  const liveCwd = activeMission?.cwd ?? state.workspaceCwds[0] ?? '';
+  // Prefer the isolated worktree once prepared; fall back to live until ready.
+  const workspace = liveCwd ? design.workspaces[liveCwd] : undefined;
+  const cwd = workspace?.path || liveCwd;
 
   useEffect(() => {
     if (!design.studioOpen) return;
@@ -23,8 +32,17 @@ export default function DesignStudio() {
       if (e.key === 'Escape') designDispatch({ type: 'CLOSE_STUDIO' });
     };
     window.addEventListener('keydown', onKey);
-    return () => { window.removeEventListener('keydown', onKey); };
+    return () => {
+      window.removeEventListener('keydown', onKey);
+    };
   }, [design.studioOpen, designDispatch]);
+
+  // Prepare the isolated design workspace when the studio opens for a project.
+  useEffect(() => {
+    if (!design.studioOpen || !liveCwd) return;
+    if (design.workspaces[liveCwd]) return;
+    prepareDesignWorkspace(liveCwd);
+  }, [design.studioOpen, liveCwd, design.workspaces]);
 
   // The native browser is an OS layer painted above the DOM; hide it while the
   // full-screen studio is up or it renders over the canvas.
@@ -48,11 +66,17 @@ export default function DesignStudio() {
             <StudioCanvasProvider>
               <StudioShell
                 cwd={cwd}
-                onClose={() => { designDispatch({ type: 'CLOSE_STUDIO' }); }}
+                onClose={() => {
+                  designDispatch({ type: 'CLOSE_STUDIO' });
+                }}
               />
             </StudioCanvasProvider>
           ) : (
-            <EmptyState onClose={() => { designDispatch({ type: 'CLOSE_STUDIO' }); }} />
+            <EmptyState
+              onClose={() => {
+                designDispatch({ type: 'CLOSE_STUDIO' });
+              }}
+            />
           )}
         </motion.div>
       )}

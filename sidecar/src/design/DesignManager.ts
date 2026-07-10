@@ -30,6 +30,10 @@ import {
 import { extractTokensFromItem } from './referenceExtract.js';
 import { scanComponentRegistry } from './registryScan.js';
 import { formatSwapPrompt, type SwapReplacement } from './swapPrompt.js';
+import {
+  prepareDesignWorkspace,
+  type WorkspaceInfo,
+} from './isolatedWorkspace.js';
 import type { ValidatorReport } from './types.js';
 import { readValidatorConfig, writeValidatorConfig } from './validator/config.js';
 import { formatFindingsPrompt, runValidator, type ValidatorBrowser } from './validator/runner.js';
@@ -45,6 +49,8 @@ type DesignCommand = Extract<ClientCommand, { type: `design.${string}` }>;
 
 export class DesignManager {
   private readonly lastReports = new Map<string, ValidatorReport>();
+  private readonly workspaces = new Map<string, WorkspaceInfo>();
+  private readonly workspaceInflight = new Map<string, Promise<WorkspaceInfo>>();
   private validatorRunning = false;
 
   constructor(private readonly options: DesignManagerOptions) {}
@@ -237,7 +243,40 @@ export class DesignManager {
         await this.renderBrandBookPreview(cmd.cwd);
         return;
       }
+      case 'design.workspace.prepare': {
+        const info = await this.prepareWorkspace(cmd.cwd);
+        this.options.emit({
+          type: 'design.workspace.ready',
+          liveCwd: info.liveCwd,
+          path: info.path,
+          isWorktree: info.isWorktree,
+          branch: info.branch,
+          note: info.note,
+        });
+        return;
+      }
     }
+  }
+
+  // Resolve (and cache) an isolated design workspace for the live project path.
+  // Git repos get a linked worktree on droidex/design; non-git projects work in place.
+  private async prepareWorkspace(liveCwd: string): Promise<WorkspaceInfo> {
+    const cached = this.workspaces.get(liveCwd);
+    if (cached) return cached;
+    const inflight = this.workspaceInflight.get(liveCwd);
+    if (inflight) return inflight;
+    const promise = prepareDesignWorkspace(liveCwd)
+      .then((info) => {
+        this.workspaces.set(liveCwd, info);
+        this.workspaceInflight.delete(liveCwd);
+        return info;
+      })
+      .catch((error) => {
+        this.workspaceInflight.delete(liveCwd);
+        throw error;
+      });
+    this.workspaceInflight.set(liveCwd, promise);
+    return promise;
   }
 
   // Render the project's DNA into a designed brand-guidelines page, serve it from

@@ -61,6 +61,17 @@ export interface DesignState {
   // User-finalized DNA directions (Libraries tab), keyed by cwd.
   savedDna: Record<string, SavedDnaEntry[]>;
   activeDnaId: Record<string, string | null>;
+  // Isolated design workspace (worktree path) keyed by the live project cwd.
+  workspaces: Record<
+    string,
+    {
+      liveCwd: string;
+      path: string;
+      isWorktree: boolean;
+      branch?: string;
+      note?: string;
+    }
+  >;
   validatorConfigs: Record<string, ValidatorConfig>;
   validatorRuns: Record<string, ValidatorRunStatus>;
   reports: Record<string, ValidatorReport>;
@@ -95,6 +106,7 @@ const initialState: DesignState = {
   libraries: [],
   savedDna: {},
   activeDnaId: {},
+  workspaces: {},
   validatorConfigs: {},
   validatorRuns: {},
   reports: {},
@@ -119,6 +131,20 @@ function applyEvent(state: DesignState, ev: ServerEvent): DesignState {
         ...state,
         savedDna: { ...state.savedDna, [ev.cwd]: ev.items },
         activeDnaId: { ...state.activeDnaId, [ev.cwd]: ev.activeId },
+      };
+    case 'design.workspace.ready':
+      return {
+        ...state,
+        workspaces: {
+          ...state.workspaces,
+          [ev.liveCwd]: {
+            liveCwd: ev.liveCwd,
+            path: ev.path,
+            isWorktree: ev.isWorktree,
+            branch: ev.branch,
+            note: ev.note,
+          },
+        },
       };
     case 'design.validator.config':
       return {

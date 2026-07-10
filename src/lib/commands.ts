@@ -309,3 +309,6 @@ export const commitDesignChange = (cwd: string, message: string) =>
 
 export const renderDesignPreview = (cwd: string) =>
   bridge.send({ type: 'design.preview.render', cwd });
+
+export const prepareDesignWorkspace = (cwd: string) =>
+  bridge.send({ type: 'design.workspace.prepare', cwd });
