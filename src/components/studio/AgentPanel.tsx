@@ -10,6 +10,7 @@ import ThreadBody from './ThreadBody';
 import SessionThread from './SessionThread';
 import ComponentShelf from './ComponentShelf';
 import DnaShelf from './DnaShelf';
+import ThreadHistoryMenu from './ThreadHistoryMenu';
 
 const TABS: { id: StudioLeftTab; label: string; icon: typeof MessageSquare }[] = [
   { id: 'agent', label: 'Agent', icon: MessageSquare },
@@ -17,13 +18,22 @@ const TABS: { id: StudioLeftTab; label: string; icon: typeof MessageSquare }[] =
   { id: 'libraries', label: 'Libraries', icon: Palette },
 ];
 
-export default function AgentPanel({ cwd }: { cwd: string }) {
+export default function AgentPanel({
+  cwd,
+  sessionKey,
+}: {
+  cwd: string;
+  /** Stable project key for design.sessions (live path). */
+  sessionKey: string;
+}) {
   const { state } = useStore();
   const { studio, studioDispatch } = useStudioCanvas();
   const [text, setText] = useState('');
   const tab = studio.leftTab;
-  const { sessionId, transcript, send, setModel, modelId, reasoningEffort } =
-    useDesignSession(cwd);
+  const { sessionId, transcript, send, setModel, modelId, reasoningEffort } = useDesignSession(
+    cwd,
+    sessionKey,
+  );
   const streaming = !!(sessionId && state.missions[sessionId]?.streaming);
 
   const handleSubmit = (instruction: string, opts: SendOptions) => {
@@ -49,6 +59,10 @@ export default function AgentPanel({ cwd }: { cwd: string }) {
             {t.label}
           </button>
         ))}
+        {/* Icon-only history next to Libraries so earlier threads are obvious. */}
+        <div className="ml-auto">
+          <ThreadHistoryMenu cwd={cwd} sessionKey={sessionKey} variant="tab" />
+        </div>
       </div>
 
       {tab === 'agent' && (
@@ -60,15 +74,15 @@ export default function AgentPanel({ cwd }: { cwd: string }) {
               <ThreadBody messages={[]} onPickSuggestion={setText} />
             )}
           </div>
-          {/* The agent's clarifying question, docked inline above the composer
-              (not the full-screen global modal). */}
           {state.pendingQuestion?.missionId === sessionId && <AskUserModal inline />}
           <StudioComposer
             text={text}
             onTextChange={setText}
             onSend={handleSubmit}
             streaming={streaming}
-            onStop={() => { if (sessionId) interruptMission(sessionId); }}
+            onStop={() => {
+              if (sessionId) interruptMission(sessionId);
+            }}
             sessionModelId={modelId}
             sessionReasoning={reasoningEffort}
             onModelChange={setModel}

@@ -66,6 +66,7 @@ export default function DesignStudio() {
             <StudioCanvasProvider>
               <StudioShell
                 cwd={cwd}
+                sessionKey={liveCwd}
                 onClose={() => {
                   designDispatch({ type: 'CLOSE_STUDIO' });
                 }}

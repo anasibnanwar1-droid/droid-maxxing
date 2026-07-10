@@ -1,11 +1,11 @@
-import { useMemo, useState, type MutableRefObject } from 'react';
+import { useMemo, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { Check, History, Plus } from 'lucide-react';
 import { useStore } from '../../hooks/useStore';
 import { useDesignStore } from '../../hooks/useDesignStore';
 import { listMissions, loadMissionHistory } from '../../lib/commands';
-import type { StudioCanvasState } from './StudioCanvasContext';
 import { emptyStudioCanvasState, useStudioCanvas } from './StudioCanvasContext';
+import type { StudioCanvasState } from './StudioCanvasContext';
 
 function relativeTime(ts?: number): string {
   if (!ts) return '';
@@ -19,56 +19,89 @@ function relativeTime(ts?: number): string {
   return `${days}d ago`;
 }
 
+function threadKey(projectKey: string, missionId: string | null | undefined): string {
+  // Empty / null = intentional new thread. Never use || here — '' is falsy.
+  return missionId != null && missionId !== '' ? missionId : `__new__:${projectKey}`;
+}
+
+function snapshotCanvas(studio: StudioCanvasState): StudioCanvasState {
+  return {
+    ...studio,
+    frames: studio.frames.map((f) => ({ ...f })),
+    selectedFrameIds: [...studio.selectedFrameIds],
+    selection: studio.selection.map((s) => ({ ...s })),
+    view: { ...studio.view },
+    settings: { ...studio.settings },
+    interactingFrameId: null,
+  };
+}
+
 /**
- * Top-bar history control: open earlier design threads for this project, start
- * a new one, and restore each thread's canvas snapshot on switch.
+ * History control: open earlier design threads, start a new one, restore each
+ * thread's canvas from design.canvasByThread (store-backed so remounts keep it).
  */
 export default function ThreadHistoryMenu({
   cwd,
-  canvasCache,
+  sessionKey,
+  variant = 'icon',
 }: {
   cwd: string;
-  /** Mutable per-thread canvas snapshots shared with StudioShell. */
-  canvasCache: MutableRefObject<Record<string, StudioCanvasState>>;
+  sessionKey?: string;
+  variant?: 'icon' | 'tab';
 }) {
   const { state } = useStore();
   const { design, designDispatch } = useDesignStore();
   const { studio, studioDispatch } = useStudioCanvas();
   const [open, setOpen] = useState(false);
-  const activeId = design.sessions[cwd] || null;
+  const key = sessionKey || cwd;
+  // Distinguish intentional new thread ('') from "not set" (undefined).
+  const rawSession = design.sessions[key] ?? design.sessions[cwd];
+  const intentionalNew = rawSession === '';
+  const activeId = intentionalNew ? null : rawSession || null;
+
+  const projectCwds = useMemo(() => {
+    const set = new Set<string>([cwd, key].filter(Boolean));
+    for (const ws of Object.values(design.workspaces)) {
+      if (ws.liveCwd === key || ws.liveCwd === cwd || ws.path === cwd || ws.path === key) {
+        set.add(ws.liveCwd);
+        set.add(ws.path);
+      }
+    }
+    return set;
+  }, [cwd, key, design.workspaces]);
 
   const threads = useMemo(() => {
     return Object.values(state.missions)
       .filter(
         (m) =>
-          m.cwd === cwd &&
+          projectCwds.has(m.cwd) &&
           m.kind !== 'mission_orchestrator' &&
           (m.title === 'Design' || m.kind === 'chat' || m.kind === 'spec'),
       )
       .sort((a, b) => (b.updatedAt ?? b.createdAt ?? 0) - (a.updatedAt ?? a.createdAt ?? 0))
       .slice(0, 24);
-  }, [state.missions, cwd]);
+  }, [state.missions, projectCwds]);
 
   const openMenu = () => {
     setOpen(true);
-    // Refresh the mission list so older design chats show up.
-    listMissions({ workspaceCwds: cwd ? [cwd] : undefined, includePlainChats: true, limitPerWorkspace: 40 });
+    // Fire-and-forget list refresh; don't block the menu open.
+    const cwds = [...projectCwds];
+    listMissions({
+      workspaceCwds: cwds.length ? cwds : undefined,
+      includePlainChats: true,
+      limitPerWorkspace: 40,
+    });
   };
 
   const switchTo = (missionId: string) => {
-    // Snapshot the current canvas under the current thread key (or "new" if none).
-    const prevKey = activeId ?? `__new__:${cwd}`;
-    canvasCache.current[prevKey] = {
-      ...studio,
-      frames: studio.frames.map((f) => ({ ...f })),
-      selectedFrameIds: [...studio.selectedFrameIds],
-      selection: studio.selection.map((s) => ({ ...s })),
-      view: { ...studio.view },
-      settings: { ...studio.settings },
-      interactingFrameId: null,
-    };
-    designDispatch({ type: 'SET_SESSION', cwd, missionId });
-    const next = canvasCache.current[missionId] ?? emptyStudioCanvasState();
+    if (missionId === activeId) {
+      setOpen(false);
+      return;
+    }
+    const prevKey = threadKey(key, activeId);
+    designDispatch({ type: 'SAVE_CANVAS', threadKey: prevKey, state: snapshotCanvas(studio) });
+    designDispatch({ type: 'SET_SESSION', cwd: key, missionId });
+    const next = design.canvasByThread[missionId] ?? emptyStudioCanvasState();
     studioDispatch({ type: 'HYDRATE', state: next });
     if (!state.historyLoaded[missionId] && (state.transcripts[missionId]?.length ?? 0) === 0) {
       loadMissionHistory(missionId);
@@ -77,30 +110,35 @@ export default function ThreadHistoryMenu({
   };
 
   const startNew = () => {
-    const prevKey = activeId ?? `__new__:${cwd}`;
-    canvasCache.current[prevKey] = {
-      ...studio,
-      frames: studio.frames.map((f) => ({ ...f })),
-      selectedFrameIds: [...studio.selectedFrameIds],
-      selection: studio.selection.map((s) => ({ ...s })),
-      view: { ...studio.view },
-      settings: { ...studio.settings },
-      interactingFrameId: null,
-    };
-    designDispatch({ type: 'SET_SESSION', cwd, missionId: null });
-    studioDispatch({ type: 'HYDRATE', state: emptyStudioCanvasState() });
+    if (intentionalNew) {
+      setOpen(false);
+      return;
+    }
+    const prevKey = threadKey(key, activeId);
+    designDispatch({ type: 'SAVE_CANVAS', threadKey: prevKey, state: snapshotCanvas(studio) });
+    designDispatch({ type: 'SET_SESSION', cwd: key, missionId: null });
+    const next = design.canvasByThread[threadKey(key, null)] ?? emptyStudioCanvasState();
+    studioDispatch({ type: 'HYDRATE', state: next });
     setOpen(false);
   };
 
+  const trigger = (
+    <button
+      onClick={() => (open ? setOpen(false) : openMenu())}
+      title="Earlier threads & canvases"
+      className={
+        variant === 'tab'
+          ? 'flex h-7 w-7 items-center justify-center rounded-lg text-droid-text-muted transition-colors hover:bg-white/[0.06] hover:text-droid-text-secondary'
+          : 'no-drag flex h-7 w-7 items-center justify-center rounded-md text-droid-text-muted transition-colors hover:bg-white/10 hover:text-droid-text'
+      }
+    >
+      <History className="h-3.5 w-3.5" />
+    </button>
+  );
+
   return (
     <div className="relative">
-      <button
-        onClick={() => (open ? setOpen(false) : openMenu())}
-        title="Thread history"
-        className="no-drag flex h-7 w-7 items-center justify-center rounded-md text-droid-text-muted transition-colors hover:bg-white/10 hover:text-droid-text"
-      >
-        <History className="h-4 w-4" />
-      </button>
+      {trigger}
       <AnimatePresence>
         {open && (
           <>
@@ -110,7 +148,9 @@ export default function ThreadHistoryMenu({
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, y: 6, scale: 0.98 }}
               transition={{ type: 'spring', damping: 24, stiffness: 340 }}
-              className="no-drag absolute right-0 top-full z-40 mt-1.5 w-72 overflow-hidden rounded-xl border border-droid-border bg-droid-elevated shadow-2xl"
+              className={`no-drag absolute top-full z-40 mt-1.5 w-72 overflow-hidden rounded-xl border border-droid-border bg-droid-elevated shadow-2xl ${
+                variant === 'tab' ? 'left-0' : 'right-0'
+              }`}
             >
               <div className="flex items-center justify-between border-b border-droid-border px-2.5 py-2">
                 <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-droid-text-muted">
@@ -125,13 +165,13 @@ export default function ThreadHistoryMenu({
                 </button>
               </div>
               <div className="max-h-[280px] overflow-y-auto p-1">
-                {!activeId && (
+                {intentionalNew && (
                   <div className="flex items-center gap-2 rounded-lg bg-[#ee6018]/[0.1] px-2.5 py-2 text-[12px] text-[#f0a060]">
                     <Check className="h-3.5 w-3.5 shrink-0" />
                     New thread (not started)
                   </div>
                 )}
-                {threads.length === 0 && activeId == null && (
+                {threads.length === 0 && !activeId && !intentionalNew && (
                   <div className="px-2.5 py-3 text-center text-[11.5px] text-droid-text-muted">
                     No earlier design threads yet.
                   </div>

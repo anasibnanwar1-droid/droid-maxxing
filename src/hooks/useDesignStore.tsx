@@ -20,6 +20,7 @@ import type {
   ValidatorConfig,
   ValidatorReport,
 } from '../types/bridge';
+import type { StudioCanvasState } from '../components/studio/StudioCanvasContext';
 
 export interface ValidatorRunStatus {
   status: 'running' | 'done' | 'failed';
@@ -81,6 +82,9 @@ export interface DesignState {
   registry: Record<string, ComponentRegistryEntry[]>;
   gitResults: Record<string, GitCommitResult>;
   lastError: { cwd?: string; message: string } | null;
+  // Per-thread canvas snapshots (mission id or `__new__:<projectKey>`). Survives
+  // StudioShell remounts when the worktree path resolves, so switch restores frames.
+  canvasByThread: Record<string, StudioCanvasState>;
 }
 
 export type DesignAction =
@@ -95,6 +99,7 @@ export type DesignAction =
   | { type: 'ADOPT_SESSION'; cwd: string; missionId: string }
   // Switch the active design thread for a cwd (or clear it to start a new one).
   | { type: 'SET_SESSION'; cwd: string; missionId: string | null }
+  | { type: 'SAVE_CANVAS'; threadKey: string; state: StudioCanvasState }
   | { type: 'BRIDGE_EVENT'; event: ServerEvent };
 
 const initialState: DesignState = {
@@ -118,6 +123,7 @@ const initialState: DesignState = {
   registry: {},
   gitResults: {},
   lastError: null,
+  canvasByThread: {},
 };
 
 function applyEvent(state: DesignState, ev: ServerEvent): DesignState {
@@ -238,17 +244,20 @@ function reducer(state: DesignState, action: DesignAction): DesignState {
         sessions: { ...state.sessions, [action.cwd]: action.missionId },
       };
     case 'SET_SESSION': {
-      if (action.missionId == null) {
-        if (!(action.cwd in state.sessions)) return state;
-        const sessions = { ...state.sessions };
-        delete sessions[action.cwd];
-        return { ...state, sessions };
-      }
+      // null → empty string marks an intentional "new thread" so auto-adopt
+      // does not immediately reattach the main-window active chat.
+      const nextId = action.missionId ?? '';
+      if (state.sessions[action.cwd] === nextId) return state;
       return {
         ...state,
-        sessions: { ...state.sessions, [action.cwd]: action.missionId },
+        sessions: { ...state.sessions, [action.cwd]: nextId },
       };
     }
+    case 'SAVE_CANVAS':
+      return {
+        ...state,
+        canvasByThread: { ...state.canvasByThread, [action.threadKey]: action.state },
+      };
     case 'BRIDGE_EVENT':
       return applyEvent(state, action.event);
   }

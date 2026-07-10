@@ -12,33 +12,53 @@ import type { ReasoningEffort } from '../../types/bridge';
 
 /**
  * The project's design session — a normal chat (interactionMode 'auto', never
- * the mission orchestrator, so Mission Control never surfaces), keyed by cwd.
- * The first send creates it (the text becomes its goal); later sends continue it.
- * Its transcript streams back through the main store, so the studio can render it.
+ * the mission orchestrator). Sessions are keyed by `sessionKey` (the live project
+ * path) even when the agent process runs in an isolated worktree at `cwd`.
  *
- * When the studio opens with a normal chat already active for this cwd, we adopt
- * that mission as the design session so the same thread continues on the canvas.
+ * Empty string in design.sessions[key] means the user explicitly started a new
+ * thread — do not re-adopt the main-window active chat.
  */
-export function useDesignSession(cwd: string) {
-  const { state } = useStore();
+export function useDesignSession(cwd: string, sessionKey?: string) {
+  const { state, dispatch } = useStore();
   const { design, designDispatch } = useDesignStore();
-  const sessionId = design.sessions[cwd] || null;
+  const key = sessionKey || cwd;
+  const mapped = design.sessions[key] ?? design.sessions[cwd];
+  // '' = intentional new thread; missing key = not decided yet; id = active thread.
+  const intentionalNew = design.sessions[key] === '' || design.sessions[cwd] === '';
+  const sessionId = intentionalNew ? null : mapped || null;
+  const hasMapping = key in design.sessions || cwd in design.sessions;
   const transcript = sessionId ? (state.transcripts[sessionId] ?? []) : [];
   const mission = sessionId ? state.missions[sessionId] : null;
 
-  // Adopt the active normal chat into the studio when it matches this cwd and
-  // we don't already have a design session mapped.
+  // Auto-adopt only when we have never set a session for this project (first open).
+  // After New thread (sessions[key] === '') or an explicit switch, leave it alone.
   useEffect(() => {
-    if (!cwd || sessionId) return;
+    if (!cwd || hasMapping) return;
     const activeId = state.activeMissionId;
     if (!activeId) return;
     const active = state.missions[activeId];
-    if (!active || active.cwd !== cwd) return;
+    if (!active) return;
     if (active.kind === 'mission_orchestrator') return;
-    designDispatch({ type: 'ADOPT_SESSION', cwd, missionId: activeId });
-  }, [cwd, sessionId, state.activeMissionId, state.missions, designDispatch]);
+    const matches =
+      active.cwd === cwd ||
+      active.cwd === key ||
+      Object.values(design.workspaces).some(
+        (ws) =>
+          (ws.liveCwd === key || ws.liveCwd === cwd || ws.path === cwd) &&
+          (active.cwd === ws.liveCwd || active.cwd === ws.path),
+      );
+    if (!matches) return;
+    designDispatch({ type: 'ADOPT_SESSION', cwd: key, missionId: activeId });
+  }, [
+    cwd,
+    key,
+    hasMapping,
+    state.activeMissionId,
+    state.missions,
+    design.workspaces,
+    designDispatch,
+  ]);
 
-  // Load transcript history when we adopt / reopen a session that isn't warm.
   useEffect(() => {
     if (!sessionId) return;
     if (state.historyLoaded[sessionId]) return;
@@ -46,11 +66,28 @@ export function useDesignSession(cwd: string) {
     loadMissionHistory(sessionId);
   }, [sessionId, state.historyLoaded, state.transcripts]);
 
+  const echoUser = (missionId: string, text: string) => {
+    // Optimistic local bubble so the prompt is visible immediately — same pattern
+    // as PromptInput. Without this, design sends only appear after the sidecar
+    // stream (or not at all if history/seed races).
+    dispatch({
+      type: 'MISSION_TRANSCRIPT',
+      event: {
+        id: `local-${Date.now()}`,
+        missionId,
+        agentSessionId: 'user',
+        role: 'orchestrator',
+        ts: Date.now(),
+        kind: 'text',
+        text,
+        author: 'user',
+      },
+    });
+  };
+
   const send = (text: string, modelId?: string, reasoningEffort?: ReasoningEffort) => {
     if (!text.trim()) return;
     if (sessionId) {
-      // Apply model/reasoning to the live session before continuing the chat —
-      // otherwise the studio picker only affects brand-new creates.
       if (modelId !== undefined || reasoningEffort !== undefined) {
         updateAgentSettings({
           missionId: sessionId,
@@ -59,18 +96,29 @@ export function useDesignSession(cwd: string) {
           reasoningEffort,
         });
       }
+      echoUser(sessionId, text);
       sendToMission(sessionId, text);
       return;
     }
     const clientRef = newClientRef();
-    designDispatch({ type: 'EXPECT_SESSION', clientRef, cwd });
+    // Seed the first user bubble via pendingCompose so MISSION_CREATED shows it
+    // even before the stream starts (mirrors normal chat create path).
+    dispatch({
+      type: 'SET_PENDING_COMPOSE',
+      clientRef,
+      text,
+      skills: [],
+      files: [],
+    });
+    designDispatch({ type: 'EXPECT_SESSION', clientRef, cwd: key });
     createMission({
       clientRef,
       cwd,
       title: 'Design',
       goal: text,
       interactionMode: 'auto',
-      autonomy: 'medium',
+      // High autonomy so design turns don't stop for tool/MCP permission prompts.
+      autonomy: 'high',
       modelId,
       reasoningEffort,
     });
@@ -82,7 +130,7 @@ export function useDesignSession(cwd: string) {
       missionId: sessionId,
       agent: 'orchestrator',
       modelId: modelId ?? null,
-      reasoningEffort,
+      ...(reasoningEffort !== undefined ? { reasoningEffort } : {}),
     });
   };
 
