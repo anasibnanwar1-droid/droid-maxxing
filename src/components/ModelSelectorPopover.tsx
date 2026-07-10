@@ -184,16 +184,19 @@ export default function ModelSelectorPopover({
       modelId: modelId ?? null,
     });
 
-    // Snap reasoning to a value the new model actually supports.
+    // Snap reasoning to a value the new model actually supports — never leave a
+    // leftover level like "max" on a model that only exposes low/medium/high.
     const next = modelId ? source.find((x) => x.id === modelId) : undefined;
     const supported = next?.supportedReasoningEfforts;
-    if (supported?.length && !supported.includes(effReasoning)) {
-      updateReasoning(next?.defaultReasoningEffort ?? supported[supported.length - 1]);
-    } else if (
-      !supported?.length &&
-      next?.defaultReasoningEffort &&
-      effReasoning !== next.defaultReasoningEffort
-    ) {
+    if (supported?.length) {
+      if (!supported.includes(effReasoning)) {
+        updateReasoning(
+          next?.defaultReasoningEffort ??
+            supported[Math.min(supported.length - 1, 1)] ??
+            supported[0],
+        );
+      }
+    } else if (next?.defaultReasoningEffort && effReasoning !== next.defaultReasoningEffort) {
       updateReasoning(next.defaultReasoningEffort);
     }
   };

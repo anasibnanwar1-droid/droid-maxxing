@@ -67,8 +67,6 @@ export default function StudioComposer({
     useImageAttachments();
 
   const modelId = sessionModelId ?? localModelId;
-  const reasoningEffort = sessionReasoning ?? localReasoning;
-
   const selectedFrame =
     studio.selectedFrameIds.length === 1
       ? studio.frames.find((f) => f.id === studio.selectedFrameIds[0])
@@ -77,6 +75,13 @@ export default function StudioComposer({
   const canSend = text.trim().length > 0 || images.length > 0;
   const selectedModel = modelId ? state.models.find((m) => m.id === modelId) : undefined;
   const efforts = selectedModel?.supportedReasoningEfforts ?? [];
+  // Prefer local pick after a model switch; never show a level the model doesn't support
+  // (e.g. leftover "max" from the previous model).
+  const rawReasoning = localReasoning ?? sessionReasoning;
+  const reasoningEffort =
+    rawReasoning && efforts.length > 0 && !efforts.includes(rawReasoning)
+      ? (selectedModel?.defaultReasoningEffort ?? efforts[Math.min(efforts.length - 1, 1)] ?? efforts[0])
+      : rawReasoning ?? selectedModel?.defaultReasoningEffort;
 
   const grow = () => {
     const ta = taRef.current;
@@ -88,10 +93,30 @@ export default function StudioComposer({
   // Keep height in sync when the text is set externally (e.g. a suggestion).
   useEffect(grow, [text]);
 
+  // If the live session still carries an unsupported effort (after a model switch),
+  // snap it so the badge and the next send agree with the catalog.
+  useEffect(() => {
+    if (!sessionModelId || !sessionReasoning || efforts.length === 0) return;
+    if (efforts.includes(sessionReasoning)) return;
+    const snapped =
+      selectedModel?.defaultReasoningEffort ?? efforts[Math.min(efforts.length - 1, 1)] ?? efforts[0];
+    setLocalReasoning(snapped);
+    onModelChange?.(sessionModelId, snapped);
+  }, [sessionModelId, sessionReasoning, efforts, selectedModel?.defaultReasoningEffort, onModelChange]);
+
   const pickModel = (next?: string) => {
+    const model = next ? state.models.find((m) => m.id === next) : undefined;
+    const supported = model?.supportedReasoningEfforts ?? [];
+    const current = localReasoning ?? sessionReasoning;
+    const snapped =
+      supported.length === 0
+        ? (model?.defaultReasoningEffort ?? undefined)
+        : current && supported.includes(current)
+          ? current
+          : (model?.defaultReasoningEffort ?? supported[Math.min(supported.length - 1, 1)] ?? supported[0]);
     setLocalModelId(next);
-    setLocalReasoning(undefined);
-    onModelChange?.(next, undefined);
+    setLocalReasoning(snapped);
+    onModelChange?.(next, snapped);
   };
 
   const pickReasoning = (next: ReasoningEffort) => {
