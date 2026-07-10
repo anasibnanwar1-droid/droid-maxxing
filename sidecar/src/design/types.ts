@@ -30,6 +30,21 @@ export interface DnaState {
   design: DnaFileState;
   motion: DnaFileState;
   tokens?: DesignTokens;
+  /** Id of the saved DNA entry currently applied, if any. */
+  activeSavedId?: string | null;
+}
+
+/** A user-finalized design direction, re-applicable from the Libraries tab. */
+export interface SavedDnaEntry {
+  id: string;
+  name: string;
+  tagline?: string;
+  createdAt: string;
+  tokens: DesignTokens;
+  design: string;
+  motion: string;
+  source: 'scan' | 'interview' | 'library' | 'manual';
+  sourceLibraryId?: string;
 }
 
 export interface DnaLibrarySummary {

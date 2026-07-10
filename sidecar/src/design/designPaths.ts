@@ -17,6 +17,14 @@ export function referenceLibraryFile(cwd: string, baseDir?: string): string {
   return join(projectDesignDir(cwd, baseDir), 'library.json');
 }
 
+export function savedDnaFile(cwd: string, baseDir?: string): string {
+  return join(projectDesignDir(cwd, baseDir), 'saved-dna.json');
+}
+
+export function activeDnaFile(cwd: string, baseDir?: string): string {
+  return join(projectDesignDir(cwd, baseDir), 'active-dna.json');
+}
+
 export function referenceImageDir(cwd: string, baseDir?: string): string {
   return join(projectDesignDir(cwd, baseDir), 'images');
 }

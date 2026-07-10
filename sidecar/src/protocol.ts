@@ -10,6 +10,7 @@ import type {
   DnaLibrarySummary,
   DnaState,
   PrototypeInfo,
+  SavedDnaEntry,
   ValidatorConfig,
   ValidatorReport,
 } from './design/types.js';
@@ -23,6 +24,7 @@ export type {
   DnaLibrarySummary,
   DnaState,
   PrototypeInfo,
+  SavedDnaEntry,
   ValidatorConfig,
   ValidatorReport,
 } from './design/types.js';
@@ -705,6 +707,17 @@ export type ClientCommand =
   | { type: 'design.dna.scan'; cwd: string }
   | { type: 'design.dna.libraries' }
   | { type: 'design.dna.applyLibrary'; cwd: string; libraryId: string }
+  | {
+      type: 'design.dna.finalize';
+      cwd: string;
+      name: string;
+      tagline?: string;
+      source?: 'scan' | 'interview' | 'library' | 'manual';
+      sourceLibraryId?: string;
+    }
+  | { type: 'design.dna.savedList'; cwd: string }
+  | { type: 'design.dna.savedApply'; cwd: string; id: string }
+  | { type: 'design.dna.savedDelete'; cwd: string; id: string }
   | { type: 'design.validator.readConfig'; cwd: string }
   | { type: 'design.validator.writeConfig'; cwd: string; config: ValidatorConfig }
   | { type: 'design.validator.run'; cwd: string; missionId: string }
@@ -858,6 +871,12 @@ export type ServerEvent =
   | { type: 'design.dna.state'; state: DnaState }
   | { type: 'design.dna.draft'; draft: DnaDraft }
   | { type: 'design.dna.libraries'; libraries: DnaLibrarySummary[] }
+  | {
+      type: 'design.dna.saved';
+      cwd: string;
+      items: SavedDnaEntry[];
+      activeId: string | null;
+    }
   | { type: 'design.validator.config'; cwd: string; config: ValidatorConfig }
   | {
       type: 'design.validator.status';

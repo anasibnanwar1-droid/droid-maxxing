@@ -14,6 +14,14 @@ import { scanRepoForDna } from './dnaScan.js';
 import { commitDesignChange } from './gitCommit.js';
 import { listPrototypes } from './prototypes.js';
 import {
+  deleteSavedDna,
+  getActiveDnaId,
+  getSavedDna,
+  listSavedDna,
+  saveDnaEntry,
+  setActiveDna,
+} from './savedDna.js';
+import {
   deleteLibraryItem,
   getLibraryItem,
   listLibraryItems,
@@ -101,7 +109,34 @@ export class DesignManager {
         if (!library) throw new Error(`Unknown DNA library: ${cmd.libraryId}`);
         writeDnaFile(cmd.cwd, 'design', library.design);
         writeDnaFile(cmd.cwd, 'motion', library.motion);
+        // Applying a curated starter clears "this is my saved direction" until
+        // the user finalizes the result as their own entry.
+        setActiveDna(cmd.cwd, null);
         this.emitDnaState(cmd.cwd);
+        this.emitSavedDna(cmd.cwd);
+        return;
+      }
+      case 'design.dna.finalize': {
+        await this.finalizeDna(cmd);
+        return;
+      }
+      case 'design.dna.savedList':
+        this.emitSavedDna(cmd.cwd);
+        return;
+      case 'design.dna.savedApply': {
+        const entry = getSavedDna(cmd.cwd, cmd.id);
+        if (!entry) throw new Error(`No saved DNA entry ${cmd.id}.`);
+        writeDnaFile(cmd.cwd, 'design', entry.design);
+        writeDnaFile(cmd.cwd, 'motion', entry.motion);
+        setActiveDna(cmd.cwd, entry.id);
+        this.emitDnaState(cmd.cwd);
+        this.emitSavedDna(cmd.cwd);
+        return;
+      }
+      case 'design.dna.savedDelete': {
+        deleteSavedDna(cmd.cwd, cmd.id);
+        this.emitDnaState(cmd.cwd);
+        this.emitSavedDna(cmd.cwd);
         return;
       }
       case 'design.validator.readConfig':
@@ -279,8 +314,43 @@ export class DesignManager {
     return { ok: true, url, name: label };
   }
 
+  private async finalizeDna(
+    cmd: Extract<DesignCommand, { type: 'design.dna.finalize' }>,
+  ): Promise<void> {
+    const state = readDnaState(cmd.cwd);
+    if (!state.tokens) {
+      throw new Error(
+        'No design tokens yet — finish the DNA intake (or apply a starting point) before finalizing.',
+      );
+    }
+    if (!state.design.exists || !state.design.content.trim()) {
+      throw new Error('DESIGN.md is empty — nothing to finalize.');
+    }
+    saveDnaEntry({
+      cwd: cmd.cwd,
+      name: cmd.name,
+      tagline: cmd.tagline,
+      tokens: state.tokens,
+      design: state.design.content,
+      motion: state.motion.content,
+      source: cmd.source ?? 'manual',
+      sourceLibraryId: cmd.sourceLibraryId,
+    });
+    this.emitDnaState(cmd.cwd);
+    this.emitSavedDna(cmd.cwd);
+  }
+
   private emitDnaState(cwd: string): void {
     this.options.emit({ type: 'design.dna.state', state: readDnaState(cwd) });
+  }
+
+  private emitSavedDna(cwd: string): void {
+    this.options.emit({
+      type: 'design.dna.saved',
+      cwd,
+      items: listSavedDna(cwd),
+      activeId: getActiveDnaId(cwd),
+    });
   }
 
   private emitLibraryState(cwd: string): void {

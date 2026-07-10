@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { getActiveDnaId } from './savedDna.js';
 import { parseTokens } from './tokens.js';
 import type { DnaFileState, DnaState } from './types.js';
 
@@ -22,6 +23,7 @@ export function readDnaState(cwd: string): DnaState {
     design,
     motion,
     tokens: design.exists ? parseTokens(design.content) : undefined,
+    activeSavedId: getActiveDnaId(cwd),
   };
 }
 
