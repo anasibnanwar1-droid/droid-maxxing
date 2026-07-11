@@ -815,6 +815,10 @@ function GeneralSection() {
     (m) => !(m.id in state.compactionTokenLimitPerModel),
   );
   const modelLabel = (id: string) => state.models.find((m) => m.id === id)?.displayName ?? id;
+  const defaultLimitLabel =
+    state.compactionTokenLimit !== undefined
+      ? `the ${formatTokenLimit(state.compactionTokenLimit)}-token default limit`
+      : "Factory's model-dependent default limit";
 
   return (
     <div className="max-w-2xl mx-auto">
@@ -864,12 +868,13 @@ function GeneralSection() {
       {/* Per-model token limits */}
       <GroupLabel>Per-model token limits</GroupLabel>
       <p className="text-[12px] text-droid-text-muted mb-3">
-        Override the default compaction limit for specific models.
+        Override the compaction limit for specific models. Models without an override use{' '}
+        {defaultLimitLabel}.
       </p>
       <div className="rounded-xl border border-droid-border bg-droid-surface p-3">
         {overrideEntries.length === 0 && (
           <div className="text-[12px] text-droid-text-muted px-1 py-1.5">
-            No overrides — every model uses the default limit.
+            No overrides — every model uses {defaultLimitLabel}.
           </div>
         )}
 

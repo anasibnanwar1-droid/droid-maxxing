@@ -60,6 +60,10 @@ export function clampCompactionTokenLimit(
   return max === undefined ? limit : Math.min(limit, max);
 }
 
+export function daemonDefaultCompactionTokenLimit(maxContextTokens?: number): number {
+  return Math.min(normalizeCompactionTokenLimit(maxContextTokens) ?? 250_000, 250_000);
+}
+
 export function createCompactionSettingsForModel(
   modelId: string | undefined,
   settings: CompactionTokenLimitPatch,
@@ -73,45 +77,50 @@ export function createCompactionSettingsForModel(
   return limit !== undefined ? { compactionTokenLimit: limit } : {};
 }
 
-// Single derivation of the auto-compaction threshold, shared by mission
-// create, resume, and worker open so every session's trigger matches the
-// limit the ContextMeter shows (per-model override -> global default, clamped
-// to the model window).
-export function effectiveCompactionLimit(
+// Single derivation of the auto-compaction threshold, shared by resume,
+// model change, worker open, and settings changes so every session's trigger
+// matches the limit the ContextMeter shows. Precedence: the UI settings
+// snapshot when it carries any signal (per-model override -> global, where an
+// explicit null global means "cleared: use the daemon's model default" and an
+// explicit per-model map suppresses cleared CLI per-model overrides), otherwise
+// the session's own exposed limit, then CLI-file defaults.
+export function resolvedCompactionTokenLimit(
   modelId: string | undefined,
+  ui: CompactionTokenLimitPatch,
+  exposed: CompactionTokenLimitPatch,
   defaults: CompactionDefaults,
-  maxContextTokens: number | undefined,
 ): number | undefined {
-  return clampCompactionTokenLimit(
-    compactionTokenLimitForModel(modelId, {}, defaults),
-    maxContextTokens,
-  );
+  const uiLimit = compactionTokenLimitForModel(modelId, ui);
+  if (uiLimit !== undefined) return uiLimit;
+  if (ui.compactionTokenLimit !== undefined) return undefined;
+  if (ui.compactionTokenLimitPerModel !== undefined) {
+    return resumedCompactionTokenLimit(undefined, exposed, defaults);
+  }
+  return resumedCompactionTokenLimit(modelId, exposed, defaults);
+}
+
+// Settings pushed to a live daemon session so its own threshold check runs
+// auto-compaction in place (same session id) when usage crosses the limit.
+export interface DaemonCompactionSettings {
+  compactionThresholdCheckEnabled: boolean;
+  compactionTokenLimit?: number;
+}
+
+export function daemonCompactionSettings(limit: number | undefined): DaemonCompactionSettings {
+  const settings: DaemonCompactionSettings = { compactionThresholdCheckEnabled: true };
+  if (limit !== undefined) settings.compactionTokenLimit = limit;
+  return settings;
 }
 
 // ---------------------------------------------------------------------------
-// Unified runtime compaction layer. Every Droid session (the Mission Control
-// orchestrator and each worker/subagent alike) flows through this single path
-// after an idle turn. The daemon returns a new backing session id on success;
-// the owner adopts it via the optional `reload` hook (the orchestrator swaps
-// its backing session behind a stable app id; a worker re-keys itself to the
-// new id). A caller without a reload hook reports the swap as 'stale'.
+// Manual compaction layer (the /compact command and the session.compact RPC).
+// The daemon returns a new backing session id on success; the owner adopts it
+// via the optional `reload` hook (the orchestrator swaps its backing session
+// behind a stable app id). A caller without a reload hook reports the swap as
+// 'stale'. Automatic compaction never flows through here: the daemon's own
+// threshold check compacts in place and announces itself through the
+// compacting_conversation / session_compacted notifications.
 // ---------------------------------------------------------------------------
-
-export interface AutoCompactState {
-  compacting?: boolean;
-  effectiveCompactionTokenLimit?: number;
-}
-
-// The one threshold rule used by both the orchestrator and workers.
-export function autoCompactionDue(
-  state: AutoCompactState,
-  usedTokens: number | undefined,
-): boolean {
-  if (state.compacting) return false;
-  const limit = state.effectiveCompactionTokenLimit;
-  if (limit === undefined || limit <= 0) return false;
-  return usedTokens !== undefined && usedTokens > 0 && usedTokens >= limit;
-}
 
 export type CompactableSession = Pick<DroidSession, 'sessionId' | 'compactSession'>;
 
@@ -122,8 +131,8 @@ export interface CompactionSink {
   // Re-read context stats so the meter reflects the compacted window.
   refresh(): Promise<void>;
   // Invoked only when the SDK returns a different backing session id. The owner
-  // adopts it here (the orchestrator swaps its backing session; a worker
-  // re-keys itself). Omitted only by callers that cannot adopt a swap.
+  // adopts it here (the orchestrator swaps its backing session behind a stable
+  // app id). Omitted only by callers that cannot adopt a swap.
   reload?: (newSessionId: string, removedCount: number) => Promise<void>;
 }
 
@@ -175,11 +184,11 @@ export async function runCompaction(
     const removedCount = result.removedCount ?? 0;
     if (result.newSessionId && result.newSessionId !== session.sessionId) {
       if (!sink.reload) {
-        // The owner keeps a stable session id (workers) and cannot adopt a
-        // swapped backing id without re-keying. Surface it and signal the
-        // session is now stale so the caller can recover.
+        // The owner keeps a stable session id and cannot adopt a swapped
+        // backing id. Surface it and signal the session is now stale so the
+        // caller can recover.
         sink.error(
-          `daemon returned a new backing session (${result.newSessionId}); subagent sessions must compact in place to keep handoff addressing stable`,
+          `daemon returned a new backing session (${result.newSessionId}) that this caller cannot adopt`,
         );
         sink.status(
           'Compaction could not finish; continuing with the current conversation.',
@@ -194,10 +203,7 @@ export async function runCompaction(
       sessionUsable = true;
     }
     await sink.refresh();
-    sink.status(
-      `Compaction complete. Removed ${removedCount.toLocaleString()} messages.`,
-      compactType,
-    );
+    sink.status('Compaction complete.', compactType);
     return 'completed';
   } catch (err) {
     sink.error(err instanceof Error ? err.message : String(err));

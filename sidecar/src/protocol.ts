@@ -115,6 +115,9 @@ export interface MissionSummary {
   contextAccuracy?: 'exact' | 'estimated';
   contextUpdatedAt?: string;
   maxContextTokens?: number;
+  // In-place daemon auto-compactions completed on this session; the UI uses it
+  // (plus the swap chain length) as the compaction generation for meter resets.
+  autoCompactions?: number;
   createdAt: number;
   updatedAt: number;
 }
@@ -248,6 +251,9 @@ export interface ContextStatsSnapshot {
   accuracy: 'exact' | 'estimated';
   updatedAt: string;
   breakdown?: ContextBreakdownSnapshot;
+  // In-place compactions completed on this agent session; set for worker
+  // snapshots (missions carry their generation on the summary instead).
+  compactions?: number;
 }
 
 export interface ContextBreakdownCategory {
@@ -550,6 +556,14 @@ export type ClientCommand =
       modelId?: string | null;
       reasoningEffort?: ReasoningEffort;
     }
+  | {
+      // Snapshot of the app's explicitly configured compaction limits. A null
+      // global or empty per-model map means the user cleared that tier; omitted
+      // fields continue following CLI-file defaults.
+      type: 'settings.compaction.update';
+      compactionTokenLimit?: number | null;
+      compactionTokenLimitPerModel?: Record<string, number>;
+    }
   | { type: 'mission.setAutonomy'; missionId: string; autonomy: Autonomy }
   | { type: 'mission.setInteractionMode'; missionId: string; mode: SessionInteractionMode }
   | {
@@ -664,10 +678,6 @@ export type ServerEvent =
       reasoningEffort?: ReasoningEffort;
       toolUseId?: string;
     }
-  // A worker compacted and the daemon swapped its backing session id. The
-  // worker stays alive under the new id; clients must remap any state keyed by
-  // the old worker session id (worker list, transcript events, selection).
-  | { type: 'mission.worker.rekey'; missionId: string; oldSessionId: string; newSessionId: string }
   | {
       type: 'mission.tokens';
       missionId: string;

@@ -1,5 +1,6 @@
 import { createContext, useContext, useReducer, ReactNode, useEffect } from 'react';
 import { bridge } from '../lib/bridge';
+import { updateCompactionSettings } from '../lib/commands';
 import {
   clearDesignMode,
   setDesignMode,
@@ -93,9 +94,6 @@ export interface AppState {
   transcripts: Record<string, TranscriptEvent[]>;
   progress: Record<string, ProgressEntry[]>;
   workers: Record<string, WorkerInfo[]>; // subagents spawned per mission
-  // old worker session id -> new id, recorded on worker-compaction rekeys so
-  // views holding a worker id in local state can follow it to the new session.
-  workerRekeys: Record<string, string>;
   historyLoaded: Record<string, boolean>;
   // Cursor for the next older page of orchestrator scrollback per mission;
   // undefined/absent once the oldest compaction segment has been loaded.
@@ -165,7 +163,7 @@ export interface AppState {
   compactionModel: string;
 
   // Global default compaction token limit applied to every session. Undefined
-  // means "use the Factory/default model context window".
+  // means "use Factory's model-dependent default".
   compactionTokenLimit?: number;
   // Per-model overrides for the compaction token limit, keyed by model id.
   compactionTokenLimitPerModel: Record<string, number>;
@@ -222,7 +220,6 @@ type Action =
       role: AgentKind;
       status: 'opened' | 'running' | 'paused' | 'completed';
     }
-  | { type: 'MISSION_WORKER_REKEY'; missionId: string; oldSessionId: string; newSessionId: string }
   | {
       type: 'MISSION_TOKENS';
       missionId: string;
@@ -437,7 +434,7 @@ function saveCompactionModel(value: string): string {
 }
 
 // Only positive finite integers are valid token limits; anything else is
-// treated as "unset" (fall back to the model's default context window).
+// treated as "unset" (fall back to Factory's model-dependent default).
 function normalizeTokenLimit(value: unknown): number | undefined {
   const n = typeof value === 'number' ? value : Number(value);
   if (!Number.isFinite(n) || n <= 0) return undefined;
@@ -521,6 +518,23 @@ function normalizeTokenLimitRecord(
       .map(([id, limit]) => [id, normalizeTokenLimit(limit)])
       .filter((entry): entry is [string, number] => entry[1] !== undefined),
   );
+}
+
+export function compactionSettingsSnapshot(
+  state: Pick<AppState, 'compactionTokenLimit' | 'compactionTokenLimitPerModel'>,
+): {
+  compactionTokenLimit?: number | null;
+  compactionTokenLimitPerModel?: Record<string, number>;
+} {
+  const snapshot: {
+    compactionTokenLimit?: number | null;
+    compactionTokenLimitPerModel?: Record<string, number>;
+  } = {};
+  if (hasStoredCompactionTokenLimit())
+    snapshot.compactionTokenLimit = state.compactionTokenLimit ?? null;
+  if (hasStoredCompactionTokenLimitPerModel())
+    snapshot.compactionTokenLimitPerModel = state.compactionTokenLimitPerModel;
+  return snapshot;
 }
 
 export function applyFactoryCompactionDefaults(
@@ -682,7 +696,6 @@ export const initialState: AppState = {
   transcripts: {},
   progress: {},
   workers: {},
-  workerRekeys: {},
   historyLoaded: {},
   historyCursor: {},
   historyLoadingOlder: {},
@@ -890,13 +903,24 @@ function baseReducer(state: AppState, action: Action): AppState {
       };
 
     case 'MISSION_UPDATED': {
+      const previous = state.missions[action.mission.id];
       const m = applyMissionOverride(
         action.mission,
         state.missionSettingOverrides[action.mission.id],
       );
+      const previousCompactions =
+        (previous?.compactedFromSessionIds?.length ?? 0) + (previous?.autoCompactions ?? 0);
+      const nextCompactions = (m.compactedFromSessionIds?.length ?? 0) + (m.autoCompactions ?? 0);
+      const contextStats =
+        nextCompactions > previousCompactions && state.contextStats[m.id]
+          ? Object.fromEntries(
+              Object.entries(state.contextStats).filter(([sessionId]) => sessionId !== m.id),
+            )
+          : state.contextStats;
       return {
         ...state,
         missions: { ...state.missions, [m.id]: m },
+        contextStats,
       };
     }
 
@@ -965,75 +989,6 @@ function baseReducer(state: AppState, action: Action): AppState {
         ];
       }
       return { ...state, workers: { ...state.workers, [mid]: next } };
-    }
-
-    case 'MISSION_WORKER_REKEY': {
-      const { missionId: mid, oldSessionId, newSessionId } = action;
-      if (oldSessionId === newSessionId) return state;
-      const workers = (state.workers[mid] ?? []).map((w) =>
-        w.sessionId === oldSessionId ? { ...w, sessionId: newSessionId } : w,
-      );
-      const missionTranscripts = state.transcripts[mid];
-      const transcripts = missionTranscripts
-        ? {
-            ...state.transcripts,
-            [mid]: missionTranscripts.map((ev) =>
-              ev.agentSessionId === oldSessionId ? { ...ev, agentSessionId: newSessionId } : ev,
-            ),
-          }
-        : state.transcripts;
-      const oldStats = state.contextStats[oldSessionId];
-      let contextStats = state.contextStats;
-      if (oldStats) {
-        const { [oldSessionId]: _dropped, ...rest } = state.contextStats;
-        // The backend refreshes context for the new id (post-compaction, lower
-        // usage) before emitting this rekey, so prefer any fresh new-id stats
-        // already in the store; only carry the old snapshot over as a bridge
-        // when the new id has none yet. Overwriting would show stale usage.
-        contextStats =
-          rest[newSessionId] !== undefined ? rest : { ...rest, [newSessionId]: oldStats };
-      }
-      // Mission features reference workers by session id (feature focus + worker
-      // role/numbering), so follow the compacted worker to its new backing id.
-      const existingMission = state.missions[mid];
-      let missions = state.missions;
-      if (existingMission) {
-        const remapId = (id?: string | null) => (id === oldSessionId ? newSessionId : id);
-        const features = existingMission.features.map((f) => ({
-          ...f,
-          workerSessionIds: f.workerSessionIds?.map((id) =>
-            id === oldSessionId ? newSessionId : id,
-          ),
-          currentWorkerSessionId: remapId(f.currentWorkerSessionId),
-          completedWorkerSessionId: remapId(f.completedWorkerSessionId),
-        }));
-        missions = { ...state.missions, [mid]: { ...existingMission, features } };
-      }
-      // Progress entries tag the worker that produced them; keep them aligned too.
-      const missionProgress = state.progress[mid];
-      const progress = missionProgress
-        ? {
-            ...state.progress,
-            [mid]: missionProgress.map((p) =>
-              p.workerSessionId === oldSessionId ? { ...p, workerSessionId: newSessionId } : p,
-            ),
-          }
-        : state.progress;
-      return {
-        ...state,
-        missions,
-        workers: { ...state.workers, [mid]: workers },
-        transcripts,
-        progress,
-        contextStats,
-        // Record the remap so views holding this id in local state (e.g. Mission
-        // Control's viewedAgent) can follow the worker to its new session.
-        workerRekeys: { ...state.workerRekeys, [oldSessionId]: newSessionId },
-        selectedAgentSessionId:
-          state.selectedAgentSessionId === oldSessionId
-            ? newSessionId
-            : state.selectedAgentSessionId,
-      };
     }
 
     case 'AGENT_HISTORY_LOADING': {
@@ -1932,13 +1887,6 @@ function adaptEvent(ev: ServerEvent): Action | null {
         reasoningEffort: ev.reasoningEffort,
         toolUseId: ev.toolUseId,
       };
-    case 'mission.worker.rekey':
-      return {
-        type: 'MISSION_WORKER_REKEY',
-        missionId: ev.missionId,
-        oldSessionId: ev.oldSessionId,
-        newSessionId: ev.newSessionId,
-      };
     case 'agent.updated':
       return {
         type: 'AGENT_UPDATED',
@@ -2032,6 +1980,17 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     state.sidebarCollapsed,
     state.specMode,
   ]);
+
+  // Keep the sidecar's compaction-limit snapshot in sync so live sessions,
+  // resumes, and model changes all follow these limits. The bridge queues
+  // commands until the socket opens, so the mount-time push is safe, and the
+  // FACTORY_DEFAULTS seed re-fires this effect with the merged values. An
+  // Undefined/empty values only mean "cleared" after the user stored them; on
+  // a cold mount those fields are omitted so the sidecar keeps following
+  // CLI-file defaults instead of treating first launch as an explicit clear.
+  useEffect(() => {
+    updateCompactionSettings(compactionSettingsSnapshot(state));
+  }, [state.compactionTokenLimit, state.compactionTokenLimitPerModel]);
 
   useEffect(() => {
     const unsub = bridge.subscribe((ev) => {

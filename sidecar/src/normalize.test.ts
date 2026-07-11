@@ -3,9 +3,97 @@ import test from 'node:test';
 import {
   classifyPermission,
   confirmationType,
+  extractCompactionNotification,
+  extractDroidWorkingState,
   permissionSignature,
   normalizeStreamEvent,
 } from './normalize.js';
+
+test('extractCompactionNotification detects the daemon compaction start', () => {
+  assert.deepEqual(
+    extractCompactionNotification({
+      params: {
+        notification: { type: 'droid_working_state_changed', newState: 'compacting_conversation' },
+      },
+    }),
+    { kind: 'started', removedCount: 0 },
+  );
+});
+
+test('extractCompactionNotification detects the compaction completion with removed count', () => {
+  assert.deepEqual(
+    extractCompactionNotification({
+      params: {
+        notification: { type: 'session_compacted', summaryId: 's1', removedCount: 42 },
+      },
+    }),
+    { kind: 'completed', removedCount: 42 },
+  );
+  // A missing or malformed count falls back to zero instead of NaN.
+  assert.deepEqual(
+    extractCompactionNotification({
+      params: { notification: { type: 'session_compacted', summaryId: 's1' } },
+    }),
+    { kind: 'completed', removedCount: 0 },
+  );
+});
+
+test('extractCompactionNotification ignores unrelated notifications', () => {
+  assert.equal(
+    extractCompactionNotification({
+      params: { notification: { type: 'droid_working_state_changed', newState: 'thinking' } },
+    }),
+    null,
+  );
+  assert.equal(
+    extractCompactionNotification({
+      params: { notification: { type: 'message', role: 'assistant' } },
+    }),
+    null,
+  );
+  assert.equal(extractCompactionNotification({}), null);
+});
+
+test('extractDroidWorkingState detects transitions that settle compaction', () => {
+  assert.equal(
+    extractDroidWorkingState({
+      params: { notification: { type: 'droid_working_state_changed', newState: 'streaming' } },
+    }),
+    'streaming',
+  );
+  assert.equal(
+    extractDroidWorkingState({
+      params: { notification: { type: 'message', role: 'assistant' } },
+    }),
+    undefined,
+  );
+});
+
+test('token usage maps context to the daemon threshold formula (in + out + cacheRead)', () => {
+  const normalized = normalizeStreamEvent('mission-1', 'mission-1', 'orchestrator', {
+    type: 'session_token_usage_changed',
+    inclusiveTokenUsage: {
+      inputTokens: 100,
+      outputTokens: 40,
+      cacheReadTokens: 30,
+      cacheCreationTokens: 20,
+    },
+    lastCallTokenUsage: {
+      inputTokens: 10,
+      outputTokens: 4,
+      cacheReadTokens: 3,
+      cacheCreationTokens: 2,
+    },
+  } as never);
+
+  // The daemon's compaction threshold checks last-call input + output +
+  // cacheRead (never cacheCreation), so the meter must count the same way.
+  assert.deepEqual(normalized?.tokens, {
+    tokensIn: 150,
+    tokensOut: 40,
+    contextTokens: 17,
+  });
+});
 
 test('classifyPermission reads the SDK toolUses shape for MCP tools', () => {
   const params = {

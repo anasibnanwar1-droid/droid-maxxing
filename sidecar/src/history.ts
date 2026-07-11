@@ -292,7 +292,8 @@ export class HistoryIndex {
         context_remaining_tokens INTEGER,
         context_accuracy TEXT,
         context_updated_at TEXT,
-        max_context_tokens INTEGER
+        max_context_tokens INTEGER,
+        auto_compactions INTEGER
       );
       CREATE TABLE IF NOT EXISTS agent_sessions (
         session_id TEXT PRIMARY KEY,
@@ -355,6 +356,16 @@ export class HistoryIndex {
         updated_at INTEGER NOT NULL
       );
     `);
+    // Databases created before the column existed; ADD COLUMN throws when it
+    // is already present, so that failure is the idempotence check. Anything
+    // else (locked db, I/O error) must surface, or the missing column only
+    // shows up later as a confusing "no such column" from syncSummaries.
+    try {
+      this.db.exec('ALTER TABLE app_sessions ADD COLUMN auto_compactions INTEGER');
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (!/duplicate column/i.test(message)) throw err;
+    }
   }
 
   syncSummaries(summaries: MissionSummary[]): void {
@@ -382,9 +393,10 @@ export class HistoryIndex {
         context_remaining_tokens,
         context_accuracy,
         context_updated_at,
-        max_context_tokens
+        max_context_tokens,
+        auto_compactions
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(app_session_id) DO UPDATE SET
         droid_session_id = excluded.droid_session_id,
         previous_droid_session_ids = excluded.previous_droid_session_ids,
@@ -407,7 +419,8 @@ export class HistoryIndex {
         context_remaining_tokens = excluded.context_remaining_tokens,
         context_accuracy = excluded.context_accuracy,
         context_updated_at = excluded.context_updated_at,
-        max_context_tokens = excluded.max_context_tokens
+        max_context_tokens = excluded.max_context_tokens,
+        auto_compactions = excluded.auto_compactions
     `);
     for (const summary of summaries) {
       stmt.run(
@@ -434,6 +447,7 @@ export class HistoryIndex {
         sqlValue(summary.contextAccuracy),
         sqlValue(summary.contextUpdatedAt),
         sqlValue(summary.maxContextTokens),
+        sqlValue(summary.autoCompactions),
       );
     }
   }
@@ -610,6 +624,7 @@ function summaryPatchesFromRows(
       contextAccuracy: contextAccuracy(row.context_accuracy),
       contextUpdatedAt: stringValue(row.context_updated_at),
       maxContextTokens: numberValue(row.max_context_tokens),
+      autoCompactions: numberValue(row.auto_compactions),
       updatedAt: numberValue(row.updated_at),
     };
     patches.set(appSessionId, patch);
@@ -794,9 +809,14 @@ function compactionDividerEvent(
 // it instead of silently dropping the boundary.
 function segmentItems(missionId: string, sessionId: string, path: string): TranscriptEvent[] {
   const items: TranscriptEvent[] = [];
+  const parsed = parseSessionTranscript(missionId, sessionId, path, 'orchestrator');
+  // The head read backstops oversized files whose leading compaction_state was
+  // tail-windowed away; when the parse already replayed that same record as a
+  // divider, adding the head copy would duplicate it.
   const comp = readCompactionState(path);
-  if (comp) items.push(compactionDividerEvent(missionId, sessionId, comp));
-  items.push(...parseSessionTranscript(missionId, sessionId, path, 'orchestrator'));
+  if (comp && !parsed.some((e) => e.kind === 'compaction' && e.ts === comp.ts))
+    items.push(compactionDividerEvent(missionId, sessionId, comp));
+  items.push(...parsed);
   return items;
 }
 
@@ -1031,6 +1051,20 @@ function parseSessionTranscript(
     );
   }
   for (const line of sessionLines.rows) {
+    // In-place daemon auto-compaction appends a compaction_state marker to the
+    // SAME session file, so a mid-file record marks a summarize-away boundary
+    // that must replay as a divider (leading records are handled by the
+    // segment's head read, which segmentItems dedupes against).
+    if (line.type === 'compaction_state') {
+      const raw = line as Record<string, unknown>;
+      const ts = dateMs(stringValue(raw.timestamp)) || 0;
+      events.push(
+        event(missionId, sessionId, role, line.id || `compaction-${ts}`, 0, ts, 'compaction', {
+          removedCount: numberValue(raw.removedCount),
+        }),
+      );
+      continue;
+    }
     if (line.type !== 'message' || !('message' in line)) continue;
     const message = line.message;
     const content = Array.isArray(message?.content) ? message.content : [];

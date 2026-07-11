@@ -157,8 +157,13 @@ export function normalizeStreamEvent(
       (Number(cumulative.cacheReadTokens ?? 0) || 0) +
       (Number(cumulative.cacheCreationTokens ?? 0) || 0);
     const tokensOut = Number(cumulative.outputTokens ?? 0) || 0;
+    // Mirror the daemon's compaction threshold count (last call's input +
+    // output + cacheRead) so the meter measures with the same stick that
+    // decides when auto-compaction fires.
     const contextTokens =
-      (Number(context.inputTokens ?? 0) || 0) + (Number(context.cacheReadTokens ?? 0) || 0);
+      (Number(context.inputTokens ?? 0) || 0) +
+      (Number(context.outputTokens ?? 0) || 0) +
+      (Number(context.cacheReadTokens ?? 0) || 0);
     return { tokens: { tokensIn, tokensOut, contextTokens } };
   }
 
@@ -271,6 +276,40 @@ export function normalizeStreamEvent(
         return { subagent: { sessionId: subagentSessionId, toolUseId: eventToolUseId } };
       return null;
   }
+}
+
+// Daemon auto-compaction runs in place (same session id) and announces itself
+// only through raw notifications: a `droid_working_state_changed` to
+// `compacting_conversation` when it starts and a `session_compacted` when it
+// finishes. Neither survives convertNotificationToStreamMessage as a usable
+// stream event, so callers detect them here before the generic conversion.
+export interface CompactionNotification {
+  kind: 'started' | 'completed';
+  removedCount: number;
+}
+
+export function extractCompactionNotification(
+  notification: Record<string, unknown>,
+): CompactionNotification | null {
+  const raw = extractNotification(notification);
+  if (!raw || typeof raw !== 'object') return null;
+  const note = raw as Record<string, unknown>;
+  if (note.type === 'droid_working_state_changed' && note.newState === 'compacting_conversation')
+    return { kind: 'started', removedCount: 0 };
+  if (note.type === 'session_compacted')
+    return { kind: 'completed', removedCount: Number(note.removedCount ?? 0) || 0 };
+  return null;
+}
+
+export function extractDroidWorkingState(
+  notification: Record<string, unknown>,
+): string | undefined {
+  const raw = extractNotification(notification);
+  if (!raw || typeof raw !== 'object') return undefined;
+  const note = raw as Record<string, unknown>;
+  return note.type === 'droid_working_state_changed' && typeof note.newState === 'string'
+    ? note.newState
+    : undefined;
 }
 
 export function normalizeNotification(
