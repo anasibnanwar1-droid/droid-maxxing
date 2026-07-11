@@ -1,6 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { applyFactoryCompactionDefaults, loadPersistedUiState } from './useStore';
+import {
+  applyFactoryCompactionDefaults,
+  compactionSettingsSnapshot,
+  loadPersistedUiState,
+} from './useStore';
 
 test('loadPersistedUiState returns an empty snapshot when storage is empty', () => {
   withLocalStorage(null, () => {
@@ -100,6 +104,34 @@ test('factory defaults seed compaction token limits before local settings exist'
     assert.equal(storage.get('droid-compaction-token-limit'), '200000');
     assert.equal(storage.get('droid-compaction-token-limit-per-model'), '{"model-a":100000}');
   });
+});
+
+test('compaction settings snapshots distinguish cold startup from explicit clears', () => {
+  withLocalStorageMap({}, () => {
+    assert.deepEqual(
+      compactionSettingsSnapshot({
+        compactionTokenLimit: undefined,
+        compactionTokenLimitPerModel: {},
+      }),
+      {},
+    );
+  });
+
+  withLocalStorageMap(
+    {
+      'droid-compaction-token-limit-configured': '1',
+      'droid-compaction-token-limit-per-model': '{}',
+    },
+    () => {
+      assert.deepEqual(
+        compactionSettingsSnapshot({
+          compactionTokenLimit: undefined,
+          compactionTokenLimitPerModel: {},
+        }),
+        { compactionTokenLimit: null, compactionTokenLimitPerModel: {} },
+      );
+    },
+  );
 });
 
 function withLocalStorage(value: string | null, fn: () => void): void {

@@ -104,7 +104,8 @@ function useStableUsed(
       setDisplayed(next);
     }
   }, [key, raw, isExact, generation]);
-  return displayed;
+  const prev = ref.current;
+  return !prev || prev.key !== key || prev.gen !== generation ? raw : displayed;
 }
 
 export default function ContextMeter({
@@ -139,19 +140,19 @@ export default function ContextMeter({
 
   // The conversation compacts once it passes the configured token limit, so the
   // meter measures usage against that threshold (per-model override -> global
-  // default), capped to the model window. Falls back to observed/model context
-  // size when the app lets Factory use its model-dependent default.
+  // default), capped to the model window. Factory's model default is the
+  // smaller of the model input window and 250K tokens.
   const compactionLimit =
     mission.modelId && state.compactionTokenLimitPerModel[mission.modelId] !== undefined
       ? state.compactionTokenLimitPerModel[mission.modelId]
       : state.compactionTokenLimit;
   const effectiveCompaction =
     compactionLimit && compactionLimit > 0
-      ? modelWindow
-        ? Math.min(compactionLimit, modelWindow)
+      ? statLimit
+        ? Math.min(compactionLimit, statLimit)
         : compactionLimit
-      : undefined;
-  const max = effectiveCompaction ?? statLimit;
+      : Math.min(statLimit ?? 250_000, 250_000);
+  const max = effectiveCompaction;
 
   const accuracy = measured?.accuracy;
   const isEstimating = (accuracy ?? 'estimated') !== 'exact';

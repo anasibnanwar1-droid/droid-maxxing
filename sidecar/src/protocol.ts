@@ -557,9 +557,9 @@ export type ClientCommand =
       reasoningEffort?: ReasoningEffort;
     }
   | {
-      // Snapshot of the app's compaction limit settings (global + per-model).
-      // A null global limit means the user cleared it (use the daemon's
-      // model-dependent default rather than any CLI-file value).
+      // Snapshot of the app's explicitly configured compaction limits. A null
+      // global or empty per-model map means the user cleared that tier; omitted
+      // fields continue following CLI-file defaults.
       type: 'settings.compaction.update';
       compactionTokenLimit?: number | null;
       compactionTokenLimitPerModel?: Record<string, number>;

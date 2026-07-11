@@ -60,6 +60,10 @@ export function clampCompactionTokenLimit(
   return max === undefined ? limit : Math.min(limit, max);
 }
 
+export function daemonDefaultCompactionTokenLimit(maxContextTokens?: number): number {
+  return Math.min(normalizeCompactionTokenLimit(maxContextTokens) ?? 250_000, 250_000);
+}
+
 export function createCompactionSettingsForModel(
   modelId: string | undefined,
   settings: CompactionTokenLimitPatch,
@@ -77,8 +81,9 @@ export function createCompactionSettingsForModel(
 // model change, worker open, and settings changes so every session's trigger
 // matches the limit the ContextMeter shows. Precedence: the UI settings
 // snapshot when it carries any signal (per-model override -> global, where an
-// explicit null global means "cleared: use the daemon's model default"),
-// otherwise the session's own exposed limit, then CLI-file defaults.
+// explicit null global means "cleared: use the daemon's model default" and an
+// explicit per-model map suppresses cleared CLI per-model overrides), otherwise
+// the session's own exposed limit, then CLI-file defaults.
 export function resolvedCompactionTokenLimit(
   modelId: string | undefined,
   ui: CompactionTokenLimitPatch,
@@ -88,13 +93,14 @@ export function resolvedCompactionTokenLimit(
   const uiLimit = compactionTokenLimitForModel(modelId, ui);
   if (uiLimit !== undefined) return uiLimit;
   if (ui.compactionTokenLimit !== undefined) return undefined;
+  if (ui.compactionTokenLimitPerModel !== undefined) {
+    return resumedCompactionTokenLimit(undefined, exposed, defaults);
+  }
   return resumedCompactionTokenLimit(modelId, exposed, defaults);
 }
 
 // Settings pushed to a live daemon session so its own threshold check runs
 // auto-compaction in place (same session id) when usage crosses the limit.
-// Sent on resume and worker open; mission create passes the same fields
-// through initialize_session instead.
 export interface DaemonCompactionSettings {
   compactionThresholdCheckEnabled: boolean;
   compactionTokenLimit?: number;

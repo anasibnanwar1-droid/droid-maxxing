@@ -4,6 +4,7 @@ import {
   classifyPermission,
   confirmationType,
   extractCompactionNotification,
+  extractDroidWorkingState,
   permissionSignature,
   normalizeStreamEvent,
 } from './normalize.js';
@@ -51,6 +52,21 @@ test('extractCompactionNotification ignores unrelated notifications', () => {
     null,
   );
   assert.equal(extractCompactionNotification({}), null);
+});
+
+test('extractDroidWorkingState detects transitions that settle compaction', () => {
+  assert.equal(
+    extractDroidWorkingState({
+      params: { notification: { type: 'droid_working_state_changed', newState: 'streaming' } },
+    }),
+    'streaming',
+  );
+  assert.equal(
+    extractDroidWorkingState({
+      params: { notification: { type: 'message', role: 'assistant' } },
+    }),
+    undefined,
+  );
 });
 
 test('token usage maps context to the daemon threshold formula (in + out + cacheRead)', () => {

@@ -163,7 +163,7 @@ export interface AppState {
   compactionModel: string;
 
   // Global default compaction token limit applied to every session. Undefined
-  // means "use the Factory/default model context window".
+  // means "use Factory's model-dependent default".
   compactionTokenLimit?: number;
   // Per-model overrides for the compaction token limit, keyed by model id.
   compactionTokenLimitPerModel: Record<string, number>;
@@ -434,7 +434,7 @@ function saveCompactionModel(value: string): string {
 }
 
 // Only positive finite integers are valid token limits; anything else is
-// treated as "unset" (fall back to the model's default context window).
+// treated as "unset" (fall back to Factory's model-dependent default).
 function normalizeTokenLimit(value: unknown): number | undefined {
   const n = typeof value === 'number' ? value : Number(value);
   if (!Number.isFinite(n) || n <= 0) return undefined;
@@ -518,6 +518,23 @@ function normalizeTokenLimitRecord(
       .map(([id, limit]) => [id, normalizeTokenLimit(limit)])
       .filter((entry): entry is [string, number] => entry[1] !== undefined),
   );
+}
+
+export function compactionSettingsSnapshot(
+  state: Pick<AppState, 'compactionTokenLimit' | 'compactionTokenLimitPerModel'>,
+): {
+  compactionTokenLimit?: number | null;
+  compactionTokenLimitPerModel?: Record<string, number>;
+} {
+  const snapshot: {
+    compactionTokenLimit?: number | null;
+    compactionTokenLimitPerModel?: Record<string, number>;
+  } = {};
+  if (hasStoredCompactionTokenLimit())
+    snapshot.compactionTokenLimit = state.compactionTokenLimit ?? null;
+  if (hasStoredCompactionTokenLimitPerModel())
+    snapshot.compactionTokenLimitPerModel = state.compactionTokenLimitPerModel;
+  return snapshot;
 }
 
 export function applyFactoryCompactionDefaults(
@@ -1957,15 +1974,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   // resumes, and model changes all follow these limits. The bridge queues
   // commands until the socket opens, so the mount-time push is safe, and the
   // FACTORY_DEFAULTS seed re-fires this effect with the merged values. An
-  // undefined limit only means "cleared" when the user actually stored one;
-  // on a cold mount the field is omitted so the sidecar keeps following
+  // Undefined/empty values only mean "cleared" after the user stored them; on
+  // a cold mount those fields are omitted so the sidecar keeps following
   // CLI-file defaults instead of treating first launch as an explicit clear.
   useEffect(() => {
-    updateCompactionSettings({
-      compactionTokenLimit:
-        state.compactionTokenLimit ?? (hasStoredCompactionTokenLimit() ? null : undefined),
-      compactionTokenLimitPerModel: state.compactionTokenLimitPerModel,
-    });
+    updateCompactionSettings(compactionSettingsSnapshot(state));
   }, [state.compactionTokenLimit, state.compactionTokenLimitPerModel]);
 
   useEffect(() => {

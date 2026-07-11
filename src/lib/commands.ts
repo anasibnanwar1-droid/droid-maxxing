@@ -125,12 +125,12 @@ export const updateAgentSettings = (p: {
   reasoningEffort?: ReasoningEffort;
 }) => bridge.send({ type: 'settings.agent.update', ...p });
 
-// Snapshot semantics: null means the user explicitly cleared the global limit
-// (suppress CLI-file defaults); the field is omitted entirely when the user
-// never configured one, so the sidecar keeps falling back to those defaults.
+// Snapshot semantics: null/empty means the user explicitly cleared a setting
+// (suppress CLI-file defaults); fields are omitted when the user never
+// configured them, so the sidecar keeps falling back to those defaults.
 export const updateCompactionSettings = (p: {
   compactionTokenLimit?: number | null;
-  compactionTokenLimitPerModel: Record<string, number>;
+  compactionTokenLimitPerModel?: Record<string, number>;
 }) => bridge.send({ type: 'settings.compaction.update', ...p });
 
 export const openBrowser = (p: {

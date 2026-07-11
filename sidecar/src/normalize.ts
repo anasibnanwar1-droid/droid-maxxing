@@ -301,6 +301,17 @@ export function extractCompactionNotification(
   return null;
 }
 
+export function extractDroidWorkingState(
+  notification: Record<string, unknown>,
+): string | undefined {
+  const raw = extractNotification(notification);
+  if (!raw || typeof raw !== 'object') return undefined;
+  const note = raw as Record<string, unknown>;
+  return note.type === 'droid_working_state_changed' && typeof note.newState === 'string'
+    ? note.newState
+    : undefined;
+}
+
 export function normalizeNotification(
   missionId: string,
   agentSessionId: string,

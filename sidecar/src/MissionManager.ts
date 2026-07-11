@@ -45,6 +45,7 @@ import {
   classifyPermission,
   confirmationType,
   extractCompactionNotification,
+  extractDroidWorkingState,
   mapFeature,
   normalizeNotification,
   normalizeStreamEvent,
@@ -77,6 +78,7 @@ import { filterMissionListSummaries, type MissionListFilterOptions } from './mis
 import {
   clampCompactionTokenLimit,
   createCompactionSettingsForModel,
+  daemonDefaultCompactionTokenLimit,
   daemonCompactionSettings,
   normalizeCompactionTokenLimit,
   resolvedCompactionTokenLimit,
@@ -96,6 +98,7 @@ interface LiveAgent {
   missionId: string;
   role: AgentRole;
   streaming: boolean;
+  autoCompacting: boolean;
   pendingSends: string[];
   interruptingForSteer?: boolean;
   lastUsedAt: number;
@@ -138,6 +141,7 @@ interface Mission {
   // Guards manual compactSession so it cannot run concurrently with itself or
   // a streaming turn (the SDK session swap is not safe to overlap with either).
   compacting?: boolean;
+  autoCompacting: boolean;
   // Raw daemon-notification subscription for the orchestrator session, used to
   // surface the daemon's in-place auto-compaction (compacting_conversation /
   // session_compacted). Re-created when a manual compaction swaps the session.
@@ -346,7 +350,7 @@ export class MissionManager {
       case 'mission.compact': {
         const missionId = cmd.type === 'session.compact' ? cmd.sessionId : cmd.missionId;
         const mission = this.findMission(missionId);
-        if (mission?.streaming || mission?.compacting) {
+        if (mission?.streaming || mission?.compacting || mission?.autoCompacting) {
           this.emitStatus(
             missionId,
             'Cannot compact while a turn is active. Try again when the model is idle.',
@@ -358,7 +362,12 @@ export class MissionManager {
         // messages queued during it. Drain one now; drive()'s finally chains
         // the rest.
         const compacted = this.findMission(missionId);
-        if (compacted && !compacted.streaming && !compacted.compacting) {
+        if (
+          compacted &&
+          !compacted.streaming &&
+          !compacted.compacting &&
+          !compacted.autoCompacting
+        ) {
           const next = compacted.pendingSends.shift();
           if (next !== undefined) {
             this.patch(compacted.summary.id, { queuedSends: compacted.pendingSends.length });
@@ -760,9 +769,16 @@ export class MissionManager {
     exposed: CompactionTokenLimitPatch = {},
   ): Promise<number | undefined> {
     const defaults = await this.getFactoryDefaults();
+    const maxContextTokens = this.maxContextTokensForModel(modelId);
+    const resolved = resolvedCompactionTokenLimit(
+      modelId,
+      this.uiCompactionSettings,
+      exposed,
+      defaults,
+    );
     return clampCompactionTokenLimit(
-      resolvedCompactionTokenLimit(modelId, this.uiCompactionSettings, exposed, defaults),
-      this.maxContextTokensForModel(modelId),
+      resolved ?? daemonDefaultCompactionTokenLimit(maxContextTokens),
+      maxContextTokens,
     );
   }
 
@@ -1283,6 +1299,9 @@ export class MissionManager {
         defaults,
         this.maxContextTokensForModel(orchestratorModelId),
       );
+      const compactionTokenLimit =
+        compactionSettings.compactionTokenLimit ??
+        daemonDefaultCompactionTokenLimit(this.maxContextTokensForModel(orchestratorModelId));
       const { workerModelId, workerReasoningEffort, validatorModelId, validatorReasoningEffort } =
         createMissionAgentDefaultsForMode(mode, cmd, defaults);
       const mcp = await this.startLocalMcpServers(ref);
@@ -1310,12 +1329,13 @@ export class MissionManager {
         validatorModelId,
         validatorReasoningEffort,
         compactionModel,
-        compactionTokenLimit: compactionSettings.compactionTokenLimit,
+        compactionTokenLimit,
         compactionThresholdCheckEnabled: true,
         mcpServers: mcp.configs,
         permissionHandler: this.makePermissionHandler(ref),
         askUserHandler: this.makeAskUserHandler(ref),
       });
+      await this.enableDaemonAutoCompaction(session, compactionTokenLimit);
 
       const id = session.sessionId;
       const now = Date.now();
@@ -1386,6 +1406,7 @@ export class MissionManager {
       mcpServers,
       mcpConfigs,
       permissionGrants: new Set(),
+      autoCompacting: false,
     };
   }
 
@@ -1525,9 +1546,13 @@ export class MissionManager {
         const queued = mission.pendingSends.splice(0);
         if (queued.length > 0) void this.redeliverQueuedSends(appSessionId, queued);
       } else {
-        const next = mission.pendingSends.shift();
-        this.patch(appSessionId, { streaming: false, queuedSends: mission.pendingSends.length });
-        if (next !== undefined) void this.drive(appSessionId, next);
+        if (mission.autoCompacting) {
+          this.patch(appSessionId, { streaming: false, queuedSends: mission.pendingSends.length });
+        } else {
+          const next = mission.pendingSends.shift();
+          this.patch(appSessionId, { streaming: false, queuedSends: mission.pendingSends.length });
+          if (next !== undefined) void this.drive(appSessionId, next);
+        }
       }
     }
   }
@@ -1855,11 +1880,18 @@ export class MissionManager {
     note: Record<string, unknown>,
   ): boolean {
     const compaction = extractCompactionNotification(note);
-    if (!compaction) return false;
+    if (!compaction) {
+      const state = extractDroidWorkingState(note);
+      if (state && state !== 'compacting_conversation')
+        this.setAutoCompacting(missionId, agentSessionId, role, false);
+      return false;
+    }
     if (compaction.kind === 'started') {
+      this.setAutoCompacting(missionId, agentSessionId, role, true);
       this.emitStatus(missionId, 'Compacting conversation...', 'auto', agentSessionId, role);
       return true;
     }
+    this.setAutoCompacting(missionId, agentSessionId, role, false);
     this.emitStatus(missionId, 'Compaction complete.', 'auto', agentSessionId, role);
     // In-place compaction keeps the session id, so the meter's ratchet only
     // resets when the generation counter moves; also drop the pre-compaction
@@ -1883,6 +1915,45 @@ export class MissionManager {
     }
     void this.refreshContext(agentSessionId, session).catch(() => {});
     return true;
+  }
+
+  private setAutoCompacting(
+    missionId: string,
+    agentSessionId: string,
+    role: AgentRole,
+    active: boolean,
+  ): void {
+    const mission = this.findMission(missionId);
+    if (!mission) return;
+    if (role === 'orchestrator') {
+      const wasActive = mission.autoCompacting;
+      mission.autoCompacting = active;
+      if (active || !wasActive || mission.streaming || mission.compacting) return;
+      const next = mission.pendingSends.shift();
+      this.patch(mission.summary.id, { queuedSends: mission.pendingSends.length });
+      if (next !== undefined) void this.drive(mission.summary.id, next);
+      return;
+    }
+
+    const agent = mission.agents.get(agentSessionId);
+    if (!agent) return;
+    const wasActive = agent.autoCompacting;
+    agent.autoCompacting = active;
+    if (active || !wasActive || agent.streaming) return;
+    if (agent.pendingSends.length === 0 && agent.closeWhenIdle) {
+      void this.closeAgent(agent.missionId, agent.session.sessionId);
+      return;
+    }
+    const next = agent.pendingSends.shift();
+    if (next !== undefined) void this.driveAgent(agent, next);
+    else
+      this.emit({
+        type: 'agent.updated',
+        missionId: agent.missionId,
+        agentSessionId: agent.session.sessionId,
+        role: agent.role,
+        status: 'paused',
+      });
   }
 
   private async compactSession(
@@ -2097,7 +2168,7 @@ export class MissionManager {
     }
     const appSessionId = mission.summary.id;
     if (!(await this.applyPendingSessionSettings(appSessionId))) return;
-    if (mission.streaming || mission.compacting) {
+    if (mission.streaming || mission.compacting || mission.autoCompacting) {
       mission.pendingSends.push(text);
       this.patch(appSessionId, { queuedSends: mission.pendingSends.length });
       return;
@@ -2117,7 +2188,7 @@ export class MissionManager {
     }
     const appSessionId = mission.summary.id;
     if (!(await this.applyPendingSessionSettings(appSessionId))) return;
-    if (!mission.streaming && !mission.compacting) {
+    if (!mission.streaming && !mission.compacting && !mission.autoCompacting) {
       await this.drive(appSessionId, text);
       return;
     }
@@ -2125,7 +2196,7 @@ export class MissionManager {
     // (driving or interrupting against it risks a failed compaction or lost steering).
     mission.pendingSends.unshift(text);
     this.patch(appSessionId, { queuedSends: mission.pendingSends.length });
-    if (mission.compacting) return;
+    if (mission.compacting || mission.autoCompacting) return;
     mission.interruptingForSteer = true;
     this.emitStatus(appSessionId, 'Steering now...');
     try {
@@ -2270,7 +2341,7 @@ export class MissionManager {
     // Never interrupt an in-flight compaction (it risks a failed/corrupt
     // compaction). Dropping queued sends is enough; compaction finishes on its
     // own and its drive()/command drain then settles streaming/phase.
-    if (mission.compacting) {
+    if (mission.compacting || mission.autoCompacting) {
       this.patch(appSessionId, { queuedSends: 0 });
       return;
     }
@@ -2357,6 +2428,7 @@ export class MissionManager {
         missionId: appSessionId,
         role,
         streaming: false,
+        autoCompacting: false,
         pendingSends: [],
         lastUsedAt: Date.now(),
       };
@@ -2405,7 +2477,7 @@ export class MissionManager {
     const agent = mission.agents.get(agentSessionId);
     if (!agent) return;
     agent.lastUsedAt = Date.now();
-    if (agent.streaming) {
+    if (agent.streaming || agent.autoCompacting) {
       agent.pendingSends.push(text);
       return;
     }
@@ -2450,7 +2522,7 @@ export class MissionManager {
     } finally {
       this.stopContextPolling(agent.session.sessionId);
       agent.interruptingForSteer = false;
-      if (agent.pendingSends.length === 0 && agent.closeWhenIdle) {
+      if (agent.pendingSends.length === 0 && agent.closeWhenIdle && !agent.autoCompacting) {
         agent.streaming = false;
         await this.closeAgent(agent.missionId, agent.session.sessionId);
       } else {
@@ -2459,6 +2531,7 @@ export class MissionManager {
         // in place (same session id), so no swap handling is needed here.
         await this.refreshContext(agent.session.sessionId, agent.session);
         agent.streaming = false;
+        if (agent.autoCompacting) return;
         const next = agent.pendingSends.shift();
         if (next !== undefined) void this.driveAgent(agent, next);
         else
@@ -2487,11 +2560,12 @@ export class MissionManager {
     const agent = mission.agents.get(agentSessionId);
     if (!agent) return;
     agent.lastUsedAt = Date.now();
-    if (!agent.streaming) {
+    if (!agent.streaming && !agent.autoCompacting) {
       await this.driveAgent(agent, text);
       return;
     }
     agent.pendingSends.unshift(text);
+    if (agent.autoCompacting) return;
     agent.interruptingForSteer = true;
     this.emitStatus(appSessionId, 'Steering subagent now...');
     try {
@@ -2519,6 +2593,7 @@ export class MissionManager {
     if (!agent) return;
     agent.pendingSends = [];
     agent.lastUsedAt = Date.now();
+    if (agent.autoCompacting) return;
     await agent.session.interrupt();
     agent.streaming = false;
     this.emit({
@@ -2555,6 +2630,7 @@ export class MissionManager {
         ([sessionId, agent]) =>
           sessionId !== requestedAgentSessionId &&
           !agent.streaming &&
+          !agent.autoCompacting &&
           agent.pendingSends.length === 0,
       )
       .sort((a, b) => a[1].lastUsedAt - b[1].lastUsedAt)[0];
@@ -2592,7 +2668,7 @@ export class MissionManager {
     const agent = mission?.agents.get(agentSessionId);
     if (!mission || !agent) return;
     agent.closeWhenIdle = true;
-    if (!agent.streaming && agent.pendingSends.length === 0)
+    if (!agent.streaming && !agent.autoCompacting && agent.pendingSends.length === 0)
       await this.closeAgent(missionId, agentSessionId);
   }
 
