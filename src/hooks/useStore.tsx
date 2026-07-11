@@ -903,13 +903,24 @@ function baseReducer(state: AppState, action: Action): AppState {
       };
 
     case 'MISSION_UPDATED': {
+      const previous = state.missions[action.mission.id];
       const m = applyMissionOverride(
         action.mission,
         state.missionSettingOverrides[action.mission.id],
       );
+      const previousCompactions =
+        (previous?.compactedFromSessionIds?.length ?? 0) + (previous?.autoCompactions ?? 0);
+      const nextCompactions = (m.compactedFromSessionIds?.length ?? 0) + (m.autoCompactions ?? 0);
+      const contextStats =
+        nextCompactions > previousCompactions && state.contextStats[m.id]
+          ? Object.fromEntries(
+              Object.entries(state.contextStats).filter(([sessionId]) => sessionId !== m.id),
+            )
+          : state.contextStats;
       return {
         ...state,
         missions: { ...state.missions, [m.id]: m },
+        contextStats,
       };
     }
 
