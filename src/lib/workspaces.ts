@@ -34,26 +34,45 @@ export function addWorkspaceCwd(existing: string[], cwd: string): string[] {
   return [next, ...existing.filter((item) => item !== next)];
 }
 
+function repositoryWorkspaceCwd(cwd: string): string {
+  const marker = cwd.match(/[\\/]\.worktrees[\\/]/);
+  return marker ? cwd.slice(0, marker.index) : cwd;
+}
+
 export function buildWorkspaceSections(
   workspaceCwds: string[],
   missions: MissionSummary[],
   limit?: number,
 ): WorkspaceSection[] {
   const seen = new Set<string>();
-  return workspaceCwds
-    .filter((cwd) => {
-      if (!cwd || seen.has(cwd)) return false;
-      seen.add(cwd);
-      return true;
-    })
-    .map((cwd) => ({
-      cwd,
-      name: workspaceName(cwd),
-      sessions: maybeLimit(
-        missions.filter((mission) => mission.cwd === cwd).sort((a, b) => b.updatedAt - a.updatedAt),
-        limit,
-      ),
-    }));
+  const workspaces = workspaceCwds.map(repositoryWorkspaceCwd).filter((cwd) => {
+    if (!cwd || seen.has(cwd)) return false;
+    seen.add(cwd);
+    return true;
+  });
+  const ownerFor = (missionCwd: string) => {
+    const normalizedMissionCwd = missionCwd.replace(/\\/g, '/');
+    return workspaces
+      .filter((cwd) => {
+        const normalizedCwd = cwd.replace(/\\/g, '/');
+        return (
+          normalizedMissionCwd === normalizedCwd ||
+          normalizedMissionCwd.startsWith(`${normalizedCwd}/`)
+        );
+      })
+      .sort((a, b) => b.length - a.length)[0];
+  };
+
+  return workspaces.map((cwd) => ({
+    cwd,
+    name: workspaceName(cwd),
+    sessions: maybeLimit(
+      missions
+        .filter((mission) => ownerFor(mission.cwd) === cwd)
+        .sort((a, b) => b.updatedAt - a.updatedAt),
+      limit,
+    ),
+  }));
 }
 
 function maybeLimit<T>(items: T[], limit?: number): T[] {

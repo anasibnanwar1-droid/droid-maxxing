@@ -58,7 +58,6 @@ export function WorktreeMenu({
   });
 
   const openInNewChat = (path: string, branch?: string | null) => {
-    dispatch({ type: 'ADD_WORKSPACE', cwd: path });
     dispatch({ type: 'START_CHAT', cwd: path, branch: branch ?? undefined });
     setOpen(false);
   };

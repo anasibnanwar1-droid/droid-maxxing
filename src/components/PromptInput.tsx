@@ -828,8 +828,14 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
           </div>
         )}
 
+        {!activeMission && !missionPreview && cwd && (
+          <div className="relative z-0 mx-4 -mb-3 min-w-0 rounded-t-2xl border border-b-0 border-droid-border bg-droid-elevated px-3 pb-5 pt-2">
+            <StartInBar />
+          </div>
+        )}
+
         <div
-          className={`relative bg-droid-elevated border rounded-2xl transition-colors ${missionPreview ? '' : boxBorder}`}
+          className={`relative z-10 bg-droid-elevated border rounded-2xl transition-colors ${missionPreview ? '' : boxBorder}`}
           style={
             missionPreview
               ? {
@@ -980,13 +986,6 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
             >
               <span>{isSpecMode ? 'Spec' : 'Chat'}</span>
             </button>
-
-            {!activeMission && !missionPreview && (
-              <>
-                <div className="h-4 w-px bg-droid-border/50 shrink-0" />
-                <StartInBar />
-              </>
-            )}
 
             <div className="flex-1 min-w-0" />
 

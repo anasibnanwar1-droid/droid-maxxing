@@ -397,6 +397,7 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
             <MessageFeed
               events={transcript}
               pending={live}
+              cwd={activeMission.cwd}
               onOpenDiff={openDiff}
               onOpenReviewFile={openReviewFile}
               onOpenSubagent={openSubagent}

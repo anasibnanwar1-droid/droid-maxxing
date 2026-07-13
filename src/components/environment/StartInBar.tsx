@@ -1,13 +1,5 @@
 import { useRef, useState } from 'react';
-import {
-  Check,
-  ChevronDown,
-  Columns2,
-  FolderPlus,
-  Folders,
-  GitBranch,
-  Monitor,
-} from 'lucide-react';
+import { Check, FolderGit2, FolderPlus, GitBranch, PanelsTopLeft } from 'lucide-react';
 import { Popover } from './Popover';
 import { StartBranchMenu } from './StartBranchMenu';
 import { useStore } from '../../hooks/useStore';
@@ -19,12 +11,14 @@ import { workspaceName } from '../../lib/workspaces';
 function Pill({
   icon,
   label,
+  title,
   open,
   innerRef,
   onClick,
 }: {
   icon: React.ReactNode;
   label: string;
+  title: string;
   open: boolean;
   innerRef: React.RefObject<HTMLButtonElement | null>;
   onClick: () => void;
@@ -33,17 +27,19 @@ function Pill({
     <button
       ref={innerRef}
       onClick={onClick}
-      className={`flex items-center gap-1.5 rounded-lg px-2 py-1 text-[11px] transition-colors ${
+      title={`${title}: ${label}`}
+      aria-label={`${title}: ${label}`}
+      aria-expanded={open}
+      className={`group flex min-w-0 items-center gap-1.5 rounded-md px-1.5 py-1 text-[11px] transition-colors ${
         open
           ? 'bg-droid-bg/60 text-droid-text'
           : 'text-droid-text-secondary hover:bg-droid-bg/40 hover:text-droid-text'
       }`}
     >
-      {icon}
-      <span className="max-w-[150px] truncate">{label}</span>
-      <ChevronDown
-        className={`h-3 w-3 shrink-0 text-droid-text-muted/50 transition-transform ${open ? 'rotate-180' : ''}`}
-      />
+      <span className="shrink-0 text-droid-text-muted transition-colors group-hover:text-droid-text-secondary">
+        {icon}
+      </span>
+      <span className="max-w-[150px] truncate text-left">{label}</span>
     </button>
   );
 }
@@ -79,24 +75,31 @@ export function StartInBar() {
   const onLocal = !currentWt;
 
   const startIn = (path: string, branch?: string) => {
-    dispatch({ type: 'ADD_WORKSPACE', cwd: path });
     dispatch({ type: 'START_CHAT', cwd: path, branch });
   };
 
   const openFolder = async () => {
     setRepoOpen(false);
     const dir = await pickDirectory();
-    if (dir) startIn(dir);
+    if (dir) {
+      dispatch({ type: 'ADD_WORKSPACE', cwd: dir });
+      startIn(dir);
+    }
   };
 
   return (
-    <div className="flex shrink-0 items-center gap-1">
+    <div className="flex min-w-0 items-center gap-4 overflow-hidden">
       <Pill
-        icon={<Folders className="h-3.5 w-3.5 shrink-0" />}
+        icon={<FolderGit2 className="h-3.5 w-3.5" />}
         label={workspaceName(repoRoot)}
+        title="Project"
         open={repoOpen}
         innerRef={repoRef}
-        onClick={() => setRepoOpen((v) => !v)}
+        onClick={() => {
+          setLocOpen(false);
+          setBranchOpen(false);
+          setRepoOpen((v) => !v);
+        }}
       />
       <Popover
         open={repoOpen}
@@ -115,7 +118,7 @@ export function StartInBar() {
               }}
               className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left transition-colors hover:bg-droid-elevated/60"
             >
-              <Folders className="h-3.5 w-3.5 shrink-0 text-droid-text-muted" />
+              <FolderGit2 className="h-3.5 w-3.5 shrink-0 text-droid-text-muted" />
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-[12.5px] text-droid-text">
                   {workspaceName(path)}
@@ -146,11 +149,16 @@ export function StartInBar() {
       {isRepo && (
         <>
           <Pill
-            icon={<Monitor className="h-3.5 w-3.5 shrink-0" />}
-            label={currentWt ? worktreeName(currentWt) : 'Work locally'}
+            icon={<PanelsTopLeft className="h-3.5 w-3.5" />}
+            label={currentWt ? worktreeName(currentWt) : 'Local'}
+            title="Worktree"
             open={locOpen}
             innerRef={locRef}
-            onClick={() => setLocOpen((v) => !v)}
+            onClick={() => {
+              setRepoOpen(false);
+              setBranchOpen(false);
+              setLocOpen((v) => !v);
+            }}
           />
           <Popover
             open={locOpen}
@@ -167,7 +175,7 @@ export function StartInBar() {
                 }}
                 className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left transition-colors hover:bg-droid-elevated/60"
               >
-                <Monitor className="h-3.5 w-3.5 shrink-0 text-droid-text-muted" />
+                <PanelsTopLeft className="h-3.5 w-3.5 shrink-0 text-droid-text-muted" />
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-[12.5px] text-droid-text">Work locally</span>
                   <span className="block truncate text-[10.5px] text-droid-text-muted">
@@ -193,7 +201,7 @@ export function StartInBar() {
                     }}
                     className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left transition-colors hover:bg-droid-elevated/60"
                   >
-                    <Columns2 className="h-3.5 w-3.5 shrink-0 text-droid-text-muted" />
+                    <PanelsTopLeft className="h-3.5 w-3.5 shrink-0 text-droid-text-muted" />
                     <span className="min-w-0 flex-1 truncate text-[12.5px] text-droid-text-secondary">
                       {worktreeName(w)}
                     </span>
@@ -210,11 +218,16 @@ export function StartInBar() {
           </Popover>
 
           <Pill
-            icon={<GitBranch className="h-3.5 w-3.5 shrink-0" />}
+            icon={<GitBranch className="h-3.5 w-3.5" />}
             label={draft?.branch ?? env?.branch ?? 'detached'}
+            title="Branch"
             open={branchOpen}
             innerRef={branchRef}
-            onClick={() => setBranchOpen((v) => !v)}
+            onClick={() => {
+              setRepoOpen(false);
+              setLocOpen(false);
+              setBranchOpen((v) => !v);
+            }}
           />
           <StartBranchMenu
             open={branchOpen}

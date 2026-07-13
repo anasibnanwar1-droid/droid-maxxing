@@ -1128,6 +1128,7 @@ const FeedItemView = memo(function FeedItemView({
   item,
   live,
   compacting,
+  cwd,
   onOpenDiff,
   onOpenReviewFile,
   onOpenSubagent,
@@ -1138,6 +1139,7 @@ const FeedItemView = memo(function FeedItemView({
   item: FeedItem;
   live: boolean;
   compacting?: boolean;
+  cwd?: string;
   onOpenDiff?: (c: FileChange) => void;
   onOpenReviewFile?: (path: string) => void;
   onOpenSubagent?: (target: SubagentTarget) => void;
@@ -1224,7 +1226,7 @@ const FeedItemView = memo(function FeedItemView({
     case 'tools':
       return <ToolGroupItem events={item.events} active={live} />;
     case 'turnChanges':
-      return <TurnChangesPanel item={item} onOpenFile={onOpenReviewFile} />;
+      return <TurnChangesPanel item={item} cwd={cwd} onOpenFile={onOpenReviewFile} />;
     case 'worked':
       return (
         <WorkedGroup
@@ -1346,70 +1348,75 @@ function DiffGroup({
 
 /* ── Per-turn changes summary: files the completed turn edited, click a file to
    open the Review pane scoped to that turn and jump to it ── */
-function turnFileGlyph(verb: FileChange['verb']): { symbol: string; color: string } {
-  if (verb === 'create') return { symbol: 'A', color: 'var(--diff-add-fg)' };
-  return { symbol: 'M', color: 'var(--droid-text-secondary)' };
+function displayEditPath(path: string, cwd?: string): string {
+  const normalizedPath = path.replace(/\\/g, '/');
+  if (!cwd) return normalizedPath;
+  const root = cwd.replace(/\\/g, '/').replace(/\/+$/, '');
+  if (normalizedPath === root) return normalizedPath;
+  if (normalizedPath.startsWith(`${root}/`)) return normalizedPath.slice(root.length + 1);
+  return normalizedPath;
+}
+
+function ChangeCount({ added, removed }: { added: number; removed: number }) {
+  if (added === 0 && removed === 0) return null;
+  return (
+    <span className="shrink-0 font-mono text-[11px]">
+      {added > 0 && <span style={{ color: 'var(--diff-add-fg)' }}>+{added}</span>}
+      {added > 0 && removed > 0 && ' '}
+      {removed > 0 && <span style={{ color: 'var(--diff-del-fg)' }}>−{removed}</span>}
+    </span>
+  );
 }
 
 function TurnChangesPanel({
   item,
+  cwd,
   onOpenFile,
 }: {
   item: Extract<FeedItem, { type: 'turnChanges' }>;
+  cwd?: string;
   onOpenFile?: (path: string) => void;
 }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(true);
   const { files, added, removed } = item;
-  const label = `Changes · ${files.length} ${files.length === 1 ? 'file' : 'files'}`;
   return (
-    <div className="rounded-xl border border-droid-border bg-droid-elevated/20">
+    <div className="overflow-hidden rounded-xl border border-droid-border bg-droid-surface">
       <button
         onClick={() => setOpen((o) => !o)}
-        className="group flex w-full min-w-0 items-center gap-1.5 px-3 py-2 text-left"
+        className="group flex w-full min-w-0 items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-droid-elevated/40"
         aria-expanded={open}
       >
         <ChevronRight
-          className={`h-3 w-3 shrink-0 text-droid-text-muted/50 transition-transform duration-200 group-hover:text-droid-text-muted ${open ? 'rotate-90' : ''}`}
+          className={`h-3.5 w-3.5 shrink-0 text-droid-text-muted transition-transform duration-200 ${open ? 'rotate-90' : ''}`}
         />
-        <span className="min-w-0 truncate text-[12.5px] font-medium text-droid-text-secondary">
-          {label}
-        </span>
-        <span className="ml-auto shrink-0 font-mono text-[11px]">
-          {added > 0 && <span style={{ color: 'var(--diff-add-fg)' }}>+{added}</span>}{' '}
-          {removed > 0 && <span style={{ color: 'var(--diff-del-fg)' }}>−{removed}</span>}
+        <span className="text-[12.5px] font-medium text-droid-text-secondary">Changes</span>
+        <span className="ml-auto flex shrink-0 items-center gap-2.5">
+          <span className="text-[11px] text-droid-text-muted">
+            {files.length} {files.length === 1 ? 'file' : 'files'}
+          </span>
+          <ChangeCount added={added} removed={removed} />
         </span>
       </button>
       <Expand open={open}>
-        <div className="border-t border-droid-border/60 py-1">
+        <div className="border-t border-droid-border">
           {files.map((f) => {
-            const glyph = turnFileGlyph(f.verb);
-            const slash = f.path.lastIndexOf('/');
-            const dir = slash >= 0 ? f.path.slice(0, slash + 1) : '';
-            const name = slash >= 0 ? f.path.slice(slash + 1) : f.path;
+            const display = displayEditPath(f.path, cwd);
+            const slash = display.lastIndexOf('/');
+            const dir = slash >= 0 ? display.slice(0, slash) : '';
+            const name = slash >= 0 ? display.slice(slash + 1) : display;
             return (
               <button
                 key={f.path}
                 onClick={() => onOpenFile?.(f.path)}
                 disabled={!onOpenFile}
-                title={onOpenFile ? `Review ${f.path}` : f.path}
-                className="flex w-full items-center gap-2 px-3 py-1.5 text-left transition-colors enabled:hover:bg-droid-elevated/50 disabled:cursor-default"
+                title={f.path}
+                className="flex w-full items-center gap-3 px-3 py-1.5 text-left transition-colors enabled:hover:bg-droid-elevated/40 disabled:cursor-default"
               >
-                <span
-                  className="w-3 shrink-0 text-center font-mono text-[11px] font-semibold"
-                  style={{ color: glyph.color }}
-                >
-                  {glyph.symbol}
-                </span>
                 <span className="min-w-0 flex-1 truncate text-[12.5px]">
-                  {dir && <span className="text-droid-text-muted/70">{dir}</span>}
-                  <span className="text-droid-text">{name}</span>
+                  <span className="text-droid-text-secondary">{name}</span>
+                  {dir && <span className="ml-2 text-[11px] text-droid-text-muted/60">{dir}</span>}
                 </span>
-                <span className="shrink-0 font-mono text-[10.5px]">
-                  {f.added > 0 && <span style={{ color: 'var(--diff-add-fg)' }}>+{f.added}</span>}{' '}
-                  {f.removed > 0 && (
-                    <span style={{ color: 'var(--diff-del-fg)' }}>−{f.removed}</span>
-                  )}
-                </span>
+                <ChangeCount added={f.added} removed={f.removed} />
               </button>
             );
           })}
@@ -1532,6 +1539,7 @@ function SubagentLine({
 export function MessageFeed({
   events,
   pending,
+  cwd,
   onOpenDiff,
   onOpenReviewFile,
   onOpenSubagent,
@@ -1541,6 +1549,7 @@ export function MessageFeed({
 }: {
   events: TranscriptEvent[];
   pending: boolean;
+  cwd?: string;
   onOpenDiff?: (c: FileChange) => void;
   onOpenReviewFile?: (path: string) => void;
   onOpenSubagent?: (target: SubagentTarget) => void;
@@ -1604,6 +1613,7 @@ export function MessageFeed({
             item={item}
             live={pending && idx === lastIdx}
             compacting={compacting && idx === lastIdx}
+            cwd={cwd}
             onOpenDiff={onOpenDiff}
             onOpenReviewFile={onOpenReviewFile}
             onOpenSubagent={onOpenSubagent}

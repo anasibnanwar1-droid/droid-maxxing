@@ -301,12 +301,18 @@ export function ReviewPanel({ cwd, onClose }: { cwd: string; onClose: () => void
 
   // Honor a focus request (e.g. a per-turn changes summary clicked in chat):
   // once the diff list contains the requested file, expand and scroll to it,
-  // then clear the request so a later poll can't re-trigger the jump.
+  // then clear the request so a later poll can't re-trigger the jump. Transcript
+  // edit paths are often absolute while git lists paths relative to the repo
+  // root, so match on an exact hit or a path-suffix rather than strict equality.
   useEffect(() => {
     const focus = state.reviewFocusPath;
     if (!focus) return;
-    if (!review.files.some((f) => f.path === focus)) return;
-    jumpTo(focus);
+    const norm = focus.replace(/\\/g, '/');
+    const target = review.files.find(
+      (f) => f.path === focus || f.path === norm || norm.endsWith(`/${f.path}`),
+    );
+    if (!target) return;
+    jumpTo(target.path);
     dispatch({ type: 'CLEAR_REVIEW_FOCUS' });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.reviewFocusPath, review.signature]);
