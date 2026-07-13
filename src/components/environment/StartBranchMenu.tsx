@@ -60,7 +60,6 @@ export function StartBranchMenu({
 
   const { locals, remotes } = useMemo(() => {
     const q = query.trim().toLowerCase();
-    const localNames = new Set((branches?.local ?? []).map((b) => b.name));
     const locals = (branches?.local ?? [])
       .filter((b) => !q || b.name.toLowerCase().includes(q))
       .sort((a, b) => {
@@ -68,11 +67,12 @@ export function StartBranchMenu({
         if (b.name === current) return 1;
         return b.committerDate - a.committerDate;
       });
-    const remotes = (branches?.remote ?? [])
-      .filter((r) => !localNames.has(stripRemotePrefix(r.name, env?.remotes)))
-      .filter((r) => !q || r.name.toLowerCase().includes(q));
+    // Keep remote entries visible even when a local branch shares the short
+    // name — the user may want to create a worktree from a different remote's
+    // version (e.g. upstream/foo vs origin/foo).
+    const remotes = (branches?.remote ?? []).filter((r) => !q || r.name.toLowerCase().includes(q));
     return { locals, remotes };
-  }, [branches, query, current, env?.remotes]);
+  }, [branches, query, current]);
 
   const worktreeFor = (branch: string) =>
     worktrees.find((w) => w.branch === branch && w.path && !w.bare);

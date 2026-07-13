@@ -28,6 +28,10 @@ export function CommitSheet({ cwd, onDone }: { cwd: string; onDone: () => void }
       } else {
         toast.error(res.message || 'Commit failed');
       }
+    } catch {
+      // A rejected IPC call (transport failure, no bridge) would otherwise leave
+      // the user with only a cleared spinner and no feedback.
+      toast.error('Commit failed');
     } finally {
       busyRef.current = false;
       setBusy(false);

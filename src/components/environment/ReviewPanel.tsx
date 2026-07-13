@@ -228,12 +228,14 @@ export function ReviewPanel({ cwd, onClose }: { cwd: string; onClose: () => void
   const sectionRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   const seen = useRef<Set<string>>(new Set());
 
-  const review = useReviewDiff(cwd, state.reviewScope, true);
+  const sessionId = state.activeMissionId ?? undefined;
+  const review = useReviewDiff(cwd, state.reviewScope, true, sessionId);
   const { entries: diffEntries, ensure } = useReviewFileDiffs(
     cwd,
     state.reviewScope,
     hideWhitespace,
     review.signature,
+    sessionId,
   );
   const git = useGitEnvironment(cwd, 'worktree');
   const isGitHub = !!git.env?.isGitHub;

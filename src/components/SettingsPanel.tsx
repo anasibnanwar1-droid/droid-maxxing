@@ -1123,8 +1123,10 @@ function WorktreesSection() {
   const [loading, setLoading] = useState(false);
   const [removing, setRemoving] = useState<string | null>(null);
   const [confirming, setConfirming] = useState<string | null>(null);
+  const loadReq = useRef(0);
 
   const load = useCallback(async () => {
+    const id = ++loadReq.current;
     setLoading(true);
     const seen = new Set<string>();
     const result: RepoWorktrees[] = [];
@@ -1137,6 +1139,7 @@ function WorktreesSection() {
       const worktrees = all.filter((w) => !w.bare && w.path);
       if (worktrees.length > 0) result.push({ root, name: workspaceName(root), worktrees });
     }
+    if (id !== loadReq.current) return;
     setRepos(result);
     setLoading(false);
   }, [state.workspaceCwds]);
@@ -1147,18 +1150,21 @@ function WorktreesSection() {
 
   const remove = async (root: string, path: string) => {
     setRemoving(path);
-    const res = await removeGitWorktree(root, { path });
-    setRemoving(null);
-    if (res.ok) {
-      toast.success('Worktree removed');
-      void load();
-    } else if (
-      res.reason === 'not_clean' ||
-      /not.*clean|dirty|contains modified/i.test(res.message ?? '')
-    ) {
-      toast.error('Has uncommitted changes — commit or discard them first');
-    } else {
-      toast.error(res.message || 'Could not remove worktree');
+    try {
+      const res = await removeGitWorktree(root, { path });
+      if (res.ok) {
+        toast.success('Worktree removed');
+        void load();
+      } else if (
+        res.reason === 'not_clean' ||
+        /not.*clean|dirty|contains modified/i.test(res.message ?? '')
+      ) {
+        toast.error('Has uncommitted changes — commit or discard them first');
+      } else {
+        toast.error(res.message || 'Could not remove worktree');
+      }
+    } finally {
+      setRemoving(null);
     }
   };
 

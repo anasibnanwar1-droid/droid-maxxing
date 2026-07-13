@@ -118,7 +118,9 @@ function registerIpc() {
   ipcMain.handle('git-diff-stat', (_event, { dir, options }) => gitVcs.diffStat(dir, options));
   ipcMain.handle('git-diff-files', (_event, { dir, options }) => gitVcs.diffFiles(dir, options));
   ipcMain.handle('git-file-diff', (_event, { dir, options }) => gitVcs.fileDiff(dir, options));
-  ipcMain.handle('git-mark-turn-start', (_event, { dir }) => gitVcs.markTurnStart(dir));
+  ipcMain.handle('git-mark-turn-start', (_event, { dir, sessionId }) =>
+    gitVcs.markTurnStart(dir, sessionId),
+  );
   ipcMain.handle('git-create-branch', (_event, { dir, options }) =>
     gitVcs.createBranch(dir, options),
   );

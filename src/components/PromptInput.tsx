@@ -481,7 +481,7 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
 
     // Capture the last-turn baseline before the agent can touch the tree;
     // a fire-and-forget call here races the first edit and corrupts the diff.
-    if (activeMission.cwd) await markGitTurnStart(activeMission.cwd);
+    if (activeMission.cwd) await markGitTurnStart(activeMission.cwd, activeMission.id);
 
     try {
       if (targetAgentSessionId) {
@@ -505,7 +505,7 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
     if (!activeMission) return;
     // Capture the Last-turn git baseline before sending ANY prompt (design
     // included) so the Review tab diffs the turn from the right starting point.
-    if (activeMission.cwd) await markGitTurnStart(activeMission.cwd);
+    if (activeMission.cwd) await markGitTurnStart(activeMission.cwd, activeMission.id);
     // The queue stays editable while that runs, so deliver whatever is now at
     // the head: this honors deletes and edits (both remove the item) as well as
     // reorders, and never sends a stale prompt out of the visible order.

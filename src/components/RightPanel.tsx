@@ -111,10 +111,10 @@ export default function RightPanel() {
     active: view === 'pr',
   });
 
-  // A PR view belongs to one session; reset it when the active session changes.
+  // A PR view belongs to one session+branch; reset it when either changes.
   useEffect(() => {
     setView('context');
-  }, [activeMission?.id]);
+  }, [activeMission?.id, git.env?.branch]);
 
   // Mission control owns its own feature-based progress; for chat/spec sessions
   // we always prefer the model's own TodoWrite list as the source of truth.

@@ -16,7 +16,12 @@ export interface ReviewDiffState {
 // tracks the agent's edits. Per-file diffs are loaded lazily by
 // useReviewFileDiffs when a section is expanded, so this hook only owns the
 // list and a content signature consumers use to invalidate cached diffs.
-export function useReviewDiff(cwd: string, scope: DiffScope, enabled: boolean): ReviewDiffState {
+export function useReviewDiff(
+  cwd: string,
+  scope: DiffScope,
+  enabled: boolean,
+  sessionId?: string,
+): ReviewDiffState {
   const [files, setFiles] = useState<DiffFile[]>([]);
   const [base, setBase] = useState<string | null>(null);
   const [loadingList, setLoadingList] = useState(false);
@@ -35,7 +40,7 @@ export function useReviewDiff(cwd: string, scope: DiffScope, enabled: boolean): 
     }
     const id = ++listReq.current;
     setLoadingList(true);
-    getGitDiffFiles(cwd, scope)
+    getGitDiffFiles(cwd, scope, sessionId)
       .then((res) => {
         if (id !== listReq.current) return;
         setFiles(res.files);
@@ -45,7 +50,7 @@ export function useReviewDiff(cwd: string, scope: DiffScope, enabled: boolean): 
       .catch(() => {
         if (id === listReq.current) setLoadingList(false);
       });
-  }, [cwd, scope, enabled]);
+  }, [cwd, scope, enabled, sessionId]);
 
   useEffect(() => {
     loadList();

@@ -54,10 +54,14 @@ export async function getGitDiffStat(dir: string, mode: DiffStatMode): Promise<G
   }
 }
 
-export async function getGitDiffFiles(dir: string, mode: DiffScope): Promise<DiffFileList> {
+export async function getGitDiffFiles(
+  dir: string,
+  mode: DiffScope,
+  sessionId?: string,
+): Promise<DiffFileList> {
   if (!isDesktop() || !dir) return { mode, base: null, files: [] };
   try {
-    return await window.droidControl!.gitDiffFiles(dir, { mode });
+    return await window.droidControl!.gitDiffFiles(dir, { mode, sessionId });
   } catch {
     return { mode, base: null, files: [] };
   }
@@ -68,19 +72,25 @@ export async function getGitFileDiff(
   mode: DiffScope,
   path: string,
   ignoreWhitespace = false,
+  sessionId?: string,
 ): Promise<FileDiffResult> {
   if (!isDesktop() || !dir) return { path, diff: '', binary: false };
   try {
-    return await window.droidControl!.gitFileDiff(dir, { mode, path, ignoreWhitespace });
+    return await window.droidControl!.gitFileDiff(dir, {
+      mode,
+      path,
+      ignoreWhitespace,
+      sessionId,
+    });
   } catch {
     return { path, diff: '', binary: false };
   }
 }
 
-export async function markGitTurnStart(dir: string): Promise<void> {
+export async function markGitTurnStart(dir: string, sessionId?: string): Promise<void> {
   if (!isDesktop() || !dir) return;
   try {
-    await window.droidControl!.gitMarkTurnStart(dir);
+    await window.droidControl!.gitMarkTurnStart(dir, sessionId);
   } catch {
     // best-effort baseline; the Last turn scope falls back to HEAD
   }

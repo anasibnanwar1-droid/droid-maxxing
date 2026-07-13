@@ -102,7 +102,7 @@ export function GitActionsBar({
           disabled={pushing || !!env?.detached}
           onClick={() => void doPush()}
         />
-        {isGitHub && !hasPr && (
+        {isGitHub && !hasPr && !env?.detached && (
           <ActionButton
             icon={<GitPullRequestIcon size={14} />}
             label="Open PR"

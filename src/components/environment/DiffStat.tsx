@@ -74,6 +74,8 @@ export function DiffStat({
         <button
           onClick={() => setOpen((v) => !v)}
           title="Change which changes are summed"
+          aria-haspopup="menu"
+          aria-expanded={open}
           className="shrink-0 rounded-r-lg px-1.5 py-2 text-droid-text-muted/60 hover:text-droid-text"
         >
           <ChevronDown className={`h-3.5 w-3.5 transition-transform ${open ? 'rotate-180' : ''}`} />

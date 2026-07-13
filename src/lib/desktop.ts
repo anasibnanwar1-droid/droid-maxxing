@@ -56,12 +56,18 @@ interface DroidControlApi {
   gitBranches: (dir: string) => Promise<GitBranchList>;
   gitWorktrees: (dir: string) => Promise<GitWorktree[]>;
   gitDiffStat: (dir: string, options: { mode: DiffStatMode }) => Promise<GitDiffStat>;
-  gitDiffFiles: (dir: string, options: { mode: DiffScope }) => Promise<DiffFileList>;
+  gitDiffFiles: (
+    dir: string,
+    options: { mode: DiffScope; sessionId?: string },
+  ) => Promise<DiffFileList>;
   gitFileDiff: (
     dir: string,
-    options: { mode: DiffScope; path: string; ignoreWhitespace?: boolean },
+    options: { mode: DiffScope; path: string; ignoreWhitespace?: boolean; sessionId?: string },
   ) => Promise<FileDiffResult>;
-  gitMarkTurnStart: (dir: string) => Promise<{ ok: boolean; baseline?: string | null }>;
+  gitMarkTurnStart: (
+    dir: string,
+    sessionId?: string,
+  ) => Promise<{ ok: boolean; baseline?: string | null }>;
   gitCreateBranch: (dir: string, options: CreateBranchOptions) => Promise<GitActionResult>;
   gitCheckout: (
     dir: string,

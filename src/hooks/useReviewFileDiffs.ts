@@ -24,9 +24,14 @@ export function useReviewFileDiffs(
   scope: DiffScope,
   ignoreWhitespace: boolean,
   signature: string,
+  sessionId?: string,
 ): ReviewFileDiffs {
   const [entries, setEntries] = useState<Record<string, FileDiffEntry>>({});
-  const status = useRef<Record<string, 'loading' | 'loaded'>>({});
+  // A Map avoids the Object.prototype lookup collision that lets a file path
+  // like `__proto__` or `constructor` bypass the cache check
+  // (`status.current['__proto__']` returns the prototype, which is truthy),
+  // causing expanded sections to refetch their diff on every render.
+  const status = useRef<Map<string, 'loading' | 'loaded'>>(new Map());
   const gen = useRef(0);
 
   const hardKey = `${cwd}\u0000${scope}\u0000${ignoreWhitespace}`;
@@ -39,20 +44,20 @@ export function useReviewFileDiffs(
   if (hardRef.current !== hardKey) {
     hardRef.current = hardKey;
     sigRef.current = signature;
-    status.current = {};
+    status.current.clear();
     gen.current += 1;
     setEntries({});
   } else if (sigRef.current !== signature) {
     sigRef.current = signature;
-    status.current = {};
+    status.current.clear();
     gen.current += 1;
     // Keep existing entries visible; ensure() refetches and overwrites in place.
   }
 
   const ensure = useCallback(
     (path: string) => {
-      if (status.current[path]) return;
-      status.current[path] = 'loading';
+      if (status.current.get(path)) return;
+      status.current.set(path, 'loading');
       const requestGen = gen.current;
       setEntries((cur) => {
         const prev = cur[path];
@@ -66,25 +71,27 @@ export function useReviewFileDiffs(
           },
         };
       });
-      getGitFileDiff(cwd, scope, path, ignoreWhitespace)
+      getGitFileDiff(cwd, scope, path, ignoreWhitespace, sessionId)
         .then((res) => {
           if (gen.current !== requestGen) return;
-          status.current[path] = 'loaded';
+          status.current.set(path, 'loaded');
           setEntries((cur) => ({
             ...cur,
             [path]: { diff: res.diff, binary: res.binary, loading: false, loaded: true },
           }));
         })
         .catch(() => {
+          // getGitFileDiff catches internally and never rejects, but guard
+          // against a future contract change so an open section doesn't hang.
           if (gen.current !== requestGen) return;
-          status.current[path] = 'loaded';
+          status.current.set(path, 'loaded');
           setEntries((cur) => ({
             ...cur,
             [path]: { diff: '', binary: false, loading: false, loaded: true },
           }));
         });
     },
-    [cwd, scope, ignoreWhitespace],
+    [cwd, scope, ignoreWhitespace, sessionId],
   );
 
   return { entries, ensure };

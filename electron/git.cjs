@@ -309,7 +309,10 @@ async function environment(dir) {
     defaultRef,
     remotes,
     remoteUrl: remoteUrl || null,
-    isGitHub: !!remoteUrl && /github\.com/i.test(remoteUrl),
+    // Anchor to the URL's host boundary so `github.com` only matches as the real
+    // host (`https://github.com/…`, `git@github.com:…`), never embedded in an
+    // arbitrary host such as `github.com.evil.com` or `evil.com/github.com`.
+    isGitHub: !!remoteUrl && /(?:^|@|\/\/)github\.com[/:]/i.test(remoteUrl),
   };
 }
 
@@ -384,9 +387,14 @@ async function scanUntracked(root) {
   const out = [];
   for (const rel of names) {
     let entry = { path: rel, additions: 0, binary: false, sig: null };
+    let fh;
     try {
       const full = path.join(root, rel);
-      const stat = await fsp.stat(full);
+      // Open once and both stat and read through the same descriptor so the size
+      // check and the read observe the same file, closing the check-then-use race
+      // where the file could change between a separate stat() and readFile().
+      fh = await fsp.open(full, 'r');
+      const stat = await fh.stat();
       const sig = `${stat.size}:${stat.mtimeMs}`;
       const cached = prior.get(rel);
       if (cached && cached.sig === sig) {
@@ -395,7 +403,7 @@ async function scanUntracked(root) {
         let additions = 0;
         let binary = false;
         if (stat.isFile() && stat.size <= UNTRACKED_BYTE_CAP) {
-          const buf = await fsp.readFile(full);
+          const buf = await fh.readFile();
           if (buf.includes(0)) binary = true;
           else {
             const text = buf.toString('utf8');
@@ -409,6 +417,8 @@ async function scanUntracked(root) {
       }
     } catch {
       // ignore unreadable entries
+    } finally {
+      await fh?.close();
     }
     out.push(entry);
     if (entry.sig) {
@@ -646,7 +656,13 @@ async function createWorktree(dir, { branch, base, newBranch = false, location }
   const root = await repoRootOf(dir);
   if (!root) return { ok: false, reason: 'not_a_repo' };
   if (!validBranchName(branch)) return { ok: false, reason: 'invalid_name' };
-  let target = location ? expandHome(location) : defaultWorktreeLocation(root, branch);
+  // A relative custom location must resolve against the repo root (where git
+  // creates it), not the Electron process cwd — otherwise the existence check,
+  // the actual creation, and the returned path could all refer to different
+  // directories, missing collisions and starting the chat at the wrong cwd.
+  let target = location
+    ? path.resolve(root, expandHome(location))
+    : defaultWorktreeLocation(root, branch);
   if (location) {
     if (fs.existsSync(target)) return { ok: false, reason: 'exists', path: target };
   } else {
@@ -672,6 +688,17 @@ async function createWorktree(dir, { branch, base, newBranch = false, location }
       : ['worktree', 'add', '--', target, branch];
     await run(root, args, { timeout: PUSH_TIMEOUT });
     if (newBranch) await rememberBase(root, branch, baseRef);
+    // When forking from a remote-tracking ref (e.g. `upstream/foo`), set up
+    // upstream tracking so push/pull targets the right remote without manual
+    // configuration. `git worktree add -b` doesn't do this automatically.
+    if (newBranch && baseRef) {
+      try {
+        await tryRun(root, ['rev-parse', '--verify', `refs/remotes/${baseRef}`]);
+        await run(root, ['branch', '--set-upstream-to', baseRef, '--', branch]);
+      } catch {
+        // base isn't a remote-tracking ref or config failed; worktree is usable
+      }
+    }
     return { ok: true, path: target, branch };
   } catch (err) {
     return { ok: false, reason: 'git_error', message: err.message };
@@ -805,7 +832,13 @@ const REVIEW_SCOPES = [
 
 // Per-worktree baseline captured at the start of an agent turn so the
 // "Last turn" scope can diff the working tree against that point in time.
+// Keyed by `${root}\u0000${sessionId}` so two sessions sharing a repo don't
+// clobber each other's baseline.
 const turnBaselines = new Map();
+
+function turnBaselineKey(root, sessionId) {
+  return `${root}\u0000${sessionId ?? ''}`;
+}
 
 function normalizeScope(value) {
   return REVIEW_SCOPES.includes(value) ? value : 'unstaged';
@@ -828,41 +861,69 @@ function statusLabel(letter) {
   }
 }
 
-// Recover the post-rename path from numstat/name-status fields, handling both
-// the `old => new` and `dir/{old => new}/file` rename encodings.
-function renameTarget(field) {
-  const value = String(field || '');
-  if (!value.includes(' => ')) return value;
-  const open = value.indexOf('{');
-  const close = value.indexOf('}');
-  if (open !== -1 && close > open) {
-    const pre = value.slice(0, open);
-    const inner = value.slice(open + 1, close);
-    const post = value.slice(close + 1);
-    const next = inner.split(' => ')[1] ?? inner;
-    return (pre + next + post).replace(/\/{2,}/g, '/');
+// Split NUL-delimited git output (`-z`) into records, dropping the empty tail a
+// trailing NUL leaves behind.
+function splitNul(out) {
+  const parts = String(out || '').split('\0');
+  if (parts.length && parts[parts.length - 1] === '') parts.pop();
+  return parts;
+}
+
+// Parse `git diff --numstat -z`. A normal record is `added\tdeleted\tpath`; a
+// rename/copy ends right after the counts (`added\tdeleted\t`) and is followed
+// by two further records — the old path then the new path.
+function parseNumstatZ(out) {
+  const tokens = splitNul(out);
+  const rows = [];
+  for (let i = 0; i < tokens.length; i++) {
+    const tok = tokens[i];
+    if (!tok) continue;
+    const tab1 = tok.indexOf('\t');
+    const tab2 = tab1 >= 0 ? tok.indexOf('\t', tab1 + 1) : -1;
+    if (tab2 < 0) continue;
+    const add = tok.slice(0, tab1);
+    const del = tok.slice(tab1 + 1, tab2);
+    let file = tok.slice(tab2 + 1);
+    if (file === '') {
+      file = tokens[i + 2] ?? tokens[i + 1] ?? '';
+      i += 2;
+    }
+    rows.push({ add, del, path: file });
   }
-  return value.slice(value.indexOf(' => ') + 4);
+  return rows;
+}
+
+// Parse `git diff --name-status -z`. A normal record is a `status` token then a
+// `path` record; a rename/copy is `Rxx`/`Cxx` then old and new path records.
+function parseNameStatusZ(out) {
+  const tokens = splitNul(out);
+  const rows = [];
+  for (let i = 0; i < tokens.length; i++) {
+    const status = tokens[i];
+    if (!status) continue;
+    if (/^[RC]/.test(status)) {
+      rows.push({ status, from: tokens[i + 1] ?? '', path: tokens[i + 2] ?? '' });
+      i += 2;
+    } else {
+      rows.push({ status, from: null, path: tokens[i + 1] ?? '' });
+      i += 1;
+    }
+  }
+  return rows;
 }
 
 function parseDiffFileList(numstatOut, nameStatusOut) {
-  // name-status is authoritative for paths and statuses. Renames/copies are
-  // reported tab-separated as `R<score>\told\tnew`, so the post-change path is
-  // the final field; every other status carries a single, literal path that is
-  // never arrow-encoded and so must NOT be rename-decoded.
+  // Both inputs are NUL-delimited (`-z`), so paths are emitted verbatim with no
+  // shell-style quoting — this is what lets Review open files whose names would
+  // otherwise be git-quoted (spaces, unicode, control chars). name-status is
+  // authoritative for statuses and post-rename paths.
   const files = [];
   const byPath = new Map();
-  const renameTargets = new Set();
-  for (const line of String(nameStatusOut || '').split('\n')) {
-    if (!line.trim()) continue;
-    const parts = line.split('\t');
-    const isRename = /^[RC]/.test(parts[0]);
-    const target = isRename ? parts[parts.length - 1] : parts.slice(1).join('\t');
+  for (const { status, path: target } of parseNameStatusZ(nameStatusOut)) {
     if (!target) continue;
-    if (isRename) renameTargets.add(target);
     const file = {
       path: target,
-      status: statusLabel(parts[0]),
+      status: statusLabel(status),
       additions: 0,
       deletions: 0,
       binary: false,
@@ -870,18 +931,8 @@ function parseDiffFileList(numstatOut, nameStatusOut) {
     files.push(file);
     byPath.set(target, file);
   }
-  // numstat uses the `old => new` / `dir/{old => new}` arrow for renames, so
-  // decode it — but only when the decoded path is a known rename target. A
-  // literal filename that merely contains ` => ` is kept verbatim rather than
-  // mistaken for a rename.
-  for (const line of String(numstatOut || '').split('\n')) {
-    if (!line.trim()) continue;
-    const parts = line.split('\t');
-    if (parts.length < 3) continue;
-    const [add, del] = parts;
-    const raw = parts.slice(2).join('\t');
-    const decoded = renameTarget(raw);
-    const target = decoded !== raw && renameTargets.has(decoded) ? decoded : raw;
+  for (const { add, del, path: target } of parseNumstatZ(numstatOut)) {
+    if (!target) continue;
     const counts = {
       additions: add === '-' ? 0 : Number.parseInt(add, 10) || 0,
       deletions: del === '-' ? 0 : Number.parseInt(del, 10) || 0,
@@ -907,7 +958,7 @@ async function untrackedFileList(root) {
 
 // Resolve a review scope to the `git diff` arguments, the base ref it compares
 // against, and whether untracked working-tree files should be folded in.
-async function scopeRange(root, scope) {
+async function scopeRange(root, scope, sessionId) {
   if (scope === 'staged') return { args: ['--cached'], base: null, includeUntracked: false };
   if (scope === 'uncommitted') {
     // Everything not yet committed: working tree vs HEAD (staged + unstaged)
@@ -935,7 +986,11 @@ async function scopeRange(root, scope) {
     return { args: [base || (hasHead ? 'HEAD' : EMPTY_TREE)], base, includeUntracked: true };
   }
   if (scope === 'last_turn') {
-    const entry = turnBaselines.get(root);
+    // Try the session-scoped baseline first, then fall back to the repo-level
+    // key (used by the first turn of a brand-new mission before it has an ID).
+    const entry =
+      turnBaselines.get(turnBaselineKey(root, sessionId)) ??
+      turnBaselines.get(turnBaselineKey(root, undefined));
     const baseline = entry?.baseline || 'HEAD';
     return {
       args: [baseline],
@@ -952,11 +1007,15 @@ async function diffFiles(dir, options = {}) {
   const scope = normalizeScope(options.mode);
   const root = await repoRootOf(dir);
   if (!root) return { mode: scope, base: null, files: [] };
-  const { args, base, includeUntracked, priorUntracked } = await scopeRange(root, scope);
+  const { args, base, includeUntracked, priorUntracked } = await scopeRange(
+    root,
+    scope,
+    options.sessionId,
+  );
   if (!args) return { mode: scope, base: null, files: [] };
   const [numstat, nameStatus] = await Promise.all([
-    runSoft(root, ['diff', ...args, '--numstat']).catch(() => ''),
-    runSoft(root, ['diff', ...args, '--name-status']).catch(() => ''),
+    runSoft(root, ['diff', ...args, '--numstat', '-z']).catch(() => ''),
+    runSoft(root, ['diff', ...args, '--name-status', '-z']).catch(() => ''),
   ]);
   const files = parseDiffFileList(numstat, nameStatus);
   if (includeUntracked) {
@@ -986,11 +1045,9 @@ async function diffFiles(dir, options = {}) {
 // detection as the file list (parseDiffFileList), so it only reports an old
 // path when the list already classified the file as a rename/copy.
 async function renameSource(root, args, file) {
-  const out = await runSoft(root, ['diff', ...args, '--name-status']).catch(() => '');
-  for (const line of String(out).split('\n')) {
-    if (!line.trim()) continue;
-    const parts = line.split('\t');
-    if (/^[RC]/.test(parts[0]) && parts[parts.length - 1] === file) return parts[1];
+  const out = await runSoft(root, ['diff', ...args, '--name-status', '-z']).catch(() => '');
+  for (const row of parseNameStatusZ(out)) {
+    if (row.from && row.path === file) return row.from;
   }
   return null;
 }
@@ -1000,7 +1057,7 @@ async function fileDiff(dir, options = {}) {
   const file = options.path;
   const root = await repoRootOf(dir);
   if (!root || !file) return { path: file || null, diff: '', binary: false };
-  const { args, includeUntracked } = await scopeRange(root, scope);
+  const { args, includeUntracked } = await scopeRange(root, scope, options.sessionId);
   if (!args) return { path: file, diff: '', binary: false };
   const ws = options.ignoreWhitespace ? ['-w'] : [];
   // A rename restricted to just the new path can't be paired with its deleted
@@ -1035,7 +1092,7 @@ async function fileSignature(root, rel) {
   }
 }
 
-async function markTurnStart(dir) {
+async function markTurnStart(dir, sessionId) {
   const root = await repoRootOf(dir);
   if (!root) return { ok: false };
   let baseline = await tryRun(root, ['stash', 'create']);
@@ -1056,7 +1113,8 @@ async function markTurnStart(dir) {
     .filter(Boolean);
   const priorUntracked = new Map();
   for (const rel of priorNames) priorUntracked.set(rel, await fileSignature(root, rel));
-  if (baseline) setRepoCache(turnBaselines, root, { baseline, priorUntracked });
+  if (baseline)
+    setRepoCache(turnBaselines, turnBaselineKey(root, sessionId), { baseline, priorUntracked });
   return { ok: !!baseline, baseline: baseline || null };
 }
 
@@ -1080,7 +1138,6 @@ module.exports = {
   parseWorktrees,
   parseNumstat,
   parseDiffFileList,
-  renameTarget,
   statusLabel,
   parseTrack,
   parseAheadBehind,

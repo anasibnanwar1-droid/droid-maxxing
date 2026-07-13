@@ -49,14 +49,17 @@ export function Popover({
       const spaceAbove = r.top - margin;
       // Flip above the anchor when there isn't enough room below (e.g. the
       // composer pickers sit at the bottom of the window).
+      // Cap maxHeight to the room actually available on the chosen side (never a
+      // fixed floor that could exceed it) so the panel is never pushed partly
+      // off-screen; its content scrolls within whatever space remains.
       if (spaceBelow < 240 && spaceAbove > spaceBelow) {
         setPos({
           bottom: window.innerHeight - r.top + 4,
           left,
-          maxHeight: Math.max(160, spaceAbove),
+          maxHeight: Math.max(0, spaceAbove),
         });
       } else {
-        setPos({ top: r.bottom + 4, left, maxHeight: Math.max(160, spaceBelow) });
+        setPos({ top: r.bottom + 4, left, maxHeight: Math.max(0, spaceBelow) });
       }
     };
     update();

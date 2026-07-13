@@ -57,25 +57,32 @@ export function WorktreeMenu({
     workers: state.workers,
   });
 
-  const openInNewChat = (path: string) => {
+  const openInNewChat = (path: string, branch?: string | null) => {
     dispatch({ type: 'ADD_WORKSPACE', cwd: path });
-    dispatch({ type: 'START_CHAT', cwd: path });
+    dispatch({ type: 'START_CHAT', cwd: path, branch: branch ?? undefined });
     setOpen(false);
   };
 
   const removeWorktree = async (path: string) => {
+    if (busyRef.current) return;
+    busyRef.current = true;
     try {
       const res = await removeGitWorktree(cwd, { path });
       if (res.ok) {
         toast.success('Worktree removed');
         onChanged();
-      } else if (res.reason === 'git_error') {
+      } else if (
+        res.reason === 'git_error' &&
+        /not.*clean|dirty|contains modified/i.test(res.message ?? '')
+      ) {
         toast.error('Worktree has changes — commit or discard first');
       } else {
         toast.error(res.message || 'Could not remove worktree');
       }
     } catch {
       toast.error('Could not remove worktree');
+    } finally {
+      busyRef.current = false;
     }
   };
 
@@ -91,7 +98,7 @@ export function WorktreeMenu({
         setCreating(false);
         setName('');
         onChanged();
-        openInNewChat(res.path);
+        openInNewChat(res.path, res.branch ?? branch);
       } else if (res.reason === 'exists') {
         toast.error('A worktree already exists at that path');
       } else {
@@ -177,7 +184,7 @@ export function WorktreeMenu({
               className="group flex items-center gap-2 px-2.5 py-1.5 transition-colors hover:bg-droid-elevated/60"
             >
               <button
-                onClick={() => w.path && openInNewChat(w.path)}
+                onClick={() => w.path && openInNewChat(w.path, w.branch)}
                 title="Open this worktree in a new chat"
                 className="flex min-w-0 flex-1 items-center gap-2 text-left"
               >

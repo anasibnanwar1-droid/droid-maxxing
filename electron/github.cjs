@@ -43,6 +43,16 @@ function parseJson(text, fallback) {
   }
 }
 
+// A PR selector must be a bare integer. Anything else (a URL, a branch name, or
+// a value beginning with `-`) could be parsed by gh as an option and silently
+// retarget another repository, so reject it before spawning gh. Callers pass the
+// validated selector after a `--` terminator as a second line of defense.
+function prSelector(value) {
+  if (value == null) return null;
+  const s = String(value);
+  return /^[0-9]+$/.test(s) ? s : null;
+}
+
 async function available() {
   const version = await gh(process.cwd(), ['--version']);
   if (version.spawnFailed || version.code !== 0) {
@@ -116,13 +126,15 @@ async function detectPr(dir, { branch } = {}) {
 }
 
 async function prChecks(dir, { prNumber } = {}) {
-  if (prNumber == null) return { ok: false, reason: 'missing_pr', checks: [] };
+  const selector = prSelector(prNumber);
+  if (selector == null) return { ok: false, reason: 'missing_pr', checks: [] };
   const res = await gh(dir, [
     'pr',
     'checks',
-    String(prNumber),
     '--json',
     'name,state,bucket,link,workflow,description,startedAt,completedAt',
+    '--',
+    selector,
   ]);
   // exit 8 = checks pending, exit 1 = a check failed; both still emit JSON.
   if (res.spawnFailed) return { ok: false, reason: 'gh_unavailable', checks: [] };
@@ -146,8 +158,9 @@ async function prChecks(dir, { prNumber } = {}) {
 }
 
 async function prComments(dir, { prNumber } = {}) {
-  if (prNumber == null) return { ok: false, reason: 'missing_pr', comments: [] };
-  const res = await gh(dir, ['pr', 'view', String(prNumber), '--json', 'comments,reviews']);
+  const selector = prSelector(prNumber);
+  if (selector == null) return { ok: false, reason: 'missing_pr', comments: [] };
+  const res = await gh(dir, ['pr', 'view', '--json', 'comments,reviews', '--', selector]);
   if (res.spawnFailed) return { ok: false, reason: 'gh_unavailable', comments: [] };
   if (res.code !== 0)
     return { ok: false, reason: 'gh_error', message: res.stderr.trim(), comments: [] };
@@ -193,9 +206,10 @@ async function createPr(dir, { title, body = '', base, draft = false, head } = {
 }
 
 async function postComment(dir, { prNumber, body } = {}) {
-  if (prNumber == null) return { ok: false, reason: 'missing_pr' };
+  const selector = prSelector(prNumber);
+  if (selector == null) return { ok: false, reason: 'missing_pr' };
   if (!body || !body.trim()) return { ok: false, reason: 'empty_body' };
-  const res = await gh(dir, ['pr', 'comment', String(prNumber), '--body', body], {
+  const res = await gh(dir, ['pr', 'comment', '--body', body, '--', selector], {
     timeout: 30000,
   });
   if (res.spawnFailed) return { ok: false, reason: 'gh_unavailable' };
