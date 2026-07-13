@@ -212,7 +212,7 @@ function FileRow({
 const AUTO_EXPAND_MAX = 25;
 
 export function ReviewPanel({ cwd, onClose }: { cwd: string; onClose: () => void }) {
-  const { state } = useStore();
+  const { state, dispatch } = useStore();
   const [filesOpen, setFilesOpen] = useState(true);
   const [wrap, setWrap] = useState(false);
   const [hideWhitespace, setHideWhitespace] = useState(false);
@@ -298,6 +298,18 @@ export function ReviewPanel({ cwd, onClose }: { cwd: string; onClose: () => void
       sectionRefs.current.get(path)?.scrollIntoView({ block: 'start', behavior: 'smooth' }),
     );
   };
+
+  // Honor a focus request (e.g. a per-turn changes summary clicked in chat):
+  // once the diff list contains the requested file, expand and scroll to it,
+  // then clear the request so a later poll can't re-trigger the jump.
+  useEffect(() => {
+    const focus = state.reviewFocusPath;
+    if (!focus) return;
+    if (!review.files.some((f) => f.path === focus)) return;
+    jumpTo(focus);
+    dispatch({ type: 'CLEAR_REVIEW_FOCUS' });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.reviewFocusPath, review.signature]);
 
   const copyPatch = () => {
     setMoreOpen(false);

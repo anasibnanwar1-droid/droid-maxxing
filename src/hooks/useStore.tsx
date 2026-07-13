@@ -132,6 +132,9 @@ export interface AppState {
   // track the mission it was opened for so switching chats doesn't carry it over.
   reviewOpenMissionId: string | null;
   reviewScope: DiffScope;
+  // A file path the Review pane should jump to once its list loads, set when a
+  // per-turn changes summary (or diff card) is clicked. Cleared after the jump.
+  reviewFocusPath: string | null;
   diffView: DiffViewMode;
   sidebarCollapsed: boolean;
   specMode: boolean;
@@ -271,6 +274,8 @@ type Action =
   | { type: 'SET_RIGHT_PANEL'; open: boolean }
   | { type: 'SET_REVIEW_OPEN'; open: boolean }
   | { type: 'SET_REVIEW_SCOPE'; scope: DiffScope }
+  | { type: 'OPEN_REVIEW_AT'; scope: DiffScope; path?: string | null }
+  | { type: 'CLEAR_REVIEW_FOCUS' }
   | { type: 'SET_DIFF_VIEW'; mode: DiffViewMode }
   | { type: 'TOGGLE_COMMAND_PALETTE' }
   | { type: 'CLOSE_COMMAND_PALETTE' }
@@ -783,6 +788,7 @@ export const initialState: AppState = {
   liveEnterBehavior: loadLiveEnterBehavior(),
   reviewOpenMissionId: null,
   reviewScope: loadReviewScope(),
+  reviewFocusPath: null,
   diffView: loadDiffView(),
   missionSettingOverrides: {},
   skills: [],
@@ -1566,10 +1572,27 @@ function baseReducer(state: AppState, action: Action): AppState {
     case 'SET_REVIEW_OPEN':
       // Scope the open state to the active mission so it never leaks into the
       // next chat; switching back to this mission restores it.
-      return { ...state, reviewOpenMissionId: action.open ? state.activeMissionId : null };
+      return {
+        ...state,
+        reviewOpenMissionId: action.open ? state.activeMissionId : null,
+        reviewFocusPath: action.open ? state.reviewFocusPath : null,
+      };
 
     case 'SET_REVIEW_SCOPE':
       return { ...state, reviewScope: saveReviewScope(action.scope) };
+
+    case 'OPEN_REVIEW_AT':
+      // Open the Review pane for the active mission at a given scope, optionally
+      // asking it to jump to a specific file once the diff list has loaded.
+      return {
+        ...state,
+        reviewOpenMissionId: state.activeMissionId,
+        reviewScope: saveReviewScope(action.scope),
+        reviewFocusPath: action.path ?? null,
+      };
+
+    case 'CLEAR_REVIEW_FOCUS':
+      return state.reviewFocusPath === null ? state : { ...state, reviewFocusPath: null };
 
     case 'SET_DIFF_VIEW':
       return { ...state, diffView: saveDiffView(action.mode) };

@@ -6,6 +6,7 @@ import { MessageFeed, WorkingIndicator } from './chat';
 import { readFile } from '../lib/desktop';
 import { interruptAgent, loadMissionHistory, loadOlderMissionHistory } from '../lib/commands';
 import { findWorkerForTarget, resolveWorkers, subagentActivityForTarget } from '../lib/subagents';
+import type { FileChange } from '../lib/diff';
 
 function DroidWordmark() {
   return (
@@ -202,6 +203,17 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
     [resolvedWorkers, dispatch],
   );
 
+  // Open the Review pane scoped to the agent's last turn and jump to the clicked
+  // file, reused by both the per-turn changes summary and inline diff cards.
+  const openReviewFile = useCallback(
+    (path: string) => dispatch({ type: 'OPEN_REVIEW_AT', scope: 'last_turn', path }),
+    [dispatch],
+  );
+  const openDiff = useCallback(
+    (change: FileChange) => openReviewFile(change.path),
+    [openReviewFile],
+  );
+
   // Latest activity for a spawn line's inline disclosure: the worker's status,
   // start time (for the timer), and its newest meaningful transcript event.
   const subagentActivity = useCallback(
@@ -385,6 +397,8 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
             <MessageFeed
               events={transcript}
               pending={live}
+              onOpenDiff={openDiff}
+              onOpenReviewFile={openReviewFile}
               onOpenSubagent={openSubagent}
               subagentActivity={subagentActivity}
               specContent={specContent}

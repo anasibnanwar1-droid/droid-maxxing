@@ -488,7 +488,39 @@ export type FeedItem =
   | { type: 'diffs'; key: string; changes: { event: TranscriptEvent; change: FileChange }[] }
   | { type: 'subagent'; key: string; event: TranscriptEvent }
   | { type: 'tools'; key: string; events: TranscriptEvent[] }
-  | { type: 'worked'; key: string; items: FeedItem[]; durationMs: number };
+  | { type: 'worked'; key: string; items: FeedItem[]; durationMs: number }
+  | { type: 'turnChanges'; key: string; files: TurnFile[]; added: number; removed: number };
+
+// One file touched during a completed turn, aggregated across every edit the
+// agent made to it that turn.
+export type TurnFile = {
+  path: string;
+  added: number;
+  removed: number;
+  verb: FileChange['verb'];
+};
+
+// Collect the files a turn's run edited, folding repeated edits to the same
+// path into a single entry (summed line counts). Order follows first touch.
+export function collectTurnFiles(run: FeedItem[]): TurnFile[] {
+  const byPath = new Map<string, TurnFile>();
+  const consider = (c: FileChange) => {
+    const cur = byPath.get(c.path);
+    if (cur) {
+      cur.added += c.added;
+      cur.removed += c.removed;
+      // A file created then edited in one turn reads best as a creation.
+      if (c.verb === 'create') cur.verb = 'create';
+    } else {
+      byPath.set(c.path, { path: c.path, added: c.added, removed: c.removed, verb: c.verb });
+    }
+  };
+  for (const it of run) {
+    if (it.type === 'diff') consider(it.change);
+    else if (it.type === 'diffs') it.changes.forEach((c) => consider(c.change));
+  }
+  return [...byPath.values()];
+}
 
 export function buildFeed(events: TranscriptEvent[], subagentCards = false): FeedItem[] {
   const items: FeedItem[] = [];
@@ -731,7 +763,7 @@ function isUserMessage(item: FeedItem): boolean {
 // Best-effort end timestamp of a feed item, used to time the live working cue.
 function tailTimestamp(item?: FeedItem): number | undefined {
   if (!item) return undefined;
-  if (item.type === 'worked') return undefined;
+  if (item.type === 'worked' || item.type === 'turnChanges') return undefined;
   if (item.type === 'tools') {
     const e = item.events[item.events.length - 1];
     return e?.endTs ?? e?.ts;
@@ -755,7 +787,8 @@ function spanOf(items: FeedItem[]): { start: number; end: number } {
   for (const it of items) {
     if (it.type === 'tools') it.events.forEach((e) => consider(e.ts, e.endTs));
     else if (it.type === 'diffs') it.changes.forEach((c) => consider(c.event.ts, c.event.endTs));
-    else if (it.type !== 'worked') consider(it.event.ts, it.event.endTs);
+    else if (it.type !== 'worked' && it.type !== 'turnChanges')
+      consider(it.event.ts, it.event.endTs);
   }
   if (start === Infinity) return { start: 0, end: 0 };
   return { start, end };
@@ -882,7 +915,14 @@ function collapseRun(run: FeedItem[], specContent?: string): FeedItem[] {
 
 // Fold completed assistant turns into "Worked for …" groups. The in-flight turn
 // (while pending) is left expanded so live thinking/tools/status keep streaming.
-export function groupTurns(items: FeedItem[], pending: boolean, specContent?: string): FeedItem[] {
+// When `changes` is set, a completed turn that edited files gets a top-level
+// "Changes · N files" summary appended so it survives the Worked-for folding.
+export function groupTurns(
+  items: FeedItem[],
+  pending: boolean,
+  specContent?: string,
+  changes = false,
+): FeedItem[] {
   const out: FeedItem[] = [];
   let i = 0;
   while (i < items.length) {
@@ -897,8 +937,23 @@ export function groupTurns(items: FeedItem[], pending: boolean, specContent?: st
       i++;
     }
     const isLastRun = i >= items.length;
-    if (isLastRun && pending) out.push(...run);
-    else out.push(...collapseRun(run, specContent));
+    if (isLastRun && pending) {
+      out.push(...run);
+    } else {
+      out.push(...collapseRun(run, specContent));
+      if (changes) {
+        const files = collectTurnFiles(run);
+        if (files.length > 0) {
+          out.push({
+            type: 'turnChanges',
+            key: `changes-${run[0].key}`,
+            files,
+            added: files.reduce((s, f) => s + f.added, 0),
+            removed: files.reduce((s, f) => s + f.removed, 0),
+          });
+        }
+      }
+    }
   }
   return out;
 }
@@ -1074,6 +1129,7 @@ const FeedItemView = memo(function FeedItemView({
   live,
   compacting,
   onOpenDiff,
+  onOpenReviewFile,
   onOpenSubagent,
   subagentActivity,
   liveTiming,
@@ -1083,6 +1139,7 @@ const FeedItemView = memo(function FeedItemView({
   live: boolean;
   compacting?: boolean;
   onOpenDiff?: (c: FileChange) => void;
+  onOpenReviewFile?: (path: string) => void;
   onOpenSubagent?: (target: SubagentTarget) => void;
   subagentActivity?: (target: SubagentTarget) => SubagentActivity | undefined;
   liveTiming?: boolean;
@@ -1166,6 +1223,8 @@ const FeedItemView = memo(function FeedItemView({
       return <DiffGroup changes={item.changes} onOpenDiff={onOpenDiff} />;
     case 'tools':
       return <ToolGroupItem events={item.events} active={live} />;
+    case 'turnChanges':
+      return <TurnChangesPanel item={item} onOpenFile={onOpenReviewFile} />;
     case 'worked':
       return (
         <WorkedGroup
@@ -1279,6 +1338,81 @@ function DiffGroup({
               +{hiddenCount} more {hiddenCount === 1 ? 'edit' : 'edits'}
             </div>
           )}
+        </div>
+      </Expand>
+    </div>
+  );
+}
+
+/* ── Per-turn changes summary: files the completed turn edited, click a file to
+   open the Review pane scoped to that turn and jump to it ── */
+function turnFileGlyph(verb: FileChange['verb']): { symbol: string; color: string } {
+  if (verb === 'create') return { symbol: 'A', color: 'var(--diff-add-fg)' };
+  return { symbol: 'M', color: 'var(--droid-text-secondary)' };
+}
+
+function TurnChangesPanel({
+  item,
+  onOpenFile,
+}: {
+  item: Extract<FeedItem, { type: 'turnChanges' }>;
+  onOpenFile?: (path: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const { files, added, removed } = item;
+  const label = `Changes · ${files.length} ${files.length === 1 ? 'file' : 'files'}`;
+  return (
+    <div className="rounded-xl border border-droid-border bg-droid-elevated/20">
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="group flex w-full min-w-0 items-center gap-1.5 px-3 py-2 text-left"
+        aria-expanded={open}
+      >
+        <ChevronRight
+          className={`h-3 w-3 shrink-0 text-droid-text-muted/50 transition-transform duration-200 group-hover:text-droid-text-muted ${open ? 'rotate-90' : ''}`}
+        />
+        <span className="min-w-0 truncate text-[12.5px] font-medium text-droid-text-secondary">
+          {label}
+        </span>
+        <span className="ml-auto shrink-0 font-mono text-[11px]">
+          {added > 0 && <span style={{ color: 'var(--diff-add-fg)' }}>+{added}</span>}{' '}
+          {removed > 0 && <span style={{ color: 'var(--diff-del-fg)' }}>−{removed}</span>}
+        </span>
+      </button>
+      <Expand open={open}>
+        <div className="border-t border-droid-border/60 py-1">
+          {files.map((f) => {
+            const glyph = turnFileGlyph(f.verb);
+            const slash = f.path.lastIndexOf('/');
+            const dir = slash >= 0 ? f.path.slice(0, slash + 1) : '';
+            const name = slash >= 0 ? f.path.slice(slash + 1) : f.path;
+            return (
+              <button
+                key={f.path}
+                onClick={() => onOpenFile?.(f.path)}
+                disabled={!onOpenFile}
+                title={onOpenFile ? `Review ${f.path}` : f.path}
+                className="flex w-full items-center gap-2 px-3 py-1.5 text-left transition-colors enabled:hover:bg-droid-elevated/50 disabled:cursor-default"
+              >
+                <span
+                  className="w-3 shrink-0 text-center font-mono text-[11px] font-semibold"
+                  style={{ color: glyph.color }}
+                >
+                  {glyph.symbol}
+                </span>
+                <span className="min-w-0 flex-1 truncate text-[12.5px]">
+                  {dir && <span className="text-droid-text-muted/70">{dir}</span>}
+                  <span className="text-droid-text">{name}</span>
+                </span>
+                <span className="shrink-0 font-mono text-[10.5px]">
+                  {f.added > 0 && <span style={{ color: 'var(--diff-add-fg)' }}>+{f.added}</span>}{' '}
+                  {f.removed > 0 && (
+                    <span style={{ color: 'var(--diff-del-fg)' }}>−{f.removed}</span>
+                  )}
+                </span>
+              </button>
+            );
+          })}
         </div>
       </Expand>
     </div>
@@ -1399,6 +1533,7 @@ export function MessageFeed({
   events,
   pending,
   onOpenDiff,
+  onOpenReviewFile,
   onOpenSubagent,
   subagentActivity,
   specContent,
@@ -1407,17 +1542,18 @@ export function MessageFeed({
   events: TranscriptEvent[];
   pending: boolean;
   onOpenDiff?: (c: FileChange) => void;
+  onOpenReviewFile?: (path: string) => void;
   onOpenSubagent?: (target: SubagentTarget) => void;
   subagentActivity?: (target: SubagentTarget) => SubagentActivity | undefined;
   specContent?: string;
   onOpenSpecWiki?: () => void;
 }) {
-  // Subagent cards, waiting label, and live timers are enabled only for the
-  // chat/spec feed (which supplies onOpenSubagent). Mission Control omits the
-  // prop, so its feed renders exactly as before.
+  // Subagent cards, waiting label, live timers, and per-turn change summaries
+  // are enabled only for the chat/spec feed (which supplies onOpenSubagent).
+  // Mission Control omits the prop, so its feed renders exactly as before.
   const rich = !!onOpenSubagent;
   const items = useMemo(
-    () => groupTurns(buildFeed(events, rich), pending, specContent),
+    () => groupTurns(buildFeed(events, rich), pending, specContent, rich),
     [events, pending, rich, specContent],
   );
   const lastIdx = items.length - 1;
@@ -1469,6 +1605,7 @@ export function MessageFeed({
             live={pending && idx === lastIdx}
             compacting={compacting && idx === lastIdx}
             onOpenDiff={onOpenDiff}
+            onOpenReviewFile={onOpenReviewFile}
             onOpenSubagent={onOpenSubagent}
             subagentActivity={subagentActivity}
             liveTiming={rich}

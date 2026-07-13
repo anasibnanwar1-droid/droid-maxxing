@@ -4,6 +4,7 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import {
   buildFeed,
+  collectTurnFiles,
   correlateResults,
   groupTurns,
   isResultFor,
@@ -693,6 +694,71 @@ test('#39 distinct edits (different toolUseIds) stay separate in the diffs group
   assert.equal(group.changes.length, 2);
   const added = group.changes.reduce((s, c) => s + c.change.added, 0);
   assert.equal(added, 5);
+});
+
+// ── #27: per-turn changes summary after a completed turn that edited files ──
+
+const editFile = (path: string, adds: number, id: string) =>
+  ev({
+    kind: 'tool_call',
+    toolName: 'apply_patch',
+    toolArgs: {
+      patch: [
+        `--- a/${path}`,
+        `+++ b/${path}`,
+        '@@',
+        ...Array.from({ length: adds }, (_, n) => `+l${n}`),
+      ].join('\n'),
+    },
+    toolUseId: id,
+  });
+
+test('#27 collectTurnFiles folds repeated edits to one path with summed counts', () => {
+  const run = buildFeed([editFile('src/a.ts', 2, 'e1'), editFile('src/a.ts', 3, 'e2')], true);
+  const files = collectTurnFiles(run);
+  assert.equal(files.length, 1);
+  assert.equal(files[0].path, 'src/a.ts');
+  assert.equal(files[0].added, 5);
+});
+
+test('#27 a completed turn that edited files gets a top-level changes summary', () => {
+  const events = [
+    userMsg('edit'),
+    editFile('src/a.ts', 2, 'e1'),
+    editFile('src/b.ts', 3, 'e2'),
+    asst('done'),
+  ];
+  const grouped = groupTurns(buildFeed(events, true), false, undefined, true);
+  const changes = grouped.find(
+    (it): it is Extract<FeedItem, { type: 'turnChanges' }> => it.type === 'turnChanges',
+  );
+  assert.ok(changes, 'expected a turnChanges summary');
+  assert.equal(changes.files.length, 2);
+  assert.equal(changes.added, 5);
+  // The summary is top-level, never nested inside the Worked group.
+  assert.ok(!workedChildren(grouped).some((c) => c.type === 'turnChanges'));
+});
+
+test('#27 a turn with no file edits gets no changes summary', () => {
+  const grouped = groupTurns(
+    buildFeed([userMsg('q'), grep(), asst('answer')], true),
+    false,
+    undefined,
+    true,
+  );
+  assert.ok(!grouped.some((it) => it.type === 'turnChanges'));
+});
+
+test('#27 the in-flight turn gets no changes summary until it completes', () => {
+  const events = [userMsg('q'), editFile('src/a.ts', 1, 'e1')];
+  const grouped = groupTurns(buildFeed(events, true), true, undefined, true);
+  assert.ok(!grouped.some((it) => it.type === 'turnChanges'));
+});
+
+test('#27 the changes summary is disabled unless the rich flag is set', () => {
+  const events = [userMsg('edit'), editFile('src/a.ts', 1, 'e1'), asst('done')];
+  const grouped = groupTurns(buildFeed(events, true), false, undefined, false);
+  assert.ok(!grouped.some((it) => it.type === 'turnChanges'));
 });
 
 test('#19/#14 a spec fragment split by reconciliation is not merged into prose', () => {
