@@ -36,8 +36,10 @@ export function usePullRequest(
       setPr(null);
       return;
     }
-    void detectPullRequest(cwd, branch ?? undefined).then((next) => {
-      if (id === detectReq.current) setPr(next);
+    void detectPullRequest(cwd, branch ?? undefined).then((res) => {
+      // A failed lookup (gh hiccup, network) keeps the last-known PR; only an
+      // authoritative answer may replace or clear it.
+      if (id === detectReq.current && res.ok) setPr(res.pr);
     });
   }, [enabled, cwd, branch]);
 

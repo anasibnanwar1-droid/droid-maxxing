@@ -2,6 +2,7 @@ import { isDesktop } from './desktop';
 import type {
   CreatePrOptions,
   CreatePrResult,
+  DetectPrResult,
   PostCommentResult,
   PrCheck,
   PrChecksResult,
@@ -9,12 +10,12 @@ import type {
   PullRequest,
 } from '../types/vcs';
 
-export async function detectPullRequest(dir: string, branch?: string): Promise<PullRequest | null> {
-  if (!isDesktop() || !dir) return null;
+export async function detectPullRequest(dir: string, branch?: string): Promise<DetectPrResult> {
+  if (!isDesktop() || !dir) return { ok: true, pr: null };
   try {
     return await window.droidControl!.githubDetectPr(dir, { branch });
   } catch {
-    return null;
+    return { ok: false, pr: null };
   }
 }
 

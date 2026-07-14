@@ -31,7 +31,6 @@ contextBridge.exposeInMainWorld('droidControl', {
   gitCheckout: (dir, options) => ipcRenderer.invoke('git-checkout', { dir, options }),
   gitCreateWorktree: (dir, options) => ipcRenderer.invoke('git-create-worktree', { dir, options }),
   gitRemoveWorktree: (dir, options) => ipcRenderer.invoke('git-remove-worktree', { dir, options }),
-  gitStageAll: (dir) => ipcRenderer.invoke('git-stage-all', { dir }),
   gitCommit: (dir, options) => ipcRenderer.invoke('git-commit', { dir, options }),
   gitPush: (dir, options) => ipcRenderer.invoke('git-push', { dir, options }),
   gitFetch: (dir) => ipcRenderer.invoke('git-fetch', { dir }),

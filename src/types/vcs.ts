@@ -160,6 +160,13 @@ export interface PullRequest {
   author: string | null;
 }
 
+// `ok: false` means the lookup itself failed (gh missing, network, auth), not
+// that no PR exists; callers should keep any PR they already know about.
+export interface DetectPrResult {
+  ok: boolean;
+  pr: PullRequest | null;
+}
+
 export type PrCheckBucket = 'pass' | 'fail' | 'pending' | 'skipping' | 'cancel' | string;
 
 export interface PrCheck {

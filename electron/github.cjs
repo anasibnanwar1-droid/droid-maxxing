@@ -80,6 +80,9 @@ const PR_FIELDS = [
   'author',
 ].join(',');
 
+// Distinguishes "queried successfully, no PR" ({ ok: true, pr: null }) from a
+// failed query ({ ok: false }), so a transient gh error never erases a PR the
+// UI already knows about.
 async function detectPr(dir, { branch } = {}) {
   let pr;
   if (branch) {
@@ -97,16 +100,23 @@ async function detectPr(dir, { branch } = {}) {
       '--json',
       PR_FIELDS,
     ]);
-    if (res.code !== 0) return null; // gh unavailable
+    if (res.code !== 0) return { ok: false, pr: null };
     const list = parseJson(res.stdout, null);
     pr = Array.isArray(list) && list.length > 0 ? list[0] : null;
   } else {
     const res = await gh(dir, ['pr', 'view', '--json', PR_FIELDS]);
-    if (res.code !== 0) return null; // no PR for the current branch, or gh unavailable
+    if (res.code !== 0) {
+      // gh exits 1 both when no PR exists and when it fails; only the explicit
+      // "no pull requests found" message means an authoritative "no PR".
+      if (!res.spawnFailed && /no pull requests found/i.test(res.stderr)) {
+        return { ok: true, pr: null };
+      }
+      return { ok: false, pr: null };
+    }
     pr = parseJson(res.stdout, null);
   }
-  if (!pr || typeof pr.number !== 'number') return null;
-  return {
+  if (!pr || typeof pr.number !== 'number') return { ok: true, pr: null };
+  const normalized = {
     number: pr.number,
     title: pr.title || '',
     state: String(pr.state || '').toLowerCase(), // open | closed | merged
@@ -123,6 +133,7 @@ async function detectPr(dir, { branch } = {}) {
     updatedAt: pr.updatedAt || null,
     author: pr.author?.login || null,
   };
+  return { ok: true, pr: normalized };
 }
 
 async function prChecks(dir, { prNumber } = {}) {
@@ -201,8 +212,8 @@ async function createPr(dir, { title, body = '', base, draft = false, head } = {
   if (res.spawnFailed) return { ok: false, reason: 'gh_unavailable' };
   if (res.code !== 0) return { ok: false, reason: 'gh_error', message: res.stderr.trim() };
   const url = (res.stdout.match(/https?:\/\/\S+/) || [])[0] || null;
-  const pr = await detectPr(dir, head ? { branch: head } : {});
-  return { ok: true, url, number: pr?.number ?? null, pr };
+  const detected = await detectPr(dir, head ? { branch: head } : {});
+  return { ok: true, url, number: detected.pr?.number ?? null, pr: detected.pr };
 }
 
 async function postComment(dir, { prNumber, body } = {}) {

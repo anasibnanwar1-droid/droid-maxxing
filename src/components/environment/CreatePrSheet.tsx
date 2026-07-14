@@ -34,11 +34,15 @@ export function CreatePrSheet({
   const [pickingBase, setPickingBase] = useState(false);
   const [busy, setBusy] = useState(false);
 
+  // The PR's own head branch can never be its base, so keep it out of the list.
   const baseOptions = [
     recordedBase,
     env?.defaultBranch ?? 'main',
     ...(branches?.remote ?? []).map((b) => stripRemotePrefix(b.name, env?.remotes)),
-  ].filter((value, index, all): value is string => !!value && all.indexOf(value) === index);
+  ].filter(
+    (value, index, all): value is string =>
+      !!value && value !== env?.branch && all.indexOf(value) === index,
+  );
 
   const doCreate = async () => {
     if (!title.trim() || busy) return;

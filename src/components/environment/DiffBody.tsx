@@ -10,6 +10,8 @@ const BG: Record<DiffLine['type'], string> = {
 };
 const SIGN: Record<DiffLine['type'], string> = { add: '+', del: '-', ctx: ' ', meta: '' };
 
+const MAX_RENDERED_LINES = 3000;
+
 function lineColor(type: DiffLine['type']): string {
   if (type === 'add') return 'var(--diff-add-fg)';
   if (type === 'del') return 'var(--diff-del-fg)';
@@ -93,6 +95,24 @@ export function DiffBody({
 }) {
   const parsed = useMemo(() => parseUnifiedDiff(diff), [diff]);
 
+  // Every diff line becomes several DOM nodes, so a huge diff (generated file,
+  // lockfile) would freeze the renderer; cap what we mount and say so.
+  const { hunks, hiddenLines } = useMemo(() => {
+    let total = 0;
+    for (const hunk of parsed.hunks) total += hunk.lines.length;
+    if (total <= MAX_RENDERED_LINES) return { hunks: parsed.hunks, hiddenLines: 0 };
+    let budget = MAX_RENDERED_LINES;
+    const capped: typeof parsed.hunks = [];
+    for (const hunk of parsed.hunks) {
+      if (budget <= 0) break;
+      capped.push(
+        hunk.lines.length <= budget ? hunk : { ...hunk, lines: hunk.lines.slice(0, budget) },
+      );
+      budget -= hunk.lines.length;
+    }
+    return { hunks: capped, hiddenLines: total - MAX_RENDERED_LINES };
+  }, [parsed]);
+
   if (binary) {
     return <div className="p-4 text-[12.5px] text-droid-text-muted">Binary file not shown</div>;
   }
@@ -102,7 +122,7 @@ export function DiffBody({
 
   return (
     <div className="font-mono text-[12px] leading-[1.6]">
-      {parsed.hunks.map((hunk, hi) => (
+      {hunks.map((hunk, hi) => (
         <div key={hi}>
           <div className="bg-droid-elevated/50 px-2 py-0.5 text-[11px] text-droid-accent/80">
             {hunk.header}
@@ -122,6 +142,11 @@ export function DiffBody({
             : hunk.lines.map((line, li) => <UnifiedLine key={li} line={line} wrap={wrap} />)}
         </div>
       ))}
+      {hiddenLines > 0 && (
+        <div className="px-3 py-2 text-[11.5px] text-droid-text-muted">
+          Diff truncated: {hiddenLines.toLocaleString()} more lines not shown
+        </div>
+      )}
     </div>
   );
 }

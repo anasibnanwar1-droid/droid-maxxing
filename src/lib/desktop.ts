@@ -18,6 +18,7 @@ import type {
   CreatePrOptions,
   CreatePrResult,
   CreateWorktreeOptions,
+  DetectPrResult,
   DiffFileList,
   DiffScope,
   DiffStatMode,
@@ -31,7 +32,6 @@ import type {
   PostCommentResult,
   PrChecksResult,
   PrCommentsResult,
-  PullRequest,
   PushOptions,
 } from '../types/vcs';
 
@@ -78,12 +78,11 @@ interface DroidControlApi {
     dir: string,
     options: { path: string; force?: boolean },
   ) => Promise<GitActionResult>;
-  gitStageAll: (dir: string) => Promise<GitActionResult>;
   gitCommit: (dir: string, options: CommitOptions) => Promise<GitActionResult>;
   gitPush: (dir: string, options: PushOptions) => Promise<GitActionResult>;
   gitFetch: (dir: string) => Promise<GitActionResult>;
   githubAvailable: () => Promise<GithubAvailability>;
-  githubDetectPr: (dir: string, options: { branch?: string }) => Promise<PullRequest | null>;
+  githubDetectPr: (dir: string, options: { branch?: string }) => Promise<DetectPrResult>;
   githubPrChecks: (dir: string, options: { prNumber: number }) => Promise<PrChecksResult>;
   githubPrComments: (dir: string, options: { prNumber: number }) => Promise<PrCommentsResult>;
   githubCreatePr: (dir: string, options: CreatePrOptions) => Promise<CreatePrResult>;

@@ -191,6 +191,7 @@ async function defaultPushRemote(root) {
   const configured = await tryRun(root, ['config', '--get', 'remote.pushDefault']);
   if (configured) return configured;
   const remotes = await listRemotes(root);
+  if (remotes.length === 0) return null;
   if (remotes.includes('origin')) return 'origin';
   if (remotes.length === 1) return remotes[0];
   return 'origin';
@@ -515,7 +516,8 @@ async function resolvesToCommit(root, ref) {
 async function createBranch(dir, { name, base, checkout = true } = {}) {
   const root = await repoRootOf(dir);
   if (!root) return { ok: false, reason: 'not_a_repo' };
-  if (!validBranchName(name)) return { ok: false, reason: 'invalid_name' };
+  if (!validBranchName(name))
+    return { ok: false, reason: 'invalid_name', message: `Invalid branch name "${name ?? ''}"` };
   // Only fork from a base that resolves to a commit. In an unborn repo the
   // current branch (e.g. "main") exists as a symbolic ref but is not yet a valid
   // object, so passing it to git would fail; drop it and start the new branch
@@ -540,7 +542,7 @@ async function isDirty(root) {
 async function checkout(dir, { ref, allowDirty = false } = {}) {
   const root = await repoRootOf(dir);
   if (!root) return { ok: false, reason: 'not_a_repo' };
-  if (!ref) return { ok: false, reason: 'invalid_name' };
+  if (!ref) return { ok: false, reason: 'invalid_name', message: 'No branch specified' };
   if (!allowDirty && (await isDirty(root))) return { ok: false, reason: 'dirty' };
 
   // An exact local branch wins over remote-prefix handling: a branch literally
@@ -655,7 +657,8 @@ async function ensureDefaultWorktreeIgnored(root) {
 async function createWorktree(dir, { branch, base, newBranch = false, location } = {}) {
   const root = await repoRootOf(dir);
   if (!root) return { ok: false, reason: 'not_a_repo' };
-  if (!validBranchName(branch)) return { ok: false, reason: 'invalid_name' };
+  if (!validBranchName(branch))
+    return { ok: false, reason: 'invalid_name', message: `Invalid branch name "${branch ?? ''}"` };
   // A relative custom location must resolve against the repo root (where git
   // creates it), not the Electron process cwd — otherwise the existence check,
   // the actual creation, and the returned path could all refer to different
@@ -722,17 +725,6 @@ async function removeWorktree(dir, { path: target, force = false } = {}) {
   }
 }
 
-async function stageAll(dir) {
-  const root = await repoRootOf(dir);
-  if (!root) return { ok: false, reason: 'not_a_repo' };
-  try {
-    await run(root, ['add', '-A']);
-    return { ok: true };
-  } catch (err) {
-    return { ok: false, reason: 'git_error', message: err.message };
-  }
-}
-
 async function commit(dir, { message, all = true } = {}) {
   const root = await repoRootOf(dir);
   if (!root) return { ok: false, reason: 'not_a_repo' };
@@ -787,6 +779,9 @@ async function push(dir, { remote, branch, setUpstream = false, force = false } 
   if (setUpstream || (upstream && !sameNameUpstream)) args.push('--set-upstream');
   if (force) args.push('--force-with-lease');
   const pushRemote = sameNameUpstream ? upstreamRemote : remote || (await defaultPushRemote(root));
+  if (!pushRemote) {
+    return { ok: false, reason: 'no_remote', message: 'No git remote configured' };
+  }
   // Push a fully-qualified refspec after `--` so a branch literally named like a
   // flag (e.g. `--mirror`) can never be parsed as a push option and, say, mirror
   // every ref. The destination keeps the branch's own name on the remote.
@@ -1130,19 +1125,7 @@ module.exports = {
   checkout,
   createWorktree,
   removeWorktree,
-  stageAll,
   commit,
   push,
   fetchRemotes,
-  // exported for reuse/inspection
-  parseWorktrees,
-  parseNumstat,
-  parseDiffFileList,
-  statusLabel,
-  parseTrack,
-  parseAheadBehind,
-  baseKindOf,
-  matchRemote,
-  stripRemotePrefix,
-  defaultWorktreeLocation,
 };
