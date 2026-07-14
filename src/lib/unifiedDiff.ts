@@ -43,6 +43,13 @@ export function parseUnifiedDiff(diff: string): ParsedDiff {
       binary = true;
       continue;
     }
+    // A new file section in a multi-file diff: reset the current hunk so this
+    // file's header lines ("--- a/x", "+++ b/x") aren't consumed as del/add
+    // lines of the previous file's last hunk.
+    if (raw.startsWith('diff --git ')) {
+      current = null;
+      continue;
+    }
     const hunkMatch = HUNK_RE.exec(raw);
     if (hunkMatch) {
       oldLine = Number.parseInt(hunkMatch[1], 10);

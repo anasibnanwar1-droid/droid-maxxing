@@ -74,6 +74,8 @@ export function BranchMenu({
     try {
       const res = await checkoutGitBranch(cwd, { ref: refName, allowDirty });
       finish(res, refName);
+    } catch {
+      toast.error(`Could not switch to ${refName}`);
     } finally {
       busyRef.current = false;
       setBusy(false);
@@ -98,6 +100,8 @@ export function BranchMenu({
       } else {
         toast.error(res.message || 'Could not create branch');
       }
+    } catch {
+      toast.error('Could not create branch');
     } finally {
       busyRef.current = false;
       setBusy(false);

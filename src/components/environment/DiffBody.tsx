@@ -113,6 +113,13 @@ export function DiffBody({
     return { hunks: capped, hiddenLines: total - MAX_RENDERED_LINES };
   }, [parsed]);
 
+  // Pairing rows for split view is O(lines); memoize per hunk so polling-driven
+  // re-renders don't recompute it on every frame.
+  const splitRows = useMemo(
+    () => (view === 'split' ? hunks.map((hunk) => toSplitRows(hunk.lines)) : null),
+    [view, hunks],
+  );
+
   if (binary) {
     return <div className="p-4 text-[12.5px] text-droid-text-muted">Binary file not shown</div>;
   }
@@ -127,8 +134,8 @@ export function DiffBody({
           <div className="bg-droid-elevated/50 px-2 py-0.5 text-[11px] text-droid-accent/80">
             {hunk.header}
           </div>
-          {view === 'split'
-            ? toSplitRows(hunk.lines).map((row, ri) =>
+          {splitRows
+            ? splitRows[hi].map((row, ri) =>
                 row.left?.type === 'meta' ? (
                   <UnifiedLine key={ri} line={row.left} wrap={wrap} />
                 ) : (

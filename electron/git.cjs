@@ -17,6 +17,7 @@ const COMMIT_TIMEOUT = 120000;
 const MAX_BUFFER = 16 * 1024 * 1024;
 const UNTRACKED_FILE_CAP = 1000;
 const UNTRACKED_BYTE_CAP = 1024 * 1024;
+const UNTRACKED_SCAN_CONCURRENCY = 8;
 // The well-known SHA of git's empty tree, used as the left side when diffing an
 // unborn branch (no HEAD) so first-turn work still shows up.
 const EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
@@ -309,7 +310,10 @@ async function environment(dir) {
     defaultBranch: defaultRef ? stripRemotePrefix(defaultRef, remotes) : null,
     defaultRef,
     remotes,
-    remoteUrl: remoteUrl || null,
+    // http(s) remote URLs may embed credentials (https://user:token@host/...);
+    // strip the userinfo before handing the URL to the renderer. scp-style ssh
+    // remotes (git@host:path) are left alone since "git" is not a secret.
+    remoteUrl: remoteUrl ? remoteUrl.replace(/^(\w+:\/\/)[^@/]+@/, '$1') : null,
     // Anchor to the URL's host boundary so `github.com` only matches as the real
     // host (`https://github.com/…`, `git@github.com:…`), never embedded in an
     // arbitrary host such as `github.com.evil.com` or `evil.com/github.com`.
@@ -385,8 +389,9 @@ async function scanUntracked(root) {
     .slice(0, UNTRACKED_FILE_CAP);
   const prior = untrackedScanCache.get(root) || new Map();
   const next = new Map();
-  const out = [];
-  for (const rel of names) {
+  const out = new Array(names.length);
+
+  const scanOne = async (rel) => {
     let entry = { path: rel, additions: 0, binary: false, sig: null };
     let fh;
     try {
@@ -421,9 +426,27 @@ async function scanUntracked(root) {
     } finally {
       await fh?.close();
     }
-    out.push(entry);
+    return entry;
+  };
+
+  // Bounded worker pool: a cold scan of hundreds of files would otherwise pay
+  // one sequential open/stat/read round-trip each, but unbounded Promise.all
+  // could exhaust file descriptors on huge repos.
+  let cursor = 0;
+  const workers = Array.from(
+    { length: Math.min(UNTRACKED_SCAN_CONCURRENCY, names.length) },
+    async () => {
+      while (cursor < names.length) {
+        const i = cursor++;
+        out[i] = await scanOne(names[i]);
+      }
+    },
+  );
+  await Promise.all(workers);
+
+  for (const entry of out) {
     if (entry.sig) {
-      next.set(rel, { additions: entry.additions, binary: entry.binary, sig: entry.sig });
+      next.set(entry.path, { additions: entry.additions, binary: entry.binary, sig: entry.sig });
     }
   }
   setRepoCache(untrackedScanCache, root, next);
@@ -654,6 +677,24 @@ async function ensureDefaultWorktreeIgnored(root) {
   }
 }
 
+function isWithin(base, target) {
+  return target === base || target.startsWith(base + path.sep);
+}
+
+// A custom worktree location is user-typed, so keep it inside places a checkout
+// plausibly lives: the repo itself, its parent (sibling worktrees), or the home
+// directory. Anything else (e.g. /etc, /tmp planted by a hostile renderer) is
+// rejected, as is nesting inside the .git dir where it would corrupt the repo.
+function allowedWorktreeTarget(root, target) {
+  const resolved = path.resolve(target);
+  if (isWithin(path.join(root, '.git'), resolved)) return false;
+  return (
+    isWithin(root, resolved) ||
+    isWithin(path.dirname(root), resolved) ||
+    isWithin(os.homedir(), resolved)
+  );
+}
+
 async function createWorktree(dir, { branch, base, newBranch = false, location } = {}) {
   const root = await repoRootOf(dir);
   if (!root) return { ok: false, reason: 'not_a_repo' };
@@ -667,6 +708,12 @@ async function createWorktree(dir, { branch, base, newBranch = false, location }
     ? path.resolve(root, expandHome(location))
     : defaultWorktreeLocation(root, branch);
   if (location) {
+    if (!allowedWorktreeTarget(root, target))
+      return {
+        ok: false,
+        reason: 'invalid_location',
+        message: 'Worktree location must be inside the repo, next to it, or in your home folder',
+      };
     if (fs.existsSync(target)) return { ok: false, reason: 'exists', path: target };
   } else {
     // Default-location worktrees auto-suffix so a second worktree for the same
@@ -1052,6 +1099,9 @@ async function fileDiff(dir, options = {}) {
   const file = options.path;
   const root = await repoRootOf(dir);
   if (!root || !file) return { path: file || null, diff: '', binary: false };
+  // Diff paths are repo-relative; anything resolving outside the root (absolute
+  // path, ../ escape) would let the --no-index fallback read arbitrary files.
+  if (!isWithin(root, path.resolve(root, file))) return { path: file, diff: '', binary: false };
   const { args, includeUntracked } = await scopeRange(root, scope, options.sessionId);
   if (!args) return { path: file, diff: '', binary: false };
   const ws = options.ignoreWhitespace ? ['-w'] : [];

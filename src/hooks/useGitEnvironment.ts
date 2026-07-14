@@ -19,6 +19,13 @@ export interface GitEnvironmentState {
 
 const POLL_MS = 6000;
 
+// Poll results are freshly deserialized every cycle; keep the previous object
+// when the payload is unchanged so consumers' memo/effect deps stay stable and
+// an idle repo doesn't cascade re-renders every 6 seconds.
+function stable<T>(prev: T, next: T): T {
+  return JSON.stringify(prev) === JSON.stringify(next) ? prev : next;
+}
+
 export function useGitEnvironment(cwd: string, diffMode: DiffStatMode): GitEnvironmentState {
   const [env, setEnv] = useState<GitEnvironment | null>(null);
   const [branches, setBranches] = useState<GitBranchList | null>(null);
@@ -71,10 +78,10 @@ export function useGitEnvironment(cwd: string, diffMode: DiffStatMode): GitEnvir
     ])
       .then(([nextEnv, nextBranches, nextWorktrees, nextDiff]) => {
         if (id !== reqRef.current) return;
-        setEnv(nextEnv);
-        setBranches(nextBranches);
-        setWorktrees(nextWorktrees);
-        if (diffId === diffReqRef.current) setDiffStat(nextDiff);
+        setEnv((prev) => stable(prev, nextEnv));
+        setBranches((prev) => stable(prev, nextBranches));
+        setWorktrees((prev) => stable(prev, nextWorktrees));
+        if (diffId === diffReqRef.current) setDiffStat((prev) => stable(prev, nextDiff));
         setLoading(false);
       })
       .catch(() => {
@@ -93,7 +100,7 @@ export function useGitEnvironment(cwd: string, diffMode: DiffStatMode): GitEnvir
     if (!cwd) return;
     const diffId = ++diffReqRef.current;
     void getGitDiffStat(cwd, diffMode).then((next) => {
-      if (diffId === diffReqRef.current) setDiffStat(next);
+      if (diffId === diffReqRef.current) setDiffStat((prev) => stable(prev, next));
     });
   }, [cwd, diffMode]);
 

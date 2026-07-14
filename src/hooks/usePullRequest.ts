@@ -38,8 +38,14 @@ export function usePullRequest(
     }
     void detectPullRequest(cwd, branch ?? undefined).then((res) => {
       // A failed lookup (gh hiccup, network) keeps the last-known PR; only an
-      // authoritative answer may replace or clear it.
-      if (id === detectReq.current && res.ok) setPr(res.pr);
+      // authoritative answer may replace or clear it. Keep the previous object
+      // when the payload is unchanged so `pr`-dependent effects (the detail
+      // poller) aren't torn down and restarted on every detection cycle.
+      if (id === detectReq.current && res.ok) {
+        setPr((prev) =>
+          prev && res.pr && JSON.stringify(prev) === JSON.stringify(res.pr) ? prev : res.pr,
+        );
+      }
     });
   }, [enabled, cwd, branch]);
 

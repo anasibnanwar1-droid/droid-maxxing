@@ -98,55 +98,57 @@ export async function markGitTurnStart(dir: string, sessionId?: string): Promise
 
 const failure = (reason: string): GitActionResult => ({ ok: false, reason });
 
+// One error contract for every mutating wrapper: an IPC-level rejection
+// (transport failure, main-process crash) surfaces as a failed GitActionResult,
+// never as a rejected promise, so callers only ever branch on `res.ok`.
+async function action(run: () => Promise<GitActionResult>): Promise<GitActionResult> {
+  if (!isDesktop()) return failure('not_desktop');
+  try {
+    return await run();
+  } catch {
+    return failure('ipc_error');
+  }
+}
+
 export async function createGitBranch(
   dir: string,
   options: CreateBranchOptions,
 ): Promise<GitActionResult> {
-  if (!isDesktop()) return failure('not_desktop');
-  return window.droidControl!.gitCreateBranch(dir, options);
+  return action(() => window.droidControl!.gitCreateBranch(dir, options));
 }
 
 export async function checkoutGitBranch(
   dir: string,
   options: { ref: string; allowDirty?: boolean },
 ): Promise<GitActionResult> {
-  if (!isDesktop()) return failure('not_desktop');
-  return window.droidControl!.gitCheckout(dir, options);
+  return action(() => window.droidControl!.gitCheckout(dir, options));
 }
 
 export async function createGitWorktree(
   dir: string,
   options: CreateWorktreeOptions,
 ): Promise<GitActionResult> {
-  if (!isDesktop()) return failure('not_desktop');
-  return window.droidControl!.gitCreateWorktree(dir, options);
+  return action(() => window.droidControl!.gitCreateWorktree(dir, options));
 }
 
 export async function removeGitWorktree(
   dir: string,
   options: { path: string; force?: boolean },
 ): Promise<GitActionResult> {
-  if (!isDesktop()) return failure('not_desktop');
-  return window.droidControl!.gitRemoveWorktree(dir, options);
+  return action(() => window.droidControl!.gitRemoveWorktree(dir, options));
 }
 
 export async function gitCommit(dir: string, options: CommitOptions): Promise<GitActionResult> {
-  if (!isDesktop()) return failure('not_desktop');
-  return window.droidControl!.gitCommit(dir, options);
+  return action(() => window.droidControl!.gitCommit(dir, options));
 }
 
 export async function gitPush(dir: string, options: PushOptions): Promise<GitActionResult> {
-  if (!isDesktop()) return failure('not_desktop');
-  return window.droidControl!.gitPush(dir, options);
+  return action(() => window.droidControl!.gitPush(dir, options));
 }
 
 export async function gitFetch(dir: string): Promise<GitActionResult> {
-  if (!isDesktop() || !dir) return failure('not_desktop');
-  try {
-    return await window.droidControl!.gitFetch(dir);
-  } catch {
-    return failure('git_error');
-  }
+  if (!dir) return failure('not_desktop');
+  return action(() => window.droidControl!.gitFetch(dir));
 }
 
 // ---- Pure helpers (unit-tested) -------------------------------------------
