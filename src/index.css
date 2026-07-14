@@ -65,6 +65,9 @@
   pre,
   .font-mono {
     font-size: var(--code-font-size);
+    /* Fixed-width digits so diff counts, gutters, and ahead/behind badges
+       align and don't shift as values tick over. */
+    font-variant-numeric: tabular-nums;
   }
 
   [data-electron-drag-region] {

@@ -25,7 +25,21 @@ export default {
       },
       fontFamily: {
         sans: ['"SF Pro Display"', 'Inter', 'system-ui', 'sans-serif'],
-        mono: ['"JetBrains Mono"', '"Fira Code"', 'monospace'],
+        // Native mono stack first: the JetBrains Mono webfont is fetched from
+        // Google Fonts, so offline/packaged sessions would otherwise fall all
+        // the way to Chromium's default `monospace` (Courier), which is what
+        // made diff counts and gutters look off. ui-monospace resolves to
+        // SF Mono on macOS, matching what dev tools render.
+        mono: [
+          'ui-monospace',
+          'SFMono-Regular',
+          '"SF Mono"',
+          'Menlo',
+          'Consolas',
+          '"Liberation Mono"',
+          '"JetBrains Mono"',
+          'monospace',
+        ],
       },
       animation: {
         'fade-in': 'fadeIn 0.2s ease-out',
