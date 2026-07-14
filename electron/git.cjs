@@ -736,10 +736,16 @@ async function createWorktree(dir, { branch, base, newBranch = false, location }
     // configuration. `git worktree add -b` doesn't do this automatically.
     if (newBranch && baseRef) {
       try {
-        await tryRun(root, ['rev-parse', '--verify', `refs/remotes/${baseRef}`]);
-        await run(root, ['branch', '--set-upstream-to', baseRef, '--', branch]);
+        // tryRun never throws, so gate on its result: only a real
+        // remote-tracking ref should become the new branch's upstream.
+        const isRemoteRef = await tryRun(root, [
+          'rev-parse',
+          '--verify',
+          `refs/remotes/${baseRef}`,
+        ]);
+        if (isRemoteRef) await run(root, ['branch', '--set-upstream-to', baseRef, '--', branch]);
       } catch {
-        // base isn't a remote-tracking ref or config failed; worktree is usable
+        // upstream config failed; worktree is usable without it
       }
     }
     return { ok: true, path: target, branch };

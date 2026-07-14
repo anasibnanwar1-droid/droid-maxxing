@@ -61,11 +61,20 @@ export function usePullRequest(
     setLoadingDetail(false);
   }, [cwd, branch]);
 
+  // Each detection spawns a `gh` child process, so poll only while the window
+  // is visible and re-detect immediately when it becomes visible again.
   useEffect(() => {
     detect();
     if (!enabled) return;
-    const interval = window.setInterval(detect, DETECT_MS);
-    return () => window.clearInterval(interval);
+    const tick = () => {
+      if (!document.hidden) detect();
+    };
+    const interval = window.setInterval(tick, DETECT_MS);
+    document.addEventListener('visibilitychange', tick);
+    return () => {
+      window.clearInterval(interval);
+      document.removeEventListener('visibilitychange', tick);
+    };
   }, [detect, enabled]);
 
   const refreshDetail = useCallback(() => {
@@ -87,8 +96,15 @@ export function usePullRequest(
   useEffect(() => {
     if (!active || !pr) return;
     refreshDetail();
-    const interval = window.setInterval(refreshDetail, DETAIL_MS);
-    return () => window.clearInterval(interval);
+    const tick = () => {
+      if (!document.hidden) refreshDetail();
+    };
+    const interval = window.setInterval(tick, DETAIL_MS);
+    document.addEventListener('visibilitychange', tick);
+    return () => {
+      window.clearInterval(interval);
+      document.removeEventListener('visibilitychange', tick);
+    };
   }, [active, pr, refreshDetail]);
 
   const refresh = useCallback(() => {

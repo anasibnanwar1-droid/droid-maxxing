@@ -259,11 +259,15 @@ export function ReviewPanel({ cwd, onClose }: { cwd: string; onClose: () => void
   useEffect(() => {
     const paths = filesRef.current.map((f) => f.path);
     const present = new Set(paths);
+    // Capture before mutating: the setExpanded updater runs on the next render,
+    // after `seen.current = present` below, so reading the ref inside it would
+    // always report every path as seen and never auto-expand anything.
+    const prevSeen = seen.current;
     setExpanded((cur) => {
       const next = new Set<string>();
       for (const p of cur) if (present.has(p)) next.add(p);
       if (paths.length <= AUTO_EXPAND_MAX) {
-        for (const p of paths) if (!seen.current.has(p)) next.add(p);
+        for (const p of paths) if (!prevSeen.has(p)) next.add(p);
       }
       return next;
     });
