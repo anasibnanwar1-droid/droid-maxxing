@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Check, ChevronDown, Columns2, ExternalLink, Loader2, Plus, Trash2, X } from 'lucide-react';
 import { Popover } from './Popover';
 import { useStore } from '../../hooks/useStore';
@@ -34,6 +34,7 @@ export function WorktreeMenu({
   // would slip past a `busy` check and launch a duplicate git operation.
   const busyRef = useRef(false);
   const [confirming, setConfirming] = useState<string | null>(null);
+  const [removing, setRemoving] = useState<string | null>(null);
 
   // Drop any armed removal confirmation when the menu closes so reopening never
   // shows a stale confirm affordance.
@@ -50,12 +51,16 @@ export function WorktreeMenu({
 
   const current = worktrees.find((w) => w.isCurrent);
   const others = worktrees.filter((w) => !w.isCurrent && !w.bare && w.path);
-  const sessionCwds = activeSessionCwds({
-    missions: Object.values(state.missions),
-    activeMissionId: state.activeMissionId,
-    draftCwd: state.draftChat?.cwd,
-    workers: state.workers,
-  });
+  const sessionCwds = useMemo(
+    () =>
+      activeSessionCwds({
+        missions: Object.values(state.missions),
+        activeMissionId: state.activeMissionId,
+        draftCwd: state.draftChat?.cwd,
+        workers: state.workers,
+      }),
+    [state.missions, state.activeMissionId, state.draftChat?.cwd, state.workers],
+  );
 
   const openInNewChat = (path: string, branch?: string | null) => {
     dispatch({ type: 'START_CHAT', cwd: path, branch: branch ?? undefined });
@@ -65,6 +70,8 @@ export function WorktreeMenu({
   const removeWorktree = async (path: string) => {
     if (busyRef.current) return;
     busyRef.current = true;
+    setBusy(true);
+    setRemoving(path);
     try {
       const res = await removeGitWorktree(cwd, { path });
       if (res.ok) {
@@ -82,6 +89,8 @@ export function WorktreeMenu({
       toast.error('Could not remove worktree');
     } finally {
       busyRef.current = false;
+      setBusy(false);
+      setRemoving(null);
     }
   };
 
@@ -111,10 +120,13 @@ export function WorktreeMenu({
     }
   };
 
-  const baseOptions = [
-    ...(branches?.local ?? []).map((b) => b.name),
-    ...(branches?.remote ?? []).map((b) => b.name),
-  ];
+  const baseOptions = useMemo(
+    () => [
+      ...(branches?.local ?? []).map((b) => b.name),
+      ...(branches?.remote ?? []).map((b) => b.name),
+    ],
+    [branches],
+  );
 
   return (
     <>
@@ -207,6 +219,8 @@ export function WorktreeMenu({
                 >
                   in use
                 </span>
+              ) : removing === w.path ? (
+                <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-droid-text-muted" />
               ) : confirming === w.path ? (
                 <div className="flex shrink-0 items-center gap-0.5">
                   <button

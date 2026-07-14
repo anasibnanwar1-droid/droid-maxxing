@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { ChevronLeft, ExternalLink, Loader2, MessageSquare, RefreshCw } from 'lucide-react';
 import { CheckStatusIcon, PrStateIcon } from './GithubIcons';
 import { bucketToStatus, checksSummary, prKind, prKindLabel } from '../../lib/github';
@@ -115,13 +115,16 @@ export function PullRequestPanel({
 }) {
   const [draft, setDraft] = useState('');
   const [posting, setPosting] = useState(false);
+  // Synchronous re-entry guard: `posting` state only updates on the next
+  // render, so a Cmd/Ctrl+Enter fired again in the same tick would slip past a
+  // state check and double-post the comment.
+  const postingRef = useRef(false);
   const kind = prKind(pr);
 
   const submit = async () => {
     const body = draft.trim();
-    // Guard re-entry: the Cmd/Ctrl+Enter shortcut can fire again while a post is
-    // in flight even though the button is disabled, which would double-post.
-    if (!body || posting) return;
+    if (!body || postingRef.current) return;
+    postingRef.current = true;
     setPosting(true);
     try {
       const res = await postPrComment(cwd, pr.number, body);
@@ -135,6 +138,7 @@ export function PullRequestPanel({
     } catch {
       toast.error('Could not post comment');
     } finally {
+      postingRef.current = false;
       setPosting(false);
     }
   };

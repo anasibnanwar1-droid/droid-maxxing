@@ -287,6 +287,11 @@ export function ReviewPanel({ cwd, onClose }: { cwd: string; onClose: () => void
     review.refresh();
   };
 
+  const registerSection = useCallback((path: string, el: HTMLDivElement | null) => {
+    if (el) sectionRefs.current.set(path, el);
+    else sectionRefs.current.delete(path);
+  }, []);
+
   const toggle = useCallback((path: string) => {
     setActivePath(path);
     setExpanded((cur) => {
@@ -496,11 +501,8 @@ export function ReviewPanel({ cwd, onClose }: { cwd: string; onClose: () => void
                 entry={diffEntries[file.path]}
                 view={state.diffView}
                 wrap={wrap}
-                onToggle={() => toggle(file.path)}
-                innerRef={(el) => {
-                  if (el) sectionRefs.current.set(file.path, el);
-                  else sectionRefs.current.delete(file.path);
-                }}
+                onToggle={toggle}
+                onSectionRef={registerSection}
               />
             ))
           )}

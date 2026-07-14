@@ -1,3 +1,4 @@
+import { memo, useCallback } from 'react';
 import { ChevronRight, Loader2 } from 'lucide-react';
 import { DiffBody } from './DiffBody';
 import { fileStatusColor, fileStatusSymbol } from '../../lib/reviewScopes';
@@ -8,7 +9,10 @@ import type { DiffFile } from '../../types/vcs';
 // One collapsible file in the Review tab: a sticky header (status, path, line
 // counts) that toggles the file's diff. The diff is fetched lazily the first
 // time the section is opened, so a large changeset stays responsive.
-export function DiffFileSection({
+// Memoized with path-taking callbacks: the parent re-renders on every diff
+// poll tick, and per-file inline closures would otherwise re-render every
+// section and detach/re-attach every callback ref each cycle.
+export const DiffFileSection = memo(function DiffFileSection({
   file,
   open,
   active,
@@ -16,7 +20,7 @@ export function DiffFileSection({
   view,
   wrap,
   onToggle,
-  innerRef,
+  onSectionRef,
 }: {
   file: DiffFile;
   open: boolean;
@@ -24,16 +28,21 @@ export function DiffFileSection({
   entry: FileDiffEntry | undefined;
   view: DiffViewMode;
   wrap: boolean;
-  onToggle: () => void;
-  innerRef: (el: HTMLDivElement | null) => void;
+  onToggle: (path: string) => void;
+  onSectionRef: (path: string, el: HTMLDivElement | null) => void;
 }) {
+  const { path } = file;
+  const sectionRef = useCallback(
+    (el: HTMLDivElement | null) => onSectionRef(path, el),
+    [onSectionRef, path],
+  );
   const slash = file.path.lastIndexOf('/');
   const dir = slash >= 0 ? file.path.slice(0, slash + 1) : '';
   const name = slash >= 0 ? file.path.slice(slash + 1) : file.path;
   return (
-    <div ref={innerRef} className="border-b border-droid-border/70">
+    <div ref={sectionRef} className="border-b border-droid-border/70">
       <button
-        onClick={onToggle}
+        onClick={() => onToggle(path)}
         title={file.path}
         aria-expanded={open}
         className={`sticky top-0 z-10 flex w-full items-center gap-2 border-b border-droid-border/50 px-3 py-1.5 text-left transition-colors ${
@@ -80,4 +89,4 @@ export function DiffFileSection({
         ))}
     </div>
   );
-}
+});

@@ -42,7 +42,11 @@ export async function createPullRequest(
   options: CreatePrOptions,
 ): Promise<CreatePrResult> {
   if (!isDesktop()) return { ok: false, reason: 'not_desktop' };
-  return window.droidControl!.githubCreatePr(dir, options);
+  try {
+    return await window.droidControl!.githubCreatePr(dir, options);
+  } catch {
+    return { ok: false, reason: 'error' };
+  }
 }
 
 export async function postPrComment(
@@ -51,7 +55,11 @@ export async function postPrComment(
   body: string,
 ): Promise<PostCommentResult> {
   if (!isDesktop()) return { ok: false, reason: 'not_desktop' };
-  return window.droidControl!.githubPostComment(dir, { prNumber, body });
+  try {
+    return await window.droidControl!.githubPostComment(dir, { prNumber, body });
+  } catch {
+    return { ok: false, reason: 'error' };
+  }
 }
 
 // ---- Pure helpers (unit-tested) -------------------------------------------

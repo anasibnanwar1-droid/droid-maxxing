@@ -1557,13 +1557,16 @@ export function MessageFeed({
   specContent?: string;
   onOpenSpecWiki?: () => void;
 }) {
-  // Subagent cards, waiting label, live timers, and per-turn change summaries
-  // are enabled only for the chat/spec feed (which supplies onOpenSubagent).
-  // Mission Control omits the prop, so its feed renders exactly as before.
+  // Subagent cards, waiting label, and live timers are enabled only for the
+  // chat/spec feed (which supplies onOpenSubagent). Per-turn change summaries
+  // are gated separately on onOpenReviewFile: Mission Control supplies
+  // onOpenSubagent for its orchestrator view but has no Review tab to open
+  // files in, so non-interactive Changes cards must not appear there.
   const rich = !!onOpenSubagent;
+  const changes = !!onOpenReviewFile;
   const items = useMemo(
-    () => groupTurns(buildFeed(events, rich), pending, specContent, rich),
-    [events, pending, rich, specContent],
+    () => groupTurns(buildFeed(events, rich), pending, specContent, changes),
+    [events, pending, rich, changes, specContent],
   );
   const lastIdx = items.length - 1;
   const last = items[lastIdx];

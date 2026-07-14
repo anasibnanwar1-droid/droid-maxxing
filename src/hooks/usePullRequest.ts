@@ -13,6 +13,12 @@ export interface PullRequestState {
 const DETECT_MS = 20000;
 const DETAIL_MS = 12000;
 
+// Poll results are freshly deserialized every cycle; keep the previous array
+// when the payload is unchanged so consumers don't re-render every poll tick.
+function stable<T>(prev: T, next: T): T {
+  return JSON.stringify(prev) === JSON.stringify(next) ? prev : next;
+}
+
 // Detects the PR for the session's branch and, while the PR detail view is
 // open, polls its checks and comments.
 export function usePullRequest(
@@ -27,6 +33,10 @@ export function usePullRequest(
   const [loadingDetail, setLoadingDetail] = useState(false);
   const detectReq = useRef(0);
   const detailReq = useRef(0);
+  // Which cwd the current `pr` was detected for. On a cwd switch the clear
+  // effect only lands next render, so the detail poller can otherwise fire once
+  // with the previous repo's PR number against the new cwd.
+  const prCwd = useRef<string | null>(null);
 
   const detect = useCallback(() => {
     // Bump first so any in-flight detection from a prior cwd/branch (or before
@@ -42,6 +52,7 @@ export function usePullRequest(
       // when the payload is unchanged so `pr`-dependent effects (the detail
       // poller) aren't torn down and restarted on every detection cycle.
       if (id === detectReq.current && res.ok) {
+        prCwd.current = cwd;
         setPr((prev) =>
           prev && res.pr && JSON.stringify(prev) === JSON.stringify(res.pr) ? prev : res.pr,
         );
@@ -78,14 +89,14 @@ export function usePullRequest(
   }, [detect, enabled]);
 
   const refreshDetail = useCallback(() => {
-    if (!cwd || !pr) return;
+    if (!cwd || !pr || prCwd.current !== cwd) return;
     const id = ++detailReq.current;
     setLoadingDetail(true);
     Promise.all([getPrChecks(cwd, pr.number), getPrComments(cwd, pr.number)])
       .then(([checkRes, commentRes]) => {
         if (id !== detailReq.current) return;
-        setChecks(checkRes.checks);
-        setComments(commentRes.comments);
+        setChecks((prev) => stable(prev, checkRes.checks));
+        setComments((prev) => stable(prev, commentRes.comments));
         setLoadingDetail(false);
       })
       .catch(() => {

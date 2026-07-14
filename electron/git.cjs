@@ -1165,6 +1165,13 @@ async function markTurnStart(dir, sessionId) {
 module.exports = {
   environment,
   branches,
+  // Pure validation helpers exported for unit tests: they are the security
+  // boundary for branch names, worktree paths, and remote resolution.
+  validBranchName,
+  sanitizeSegment,
+  allowedWorktreeTarget,
+  matchRemote,
+  isWithin,
   worktrees,
   diffStat,
   diffFiles,

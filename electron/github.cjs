@@ -231,6 +231,8 @@ async function postComment(dir, { prNumber, body } = {}) {
 
 module.exports = {
   available,
+  // Exported for unit tests: the validation boundary for PR selectors.
+  prSelector,
   detectPr,
   prChecks,
   prComments,
