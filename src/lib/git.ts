@@ -147,7 +147,7 @@ export async function gitPush(dir: string, options: PushOptions): Promise<GitAct
 }
 
 export async function gitFetch(dir: string): Promise<GitActionResult> {
-  if (!dir) return failure('not_desktop');
+  if (!dir) return failure('no_dir');
   return action(() => window.droidControl!.gitFetch(dir));
 }
 

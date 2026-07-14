@@ -36,8 +36,8 @@ export function DiffFileSection({
         onClick={onToggle}
         title={file.path}
         aria-expanded={open}
-        className={`sticky top-0 z-10 flex w-full items-center gap-2 border-b border-droid-border/50 px-3 py-1.5 text-left backdrop-blur transition-colors ${
-          active ? 'bg-droid-elevated/80' : 'bg-droid-surface/95 hover:bg-droid-elevated/50'
+        className={`sticky top-0 z-10 flex w-full items-center gap-2 border-b border-droid-border/50 px-3 py-1.5 text-left transition-colors ${
+          active ? 'bg-droid-elevated' : 'bg-droid-surface hover:bg-droid-elevated'
         }`}
       >
         <ChevronRight

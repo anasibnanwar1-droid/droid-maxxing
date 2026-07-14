@@ -89,10 +89,20 @@ export function useGitEnvironment(cwd: string, diffMode: DiffStatMode): GitEnvir
       });
   }, [cwd]);
 
+  // Poll only while the window is visible; a hidden app should not keep
+  // spawning git subprocesses every cycle. Refresh immediately on return so
+  // the panel is current without waiting for the next tick.
   useEffect(() => {
     refresh();
-    const interval = window.setInterval(refresh, POLL_MS);
-    return () => window.clearInterval(interval);
+    const tick = () => {
+      if (!document.hidden) refresh();
+    };
+    const interval = window.setInterval(tick, POLL_MS);
+    document.addEventListener('visibilitychange', tick);
+    return () => {
+      window.clearInterval(interval);
+      document.removeEventListener('visibilitychange', tick);
+    };
   }, [refresh]);
 
   // Refetch only the diff stat when the selected mode changes.

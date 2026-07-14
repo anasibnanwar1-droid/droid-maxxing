@@ -43,7 +43,10 @@ export function useReviewDiff(
     getGitDiffFiles(cwd, scope, sessionId)
       .then((res) => {
         if (id !== listReq.current) return;
-        setFiles(res.files);
+        // Poll results are freshly deserialized; keep the previous array when
+        // nothing changed so downstream memos and effects keyed on `files`
+        // stay stable across idle polls.
+        setFiles((prev) => (JSON.stringify(prev) === JSON.stringify(res.files) ? prev : res.files));
         setBase(res.base);
         setLoadingList(false);
       })
@@ -52,11 +55,20 @@ export function useReviewDiff(
       });
   }, [cwd, scope, enabled, sessionId]);
 
+  // Poll only while the window is visible (no git subprocess churn when the
+  // app is in the background); refresh immediately on becoming visible again.
   useEffect(() => {
     loadList();
     if (!enabled) return;
-    const interval = window.setInterval(loadList, POLL_MS);
-    return () => window.clearInterval(interval);
+    const tick = () => {
+      if (!document.hidden) loadList();
+    };
+    const interval = window.setInterval(tick, POLL_MS);
+    document.addEventListener('visibilitychange', tick);
+    return () => {
+      window.clearInterval(interval);
+      document.removeEventListener('visibilitychange', tick);
+    };
   }, [loadList, enabled]);
 
   // Changes only when a file's identity or line counts change, so an idle poll

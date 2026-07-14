@@ -268,30 +268,23 @@ async function environment(dir) {
   const branchName =
     branch && branch !== 'HEAD' ? branch : await tryRun(root, ['symbolic-ref', '--short', 'HEAD']);
   const detached = !branchName;
-  let ahead = 0;
-  let behind = 0;
-  if (upstream) {
-    const counts = await tryRun(root, [
-      'rev-list',
-      '--left-right',
-      '--count',
-      `${upstream}...HEAD`,
-    ]);
-    ({ ahead, behind } = parseAheadBehind(counts));
-  }
-  const remotes = await listRemotes(root);
+  const [counts, remotes, storedBaseRef] = await Promise.all([
+    upstream ? tryRun(root, ['rev-list', '--left-right', '--count', `${upstream}...HEAD`]) : null,
+    listRemotes(root),
+    detached ? null : storedBase(root, branchName),
+  ]);
+  const { ahead, behind } = counts ? parseAheadBehind(counts) : { ahead: 0, behind: 0 };
   const primaryRemote = pickPrimaryRemote(remotes);
-  const remoteUrl = primaryRemote ? await tryRun(root, ['remote', 'get-url', primaryRemote]) : null;
-  const defaultRef = await defaultBaseRef(root, primaryRemote);
-  const storedBaseRef = detached ? null : await storedBase(root, branchName);
+  const [remoteUrl, defaultRef, storedBaseVerified] = await Promise.all([
+    primaryRemote ? tryRun(root, ['remote', 'get-url', primaryRemote]) : null,
+    defaultBaseRef(root, primaryRemote),
+    storedBaseRef ? tryRun(root, ['rev-parse', '--verify', '--quiet', storedBaseRef]) : null,
+  ]);
   // The ref this branch forks from and is diffed against (mirrors
   // effectiveBaseRef): its verified stored base, otherwise the default branch
   // ref. Upstream is the push target (often the branch's own remote ref), not a
   // base, so it is intentionally not used here.
-  const base =
-    storedBaseRef && (await tryRun(root, ['rev-parse', '--verify', '--quiet', storedBaseRef]))
-      ? storedBaseRef
-      : defaultRef;
+  const base = storedBaseRef && storedBaseVerified ? storedBaseRef : defaultRef;
   const isLinkedWorktree =
     !!commonDir && !!gitDir && path.resolve(root, commonDir) !== path.resolve(root, gitDir);
   return {

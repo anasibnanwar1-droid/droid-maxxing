@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type RefObject } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import {
   AlignLeft,
   Check,
@@ -77,15 +77,16 @@ function ScopeSelector() {
   );
 }
 
+const VIEW_TOGGLE_ITEMS = [
+  { mode: 'unified' as const, icon: AlignLeft, title: 'Unified' },
+  { mode: 'split' as const, icon: Columns2, title: 'Split' },
+];
+
 function ViewToggle() {
   const { state, dispatch } = useStore();
-  const items = [
-    { mode: 'unified' as const, icon: AlignLeft, title: 'Unified' },
-    { mode: 'split' as const, icon: Columns2, title: 'Split' },
-  ];
   return (
     <div className="flex items-center rounded-lg bg-droid-elevated p-0.5">
-      {items.map(({ mode, icon: Icon, title }) => (
+      {VIEW_TOGGLE_ITEMS.map(({ mode, icon: Icon, title }) => (
         <button
           key={mode}
           onClick={() => dispatch({ type: 'SET_DIFF_VIEW', mode })}
@@ -239,8 +240,13 @@ export function ReviewPanel({ cwd, onClose }: { cwd: string; onClose: () => void
   );
   const git = useGitEnvironment(cwd, 'worktree');
   const isGitHub = !!git.env?.isGitHub;
-  const totalAdd = review.files.reduce((sum, f) => sum + f.additions, 0);
-  const totalDel = review.files.reduce((sum, f) => sum + f.deletions, 0);
+  const { totalAdd, totalDel } = useMemo(
+    () => ({
+      totalAdd: review.files.reduce((sum, f) => sum + f.additions, 0),
+      totalDel: review.files.reduce((sum, f) => sum + f.deletions, 0),
+    }),
+    [review.files],
+  );
   const allExpanded = review.files.length > 0 && review.files.every((f) => expanded.has(f.path));
 
   const filesRef = useRef(review.files);

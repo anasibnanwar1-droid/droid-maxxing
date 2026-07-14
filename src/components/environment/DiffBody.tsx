@@ -1,22 +1,24 @@
-import { useMemo } from 'react';
+import { useMemo, type CSSProperties } from 'react';
 import { parseUnifiedDiff, toSplitRows, type DiffLine } from '../../lib/unifiedDiff';
 import type { DiffViewMode } from '../../hooks/useStore';
 
-const BG: Record<DiffLine['type'], string> = {
-  add: 'var(--diff-add-bg)',
-  del: 'var(--diff-del-bg)',
-  ctx: 'transparent',
-  meta: 'transparent',
+// Shared per-type style objects: a large diff renders thousands of lines, so
+// inline object literals would allocate on every line every render.
+const ROW_STYLE: Record<DiffLine['type'], CSSProperties> = {
+  add: { background: 'var(--diff-add-bg)' },
+  del: { background: 'var(--diff-del-bg)' },
+  ctx: { background: 'transparent' },
+  meta: { background: 'transparent' },
+};
+const SIGN_STYLE: Record<DiffLine['type'], CSSProperties> = {
+  add: { color: 'var(--diff-add-fg)' },
+  del: { color: 'var(--diff-del-fg)' },
+  ctx: { color: 'var(--droid-text-secondary)' },
+  meta: { color: 'var(--droid-text-secondary)' },
 };
 const SIGN: Record<DiffLine['type'], string> = { add: '+', del: '-', ctx: ' ', meta: '' };
 
 const MAX_RENDERED_LINES = 3000;
-
-function lineColor(type: DiffLine['type']): string {
-  if (type === 'add') return 'var(--diff-add-fg)';
-  if (type === 'del') return 'var(--diff-del-fg)';
-  return 'var(--droid-text-secondary)';
-}
 
 function Gutter({ value }: { value: number | null }) {
   return (
@@ -37,13 +39,10 @@ function UnifiedLine({ line, wrap }: { line: DiffLine; wrap: boolean }) {
     );
   }
   return (
-    <div className="flex" style={{ background: BG[line.type] }}>
+    <div className="flex" style={ROW_STYLE[line.type]}>
       <Gutter value={line.oldLine} />
       <Gutter value={line.newLine} />
-      <span
-        className="w-4 shrink-0 select-none text-center"
-        style={{ color: lineColor(line.type) }}
-      >
+      <span className="w-4 shrink-0 select-none text-center" style={SIGN_STYLE[line.type]}>
         {SIGN[line.type]}
       </span>
       <span className={`${textClass} min-w-0 flex-1 px-1 text-droid-text-secondary`}>
@@ -65,14 +64,11 @@ function SplitCell({
   if (!line) return <div className="flex flex-1 bg-droid-bg/30" />;
   const textClass = wrap ? 'whitespace-pre-wrap break-all' : 'whitespace-pre';
   return (
-    <div className="flex min-w-0 flex-1" style={{ background: BG[line.type] }}>
+    <div className="flex min-w-0 flex-1" style={ROW_STYLE[line.type]}>
       {/* The left pane is the old file, the right pane the new one; a context
           row carries both numbers, so pick by side rather than by line type. */}
       <Gutter value={side === 'left' ? line.oldLine : line.newLine} />
-      <span
-        className="w-4 shrink-0 select-none text-center"
-        style={{ color: lineColor(line.type) }}
-      >
+      <span className="w-4 shrink-0 select-none text-center" style={SIGN_STYLE[line.type]}>
         {SIGN[line.type]}
       </span>
       <span className={`${textClass} min-w-0 flex-1 px-1 text-droid-text-secondary`}>
