@@ -23,7 +23,18 @@ function relativeTime(iso: string | null): string {
 const ADD_COLOR = 'var(--diff-add-fg)';
 const DEL_COLOR = 'var(--diff-del-fg)';
 
-function ChecksBlock({ checks }: { checks: PrCheck[] }) {
+// Before the first detail fetch resolves, an empty list means "not loaded
+// yet", not "the PR has none", so show a loading row instead of the
+// misleading empty state.
+function LoadingRow() {
+  return (
+    <div className="flex items-center gap-1.5 px-1.5 pb-1.5 text-[12px] text-droid-text-muted">
+      <Loader2 className="h-3 w-3 animate-spin" /> Loading…
+    </div>
+  );
+}
+
+function ChecksBlock({ checks, loading }: { checks: PrCheck[]; loading: boolean }) {
   const summary = checksSummary(checks);
   return (
     <div className="px-1.5">
@@ -36,7 +47,11 @@ function ChecksBlock({ checks }: { checks: PrCheck[] }) {
         )}
       </div>
       {checks.length === 0 ? (
-        <div className="px-1.5 pb-1.5 text-[12px] text-droid-text-muted">No checks reported</div>
+        loading ? (
+          <LoadingRow />
+        ) : (
+          <div className="px-1.5 pb-1.5 text-[12px] text-droid-text-muted">No checks reported</div>
+        )
       ) : (
         checks.map((check) => (
           <button
@@ -62,14 +77,18 @@ function ChecksBlock({ checks }: { checks: PrCheck[] }) {
   );
 }
 
-function CommentsBlock({ comments }: { comments: PrComment[] }) {
+function CommentsBlock({ comments, loading }: { comments: PrComment[]; loading: boolean }) {
   return (
     <div className="px-1.5 pt-2">
       <div className="px-1.5 pb-1.5 text-[12px] font-medium text-droid-text-muted">
         Comments {comments.length > 0 && `(${comments.length})`}
       </div>
       {comments.length === 0 ? (
-        <div className="px-1.5 pb-1.5 text-[12px] text-droid-text-muted">No comments yet</div>
+        loading ? (
+          <LoadingRow />
+        ) : (
+          <div className="px-1.5 pb-1.5 text-[12px] text-droid-text-muted">No comments yet</div>
+        )
       ) : (
         comments.map((comment) => (
           <div key={comment.id} className="px-1.5 py-1.5">
@@ -199,9 +218,9 @@ export function PullRequestPanel({
         </button>
 
         <div className="mx-3 my-1.5 h-px bg-droid-border/70" />
-        <ChecksBlock checks={checks} />
+        <ChecksBlock checks={checks} loading={loadingDetail} />
         <div className="mx-3 my-1.5 h-px bg-droid-border/70" />
-        <CommentsBlock comments={comments} />
+        <CommentsBlock comments={comments} loading={loadingDetail} />
       </div>
 
       <div className="border-t border-droid-border/70 p-2">

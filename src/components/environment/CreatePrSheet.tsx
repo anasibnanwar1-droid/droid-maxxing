@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { ChevronDown, Loader2 } from 'lucide-react';
 import { createPullRequest } from '../../lib/github';
 import { baseDescriptor, gitPush, stripRemotePrefix } from '../../lib/git';
@@ -33,6 +33,10 @@ export function CreatePrSheet({
   const [draft, setDraft] = useState(false);
   const [pickingBase, setPickingBase] = useState(false);
   const [busy, setBusy] = useState(false);
+  // Synchronous re-entry guard: `busy` state only updates on the next render, so
+  // a second Cmd+Enter fired in the same tick would slip past a `busy` check and
+  // push/create twice.
+  const busyRef = useRef(false);
 
   // The PR's own head branch can never be its base, so keep it out of the list.
   const baseOptions = [
@@ -45,7 +49,8 @@ export function CreatePrSheet({
   );
 
   const doCreate = async () => {
-    if (!title.trim() || busy) return;
+    if (!title.trim() || busyRef.current) return;
+    busyRef.current = true;
     setBusy(true);
     try {
       // Push when there is no upstream yet, or when the local branch is ahead, so
@@ -71,7 +76,15 @@ export function CreatePrSheet({
     } catch {
       toast.error('Could not open PR');
     } finally {
+      busyRef.current = false;
       setBusy(false);
+    }
+  };
+
+  const submitOnMetaEnter = (e: React.KeyboardEvent) => {
+    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+      e.preventDefault();
+      void doCreate();
     }
   };
 
@@ -81,12 +94,14 @@ export function CreatePrSheet({
         autoFocus
         value={title}
         onChange={(e) => setTitle(e.target.value)}
+        onKeyDown={submitOnMetaEnter}
         placeholder="Pull request title"
         className="w-full rounded-lg bg-droid-bg/60 px-2.5 py-1.5 text-[12.5px] text-droid-text placeholder:text-droid-text-muted/70 focus:outline-none"
       />
       <textarea
         value={body}
         onChange={(e) => setBody(e.target.value)}
+        onKeyDown={submitOnMetaEnter}
         rows={3}
         placeholder="Description (optional)"
         className="w-full resize-none rounded-lg bg-droid-bg/60 px-2.5 py-2 text-[12.5px] text-droid-text placeholder:text-droid-text-muted/70 focus:outline-none"

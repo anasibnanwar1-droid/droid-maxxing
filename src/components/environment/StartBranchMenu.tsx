@@ -239,7 +239,7 @@ export function StartBranchMenu({
               <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-droid-accent" />
             )}
           </div>
-          <div className="max-h-[280px] overflow-y-auto py-1">
+          <div role="listbox" aria-label="Branches" className="max-h-[280px] overflow-y-auto py-1">
             <div className="px-2.5 pb-1 pt-1.5 text-[10px] font-medium uppercase tracking-wider text-droid-text-muted">
               Branches
             </div>
@@ -247,6 +247,8 @@ export function StartBranchMenu({
               <button
                 key={b.name}
                 onClick={() => pickBranch(b.name, false)}
+                role="option"
+                aria-selected={b.name === current}
                 className="flex w-full items-center gap-2.5 px-2.5 py-1.5 text-left transition-colors hover:bg-droid-elevated/60"
               >
                 <GitBranch className="h-3.5 w-3.5 shrink-0 text-droid-text-muted" />
@@ -285,6 +287,8 @@ export function StartBranchMenu({
               <button
                 key={r.name}
                 onClick={() => pickBranch(r.name, true)}
+                role="option"
+                aria-selected={false}
                 className="flex w-full items-center gap-2.5 px-2.5 py-1.5 text-left transition-colors hover:bg-droid-elevated/60"
               >
                 <GitBranch className="h-3.5 w-3.5 shrink-0 text-droid-text-muted" />

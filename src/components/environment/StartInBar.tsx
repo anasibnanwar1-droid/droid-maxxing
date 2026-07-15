@@ -30,6 +30,7 @@ function Pill({
       title={`${title}: ${label}`}
       aria-label={`${title}: ${label}`}
       aria-expanded={open}
+      aria-haspopup="dialog"
       className={`group flex min-w-0 items-center gap-1.5 rounded-md px-1.5 py-1 text-[11px] transition-colors ${
         open
           ? 'bg-droid-bg/60 text-droid-text'
@@ -108,7 +109,7 @@ export function StartInBar() {
         align="left"
         width={264}
       >
-        <div className="max-h-[260px] overflow-y-auto py-1">
+        <div role="listbox" aria-label="Projects" className="max-h-[260px] overflow-y-auto py-1">
           {state.workspaceCwds.map((path) => (
             <button
               key={path}
@@ -116,6 +117,8 @@ export function StartInBar() {
                 startIn(path);
                 setRepoOpen(false);
               }}
+              role="option"
+              aria-selected={path === repoRoot}
               className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left transition-colors hover:bg-droid-elevated/60"
             >
               <FolderGit2 className="h-3.5 w-3.5 shrink-0 text-droid-text-muted" />
@@ -167,12 +170,18 @@ export function StartInBar() {
             align="left"
             width={280}
           >
-            <div className="max-h-[260px] overflow-y-auto py-1">
+            <div
+              role="listbox"
+              aria-label="Worktrees"
+              className="max-h-[260px] overflow-y-auto py-1"
+            >
               <button
                 onClick={() => {
                   startIn(repoRoot);
                   setLocOpen(false);
                 }}
+                role="option"
+                aria-selected={onLocal}
                 className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left transition-colors hover:bg-droid-elevated/60"
               >
                 <PanelsTopLeft className="h-3.5 w-3.5 shrink-0 text-droid-text-muted" />
@@ -199,6 +208,8 @@ export function StartInBar() {
                       if (w.path) startIn(w.path, w.branch ?? undefined);
                       setLocOpen(false);
                     }}
+                    role="option"
+                    aria-selected={currentWtPath === w.path}
                     className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left transition-colors hover:bg-droid-elevated/60"
                   >
                     <PanelsTopLeft className="h-3.5 w-3.5 shrink-0 text-droid-text-muted" />

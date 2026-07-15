@@ -35,6 +35,30 @@ export function Popover({
     left: number;
     maxHeight: number;
   } | null>(null);
+  // Drives the enter transition: mount at opacity-0/scale-95, then flip on the
+  // next frame so the CSS transition has a starting state to animate from.
+  const [entered, setEntered] = useState(false);
+
+  useEffect(() => {
+    if (!open) {
+      setEntered(false);
+      return;
+    }
+    const raf = requestAnimationFrame(() => setEntered(true));
+    return () => cancelAnimationFrame(raf);
+  }, [open]);
+
+  // If focus is inside the panel when it closes (Escape from the search input,
+  // an activated row unmounting), it would fall to <body>; hand it back to the
+  // trigger instead. Cleanup runs before the portal DOM is removed, so the
+  // containment check still sees the focused node.
+  useEffect(() => {
+    if (!open) return;
+    const anchor = anchorRef.current;
+    return () => {
+      if (panelRef.current?.contains(document.activeElement)) anchor?.focus();
+    };
+  }, [open, anchorRef]);
 
   useLayoutEffect(() => {
     if (!open) return;
@@ -93,6 +117,7 @@ export function Popover({
   return createPortal(
     <div
       ref={panelRef}
+      role="dialog"
       style={{
         position: 'fixed',
         top: pos.top,
@@ -100,8 +125,11 @@ export function Popover({
         left: pos.left,
         width,
         maxHeight: pos.maxHeight,
+        transformOrigin: pos.top !== undefined ? 'top' : 'bottom',
       }}
-      className={`z-[1000] flex flex-col overflow-hidden rounded-xl border border-droid-border bg-droid-surface shadow-2xl shadow-black/50 ${className}`}
+      className={`z-[1000] flex flex-col overflow-hidden rounded-xl border border-droid-border bg-droid-surface shadow-2xl shadow-black/50 transition-[opacity,transform] duration-150 ease-out ${
+        entered ? 'scale-100 opacity-100' : 'scale-95 opacity-0'
+      } ${className}`}
     >
       {children}
     </div>,

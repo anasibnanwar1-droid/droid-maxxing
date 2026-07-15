@@ -167,7 +167,11 @@ export interface DetectPrResult {
   pr: PullRequest | null;
 }
 
-export type PrCheckBucket = 'pass' | 'fail' | 'pending' | 'skipping' | 'cancel' | string;
+// gh's documented buckets, but the backend falls back to the raw check state
+// when gh omits the bucket, so other strings are possible at runtime. The
+// `string & {}` arm keeps the literals suggested without collapsing the union
+// to plain string.
+export type PrCheckBucket = 'pass' | 'fail' | 'pending' | 'skipping' | 'cancel' | (string & {});
 
 export interface PrCheck {
   name: string;

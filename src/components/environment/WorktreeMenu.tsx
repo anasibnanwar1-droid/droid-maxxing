@@ -133,6 +133,8 @@ export function WorktreeMenu({
       <button
         ref={anchorRef}
         onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        aria-haspopup="dialog"
         title="Worktrees"
         className={`group flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left transition-colors ${
           open ? 'bg-droid-elevated' : 'hover:bg-droid-elevated/50'

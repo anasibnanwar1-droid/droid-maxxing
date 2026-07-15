@@ -1319,10 +1319,13 @@ function DiffGroup({
         <span className="min-w-0 truncate text-[13px] font-medium text-droid-text-muted group-hover:text-droid-text-secondary">
           {label}
         </span>
-        <span className="ml-auto text-[11px] font-mono shrink-0" style={{ color: '#5cc89a' }}>
+        <span
+          className="ml-auto text-[11px] font-mono shrink-0"
+          style={{ color: 'var(--diff-add-fg)' }}
+        >
           +{added}
         </span>
-        <span className="text-[11px] font-mono shrink-0" style={{ color: '#ff7a5c' }}>
+        <span className="text-[11px] font-mono shrink-0" style={{ color: 'var(--diff-del-fg)' }}>
           −{removed}
         </span>
       </button>

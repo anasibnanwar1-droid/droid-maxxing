@@ -1,4 +1,4 @@
-import { useMemo, type CSSProperties } from 'react';
+import { memo, useMemo, type CSSProperties } from 'react';
 import { parseUnifiedDiff, toSplitRows, type DiffLine } from '../../lib/unifiedDiff';
 import type { DiffViewMode } from '../../hooks/useStore';
 
@@ -28,7 +28,9 @@ function Gutter({ value }: { value: number | null }) {
   );
 }
 
-function UnifiedLine({ line, wrap }: { line: DiffLine; wrap: boolean }) {
+// Memoized: hunk line arrays are stable across parent re-renders (memoized
+// parse), so thousands of line rows can skip reconciliation during polling.
+const UnifiedLine = memo(function UnifiedLine({ line, wrap }: { line: DiffLine; wrap: boolean }) {
   const textClass = wrap ? 'whitespace-pre-wrap break-all' : 'whitespace-pre';
   if (line.type === 'meta') {
     return (
@@ -50,9 +52,9 @@ function UnifiedLine({ line, wrap }: { line: DiffLine; wrap: boolean }) {
       </span>
     </div>
   );
-}
+});
 
-function SplitCell({
+const SplitCell = memo(function SplitCell({
   line,
   side,
   wrap,
@@ -76,7 +78,7 @@ function SplitCell({
       </span>
     </div>
   );
-}
+});
 
 export function DiffBody({
   diff,

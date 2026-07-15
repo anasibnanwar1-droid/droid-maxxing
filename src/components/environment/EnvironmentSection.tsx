@@ -62,7 +62,12 @@ export function EnvironmentSection({
         onClick={() => openCodebase(cwd)}
       />
 
-      {!isRepo ? (
+      {!env ? (
+        // env is null until the first fetch for this cwd resolves (it is
+        // cleared on every cwd switch), so a null env means "loading", not
+        // "not a repo"; only an answered environment may claim the latter.
+        <div className="px-3 py-1.5 text-[12px] text-droid-text-muted">Loading environment…</div>
+      ) : !isRepo ? (
         <div className="px-3 py-1.5 text-[12px] text-droid-text-muted">Not a git repository</div>
       ) : (
         <>

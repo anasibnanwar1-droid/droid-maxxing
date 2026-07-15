@@ -27,7 +27,7 @@ export interface SplitRow {
   right: DiffLine | null;
 }
 
-const HUNK_RE = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/;
+const HUNK_RE = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/;
 
 export function parseUnifiedDiff(diff: string): ParsedDiff {
   const hunks: DiffHunk[] = [];
@@ -37,6 +37,12 @@ export function parseUnifiedDiff(diff: string): ParsedDiff {
   let current: DiffHunk | null = null;
   let oldLine = 0;
   let newLine = 0;
+  // Lines the current hunk still owes per the @@ header counts. Once both hit
+  // zero the hunk is complete, so a following "--- a/x" is the next file's
+  // header, not a deletion; without the counts that line is ambiguous (a real
+  // deletion of the text "-- x" looks identical).
+  let oldRemain = 0;
+  let newRemain = 0;
 
   for (const raw of String(diff || '').split('\n')) {
     if (raw.startsWith('Binary files ')) {
@@ -53,7 +59,9 @@ export function parseUnifiedDiff(diff: string): ParsedDiff {
     const hunkMatch = HUNK_RE.exec(raw);
     if (hunkMatch) {
       oldLine = Number.parseInt(hunkMatch[1], 10);
-      newLine = Number.parseInt(hunkMatch[2], 10);
+      newLine = Number.parseInt(hunkMatch[3], 10);
+      oldRemain = hunkMatch[2] === undefined ? 1 : Number.parseInt(hunkMatch[2], 10);
+      newRemain = hunkMatch[4] === undefined ? 1 : Number.parseInt(hunkMatch[4], 10);
       current = { header: raw, lines: [] };
       hunks.push(current);
       continue;
@@ -67,20 +75,30 @@ export function parseUnifiedDiff(diff: string): ParsedDiff {
       current.lines.push({ type: 'meta', text: raw.slice(1).trim(), oldLine: null, newLine: null });
       continue;
     }
+    // The hunk delivered every line its header promised; whatever follows
+    // (except "\" meta, handled above) belongs to the next file's headers.
+    if (oldRemain <= 0 && newRemain <= 0) {
+      current = null;
+      continue;
+    }
     const marker = raw[0];
     const text = raw.slice(1);
     if (marker === '+') {
       current.lines.push({ type: 'add', text, oldLine: null, newLine });
       newLine += 1;
+      newRemain -= 1;
       additions += 1;
     } else if (marker === '-') {
       current.lines.push({ type: 'del', text, oldLine, newLine: null });
       oldLine += 1;
+      oldRemain -= 1;
       deletions += 1;
     } else {
       current.lines.push({ type: 'ctx', text, oldLine, newLine });
       oldLine += 1;
       newLine += 1;
+      oldRemain -= 1;
+      newRemain -= 1;
     }
   }
 

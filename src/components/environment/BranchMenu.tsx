@@ -34,12 +34,14 @@ export function BranchMenu({
 
   const current = env?.branch ?? null;
 
-  const { local, remote } = useMemo(() => {
+  const { local, remote, remoteOverflow } = useMemo(() => {
     const q = query.trim().toLowerCase();
     const match = (name: string) => !q || name.toLowerCase().includes(q);
+    const remoteAll = (branches?.remote ?? []).filter((b) => match(b.name));
     return {
       local: (branches?.local ?? []).filter((b) => match(b.name)),
-      remote: (branches?.remote ?? []).filter((b) => match(b.name)).slice(0, 30),
+      remote: remoteAll.slice(0, 30),
+      remoteOverflow: Math.max(0, remoteAll.length - 30),
     };
   }, [branches, query]);
 
@@ -113,6 +115,8 @@ export function BranchMenu({
       <button
         ref={anchorRef}
         onClick={() => (open ? close() : setOpen(true))}
+        aria-expanded={open}
+        aria-haspopup="dialog"
         title={current ? `On branch ${current}` : 'Detached HEAD'}
         className={`group flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left transition-colors ${
           open ? 'bg-droid-elevated' : 'hover:bg-droid-elevated/50'
@@ -158,7 +162,7 @@ export function BranchMenu({
           </div>
         )}
 
-        <div className="min-h-0 flex-1 overflow-y-auto py-1">
+        <div role="listbox" aria-label="Branches" className="min-h-0 flex-1 overflow-y-auto py-1">
           <div className="px-2.5 pb-1 pt-1 text-[10px] font-medium uppercase tracking-wider text-droid-text-muted">
             Branches
           </div>
@@ -169,6 +173,8 @@ export function BranchMenu({
                 key={b.name}
                 onClick={() => !b.current && doCheckout(b.name)}
                 disabled={busy || fetching}
+                role="option"
+                aria-selected={b.current}
                 className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left transition-colors hover:bg-droid-elevated/60 disabled:cursor-default"
               >
                 <GitBranch className="h-3.5 w-3.5 shrink-0 text-droid-text-muted" />
@@ -200,6 +206,8 @@ export function BranchMenu({
                 key={b.name}
                 onClick={() => doCheckout(b.name)}
                 disabled={busy || fetching}
+                role="option"
+                aria-selected={false}
                 className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left transition-colors hover:bg-droid-elevated/60 disabled:cursor-default"
               >
                 <GitBranch className="h-3.5 w-3.5 shrink-0 text-droid-text-muted/70" />
@@ -209,6 +217,11 @@ export function BranchMenu({
               </button>
             );
           })}
+          {remoteOverflow > 0 && (
+            <div className="px-2.5 py-1.5 text-[11px] text-droid-text-muted">
+              + {remoteOverflow} more, refine the search to see them
+            </div>
+          )}
         </div>
 
         <div className="shrink-0 border-t border-droid-border/70 p-1.5">

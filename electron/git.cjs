@@ -254,12 +254,13 @@ async function rememberBase(root, branch, base) {
 async function environment(dir) {
   const root = await repoRootOf(dir);
   if (!root) return { isRepo: false };
-  const [branch, head, upstream, commonDir, gitDir] = await Promise.all([
+  const [branch, head, upstream, commonDir, gitDir, remotes] = await Promise.all([
     tryRun(root, ['rev-parse', '--abbrev-ref', 'HEAD']),
     tryRun(root, ['rev-parse', '--short', 'HEAD']),
     tryRun(root, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}']),
     tryRun(root, ['rev-parse', '--git-common-dir']),
     tryRun(root, ['rev-parse', '--git-dir']),
+    listRemotes(root),
   ]);
   // `rev-parse --abbrev-ref HEAD` returns "HEAD" when detached and fails on an
   // unborn branch (no commits yet). `symbolic-ref --short HEAD` still resolves
@@ -268,18 +269,23 @@ async function environment(dir) {
   const branchName =
     branch && branch !== 'HEAD' ? branch : await tryRun(root, ['symbolic-ref', '--short', 'HEAD']);
   const detached = !branchName;
-  const [counts, remotes, storedBaseRef] = await Promise.all([
-    upstream ? tryRun(root, ['rev-list', '--left-right', '--count', `${upstream}...HEAD`]) : null,
-    listRemotes(root),
-    detached ? null : storedBase(root, branchName),
-  ]);
-  const { ahead, behind } = counts ? parseAheadBehind(counts) : { ahead: 0, behind: 0 };
   const primaryRemote = pickPrimaryRemote(remotes);
-  const [remoteUrl, defaultRef, storedBaseVerified] = await Promise.all([
+  const [counts, remoteUrl, defaultRef, storedBaseState] = await Promise.all([
+    upstream ? tryRun(root, ['rev-list', '--left-right', '--count', `${upstream}...HEAD`]) : null,
     primaryRemote ? tryRun(root, ['remote', 'get-url', primaryRemote]) : null,
     defaultBaseRef(root, primaryRemote),
-    storedBaseRef ? tryRun(root, ['rev-parse', '--verify', '--quiet', storedBaseRef]) : null,
+    // The stored base and its verification are inherently sequential (verify
+    // needs the ref), so chain them inside this wave rather than adding one.
+    detached
+      ? null
+      : storedBase(root, branchName).then(async (ref) => ({
+          ref,
+          verified: ref ? await tryRun(root, ['rev-parse', '--verify', '--quiet', ref]) : null,
+        })),
   ]);
+  const { ahead, behind } = counts ? parseAheadBehind(counts) : { ahead: 0, behind: 0 };
+  const storedBaseRef = storedBaseState?.ref ?? null;
+  const storedBaseVerified = storedBaseState?.verified ?? null;
   // The ref this branch forks from and is diffed against (mirrors
   // effectiveBaseRef): its verified stored base, otherwise the default branch
   // ref. Upstream is the push target (often the branch's own remote ref), not a
@@ -1150,11 +1156,15 @@ async function markTurnStart(dir, sessionId) {
   // the last-turn diff folds in every current untracked file. Snapshot each
   // preexisting untracked path with a size+mtime signature so files that predate
   // the turn are hidden, while edits the agent makes to them still surface.
+  // Cap like scanUntracked does: past the cap the turn diff won't surface the
+  // files anyway, and stat-ing an unbounded listing (node_modules and the like)
+  // would stall the turn-start hook.
   const priorNames = String(
     (await tryRun(root, ['ls-files', '--others', '--exclude-standard'])) || '',
   )
     .split('\n')
-    .filter(Boolean);
+    .filter(Boolean)
+    .slice(0, UNTRACKED_FILE_CAP);
   const priorUntracked = new Map();
   for (const rel of priorNames) priorUntracked.set(rel, await fileSignature(root, rel));
   if (baseline)

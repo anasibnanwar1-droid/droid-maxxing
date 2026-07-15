@@ -1570,6 +1570,9 @@ function baseReducer(state: AppState, action: Action): AppState {
       return { ...state, rightPanelOpen: action.open };
 
     case 'SET_REVIEW_OPEN':
+      // Closing while already closed is a no-op; bail before allocating a new
+      // state object so subscribers don't re-render.
+      if (!action.open && state.reviewOpenMissionId === null) return state;
       // Scope the open state to the active mission so it never leaks into the
       // next chat; switching back to this mission restores it.
       return {

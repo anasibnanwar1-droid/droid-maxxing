@@ -7,6 +7,9 @@ export interface PullRequestState {
   checks: PrCheck[];
   comments: PrComment[];
   loadingDetail: boolean;
+  // False until the first checks/comments fetch for this cwd/branch resolves,
+  // so empty arrays can be rendered as "loading" instead of "none exist".
+  detailLoaded: boolean;
   refresh: () => void;
 }
 
@@ -31,6 +34,7 @@ export function usePullRequest(
   const [checks, setChecks] = useState<PrCheck[]>([]);
   const [comments, setComments] = useState<PrComment[]>([]);
   const [loadingDetail, setLoadingDetail] = useState(false);
+  const [detailLoaded, setDetailLoaded] = useState(false);
   const detectReq = useRef(0);
   const detailReq = useRef(0);
   // Which cwd the current `pr` was detected for. On a cwd switch the clear
@@ -70,6 +74,7 @@ export function usePullRequest(
     setChecks([]);
     setComments([]);
     setLoadingDetail(false);
+    setDetailLoaded(false);
   }, [cwd, branch]);
 
   // Each detection spawns a `gh` child process, so poll only while the window
@@ -98,6 +103,7 @@ export function usePullRequest(
         setChecks((prev) => stable(prev, checkRes.checks));
         setComments((prev) => stable(prev, commentRes.comments));
         setLoadingDetail(false);
+        setDetailLoaded(true);
       })
       .catch(() => {
         if (id === detailReq.current) setLoadingDetail(false);
@@ -123,5 +129,5 @@ export function usePullRequest(
     refreshDetail();
   }, [detect, refreshDetail]);
 
-  return { pr, checks, comments, loadingDetail, refresh };
+  return { pr, checks, comments, loadingDetail, detailLoaded, refresh };
 }
