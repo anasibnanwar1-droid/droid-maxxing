@@ -14,11 +14,28 @@ export interface ReviewFileDiffs {
   ensure: (path: string) => void;
 }
 
+// Split the list signature (one `path:status:additions:deletions` line per
+// file, as built by useReviewDiff) into a per-file map so a soft change can
+// invalidate only the files that actually changed. The status/adds/dels tail
+// never contains ":", so the greedy path group tolerates ":" in paths.
+function parseSignature(signature: string): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const line of signature.split('\n')) {
+    if (!line) continue;
+    const m = /^(.*):([^:]*:\d+:\d+)$/.exec(line);
+    if (m) map.set(m[1], m[2]);
+    else map.set(line, '');
+  }
+  return map;
+}
+
 // Lazily loads and caches the diff for each expanded file section in the Review
 // tab. A hard context change (cwd/scope/whitespace) clears the cache; a soft
-// change (the file-list signature after an edit) only allows a refetch while
-// keeping the last diff on screen, so an idle poll never blanks an open
-// section. Stale in-flight responses are dropped by comparing generations.
+// change (the file-list signature after an edit) invalidates only the files
+// whose own signature line changed, keeping their last diff on screen, so one
+// edited file does not refetch every expanded section. Stale in-flight
+// responses are dropped by comparing generations (global for hard resets,
+// per-file for soft ones).
 export function useReviewFileDiffs(
   cwd: string,
   scope: DiffScope,
@@ -33,6 +50,7 @@ export function useReviewFileDiffs(
   // causing expanded sections to refetch their diff on every render.
   const status = useRef<Map<string, 'loading' | 'loaded'>>(new Map());
   const gen = useRef(0);
+  const fileGen = useRef<Map<string, number>>(new Map());
 
   const hardKey = `${cwd}\u0000${scope}\u0000${ignoreWhitespace}`;
   const hardRef = useRef(hardKey);
@@ -45,13 +63,22 @@ export function useReviewFileDiffs(
     hardRef.current = hardKey;
     sigRef.current = signature;
     status.current.clear();
+    fileGen.current.clear();
     gen.current += 1;
     setEntries({});
   } else if (sigRef.current !== signature) {
+    const prev = parseSignature(sigRef.current);
+    const next = parseSignature(signature);
     sigRef.current = signature;
-    status.current.clear();
-    gen.current += 1;
-    // Keep existing entries visible; ensure() refetches and overwrites in place.
+    // Keep existing entries visible; ensure() refetches and overwrites in
+    // place. Files whose line vanished also drop their status so a later
+    // reappearance refetches instead of serving the stale diff.
+    for (const path of status.current.keys()) {
+      if (next.get(path) !== prev.get(path)) {
+        status.current.delete(path);
+        fileGen.current.set(path, (fileGen.current.get(path) ?? 0) + 1);
+      }
+    }
   }
 
   const ensure = useCallback(
@@ -59,6 +86,9 @@ export function useReviewFileDiffs(
       if (status.current.get(path)) return;
       status.current.set(path, 'loading');
       const requestGen = gen.current;
+      const requestFileGen = fileGen.current.get(path) ?? 0;
+      const stale = () =>
+        gen.current !== requestGen || (fileGen.current.get(path) ?? 0) !== requestFileGen;
       setEntries((cur) => {
         const prev = cur[path];
         return {
@@ -73,7 +103,7 @@ export function useReviewFileDiffs(
       });
       getGitFileDiff(cwd, scope, path, ignoreWhitespace, sessionId)
         .then((res) => {
-          if (gen.current !== requestGen) return;
+          if (stale()) return;
           status.current.set(path, 'loaded');
           setEntries((cur) => ({
             ...cur,
@@ -83,7 +113,7 @@ export function useReviewFileDiffs(
         .catch(() => {
           // getGitFileDiff catches internally and never rejects, but guard
           // against a future contract change so an open section doesn't hang.
-          if (gen.current !== requestGen) return;
+          if (stale()) return;
           status.current.set(path, 'loaded');
           setEntries((cur) => ({
             ...cur,

@@ -1,4 +1,4 @@
-import { memo, useMemo, type CSSProperties } from 'react';
+import { memo, useEffect, useMemo, useState, type CSSProperties } from 'react';
 import { parseUnifiedDiff, toSplitRows, type DiffLine } from '../../lib/unifiedDiff';
 import type { DiffViewMode } from '../../hooks/useStore';
 
@@ -19,6 +19,17 @@ const SIGN_STYLE: Record<DiffLine['type'], CSSProperties> = {
 const SIGN: Record<DiffLine['type'], string> = { add: '+', del: '-', ctx: ' ', meta: '' };
 
 const MAX_RENDERED_LINES = 3000;
+
+// Large diffs are mounted in fixed-size chunks: `content-visibility: auto`
+// lets the browser skip layout/paint for offscreen chunks, and only a few
+// chunks mount per frame so a big file never lands in one synchronous React
+// commit (thousands of rows at 5-9 DOM nodes each would drop frames for
+// hundreds of ms). The intrinsic-size estimate only seeds the scrollbar; once
+// a chunk has rendered, `auto` remembers its real height (wrap included).
+const CHUNK_ROWS = 200;
+const INITIAL_CHUNKS = 3;
+const CHUNKS_PER_FRAME = 2;
+const EST_ROW_PX = 19.2; // 12px font at 1.6 line-height
 
 function Gutter({ value }: { value: number | null }) {
   return (
@@ -80,6 +91,46 @@ const SplitCell = memo(function SplitCell({
   );
 });
 
+type Row =
+  | { kind: 'header'; text: string }
+  | { kind: 'line'; line: DiffLine }
+  | { kind: 'split'; left: DiffLine | null; right: DiffLine | null };
+
+function RowView({ row, wrap }: { row: Row; wrap: boolean }) {
+  if (row.kind === 'header') {
+    return (
+      <div className="bg-droid-elevated/50 px-2 py-0.5 text-[11px] text-droid-accent/80">
+        {row.text}
+      </div>
+    );
+  }
+  if (row.kind === 'line') return <UnifiedLine line={row.line} wrap={wrap} />;
+  return (
+    <div className="flex">
+      <SplitCell line={row.left} side="left" wrap={wrap} />
+      <div className="w-px shrink-0 bg-droid-border" />
+      <SplitCell line={row.right} side="right" wrap={wrap} />
+    </div>
+  );
+}
+
+// Memoized so polling-driven parent re-renders skip every already-mounted
+// chunk (its rows slice is referentially stable while the diff is unchanged).
+const Chunk = memo(function Chunk({ rows, wrap }: { rows: Row[]; wrap: boolean }) {
+  return (
+    <div
+      style={{
+        contentVisibility: 'auto',
+        containIntrinsicSize: `auto ${Math.round(rows.length * EST_ROW_PX)}px`,
+      }}
+    >
+      {rows.map((row, i) => (
+        <RowView key={i} row={row} wrap={wrap} />
+      ))}
+    </div>
+  );
+});
+
 export function DiffBody({
   diff,
   view,
@@ -118,6 +169,47 @@ export function DiffBody({
     [view, hunks],
   );
 
+  // Flatten headers and lines into one row stream so chunking can cut across
+  // hunk boundaries; a meta row in split view spans both panes.
+  const rows = useMemo(() => {
+    const out: Row[] = [];
+    hunks.forEach((hunk, hi) => {
+      out.push({ kind: 'header', text: hunk.header });
+      if (splitRows) {
+        for (const row of splitRows[hi]) {
+          if (row.left?.type === 'meta') out.push({ kind: 'line', line: row.left });
+          else out.push({ kind: 'split', left: row.left, right: row.right });
+        }
+      } else {
+        for (const line of hunk.lines) out.push({ kind: 'line', line });
+      }
+    });
+    return out;
+  }, [hunks, splitRows]);
+
+  const chunks = useMemo(() => {
+    const out: Row[][] = [];
+    for (let i = 0; i < rows.length; i += CHUNK_ROWS) out.push(rows.slice(i, i + CHUNK_ROWS));
+    return out;
+  }, [rows]);
+
+  // Progressive mount: start with a few chunks and add a couple per frame until
+  // the whole diff is in the DOM. Reset during render (the supported pattern
+  // for derived-state resets) whenever the diff content or view changes.
+  const [mounted, setMounted] = useState(INITIAL_CHUNKS);
+  const [prevRows, setPrevRows] = useState(rows);
+  if (prevRows !== rows) {
+    setPrevRows(rows);
+    setMounted(INITIAL_CHUNKS);
+  }
+  useEffect(() => {
+    if (mounted >= chunks.length) return;
+    const raf = requestAnimationFrame(() => setMounted((v) => v + CHUNKS_PER_FRAME));
+    return () => cancelAnimationFrame(raf);
+  }, [mounted, chunks.length]);
+
+  const pendingRows = Math.max(0, rows.length - mounted * CHUNK_ROWS);
+
   if (binary) {
     return <div className="p-4 text-[12.5px] text-droid-text-muted">Binary file not shown</div>;
   }
@@ -127,26 +219,12 @@ export function DiffBody({
 
   return (
     <div className="font-mono text-[12px] leading-[1.6]">
-      {hunks.map((hunk, hi) => (
-        <div key={hi}>
-          <div className="bg-droid-elevated/50 px-2 py-0.5 text-[11px] text-droid-accent/80">
-            {hunk.header}
-          </div>
-          {splitRows
-            ? splitRows[hi].map((row, ri) =>
-                row.left?.type === 'meta' ? (
-                  <UnifiedLine key={ri} line={row.left} wrap={wrap} />
-                ) : (
-                  <div key={ri} className="flex">
-                    <SplitCell line={row.left} side="left" wrap={wrap} />
-                    <div className="w-px shrink-0 bg-droid-border" />
-                    <SplitCell line={row.right} side="right" wrap={wrap} />
-                  </div>
-                ),
-              )
-            : hunk.lines.map((line, li) => <UnifiedLine key={li} line={line} wrap={wrap} />)}
-        </div>
+      {chunks.slice(0, mounted).map((chunk, ci) => (
+        <Chunk key={ci} rows={chunk} wrap={wrap} />
       ))}
+      {/* Placeholder for not-yet-mounted chunks so the scroll height is stable
+          while the progressive mount catches up. */}
+      {pendingRows > 0 && <div style={{ height: Math.round(pendingRows * EST_ROW_PX) }} />}
       {hiddenLines > 0 && (
         <div className="px-3 py-2 text-[11.5px] text-droid-text-muted">
           Diff truncated: {hiddenLines.toLocaleString()} more lines not shown
