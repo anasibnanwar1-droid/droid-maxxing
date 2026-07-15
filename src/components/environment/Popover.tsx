@@ -50,13 +50,24 @@ export function Popover({
 
   // If focus is inside the panel when it closes (Escape from the search input,
   // an activated row unmounting), it would fall to <body>; hand it back to the
-  // trigger instead. Cleanup runs before the portal DOM is removed, so the
-  // containment check still sees the focused node.
+  // trigger instead. React clears panelRef and unmounts the portal before this
+  // cleanup runs, so containment can't be checked at teardown: track it live
+  // via focusin while the panel is open. A close by outside-click moves focus
+  // to the clicked target (or <body>) before cleanup, so it clears the flag and
+  // does not steal focus back.
+  const focusInsideRef = useRef(false);
   useEffect(() => {
     if (!open) return;
+    const track = () => {
+      focusInsideRef.current = !!panelRef.current?.contains(document.activeElement);
+    };
+    track();
+    document.addEventListener('focusin', track);
     const anchor = anchorRef.current;
     return () => {
-      if (panelRef.current?.contains(document.activeElement)) anchor?.focus();
+      document.removeEventListener('focusin', track);
+      if (focusInsideRef.current) anchor?.focus();
+      focusInsideRef.current = false;
     };
   }, [open, anchorRef]);
 

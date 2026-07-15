@@ -78,16 +78,27 @@ async function isDirectory(dir) {
   }
 }
 
-// Parse `git rev-list --left-right --count A...B` → { ahead, behind }.
-function parseAheadBehind(out) {
-  const [behind, ahead] = String(out || '')
-    .trim()
-    .split(/\s+/)
-    .map((n) => Number.parseInt(n, 10));
-  return {
-    ahead: Number.isFinite(ahead) ? ahead : 0,
-    behind: Number.isFinite(behind) ? behind : 0,
-  };
+// Parse the `# branch.*` headers of `git status --porcelain=v2 --branch`. One
+// subprocess yields the branch name (even on an unborn branch, where rev-parse
+// fails), the upstream and the ahead/behind counts, replacing four separate
+// rev-parse/rev-list calls per environment refresh.
+function parseStatusBranch(stdout) {
+  const out = { head: null, upstream: null, ahead: 0, behind: 0 };
+  for (const line of String(stdout || '').split('\n')) {
+    if (!line.startsWith('#')) break; // file entries follow the headers
+    if (!line.startsWith('# branch.')) continue;
+    const rest = line.slice('# branch.'.length);
+    if (rest.startsWith('head ')) out.head = rest.slice(5);
+    else if (rest.startsWith('upstream ')) out.upstream = rest.slice(9);
+    else if (rest.startsWith('ab ')) {
+      const m = rest.match(/^ab \+(\d+) -(\d+)$/);
+      if (m) {
+        out.ahead = Number.parseInt(m[1], 10) || 0;
+        out.behind = Number.parseInt(m[2], 10) || 0;
+      }
+    }
+  }
+  return out;
 }
 
 // Parse `%(upstream:track)` like "[ahead 2, behind 1]" → { ahead, behind }.
@@ -151,11 +162,23 @@ function parseNumstat(stdout) {
   return { additions, deletions, files };
 }
 
+// Every IPC entry point resolves the repo root, and each poll cycle fires
+// several of them in parallel, so an uncached resolution pays a stat plus a
+// rev-parse per call. Cache briefly so one cycle resolves the root once; the
+// short TTL keeps moved or newly initialized repos honest.
+const repoRootCache = new Map();
+const REPO_ROOT_TTL_MS = 5000;
+
 async function repoRootOf(dir) {
-  const root = expandHome(dir);
-  if (!root || !(await isDirectory(root))) return null;
-  const top = await tryRun(root, ['rev-parse', '--show-toplevel']);
-  return top || null;
+  const key = expandHome(dir);
+  if (!key) return null;
+  const cached = repoRootCache.get(key);
+  if (cached && Date.now() - cached.at < REPO_ROOT_TTL_MS) return cached.root;
+  const root = (await isDirectory(key))
+    ? (await tryRun(key, ['rev-parse', '--show-toplevel'])) || null
+    : null;
+  setRepoCache(repoRootCache, key, { root, at: Date.now() });
+  return root;
 }
 
 async function defaultBaseRef(root, remote = 'origin') {
@@ -254,24 +277,24 @@ async function rememberBase(root, branch, base) {
 async function environment(dir) {
   const root = await repoRootOf(dir);
   if (!root) return { isRepo: false };
-  const [branch, head, upstream, commonDir, gitDir, remotes] = await Promise.all([
-    tryRun(root, ['rev-parse', '--abbrev-ref', 'HEAD']),
+  const [statusOut, head, dirs, remotes] = await Promise.all([
+    // -uno: only the `# branch.*` headers matter here, so skip the untracked
+    // scan and keep the output small on repos with large ignored-adjacent trees.
+    tryRun(root, ['status', '--porcelain=v2', '--branch', '-uno']),
     tryRun(root, ['rev-parse', '--short', 'HEAD']),
-    tryRun(root, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}']),
-    tryRun(root, ['rev-parse', '--git-common-dir']),
-    tryRun(root, ['rev-parse', '--git-dir']),
+    tryRun(root, ['rev-parse', '--git-common-dir', '--git-dir']),
     listRemotes(root),
   ]);
-  // `rev-parse --abbrev-ref HEAD` returns "HEAD" when detached and fails on an
-  // unborn branch (no commits yet). `symbolic-ref --short HEAD` still resolves
-  // the branch name before the first commit, so only a real detached HEAD
-  // (where it also fails) is reported as detached.
-  const branchName =
-    branch && branch !== 'HEAD' ? branch : await tryRun(root, ['symbolic-ref', '--short', 'HEAD']);
-  const detached = !branchName;
+  // `branch.head` resolves the branch name even before the first commit
+  // (unborn branch); only a real detached HEAD reports "(detached)".
+  const status = parseStatusBranch(statusOut);
+  const detached = !status.head || status.head === '(detached)';
+  const branchName = detached ? null : status.head;
+  const upstream = status.upstream;
+  const { ahead, behind } = status;
+  const [commonDir, gitDir] = String(dirs || '').split('\n');
   const primaryRemote = pickPrimaryRemote(remotes);
-  const [counts, remoteUrl, defaultRef, storedBaseState] = await Promise.all([
-    upstream ? tryRun(root, ['rev-list', '--left-right', '--count', `${upstream}...HEAD`]) : null,
+  const [remoteUrl, defaultRef, storedBaseState] = await Promise.all([
     primaryRemote ? tryRun(root, ['remote', 'get-url', primaryRemote]) : null,
     defaultBaseRef(root, primaryRemote),
     // The stored base and its verification are inherently sequential (verify
@@ -283,7 +306,6 @@ async function environment(dir) {
           verified: ref ? await tryRun(root, ['rev-parse', '--verify', '--quiet', ref]) : null,
         })),
   ]);
-  const { ahead, behind } = counts ? parseAheadBehind(counts) : { ahead: 0, behind: 0 };
   const storedBaseRef = storedBaseState?.ref ?? null;
   const storedBaseVerified = storedBaseState?.verified ?? null;
   // The ref this branch forks from and is diffed against (mirrors
@@ -1165,8 +1187,20 @@ async function markTurnStart(dir, sessionId) {
     .split('\n')
     .filter(Boolean)
     .slice(0, UNTRACKED_FILE_CAP);
-  const priorUntracked = new Map();
-  for (const rel of priorNames) priorUntracked.set(rel, await fileSignature(root, rel));
+  // Same bounded worker pool as scanUntracked: this runs on the prompt-send
+  // path, where stat-ing up to the cap sequentially would stall the turn start,
+  // while unbounded Promise.all could exhaust file descriptors on huge repos.
+  const sigs = new Array(priorNames.length);
+  let cursor = 0;
+  await Promise.all(
+    Array.from({ length: Math.min(UNTRACKED_SCAN_CONCURRENCY, priorNames.length) }, async () => {
+      while (cursor < priorNames.length) {
+        const i = cursor++;
+        sigs[i] = await fileSignature(root, priorNames[i]);
+      }
+    }),
+  );
+  const priorUntracked = new Map(priorNames.map((rel, i) => [rel, sigs[i]]));
   if (baseline)
     setRepoCache(turnBaselines, turnBaselineKey(root, sessionId), { baseline, priorUntracked });
   return { ok: !!baseline, baseline: baseline || null };

@@ -240,6 +240,15 @@ export function ReviewPanel({ cwd, onClose }: { cwd: string; onClose: () => void
   );
   const git = useGitEnvironment(cwd, 'worktree');
   const isGitHub = !!git.env?.isGitHub;
+  // The Review pane has no PR polling of its own, so without this flag the PR
+  // button would stay live after a successful create and a second submit would
+  // surface GitHub's raw "already exists" error. Reset when the branch changes,
+  // where opening a new PR is legitimate again.
+  const [prCreated, setPrCreated] = useState(false);
+  const branch = git.env?.branch ?? null;
+  useEffect(() => {
+    setPrCreated(false);
+  }, [cwd, branch]);
   const { totalAdd, totalDel } = useMemo(
     () => ({
       totalAdd: review.files.reduce((sum, f) => sum + f.additions, 0),
@@ -360,7 +369,7 @@ export function ReviewPanel({ cwd, onClose }: { cwd: string; onClose: () => void
           active={commitOpen}
           onClick={() => setCommitOpen((v) => !v)}
         />
-        {isGitHub && (
+        {isGitHub && !prCreated && (
           <ToolbarButton
             icon={GitPullRequest}
             label="PR"
@@ -416,6 +425,7 @@ export function ReviewPanel({ cwd, onClose }: { cwd: string; onClose: () => void
             cwd={cwd}
             env={git.env}
             branches={git.branches}
+            onCreated={() => setPrCreated(true)}
             onDone={() => {
               setPrOpen(false);
               afterAction();
