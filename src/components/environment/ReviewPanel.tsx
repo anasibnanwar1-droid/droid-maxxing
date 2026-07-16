@@ -212,6 +212,12 @@ function FileRow({
 // they want to read.
 const AUTO_EXPAND_MAX = 25;
 
+// The file sidebar and diff-section column render at most this many rows at
+// once; huge changesets (hundreds of files) otherwise mount thousands of DOM
+// nodes and re-create them on every poll. "Show more" reveals the rest in
+// increments, and jumpTo raises the limit when the target sits past it.
+const FILE_RENDER_CAP = 100;
+
 export function ReviewPanel({ cwd, onClose }: { cwd: string; onClose: () => void }) {
   const { state, dispatch } = useStore();
   const [filesOpen, setFilesOpen] = useState(true);
@@ -222,6 +228,7 @@ export function ReviewPanel({ cwd, onClose }: { cwd: string; onClose: () => void
   const [moreOpen, setMoreOpen] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [activePath, setActivePath] = useState<string | null>(null);
+  const [renderLimit, setRenderLimit] = useState(FILE_RENDER_CAP);
   const commitRef = useRef<HTMLButtonElement>(null);
   const prRef = useRef<HTMLButtonElement>(null);
   const moreRef = useRef<HTMLButtonElement>(null);
@@ -249,6 +256,9 @@ export function ReviewPanel({ cwd, onClose }: { cwd: string; onClose: () => void
   useEffect(() => {
     setPrCreated(false);
   }, [cwd, branch]);
+  useEffect(() => {
+    setRenderLimit(FILE_RENDER_CAP);
+  }, [cwd, state.reviewScope]);
   const { totalAdd, totalDel } = useMemo(
     () => ({
       totalAdd: review.files.reduce((sum, f) => sum + f.additions, 0),
@@ -284,12 +294,16 @@ export function ReviewPanel({ cwd, onClose }: { cwd: string; onClose: () => void
     setActivePath((cur) => (cur && present.has(cur) ? cur : (paths[0] ?? null)));
   }, [review.signature]);
 
-  // Fetch the diff for every open section; ensure() is a no-op for diffs
-  // already loaded this generation, so this only does work for freshly opened
-  // files or after the signature invalidates the cache.
+  // Fetch the diff for every open section that is actually rendered; ensure()
+  // is a no-op for diffs already loaded this generation, so this only does
+  // work for freshly opened files or after the signature invalidates the
+  // cache. Sections past the render cap fetch lazily when revealed.
   useEffect(() => {
-    expanded.forEach((p) => ensure(p));
-  }, [expanded, review.signature, ensure]);
+    const visible = new Set(review.files.slice(0, renderLimit).map((f) => f.path));
+    expanded.forEach((p) => {
+      if (visible.has(p)) ensure(p);
+    });
+  }, [expanded, review.signature, ensure, review.files, renderLimit]);
 
   const afterAction = () => {
     git.refresh();
@@ -317,9 +331,15 @@ export function ReviewPanel({ cwd, onClose }: { cwd: string; onClose: () => void
 
   const jumpTo = (path: string) => {
     setActivePath(path);
+    const idx = filesRef.current.findIndex((f) => f.path === path);
+    if (idx >= 0) setRenderLimit((cur) => (idx < cur ? cur : idx + FILE_RENDER_CAP));
     setExpanded((cur) => (cur.has(path) ? cur : new Set(cur).add(path)));
+    // Two frames: the first lets React commit a raised render limit so the
+    // target section exists before scrollIntoView runs.
     requestAnimationFrame(() =>
-      sectionRefs.current.get(path)?.scrollIntoView({ block: 'start', behavior: 'smooth' }),
+      requestAnimationFrame(() =>
+        sectionRefs.current.get(path)?.scrollIntoView({ block: 'start', behavior: 'smooth' }),
+      ),
     );
   };
 
@@ -410,6 +430,7 @@ export function ReviewPanel({ cwd, onClose }: { cwd: string; onClose: () => void
           open={commitOpen}
           onClose={() => setCommitOpen(false)}
           anchorRef={commitRef}
+          label="Commit changes"
           width={320}
         >
           <CommitSheet
@@ -420,7 +441,13 @@ export function ReviewPanel({ cwd, onClose }: { cwd: string; onClose: () => void
             }}
           />
         </Popover>
-        <Popover open={prOpen} onClose={() => setPrOpen(false)} anchorRef={prRef} width={340}>
+        <Popover
+          open={prOpen}
+          onClose={() => setPrOpen(false)}
+          anchorRef={prRef}
+          label="Create pull request"
+          width={340}
+        >
           <CreatePrSheet
             cwd={cwd}
             env={git.env}
@@ -432,7 +459,13 @@ export function ReviewPanel({ cwd, onClose }: { cwd: string; onClose: () => void
             }}
           />
         </Popover>
-        <Popover open={moreOpen} onClose={() => setMoreOpen(false)} anchorRef={moreRef} width={224}>
+        <Popover
+          open={moreOpen}
+          onClose={() => setMoreOpen(false)}
+          anchorRef={moreRef}
+          label="Review options"
+          width={224}
+        >
           <div className="p-1.5">
             <MenuItem
               icon={RefreshCw}
@@ -477,14 +510,25 @@ export function ReviewPanel({ cwd, onClose }: { cwd: string; onClose: () => void
                   {review.loadingList ? 'Loading…' : 'No changes in this scope'}
                 </div>
               ) : (
-                review.files.map((file) => (
-                  <FileRow
-                    key={file.path}
-                    file={file}
-                    selected={activePath === file.path}
-                    onSelect={() => jumpTo(file.path)}
-                  />
-                ))
+                <>
+                  {review.files.slice(0, renderLimit).map((file) => (
+                    <FileRow
+                      key={file.path}
+                      file={file}
+                      selected={activePath === file.path}
+                      onSelect={() => jumpTo(file.path)}
+                    />
+                  ))}
+                  {review.files.length > renderLimit && (
+                    <button
+                      onClick={() => setRenderLimit((cur) => cur + FILE_RENDER_CAP)}
+                      className="w-full px-2.5 py-2 text-left text-[12px] text-droid-accent transition-colors hover:bg-droid-elevated/50"
+                    >
+                      Show {Math.min(FILE_RENDER_CAP, review.files.length - renderLimit)} more
+                      files…
+                    </button>
+                  )}
+                </>
               )}
             </div>
           </div>
@@ -502,19 +546,29 @@ export function ReviewPanel({ cwd, onClose }: { cwd: string; onClose: () => void
               )}
             </div>
           ) : (
-            review.files.map((file) => (
-              <DiffFileSection
-                key={file.path}
-                file={file}
-                open={expanded.has(file.path)}
-                active={activePath === file.path}
-                entry={diffEntries[file.path]}
-                view={state.diffView}
-                wrap={wrap}
-                onToggle={toggle}
-                onSectionRef={registerSection}
-              />
-            ))
+            <>
+              {review.files.slice(0, renderLimit).map((file) => (
+                <DiffFileSection
+                  key={file.path}
+                  file={file}
+                  open={expanded.has(file.path)}
+                  active={activePath === file.path}
+                  entry={diffEntries[file.path]}
+                  view={state.diffView}
+                  wrap={wrap}
+                  onToggle={toggle}
+                  onSectionRef={registerSection}
+                />
+              ))}
+              {review.files.length > renderLimit && (
+                <button
+                  onClick={() => setRenderLimit((cur) => cur + FILE_RENDER_CAP)}
+                  className="w-full px-3 py-2.5 text-left text-[12.5px] text-droid-accent transition-colors hover:bg-droid-elevated/40"
+                >
+                  Show {Math.min(FILE_RENDER_CAP, review.files.length - renderLimit)} more files…
+                </button>
+              )}
+            </>
           )}
         </div>
       </div>

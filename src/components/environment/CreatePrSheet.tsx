@@ -1,5 +1,6 @@
-import { useRef, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { ChevronDown, Loader2 } from 'lucide-react';
+import { usePopover } from './usePopover';
 import { createPullRequest } from '../../lib/github';
 import { baseDescriptor, gitPush, stripRemotePrefix } from '../../lib/git';
 import { openExternal } from '../../lib/onboarding';
@@ -37,6 +38,10 @@ export function CreatePrSheet({
   // a second Cmd+Enter fired in the same tick would slip past a `busy` check and
   // push/create twice.
   const busyRef = useRef(false);
+  const basePickerRef = usePopover<HTMLDivElement>(
+    pickingBase,
+    useCallback(() => setPickingBase(false), []),
+  );
 
   // The PR's own head branch can never be its base, so keep it out of the list.
   const baseOptions = [
@@ -106,7 +111,7 @@ export function CreatePrSheet({
         placeholder="Description (optional)"
         className="w-full resize-none rounded-lg bg-droid-bg/60 px-2.5 py-2 text-[12.5px] text-droid-text placeholder:text-droid-text-muted/70 focus:outline-none"
       />
-      <div className="relative">
+      <div className="relative" ref={basePickerRef}>
         <button
           onClick={() => setPickingBase((v) => !v)}
           className="flex w-full items-center gap-1.5 rounded-lg bg-droid-bg/40 px-2.5 py-1.5 text-[11.5px] hover:bg-droid-bg/60"

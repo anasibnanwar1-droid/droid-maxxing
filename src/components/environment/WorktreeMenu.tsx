@@ -36,10 +36,14 @@ export function WorktreeMenu({
   const [confirming, setConfirming] = useState<string | null>(null);
   const [removing, setRemoving] = useState<string | null>(null);
 
-  // Drop any armed removal confirmation when the menu closes so reopening never
-  // shows a stale confirm affordance.
+  // Reset transient menu state when it closes so reopening never shows a stale
+  // confirm affordance or a half-filled create form from the previous open.
   useEffect(() => {
-    if (!open) setConfirming(null);
+    if (open) return;
+    setConfirming(null);
+    setCreating(false);
+    setName('');
+    setPickingBase(false);
   }, [open]);
 
   // The create form is opened on demand; seed its base from the current branch
@@ -165,6 +169,7 @@ export function WorktreeMenu({
         open={open}
         onClose={() => setOpen(false)}
         anchorRef={anchorRef}
+        label="Worktrees"
         align="right"
         width={288}
       >

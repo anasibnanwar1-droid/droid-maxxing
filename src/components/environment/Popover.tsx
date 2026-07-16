@@ -3,6 +3,7 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
   type RefObject,
 } from 'react';
@@ -15,6 +16,7 @@ export function Popover({
   open,
   onClose,
   anchorRef,
+  label,
   align = 'right',
   width = 288,
   className = '',
@@ -23,6 +25,7 @@ export function Popover({
   open: boolean;
   onClose: () => void;
   anchorRef: RefObject<HTMLElement | null>;
+  label?: string;
   align?: 'left' | 'right';
   width?: number;
   className?: string;
@@ -98,11 +101,23 @@ export function Popover({
       }
     };
     update();
-    window.addEventListener('scroll', update, true);
-    window.addEventListener('resize', update);
+    // The capture-phase scroll listener fires for every scrollable container
+    // (including the diff panel); coalesce to one reposition per frame so
+    // scrolling with a popover open doesn't run rect reads per scroll event.
+    let raf = 0;
+    const schedule = () => {
+      if (raf) return;
+      raf = requestAnimationFrame(() => {
+        raf = 0;
+        update();
+      });
+    };
+    window.addEventListener('scroll', schedule, true);
+    window.addEventListener('resize', schedule);
     return () => {
-      window.removeEventListener('scroll', update, true);
-      window.removeEventListener('resize', update);
+      if (raf) cancelAnimationFrame(raf);
+      window.removeEventListener('scroll', schedule, true);
+      window.removeEventListener('resize', schedule);
     };
   }, [open, anchorRef, align, width]);
 
@@ -124,11 +139,35 @@ export function Popover({
     };
   }, [open, onClose, anchorRef]);
 
+  // The portal escapes the trigger's DOM order, so Tab would otherwise walk
+  // out of the open panel into whatever follows <body>; wrap focus instead.
+  const trapTab = (e: ReactKeyboardEvent) => {
+    if (e.key !== 'Tab') return;
+    const panel = panelRef.current;
+    if (!panel) return;
+    const focusables = panel.querySelectorAll<HTMLElement>(
+      'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+    );
+    if (focusables.length === 0) return;
+    const first = focusables[0];
+    const last = focusables[focusables.length - 1];
+    const active = document.activeElement;
+    if (e.shiftKey && (active === first || !panel.contains(active))) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && (active === last || !panel.contains(active))) {
+      e.preventDefault();
+      first.focus();
+    }
+  };
+
   if (!open || !pos) return null;
   return createPortal(
     <div
       ref={panelRef}
       role="dialog"
+      aria-label={label ?? 'Menu'}
+      onKeyDown={trapTab}
       style={{
         position: 'fixed',
         top: pos.top,

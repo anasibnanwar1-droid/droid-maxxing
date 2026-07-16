@@ -181,6 +181,35 @@ async function repoRootOf(dir) {
   return root;
 }
 
+// Short-lived cache for read-only queries (environment, branches, worktrees,
+// diff stats, base-ref resolution), keyed by repo root + query. Every poll
+// cycle fires several of these concurrently — often for the same repo from
+// multiple subscribers — and each one costs a wave of git subprocesses. The
+// in-flight promise is cached, so concurrent callers share one wave; the TTL
+// is shorter than the poll interval, so consecutive cycles still see fresh
+// data. Mutating actions invalidate the repo's entries immediately.
+const READ_CACHE_TTL_MS = 2500;
+const readCache = new Map();
+
+function cachedRead(root, name, fn) {
+  const key = `${root}\u0000${name}`;
+  const hit = readCache.get(key);
+  if (hit && Date.now() - hit.at < READ_CACHE_TTL_MS) return hit.promise;
+  const promise = fn();
+  // A failed read must not be served for the rest of the TTL.
+  promise.catch(() => readCache.delete(key));
+  setRepoCache(readCache, key, { at: Date.now(), promise });
+  return promise;
+}
+
+function invalidateReads(root) {
+  if (!root) return;
+  const prefix = `${root}\u0000`;
+  for (const key of readCache.keys()) {
+    if (key.startsWith(prefix)) readCache.delete(key);
+  }
+}
+
 async function defaultBaseRef(root, remote = 'origin') {
   if (!remote) return null;
   const head = await tryRun(root, ['symbolic-ref', '--quiet', `refs/remotes/${remote}/HEAD`]);
@@ -258,11 +287,13 @@ function storedBase(root, branch) {
 // at creation), verified to still exist, else the repo's default branch. Diffs
 // and Review scopes compare against this so a branch cut from `develop` is not
 // measured against main (which would surface unrelated changes).
-async function effectiveBaseRef(root) {
-  const branch = await tryRun(root, ['symbolic-ref', '--short', 'HEAD']);
-  const stored = branch ? await storedBase(root, branch) : null;
-  if (stored && (await tryRun(root, ['rev-parse', '--verify', '--quiet', stored]))) return stored;
-  return resolveBaseRef(root);
+function effectiveBaseRef(root) {
+  return cachedRead(root, 'baseRef', async () => {
+    const branch = await tryRun(root, ['symbolic-ref', '--short', 'HEAD']);
+    const stored = branch ? await storedBase(root, branch) : null;
+    if (stored && (await tryRun(root, ['rev-parse', '--verify', '--quiet', stored]))) return stored;
+    return resolveBaseRef(root);
+  });
 }
 
 async function rememberBase(root, branch, base) {
@@ -277,6 +308,10 @@ async function rememberBase(root, branch, base) {
 async function environment(dir) {
   const root = await repoRootOf(dir);
   if (!root) return { isRepo: false };
+  return cachedRead(root, 'environment', () => environmentOf(root));
+}
+
+async function environmentOf(root) {
   const [statusOut, head, dirs, remotes] = await Promise.all([
     // -uno: only the `# branch.*` headers matter here, so skip the untracked
     // scan and keep the output small on repos with large ignored-adjacent trees.
@@ -345,6 +380,10 @@ async function environment(dir) {
 async function branches(dir) {
   const root = await repoRootOf(dir);
   if (!root) return { current: null, detached: true, local: [], remote: [] };
+  return cachedRead(root, 'branches', () => branchesOf(root));
+}
+
+async function branchesOf(root) {
   const current = await tryRun(root, ['rev-parse', '--abbrev-ref', 'HEAD']);
   const sep = '\u0001';
   const localOut = await tryRun(root, [
@@ -389,8 +428,10 @@ async function branches(dir) {
 async function worktrees(dir) {
   const root = await repoRootOf(dir);
   if (!root) return [];
-  const out = await tryRun(root, ['worktree', 'list', '--porcelain']);
-  return parseWorktrees(out, root);
+  return cachedRead(root, 'worktrees', async () => {
+    const out = await tryRun(root, ['worktree', 'list', '--porcelain']);
+    return parseWorktrees(out, root);
+  });
 }
 
 // Untracked-file content cache keyed by repo root, reused across the 6s poll so
@@ -401,8 +442,14 @@ const untrackedScanCache = new Map();
 
 // Scan untracked (but not ignored) files once, returning a line-addition count,
 // binary flag, and size+mtime signature per file. Per-file results are memoized
-// by signature so file contents are not re-read when nothing changed.
-async function scanUntracked(root) {
+// by signature so file contents are not re-read when nothing changed. The whole
+// scan is also TTL-cached so the several diff queries of one poll cycle share a
+// single ls-files + stat pass.
+function scanUntracked(root) {
+  return cachedRead(root, 'untracked', () => scanUntrackedOf(root));
+}
+
+async function scanUntrackedOf(root) {
   const listing = await tryRun(root, ['ls-files', '--others', '--exclude-standard']);
   const names = String(listing || '')
     .split('\n')
@@ -414,19 +461,24 @@ async function scanUntracked(root) {
 
   const scanOne = async (rel) => {
     let entry = { path: rel, additions: 0, binary: false, sig: null };
-    let fh;
+    const full = path.join(root, rel);
     try {
-      const full = path.join(root, rel);
-      // Open once and both stat and read through the same descriptor so the size
-      // check and the read observe the same file, closing the check-then-use race
-      // where the file could change between a separate stat() and readFile().
-      fh = await fsp.open(full, 'r');
-      const stat = await fh.stat();
-      const sig = `${stat.size}:${stat.mtimeMs}`;
+      // Stat first: on the steady-state poll almost every file is unchanged, so
+      // a cache hit costs one stat instead of an open/fstat/close round-trip.
+      const probe = await fsp.stat(full);
       const cached = prior.get(rel);
-      if (cached && cached.sig === sig) {
-        entry = { path: rel, additions: cached.additions, binary: cached.binary, sig };
-      } else {
+      if (cached && cached.sig === `${probe.size}:${probe.mtimeMs}`) {
+        return { path: rel, additions: cached.additions, binary: cached.binary, sig: cached.sig };
+      }
+      // Changed or new: open once and both stat and read through the same
+      // descriptor so the size check and the read observe the same file,
+      // closing the check-then-use race where the file could change between
+      // the probe stat() above and readFile().
+      let fh;
+      try {
+        fh = await fsp.open(full, 'r');
+        const stat = await fh.stat();
+        const sig = `${stat.size}:${stat.mtimeMs}`;
         let additions = 0;
         let binary = false;
         if (stat.isFile() && stat.size <= UNTRACKED_BYTE_CAP) {
@@ -441,11 +493,11 @@ async function scanUntracked(root) {
           binary = true;
         }
         entry = { path: rel, additions, binary, sig };
+      } finally {
+        await fh?.close();
       }
     } catch {
       // ignore unreadable entries
-    } finally {
-      await fh?.close();
     }
     return entry;
   };
@@ -489,6 +541,10 @@ async function diffStat(dir, options = {}) {
     : 'worktree';
   const root = await repoRootOf(dir);
   if (!root) return { mode, base: null, additions: 0, deletions: 0, files: 0 };
+  return cachedRead(root, `diffStat:${mode}`, () => diffStatOf(root, mode));
+}
+
+async function diffStatOf(root, mode) {
   const defaultRef = await effectiveBaseRef(root);
   let base = null;
   if (defaultRef) base = await tryRun(root, ['merge-base', defaultRef, 'HEAD']);
@@ -549,6 +605,14 @@ function validBranchName(name) {
     .every((seg) => seg.length > 0 && !seg.startsWith('.') && !seg.endsWith('.lock'));
 }
 
+// Mutating actions return a freshly computed environment so the caller's UI
+// updates without waiting for the next poll; drop the repo's cached reads
+// first so this (and every concurrent poll) recomputes.
+function freshEnvironment(root) {
+  invalidateReads(root);
+  return environment(root);
+}
+
 // True only when `ref` resolves to a real commit object. Guards against passing
 // an unborn branch name (valid as a symbolic ref but not yet an object) or any
 // other unresolvable ref to git as a fork base.
@@ -572,7 +636,7 @@ async function createBranch(dir, { name, base, checkout = true } = {}) {
     if (checkout) await run(root, ['switch', '-c', name, ...(baseRef ? ['--', baseRef] : [])]);
     else await run(root, ['branch', '--', name, ...(baseRef ? [baseRef] : [])]);
     await rememberBase(root, name, baseRef);
-    return { ok: true, environment: await environment(root) };
+    return { ok: true, environment: await freshEnvironment(root) };
   } catch (err) {
     return { ok: false, reason: 'git_error', message: err.message };
   }
@@ -596,7 +660,7 @@ async function checkout(dir, { ref, allowDirty = false } = {}) {
   if (exactLocal) {
     try {
       await run(root, ['switch', '--', ref]);
-      return { ok: true, environment: await environment(root) };
+      return { ok: true, environment: await freshEnvironment(root) };
     } catch (err) {
       return { ok: false, reason: 'git_error', message: err.message };
     }
@@ -639,7 +703,7 @@ async function checkout(dir, { ref, allowDirty = false } = {}) {
           // the first path component, which is wrong for slash-named remotes.
           await run(root, ['switch', '-c', local, '--track', '--', ref]);
         }
-        return { ok: true, environment: await environment(root) };
+        return { ok: true, environment: await freshEnvironment(root) };
       } catch (err) {
         return { ok: false, reason: 'git_error', message: err.message };
       }
@@ -648,7 +712,7 @@ async function checkout(dir, { ref, allowDirty = false } = {}) {
 
   try {
     await run(root, ['switch', '--', ref]);
-    return { ok: true, environment: await environment(root) };
+    return { ok: true, environment: await freshEnvironment(root) };
   } catch (err) {
     // `switch` refuses non-branch refs, so detach for tags/sha. `--detach`
     // avoids `checkout`'s pathspec mode (`git checkout -- x` restores a file
@@ -657,7 +721,7 @@ async function checkout(dir, { ref, allowDirty = false } = {}) {
     // working-tree changes.
     try {
       await run(root, ['switch', '--detach', '--', ref]);
-      return { ok: true, environment: await environment(root) };
+      return { ok: true, environment: await freshEnvironment(root) };
     } catch {
       return { ok: false, reason: 'git_error', message: err.message };
     }
@@ -776,6 +840,7 @@ async function createWorktree(dir, { branch, base, newBranch = false, location }
         // upstream config failed; worktree is usable without it
       }
     }
+    invalidateReads(root);
     return { ok: true, path: target, branch };
   } catch (err) {
     return { ok: false, reason: 'git_error', message: err.message };
@@ -793,6 +858,7 @@ async function removeWorktree(dir, { path: target, force = false } = {}) {
       '--',
       expandHome(target),
     ]);
+    invalidateReads(root);
     return { ok: true };
   } catch (err) {
     return { ok: false, reason: 'git_error', message: err.message };
@@ -814,6 +880,7 @@ async function commit(dir, { message, all = true } = {}) {
     }
     if (!staged) return { ok: false, reason: 'nothing_to_commit' };
     await run(root, ['commit', '-m', message], { timeout: COMMIT_TIMEOUT });
+    invalidateReads(root);
     const head = await tryRun(root, ['rev-parse', '--short', 'HEAD']);
     return { ok: true, head };
   } catch (err) {
@@ -862,7 +929,7 @@ async function push(dir, { remote, branch, setUpstream = false, force = false } 
   args.push('--', pushRemote, `refs/heads/${target}:refs/heads/${target}`);
   try {
     const output = await run(root, args, { timeout: PUSH_TIMEOUT });
-    return { ok: true, output, environment: await environment(root) };
+    return { ok: true, output, environment: await freshEnvironment(root) };
   } catch (err) {
     return { ok: false, reason: 'git_error', message: err.message };
   }
@@ -878,6 +945,7 @@ async function fetchRemotes(dir) {
   if (!remotes.length) return { ok: true };
   try {
     await run(root, ['fetch', '--all', '--prune'], { timeout: FETCH_TIMEOUT });
+    invalidateReads(root);
     return { ok: true };
   } catch (err) {
     return { ok: false, reason: 'git_error', message: err.message };

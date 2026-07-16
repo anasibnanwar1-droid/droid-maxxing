@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { detectPullRequest, getPrChecks, getPrComments } from '../lib/github';
+import { stable } from '../lib/stable';
 import type { PrCheck, PrComment, PullRequest } from '../types/vcs';
 
 export interface PullRequestState {
@@ -16,12 +17,6 @@ export interface PullRequestState {
 const DETECT_MS = 20000;
 const DETAIL_MS = 12000;
 
-// Poll results are freshly deserialized every cycle; keep the previous array
-// when the payload is unchanged so consumers don't re-render every poll tick.
-function stable<T>(prev: T, next: T): T {
-  return JSON.stringify(prev) === JSON.stringify(next) ? prev : next;
-}
-
 // Detects the PR for the session's branch and, while the PR detail view is
 // open, polls its checks and comments.
 export function usePullRequest(
@@ -35,6 +30,9 @@ export function usePullRequest(
   const [comments, setComments] = useState<PrComment[]>([]);
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [detailLoaded, setDetailLoaded] = useState(false);
+  // Mirrors detailLoaded so refreshDetail can read it without taking it as a
+  // dependency (which would restart the polling interval on the first load).
+  const detailLoadedRef = useRef(false);
   const detectReq = useRef(0);
   const detailReq = useRef(0);
   // Which cwd the current `pr` was detected for. On a cwd switch the clear
@@ -75,6 +73,7 @@ export function usePullRequest(
     setComments([]);
     setLoadingDetail(false);
     setDetailLoaded(false);
+    detailLoadedRef.current = false;
   }, [cwd, branch]);
 
   // Each detection spawns a `gh` child process, so poll only while the window
@@ -93,22 +92,34 @@ export function usePullRequest(
     };
   }, [detect, enabled]);
 
-  const refreshDetail = useCallback(() => {
-    if (!cwd || !pr || prCwd.current !== cwd) return;
-    const id = ++detailReq.current;
-    setLoadingDetail(true);
-    Promise.all([getPrChecks(cwd, pr.number), getPrComments(cwd, pr.number)])
-      .then(([checkRes, commentRes]) => {
-        if (id !== detailReq.current) return;
-        setChecks((prev) => stable(prev, checkRes.checks));
-        setComments((prev) => stable(prev, commentRes.comments));
-        setLoadingDetail(false);
-        setDetailLoaded(true);
-      })
-      .catch(() => {
-        if (id === detailReq.current) setLoadingDetail(false);
-      });
-  }, [cwd, pr]);
+  const refreshDetail = useCallback(
+    (userInitiated = false) => {
+      if (!cwd || !pr || prCwd.current !== cwd) return;
+      const id = ++detailReq.current;
+      // Background poll ticks refresh silently; the spinner only shows for the
+      // initial load and explicit user refreshes, so the panel doesn't flash
+      // its loading state every poll interval.
+      if (userInitiated || !detailLoadedRef.current) setLoadingDetail(true);
+      Promise.all([getPrChecks(cwd, pr.number), getPrComments(cwd, pr.number)])
+        .then(([checkRes, commentRes]) => {
+          if (id !== detailReq.current) return;
+          // The fetchers resolve ok:false with empty arrays on gh/IPC hiccups;
+          // keep the last-known data instead of blanking rows until the next
+          // successful poll.
+          if (checkRes.ok) setChecks((prev) => stable(prev, checkRes.checks));
+          if (commentRes.ok) setComments((prev) => stable(prev, commentRes.comments));
+          setLoadingDetail(false);
+          if (checkRes.ok && commentRes.ok) {
+            setDetailLoaded(true);
+            detailLoadedRef.current = true;
+          }
+        })
+        .catch(() => {
+          if (id === detailReq.current) setLoadingDetail(false);
+        });
+    },
+    [cwd, pr],
+  );
 
   useEffect(() => {
     if (!active || !pr) return;
@@ -126,7 +137,7 @@ export function usePullRequest(
 
   const refresh = useCallback(() => {
     detect();
-    refreshDetail();
+    refreshDetail(true);
   }, [detect, refreshDetail]);
 
   return { pr, checks, comments, loadingDetail, detailLoaded, refresh };

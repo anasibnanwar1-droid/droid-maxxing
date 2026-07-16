@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useReducer } from 'react';
 import { getGitBranches, getGitDiffStat, getGitEnvironment, getGitWorktrees } from '../lib/git';
+import { stable } from '../lib/stable';
 import type {
   DiffStatMode,
   GitBranchList,
@@ -19,12 +20,11 @@ export interface GitEnvironmentState {
 
 const POLL_MS = 6000;
 
-// Poll results are freshly deserialized every cycle; keep the previous object
-// when the payload is unchanged so consumers' memo/effect deps stay stable and
-// an idle repo doesn't cascade re-renders every 6 seconds.
-function stable<T>(prev: T, next: T): T {
-  return JSON.stringify(prev) === JSON.stringify(next) ? prev : next;
-}
+// How long a poller with no subscribers survives before teardown. Covers a
+// single subscriber remounting (panel switch, StrictMode double-invoke), which
+// would otherwise destroy and recreate the poller, losing the cached snapshot
+// and flashing a loading state.
+const TEARDOWN_GRACE_MS = 1000;
 
 // Every poll tick spawns a dozen git subprocesses, so hook instances watching
 // the same repo (e.g. the Context panel and the Review pane) must share one
@@ -46,6 +46,7 @@ interface StoreEntry {
   req: number;
   interval: number;
   onVisible: () => void;
+  teardownTimer: number | null;
 }
 
 const store = new Map<string, StoreEntry>();
@@ -109,6 +110,7 @@ function acquire(cwd: string, mode: DiffStatMode, listener: () => void): StoreEn
       req: 0,
       interval: 0,
       onVisible: () => {},
+      teardownTimer: null,
     };
     created.onVisible = () => {
       if (!document.hidden) refreshEntry(created);
@@ -117,6 +119,10 @@ function acquire(cwd: string, mode: DiffStatMode, listener: () => void): StoreEn
     document.addEventListener('visibilitychange', created.onVisible);
     store.set(cwd, created);
     entry = created;
+  }
+  if (entry.teardownTimer !== null) {
+    window.clearTimeout(entry.teardownTimer);
+    entry.teardownTimer = null;
   }
   entry.listeners.add(listener);
   const hadMode = entry.modeCounts.has(mode);
@@ -139,11 +145,15 @@ function release(cwd: string, mode: DiffStatMode, listener: () => void) {
   } else {
     entry.modeCounts.set(mode, count - 1);
   }
-  if (entry.listeners.size === 0) {
-    entry.req++;
-    window.clearInterval(entry.interval);
-    document.removeEventListener('visibilitychange', entry.onVisible);
-    store.delete(cwd);
+  if (entry.listeners.size === 0 && entry.teardownTimer === null) {
+    entry.teardownTimer = window.setTimeout(() => {
+      entry.teardownTimer = null;
+      if (entry.listeners.size > 0) return;
+      entry.req++;
+      window.clearInterval(entry.interval);
+      document.removeEventListener('visibilitychange', entry.onVisible);
+      store.delete(cwd);
+    }, TEARDOWN_GRACE_MS);
   }
 }
 

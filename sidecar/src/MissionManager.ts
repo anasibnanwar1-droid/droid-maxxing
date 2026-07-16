@@ -98,6 +98,10 @@ interface LiveAgent {
   missionId: string;
   role: AgentRole;
   streaming: boolean;
+  // Set by a manual worker compaction path, should one be added; the
+  // notification subscription skips compaction events while it is set so
+  // they are not processed twice (see subscribeOrchestratorCompaction).
+  compacting?: boolean;
   autoCompacting: boolean;
   pendingSends: string[];
   interruptingForSteer?: boolean;
@@ -1881,9 +1885,12 @@ export class MissionManager {
   ): boolean {
     const compaction = extractCompactionNotification(note);
     if (!compaction) {
+      // Safety net for a session_compacted that never arrives: only a report
+      // of the daemon going idle settles the flag. Intermediate states such as
+      // generating/thinking can surface mid-compaction, and settling on those
+      // would drain a queued send into a session still being compacted.
       const state = extractDroidWorkingState(note);
-      if (state && state !== 'compacting_conversation')
-        this.setAutoCompacting(missionId, agentSessionId, role, false);
+      if (state === 'idle') this.setAutoCompacting(missionId, agentSessionId, role, false);
       return false;
     }
     if (compaction.kind === 'started') {
@@ -2433,6 +2440,10 @@ export class MissionManager {
         lastUsedAt: Date.now(),
       };
       agent.unsubscribe = session.onNotification((note: Record<string, unknown>) => {
+        // Mirror the orchestrator subscription: a manual compaction RPC emits
+        // the same compacting/compacted notifications, and its own path owns
+        // the statuses and refresh, so reacting here too would duplicate them.
+        if (agent.compacting) return;
         if (this.handleCompactionNotification(appSessionId, agentSessionId, role, session, note))
           return;
         for (const n of normalizeNotification(appSessionId, agentSessionId, role, note))

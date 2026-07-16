@@ -30,12 +30,13 @@ function parseSignature(signature: string): Map<string, string> {
 }
 
 // Lazily loads and caches the diff for each expanded file section in the Review
-// tab. A hard context change (cwd/scope/whitespace) clears the cache; a soft
+// tab. A cwd change clears the cache outright; a scope/whitespace change
+// invalidates every file but keeps the last diffs on screen while ensure()
+// refetches, so toggling scope doesn't blank the expanded sections; a soft
 // change (the file-list signature after an edit) invalidates only the files
-// whose own signature line changed, keeping their last diff on screen, so one
-// edited file does not refetch every expanded section. Stale in-flight
-// responses are dropped by comparing generations (global for hard resets,
-// per-file for soft ones).
+// whose own signature line changed, so one edited file does not refetch every
+// expanded section. Stale in-flight responses are dropped by comparing
+// generations (global for resets, per-file for soft ones).
 export function useReviewFileDiffs(
   cwd: string,
   scope: DiffScope,
@@ -54,18 +55,24 @@ export function useReviewFileDiffs(
 
   const hardKey = `${cwd}\u0000${scope}\u0000${ignoreWhitespace}`;
   const hardRef = useRef(hardKey);
+  const cwdRef = useRef(cwd);
   const sigRef = useRef(signature);
 
   // Adjust cache state during render (the supported React pattern for resetting
   // when inputs change) so a fresh generation is in effect before any effect
   // calls ensure() this commit.
   if (hardRef.current !== hardKey) {
+    const cwdChanged = cwdRef.current !== cwd;
     hardRef.current = hardKey;
+    cwdRef.current = cwd;
     sigRef.current = signature;
     status.current.clear();
     fileGen.current.clear();
     gen.current += 1;
-    setEntries({});
+    // Another repo's diffs must never linger; within the same repo, keep the
+    // stale diffs visible while ensure() refetches under the new scope or
+    // whitespace setting.
+    if (cwdChanged) setEntries({});
   } else if (sigRef.current !== signature) {
     const prev = parseSignature(sigRef.current);
     const next = parseSignature(signature);

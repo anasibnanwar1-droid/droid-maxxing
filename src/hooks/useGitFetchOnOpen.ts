@@ -1,11 +1,18 @@
 import { useEffect, useRef, useState } from 'react';
 import { gitFetch } from '../lib/git';
 
+// A fetch hits the network, so rapid open/close/reopen of a picker must not
+// hammer the remote; one fetch per repo per interval is plenty for "branches
+// pushed from elsewhere" freshness. Module-level so all pickers share it.
+const MIN_FETCH_INTERVAL_MS = 30_000;
+const lastFetchAt = new Map<string, number>();
+
 // Best-effort `git fetch` when a branch picker opens so branches pushed from
 // elsewhere appear without leaving the app. Fires once per open (not on every
-// render or poll), ignores offline/auth failures, and reports in-flight state
-// so the caller can show a spinner. The callback is read through a ref so an
-// unstable `onFetched` identity never re-triggers the fetch.
+// render or poll) and at most once per MIN_FETCH_INTERVAL_MS per repo, ignores
+// offline/auth failures, and reports in-flight state so the caller can show a
+// spinner. The callback is read through a ref so an unstable `onFetched`
+// identity never re-triggers the fetch.
 export function useGitFetchOnOpen(open: boolean, cwd: string, onFetched: () => void): boolean {
   const [fetching, setFetching] = useState(false);
   const cbRef = useRef(onFetched);
@@ -18,6 +25,10 @@ export function useGitFetchOnOpen(open: boolean, cwd: string, onFetched: () => v
       setFetching(false);
       return;
     }
+    if (Date.now() - (lastFetchAt.get(cwd) ?? 0) < MIN_FETCH_INTERVAL_MS) return;
+    // Recorded at start (not completion) so a concurrent second picker, or a
+    // failing remote, can't stack parallel fetches.
+    lastFetchAt.set(cwd, Date.now());
     let cancelled = false;
     setFetching(true);
     void gitFetch(cwd).then((res) => {

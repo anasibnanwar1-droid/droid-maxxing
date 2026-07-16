@@ -185,7 +185,14 @@ export function StartBranchMenu({
   };
 
   return (
-    <Popover open={open} onClose={close} anchorRef={anchorRef} align="left" width={320}>
+    <Popover
+      open={open}
+      onClose={close}
+      anchorRef={anchorRef}
+      label="Choose starting branch"
+      align="left"
+      width={320}
+    >
       {pending ? (
         <div className="p-2.5">
           <button

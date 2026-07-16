@@ -73,6 +73,10 @@ export function BranchMenu({
     }
     busyRef.current = true;
     setBusy(true);
+    // Clear the previous dirty prompt now: if this attempt fails with a
+    // non-dirty error, a stale banner would otherwise offer "Switch anyway"
+    // for the earlier branch, force-checking-out the wrong ref.
+    setDirtyRef(null);
     try {
       const res = await checkoutGitBranch(cwd, { ref: refName, allowDirty });
       finish(res, refName);
@@ -133,7 +137,14 @@ export function BranchMenu({
         />
       </button>
 
-      <Popover open={open} onClose={close} anchorRef={anchorRef} align="right" width={288}>
+      <Popover
+        open={open}
+        onClose={close}
+        anchorRef={anchorRef}
+        label="Switch branch"
+        align="right"
+        width={288}
+      >
         <div className="flex shrink-0 items-center gap-2 border-b border-droid-border/70 px-2.5 py-2">
           <Search className="h-3.5 w-3.5 shrink-0 text-droid-text-muted" />
           <input

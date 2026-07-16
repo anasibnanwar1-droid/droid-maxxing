@@ -1124,6 +1124,9 @@ function WorktreesSection() {
   const [removing, setRemoving] = useState<string | null>(null);
   const [confirming, setConfirming] = useState<string | null>(null);
   const loadReq = useRef(0);
+  // Synchronous re-entry guard: `removing` state only updates on the next
+  // render, so a rapid double-click would launch two removals.
+  const removingRef = useRef(false);
 
   const load = useCallback(async () => {
     const id = ++loadReq.current;
@@ -1149,6 +1152,8 @@ function WorktreesSection() {
   }, [load]);
 
   const remove = async (root: string, path: string) => {
+    if (removingRef.current) return;
+    removingRef.current = true;
     setRemoving(path);
     try {
       const res = await removeGitWorktree(root, { path });
@@ -1164,6 +1169,7 @@ function WorktreesSection() {
         toast.error(res.message || 'Could not remove worktree');
       }
     } finally {
+      removingRef.current = false;
       setRemoving(null);
     }
   };
