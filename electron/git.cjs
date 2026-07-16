@@ -325,11 +325,10 @@ async function environmentOf(root) {
   const status = parseStatusBranch(statusOut);
   const detached = !status.head || status.head === '(detached)';
   const branchName = detached ? null : status.head;
-  const upstream = status.upstream;
   const { ahead, behind } = status;
   const [commonDir, gitDir] = String(dirs || '').split('\n');
   const primaryRemote = pickPrimaryRemote(remotes);
-  const [remoteUrl, defaultRef, storedBaseState] = await Promise.all([
+  const [remoteUrl, defaultRef, storedBaseState, upstreamResolved] = await Promise.all([
     primaryRemote ? tryRun(root, ['remote', 'get-url', primaryRemote]) : null,
     defaultBaseRef(root, primaryRemote),
     // The stored base and its verification are inherently sequential (verify
@@ -340,9 +339,17 @@ async function environmentOf(root) {
           ref,
           verified: ref ? await tryRun(root, ['rev-parse', '--verify', '--quiet', ref]) : null,
         })),
+    // A configured upstream whose remote-tracking ref was deleted (e.g. the
+    // branch was removed on the remote but the local config remains) still
+    // appears in porcelain v2's `# branch.upstream`. Verify it resolves so the
+    // UI stops reporting tracking, letting the next Push repair it.
+    status.upstream ? tryRun(root, ['rev-parse', '--verify', '--quiet', status.upstream]) : null,
   ]);
   const storedBaseRef = storedBaseState?.ref ?? null;
   const storedBaseVerified = storedBaseState?.verified ?? null;
+  // Only report an upstream when its remote-tracking ref still resolves: porcelain
+  // v2 emits `# branch.upstream` from config even after the ref is deleted.
+  const upstream = upstreamResolved ? status.upstream : null;
   // The ref this branch forks from and is diffed against (mirrors
   // effectiveBaseRef): its verified stored base, otherwise the default branch
   // ref. Upstream is the push target (often the branch's own remote ref), not a
@@ -368,8 +375,10 @@ async function environmentOf(root) {
     remotes,
     // http(s) remote URLs may embed credentials (https://user:token@host/...);
     // strip the userinfo before handing the URL to the renderer. scp-style ssh
-    // remotes (git@host:path) are left alone since "git" is not a secret.
-    remoteUrl: remoteUrl ? remoteUrl.replace(/^(\w+:\/\/)[^@/]+@/, '$1') : null,
+    // remotes (git@host:path) are left alone since "git" is not a secret. The
+    // userinfo class is greedy up to the LAST '@' before the host so passwords
+    // that themselves contain '@' (e.g. https://u:p@ss@host/x) are fully stripped.
+    remoteUrl: remoteUrl ? remoteUrl.replace(/^(\w+:\/\/)[^/]+@/, '$1') : null,
     // Anchor to the URL's host boundary so `github.com` only matches as the real
     // host (`https://github.com/…`, `git@github.com:…`), never embedded in an
     // arbitrary host such as `github.com.evil.com` or `evil.com/github.com`.
@@ -763,7 +772,12 @@ async function ensureDefaultWorktreeIgnored(root) {
 }
 
 function isWithin(base, target) {
-  return target === base || target.startsWith(base + path.sep);
+  if (target === base) return true;
+  // Avoid doubling the separator when `base` is a filesystem root (e.g. '/'):
+  // base + path.sep would produce '//' and reject every sibling. A root already
+  // ends with the separator, so reuse it as the prefix.
+  const prefix = base.endsWith(path.sep) ? base : base + path.sep;
+  return target.startsWith(prefix);
 }
 
 // A custom worktree location is user-typed, so keep it inside places a checkout
@@ -1134,6 +1148,7 @@ async function scopeRange(root, scope, sessionId) {
       base: baseline,
       includeUntracked: true,
       priorUntracked: entry?.priorUntracked ?? null,
+      priorUntrackedTruncated: !!entry?.untrackedTruncated,
     };
   }
   // unstaged (working tree vs index)
@@ -1144,11 +1159,8 @@ async function diffFiles(dir, options = {}) {
   const scope = normalizeScope(options.mode);
   const root = await repoRootOf(dir);
   if (!root) return { mode: scope, base: null, files: [] };
-  const { args, base, includeUntracked, priorUntracked } = await scopeRange(
-    root,
-    scope,
-    options.sessionId,
-  );
+  const { args, base, includeUntracked, priorUntracked, priorUntrackedTruncated } =
+    await scopeRange(root, scope, options.sessionId);
   if (!args) return { mode: scope, base: null, files: [] };
   const [numstat, nameStatus] = await Promise.all([
     runSoft(root, ['diff', ...args, '--numstat', '-z']).catch(() => ''),
@@ -1162,6 +1174,11 @@ async function diffFiles(dir, options = {}) {
         // Hide files that predate the turn only when byte-for-byte unchanged;
         // surface preexisting untracked files the agent edited this turn.
         if (priorSig !== undefined && priorSig === u.sig) continue;
+        // When the turn-start untracked listing was truncated past the cap, a
+        // file absent from the baseline may simply have been beyond the cap
+        // rather than newly created this turn. Skip it so a shifting capped
+        // window doesn't surface unchanged preexisting files as turn changes.
+        if (priorUntrackedTruncated && priorSig === undefined) continue;
       }
       if (!files.some((f) => f.path === u.path)) {
         files.push({
@@ -1249,12 +1266,16 @@ async function markTurnStart(dir, sessionId) {
   // Cap like scanUntracked does: past the cap the turn diff won't surface the
   // files anyway, and stat-ing an unbounded listing (node_modules and the like)
   // would stall the turn-start hook.
-  const priorNames = String(
+  const priorListing = String(
     (await tryRun(root, ['ls-files', '--others', '--exclude-standard'])) || '',
   )
     .split('\n')
-    .filter(Boolean)
-    .slice(0, UNTRACKED_FILE_CAP);
+    .filter(Boolean);
+  const priorNames = priorListing.slice(0, UNTRACKED_FILE_CAP);
+  // When the untracked listing exceeded the cap, the baseline map can't answer
+  // "did this path predate the turn?" for entries beyond it. Recorded so the
+  // last-turn diff treats those absences as ambiguous rather than as new files.
+  const untrackedTruncated = priorListing.length > UNTRACKED_FILE_CAP;
   // Same bounded worker pool as scanUntracked: this runs on the prompt-send
   // path, where stat-ing up to the cap sequentially would stall the turn start,
   // while unbounded Promise.all could exhaust file descriptors on huge repos.
@@ -1270,7 +1291,11 @@ async function markTurnStart(dir, sessionId) {
   );
   const priorUntracked = new Map(priorNames.map((rel, i) => [rel, sigs[i]]));
   if (baseline)
-    setRepoCache(turnBaselines, turnBaselineKey(root, sessionId), { baseline, priorUntracked });
+    setRepoCache(turnBaselines, turnBaselineKey(root, sessionId), {
+      baseline,
+      priorUntracked,
+      untrackedTruncated,
+    });
   return { ok: !!baseline, baseline: baseline || null };
 }
 

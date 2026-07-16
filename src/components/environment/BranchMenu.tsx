@@ -34,14 +34,19 @@ export function BranchMenu({
 
   const current = env?.branch ?? null;
 
-  const { local, remote, remoteOverflow } = useMemo(() => {
+  const { local, localOverflow, remote, remoteOverflow } = useMemo(() => {
     const q = query.trim().toLowerCase();
     const match = (name: string) => !q || name.toLowerCase().includes(q);
+    const localAll = (branches?.local ?? []).filter((b) => match(b.name));
     const remoteAll = (branches?.remote ?? []).filter((b) => match(b.name));
+    // Cap both lists the same way so a repo with hundreds of branches doesn't
+    // mount hundreds of rows; a "more" hint surfaces the rest like the remote list.
+    const MAX = 30;
     return {
-      local: (branches?.local ?? []).filter((b) => match(b.name)),
-      remote: remoteAll.slice(0, 30),
-      remoteOverflow: Math.max(0, remoteAll.length - 30),
+      local: localAll.slice(0, MAX),
+      localOverflow: Math.max(0, localAll.length - MAX),
+      remote: remoteAll.slice(0, MAX),
+      remoteOverflow: Math.max(0, remoteAll.length - MAX),
     };
   }, [branches, query]);
 
@@ -173,7 +178,7 @@ export function BranchMenu({
           </div>
         )}
 
-        <div role="listbox" aria-label="Branches" className="min-h-0 flex-1 overflow-y-auto py-1">
+        <div className="min-h-0 flex-1 overflow-y-auto py-1">
           <div className="px-2.5 pb-1 pt-1 text-[10px] font-medium uppercase tracking-wider text-droid-text-muted">
             Branches
           </div>
@@ -182,11 +187,12 @@ export function BranchMenu({
             return (
               <button
                 key={b.name}
-                onClick={() => !b.current && doCheckout(b.name)}
-                disabled={busy || fetching}
-                role="option"
-                aria-selected={b.current}
-                className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left transition-colors hover:bg-droid-elevated/60 disabled:cursor-default"
+                onClick={() => {
+                  if (busy || fetching || b.current) return;
+                  doCheckout(b.name);
+                }}
+                aria-disabled={busy || fetching}
+                className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left transition-colors hover:bg-droid-elevated/60"
               >
                 <GitBranch className="h-3.5 w-3.5 shrink-0 text-droid-text-muted" />
                 <span className="min-w-0 flex-1 truncate text-[12.5px] text-droid-text">
@@ -205,6 +211,11 @@ export function BranchMenu({
               </button>
             );
           })}
+          {localOverflow > 0 && (
+            <div className="px-2.5 py-1.5 text-[11px] text-droid-text-muted">
+              + {localOverflow} more, refine the search to see them
+            </div>
+          )}
 
           {remote.length > 0 && (
             <div className="px-2.5 pb-1 pt-2 text-[10px] font-medium uppercase tracking-wider text-droid-text-muted">
@@ -215,11 +226,12 @@ export function BranchMenu({
             return (
               <button
                 key={b.name}
-                onClick={() => doCheckout(b.name)}
-                disabled={busy || fetching}
-                role="option"
-                aria-selected={false}
-                className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left transition-colors hover:bg-droid-elevated/60 disabled:cursor-default"
+                onClick={() => {
+                  if (busy || fetching) return;
+                  doCheckout(b.name);
+                }}
+                aria-disabled={busy || fetching}
+                className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left transition-colors hover:bg-droid-elevated/60"
               >
                 <GitBranch className="h-3.5 w-3.5 shrink-0 text-droid-text-muted/70" />
                 <span className="min-w-0 flex-1 truncate text-[12.5px] text-droid-text-secondary">

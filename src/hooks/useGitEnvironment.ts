@@ -39,10 +39,19 @@ interface StoreEntry {
   worktrees: GitWorktree[];
   diffStats: Partial<Record<DiffStatMode, GitDiffStat | null>>;
   loading: boolean;
+  // True until the FIRST refresh for this entry resolves (success or failure);
+  // background poll ticks must not toggle `loading`, only the initial load does,
+  // so subscribers don't flash a spinner on every POLL_MS cycle.
+  hasLoaded: boolean;
+  // In-flight guard: when a refresh is pending, skip subsequent interval ticks
+  // so a slow tick (slower than POLL_MS) can't stack parallel git subprocesses.
+  refreshing: boolean;
   listeners: Set<() => void>;
   modeCounts: Map<DiffStatMode, number>;
   // Monotonic fetch id: bumped on every refresh (and on teardown) so a slow
-  // in-flight load can never overwrite the results of a newer one.
+  // in-flight load can never overwrite the results of a newer one. Also bumped
+  // when a mode is released, so an in-flight diff-stat fetch for a just-removed
+  // mode can't resolve and overwrite data after the mode is re-acquired.
   req: number;
   interval: number;
   onVisible: () => void;
@@ -56,10 +65,21 @@ function notify(entry: StoreEntry) {
 }
 
 function refreshEntry(entry: StoreEntry) {
+  // In-flight guard: a tick that fires while the previous refresh is still
+  // pending would spawn another batch of git subprocesses whose results are
+  // dropped anyway (req mismatch). Skip instead of stacking work.
+  if (entry.refreshing) return;
+  entry.refreshing = true;
   const id = ++entry.req;
   const modes = [...entry.modeCounts.keys()];
-  entry.loading = true;
-  notify(entry);
+  const isFirstLoad = !entry.hasLoaded;
+  // Only the initial load toggles `loading`; background refreshes update the
+  // snapshot silently so subscribers don't re-render into a loading state every
+  // poll tick (which caused flicker on every POLL_MS cycle).
+  if (isFirstLoad) {
+    entry.loading = true;
+    notify(entry);
+  }
   Promise.all([
     getGitEnvironment(entry.cwd),
     getGitBranches(entry.cwd),
@@ -67,20 +87,46 @@ function refreshEntry(entry: StoreEntry) {
     Promise.all(modes.map((mode) => getGitDiffStat(entry.cwd, mode))),
   ])
     .then(([env, branches, worktrees, stats]) => {
+      // We're the single in-flight refresh (refreshEntry is single-flight via
+      // the guard above), so always release the lock — even if req was bumped
+      // out from under us by release()/teardown, no other refreshEntry could
+      // have started while we held it, so clearing is always safe.
+      entry.refreshing = false;
       if (id !== entry.req) return;
-      entry.env = stable(entry.env, env);
-      entry.branches = stable(entry.branches, branches);
-      entry.worktrees = stable(entry.worktrees, worktrees);
+      // Track whether any reference actually changed so a silent background
+      // refresh only notifies subscribers when there's new data to render.
+      const prevEnv = entry.env;
+      const prevBranches = entry.branches;
+      const prevWorktrees = entry.worktrees;
+      const prevStats = modes.map((mode) => entry.diffStats[mode] ?? null);
+      entry.env = stable(prevEnv, env);
+      entry.branches = stable(prevBranches, branches);
+      entry.worktrees = stable(prevWorktrees, worktrees);
+      let changed =
+        entry.env !== prevEnv ||
+        entry.branches !== prevBranches ||
+        entry.worktrees !== prevWorktrees;
       modes.forEach((mode, i) => {
-        entry.diffStats[mode] = stable(entry.diffStats[mode] ?? null, stats[i]);
+        const next = stable(prevStats[i], stats[i]);
+        entry.diffStats[mode] = next;
+        if (next !== prevStats[i]) changed = true;
       });
-      entry.loading = false;
-      notify(entry);
+      entry.hasLoaded = true;
+      // First load always notifies (to clear the loading spinner); background
+      // refreshes only notify when something actually changed.
+      if (isFirstLoad || changed) {
+        if (isFirstLoad) entry.loading = false;
+        notify(entry);
+      }
     })
     .catch(() => {
+      entry.refreshing = false;
       if (id !== entry.req) return;
-      entry.loading = false;
-      notify(entry);
+      entry.hasLoaded = true;
+      if (isFirstLoad) {
+        entry.loading = false;
+        notify(entry);
+      }
     });
 }
 
@@ -105,6 +151,8 @@ function acquire(cwd: string, mode: DiffStatMode, listener: () => void): StoreEn
       worktrees: [],
       diffStats: {},
       loading: true,
+      hasLoaded: false,
+      refreshing: false,
       listeners: new Set(),
       modeCounts: new Map(),
       req: 0,
@@ -113,7 +161,9 @@ function acquire(cwd: string, mode: DiffStatMode, listener: () => void): StoreEn
       teardownTimer: null,
     };
     created.onVisible = () => {
-      if (!document.hidden) refreshEntry(created);
+      // Skip ticks while a refresh is already pending so slow ticks can't
+      // stack parallel git subprocesses.
+      if (!document.hidden && !created.refreshing) refreshEntry(created);
     };
     created.interval = window.setInterval(created.onVisible, POLL_MS);
     document.addEventListener('visibilitychange', created.onVisible);
@@ -142,6 +192,12 @@ function release(cwd: string, mode: DiffStatMode, listener: () => void) {
   if (count <= 1) {
     entry.modeCounts.delete(mode);
     delete entry.diffStats[mode];
+    // Invalidate any in-flight diff-stat fetch for this mode: without a bump,
+    // a slow in-flight request could resolve AFTER the mode is re-acquired
+    // (while another subscriber keeps the entry alive) and overwrite the
+    // fresher data the re-acquire's fetch will have written. Bumping req makes
+    // the stale in-flight's id check fail so it's dropped.
+    entry.req++;
   } else {
     entry.modeCounts.set(mode, count - 1);
   }

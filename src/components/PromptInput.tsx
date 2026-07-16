@@ -829,7 +829,7 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
         )}
 
         {!activeMission && !missionPreview && cwd && (
-          <div className="relative z-0 mx-4 -mb-3 min-w-0 rounded-t-2xl border border-b-0 border-droid-border bg-droid-elevated px-3 pb-5 pt-2">
+          <div className="relative z-20 mx-4 -mb-3 min-w-0 rounded-t-2xl border border-b-0 border-droid-border bg-droid-elevated px-3 pb-5 pt-2">
             <StartInBar />
           </div>
         )}

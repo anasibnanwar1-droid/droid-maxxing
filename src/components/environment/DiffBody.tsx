@@ -210,7 +210,7 @@ export function DiffBody({
 
   const pendingRows = Math.max(0, rows.length - mounted * CHUNK_ROWS);
 
-  if (binary) {
+  if (binary || parsed.binary) {
     return <div className="p-4 text-[12.5px] text-droid-text-muted">Binary file not shown</div>;
   }
   if (parsed.hunks.length === 0) {

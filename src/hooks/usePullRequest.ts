@@ -10,7 +10,14 @@ export interface PullRequestState {
   loadingDetail: boolean;
   // False until the first checks/comments fetch for this cwd/branch resolves,
   // so empty arrays can be rendered as "loading" instead of "none exist".
+  // Also settles to true on a FAILED initial load so the panel doesn't spin
+  // forever when gh/IPC is unavailable.
   detailLoaded: boolean;
+  // Set when the most recent detail fetch failed outright (gh hiccup, not
+  // desktop, etc.) so the panel can show an error line instead of the
+  // misleading "No checks reported"/"No comments yet" empty states that are
+  // indistinguishable from a genuinely empty PR.
+  detailError: string | null;
   refresh: () => void;
 }
 
@@ -30,6 +37,7 @@ export function usePullRequest(
   const [comments, setComments] = useState<PrComment[]>([]);
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [detailLoaded, setDetailLoaded] = useState(false);
+  const [detailError, setDetailError] = useState<string | null>(null);
   // Mirrors detailLoaded so refreshDetail can read it without taking it as a
   // dependency (which would restart the polling interval on the first load).
   const detailLoadedRef = useRef(false);
@@ -73,6 +81,7 @@ export function usePullRequest(
     setComments([]);
     setLoadingDetail(false);
     setDetailLoaded(false);
+    setDetailError(null);
     detailLoadedRef.current = false;
   }, [cwd, branch]);
 
@@ -96,26 +105,47 @@ export function usePullRequest(
     (userInitiated = false) => {
       if (!cwd || !pr || prCwd.current !== cwd) return;
       const id = ++detailReq.current;
+      const isFirstLoad = !detailLoadedRef.current;
       // Background poll ticks refresh silently; the spinner only shows for the
       // initial load and explicit user refreshes, so the panel doesn't flash
       // its loading state every poll interval.
-      if (userInitiated || !detailLoadedRef.current) setLoadingDetail(true);
+      if (userInitiated || isFirstLoad) setLoadingDetail(true);
       Promise.all([getPrChecks(cwd, pr.number), getPrComments(cwd, pr.number)])
         .then(([checkRes, commentRes]) => {
           if (id !== detailReq.current) return;
+          const bothOk = checkRes.ok && commentRes.ok;
           // The fetchers resolve ok:false with empty arrays on gh/IPC hiccups;
           // keep the last-known data instead of blanking rows until the next
           // successful poll.
           if (checkRes.ok) setChecks((prev) => stable(prev, checkRes.checks));
           if (commentRes.ok) setComments((prev) => stable(prev, commentRes.comments));
           setLoadingDetail(false);
-          if (checkRes.ok && commentRes.ok) {
+          if (bothOk) {
+            setDetailError(null);
+          } else if (isFirstLoad || userInitiated) {
+            // Only surface an error when there's no prior data to fall back on
+            // (initial load) or the user explicitly asked for a refresh; a
+            // transient background-poll hiccup keeps showing the last-known
+            // rows without flickering an error banner.
+            setDetailError(checkRes.message || commentRes.message || 'Could not load PR details');
+          }
+          // Settle the initial-load flag on BOTH success and failure: without
+          // this, a failed first fetch leaves detailLoaded=false forever, so the
+          // panel's loading fallback (loadingDetail || !detailLoaded) spins
+          // indefinitely even though no request is pending.
+          if (isFirstLoad) {
             setDetailLoaded(true);
             detailLoadedRef.current = true;
           }
         })
         .catch(() => {
-          if (id === detailReq.current) setLoadingDetail(false);
+          if (id !== detailReq.current) return;
+          setLoadingDetail(false);
+          if (isFirstLoad) {
+            setDetailLoaded(true);
+            detailLoadedRef.current = true;
+            setDetailError('Could not load PR details');
+          }
         });
     },
     [cwd, pr],
@@ -140,5 +170,5 @@ export function usePullRequest(
     refreshDetail(true);
   }, [detect, refreshDetail]);
 
-  return { pr, checks, comments, loadingDetail, detailLoaded, refresh };
+  return { pr, checks, comments, loadingDetail, detailLoaded, detailError, refresh };
 }

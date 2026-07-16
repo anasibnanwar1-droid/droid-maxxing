@@ -34,7 +34,22 @@ function LoadingRow() {
   );
 }
 
-function ChecksBlock({ checks, loading }: { checks: PrCheck[]; loading: boolean }) {
+// When the detail fetch failed outright (gh/IPC unavailable), an empty list is
+// "couldn't load", not "the PR has none"; show a muted error line instead of
+// the misleading empty states that are indistinguishable from an empty PR.
+function ErrorRow({ message }: { message: string }) {
+  return <div className="px-1.5 pb-1.5 text-[12px] text-droid-text-muted">{message}</div>;
+}
+
+function ChecksBlock({
+  checks,
+  loading,
+  error,
+}: {
+  checks: PrCheck[];
+  loading: boolean;
+  error: string | null;
+}) {
   const summary = checksSummary(checks);
   return (
     <div className="px-1.5">
@@ -49,6 +64,8 @@ function ChecksBlock({ checks, loading }: { checks: PrCheck[]; loading: boolean 
       {checks.length === 0 ? (
         loading ? (
           <LoadingRow />
+        ) : error ? (
+          <ErrorRow message={error} />
         ) : (
           <div className="px-1.5 pb-1.5 text-[12px] text-droid-text-muted">No checks reported</div>
         )
@@ -77,7 +94,15 @@ function ChecksBlock({ checks, loading }: { checks: PrCheck[]; loading: boolean 
   );
 }
 
-function CommentsBlock({ comments, loading }: { comments: PrComment[]; loading: boolean }) {
+function CommentsBlock({
+  comments,
+  loading,
+  error,
+}: {
+  comments: PrComment[];
+  loading: boolean;
+  error: string | null;
+}) {
   return (
     <div className="px-1.5 pt-2">
       <div className="px-1.5 pb-1.5 text-[12px] font-medium text-droid-text-muted">
@@ -86,6 +111,8 @@ function CommentsBlock({ comments, loading }: { comments: PrComment[]; loading: 
       {comments.length === 0 ? (
         loading ? (
           <LoadingRow />
+        ) : error ? (
+          <ErrorRow message={error} />
         ) : (
           <div className="px-1.5 pb-1.5 text-[12px] text-droid-text-muted">No comments yet</div>
         )
@@ -121,6 +148,7 @@ export function PullRequestPanel({
   checks,
   comments,
   loadingDetail,
+  detailError,
   onBack,
   onRefresh,
 }: {
@@ -129,6 +157,7 @@ export function PullRequestPanel({
   checks: PrCheck[];
   comments: PrComment[];
   loadingDetail: boolean;
+  detailError: string | null;
   onBack: () => void;
   onRefresh: () => void;
 }) {
@@ -218,9 +247,9 @@ export function PullRequestPanel({
         </button>
 
         <div className="mx-3 my-1.5 h-px bg-droid-border/70" />
-        <ChecksBlock checks={checks} loading={loadingDetail} />
+        <ChecksBlock checks={checks} loading={loadingDetail} error={detailError} />
         <div className="mx-3 my-1.5 h-px bg-droid-border/70" />
-        <CommentsBlock comments={comments} loading={loadingDetail} />
+        <CommentsBlock comments={comments} loading={loadingDetail} error={detailError} />
       </div>
 
       <div className="border-t border-droid-border/70 p-2">

@@ -1570,9 +1570,13 @@ function baseReducer(state: AppState, action: Action): AppState {
       return { ...state, rightPanelOpen: action.open };
 
     case 'SET_REVIEW_OPEN':
-      // Closing while already closed is a no-op; bail before allocating a new
-      // state object so subscribers don't re-render.
-      if (!action.open && state.reviewOpenMissionId === null) return state;
+      // Closing while already closed AND no pending focus is a true no-op; bail
+      // before allocating a new state object so subscribers don't re-render. The
+      // reviewFocusPath check is essential: a close dispatched when the pane is
+      // already shut but a focus path is still pending would otherwise skip the
+      // clear and leave the stale focus request to fire on the next open.
+      if (!action.open && state.reviewOpenMissionId === null && state.reviewFocusPath === null)
+        return state;
       // Scope the open state to the active mission so it never leaks into the
       // next chat; switching back to this mission restores it.
       return {

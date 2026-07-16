@@ -25,19 +25,36 @@ export function useGitFetchOnOpen(open: boolean, cwd: string, onFetched: () => v
       setFetching(false);
       return;
     }
-    if (Date.now() - (lastFetchAt.get(cwd) ?? 0) < MIN_FETCH_INTERVAL_MS) return;
+    if (Date.now() - (lastFetchAt.get(cwd) ?? 0) < MIN_FETCH_INTERVAL_MS) {
+      // Under StrictMode the effect double-invokes: the first run sets fetching
+      // and starts a fetch, the cleanup cancels it, and this guard early-returns
+      // on the second run — leaving fetching stuck true forever. Reset it on
+      // every early-return path so the spinner can never get wedged.
+      setFetching(false);
+      return;
+    }
     // Recorded at start (not completion) so a concurrent second picker, or a
     // failing remote, can't stack parallel fetches.
     lastFetchAt.set(cwd, Date.now());
     let cancelled = false;
     setFetching(true);
-    void gitFetch(cwd).then((res) => {
-      if (cancelled) return;
-      setFetching(false);
-      if (res.ok) cbRef.current();
-    });
+    void gitFetch(cwd)
+      .then((res) => {
+        if (cancelled) return;
+        setFetching(false);
+        if (res.ok) cbRef.current();
+      })
+      // try/finally semantics: even a rejected promise (network/IPC error) must
+      // clear the in-flight flag instead of leaving the spinner pinned.
+      .catch(() => {
+        if (cancelled) return;
+        setFetching(false);
+      });
+    // The cleanup runs on unmount, open/cwd change, and StrictMode remount; it
+    // must reset fetching too, because the cancelled .then/.catch will no-op.
     return () => {
       cancelled = true;
+      setFetching(false);
     };
   }, [open, cwd]);
 

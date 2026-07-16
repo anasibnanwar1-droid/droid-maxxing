@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import {
   AlignLeft,
   Check,
@@ -28,6 +28,7 @@ import { useReviewFileDiffs } from '../../hooks/useReviewFileDiffs';
 import { useGitEnvironment } from '../../hooks/useGitEnvironment';
 import { useStore } from '../../hooks/useStore';
 import { toast } from '../../lib/toast';
+import { detectPullRequest } from '../../lib/github';
 import {
   REVIEW_SCOPE_OPTIONS,
   fileStatusColor,
@@ -165,21 +166,21 @@ function MenuItem({
   );
 }
 
-function FileRow({
+const FileRow = memo(function FileRow({
   file,
   selected,
   onSelect,
 }: {
   file: DiffFile;
   selected: boolean;
-  onSelect: () => void;
+  onSelect: (path: string) => void;
 }) {
   const slash = file.path.lastIndexOf('/');
   const dir = slash >= 0 ? file.path.slice(0, slash + 1) : '';
   const name = slash >= 0 ? file.path.slice(slash + 1) : file.path;
   return (
     <button
-      onClick={onSelect}
+      onClick={() => onSelect(file.path)}
       title={file.path}
       className={`flex w-full items-center gap-2 px-2.5 py-1.5 text-left transition-colors ${
         selected ? 'bg-droid-elevated' : 'hover:bg-droid-elevated/50'
@@ -205,7 +206,7 @@ function FileRow({
       </span>
     </button>
   );
-}
+});
 
 // Below this many files a scope loads fully expanded (GitHub-style); larger
 // changesets start collapsed so the view stays snappy and the user expands what
@@ -252,10 +253,23 @@ export function ReviewPanel({ cwd, onClose }: { cwd: string; onClose: () => void
   // surface GitHub's raw "already exists" error. Reset when the branch changes,
   // where opening a new PR is legitimate again.
   const [prCreated, setPrCreated] = useState(false);
+  // One-shot detection per cwd/branch: a branch may already have an open PR
+  // from a previous session or another tool, in which case offering "Create PR"
+  // would only surface GitHub's duplicate-PR error on submit.
+  const [hasPr, setHasPr] = useState(false);
   const branch = git.env?.branch ?? null;
   useEffect(() => {
     setPrCreated(false);
-  }, [cwd, branch]);
+    setHasPr(false);
+    if (!isGitHub || !branch) return;
+    let stale = false;
+    void detectPullRequest(cwd, branch).then((res) => {
+      if (!stale && res.ok && res.pr && res.pr.state.toLowerCase() !== 'closed') setHasPr(true);
+    });
+    return () => {
+      stale = true;
+    };
+  }, [cwd, branch, isGitHub]);
   useEffect(() => {
     setRenderLimit(FILE_RENDER_CAP);
   }, [cwd, state.reviewScope]);
@@ -329,7 +343,7 @@ export function ReviewPanel({ cwd, onClose }: { cwd: string; onClose: () => void
     setExpanded(allExpanded ? new Set() : new Set(review.files.map((f) => f.path)));
   };
 
-  const jumpTo = (path: string) => {
+  const jumpTo = useCallback((path: string) => {
     setActivePath(path);
     const idx = filesRef.current.findIndex((f) => f.path === path);
     if (idx >= 0) setRenderLimit((cur) => (idx < cur ? cur : idx + FILE_RENDER_CAP));
@@ -341,7 +355,7 @@ export function ReviewPanel({ cwd, onClose }: { cwd: string; onClose: () => void
         sectionRefs.current.get(path)?.scrollIntoView({ block: 'start', behavior: 'smooth' }),
       ),
     );
-  };
+  }, []);
 
   // Honor a focus request (e.g. a per-turn changes summary clicked in chat):
   // once the diff list contains the requested file, expand and scroll to it,
@@ -389,7 +403,7 @@ export function ReviewPanel({ cwd, onClose }: { cwd: string; onClose: () => void
           active={commitOpen}
           onClick={() => setCommitOpen((v) => !v)}
         />
-        {isGitHub && !prCreated && (
+        {isGitHub && !prCreated && !hasPr && (
           <ToolbarButton
             icon={GitPullRequest}
             label="PR"
@@ -516,7 +530,7 @@ export function ReviewPanel({ cwd, onClose }: { cwd: string; onClose: () => void
                       key={file.path}
                       file={file}
                       selected={activePath === file.path}
-                      onSelect={() => jumpTo(file.path)}
+                      onSelect={jumpTo}
                     />
                   ))}
                   {review.files.length > renderLimit && (
