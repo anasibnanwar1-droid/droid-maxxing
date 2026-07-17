@@ -219,6 +219,12 @@ const AUTO_EXPAND_MAX = 25;
 // increments, and jumpTo raises the limit when the target sits past it.
 const FILE_RENDER_CAP = 100;
 
+// When jumping to a file past the render cap, only raise the limit enough to
+// include a small buffer after the target rather than FILE_RENDER_CAP more rows.
+// This avoids mounting hundreds of preceding DOM nodes. A true fix would
+// require windowing/virtualization; this is the bounded improvement.
+const FILE_RENDER_JUMP_BUFFER = 20;
+
 export function ReviewPanel({ cwd, onClose }: { cwd: string; onClose: () => void }) {
   const { state, dispatch } = useStore();
   const [filesOpen, setFilesOpen] = useState(true);
@@ -308,16 +314,27 @@ export function ReviewPanel({ cwd, onClose }: { cwd: string; onClose: () => void
     setActivePath((cur) => (cur && present.has(cur) ? cur : (paths[0] ?? null)));
   }, [review.signature]);
 
+  // After a scope/worktree change resets the render limit, raise it if the
+  // active file sits past the cap so its selection stays visible.
+  useEffect(() => {
+    if (!activePath) return;
+    const idx = filesRef.current.findIndex((f) => f.path === activePath);
+    if (idx >= 0) setRenderLimit((cur) => (idx < cur ? cur : idx + FILE_RENDER_JUMP_BUFFER));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activePath, review.signature]);
+
   // Fetch the diff for every open section that is actually rendered; ensure()
   // is a no-op for diffs already loaded this generation, so this only does
   // work for freshly opened files or after the signature invalidates the
-  // cache. Sections past the render cap fetch lazily when revealed.
+  // cache. Sections past the render cap fetch lazily when revealed, but the
+  // active file is always fetched so Copy patch reflects the current generation.
   useEffect(() => {
     const visible = new Set(review.files.slice(0, renderLimit).map((f) => f.path));
     expanded.forEach((p) => {
       if (visible.has(p)) ensure(p);
     });
-  }, [expanded, review.signature, ensure, review.files, renderLimit]);
+    if (activePath) ensure(activePath);
+  }, [expanded, activePath, review.signature, ensure, review.files, renderLimit]);
 
   const afterAction = () => {
     git.refresh();
@@ -346,7 +363,7 @@ export function ReviewPanel({ cwd, onClose }: { cwd: string; onClose: () => void
   const jumpTo = useCallback((path: string) => {
     setActivePath(path);
     const idx = filesRef.current.findIndex((f) => f.path === path);
-    if (idx >= 0) setRenderLimit((cur) => (idx < cur ? cur : idx + FILE_RENDER_CAP));
+    if (idx >= 0) setRenderLimit((cur) => (idx < cur ? cur : idx + FILE_RENDER_JUMP_BUFFER));
     setExpanded((cur) => (cur.has(path) ? cur : new Set(cur).add(path)));
     // Two frames: the first lets React commit a raised render limit so the
     // target section exists before scrollIntoView runs.

@@ -1,8 +1,9 @@
-import { useMemo, useRef, useState, type RefObject } from 'react';
+import { useMemo, useState, type RefObject } from 'react';
 import { Check, ChevronLeft, GitBranch, Loader2, Plus, Search } from 'lucide-react';
 import { Popover } from './Popover';
 import { checkoutGitBranch, createGitWorktree, stripRemotePrefix } from '../../lib/git';
 import { useGitFetchOnOpen } from '../../hooks/useGitFetchOnOpen';
+import { useBusyAction } from '../../hooks/useBusyAction';
 import { toast } from '../../lib/toast';
 import type { GitBranchList, GitEnvironment, GitWorktree } from '../../types/vcs';
 
@@ -37,12 +38,8 @@ export function StartBranchMenu({
   const [defaultPath, setDefaultPath] = useState('');
   const [creatingNew, setCreatingNew] = useState(false);
   const [newName, setNewName] = useState('');
-  const [busy, setBusy] = useState(false);
-  // Synchronous re-entry guard: `busy` state only updates on the next render, so
-  // a second Enter fired in the same tick (the input's keydown isn't disabled)
-  // would slip past a `busy` check and launch a duplicate git operation.
-  const busyRef = useRef(false);
-  const fetching = useGitFetchOnOpen(open, cwd, onRefresh);
+  const { busy, run } = useBusyAction();
+  const fetching = useGitFetchOnOpen(open, cwd, onRefresh, env?.repoRoot ?? undefined);
 
   const repoRoot = env?.repoRoot ?? cwd;
   const current = env?.branch ?? null;
@@ -93,105 +90,93 @@ export function StartBranchMenu({
     setPath(def);
   };
 
-  const confirmCreate = async () => {
-    if (!pending || busyRef.current) return;
-    busyRef.current = true;
-    setBusy(true);
-    const localName = pending.remote
-      ? stripRemotePrefix(pending.branch, env?.remotes)
-      : pending.branch;
-    const trimmed = path.trim();
-    try {
-      const res = await createGitWorktree(cwd, {
-        branch: localName,
-        // Use the selected remote ref verbatim so upstream/foo doesn't silently
-        // become origin/foo (or fail when only one remote has the branch).
-        base: pending.remote ? pending.branch : undefined,
-        newBranch: pending.remote,
-        // Leave location unset when the default path is unchanged so the backend
-        // can auto-suffix collisions and add `.worktrees/` to the repo's exclude.
-        location: trimmed && trimmed !== defaultPath ? trimmed : undefined,
-      });
-      if (res.ok && res.path) {
-        toast.success(`Worktree ready on ${localName}`);
-        onStartIn(res.path, localName);
-        onRefresh();
-        close();
-      } else if (res.reason === 'exists') {
-        toast.error('A worktree already exists at that path');
-      } else {
-        toast.error(res.message || 'Could not create worktree');
+  const confirmCreate = () =>
+    run(async () => {
+      if (!pending) return;
+      const localName = pending.remote
+        ? stripRemotePrefix(pending.branch, env?.remotes)
+        : pending.branch;
+      const trimmed = path.trim();
+      try {
+        const res = await createGitWorktree(cwd, {
+          branch: localName,
+          // Use the selected remote ref verbatim so upstream/foo doesn't silently
+          // become origin/foo (or fail when only one remote has the branch).
+          base: pending.remote ? pending.branch : undefined,
+          newBranch: pending.remote,
+          // Leave location unset when the default path is unchanged so the backend
+          // can auto-suffix collisions and add `.worktrees/` to the repo's exclude.
+          location: trimmed && trimmed !== defaultPath ? trimmed : undefined,
+        });
+        if (res.ok && res.path) {
+          toast.success(`Worktree ready on ${localName}`);
+          onStartIn(res.path, localName);
+          onRefresh();
+          close();
+        } else if (res.reason === 'exists') {
+          toast.error('A worktree already exists at that path');
+        } else {
+          toast.error(res.message || 'Could not create worktree');
+        }
+      } catch {
+        toast.error('Could not create worktree');
       }
-    } catch {
-      toast.error('Could not create worktree');
-    } finally {
-      busyRef.current = false;
-      setBusy(false);
-    }
-  };
+    });
 
-  const checkoutLocally = async () => {
-    if (!pending || busyRef.current) return;
-    busyRef.current = true;
-    setBusy(true);
-    try {
-      const res = await checkoutGitBranch(cwd, { ref: pending.branch });
-      if (res.ok) {
-        // Start where the checkout actually happened. checkoutGitBranch runs in
-        // `cwd`, so a linked worktree (cwd !== repoRoot) must start in that
-        // worktree, not the main repo root which is still on its own branch.
-        // Only a remote ref carries a remote prefix to strip; a local branch
-        // like `feature/foo` must be recorded verbatim, not collapsed to `foo`.
-        onStartIn(
-          cwd,
-          pending.remote ? stripRemotePrefix(pending.branch, env?.remotes) : pending.branch,
-        );
-        onRefresh();
-        close();
-      } else if (res.reason === 'dirty') {
-        toast.error('Commit or stash your changes before checking out locally');
-      } else {
-        toast.error(res.message || 'Could not checkout');
+  const checkoutLocally = () =>
+    run(async () => {
+      if (!pending) return;
+      try {
+        const res = await checkoutGitBranch(cwd, { ref: pending.branch });
+        if (res.ok) {
+          // Start where the checkout actually happened. checkoutGitBranch runs in
+          // `cwd`, so a linked worktree (cwd !== repoRoot) must start in that
+          // worktree, not the main repo root which is still on its own branch.
+          // Only a remote ref carries a remote prefix to strip; a local branch
+          // like `feature/foo` must be recorded verbatim, not collapsed to `foo`.
+          onStartIn(
+            cwd,
+            pending.remote ? stripRemotePrefix(pending.branch, env?.remotes) : pending.branch,
+          );
+          onRefresh();
+          close();
+        } else if (res.reason === 'dirty') {
+          toast.error('Commit or stash your changes before checking out locally');
+        } else {
+          toast.error(res.message || 'Could not checkout');
+        }
+      } catch {
+        toast.error('Could not checkout');
       }
-    } catch {
-      toast.error('Could not checkout');
-    } finally {
-      busyRef.current = false;
-      setBusy(false);
-    }
-  };
+    });
 
-  const createNewBranch = async () => {
-    const branch = newName.trim();
-    if (!branch || busyRef.current) return;
-    busyRef.current = true;
-    setBusy(true);
-    try {
-      const res = await createGitWorktree(cwd, { branch, base, newBranch: true });
-      if (res.ok && res.path) {
-        toast.success(`Worktree ready on ${branch}`);
-        onStartIn(res.path, branch);
-        onRefresh();
-        close();
-      } else if (res.reason === 'exists') {
-        toast.error('A worktree already exists at that path');
-      } else {
-        toast.error(res.message || 'Could not create worktree');
+  const createNewBranch = () =>
+    run(async () => {
+      const branch = newName.trim();
+      if (!branch) return;
+      try {
+        const res = await createGitWorktree(cwd, { branch, base, newBranch: true });
+        if (res.ok && res.path) {
+          toast.success(`Worktree ready on ${branch}`);
+          onStartIn(res.path, branch);
+          onRefresh();
+          close();
+        } else if (res.reason === 'exists') {
+          toast.error('A worktree already exists at that path');
+        } else {
+          toast.error(res.message || 'Could not create worktree');
+        }
+      } catch {
+        toast.error('Could not create worktree');
       }
-    } catch {
-      toast.error('Could not create worktree');
-    } finally {
-      busyRef.current = false;
-      setBusy(false);
-    }
-  };
+    });
 
   return (
     <Popover
       open={open}
       onClose={close}
       anchorRef={anchorRef}
-      label="Choose starting branch"
+      label={pending ? `Set up worktree for ${pending.branch}` : 'Choose starting branch'}
       align="left"
       width={320}
     >

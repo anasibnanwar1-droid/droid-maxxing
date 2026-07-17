@@ -98,10 +98,6 @@ interface LiveAgent {
   missionId: string;
   role: AgentRole;
   streaming: boolean;
-  // Set by a manual worker compaction path, should one be added; the
-  // notification subscription skips compaction events while it is set so
-  // they are not processed twice (see subscribeOrchestratorCompaction).
-  compacting?: boolean;
   autoCompacting: boolean;
   pendingSends: string[];
   interruptingForSteer?: boolean;
@@ -2440,10 +2436,9 @@ export class MissionManager {
         lastUsedAt: Date.now(),
       };
       agent.unsubscribe = session.onNotification((note: Record<string, unknown>) => {
-        // Mirror the orchestrator subscription: a manual compaction RPC emits
-        // the same compacting/compacted notifications, and its own path owns
-        // the statuses and refresh, so reacting here too would duplicate them.
-        if (agent.compacting) return;
+        // The daemon's auto-compaction notifications are handled by
+        // handleCompactionNotification, which owns the agent's status and
+        // refresh; any other notification is normalized and applied here.
         if (this.handleCompactionNotification(appSessionId, agentSessionId, role, session, note))
           return;
         for (const n of normalizeNotification(appSessionId, agentSessionId, role, note))
@@ -2665,6 +2660,7 @@ export class MissionManager {
     if (!mission || !agent) return;
     mission.agents.delete(agentSessionId);
     this.agentCompactions.delete(agentSessionId);
+    this.contextSnapshots.delete(agentSessionId);
     this.stopContextPolling(agent.session.sessionId);
     agent.unsubscribe?.();
     try {
@@ -2908,6 +2904,7 @@ export class MissionManager {
     mission.unsubscribe?.();
     for (const agent of mission.agents.values()) {
       this.stopContextPolling(agent.session.sessionId);
+      this.contextSnapshots.delete(agent.session.sessionId);
       agent.unsubscribe?.();
       try {
         await agent.session.close();
@@ -2929,6 +2926,8 @@ export class MissionManager {
     await this.browsers.close(mission.summary.id).catch(() => {});
     this.missions.delete(key);
     this.usageOffsets.delete(key);
+    this.contextSnapshots.delete(key);
+    if (mission.summary.sessionId) this.contextSnapshots.delete(mission.summary.sessionId);
     this.emitMissionList();
   }
 

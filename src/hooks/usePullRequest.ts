@@ -47,6 +47,10 @@ export function usePullRequest(
   // effect only lands next render, so the detail poller can otherwise fire once
   // with the previous repo's PR number against the new cwd.
   const prCwd = useRef<string | null>(null);
+  // Tracks the PR number the current detail state belongs to. When detection
+  // finds a different PR on the same branch (old PR closed, new one opened),
+  // the old checks/comments must be cleared and reloaded.
+  const prNumberRef = useRef<number | null>(null);
 
   const detect = useCallback(() => {
     // Bump first so any in-flight detection from a prior cwd/branch (or before
@@ -76,6 +80,7 @@ export function usePullRequest(
   // longer resolve and repopulate stale details under the newly detected PR.
   useEffect(() => {
     detailReq.current++;
+    prNumberRef.current = null;
     setPr(null);
     setChecks([]);
     setComments([]);
@@ -84,6 +89,24 @@ export function usePullRequest(
     setDetailError(null);
     detailLoadedRef.current = false;
   }, [cwd, branch]);
+
+  // When the detected PR number changes on the SAME branch (e.g. old PR closed,
+  // new one opened), stale checks/comments from the previous PR must be cleared
+  // and the detail loading state reset so the panel shows a reload indicator
+  // instead of the old PR's data.
+  useEffect(() => {
+    const num = pr?.number ?? null;
+    if (prNumberRef.current !== null && prNumberRef.current !== num) {
+      detailReq.current++;
+      setChecks([]);
+      setComments([]);
+      setLoadingDetail(false);
+      setDetailLoaded(false);
+      setDetailError(null);
+      detailLoadedRef.current = false;
+    }
+    prNumberRef.current = num;
+  }, [pr?.number]);
 
   // Each detection spawns a `gh` child process, so poll only while the window
   // is visible and re-detect immediately when it becomes visible again.

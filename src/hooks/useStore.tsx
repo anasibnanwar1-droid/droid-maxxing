@@ -1,4 +1,4 @@
-import { createContext, useContext, useReducer, ReactNode, useEffect } from 'react';
+import { createContext, useContext, useMemo, useReducer, ReactNode, useEffect } from 'react';
 import { bridge } from '../lib/bridge';
 import { updateCompactionSettings } from '../lib/commands';
 import {
@@ -2097,7 +2097,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  return <StoreContext.Provider value={{ state, dispatch }}>{children}</StoreContext.Provider>;
+  // Memoize the context value so useStore() consumers only re-render when
+  // state actually changes. dispatch is stable from useReducer, so [state] is
+  // the correct key. Without this, every StoreProvider render creates a fresh
+  // { state, dispatch } object, causing every consumer to re-render on every
+  // dispatch regardless of whether the slice they read changed.
+  const value = useMemo(() => ({ state, dispatch }), [state]);
+
+  return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>;
 }
 
 export function useStore() {

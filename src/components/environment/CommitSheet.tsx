@@ -1,42 +1,38 @@
-import { useRef, useState } from 'react';
+import { useState } from 'react';
 import { Loader2 } from 'lucide-react';
 import { gitCommit } from '../../lib/git';
 import { toast } from '../../lib/toast';
+import { useBusyAction } from '../../hooks/useBusyAction';
 
 // Inline commit form shown beneath the git actions row.
 export function CommitSheet({ cwd, onDone }: { cwd: string; onDone: () => void }) {
   const [message, setMessage] = useState('');
   const [stageAll, setStageAll] = useState(true);
-  const [busy, setBusy] = useState(false);
-  const busyRef = useRef(false);
+  // run() guards against a second Cmd/Ctrl+Enter (the button is disabled,
+  // but the keyboard shortcut isn't) firing a duplicate in-flight commit.
+  const { busy, run } = useBusyAction();
 
-  const doCommit = async () => {
-    const text = message.trim();
-    // busyRef guards against a second Cmd/Ctrl+Enter (the button is disabled,
-    // but the keyboard shortcut isn't) firing a duplicate in-flight commit.
-    if (!text || busyRef.current) return;
-    busyRef.current = true;
-    setBusy(true);
-    try {
-      const res = await gitCommit(cwd, { message: text, all: stageAll });
-      if (res.ok) {
-        toast.success(`Committed ${res.head ?? ''}`.trim());
-        setMessage('');
-        onDone();
-      } else if (res.reason === 'nothing_to_commit') {
-        toast.info('Nothing to commit');
-      } else {
-        toast.error(res.message || 'Commit failed');
+  const doCommit = () =>
+    run(async () => {
+      const text = message.trim();
+      if (!text) return;
+      try {
+        const res = await gitCommit(cwd, { message: text, all: stageAll });
+        if (res.ok) {
+          toast.success(`Committed ${res.head ?? ''}`.trim());
+          setMessage('');
+          onDone();
+        } else if (res.reason === 'nothing_to_commit') {
+          toast.info('Nothing to commit');
+        } else {
+          toast.error(res.message || 'Commit failed');
+        }
+      } catch {
+        // A rejected IPC call (transport failure, no bridge) would otherwise leave
+        // the user with only a cleared spinner and no feedback.
+        toast.error('Commit failed');
       }
-    } catch {
-      // A rejected IPC call (transport failure, no bridge) would otherwise leave
-      // the user with only a cleared spinner and no feedback.
-      toast.error('Commit failed');
-    } finally {
-      busyRef.current = false;
-      setBusy(false);
-    }
-  };
+    });
 
   return (
     <div className="mx-2 mb-1.5 space-y-2 rounded-xl bg-droid-elevated/50 px-2.5 py-2.5">

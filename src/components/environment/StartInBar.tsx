@@ -106,6 +106,7 @@ export function StartInBar() {
         open={repoOpen}
         onClose={() => setRepoOpen(false)}
         anchorRef={repoRef}
+        label="Projects"
         align="left"
         width={264}
       >
@@ -165,6 +166,7 @@ export function StartInBar() {
             open={locOpen}
             onClose={() => setLocOpen(false)}
             anchorRef={locRef}
+            label="Worktrees"
             align="left"
             width={280}
           >

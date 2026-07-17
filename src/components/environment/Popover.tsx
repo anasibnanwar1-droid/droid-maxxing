@@ -8,6 +8,7 @@ import {
   type RefObject,
 } from 'react';
 import { createPortal } from 'react-dom';
+import { pushEscapeLayer } from './usePopover';
 
 // A dropdown panel rendered into <body> via a portal so it escapes the Context
 // panel's `overflow` clipping. It stays anchored to its trigger and reflows on
@@ -65,6 +66,18 @@ export function Popover({
       focusInsideRef.current = !!panelRef.current?.contains(document.activeElement);
     };
     track();
+    // If nothing inside the panel grabbed focus on open (e.g. an input with
+    // autoFocus), move focus to the first focusable element so the first Tab
+    // is trapped. Otherwise focus stays on the trigger and Tab escapes the
+    // portal, bypassing the onKeyDown trap which only fires inside the panel.
+    if (!focusInsideRef.current && panelRef.current) {
+      const focusables = panelRef.current.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      );
+      if (focusables.length > 0) focusables[0].focus();
+      else panelRef.current.focus();
+      track();
+    }
     document.addEventListener('focusin', track);
     const anchor = anchorRef.current;
     return () => {
@@ -128,14 +141,13 @@ export function Popover({
       if (panelRef.current?.contains(t) || anchorRef.current?.contains(t)) return;
       onClose();
     };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
+    // Escape is handled by the shared module-level stack (usePopover.ts) so a
+    // nested popover doesn't close both layers on a single keystroke.
+    const pop = pushEscapeLayer(onClose);
     window.addEventListener('mousedown', onDown);
-    window.addEventListener('keydown', onKey);
     return () => {
       window.removeEventListener('mousedown', onDown);
-      window.removeEventListener('keydown', onKey);
+      pop();
     };
   }, [open, onClose, anchorRef]);
 
@@ -167,6 +179,7 @@ export function Popover({
       ref={panelRef}
       role="dialog"
       aria-label={label ?? 'Menu'}
+      tabIndex={-1}
       onKeyDown={trapTab}
       style={{
         position: 'fixed',

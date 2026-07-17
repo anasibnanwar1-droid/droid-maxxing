@@ -145,16 +145,13 @@ function parseWorktrees(stdout, currentRoot) {
   });
 }
 
-// Parse `git diff --numstat` lines into a totals object. Binary files report
-// "-\t-\t<path>" and count as one changed file with zero line deltas.
-function parseNumstat(stdout) {
+// Sum `git diff --numstat -z` output into a totals object. Binary files report
+// "-" counts and tally as one changed file with zero line deltas.
+function numstatTotals(stdout) {
   let additions = 0;
   let deletions = 0;
   let files = 0;
-  for (const line of String(stdout || '').split('\n')) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-    const [add, del] = trimmed.split('\t');
+  for (const { add, del } of parseNumstatZ(stdout)) {
     files += 1;
     if (add !== '-') additions += Number.parseInt(add, 10) || 0;
     if (del !== '-') deletions += Number.parseInt(del, 10) || 0;
@@ -191,6 +188,19 @@ async function repoRootOf(dir) {
 const READ_CACHE_TTL_MS = 2500;
 const readCache = new Map();
 
+// Tracks the resolved git common dir (the shared object/refs store that linked
+// worktrees all point at) for each root that has had its environment queried.
+// Populated as a side-effect of environmentOf, which already runs
+// `git rev-parse --git-common-dir`. Used by invalidateReads to bust cached
+// reads for sibling worktrees after a repo-wide mutation (branch create,
+// checkout, commit, push, fetch, worktree add/remove).
+const rootCommonDir = new Map();
+
+function rememberCommonDir(root, commonDirRaw) {
+  if (!root || !commonDirRaw) return;
+  setRepoCache(rootCommonDir, root, path.resolve(root, commonDirRaw));
+}
+
 function cachedRead(root, name, fn) {
   const key = `${root}\u0000${name}`;
   const hit = readCache.get(key);
@@ -204,10 +214,33 @@ function cachedRead(root, name, fn) {
 
 function invalidateReads(root) {
   if (!root) return;
-  const prefix = `${root}\u0000`;
-  for (const key of readCache.keys()) {
-    if (key.startsWith(prefix)) readCache.delete(key);
+  // Drop the mutating root's entries, then those of every linked-worktree
+  // sibling sharing the same git common dir. A branch/worktree/commit mutation
+  // changes repo-wide state (refs, the object store, the worktree list) that
+  // each sibling has cached under its own root key; without cross-root
+  // invalidation they would serve stale data until their independent TTL expires.
+  const commonDir = rootCommonDir.get(root);
+  const rootsToInvalidate = commonDir
+    ? [root, ...siblingRootsSharingCommonDir(root, commonDir)]
+    : [root];
+  for (const target of rootsToInvalidate) {
+    const prefix = `${target}\u0000`;
+    for (const key of readCache.keys()) {
+      if (key.startsWith(prefix)) readCache.delete(key);
+    }
   }
+}
+
+// Roots known to share the given common dir, excluding the originating root.
+// Derived from rootCommonDir, which is populated as each worktree's environment
+// is queried. A sibling whose environment has never been polled will not appear
+// here, but it also has no cached reads to invalidate.
+function siblingRootsSharingCommonDir(originRoot, commonDir) {
+  const siblings = [];
+  for (const [siblingRoot, siblingCommonDir] of rootCommonDir) {
+    if (siblingRoot !== originRoot && siblingCommonDir === commonDir) siblings.push(siblingRoot);
+  }
+  return siblings;
 }
 
 async function defaultBaseRef(root, remote = 'origin') {
@@ -327,6 +360,10 @@ async function environmentOf(root) {
   const branchName = detached ? null : status.head;
   const { ahead, behind } = status;
   const [commonDir, gitDir] = String(dirs || '').split('\n');
+  // Record the common dir so invalidateReads can cross-invalidate sibling
+  // worktrees after a repo-wide mutation. Both values are relative to root
+  // (or absolute), so resolve against root for a stable comparison key.
+  rememberCommonDir(root, commonDir);
   const primaryRemote = pickPrimaryRemote(remotes);
   const [remoteUrl, defaultRef, storedBaseState, upstreamResolved] = await Promise.all([
     primaryRemote ? tryRun(root, ['remote', 'get-url', primaryRemote]) : null,
@@ -373,11 +410,11 @@ async function environmentOf(root) {
     defaultBranch: defaultRef ? stripRemotePrefix(defaultRef, remotes) : null,
     defaultRef,
     remotes,
-    // http(s) remote URLs may embed credentials (https://user:token@host/...);
-    // strip the userinfo before handing the URL to the renderer. scp-style ssh
-    // remotes (git@host:path) are left alone since "git" is not a secret. The
-    // userinfo class is greedy up to the LAST '@' before the host so passwords
-    // that themselves contain '@' (e.g. https://u:p@ss@host/x) are fully stripped.
+    // http(s) remote URLs may embed userinfo before the host; strip it before
+    // handing the URL to the renderer. scp-style ssh remotes (git@host:path)
+    // are left alone since "git" is not a secret. The userinfo class is greedy
+    // up to the LAST '@' before the host so secrets that themselves contain
+    // '@' are fully stripped.
     remoteUrl: remoteUrl ? remoteUrl.replace(/^(\w+:\/\/)[^/]+@/, '$1') : null,
     // Anchor to the URL's host boundary so `github.com` only matches as the real
     // host (`https://github.com/…`, `git@github.com:…`), never embedded in an
@@ -563,8 +600,8 @@ async function diffStatOf(root, mode) {
   const hasHead = !!(await tryRun(root, ['rev-parse', '--verify', '--quiet', 'HEAD']));
 
   if (mode === 'uncommitted') {
-    const tracked = parseNumstat(
-      await runSoft(root, ['diff', '--numstat', hasHead ? 'HEAD' : EMPTY_TREE]),
+    const tracked = numstatTotals(
+      await runSoft(root, ['diff', '--numstat', '-z', hasHead ? 'HEAD' : EMPTY_TREE]),
     );
     const untracked = await untrackedAdditions(root);
     return {
@@ -578,13 +615,15 @@ async function diffStatOf(root, mode) {
 
   if (mode === 'branch') {
     if (!base) return { mode, base: null, additions: 0, deletions: 0, files: 0 };
-    const tracked = parseNumstat(await runSoft(root, ['diff', '--numstat', `${base}...HEAD`]));
+    const tracked = numstatTotals(
+      await runSoft(root, ['diff', '--numstat', '-z', `${base}...HEAD`]),
+    );
     return { mode, base, ...tracked };
   }
 
   // worktree total: everything since base, including the working tree.
   const range = base || (hasHead ? 'HEAD' : EMPTY_TREE);
-  const tracked = parseNumstat(await runSoft(root, ['diff', '--numstat', range]));
+  const tracked = numstatTotals(await runSoft(root, ['diff', '--numstat', '-z', range]));
   const untracked = await untrackedAdditions(root);
   return {
     mode,
@@ -864,14 +903,29 @@ async function createWorktree(dir, { branch, base, newBranch = false, location }
 async function removeWorktree(dir, { path: target, force = false } = {}) {
   const root = await repoRootOf(dir);
   if (!root) return { ok: false, reason: 'not_a_repo' };
+  if (!target)
+    return { ok: false, reason: 'invalid_worktree', message: 'No worktree path specified' };
+  // Resolve the target against the repo root (matching how createWorktree
+  // resolves relative locations) and validate it is a registered linked
+  // worktree — never the main worktree — so a compromised renderer cannot
+  // remove arbitrary directories or wipe the primary checkout.
+  const resolvedTarget = path.resolve(root, expandHome(target));
+  const registered = await worktrees(root);
+  const match = registered.find((wt) => wt.path && path.resolve(wt.path) === resolvedTarget);
+  if (!match)
+    return {
+      ok: false,
+      reason: 'invalid_worktree',
+      message: 'Path is not a registered worktree of this repository',
+    };
+  if (match.isMain)
+    return {
+      ok: false,
+      reason: 'invalid_worktree',
+      message: 'Cannot remove the main worktree',
+    };
   try {
-    await run(root, [
-      'worktree',
-      'remove',
-      ...(force ? ['--force'] : []),
-      '--',
-      expandHome(target),
-    ]);
+    await run(root, ['worktree', 'remove', ...(force ? ['--force'] : []), '--', resolvedTarget]);
     invalidateReads(root);
     return { ok: true };
   } catch (err) {
@@ -907,6 +961,14 @@ async function push(dir, { remote, branch, setUpstream = false, force = false } 
   if (!root) return { ok: false, reason: 'not_a_repo' };
   const target = branch || (await tryRun(root, ['rev-parse', '--abbrev-ref', 'HEAD']));
   if (!target || target === 'HEAD') return { ok: false, reason: 'detached' };
+  // An explicit remote from IPC must be a configured remote name, not an
+  // arbitrary URL (e.g. http://evil.com/repo.git) that could exfiltrate source
+  // to an attacker-controlled server.
+  if (remote) {
+    const configured = await listRemotes(root);
+    if (!configured.includes(remote))
+      return { ok: false, reason: 'invalid_remote', message: `Unknown remote "${remote}"` };
+  }
   // Honor the branch's configured upstream so a non-origin tracking ref is never
   // clobbered — but only when it names the *same* branch. A branch cut from
   // origin/main tracks origin/main as its base, and pushing `feature:main` there

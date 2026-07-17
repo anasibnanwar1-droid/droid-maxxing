@@ -3,6 +3,7 @@ import { Check, ChevronDown, GitBranch, Loader2, Plus, Search, TriangleAlert } f
 import { Popover } from './Popover';
 import { checkoutGitBranch, createGitBranch, aheadBehindLabel } from '../../lib/git';
 import { useGitFetchOnOpen } from '../../hooks/useGitFetchOnOpen';
+import { useBusyAction } from '../../hooks/useBusyAction';
 import { toast } from '../../lib/toast';
 import type { GitActionResult, GitBranchList, GitEnvironment } from '../../types/vcs';
 
@@ -22,15 +23,11 @@ export function BranchMenu({
   const [open, setOpen] = useState(false);
   const anchorRef = useRef<HTMLButtonElement>(null);
   const [query, setQuery] = useState('');
-  const [busy, setBusy] = useState(false);
-  // Synchronous re-entry guard: `busy` state only updates on the next render, so
-  // a same-tick second trigger (the create input's Enter isn't disabled) would
-  // slip past a `busy` check and launch a duplicate git operation.
-  const busyRef = useRef(false);
+  const { busy, run } = useBusyAction();
   const [dirtyRef, setDirtyRef] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState('');
-  const fetching = useGitFetchOnOpen(open, cwd, onChanged);
+  const fetching = useGitFetchOnOpen(open, cwd, onChanged, env?.repoRoot ?? undefined);
 
   const current = env?.branch ?? null;
 
@@ -70,54 +67,49 @@ export function BranchMenu({
     }
   };
 
-  const doCheckout = async (refName: string, allowDirty = false) => {
-    if (busyRef.current) return;
-    if (live) {
-      toast.error('Stop the agent before switching branches');
-      return;
-    }
-    busyRef.current = true;
-    setBusy(true);
-    // Clear the previous dirty prompt now: if this attempt fails with a
-    // non-dirty error, a stale banner would otherwise offer "Switch anyway"
-    // for the earlier branch, force-checking-out the wrong ref.
-    setDirtyRef(null);
-    try {
-      const res = await checkoutGitBranch(cwd, { ref: refName, allowDirty });
-      finish(res, refName);
-    } catch {
-      toast.error(`Could not switch to ${refName}`);
-    } finally {
-      busyRef.current = false;
-      setBusy(false);
-    }
-  };
-
-  const doCreate = async () => {
-    const name = newName.trim();
-    if (!name || busyRef.current) return;
-    if (live) {
-      toast.error('Stop the agent before creating a branch');
-      return;
-    }
-    busyRef.current = true;
-    setBusy(true);
-    try {
-      const res = await createGitBranch(cwd, { name, base: current ?? undefined, checkout: true });
-      if (res.ok) {
-        toast.success(`Created and checked out ${name}`);
-        close();
-        onChanged();
-      } else {
-        toast.error(res.message || 'Could not create branch');
+  const doCheckout = (refName: string, allowDirty = false) =>
+    run(async () => {
+      if (live) {
+        toast.error('Stop the agent before switching branches');
+        return;
       }
-    } catch {
-      toast.error('Could not create branch');
-    } finally {
-      busyRef.current = false;
-      setBusy(false);
-    }
-  };
+      // Clear the previous dirty prompt now: if this attempt fails with a
+      // non-dirty error, a stale banner would otherwise offer "Switch anyway"
+      // for the earlier branch, force-checking-out the wrong ref.
+      setDirtyRef(null);
+      try {
+        const res = await checkoutGitBranch(cwd, { ref: refName, allowDirty });
+        finish(res, refName);
+      } catch {
+        toast.error(`Could not switch to ${refName}`);
+      }
+    });
+
+  const doCreate = () =>
+    run(async () => {
+      const name = newName.trim();
+      if (!name) return;
+      if (live) {
+        toast.error('Stop the agent before creating a branch');
+        return;
+      }
+      try {
+        const res = await createGitBranch(cwd, {
+          name,
+          base: current ?? undefined,
+          checkout: true,
+        });
+        if (res.ok) {
+          toast.success(`Created and checked out ${name}`);
+          close();
+          onChanged();
+        } else {
+          toast.error(res.message || 'Could not create branch');
+        }
+      } catch {
+        toast.error('Could not create branch');
+      }
+    });
 
   return (
     <>

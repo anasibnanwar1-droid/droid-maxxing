@@ -1247,7 +1247,8 @@ function WorktreesSection() {
                             setConfirming(null);
                             if (w.path) void remove(repo.root, w.path);
                           }}
-                          className="rounded-md px-2 py-1 text-[11px] font-medium text-red-400 hover:bg-droid-elevated"
+                          disabled={removing !== null}
+                          className="rounded-md px-2 py-1 text-[11px] font-medium text-red-400 hover:bg-droid-elevated disabled:opacity-40"
                         >
                           Remove
                         </button>
@@ -1261,7 +1262,7 @@ function WorktreesSection() {
                     ) : (
                       <button
                         onClick={() => w.path && setConfirming(w.path)}
-                        disabled={removing === w.path}
+                        disabled={removing !== null}
                         title="Remove worktree"
                         className="flex shrink-0 items-center rounded-md p-1.5 text-droid-text-muted transition-colors hover:bg-droid-elevated hover:text-red-400 disabled:opacity-40"
                       >

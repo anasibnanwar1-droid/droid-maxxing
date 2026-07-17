@@ -86,6 +86,7 @@ export function DiffStat({
         open={open}
         onClose={() => setOpen(false)}
         anchorRef={anchorRef}
+        label="Diff mode"
         align="right"
         width={224}
       >

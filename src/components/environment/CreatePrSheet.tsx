@@ -1,10 +1,11 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useState } from 'react';
 import { ChevronDown, Loader2 } from 'lucide-react';
 import { usePopover } from './usePopover';
 import { createPullRequest } from '../../lib/github';
 import { baseDescriptor, gitPush, stripRemotePrefix } from '../../lib/git';
 import { openExternal } from '../../lib/onboarding';
 import { toast } from '../../lib/toast';
+import { useBusyAction } from '../../hooks/useBusyAction';
 import type { GitBranchList, GitEnvironment } from '../../types/vcs';
 
 // Inline "open pull request" form. Pushes the branch (setting upstream when
@@ -33,11 +34,9 @@ export function CreatePrSheet({
   const [base, setBase] = useState(recordedBase ?? env?.defaultBranch ?? 'main');
   const [draft, setDraft] = useState(false);
   const [pickingBase, setPickingBase] = useState(false);
-  const [busy, setBusy] = useState(false);
-  // Synchronous re-entry guard: `busy` state only updates on the next render, so
-  // a second Cmd+Enter fired in the same tick would slip past a `busy` check and
-  // push/create twice.
-  const busyRef = useRef(false);
+  // run() guards re-entry synchronously so a second Cmd+Enter fired in the
+  // same tick can't push/create twice.
+  const { busy, run } = useBusyAction();
   const basePickerRef = usePopover<HTMLDivElement>(
     pickingBase,
     useCallback(() => setPickingBase(false), []),
@@ -53,38 +52,34 @@ export function CreatePrSheet({
       !!value && value !== env?.branch && all.indexOf(value) === index,
   );
 
-  const doCreate = async () => {
-    if (!title.trim() || busyRef.current) return;
-    busyRef.current = true;
-    setBusy(true);
-    try {
-      // Push when there is no upstream yet, or when the local branch is ahead, so
-      // gh opens the PR from the latest commits instead of a stale remote tip.
-      if (!env?.upstream || (env?.ahead ?? 0) > 0) {
-        const pushed = await gitPush(cwd, { setUpstream: !env?.upstream });
-        if (!pushed.ok) {
-          toast.error(pushed.message || 'Could not push branch');
-          return;
+  const doCreate = () =>
+    run(async () => {
+      if (!title.trim()) return;
+      try {
+        // Push when there is no upstream yet, or when the local branch is ahead, so
+        // gh opens the PR from the latest commits instead of a stale remote tip.
+        if (!env?.upstream || (env?.ahead ?? 0) > 0) {
+          const pushed = await gitPush(cwd, { setUpstream: !env?.upstream });
+          if (!pushed.ok) {
+            toast.error(pushed.message || 'Could not push branch');
+            return;
+          }
         }
+        const res = await createPullRequest(cwd, { title: title.trim(), body, base, draft });
+        if (res.ok) {
+          toast.success(`Opened PR #${res.number ?? ''}`.trim());
+          if (res.url) void openExternal(res.url);
+          onCreated?.();
+          onDone();
+        } else if (res.reason === 'gh_unavailable') {
+          toast.error('GitHub CLI not available');
+        } else {
+          toast.error(res.message || 'Could not open PR');
+        }
+      } catch {
+        toast.error('Could not open PR');
       }
-      const res = await createPullRequest(cwd, { title: title.trim(), body, base, draft });
-      if (res.ok) {
-        toast.success(`Opened PR #${res.number ?? ''}`.trim());
-        if (res.url) void openExternal(res.url);
-        onCreated?.();
-        onDone();
-      } else if (res.reason === 'gh_unavailable') {
-        toast.error('GitHub CLI not available');
-      } else {
-        toast.error(res.message || 'Could not open PR');
-      }
-    } catch {
-      toast.error('Could not open PR');
-    } finally {
-      busyRef.current = false;
-      setBusy(false);
-    }
-  };
+    });
 
   const submitOnMetaEnter = (e: React.KeyboardEvent) => {
     if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {

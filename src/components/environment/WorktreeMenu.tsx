@@ -4,6 +4,7 @@ import { Popover } from './Popover';
 import { useStore } from '../../hooks/useStore';
 import { createGitWorktree, isWorktreeInUse, removeGitWorktree, worktreeName } from '../../lib/git';
 import { activeSessionCwds } from '../../lib/missions';
+import { useBusyAction } from '../../hooks/useBusyAction';
 import { toast } from '../../lib/toast';
 import type { GitBranchList, GitEnvironment, GitWorktree } from '../../types/vcs';
 
@@ -28,11 +29,7 @@ export function WorktreeMenu({
   const defaultBase = env?.branch ?? env?.defaultBranch ?? 'main';
   const [base, setBase] = useState<string>(defaultBase);
   const [pickingBase, setPickingBase] = useState(false);
-  const [busy, setBusy] = useState(false);
-  // Synchronous re-entry guard: `busy` state only updates on the next render, so
-  // a second Enter fired in the same tick (the input's keydown isn't disabled)
-  // would slip past a `busy` check and launch a duplicate git operation.
-  const busyRef = useRef(false);
+  const { busy, run } = useBusyAction();
   const [confirming, setConfirming] = useState<string | null>(null);
   const [removing, setRemoving] = useState<string | null>(null);
 
@@ -71,58 +68,50 @@ export function WorktreeMenu({
     setOpen(false);
   };
 
-  const removeWorktree = async (path: string) => {
-    if (busyRef.current) return;
-    busyRef.current = true;
-    setBusy(true);
-    setRemoving(path);
-    try {
-      const res = await removeGitWorktree(cwd, { path });
-      if (res.ok) {
-        toast.success('Worktree removed');
-        onChanged();
-      } else if (
-        res.reason === 'git_error' &&
-        /not.*clean|dirty|contains modified/i.test(res.message ?? '')
-      ) {
-        toast.error('Worktree has changes — commit or discard first');
-      } else {
-        toast.error(res.message || 'Could not remove worktree');
+  const removeWorktree = (path: string) =>
+    run(async () => {
+      setRemoving(path);
+      try {
+        const res = await removeGitWorktree(cwd, { path });
+        if (res.ok) {
+          toast.success('Worktree removed');
+          onChanged();
+        } else if (
+          res.reason === 'git_error' &&
+          /not.*clean|dirty|contains modified/i.test(res.message ?? '')
+        ) {
+          toast.error('Worktree has changes — commit or discard first');
+        } else {
+          toast.error(res.message || 'Could not remove worktree');
+        }
+      } catch {
+        toast.error('Could not remove worktree');
+      } finally {
+        setRemoving(null);
       }
-    } catch {
-      toast.error('Could not remove worktree');
-    } finally {
-      busyRef.current = false;
-      setBusy(false);
-      setRemoving(null);
-    }
-  };
+    });
 
-  const doCreate = async () => {
-    const branch = name.trim();
-    if (!branch || busyRef.current) return;
-    busyRef.current = true;
-    setBusy(true);
-    try {
-      const res = await createGitWorktree(cwd, { branch, base, newBranch: true });
-      if (res.ok && res.path) {
-        toast.success(`Created worktree ${branch}`);
-        setCreating(false);
-        setName('');
-        onChanged();
-        openInNewChat(res.path, res.branch ?? branch);
-      } else if (res.reason === 'exists') {
-        toast.error('A worktree already exists at that path');
-      } else {
-        toast.error(res.message || 'Could not create worktree');
+  const doCreate = () =>
+    run(async () => {
+      const branch = name.trim();
+      if (!branch) return;
+      try {
+        const res = await createGitWorktree(cwd, { branch, base, newBranch: true });
+        if (res.ok && res.path) {
+          toast.success(`Created worktree ${branch}`);
+          setCreating(false);
+          setName('');
+          onChanged();
+          openInNewChat(res.path, res.branch ?? branch);
+        } else if (res.reason === 'exists') {
+          toast.error('A worktree already exists at that path');
+        } else {
+          toast.error(res.message || 'Could not create worktree');
+        }
+      } catch {
+        toast.error('Could not create worktree');
       }
-    } catch {
-      toast.error('Could not create worktree');
-    } finally {
-      busyRef.current = false;
-      setBusy(false);
-    }
-  };
+    });
 
   const baseOptions = useMemo(
     () => [
