@@ -67,7 +67,7 @@ test('#20 a TodoWrite update does not add a chat message and answer stays single
   assert.ok(inWorked, 'TodoWrite activity should be inside the Worked group');
 });
 
-test('conversation timeline anchors one dot per turn final model response', () => {
+test('conversation timeline anchors one dot per user prompt', () => {
   const events = [
     userMsg('first question'),
     grep(),
@@ -80,7 +80,17 @@ test('conversation timeline anchors one dot per turn final model response', () =
   assert.equal(anchors.length, 2);
   assert.deepEqual(
     anchors.map((a) => a.label),
-    ['first answer', 'second answer'],
+    ['first question', 'second question'],
+  );
+});
+
+test('a leading model message before any prompt does not add a stray dot', () => {
+  const events = [asst('restored summary'), userMsg('one'), asst('a'), userMsg('two'), asst('b')];
+  const anchors = conversationAnchors(events, true, false);
+  assert.equal(anchors.length, 2);
+  assert.deepEqual(
+    anchors.map((a) => a.label),
+    ['one', 'two'],
   );
 });
 

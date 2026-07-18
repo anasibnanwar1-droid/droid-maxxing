@@ -3,12 +3,12 @@ import type { RefObject } from 'react';
 import type { ConversationAnchor } from './chat';
 
 /**
- * A quiet navigation rail in the chat's left gutter: one dot per model final
- * response (the summary of each turn). The dot list is derived from transcript
- * data (so it always matches the feed), while scrolling and the "you are here"
- * highlight resolve the rendered row by its `data-anchor-id`. Hovering previews
- * the response; clicking scrolls it to the top, with the follow-up prompt just
- * below it.
+ * A quiet navigation rail in the chat's left gutter: one dot per user prompt.
+ * The dot list is derived from transcript data (so it always matches the feed),
+ * while scrolling and the "you are here" highlight resolve the rendered row by
+ * its `data-anchor-id`. Hovering previews the prompt; clicking scrolls it to the
+ * top. The preview is positioned with fixed coordinates measured from the dot so
+ * it escapes the rail's scroll clipping instead of being cut off.
  */
 export function ConversationTimeline({
   scrollRef,
@@ -18,8 +18,9 @@ export function ConversationTimeline({
   anchors: ConversationAnchor[];
 }) {
   const [activeId, setActiveId] = useState<string | null>(null);
+  const [hover, setHover] = useState<{ label: string; top: number; left: number } | null>(null);
 
-  // Highlight the response nearest the top of the viewport as the user scrolls.
+  // Highlight the prompt nearest the top of the viewport as the user scrolls.
   useEffect(() => {
     const root = scrollRef.current;
     if (!root || anchors.length === 0) return undefined;
@@ -59,24 +60,33 @@ export function ConversationTimeline({
               key={a.id}
               type="button"
               onClick={() => jump(a.id)}
-              className="group/dot relative flex items-center"
-              title={a.label}
+              onMouseEnter={(e) => {
+                const r = e.currentTarget.getBoundingClientRect();
+                setHover({ label: a.label, top: r.top + r.height / 2, left: r.right + 8 });
+              }}
+              onMouseLeave={() => setHover(null)}
+              className="group/dot flex items-center py-0.5"
               aria-label={a.label}
             >
               <span
                 className={`h-1.5 w-1.5 shrink-0 rounded-full transition-all duration-200 ${
                   active
-                    ? 'scale-110 bg-droid-text-secondary'
+                    ? 'scale-125 bg-droid-text-secondary'
                     : 'bg-droid-text-muted/35 group-hover/dot:bg-droid-text-muted/80'
                 }`}
               />
-              <span className="pointer-events-none absolute left-4 block max-w-[200px] translate-x-1 truncate rounded-md bg-droid-elevated px-2 py-1 text-[11px] text-droid-text-secondary opacity-0 shadow-sm ring-1 ring-droid-border/60 transition-all duration-150 group-hover/dot:translate-x-0 group-hover/dot:opacity-100">
-                {a.label}
-              </span>
             </button>
           );
         })}
       </div>
+      {hover && (
+        <div
+          className="pointer-events-none fixed z-50 max-w-[300px] -translate-y-1/2 overflow-hidden whitespace-pre-line rounded-md bg-droid-elevated px-2.5 py-1.5 text-[11px] leading-snug text-droid-text-secondary shadow-md ring-1 ring-droid-border/60"
+          style={{ top: hover.top, left: hover.left }}
+        >
+          {hover.label}
+        </div>
+      )}
     </div>
   );
 }

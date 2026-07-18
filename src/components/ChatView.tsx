@@ -10,7 +10,7 @@ import {
   ChatSkeleton,
   TranscriptSkeleton,
   buildGroupedFeed,
-  finalResponseAnchorsFromItems,
+  promptAnchorsFromItems,
 } from './chat';
 import { readFile } from '../lib/desktop';
 import { interruptAgent, loadMissionHistory, loadOlderMissionHistory } from '../lib/commands';
@@ -379,10 +379,10 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
     () => buildGroupedFeed(transcript, true, live, specContent, true),
     [transcript, live, specContent],
   );
-  // Dots for the conversation timeline: one per turn's final model response,
-  // derived from the same feed the transcript renders so the rail stays in sync.
+  // Dots for the conversation timeline: one per user prompt, derived from the
+  // same feed the transcript renders so the rail stays in sync.
   const timelineAnchors = useMemo(
-    () => (viewingSub ? [] : finalResponseAnchorsFromItems(feedItems)),
+    () => (viewingSub ? [] : promptAnchorsFromItems(feedItems)),
     [feedItems, viewingSub],
   );
 

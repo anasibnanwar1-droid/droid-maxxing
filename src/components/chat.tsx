@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import type { BrowserTranscriptReference, TranscriptEvent } from '../types/bridge';
 import { Markdown } from './Markdown';
+import { SpecRenderer } from './SpecRenderer';
 import { JsonRender, splitJsonRender, hasJsonRender } from './JsonRender';
 import { extractFileChange, type FileChange } from '../lib/diff';
 import { DiffCard } from './DiffView';
@@ -303,6 +304,38 @@ function CopyButton({ text }: { text: string }) {
   );
 }
 
+// Turn bare URLs in captured tool output into clickable links, so a web search
+// or page fetch shows the links it visited and the user can open them.
+const URL_RE = /(https?:\/\/[^\s<>()[\]"'`]+)/g;
+function linkify(text: string): React.ReactNode {
+  const nodes: React.ReactNode[] = [];
+  let last = 0;
+  let m: RegExpExecArray | null;
+  URL_RE.lastIndex = 0;
+  while ((m = URL_RE.exec(text)) !== null) {
+    if (m.index > last) nodes.push(text.slice(last, m.index));
+    let url = m[0];
+    const tail = url.match(/[.,;:!?)\]}]+$/)?.[0] ?? '';
+    if (tail) url = url.slice(0, url.length - tail.length);
+    nodes.push(
+      <a
+        key={m.index}
+        href={url}
+        target="_blank"
+        rel="noreferrer"
+        className="underline underline-offset-2 hover:opacity-80 break-all"
+        style={{ color: ACCENT }}
+      >
+        {url}
+      </a>,
+    );
+    if (tail) nodes.push(tail);
+    last = m.index + m[0].length;
+  }
+  if (last < text.length) nodes.push(text.slice(last));
+  return nodes.length ? nodes : text;
+}
+
 /* ── Terminal-style command card ── */
 function CommandCard({
   command,
@@ -332,7 +365,7 @@ function CommandCard({
         </div>
         {out && (
           <pre className="mt-2.5 pt-2.5 border-t border-droid-border/60 max-h-56 overflow-auto whitespace-pre-wrap text-[11px] leading-[1.55] text-droid-text-muted break-words">
-            {out}
+            {linkify(out)}
           </pre>
         )}
       </div>
@@ -361,9 +394,9 @@ function ToolLine({ event, output }: { event: TranscriptEvent; output?: string }
           </span>
         )}
       </div>
-      {cat === 'other' && out && (
+      {(cat === 'other' || cat === 'search' || cat === 'web') && out && (
         <pre className="mt-1.5 max-h-44 overflow-auto rounded-md bg-droid-bg/50 px-2.5 py-2 text-[11px] leading-relaxed font-mono text-droid-text-muted/80 whitespace-pre-wrap break-words">
-          {out}
+          {linkify(out)}
         </pre>
       )}
     </div>
@@ -490,7 +523,7 @@ function renderToolEvents(events: TranscriptEvent[]): React.ReactNode[] {
         key={e.id}
         className="max-h-48 overflow-auto rounded-md bg-droid-bg/50 px-2.5 py-2 text-[11px] leading-relaxed font-mono text-droid-text-muted/80 whitespace-pre-wrap break-words"
       >
-        {body}
+        {linkify(body)}
       </pre>,
     );
   }
@@ -804,16 +837,20 @@ function isUserMessage(item: FeedItem): boolean {
   return item.type === 'message' && item.event.author === 'user';
 }
 
-// One-line preview of a message for the conversation timeline tooltip.
+// Short preview of a message for the conversation timeline tooltip: the first
+// few non-empty lines, capped in length so a large prompt can't produce a huge
+// tooltip. Newlines are preserved so the hover can show a couple of lines.
 function turnLabel(text?: string): string {
   if (!text) return 'Message';
-  const firstLine = text
-    .trim()
+  const lines = text
+    .replace(/\r/g, '')
     .split('\n')
-    .find((line) => line.trim().length > 0);
-  const clean = (firstLine ?? text).replace(/\s+/g, ' ').trim();
-  if (!clean) return 'Message';
-  return clean.length > 80 ? `${clean.slice(0, 80)}…` : clean;
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .slice(0, 3);
+  const preview = lines.join('\n');
+  if (!preview) return 'Message';
+  return preview.length > 200 ? `${preview.slice(0, 200).trimEnd()}…` : preview;
 }
 
 export interface ConversationAnchor {
@@ -845,6 +882,20 @@ export function finalResponseAnchorsFromItems(items: FeedItem[]): ConversationAn
   return out;
 }
 
+// One anchor per user prompt for the conversation timeline: the dot previews the
+// prompt text and scrolls that prompt to the top. Anchoring on prompts keeps the
+// dot count exactly equal to the number of prompts (a leading model/spec message
+// no longer adds a stray dot) and lets the hover preview show what was asked.
+export function promptAnchorsFromItems(items: FeedItem[]): ConversationAnchor[] {
+  const out: ConversationAnchor[] = [];
+  for (const it of items) {
+    if (it.type === 'message' && it.event.author === 'user') {
+      out.push({ id: it.key, label: turnLabel(it.event.text) });
+    }
+  }
+  return out;
+}
+
 // Build the grouped feed once so callers can share it (the chat view derives
 // timeline anchors from the same items it hands to MessageFeed, instead of
 // running buildFeed/groupTurns a second time on every render and switch).
@@ -865,7 +916,7 @@ export function conversationAnchors(
   pending: boolean,
   specContent?: string,
 ): ConversationAnchor[] {
-  return finalResponseAnchorsFromItems(buildGroupedFeed(events, rich, pending, specContent));
+  return promptAnchorsFromItems(buildGroupedFeed(events, rich, pending, specContent));
 }
 
 // Best-effort end timestamp of a feed item, used to time the live working cue.
@@ -1210,7 +1261,7 @@ const InlineSpecCard = memo(function InlineSpecCard({
             transition={{ duration: 0.12, ease: 'linear' }}
           >
             <div className="px-4 pb-4 pt-2 border-t border-droid-border">
-              <Markdown specMode>{content}</Markdown>
+              <SpecRenderer content={content} />
             </div>
           </motion.div>
         )}
@@ -1764,10 +1815,15 @@ export function MessageFeed({
     [providedItems, events, pending, rich, changes, specContent],
   );
 
-  // The conversation timeline anchors a dot on each turn's final model response.
-  // Stamp those rows so the rail (driven by the same data) can scroll to them.
+  // The copy button appears only on a turn's final model response.
   const finalResponseKeys = useMemo(
     () => new Set(finalResponseAnchorsFromItems(items).map((a) => a.id)),
+    [items],
+  );
+  // The conversation timeline anchors a dot on each user prompt; stamp those
+  // rows so the rail (driven by the same data) can scroll to them.
+  const promptKeys = useMemo(
+    () => new Set(promptAnchorsFromItems(items).map((a) => a.id)),
     [items],
   );
 
@@ -1811,7 +1867,7 @@ export function MessageFeed({
       {items.map((item, idx) => (
         <motion.div
           key={item.key}
-          {...(finalResponseKeys.has(item.key) ? { 'data-anchor-id': item.key } : {})}
+          {...(promptKeys.has(item.key) ? { 'data-anchor-id': item.key } : {})}
           initial={{ opacity: 0, y: 4 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.2, ease: EASE }}
