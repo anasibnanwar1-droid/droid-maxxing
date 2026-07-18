@@ -80,6 +80,11 @@ export function StartBranchMenu({
     const localName = remote ? stripRemotePrefix(branch, env?.remotes) : branch;
     const wt = worktreeFor(localName);
     if (wt?.path) {
+      // A remote pick reuses the branch's existing local worktree, which may
+      // trail the remote ref; say so instead of silently substituting it.
+      if (remote && branch !== localName) {
+        toast.info(`Opened existing worktree on ${localName}; pull there to sync with ${branch}`);
+      }
       onStartIn(wt.path, localName);
       close();
       return;
@@ -241,6 +246,7 @@ export function StartBranchMenu({
               <button
                 key={b.name}
                 onClick={() => pickBranch(b.name, false)}
+                aria-pressed={b.name === current}
                 className="flex w-full items-center gap-2.5 px-2.5 py-1.5 text-left transition-colors hover:bg-droid-elevated/60"
               >
                 <GitBranch className="h-3.5 w-3.5 shrink-0 text-droid-text-muted" />

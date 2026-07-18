@@ -76,6 +76,7 @@ const SplitCell = memo(function SplitCell({
 }) {
   if (!line) return <div className="flex flex-1 bg-droid-bg/30" />;
   const textClass = wrap ? 'whitespace-pre-wrap break-all' : 'whitespace-pre';
+  const isMeta = line.type === 'meta';
   return (
     <div className="flex min-w-0 flex-1" style={ROW_STYLE[line.type]}>
       {/* The left pane is the old file, the right pane the new one; a context
@@ -84,7 +85,11 @@ const SplitCell = memo(function SplitCell({
       <span className="w-4 shrink-0 select-none text-center" style={SIGN_STYLE[line.type]}>
         {SIGN[line.type]}
       </span>
-      <span className={`${textClass} min-w-0 flex-1 px-1 text-droid-text-secondary`}>
+      <span
+        className={`${textClass} min-w-0 flex-1 px-1 ${
+          isMeta ? 'italic text-droid-text-muted/60' : 'text-droid-text-secondary'
+        }`}
+      >
         {line.text || ' '}
       </span>
     </div>
@@ -154,8 +159,13 @@ export function DiffBody({
     const capped: typeof parsed.hunks = [];
     for (const hunk of parsed.hunks) {
       if (budget <= 0) break;
+      // A cut hunk keeps its original @@ header, whose line counts no longer
+      // match what is rendered (and a replacement block may lose its add side);
+      // flag it so the header doesn't claim to be complete.
       capped.push(
-        hunk.lines.length <= budget ? hunk : { ...hunk, lines: hunk.lines.slice(0, budget) },
+        hunk.lines.length <= budget
+          ? hunk
+          : { ...hunk, header: `${hunk.header} (truncated)`, lines: hunk.lines.slice(0, budget) },
       );
       budget -= hunk.lines.length;
     }
@@ -176,9 +186,10 @@ export function DiffBody({
     hunks.forEach((hunk, hi) => {
       out.push({ kind: 'header', text: hunk.header });
       if (splitRows) {
+        // Meta markers ("\ No newline at end of file") are column-scoped by
+        // toSplitRows, so they render as split cells like any other row.
         for (const row of splitRows[hi]) {
-          if (row.left?.type === 'meta') out.push({ kind: 'line', line: row.left });
-          else out.push({ kind: 'split', left: row.left, right: row.right });
+          out.push({ kind: 'split', left: row.left, right: row.right });
         }
       } else {
         for (const line of hunk.lines) out.push({ kind: 'line', line });

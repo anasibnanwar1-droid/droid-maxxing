@@ -46,6 +46,16 @@ interface StoreEntry {
   // In-flight guard: when a refresh is pending, skip subsequent interval ticks
   // so a slow tick (slower than POLL_MS) can't stack parallel git subprocesses.
   refreshing: boolean;
+  // The req id of the currently in-flight refresh. When it no longer matches
+  // entry.req the in-flight results will be dropped, so a re-acquire during
+  // the initial load can tell "valid load pending" from "load invalidated".
+  inFlightReq: number;
+  // Set when a refresh is requested while one is in flight (an explicit
+  // refresh after commit/PR/checkout, or a remount that invalidated the
+  // initial load). The in-flight request may resolve with a pre-action
+  // snapshot, so a queued refresh re-runs as soon as it settles instead of
+  // waiting for the next poll tick.
+  refreshQueued: boolean;
   listeners: Set<() => void>;
   modeCounts: Map<DiffStatMode, number>;
   // Monotonic fetch id: bumped on every refresh (and on teardown) so a slow
@@ -71,6 +81,7 @@ function refreshEntry(entry: StoreEntry) {
   if (entry.refreshing) return;
   entry.refreshing = true;
   const id = ++entry.req;
+  entry.inFlightReq = id;
   const modes = [...entry.modeCounts.keys()];
   const isFirstLoad = !entry.hasLoaded;
   // Only the initial load toggles `loading`; background refreshes update the
@@ -127,7 +138,24 @@ function refreshEntry(entry: StoreEntry) {
         entry.loading = false;
         notify(entry);
       }
+    })
+    // Runs after the result handlers above, so a queued refresh (requested
+    // while this one was in flight) starts against the fully applied snapshot.
+    .finally(() => {
+      if (entry.refreshQueued && store.get(entry.cwd) === entry) {
+        entry.refreshQueued = false;
+        refreshEntry(entry);
+      }
     });
+}
+
+// Run a refresh now, or queue one to run when the in-flight refresh settles.
+// The in-flight request may have started before the caller's action (commit,
+// PR, checkout, worktree change), so skipping would leave the snapshot stale
+// until the next poll tick.
+function requestRefresh(entry: StoreEntry) {
+  if (entry.refreshing) entry.refreshQueued = true;
+  else refreshEntry(entry);
 }
 
 function refreshDiffStat(entry: StoreEntry, mode: DiffStatMode) {
@@ -153,6 +181,8 @@ function acquire(cwd: string, mode: DiffStatMode, listener: () => void): StoreEn
       loading: true,
       hasLoaded: false,
       refreshing: false,
+      inFlightReq: 0,
+      refreshQueued: false,
       listeners: new Set(),
       modeCounts: new Map(),
       req: 0,
@@ -178,6 +208,14 @@ function acquire(cwd: string, mode: DiffStatMode, listener: () => void): StoreEn
   const hadMode = entry.modeCounts.has(mode);
   entry.modeCounts.set(mode, (entry.modeCounts.get(mode) ?? 0) + 1);
   if (isNew) refreshEntry(entry);
+  else if (!entry.hasLoaded && (!entry.refreshing || entry.req !== entry.inFlightReq)) {
+    // Re-acquire before the initial load landed (StrictMode remount, rapid
+    // panel reopen): release() bumped req, so the in-flight load's results
+    // will be dropped and nothing else would populate the snapshot until the
+    // next poll tick. Re-run (or queue) the full refresh. When the in-flight
+    // load is still valid (req matches), it will populate the entry itself.
+    requestRefresh(entry);
+  }
   // A newly watched mode on an existing entry only needs its diff stat; the
   // rest of the snapshot is mode-independent and already polling.
   else if (!hadMode) refreshDiffStat(entry, mode);
@@ -228,7 +266,7 @@ export function useGitEnvironment(cwd: string, diffMode: DiffStatMode): GitEnvir
 
   const refresh = useCallback(() => {
     const entry = store.get(cwd);
-    if (entry) refreshEntry(entry);
+    if (entry) requestRefresh(entry);
   }, [cwd]);
 
   const entry = cwd ? store.get(cwd) : undefined;

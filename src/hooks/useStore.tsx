@@ -2097,11 +2097,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  // Memoize the context value so useStore() consumers only re-render when
-  // state actually changes. dispatch is stable from useReducer, so [state] is
-  // the correct key. Without this, every StoreProvider render creates a fresh
-  // { state, dispatch } object, causing every consumer to re-render on every
-  // dispatch regardless of whether the slice they read changed.
+  // Memoize the context value so a StoreProvider re-render with unchanged
+  // state (parent re-render, StrictMode double-render) doesn't hand consumers
+  // a fresh { state, dispatch } identity. Dispatches still re-render every
+  // consumer, since the reducer returns a new state object; this only removes
+  // the same-state case. dispatch is stable from useReducer, so [state] is the
+  // correct key.
   const value = useMemo(() => ({ state, dispatch }), [state]);
 
   return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>;

@@ -10,18 +10,27 @@ const MIN_FETCH_INTERVAL_MS = 30_000;
 // stale entries (older than the interval) are swept each time we read/write.
 const MAX_THROTTLE_ENTRIES = 32;
 const lastFetchAt = new Map<string, number>();
+// One shared fetch per working directory: remounts (StrictMode) and throttle
+// key changes (cwd -> repoRoot once the environment loads) subscribe to the
+// running fetch instead of starting a second one or losing its result.
+const inFlightByCwd = new Map<string, Promise<boolean>>();
+// Throttle keys with a running fetch are exempt from eviction so the
+// no-parallel-fetch guarantee survives visiting many repos in one interval.
+const inFlightKeys = new Set<string>();
 
 function pruneStaleFetchEntries() {
   if (lastFetchAt.size <= MAX_THROTTLE_ENTRIES) return;
   const cutoff = Date.now() - MIN_FETCH_INTERVAL_MS;
   for (const [key, ts] of lastFetchAt) {
-    if (ts < cutoff) lastFetchAt.delete(key);
+    if (ts < cutoff && !inFlightKeys.has(key)) lastFetchAt.delete(key);
   }
   // If still over cap (many repos accessed within the interval), evict oldest.
   if (lastFetchAt.size > MAX_THROTTLE_ENTRIES) {
-    const sorted = [...lastFetchAt.entries()].sort((a, b) => a[1] - b[1]);
+    const sorted = [...lastFetchAt.entries()]
+      .filter(([key]) => !inFlightKeys.has(key))
+      .sort((a, b) => a[1] - b[1]);
     const excess = lastFetchAt.size - MAX_THROTTLE_ENTRIES;
-    for (let i = 0; i < excess; i++) lastFetchAt.delete(sorted[i][0]);
+    for (let i = 0; i < excess && i < sorted.length; i++) lastFetchAt.delete(sorted[i][0]);
   }
 }
 
@@ -57,33 +66,51 @@ export function useGitFetchOnOpen(
       return;
     }
     pruneStaleFetchEntries();
+    let cancelled = false;
+    const subscribe = (fetchDone: Promise<boolean>) => {
+      setFetching(true);
+      void fetchDone.then((ok) => {
+        if (cancelled) return;
+        setFetching(false);
+        if (ok) cbRef.current();
+      });
+    };
+    const running = inFlightByCwd.get(cwd);
+    if (running) {
+      // A StrictMode remount, or the throttle key changing from cwd to
+      // repoRoot while the fetch is in flight, subscribes to the same fetch:
+      // its result (and the spinner) is preserved without a second network
+      // call, and the current key gets a throttle stamp for future opens.
+      lastFetchAt.set(throttleKey, Date.now());
+      subscribe(running);
+      return () => {
+        cancelled = true;
+        setFetching(false);
+      };
+    }
     if (Date.now() - (lastFetchAt.get(throttleKey) ?? 0) < MIN_FETCH_INTERVAL_MS) {
-      // Under StrictMode the effect double-invokes: the first run sets fetching
-      // and starts a fetch, the cleanup cancels it, and this guard early-returns
-      // on the second run — leaving fetching stuck true forever. Reset it on
-      // every early-return path so the spinner can never get wedged.
+      // Reset on every early-return path so the spinner can never get wedged
+      // by a previous run's cancelled subscription.
       setFetching(false);
       return;
     }
     // Recorded at start (not completion) so a concurrent second picker, or a
-    // failing remote, can't stack parallel fetches.
+    // failing remote, can't stack parallel fetches. try/finally semantics:
+    // even a rejected promise (network/IPC error) resolves the shared promise
+    // and clears the in-flight registries.
     lastFetchAt.set(throttleKey, Date.now());
-    let cancelled = false;
-    setFetching(true);
-    void gitFetch(cwd)
-      .then((res) => {
-        if (cancelled) return;
-        setFetching(false);
-        if (res.ok) cbRef.current();
-      })
-      // try/finally semantics: even a rejected promise (network/IPC error) must
-      // clear the in-flight flag instead of leaving the spinner pinned.
-      .catch(() => {
-        if (cancelled) return;
-        setFetching(false);
+    inFlightKeys.add(throttleKey);
+    const fetchDone = gitFetch(cwd)
+      .then((res) => res.ok)
+      .catch(() => false)
+      .finally(() => {
+        inFlightByCwd.delete(cwd);
+        inFlightKeys.delete(throttleKey);
       });
+    inFlightByCwd.set(cwd, fetchDone);
+    subscribe(fetchDone);
     // The cleanup runs on unmount, open/cwd change, and StrictMode remount; it
-    // must reset fetching too, because the cancelled .then/.catch will no-op.
+    // must reset fetching too, because the cancelled subscription will no-op.
     return () => {
       cancelled = true;
       setFetching(false);

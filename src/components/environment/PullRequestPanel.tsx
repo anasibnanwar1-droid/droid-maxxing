@@ -148,7 +148,8 @@ export function PullRequestPanel({
   checks,
   comments,
   loadingDetail,
-  detailError,
+  checksError,
+  commentsError,
   onBack,
   onRefresh,
 }: {
@@ -157,7 +158,8 @@ export function PullRequestPanel({
   checks: PrCheck[];
   comments: PrComment[];
   loadingDetail: boolean;
-  detailError: string | null;
+  checksError: string | null;
+  commentsError: string | null;
   onBack: () => void;
   onRefresh: () => void;
 }) {
@@ -247,9 +249,9 @@ export function PullRequestPanel({
         </button>
 
         <div className="mx-3 my-1.5 h-px bg-droid-border/70" />
-        <ChecksBlock checks={checks} loading={loadingDetail} error={detailError} />
+        <ChecksBlock checks={checks} loading={loadingDetail} error={checksError} />
         <div className="mx-3 my-1.5 h-px bg-droid-border/70" />
-        <CommentsBlock comments={comments} loading={loadingDetail} error={detailError} />
+        <CommentsBlock comments={comments} loading={loadingDetail} error={commentsError} />
       </div>
 
       <div className="border-t border-droid-border/70 p-2">

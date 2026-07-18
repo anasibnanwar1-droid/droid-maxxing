@@ -261,16 +261,29 @@ export function ReviewPanel({ cwd, onClose }: { cwd: string; onClose: () => void
   const [prCreated, setPrCreated] = useState(false);
   // One-shot detection per cwd/branch: a branch may already have an open PR
   // from a previous session or another tool, in which case offering "Create PR"
-  // would only surface GitHub's duplicate-PR error on submit.
+  // would only surface GitHub's duplicate-PR error on submit. Only an OPEN PR
+  // blocks the button: a merged or closed PR leaves the branch free to open a
+  // subsequent one. The button stays hidden until detection settles so a fast
+  // click can't race a pending lookup into that same duplicate-PR error.
   const [hasPr, setHasPr] = useState(false);
+  const [prChecked, setPrChecked] = useState(false);
   const branch = git.env?.branch ?? null;
   useEffect(() => {
     setPrCreated(false);
     setHasPr(false);
+    setPrChecked(false);
     if (!isGitHub || !branch) return;
     let stale = false;
     void detectPullRequest(cwd, branch).then((res) => {
-      if (!stale && res.ok && res.pr && res.pr.state.toLowerCase() !== 'closed') setHasPr(true);
+      if (stale) return;
+      // Settle on failure too so a gh hiccup can't hide the button forever.
+      setPrChecked(true);
+      if (res.ok && res.pr && res.pr.state.toLowerCase() === 'open') {
+        setHasPr(true);
+        // If the create form was already open when an existing PR turned up,
+        // close it rather than leaving a submit that is guaranteed to fail.
+        setPrOpen(false);
+      }
     });
     return () => {
       stale = true;
@@ -386,11 +399,18 @@ export function ReviewPanel({ cwd, onClose }: { cwd: string; onClose: () => void
     const target = review.files.find(
       (f) => f.path === focus || f.path === norm || norm.endsWith(`/${f.path}`),
     );
-    if (!target) return;
+    if (!target) {
+      // A settled list without the file means the request can't be honored in
+      // this scope. Drop it now; keeping it would re-run this effect on every
+      // poll (signature changes) and surprise-jump if the file appears after
+      // the user has navigated elsewhere.
+      if (!review.loadingList) dispatch({ type: 'CLEAR_REVIEW_FOCUS' });
+      return;
+    }
     jumpTo(target.path);
     dispatch({ type: 'CLEAR_REVIEW_FOCUS' });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state.reviewFocusPath, review.signature]);
+  }, [state.reviewFocusPath, review.signature, review.loadingList]);
 
   const copyPatch = () => {
     setMoreOpen(false);
@@ -420,7 +440,7 @@ export function ReviewPanel({ cwd, onClose }: { cwd: string; onClose: () => void
           active={commitOpen}
           onClick={() => setCommitOpen((v) => !v)}
         />
-        {isGitHub && !prCreated && !hasPr && (
+        {isGitHub && prChecked && !prCreated && !hasPr && (
           <ToolbarButton
             icon={GitPullRequest}
             label="PR"

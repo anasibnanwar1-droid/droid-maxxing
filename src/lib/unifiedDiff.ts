@@ -117,25 +117,27 @@ export function toSplitRows(lines: DiffLine[]): SplitRow[] {
       continue;
     }
     if (line.type === 'meta') {
-      // Keep meta markers (e.g. "\ No newline at end of file") so split view
-      // renders them full-width instead of silently dropping them.
-      rows.push({ left: line, right: null });
+      // A meta marker after a context run ("\ No newline at end of file")
+      // describes the shared final line, so it applies to both panes.
+      rows.push({ left: line, right: line });
       i += 1;
       continue;
     }
     // A replacement run can be interrupted by "\ No newline at end of file"
     // markers (git emits one after the last deleted line and one after the last
-    // added line). Collect those aside so the del/add lines still pair up.
+    // added line). Collect them per side so each marker lands under the column
+    // it describes: old-file markers on the left, new-file markers on the right.
     const dels: DiffLine[] = [];
     const adds: DiffLine[] = [];
-    const metas: DiffLine[] = [];
+    const delMetas: DiffLine[] = [];
+    const addMetas: DiffLine[] = [];
     while (i < lines.length && (lines[i].type === 'del' || lines[i].type === 'meta')) {
-      if (lines[i].type === 'meta') metas.push(lines[i]);
+      if (lines[i].type === 'meta') delMetas.push(lines[i]);
       else dels.push(lines[i]);
       i += 1;
     }
     while (i < lines.length && (lines[i].type === 'add' || lines[i].type === 'meta')) {
-      if (lines[i].type === 'meta') metas.push(lines[i]);
+      if (lines[i].type === 'meta') addMetas.push(lines[i]);
       else adds.push(lines[i]);
       i += 1;
     }
@@ -143,7 +145,10 @@ export function toSplitRows(lines: DiffLine[]): SplitRow[] {
     for (let k = 0; k < rowCount; k++) {
       rows.push({ left: dels[k] ?? null, right: adds[k] ?? null });
     }
-    for (const m of metas) rows.push({ left: m, right: null });
+    const metaCount = Math.max(delMetas.length, addMetas.length);
+    for (let k = 0; k < metaCount; k++) {
+      rows.push({ left: delMetas[k] ?? null, right: addMetas[k] ?? null });
+    }
   }
   return rows;
 }

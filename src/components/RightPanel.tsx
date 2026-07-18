@@ -183,7 +183,8 @@ export default function RightPanel() {
               checks={pr.checks}
               comments={pr.comments}
               loadingDetail={pr.loadingDetail || !pr.detailLoaded}
-              detailError={pr.detailError}
+              checksError={pr.checksError}
+              commentsError={pr.commentsError}
               onBack={() => setView('context')}
               onRefresh={pr.refresh}
             />

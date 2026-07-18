@@ -118,6 +118,7 @@ export function StartInBar() {
                 startIn(path);
                 setRepoOpen(false);
               }}
+              aria-pressed={path === repoRoot}
               className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left transition-colors hover:bg-droid-elevated/60"
             >
               <FolderGit2 className="h-3.5 w-3.5 shrink-0 text-droid-text-muted" />
@@ -176,6 +177,7 @@ export function StartInBar() {
                   startIn(repoRoot);
                   setLocOpen(false);
                 }}
+                aria-pressed={onLocal}
                 className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left transition-colors hover:bg-droid-elevated/60"
               >
                 <PanelsTopLeft className="h-3.5 w-3.5 shrink-0 text-droid-text-muted" />
@@ -202,6 +204,7 @@ export function StartInBar() {
                       if (w.path) startIn(w.path, w.branch ?? undefined);
                       setLocOpen(false);
                     }}
+                    aria-pressed={currentWtPath === w.path}
                     className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left transition-colors hover:bg-droid-elevated/60"
                   >
                     <PanelsTopLeft className="h-3.5 w-3.5 shrink-0 text-droid-text-muted" />

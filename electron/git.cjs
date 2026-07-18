@@ -1211,6 +1211,7 @@ async function scopeRange(root, scope, sessionId) {
       includeUntracked: true,
       priorUntracked: entry?.priorUntracked ?? null,
       priorUntrackedTruncated: !!entry?.untrackedTruncated,
+      priorUntrackedNames: entry?.priorUntrackedNames ?? null,
     };
   }
   // unstaged (working tree vs index)
@@ -1221,8 +1222,14 @@ async function diffFiles(dir, options = {}) {
   const scope = normalizeScope(options.mode);
   const root = await repoRootOf(dir);
   if (!root) return { mode: scope, base: null, files: [] };
-  const { args, base, includeUntracked, priorUntracked, priorUntrackedTruncated } =
-    await scopeRange(root, scope, options.sessionId);
+  const {
+    args,
+    base,
+    includeUntracked,
+    priorUntracked,
+    priorUntrackedTruncated,
+    priorUntrackedNames,
+  } = await scopeRange(root, scope, options.sessionId);
   if (!args) return { mode: scope, base: null, files: [] };
   const [numstat, nameStatus] = await Promise.all([
     runSoft(root, ['diff', ...args, '--numstat', '-z']).catch(() => ''),
@@ -1236,11 +1243,17 @@ async function diffFiles(dir, options = {}) {
         // Hide files that predate the turn only when byte-for-byte unchanged;
         // surface preexisting untracked files the agent edited this turn.
         if (priorSig !== undefined && priorSig === u.sig) continue;
-        // When the turn-start untracked listing was truncated past the cap, a
-        // file absent from the baseline may simply have been beyond the cap
-        // rather than newly created this turn. Skip it so a shifting capped
-        // window doesn't surface unchanged preexisting files as turn changes.
-        if (priorUntrackedTruncated && priorSig === undefined) continue;
+        // When the turn-start stat scan was truncated past the cap, a path
+        // without a signature may still have existed at turn start. The full
+        // name listing (uncapped) settles that: known-preexisting paths stay
+        // hidden (unknowable whether edited), while genuinely new files still
+        // surface. Without the listing (stale cache shape) stay conservative.
+        if (
+          priorUntrackedTruncated &&
+          priorSig === undefined &&
+          (!priorUntrackedNames || priorUntrackedNames.has(u.path))
+        )
+          continue;
       }
       if (!files.some((f) => f.path === u.path)) {
         files.push({
@@ -1334,10 +1347,12 @@ async function markTurnStart(dir, sessionId) {
     .split('\n')
     .filter(Boolean);
   const priorNames = priorListing.slice(0, UNTRACKED_FILE_CAP);
-  // When the untracked listing exceeded the cap, the baseline map can't answer
-  // "did this path predate the turn?" for entries beyond it. Recorded so the
-  // last-turn diff treats those absences as ambiguous rather than as new files.
+  // When the untracked listing exceeded the cap, the signature map can't answer
+  // "did this path predate the turn?" for entries beyond it. Keep the full name
+  // listing too (names are cheap; only stat-ing is capped) so the last-turn
+  // diff can still tell "existed at turn start" from "created this turn".
   const untrackedTruncated = priorListing.length > UNTRACKED_FILE_CAP;
+  const priorUntrackedNames = untrackedTruncated ? new Set(priorListing) : null;
   // Same bounded worker pool as scanUntracked: this runs on the prompt-send
   // path, where stat-ing up to the cap sequentially would stall the turn start,
   // while unbounded Promise.all could exhaust file descriptors on huge repos.
@@ -1357,6 +1372,7 @@ async function markTurnStart(dir, sessionId) {
       baseline,
       priorUntracked,
       untrackedTruncated,
+      priorUntrackedNames,
     });
   return { ok: !!baseline, baseline: baseline || null };
 }

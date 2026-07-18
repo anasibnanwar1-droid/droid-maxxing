@@ -51,10 +51,15 @@ export function CreatePrSheet({
     (value, index, all): value is string =>
       !!value && value !== env?.branch && all.indexOf(value) === index,
   );
+  // The base state can initialize to the head branch (single-branch repo, or
+  // a branch whose recorded base is itself); gh would reject that with "no
+  // commits between X and X". Fall back to the first valid option, and when
+  // none exists disable submit instead of dead-ending on the error.
+  const effectiveBase = baseOptions.includes(base) ? base : baseOptions[0];
 
   const doCreate = () =>
     run(async () => {
-      if (!title.trim()) return;
+      if (!title.trim() || !effectiveBase) return;
       try {
         // Push when there is no upstream yet, or when the local branch is ahead, so
         // gh opens the PR from the latest commits instead of a stale remote tip.
@@ -65,7 +70,12 @@ export function CreatePrSheet({
             return;
           }
         }
-        const res = await createPullRequest(cwd, { title: title.trim(), body, base, draft });
+        const res = await createPullRequest(cwd, {
+          title: title.trim(),
+          body,
+          base: effectiveBase,
+          draft,
+        });
         if (res.ok) {
           toast.success(`Opened PR #${res.number ?? ''}`.trim());
           if (res.url) void openExternal(res.url);
@@ -112,7 +122,9 @@ export function CreatePrSheet({
           className="flex w-full items-center gap-1.5 rounded-lg bg-droid-bg/40 px-2.5 py-1.5 text-[11.5px] hover:bg-droid-bg/60"
         >
           <span className="text-droid-text-muted">Base</span>
-          <span className="flex-1 truncate text-left text-droid-text">{base}</span>
+          <span className="flex-1 truncate text-left text-droid-text">
+            {effectiveBase ?? 'No base branch available'}
+          </span>
           <ChevronDown
             className={`h-3 w-3 transition-transform ${pickingBase ? 'rotate-180' : ''}`}
           />
@@ -146,7 +158,7 @@ export function CreatePrSheet({
         </label>
         <button
           onClick={() => void doCreate()}
-          disabled={!title.trim() || busy}
+          disabled={!title.trim() || !effectiveBase || busy}
           className="flex items-center gap-1.5 rounded-lg bg-droid-accent/15 px-2.5 py-1 text-[11.5px] font-medium text-droid-accent transition-colors hover:bg-droid-accent/25 disabled:opacity-40"
         >
           {busy && <Loader2 className="h-3 w-3 animate-spin" />}

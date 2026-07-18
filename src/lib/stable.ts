@@ -6,6 +6,11 @@
 
 function deepEqual(a: unknown, b: unknown): boolean {
   if (a === b) return true;
+  // NaN !== NaN, but two NaN payloads are the same data; without this a NaN
+  // field would make every poll look changed and defeat the whole point.
+  if (typeof a === 'number' && typeof b === 'number') {
+    return Number.isNaN(a) && Number.isNaN(b);
+  }
   if (a === null || b === null) return false;
   if (typeof a !== typeof b) return false;
   if (typeof a !== 'object') return false; // primitives already handled by ===

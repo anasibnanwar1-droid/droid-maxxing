@@ -68,8 +68,11 @@ test('toSplitRows pairs a no-newline replacement across meta markers', () => {
   assert.ok(paired, 'the replacement should sit on a single paired row');
   assert.equal(paired?.left?.text, 'old');
   assert.equal(paired?.right?.text, 'new');
-  // the no-newline markers are preserved, not dropped
-  assert.ok(rows.some((r) => r.left?.type === 'meta'));
+  // The old-file marker lands in the left column and the new-file marker in
+  // the right column, on the same row.
+  const metaRow = rows.find((r) => r.left?.type === 'meta' || r.right?.type === 'meta');
+  assert.equal(metaRow?.left?.type, 'meta');
+  assert.equal(metaRow?.right?.type, 'meta');
 });
 
 test('parseUnifiedDiff flags binary patches', () => {
@@ -90,11 +93,12 @@ test('toSplitRows pairs deletions with additions', () => {
   assert.equal(rows[rows.length - 2].right?.type, 'ctx');
 });
 
-test('toSplitRows preserves meta markers as left-only rows', () => {
+test('toSplitRows applies a post-context meta marker to both panes', () => {
   const parsed = parseUnifiedDiff(SAMPLE);
   const rows = toSplitRows(parsed.hunks[0].lines);
   const meta = rows.find((r) => r.left?.type === 'meta');
   assert.ok(meta, 'meta row should be kept in split view');
-  assert.equal(meta?.right, null);
+  // After a shared context line, the missing newline describes both files.
+  assert.equal(meta?.right, meta?.left);
   assert.match(meta?.left?.text ?? '', /No newline at end of file/);
 });

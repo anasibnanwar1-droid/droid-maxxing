@@ -13,11 +13,17 @@ export interface PullRequestState {
   // Also settles to true on a FAILED initial load so the panel doesn't spin
   // forever when gh/IPC is unavailable.
   detailLoaded: boolean;
-  // Set when the most recent detail fetch failed outright (gh hiccup, not
-  // desktop, etc.) so the panel can show an error line instead of the
-  // misleading "No checks reported"/"No comments yet" empty states that are
-  // indistinguishable from a genuinely empty PR.
-  detailError: string | null;
+  // Set when the most recent fetch for that section failed outright (gh
+  // hiccup, not desktop, etc.) so the panel can show an error line instead of
+  // the misleading "No checks reported"/"No comments yet" empty states that
+  // are indistinguishable from a genuinely empty PR. Tracked per section so a
+  // partial failure doesn't put an error under the section that succeeded.
+  checksError: string | null;
+  commentsError: string | null;
+  // False until the first detectPullRequest call for this cwd/branch settles,
+  // so callers can gate "create PR" affordances on an authoritative answer
+  // instead of racing a pending detection.
+  detectSettled: boolean;
   refresh: () => void;
 }
 
@@ -37,7 +43,9 @@ export function usePullRequest(
   const [comments, setComments] = useState<PrComment[]>([]);
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [detailLoaded, setDetailLoaded] = useState(false);
-  const [detailError, setDetailError] = useState<string | null>(null);
+  const [checksError, setChecksError] = useState<string | null>(null);
+  const [commentsError, setCommentsError] = useState<string | null>(null);
+  const [detectSettled, setDetectSettled] = useState(false);
   // Mirrors detailLoaded so refreshDetail can read it without taking it as a
   // dependency (which would restart the polling interval on the first load).
   const detailLoadedRef = useRef(false);
@@ -61,11 +69,15 @@ export function usePullRequest(
       return;
     }
     void detectPullRequest(cwd, branch ?? undefined).then((res) => {
+      if (id !== detectReq.current) return;
+      // Settle on failure too: a wedged gh must not leave "create PR"
+      // affordances gated forever behind a detection that will never succeed.
+      setDetectSettled(true);
       // A failed lookup (gh hiccup, network) keeps the last-known PR; only an
       // authoritative answer may replace or clear it. Keep the previous object
       // when the payload is unchanged so `pr`-dependent effects (the detail
       // poller) aren't torn down and restarted on every detection cycle.
-      if (id === detectReq.current && res.ok) {
+      if (res.ok) {
         prCwd.current = cwd;
         setPr((prev) =>
           prev && res.pr && JSON.stringify(prev) === JSON.stringify(res.pr) ? prev : res.pr,
@@ -86,7 +98,9 @@ export function usePullRequest(
     setComments([]);
     setLoadingDetail(false);
     setDetailLoaded(false);
-    setDetailError(null);
+    setChecksError(null);
+    setCommentsError(null);
+    setDetectSettled(false);
     detailLoadedRef.current = false;
   }, [cwd, branch]);
 
@@ -102,7 +116,8 @@ export function usePullRequest(
       setComments([]);
       setLoadingDetail(false);
       setDetailLoaded(false);
-      setDetailError(null);
+      setChecksError(null);
+      setCommentsError(null);
       detailLoadedRef.current = false;
     }
     prNumberRef.current = num;
@@ -136,21 +151,27 @@ export function usePullRequest(
       Promise.all([getPrChecks(cwd, pr.number), getPrComments(cwd, pr.number)])
         .then(([checkRes, commentRes]) => {
           if (id !== detailReq.current) return;
-          const bothOk = checkRes.ok && commentRes.ok;
           // The fetchers resolve ok:false with empty arrays on gh/IPC hiccups;
           // keep the last-known data instead of blanking rows until the next
           // successful poll.
           if (checkRes.ok) setChecks((prev) => stable(prev, checkRes.checks));
           if (commentRes.ok) setComments((prev) => stable(prev, commentRes.comments));
           setLoadingDetail(false);
-          if (bothOk) {
-            setDetailError(null);
+          // Per-section error handling: a checks failure must not put an error
+          // under a Comments section that loaded fine (and vice versa). Only
+          // surface an error when there's no prior data to fall back on
+          // (initial load) or the user explicitly asked for a refresh; a
+          // transient background-poll hiccup keeps showing the last-known rows
+          // without flickering an error banner.
+          if (checkRes.ok) {
+            setChecksError(null);
           } else if (isFirstLoad || userInitiated) {
-            // Only surface an error when there's no prior data to fall back on
-            // (initial load) or the user explicitly asked for a refresh; a
-            // transient background-poll hiccup keeps showing the last-known
-            // rows without flickering an error banner.
-            setDetailError(checkRes.message || commentRes.message || 'Could not load PR details');
+            setChecksError(checkRes.message || 'Could not load PR checks');
+          }
+          if (commentRes.ok) {
+            setCommentsError(null);
+          } else if (isFirstLoad || userInitiated) {
+            setCommentsError(commentRes.message || 'Could not load PR comments');
           }
           // Settle the initial-load flag on BOTH success and failure: without
           // this, a failed first fetch leaves detailLoaded=false forever, so the
@@ -167,7 +188,8 @@ export function usePullRequest(
           if (isFirstLoad) {
             setDetailLoaded(true);
             detailLoadedRef.current = true;
-            setDetailError('Could not load PR details');
+            setChecksError('Could not load PR details');
+            setCommentsError('Could not load PR details');
           }
         });
     },
@@ -193,5 +215,15 @@ export function usePullRequest(
     refreshDetail(true);
   }, [detect, refreshDetail]);
 
-  return { pr, checks, comments, loadingDetail, detailLoaded, detailError, refresh };
+  return {
+    pr,
+    checks,
+    comments,
+    loadingDetail,
+    detailLoaded,
+    checksError,
+    commentsError,
+    detectSettled,
+    refresh,
+  };
 }
