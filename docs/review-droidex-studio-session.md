@@ -250,3 +250,27 @@ node --import tsx --test sidecar/src/design/*.test.ts
 
 Primary review surface: commits above + files named in each section.  
 Base for “before this arc”: parent of `6de206d` (or `b77e4eb` for studio authoring baseline).
+
+---
+
+# Addendum — overnight arc (`84b3799` … `c29bbbf`)
+
+**Range:** `84b3799`..`c29bbbf` (6 commits). Tree clean; `npm test` 160/160, `npm run sidecar:test` 167/167, both typechecks clean. Precommit hooks now pass normally (no `-n`): the lint-error debt in `useStore.tsx` and `MissionManager.ts` was cleared behavior-preserving.
+
+| SHA | Summary |
+|-----|---------|
+| `c29bbbf` | Intake explores N (1–4) rendered direction specimens on canvas; user picks before DNA is committed |
+| `ad1eccb` | DNA pointer auto-appended once per studio chat session (`withDesignDnaPointer`); MissionManager lint debt cleared |
+| `6fb253f` | Craft guideline reframed: intentionality, no forced aesthetic bans |
+| `5b4be42` | Thread switching: HYDRATE-aware canvas (no fly-to/pop), ThreadSkeleton during history load |
+| `d8e9b2d` | Model/reasoning picks optimistic (`MISSION_SET_MODEL`) + precedence fix; send() no longer races settings |
+| `84b3799` | Studio chat reuses main-chat `MessageFeed` (tool cards, thinking, diffs, streaming); SessionThread deleted |
+
+Also inside `ad1eccb` (batch): one-click DNA switching (card = switch, Active badge), DnaShelf joins the panel's thread via sessionKey (was forking a session), frame viewport toggle fix (mode change drops explicit width/height), `design_preview` serves the HTML's directory so multi-file galleries with running motion render on canvas, "rendered galleries not diffs" guideline, StoreContext memoized, `tabular-nums` global, composer @ button wired.
+
+**Review focus:**
+- `sidecar/src/MissionManager.ts` — `withDesignDnaPointer` (pointer appended once per live session; correct for resumes?) and the lint-cleanup diff (behavior-preserving claim).
+- `sidecar/src/design/DesignManager.ts` `renderPreview` — file previews now serve `dirname(abs)` via the path-confined preview server instead of copying one file to tmp. Confinement: workspace-path check + per-id dir pinning + traversal guard in `previewServer.ts`.
+- `src/components/studio/useDesignSession.ts` — optimistic dispatch + changed-only settings push.
+- `src/components/studio/StudioCanvasContext.tsx` — `hydrateCount` mechanism.
+- `src/components/studio/designBrief.ts` `authoringInstruction(directions)` — multi-direction prompt.
