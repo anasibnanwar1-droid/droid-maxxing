@@ -111,7 +111,7 @@ export default function AgentPanel({
 
       {tab === 'libraries' && (
         <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-4">
-          <DnaShelf cwd={cwd} />
+          <DnaShelf cwd={cwd} sessionKey={sessionKey} />
         </div>
       )}
     </div>

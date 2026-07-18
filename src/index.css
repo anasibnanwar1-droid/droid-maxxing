@@ -62,6 +62,9 @@
     font-size: var(--ui-font-size);
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+    /* Fixed-width digits everywhere: timers, counts, and zoom % stay steady
+       instead of jiggling as values tick. */
+    font-variant-numeric: tabular-nums;
   }
 
   #root {

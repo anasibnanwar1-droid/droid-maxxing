@@ -200,7 +200,19 @@ function reducer(state: StudioCanvasState, action: StudioCanvasAction): StudioCa
     case 'UPDATE_FRAME':
       return {
         ...state,
-        frames: state.frames.map((f) => (f.id === action.id ? { ...f, ...action.patch } : f)),
+        frames: state.frames.map((f) => {
+          if (f.id !== action.id) return f;
+          // Switching viewport mode must actually resize: explicit width/height
+          // (free/showcase frames) would otherwise override the preset in
+          // sizeOf() and make the toggle a silent no-op.
+          const dropSize =
+            action.patch.mode !== undefined &&
+            action.patch.width === undefined &&
+            action.patch.height === undefined;
+          return dropSize
+            ? { ...f, ...action.patch, width: undefined, height: undefined }
+            : { ...f, ...action.patch };
+        }),
       };
     case 'MOVE_FRAME':
       return {

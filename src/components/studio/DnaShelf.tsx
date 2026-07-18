@@ -1,13 +1,5 @@
 import { useEffect, useState } from 'react';
-import {
-  BookOpen,
-  Check,
-  MessagesSquare,
-  RefreshCw,
-  Save,
-  ScanLine,
-  Trash2,
-} from 'lucide-react';
+import { BookOpen, Check, MessagesSquare, RefreshCw, Save, ScanLine, Trash2 } from 'lucide-react';
 import { useDesignStore } from '../../hooks/useDesignStore';
 import {
   applyDnaLibrary,
@@ -20,7 +12,7 @@ import {
   scanDesignDna,
   writeDesignDna,
 } from '../../lib/commands';
-import type { DnaLibrarySummary, SavedDnaEntry } from '../../types/bridge';
+import type { DnaDraft, DnaLibrarySummary, DnaState, SavedDnaEntry } from '../../types/bridge';
 import { useStudioCanvas } from './StudioCanvasContext';
 import { useDesignSession } from './useDesignSession';
 import { FontLine, Header, Swatches } from './DnaPrimitives';
@@ -34,18 +26,23 @@ import MotionPreview from './MotionPreview';
  * a visual proposal, apply a curated system, or view the project's current DNA
  * as swatches. Everything is visual; the markdown lives in the repo.
  */
-export default function DnaShelf({ cwd }: { cwd: string }) {
+export default function DnaShelf({ cwd, sessionKey }: { cwd: string; sessionKey?: string }) {
   const { design } = useDesignStore();
-  const dna = design.dna[cwd];
-  const draft = design.drafts[cwd];
+  // Record lookups can miss at runtime even though the index type says otherwise.
+  const dna = design.dna[cwd] as DnaState | undefined;
+  const draft = design.drafts[cwd] as DnaDraft | undefined;
   const libraries = design.libraries;
   const saved = design.savedDna[cwd] ?? [];
   const activeId = design.activeDnaId[cwd] ?? dna?.activeSavedId ?? null;
-  const hasCurrent = !!dna?.design.exists;
-  const currentColors = dna?.tokens ? Object.values(dna.tokens.colors) : [];
+  const hasCurrent = dna?.design.exists ?? false;
+  const motionExists = dna?.motion.exists ?? false;
+  const tokens = dna?.tokens;
+  const currentColors = tokens ? Object.values(tokens.colors) : [];
 
   const { studioDispatch } = useStudioCanvas();
-  const { send, sessionId } = useDesignSession(cwd);
+  // Same key as AgentPanel so interview sends land in the panel's thread, not a
+  // second session keyed by the worktree path.
+  const { send, sessionId } = useDesignSession(cwd, sessionKey);
   const [dismissed, setDismissed] = useState<string | null>(null);
   const [scanning, setScanning] = useState(false);
   const [interview, setInterview] = useState(false);
@@ -56,7 +53,7 @@ export default function DnaShelf({ cwd }: { cwd: string }) {
   // Clear the scanning state once a fresh draft lands for this project.
   useEffect(() => {
     if (draft) setScanning(false);
-  }, [draft?.content]);
+  }, [draft]);
 
   // Pull saved directions + current DNA whenever this shelf mounts for a cwd.
   useEffect(() => {
@@ -68,13 +65,17 @@ export default function DnaShelf({ cwd }: { cwd: string }) {
   // When the design session goes idle, re-read DNA — the agent may have written
   // DESIGN.md via file tools (not design.dna.write), so the shelf would otherwise
   // stay stale ("doesn't come as selected").
-  const streaming = !!(sessionId && design.sessions[cwd]); // session exists; streaming checked via store in AgentPanel
+  const streaming = !!sessionId && cwd in design.sessions; // session exists; streaming checked via store in AgentPanel
   useEffect(() => {
     if (!cwd || !sessionId) return;
     // Soft re-fetch on session attach; AgentPanel's streaming edge is the real
     // idle signal, but a mount refresh already covers most cases.
-    const t = setTimeout(() => readDesignDna(cwd), 400);
-    return () => clearTimeout(t);
+    const t = setTimeout(() => {
+      readDesignDna(cwd);
+    }, 400);
+    return () => {
+      clearTimeout(t);
+    };
   }, [cwd, sessionId, streaming]);
 
   const scan = () => {
@@ -98,7 +99,7 @@ export default function DnaShelf({ cwd }: { cwd: string }) {
 
   return (
     <div className="space-y-5">
-      {showDraft && draft && (
+      {draft && showDraft && (
         <DnaDraftProposal
           draft={draft}
           onApply={() => {
@@ -108,7 +109,9 @@ export default function DnaShelf({ cwd }: { cwd: string }) {
             if (!dna?.motion.exists) writeDesignDna(cwd, 'motion', draft.motion);
             setDismissed(draft.content);
           }}
-          onDismiss={() => setDismissed(draft.content)}
+          onDismiss={() => {
+            setDismissed(draft.content);
+          }}
         />
       )}
 
@@ -129,7 +132,9 @@ export default function DnaShelf({ cwd }: { cwd: string }) {
         />
         {interview && (
           <DnaInterview
-            onClose={() => setInterview(false)}
+            onClose={() => {
+              setInterview(false);
+            }}
             onComplete={(brief) => {
               // Write the intake to DESIGN.md (the agent reads it), then hand off
               // to the design session to author the full system, and switch to the
@@ -147,8 +152,8 @@ export default function DnaShelf({ cwd }: { cwd: string }) {
               <span className="text-[12.5px] font-medium text-droid-text">Design DNA</span>
               <div className="flex items-center gap-2 font-mono text-[10px]">
                 <span className="text-[#6a8a6a]">design</span>
-                <span className={dna?.motion.exists ? 'text-[#6a8a6a]' : 'text-droid-text-muted'}>
-                  {dna?.motion.exists ? 'motion' : 'no motion'}
+                <span className={motionExists ? 'text-[#6a8a6a]' : 'text-droid-text-muted'}>
+                  {motionExists ? 'motion' : 'no motion'}
                 </span>
               </div>
             </div>
@@ -159,11 +164,13 @@ export default function DnaShelf({ cwd }: { cwd: string }) {
                 DESIGN.md is present. Add a token block to unlock validation.
               </div>
             )}
-            {dna?.tokens?.fonts && <FontLine fonts={dna.tokens.fonts} />}
-            {dna?.tokens && (
+            {tokens?.fonts && <FontLine fonts={tokens.fonts} />}
+            {tokens && (
               <div className="mt-3 flex flex-wrap items-center gap-1.5">
                 <button
-                  onClick={() => renderDesignPreview(cwd)}
+                  onClick={() => {
+                    renderDesignPreview(cwd);
+                  }}
                   className="inline-flex items-center gap-1.5 rounded-lg bg-[#ee6018] px-3 py-1.5 text-[12px] font-medium text-black transition-colors hover:bg-[#ff6a1e]"
                 >
                   <BookOpen className="h-3.5 w-3.5" />
@@ -183,7 +190,9 @@ export default function DnaShelf({ cwd }: { cwd: string }) {
                 <input
                   autoFocus
                   value={finalizeName}
-                  onChange={(e) => setFinalizeName(e.target.value)}
+                  onChange={(e) => {
+                    setFinalizeName(e.target.value);
+                  }}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') commitFinalize();
                     if (e.key === 'Escape') setFinalizing(false);
@@ -198,7 +207,9 @@ export default function DnaShelf({ cwd }: { cwd: string }) {
                   Save
                 </button>
                 <button
-                  onClick={() => setFinalizing(false)}
+                  onClick={() => {
+                    setFinalizing(false);
+                  }}
                   className="rounded-md px-2 py-1 text-[11.5px] text-droid-text-muted hover:text-droid-text"
                 >
                   Cancel
@@ -207,7 +218,13 @@ export default function DnaShelf({ cwd }: { cwd: string }) {
             )}
           </div>
         ) : (
-          <IntakeCta scanning={scanning} onScan={scan} onInterview={() => setInterview(true)} />
+          <IntakeCta
+            scanning={scanning}
+            onScan={scan}
+            onInterview={() => {
+              setInterview(true);
+            }}
+          />
         )}
       </div>
 
@@ -225,8 +242,12 @@ export default function DnaShelf({ cwd }: { cwd: string }) {
                 key={entry.id}
                 entry={entry}
                 selected={activeId === entry.id}
-                onApply={() => applySavedDna(cwd, entry.id)}
-                onDelete={() => deleteSavedDna(cwd, entry.id)}
+                onApply={() => {
+                  applySavedDna(cwd, entry.id);
+                }}
+                onDelete={() => {
+                  deleteSavedDna(cwd, entry.id);
+                }}
               />
             ))}
           </div>
@@ -237,7 +258,13 @@ export default function DnaShelf({ cwd }: { cwd: string }) {
         <Header title="Starting points" />
         <div className="space-y-2">
           {libraries.map((lib) => (
-            <LibraryCard key={lib.id} lib={lib} onApply={() => applyDnaLibrary(cwd, lib.id)} />
+            <LibraryCard
+              key={lib.id}
+              lib={lib}
+              onApply={() => {
+                applyDnaLibrary(cwd, lib.id);
+              }}
+            />
           ))}
           {libraries.length === 0 && (
             <div className="text-[11.5px] text-droid-text-muted">Loading curated systems…</div>
@@ -319,13 +346,25 @@ function SavedDnaCard({
   onApply: () => void;
   onDelete: () => void;
 }) {
-  const colors = Object.values(entry.tokens.colors ?? {}).slice(0, 8);
+  const colors = Object.values(entry.tokens.colors).slice(0, 8);
   return (
+    // The whole card is the switch: click a direction to make it active.
     <div
+      role="button"
+      tabIndex={0}
+      onClick={() => {
+        if (!selected) onApply();
+      }}
+      onKeyDown={(e) => {
+        if (!selected && (e.key === 'Enter' || e.key === ' ')) {
+          e.preventDefault();
+          onApply();
+        }
+      }}
       className={`group rounded-xl border p-3 transition-colors ${
         selected
           ? 'border-[#ee6018]/50 bg-[#ee6018]/[0.08]'
-          : 'border-droid-border bg-white/[0.02] hover:border-droid-border'
+          : 'cursor-pointer border-droid-border bg-white/[0.02] hover:border-[#ee6018]/30'
       }`}
     >
       <div className="flex items-start justify-between gap-2">
@@ -334,7 +373,7 @@ function SavedDnaCard({
             <span className="text-[12.5px] font-medium text-droid-text">{entry.name}</span>
             {selected && (
               <span className="rounded-full bg-[#ee6018]/20 px-1.5 py-0.5 text-[9.5px] font-medium uppercase tracking-wide text-[#f0a060]">
-                Selected
+                Active
               </span>
             )}
           </div>
@@ -344,16 +383,16 @@ function SavedDnaCard({
         </div>
         <div className="flex shrink-0 items-center gap-1">
           {!selected && (
-            <button
-              onClick={onApply}
-              className="flex items-center gap-1 rounded-md border border-droid-border px-2 py-1 text-[11px] text-droid-text-secondary opacity-0 transition-all group-hover:opacity-100 hover:border-[#ee6018]/50 hover:text-droid-text"
-            >
+            <span className="flex items-center gap-1 rounded-md border border-droid-border px-2 py-1 text-[11px] text-droid-text-secondary opacity-0 transition-all group-hover:opacity-100">
               <Check className="h-3 w-3" />
-              Apply
-            </button>
+              Use
+            </span>
           )}
           <button
-            onClick={onDelete}
+            onClick={(e) => {
+              e.stopPropagation();
+              onDelete();
+            }}
             title="Remove saved direction"
             className="flex h-6 w-6 items-center justify-center rounded-md text-droid-text-muted opacity-0 transition-all group-hover:opacity-100 hover:bg-white/[0.06] hover:text-[#e0806a]"
           >

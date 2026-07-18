@@ -268,7 +268,13 @@ export default function StudioComposer({
               <IconChip title="Attach an image" onClick={() => fileRef.current?.click()}>
                 <ImagePlus className="h-4 w-4" />
               </IconChip>
-              <IconChip title="Mention a component or frame">
+              <IconChip
+                title="Mention a component or frame"
+                onClick={() => {
+                  onTextChange(text.endsWith(' ') || text === '' ? `${text}@` : `${text} @`);
+                  taRef.current?.focus();
+                }}
+              >
                 <AtSign className="h-4 w-4" />
               </IconChip>
             </div>
