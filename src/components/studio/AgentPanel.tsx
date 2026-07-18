@@ -1,13 +1,14 @@
 import { useState } from 'react';
 import { Blocks, MessageSquare, Palette } from 'lucide-react';
 import { useStore } from '../../hooks/useStore';
+import type { MissionSummary } from '../../types/bridge';
 import { interruptMission } from '../../lib/commands';
 import AskUserModal from '../AskUserModal';
 import { useStudioCanvas, type StudioLeftTab } from './StudioCanvasContext';
 import { useDesignSession } from './useDesignSession';
 import StudioComposer, { type SendOptions } from './StudioComposer';
 import ThreadBody from './ThreadBody';
-import SessionThread from './SessionThread';
+import { MessageFeed } from '../chat';
 import ComponentShelf from './ComponentShelf';
 import DnaShelf from './DnaShelf';
 import ThreadHistoryMenu from './ThreadHistoryMenu';
@@ -34,7 +35,9 @@ export default function AgentPanel({
     cwd,
     sessionKey,
   );
-  const streaming = !!(sessionId && state.missions[sessionId]?.streaming);
+  // Record index can miss at runtime even though the type says otherwise.
+  const mission = sessionId ? (state.missions[sessionId] as MissionSummary | undefined) : undefined;
+  const streaming = !!mission?.streaming;
 
   const handleSubmit = (instruction: string, opts: SendOptions) => {
     send(instruction, opts.modelId, opts.reasoningEffort);
@@ -48,7 +51,9 @@ export default function AgentPanel({
         {TABS.map((t) => (
           <button
             key={t.id}
-            onClick={() => studioDispatch({ type: 'SET_LEFT_TAB', tab: t.id })}
+            onClick={() => {
+              studioDispatch({ type: 'SET_LEFT_TAB', tab: t.id });
+            }}
             className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[12px] transition-colors ${
               tab === t.id
                 ? 'bg-droid-elevated text-droid-text'
@@ -69,7 +74,10 @@ export default function AgentPanel({
         <>
           <div className="min-h-0 flex-1 overflow-y-auto">
             {sessionId ? (
-              <SessionThread events={transcript} streaming={streaming} />
+              <div className="px-4 py-4">
+                {/* Same feed as the main chat — tool cards, thinking, diffs, streaming. */}
+                <MessageFeed events={transcript} pending={streaming} />
+              </div>
             ) : (
               <ThreadBody messages={[]} onPickSuggestion={setText} />
             )}
