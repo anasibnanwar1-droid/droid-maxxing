@@ -8,7 +8,7 @@ import {
   sendToMission,
   updateAgentSettings,
 } from '../../lib/commands';
-import type { ReasoningEffort } from '../../types/bridge';
+import type { MissionSummary, ReasoningEffort, TranscriptEvent } from '../../types/bridge';
 
 /**
  * The project's design session — a normal chat (interactionMode 'auto', never
@@ -21,7 +21,7 @@ import type { ReasoningEffort } from '../../types/bridge';
 export function useDesignSession(cwd: string, sessionKey?: string) {
   const { state, dispatch } = useStore();
   const { design, designDispatch } = useDesignStore();
-  const key = sessionKey || cwd;
+  const key = sessionKey ?? cwd;
   const mapped = design.sessions[key] ?? design.sessions[cwd];
   // '' = intentional new thread; missing key = not decided yet; id = active thread.
   const intentionalNew = design.sessions[key] === '' || design.sessions[cwd] === '';
@@ -36,7 +36,7 @@ export function useDesignSession(cwd: string, sessionKey?: string) {
     if (!cwd || hasMapping) return;
     const activeId = state.activeMissionId;
     if (!activeId) return;
-    const active = state.missions[activeId];
+    const active = state.missions[activeId] as MissionSummary | undefined;
     if (!active) return;
     if (active.kind === 'mission_orchestrator') return;
     const matches =
@@ -62,7 +62,8 @@ export function useDesignSession(cwd: string, sessionKey?: string) {
   useEffect(() => {
     if (!sessionId) return;
     if (state.historyLoaded[sessionId]) return;
-    if ((state.transcripts[sessionId]?.length ?? 0) > 0) return;
+    const existing = state.transcripts[sessionId] as TranscriptEvent[] | undefined;
+    if ((existing?.length ?? 0) > 0) return;
     loadMissionHistory(sessionId);
   }, [sessionId, state.historyLoaded, state.transcripts]);
 
@@ -73,7 +74,7 @@ export function useDesignSession(cwd: string, sessionKey?: string) {
     dispatch({
       type: 'MISSION_TRANSCRIPT',
       event: {
-        id: `local-${Date.now()}`,
+        id: `local-${String(Date.now())}`,
         missionId,
         agentSessionId: 'user',
         role: 'orchestrator',
@@ -88,7 +89,12 @@ export function useDesignSession(cwd: string, sessionKey?: string) {
   const send = (text: string, modelId?: string, reasoningEffort?: ReasoningEffort) => {
     if (!text.trim()) return;
     if (sessionId) {
-      if (modelId !== undefined || reasoningEffort !== undefined) {
+      // Only push settings that actually changed — pickModel already applied
+      // live picks, so re-sending stale composer values here would race it.
+      const changed =
+        (modelId !== undefined && modelId !== mission?.modelId) ||
+        (reasoningEffort !== undefined && reasoningEffort !== mission?.reasoningEffort);
+      if (changed) {
         updateAgentSettings({
           missionId: sessionId,
           agent: 'orchestrator',
@@ -126,6 +132,13 @@ export function useDesignSession(cwd: string, sessionKey?: string) {
 
   const setModel = (modelId?: string, reasoningEffort?: ReasoningEffort) => {
     if (!sessionId) return;
+    // Optimistic dispatch first (same as the main-chat picker): the label
+    // updates instantly and missionSettingOverrides protects the pick from
+    // stale mission.updated/list rebroadcasts.
+    dispatch({ type: 'MISSION_SET_MODEL', missionId: sessionId, modelId });
+    if (reasoningEffort !== undefined) {
+      dispatch({ type: 'MISSION_SET_REASONING', missionId: sessionId, reasoning: reasoningEffort });
+    }
     updateAgentSettings({
       missionId: sessionId,
       agent: 'orchestrator',

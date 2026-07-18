@@ -16,6 +16,19 @@ export interface SendOptions {
 
 const COUNTS = [1, 2, 3, 4];
 
+/** Coerce an effort to one the model supports (fall back to its default). */
+function snapEffort(
+  model:
+    | { supportedReasoningEfforts?: ReasoningEffort[]; defaultReasoningEffort?: ReasoningEffort }
+    | undefined,
+  current: ReasoningEffort | undefined,
+): ReasoningEffort | undefined {
+  const supported = model?.supportedReasoningEfforts ?? [];
+  if (supported.length === 0) return model?.defaultReasoningEffort;
+  if (current && supported.includes(current)) return current;
+  return model?.defaultReasoningEffort ?? supported[Math.min(supported.length - 1, 1)];
+}
+
 /** Compact host label for a frame chip, e.g. "localhost:5173". */
 function frameHost(url: string): string {
   try {
@@ -63,9 +76,18 @@ export default function StudioComposer({
   const [countOpen, setCountOpen] = useState(false);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
-  const { images, addFiles, onPaste, remove: removeImage, clear: clearImages } =
-    useImageAttachments();
+  const {
+    images,
+    addFiles,
+    onPaste,
+    remove: removeImage,
+    clear: clearImages,
+  } = useImageAttachments();
 
+  // Session value first: setModel dispatches MISSION_SET_MODEL optimistically,
+  // so it reflects a pick instantly and stays correct across thread switches
+  // (a lingering local pick would leak into other threads). Local only covers
+  // the pre-session compose.
   const modelId = sessionModelId ?? localModelId;
   const selectedFrame =
     studio.selectedFrameIds.length === 1
@@ -75,19 +97,16 @@ export default function StudioComposer({
   const canSend = text.trim().length > 0 || images.length > 0;
   const selectedModel = modelId ? state.models.find((m) => m.id === modelId) : undefined;
   const efforts = selectedModel?.supportedReasoningEfforts ?? [];
-  // Prefer local pick after a model switch; never show a level the model doesn't support
-  // (e.g. leftover "max" from the previous model).
-  const rawReasoning = localReasoning ?? sessionReasoning;
-  const reasoningEffort =
-    rawReasoning && efforts.length > 0 && !efforts.includes(rawReasoning)
-      ? (selectedModel?.defaultReasoningEffort ?? efforts[Math.min(efforts.length - 1, 1)] ?? efforts[0])
-      : rawReasoning ?? selectedModel?.defaultReasoningEffort;
+  // Session-first for the same reason as the model above; never show a level
+  // the model doesn't support (e.g. leftover "max" from the previous model).
+  const rawReasoning = sessionReasoning ?? localReasoning;
+  const reasoningEffort = snapEffort(selectedModel, rawReasoning);
 
   const grow = () => {
     const ta = taRef.current;
     if (!ta) return;
     ta.style.height = 'auto';
-    ta.style.height = `${Math.min(ta.scrollHeight, 200)}px`;
+    ta.style.height = `${String(Math.min(ta.scrollHeight, 200))}px`;
   };
 
   // Keep height in sync when the text is set externally (e.g. a suggestion).
@@ -98,22 +117,14 @@ export default function StudioComposer({
   useEffect(() => {
     if (!sessionModelId || !sessionReasoning || efforts.length === 0) return;
     if (efforts.includes(sessionReasoning)) return;
-    const snapped =
-      selectedModel?.defaultReasoningEffort ?? efforts[Math.min(efforts.length - 1, 1)] ?? efforts[0];
+    const snapped = snapEffort(selectedModel, undefined);
     setLocalReasoning(snapped);
     onModelChange?.(sessionModelId, snapped);
-  }, [sessionModelId, sessionReasoning, efforts, selectedModel?.defaultReasoningEffort, onModelChange]);
+  }, [sessionModelId, sessionReasoning, efforts, selectedModel, onModelChange]);
 
   const pickModel = (next?: string) => {
     const model = next ? state.models.find((m) => m.id === next) : undefined;
-    const supported = model?.supportedReasoningEfforts ?? [];
-    const current = localReasoning ?? sessionReasoning;
-    const snapped =
-      supported.length === 0
-        ? (model?.defaultReasoningEffort ?? undefined)
-        : current && supported.includes(current)
-          ? current
-          : (model?.defaultReasoningEffort ?? supported[Math.min(supported.length - 1, 1)] ?? supported[0]);
+    const snapped = snapEffort(model, localReasoning ?? sessionReasoning);
     setLocalModelId(next);
     setLocalReasoning(snapped);
     onModelChange?.(next, snapped);
@@ -141,14 +152,16 @@ export default function StudioComposer({
     <div className="px-3 pb-3">
       <div className="rounded-2xl border border-droid-border bg-droid-elevated shadow-[0_10px_40px_-12px_rgba(0,0,0,0.6)] transition-colors focus-within:border-droid-border">
         {/* Reference chips + attached images */}
-        {(chips.length > 0 || selectedFrame || images.length > 0) && (
+        {(chips.length > 0 || selectedFrame !== undefined || images.length > 0) && (
           <div className="flex flex-wrap items-center gap-1.5 px-3 pt-3">
             {selectedFrame && (
               <Chip
                 label={selectedFrame.name}
                 sub={frameHost(selectedFrame.url)}
                 kind="frame"
-                onRemove={() => studioDispatch({ type: 'SELECT_FRAMES', ids: [] })}
+                onRemove={() => {
+                  studioDispatch({ type: 'SELECT_FRAMES', ids: [] });
+                }}
               />
             )}
             {chips.map((c) => (
@@ -157,7 +170,9 @@ export default function StudioComposer({
                 label={c.label}
                 sub={c.tag}
                 kind="element"
-                onRemove={() => { studioDispatch({ type: 'REMOVE_SELECTION', id: c.id }); }}
+                onRemove={() => {
+                  studioDispatch({ type: 'REMOVE_SELECTION', id: c.id });
+                }}
               />
             ))}
             {images.map((src, i) => (
@@ -168,7 +183,9 @@ export default function StudioComposer({
                   className="h-10 w-10 rounded-md object-cover ring-1 ring-white/10"
                 />
                 <button
-                  onClick={() => removeImage(i)}
+                  onClick={() => {
+                    removeImage(i);
+                  }}
                   className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-black/85 text-droid-text-secondary opacity-0 transition-opacity group-hover:opacity-100"
                 >
                   <X className="h-2.5 w-2.5" />
@@ -209,7 +226,9 @@ export default function StudioComposer({
                 open={reasoningOpen}
                 setOpen={setReasoningOpen}
                 value={reasoningEffort ?? selectedModel?.defaultReasoningEffort ?? 'auto'}
-                onPick={(v) => { pickReasoning(v as ReasoningEffort); }}
+                onPick={(v) => {
+                  pickReasoning(v as ReasoningEffort);
+                }}
                 options={efforts}
                 width="w-32"
                 icon={<Gauge className="h-3 w-3" />}
@@ -221,9 +240,11 @@ export default function StudioComposer({
             <Selector
               open={countOpen}
               setOpen={setCountOpen}
-              value={`${count}×`}
-              onPick={(v) => { setCount(Number(v.replace('×', ''))); }}
-              options={COUNTS.map((c) => `${c}×`)}
+              value={`${String(count)}×`}
+              onPick={(v) => {
+                setCount(Number(v.replace('×', '')));
+              }}
+              options={COUNTS.map((c) => `${String(c)}×`)}
               width="w-24"
               icon={<Copy className="h-3 w-3" />}
               align="left"
@@ -358,7 +379,9 @@ function Selector({
   return (
     <div className="relative shrink-0">
       <button
-        onClick={() => { setOpen(!open); }}
+        onClick={() => {
+          setOpen(!open);
+        }}
         className="flex items-center gap-1.5 rounded-lg border border-droid-border bg-white/[0.03] px-2 py-1.5 text-[11.5px] text-droid-text-secondary transition-colors hover:border-droid-border hover:text-droid-text"
       >
         {icon}
@@ -368,7 +391,12 @@ function Selector({
       <AnimatePresence>
         {open && (
           <>
-            <div className="fixed inset-0 z-10" onClick={() => { setOpen(false); }} />
+            <div
+              className="fixed inset-0 z-10"
+              onClick={() => {
+                setOpen(false);
+              }}
+            />
             <motion.div
               initial={{ opacity: 0, y: 6, scale: 0.98 }}
               animate={{ opacity: 1, y: 0, scale: 1 }}
