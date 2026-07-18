@@ -24,11 +24,15 @@ export function briefImages(brief: DesignBrief): string[] {
 }
 
 function line(q: InterviewQuestion, a: Answer | undefined): string | undefined {
-  if (!answered(a)) return undefined;
+  if (!a || !answered(a)) return undefined;
   const parts: string[] = [];
-  if (a!.selected.length) parts.push(a!.selected.join(', '));
-  if (a!.text.trim()) parts.push(a!.text.trim());
-  if (a!.images.length) parts.push(`(${a!.images.length} reference image${a!.images.length === 1 ? '' : 's'} attached)`);
+  if (a.selected.length) parts.push(a.selected.join(', '));
+  if (a.text.trim()) parts.push(a.text.trim());
+  if (a.images.length) {
+    parts.push(
+      `(${String(a.images.length)} reference image${a.images.length === 1 ? '' : 's'} attached)`,
+    );
+  }
   return `- ${q.title} ${parts.join(' — ')}`;
 }
 
@@ -59,7 +63,7 @@ export function toBriefMarkdown(brief: DesignBrief): string {
   return [
     '# Design DNA',
     '',
-    "Living intent for this workspace, captured from a design intake. Read it to understand the",
+    'Living intent for this workspace, captured from a design intake. Read it to understand the',
     "user's taste and direction — treat it as guidance, not a rigid lock, and keep it updated as",
     'their instructions evolve, so future turns and production builds stay true to what they want.',
     '',
@@ -75,12 +79,26 @@ export function toBriefMarkdown(brief: DesignBrief): string {
  *  gathered brief) is READ from DESIGN.md, never embedded here — so the CLI shows
  *  the task, not a forced brief. Fundamentals are stated as knowledge to apply,
  *  not a single forced aesthetic. */
-export function authoringInstruction(): string {
+export function authoringInstruction(directions = 3): string {
+  const n = Math.max(1, Math.min(4, directions));
+  const many = n > 1;
   return [
-    "Author (or refresh) this project's design system. The user's intake is captured in DESIGN.md —",
+    "Author this project's design system. The user's intake is captured in DESIGN.md —",
     'read it first (design_dna tool) to understand their taste and direction, and read design_guidelines.',
     '',
-    'Then write real files in the repo:',
+    ...(many
+      ? [
+          `First, explore ${String(n)} genuinely distinct visual directions that each honor the intake — different`,
+          'type pairings, palettes, and personalities, not one idea at three intensities. For EACH direction',
+          'write a self-contained one-page HTML specimen (inline CSS/JS): name it, show its palette, type',
+          'scale, sample components (button, card, input in default/hover states), and a motion sample that',
+          'actually runs. Preview every specimen on the canvas with design_preview, named "Direction N — <name>",',
+          'so the user compares them side by side. Then ask the user which direction to make the DNA (or what',
+          'to blend) and WAIT for their pick.',
+          '',
+          'Once picked, build out that direction for real:',
+        ]
+      : ['Then write real files in the repo:']),
     '1. DESIGN.md — a fenced `design-tokens` JSON block (color roles, type scale, spacing, radii, shadows)',
     '   with tokens for BOTH light and dark (theme is a user preference), plus prose rationale.',
     '2. MOTION.md — easing curves, a duration scale, hover/press/enter behavior, and a reduced-motion policy.',
@@ -90,8 +108,8 @@ export function authoringInstruction(): string {
     '',
     'Ground it in fundamentals: hierarchy via size/weight/space; a consistent spatial base (4/8px) and a',
     'modular type scale with a deliberate pairing; accessible contrast (WCAG AA+) in both themes; motion',
-    "easing matched to tone; restraint even in bold directions. Reflect the user's taste — explore, do not",
-    'lock to one direction. No AI slop (no purple gradients, Inter/Roboto defaults, generic cards, sparkles,',
-    'emoji, glassmorphism); use real content and explain the reasoning like a real design team.',
+    "easing matched to tone; restraint even in bold directions. Reflect the user's taste, and make every",
+    'font/color/effect choice for a stated reason rather than as a generator default. Use real content and',
+    'explain the reasoning like a real design team.',
   ].join('\n');
 }

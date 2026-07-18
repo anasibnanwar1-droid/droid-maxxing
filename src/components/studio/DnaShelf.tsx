@@ -135,12 +135,14 @@ export default function DnaShelf({ cwd, sessionKey }: { cwd: string; sessionKey?
             onClose={() => {
               setInterview(false);
             }}
-            onComplete={(brief) => {
+            onComplete={(brief, directions) => {
               // Write the intake to DESIGN.md (the agent reads it), then hand off
               // to the design session to author the full system, and switch to the
-              // Agent tab so the user watches it work.
+              // Agent tab so the user watches it work. With directions > 1 the
+              // agent renders that many live specimens on the canvas and waits
+              // for the user's pick before committing the DNA.
               writeDesignDna(cwd, 'design', toBriefMarkdown(brief));
-              send(authoringInstruction());
+              send(authoringInstruction(directions));
               studioDispatch({ type: 'SET_LEFT_TAB', tab: 'agent' });
               setInterview(false);
             }}

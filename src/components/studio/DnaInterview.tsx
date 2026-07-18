@@ -16,23 +16,36 @@ export default function DnaInterview({
   onComplete,
 }: {
   onClose: () => void;
-  onComplete: (brief: DesignBrief) => void;
+  onComplete: (brief: DesignBrief, directions: number) => void;
 }) {
   const [step, setStep] = useState(0);
   const [brief, setBrief] = useState<DesignBrief>({});
+  const [directions, setDirections] = useState(3);
   const total = INTERVIEW_QUESTIONS.length;
   const q = INTERVIEW_QUESTIONS[step];
   const answer = brief[q.id] ?? emptyAnswer();
   const last = step === total - 1;
-  const answeredCount = INTERVIEW_QUESTIONS.filter((question) => answered(brief[question.id])).length;
+  const answeredCount = INTERVIEW_QUESTIONS.filter((question) =>
+    answered(brief[question.id]),
+  ).length;
 
-  const setAnswer = (next: Answer) => setBrief((prev) => ({ ...prev, [q.id]: next }));
-  const back = () => setStep((s) => Math.max(0, s - 1));
-  const next = () => (last ? onComplete(brief) : setStep((s) => Math.min(total - 1, s + 1)));
+  const setAnswer = (next: Answer) => {
+    setBrief((prev) => ({ ...prev, [q.id]: next }));
+  };
+  const back = () => {
+    setStep((s) => Math.max(0, s - 1));
+  };
+  const next = () => {
+    if (last) onComplete(brief, directions);
+    else setStep((s) => Math.min(total - 1, s + 1));
+  };
 
   return (
     <div className="fixed inset-0 z-[70] flex flex-col bg-droid-bg/97 backdrop-blur-xl">
-      <div data-electron-drag-region className="flex h-11 shrink-0 items-center justify-between px-4">
+      <div
+        data-electron-drag-region
+        className="flex h-11 shrink-0 items-center justify-between px-4"
+      >
         <div className="flex items-center gap-2">
           <StudioMark className="h-3.5 w-3.5 text-droid-text-secondary" />
           <span className="text-[12.5px] font-medium text-droid-text">Design intake</span>
@@ -56,7 +69,11 @@ export default function DnaInterview({
             className="h-0.5 flex-1 rounded-full transition-colors duration-300"
             style={{
               backgroundColor:
-                i < step ? '#ee6018' : i === step ? 'rgba(238,96,24,0.5)' : 'rgba(255,255,255,0.08)',
+                i < step
+                  ? '#ee6018'
+                  : i === step
+                    ? 'rgba(238,96,24,0.5)'
+                    : 'rgba(255,255,255,0.08)',
             }}
           />
         ))}
@@ -89,9 +106,34 @@ export default function DnaInterview({
         </button>
 
         <div className="flex items-center gap-2">
+          {last && (
+            <div
+              className="mr-1 flex items-center gap-1"
+              title="How many visual directions to explore"
+            >
+              {[1, 2, 3, 4].map((n) => (
+                <button
+                  key={n}
+                  onClick={() => {
+                    setDirections(n);
+                  }}
+                  className={`h-7 w-7 rounded-md font-mono text-[11.5px] transition-colors ${
+                    directions === n
+                      ? 'bg-[#ee6018]/20 text-[#f0a060]'
+                      : 'text-droid-text-muted hover:bg-white/[0.06] hover:text-droid-text-secondary'
+                  }`}
+                >
+                  {n}
+                </button>
+              ))}
+              <span className="ml-1 text-[11px] text-droid-text-muted">directions</span>
+            </div>
+          )}
           {!last && (
             <button
-              onClick={() => setStep((s) => Math.min(total - 1, s + 1))}
+              onClick={() => {
+                setStep((s) => Math.min(total - 1, s + 1));
+              }}
               className="rounded-lg px-3 py-1.5 text-[12.5px] text-droid-text-muted transition-colors hover:text-droid-text-secondary"
             >
               Skip
@@ -101,7 +143,7 @@ export default function DnaInterview({
             onClick={next}
             className="flex items-center gap-1.5 rounded-lg bg-[#ee6018] px-4 py-1.5 text-[12.5px] font-medium text-black transition-colors hover:bg-[#ff6a1e]"
           >
-            {last ? `Create my system · ${answeredCount} answered` : 'Next'}
+            {last ? `Create my system · ${String(answeredCount)} answered` : 'Next'}
             {!last && <ArrowRight className="h-3.5 w-3.5" />}
           </button>
         </div>
