@@ -1,4 +1,10 @@
-import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type PointerEvent as ReactPointerEvent,
+} from 'react';
 import { useStudioCanvas, sizeOf, type StudioFrame } from './StudioCanvasContext';
 import {
   fitRects,
@@ -71,8 +77,16 @@ export default function StudioCanvas({ onRequestAddFrame }: { onRequestAddFrame:
   }, []);
 
   // Fly the canvas to a newly added frame so focus lands on the new work.
+  // A thread-switch HYDRATE swaps the whole set and must restore the saved
+  // view untouched, so skip the fly-to right after one.
+  const hydrateSeen = useRef(studio.hydrateCount);
+  // True only during the render that swapped in a restored thread (the effect
+  // below syncs the ref right after) — used to mount frames without animation.
+  const restoring = studio.hydrateCount !== hydrateSeen.current;
   useEffect(() => {
-    if (frames.length > prevFrameCount.current) {
+    const hydrated = studio.hydrateCount !== hydrateSeen.current;
+    hydrateSeen.current = studio.hydrateCount;
+    if (!hydrated && frames.length > prevFrameCount.current) {
       const added = frames[frames.length - 1];
       const rect = rootRef.current?.getBoundingClientRect();
       if (rect) {
@@ -86,7 +100,7 @@ export default function StudioCanvas({ onRequestAddFrame }: { onRequestAddFrame:
       }
     }
     prevFrameCount.current = frames.length;
-  }, [frames, animateView]);
+  }, [frames, studio.hydrateCount, animateView]);
 
   useEffect(() => stopAnimation, [stopAnimation]);
 
@@ -100,7 +114,9 @@ export default function StudioCanvas({ onRequestAddFrame }: { onRequestAddFrame:
       }
     };
     window.addEventListener('keydown', onKey, true);
-    return () => window.removeEventListener('keydown', onKey, true);
+    return () => {
+      window.removeEventListener('keydown', onKey, true);
+    };
   }, [studio.interactingFrameId, studioDispatch]);
 
   const localPoint = useCallback((clientX: number, clientY: number): Point => {
@@ -149,7 +165,9 @@ export default function StudioCanvas({ onRequestAddFrame }: { onRequestAddFrame:
       }
     };
     node.addEventListener('wheel', onWheelNative, { passive: false });
-    return () => node.removeEventListener('wheel', onWheelNative);
+    return () => {
+      node.removeEventListener('wheel', onWheelNative);
+    };
   }, [studioDispatch]);
 
   const onPointerDown = (e: ReactPointerEvent) => {
@@ -201,7 +219,7 @@ export default function StudioCanvas({ onRequestAddFrame }: { onRequestAddFrame:
   const onPointerUp = (e: ReactPointerEvent) => {
     const d = drag.current;
     drag.current = null;
-    rootRef.current?.releasePointerCapture?.(e.pointerId);
+    rootRef.current?.releasePointerCapture(e.pointerId);
     if (!d) return;
     if (d.mode === 'marquee') {
       if (d.moved && marquee) {
@@ -256,8 +274,8 @@ export default function StudioCanvas({ onRequestAddFrame }: { onRequestAddFrame:
         style={{
           backgroundImage:
             'radial-gradient(circle, color-mix(in srgb, var(--droid-text) 7%, transparent) 1px, transparent 1px)',
-          backgroundSize: `${gridSize}px ${gridSize}px`,
-          backgroundPosition: `${view.pan.x}px ${view.pan.y}px`,
+          backgroundSize: `${String(gridSize)}px ${String(gridSize)}px`,
+          backgroundPosition: `${String(view.pan.x)}px ${String(view.pan.y)}px`,
           opacity: Math.min(1, 0.35 + view.zoom * 0.4),
         }}
       />
@@ -275,10 +293,12 @@ export default function StudioCanvas({ onRequestAddFrame }: { onRequestAddFrame:
           so pan/marquee always work over them. */}
       <div
         className="pointer-events-none absolute left-0 top-0 origin-top-left"
-        style={{ transform: `translate3d(${view.pan.x}px, ${view.pan.y}px, 0) scale(${view.zoom})` }}
+        style={{
+          transform: `translate3d(${String(view.pan.x)}px, ${String(view.pan.y)}px, 0) scale(${String(view.zoom)})`,
+        }}
       >
         {frames.map((f) => (
-          <StudioFrameBody key={f.id} frame={f} />
+          <StudioFrameBody key={f.id} frame={f} entrance={!restoring} />
         ))}
       </div>
 

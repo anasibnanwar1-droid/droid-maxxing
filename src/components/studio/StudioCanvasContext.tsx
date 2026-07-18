@@ -62,6 +62,9 @@ export interface StudioCanvasState {
   settings: StudioSettings;
   // The frame currently in interactive mode (its iframe receives pointer events).
   interactingFrameId: string | null;
+  // Bumped on every HYDRATE so views can tell a thread-switch restore apart
+  // from an organic frame add (no fly-to, no entrance animation).
+  hydrateCount: number;
 }
 
 export type StudioCanvasAction =
@@ -155,6 +158,7 @@ const initialState: StudioCanvasState = {
   selection: [],
   settings: { interactOnDoubleClick: true },
   interactingFrameId: null,
+  hydrateCount: 0,
 };
 
 function reducer(state: StudioCanvasState, action: StudioCanvasAction): StudioCanvasState {
@@ -240,6 +244,7 @@ function reducer(state: StudioCanvasState, action: StudioCanvasAction): StudioCa
         ...action.state,
         // Always drop interactive mode on restore — the iframe needs a fresh attach.
         interactingFrameId: null,
+        hydrateCount: state.hydrateCount + 1,
       };
     default:
       return state;
@@ -257,6 +262,7 @@ export function emptyStudioCanvasState(): StudioCanvasState {
     selection: [],
     settings: { interactOnDoubleClick: true },
     interactingFrameId: null,
+    hydrateCount: 0,
   };
 }
 

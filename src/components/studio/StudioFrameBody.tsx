@@ -9,7 +9,14 @@ import { useStudioCanvas, sizeOf, type StudioFrame } from './StudioCanvasContext
  * server, rendered at its natural viewport size. The parent world layer applies
  * the pan/zoom transform, so this stays pixel-crisp and hot-reloads on its own.
  */
-export default function StudioFrameBody({ frame }: { frame: StudioFrame }) {
+export default function StudioFrameBody({
+  frame,
+  entrance = true,
+}: {
+  frame: StudioFrame;
+  /** False when mounting a restored thread — no pop-in on switch. */
+  entrance?: boolean;
+}) {
   const { studio, studioDispatch } = useStudioCanvas();
   const interacting = studio.interactingFrameId === frame.id;
   const size = sizeOf(frame);
@@ -51,13 +58,17 @@ export default function StudioFrameBody({ frame }: { frame: StudioFrame }) {
     // Skip the dispatch if already ready — a hot-reloading app fires onLoad
     // repeatedly, and re-dispatching churns the whole canvas each time.
     if (frame.status !== 'ready') {
-      studioDispatch({ type: 'UPDATE_FRAME', id: frame.id, patch: { status: 'ready', error: undefined } });
+      studioDispatch({
+        type: 'UPDATE_FRAME',
+        id: frame.id,
+        patch: { status: 'ready', error: undefined },
+      });
     }
   };
 
   return (
     <motion.div
-      initial={{ opacity: 0, scale: 0.965 }}
+      initial={entrance ? { opacity: 0, scale: 0.965 } : false}
       animate={{ opacity: 1, scale: 1 }}
       transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
       className="absolute overflow-hidden rounded-[10px] bg-white shadow-[0_24px_80px_-24px_rgba(0,0,0,0.75),0_2px_8px_rgba(0,0,0,0.4)]"
@@ -114,9 +125,8 @@ function SelfEmbedError({ url }: { url: string }) {
       <ShieldAlert className="h-6 w-6 text-[#ee6018]" />
       <div className="text-[14px] font-medium text-droid-text">Can’t embed this app in itself</div>
       <div className="max-w-[300px] font-mono text-[11px] leading-relaxed text-droid-text-muted">
-        {url} is DROIDEX’s own address. Rendering it here would nest the app inside
-        itself and spike your CPU. Point the frame at your project’s dev server on a
-        different port.
+        {url} is DROIDEX’s own address. Rendering it here would nest the app inside itself and spike
+        your CPU. Point the frame at your project’s dev server on a different port.
       </div>
     </div>
   );

@@ -12,6 +12,7 @@ import { MessageFeed } from '../chat';
 import ComponentShelf from './ComponentShelf';
 import DnaShelf from './DnaShelf';
 import ThreadHistoryMenu from './ThreadHistoryMenu';
+import ThreadSkeleton from './ThreadSkeleton';
 
 const TABS: { id: StudioLeftTab; label: string; icon: typeof MessageSquare }[] = [
   { id: 'agent', label: 'Agent', icon: MessageSquare },
@@ -74,10 +75,14 @@ export default function AgentPanel({
         <>
           <div className="min-h-0 flex-1 overflow-y-auto">
             {sessionId ? (
-              <div className="px-4 py-4">
-                {/* Same feed as the main chat — tool cards, thinking, diffs, streaming. */}
-                <MessageFeed events={transcript} pending={streaming} />
-              </div>
+              transcript.length === 0 && !state.historyLoaded[sessionId] ? (
+                <ThreadSkeleton />
+              ) : (
+                <div className="px-4 py-4">
+                  {/* Same feed as the main chat — tool cards, thinking, diffs, streaming. */}
+                  <MessageFeed events={transcript} pending={streaming} />
+                </div>
+              )
             ) : (
               <ThreadBody messages={[]} onPickSuggestion={setText} />
             )}
