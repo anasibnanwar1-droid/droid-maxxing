@@ -224,8 +224,9 @@ export function WorktreeMenu({
                       setConfirming(null);
                       if (w.path) void removeWorktree(w.path);
                     }}
+                    disabled={busy}
                     title="Confirm removal"
-                    className="rounded p-1 text-droid-orange hover:bg-droid-orange/15"
+                    className="rounded p-1 text-droid-orange hover:bg-droid-orange/15 disabled:opacity-40"
                   >
                     <Check className="h-3.5 w-3.5" strokeWidth={3} />
                   </button>
@@ -240,8 +241,9 @@ export function WorktreeMenu({
               ) : (
                 <button
                   onClick={() => w.path && setConfirming(w.path)}
+                  disabled={busy}
                   title="Remove worktree"
-                  className="shrink-0 rounded p-1 text-droid-text-muted/0 transition-colors group-hover:text-droid-text-muted hover:!text-droid-orange"
+                  className="shrink-0 rounded p-1 text-droid-text-muted/0 transition-colors group-hover:text-droid-text-muted hover:!text-droid-orange disabled:opacity-40"
                 >
                   <Trash2 className="h-3.5 w-3.5" />
                 </button>

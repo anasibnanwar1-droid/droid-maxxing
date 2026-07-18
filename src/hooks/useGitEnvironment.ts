@@ -103,7 +103,16 @@ function refreshEntry(entry: StoreEntry) {
       // out from under us by release()/teardown, no other refreshEntry could
       // have started while we held it, so clearing is always safe.
       entry.refreshing = false;
-      if (id !== entry.req) return;
+      if (id !== entry.req) {
+        // Invalidated mid-initial-load (a mode release bumped req while a
+        // co-subscriber stayed mounted): these results are dropped and nothing
+        // else would populate the snapshot until the next poll tick, leaving
+        // the remaining subscribers stuck on the spinner for up to POLL_MS.
+        // Queue an immediate re-run instead; `loading` stays true until it
+        // lands, so there's no flash of an empty state.
+        if (isFirstLoad && entry.listeners.size > 0) entry.refreshQueued = true;
+        return;
+      }
       // Track whether any reference actually changed so a silent background
       // refresh only notifies subscribers when there's new data to render.
       const prevEnv = entry.env;
@@ -132,7 +141,11 @@ function refreshEntry(entry: StoreEntry) {
     })
     .catch(() => {
       entry.refreshing = false;
-      if (id !== entry.req) return;
+      if (id !== entry.req) {
+        // Same as the success path: don't strand the initial-load spinner.
+        if (isFirstLoad && entry.listeners.size > 0) entry.refreshQueued = true;
+        return;
+      }
       entry.hasLoaded = true;
       if (isFirstLoad) {
         entry.loading = false;

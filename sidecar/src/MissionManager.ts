@@ -2902,9 +2902,12 @@ export class MissionManager {
     this.stopContextPolling(key);
     if (mission.summary.sessionId) this.stopContextPolling(mission.summary.sessionId);
     mission.unsubscribe?.();
-    for (const agent of mission.agents.values()) {
+    for (const [agentSessionId, agent] of mission.agents) {
       this.stopContextPolling(agent.session.sessionId);
       this.contextSnapshots.delete(agent.session.sessionId);
+      // Keyed by the app-level agent session id (like closeAgent), which is
+      // never reused, so a missed delete would linger forever.
+      this.agentCompactions.delete(agentSessionId);
       agent.unsubscribe?.();
       try {
         await agent.session.close();

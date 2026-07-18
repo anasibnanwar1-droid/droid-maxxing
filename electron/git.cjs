@@ -279,8 +279,7 @@ async function defaultPushRemote(root) {
   const remotes = await listRemotes(root);
   if (remotes.length === 0) return null;
   if (remotes.includes('origin')) return 'origin';
-  if (remotes.length === 1) return remotes[0];
-  return 'origin';
+  return remotes[0] ?? null;
 }
 
 // Remote names may themselves contain "/" (e.g. "foo/bar"), so resolve the
@@ -686,7 +685,7 @@ async function createBranch(dir, { name, base, checkout = true } = {}) {
     await rememberBase(root, name, baseRef);
     return { ok: true, environment: await freshEnvironment(root) };
   } catch (err) {
-    return { ok: false, reason: 'git_error', message: err.message };
+    return { ok: false, reason: 'git_error', message: sanitizeGitError(err.message) };
   }
 }
 
@@ -710,7 +709,7 @@ async function checkout(dir, { ref, allowDirty = false } = {}) {
       await run(root, ['switch', '--', ref]);
       return { ok: true, environment: await freshEnvironment(root) };
     } catch (err) {
-      return { ok: false, reason: 'git_error', message: err.message };
+      return { ok: false, reason: 'git_error', message: sanitizeGitError(err.message) };
     }
   }
 
@@ -753,7 +752,7 @@ async function checkout(dir, { ref, allowDirty = false } = {}) {
         }
         return { ok: true, environment: await freshEnvironment(root) };
       } catch (err) {
-        return { ok: false, reason: 'git_error', message: err.message };
+        return { ok: false, reason: 'git_error', message: sanitizeGitError(err.message) };
       }
     }
   }
@@ -771,9 +770,18 @@ async function checkout(dir, { ref, allowDirty = false } = {}) {
       await run(root, ['switch', '--detach', '--', ref]);
       return { ok: true, environment: await freshEnvironment(root) };
     } catch {
-      return { ok: false, reason: 'git_error', message: err.message };
+      return { ok: false, reason: 'git_error', message: sanitizeGitError(err.message) };
     }
   }
+}
+
+// Git error output often echoes the remote URL verbatim, which can carry
+// embedded credentials (https://x-access-token:TOKEN@host/...). Strip the
+// userinfo before a message crosses to the renderer, using the same rule as
+// environment()'s remoteUrl: greedy to the last '@' within the token so
+// secrets that themselves contain '@' are fully removed.
+function sanitizeGitError(message) {
+  return String(message || '').replace(/(\w+:\/\/)[^\s/]+@/g, '$1');
 }
 
 function sanitizeSegment(value) {
@@ -896,7 +904,7 @@ async function createWorktree(dir, { branch, base, newBranch = false, location }
     invalidateReads(root);
     return { ok: true, path: target, branch };
   } catch (err) {
-    return { ok: false, reason: 'git_error', message: err.message };
+    return { ok: false, reason: 'git_error', message: sanitizeGitError(err.message) };
   }
 }
 
@@ -929,7 +937,7 @@ async function removeWorktree(dir, { path: target, force = false } = {}) {
     invalidateReads(root);
     return { ok: true };
   } catch (err) {
-    return { ok: false, reason: 'git_error', message: err.message };
+    return { ok: false, reason: 'git_error', message: sanitizeGitError(err.message) };
   }
 }
 
@@ -952,7 +960,7 @@ async function commit(dir, { message, all = true } = {}) {
     const head = await tryRun(root, ['rev-parse', '--short', 'HEAD']);
     return { ok: true, head };
   } catch (err) {
-    return { ok: false, reason: 'git_error', message: err.message };
+    return { ok: false, reason: 'git_error', message: sanitizeGitError(err.message) };
   }
 }
 
@@ -1007,7 +1015,7 @@ async function push(dir, { remote, branch, setUpstream = false, force = false } 
     const output = await run(root, args, { timeout: PUSH_TIMEOUT });
     return { ok: true, output, environment: await freshEnvironment(root) };
   } catch (err) {
-    return { ok: false, reason: 'git_error', message: err.message };
+    return { ok: false, reason: 'git_error', message: sanitizeGitError(err.message) };
   }
 }
 
@@ -1024,7 +1032,7 @@ async function fetchRemotes(dir) {
     invalidateReads(root);
     return { ok: true };
   } catch (err) {
-    return { ok: false, reason: 'git_error', message: err.message };
+    return { ok: false, reason: 'git_error', message: sanitizeGitError(err.message) };
   }
 }
 
