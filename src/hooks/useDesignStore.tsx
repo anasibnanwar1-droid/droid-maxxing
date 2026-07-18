@@ -54,7 +54,7 @@ export interface DesignState {
   sessions: Record<string, string>;
   expected: Record<string, string>;
   // Latest brand-book / design preview per cwd (served by the preview harness).
-  previews: Record<string, { id: string; name: string; url: string }>;
+  previews: Record<string, { id: string; name: string; url: string; kind?: 'page' | 'component' }>;
   // All design data is project-scoped, keyed by the mission cwd.
   dna: Record<string, DnaState>;
   drafts: Record<string, DnaDraft>;
@@ -202,7 +202,10 @@ function applyEvent(state: DesignState, ev: ServerEvent): DesignState {
     case 'design.preview':
       return {
         ...state,
-        previews: { ...state.previews, [ev.cwd]: { id: ev.id, name: ev.name, url: ev.url } },
+        previews: {
+          ...state.previews,
+          [ev.cwd]: { id: ev.id, name: ev.name, url: ev.url, kind: ev.kind },
+        },
       };
     case 'design.error':
       return { ...state, lastError: { cwd: ev.cwd, message: ev.message } };
@@ -229,8 +232,9 @@ function reducer(state: DesignState, action: DesignAction): DesignState {
       return { ...state, lastError: null };
     case 'CLEAR_GIT_RESULT': {
       if (!(action.cwd in state.gitResults)) return state;
-      const gitResults = { ...state.gitResults };
-      delete gitResults[action.cwd];
+      const gitResults = Object.fromEntries(
+        Object.entries(state.gitResults).filter(([key]) => key !== action.cwd),
+      );
       return { ...state, gitResults };
     }
     case 'EXPECT_SESSION':

@@ -746,6 +746,13 @@ export type ClientCommand =
     }
   | { type: 'design.git.commit'; cwd: string; message: string }
   | { type: 'design.preview.render'; cwd: string }
+  | {
+      type: 'design.component.preview';
+      cwd: string;
+      file: string;
+      name: string;
+      exportKind: 'default' | 'named';
+    }
   | { type: 'design.workspace.prepare'; cwd: string }
   | { type: 'spec.read'; appSessionId: string; path: string };
 
@@ -902,7 +909,14 @@ export type ServerEvent =
   | { type: 'design.prototypes.state'; cwd: string; prototypes: PrototypeInfo[] }
   | { type: 'design.registry.state'; cwd: string; components: ComponentRegistryEntry[] }
   | { type: 'design.git.committed'; cwd: string; ok: boolean; sha?: string; error?: string }
-  | { type: 'design.preview'; cwd: string; id: string; name: string; url: string }
+  | {
+      type: 'design.preview';
+      cwd: string;
+      id: string;
+      name: string;
+      url: string;
+      kind?: 'page' | 'component';
+    }
   | {
       type: 'design.workspace.ready';
       liveCwd: string;

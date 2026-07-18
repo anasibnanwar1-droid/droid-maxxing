@@ -312,3 +312,10 @@ export const renderDesignPreview = (cwd: string) =>
 
 export const prepareDesignWorkspace = (cwd: string) =>
   bridge.send({ type: 'design.workspace.prepare', cwd });
+
+export const previewComponent = (input: {
+  cwd: string;
+  file: string;
+  name: string;
+  exportKind: 'default' | 'named';
+}) => bridge.send({ type: 'design.component.preview', ...input });

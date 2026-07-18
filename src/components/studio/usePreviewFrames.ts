@@ -13,7 +13,10 @@ export function usePreviewFrames(cwd: string) {
   const bump = useRef(0);
   const framesRef = useRef(studio.frames);
   framesRef.current = studio.frames;
-  const preview = design.previews[cwd];
+  // Record lookup can miss at runtime even though the index type says otherwise.
+  const preview = design.previews[cwd] as
+    | { id: string; name: string; url: string; kind?: 'page' | 'component' }
+    | undefined;
 
   useEffect(() => {
     if (!preview) return;
@@ -23,9 +26,11 @@ export function usePreviewFrames(cwd: string) {
       studioDispatch({
         type: 'UPDATE_FRAME',
         id: preview.id,
-        patch: { url: `${preview.url}?v=${bump.current}`, status: 'loading' },
+        patch: { url: `${preview.url}?v=${String(bump.current)}`, status: 'loading' },
       });
     } else {
+      // Component stages are small and centered; pages get the tall showcase.
+      const component = preview.kind === 'component';
       studioDispatch({
         type: 'ADD_FRAME',
         frame: {
@@ -33,8 +38,8 @@ export function usePreviewFrames(cwd: string) {
           name: preview.name,
           url: preview.url,
           mode: 'custom',
-          width: 1200,
-          height: 3200,
+          width: component ? 720 : 1200,
+          height: component ? 480 : 3200,
           kind: 'showcase',
         },
       });

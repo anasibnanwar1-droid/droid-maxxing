@@ -28,6 +28,7 @@ import {
   saveReference,
 } from './referenceLibrary.js';
 import { extractTokensFromItem } from './referenceExtract.js';
+import { buildComponentPreview, componentPreviewLabel } from './componentPreview.js';
 import { scanComponentRegistry } from './registryScan.js';
 import { formatSwapPrompt, type SwapReplacement } from './swapPrompt.js';
 import { prepareDesignWorkspace, type WorkspaceInfo } from './isolatedWorkspace.js';
@@ -242,6 +243,24 @@ export class DesignManager {
         await this.renderBrandBookPreview(cmd.cwd);
         return;
       }
+      case 'design.component.preview': {
+        const built = await buildComponentPreview({
+          cwd: cmd.cwd,
+          file: cmd.file,
+          name: cmd.name,
+          exportKind: cmd.exportKind,
+        });
+        if (built.error) throw new Error(built.error);
+        await this.servePreview(
+          cmd.cwd,
+          built.id,
+          built.dir,
+          'index.html',
+          componentPreviewLabel(cmd.name),
+          'component',
+        );
+        return;
+      }
       case 'design.workspace.prepare': {
         const info = await this.prepareWorkspace(cmd.cwd);
         this.options.emit({
@@ -361,11 +380,12 @@ export class DesignManager {
     dir: string,
     entry: string,
     label: string,
+    kind: 'page' | 'component' = 'page',
   ): Promise<{ ok: true; url: string; name: string }> {
     await this.options.previewServer.start();
     const base = this.options.previewServer.register(id, dir);
     const url = entry === 'index.html' ? base : `${base}${encodeURIComponent(entry)}`;
-    this.options.emit({ type: 'design.preview', cwd, id, name: label, url });
+    this.options.emit({ type: 'design.preview', cwd, id, name: label, url, kind });
     return { ok: true, url, name: label };
   }
 
