@@ -2,13 +2,15 @@ import { useRef, useEffect, useLayoutEffect, useMemo, useState, useCallback } fr
 import { GripVertical, ChevronRight, Square } from 'lucide-react';
 import { useStore } from '../hooks/useStore';
 import { useMissionLive } from '../hooks/useMissionLive';
+import { motion } from 'framer-motion';
 import {
   MessageFeed,
   WorkingIndicator,
   UserBubble,
   ChatSkeleton,
   TranscriptSkeleton,
-  conversationAnchors,
+  buildGroupedFeed,
+  finalResponseAnchorsFromItems,
 } from './chat';
 import { readFile } from '../lib/desktop';
 import { interruptAgent, loadMissionHistory, loadOlderMissionHistory } from '../lib/commands';
@@ -370,11 +372,18 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
     dispatch({ type: 'SPEC_SET', missionId, path, title, content: specContent });
   }, [missionId, specContent, hasFileSpec, fileSpec, storedSpec?.path, dispatch]);
 
+  // Build the grouped feed once and share it: MessageFeed renders it and the
+  // timeline derives its anchors from the same items, so switching sessions
+  // doesn't run buildFeed/groupTurns twice on every render.
+  const feedItems = useMemo(
+    () => buildGroupedFeed(transcript, true, live, specContent, true),
+    [transcript, live, specContent],
+  );
   // Dots for the conversation timeline: one per turn's final model response,
   // derived from the same feed the transcript renders so the rail stays in sync.
   const timelineAnchors = useMemo(
-    () => (viewingSub ? [] : conversationAnchors(transcript, true, live, specContent)),
-    [transcript, viewingSub, live, specContent],
+    () => (viewingSub ? [] : finalResponseAnchorsFromItems(feedItems)),
+    [feedItems, viewingSub],
   );
 
   // Old/large chats restore only a recent window, which can hold too few final
@@ -426,7 +435,13 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
           }}
         >
           {activeMission && transcript.length > 0 ? (
-            <div className="mx-auto min-w-0 px-6 py-6 max-w-2xl">
+            <motion.div
+              key={`${missionId ?? 'none'}:${viewingSub ? selectedAgent : 'main'}`}
+              initial={{ opacity: 0, y: 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
+              className="mx-auto min-w-0 px-6 py-6 max-w-2xl"
+            >
               {!viewingSub && restore?.status === 'failed' && (
                 <RestoreFailedBanner message={restore.error} onRetry={retryRestore} />
               )}
@@ -439,6 +454,7 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
               )}
               <MessageFeed
                 events={transcript}
+                items={feedItems}
                 pending={live}
                 cwd={activeMission.cwd}
                 onOpenDiff={openDiff}
@@ -450,7 +466,7 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
                   missionId ? () => dispatch({ type: 'SPEC_OPEN_WIKI', missionId }) : undefined
                 }
               />
-            </div>
+            </motion.div>
           ) : activeMission && restore?.status === 'failed' ? (
             <RestoreFailedState message={restore.error} onRetry={retryRestore} />
           ) : activeMission && viewingSub ? (

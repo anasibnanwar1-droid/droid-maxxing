@@ -6,7 +6,6 @@ import {
   Folder,
   FolderPlus,
   Plus,
-  User,
   Settings,
   ChevronRight,
   ArrowUpCircle,
@@ -394,25 +393,15 @@ export default function Sidebar() {
         })()}
       </div>
 
-      {/* Account bar */}
+      {/* Settings */}
       <div className="px-2 py-2 border-t border-droid-border">
         <button
           onClick={() => dispatch({ type: 'TOGGLE_SETTINGS' })}
-          className="w-full flex items-center gap-2.5 px-2 py-1.5 rounded-lg hover:bg-droid-elevated transition-colors text-left"
+          className="w-full flex items-center gap-2.5 px-2 py-2 rounded-lg text-droid-text-secondary hover:text-droid-text hover:bg-droid-elevated transition-colors text-left"
           title="Open settings"
         >
-          <span className="w-7 h-7 rounded-full flex items-center justify-center shrink-0 bg-droid-accent/15 text-droid-accent">
-            <User className="w-4 h-4" />
-          </span>
-          <span className="min-w-0 flex-1">
-            <span className="block text-[12.5px] font-semibold text-droid-text leading-tight truncate">
-              Anas
-            </span>
-            <span className="block text-[10.5px] text-droid-text-muted leading-tight truncate">
-              Max Plan
-            </span>
-          </span>
-          <Settings className="w-4 h-4 text-droid-text-muted shrink-0" />
+          <Settings className="w-4 h-4 shrink-0" />
+          <span className="text-[13px] font-medium">Settings</span>
         </button>
       </div>
     </aside>

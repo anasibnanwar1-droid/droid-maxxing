@@ -17,6 +17,7 @@ import { JsonRender, splitJsonRender, hasJsonRender } from './JsonRender';
 import { extractFileChange, type FileChange } from '../lib/diff';
 import { DiffCard } from './DiffView';
 import {
+  CAT_ICON,
   CAT_LABEL,
   toolMeta,
   safeJson,
@@ -314,21 +315,23 @@ function CommandCard({
 }) {
   const out = output ? stripAnsi(output).trimEnd() : '';
   return (
-    <div className="rounded-xl bg-droid-bg/60 overflow-hidden ring-1 ring-droid-border">
-      <div className="flex items-center gap-2 h-8 px-3 bg-droid-elevated/30">
+    <div className="rounded-xl border border-droid-border overflow-hidden bg-droid-bg/40">
+      <div className="flex items-center gap-2 h-8 px-3 bg-droid-surface/60 border-b border-droid-border">
         <Terminal className="w-3.5 h-3.5 text-droid-text-muted shrink-0" />
-        <span className="min-w-0 flex-1 truncate text-[11.5px] text-droid-text-secondary">
-          {title || 'Command'}
+        <span className="min-w-0 flex-1 truncate text-[10.5px] font-medium uppercase tracking-wider text-droid-text-muted">
+          {title || 'Terminal'}
         </span>
         <CopyButton text={out ? `${command}\n\n${out}` : command} />
       </div>
-      <div className="px-3 py-2.5 font-mono text-[11.5px] leading-[1.6]">
-        <div className="flex gap-1.5 break-words">
-          <span className="select-none text-droid-text-muted/70">$</span>
-          <span className="whitespace-pre-wrap text-droid-text-secondary">{command}</span>
+      <div className="px-3.5 py-3 font-mono text-[11.5px] leading-[1.6]">
+        <div className="flex gap-2 break-words">
+          <span className="select-none text-droid-text-muted" style={{ color: ACCENT }}>
+            $
+          </span>
+          <span className="whitespace-pre-wrap text-droid-text">{command}</span>
         </div>
         {out && (
-          <pre className="mt-2 max-h-56 overflow-auto whitespace-pre-wrap text-[11px] leading-[1.55] text-droid-text-muted/80 break-words">
+          <pre className="mt-2.5 pt-2.5 border-t border-droid-border/60 max-h-56 overflow-auto whitespace-pre-wrap text-[11px] leading-[1.55] text-droid-text-muted break-words">
             {out}
           </pre>
         )}
@@ -339,14 +342,22 @@ function CommandCard({
 
 function ToolLine({ event, output }: { event: TranscriptEvent; output?: string }) {
   const { cat, detail } = toolMeta(event.toolName, event.toolArgs);
+  const Icon = CAT_ICON[cat];
   const out = output ? stripAnsi(output).trimEnd() : '';
+  const raw = detail || event.toolName || '';
+  const slash = raw.lastIndexOf('/');
+  const looksLikePath = slash > 0 && !raw.includes(' ');
+  const dir = looksLikePath ? raw.slice(0, slash + 1) : '';
+  const name = looksLikePath ? raw.slice(slash + 1) : raw;
   return (
     <div>
-      <div className="text-[12.5px] leading-relaxed break-words">
-        <span className="text-droid-text-secondary">{CAT_LABEL[cat]}</span>
-        {(detail || event.toolName) && (
-          <span className="ml-1.5 font-mono text-[11.5px] text-droid-text-muted">
-            {detail || event.toolName}
+      <div className="flex items-center gap-1.5 text-[12.5px] leading-relaxed min-w-0">
+        <Icon className="w-3.5 h-3.5 shrink-0 text-droid-text-muted" />
+        <span className="text-droid-text-secondary shrink-0">{CAT_LABEL[cat]}</span>
+        {raw && (
+          <span className="font-mono text-[11.5px] min-w-0 truncate">
+            {dir && <span className="text-droid-text-muted/50">{dir}</span>}
+            <span className="text-droid-text-muted">{name}</span>
           </span>
         )}
       </div>
@@ -813,7 +824,7 @@ export interface ConversationAnchor {
 // One anchor per turn: the turn's final model response (its summary). The id is
 // the feed item key, which MessageFeed also stamps onto the rendered row so the
 // timeline can scroll to it.
-function finalResponseAnchorsFromItems(items: FeedItem[]): ConversationAnchor[] {
+export function finalResponseAnchorsFromItems(items: FeedItem[]): ConversationAnchor[] {
   const out: ConversationAnchor[] = [];
   let pendingKey: string | null = null;
   let pendingText: string | undefined;
@@ -834,6 +845,19 @@ function finalResponseAnchorsFromItems(items: FeedItem[]): ConversationAnchor[] 
   return out;
 }
 
+// Build the grouped feed once so callers can share it (the chat view derives
+// timeline anchors from the same items it hands to MessageFeed, instead of
+// running buildFeed/groupTurns a second time on every render and switch).
+export function buildGroupedFeed(
+  events: TranscriptEvent[],
+  rich: boolean,
+  pending: boolean,
+  specContent?: string,
+  changes = false,
+): FeedItem[] {
+  return groupTurns(buildFeed(events, rich), pending, specContent, changes);
+}
+
 // Public helper so the chat view can derive the same anchors MessageFeed stamps.
 export function conversationAnchors(
   events: TranscriptEvent[],
@@ -841,7 +865,7 @@ export function conversationAnchors(
   pending: boolean,
   specContent?: string,
 ): ConversationAnchor[] {
-  return finalResponseAnchorsFromItems(groupTurns(buildFeed(events, rich), pending, specContent));
+  return finalResponseAnchorsFromItems(buildGroupedFeed(events, rich, pending, specContent));
 }
 
 // Best-effort end timestamp of a feed item, used to time the live working cue.
@@ -1677,6 +1701,7 @@ function SubagentLine({
 /* ── The activity feed (list only; parent owns the scroll container) ── */
 export function MessageFeed({
   events,
+  items: providedItems,
   pending,
   cwd,
   onOpenDiff,
@@ -1687,6 +1712,7 @@ export function MessageFeed({
   onOpenSpecWiki,
 }: {
   events: TranscriptEvent[];
+  items?: FeedItem[];
   pending: boolean;
   cwd?: string;
   onOpenDiff?: (c: FileChange) => void;
@@ -1734,8 +1760,8 @@ export function MessageFeed({
   );
 
   const items = useMemo(
-    () => groupTurns(buildFeed(events, rich), pending, specContent, changes),
-    [events, pending, rich, changes, specContent],
+    () => providedItems ?? groupTurns(buildFeed(events, rich), pending, specContent, changes),
+    [providedItems, events, pending, rich, changes, specContent],
   );
 
   // The conversation timeline anchors a dot on each turn's final model response.
