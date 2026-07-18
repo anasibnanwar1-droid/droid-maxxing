@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import type { RefObject } from 'react';
 import type { ConversationAnchor } from './chat';
 
@@ -79,14 +80,24 @@ export function ConversationTimeline({
           );
         })}
       </div>
-      {hover && (
-        <div
-          className="pointer-events-none fixed z-50 max-w-[300px] -translate-y-1/2 overflow-hidden whitespace-pre-line rounded-md bg-droid-elevated px-2.5 py-1.5 text-[11px] leading-snug text-droid-text-secondary shadow-md ring-1 ring-droid-border/60"
-          style={{ top: hover.top, left: hover.left }}
-        >
-          {hover.label}
-        </div>
-      )}
+      {hover &&
+        createPortal(
+          <div
+            className="pointer-events-none fixed z-[60] max-w-[380px] rounded-md bg-droid-elevated px-2.5 py-1.5 text-[11px] leading-snug text-droid-text-secondary shadow-md ring-1 ring-droid-border/60"
+            style={{
+              top: hover.top,
+              left: hover.left,
+              transform: 'translateY(-50%)',
+              display: '-webkit-box',
+              WebkitLineClamp: 2,
+              WebkitBoxOrient: 'vertical',
+              overflow: 'hidden',
+            }}
+          >
+            {hover.label}
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }

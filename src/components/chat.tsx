@@ -837,20 +837,15 @@ function isUserMessage(item: FeedItem): boolean {
   return item.type === 'message' && item.event.author === 'user';
 }
 
-// Short preview of a message for the conversation timeline tooltip: the first
-// few non-empty lines, capped in length so a large prompt can't produce a huge
-// tooltip. Newlines are preserved so the hover can show a couple of lines.
+// Short preview of a message for the conversation timeline tooltip: whitespace
+// (including newlines) is collapsed to single spaces so the hover reads as one
+// flowing horizontal snippet, capped in length so a large prompt can't produce
+// a huge tooltip.
 function turnLabel(text?: string): string {
   if (!text) return 'Message';
-  const lines = text
-    .replace(/\r/g, '')
-    .split('\n')
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0)
-    .slice(0, 3);
-  const preview = lines.join('\n');
-  if (!preview) return 'Message';
-  return preview.length > 200 ? `${preview.slice(0, 200).trimEnd()}…` : preview;
+  const clean = text.replace(/\s+/g, ' ').trim();
+  if (!clean) return 'Message';
+  return clean.length > 160 ? `${clean.slice(0, 160).trimEnd()}…` : clean;
 }
 
 export interface ConversationAnchor {
