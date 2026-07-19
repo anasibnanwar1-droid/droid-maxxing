@@ -508,22 +508,19 @@ async function scanUntrackedOf(root) {
     let entry = { path: rel, additions: 0, binary: false, sig: null };
     const full = path.join(root, rel);
     try {
-      // Stat first: on the steady-state poll almost every file is unchanged, so
-      // a cache hit costs one stat instead of an open/fstat/close round-trip.
-      const probe = await fsp.stat(full);
-      const cached = prior.get(rel);
-      if (cached && cached.sig === `${probe.size}:${probe.mtimeMs}`) {
-        return { path: rel, additions: cached.additions, binary: cached.binary, sig: cached.sig };
-      }
-      // Changed or new: open once and both stat and read through the same
-      // descriptor so the size check and the read observe the same file,
-      // closing the check-then-use race where the file could change between
-      // the probe stat() above and readFile().
+      // Open first and run every check through the descriptor: the cache
+      // probe (fstat), the size check, and the read all observe the same
+      // file, so there's no path-based check-then-use window where the entry
+      // could be swapped between a probe stat() and the open/read.
       let fh;
       try {
         fh = await fsp.open(full, 'r');
         const stat = await fh.stat();
         const sig = `${stat.size}:${stat.mtimeMs}`;
+        const cached = prior.get(rel);
+        if (cached && cached.sig === sig) {
+          return { path: rel, additions: cached.additions, binary: cached.binary, sig };
+        }
         let additions = 0;
         let binary = false;
         if (stat.isFile() && stat.size <= UNTRACKED_BYTE_CAP) {
