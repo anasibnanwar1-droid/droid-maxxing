@@ -1881,9 +1881,12 @@ export class MissionManager {
   ): boolean {
     const compaction = extractCompactionNotification(note);
     if (!compaction) {
+      // Safety net for a session_compacted that never arrives: only a report
+      // of the daemon going idle settles the flag. Intermediate states such as
+      // generating/thinking can surface mid-compaction, and settling on those
+      // would drain a queued send into a session still being compacted.
       const state = extractDroidWorkingState(note);
-      if (state && state !== 'compacting_conversation')
-        this.setAutoCompacting(missionId, agentSessionId, role, false);
+      if (state === 'idle') this.setAutoCompacting(missionId, agentSessionId, role, false);
       return false;
     }
     if (compaction.kind === 'started') {
@@ -2433,6 +2436,9 @@ export class MissionManager {
         lastUsedAt: Date.now(),
       };
       agent.unsubscribe = session.onNotification((note: Record<string, unknown>) => {
+        // The daemon's auto-compaction notifications are handled by
+        // handleCompactionNotification, which owns the agent's status and
+        // refresh; any other notification is normalized and applied here.
         if (this.handleCompactionNotification(appSessionId, agentSessionId, role, session, note))
           return;
         for (const n of normalizeNotification(appSessionId, agentSessionId, role, note))
@@ -2654,6 +2660,7 @@ export class MissionManager {
     if (!mission || !agent) return;
     mission.agents.delete(agentSessionId);
     this.agentCompactions.delete(agentSessionId);
+    this.contextSnapshots.delete(agentSessionId);
     this.stopContextPolling(agent.session.sessionId);
     agent.unsubscribe?.();
     try {
@@ -2895,8 +2902,12 @@ export class MissionManager {
     this.stopContextPolling(key);
     if (mission.summary.sessionId) this.stopContextPolling(mission.summary.sessionId);
     mission.unsubscribe?.();
-    for (const agent of mission.agents.values()) {
+    for (const [agentSessionId, agent] of mission.agents) {
       this.stopContextPolling(agent.session.sessionId);
+      this.contextSnapshots.delete(agent.session.sessionId);
+      // Keyed by the app-level agent session id (like closeAgent), which is
+      // never reused, so a missed delete would linger forever.
+      this.agentCompactions.delete(agentSessionId);
       agent.unsubscribe?.();
       try {
         await agent.session.close();
@@ -2918,6 +2929,8 @@ export class MissionManager {
     await this.browsers.close(mission.summary.id).catch(() => {});
     this.missions.delete(key);
     this.usageOffsets.delete(key);
+    this.contextSnapshots.delete(key);
+    if (mission.summary.sessionId) this.contextSnapshots.delete(mission.summary.sessionId);
     this.emitMissionList();
   }
 

@@ -19,6 +19,7 @@ import {
 } from '../lib/commands';
 import { browserTranscriptReferencesFromDesignReferences } from './browser/browserTranscriptReferences';
 import { pickDirectory, listFiles } from '../lib/desktop';
+import { markGitTurnStart } from '../lib/git';
 import { createLocalDesignTranscriptEvent, newQueueId } from '../lib/promptQueue';
 import { composePrompt } from '../lib/composePrompt';
 import {
@@ -40,6 +41,7 @@ import ModelSelectorPopover from './ModelSelectorPopover';
 import PermissionInline from './PermissionInline';
 import PlanApprovalInline from './PlanApprovalInline';
 import { ModelIcon, providerOf } from './ModelIcon';
+import { StartInBar } from './environment/StartInBar';
 import type { SkillInfo, SkillLocation } from '../types/bridge';
 
 const ACCENT = 'var(--droid-accent)';
@@ -92,6 +94,7 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
   const [sendHover, setSendHover] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const submittingRef = useRef(false);
   const pendingCaret = useRef<number | null>(null);
   const prevLive = useRef<{ missionId: string | null; live: boolean }>({
     missionId: null,
@@ -335,7 +338,20 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
     setAttachedFiles([]);
   };
 
+  // Re-entry guard: a send awaits markGitTurnStart before the input is cleared,
+  // so without this a second Enter/click during that window would resend the
+  // same payload (and create a duplicate mission/turn).
   const handleSubmit = async (mode: SubmitMode = 'queue') => {
+    if (submittingRef.current) return;
+    submittingRef.current = true;
+    try {
+      await runSubmit(mode);
+    } finally {
+      submittingRef.current = false;
+    }
+  };
+
+  const runSubmit = async (mode: SubmitMode = 'queue') => {
     const text = input.trim();
     const hasPayload = text || activeSkills.length > 0 || attachedFiles.length > 0;
     if (!hasPayload) return;
@@ -371,6 +387,13 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
       const { orchestrator, worker, validator } = state.agentConfig;
       const clientRef = newClientRef();
       registerPending(clientRef);
+      // Clear the composer before the git-baseline await below so a prompt the
+      // user starts typing during that delay is never wiped by a late clear.
+      setInput('');
+      resetAttachments();
+      // Snapshot the tree before the agent's first turn so the Review "Last
+      // turn" scope only attributes changes this session actually makes.
+      await markGitTurnStart(dir);
       createMission({
         clientRef,
         cwd: dir,
@@ -389,19 +412,22 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
         validatorModel: validator.modelId,
         validatorReasoning: validator.reasoning,
       });
-      setInput('');
-      resetAttachments();
       return;
     }
 
     // Draft/default chat: first message creates the session. No workspace is required.
     if (!activeMission) {
+      const dir = state.draftChat?.cwd ?? '';
       const { orchestrator } = state.agentConfig;
       const clientRef = newClientRef();
       registerPending(clientRef);
+      // Clear before the baseline await (see above) so fast typing isn't lost.
+      setInput('');
+      resetAttachments();
+      if (dir) await markGitTurnStart(dir);
       createMission({
         clientRef,
-        cwd: state.draftChat?.cwd ?? '',
+        cwd: dir,
         title: (text || activeSkills[0]?.name || 'Chat').slice(0, 48),
         goal: composed,
         interactionMode: isSpecMode ? 'spec' : 'auto',
@@ -413,8 +439,6 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
         compactionTokenLimit: state.compactionTokenLimit,
         compactionTokenLimitPerModel: state.compactionTokenLimitPerModel,
       });
-      setInput('');
-      resetAttachments();
       return;
     }
 
@@ -450,6 +474,15 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
       },
     });
 
+    // Clear the composer now (before any await) so a prompt the user starts
+    // typing during the git-baseline delay below is never wiped out.
+    setInput('');
+    resetAttachments();
+
+    // Capture the last-turn baseline before the agent can touch the tree;
+    // a fire-and-forget call here races the first edit and corrupts the diff.
+    if (activeMission.cwd) await markGitTurnStart(activeMission.cwd, activeMission.id);
+
     try {
       if (targetAgentSessionId) {
         if (mode === 'now') sendToAgentNow(activeMission.id, targetAgentSessionId, composed);
@@ -459,33 +492,44 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
     } catch (err) {
       console.error('[PromptInput] sendToMission failed:', err);
     }
-
-    setInput('');
-    resetAttachments();
   };
 
   const queue: QueuedPrompt[] = activeMission ? (state.promptQueue[activeMission.id] ?? []) : [];
 
-  const deliverPrompt = (p: QueuedPrompt) => {
+  // Mirror the live queue so an async delivery can re-check membership after an
+  // await, even though deliverPrompt closes over a stale render snapshot.
+  const promptQueueRef = useRef(state.promptQueue);
+  promptQueueRef.current = state.promptQueue;
+
+  const deliverPrompt = async () => {
     if (!activeMission) return;
-    if (p.design) {
+    // Capture the Last-turn git baseline before sending ANY prompt (design
+    // included) so the Review tab diffs the turn from the right starting point.
+    if (activeMission.cwd) await markGitTurnStart(activeMission.cwd, activeMission.id);
+    // The queue stays editable while that runs, so deliver whatever is now at
+    // the head: this honors deletes and edits (both remove the item) as well as
+    // reorders, and never sends a stale prompt out of the visible order.
+    const head = (promptQueueRef.current[activeMission.id] ?? [])[0];
+    if (!head) return;
+
+    if (head.design) {
       try {
-        sendDesignPrompt(p.design.browserKey, p.text, p.design.referenceIds);
+        sendDesignPrompt(head.design.browserKey, head.text, head.design.referenceIds);
       } catch (err) {
         console.error('[PromptInput] queued design send failed:', err);
         return;
       }
-      const browserRefs = browserTranscriptReferencesFromDesignReferences(p.design.references);
+      const browserRefs = browserTranscriptReferencesFromDesignReferences(head.design.references);
       dispatch({
         type: 'MISSION_TRANSCRIPT',
-        event: createLocalDesignTranscriptEvent(activeMission.id, p.text, browserRefs),
+        event: createLocalDesignTranscriptEvent(activeMission.id, head.text, browserRefs),
       });
-      dispatch({ type: 'REMOVE_QUEUED_PROMPT', missionId: activeMission.id, id: p.id });
+      dispatch({ type: 'REMOVE_QUEUED_PROMPT', missionId: activeMission.id, id: head.id });
       return;
     }
-    const composed = composeFrom(p.text, p.skills, p.files);
+
     try {
-      sendToMission(activeMission.id, composed);
+      sendToMission(activeMission.id, composeFrom(head.text, head.skills, head.files));
     } catch (err) {
       // Keep the prompt staged and skip the transcript echo so a send failure
       // neither loses queued input nor leaves a duplicate user message behind.
@@ -501,13 +545,13 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
         role: 'orchestrator',
         ts: Date.now(),
         kind: 'text',
-        text: p.text,
+        text: head.text,
         author: 'user',
-        skills: p.skills,
-        files: p.files,
+        skills: head.skills,
+        files: head.files,
       },
     });
-    dispatch({ type: 'REMOVE_QUEUED_PROMPT', missionId: activeMission.id, id: p.id });
+    dispatch({ type: 'REMOVE_QUEUED_PROMPT', missionId: activeMission.id, id: head.id });
   };
 
   // When the current turn finishes, deliver the next staged prompt. Delivering
@@ -518,7 +562,7 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
     // missions mid-turn must not drain a different mission's queue.
     if (prev.live && !isLive && activeMission && prev.missionId === activeMission.id) {
       const next = (state.promptQueue[activeMission.id] ?? [])[0];
-      if (next) deliverPrompt(next);
+      if (next) void deliverPrompt();
     }
     prevLive.current = { missionId: activeMission?.id ?? null, live: isLive };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -784,8 +828,14 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
           </div>
         )}
 
+        {!activeMission && !missionPreview && cwd && (
+          <div className="relative z-20 mx-4 -mb-3 min-w-0 rounded-t-2xl border border-b-0 border-droid-border bg-droid-elevated px-3 pb-5 pt-2">
+            <StartInBar />
+          </div>
+        )}
+
         <div
-          className={`relative bg-droid-elevated border rounded-2xl transition-colors ${missionPreview ? '' : boxBorder}`}
+          className={`relative z-10 bg-droid-elevated border rounded-2xl transition-colors ${missionPreview ? '' : boxBorder}`}
           style={
             missionPreview
               ? {

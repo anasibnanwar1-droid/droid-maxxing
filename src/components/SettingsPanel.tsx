@@ -1,13 +1,33 @@
-import { useStore, type LiveEnterBehavior } from '../hooks/useStore';
+import { useStore, type DiffViewMode, type LiveEnterBehavior } from '../hooks/useStore';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ChevronLeft, ChevronDown, Search, Sun, Moon, Monitor, Check, X, Plus } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import {
+  ChevronLeft,
+  ChevronDown,
+  Search,
+  Sun,
+  Moon,
+  Monitor,
+  Check,
+  X,
+  Plus,
+  Columns2,
+  GitBranch,
+  Loader2,
+  RefreshCw,
+  Trash2,
+} from 'lucide-react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ColorField } from './ColorPicker';
 import { ModelIcon, providerOf } from './ModelIcon';
 import type { ModelInfo } from '../types/bridge';
+import type { GitWorktree } from '../types/vcs';
 import { useOnboarding } from '../hooks/useOnboarding';
 import { getAppVersion, type AppUpdateInfo } from '../lib/onboarding';
 import { refreshAppUpdate, startAppUpdate } from '../lib/appUpdate';
+import { getGitWorktrees, isWorktreeInUse, removeGitWorktree, worktreeName } from '../lib/git';
+import { activeSessionCwds } from '../lib/missions';
+import { workspaceName } from '../lib/workspaces';
+import { toast } from '../lib/toast';
 
 const PRESET_ACCENTS = [
   '#ee6018',
@@ -844,6 +864,24 @@ function GeneralSection() {
         </SettingRow>
       </div>
 
+      <GroupLabel>Diff display</GroupLabel>
+      <div className="rounded-xl border border-droid-border bg-droid-surface divide-y divide-droid-border mb-8">
+        <SettingRow
+          label="Diff view"
+          description="How file diffs render in the Review tab — one column or side-by-side."
+        >
+          <Dropdown
+            value={state.diffView}
+            width="w-44"
+            options={[
+              { value: 'unified', label: 'Unified' },
+              { value: 'split', label: 'Split' },
+            ]}
+            onChange={(mode) => dispatch({ type: 'SET_DIFF_VIEW', mode: mode as DiffViewMode })}
+          />
+        </SettingRow>
+      </div>
+
       {/* Compaction */}
       <GroupLabel>Compaction</GroupLabel>
       <div className="rounded-xl border border-droid-border bg-droid-surface divide-y divide-droid-border mb-8">
@@ -1073,6 +1111,178 @@ function SetupSection({ onClose }: { onClose: () => void }) {
   );
 }
 
+interface RepoWorktrees {
+  root: string;
+  name: string;
+  worktrees: GitWorktree[];
+}
+
+function WorktreesSection() {
+  const { state } = useStore();
+  const [repos, setRepos] = useState<RepoWorktrees[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [removing, setRemoving] = useState<string | null>(null);
+  const [confirming, setConfirming] = useState<string | null>(null);
+  const loadReq = useRef(0);
+  // Synchronous re-entry guard: `removing` state only updates on the next
+  // render, so a rapid double-click would launch two removals.
+  const removingRef = useRef(false);
+
+  const load = useCallback(async () => {
+    const id = ++loadReq.current;
+    setLoading(true);
+    const seen = new Set<string>();
+    const result: RepoWorktrees[] = [];
+    for (const cwd of state.workspaceCwds) {
+      const all = await getGitWorktrees(cwd);
+      const main = all.find((w) => w.isMain) ?? all[0];
+      const root = main?.path ?? cwd;
+      if (!root || seen.has(root)) continue;
+      seen.add(root);
+      const worktrees = all.filter((w) => !w.bare && w.path);
+      if (worktrees.length > 0) result.push({ root, name: workspaceName(root), worktrees });
+    }
+    if (id !== loadReq.current) return;
+    setRepos(result);
+    setLoading(false);
+  }, [state.workspaceCwds]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const remove = async (root: string, path: string) => {
+    if (removingRef.current) return;
+    removingRef.current = true;
+    setRemoving(path);
+    try {
+      const res = await removeGitWorktree(root, { path });
+      if (res.ok) {
+        toast.success('Worktree removed');
+        void load();
+      } else if (
+        res.reason === 'not_clean' ||
+        /not.*clean|dirty|contains modified/i.test(res.message ?? '')
+      ) {
+        toast.error('Has uncommitted changes — commit or discard them first');
+      } else {
+        toast.error(res.message || 'Could not remove worktree');
+      }
+    } finally {
+      removingRef.current = false;
+      setRemoving(null);
+    }
+  };
+
+  const linked = repos.flatMap((r) => r.worktrees.filter((w) => !w.isMain));
+
+  // Worktrees an active/live chat runs in must not be removable — deleting the
+  // session's cwd would break its subsequent agent and git operations. Idle
+  // historical chats are excluded so their old worktrees can still be cleaned up.
+  const sessionCwds = activeSessionCwds({
+    missions: Object.values(state.missions),
+    activeMissionId: state.activeMissionId,
+    draftCwd: state.draftChat?.cwd,
+    workers: state.workers,
+  });
+
+  return (
+    <div className="max-w-2xl mx-auto">
+      <div className="mb-4 flex items-start justify-between gap-3">
+        <SectionTitle
+          title="Worktrees"
+          sub="Linked checkouts created when you start a chat on another branch. Remove the ones you no longer need."
+        />
+        <button
+          onClick={() => void load()}
+          className="flex shrink-0 items-center gap-1.5 rounded-lg border border-droid-border px-2.5 py-1.5 text-[12px] text-droid-text-secondary transition-colors hover:bg-droid-elevated/60 hover:text-droid-text"
+        >
+          <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
+          Refresh
+        </button>
+      </div>
+
+      {linked.length === 0 ? (
+        <div className="rounded-xl border border-dashed border-droid-border bg-droid-surface/40 p-10 text-center">
+          <p className="text-[13px] text-droid-text-secondary">
+            {loading ? 'Scanning workspaces…' : 'No linked worktrees yet.'}
+          </p>
+        </div>
+      ) : (
+        repos
+          .filter((r) => r.worktrees.some((w) => !w.isMain))
+          .map((repo) => (
+            <div key={repo.root} className="mb-8">
+              <GroupLabel>{repo.name}</GroupLabel>
+              <div className="divide-y divide-droid-border overflow-hidden rounded-xl border border-droid-border bg-droid-surface">
+                {repo.worktrees.map((w) => (
+                  <div key={w.path} className="flex items-center gap-2.5 px-3 py-2.5">
+                    <Columns2 className="h-4 w-4 shrink-0 text-droid-text-muted" />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-1.5">
+                        <GitBranch className="h-3 w-3 shrink-0 text-droid-text-muted" />
+                        <span className="truncate text-[12.5px] text-droid-text">
+                          {worktreeName(w)}
+                        </span>
+                        {w.isMain && (
+                          <span className="rounded bg-droid-elevated px-1.5 py-0.5 text-[10px] text-droid-text-muted">
+                            main
+                          </span>
+                        )}
+                      </div>
+                      <div className="truncate text-[11px] text-droid-text-muted">{w.path}</div>
+                    </div>
+                    {w.isMain ? null : w.path && isWorktreeInUse(w.path, sessionCwds) ? (
+                      <span
+                        title="A chat is currently using this worktree"
+                        className="shrink-0 rounded bg-droid-elevated px-1.5 py-0.5 text-[10px] text-droid-text-muted"
+                      >
+                        in use
+                      </span>
+                    ) : confirming === w.path ? (
+                      <div className="flex shrink-0 items-center gap-1.5">
+                        <span className="text-[11px] text-droid-text-muted">Remove?</span>
+                        <button
+                          onClick={() => {
+                            setConfirming(null);
+                            if (w.path) void remove(repo.root, w.path);
+                          }}
+                          disabled={removing !== null}
+                          className="rounded-md px-2 py-1 text-[11px] font-medium text-red-400 hover:bg-droid-elevated disabled:opacity-40"
+                        >
+                          Remove
+                        </button>
+                        <button
+                          onClick={() => setConfirming(null)}
+                          className="rounded-md px-2 py-1 text-[11px] text-droid-text-muted hover:bg-droid-elevated"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        onClick={() => w.path && setConfirming(w.path)}
+                        disabled={removing !== null}
+                        title="Remove worktree"
+                        className="flex shrink-0 items-center rounded-md p-1.5 text-droid-text-muted transition-colors hover:bg-droid-elevated hover:text-red-400 disabled:opacity-40"
+                      >
+                        {removing === w.path ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <Trash2 className="h-3.5 w-3.5" />
+                        )}
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))
+      )}
+    </div>
+  );
+}
+
 function PlaceholderSection({ title }: { title: string }) {
   return (
     <div className="max-w-2xl mx-auto">
@@ -1169,6 +1379,8 @@ export default function SettingsPanel() {
                 <GeneralSection />
               ) : active === 'Setup & updates' ? (
                 <SetupSection onClose={close} />
+              ) : active === 'Worktrees' ? (
+                <WorktreesSection />
               ) : (
                 <PlaceholderSection title={active} />
               )}

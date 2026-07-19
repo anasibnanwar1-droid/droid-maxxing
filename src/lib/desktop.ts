@@ -12,6 +12,28 @@ import type {
 import type { EditorId, EditorTarget } from './editorOpen';
 import type { RepoStatus } from './repoEnvironment';
 import type { AppUpdateInfo, AppUpdateResult, OnboardingState } from './onboarding';
+import type {
+  CommitOptions,
+  CreateBranchOptions,
+  CreatePrOptions,
+  CreatePrResult,
+  CreateWorktreeOptions,
+  DetectPrResult,
+  DiffFileList,
+  DiffScope,
+  DiffStatMode,
+  FileDiffResult,
+  GitActionResult,
+  GitBranchList,
+  GitDiffStat,
+  GitEnvironment,
+  GitWorktree,
+  GithubAvailability,
+  PostCommentResult,
+  PrChecksResult,
+  PrCommentsResult,
+  PushOptions,
+} from '../types/vcs';
 
 interface BridgeInfo {
   port: number;
@@ -30,6 +52,44 @@ interface DroidControlApi {
   repoStatus: (dir: string) => Promise<RepoStatus | null>;
   listEditors: () => Promise<EditorId[]>;
   openProject: (dir: string, editor: EditorId, target: EditorTarget) => Promise<void>;
+  gitEnvironment: (dir: string) => Promise<GitEnvironment>;
+  gitBranches: (dir: string) => Promise<GitBranchList>;
+  gitWorktrees: (dir: string) => Promise<GitWorktree[]>;
+  gitDiffStat: (dir: string, options: { mode: DiffStatMode }) => Promise<GitDiffStat>;
+  gitDiffFiles: (
+    dir: string,
+    options: { mode: DiffScope; sessionId?: string },
+  ) => Promise<DiffFileList>;
+  gitFileDiff: (
+    dir: string,
+    options: { mode: DiffScope; path: string; ignoreWhitespace?: boolean; sessionId?: string },
+  ) => Promise<FileDiffResult>;
+  gitMarkTurnStart: (
+    dir: string,
+    sessionId?: string,
+  ) => Promise<{ ok: boolean; baseline?: string | null }>;
+  gitCreateBranch: (dir: string, options: CreateBranchOptions) => Promise<GitActionResult>;
+  gitCheckout: (
+    dir: string,
+    options: { ref: string; allowDirty?: boolean },
+  ) => Promise<GitActionResult>;
+  gitCreateWorktree: (dir: string, options: CreateWorktreeOptions) => Promise<GitActionResult>;
+  gitRemoveWorktree: (
+    dir: string,
+    options: { path: string; force?: boolean },
+  ) => Promise<GitActionResult>;
+  gitCommit: (dir: string, options: CommitOptions) => Promise<GitActionResult>;
+  gitPush: (dir: string, options: PushOptions) => Promise<GitActionResult>;
+  gitFetch: (dir: string) => Promise<GitActionResult>;
+  githubAvailable: () => Promise<GithubAvailability>;
+  githubDetectPr: (dir: string, options: { branch?: string }) => Promise<DetectPrResult>;
+  githubPrChecks: (dir: string, options: { prNumber: number }) => Promise<PrChecksResult>;
+  githubPrComments: (dir: string, options: { prNumber: number }) => Promise<PrCommentsResult>;
+  githubCreatePr: (dir: string, options: CreatePrOptions) => Promise<CreatePrResult>;
+  githubPostComment: (
+    dir: string,
+    options: { prNumber: number; body: string },
+  ) => Promise<PostCommentResult>;
   getOnboarding: () => Promise<OnboardingState>;
   setOnboarding: (patch: Partial<OnboardingState>) => Promise<OnboardingState>;
   appVersion: () => Promise<string>;

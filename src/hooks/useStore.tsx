@@ -1,4 +1,4 @@
-import { createContext, useContext, useReducer, ReactNode, useEffect } from 'react';
+import { createContext, useContext, useMemo, useReducer, ReactNode, useEffect } from 'react';
 import { bridge } from '../lib/bridge';
 import { updateCompactionSettings } from '../lib/commands';
 import {
@@ -29,9 +29,11 @@ import type {
 import { addWorkspaceCwd } from '../lib/workspaces';
 import { sanitizeForLog } from '../lib/sensitiveLogRedaction';
 import { composePrompt } from '../lib/composePrompt';
+import { DIFF_SCOPES, type DiffScope } from '../types/vcs';
 
 export type AgentKind = 'orchestrator' | 'worker' | 'validator';
 export type LiveEnterBehavior = 'queue' | 'interrupt';
+export type DiffViewMode = 'unified' | 'split';
 
 export interface WorkerInfo extends WorkerSummary {
   startedAt: number;
@@ -125,6 +127,15 @@ export interface AppState {
 
   // UI flags
   rightPanelOpen: boolean;
+  // The Review diff tab: a wide right-side pane, opened from the Context panel's
+  // changes button. Scope + view mode persist; open state is per-session — we
+  // track the mission it was opened for so switching chats doesn't carry it over.
+  reviewOpenMissionId: string | null;
+  reviewScope: DiffScope;
+  // A file path the Review pane should jump to once its list loads, set when a
+  // per-turn changes summary (or diff card) is clicked. Cleared after the jump.
+  reviewFocusPath: string | null;
+  diffView: DiffViewMode;
   sidebarCollapsed: boolean;
   specMode: boolean;
   settingsOpen: boolean;
@@ -136,7 +147,7 @@ export interface AppState {
   contextMeterOpen: boolean;
   theme: ThemeConfig;
   missionMode: boolean;
-  draftChat: { cwd: string } | null;
+  draftChat: { cwd: string; branch?: string } | null;
   workspaceCwds: string[];
   // Derived (synced by the reducer): whether the browser pane is open for the
   // *currently active* session. Source of truth is `browserOpenKeys`.
@@ -261,6 +272,11 @@ type Action =
   // UI
   | { type: 'SET_ACTIVE_MISSION'; id: string | null }
   | { type: 'SET_RIGHT_PANEL'; open: boolean }
+  | { type: 'SET_REVIEW_OPEN'; open: boolean }
+  | { type: 'SET_REVIEW_SCOPE'; scope: DiffScope }
+  | { type: 'OPEN_REVIEW_AT'; scope: DiffScope; path?: string | null }
+  | { type: 'CLEAR_REVIEW_FOCUS' }
+  | { type: 'SET_DIFF_VIEW'; mode: DiffViewMode }
   | { type: 'TOGGLE_COMMAND_PALETTE' }
   | { type: 'CLOSE_COMMAND_PALETTE' }
   | { type: 'SET_CONTEXT_METER_OPEN'; open: boolean }
@@ -269,7 +285,7 @@ type Action =
   | { type: 'MISSION_SET_KIND'; missionId: string; kind: SessionKind }
   | { type: 'TOGGLE_SETTINGS' }
   | { type: 'TOGGLE_MISSION_MODE' }
-  | { type: 'START_CHAT'; cwd: string }
+  | { type: 'START_CHAT'; cwd: string; branch?: string }
   | { type: 'ADD_WORKSPACE'; cwd: string }
   | { type: 'TOGGLE_BROWSER' }
   | { type: 'SET_BROWSER_OPEN'; open: boolean }
@@ -393,6 +409,8 @@ const COMPACTION_TOKEN_LIMIT_STORAGE_KEY = 'droid-compaction-token-limit';
 const COMPACTION_TOKEN_LIMIT_CONFIGURED_STORAGE_KEY = 'droid-compaction-token-limit-configured';
 const COMPACTION_TOKEN_LIMIT_PER_MODEL_STORAGE_KEY = 'droid-compaction-token-limit-per-model';
 const LIVE_ENTER_BEHAVIOR_STORAGE_KEY = 'droid-live-enter-behavior';
+const DIFF_VIEW_STORAGE_KEY = 'droid-diff-view';
+const REVIEW_SCOPE_STORAGE_KEY = 'droid-review-scope';
 const WORKSPACES_STORAGE_KEY = 'droid-workspaces';
 const UI_STATE_STORAGE_KEY = 'droid-ui-state-v1';
 const BROWSER_VIEWPORT_MODES = new Set<BrowserViewportMode>([
@@ -583,6 +601,43 @@ function saveLiveEnterBehavior(value: LiveEnterBehavior): LiveEnterBehavior {
   return behavior;
 }
 
+function loadDiffView(): DiffViewMode {
+  try {
+    return getLocalStorage()?.getItem(DIFF_VIEW_STORAGE_KEY) === 'split' ? 'split' : 'unified';
+  } catch {
+    return 'unified';
+  }
+}
+
+function saveDiffView(value: DiffViewMode): DiffViewMode {
+  const mode = value === 'split' ? 'split' : 'unified';
+  try {
+    getLocalStorage()?.setItem(DIFF_VIEW_STORAGE_KEY, mode);
+  } catch {
+    /* ignore */
+  }
+  return mode;
+}
+
+function loadReviewScope(): DiffScope {
+  try {
+    const raw = getLocalStorage()?.getItem(REVIEW_SCOPE_STORAGE_KEY) as DiffScope | null;
+    return raw && DIFF_SCOPES.includes(raw) ? raw : 'unstaged';
+  } catch {
+    return 'unstaged';
+  }
+}
+
+function saveReviewScope(value: DiffScope): DiffScope {
+  const scope = DIFF_SCOPES.includes(value) ? value : 'unstaged';
+  try {
+    getLocalStorage()?.setItem(REVIEW_SCOPE_STORAGE_KEY, scope);
+  } catch {
+    /* ignore */
+  }
+  return scope;
+}
+
 function loadWorkspaceCwds(): string[] {
   try {
     const raw = getLocalStorage()?.getItem(WORKSPACES_STORAGE_KEY);
@@ -731,6 +786,10 @@ export const initialState: AppState = {
   compactionTokenLimit: loadCompactionTokenLimit(),
   compactionTokenLimitPerModel: loadCompactionTokenLimitPerModel(),
   liveEnterBehavior: loadLiveEnterBehavior(),
+  reviewOpenMissionId: null,
+  reviewScope: loadReviewScope(),
+  reviewFocusPath: null,
+  diffView: loadDiffView(),
   missionSettingOverrides: {},
   skills: [],
   skillsSessionId: undefined,
@@ -1510,6 +1569,41 @@ function baseReducer(state: AppState, action: Action): AppState {
     case 'SET_RIGHT_PANEL':
       return { ...state, rightPanelOpen: action.open };
 
+    case 'SET_REVIEW_OPEN':
+      // Closing while already closed AND no pending focus is a true no-op; bail
+      // before allocating a new state object so subscribers don't re-render. The
+      // reviewFocusPath check is essential: a close dispatched when the pane is
+      // already shut but a focus path is still pending would otherwise skip the
+      // clear and leave the stale focus request to fire on the next open.
+      if (!action.open && state.reviewOpenMissionId === null && state.reviewFocusPath === null)
+        return state;
+      // Scope the open state to the active mission so it never leaks into the
+      // next chat; switching back to this mission restores it.
+      return {
+        ...state,
+        reviewOpenMissionId: action.open ? state.activeMissionId : null,
+        reviewFocusPath: action.open ? state.reviewFocusPath : null,
+      };
+
+    case 'SET_REVIEW_SCOPE':
+      return { ...state, reviewScope: saveReviewScope(action.scope) };
+
+    case 'OPEN_REVIEW_AT':
+      // Open the Review pane for the active mission at a given scope, optionally
+      // asking it to jump to a specific file once the diff list has loaded.
+      return {
+        ...state,
+        reviewOpenMissionId: state.activeMissionId,
+        reviewScope: saveReviewScope(action.scope),
+        reviewFocusPath: action.path ?? null,
+      };
+
+    case 'CLEAR_REVIEW_FOCUS':
+      return state.reviewFocusPath === null ? state : { ...state, reviewFocusPath: null };
+
+    case 'SET_DIFF_VIEW':
+      return { ...state, diffView: saveDiffView(action.mode) };
+
     case 'TOGGLE_COMMAND_PALETTE':
       return { ...state, commandPaletteOpen: !state.commandPaletteOpen };
 
@@ -1545,7 +1639,7 @@ function baseReducer(state: AppState, action: Action): AppState {
     case 'START_CHAT':
       return {
         ...state,
-        draftChat: { cwd: action.cwd },
+        draftChat: { cwd: action.cwd, branch: action.branch },
         activeMissionId: null,
         missionMode: false,
       };
@@ -2003,7 +2097,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  return <StoreContext.Provider value={{ state, dispatch }}>{children}</StoreContext.Provider>;
+  // Memoize the context value so a StoreProvider re-render with unchanged
+  // state (parent re-render, StrictMode double-render) doesn't hand consumers
+  // a fresh { state, dispatch } identity. Dispatches still re-render every
+  // consumer, since the reducer returns a new state object; this only removes
+  // the same-state case. dispatch is stable from useReducer, so [state] is the
+  // correct key.
+  const value = useMemo(() => ({ state, dispatch }), [state]);
+
+  return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>;
 }
 
 export function useStore() {

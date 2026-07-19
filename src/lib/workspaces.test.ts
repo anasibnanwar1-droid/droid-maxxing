@@ -68,6 +68,28 @@ test('buildWorkspaceSections can still cap an explicit bootstrap list', () => {
   );
 });
 
+test('buildWorkspaceSections keeps nested worktree sessions under the repository workspace', () => {
+  const sections = buildWorkspaceSections(
+    ['/repo/app/.worktrees/feature-a', '/repo/app', '/repo/app/packages/ui'],
+    [
+      mission('main', '/repo/app', 1),
+      mission('worktree', '/repo/app/.worktrees/feature-a', 3),
+      mission('nested-workspace', '/repo/app/packages/ui', 2),
+    ],
+  );
+
+  assert.deepEqual(
+    sections[0].sessions.map((m) => m.id),
+    ['worktree', 'main'],
+  );
+  assert.deepEqual(
+    sections[1].sessions.map((m) => m.id),
+    ['nested-workspace'],
+  );
+  assert.equal(sections.length, 2);
+  assert.equal(sections[0].cwd, '/repo/app');
+});
+
 test('isSubagentSession flags workers, validators and parented sessions', () => {
   assert.equal(isSubagentSession(mission('a', '/repo/app', 1)), false);
   assert.equal(isSubagentSession({ ...mission('w', '/repo/app', 1), role: 'worker' }), true);
