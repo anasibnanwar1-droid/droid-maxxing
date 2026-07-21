@@ -11,6 +11,7 @@ import {
 } from './MissionManager.js';
 import {
   clampCompactionTokenLimit,
+  compactionTriggerCeiling,
   compactionTokenLimitForModel,
   createCompactionSettingsForModel,
   daemonDefaultCompactionTokenLimit,
@@ -194,9 +195,14 @@ test('builds Droid compaction init payloads', () => {
   );
 });
 
-test('caps Droid compaction limits to the selected model context window', () => {
-  assert.equal(clampCompactionTokenLimit(200_000, 100_000), 100_000);
-  assert.equal(clampCompactionTokenLimit(80_000, 100_000), 80_000);
+test('caps Droid compaction limits below the model context window with headroom', () => {
+  // The trigger never reaches the full window: it is capped at
+  // COMPACTION_WINDOW_FRACTION (80%) so the daemon can still run the next
+  // provider call and the compaction turn itself before the window overflows.
+  assert.equal(compactionTriggerCeiling(100_000), 80_000);
+  assert.equal(compactionTriggerCeiling(undefined), undefined);
+  assert.equal(clampCompactionTokenLimit(200_000, 100_000), 80_000);
+  assert.equal(clampCompactionTokenLimit(80_000, 200_000), 80_000);
   assert.equal(clampCompactionTokenLimit(200_000), 200_000);
   assert.deepEqual(
     createCompactionSettingsForModel(
@@ -206,7 +212,7 @@ test('caps Droid compaction limits to the selected model context window', () => 
       100_000,
     ),
     {
-      compactionTokenLimit: 100_000,
+      compactionTokenLimit: 80_000,
     },
   );
 });
@@ -1093,14 +1099,20 @@ test('daemon compaction notifications protect orchestrator compaction from steer
   assert.equal(session.interrupts, 0);
   assert.deepEqual(mission.pendingSends, ['after compaction']);
 
+  // Stop is the user's escape hatch: it settles the auto-compacting flag and
+  // interrupts for real, so a lost session_compacted can never wedge the chat.
   await manager.handle({ type: 'mission.interrupt', missionId: 'app-compact' });
-  assert.equal(session.interrupts, 0);
+  assert.equal(session.interrupts, 1);
+  assert.equal(mission.autoCompacting, false);
   assert.deepEqual(mission.pendingSends, []);
 
+  // The late completion is now a duplicate: it must not re-enter compaction
+  // accounting (status, counter, context reset).
   internals.handleCompactionNotification('app-compact', 'app-compact', 'orchestrator', session, {
     params: { notification: { type: 'session_compacted', summaryId: 's1', removedCount: 12 } },
   });
   assert.equal(mission.autoCompacting, false);
+  assert.equal(mission.summary.autoCompactions ?? 0, 0);
 });
 
 test('daemon compaction notifications protect worker compaction from steering and Stop', async () => {
@@ -1138,14 +1150,18 @@ test('daemon compaction notifications protect worker compaction from steering an
   assert.equal(session.interrupts, 0);
   assert.deepEqual(agent.pendingSends, ['after compaction']);
 
+  // Same escape hatch as the orchestrator: Stop settles the flag and
+  // interrupts instead of being silently swallowed.
   await manager.handle({
     type: 'agent.interrupt',
     missionId: 'app-compact',
     agentSessionId: 'worker-1',
   });
-  assert.equal(session.interrupts, 0);
+  assert.equal(session.interrupts, 1);
+  assert.equal(agent.autoCompacting, false);
   assert.deepEqual(agent.pendingSends, []);
 
+  // A completion with no in-flight start is a late duplicate and stays inert.
   internals.handleCompactionNotification('app-compact', 'worker-1', 'worker', session, {
     params: { notification: { type: 'session_compacted', summaryId: 's1', removedCount: 5 } },
   });
@@ -1241,9 +1257,25 @@ test('worker completion waits for auto-compaction before closing its transport',
 });
 
 test('a worker in-place compaction bumps the worker snapshot generation, not the mission summary', async () => {
-  const { manager, session, events, mission } = compactionHarness(10_000);
+  const { manager, events, mission } = compactionHarness(10_000);
+  const session = new FakeCompactionSession('worker-1', 10_000);
+  mission.linkedSubagents.add('worker-1');
+  mission.agents.set('worker-1', {
+    session,
+    missionId: 'app-compact',
+    role: 'worker' as const,
+    streaming: false,
+    autoCompacting: false,
+    pendingSends: [] as string[],
+    lastUsedAt: Date.now(),
+  });
   const internals = manager as unknown as CompactionNotificationInternals;
 
+  internals.handleCompactionNotification('app-compact', 'worker-1', 'worker', session, {
+    params: {
+      notification: { type: 'droid_working_state_changed', newState: 'compacting_conversation' },
+    },
+  });
   const handled = internals.handleCompactionNotification(
     'app-compact',
     'worker-1',

@@ -27,6 +27,15 @@ import type {
   DesignReference,
 } from '../types/bridge';
 import { addWorkspaceCwd } from '../lib/workspaces';
+import {
+  applyFactoryCompactionDefaults,
+  compactionSettingsSnapshot,
+  loadCompactionTokenLimit,
+  loadCompactionTokenLimitPerModel,
+  normalizeTokenLimit,
+  saveCompactionTokenLimit,
+  saveCompactionTokenLimitPerModel,
+} from '../lib/compactionSettings';
 import { sanitizeForLog } from '../lib/sensitiveLogRedaction';
 import { composePrompt } from '../lib/composePrompt';
 import { DIFF_SCOPES, type DiffScope } from '../types/vcs';
@@ -178,6 +187,10 @@ export interface AppState {
   compactionTokenLimit?: number;
   // Per-model overrides for the compaction token limit, keyed by model id.
   compactionTokenLimitPerModel: Record<string, number>;
+  // Bumped on every compaction-settings change (including clears that leave
+  // the values structurally identical, e.g. undefined -> cleared undefined) so
+  // the push effect always re-fires and the sidecar snapshot never goes stale.
+  compactionSettingsRev: number;
   liveEnterBehavior: LiveEnterBehavior;
 
   // Per-mission model/reasoning the user picked in the selector. These are
@@ -405,9 +418,6 @@ function saveAgentConfig(config: AgentConfig): AgentConfig {
 // whatever model it is currently using; otherwise a specific model id is used
 // for compaction across every session.
 const COMPACTION_MODEL_STORAGE_KEY = 'droid-compaction-model';
-const COMPACTION_TOKEN_LIMIT_STORAGE_KEY = 'droid-compaction-token-limit';
-const COMPACTION_TOKEN_LIMIT_CONFIGURED_STORAGE_KEY = 'droid-compaction-token-limit-configured';
-const COMPACTION_TOKEN_LIMIT_PER_MODEL_STORAGE_KEY = 'droid-compaction-token-limit-per-model';
 const LIVE_ENTER_BEHAVIOR_STORAGE_KEY = 'droid-live-enter-behavior';
 const DIFF_VIEW_STORAGE_KEY = 'droid-diff-view';
 const REVIEW_SCOPE_STORAGE_KEY = 'droid-review-scope';
@@ -451,133 +461,8 @@ function saveCompactionModel(value: string): string {
   return value;
 }
 
-// Only positive finite integers are valid token limits; anything else is
-// treated as "unset" (fall back to Factory's model-dependent default).
-function normalizeTokenLimit(value: unknown): number | undefined {
-  const n = typeof value === 'number' ? value : Number(value);
-  if (!Number.isFinite(n) || n <= 0) return undefined;
-  return Math.floor(n);
-}
-
-function loadCompactionTokenLimit(): number | undefined {
-  try {
-    return normalizeTokenLimit(getLocalStorage()?.getItem(COMPACTION_TOKEN_LIMIT_STORAGE_KEY));
-  } catch {
-    return undefined;
-  }
-}
-
-function hasStoredCompactionTokenLimit(): boolean {
-  try {
-    const storage = getLocalStorage();
-    return (
-      storage?.getItem(COMPACTION_TOKEN_LIMIT_STORAGE_KEY) !== null ||
-      storage?.getItem(COMPACTION_TOKEN_LIMIT_CONFIGURED_STORAGE_KEY) === '1'
-    );
-  } catch {
-    return false;
-  }
-}
-
-function saveCompactionTokenLimit(
-  value?: number,
-  options: { userConfigured?: boolean } = {},
-): number | undefined {
-  try {
-    const storage = getLocalStorage();
-    if (value === undefined) storage?.removeItem(COMPACTION_TOKEN_LIMIT_STORAGE_KEY);
-    else storage?.setItem(COMPACTION_TOKEN_LIMIT_STORAGE_KEY, String(value));
-    if (options.userConfigured ?? true)
-      storage?.setItem(COMPACTION_TOKEN_LIMIT_CONFIGURED_STORAGE_KEY, '1');
-  } catch {
-    /* ignore */
-  }
-  return value;
-}
-
-function loadCompactionTokenLimitPerModel(): Record<string, number> {
-  try {
-    const raw = getLocalStorage()?.getItem(COMPACTION_TOKEN_LIMIT_PER_MODEL_STORAGE_KEY);
-    if (!raw) return {};
-    const parsed = JSON.parse(raw) as Record<string, unknown>;
-    const out: Record<string, number> = {};
-    for (const [id, value] of Object.entries(parsed)) {
-      const n = normalizeTokenLimit(value);
-      if (id && n !== undefined) out[id] = n;
-    }
-    return out;
-  } catch {
-    return {};
-  }
-}
-
-function hasStoredCompactionTokenLimitPerModel(): boolean {
-  try {
-    return getLocalStorage()?.getItem(COMPACTION_TOKEN_LIMIT_PER_MODEL_STORAGE_KEY) !== null;
-  } catch {
-    return false;
-  }
-}
-
-function saveCompactionTokenLimitPerModel(value: Record<string, number>): Record<string, number> {
-  try {
-    getLocalStorage()?.setItem(COMPACTION_TOKEN_LIMIT_PER_MODEL_STORAGE_KEY, JSON.stringify(value));
-  } catch {
-    /* ignore */
-  }
-  return value;
-}
-
-function normalizeTokenLimitRecord(
-  value: Record<string, number> | undefined,
-): Record<string, number> {
-  return Object.fromEntries(
-    Object.entries(value ?? {})
-      .map(([id, limit]) => [id, normalizeTokenLimit(limit)])
-      .filter((entry): entry is [string, number] => entry[1] !== undefined),
-  );
-}
-
-export function compactionSettingsSnapshot(
-  state: Pick<AppState, 'compactionTokenLimit' | 'compactionTokenLimitPerModel'>,
-): {
-  compactionTokenLimit?: number | null;
-  compactionTokenLimitPerModel?: Record<string, number>;
-} {
-  const snapshot: {
-    compactionTokenLimit?: number | null;
-    compactionTokenLimitPerModel?: Record<string, number>;
-  } = {};
-  if (hasStoredCompactionTokenLimit())
-    snapshot.compactionTokenLimit = state.compactionTokenLimit ?? null;
-  if (hasStoredCompactionTokenLimitPerModel())
-    snapshot.compactionTokenLimitPerModel = state.compactionTokenLimitPerModel;
-  return snapshot;
-}
-
-export function applyFactoryCompactionDefaults(
-  state: Pick<AppState, 'compactionTokenLimit' | 'compactionTokenLimitPerModel'>,
-  defaults: Pick<FactoryDefaultSettings, 'compactionTokenLimit' | 'compactionTokenLimitPerModel'>,
-): Pick<AppState, 'compactionTokenLimit' | 'compactionTokenLimitPerModel'> {
-  const hasLocalLimit = hasStoredCompactionTokenLimit();
-  const hasLocalPerModel = hasStoredCompactionTokenLimitPerModel();
-  const defaultLimit = normalizeTokenLimit(defaults.compactionTokenLimit);
-  const defaultPerModel = normalizeTokenLimitRecord(defaults.compactionTokenLimitPerModel);
-
-  const compactionTokenLimit = hasLocalLimit ? state.compactionTokenLimit : defaultLimit;
-  const compactionTokenLimitPerModel = hasLocalPerModel
-    ? state.compactionTokenLimitPerModel
-    : defaultPerModel;
-
-  if (!hasLocalLimit && compactionTokenLimit !== undefined) {
-    saveCompactionTokenLimit(compactionTokenLimit, { userConfigured: false });
-  }
-  if (!hasLocalPerModel && Object.keys(defaultPerModel).length > 0) {
-    saveCompactionTokenLimitPerModel(defaultPerModel);
-  }
-
-  return { compactionTokenLimit, compactionTokenLimitPerModel };
-}
+// Compaction token limit persistence and snapshot semantics live in
+// lib/compactionSettings.ts; the store only wires them into state changes.
 
 function normalizeLiveEnterBehavior(value: unknown): LiveEnterBehavior {
   return value === 'interrupt' ? 'interrupt' : 'queue';
@@ -785,6 +670,7 @@ export const initialState: AppState = {
   compactionModel: loadCompactionModel(),
   compactionTokenLimit: loadCompactionTokenLimit(),
   compactionTokenLimitPerModel: loadCompactionTokenLimitPerModel(),
+  compactionSettingsRev: 0,
   liveEnterBehavior: loadLiveEnterBehavior(),
   reviewOpenMissionId: null,
   reviewScope: loadReviewScope(),
@@ -1785,6 +1671,7 @@ function baseReducer(state: AppState, action: Action): AppState {
         ...state,
         agentConfig: saveAgentConfig(next),
         ...compactionDefaults,
+        compactionSettingsRev: state.compactionSettingsRev + 1,
       };
     }
 
@@ -1845,7 +1732,11 @@ function baseReducer(state: AppState, action: Action): AppState {
     case 'SET_COMPACTION_TOKEN_LIMIT_GLOBAL': {
       const limit = normalizeTokenLimit(action.limit);
       saveCompactionTokenLimit(limit);
-      return { ...state, compactionTokenLimit: limit };
+      return {
+        ...state,
+        compactionTokenLimit: limit,
+        compactionSettingsRev: state.compactionSettingsRev + 1,
+      };
     }
 
     case 'SET_COMPACTION_TOKEN_LIMIT_FOR_MODEL': {
@@ -1854,7 +1745,11 @@ function baseReducer(state: AppState, action: Action): AppState {
       if (limit === undefined) delete next[action.modelId];
       else next[action.modelId] = limit;
       saveCompactionTokenLimitPerModel(next);
-      return { ...state, compactionTokenLimitPerModel: next };
+      return {
+        ...state,
+        compactionTokenLimitPerModel: next,
+        compactionSettingsRev: state.compactionSettingsRev + 1,
+      };
     }
 
     case 'SET_LIVE_ENTER_BEHAVIOR': {
@@ -2077,14 +1972,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   // Keep the sidecar's compaction-limit snapshot in sync so live sessions,
   // resumes, and model changes all follow these limits. The bridge queues
-  // commands until the socket opens, so the mount-time push is safe, and the
-  // FACTORY_DEFAULTS seed re-fires this effect with the merged values. An
-  // Undefined/empty values only mean "cleared" after the user stored them; on
-  // a cold mount those fields are omitted so the sidecar keeps following
-  // CLI-file defaults instead of treating first launch as an explicit clear.
+  // commands until the socket opens, so the mount-time push is safe. Keyed on
+  // the settings revision rather than the values: a clear can leave the values
+  // structurally identical (undefined -> undefined) while the user-configured
+  // markers changed, and that must still reach the sidecar.
   useEffect(() => {
     updateCompactionSettings(compactionSettingsSnapshot(state));
-  }, [state.compactionTokenLimit, state.compactionTokenLimitPerModel]);
+  }, [state.compactionSettingsRev]);
 
   useEffect(() => {
     const unsub = bridge.subscribe((ev) => {

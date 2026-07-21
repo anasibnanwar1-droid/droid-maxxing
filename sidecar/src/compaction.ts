@@ -51,13 +51,25 @@ export function resumedCompactionTokenLimit(
   return own !== undefined ? own : compactionTokenLimitForModel(modelId, {}, defaults);
 }
 
+// Fraction of the model window the auto-compaction trigger may reach. The
+// trigger must leave headroom for the next provider call and the compaction
+// turn itself: a trigger at 100% of the window means the provider rejects the
+// oversized request before the daemon's threshold check ever gets to compact,
+// which presents as "compaction never happens and the session is stuck".
+export const COMPACTION_WINDOW_FRACTION = 0.8;
+
+export function compactionTriggerCeiling(maxContextTokens?: number): number | undefined {
+  const max = normalizeCompactionTokenLimit(maxContextTokens);
+  return max === undefined ? undefined : Math.floor(max * COMPACTION_WINDOW_FRACTION);
+}
+
 export function clampCompactionTokenLimit(
   limit: number | undefined,
   maxContextTokens?: number,
 ): number | undefined {
   if (limit === undefined) return undefined;
-  const max = normalizeCompactionTokenLimit(maxContextTokens);
-  return max === undefined ? limit : Math.min(limit, max);
+  const ceiling = compactionTriggerCeiling(maxContextTokens);
+  return ceiling === undefined ? limit : Math.min(limit, ceiling);
 }
 
 export function daemonDefaultCompactionTokenLimit(maxContextTokens?: number): number {

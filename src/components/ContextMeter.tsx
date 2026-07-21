@@ -117,7 +117,7 @@ export default function ContextMeter({
   stats?: ContextStatsSnapshot;
   sessionKey?: string;
 }) {
-  const { state, dispatch } = useStore();
+  const { dispatch } = useStore();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
@@ -138,21 +138,11 @@ export default function ContextMeter({
     mission.maxContextTokens && mission.maxContextTokens > 0 ? mission.maxContextTokens : undefined;
   const statLimit = measured?.limit && measured.limit > 0 ? measured.limit : modelWindow;
 
-  // The conversation compacts once it passes the configured token limit, so the
-  // meter measures usage against that threshold (per-model override -> global
-  // default), capped to the model window. Factory's model default is the
-  // smaller of the model input window and 250K tokens.
-  const compactionLimit =
-    mission.modelId && state.compactionTokenLimitPerModel[mission.modelId] !== undefined
-      ? state.compactionTokenLimitPerModel[mission.modelId]
-      : state.compactionTokenLimit;
-  const effectiveCompaction =
-    compactionLimit && compactionLimit > 0
-      ? statLimit
-        ? Math.min(compactionLimit, statLimit)
-        : compactionLimit
-      : Math.min(statLimit ?? 250_000, 250_000);
-  const max = effectiveCompaction;
+  // The meter measures usage against the session's context window only. When
+  // and where the daemon auto-compacts is its own business (it announces
+  // itself in the transcript when it happens), so no trigger line is drawn or
+  // listed here.
+  const max = statLimit;
 
   const accuracy = measured?.accuracy;
   const isEstimating = (accuracy ?? 'estimated') !== 'exact';
@@ -264,14 +254,7 @@ export default function ContextMeter({
                 {remaining !== undefined && (
                   <Row color="var(--droid-text-muted)" label="Window free" value={remaining} />
                 )}
-                {effectiveCompaction !== undefined && (
-                  <Row
-                    color="var(--droid-orange)"
-                    label="Compacts at"
-                    value={effectiveCompaction}
-                  />
-                )}
-                {modelWindow !== undefined && (
+                {modelWindow !== undefined && modelWindow !== max && (
                   <Row color="var(--droid-text-muted)" label="Model window" value={modelWindow} />
                 )}
                 <Row

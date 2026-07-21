@@ -86,6 +86,11 @@ import {
   type CompactionTokenLimitPatch,
   type CompactType,
 } from './compaction.js';
+import {
+  AutoCompactionWatchdogs,
+  AUTO_COMPACTION_WATCHDOG_MS,
+  POST_TURN_AUTO_COMPACTION_WATCHDOG_MS,
+} from './autoCompactionWatchdog.js';
 
 type Emit = (event: ServerEvent) => void;
 
@@ -224,6 +229,11 @@ export class MissionManager {
   // defaults so resume, model changes, and worker opens all follow the limits
   // the Settings panel shows.
   private uiCompactionSettings: CompactionTokenLimitPatch = {};
+  // Bounds how long an autoCompacting flag may stay raised without a
+  // completion, so a lost session_compacted can never wedge a session forever.
+  private readonly autoCompactionWatchdogs = new AutoCompactionWatchdogs((sessionKey) =>
+    this.onAutoCompactionWatchdogExpired(sessionKey),
+  );
   private readonly usageOffsets = new Map<string, UsageOffset>();
   private readonly contextSnapshots = new Map<string, ContextStatsSnapshot>();
   // In-place compactions completed per worker session; carried on that
@@ -758,7 +768,11 @@ export class MissionManager {
     const modelId =
       mission.summary.modelId ??
       defaultModelForAgent('orchestrator', modeForSummary(mission.summary), defaults);
-    await this.enableDaemonAutoCompaction(mission.session, await this.compactionLimit(modelId));
+    const limit = await this.compactionLimit(modelId);
+    await this.enableDaemonAutoCompaction(mission.session, limit);
+    // The summary carries the armed trigger so the ContextMeter shows the
+    // exact number the daemon compacts at instead of re-deriving its own.
+    this.patch(mission.summary.id, { compactionTokenLimit: limit });
   }
 
   // The one derivation every live-session path shares: UI snapshot first, then
@@ -807,14 +821,21 @@ export class MissionManager {
       next.compactionTokenLimitPerModel = cmd.compactionTokenLimitPerModel;
     this.uiCompactionSettings = next;
     // Retune every live session (orchestrators and opened agents) so concurrent
-    // chats on different models each follow their own effective limit.
+    // chats on different models each follow their own effective limit. Sessions
+    // retune in parallel so one hung updateSettings cannot stall the rest.
+    const retunes: Promise<void>[] = [];
     for (const mission of this.missions.values()) {
-      await this.recomputeOrchestratorCompactionLimit(mission);
+      retunes.push(this.recomputeOrchestratorCompactionLimit(mission));
       for (const [agentSessionId, agent] of mission.agents) {
         const modelId = this.agentModelId(mission, agentSessionId, agent.role);
-        await this.enableDaemonAutoCompaction(agent.session, await this.compactionLimit(modelId));
+        retunes.push(
+          this.compactionLimit(modelId).then((limit) =>
+            this.enableDaemonAutoCompaction(agent.session, limit),
+          ),
+        );
       }
     }
+    await Promise.allSettled(retunes);
   }
 
   // Best effort: turn on the daemon's own threshold check so it compacts the
@@ -827,8 +848,12 @@ export class MissionManager {
   ): Promise<void> {
     try {
       await session.updateSettings(daemonCompactionSettings(limit) as never);
-    } catch {
-      /* daemon may predate the setting; the session stays usable without it */
+    } catch (err) {
+      // The session stays usable, but auto-compaction is NOT armed: surface it
+      // in the logs instead of failing silently ("compaction never happens").
+      console.error(
+        `[compaction] could not arm auto-compaction on ${session.sessionId}: ${errMsg(err)}`,
+      );
     }
   }
 
@@ -1015,6 +1040,7 @@ export class MissionManager {
         compactionTokenLimitPerModel: init.settings?.compactionTokenLimitPerModel,
       });
       await this.enableDaemonAutoCompaction(session, resumeCompactionLimit);
+      summary.compactionTokenLimit = resumeCompactionLimit;
       const mission: Mission = this.createLiveMission(summary, session, mcp.servers, mcp.configs);
       this.subscribeOrchestratorCompaction(mission);
       // Seed the spawn->worker links persisted for this mission so historical
@@ -1299,9 +1325,13 @@ export class MissionManager {
         defaults,
         this.maxContextTokensForModel(orchestratorModelId),
       );
+      const orchestratorWindow = this.maxContextTokensForModel(orchestratorModelId);
       const compactionTokenLimit =
         compactionSettings.compactionTokenLimit ??
-        daemonDefaultCompactionTokenLimit(this.maxContextTokensForModel(orchestratorModelId));
+        clampCompactionTokenLimit(
+          daemonDefaultCompactionTokenLimit(orchestratorWindow),
+          orchestratorWindow,
+        );
       const { workerModelId, workerReasoningEffort, validatorModelId, validatorReasoningEffort } =
         createMissionAgentDefaultsForMode(mode, cmd, defaults);
       const mcp = await this.startLocalMcpServers(ref);
@@ -1365,6 +1395,7 @@ export class MissionManager {
         tokensOut: 0,
         contextTokens: 0,
         maxContextTokens: this.maxContextTokensForModel(orchestratorModelId),
+        compactionTokenLimit,
         createdAt: now,
         updatedAt: now,
       };
@@ -1547,6 +1578,10 @@ export class MissionManager {
         if (queued.length > 0) void this.redeliverQueuedSends(appSessionId, queued);
       } else {
         if (mission.autoCompacting) {
+          // The turn is over, so any mid-turn compaction already finished; if
+          // the completion notification got lost, settle quickly instead of
+          // holding queued sends until the long start-of-compaction watchdog.
+          this.autoCompactionWatchdogs.arm(appSessionId, POST_TURN_AUTO_COMPACTION_WATCHDOG_MS);
           this.patch(appSessionId, { streaming: false, queuedSends: mission.pendingSends.length });
         } else {
           const next = mission.pendingSends.shift();
@@ -1809,9 +1844,11 @@ export class MissionManager {
             m.summary.contextAccuracy = 'exact';
             m.summary.contextUpdatedAt = new Date().toISOString();
           }
+          // Keep the last known window when the catalog cannot resolve the
+          // model (e.g. Default): deleting it here made the meter flip between
+          // "no max" and the stats limit on every token event.
           const maxContextTokens = this.maxContextTokensForSummary(m.summary);
-          if (maxContextTokens === undefined) delete m.summary.maxContextTokens;
-          else m.summary.maxContextTokens = maxContextTokens;
+          if (maxContextTokens !== undefined) m.summary.maxContextTokens = maxContextTokens;
           this.emitContextEstimate(appSessionId, m.summary);
         }
         this.emit({
@@ -1894,13 +1931,22 @@ export class MissionManager {
       this.emitStatus(missionId, 'Compacting conversation...', 'auto', agentSessionId, role);
       return true;
     }
+    // A completion without a matching in-flight start is a late/duplicate
+    // note (typically the daemon echoing a manual compactSession after
+    // runCompaction already reported it); acting on it would double-count the
+    // compaction and emit a duplicate status.
+    const mission = this.findMission(missionId);
+    const active =
+      agentSessionId === missionId
+        ? mission?.autoCompacting
+        : mission?.agents.get(agentSessionId)?.autoCompacting;
+    if (!active) return true;
     this.setAutoCompacting(missionId, agentSessionId, role, false);
     this.emitStatus(missionId, 'Compaction complete.', 'auto', agentSessionId, role);
     // In-place compaction keeps the session id, so the meter's ratchet only
     // resets when the generation counter moves; also drop the pre-compaction
     // exact reading so the refreshed estimate is not overridden by stale usage.
     if (agentSessionId === missionId) {
-      const mission = this.findMission(missionId);
       if (mission) {
         this.patch(missionId, {
           contextTokens: 0,
@@ -1920,6 +1966,23 @@ export class MissionManager {
     return true;
   }
 
+  private onAutoCompactionWatchdogExpired(sessionKey: string): void {
+    const mission = this.findMission(sessionKey);
+    if (mission?.autoCompacting) {
+      console.warn(`[compaction] watchdog settled a stale auto-compaction on ${sessionKey}`);
+      this.setAutoCompacting(mission.summary.id, mission.summary.id, 'orchestrator', false);
+      return;
+    }
+    for (const owner of this.missions.values()) {
+      const agent = owner.agents.get(sessionKey);
+      if (agent?.autoCompacting) {
+        console.warn(`[compaction] watchdog settled a stale auto-compaction on ${sessionKey}`);
+        this.setAutoCompacting(owner.summary.id, sessionKey, agent.role, false);
+        return;
+      }
+    }
+  }
+
   private setAutoCompacting(
     missionId: string,
     agentSessionId: string,
@@ -1931,6 +1994,8 @@ export class MissionManager {
     if (role === 'orchestrator') {
       const wasActive = mission.autoCompacting;
       mission.autoCompacting = active;
+      if (active) this.autoCompactionWatchdogs.arm(mission.summary.id, AUTO_COMPACTION_WATCHDOG_MS);
+      else this.autoCompactionWatchdogs.clear(mission.summary.id);
       if (active || !wasActive || mission.streaming || mission.compacting) return;
       const next = mission.pendingSends.shift();
       this.patch(mission.summary.id, { queuedSends: mission.pendingSends.length });
@@ -1942,6 +2007,8 @@ export class MissionManager {
     if (!agent) return;
     const wasActive = agent.autoCompacting;
     agent.autoCompacting = active;
+    if (active) this.autoCompactionWatchdogs.arm(agentSessionId, AUTO_COMPACTION_WATCHDOG_MS);
+    else this.autoCompactionWatchdogs.clear(agentSessionId);
     if (active || !wasActive || agent.streaming) return;
     if (agent.pendingSends.length === 0 && agent.closeWhenIdle) {
       void this.closeAgent(agent.missionId, agent.session.sessionId);
@@ -2341,12 +2408,19 @@ export class MissionManager {
     if (!mission) return;
     const appSessionId = mission.summary.id;
     mission.pendingSends = [];
-    // Never interrupt an in-flight compaction (it risks a failed/corrupt
-    // compaction). Dropping queued sends is enough; compaction finishes on its
-    // own and its drive()/command drain then settles streaming/phase.
-    if (mission.compacting || mission.autoCompacting) {
+    // Never interrupt an in-flight manual compaction (it risks a failed/
+    // corrupt swap). Dropping queued sends is enough; compaction finishes on
+    // its own and its drive()/command drain then settles streaming/phase.
+    if (mission.compacting) {
       this.patch(appSessionId, { queuedSends: 0 });
       return;
+    }
+    // A user interrupt is the escape hatch for a wedged in-place
+    // auto-compaction: settle the flag and interrupt for real. Worst case the
+    // daemon ignores the interrupt while it actually is still compacting.
+    if (mission.autoCompacting) {
+      mission.autoCompacting = false;
+      this.autoCompactionWatchdogs.clear(appSessionId);
     }
     await mission.session.interrupt();
     this.patch(appSessionId, { phase: 'paused', streaming: false, queuedSends: 0 });
@@ -2537,7 +2611,13 @@ export class MissionManager {
         // in place (same session id), so no swap handling is needed here.
         await this.refreshContext(agent.session.sessionId, agent.session);
         agent.streaming = false;
-        if (agent.autoCompacting) return;
+        if (agent.autoCompacting) {
+          this.autoCompactionWatchdogs.arm(
+            agent.session.sessionId,
+            POST_TURN_AUTO_COMPACTION_WATCHDOG_MS,
+          );
+          return;
+        }
         const next = agent.pendingSends.shift();
         if (next !== undefined) void this.driveAgent(agent, next);
         else
@@ -2599,7 +2679,12 @@ export class MissionManager {
     if (!agent) return;
     agent.pendingSends = [];
     agent.lastUsedAt = Date.now();
-    if (agent.autoCompacting) return;
+    // Same escape hatch as the orchestrator: a user interrupt settles a
+    // wedged in-place auto-compaction instead of being silently ignored.
+    if (agent.autoCompacting) {
+      agent.autoCompacting = false;
+      this.autoCompactionWatchdogs.clear(agentSessionId);
+    }
     await agent.session.interrupt();
     agent.streaming = false;
     this.emit({
@@ -2661,6 +2746,7 @@ export class MissionManager {
     mission.agents.delete(agentSessionId);
     this.agentCompactions.delete(agentSessionId);
     this.contextSnapshots.delete(agentSessionId);
+    this.autoCompactionWatchdogs.clear(agentSessionId);
     this.stopContextPolling(agent.session.sessionId);
     agent.unsubscribe?.();
     try {
@@ -2843,7 +2929,10 @@ export class MissionManager {
         const contextPatch = {
           contextTokens: snapshot.used,
           contextRemainingTokens: snapshot.remaining,
-          maxContextTokens: snapshot.limit,
+          // summary.maxContextTokens means "model window". The catalog wins;
+          // the daemon's stats limit only fills in for unknown models, so the
+          // meter's window row stops flip-flopping between the two sources.
+          maxContextTokens: this.maxContextTokensForSummary(mission.summary) ?? snapshot.limit,
           contextAccuracy: snapshot.accuracy,
           contextUpdatedAt: snapshot.updatedAt,
         };
@@ -2901,6 +2990,7 @@ export class MissionManager {
     if (!mission) return;
     this.stopContextPolling(key);
     if (mission.summary.sessionId) this.stopContextPolling(mission.summary.sessionId);
+    this.autoCompactionWatchdogs.clear(mission.summary.id);
     mission.unsubscribe?.();
     for (const [agentSessionId, agent] of mission.agents) {
       this.stopContextPolling(agent.session.sessionId);
@@ -2908,6 +2998,7 @@ export class MissionManager {
       // Keyed by the app-level agent session id (like closeAgent), which is
       // never reused, so a missed delete would linger forever.
       this.agentCompactions.delete(agentSessionId);
+      this.autoCompactionWatchdogs.clear(agentSessionId);
       agent.unsubscribe?.();
       try {
         await agent.session.close();
