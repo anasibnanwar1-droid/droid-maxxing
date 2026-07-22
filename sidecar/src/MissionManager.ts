@@ -76,12 +76,9 @@ import {
 } from './permissionOutcomes.js';
 import { filterMissionListSummaries, type MissionListFilterOptions } from './missionListFilter.js';
 import {
-  clampCompactionTokenLimit,
-  createCompactionSettingsForModel,
-  daemonDefaultCompactionTokenLimit,
   daemonCompactionSettings,
+  effectiveCompactionTriggerLimit,
   normalizeCompactionTokenLimit,
-  resolvedCompactionTokenLimit,
   runCompaction,
   type CompactionTokenLimitPatch,
   type CompactType,
@@ -229,6 +226,9 @@ export class MissionManager {
   // defaults so resume, model changes, and worker opens all follow the limits
   // the Settings panel shows.
   private uiCompactionSettings: CompactionTokenLimitPatch = {};
+  // Monotonic revision of uiCompactionSettings; in-flight retunes from an
+  // older revision stop instead of re-arming stale limits out of order.
+  private compactionRetuneRev = 0;
   // Bounds how long an autoCompacting flag may stay raised without a
   // completion, so a lost session_compacted can never wedge a session forever.
   private readonly autoCompactionWatchdogs = new AutoCompactionWatchdogs((sessionKey) =>
@@ -763,37 +763,37 @@ export class MissionManager {
   // orchestrator model. When the model was reset to Default, summary.modelId is
   // undefined, so resolve the actual default model (its per-model limit and
   // context-window clamp would otherwise be ignored).
-  private async recomputeOrchestratorCompactionLimit(mission: Mission): Promise<void> {
+  private async recomputeOrchestratorCompactionLimit(
+    mission: Mission,
+    stillCurrent: () => boolean = () => true,
+  ): Promise<void> {
     const defaults = await this.getFactoryDefaults();
     const modelId =
       mission.summary.modelId ??
       defaultModelForAgent('orchestrator', modeForSummary(mission.summary), defaults);
     const limit = await this.compactionLimit(modelId);
-    await this.enableDaemonAutoCompaction(mission.session, limit);
-    // The summary carries the armed trigger so the ContextMeter shows the
-    // exact number the daemon compacts at instead of re-deriving its own.
-    this.patch(mission.summary.id, { compactionTokenLimit: limit });
+    if (!stillCurrent()) return;
+    const armed = await this.enableDaemonAutoCompaction(mission.session, limit);
+    if (!stillCurrent()) return;
+    // The summary records the trigger the daemon actually accepted; an arm
+    // failure clears it instead of advertising a limit that is not in force.
+    this.patch(mission.summary.id, { compactionTokenLimit: armed ? limit : undefined });
   }
 
-  // The one derivation every live-session path shares: UI snapshot first, then
-  // an optional session-exposed limit, then CLI defaults, clamped to the
-  // model's context window.
+  // Thin binding of the shared derivation to this manager's state (UI settings
+  // snapshot, CLI defaults, model catalog).
   private async compactionLimit(
     modelId: string | undefined,
     exposed: CompactionTokenLimitPatch = {},
-  ): Promise<number | undefined> {
+  ): Promise<number> {
     const defaults = await this.getFactoryDefaults();
-    const maxContextTokens = this.maxContextTokensForModel(modelId);
-    const resolved = resolvedCompactionTokenLimit(
+    return effectiveCompactionTriggerLimit({
       modelId,
-      this.uiCompactionSettings,
+      ui: this.uiCompactionSettings,
       exposed,
       defaults,
-    );
-    return clampCompactionTokenLimit(
-      resolved ?? daemonDefaultCompactionTokenLimit(maxContextTokens),
-      maxContextTokens,
-    );
+      maxContextTokens: this.maxContextTokensForModel(modelId),
+    });
   }
 
   private agentModelId(
@@ -822,16 +822,21 @@ export class MissionManager {
     this.uiCompactionSettings = next;
     // Retune every live session (orchestrators and opened agents) so concurrent
     // chats on different models each follow their own effective limit. Sessions
-    // retune in parallel so one hung updateSettings cannot stall the rest.
-    const retunes: Promise<void>[] = [];
+    // retune in parallel so one hung updateSettings cannot stall the rest; the
+    // revision guard keeps a slow batch from re-arming stale limits after a
+    // newer settings change already retuned.
+    const rev = ++this.compactionRetuneRev;
+    const stillCurrent = () => rev === this.compactionRetuneRev;
+    const retunes: Promise<unknown>[] = [];
     for (const mission of this.missions.values()) {
-      retunes.push(this.recomputeOrchestratorCompactionLimit(mission));
+      retunes.push(this.recomputeOrchestratorCompactionLimit(mission, stillCurrent));
       for (const [agentSessionId, agent] of mission.agents) {
         const modelId = this.agentModelId(mission, agentSessionId, agent.role);
         retunes.push(
-          this.compactionLimit(modelId).then((limit) =>
-            this.enableDaemonAutoCompaction(agent.session, limit),
-          ),
+          this.compactionLimit(modelId).then((limit) => {
+            if (!stillCurrent()) return;
+            return this.enableDaemonAutoCompaction(agent.session, limit);
+          }),
         );
       }
     }
@@ -839,21 +844,23 @@ export class MissionManager {
   }
 
   // Best effort: turn on the daemon's own threshold check so it compacts the
-  // session in place (same session id) once usage crosses the limit, with the
-  // same limit the ContextMeter shows. A failure just leaves the daemon's
-  // default behavior in place, so it never blocks the caller.
+  // session in place (same session id) once usage crosses the limit. A failure
+  // leaves the daemon's default behavior in place and never blocks the caller;
+  // the boolean lets callers avoid recording a trigger that is not in force.
   private async enableDaemonAutoCompaction(
     session: DroidSession,
     limit: number | undefined,
-  ): Promise<void> {
+  ): Promise<boolean> {
     try {
       await session.updateSettings(daemonCompactionSettings(limit) as never);
+      return true;
     } catch (err) {
       // The session stays usable, but auto-compaction is NOT armed: surface it
       // in the logs instead of failing silently ("compaction never happens").
       console.error(
         `[compaction] could not arm auto-compaction on ${session.sessionId}: ${errMsg(err)}`,
       );
+      return false;
     }
   }
 
@@ -1039,8 +1046,8 @@ export class MissionManager {
         compactionTokenLimit: init.settings?.compactionTokenLimit,
         compactionTokenLimitPerModel: init.settings?.compactionTokenLimitPerModel,
       });
-      await this.enableDaemonAutoCompaction(session, resumeCompactionLimit);
-      summary.compactionTokenLimit = resumeCompactionLimit;
+      const armed = await this.enableDaemonAutoCompaction(session, resumeCompactionLimit);
+      if (armed) summary.compactionTokenLimit = resumeCompactionLimit;
       const mission: Mission = this.createLiveMission(summary, session, mcp.servers, mcp.configs);
       this.subscribeOrchestratorCompaction(mission);
       // Seed the spawn->worker links persisted for this mission so historical
@@ -1311,9 +1318,9 @@ export class MissionManager {
       const { modelId: orchestratorModelId, reasoningEffort: orchestratorReasoning } =
         createModelDefaultsForMode(mode, cmd, defaults);
       const compactionModel = cmd.compactionModel ?? defaults.compactionModel ?? 'current-model';
-      const compactionSettings = createCompactionSettingsForModel(
-        orchestratorModelId,
-        {
+      const compactionTokenLimit = effectiveCompactionTriggerLimit({
+        modelId: orchestratorModelId,
+        ui: {
           compactionTokenLimit:
             cmd.compactionTokenLimit !== undefined
               ? cmd.compactionTokenLimit
@@ -1323,15 +1330,8 @@ export class MissionManager {
             this.uiCompactionSettings.compactionTokenLimitPerModel,
         },
         defaults,
-        this.maxContextTokensForModel(orchestratorModelId),
-      );
-      const orchestratorWindow = this.maxContextTokensForModel(orchestratorModelId);
-      const compactionTokenLimit =
-        compactionSettings.compactionTokenLimit ??
-        clampCompactionTokenLimit(
-          daemonDefaultCompactionTokenLimit(orchestratorWindow),
-          orchestratorWindow,
-        );
+        maxContextTokens: this.maxContextTokensForModel(orchestratorModelId),
+      });
       const { workerModelId, workerReasoningEffort, validatorModelId, validatorReasoningEffort } =
         createMissionAgentDefaultsForMode(mode, cmd, defaults);
       const mcp = await this.startLocalMcpServers(ref);
@@ -1365,6 +1365,9 @@ export class MissionManager {
         permissionHandler: this.makePermissionHandler(ref),
         askUserHandler: this.makeAskUserHandler(ref),
       });
+      // The createSession init payload above already armed the trigger; this
+      // follow-up push is belt and braces, so its outcome does not gate the
+      // summary field recorded below.
       await this.enableDaemonAutoCompaction(session, compactionTokenLimit);
 
       const id = session.sessionId;
@@ -2416,13 +2419,15 @@ export class MissionManager {
       return;
     }
     // A user interrupt is the escape hatch for a wedged in-place
-    // auto-compaction: settle the flag and interrupt for real. Worst case the
-    // daemon ignores the interrupt while it actually is still compacting.
-    if (mission.autoCompacting) {
+    // auto-compaction: interrupt for real, then settle the flag. The flag and
+    // its watchdog are only cleared once the interrupt actually landed; if it
+    // throws they stay in place so the watchdog can still settle the session.
+    const wasAutoCompacting = mission.autoCompacting;
+    await mission.session.interrupt();
+    if (wasAutoCompacting) {
       mission.autoCompacting = false;
       this.autoCompactionWatchdogs.clear(appSessionId);
     }
-    await mission.session.interrupt();
     this.patch(appSessionId, { phase: 'paused', streaming: false, queuedSends: 0 });
   }
 
@@ -2679,13 +2684,14 @@ export class MissionManager {
     if (!agent) return;
     agent.pendingSends = [];
     agent.lastUsedAt = Date.now();
-    // Same escape hatch as the orchestrator: a user interrupt settles a
-    // wedged in-place auto-compaction instead of being silently ignored.
-    if (agent.autoCompacting) {
+    // Same escape hatch as the orchestrator: interrupt first, and settle the
+    // wedged auto-compaction flag only once the interrupt landed.
+    const wasAutoCompacting = agent.autoCompacting;
+    await agent.session.interrupt();
+    if (wasAutoCompacting) {
       agent.autoCompacting = false;
       this.autoCompactionWatchdogs.clear(agentSessionId);
     }
-    await agent.session.interrupt();
     agent.streaming = false;
     this.emit({
       type: 'agent.updated',

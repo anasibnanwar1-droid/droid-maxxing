@@ -114,8 +114,9 @@ export interface MissionSummary {
   contextAccuracy?: 'exact' | 'estimated';
   contextUpdatedAt?: string;
   maxContextTokens?: number;
-  // The auto-compaction trigger the sidecar armed on the daemon (clamped below
-  // the model window); display-only truth for the meter's "Compacts at" row.
+  // The auto-compaction trigger the sidecar last armed on the daemon (clamped
+  // below the model window), cleared when arming failed. Diagnostic/persisted
+  // truth only; nothing in the meter renders it.
   compactionTokenLimit?: number;
   // In-place daemon auto-compactions; part of the meter's compaction generation.
   autoCompactions?: number;

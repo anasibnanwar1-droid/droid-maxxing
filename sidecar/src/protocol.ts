@@ -115,9 +115,10 @@ export interface MissionSummary {
   contextAccuracy?: 'exact' | 'estimated';
   contextUpdatedAt?: string;
   maxContextTokens?: number;
-  // The auto-compaction trigger the sidecar armed on the daemon for this
-  // session (already clamped below the model window). Display-only truth for
-  // the ContextMeter's "Compacts at" row.
+  // The auto-compaction trigger the sidecar last armed on the daemon for this
+  // session (already clamped below the model window), cleared when arming
+  // failed. Recorded as diagnostic/persisted truth; the meter itself renders
+  // the context window only and compaction announces itself in the transcript.
   compactionTokenLimit?: number;
   // In-place daemon auto-compactions completed on this session; the UI uses it
   // (plus the swap chain length) as the compaction generation for meter resets.

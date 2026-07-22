@@ -13,7 +13,7 @@ import {
   clampCompactionTokenLimit,
   compactionTriggerCeiling,
   compactionTokenLimitForModel,
-  createCompactionSettingsForModel,
+  effectiveCompactionTriggerLimit,
   daemonDefaultCompactionTokenLimit,
   daemonCompactionSettings,
   resolvedCompactionTokenLimit,
@@ -183,15 +183,16 @@ test('uses Factory compaction defaults when command omits them', () => {
   );
 });
 
-test('builds Droid compaction init payloads', () => {
-  assert.deepEqual(
-    createCompactionSettingsForModel('model-a', {
-      compactionTokenLimit: 200_000,
-      compactionTokenLimitPerModel: { 'model-a': 150_000 },
+test('derives the armed trigger from the UI snapshot (per-model over global)', () => {
+  assert.equal(
+    effectiveCompactionTriggerLimit({
+      modelId: 'model-a',
+      ui: {
+        compactionTokenLimit: 200_000,
+        compactionTokenLimitPerModel: { 'model-a': 150_000 },
+      },
     }),
-    {
-      compactionTokenLimit: 150_000,
-    },
+    150_000,
   );
 });
 
@@ -201,19 +202,18 @@ test('caps Droid compaction limits below the model context window with headroom'
   // provider call and the compaction turn itself before the window overflows.
   assert.equal(compactionTriggerCeiling(100_000), 80_000);
   assert.equal(compactionTriggerCeiling(undefined), undefined);
+  // Never rounds down to an invalid zero trigger.
+  assert.equal(compactionTriggerCeiling(1), 1);
   assert.equal(clampCompactionTokenLimit(200_000, 100_000), 80_000);
   assert.equal(clampCompactionTokenLimit(80_000, 200_000), 80_000);
   assert.equal(clampCompactionTokenLimit(200_000), 200_000);
-  assert.deepEqual(
-    createCompactionSettingsForModel(
-      'model-a',
-      { compactionTokenLimit: 200_000, compactionTokenLimitPerModel: { 'model-a': 150_000 } },
-      {},
-      100_000,
-    ),
-    {
-      compactionTokenLimit: 80_000,
-    },
+  assert.equal(
+    effectiveCompactionTriggerLimit({
+      modelId: 'model-a',
+      ui: { compactionTokenLimit: 200_000, compactionTokenLimitPerModel: { 'model-a': 150_000 } },
+      maxContextTokens: 100_000,
+    }),
+    80_000,
   );
 });
 
@@ -223,15 +223,14 @@ test('matches the daemon model-default compaction threshold', () => {
   assert.equal(daemonDefaultCompactionTokenLimit(180_000), 180_000);
 });
 
-test('leaves unset compaction limits to Factory session defaults', () => {
-  assert.deepEqual(
-    createCompactionSettingsForModel(
-      'model-a',
-      { compactionTokenLimit: null, compactionTokenLimitPerModel: {} },
-      {},
-      100_000,
-    ),
-    {},
+test('cleared limits fall back to the daemon model default, still with headroom', () => {
+  assert.equal(
+    effectiveCompactionTriggerLimit({
+      modelId: 'model-a',
+      ui: { compactionTokenLimit: null, compactionTokenLimitPerModel: {} },
+      maxContextTokens: 100_000,
+    }),
+    80_000,
   );
 });
 
@@ -622,13 +621,15 @@ test('design turns disable TodoWrite and normal turns restore it', async () => {
   );
 });
 
-test('does not emit live compaction disable payloads', () => {
-  assert.deepEqual(
-    createCompactionSettingsForModel('model-a', {
-      compactionTokenLimit: null,
-      compactionTokenLimitPerModel: {},
+test('a cleared UI limit never disables the threshold check', () => {
+  // Clearing means "back to the daemon default trigger", never "stop
+  // auto-compacting".
+  assert.equal(
+    effectiveCompactionTriggerLimit({
+      modelId: 'model-a',
+      ui: { compactionTokenLimit: null, compactionTokenLimitPerModel: {} },
     }),
-    {},
+    250_000,
   );
 });
 

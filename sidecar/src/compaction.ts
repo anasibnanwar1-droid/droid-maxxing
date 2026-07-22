@@ -60,7 +60,8 @@ export const COMPACTION_WINDOW_FRACTION = 0.8;
 
 export function compactionTriggerCeiling(maxContextTokens?: number): number | undefined {
   const max = normalizeCompactionTokenLimit(maxContextTokens);
-  return max === undefined ? undefined : Math.floor(max * COMPACTION_WINDOW_FRACTION);
+  // Floor at 1: a trigger of 0 is not a valid compactionTokenLimit.
+  return max === undefined ? undefined : Math.max(1, Math.floor(max * COMPACTION_WINDOW_FRACTION));
 }
 
 export function clampCompactionTokenLimit(
@@ -76,20 +77,7 @@ export function daemonDefaultCompactionTokenLimit(maxContextTokens?: number): nu
   return Math.min(normalizeCompactionTokenLimit(maxContextTokens) ?? 250_000, 250_000);
 }
 
-export function createCompactionSettingsForModel(
-  modelId: string | undefined,
-  settings: CompactionTokenLimitPatch,
-  defaults: CompactionDefaults = {},
-  maxContextTokens?: number,
-): Record<string, number> {
-  const limit = clampCompactionTokenLimit(
-    compactionTokenLimitForModel(modelId, settings, defaults),
-    maxContextTokens,
-  );
-  return limit !== undefined ? { compactionTokenLimit: limit } : {};
-}
-
-// Single derivation of the auto-compaction threshold, shared by resume,
+// Single derivation of the auto-compaction threshold, shared by create, resume,
 // model change, worker open, and settings changes so every session's trigger
 // matches the limit the ContextMeter shows. Precedence: the UI settings
 // snapshot when it carries any signal (per-model override -> global, where an
@@ -109,6 +97,32 @@ export function resolvedCompactionTokenLimit(
     return resumedCompactionTokenLimit(undefined, exposed, defaults);
   }
   return resumedCompactionTokenLimit(modelId, exposed, defaults);
+}
+
+export interface CompactionTriggerInput {
+  modelId: string | undefined;
+  // Current UI settings snapshot (or, at create time, the command's fields
+  // merged over it).
+  ui: CompactionTokenLimitPatch;
+  // Limits a resumed session's own init settings expose.
+  exposed?: CompactionTokenLimitPatch;
+  // CLI-file defaults.
+  defaults?: CompactionDefaults;
+  // The model's context window, when the catalog knows it.
+  maxContextTokens?: number;
+}
+
+// The trigger every session path arms on the daemon: the resolved limit when
+// any tier carries a signal, otherwise the daemon's own model default, always
+// capped below the context window with headroom. Never undefined; the
+// threshold check is always armed with an explicit trigger.
+export function effectiveCompactionTriggerLimit(input: CompactionTriggerInput): number {
+  const { modelId, ui, exposed = {}, defaults = {}, maxContextTokens } = input;
+  const limit =
+    resolvedCompactionTokenLimit(modelId, ui, exposed, defaults) ??
+    daemonDefaultCompactionTokenLimit(maxContextTokens);
+  const ceiling = compactionTriggerCeiling(maxContextTokens);
+  return ceiling === undefined ? limit : Math.min(limit, ceiling);
 }
 
 // Settings pushed to a live daemon session so its own threshold check runs
