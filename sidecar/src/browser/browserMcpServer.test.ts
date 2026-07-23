@@ -13,12 +13,17 @@ test('browser MCP server exposes agent-facing names and typed inputs', () => {
       'browser_open',
       'browser_snapshot',
       'browser_reload',
+      'browser_back',
+      'browser_forward',
       'browser_screenshot',
       'browser_click',
+      'browser_hover',
+      'browser_select',
       'browser_type',
       'browser_keypress',
       'browser_resize',
       'browser_scroll',
+      'browser_wait',
       'browser_fill_login',
       'design-mode',
       'design_reference',
@@ -96,4 +101,31 @@ test('browser_reload returns a fresh browser state', async () => {
   const result = await browserReload?.handler({});
 
   assert.match(String(result), /https:\/\/example.com/);
+});
+
+test('browser history tools return the resulting page state', async () => {
+  const calls: string[] = [];
+  const state = {
+    url: 'https://example.com/history',
+    viewport: { width: 1200, height: 800, deviceScaleFactor: 2 },
+    viewportMode: 'fit' as const,
+    scroll: { x: 0, y: 0 },
+    refs: [],
+  };
+  const manager = {
+    async goBack() {
+      calls.push('back');
+      return state;
+    },
+    async goForward() {
+      calls.push('forward');
+      return state;
+    },
+  } as unknown as BrowserSessionManager;
+  const server = createBrowserMcpServer(manager, () => 'm1');
+
+  await server.tools.find((tool) => tool.name === 'browser_back')?.handler({});
+  await server.tools.find((tool) => tool.name === 'browser_forward')?.handler({});
+
+  assert.deepEqual(calls, ['back', 'forward']);
 });

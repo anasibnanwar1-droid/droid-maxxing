@@ -26,6 +26,7 @@ import { getAppVersion, type AppUpdateInfo } from '../lib/onboarding';
 import { refreshAppUpdate, startAppUpdate } from '../lib/appUpdate';
 import { getGitWorktrees, isWorktreeInUse, removeGitWorktree, worktreeName } from '../lib/git';
 import { activeSessionCwds } from '../lib/missions';
+import { utilityTerminalCwds } from '../lib/utilityPanel';
 import { workspaceName } from '../lib/workspaces';
 import { toast } from '../lib/toast';
 
@@ -1214,6 +1215,10 @@ function WorktreesSection() {
     activeMissionId: state.activeMissionId,
     draftCwd: state.draftChat?.cwd,
     workers: state.workers,
+    pinnedCwds: utilityTerminalCwds(
+      state.utilityPanels,
+      Object.fromEntries(Object.entries(state.missions).map(([id, mission]) => [id, mission.cwd])),
+    ),
   });
 
   return (

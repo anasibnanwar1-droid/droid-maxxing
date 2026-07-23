@@ -8,6 +8,7 @@ import type {
   BrowserBox,
   BrowserElementRef,
   BrowserScreenshotOptions,
+  BrowserSnapshot,
   BrowserState,
   BrowserViewport,
   BrowserViewportMode,
@@ -47,6 +48,8 @@ export interface BrowserRuntime {
     scroll: { x: number; y: number };
     refs: BrowserElementRef[];
   }>;
+  goBack(): Promise<BrowserSnapshot>;
+  goForward(): Promise<BrowserSnapshot>;
   setViewport(viewport: BrowserViewport): Promise<void>;
   screenshot(options?: BrowserScreenshotOptions): Promise<string>;
   capture(box?: BrowserBox, options?: BrowserScreenshotOptions): Promise<string>;
@@ -56,10 +59,12 @@ export interface BrowserRuntime {
     scroll: { x: number; y: number };
     refs: BrowserElementRef[];
   }>;
-  click(x: number, y: number): Promise<void>;
+  click(x: number, y: number, selector?: string): Promise<void>;
+  hover(x: number, y: number, selector?: string): Promise<void>;
+  selectOption(selector: string, value: string): Promise<void>;
   type(text: string): Promise<void>;
   keypress(key: string): Promise<void>;
-  scroll(direction: ScrollDirection, pixels?: number): Promise<void>;
+  scroll(direction: ScrollDirection, pixels?: number, x?: number, y?: number): Promise<void>;
   fillCredentials?(): Promise<{
     url: string;
     title?: string;
@@ -136,9 +141,29 @@ export class BrowserSessionManager {
     return session.state;
   }
 
+  async goBack(missionId: string): Promise<BrowserState> {
+    return this.navigateHistory(missionId, 'back');
+  }
+
+  async goForward(missionId: string): Promise<BrowserState> {
+    return this.navigateHistory(missionId, 'forward');
+  }
+
   async refresh(missionId: string): Promise<BrowserState> {
     const session = this.requireSession(missionId);
     session.state = await this.captureState(session);
+    this.emitUpdated(session.state);
+    return session.state;
+  }
+
+  private async navigateHistory(
+    missionId: string,
+    direction: 'back' | 'forward',
+  ): Promise<BrowserState> {
+    const session = this.requireSession(missionId);
+    const snapshot =
+      direction === 'back' ? await session.runtime.goBack() : await session.runtime.goForward();
+    session.state = this.stateFromSnapshot(session, snapshot);
     this.emitUpdated(session.state);
     return session.state;
   }
@@ -169,10 +194,56 @@ export class BrowserSessionManager {
     source?: BrowserInputSource;
   }): Promise<BrowserState> {
     const session = this.requireSession(input.missionId);
-    const point = input.ref ? centerOf(this.requireRef(session, input.ref)) : pointFrom(input);
+    if (input.ref) await this.refresh(session.missionId);
+    const target = input.ref ? this.requireRef(session, input.ref) : undefined;
+    const point = target ? centerOf(target) : pointFrom(input);
     this.showAgentCursor(session, point, input.source);
-    await session.runtime.click(point.x, point.y);
+    await session.runtime.click(point.x, point.y, target?.selector);
     return this.refresh(session.missionId);
+  }
+
+  async hover(input: {
+    missionId: string;
+    ref?: string;
+    x?: number;
+    y?: number;
+  }): Promise<BrowserState> {
+    const session = this.requireSession(input.missionId);
+    if (input.ref) await this.refresh(session.missionId);
+    const target = input.ref ? this.requireRef(session, input.ref) : undefined;
+    const point = target ? centerOf(target) : pointFrom(input);
+    this.showAgentCursor(session, point, 'agent');
+    await session.runtime.hover(point.x, point.y, target?.selector);
+    return this.refresh(session.missionId);
+  }
+
+  async selectOption(missionId: string, ref: string, value: string): Promise<BrowserState> {
+    const session = this.requireSession(missionId);
+    await this.refresh(session.missionId);
+    const target = this.requireRef(session, ref);
+    await session.runtime.selectOption(target.selector, value);
+    return this.refresh(session.missionId);
+  }
+
+  async wait(
+    missionId: string,
+    input: { text?: string; ref?: string; urlIncludes?: string; timeoutMs?: number },
+  ): Promise<BrowserState> {
+    const timeoutMs = Math.min(15_000, Math.max(0, input.timeoutMs ?? 5_000));
+    if (!input.text && !input.ref && !input.urlIncludes) {
+      await delay(timeoutMs);
+      return this.refresh(missionId);
+    }
+    const deadline = Date.now() + timeoutMs;
+    let state = await this.refresh(missionId);
+    while (!waitConditionMatches(state, input) && Date.now() < deadline) {
+      await delay(Math.min(200, Math.max(0, deadline - Date.now())));
+      state = await this.refresh(missionId);
+    }
+    if (!waitConditionMatches(state, input)) {
+      throw new Error('Timed out waiting for the browser condition.');
+    }
+    return state;
   }
 
   async type(missionId: string, text: string): Promise<BrowserState> {
@@ -192,17 +263,18 @@ export class BrowserSessionManager {
     direction: ScrollDirection,
     pixels?: number,
     source?: BrowserInputSource,
+    ref?: string,
   ): Promise<BrowserState> {
     const session = this.requireSession(missionId);
-    this.showAgentCursor(
-      session,
-      {
-        x: Math.round(session.state.viewport.width / 2),
-        y: Math.round(session.state.viewport.height / 2),
-      },
-      source,
-    );
-    await session.runtime.scroll(direction, pixels);
+    if (ref) await this.refresh(session.missionId);
+    const point = ref
+      ? centerOf(this.requireRef(session, ref))
+      : {
+          x: Math.round(session.state.viewport.width / 2),
+          y: Math.round(session.state.viewport.height / 2),
+        };
+    this.showAgentCursor(session, point, source);
+    await session.runtime.scroll(direction, pixels, point.x, point.y);
     return this.refresh(session.missionId);
   }
 
@@ -380,12 +452,7 @@ export class BrowserSessionManager {
 
   private stateFromSnapshot(
     session: ManagedBrowserSession,
-    snapshot: {
-      url: string;
-      title?: string;
-      scroll: { x: number; y: number };
-      refs: BrowserElementRef[];
-    },
+    snapshot: BrowserSnapshot,
   ): BrowserState {
     return {
       ...session.state,
@@ -460,6 +527,30 @@ function centerOf(ref: BrowserElementRef): { x: number; y: number } {
 
 function pointFrom(input: { x?: number; y?: number }): { x: number; y: number } {
   if (input.x === undefined || input.y === undefined)
-    throw new Error('browser.click requires either a ref or x/y coordinates.');
+    throw new Error('Browser interaction requires either a ref or x/y coordinates.');
   return { x: input.x, y: input.y };
+}
+
+function waitConditionMatches(
+  state: BrowserState,
+  input: { text?: string; ref?: string; urlIncludes?: string },
+): boolean {
+  if (input.urlIncludes && !state.url.includes(input.urlIncludes)) return false;
+  if (input.ref && !state.refs.some((item) => item.ref === input.ref)) return false;
+  if (input.text) {
+    const expected = input.text.toLocaleLowerCase();
+    if (
+      !state.refs.some(
+        (item) =>
+          item.text?.toLocaleLowerCase().includes(expected) ||
+          item.name?.toLocaleLowerCase().includes(expected),
+      )
+    )
+      return false;
+  }
+  return true;
+}
+
+function delay(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }

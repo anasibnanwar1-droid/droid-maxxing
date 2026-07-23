@@ -2,6 +2,7 @@ import { useRef, useEffect, useMemo, useState, useCallback } from 'react';
 import { useStore } from '../hooks/useStore';
 import { useRepoStatus } from '../hooks/useRepoStatus';
 import { interruptMission, setMissionAutonomy, subscribeWorker } from '../lib/commands';
+import { utilityPanelForMission } from '../lib/utilityPanel';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   FileDiff,
@@ -894,6 +895,7 @@ function FeatureFocus({
 export default function MissionControl() {
   const { state } = useStore();
   const mission = state.activeMissionId ? state.missions[state.activeMissionId] : null;
+  const utilityOpen = utilityPanelForMission(state.utilityPanels, state.activeMissionId).open;
   const [viewedAgent, setViewedAgent] = useState<string>('orchestrator');
   const [selectedFeatureId, setSelectedFeatureId] = useState<string | null>(null);
   const [focusOpen, setFocusOpen] = useState(false);
@@ -1173,7 +1175,7 @@ export default function MissionControl() {
 
         {/* ─── Context panel (collapsible via the top-bar context button) ─── */}
         <AnimatePresence initial={false}>
-          {state.rightPanelOpen && !state.browserOpen && (
+          {state.rightPanelOpen && !utilityOpen && (
             <motion.aside
               key="mc-context"
               initial={{ width: 0, opacity: 0 }}

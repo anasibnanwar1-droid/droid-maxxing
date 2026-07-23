@@ -19,11 +19,12 @@ export const PRESET_VIEWPORTS: Partial<Record<BrowserViewportMode, BrowserViewpo
   mobile: { width: 390, height: 844, deviceScaleFactor: 2 },
 };
 
-export function viewportFromFrame(size: Size): BrowserViewport {
+export function viewportFromFrame(size: Size, edgeToEdge = false): BrowserViewport {
   if (size.width <= 1 || size.height <= 1) return FIT_FALLBACK_VIEWPORT;
+  const inset = edgeToEdge ? 0 : 36;
   return {
-    width: even(clamp(size.width - 72, 390, 1440)),
-    height: even(clamp(size.height - 96, 360, 1100)),
+    width: pixels(size.width - inset),
+    height: pixels(size.height - inset),
     deviceScaleFactor: 2,
   };
 }
@@ -68,6 +69,6 @@ export function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
 
-function even(value: number): number {
-  return Math.max(2, Math.round(value / 2) * 2);
+function pixels(value: number): number {
+  return Math.max(1, Math.round(value));
 }

@@ -36,6 +36,8 @@ export interface BrowserSnapshot {
   title?: string;
   scroll: { x: number; y: number };
   refs: BrowserElementRef[];
+  canGoBack?: boolean;
+  canGoForward?: boolean;
 }
 
 export type ScrollDirection = 'up' | 'down' | 'left' | 'right';

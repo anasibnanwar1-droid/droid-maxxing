@@ -21,6 +21,21 @@ test('loadPersistedUiState sanitizes persisted shell fields', () => {
       sidebarCollapsed: true,
       specMode: true,
       missionMode: false,
+      utilityPanels: {
+        m1: {
+          open: true,
+          activeTabId: 'terminal-1',
+          tabs: [
+            { id: 'review', tool: 'review', label: 'Review' },
+            {
+              id: 'terminal-1',
+              tool: 'terminal',
+              label: 'Terminal',
+              terminalId: 'pty-1',
+            },
+          ],
+        },
+      },
       browserOpenKeys: { 'chat-1': true, 'chat-2': false, '': true },
       browsers: {
         'chat-1': {
@@ -48,6 +63,13 @@ test('loadPersistedUiState sanitizes persisted shell fields', () => {
         sidebarCollapsed: true,
         specMode: true,
         missionMode: false,
+        utilityPanels: {
+          m1: {
+            open: true,
+            activeTabId: 'review',
+            tabs: [{ id: 'review', tool: 'review', label: 'Review' }],
+          },
+        },
         browserOpenKeys: { 'chat-1': true, 'chat-2': false },
         browsers: {
           'chat-1': {

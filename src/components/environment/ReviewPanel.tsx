@@ -225,7 +225,7 @@ const FILE_RENDER_CAP = 100;
 // require windowing/virtualization; this is the bounded improvement.
 const FILE_RENDER_JUMP_BUFFER = 20;
 
-export function ReviewPanel({ cwd, onClose }: { cwd: string; onClose: () => void }) {
+export function ReviewPanel({ cwd, onClose }: { cwd: string; onClose?: () => void }) {
   const { state, dispatch } = useStore();
   const [filesOpen, setFilesOpen] = useState(true);
   const [wrap, setWrap] = useState(false);
@@ -469,13 +469,15 @@ export function ReviewPanel({ cwd, onClose }: { cwd: string; onClose: () => void
           active={moreOpen}
           onClick={() => setMoreOpen((v) => !v)}
         />
-        <button
-          onClick={onClose}
-          title="Close review"
-          className="rounded-md p-1.5 text-droid-text-muted transition-colors hover:bg-droid-elevated/60 hover:text-droid-text"
-        >
-          <X className="h-4 w-4" />
-        </button>
+        {onClose && (
+          <button
+            onClick={onClose}
+            title="Close review"
+            className="rounded-md p-1.5 text-droid-text-muted transition-colors hover:bg-droid-elevated/60 hover:text-droid-text"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        )}
 
         <Popover
           open={commitOpen}

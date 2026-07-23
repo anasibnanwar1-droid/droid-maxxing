@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import type { RefObject } from 'react';
 import { isDesktop } from '../../lib/desktop';
 import {
@@ -13,6 +13,8 @@ import {
   attachNativeBrowser,
   closeNativeBrowser,
   detachNativeBrowser,
+  goBackNativeBrowser,
+  goForwardNativeBrowser,
   onNativeBrowserDesignPrompt,
   onNativeBrowserLoadFailed,
   onNativeBrowserLoaded,
@@ -23,10 +25,12 @@ import {
   setNativeBrowserBounds,
   setNativeBrowserDesignMode,
   setNativeBrowserPencilMode,
+  setNativeBrowserVisible,
   waitForNextNativeBrowserLoad,
   type NativeBrowserBounds,
   type NativeBrowserDesignPrompt,
   type NativeBrowserLoadFailed,
+  type NativeBrowserLoaded,
   type NativeBrowserSelection,
   reloadNativeBrowser,
 } from '../../lib/nativeBrowser';
@@ -39,7 +43,6 @@ import type {
   BrowserViewportMode,
 } from '../../types/bridge';
 import type { Size } from '../canvas/canvasMath';
-import { useElementSize } from './useElementSize';
 
 interface NativeBrowserSurfaceProps {
   browserKey: string;
@@ -50,7 +53,9 @@ interface NativeBrowserSurfaceProps {
   viewportMode: BrowserViewportMode;
   designMode: boolean;
   pencilMode: boolean;
-  onLoaded: (url: string) => void;
+  expanded?: boolean;
+  frameSize: Size;
+  onLoaded: (event: NativeBrowserLoaded) => void;
   onSelection: (selection: NativeBrowserSelection) => void;
   onPrompt: (prompt: NativeBrowserDesignPrompt) => void;
   onLoadFailed?: (failure: NativeBrowserLoadFailed) => void;
@@ -66,28 +71,71 @@ export function NativeBrowserSurface({
   viewportMode,
   designMode,
   pencilMode,
+  expanded = false,
+  frameSize,
   onLoaded,
   onSelection,
   onPrompt,
   onLoadFailed,
   onViewportSizeChange,
 }: NativeBrowserSurfaceProps) {
-  const stageRef = useRef<HTMLDivElement>(null);
   const slotRef = useRef<HTMLDivElement>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
-  const frameSize = useElementSize(stageRef);
   const surfaceReady = frameSize.width > 8 && frameSize.height > 8;
   const lastBounds = useRef<NativeBrowserBounds | null>(null);
+  const pendingBounds = useRef<{
+    sessionId: string;
+    bounds: NativeBrowserBounds;
+  } | null>(null);
+  const boundsFrame = useRef(0);
   const attachedSessionRef = useRef<string | undefined>(undefined);
   const attachingSessionRef = useRef<string | undefined>(undefined);
   const onLoadedRef = useRef(onLoaded);
   const onSelectionRef = useRef(onSelection);
   const onPromptRef = useRef(onPrompt);
   const onLoadFailedRef = useRef(onLoadFailed);
+  const obscuredRef = useRef(obscured);
+  const controllerStateRef = useRef({
+    browserKey,
+    designMode,
+    obscured,
+    pencilMode,
+    url,
+    visibleSessionId,
+  });
+  controllerStateRef.current = {
+    browserKey,
+    designMode,
+    obscured,
+    pencilMode,
+    url,
+    visibleSessionId,
+  };
+  const urlRef = useRef(url);
+  urlRef.current = url;
   const native = isDesktop();
   const surface = useMemo(
-    () => surfaceLayout(frameSize, viewport, viewportMode),
-    [frameSize, viewport, viewportMode],
+    () => surfaceLayout(frameSize, viewport, viewportMode, expanded),
+    [expanded, frameSize, viewport, viewportMode],
+  );
+  const scheduleBoundsUpdate = useCallback((sessionId: string, bounds: NativeBrowserBounds) => {
+    pendingBounds.current = { sessionId, bounds };
+    if (boundsFrame.current) return;
+    boundsFrame.current = requestAnimationFrame(() => {
+      boundsFrame.current = 0;
+      const pending = pendingBounds.current;
+      pendingBounds.current = null;
+      if (!pending) return;
+      lastBounds.current = pending.bounds;
+      setNativeBrowserBounds(pending.sessionId, pending.bounds).catch(() => {});
+    });
+  }, []);
+
+  useEffect(
+    () => () => {
+      if (boundsFrame.current) cancelAnimationFrame(boundsFrame.current);
+    },
+    [],
   );
 
   useEffect(() => {
@@ -95,26 +143,20 @@ export function NativeBrowserSurface({
     onSelectionRef.current = onSelection;
     onPromptRef.current = onPrompt;
     onLoadFailedRef.current = onLoadFailed;
-  }, [onLoadFailed, onLoaded, onPrompt, onSelection]);
+    obscuredRef.current = obscured;
+  }, [obscured, onLoadFailed, onLoaded, onPrompt, onSelection]);
 
   useEffect(() => {
     onViewportSizeChange({ width: Math.round(surface.width), height: Math.round(surface.height) });
   }, [onViewportSizeChange, surface.height, surface.width]);
 
-  // While obscured, native design/pencil mode is forced off (the BrowserView is
-  // detached). Depending on `obscured` here re-runs the effect when the overlay
-  // closes, re-asserting the real design state so the toolbar and in-page
-  // selection don't disagree after a request arrived while obscured.
   useEffect(() => {
-    if (visibleSessionId)
-      setNativeBrowserDesignMode(visibleSessionId, !obscured && designMode).catch(() => {});
-  }, [designMode, obscured, visibleSessionId]);
-
-  useEffect(() => {
-    if (visibleSessionId)
-      setNativeBrowserPencilMode(visibleSessionId, !obscured && designMode && pencilMode).catch(
-        () => {},
-      );
+    if (!visibleSessionId) return;
+    const designActive = !obscured && designMode;
+    Promise.all([
+      setNativeBrowserDesignMode(visibleSessionId, designActive),
+      setNativeBrowserPencilMode(visibleSessionId, designActive && pencilMode),
+    ]).catch(() => {});
   }, [designMode, obscured, pencilMode, visibleSessionId]);
 
   useEffect(() => {
@@ -145,7 +187,7 @@ export function NativeBrowserSurface({
     track(
       onNativeBrowserLoaded((event) => {
         if (event.sessionId && event.sessionId !== visibleSessionId) return;
-        onLoadedRef.current(event.url);
+        onLoadedRef.current(event);
       }),
     );
     track(
@@ -174,7 +216,10 @@ export function NativeBrowserSurface({
           pencilMode,
           onSelection,
         });
-        onLoaded(readIframeUrl(iframe) ?? url);
+        onLoaded({
+          sessionId: visibleSessionId ?? browserKey,
+          url: readIframeUrl(iframe) ?? url,
+        });
       } catch {
         detachDesignMode = () => {};
       }
@@ -187,19 +232,23 @@ export function NativeBrowserSurface({
     };
   }, [designMode, native, onLoaded, onSelection, pencilMode, url]);
 
+  useLayoutEffect(() => {
+    if (!native) return;
+    if (visibleSessionId) {
+      setNativeBrowserVisible(visibleSessionId, !obscured).catch(() => {});
+    }
+  }, [native, obscured, visibleSessionId]);
+
   useEffect(() => {
     if (!native) return;
     if (obscured) {
-      detachNativeBrowser(visibleSessionId).catch(() => {});
-      attachedSessionRef.current = undefined;
-      attachingSessionRef.current = undefined;
-      lastBounds.current = null;
       return;
     }
     if (!surfaceReady) return;
     const bounds = boundsFor(slotRef);
     if (!bounds) return;
     if (!visibleSessionId) {
+      pendingBounds.current = null;
       detachNativeBrowser().catch(() => {});
       attachedSessionRef.current = undefined;
       attachingSessionRef.current = undefined;
@@ -213,13 +262,16 @@ export function NativeBrowserSurface({
       if (attachingSessionRef.current === visibleSessionId) return;
       const target = visibleSessionId;
       attachingSessionRef.current = target;
-      attachNativeBrowser(target, bounds, url)
+      attachNativeBrowser(target, bounds, urlRef.current)
         .then(() => {
           // A newer session may have started attaching while this was in
           // flight; only commit state if `target` is still the intended one.
           if (attachingSessionRef.current !== target) return;
           attachedSessionRef.current = target;
           lastBounds.current = bounds;
+          if (obscuredRef.current) {
+            setNativeBrowserVisible(target, false).catch(() => {});
+          }
         })
         .catch(() => {})
         .finally(() => {
@@ -228,8 +280,7 @@ export function NativeBrowserSurface({
       return;
     }
     if (!lastBounds.current || !equalBounds(lastBounds.current, bounds)) {
-      setNativeBrowserBounds(visibleSessionId, bounds).catch(() => {});
-      lastBounds.current = bounds;
+      scheduleBoundsUpdate(visibleSessionId, bounds);
     }
   }, [
     native,
@@ -239,38 +290,40 @@ export function NativeBrowserSurface({
     surface.top,
     surface.width,
     surfaceReady,
-    url,
+    scheduleBoundsUpdate,
     visibleSessionId,
   ]);
 
   useEffect(
     () =>
       registerNativeBrowserController({
-        perform: async (request) =>
-          native
+        perform: async (request) => {
+          const current = controllerStateRef.current;
+          return native
             ? performNativeRequest(request, {
-                currentUrl: url,
-                browserKey,
-                visibleSessionId,
-                obscured,
-                designMode,
-                pencilMode: designMode && pencilMode,
+                currentUrl: current.url,
+                browserKey: current.browserKey,
+                visibleSessionId: current.visibleSessionId,
+                obscured: current.obscured,
+                designMode: current.designMode,
+                pencilMode: current.designMode && current.pencilMode,
                 bounds: () => boundsFor(slotRef),
                 markOpen: (bounds) => {
                   lastBounds.current = bounds;
-                  if (visibleSessionId) {
-                    attachedSessionRef.current = visibleSessionId;
+                  if (current.visibleSessionId) {
+                    attachedSessionRef.current = current.visibleSessionId;
                     attachingSessionRef.current = undefined;
                   }
                 },
               })
             : performIframeRequest(request, {
-                currentUrl: url,
+                currentUrl: current.url,
                 iframe: iframeRef,
-                onLoaded,
-              }),
+                onLoaded: (url) => onLoadedRef.current({ sessionId: request.sessionId, url }),
+              });
+        },
       }),
-    [browserKey, designMode, native, obscured, onLoaded, pencilMode, url, visibleSessionId],
+    [native],
   );
 
   useEffect(() => {
@@ -280,10 +333,14 @@ export function NativeBrowserSurface({
   }, [native, visibleSessionId]);
 
   return (
-    <div ref={stageRef} className="relative h-full min-h-0 w-full overflow-hidden bg-[#070707]">
+    <div className="relative h-full min-h-0 w-full overflow-hidden bg-[#070707]">
       <div
         ref={slotRef}
-        className="absolute overflow-hidden rounded-[6px] bg-white shadow-[0_0_0_1px_rgba(255,255,255,0.1),0_24px_80px_rgba(0,0,0,0.45)]"
+        className={`absolute overflow-hidden bg-white ${
+          expanded
+            ? 'rounded-none'
+            : 'rounded-[6px] shadow-[0_0_0_1px_rgba(255,255,255,0.1),0_24px_80px_rgba(0,0,0,0.45)]'
+        }`}
         style={{
           left: surface.left,
           top: surface.top,
@@ -344,6 +401,9 @@ async function performNativeRequest(
         requestSessionId: request.sessionId,
       });
     const visibleBounds = visible ? requireNativeBrowserBounds(bounds) : undefined;
+    if (visibleBounds && request.action !== 'open') {
+      await setNativeBrowserBounds(request.sessionId, visibleBounds);
+    }
     await syncNativeDesignState(
       request.sessionId,
       visible ? options.designMode : false,
@@ -359,7 +419,7 @@ async function performNativeRequest(
         requestId: request.requestId,
         missionId: request.missionId,
         ok: true,
-        snapshot: navigationSnapshot(loadedEvent?.url ?? targetUrl),
+        snapshot: await snapshotAfterNavigation(request, loadedEvent?.url ?? targetUrl),
       };
     }
     if (request.action === 'reload') {
@@ -370,7 +430,29 @@ async function performNativeRequest(
         requestId: request.requestId,
         missionId: request.missionId,
         ok: true,
-        snapshot: navigationSnapshot(loadedEvent?.url ?? options.currentUrl),
+        snapshot: await snapshotAfterNavigation(request, loadedEvent?.url ?? options.currentUrl),
+      };
+    }
+    if (request.action === 'goBack' || request.action === 'goForward') {
+      const loaded = waitForNextNativeBrowserLoad(request.sessionId).catch(() => undefined);
+      const moved =
+        request.action === 'goBack'
+          ? await goBackNativeBrowser(request.sessionId)
+          : await goForwardNativeBrowser(request.sessionId);
+      if (!moved) {
+        return {
+          requestId: request.requestId,
+          missionId: request.missionId,
+          ok: true,
+          snapshot: await snapshotAfterNavigation(request, options.currentUrl),
+        };
+      }
+      const loadedEvent = await loaded;
+      return {
+        requestId: request.requestId,
+        missionId: request.missionId,
+        ok: true,
+        snapshot: await snapshotAfterNavigation(request, loadedEvent?.url ?? options.currentUrl),
       };
     }
     if (request.action === 'capture') {
@@ -530,13 +612,35 @@ function navigationSnapshot(url: string) {
   return { url, scroll: { x: 0, y: 0 }, refs: [] };
 }
 
+async function snapshotAfterNavigation(request: BrowserNativeRequest, fallbackUrl: string) {
+  const result = await runNativeBrowserAgentAction({
+    requestId: `${request.requestId}:snapshot`,
+    sessionId: request.sessionId,
+    action: 'snapshot',
+  }).catch(() => undefined);
+  return result?.ok && result.snapshot ? result.snapshot : navigationSnapshot(fallbackUrl);
+}
+
 function settleFrame(): Promise<void> {
   return new Promise((resolve) =>
     requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
   );
 }
 
-function surfaceLayout(frame: Size, viewport: BrowserViewport, mode: BrowserViewportMode) {
+function surfaceLayout(
+  frame: Size,
+  viewport: BrowserViewport,
+  mode: BrowserViewportMode,
+  expanded = false,
+) {
+  if (expanded && mode === 'fit') {
+    return {
+      width: Math.max(1, Math.round(frame.width)),
+      height: Math.max(1, Math.round(frame.height)),
+      left: 0,
+      top: 0,
+    };
+  }
   const padding = 18;
   const availableWidth = Math.max(1, frame.width - padding * 2);
   const availableHeight = Math.max(1, frame.height - padding * 2);
