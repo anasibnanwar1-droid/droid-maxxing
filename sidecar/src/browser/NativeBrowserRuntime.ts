@@ -33,7 +33,7 @@ export class NativeBrowserRuntime implements BrowserRuntime {
   }
 
   async reload(): Promise<BrowserSnapshot> {
-    return this.snapshotFrom(await this.send({ action: 'reload' }));
+    return this.navigationSnapshotFrom(await this.send({ action: 'reload' }));
   }
 
   async goBack(): Promise<BrowserSnapshot> {
@@ -124,9 +124,14 @@ export class NativeBrowserRuntime implements BrowserRuntime {
 
   private snapshotFrom(result: BrowserNativeResult, fallbackUrl?: string): BrowserSnapshot {
     if (!result.ok) throw new Error(result.error ?? 'Native browser action failed.');
-    this.lastSnapshot =
-      result.snapshot ??
-      (fallbackUrl ? { ...this.lastSnapshot, url: fallbackUrl, refs: [] } : this.lastSnapshot);
+    if (result.snapshot) {
+      this.lastSnapshot = result.snapshot;
+      return this.lastSnapshot;
+    }
+    if (!fallbackUrl) {
+      throw new Error('Native browser action completed without a fresh page snapshot.');
+    }
+    this.lastSnapshot = { ...this.lastSnapshot, url: fallbackUrl, refs: [] };
     return this.lastSnapshot;
   }
 
