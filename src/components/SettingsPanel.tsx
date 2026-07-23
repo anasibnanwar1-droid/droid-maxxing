@@ -1455,6 +1455,7 @@ export function applyTheme(theme: ReturnType<typeof useStore>['state']['theme'])
   // neutral monochrome tone.
   root.style.setProperty('--droid-green', '#4fae82');
   root.style.setProperty('--droid-orange', '#d9913a');
+  root.style.setProperty('--droid-red', '#cf5d54');
 
   root.style.setProperty('--ui-font-family', uiFontStack(theme.uiFont));
   root.style.setProperty('--ui-font-size', `${theme.uiFontSize}px`);

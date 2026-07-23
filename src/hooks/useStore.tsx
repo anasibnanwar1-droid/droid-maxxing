@@ -395,11 +395,17 @@ function loadTheme(): ThemeConfig {
     // persisted flag (not the accent value) lets a user later pick that same
     // orange from the preset palette and have the choice stick across reloads.
     if (storage && storage.getItem(THEME_ACCENT_MIGRATED_KEY) !== '1') {
-      if (saved && LEGACY_DEFAULT_ACCENTS.has(String(theme.accent).toLowerCase())) {
-        theme.accent = neutralAccentFor(theme.bg);
-        storage.setItem('droid-theme', JSON.stringify(theme));
+      // Migration writes are isolated so a storage failure (quota/restricted)
+      // never discards the theme we already parsed successfully above.
+      try {
+        if (saved && LEGACY_DEFAULT_ACCENTS.has(String(theme.accent).toLowerCase())) {
+          theme.accent = neutralAccentFor(theme.bg);
+          storage.setItem('droid-theme', JSON.stringify(theme));
+        }
+        storage.setItem(THEME_ACCENT_MIGRATED_KEY, '1');
+      } catch {
+        /* migration write failed; retry on a later load */
       }
-      storage.setItem(THEME_ACCENT_MIGRATED_KEY, '1');
     }
     return theme;
   } catch {
@@ -1284,6 +1290,7 @@ function baseReducer(state: AppState, action: Action): AppState {
       const prev = state.sessionRestore[action.missionId];
       return {
         ...state,
+        historyLoadingOlder: { ...state.historyLoadingOlder, [action.missionId]: false },
         sessionRestore: {
           ...state.sessionRestore,
           [action.missionId]: {
@@ -1602,13 +1609,21 @@ function baseReducer(state: AppState, action: Action): AppState {
     case 'TOGGLE_MISSION_MODE':
       return { ...state, missionMode: !state.missionMode };
 
-    case 'START_CHAT':
+    case 'START_CHAT': {
+      // Stamp the session being left so model output produced while it was
+      // open doesn't surface as an unread badge after starting a new chat.
+      const missionLastSeen = { ...state.missionLastSeen };
+      if (state.activeMissionId && state.missions[state.activeMissionId]) {
+        missionLastSeen[state.activeMissionId] = Date.now();
+      }
       return {
         ...state,
         draftChat: { cwd: action.cwd, branch: action.branch },
         activeMissionId: null,
         missionMode: false,
+        missionLastSeen,
       };
+    }
 
     case 'ADD_WORKSPACE':
       return {

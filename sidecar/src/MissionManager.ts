@@ -1567,6 +1567,10 @@ export class MissionManager {
     } catch (err) {
       if (mission.interruptingForSteer)
         this.emitStatus(appSessionId, 'Current turn interrupted for steering.');
+      else if (isUserCancellation(err))
+        // The user pressed Stop; interrupt() already set the paused phase, so
+        // settle quietly without surfacing an error.
+        this.patch(appSessionId, { phase: 'paused' });
       else {
         this.emitError({ missionId: appSessionId, message: errMsg(err) });
         this.patch(appSessionId, { phase: 'failed' });
@@ -2523,7 +2527,7 @@ export class MissionManager {
     } catch (err) {
       if (agent.interruptingForSteer)
         this.emitStatus(agent.missionId, 'Subagent turn interrupted for steering.');
-      else {
+      else if (!isUserCancellation(err)) {
         const message = errMsg(err);
         this.emit({
           type: 'agent.not_steerable',
@@ -3458,6 +3462,23 @@ function uniqueStrings(values: Array<string | undefined>): string[] {
 
 function errMsg(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+// A user Stop/interrupt makes the SDK stream throw (a cancellation message or an
+// AbortError). That is a deliberate stop, not a failure, so callers must settle
+// quietly instead of surfacing it as an error.
+function isUserCancellation(err: unknown): boolean {
+  if (err && typeof err === 'object' && (err as { name?: string }).name === 'AbortError')
+    return true;
+  const m = errMsg(err).toLowerCase();
+  return (
+    m.includes('interrupted by user') ||
+    m.includes('cancelled by user') ||
+    m.includes('canceled by user') ||
+    m.includes('request interrupted') ||
+    m.includes('request cancelled') ||
+    m.includes('request canceled')
+  );
 }
 
 // Model-generated transcript kinds that, once a turn is terminal, would form a

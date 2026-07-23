@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { RefObject } from 'react';
 import type { ConversationAnchor } from './chat';
@@ -20,27 +20,56 @@ export function ConversationTimeline({
 }) {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [hover, setHover] = useState<{ label: string; top: number; left: number } | null>(null);
+  // Currently-intersecting anchors keyed by id -> their viewport-relative top.
+  // The observer only reports anchors whose intersection *changed*, so we keep
+  // the full visible set here and recompute the topmost one on every callback;
+  // otherwise the highlight sticks when the active anchor leaves the zone while
+  // another already-visible anchor stays put.
+  const visible = useRef<Map<string, number>>(new Map());
+
+  // A stable identity for the anchor set. `anchors` is rebuilt on every
+  // transcript token, but the observer only needs to reset when the actual set
+  // of prompt ids changes, so key the effect off the joined ids to avoid tearing
+  // down and rebuilding the observer on every streamed token.
+  const anchorKey = anchors.map((a) => a.id).join('\n');
 
   // Highlight the prompt nearest the top of the viewport as the user scrolls.
   useEffect(() => {
     const root = scrollRef.current;
     if (!root || anchors.length === 0) return undefined;
+    const seen = visible.current;
+    seen.clear();
     const els = anchors
       .map((a) => root.querySelector<HTMLElement>(`[data-anchor-id="${CSS.escape(a.id)}"]`))
       .filter((el): el is HTMLElement => el !== null);
     if (els.length === 0) return undefined;
     const observer = new IntersectionObserver(
       (entries) => {
-        const top = entries
-          .filter((e) => e.isIntersecting)
-          .sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top)[0];
-        if (top) setActiveId((top.target as HTMLElement).dataset.anchorId ?? null);
+        for (const e of entries) {
+          const id = (e.target as HTMLElement).dataset.anchorId;
+          if (!id) continue;
+          if (e.isIntersecting) seen.set(id, e.boundingClientRect.top);
+          else seen.delete(id);
+        }
+        let bestId: string | null = null;
+        let bestTop = Infinity;
+        for (const [id, top] of seen) {
+          if (top < bestTop) {
+            bestTop = top;
+            bestId = id;
+          }
+        }
+        if (bestId) setActiveId(bestId);
       },
       { root, rootMargin: '0px 0px -65% 0px', threshold: 0 },
     );
     els.forEach((el) => observer.observe(el));
-    return () => observer.disconnect();
-  }, [scrollRef, anchors]);
+    return () => {
+      observer.disconnect();
+      seen.clear();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scrollRef, anchorKey]);
 
   if (anchors.length < 2) return null;
 

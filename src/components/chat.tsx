@@ -10,6 +10,8 @@ import {
   FoldVertical,
   MousePointer2,
   PenLine,
+  Globe,
+  AlertTriangle,
 } from 'lucide-react';
 import type { BrowserTranscriptReference, TranscriptEvent } from '../types/bridge';
 import { Markdown } from './Markdown';
@@ -29,6 +31,11 @@ import {
   subagentInfo,
   parseTodos,
   hasTodoPayload,
+  isWebSearchTool,
+  parseWebSearch,
+  webSourceName,
+  faviconUrl,
+  toolArgStringArray,
 } from '../lib/tools';
 import { classifyEvent } from '../lib/transcript';
 import {
@@ -37,6 +44,13 @@ import {
   type SubagentActivity,
   type SubagentTarget,
 } from '../lib/subagents';
+import { openExternal } from '../lib/onboarding';
+
+// Open a link in the OS default browser rather than inside the Electron window.
+function openLink(e: React.MouseEvent, url: string) {
+  e.preventDefault();
+  void openExternal(url);
+}
 
 const ACCENT = 'var(--droid-accent)';
 const EASE = [0.16, 1, 0.3, 1] as const;
@@ -321,8 +335,7 @@ function linkify(text: string): React.ReactNode {
       <a
         key={m.index}
         href={url}
-        target="_blank"
-        rel="noreferrer"
+        onClick={(e) => openLink(e, url)}
         className="underline underline-offset-2 hover:opacity-80 break-all"
         style={{ color: ACCENT }}
       >
@@ -336,17 +349,112 @@ function linkify(text: string): React.ReactNode {
   return nodes.length ? nodes : text;
 }
 
+const RED = 'var(--droid-red)';
+const RED_TINT = 'color-mix(in srgb, var(--droid-red) 8%, transparent)';
+
+// A small red "error" pill shown on the right of a failed tool's header row.
+function ErrorTag() {
+  return (
+    <span
+      className="ml-auto shrink-0 rounded-md px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide"
+      style={{
+        backgroundColor: 'color-mix(in srgb, var(--droid-red) 15%, transparent)',
+        color: RED,
+      }}
+    >
+      error
+    </span>
+  );
+}
+
+function firstLine(text: string): string {
+  const line = text.split('\n').find((l) => l.trim()) ?? text;
+  return line.trim();
+}
+
+// A standalone failed result (or a pure error event) rendered as a collapsible
+// row: a red "error" tag with the first line, expanding to the full message.
+function ErrorLine({ text }: { text: string }) {
+  const [open, setOpen] = useState(false);
+  const body = stripAnsi(text).trim();
+  return (
+    <div>
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="group flex w-full min-w-0 items-center gap-1.5 text-left text-[12.5px] leading-relaxed"
+      >
+        <AlertTriangle className="h-3.5 w-3.5 shrink-0" style={{ color: RED }} />
+        <span className="min-w-0 truncate text-droid-text-muted">{firstLine(body)}</span>
+        <ErrorTag />
+        <Caret open={open} />
+      </button>
+      <Expand open={open}>
+        <pre
+          className="mt-1.5 max-h-56 overflow-auto rounded-md px-2.5 py-2 text-[11px] leading-relaxed font-mono whitespace-pre-wrap break-words"
+          style={{ backgroundColor: RED_TINT, color: RED }}
+        >
+          {linkify(body)}
+        </pre>
+      </Expand>
+    </div>
+  );
+}
+
 /* ── Terminal-style command card ── */
 function CommandCard({
   command,
   output,
   title,
+  error = false,
 }: {
   command: string;
   output?: string;
   title?: string;
+  error?: boolean;
 }) {
   const out = output ? stripAnsi(output).trimEnd() : '';
+  const [open, setOpen] = useState(false);
+  const body = (
+    <div className="px-3.5 py-3 font-mono text-[11.5px] leading-[1.6]">
+      <div className="flex gap-2 break-words">
+        <span className="select-none text-droid-text-muted" style={{ color: error ? RED : ACCENT }}>
+          $
+        </span>
+        <span className="whitespace-pre-wrap text-droid-text">{command}</span>
+      </div>
+      {out && (
+        <pre
+          className="mt-2.5 pt-2.5 border-t border-droid-border/60 max-h-56 overflow-auto whitespace-pre-wrap text-[11px] leading-[1.55] break-words"
+          style={error ? { color: RED } : undefined}
+        >
+          {error ? out : linkify(out)}
+        </pre>
+      )}
+    </div>
+  );
+  // A failed command collapses to a compact header with an "error" tag; expand
+  // to inspect the command and its error output.
+  if (error) {
+    return (
+      <div
+        className="rounded-xl border overflow-hidden bg-droid-bg/40"
+        style={{ borderColor: 'color-mix(in srgb, var(--droid-red) 30%, var(--droid-border))' }}
+      >
+        <button
+          onClick={() => setOpen((o) => !o)}
+          className="group flex w-full items-center gap-2 h-8 px-3 bg-droid-surface/60 border-b border-droid-border text-left"
+        >
+          <Terminal className="w-3.5 h-3.5 shrink-0" style={{ color: RED }} />
+          <span className="min-w-0 truncate text-[10.5px] font-medium uppercase tracking-wider text-droid-text-muted">
+            {title || 'Terminal'}
+          </span>
+          <ErrorTag />
+          <Caret open={open} />
+        </button>
+        <Expand open={open}>{body}</Expand>
+      </div>
+    );
+  }
   return (
     <div className="rounded-xl border border-droid-border overflow-hidden bg-droid-bg/40">
       <div className="flex items-center gap-2 h-8 px-3 bg-droid-surface/60 border-b border-droid-border">
@@ -356,24 +464,20 @@ function CommandCard({
         </span>
         <CopyButton text={out ? `${command}\n\n${out}` : command} />
       </div>
-      <div className="px-3.5 py-3 font-mono text-[11.5px] leading-[1.6]">
-        <div className="flex gap-2 break-words">
-          <span className="select-none text-droid-text-muted" style={{ color: ACCENT }}>
-            $
-          </span>
-          <span className="whitespace-pre-wrap text-droid-text">{command}</span>
-        </div>
-        {out && (
-          <pre className="mt-2.5 pt-2.5 border-t border-droid-border/60 max-h-56 overflow-auto whitespace-pre-wrap text-[11px] leading-[1.55] text-droid-text-muted break-words">
-            {linkify(out)}
-          </pre>
-        )}
-      </div>
+      {body}
     </div>
   );
 }
 
-function ToolLine({ event, output }: { event: TranscriptEvent; output?: string }) {
+function ToolLine({
+  event,
+  output,
+  error = false,
+}: {
+  event: TranscriptEvent;
+  output?: string;
+  error?: boolean;
+}) {
   const { cat, detail } = toolMeta(event.toolName, event.toolArgs);
   const Icon = CAT_ICON[cat];
   const out = output ? stripAnsi(output).trimEnd() : '';
@@ -382,23 +486,156 @@ function ToolLine({ event, output }: { event: TranscriptEvent; output?: string }
   const looksLikePath = slash > 0 && !raw.includes(' ');
   const dir = looksLikePath ? raw.slice(0, slash + 1) : '';
   const name = looksLikePath ? raw.slice(slash + 1) : raw;
-  return (
-    <div>
-      <div className="flex items-center gap-1.5 text-[12.5px] leading-relaxed min-w-0">
-        <Icon className="w-3.5 h-3.5 shrink-0 text-droid-text-muted" />
-        <span className="text-droid-text-secondary shrink-0">{CAT_LABEL[cat]}</span>
-        {raw && (
-          <span className="font-mono text-[11.5px] min-w-0 truncate">
-            {dir && <span className="text-droid-text-muted/50">{dir}</span>}
-            <span className="text-droid-text-muted">{name}</span>
-          </span>
+  const [open, setOpen] = useState(false);
+  const label = (
+    <>
+      <Icon
+        className={`w-3.5 h-3.5 shrink-0 ${error ? '' : 'text-droid-text-muted'}`}
+        style={error ? { color: RED } : undefined}
+      />
+      <span className="text-droid-text-secondary shrink-0">{CAT_LABEL[cat]}</span>
+      {raw && (
+        <span className="font-mono text-[11.5px] min-w-0 truncate">
+          {dir && <span className="text-droid-text-muted/50">{dir}</span>}
+          <span className="text-droid-text-muted">{name}</span>
+        </span>
+      )}
+    </>
+  );
+  // A failed tool collapses to its header row with an "error" tag; expand to
+  // read the error output.
+  if (error) {
+    return (
+      <div>
+        <button
+          onClick={() => setOpen((o) => !o)}
+          className="group flex w-full items-center gap-1.5 text-[12.5px] leading-relaxed min-w-0 text-left"
+        >
+          {label}
+          <ErrorTag />
+          <Caret open={open} />
+        </button>
+        {out && (
+          <Expand open={open}>
+            <pre
+              className="mt-1.5 max-h-56 overflow-auto rounded-md px-2.5 py-2 text-[11px] leading-relaxed font-mono whitespace-pre-wrap break-words"
+              style={{ backgroundColor: RED_TINT, color: RED }}
+            >
+              {out}
+            </pre>
+          </Expand>
         )}
       </div>
+    );
+  }
+  return (
+    <div>
+      <div className="flex items-center gap-1.5 text-[12.5px] leading-relaxed min-w-0">{label}</div>
       {(cat === 'other' || cat === 'search' || cat === 'web') && out && (
         <pre className="mt-1.5 max-h-44 overflow-auto rounded-md bg-droid-bg/50 px-2.5 py-2 text-[11px] leading-relaxed font-mono text-droid-text-muted/80 whitespace-pre-wrap break-words">
           {linkify(out)}
         </pre>
       )}
+    </div>
+  );
+}
+
+function Favicon({ url }: { url: string }) {
+  const [failed, setFailed] = useState(false);
+  const src = faviconUrl(url);
+  if (failed || !src) return <Globe className="h-3.5 w-3.5 shrink-0 text-droid-text-muted" />;
+  return (
+    <img
+      src={src}
+      alt=""
+      loading="lazy"
+      className="h-3.5 w-3.5 shrink-0 rounded-sm"
+      onError={() => setFailed(true)}
+    />
+  );
+}
+
+/* ── Web search: a collapsible search row that expands into readable result
+   cards (title, snippet, source) instead of a raw text dump ── */
+function WebSearchCard({
+  event,
+  output,
+  error = false,
+}: {
+  event: TranscriptEvent;
+  output?: string;
+  error?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const query = argStr(event.toolArgs, 'query') ?? '';
+  const { results, count } = parseWebSearch(output ?? '');
+  const total = count ?? results.length;
+  const isX = toolArgStringArray(event.toolArgs, 'includeDomains').some((d) =>
+    /(^|\.)(x|twitter)\.com$/i.test(d),
+  );
+  const raw = output ? stripAnsi(output).trim() : '';
+  return (
+    <div>
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="group flex w-full min-w-0 items-center gap-1.5 text-left"
+      >
+        {isX ? (
+          <span className="flex h-3.5 w-3.5 shrink-0 items-center justify-center text-[12px] font-bold leading-none text-droid-text-muted">
+            𝕏
+          </span>
+        ) : (
+          <Globe className="h-3.5 w-3.5 shrink-0 text-droid-text-muted" />
+        )}
+        <span className="shrink-0 text-[12.5px] text-droid-text-secondary">
+          {isX ? 'Searched X' : 'Searched web'}
+        </span>
+        {query && (
+          <span className="min-w-0 truncate font-mono text-[11.5px] text-droid-text-muted">
+            {query}
+          </span>
+        )}
+        {error ? (
+          <ErrorTag />
+        ) : total ? (
+          <span className="ml-auto shrink-0 rounded-md border border-droid-border bg-droid-elevated/60 px-1.5 py-0.5 font-mono text-[11px] text-droid-text-secondary">
+            {total}
+          </span>
+        ) : null}
+      </button>
+      <Expand open={open}>
+        {results.length > 0 ? (
+          <div className="mt-2 space-y-1">
+            {results.map((r, i) => (
+              <a
+                key={`${r.url}-${i}`}
+                href={r.url}
+                onClick={(e) => openLink(e, r.url)}
+                className={`block rounded-lg px-3 py-2 transition-colors hover:bg-droid-elevated/60 ${
+                  i === 0 ? 'bg-droid-elevated/40' : ''
+                }`}
+              >
+                <div className="truncate text-[13px] font-medium text-droid-text">{r.title}</div>
+                {r.snippet && (
+                  <div className="mt-0.5 line-clamp-2 text-[12px] leading-relaxed text-droid-text-muted">
+                    {r.snippet}
+                  </div>
+                )}
+                <div className="mt-1.5 flex items-center gap-1.5">
+                  <Favicon url={r.url} />
+                  <span className="truncate text-[11px] text-droid-text-secondary">
+                    {webSourceName(r.url)}
+                  </span>
+                </div>
+              </a>
+            ))}
+          </div>
+        ) : raw ? (
+          <pre className="mt-1.5 max-h-44 overflow-auto rounded-md bg-droid-bg/50 px-2.5 py-2 text-[11px] leading-relaxed font-mono text-droid-text-muted/80 whitespace-pre-wrap break-words">
+            {linkify(raw)}
+          </pre>
+        ) : null}
+      </Expand>
     </div>
   );
 }
@@ -471,9 +708,10 @@ export function correlateResults(events: TranscriptEvent[]): {
       if (next && next.kind === 'tool_result' && !next.toolUseId) result = next;
     }
     if (!result || consumed.has(result)) continue;
-    // A failed result must always surface (as raw activity), so never consume it
-    // or attach it as a call's inline output — mirrors isResultFor's error guard.
-    if (result.isError) continue;
+    // A failed plan result must surface (the checklist cannot convey a failure),
+    // so it is left unconsumed. Every other result — success or failure —
+    // attaches to its call so a failure folds into the tool card as an "error".
+    if (result.isError && classifyEvent(call) === 'plan_update') continue;
     if (classifyEvent(call) !== 'plan_update') resultByCall.set(call, result);
     consumed.add(result);
   }
@@ -491,8 +729,13 @@ function renderToolEvents(events: TranscriptEvent[]): React.ReactNode[] {
         continue;
       }
       const result = resultByCall.get(e);
+      const isError = !!result?.isError;
       const { cat, detail } = toolMeta(e.toolName, e.toolArgs);
-      if (cat === 'exec') {
+      // WebSearch's name matches the generic /search/ category, so route it by
+      // name (not cat) to the readable result-card renderer.
+      if (isWebSearchTool(e.toolName)) {
+        nodes.push(<WebSearchCard key={e.id} event={e} output={result?.text} error={isError} />);
+      } else if (cat === 'exec') {
         const command =
           argStr(e.toolArgs, 'command') ??
           argStr(e.toolArgs, 'cmd') ??
@@ -506,10 +749,11 @@ function renderToolEvents(events: TranscriptEvent[]): React.ReactNode[] {
             command={command}
             output={result?.text}
             title={argStr(e.toolArgs, 'summary')}
+            error={isError}
           />,
         );
       } else {
-        nodes.push(<ToolLine key={e.id} event={e} output={result?.text} />);
+        nodes.push(<ToolLine key={e.id} event={e} output={result?.text} error={isError} />);
       }
       continue;
     }
@@ -518,6 +762,12 @@ function renderToolEvents(events: TranscriptEvent[]): React.ReactNode[] {
     if (e.kind === 'tool_result' && consumed.has(e)) continue;
     const body = stripAnsi(e.text ?? safeJson(e.toolArgs)).trimEnd();
     if (!body) continue;
+    // A failed result with no call to fold into (e.g. a failed edit that broke
+    // its diff run) renders as a compact, expandable error rather than a dump.
+    if (e.kind === 'tool_result' && e.isError) {
+      nodes.push(<ErrorLine key={e.id} text={body} />);
+      continue;
+    }
     nodes.push(
       <pre
         key={e.id}
@@ -530,8 +780,16 @@ function renderToolEvents(events: TranscriptEvent[]): React.ReactNode[] {
   return nodes;
 }
 
-function ToolGroupItem({ events, active }: { events: TranscriptEvent[]; active?: boolean }) {
-  const [open, setOpen] = useState(false);
+function ToolGroupItem({
+  events,
+  active,
+  defaultOpen = false,
+}: {
+  events: TranscriptEvent[];
+  active?: boolean;
+  defaultOpen?: boolean;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
   const summary = summarizeTools(events);
   return (
     <div>
@@ -599,7 +857,20 @@ export function collectTurnFiles(run: FeedItem[]): TurnFile[] {
   return [...byPath.values()];
 }
 
+// Artifacts the SDK persists when the user stops a run: a failed tool_result for
+// each in-flight tool ("… cancelled by user") plus a "Request interrupted/
+// cancelled by user" note. A user Stop is not a failure, so these are hidden
+// from the feed — both live and on replay.
+export function isCancellationArtifact(e: TranscriptEvent): boolean {
+  const text = (e.text ?? '').trim();
+  if (!text) return false;
+  if (e.isError && /cancell?ed by user/i.test(text)) return true;
+  if (/^request (interrupted|cancell?ed) by user\.?$/i.test(text)) return true;
+  return false;
+}
+
 export function buildFeed(events: TranscriptEvent[], subagentCards = false): FeedItem[] {
+  events = events.filter((e) => !isCancellationArtifact(e));
   const items: FeedItem[] = [];
   // toolUseId → index of its spawn item, so streaming deltas collapse into one.
   const subagentIdx = new Map<string, number>();
@@ -669,7 +940,10 @@ export function buildFeed(events: TranscriptEvent[], subagentCards = false): Fee
       i++;
       continue;
     }
-    if (ev.kind === 'error' || ev.isError) {
+    // A pure error event (no tool call) and a failed subagent/plan result surface
+    // as a standalone error. An ordinary failed tool result is not diverted here;
+    // it flows into its tool group below and folds into the tool card as an error.
+    if (ev.kind === 'error' || (ev.isError && isCardResult(ev))) {
       items.push({ type: 'error', key: ev.id, event: ev });
       i++;
       continue;
@@ -743,12 +1017,14 @@ export function buildFeed(events: TranscriptEvent[], subagentCards = false): Fee
       while (i < events.length) {
         const t = events[i];
         if (t.kind === 'tool_result') {
-          // Any failed result breaks the group so the outer loop surfaces it as
-          // an error, regardless of tool family (the classifier invariant).
-          if (t.isError) break;
+          // A failed subagent/plan result breaks the group so the outer loop
+          // surfaces it as a standalone error (its card/checklist can't convey
+          // the failure). An ordinary failed result stays so it folds into its
+          // tool card.
+          if (t.isError && isCardResult(t)) break;
           // A successful subagent/plan result is dropped (represented by its
           // card or checklist, or pure noise); other results stay in the group.
-          if (isCardResult(t)) {
+          if (!t.isError && isCardResult(t)) {
             i++;
             continue;
           }
@@ -1297,6 +1573,10 @@ interface FeedItemViewProps {
   liveTiming?: boolean;
   specContent?: string;
   isFinalResponse?: boolean;
+  // When true, nested collapsible groups (tool runs, diff runs) render expanded.
+  // Set inside a "Worked for …" disclosure so opening it reveals the actual tool
+  // calls and edits directly instead of a second layer of collapsed groups.
+  expandGroups?: boolean;
 }
 
 // Two feed items render identically when they wrap the same underlying transcript
@@ -1331,6 +1611,7 @@ function feedItemPropsEqual(prev: FeedItemViewProps, next: FeedItemViewProps): b
     prev.specContent === next.specContent &&
     prev.cwd === next.cwd &&
     prev.isFinalResponse === next.isFinalResponse &&
+    prev.expandGroups === next.expandGroups &&
     prev.onOpenDiff === next.onOpenDiff &&
     prev.onOpenReviewFile === next.onOpenReviewFile &&
     prev.onOpenSubagent === next.onOpenSubagent &&
@@ -1351,6 +1632,7 @@ const FeedItemView = memo(function FeedItemView({
   liveTiming,
   specContent,
   isFinalResponse,
+  expandGroups,
 }: FeedItemViewProps) {
   switch (item.type) {
     case 'message': {
@@ -1412,14 +1694,7 @@ const FeedItemView = memo(function FeedItemView({
       );
     }
     case 'error':
-      return (
-        <div
-          className="text-[13px] leading-relaxed whitespace-pre-wrap break-words"
-          style={{ color: ACCENT }}
-        >
-          {item.event.text}
-        </div>
-      );
+      return <ErrorLine text={item.event.text ?? ''} />;
     case 'diff':
       return (
         <DiffCard
@@ -1428,9 +1703,11 @@ const FeedItemView = memo(function FeedItemView({
         />
       );
     case 'diffs':
-      return <DiffGroup changes={item.changes} onOpenDiff={onOpenDiff} />;
+      return (
+        <DiffGroup changes={item.changes} onOpenDiff={onOpenDiff} defaultOpen={expandGroups} />
+      );
     case 'tools':
-      return <ToolGroupItem events={item.events} active={live} />;
+      return <ToolGroupItem events={item.events} active={live} defaultOpen={expandGroups} />;
     case 'turnChanges':
       return <TurnChangesPanel item={item} cwd={cwd} onOpenFile={onOpenReviewFile} />;
     case 'worked':
@@ -1483,6 +1760,7 @@ function WorkedGroup({
               onOpenSubagent={onOpenSubagent}
               subagentActivity={subagentActivity}
               specContent={specContent}
+              expandGroups
             />
           ))}
         </div>
@@ -1496,11 +1774,13 @@ const MAX_DIFF_CARDS = 50;
 function DiffGroup({
   changes,
   onOpenDiff,
+  defaultOpen = false,
 }: {
   changes: { event: TranscriptEvent; change: FileChange }[];
   onOpenDiff?: (c: FileChange) => void;
+  defaultOpen?: boolean;
 }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(defaultOpen);
   const added = changes.reduce((s, c) => s + c.change.added, 0);
   const removed = changes.reduce((s, c) => s + c.change.removed, 0);
   const files = new Set(changes.map((c) => c.change.path));

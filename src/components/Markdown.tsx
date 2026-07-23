@@ -250,12 +250,19 @@ function langLabel(className?: string): string {
 
 function CodeCopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => clearTimeout(timer.current ?? undefined), []);
   return (
     <button
       onClick={() => {
-        void navigator.clipboard?.writeText(text);
-        setCopied(true);
-        setTimeout(() => setCopied(false), 1200);
+        navigator.clipboard
+          ?.writeText(text)
+          .then(() => {
+            setCopied(true);
+            clearTimeout(timer.current ?? undefined);
+            timer.current = setTimeout(() => setCopied(false), 1200);
+          })
+          .catch(() => {});
       }}
       className="flex items-center gap-1 text-[10.5px] text-droid-text-muted hover:text-droid-text transition-colors"
       title="Copy"

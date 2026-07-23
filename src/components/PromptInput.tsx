@@ -38,6 +38,7 @@ import {
   MousePointerSquareDashed,
 } from 'lucide-react';
 import ModelSelectorPopover from './ModelSelectorPopover';
+import ContextStatusCluster from './ContextStatusCluster';
 import PermissionInline from './PermissionInline';
 import PlanApprovalInline from './PlanApprovalInline';
 import { ModelIcon, providerOf } from './ModelIcon';
@@ -270,9 +271,13 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
     setMenuIndex(0);
   }, [trigger?.kind, trigger?.query]);
 
-  // Leave history-recall mode when switching conversations.
+  // Leave history-recall mode and drop any composer draft attachments when
+  // switching conversations, so skills/files staged for one chat don't linger
+  // on another chat's prompt bar.
   useEffect(() => {
     setHistoryIndex(null);
+    setActiveSkills([]);
+    setAttachedFiles([]);
   }, [activeMission?.id]);
 
   useEffect(() => {
@@ -684,6 +689,9 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
     : 'border-droid-border focus-within:border-droid-border-hover';
 
   const hasChips = activeSkills.length > 0 || attachedFiles.length > 0;
+  // The "Start in" repo/worktree/branch row only applies while drafting a brand
+  // new chat; it renders as the top section of the composer card.
+  const showStartIn = !activeMission && !missionPreview && !!cwd;
   const enterSteers = state.liveEnterBehavior === 'interrupt';
   const idleSendTooltip = 'Enter: send\nShift+Enter: newline';
   const hasContent = input.trim().length > 0 || activeSkills.length > 0 || attachedFiles.length > 0;
@@ -882,8 +890,8 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
           </div>
         )}
 
-        {!activeMission && !missionPreview && cwd && (
-          <div className="relative z-20 mx-4 -mb-3 min-w-0 rounded-t-2xl border border-b-0 border-droid-border bg-droid-elevated px-3 pb-5 pt-2">
+        {showStartIn && (
+          <div className="relative z-0 mx-[6%] -mb-3 min-w-0 rounded-t-2xl border border-droid-border bg-droid-surface px-4 pb-4 pt-1.5">
             <StartInBar />
           </div>
         )}
@@ -1043,6 +1051,8 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
             </button>
 
             <div className="flex-1 min-w-0" />
+
+            <ContextStatusCluster />
 
             {isLive && !hasContent ? (
               <button

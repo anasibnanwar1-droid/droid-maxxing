@@ -159,9 +159,10 @@ export default function Sidebar() {
   const visibleCountFor = (key: string) => shownCount.get(key) ?? SIDEBAR_VISIBLE_SESSION_LIMIT;
 
   const showMore = (key: string) =>
-    setShownCount((prev) =>
-      new Map(prev).set(key, visibleCountFor(key) + SIDEBAR_VISIBLE_SESSION_LIMIT),
-    );
+    setShownCount((prev) => {
+      const cur = prev.get(key) ?? SIDEBAR_VISIBLE_SESSION_LIMIT;
+      return new Map(prev).set(key, cur + SIDEBAR_VISIBLE_SESSION_LIMIT);
+    });
 
   const showLess = (key: string) =>
     setShownCount((prev) => {

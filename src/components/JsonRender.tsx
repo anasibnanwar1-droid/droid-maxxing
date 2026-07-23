@@ -331,8 +331,10 @@ function StatusLineEl({ props }: { props: Record<string, unknown> }) {
 function KeyValueEl({ props }: { props: Record<string, unknown> }) {
   return (
     <div className="flex items-baseline gap-2 text-[13px]">
-      <span className="text-droid-text-muted">{asString(props.label)}</span>
-      <span className="text-droid-text font-medium break-words">{asString(props.value)}</span>
+      <span className="shrink-0 text-droid-text-muted">{asString(props.label)}</span>
+      <span className="min-w-0 text-droid-text font-medium break-words">
+        {asString(props.value)}
+      </span>
     </div>
   );
 }
@@ -400,7 +402,6 @@ function CalloutEl({ props, children }: { props: Record<string, unknown>; childr
   const content = asString(props.content);
   // A single colored dot carries the severity; the card itself is a plain
   // elevated surface so P-level/danger notes read as clean cards, not stickers.
-  const indent = title ? 'pl-3.5' : '';
   return (
     <div className="w-full rounded-xl border border-droid-border bg-droid-elevated px-4 py-3">
       {title && (
@@ -411,12 +412,18 @@ function CalloutEl({ props, children }: { props: Record<string, unknown>; childr
       )}
       {content && (
         <div
-          className={`text-[12.5px] leading-relaxed text-droid-text-secondary break-words ${title ? `mt-1.5 ${indent}` : ''}`}
+          className={`flex gap-2 text-[12.5px] leading-relaxed text-droid-text-secondary break-words ${title ? 'mt-1.5 pl-3.5' : ''}`}
         >
+          {!title && (
+            <span
+              className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full"
+              style={{ background: color }}
+            />
+          )}
           {content}
         </div>
       )}
-      {children && <div className={title ? `mt-1.5 ${indent}` : ''}>{children}</div>}
+      {children && <div className={title ? 'mt-1.5 pl-3.5' : ''}>{children}</div>}
     </div>
   );
 }

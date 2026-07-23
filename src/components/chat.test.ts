@@ -259,7 +259,7 @@ test('#20 a failed plan result in a batched group is not consumed (it must surfa
   assert.equal(consumed.has(failed), false);
 });
 
-test('#20 a failed non-plan tool result is never consumed so the failure surfaces', () => {
+test('a failed non-plan tool result attaches to its call so the failure folds in', () => {
   const grepCall = ev({
     kind: 'tool_call',
     toolName: 'Grep',
@@ -274,15 +274,34 @@ test('#20 a failed non-plan tool result is never consumed so the failure surface
     text: 'permission denied',
   });
   const { resultByCall, consumed } = correlateResults([grepCall, failed]);
-  // A failed Grep result must not be hidden as the call's inline output nor
-  // marked consumed; it surfaces as raw activity instead.
-  assert.equal(resultByCall.has(grepCall), false);
+  // The failed Grep result is attached to its call (so the card shows an "error"
+  // state) and marked consumed so it never also renders as raw activity.
+  assert.equal(resultByCall.get(grepCall), failed);
+  assert.equal(consumed.has(failed), true);
+});
+
+test('a failed plan result is still never consumed (it must surface)', () => {
+  const todoCall = ev({
+    kind: 'tool_call',
+    toolName: 'TodoWrite',
+    toolArgs: { todos: 'x' },
+    toolUseId: 'p1',
+  });
+  const failed = ev({
+    kind: 'tool_result',
+    toolName: '',
+    toolUseId: 'p1',
+    isError: true,
+    text: 'plan failed',
+  });
+  const { resultByCall, consumed } = correlateResults([todoCall, failed]);
+  assert.equal(resultByCall.has(todoCall), false);
   assert.equal(consumed.has(failed), false);
 });
 
-test('#20 a failed ordinary tool result surfaces as an error, not folded into a group', () => {
+test('a failed ordinary tool result folds into its tool group as an error', () => {
   // [Execute call, failed result] enters the generic grouping loop at the call;
-  // the failed result must break out and render as an error, not join the group.
+  // the failed result now stays in the group so it folds into the tool card.
   const execCall = ev({
     kind: 'tool_call',
     toolName: 'Execute',
@@ -297,21 +316,24 @@ test('#20 a failed ordinary tool result surfaces as an error, not folded into a 
     text: 'exit code 1',
   });
   const items = buildFeed([execCall, failed]);
+  // No standalone top-level error item...
+  assert.equal(
+    items.some((it) => it.type === 'error'),
+    false,
+  );
+  // ...the failed result rides along in the tools group with its call.
   const toolEvents = items
     .filter((it): it is Extract<FeedItem, { type: 'tools' }> => it.type === 'tools')
     .flatMap((it) => it.events);
-  // The failed result is not folded into the tools group...
-  assert.equal(
-    toolEvents.some((e) => e.kind === 'tool_result'),
-    false,
-  );
-  // ...it surfaces as a standalone error.
-  assert.ok(items.some((it) => it.type === 'error' && it.event.toolUseId === 'e1'));
+  assert.ok(toolEvents.some((e) => e.kind === 'tool_result' && e.toolUseId === 'e1'));
+  // correlateResults then attaches it to its call so the card renders an error.
+  const { resultByCall } = correlateResults(toolEvents);
+  assert.equal(resultByCall.get(execCall)?.isError, true);
 });
 
-test('#20 a failed tool result stays top-level after a completed turn is grouped', () => {
-  // The grouped render path (groupTurns) must keep the error visible, not bury
-  // it in a collapsed "Worked for …" group once the turn completes.
+test('a failed tool folds into the worked group after a completed turn', () => {
+  // Per product decision, a failed tool now folds into its tool card inside the
+  // "Worked for …" group rather than surfacing as a separate top-level error.
   const execCall = ev({
     kind: 'tool_call',
     toolName: 'Execute',
@@ -326,10 +348,50 @@ test('#20 a failed tool result stays top-level after a completed turn is grouped
     text: 'exit code 1',
   });
   const grouped = groupTurns(buildFeed([userMsg('run tests'), execCall, failed]), false);
-  // The failure is a top-level error item, not nested inside a worked group.
-  assert.ok(grouped.some((it) => it.type === 'error' && it.event.toolUseId === 'e1'));
-  const inWorked = workedChildren(grouped).some((c) => c.type === 'error');
-  assert.equal(inWorked, false);
+  assert.equal(
+    grouped.some((it) => it.type === 'error'),
+    false,
+  );
+  const tools = workedChildren(grouped).find((c) => c.type === 'tools') as
+    | Extract<FeedItem, { type: 'tools' }>
+    | undefined;
+  assert.ok(tools, 'expected a tools group nested in the worked group');
+  assert.ok(tools.events.some((e) => e.kind === 'tool_result' && e.toolUseId === 'e1'));
+});
+
+test('a user cancellation is hidden from the feed', () => {
+  // The SDK persists a "cancelled by user" tool_result and a "Request
+  // interrupted by user" note on Stop; neither should render.
+  const execCall = ev({
+    kind: 'tool_call',
+    toolName: 'Execute',
+    toolArgs: { command: 'sleep 100' },
+    toolUseId: 'c1',
+  });
+  const cancelledTool = ev({
+    kind: 'tool_result',
+    toolName: '',
+    toolUseId: 'c1',
+    isError: true,
+    text: 'Error: Tool execution cancelled by user',
+  });
+  const interruptNote = ev({ kind: 'text', author: 'user', text: 'Request interrupted by user' });
+  const items = buildFeed([userMsg('go'), execCall, cancelledTool, interruptNote]);
+  assert.equal(
+    items.some((it) => it.type === 'error'),
+    false,
+  );
+  const toolEvents = items
+    .filter((it): it is Extract<FeedItem, { type: 'tools' }> => it.type === 'tools')
+    .flatMap((it) => it.events);
+  assert.equal(
+    toolEvents.some((e) => e.kind === 'tool_result'),
+    false,
+  );
+  assert.equal(
+    items.some((it) => it.type === 'message' && it.event.text === 'Request interrupted by user'),
+    false,
+  );
 });
 
 test('#20 a tool result split from its call by a subagent spawn still pairs inline', () => {
