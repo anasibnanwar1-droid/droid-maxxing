@@ -38,6 +38,29 @@ test('opening Context collapses the active mission utility pane without closing 
   assert.equal(state.utilityPanels['mission-a'].tabs[0].id, 'terminal-1');
 });
 
+test('an explicit mission id keeps delayed tab closes scoped to their origin', () => {
+  let state = reducer(activeState('mission-a'), {
+    type: 'OPEN_UTILITY_TOOL',
+    tool: 'terminal',
+    tabId: 'terminal-a',
+  });
+  state = reducer(state, { type: 'SET_ACTIVE_MISSION', id: 'mission-b' });
+  state = reducer(state, {
+    type: 'OPEN_UTILITY_TOOL',
+    tool: 'terminal',
+    tabId: 'terminal-b',
+  });
+
+  state = reducer(state, {
+    type: 'CLOSE_UTILITY_TAB',
+    tabId: 'terminal-a',
+    missionId: 'mission-a',
+  });
+
+  assert.equal(state.utilityPanels['mission-a'].tabs.length, 0);
+  assert.equal(state.utilityPanels['mission-b'].tabs[0].id, 'terminal-b');
+});
+
 test('legacy Review and Browser actions route through utility tabs', () => {
   let state = reducer(activeState('mission-a'), {
     type: 'SET_REVIEW_OPEN',

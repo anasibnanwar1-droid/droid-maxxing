@@ -437,7 +437,11 @@ export default function App() {
                       }
                       if (tab.tool === 'terminal') {
                         void closeTerminalForTab(tab.id, tab.terminalId).finally(() => {
-                          dispatch({ type: 'CLOSE_UTILITY_TAB', tabId: tab.id });
+                          dispatch({
+                            type: 'CLOSE_UTILITY_TAB',
+                            tabId: tab.id,
+                            missionId: activeMission.id,
+                          });
                         });
                         return;
                       }

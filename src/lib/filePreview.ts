@@ -197,3 +197,63 @@ export function previewSizeLabel(category: PreviewCategory): string {
   if (category === 'external') return 'Open externally';
   return '25 MiB binary';
 }
+
+function readQuotedCharacter(
+  text: string,
+  index: number,
+): { value: string; nextIndex: number; closed: boolean } {
+  const ch = text[index];
+  if (ch !== '"') return { value: ch, nextIndex: index, closed: false };
+  if (text[index + 1] === '"') return { value: '"', nextIndex: index + 1, closed: false };
+  return { value: '', nextIndex: index, closed: true };
+}
+
+export function parseDelimitedText(
+  text: string,
+  delimiter: string,
+  rowLimit: number,
+  columnLimit: number,
+): string[][] {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let field = '';
+  let inQuotes = false;
+  let columnLimitReached = false;
+
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (inQuotes) {
+      const quoted = readQuotedCharacter(text, i);
+      i = quoted.nextIndex;
+      if (quoted.closed) {
+        inQuotes = false;
+      } else if (!columnLimitReached) {
+        field += quoted.value;
+      }
+    } else if (ch === '"') {
+      inQuotes = true;
+    } else if (ch === delimiter) {
+      if (row.length < columnLimit - 1) {
+        row.push(field);
+        field = '';
+      } else {
+        columnLimitReached = true;
+      }
+    } else if (ch === '\n') {
+      row.push(field);
+      rows.push(row);
+      row = [];
+      field = '';
+      columnLimitReached = false;
+      if (rows.length >= rowLimit) break;
+    } else if (ch !== '\r' && !columnLimitReached) {
+      field += ch;
+    }
+  }
+
+  if (rows.length < rowLimit && (field || row.length)) {
+    row.push(field);
+    rows.push(row);
+  }
+  return rows;
+}

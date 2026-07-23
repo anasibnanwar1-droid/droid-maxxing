@@ -16,6 +16,7 @@ import {
   revealFile,
   type FilePreviewPayload,
 } from '../../lib/desktop';
+import { parseDelimitedText } from '../../lib/filePreview';
 import { Markdown } from '../Markdown';
 import { toast } from '../../lib/toast';
 
@@ -61,49 +62,6 @@ function extensionOf(name: string): string {
 
 const MARKDOWN_EXTENSIONS = new Set(['md', 'markdown', 'mdx']);
 const TABULAR_EXTENSIONS = new Set(['csv', 'tsv']);
-
-function parseCsv(text: string, delimiter: string): string[][] {
-  const rows: string[][] = [];
-  let row: string[] = [];
-  let field = '';
-  let inQuotes = false;
-  const len = text.length;
-  for (let i = 0; i < len; i++) {
-    const ch = text[i];
-    if (inQuotes) {
-      if (ch === '"') {
-        if (text[i + 1] === '"') {
-          field += '"';
-          i++;
-        } else {
-          inQuotes = false;
-        }
-      } else {
-        field += ch;
-      }
-    } else if (ch === '"') {
-      inQuotes = true;
-    } else if (ch === delimiter && row.length < TABLE_COL_LIMIT - 1) {
-      row.push(field);
-      field = '';
-    } else if (ch === '\n') {
-      row.push(field);
-      rows.push(row);
-      row = [];
-      field = '';
-      if (rows.length >= TABLE_ROW_LIMIT) break;
-    } else if (ch === '\r') {
-      continue;
-    } else {
-      field += ch;
-    }
-  }
-  if (rows.length < TABLE_ROW_LIMIT && (field || row.length)) {
-    row.push(field);
-    rows.push(row);
-  }
-  return rows;
-}
 
 function ToolbarButton({
   title,
@@ -372,7 +330,10 @@ function CsvPreview({
   truncated: boolean;
   originalLength: number;
 }) {
-  const rows = useMemo(() => parseCsv(text, delimiter), [text, delimiter]);
+  const rows = useMemo(
+    () => parseDelimitedText(text, delimiter, TABLE_ROW_LIMIT, TABLE_COL_LIMIT),
+    [text, delimiter],
+  );
   return (
     <div className="flex h-full flex-col overflow-hidden">
       {truncated && (
@@ -511,6 +472,7 @@ function PdfPreview({ data }: { data?: Uint8Array }) {
     let cancelled = false;
     const isCancelled = () => cancelled;
     let renderTask: RenderTask | null = null;
+    setError('');
     setRendering(true);
     Promise.resolve()
       .then(async () => {
