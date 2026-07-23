@@ -97,6 +97,10 @@ interface MissionManagerOptions {
 
 interface LiveAgent {
   session: DroidSession;
+  // The mission.agents map key (and watchdog key). Kept explicitly so paths
+  // that only hold the agent never key timers off session.sessionId, which is
+  // not guaranteed to match the map key.
+  agentSessionId: string;
   missionId: string;
   role: AgentRole;
   streaming: boolean;
@@ -2507,6 +2511,7 @@ export class MissionManager {
       await this.enableDaemonAutoCompaction(session, await this.compactionLimit(workerModelId));
       const agent: LiveAgent = {
         session,
+        agentSessionId,
         missionId: appSessionId,
         role,
         streaming: false,
@@ -2617,8 +2622,11 @@ export class MissionManager {
         await this.refreshContext(agent.session.sessionId, agent.session);
         agent.streaming = false;
         if (agent.autoCompacting) {
+          // Key by the agents-map id: every other watchdog op (initial arm,
+          // interrupt, close, expiry lookup) uses it, so the tightened timer
+          // actually replaces the 5-minute one.
           this.autoCompactionWatchdogs.arm(
-            agent.session.sessionId,
+            agent.agentSessionId,
             POST_TURN_AUTO_COMPACTION_WATCHDOG_MS,
           );
           return;

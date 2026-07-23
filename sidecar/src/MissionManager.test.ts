@@ -1169,6 +1169,43 @@ test('daemon compaction notifications protect worker compaction from steering an
   assert.equal(agent.autoCompacting, false);
 });
 
+test('worker post-turn watchdog re-arms on the agents-map key, not the live session id', async () => {
+  const { manager, mission } = compactionHarness(10_000);
+  // The live session's own id intentionally differs from the agents-map key.
+  const session = new FakeCompactionSession('daemon-worker-raw', 10_000);
+  const agent = {
+    session,
+    agentSessionId: 'worker-1',
+    missionId: 'app-compact',
+    role: 'worker' as const,
+    streaming: false,
+    autoCompacting: false,
+    pendingSends: [] as string[],
+    lastUsedAt: Date.now(),
+  };
+  mission.linkedSubagents.add('worker-1');
+  mission.agents.set('worker-1', agent);
+  const internals = manager as unknown as CompactionNotificationInternals & {
+    driveAgent: (agent: unknown, text: string) => Promise<void>;
+    autoCompactionWatchdogs: { isArmed: (key: string) => boolean };
+  };
+
+  internals.handleCompactionNotification('app-compact', 'worker-1', 'worker', session, {
+    params: {
+      notification: { type: 'droid_working_state_changed', newState: 'compacting_conversation' },
+    },
+  });
+  assert.equal(agent.autoCompacting, true);
+  assert.equal(internals.autoCompactionWatchdogs.isArmed('worker-1'), true);
+
+  await internals.driveAgent(agent, 'go');
+
+  // The tightened post-turn timer must replace the start-of-compaction timer,
+  // so it has to live under the same key every other watchdog op uses.
+  assert.equal(internals.autoCompactionWatchdogs.isArmed('worker-1'), true);
+  assert.equal(internals.autoCompactionWatchdogs.isArmed('daemon-worker-raw'), false);
+});
+
 test('auto-compaction settlement drains queued orchestrator and worker sends', async () => {
   const { manager, session, mission } = compactionHarness(10_000);
   const internals = manager as unknown as CompactionNotificationInternals;

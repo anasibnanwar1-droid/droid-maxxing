@@ -30,6 +30,10 @@ export class AutoCompactionWatchdogs {
     this.timers.set(sessionKey, timer);
   }
 
+  isArmed(sessionKey: string): boolean {
+    return this.timers.has(sessionKey);
+  }
+
   clear(sessionKey: string): void {
     const timer = this.timers.get(sessionKey);
     if (timer !== undefined) {
