@@ -12,12 +12,14 @@ export function ensureTerminalForTab(
   const promise = existingId
     ? listTerminals(options.missionId).then((terminals) => {
         const terminal = terminals.find((candidate) => candidate.id === existingId);
-        if (!terminal) throw new Error('This terminal process is no longer available.');
-        return terminal;
+        return terminal ?? createTerminal(options);
       })
     : createTerminal(options);
   terminalsByTab.set(tabId, promise);
-  promise.catch(() => terminalsByTab.delete(tabId));
+  const release = () => {
+    if (terminalsByTab.get(tabId) === promise) terminalsByTab.delete(tabId);
+  };
+  void promise.then(release, release);
   return promise;
 }
 

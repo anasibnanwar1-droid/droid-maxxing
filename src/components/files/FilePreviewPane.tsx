@@ -350,7 +350,7 @@ function TextPreview({ text, fileName }: { text: string; fileName: string }) {
       )}
       {isMarkdown ? (
         <div className="px-4 py-3">
-          <Markdown>{visibleText}</Markdown>
+          <Markdown allowDiagrams={false}>{visibleText}</Markdown>
         </div>
       ) : (
         <pre className="px-4 py-3 font-mono text-[11.5px] leading-[1.6] text-droid-text-secondary [overflow-wrap:anywhere]">

@@ -75,3 +75,34 @@ test('open remains usable when navigation succeeds before a DOM snapshot is read
     refs: [],
   });
 });
+
+test('history navigation never reuses a stale page snapshot', async () => {
+  const runtime = new NativeBrowserRuntime({
+    missionId: 'mission-one',
+    sessionId: 'browser-one',
+    viewport: { width: 900, height: 700, deviceScaleFactor: 2 },
+    request: async (request) => ({
+      requestId: request.requestId,
+      missionId: request.missionId,
+      ok: true,
+      snapshot:
+        request.action === 'open'
+          ? {
+              url: 'https://example.com/current',
+              scroll: { x: 0, y: 0 },
+              refs: [
+                {
+                  ref: '@b-current',
+                  selector: '#current',
+                  tagName: 'main',
+                  box: { x: 0, y: 0, width: 100, height: 100 },
+                },
+              ],
+            }
+          : undefined,
+    }),
+  });
+
+  await runtime.open('https://example.com/current');
+  await assert.rejects(runtime.goBack(), /navigation completed without a fresh page snapshot/);
+});

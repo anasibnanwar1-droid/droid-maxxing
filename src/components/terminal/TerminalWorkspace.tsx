@@ -127,6 +127,10 @@ export function TerminalWorkspace({
           }
         });
         await subscribeTerminal(info.id);
+        if (isDisposed()) {
+          await unsubscribeTerminal(info.id);
+          return;
+        }
         instance.onData((data) => void writeTerminal(info.id, data));
         instance.focus();
       })

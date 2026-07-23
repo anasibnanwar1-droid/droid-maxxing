@@ -307,7 +307,15 @@ function CodeCard({
   );
 }
 
-function MarkdownImpl({ children, specMode }: { children: string; specMode?: boolean }) {
+function MarkdownImpl({
+  children,
+  specMode,
+  allowDiagrams = true,
+}: {
+  children: string;
+  specMode?: boolean;
+  allowDiagrams?: boolean;
+}) {
   return (
     <div
       className={`text-droid-text break-words ${specMode ? 'text-[15px] leading-[1.8] space-y-5' : 'text-[13.5px] leading-[1.7] space-y-3'}`}
@@ -423,11 +431,11 @@ function MarkdownImpl({ children, specMode }: { children: string; specMode?: boo
 
             const codeText = String(children ?? '');
 
-            if (isMermaidLang(className)) {
+            if (allowDiagrams && isMermaidLang(className)) {
               return <MermaidBlock code={codeText} />;
             }
 
-            if (isSvgLang(className)) {
+            if (allowDiagrams && isSvgLang(className)) {
               return <SvgCodeBlock content={codeText} />;
             }
 
