@@ -44,8 +44,6 @@ import { buildInstallCommand, buildUpdateCommand, runStreaming } from './CliInst
 import {
   classifyPermission,
   confirmationType,
-  extractCompactionNotification,
-  extractDroidWorkingState,
   mapFeature,
   normalizeNotification,
   normalizeStreamEvent,
@@ -85,9 +83,13 @@ import {
 } from './compaction.js';
 import {
   AutoCompactionWatchdogs,
-  AUTO_COMPACTION_WATCHDOG_MS,
   POST_TURN_AUTO_COMPACTION_WATCHDOG_MS,
 } from './autoCompactionWatchdog.js';
+import {
+  handleCompactionNotification as runCompactionNotification,
+  onAutoCompactionWatchdogExpired as settleExpiredAutoCompaction,
+  type AutoCompactionHost,
+} from './missionAutoCompaction.js';
 
 type Emit = (event: ServerEvent) => void;
 
@@ -1923,114 +1925,42 @@ export class MissionManager {
     session: DroidSession,
     note: Record<string, unknown>,
   ): boolean {
-    const compaction = extractCompactionNotification(note);
-    if (!compaction) {
-      // Safety net for a session_compacted that never arrives: only a report
-      // of the daemon going idle settles the flag. Intermediate states such as
-      // generating/thinking can surface mid-compaction, and settling on those
-      // would drain a queued send into a session still being compacted.
-      const state = extractDroidWorkingState(note);
-      if (state === 'idle') this.setAutoCompacting(missionId, agentSessionId, role, false);
-      return false;
-    }
-    if (compaction.kind === 'started') {
-      this.setAutoCompacting(missionId, agentSessionId, role, true);
-      this.emitStatus(missionId, 'Compacting conversation...', 'auto', agentSessionId, role);
-      return true;
-    }
-    // A completion without a matching in-flight start is a late/duplicate
-    // note (typically the daemon echoing a manual compactSession after
-    // runCompaction already reported it); acting on it would double-count the
-    // compaction and emit a duplicate status.
-    const mission = this.findMission(missionId);
-    const active =
-      agentSessionId === missionId
-        ? mission?.autoCompacting
-        : mission?.agents.get(agentSessionId)?.autoCompacting;
-    if (!active) return true;
-    this.setAutoCompacting(missionId, agentSessionId, role, false);
-    this.emitStatus(missionId, 'Compaction complete.', 'auto', agentSessionId, role);
-    // In-place compaction keeps the session id, so the meter's ratchet only
-    // resets when the generation counter moves; also drop the pre-compaction
-    // exact reading so the refreshed estimate is not overridden by stale usage.
-    if (agentSessionId === missionId) {
-      if (mission) {
-        this.patch(missionId, {
-          contextTokens: 0,
-          contextAccuracy: undefined,
-          autoCompactions: (mission.summary.autoCompactions ?? 0) + 1,
-        });
-      }
-    } else {
-      // Worker in-place compaction: the ratchet reset travels on the worker's
-      // own context snapshots instead of the mission summary.
-      this.agentCompactions.set(
-        agentSessionId,
-        (this.agentCompactions.get(agentSessionId) ?? 0) + 1,
-      );
-    }
-    void this.refreshContext(agentSessionId, session).catch(() => {});
-    return true;
+    return runCompactionNotification(
+      this.compactionHost(),
+      missionId,
+      agentSessionId,
+      role,
+      session,
+      note,
+    );
   }
 
   private onAutoCompactionWatchdogExpired(sessionKey: string): void {
-    const mission = this.findMission(sessionKey);
-    if (mission?.autoCompacting) {
-      console.warn(`[compaction] watchdog settled a stale auto-compaction on ${sessionKey}`);
-      this.setAutoCompacting(mission.summary.id, mission.summary.id, 'orchestrator', false);
-      return;
-    }
-    for (const owner of this.missions.values()) {
-      const agent = owner.agents.get(sessionKey);
-      if (agent?.autoCompacting) {
-        console.warn(`[compaction] watchdog settled a stale auto-compaction on ${sessionKey}`);
-        this.setAutoCompacting(owner.summary.id, sessionKey, agent.role, false);
-        return;
-      }
-    }
+    settleExpiredAutoCompaction(this.compactionHost(), sessionKey);
   }
 
-  private setAutoCompacting(
-    missionId: string,
-    agentSessionId: string,
-    role: AgentRole,
-    active: boolean,
-  ): void {
-    const mission = this.findMission(missionId);
-    if (!mission) return;
-    if (role === 'orchestrator') {
-      const wasActive = mission.autoCompacting;
-      mission.autoCompacting = active;
-      if (active) this.autoCompactionWatchdogs.arm(mission.summary.id, AUTO_COMPACTION_WATCHDOG_MS);
-      else this.autoCompactionWatchdogs.clear(mission.summary.id);
-      if (active || !wasActive || mission.streaming || mission.compacting) return;
-      const next = mission.pendingSends.shift();
-      this.patch(mission.summary.id, { queuedSends: mission.pendingSends.length });
-      if (next !== undefined) void this.drive(mission.summary.id, next);
-      return;
-    }
-
-    const agent = mission.agents.get(agentSessionId);
-    if (!agent) return;
-    const wasActive = agent.autoCompacting;
-    agent.autoCompacting = active;
-    if (active) this.autoCompactionWatchdogs.arm(agentSessionId, AUTO_COMPACTION_WATCHDOG_MS);
-    else this.autoCompactionWatchdogs.clear(agentSessionId);
-    if (active || !wasActive || agent.streaming) return;
-    if (agent.pendingSends.length === 0 && agent.closeWhenIdle) {
-      void this.closeAgent(agent.missionId, agent.session.sessionId);
-      return;
-    }
-    const next = agent.pendingSends.shift();
-    if (next !== undefined) void this.driveAgent(agent, next);
-    else
-      this.emit({
-        type: 'agent.updated',
-        missionId: agent.missionId,
-        agentSessionId: agent.session.sessionId,
-        role: agent.role,
-        status: 'paused',
-      });
+  private compactionHost(): AutoCompactionHost<LiveAgent, Mission, DroidSession> {
+    return {
+      watchdogs: this.autoCompactionWatchdogs,
+      missions: () => this.missions.values(),
+      findMission: (missionId) => this.findMission(missionId),
+      agentCompactions: this.agentCompactions,
+      emitCompactionStatus: (missionId, text, agentSessionId, role) =>
+        this.emitStatus(missionId, text, 'auto', agentSessionId, role),
+      patchSummary: (missionId, patch) => this.patch(missionId, patch),
+      refreshContext: (sessionId, session) => this.refreshContext(sessionId, session),
+      drive: (missionId, text) => this.drive(missionId, text),
+      driveAgent: (agent, text) => this.driveAgent(agent, text),
+      closeAgent: (missionId, agentSessionId) => this.closeAgent(missionId, agentSessionId),
+      emitAgentPaused: (agent) =>
+        this.emit({
+          type: 'agent.updated',
+          missionId: agent.missionId,
+          agentSessionId: agent.session.sessionId,
+          role: agent.role,
+          status: 'paused',
+        }),
+    };
   }
 
   private async compactSession(
