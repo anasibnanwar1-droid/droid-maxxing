@@ -31,7 +31,6 @@ export function TerminalWorkspace({
   const terminalIdRef = useRef(terminalId);
   const onCreatedRef = useRef(onCreated);
   const lastSizeRef = useRef({ cols: 0, rows: 0 });
-  const disposedRef = useRef(false);
   const [status, setStatus] = useState<'starting' | 'running' | 'exited' | 'error'>(
     terminalId ? 'running' : 'starting',
   );
@@ -46,8 +45,8 @@ export function TerminalWorkspace({
   }, [onCreated]);
 
   useEffect(() => {
-    disposedRef.current = false;
-    const isDisposed = () => disposedRef.current;
+    let cancelled = false;
+    const isDisposed = () => cancelled;
     let resizeFrame = 0;
     let unlisten: () => void = () => {
       /* no-op */
@@ -141,7 +140,7 @@ export function TerminalWorkspace({
       });
 
     return () => {
-      disposedRef.current = true;
+      cancelled = true;
       if (resizeFrame) cancelAnimationFrame(resizeFrame);
       observer?.disconnect();
       unlisten();
