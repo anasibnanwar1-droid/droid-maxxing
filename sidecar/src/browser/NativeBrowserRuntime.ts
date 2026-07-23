@@ -18,17 +18,30 @@ export interface NativeBrowserRuntimeOptions {
 
 export class NativeBrowserRuntime implements BrowserRuntime {
   private viewport: BrowserViewport;
+  private lastSnapshot: BrowserSnapshot = {
+    url: 'about:blank',
+    scroll: { x: 0, y: 0 },
+    refs: [],
+  };
 
   constructor(private readonly options: NativeBrowserRuntimeOptions) {
     this.viewport = options.viewport;
   }
 
   async open(url: string): Promise<BrowserSnapshot> {
-    return this.snapshotFrom(await this.send({ action: 'open', url }));
+    return this.snapshotFrom(await this.send({ action: 'open', url }), url);
   }
 
   async reload(): Promise<BrowserSnapshot> {
     return this.snapshotFrom(await this.send({ action: 'reload' }));
+  }
+
+  async goBack(): Promise<BrowserSnapshot> {
+    return this.snapshotFrom(await this.send({ action: 'goBack' }));
+  }
+
+  async goForward(): Promise<BrowserSnapshot> {
+    return this.snapshotFrom(await this.send({ action: 'goForward' }));
   }
 
   async setViewport(viewport: BrowserViewport): Promise<void> {
@@ -55,20 +68,28 @@ export class NativeBrowserRuntime implements BrowserRuntime {
     return this.snapshotFrom(await this.send({ action: 'snapshot' }));
   }
 
-  async click(x: number, y: number): Promise<void> {
-    await this.send({ action: 'click', x, y });
+  async click(x: number, y: number, selector?: string): Promise<void> {
+    await this.action({ action: 'click', x, y, selector });
+  }
+
+  async hover(x: number, y: number, selector?: string): Promise<void> {
+    await this.action({ action: 'hover', x, y, selector });
+  }
+
+  async selectOption(selector: string, value: string): Promise<void> {
+    await this.action({ action: 'selectOption', selector, text: value });
   }
 
   async type(text: string): Promise<void> {
-    await this.send({ action: 'type', text });
+    await this.action({ action: 'type', text });
   }
 
   async keypress(key: string): Promise<void> {
-    await this.send({ action: 'keypress', key });
+    await this.action({ action: 'keypress', key });
   }
 
-  async scroll(direction: ScrollDirection, pixels?: number): Promise<void> {
-    await this.send({ action: 'scroll', direction, pixels });
+  async scroll(direction: ScrollDirection, pixels?: number, x?: number, y?: number): Promise<void> {
+    await this.action({ action: 'scroll', direction, pixels, x, y });
   }
 
   async fillCredentials(): Promise<BrowserSnapshot> {
@@ -76,7 +97,15 @@ export class NativeBrowserRuntime implements BrowserRuntime {
   }
 
   async close(): Promise<void> {
-    await this.send({ action: 'close' }).catch(() => {});
+    await this.action({ action: 'close' }).catch(() => {});
+  }
+
+  private async action(
+    input: Omit<BrowserNativeRequest, 'requestId' | 'missionId' | 'sessionId' | 'viewport'>,
+  ): Promise<void> {
+    const result = await this.send(input);
+    if (!result.ok) throw new Error(result.error ?? 'Native browser action failed.');
+    if (result.snapshot) this.lastSnapshot = result.snapshot;
   }
 
   private send(
@@ -93,9 +122,11 @@ export class NativeBrowserRuntime implements BrowserRuntime {
     });
   }
 
-  private snapshotFrom(result: BrowserNativeResult): BrowserSnapshot {
+  private snapshotFrom(result: BrowserNativeResult, fallbackUrl?: string): BrowserSnapshot {
     if (!result.ok) throw new Error(result.error ?? 'Native browser action failed.');
-    if (!result.snapshot) throw new Error('Native browser did not return a page snapshot.');
-    return result.snapshot;
+    this.lastSnapshot =
+      result.snapshot ??
+      (fallbackUrl ? { ...this.lastSnapshot, url: fallbackUrl, refs: [] } : this.lastSnapshot);
+    return this.lastSnapshot;
   }
 }

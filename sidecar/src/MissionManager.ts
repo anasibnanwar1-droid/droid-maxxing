@@ -480,6 +480,7 @@ export class MissionManager {
             cmd.direction,
             cmd.pixels,
             cmd.source,
+            cmd.ref,
           ),
         );
         return;

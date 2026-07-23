@@ -40,6 +40,70 @@ interface BridgeInfo {
   token: string;
 }
 
+export interface TerminalSessionInfo {
+  id: string;
+  missionId: string;
+  cwd: string;
+  shell: string;
+  cols: number;
+  rows: number;
+  exited?: boolean;
+  exitCode?: number | null;
+}
+
+export type TerminalEvent =
+  | {
+      terminalId: string;
+      kind: 'replay';
+      data: string;
+      sequence: number;
+      truncated: boolean;
+      droppedBytes: number;
+    }
+  | {
+      terminalId: string;
+      kind: 'data';
+      data: string;
+      sequence: number;
+      byteOffset: number;
+    }
+  | {
+      terminalId: string;
+      kind: 'exit';
+      sequence: number;
+      exitCode: number | null;
+      signal: number | null;
+    };
+
+export interface FilesEntry {
+  name: string;
+  kind: 'directory' | 'file';
+  size: number;
+  mtimeMs: number;
+}
+
+export interface FilesListing {
+  root: string;
+  relative: string;
+  entries: FilesEntry[];
+  totalSeen: number;
+  capped: boolean;
+  permissionDenied: boolean;
+}
+
+export interface FilePreviewPayload {
+  category: 'text' | 'image' | 'pdf' | 'docx' | 'xlsx' | 'external';
+  totalSize: number;
+  sizeCapBytes: number;
+  previewable: boolean;
+  oversize?: boolean;
+  reason?: string;
+  encoding?: 'utf8' | 'binary';
+  text?: string;
+  data?: Uint8Array;
+  path: { root: string; relative: string };
+}
+
 interface DroidControlApi {
   bridgeInfo: () => Promise<BridgeInfo>;
   pickDirectory: () => Promise<string | null>;
@@ -97,6 +161,23 @@ interface DroidControlApi {
   downloadAppUpdate: (dmgUrl?: string) => Promise<AppUpdateResult>;
   relaunchApp: () => Promise<void>;
   openExternal: (url: string) => Promise<void>;
+  terminalCreate: (options: {
+    missionId: string;
+    cwd: string;
+    cols: number;
+    rows: number;
+  }) => Promise<TerminalSessionInfo>;
+  terminalWrite: (id: string, data: string) => Promise<void>;
+  terminalResize: (id: string, cols: number, rows: number) => Promise<void>;
+  terminalKill: (id: string) => Promise<void>;
+  terminalList: (missionId: string) => Promise<TerminalSessionInfo[]>;
+  terminalSubscribe: (id: string) => Promise<void>;
+  terminalUnsubscribe: (id: string) => Promise<void>;
+  onTerminalEvent: (handler: (event: TerminalEvent) => void) => () => void;
+  filesList: (root: string, relative: string) => Promise<FilesListing>;
+  filesPreview: (root: string, relative: string) => Promise<FilePreviewPayload>;
+  filesOpen: (root: string, relative: string) => Promise<void>;
+  filesReveal: (root: string, relative: string) => Promise<void>;
   nativeBrowserOpen: (
     sessionId: string,
     url: string,
@@ -110,8 +191,11 @@ interface DroidControlApi {
   ) => Promise<void>;
   nativeBrowserDetach: (sessionId?: string) => Promise<void>;
   nativeBrowserSetBounds: (sessionId: string, bounds: NativeBrowserBounds) => Promise<void>;
+  nativeBrowserSetVisible: (sessionId: string, visible: boolean) => Promise<void>;
   nativeBrowserClose: (sessionId: string) => Promise<void>;
   nativeBrowserReload: (sessionId: string) => Promise<void>;
+  nativeBrowserGoBack: (sessionId: string) => Promise<boolean>;
+  nativeBrowserGoForward: (sessionId: string) => Promise<boolean>;
   nativeBrowserSetDesignMode: (sessionId: string, active: boolean) => Promise<void>;
   nativeBrowserSetPencilMode: (sessionId: string, active: boolean) => Promise<void>;
   nativeBrowserAgentAction: (
@@ -165,6 +249,71 @@ export async function setApiKey(key: string): Promise<void> {
 export async function clearApiKey(): Promise<void> {
   if (!isDesktop()) return;
   await window.droidControl!.clearApiKey();
+}
+
+export async function createTerminal(options: {
+  missionId: string;
+  cwd: string;
+  cols: number;
+  rows: number;
+}): Promise<TerminalSessionInfo> {
+  if (!isDesktop()) throw new Error('Terminal is only available in the desktop app.');
+  return window.droidControl!.terminalCreate(options);
+}
+
+export async function writeTerminal(id: string, data: string): Promise<void> {
+  if (!isDesktop()) return;
+  await window.droidControl!.terminalWrite(id, data);
+}
+
+export async function resizeTerminal(id: string, cols: number, rows: number): Promise<void> {
+  if (!isDesktop()) return;
+  await window.droidControl!.terminalResize(id, cols, rows);
+}
+
+export async function killTerminal(id: string): Promise<void> {
+  if (!isDesktop()) return;
+  await window.droidControl!.terminalKill(id);
+}
+
+export async function listTerminals(missionId: string): Promise<TerminalSessionInfo[]> {
+  if (!isDesktop()) return [];
+  return window.droidControl!.terminalList(missionId);
+}
+
+export async function subscribeTerminal(id: string): Promise<void> {
+  if (!isDesktop()) return;
+  await window.droidControl!.terminalSubscribe(id);
+}
+
+export async function unsubscribeTerminal(id: string): Promise<void> {
+  if (!isDesktop()) return;
+  await window.droidControl!.terminalUnsubscribe(id);
+}
+
+export function onTerminalEvent(handler: (event: TerminalEvent) => void): () => void {
+  if (!isDesktop()) return () => {};
+  return window.droidControl!.onTerminalEvent(handler);
+}
+
+export async function listDirectory(root: string, relative = ''): Promise<FilesListing> {
+  if (!isDesktop()) throw new Error('Files are only available in the desktop app.');
+  return window.droidControl!.filesList(root, relative);
+}
+
+export async function readFilePreview(root: string, relative: string): Promise<FilePreviewPayload> {
+  if (!isDesktop()) throw new Error('Files are only available in the desktop app.');
+  return window.droidControl!.filesPreview(root, relative);
+}
+
+export async function openFileDefault(root: string, relative: string): Promise<void> {
+  if (!isDesktop()) return;
+  await window.droidControl!.filesOpen(root, relative);
+}
+
+export async function revealFile(root: string, relative: string): Promise<void> {
+  if (!isDesktop()) return;
+  await window.droidControl!.filesReveal(root, relative);
 }
 
 export async function listFiles(dir: string): Promise<string[]> {

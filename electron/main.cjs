@@ -18,10 +18,14 @@ const os = require('node:os');
 const path = require('node:path');
 const gitVcs = require('./git.cjs');
 const githubVcs = require('./github.cjs');
+const { createTerminalManager } = require('./terminal.cjs');
+const files = require('./files.cjs');
 
 const APP_NAME = 'Droid Control';
 const BRIDGE_PORT = Number(process.env.BRIDGE_PORT ?? 8765);
 const bridge = { port: BRIDGE_PORT, token: crypto.randomBytes(16).toString('hex') };
+const terminalManager = createTerminalManager();
+const terminalSubscriptions = new Map();
 
 let mainWindow = null;
 let hiddenNativeBrowserWindow = null;
@@ -52,6 +56,8 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   stopSidecar();
+  terminalManager.closeAll();
+  clearTerminalSubscriptions();
 });
 
 app.on('activate', () => {
@@ -85,6 +91,8 @@ function createMainWindow() {
 
   mainWindow.on('closed', () => {
     closeAllNativeBrowsers();
+    terminalManager.closeAll();
+    clearTerminalSubscriptions();
     mainWindow = null;
   });
 }
@@ -160,6 +168,57 @@ function registerIpc() {
   ipcMain.handle('app-relaunch', () => relaunchApp());
   ipcMain.handle('open-external', (_event, { url }) => openExternal(url));
 
+  ipcMain.handle('terminal-create', (event, args) => {
+    assertMainRenderer(event);
+    return terminalManager.create({
+      missionId: args?.missionId,
+      cwd: args?.cwd,
+      cols: args?.cols,
+      rows: args?.rows,
+    });
+  });
+  ipcMain.handle('terminal-write', (event, { id, data }) => {
+    assertMainRenderer(event);
+    terminalManager.write(id, data);
+  });
+  ipcMain.handle('terminal-resize', (event, { id, cols, rows }) => {
+    assertMainRenderer(event);
+    terminalManager.resize(id, cols, rows);
+  });
+  ipcMain.handle('terminal-kill', (event, { id }) => {
+    assertMainRenderer(event);
+    unsubscribeTerminal(event.sender, id);
+    terminalManager.kill(id);
+  });
+  ipcMain.handle('terminal-list', (event, filter) => {
+    assertMainRenderer(event);
+    return terminalManager.list({ missionId: filter?.missionId });
+  });
+  ipcMain.handle('terminal-subscribe', (event, { id }) => {
+    assertMainRenderer(event);
+    subscribeTerminal(event.sender, id);
+  });
+  ipcMain.handle('terminal-unsubscribe', (event, { id }) => {
+    assertMainRenderer(event);
+    unsubscribeTerminal(event.sender, id);
+  });
+  ipcMain.handle('files-list', (event, { root, relative }) => {
+    assertMainRenderer(event);
+    return files.listDirectory(root, relative);
+  });
+  ipcMain.handle('files-preview', (event, { root, relative }) => {
+    assertMainRenderer(event);
+    return files.readPreview(root, relative);
+  });
+  ipcMain.handle('files-open', (event, { root, relative }) => {
+    assertMainRenderer(event);
+    return files.openDefault(root, relative, shell);
+  });
+  ipcMain.handle('files-reveal', (event, { root, relative }) => {
+    assertMainRenderer(event);
+    return files.revealInFolder(root, relative, shell);
+  });
+
   ipcMain.handle('native-browser-open', (_event, { sessionId, url, bounds, viewport }) =>
     openNativeBrowser(sessionId, url, bounds, viewport),
   );
@@ -172,9 +231,18 @@ function registerIpc() {
   ipcMain.handle('native-browser-set-bounds', (_event, { sessionId, bounds }) =>
     setNativeBrowserBounds(sessionId, bounds),
   );
+  ipcMain.handle('native-browser-visible', (_event, { sessionId, visible }) =>
+    setNativeBrowserVisible(sessionId, visible),
+  );
   ipcMain.handle('native-browser-close', (_event, { sessionId }) => closeNativeBrowser(sessionId));
   ipcMain.handle('native-browser-reload', (_event, { sessionId }) =>
     reloadNativeBrowser(sessionId),
+  );
+  ipcMain.handle('native-browser-go-back', (_event, { sessionId }) =>
+    navigateNativeBrowserHistory(sessionId, 'back'),
+  );
+  ipcMain.handle('native-browser-go-forward', (_event, { sessionId }) =>
+    navigateNativeBrowserHistory(sessionId, 'forward'),
   );
   ipcMain.handle('native-browser-set-design-mode', (_event, { sessionId, active }) =>
     setNativeBrowserDesignMode(sessionId, active),
@@ -214,6 +282,48 @@ function registerIpc() {
   ipcMain.on('native-browser-credential-capture', (event, payload) => {
     void handleCredentialCapture(event.sender, payload);
   });
+}
+
+function assertMainRenderer(event) {
+  if (!mainWindow || event.sender !== mainWindow.webContents) {
+    throw new Error('Desktop request rejected for unknown renderer.');
+  }
+}
+
+function subscribeTerminal(sender, terminalId) {
+  unsubscribeTerminal(sender, terminalId);
+  let subscriptions = terminalSubscriptions.get(sender.id);
+  if (!subscriptions) {
+    subscriptions = new Map();
+    terminalSubscriptions.set(sender.id, subscriptions);
+    sender.once('destroyed', () => clearTerminalSubscriptions(sender.id));
+  }
+  const unsubscribe = terminalManager.subscribe(terminalId, (payload) => {
+    if (!sender.isDestroyed()) {
+      sender.send('terminal-event', { terminalId, ...payload });
+    }
+  });
+  subscriptions.set(terminalId, unsubscribe);
+}
+
+function unsubscribeTerminal(sender, terminalId) {
+  const subscriptions = terminalSubscriptions.get(sender.id);
+  const unsubscribe = subscriptions?.get(terminalId);
+  if (unsubscribe) unsubscribe();
+  subscriptions?.delete(terminalId);
+  if (subscriptions?.size === 0) terminalSubscriptions.delete(sender.id);
+}
+
+function clearTerminalSubscriptions(senderId) {
+  const entries =
+    senderId === undefined
+      ? [...terminalSubscriptions.entries()]
+      : [[senderId, terminalSubscriptions.get(senderId)]];
+  for (const [id, subscriptions] of entries) {
+    if (!subscriptions) continue;
+    for (const unsubscribe of subscriptions.values()) unsubscribe();
+    terminalSubscriptions.delete(id);
+  }
 }
 
 function installApplicationMenu() {
@@ -511,6 +621,7 @@ function createNativeBrowserEntry(sessionId) {
     targetUrl: null,
     state: { designMode: false, pencilMode: false },
     attached: false,
+    visible: true,
     windowAttached: false,
     hostWindow: null,
     idleTimer: null,
@@ -635,6 +746,7 @@ function detachNativeBrowser(sessionId) {
   if (!entry) return;
   if (attachedBrowserSessionId === targetSessionId) attachedBrowserSessionId = null;
   entry.attached = false;
+  safeWebContents(entry.view)?.setBackgroundThrottling(true);
   setHiddenNativeBrowserBounds(entry);
   removeNativeBrowserViewFromWindow(entry, entry.view);
   scheduleNativeBrowserIdleClose(entry);
@@ -644,6 +756,14 @@ function setNativeBrowserBounds(sessionId, bounds) {
   const entry = nativeBrowsers.get(normalizeNativeBrowserSessionId(sessionId));
   if (!entry || !isBrowserViewUsable(entry.view)) return;
   entry.view.setBounds(normalizeBounds(bounds));
+}
+
+function setNativeBrowserVisible(sessionId, visible) {
+  const entry = ensureNativeBrowserEntry(sessionId);
+  entry.visible = Boolean(visible);
+  if (!isBrowserViewUsable(entry.view) || !entry.attached) return;
+  entry.view.setVisible(entry.visible);
+  safeWebContents(entry.view)?.setBackgroundThrottling(!entry.visible);
 }
 
 function closeNativeBrowser(sessionId) {
@@ -659,16 +779,35 @@ function reloadNativeBrowser(sessionId) {
   contents.reload();
 }
 
+function navigateNativeBrowserHistory(sessionId, direction) {
+  const entry = nativeBrowsers.get(normalizeNativeBrowserSessionId(sessionId));
+  const contents = safeWebContents(entry?.view);
+  if (!contents) throw new Error('Droid Control browser is not open.');
+  const history = contents.navigationHistory;
+  if (direction === 'back') {
+    if (!history.canGoBack()) return false;
+    history.goBack();
+  } else {
+    if (!history.canGoForward()) return false;
+    history.goForward();
+  }
+  return true;
+}
+
 function setNativeBrowserDesignMode(sessionId, active) {
   const entry = ensureNativeBrowserEntry(sessionId);
-  entry.state.designMode = Boolean(active);
+  const next = Boolean(active);
+  if (entry.state.designMode === next) return;
+  entry.state.designMode = next;
   if (!entry.state.designMode) entry.state.pencilMode = false;
   return applyNativeBrowserDesignState(entry);
 }
 
 function setNativeBrowserPencilMode(sessionId, active) {
   const entry = ensureNativeBrowserEntry(sessionId);
-  entry.state.pencilMode = entry.state.designMode && Boolean(active);
+  const next = entry.state.designMode && Boolean(active);
+  if (entry.state.pencilMode === next) return;
+  entry.state.pencilMode = next;
   return applyNativeBrowserDesignState(entry);
 }
 
@@ -676,17 +815,194 @@ async function runNativeBrowserAgentAction(request) {
   const entry = await restoreNativeBrowserForAction(request.sessionId);
   const contents = safeWebContents(entry.view);
   if (!contents) throw new Error('Droid Control browser is not open.');
+  const navigation = observeAgentNavigation(contents);
+  contents.setBackgroundThrottling(false);
   try {
     if (request.action === 'fillCredentials') {
-      return await fillCredentialsForAgent(contents, request);
+      return withNativeBrowserHistory(contents, await fillCredentialsForAgent(contents, request));
     }
-    return await contents.executeJavaScript(
-      `window.__DROIDMAXX_AGENT_ACTION?.(${JSON.stringify(request)});`,
-      true,
+    const execution = executeNativeBrowserAgentAction(contents, request).then(
+      (result) => ({ type: 'result', result }),
+      (error) => ({ type: 'error', error }),
     );
+    const outcome = await Promise.race([
+      execution,
+      navigation.wait().then(() => ({ type: 'navigation' })),
+    ]);
+    if (outcome.type === 'navigation') {
+      return await snapshotNativeBrowserAfterNavigation(contents, request);
+    }
+    if (outcome.type === 'error') {
+      if (!navigation.started() || !isNavigationExecutionError(outcome.error)) throw outcome.error;
+      await navigation.wait();
+      return await snapshotNativeBrowserAfterNavigation(contents, request);
+    }
+    return withNativeBrowserHistory(contents, outcome.result);
   } finally {
+    navigation.dispose();
+    if (!entry.attached) contents.setBackgroundThrottling(true);
     scheduleNativeBrowserIdleClose(entry);
   }
+}
+
+async function executeNativeBrowserAgentAction(contents, request) {
+  if (
+    request.action === 'scroll' &&
+    Number.isFinite(Number(request.x)) &&
+    Number.isFinite(Number(request.y))
+  ) {
+    const x = Math.round(Number(request.x));
+    const y = Math.round(Number(request.y));
+    const pixels = Math.max(1, Math.round(Number(request.pixels) || 500));
+    const horizontal = request.direction === 'left' || request.direction === 'right';
+    contents.sendInputEvent({
+      type: 'mouseWheel',
+      x,
+      y,
+      deltaX: horizontal ? (request.direction === 'left' ? -pixels : pixels) : 0,
+      deltaY: horizontal ? 0 : request.direction === 'up' ? -pixels : pixels,
+      canScroll: true,
+    });
+    return contents.executeJavaScript(
+      `window.__DROIDMAXX_AGENT_ACTION?.(${JSON.stringify({
+        ...request,
+        action: 'snapshot',
+      })});`,
+      true,
+    );
+  }
+  if (request.action === 'click' || request.action === 'hover') {
+    const point = await resolveNativeBrowserPointer(contents, request);
+    const x = point.x;
+    const y = point.y;
+    if (!Number.isFinite(x) || !Number.isFinite(y)) {
+      throw new Error('Browser pointer interaction requires finite viewport coordinates.');
+    }
+    contents.sendInputEvent({ type: 'mouseMove', x, y, movementX: 0, movementY: 0 });
+    if (request.action === 'click') {
+      contents.sendInputEvent({ type: 'mouseDown', x, y, button: 'left', clickCount: 1 });
+      contents.sendInputEvent({ type: 'mouseUp', x, y, button: 'left', clickCount: 1 });
+    }
+    return contents.executeJavaScript(
+      `window.__DROIDMAXX_AGENT_ACTION?.(${JSON.stringify({
+        ...request,
+        action: 'snapshot',
+      })});`,
+      true,
+    );
+  }
+  return contents.executeJavaScript(
+    `window.__DROIDMAXX_AGENT_ACTION?.(${JSON.stringify(request)});`,
+    true,
+  );
+}
+
+async function resolveNativeBrowserPointer(contents, request) {
+  if (typeof request.selector === 'string' && request.selector) {
+    const point = await contents.executeJavaScript(
+      `(() => {
+        const target = document.querySelector(${JSON.stringify(request.selector)});
+        if (!target) return null;
+        target.scrollIntoView({ block: 'center', inline: 'center', behavior: 'auto' });
+        const box = target.getBoundingClientRect();
+        if (box.width <= 0 || box.height <= 0) return null;
+        return {
+          x: Math.round(box.left + box.width / 2),
+          y: Math.round(box.top + box.height / 2)
+        };
+      })()`,
+      true,
+    );
+    if (!point) {
+      throw new Error('Browser target is no longer available. Refresh the snapshot and try again.');
+    }
+    return point;
+  }
+  return {
+    x: Math.round(Number(request.x)),
+    y: Math.round(Number(request.y)),
+  };
+}
+
+async function snapshotNativeBrowserAfterNavigation(contents, request) {
+  try {
+    const result = await contents.executeJavaScript(
+      `window.__DROIDMAXX_AGENT_ACTION?.(${JSON.stringify({
+        requestId: request.requestId,
+        action: 'snapshot',
+      })});`,
+      true,
+    );
+    return withNativeBrowserHistory(contents, result);
+  } catch {
+    return withNativeBrowserHistory(contents, { requestId: request.requestId, ok: true });
+  }
+}
+
+function withNativeBrowserHistory(contents, result) {
+  if (!result || typeof result !== 'object') return result;
+  const history = contents.navigationHistory;
+  if (!result.snapshot) return result;
+  return {
+    ...result,
+    snapshot: {
+      ...result.snapshot,
+      canGoBack: history.canGoBack(),
+      canGoForward: history.canGoForward(),
+    },
+  };
+}
+
+function observeAgentNavigation(contents, timeoutMs = 7_000) {
+  let didStart = false;
+  let settled = false;
+  let timeout;
+  let resolveCompletion;
+  const completion = new Promise((resolve) => {
+    resolveCompletion = resolve;
+  });
+  const finish = () => {
+    if (settled) return;
+    settled = true;
+    resolveCompletion();
+  };
+  const onStart = (_event, _url, _isInPlace, isMainFrame) => {
+    if (!isMainFrame || didStart) return;
+    didStart = true;
+    timeout = setTimeout(finish, timeoutMs);
+  };
+  const onFinish = () => {
+    if (didStart) finish();
+  };
+  const onFail = (_event, errorCode, _description, _url, isMainFrame) => {
+    if (isMainFrame && errorCode !== -3) finish();
+  };
+  const onDestroyed = () => finish();
+  contents.on('did-start-navigation', onStart);
+  contents.on('did-finish-load', onFinish);
+  contents.on('did-fail-load', onFail);
+  contents.on('destroyed', onDestroyed);
+  return {
+    started: () => didStart,
+    wait: () => completion,
+    dispose: () => {
+      clearTimeout(timeout);
+      contents.removeListener('did-start-navigation', onStart);
+      contents.removeListener('did-finish-load', onFinish);
+      contents.removeListener('did-fail-load', onFail);
+      contents.removeListener('destroyed', onDestroyed);
+    },
+  };
+}
+
+function isNavigationExecutionError(err) {
+  const message = String(err?.message || err).toLowerCase();
+  return (
+    message.includes('script execution was interrupted') ||
+    message.includes('execution context was destroyed') ||
+    message.includes('frame was disposed') ||
+    message.includes('object has been destroyed')
+  );
 }
 
 // Agent-blind login: the saved secret is decrypted and injected here in the
@@ -737,6 +1053,7 @@ async function captureNativeBrowser(sessionId, box, options = {}) {
   const entry = await restoreNativeBrowserForAction(sessionId);
   const contents = safeWebContents(entry.view);
   if (!contents) throw new Error('Droid Control browser is not open.');
+  contents.setBackgroundThrottling(false);
   try {
     const fullPage = Boolean(options?.fullPage);
     const scale =
@@ -767,6 +1084,7 @@ async function captureNativeBrowser(sessionId, box, options = {}) {
     const image = rect ? await contents.capturePage(rect) : await contents.capturePage();
     return image.isEmpty() ? undefined : image.toPNG().toString('base64');
   } finally {
+    if (!entry.attached) contents.setBackgroundThrottling(true);
     scheduleNativeBrowserIdleClose(entry);
   }
 }
@@ -883,7 +1201,13 @@ function applyNativeBrowserDesignState(entry) {
 
 function emitNativeBrowserLoaded(entry, url) {
   if (!isWindowUsable(mainWindow)) return;
-  mainWindow.webContents.send('native-browser-loaded', { sessionId: entry.sessionId, url });
+  const history = safeWebContents(entry.view)?.navigationHistory;
+  mainWindow.webContents.send('native-browser-loaded', {
+    sessionId: entry.sessionId,
+    url,
+    canGoBack: history?.canGoBack() ?? false,
+    canGoForward: history?.canGoForward() ?? false,
+  });
 }
 
 function emitNativeBrowserLoadFailed(entry, url, error) {
@@ -968,6 +1292,8 @@ function attachNativeBrowserViewToMainWindow(entry) {
     removeNativeBrowserViewFromWindow(entry, entry.view);
   // addChildView is idempotent and raises the view to the top of the stack.
   mainWindow.contentView.addChildView(entry.view);
+  entry.view.setVisible(entry.visible);
+  safeWebContents(entry.view)?.setBackgroundThrottling(!entry.visible);
   entry.windowAttached = true;
   entry.hostWindow = mainWindow;
 }

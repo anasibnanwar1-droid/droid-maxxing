@@ -50,6 +50,19 @@ contextBridge.exposeInMainWorld('droidControl', {
   relaunchApp: () => ipcRenderer.invoke('app-relaunch'),
   openExternal: (url) => ipcRenderer.invoke('open-external', { url }),
 
+  terminalCreate: (options) => ipcRenderer.invoke('terminal-create', options),
+  terminalWrite: (id, data) => ipcRenderer.invoke('terminal-write', { id, data }),
+  terminalResize: (id, cols, rows) => ipcRenderer.invoke('terminal-resize', { id, cols, rows }),
+  terminalKill: (id) => ipcRenderer.invoke('terminal-kill', { id }),
+  terminalList: (missionId) => ipcRenderer.invoke('terminal-list', { missionId }),
+  terminalSubscribe: (id) => ipcRenderer.invoke('terminal-subscribe', { id }),
+  terminalUnsubscribe: (id) => ipcRenderer.invoke('terminal-unsubscribe', { id }),
+  onTerminalEvent: (handler) => on('terminal-event', handler),
+  filesList: (root, relative) => ipcRenderer.invoke('files-list', { root, relative }),
+  filesPreview: (root, relative) => ipcRenderer.invoke('files-preview', { root, relative }),
+  filesOpen: (root, relative) => ipcRenderer.invoke('files-open', { root, relative }),
+  filesReveal: (root, relative) => ipcRenderer.invoke('files-reveal', { root, relative }),
+
   nativeBrowserOpen: (sessionId, url, bounds, viewport) =>
     ipcRenderer.invoke('native-browser-open', { sessionId, url, bounds, viewport }),
   nativeBrowserAttach: (sessionId, bounds, url) =>
@@ -57,8 +70,13 @@ contextBridge.exposeInMainWorld('droidControl', {
   nativeBrowserDetach: (sessionId) => ipcRenderer.invoke('native-browser-detach', { sessionId }),
   nativeBrowserSetBounds: (sessionId, bounds) =>
     ipcRenderer.invoke('native-browser-set-bounds', { sessionId, bounds }),
+  nativeBrowserSetVisible: (sessionId, visible) =>
+    ipcRenderer.invoke('native-browser-visible', { sessionId, visible }),
   nativeBrowserClose: (sessionId) => ipcRenderer.invoke('native-browser-close', { sessionId }),
   nativeBrowserReload: (sessionId) => ipcRenderer.invoke('native-browser-reload', { sessionId }),
+  nativeBrowserGoBack: (sessionId) => ipcRenderer.invoke('native-browser-go-back', { sessionId }),
+  nativeBrowserGoForward: (sessionId) =>
+    ipcRenderer.invoke('native-browser-go-forward', { sessionId }),
   nativeBrowserSetDesignMode: (sessionId, active) =>
     ipcRenderer.invoke('native-browser-set-design-mode', { sessionId, active }),
   nativeBrowserSetPencilMode: (sessionId, active) =>

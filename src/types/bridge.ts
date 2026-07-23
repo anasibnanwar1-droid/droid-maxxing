@@ -332,6 +332,8 @@ export interface BrowserState {
   screenshotUrl?: string;
   scroll: { x: number; y: number };
   refs: BrowserElementRef[];
+  canGoBack?: boolean;
+  canGoForward?: boolean;
   agentCursor?: { x: number; y: number };
   error?: string;
 }
@@ -341,13 +343,19 @@ export interface BrowserNativeSnapshot {
   title?: string;
   scroll: { x: number; y: number };
   refs: BrowserElementRef[];
+  canGoBack?: boolean;
+  canGoForward?: boolean;
 }
 
 export type BrowserNativeAction =
   | 'open'
   | 'reload'
+  | 'goBack'
+  | 'goForward'
   | 'snapshot'
   | 'click'
+  | 'hover'
+  | 'selectOption'
   | 'type'
   | 'keypress'
   | 'scroll'
@@ -365,6 +373,7 @@ export interface BrowserNativeRequest {
   viewportMode?: BrowserViewportMode;
   x?: number;
   y?: number;
+  selector?: string;
   text?: string;
   key?: string;
   direction?: BrowserScrollDirection;
@@ -607,6 +616,7 @@ export type ClientCommand =
       missionId: string;
       direction: BrowserScrollDirection;
       pixels?: number;
+      ref?: string;
       source?: 'agent' | 'user';
     }
   | {

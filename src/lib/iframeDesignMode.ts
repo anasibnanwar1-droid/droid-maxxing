@@ -416,7 +416,7 @@ function collectRefs(doc: Document): BrowserElementRef[] {
   let node: Node | null = root;
   while (node && refs.length < 80) {
     if (node.nodeType === Node.ELEMENT_NODE && isCandidate(node as Element)) {
-      refs.push(refFor(node as Element, refs.length + 1));
+      refs.push(refFor(node as Element));
     }
     node = walker.nextNode();
   }
@@ -517,11 +517,15 @@ function cssEscape(value: string): string {
 }
 
 function stableId(value: string): string {
+  return `@live-${stableHash(value)}`;
+}
+
+function stableHash(value: string): string {
   let hash = 0;
   for (let index = 0; index < value.length; index += 1) {
     hash = (Math.imul(31, hash) + value.charCodeAt(index)) | 0;
   }
-  return `@live-${Math.abs(hash).toString(36)}`;
+  return Math.abs(hash).toString(36);
 }
 
 function selectionFor(
@@ -608,9 +612,10 @@ function labelFor(el: Element): string {
   return `${label || tag} · ${tag}`;
 }
 
-function refFor(el: Element, index: number): BrowserElementRef {
+function refFor(el: Element): BrowserElementRef {
   const rect = el.getBoundingClientRect();
   const text = cleanText((el as HTMLElement).innerText || el.textContent);
+  const selector = selectorFor(el);
   const name = cleanText(
     el.getAttribute('aria-label') ||
       el.getAttribute('title') ||
@@ -619,8 +624,8 @@ function refFor(el: Element, index: number): BrowserElementRef {
       text,
   );
   return {
-    ref: `@b${index}`,
-    selector: selectorFor(el),
+    ref: `@b-${stableHash(selector)}`,
+    selector,
     tagName: el.tagName.toLowerCase(),
     role: roleFor(el) || undefined,
     name: name || undefined,
