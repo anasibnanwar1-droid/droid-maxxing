@@ -86,6 +86,29 @@ export default function BrowserWorkspace({
   const [loading, setLoading] = useState(false);
   const [canGoBack, setCanGoBack] = useState(browser?.canGoBack ?? false);
   const [canGoForward, setCanGoForward] = useState(browser?.canGoForward ?? false);
+  const loadingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const startLoading = useCallback(() => {
+    if (loadingTimerRef.current) clearTimeout(loadingTimerRef.current);
+    setLoading(true);
+    loadingTimerRef.current = setTimeout(() => {
+      loadingTimerRef.current = null;
+      setLoading(false);
+    }, 10_000);
+  }, []);
+  const stopLoading = useCallback(() => {
+    if (loadingTimerRef.current) {
+      clearTimeout(loadingTimerRef.current);
+      loadingTimerRef.current = null;
+    }
+    setLoading(false);
+  }, []);
+
+  useEffect(
+    () => () => {
+      if (loadingTimerRef.current) clearTimeout(loadingTimerRef.current);
+    },
+    [],
+  );
 
   // Auto-reload: when the agent edits files and the browser shows a local
   // dev server URL, reload the pane after a short debounce so the new code
@@ -215,7 +238,7 @@ export default function BrowserWorkspace({
     }
     const url = safeBrowserUrl(normalizedUrl, appOrigin);
     setLoadFailure(null);
-    setLoading(true);
+    startLoading();
     setUrlInput(url);
     setActiveUrl(url);
     if (browserKey) {
@@ -232,15 +255,15 @@ export default function BrowserWorkspace({
     async (direction: 'back' | 'forward') => {
       if (!browser?.sessionId) return;
       setLoadFailure(null);
-      setLoading(true);
+      startLoading();
       try {
         const moved =
           direction === 'back'
             ? await goBackNativeBrowser(browser.sessionId)
             : await goForwardNativeBrowser(browser.sessionId);
-        if (!moved) setLoading(false);
+        if (!moved) stopLoading();
       } catch (error) {
-        setLoading(false);
+        stopLoading();
         setLoadFailure({
           sessionId: browser.sessionId,
           url: activeUrl,
@@ -248,7 +271,7 @@ export default function BrowserWorkspace({
         });
       }
     },
-    [activeUrl, browser?.sessionId],
+    [activeUrl, browser?.sessionId, startLoading, stopLoading],
   );
 
   const emitDesignTranscript = useCallback(
@@ -351,7 +374,7 @@ export default function BrowserWorkspace({
         onGoBack={() => void navigateHistory('back')}
         onGoForward={() => void navigateHistory('forward')}
         onReload={() => {
-          setLoading(true);
+          startLoading();
           if (browserKey && browser) reloadBrowser(browserKey);
           else openCurrentUrl();
         }}
@@ -379,7 +402,7 @@ export default function BrowserWorkspace({
             className="shrink-0 rounded border border-droid-border px-2 py-0.5 text-[11px] text-droid-text-muted hover:text-droid-text"
             onClick={() => {
               setLoadFailure(null);
-              setLoading(true);
+              startLoading();
               if (browserKey && browser) reloadBrowser(browserKey);
               else openCurrentUrl();
             }}
@@ -411,7 +434,7 @@ export default function BrowserWorkspace({
             frameSize={frameSize}
             onLoaded={(event) => {
               setLoadFailure(null);
-              setLoading(false);
+              stopLoading();
               setCanGoBack(event.canGoBack ?? canGoBack);
               setCanGoForward(event.canGoForward ?? canGoForward);
               setActiveUrl(event.url);
@@ -430,7 +453,7 @@ export default function BrowserWorkspace({
             onSelection={handleSelection}
             onPrompt={handleNativePrompt}
             onLoadFailed={(failure) => {
-              setLoading(false);
+              stopLoading();
               handleLoadFailed(failure);
             }}
             onViewportSizeChange={setActualViewport}

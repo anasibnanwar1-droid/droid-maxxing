@@ -37,11 +37,11 @@ export class NativeBrowserRuntime implements BrowserRuntime {
   }
 
   async goBack(): Promise<BrowserSnapshot> {
-    return this.snapshotFrom(await this.send({ action: 'goBack' }));
+    return this.navigationSnapshotFrom(await this.send({ action: 'goBack' }));
   }
 
   async goForward(): Promise<BrowserSnapshot> {
-    return this.snapshotFrom(await this.send({ action: 'goForward' }));
+    return this.navigationSnapshotFrom(await this.send({ action: 'goForward' }));
   }
 
   async setViewport(viewport: BrowserViewport): Promise<void> {
@@ -127,6 +127,15 @@ export class NativeBrowserRuntime implements BrowserRuntime {
     this.lastSnapshot =
       result.snapshot ??
       (fallbackUrl ? { ...this.lastSnapshot, url: fallbackUrl, refs: [] } : this.lastSnapshot);
+    return this.lastSnapshot;
+  }
+
+  private navigationSnapshotFrom(result: BrowserNativeResult): BrowserSnapshot {
+    if (!result.ok) throw new Error(result.error ?? 'Native browser navigation failed.');
+    if (!result.snapshot) {
+      throw new Error('Native browser navigation completed without a fresh page snapshot.');
+    }
+    this.lastSnapshot = result.snapshot;
     return this.lastSnapshot;
   }
 }

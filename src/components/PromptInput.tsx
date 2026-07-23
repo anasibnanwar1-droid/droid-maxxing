@@ -177,7 +177,11 @@ export default function PromptInput({
   ];
 
   const trigger = useMemo(() => getTrigger(input, caret), [input, caret]);
-  const overlayOpen = Boolean(trigger || modelsOpen || sendHover);
+  const overlayOpen = Boolean(trigger || modelsOpen || (isLive && sendHover));
+
+  useEffect(() => {
+    if (!isLive) setSendHover(false);
+  }, [isLive]);
 
   useEffect(() => {
     onOverlayChange?.(overlayOpen);

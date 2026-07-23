@@ -829,19 +829,23 @@ function pickTarget(x, y, climb) {
 }
 
 function selectorFor(el) {
-  if (el.id) return `#${cssEscape(el.id)}`;
+  if (el.id) {
+    const selector = `#${cssEscape(el.id)}`;
+    if (verifySelector(el, selector)) return selector;
+  }
   const testId = el.getAttribute('data-testid');
-  if (testId) return `[data-testid="${cssEscape(testId)}"]`;
+  if (testId) {
+    const selector = `[data-testid="${cssEscape(testId)}"]`;
+    if (verifySelector(el, selector)) return selector;
+  }
   const aria = el.getAttribute('aria-label');
-  if (aria) return `${el.tagName.toLowerCase()}[aria-label="${cssEscape(aria)}"]`;
+  if (aria) {
+    const selector = `${el.tagName.toLowerCase()}[aria-label="${cssEscape(aria)}"]`;
+    if (verifySelector(el, selector)) return selector;
+  }
   const parts = [];
   let node = el;
-  while (
-    node &&
-    node.nodeType === Node.ELEMENT_NODE &&
-    node !== document.documentElement &&
-    parts.length < 5
-  ) {
+  while (node && node.nodeType === Node.ELEMENT_NODE && node !== document.documentElement) {
     let part = node.tagName.toLowerCase();
     const parent = node.parentElement;
     if (parent) {
@@ -849,6 +853,8 @@ function selectorFor(el) {
       if (same.length > 1) part += `:nth-of-type(${same.indexOf(node) + 1})`;
     }
     parts.unshift(part);
+    const selector = parts.join(' > ');
+    if (verifySelector(el, selector)) return selector;
     node = parent;
   }
   return parts.join(' > ');

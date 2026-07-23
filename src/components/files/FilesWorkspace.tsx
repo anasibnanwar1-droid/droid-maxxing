@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react';
 import {
   ChevronDown,
   ChevronRight,
@@ -39,29 +47,39 @@ export function FilesWorkspace({
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set(['']));
   const [loading, setLoading] = useState<Set<string>>(() => new Set());
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const rootVersionRef = useRef(0);
+
+  useLayoutEffect(() => {
+    rootVersionRef.current += 1;
+  }, [root]);
 
   const load = useCallback(
     async (relative: string, force = false) => {
       const key = normalizeRelative(relative);
       if (!force && key in listings) return;
+      const requestVersion = rootVersionRef.current;
       setLoading((current) => new Set(current).add(key));
       setErrors((current) =>
         Object.fromEntries(Object.entries(current).filter(([k]) => k !== key)),
       );
       try {
         const listing = await listDirectory(root, key);
+        if (rootVersionRef.current !== requestVersion) return;
         setListings((current) => ({ ...current, [key]: listing }));
       } catch (reason) {
+        if (rootVersionRef.current !== requestVersion) return;
         setErrors((current) => ({
           ...current,
           [key]: reason instanceof Error ? reason.message : String(reason),
         }));
       } finally {
-        setLoading((current) => {
-          const next = new Set(current);
-          next.delete(key);
-          return next;
-        });
+        if (rootVersionRef.current === requestVersion) {
+          setLoading((current) => {
+            const next = new Set(current);
+            next.delete(key);
+            return next;
+          });
+        }
       }
     },
     [listings, root],
@@ -71,6 +89,7 @@ export function FilesWorkspace({
     let cancelled = false;
     setListings({});
     setExpanded(new Set(['']));
+    setLoading(new Set());
     setErrors({});
     void listDirectory(root, '')
       .then((listing) => {

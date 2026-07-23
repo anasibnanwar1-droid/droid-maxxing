@@ -181,9 +181,9 @@ function createTerminalManager(opts) {
     // Register before spawn so an early exit still has somewhere to land.
     terminals.set(id, entry);
 
-    const ptyLib = loadPty();
     let ptyInstance;
     try {
+      const ptyLib = loadPty();
       ptyInstance = ptyLib.spawn(file, fileArgs, {
         name: TERM,
         cols: dims.cols,

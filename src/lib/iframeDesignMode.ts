@@ -485,19 +485,23 @@ function pickTarget(start: Element | null): Element | null {
 }
 
 function selectorFor(el: Element): string {
-  if (el.id) return `#${cssEscape(el.id)}`;
+  if (el.id) {
+    const selector = `#${cssEscape(el.id)}`;
+    if (isUniqueSelector(el, selector)) return selector;
+  }
   const testId = el.getAttribute('data-testid');
-  if (testId) return `[data-testid="${cssEscape(testId)}"]`;
+  if (testId) {
+    const selector = `[data-testid="${cssEscape(testId)}"]`;
+    if (isUniqueSelector(el, selector)) return selector;
+  }
   const aria = el.getAttribute('aria-label');
-  if (aria) return `${el.tagName.toLowerCase()}[aria-label="${cssEscape(aria)}"]`;
+  if (aria) {
+    const selector = `${el.tagName.toLowerCase()}[aria-label="${cssEscape(aria)}"]`;
+    if (isUniqueSelector(el, selector)) return selector;
+  }
   const parts: string[] = [];
   let node: Element | null = el;
-  while (
-    node &&
-    node.nodeType === Node.ELEMENT_NODE &&
-    node !== el.ownerDocument.documentElement &&
-    parts.length < 5
-  ) {
+  while (node && node.nodeType === Node.ELEMENT_NODE && node !== el.ownerDocument.documentElement) {
     let part = node.tagName.toLowerCase();
     const parent: Element | null = node.parentElement;
     if (parent) {
@@ -505,9 +509,20 @@ function selectorFor(el: Element): string {
       if (same.length > 1) part += `:nth-of-type(${same.indexOf(node) + 1})`;
     }
     parts.unshift(part);
+    const selector = parts.join(' > ');
+    if (isUniqueSelector(el, selector)) return selector;
     node = parent;
   }
   return parts.join(' > ');
+}
+
+function isUniqueSelector(el: Element, selector: string): boolean {
+  try {
+    const matches = el.ownerDocument.querySelectorAll(selector);
+    return matches.length === 1 && matches[0] === el;
+  } catch {
+    return false;
+  }
 }
 
 function cssEscape(value: string): string {

@@ -101,3 +101,29 @@ test('terminal manager enforces per-mission and global limits', async () => {
   }
   await assert.rejects(manager.create({ missionId: 'mission-3', cwd: '/repo' }), /global/);
 });
+
+test('terminal manager releases capacity when node-pty fails to load', async () => {
+  const manager = createTerminalManager({
+    platform: 'darwin',
+    randomId: (() => {
+      let id = 0;
+      return () => `failed-terminal-${++id}`;
+    })(),
+    fsp: {
+      stat: async () => ({ isDirectory: () => true }),
+      realpath: async (cwd) => cwd,
+    },
+    resolveShell: () => ({ file: '/bin/zsh', args: ['-l'] }),
+    loadPty: () => {
+      throw new Error('node-pty unavailable');
+    },
+  });
+
+  for (let attempt = 0; attempt < 9; attempt += 1) {
+    await assert.rejects(
+      manager.create({ missionId: 'mission-1', cwd: '/repo' }),
+      /node-pty unavailable/,
+    );
+  }
+  assert.equal(manager.list().length, 0);
+});
