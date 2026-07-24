@@ -58,7 +58,7 @@ export default function PermissionInline() {
       >
         <div className="flex items-start gap-2 px-3.5 pt-3 pb-2">
           <div className="min-w-0 flex-1">
-            <div className="text-[12.5px] font-medium leading-snug text-droid-text [overflow-wrap:anywhere]">
+            <div className="text-[12.5px] font-medium leading-snug text-droid-text break-words">
               {reason}
             </div>
             {subtitle && (
@@ -72,7 +72,7 @@ export default function PermissionInline() {
 
         {detail && (
           <div className="px-3.5 pb-2.5">
-            <pre className="max-h-32 overflow-y-auto whitespace-pre-wrap [overflow-wrap:anywhere] rounded-lg border border-droid-border bg-droid-bg/60 px-2.5 py-2 font-mono text-[11.5px] leading-[1.55] text-droid-text-secondary">
+            <pre className="max-h-32 overflow-y-auto whitespace-pre-wrap break-words rounded-lg border border-droid-border bg-droid-bg/60 px-2.5 py-2 font-mono text-[11.5px] leading-[1.55] text-droid-text-secondary">
               {detail}
             </pre>
           </div>

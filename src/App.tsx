@@ -27,7 +27,6 @@ import { ReviewPanel } from './components/environment/ReviewPanel';
 import EditorOpenMenu from './components/EditorOpenMenu';
 import Toaster from './components/Toaster';
 import { useRepoStatus } from './hooks/useRepoStatus';
-import StatusBar from './components/StatusBar';
 import CommandPalette from './components/CommandPalette';
 import SettingsPanel, { applyTheme, paletteForMode } from './components/SettingsPanel';
 import AskUserModal from './components/AskUserModal';
@@ -408,8 +407,6 @@ export default function App() {
           )}
         </AnimatePresence>
       </div>
-
-      <StatusBar />
 
       {/* Floating window controls — rendered LAST so their `no-drag` regions are
           accumulated after the full-width header drag regions (sidebar/chat/

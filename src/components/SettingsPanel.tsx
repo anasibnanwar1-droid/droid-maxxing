@@ -42,11 +42,21 @@ const PRESET_ACCENTS = [
   '#fcfcfc',
 ];
 
+// Each preset carries a theme-matched neutral accent so switching mode/preset
+// keeps the UI monochrome (the accent tracks the foreground tone) instead of
+// leaving a stale colored accent behind. Tinted themes (midnight/warm) use their
+// own fg tone as the accent so they stay on a single tonal scale.
 const PRESET_THEMES = {
-  dark: { bg: '#0a0a0a', fg: '#ededed', surface: '#111111', border: '#1f1f1f' },
-  light: { bg: '#fcfcfc', fg: '#141414', surface: '#f3f3f3', border: '#eeeeee' },
-  midnight: { bg: '#0a0e1a', fg: '#c8d0e0', surface: '#11152a', border: '#1a2040' },
-  warm: { bg: '#1a1612', fg: '#d8d0c8', surface: '#221e18', border: '#322a22' },
+  dark: { bg: '#0a0a0a', fg: '#ededed', surface: '#111111', border: '#1f1f1f', accent: '#f2f2f2' },
+  light: { bg: '#fcfcfc', fg: '#141414', surface: '#f3f3f3', border: '#eeeeee', accent: '#1a1a1a' },
+  midnight: {
+    bg: '#0a0e1a',
+    fg: '#c8d0e0',
+    surface: '#11152a',
+    border: '#1a2040',
+    accent: '#c8d0e0',
+  },
+  warm: { bg: '#1a1612', fg: '#d8d0c8', surface: '#221e18', border: '#322a22', accent: '#d8d0c8' },
 };
 
 const SYSTEM_FONT_STACK = '-apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif';
@@ -223,7 +233,7 @@ function Toggle({
         className={`w-10 h-6 rounded-full transition-colors shrink-0 flex items-center p-0.5 ${checked ? 'bg-droid-accent' : 'bg-droid-border'}`}
       >
         <span
-          className={`w-5 h-5 rounded-full bg-white shadow-sm transition-transform ${checked ? 'translate-x-4' : 'translate-x-0'}`}
+          className={`w-5 h-5 rounded-full shadow-sm transition-transform ${checked ? 'bg-droid-bg translate-x-4' : 'bg-droid-text-secondary translate-x-0'}`}
         />
       </button>
     </div>
@@ -237,16 +247,36 @@ function DiffPreview() {
         themePreview.ts
       </div>
       <div className="px-3 py-1.5">
-        <div style={{ backgroundColor: 'rgba(176,106,74,0.12)', color: 'var(--droid-orange)' }}>
+        <div
+          style={{
+            backgroundColor: 'color-mix(in srgb, var(--droid-red) 15%, transparent)',
+            color: 'var(--droid-red)',
+          }}
+        >
           − accent: "#ff5d2e",
         </div>
-        <div style={{ backgroundColor: 'rgba(106,138,106,0.12)', color: 'var(--droid-green)' }}>
-          + accent: "#ee6018",
+        <div
+          style={{
+            backgroundColor: 'color-mix(in srgb, var(--droid-green) 16%, transparent)',
+            color: 'var(--droid-green)',
+          }}
+        >
+          + accent: "#f2f2f2",
         </div>
-        <div style={{ backgroundColor: 'rgba(176,106,74,0.12)', color: 'var(--droid-orange)' }}>
+        <div
+          style={{
+            backgroundColor: 'color-mix(in srgb, var(--droid-red) 15%, transparent)',
+            color: 'var(--droid-red)',
+          }}
+        >
           − surface: "#181818",
         </div>
-        <div style={{ backgroundColor: 'rgba(106,138,106,0.12)', color: 'var(--droid-green)' }}>
+        <div
+          style={{
+            backgroundColor: 'color-mix(in srgb, var(--droid-green) 16%, transparent)',
+            color: 'var(--droid-green)',
+          }}
+        >
           + surface: "#111111",
         </div>
       </div>
@@ -1081,7 +1111,7 @@ function SetupSection({ onClose }: { onClose: () => void }) {
                 onClick={() => {
                   void startAppUpdate(update);
                 }}
-                className="px-2.5 h-7 rounded-md bg-droid-accent text-white text-[12px] hover:opacity-90 transition-opacity"
+                className="px-2.5 h-7 rounded-md bg-droid-accent text-droid-bg text-[12px] hover:opacity-90 transition-opacity"
               >
                 Restart & update
               </button>
@@ -1357,7 +1387,7 @@ export default function SettingsPanel() {
                         onClick={() => setActive(label)}
                         className={`flex items-center w-full px-2 h-8 rounded-md text-[12px] transition-colors ${
                           active === label
-                            ? 'bg-droid-elevated text-droid-text'
+                            ? 'bg-droid-active text-droid-text'
                             : 'text-droid-text-secondary hover:text-droid-text hover:bg-droid-elevated/50'
                         }`}
                       >
@@ -1397,12 +1427,20 @@ export function applyTheme(theme: ReturnType<typeof useStore>['state']['theme'])
   const root = document.documentElement;
   root.style.setProperty('--droid-bg', theme.bg);
   root.style.setProperty('--droid-surface', theme.surface);
-  root.style.setProperty('--droid-elevated', adjustColor(theme.surface, 6));
+  // Build the elevation ramp in the correct direction for the theme. Dark themes
+  // get lighter as surfaces rise (bg < surface < elevated < active); light themes
+  // step progressively darker, since there is no headroom above a near-white base
+  // (e.g. surface #f3f3f3 over bg #fcfcfc). This keeps a real, visible tonal
+  // hierarchy in both modes instead of an inverted/flat ramp.
+  const bgIsDark = colorLuminance(theme.bg) < 0.4;
+  const lift = (amount: number) => adjustColor(theme.surface, bgIsDark ? amount : -amount);
+  root.style.setProperty('--droid-elevated', lift(13));
+  // The most-raised neutral, for selected/active rows.
+  root.style.setProperty('--droid-active', lift(26));
   // Soften resting borders by blending toward the background so panel/section
   // separators read as gentle hairlines rather than hard lines. Dark themes need
   // a stronger blend: at low luminance the same edge reads as a harsh outline, so
   // we push it closer to the background to keep the subtle look light mode has.
-  const bgIsDark = colorLuminance(theme.bg) < 0.4;
   root.style.setProperty('--droid-border', mixHex(theme.border, theme.bg, bgIsDark ? 0.72 : 0.6));
   root.style.setProperty(
     '--droid-border-hover',
@@ -1412,8 +1450,12 @@ export function applyTheme(theme: ReturnType<typeof useStore>['state']['theme'])
   root.style.setProperty('--droid-text-secondary', adjustColor(theme.fg, -30));
   root.style.setProperty('--droid-text-muted', adjustColor(theme.fg, -50));
   root.style.setProperty('--droid-accent', theme.accent);
-  root.style.setProperty('--droid-green', adjustColor(theme.accent, -10));
-  root.style.setProperty('--droid-orange', adjustColor(theme.accent, 10));
+  // Semantic status colors are FIXED, never accent-derived, so success/warning
+  // and diff add/remove always read as green/amber/red even when the accent is a
+  // neutral monochrome tone.
+  root.style.setProperty('--droid-green', '#4fae82');
+  root.style.setProperty('--droid-orange', '#d9913a');
+  root.style.setProperty('--droid-red', '#cf5d54');
 
   root.style.setProperty('--ui-font-family', uiFontStack(theme.uiFont));
   root.style.setProperty('--ui-font-size', `${theme.uiFontSize}px`);

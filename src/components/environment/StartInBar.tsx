@@ -1,6 +1,46 @@
 import { useRef, useState } from 'react';
-import { Check, FolderGit2, FolderPlus, GitBranch, PanelsTopLeft } from 'lucide-react';
+import { Check, FolderGit2, FolderPlus, PanelsTopLeft } from 'lucide-react';
 import { Popover } from './Popover';
+
+// Custom composer-bar glyphs (16x16, currentColor) that replace the stock
+// lucide marks for the Local/machine and branch pills.
+function LocalGlyph({ className }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.4}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden="true"
+    >
+      <rect x="2.5" y="3.5" width="11" height="8" rx="1.5" />
+      <path d="M5 13h6" />
+      <path d="M8 11.5V13" />
+    </svg>
+  );
+}
+
+function BranchGlyph({ className }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.4}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden="true"
+    >
+      <circle cx="5" cy="11" r="2" />
+      <circle cx="11" cy="5" r="2" />
+      <path d="M5 9V5.5A1.5 1.5 0 0 1 6.5 4H9" />
+    </svg>
+  );
+}
 import { StartBranchMenu } from './StartBranchMenu';
 import { useStore } from '../../hooks/useStore';
 import { useGitEnvironment } from '../../hooks/useGitEnvironment';
@@ -152,7 +192,7 @@ export function StartInBar() {
       {isRepo && (
         <>
           <Pill
-            icon={<PanelsTopLeft className="h-3.5 w-3.5" />}
+            icon={<LocalGlyph className="h-3.5 w-3.5" />}
             label={currentWt ? worktreeName(currentWt) : 'Local'}
             title="Worktree"
             open={locOpen}
@@ -224,7 +264,7 @@ export function StartInBar() {
           </Popover>
 
           <Pill
-            icon={<GitBranch className="h-3.5 w-3.5" />}
+            icon={<BranchGlyph className="h-3.5 w-3.5" />}
             label={draft?.branch ?? env?.branch ?? 'detached'}
             title="Branch"
             open={branchOpen}

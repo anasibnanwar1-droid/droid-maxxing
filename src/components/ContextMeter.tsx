@@ -119,9 +119,11 @@ export default function ContextMeter({
 }) {
   const { dispatch } = useStore();
   const [open, setOpen] = useState(false);
+  const [hover, setHover] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<{ right: number; bottom: number }>({ right: 0, bottom: 0 });
+  const [tipPos, setTipPos] = useState<{ right: number; bottom: number }>({ right: 0, bottom: 0 });
 
   const measured =
     stats ??
@@ -161,12 +163,19 @@ export default function ContextMeter({
   const ready = used !== undefined && max !== undefined && max > 0;
   const pct = ready ? used / max : 0;
   const pctLabel = ready ? Math.min(100, Math.round(pct * 100)) : 0;
+  const windowSize = modelWindow ?? statLimit ?? (ready ? max : undefined);
 
   useLayoutEffect(() => {
     if (!open || !ref.current) return;
     const r = ref.current.getBoundingClientRect();
     setPos({ right: window.innerWidth - r.right, bottom: window.innerHeight - r.top + 8 });
   }, [open]);
+
+  useLayoutEffect(() => {
+    if (!hover || !ref.current) return;
+    const r = ref.current.getBoundingClientRect();
+    setTipPos({ right: window.innerWidth - r.right, bottom: window.innerHeight - r.top + 8 });
+  }, [hover]);
 
   // Detach the native browser view while the popover is open so it renders
   // above the right pane and outside clicks reach this component's handler.
@@ -192,14 +201,51 @@ export default function ContextMeter({
     <div ref={ref} className="relative flex items-center">
       <button
         onClick={() => setOpen((v) => !v)}
-        className="flex items-center gap-2 rounded-md px-1.5 py-0.5 transition-colors hover:bg-droid-elevated/60"
-        title="Context usage"
+        onMouseEnter={() => setHover(true)}
+        onMouseLeave={() => setHover(false)}
+        className="flex items-center rounded-md p-1 transition-colors hover:bg-droid-elevated/60"
+        aria-label="Context usage"
       >
-        <span className="font-mono text-[11px] text-droid-text-secondary">
-          {ready ? `${isEstimating ? '~' : ''}${fmt(used)} / ${fmt(max)}` : 'Context ...'}
-        </span>
-        <Ring pct={pct} />
+        <Ring pct={pct} size={18} />
       </button>
+
+      {createPortal(
+        <AnimatePresence>
+          {hover && !open && (
+            <motion.div
+              initial={{ opacity: 0, y: 4 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 4 }}
+              transition={{ duration: 0.14, ease: EASE }}
+              style={{ position: 'fixed', right: tipPos.right, bottom: tipPos.bottom }}
+              className="pointer-events-none z-[100] origin-bottom-right rounded-lg border border-droid-border bg-droid-elevated px-3 py-2 shadow-xl shadow-black/40"
+            >
+              <div className="whitespace-nowrap text-[11px] text-droid-text-secondary">
+                {ready ? (
+                  <>
+                    <span className="font-mono text-droid-text">
+                      {isEstimating ? '~' : ''}
+                      {fmt(used)} / {fmt(max)}
+                    </span>
+                    <span className="text-droid-text-muted"> · {pctLabel}% full</span>
+                  </>
+                ) : (
+                  'Context …'
+                )}
+              </div>
+              {windowSize !== undefined && (
+                <div className="mt-0.5 whitespace-nowrap text-[11px] text-droid-text-muted">
+                  Window {fmt(windowSize)} tokens
+                </div>
+              )}
+              <div className="mt-0.5 whitespace-nowrap text-[11px] text-droid-text-muted">
+                {generation} compaction{generation === 1 ? '' : 's'}
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>,
+        document.body,
+      )}
 
       {createPortal(
         <AnimatePresence>
