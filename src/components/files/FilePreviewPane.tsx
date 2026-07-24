@@ -16,7 +16,12 @@ import {
   revealFile,
   type FilePreviewPayload,
 } from '../../lib/desktop';
-import { loadPdfDocumentForPreview, parseDelimitedText } from '../../lib/filePreview';
+import {
+  DOCX_PREVIEW_OPTIONS,
+  loadPdfDocumentForPreview,
+  parseDelimitedText,
+  sanitizeDocxPreview,
+} from '../../lib/filePreview';
 import { Markdown } from '../Markdown';
 import { toast } from '../../lib/toast';
 
@@ -568,17 +573,18 @@ function DocxPreview({ data }: { data?: Uint8Array }) {
     setError('');
     import('docx-preview')
       .then(({ renderAsync }) =>
-        renderAsync(new Blob([bytes as unknown as BlobPart]), container, undefined, {
-          inWrapper: true,
-          ignoreWidth: false,
-          ignoreHeight: false,
-          breakPages: true,
-          experimental: false,
-          className: 'docx-preview',
-        }),
+        renderAsync(
+          new Blob([bytes as unknown as BlobPart]),
+          container,
+          undefined,
+          DOCX_PREVIEW_OPTIONS,
+        ),
       )
       .then(() => {
-        if (!cancelled) setLoading(false);
+        if (!cancelled) {
+          sanitizeDocxPreview(container);
+          setLoading(false);
+        }
       })
       .catch((err: unknown) => {
         if (!cancelled) {

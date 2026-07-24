@@ -17,6 +17,59 @@ import type { PDFDocumentLoadingTask, PDFDocumentProxy } from 'pdfjs-dist';
 
 export type PreviewCategory = 'text' | 'image' | 'pdf' | 'docx' | 'xlsx' | 'external';
 
+export const DOCX_PREVIEW_OPTIONS = {
+  inWrapper: true,
+  ignoreWidth: false,
+  ignoreHeight: false,
+  breakPages: true,
+  experimental: false,
+  // docx-preview renders alt chunks as unsandboxed srcdoc iframes.
+  renderAltChunks: false,
+  className: 'docx-preview',
+} as const;
+
+const DOCX_ACTIVE_CONTENT_SELECTOR = 'script, iframe, object, embed, link, meta, base, form';
+const DOCX_URL_ATTRIBUTES = new Set([
+  'href',
+  'xlink:href',
+  'src',
+  'action',
+  'formaction',
+  'poster',
+]);
+
+function isUnsafeDocxUrl(value: string): boolean {
+  let normalized = '';
+  for (const character of value.trim()) {
+    if (character.charCodeAt(0) > 0x20) normalized += character.toLowerCase();
+  }
+  return (
+    normalized.startsWith('javascript:') ||
+    normalized.startsWith('vbscript:') ||
+    normalized.startsWith('data:')
+  );
+}
+
+export function sanitizeDocxPreview(container: ParentNode): void {
+  container.querySelectorAll(DOCX_ACTIVE_CONTENT_SELECTOR).forEach((element) => {
+    element.remove();
+  });
+
+  container.querySelectorAll('*').forEach((element) => {
+    for (const attribute of Array.from(element.attributes)) {
+      const name = attribute.name.toLowerCase();
+      if (
+        name.startsWith('on') ||
+        name === 'srcdoc' ||
+        (DOCX_URL_ATTRIBUTES.has(name) && isUnsafeDocxUrl(attribute.value)) ||
+        (element.tagName.toLowerCase() === 'a' && name === 'href')
+      ) {
+        element.removeAttribute(attribute.name);
+      }
+    }
+  });
+}
+
 /** Maximum payload size the backend will return for a text-classified file. */
 export const TEXT_PREVIEW_CAP_BYTES = 5 * 1024 * 1024; // 5 MiB
 /** Maximum payload size the backend will return for binary-classified files. */
