@@ -10,7 +10,7 @@ import {
   unsubscribeTerminal,
   writeTerminal,
 } from '../../lib/desktop';
-import { ensureTerminalForTab } from '../../lib/terminal';
+import { closeTerminalForTab, ensureTerminalForTab } from '../../lib/terminal';
 
 export function TerminalWorkspace({
   tabId,
@@ -102,13 +102,19 @@ export function TerminalWorkspace({
         observer.observe(hostRef.current);
         applyFit();
 
-        const info = await ensureTerminalForTab(tabId, terminalIdRef.current, {
+        const requestedTerminalId = terminalIdRef.current;
+        const info = await ensureTerminalForTab(tabId, requestedTerminalId, {
           missionId,
           cwd,
           cols: instance.cols,
           rows: instance.rows,
         });
-        if (isDisposed()) return;
+        if (isDisposed()) {
+          if (info.id !== requestedTerminalId) {
+            await closeTerminalForTab(tabId, info.id);
+          }
+          return;
+        }
         terminalIdRef.current = info.id;
         setStatus('running');
         const shellName = info.shell.split(/[\\/]/).pop() ?? 'Terminal';
@@ -130,7 +136,9 @@ export function TerminalWorkspace({
           await unsubscribeTerminal(info.id);
           return;
         }
-        instance.onData((data) => void writeTerminal(info.id, data));
+        instance.onData((data) => {
+          void writeTerminal(info.id, data).catch(() => undefined);
+        });
         instance.focus();
       })
       .catch((reason: unknown) => {

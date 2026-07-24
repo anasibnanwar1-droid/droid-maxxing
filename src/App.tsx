@@ -479,6 +479,7 @@ export default function App() {
                               dispatch({
                                 type: 'UPDATE_UTILITY_TAB',
                                 tabId: tab.id,
+                                missionId: activeMission.id,
                                 terminalId,
                                 label,
                               });
@@ -494,6 +495,7 @@ export default function App() {
                             dispatch({
                               type: 'UPDATE_UTILITY_TAB',
                               tabId: tab.id,
+                              missionId: activeMission.id,
                               filePath,
                             });
                           }}

@@ -315,6 +315,7 @@ type Action =
   | {
       type: 'UPDATE_UTILITY_TAB';
       tabId: string;
+      missionId?: string;
       terminalId?: string;
       filePath?: string;
       label?: string;
@@ -1654,7 +1655,7 @@ function baseReducer(state: AppState, action: Action): AppState {
     }
 
     case 'UPDATE_UTILITY_TAB': {
-      const missionId = state.activeMissionId;
+      const missionId = action.missionId ?? state.activeMissionId;
       if (!missionId) return state;
       const current = state.utilityPanels[missionId];
       const panel = updateUtilityTab(current, action.tabId, {
