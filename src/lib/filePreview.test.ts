@@ -3,11 +3,13 @@ import assert from 'node:assert';
 import {
   TEXT_PREVIEW_CAP_BYTES,
   BINARY_PREVIEW_CAP_BYTES,
+  DOCX_PREVIEW_OPTIONS,
   classifyByName,
   classifyPreview,
   isPreviewable,
   previewSizeCapBytes,
   previewSizeLabel,
+  sanitizeDocxPreview,
 } from './filePreview';
 
 test('classifyByName groups common text, markdown, json, csv, and config types', () => {
@@ -101,4 +103,48 @@ test('previewSizeLabel keeps text and external distinct from binary', () => {
   assert.equal(previewSizeLabel('image'), '25 MiB binary');
   assert.equal(previewSizeLabel('pdf'), '25 MiB binary');
   assert.equal(previewSizeLabel('external'), 'Open externally');
+});
+
+test('DOCX previews disable HTML alt chunks', () => {
+  assert.equal(DOCX_PREVIEW_OPTIONS.renderAltChunks, false);
+});
+
+test('DOCX preview sanitization removes active content and executable URLs', () => {
+  class FakeElement {
+    removed = false;
+
+    constructor(
+      readonly tagName: string,
+      readonly attributes: { name: string; value: string }[],
+    ) {}
+
+    remove() {
+      this.removed = true;
+    }
+
+    removeAttribute(name: string) {
+      const index = this.attributes.findIndex((attribute) => attribute.name === name);
+      if (index >= 0) this.attributes.splice(index, 1);
+    }
+  }
+
+  const iframe = new FakeElement('IFRAME', [{ name: 'srcdoc', value: '<script />' }]);
+  const link = new FakeElement('A', [{ name: 'href', value: 'https://example.com' }]);
+  const image = new FakeElement('IMG', [{ name: 'src', value: 'java\nscript:alert(1)' }]);
+  const paragraph = new FakeElement('P', [{ name: 'onclick', value: 'alert(1)' }]);
+  const safeImage = new FakeElement('IMG', [{ name: 'src', value: 'blob:preview' }]);
+  const elements = [iframe, link, image, paragraph, safeImage];
+  const container = {
+    querySelectorAll(selector: string) {
+      return selector === '*' ? elements : [iframe];
+    },
+  };
+
+  sanitizeDocxPreview(container as unknown as ParentNode);
+
+  assert.equal(iframe.removed, true);
+  assert.deepEqual(link.attributes, []);
+  assert.deepEqual(image.attributes, []);
+  assert.deepEqual(paragraph.attributes, []);
+  assert.deepEqual(safeImage.attributes, [{ name: 'src', value: 'blob:preview' }]);
 });

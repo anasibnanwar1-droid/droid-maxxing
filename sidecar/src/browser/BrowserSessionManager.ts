@@ -36,41 +36,21 @@ export interface BrowserSessionManagerOptions {
 }
 
 export interface BrowserRuntime {
-  open(url: string): Promise<{
-    url: string;
-    title?: string;
-    scroll: { x: number; y: number };
-    refs: BrowserElementRef[];
-  }>;
-  reload(): Promise<{
-    url: string;
-    title?: string;
-    scroll: { x: number; y: number };
-    refs: BrowserElementRef[];
-  }>;
+  open(url: string): Promise<BrowserSnapshot>;
+  reload(): Promise<BrowserSnapshot>;
   goBack(): Promise<BrowserSnapshot>;
   goForward(): Promise<BrowserSnapshot>;
   setViewport(viewport: BrowserViewport): Promise<void>;
   screenshot(options?: BrowserScreenshotOptions): Promise<string>;
   capture(box?: BrowserBox, options?: BrowserScreenshotOptions): Promise<string>;
-  snapshot(): Promise<{
-    url: string;
-    title?: string;
-    scroll: { x: number; y: number };
-    refs: BrowserElementRef[];
-  }>;
+  snapshot(): Promise<BrowserSnapshot>;
   click(x: number, y: number, selector?: string): Promise<void>;
   hover(x: number, y: number, selector?: string): Promise<void>;
   selectOption(selector: string, value: string): Promise<void>;
   type(text: string): Promise<void>;
   keypress(key: string): Promise<void>;
   scroll(direction: ScrollDirection, pixels?: number, x?: number, y?: number): Promise<void>;
-  fillCredentials?(): Promise<{
-    url: string;
-    title?: string;
-    scroll: { x: number; y: number };
-    refs: BrowserElementRef[];
-  }>;
+  fillCredentials?(): Promise<BrowserSnapshot>;
   close(): Promise<void>;
 }
 

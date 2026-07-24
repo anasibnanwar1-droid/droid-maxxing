@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, type PointerEvent as ReactPointerEvent } from 'react';
 
 export function PaneResizeHandle({
   width,
@@ -32,6 +32,21 @@ export function PaneResizeHandle({
       if (drag.current) onResize(drag.current.latest);
     });
   };
+  const finishDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const latest = drag.current?.latest;
+    drag.current = null;
+    if (frame.current) {
+      cancelAnimationFrame(frame.current);
+      frame.current = 0;
+    }
+    if (latest !== undefined) {
+      onResize(latest);
+      onResizeEnd(latest);
+    }
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+  };
 
   return (
     <div
@@ -58,27 +73,8 @@ export function PaneResizeHandle({
         if (!drag.current) return;
         schedule(clamp(drag.current.width + drag.current.x - event.clientX));
       }}
-      onPointerUp={(event) => {
-        const latest = drag.current?.latest;
-        drag.current = null;
-        if (frame.current) {
-          cancelAnimationFrame(frame.current);
-          frame.current = 0;
-        }
-        if (latest !== undefined) {
-          onResize(latest);
-          onResizeEnd(latest);
-        }
-        if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-          event.currentTarget.releasePointerCapture(event.pointerId);
-        }
-      }}
-      onPointerCancel={(event) => {
-        drag.current = null;
-        if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-          event.currentTarget.releasePointerCapture(event.pointerId);
-        }
-      }}
+      onPointerUp={finishDrag}
+      onPointerCancel={finishDrag}
     >
       <div className="absolute left-0 top-0 h-full w-px bg-droid-border-hover/60 transition-colors group-hover:bg-droid-accent/70 group-focus:bg-droid-accent" />
       <div className="absolute left-1 top-1/2 h-12 w-1 -translate-y-1/2 rounded-full bg-droid-border-hover/70 opacity-70 transition-colors group-hover:bg-droid-accent group-focus:bg-droid-accent" />

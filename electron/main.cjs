@@ -840,7 +840,7 @@ async function runNativeBrowserAgentAction(request) {
     return withNativeBrowserHistory(contents, outcome.result);
   } finally {
     navigation.dispose();
-    if (!entry.attached) contents.setBackgroundThrottling(true);
+    if (!entry.attached || !entry.visible) contents.setBackgroundThrottling(true);
     scheduleNativeBrowserIdleClose(entry);
   }
 }
@@ -1084,7 +1084,7 @@ async function captureNativeBrowser(sessionId, box, options = {}) {
     const image = rect ? await contents.capturePage(rect) : await contents.capturePage();
     return image.isEmpty() ? undefined : image.toPNG().toString('base64');
   } finally {
-    if (!entry.attached) contents.setBackgroundThrottling(true);
+    if (!entry.attached || !entry.visible) contents.setBackgroundThrottling(true);
     scheduleNativeBrowserIdleClose(entry);
   }
 }
