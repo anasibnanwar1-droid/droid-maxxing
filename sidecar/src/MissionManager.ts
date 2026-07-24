@@ -2544,7 +2544,9 @@ export class MissionManager {
       agent.interruptingForSteer = false;
       if (agent.pendingSends.length === 0 && agent.closeWhenIdle && !agent.autoCompacting) {
         agent.streaming = false;
-        await this.closeAgent(agent.missionId, agent.session.sessionId);
+        // closeAgent resolves the worker by the agents-map id, which is not
+        // guaranteed to match the live session id.
+        await this.closeAgent(agent.missionId, agent.agentSessionId);
       } else {
         // Refresh while streaming stays true so concurrent sends queue instead
         // of racing a second driveAgent(). The daemon auto-compacts the worker
