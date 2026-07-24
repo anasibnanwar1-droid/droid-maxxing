@@ -23,6 +23,7 @@
  * the paired unit tests exercise the shared edge cases.
  */
 
+const fs = require('node:fs');
 const fsp = require('node:fs/promises');
 const path = require('node:path');
 
@@ -209,10 +210,14 @@ function validateRelative(rootDir, relativePath) {
   }
   const target = path.resolve(root, relativePath);
   const relative = path.relative(root, target);
-  if (relative !== '' && (relative.startsWith('..') || path.isAbsolute(relative))) {
+  if (escapesRoot(relative)) {
     throw new Error('path escapes root');
   }
   return { root, target, relative };
+}
+
+function escapesRoot(relative) {
+  return path.isAbsolute(relative) || relative === '..' || relative.startsWith(`..${path.sep}`);
 }
 
 /**
@@ -242,7 +247,7 @@ async function resolveWithin(rootDir, relativePath) {
     }
   }
   const relativeReal = path.relative(rootReal, targetReal);
-  if (relativeReal !== '' && (relativeReal.startsWith('..') || path.isAbsolute(relativeReal))) {
+  if (escapesRoot(relativeReal)) {
     throw new Error('symlink escapes root');
   }
   return { root: rootReal, target: targetReal, relative: relativeReal };
@@ -254,9 +259,12 @@ async function resolveWithin(rootDir, relativePath) {
  * (broken symlinks) so escape attempts cannot hide behind ENOENT.
  */
 async function assertNoSymlinkEscape(rootReal, targetLexical) {
-  const segments = path.relative(rootReal, targetLexical).split(path.sep).filter(Boolean);
+  const pending = path.relative(rootReal, targetLexical).split(path.sep).filter(Boolean);
+  const seenSymlinks = new Set();
   let current = rootReal;
-  for (const segment of segments) {
+  let followedLinks = 0;
+  while (pending.length > 0) {
+    const segment = pending.shift();
     const candidate = path.join(current, segment);
     let stat;
     try {
@@ -266,13 +274,24 @@ async function assertNoSymlinkEscape(rootReal, targetLexical) {
       throw err;
     }
     if (stat.isSymbolicLink()) {
+      if (seenSymlinks.has(candidate)) {
+        throw new Error('symlink chain contains a loop');
+      }
+      seenSymlinks.add(candidate);
+      followedLinks += 1;
+      if (followedLinks > 40) {
+        throw new Error('symlink chain is too deep');
+      }
       const linkTarget = await fsp.readlink(candidate);
-      const resolved = path.isAbsolute(linkTarget) ? linkTarget : path.resolve(current, linkTarget);
-      const rel = path.relative(rootReal, resolved);
-      if (rel !== '' && (rel.startsWith('..') || path.isAbsolute(rel))) {
+      const resolved = path.isAbsolute(linkTarget)
+        ? path.resolve(linkTarget)
+        : path.resolve(path.dirname(candidate), linkTarget);
+      const relative = path.relative(rootReal, resolved);
+      if (escapesRoot(relative)) {
         throw new Error('symlink escapes root');
       }
-      current = resolved;
+      pending.unshift(...relative.split(path.sep).filter(Boolean));
+      current = rootReal;
     } else {
       current = candidate;
     }
@@ -379,77 +398,96 @@ function clampCap(value) {
  * and no payload, so the UI can prompt the user to open externally rather than
  * silently truncating.
  */
+async function readExactBytes(handle, length) {
+  const buffer = Buffer.alloc(length);
+  let offset = 0;
+  while (offset < length) {
+    const { bytesRead } = await handle.read(buffer, offset, length - offset, offset);
+    if (bytesRead === 0) break;
+    offset += bytesRead;
+  }
+  if (offset !== length) {
+    throw new Error('file changed during preview');
+  }
+  return buffer;
+}
+
 async function readPreview(rootDir, relativePath) {
   const resolved = await resolveWithin(rootDir, relativePath);
-  const stat = await fsp.lstat(resolved.target);
-  if (!stat.isFile()) {
+  const expectedStat = await fsp.lstat(resolved.target);
+  if (!expectedStat.isFile()) {
     const err = new Error('not a file');
     err.code = 'EINVAL';
     throw err;
   }
-  const name = path.basename(resolved.target);
-  const category = classifyByName(name);
-  const totalSize = stat.size;
-  const sizeCapBytes = previewSizeCap(category);
+  const noFollow = process.platform === 'win32' ? 0 : fs.constants.O_NOFOLLOW;
+  const handle = await fsp.open(resolved.target, fs.constants.O_RDONLY | noFollow);
+  try {
+    const stat = await handle.stat();
+    if (!stat.isFile() || stat.dev !== expectedStat.dev || stat.ino !== expectedStat.ino) {
+      throw new Error('file changed during preview');
+    }
+    const name = path.basename(resolved.target);
+    const category = classifyByName(name);
+    const totalSize = stat.size;
+    const sizeCapBytes = previewSizeCap(category);
 
-  if (category === 'external') {
-    return {
-      category,
-      totalSize,
-      sizeCapBytes,
-      previewable: false,
-      reason: 'external-fallback',
-      path: { root: resolved.root, relative: resolved.relative },
-    };
-  }
-
-  if (totalSize > sizeCapBytes) {
-    return {
-      category,
-      totalSize,
-      sizeCapBytes,
-      previewable: true,
-      oversize: true,
-      path: { root: resolved.root, relative: resolved.relative },
-    };
-  }
-
-  if (category === 'text') {
-    const buffer = await fsp.readFile(resolved.target);
-    if (containsBinaryProbe(buffer)) {
-      // A file with a text extension that is actually binary (NUL bytes in the
-      // leading window) would render as garbage and likely contains a packed
-      // payload. Refuse to inline it and hand off to the OS default.
+    if (category === 'external') {
       return {
-        category: 'external',
+        category,
         totalSize,
-        sizeCapBytes: BINARY_PREVIEW_CAP_BYTES,
+        sizeCapBytes,
         previewable: false,
-        reason: 'binary-in-text-extension',
+        reason: 'external-fallback',
+        path: { root: resolved.root, relative: resolved.relative },
+      };
+    }
+
+    if (totalSize > sizeCapBytes) {
+      return {
+        category,
+        totalSize,
+        sizeCapBytes,
+        previewable: true,
+        oversize: true,
+        path: { root: resolved.root, relative: resolved.relative },
+      };
+    }
+
+    const buffer = await readExactBytes(handle, totalSize);
+    if (category === 'text') {
+      if (containsBinaryProbe(buffer)) {
+        return {
+          category: 'external',
+          totalSize,
+          sizeCapBytes: BINARY_PREVIEW_CAP_BYTES,
+          previewable: false,
+          reason: 'binary-in-text-extension',
+          path: { root: resolved.root, relative: resolved.relative },
+        };
+      }
+      return {
+        category: 'text',
+        totalSize,
+        sizeCapBytes,
+        previewable: true,
+        encoding: 'utf8',
+        text: buffer.toString('utf8'),
         path: { root: resolved.root, relative: resolved.relative },
       };
     }
     return {
-      category: 'text',
+      category,
       totalSize,
       sizeCapBytes,
       previewable: true,
-      encoding: 'utf8',
-      text: buffer.toString('utf8'),
+      encoding: 'binary',
+      data: buffer,
       path: { root: resolved.root, relative: resolved.relative },
     };
+  } finally {
+    await handle.close();
   }
-
-  const data = await fsp.readFile(resolved.target);
-  return {
-    category,
-    totalSize,
-    sizeCapBytes,
-    previewable: true,
-    encoding: 'binary',
-    data,
-    path: { root: resolved.root, relative: resolved.relative },
-  };
 }
 
 function containsBinaryProbe(buffer) {

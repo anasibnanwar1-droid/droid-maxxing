@@ -13,6 +13,8 @@
  * to render an unsupported payload.
  */
 
+import type { PDFDocumentLoadingTask, PDFDocumentProxy } from 'pdfjs-dist';
+
 export type PreviewCategory = 'text' | 'image' | 'pdf' | 'docx' | 'xlsx' | 'external';
 
 /** Maximum payload size the backend will return for a text-classified file. */
@@ -196,6 +198,26 @@ export function previewSizeLabel(category: PreviewCategory): string {
   if (category === 'text') return '5 MiB text';
   if (category === 'external') return 'Open externally';
   return '25 MiB binary';
+}
+
+export async function loadPdfDocumentForPreview(
+  loadLibrary: () => Promise<{
+    getDocument: (input: { data: Uint8Array }) => PDFDocumentLoadingTask;
+  }>,
+  bytes: Uint8Array,
+  isCancelled: () => boolean,
+  onLoadingTask: (task: PDFDocumentLoadingTask) => void,
+): Promise<PDFDocumentProxy | null> {
+  const pdfjsLib = await loadLibrary();
+  if (isCancelled()) return null;
+  const loadingTask = pdfjsLib.getDocument({ data: bytes.slice() });
+  onLoadingTask(loadingTask);
+  const doc = await loadingTask.promise;
+  if (isCancelled()) {
+    await loadingTask.destroy();
+    return null;
+  }
+  return doc;
 }
 
 function readQuotedCharacter(

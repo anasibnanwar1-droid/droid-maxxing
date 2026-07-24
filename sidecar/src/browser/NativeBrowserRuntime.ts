@@ -131,7 +131,11 @@ export class NativeBrowserRuntime implements BrowserRuntime {
     if (!fallbackUrl) {
       throw new Error('Native browser action completed without a fresh page snapshot.');
     }
-    this.lastSnapshot = { ...this.lastSnapshot, url: fallbackUrl, refs: [] };
+    this.lastSnapshot = {
+      url: fallbackUrl,
+      scroll: { x: 0, y: 0 },
+      refs: [],
+    };
     return this.lastSnapshot;
   }
 

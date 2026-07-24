@@ -2,7 +2,7 @@ const assert = require('node:assert/strict');
 const test = require('node:test');
 const { createTerminalManager, MAX_REPLAY_BYTES } = require('./terminal.cjs');
 
-function fixture() {
+function fixture(options = {}) {
   const instances = [];
   const manager = createTerminalManager({
     platform: 'darwin',
@@ -10,10 +10,13 @@ function fixture() {
       let id = 0;
       return () => `terminal-${++id}`;
     })(),
-    fsp: {
+    fsp: options.fsp ?? {
       stat: async () => ({ isDirectory: () => true }),
       realpath: async (cwd) => `/real${cwd}`,
     },
+    setTimeout: options.setTimeout,
+    clearTimeout: options.clearTimeout,
+    exitRetentionMs: options.exitRetentionMs,
     resolveShell: () => ({ file: '/bin/zsh', args: ['-l'] }),
     buildEnv: () => ({ TERM: 'xterm-256color' }),
     loadPty: () => ({
@@ -100,6 +103,69 @@ test('terminal manager enforces per-mission and global limits', async () => {
     await manager.create({ missionId: 'mission-2', cwd: '/repo' });
   }
   await assert.rejects(manager.create({ missionId: 'mission-3', cwd: '/repo' }), /global/);
+});
+
+test('concurrent terminal creation cannot exceed the per-mission limit', async () => {
+  let releaseValidation;
+  const validationGate = new Promise((resolve) => {
+    releaseValidation = resolve;
+  });
+  const { manager } = fixture({
+    fsp: {
+      stat: async () => {
+        await validationGate;
+        return { isDirectory: () => true };
+      },
+      realpath: async (cwd) => `/real${cwd}`,
+    },
+  });
+  const creations = Array.from({ length: 6 }, () =>
+    manager.create({ missionId: 'mission-1', cwd: '/repo' }),
+  );
+
+  releaseValidation();
+  const results = await Promise.allSettled(creations);
+
+  assert.equal(results.filter((result) => result.status === 'fulfilled').length, 4);
+  assert.equal(results.filter((result) => result.status === 'rejected').length, 2);
+  assert.equal(manager.list().length, 4);
+});
+
+test('exited terminals are reclaimed after the retention window', async () => {
+  const cleanups = [];
+  const { manager, instances } = fixture({
+    setTimeout: (callback) => {
+      cleanups.push(callback);
+      return { unref() {} };
+    },
+    clearTimeout: () => {},
+    exitRetentionMs: 10,
+  });
+  const exited = [];
+  for (let index = 0; index < 4; index += 1) {
+    exited.push(await manager.create({ missionId: 'mission-1', cwd: '/repo' }));
+    instances[index].emitExit();
+  }
+
+  await assert.rejects(manager.create({ missionId: 'mission-1', cwd: '/repo' }), /per mission/);
+
+  for (const cleanup of cleanups) cleanup();
+  assert.equal(manager.list().length, 0);
+  await manager.create({ missionId: 'mission-1', cwd: '/repo' });
+});
+
+test('replay trimming preserves complete UTF-8 characters', async () => {
+  const { manager, instances } = fixture();
+  const terminal = await manager.create({ missionId: 'mission-1', cwd: '/repo' });
+  instances[0].emitData(`🙂${'a'.repeat(MAX_REPLAY_BYTES - 2)}`);
+  const events = [];
+
+  manager.subscribe(terminal.id, (event) => events.push(event));
+
+  assert.equal(events[0].kind, 'replay');
+  assert.equal(events[0].data.startsWith('\uFFFD'), false);
+  assert.equal(events[0].data, 'a'.repeat(MAX_REPLAY_BYTES - 2));
+  assert.equal(events[0].droppedBytes, 4);
 });
 
 test('terminal manager releases capacity when node-pty fails to load', async () => {

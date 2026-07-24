@@ -76,6 +76,39 @@ test('open remains usable when navigation succeeds before a DOM snapshot is read
   });
 });
 
+test('open fallback clears metadata from the previous page', async () => {
+  const runtime = new NativeBrowserRuntime({
+    missionId: 'mission-one',
+    sessionId: 'browser-one',
+    viewport: { width: 900, height: 700, deviceScaleFactor: 2 },
+    request: async (request) => ({
+      requestId: request.requestId,
+      missionId: request.missionId,
+      ok: true,
+      snapshot:
+        request.url === 'https://example.com/first'
+          ? {
+              url: request.url,
+              title: 'First page',
+              scroll: { x: 40, y: 80 },
+              refs: [],
+              canGoBack: true,
+              canGoForward: true,
+            }
+          : undefined,
+    }),
+  });
+
+  await runtime.open('https://example.com/first');
+  const snapshot = await runtime.open('https://example.com/second');
+
+  assert.deepEqual(snapshot, {
+    url: 'https://example.com/second',
+    scroll: { x: 0, y: 0 },
+    refs: [],
+  });
+});
+
 test('reload and snapshot actions never reuse a stale page snapshot', async () => {
   const runtime = new NativeBrowserRuntime({
     missionId: 'mission-one',
