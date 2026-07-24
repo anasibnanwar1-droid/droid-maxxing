@@ -20,6 +20,7 @@ import {
   onNativeBrowserLoaded,
   onNativeBrowserSelection,
   openNativeBrowser,
+  nativeBrowserAgentActionFromRequest,
   nativeBrowserCapture,
   runNativeBrowserAgentAction,
   setNativeBrowserBounds,
@@ -462,17 +463,7 @@ async function performNativeRequest(
       });
       return { requestId: request.requestId, missionId: request.missionId, ok: true, image };
     }
-    const result = await runNativeBrowserAgentAction({
-      requestId: request.requestId,
-      sessionId: request.sessionId,
-      action: request.action,
-      x: request.x,
-      y: request.y,
-      text: request.text,
-      key: request.key,
-      direction: request.direction,
-      pixels: request.pixels,
-    });
+    const result = await runNativeBrowserAgentAction(nativeBrowserAgentActionFromRequest(request));
     return {
       requestId: request.requestId,
       missionId: request.missionId,

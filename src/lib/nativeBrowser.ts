@@ -2,6 +2,7 @@ import { isDesktop } from './desktop';
 import type {
   BrowserBox,
   BrowserNativeAction,
+  BrowserNativeRequest,
   BrowserNativeSnapshot,
   BrowserScrollDirection,
   DesignAnchor,
@@ -55,6 +56,7 @@ export interface NativeBrowserAgentAction {
   url?: string;
   x?: number;
   y?: number;
+  selector?: string;
   text?: string;
   key?: string;
   direction?: BrowserScrollDirection;
@@ -66,6 +68,23 @@ export interface NativeBrowserAgentResult {
   ok: boolean;
   snapshot?: BrowserNativeSnapshot;
   error?: string;
+}
+
+export function nativeBrowserAgentActionFromRequest(
+  request: BrowserNativeRequest,
+): NativeBrowserAgentAction {
+  return {
+    requestId: request.requestId,
+    sessionId: request.sessionId,
+    action: request.action,
+    x: request.x,
+    y: request.y,
+    selector: request.selector,
+    text: request.text,
+    key: request.key,
+    direction: request.direction,
+    pixels: request.pixels,
+  };
 }
 
 export async function openNativeBrowser(
