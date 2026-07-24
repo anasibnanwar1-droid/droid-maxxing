@@ -2938,7 +2938,11 @@ export class MissionManager {
     mission.unsubscribe?.();
     for (const [agentSessionId, agent] of mission.agents) {
       this.stopContextPolling(agent.session.sessionId);
+      // Worker snapshots can live under either key: refreshContext stores by
+      // the id it was called with, which is the agents-map id on the
+      // compaction path and the live session id on the polling path.
       this.contextSnapshots.delete(agent.session.sessionId);
+      this.contextSnapshots.delete(agentSessionId);
       // Keyed by the app-level agent session id (like closeAgent), which is
       // never reused, so a missed delete would linger forever.
       this.agentCompactions.delete(agentSessionId);

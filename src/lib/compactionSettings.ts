@@ -92,11 +92,15 @@ export function loadCompactionTokenLimitPerModel(): Record<string, number> {
     // almost always from explicit user edits (the old defaults seed was rare
     // and wrote the same values the CLI file carried anyway). Stamp it as
     // user-configured so the next defaults event cannot wipe it.
-    if (
-      Object.keys(out).length > 0 &&
-      storage?.getItem(COMPACTION_TOKEN_LIMIT_PER_MODEL_CONFIGURED_STORAGE_KEY) === null
-    ) {
-      storage.setItem(COMPACTION_TOKEN_LIMIT_PER_MODEL_CONFIGURED_STORAGE_KEY, '1');
+    try {
+      if (
+        Object.keys(out).length > 0 &&
+        storage?.getItem(COMPACTION_TOKEN_LIMIT_PER_MODEL_CONFIGURED_STORAGE_KEY) === null
+      ) {
+        storage.setItem(COMPACTION_TOKEN_LIMIT_PER_MODEL_CONFIGURED_STORAGE_KEY, '1');
+      }
+    } catch {
+      // A failed marker write must not discard the successfully loaded data.
     }
     return out;
   } catch {

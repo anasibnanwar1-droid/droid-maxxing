@@ -184,7 +184,9 @@ function setAutoCompacting<
   else host.watchdogs.clear(agentSessionId);
   if (active || !wasActive || agent.streaming) return;
   if (agent.pendingSends.length === 0 && agent.closeWhenIdle) {
-    void host.closeAgent(agent.missionId, agent.session.sessionId);
+    // closeAgent looks the worker up by the agents-map id, which is not
+    // guaranteed to match the live session id.
+    void host.closeAgent(agent.missionId, agent.agentSessionId);
     return;
   }
   const next = agent.pendingSends.shift();

@@ -1271,6 +1271,7 @@ test('worker completion waits for auto-compaction before closing its transport',
   const session = new FakeCompactionSession('worker-close', 10_000);
   const agent = {
     session,
+    agentSessionId: 'worker-close',
     missionId: 'app-compact',
     role: 'worker' as const,
     streaming: false,
@@ -1292,6 +1293,33 @@ test('worker completion waits for auto-compaction before closing its transport',
 
   assert.equal(session.closes, 1);
   assert.equal(mission.agents.has('worker-close'), false);
+});
+
+test('deferred worker close resolves the agent by the agents-map id, not the live session id', async () => {
+  const { manager, mission } = compactionHarness(10_000);
+  const session = new FakeCompactionSession('worker-close-live', 10_000);
+  mission.agents.set('worker-close-key', {
+    session,
+    agentSessionId: 'worker-close-key',
+    missionId: 'app-compact',
+    role: 'worker' as const,
+    streaming: false,
+    autoCompacting: true,
+    pendingSends: [] as string[],
+    lastUsedAt: Date.now(),
+  });
+  const internals = manager as unknown as CompactionNotificationInternals;
+
+  await internals.closeAgentWhenIdle('app-compact', 'worker-close-key');
+  assert.equal(session.closes, 0);
+
+  internals.handleCompactionNotification('app-compact', 'worker-close-key', 'worker', session, {
+    params: { notification: { type: 'session_compacted', removedCount: 5 } },
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(session.closes, 1);
+  assert.equal(mission.agents.has('worker-close-key'), false);
 });
 
 test('a worker in-place compaction bumps the worker snapshot generation, not the mission summary', async () => {
