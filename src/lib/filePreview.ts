@@ -314,14 +314,15 @@ export function parseDelimitedText(
       } else {
         columnLimitReached = true;
       }
-    } else if (ch === '\n') {
+    } else if (ch === '\n' || ch === '\r') {
+      if (ch === '\r' && text[i + 1] === '\n') i += 1;
       row.push(field);
       rows.push(row);
       row = [];
       field = '';
       columnLimitReached = false;
       if (rows.length >= rowLimit) break;
-    } else if (ch !== '\r' && !columnLimitReached) {
+    } else if (!columnLimitReached) {
       field += ch;
     }
   }
