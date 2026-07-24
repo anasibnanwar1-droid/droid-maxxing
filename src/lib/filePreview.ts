@@ -1,0 +1,335 @@
+/**
+ * Renderer-side preview classification helpers for the Files tab.
+ *
+ * These are pure functions (no I/O) so they can run in the renderer to drive
+ * UI hints (icon, size badge, "open externally" affordance) before the
+ * main-process `readPreview` round-trip. The authoritative classification
+ * lives in `electron/files.cjs`, which mirrors these tables; keep both in
+ * sync and exercise the edge cases via the paired unit tests.
+ *
+ * Categories covered per spec: text/markdown/json/csv (text), raster (image),
+ * pdf, docx, xlsx. Everything else resolves to `external` so the UI falls
+ * back to opening the file in the OS default application instead of trying
+ * to render an unsupported payload.
+ */
+
+import type { PDFDocumentLoadingTask, PDFDocumentProxy } from 'pdfjs-dist';
+
+export type PreviewCategory = 'text' | 'image' | 'pdf' | 'docx' | 'xlsx' | 'external';
+
+export const DOCX_PREVIEW_OPTIONS = {
+  inWrapper: true,
+  ignoreWidth: false,
+  ignoreHeight: false,
+  breakPages: true,
+  experimental: false,
+  // docx-preview renders alt chunks as unsandboxed srcdoc iframes.
+  renderAltChunks: false,
+  className: 'docx-preview',
+} as const;
+
+const DOCX_ACTIVE_CONTENT_SELECTOR = 'script, iframe, object, embed, link, meta, base, form';
+const DOCX_URL_ATTRIBUTES = new Set([
+  'href',
+  'xlink:href',
+  'src',
+  'action',
+  'formaction',
+  'poster',
+]);
+
+function isUnsafeDocxUrl(value: string): boolean {
+  let normalized = '';
+  for (const character of value.trim()) {
+    if (character.charCodeAt(0) > 0x20) normalized += character.toLowerCase();
+  }
+  return (
+    normalized.startsWith('javascript:') ||
+    normalized.startsWith('vbscript:') ||
+    normalized.startsWith('data:')
+  );
+}
+
+export function sanitizeDocxPreview(container: ParentNode): void {
+  container.querySelectorAll(DOCX_ACTIVE_CONTENT_SELECTOR).forEach((element) => {
+    element.remove();
+  });
+
+  container.querySelectorAll('*').forEach((element) => {
+    for (const attribute of Array.from(element.attributes)) {
+      const name = attribute.name.toLowerCase();
+      if (
+        name.startsWith('on') ||
+        name === 'srcdoc' ||
+        (DOCX_URL_ATTRIBUTES.has(name) && isUnsafeDocxUrl(attribute.value)) ||
+        (element.tagName.toLowerCase() === 'a' && name === 'href')
+      ) {
+        element.removeAttribute(attribute.name);
+      }
+    }
+  });
+}
+
+/** Maximum payload size the backend will return for a text-classified file. */
+export const TEXT_PREVIEW_CAP_BYTES = 5 * 1024 * 1024; // 5 MiB
+/** Maximum payload size the backend will return for binary-classified files. */
+export const BINARY_PREVIEW_CAP_BYTES = 25 * 1024 * 1024; // 25 MiB
+
+const TEXT_EXTENSIONS = new Set([
+  // plain text
+  'txt',
+  'text',
+  'log',
+  'md',
+  'markdown',
+  'mdx',
+  // structured text
+  'json',
+  'json5',
+  'jsonc',
+  'csv',
+  'tsv',
+  'yaml',
+  'yml',
+  'xml',
+  // web markup
+  'html',
+  'htm',
+  'xhtml',
+  'css',
+  'scss',
+  'sass',
+  'less',
+  'styl',
+  // code
+  'js',
+  'mjs',
+  'cjs',
+  'ts',
+  'tsx',
+  'jsx',
+  'py',
+  'pyi',
+  'rb',
+  'php',
+  'go',
+  'rs',
+  'c',
+  'h',
+  'cc',
+  'cpp',
+  'hpp',
+  'cs',
+  'java',
+  'kt',
+  'swift',
+  'sh',
+  'bash',
+  'zsh',
+  'fish',
+  'ps1',
+  'lua',
+  'pl',
+  'r',
+  'scala',
+  'clj',
+  'cljs',
+  'ex',
+  'exs',
+  'erl',
+  'hs',
+  'ml',
+  'mli',
+  'fs',
+  'fsi',
+  'vim',
+  // config
+  'toml',
+  'ini',
+  'cfg',
+  'conf',
+  'config',
+  'properties',
+  'env',
+  'editorconfig',
+  // data/query
+  'sql',
+  'graphql',
+  'gql',
+  'diff',
+  'patch',
+  // dotfiles / well-known filenames handled by name below
+]);
+
+const TEXT_FILENAMES = new Set([
+  'dockerfile',
+  'makefile',
+  'rakefile',
+  'gemfile',
+  'procfile',
+  'babelrc',
+  'eslintrc',
+  'prettierrc',
+  'gitignore',
+  'gitattributes',
+  'npmrc',
+  'yarnrc',
+  'nvmrc',
+  'bashrc',
+  'zshrc',
+  'profile',
+]);
+
+const IMAGE_EXTENSIONS = new Set([
+  'png',
+  'jpg',
+  'jpeg',
+  'gif',
+  'webp',
+  'bmp',
+  'avif',
+  'ico',
+  'svg',
+]);
+const PDF_EXTENSIONS = new Set(['pdf']);
+const DOCX_EXTENSIONS = new Set(['docx']);
+const XLSX_EXTENSIONS = new Set(['xlsx']);
+
+function extensionOf(name: string): string {
+  const lower = name.toLowerCase();
+  const base = lower.split(/[\\/]/).pop() ?? lower;
+  // Dotfiles such as ".gitignore" should be classified by their full stem so
+  // TEXT_FILENAMES can match them.
+  if (TEXT_FILENAMES.has(base)) return base;
+  const dot = base.lastIndexOf('.');
+  if (dot <= 0) {
+    // No extension. For dotfiles, strip the leading dot so TEXT_FILENAMES can
+    // match "gitignore" without storing the dot prefix.
+    return base.startsWith('.') ? base.slice(1) : base;
+  }
+  return base.slice(dot + 1);
+}
+
+export function classifyByName(name: string): PreviewCategory {
+  const ext = extensionOf(name);
+  if (TEXT_EXTENSIONS.has(ext) || TEXT_FILENAMES.has(ext)) return 'text';
+  if (IMAGE_EXTENSIONS.has(ext)) return 'image';
+  if (PDF_EXTENSIONS.has(ext)) return 'pdf';
+  if (DOCX_EXTENSIONS.has(ext)) return 'docx';
+  if (XLSX_EXTENSIONS.has(ext)) return 'xlsx';
+  return 'external';
+}
+
+export function previewSizeCapBytes(category: PreviewCategory): number {
+  return category === 'text' ? TEXT_PREVIEW_CAP_BYTES : BINARY_PREVIEW_CAP_BYTES;
+}
+
+export function isPreviewable(category: PreviewCategory): boolean {
+  return category !== 'external';
+}
+
+export interface PreviewClassification {
+  category: PreviewCategory;
+  previewable: boolean;
+  sizeCapBytes: number;
+}
+
+export function classifyPreview(name: string): PreviewClassification {
+  const category = classifyByName(name);
+  return {
+    category,
+    previewable: isPreviewable(category),
+    sizeCapBytes: previewSizeCapBytes(category),
+  };
+}
+
+/**
+ * Returns a short label suitable for a size badge. Centralised so the renderer
+ * and any future empty-state copy stay consistent.
+ */
+export function previewSizeLabel(category: PreviewCategory): string {
+  if (category === 'text') return '5 MiB text';
+  if (category === 'external') return 'Open externally';
+  return '25 MiB binary';
+}
+
+export async function loadPdfDocumentForPreview(
+  loadLibrary: () => Promise<{
+    getDocument: (input: { data: Uint8Array }) => PDFDocumentLoadingTask;
+  }>,
+  bytes: Uint8Array,
+  isCancelled: () => boolean,
+  onLoadingTask: (task: PDFDocumentLoadingTask) => void,
+): Promise<PDFDocumentProxy | null> {
+  const pdfjsLib = await loadLibrary();
+  if (isCancelled()) return null;
+  const loadingTask = pdfjsLib.getDocument({ data: bytes.slice() });
+  onLoadingTask(loadingTask);
+  const doc = await loadingTask.promise;
+  if (isCancelled()) {
+    await loadingTask.destroy();
+    return null;
+  }
+  return doc;
+}
+
+function readQuotedCharacter(
+  text: string,
+  index: number,
+): { value: string; nextIndex: number; closed: boolean } {
+  const ch = text[index];
+  if (ch !== '"') return { value: ch, nextIndex: index, closed: false };
+  if (text[index + 1] === '"') return { value: '"', nextIndex: index + 1, closed: false };
+  return { value: '', nextIndex: index, closed: true };
+}
+
+export function parseDelimitedText(
+  text: string,
+  delimiter: string,
+  rowLimit: number,
+  columnLimit: number,
+): string[][] {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let field = '';
+  let inQuotes = false;
+  let columnLimitReached = false;
+
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (inQuotes) {
+      const quoted = readQuotedCharacter(text, i);
+      i = quoted.nextIndex;
+      if (quoted.closed) {
+        inQuotes = false;
+      } else if (!columnLimitReached) {
+        field += quoted.value;
+      }
+    } else if (ch === '"') {
+      inQuotes = true;
+    } else if (ch === delimiter) {
+      if (row.length < columnLimit - 1) {
+        row.push(field);
+        field = '';
+      } else {
+        columnLimitReached = true;
+      }
+    } else if (ch === '\n' || ch === '\r') {
+      if (ch === '\r' && text[i + 1] === '\n') i += 1;
+      row.push(field);
+      rows.push(row);
+      row = [];
+      field = '';
+      columnLimitReached = false;
+      if (rows.length >= rowLimit) break;
+    } else if (!columnLimitReached) {
+      field += ch;
+    }
+  }
+
+  if (rows.length < rowLimit && (field || row.length)) {
+    row.push(field);
+    rows.push(row);
+  }
+  return rows;
+}

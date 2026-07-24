@@ -80,7 +80,15 @@ const LOCATION_ICON: Record<SkillLocation, typeof User> = {
 
 const COMPACT_COMMANDS = new Set(['/compact', '/compaction', '/compression']);
 
-export default function PromptInput({ rightInset = false }: { rightInset?: boolean }) {
+export default function PromptInput({
+  rightInset = false,
+  compact = false,
+  onOverlayChange,
+}: {
+  rightInset?: boolean;
+  compact?: boolean;
+  onOverlayChange?: (open: boolean) => void;
+}) {
   const { state, dispatch } = useStore();
   const [input, setInput] = useState('');
   const [caret, setCaret] = useState(0);
@@ -169,6 +177,22 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
   ];
 
   const trigger = useMemo(() => getTrigger(input, caret), [input, caret]);
+  const overlayOpen = Boolean(trigger || modelsOpen || (isLive && sendHover));
+
+  useEffect(() => {
+    if (!isLive) setSendHover(false);
+  }, [isLive]);
+
+  useEffect(() => {
+    onOverlayChange?.(overlayOpen);
+  }, [onOverlayChange, overlayOpen]);
+
+  useEffect(
+    () => () => {
+      onOverlayChange?.(false);
+    },
+    [onOverlayChange],
+  );
 
   const invocableSkills = useMemo(
     () =>
@@ -636,10 +660,10 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
 
   return (
     <div
-      className="shrink-0 w-full min-w-0 px-6 pb-5 pt-2"
+      className={`w-full min-w-0 shrink-0 ${compact ? 'px-3 pb-3 pt-2' : 'px-6 pb-5 pt-2'}`}
       style={{ paddingRight: rightInset ? 312 : undefined, transition: 'padding-right 0.2s ease' }}
     >
-      <div className="max-w-3xl min-w-0 mx-auto relative">
+      <div className={`relative mx-auto min-w-0 ${compact ? 'max-w-4xl' : 'max-w-3xl'}`}>
         <AnimatePresence>
           {menuOpen && (
             <motion.div

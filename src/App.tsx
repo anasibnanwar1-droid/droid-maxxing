@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useStore } from './hooks/useStore';
 import { AnimatePresence, motion } from 'framer-motion';
-import { Monitor, PanelLeft } from 'lucide-react';
+import { PanelLeft, PanelRight } from 'lucide-react';
 import { bridge } from './lib/bridge';
 import {
   connect,
@@ -32,14 +32,18 @@ import CommandPalette from './components/CommandPalette';
 import SettingsPanel, { applyTheme, paletteForMode } from './components/SettingsPanel';
 import AskUserModal from './components/AskUserModal';
 import SpecWikiModal from './components/SpecWikiModal';
-import BrowserWorkspace from './components/browser/BrowserWorkspace';
-import { isDesktop } from './lib/desktop';
+import { BrowserFocusWorkspace } from './components/browser/BrowserFocusWorkspace';
 import { useOnboarding, shouldShowOnboarding, hasSetupBlocker } from './hooks/useOnboarding';
 import OnboardingWizard from './components/onboarding/OnboardingWizard';
 import SetupBanner from './components/onboarding/SetupBanner';
 import { updateCli } from './lib/commands';
 import { refreshAppUpdate, startAppUpdate } from './lib/appUpdate';
 import { toast } from './lib/toast';
+import { UtilityPane } from './components/utility/UtilityPane';
+import { TerminalWorkspace } from './components/terminal/TerminalWorkspace';
+import { FilesWorkspace } from './components/files/FilesWorkspace';
+import { closeTerminalForTab } from './lib/terminal';
+import { utilityPanelForMission, type UtilityTool } from './lib/utilityPanel';
 
 function ContextListIcon({ className }: { className?: string }) {
   return (
@@ -59,10 +63,10 @@ function ContextListIcon({ className }: { className?: string }) {
   );
 }
 
-const BROWSER_PANE_MIN = 460;
-const BROWSER_PANE_MAX = 1280;
-const BROWSER_PANE_DEFAULT = 860;
-const BROWSER_PANE_WIDTH_STORAGE_KEY = 'droid-browser-pane-width';
+const UTILITY_PANE_MIN = 460;
+const UTILITY_PANE_MAX = 1280;
+const UTILITY_PANE_DEFAULT = 760;
+const UTILITY_PANE_WIDTH_STORAGE_KEY = 'droid-utility-pane-width';
 
 export default function App() {
   const { state, dispatch } = useStore();
@@ -70,6 +74,7 @@ export default function App() {
   const onboard = useOnboarding();
   const [forceWizard, setForceWizard] = useState(false);
   const [bannerDismissed, setBannerDismissed] = useState(false);
+  const [expandedBrowserMissionId, setExpandedBrowserMissionId] = useState<string | null>(null);
   const launchHandled = useRef(false);
   const showWizard =
     !embedded && onboard.ready && (forceWizard || shouldShowOnboarding(onboard.onboarding));
@@ -78,14 +83,15 @@ export default function App() {
   // The view is a real mission only when the active session is a mission orchestrator,
   // not merely because the global mission-compose flag is on.
   const isMissionView = !!activeMission && activeMission.kind === 'mission_orchestrator';
-  // The browser pane must win over Review: a browser tool request only flips
-  // browserOpen, and BrowserWorkspace (which registers the controller) lives
-  // inside this pane. If Review suppressed it, the controller would never mount
-  // and the tool call would time out until Review was closed by hand.
-  const showBrowserPane = !embedded && state.browserOpen && !showWizard;
-  const reviewOpen = !!activeMission && state.reviewOpenMissionId === activeMission.id;
-  const showReviewPane = !embedded && reviewOpen && !isMissionView && !showBrowserPane;
-  const nativeBrowserPane = showBrowserPane && isDesktop();
+  const utilityPanel = utilityPanelForMission(state.utilityPanels, activeMission?.id);
+  const activeUtilityTab =
+    utilityPanel.tabs.find((tab) => tab.id === utilityPanel.activeTabId) ?? null;
+  const showUtilityPane = !embedded && !!activeMission && utilityPanel.open && !showWizard;
+  const browserExpanded = Boolean(
+    showUtilityPane &&
+    activeUtilityTab?.tool === 'browser' &&
+    expandedBrowserMissionId === activeMission?.id,
+  );
   const focused = isMissionView;
   // A normal/spec session only has something worth showing once a message has
   // been sent (the first transcript is seeded from the opening prompt).
@@ -98,44 +104,57 @@ export default function App() {
   // the main scroll area), so the page scrollbar stays pinned to the window's
   // right edge instead of sliding inward and looking like a divider.
   const rightPanelVisible =
-    !focused && !showBrowserPane && !showReviewPane && state.rightPanelOpen && hasSessionContent;
+    !focused && !showUtilityPane && state.rightPanelOpen && hasSessionContent;
   const requestedHistory = useRef(new Set<string>());
-  const [browserPaneWidth, setBrowserPaneWidth] = useState(() => initialBrowserPaneWidth());
-  const setStoredBrowserPaneWidth = useCallback((width: number) => {
-    const next = clampBrowserPane(width);
-    setBrowserPaneWidth(next);
-    try {
-      localStorage.setItem(BROWSER_PANE_WIDTH_STORAGE_KEY, String(next));
-    } catch {
-      /* ignore */
-    }
-  }, []);
-
-  const toggleBrowserPane = useCallback(() => {
-    // Browser and the context panel are mutually exclusive — opening the browser
-    // collapses the right panel so they never fight for horizontal space.
-    if (!state.browserOpen) dispatch({ type: 'SET_RIGHT_PANEL', open: false });
-    dispatch({ type: 'TOGGLE_BROWSER' });
-  }, [dispatch, state.browserOpen]);
+  const [utilityPaneWidth, setUtilityPaneWidth] = useState(() => initialUtilityPaneWidth());
+  const [utilityPaneMax, setUtilityPaneMax] = useState(() => utilityPaneMaxWidth());
+  const contentRowRef = useRef<HTMLDivElement>(null);
+  const [contentRowWidth, setContentRowWidth] = useState(0);
 
   const toggleRightPanel = useCallback(() => {
     const open = !state.rightPanelOpen;
-    // Opening the context panel hides the browser pane while preserving the
-    // chat-scoped native browser session.
-    if (open && state.browserOpen) {
-      dispatch({ type: 'SET_BROWSER_OPEN', open: false });
-    }
     dispatch({ type: 'SET_RIGHT_PANEL', open });
-  }, [dispatch, state.browserOpen, state.rightPanelOpen]);
+  }, [dispatch, state.rightPanelOpen]);
+
+  const toggleUtilityPane = useCallback(() => {
+    dispatch({ type: 'SET_UTILITY_PANEL_OPEN', open: !utilityPanel.open });
+  }, [dispatch, utilityPanel.open]);
+
+  const openUtilityTool = useCallback(
+    (tool: UtilityTool) => {
+      dispatch({
+        type: 'OPEN_UTILITY_TOOL',
+        tool,
+        tabId: tool === 'terminal' ? crypto.randomUUID() : undefined,
+      });
+    },
+    [dispatch],
+  );
+
+  useEffect(() => {
+    const onResize = () => {
+      setUtilityPaneMax(utilityPaneMaxWidth());
+      setUtilityPaneWidth((width) => clampUtilityPane(width));
+    };
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+
+  useEffect(() => {
+    const node = contentRowRef.current;
+    if (!node) return;
+    const update = () => {
+      setContentRowWidth(Math.round(node.getBoundingClientRect().width));
+    };
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
 
   useEffect(() => {
     applyTheme(state.theme);
   }, [state.theme]);
-
-  // The Review pane belongs to one session; close it when switching missions.
-  useEffect(() => {
-    dispatch({ type: 'SET_REVIEW_OPEN', open: false });
-  }, [activeMission?.id, dispatch]);
 
   useEffect(() => {
     if (state.theme.mode !== 'system') return;
@@ -197,8 +216,8 @@ export default function App() {
   // The native browser is a separate Electron layer that floats above the DOM,
   // so close it while the full-screen wizard is up or it paints over the tour.
   useEffect(() => {
-    if (showWizard && state.browserOpen) dispatch({ type: 'SET_BROWSER_OPEN', open: false });
-  }, [showWizard, state.browserOpen, dispatch]);
+    if (showWizard && utilityPanel.open) dispatch({ type: 'SET_UTILITY_PANEL_OPEN', open: false });
+  }, [showWizard, utilityPanel.open, dispatch]);
 
   // "Run setup again" from Settings re-opens the tour.
   useEffect(() => {
@@ -228,7 +247,7 @@ export default function App() {
       }
       if (!state.activeMissionId || requestIsForActiveChat) {
         dispatch({ type: 'SET_RIGHT_PANEL', open: false });
-        dispatch({ type: 'SET_BROWSER_OPEN', open: true });
+        dispatch({ type: 'OPEN_UTILITY_TOOL', tool: 'browser' });
       }
       void performNativeBrowserRequest(event.request)
         .then(sendNativeBrowserResult)
@@ -269,12 +288,20 @@ export default function App() {
   // Keyboard shortcuts
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
+      if (e.ctrlKey && e.key === '`') {
+        e.preventDefault();
+        openUtilityTool('terminal');
+        return;
+      }
       const meta = e.metaKey || e.ctrlKey;
       if (!meta) return;
-      if (e.shiftKey && e.key.toLowerCase() === 'b') {
-        e.preventDefault();
-        toggleBrowserPane();
-        return;
+      if (e.shiftKey) {
+        const key = e.key.toLowerCase();
+        if (key === 'b' || key === 'f' || key === 'r') {
+          e.preventDefault();
+          openUtilityTool(key === 'b' ? 'browser' : key === 'f' ? 'files' : 'review');
+          return;
+        }
       }
       switch (e.key.toLowerCase()) {
         case 'k':
@@ -287,7 +314,7 @@ export default function App() {
           break;
         case '\\':
           e.preventDefault();
-          toggleRightPanel();
+          toggleUtilityPane();
           break;
         case ',':
           e.preventDefault();
@@ -297,7 +324,7 @@ export default function App() {
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [dispatch, toggleBrowserPane, toggleRightPanel]);
+  }, [dispatch, openUtilityTool, toggleUtilityPane]);
 
   const setupBlocker =
     !showWizard &&
@@ -340,8 +367,13 @@ export default function App() {
 
         <main className="relative flex-1 min-w-0 flex flex-col min-h-0 overflow-hidden bg-droid-bg">
           {state.sidebarCollapsed && <div data-electron-drag-region className="h-9 shrink-0" />}
-          <div className="flex-1 min-h-0 min-w-0 overflow-hidden flex relative">
-            <section className="relative min-w-0 flex-1 flex flex-col overflow-hidden">
+          <div ref={contentRowRef} className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden">
+            <section
+              aria-hidden={browserExpanded}
+              className={`relative flex min-w-0 flex-1 flex-col overflow-hidden ${
+                browserExpanded ? 'pointer-events-none' : ''
+              }`}
+            >
               {isMissionView ? (
                 <motion.div
                   key="mission-control"
@@ -358,36 +390,124 @@ export default function App() {
                   <PromptInput rightInset={rightPanelVisible} />
                 </>
               )}
-              {state.pendingQuestion && <AskUserModal />}
             </section>
 
             <AnimatePresence initial={false}>
-              {showBrowserPane && (
-                <BrowserPane
-                  animated={!nativeBrowserPane}
-                  width={browserPaneWidth}
-                  onResize={setStoredBrowserPaneWidth}
-                />
-              )}
-            </AnimatePresence>
-
-            <AnimatePresence initial={false}>
-              {showReviewPane && activeMission && (
-                <motion.aside
-                  key="review-pane"
+              {showUtilityPane && (
+                <motion.div
+                  key="utility-pane"
                   initial={{ width: 0, opacity: 0 }}
-                  animate={{ width: '58%', opacity: 1 }}
+                  animate={{
+                    width:
+                      browserExpanded && contentRowWidth > 0 ? contentRowWidth : utilityPaneWidth,
+                    opacity: 1,
+                  }}
                   exit={{ width: 0, opacity: 0 }}
-                  transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
-                  className="relative h-full shrink-0 min-w-[460px] overflow-hidden border-l border-droid-border bg-droid-bg shadow-[-24px_0_60px_rgba(0,0,0,0.18)]"
+                  transition={{ duration: 0.24, ease: [0.16, 1, 0.3, 1] }}
+                  className="h-full min-w-0 shrink-0 overflow-hidden"
                 >
-                  <ReviewPanel
-                    cwd={activeMission.cwd}
-                    onClose={() => dispatch({ type: 'SET_REVIEW_OPEN', open: false })}
+                  <UtilityPane
+                    panel={utilityPanel}
+                    expanded={browserExpanded}
+                    width={utilityPaneWidth}
+                    minWidth={UTILITY_PANE_MIN}
+                    maxWidth={utilityPaneMax}
+                    onResize={setUtilityPaneWidth}
+                    onResizeEnd={(width) => {
+                      const next = clampUtilityPane(width);
+                      setUtilityPaneWidth(next);
+                      try {
+                        localStorage.setItem(UTILITY_PANE_WIDTH_STORAGE_KEY, String(next));
+                      } catch {
+                        /* ignore */
+                      }
+                    }}
+                    onOpenTool={openUtilityTool}
+                    onActivateTab={(tabId) => {
+                      const nextTab = utilityPanel.tabs.find((tab) => tab.id === tabId);
+                      if (nextTab?.tool !== 'browser') setExpandedBrowserMissionId(null);
+                      dispatch({ type: 'ACTIVATE_UTILITY_TAB', tabId });
+                    }}
+                    onCloseTab={(tab) => {
+                      if (
+                        tab.tool === 'terminal' &&
+                        !window.confirm('Close this terminal and stop its running process?')
+                      ) {
+                        return;
+                      }
+                      if (tab.tool === 'terminal') {
+                        void closeTerminalForTab(tab.id, tab.terminalId).finally(() => {
+                          dispatch({
+                            type: 'CLOSE_UTILITY_TAB',
+                            tabId: tab.id,
+                            missionId: activeMission.id,
+                          });
+                        });
+                        return;
+                      }
+                      if (tab.tool === 'browser') setExpandedBrowserMissionId(null);
+                      dispatch({ type: 'CLOSE_UTILITY_TAB', tabId: tab.id });
+                    }}
+                    onClosePane={() => {
+                      setExpandedBrowserMissionId(null);
+                      dispatch({ type: 'SET_UTILITY_PANEL_OPEN', open: false });
+                    }}
+                    renderTab={(tab, { overlayOpen }) => {
+                      if (tab.tool === 'review') {
+                        return <ReviewPanel cwd={activeMission.cwd} />;
+                      }
+                      if (tab.tool === 'browser') {
+                        return (
+                          <BrowserFocusWorkspace
+                            expanded={browserExpanded}
+                            externalObscured={overlayOpen}
+                            onToggleExpanded={() => {
+                              setExpandedBrowserMissionId(
+                                browserExpanded ? null : activeMission.id,
+                              );
+                            }}
+                          />
+                        );
+                      }
+                      if (tab.tool === 'terminal') {
+                        return (
+                          <TerminalWorkspace
+                            tabId={tab.id}
+                            terminalId={tab.terminalId}
+                            missionId={activeMission.id}
+                            cwd={activeMission.cwd}
+                            onCreated={(terminalId, label) => {
+                              dispatch({
+                                type: 'UPDATE_UTILITY_TAB',
+                                tabId: tab.id,
+                                missionId: activeMission.id,
+                                terminalId,
+                                label,
+                              });
+                            }}
+                          />
+                        );
+                      }
+                      return (
+                        <FilesWorkspace
+                          root={activeMission.cwd}
+                          selectedPath={tab.filePath}
+                          onSelectPath={(filePath) => {
+                            dispatch({
+                              type: 'UPDATE_UTILITY_TAB',
+                              tabId: tab.id,
+                              missionId: activeMission.id,
+                              filePath,
+                            });
+                          }}
+                        />
+                      );
+                    }}
                   />
-                </motion.aside>
+                </motion.div>
               )}
             </AnimatePresence>
+            {state.pendingQuestion && <AskUserModal />}
           </div>
         </main>
 
@@ -428,31 +548,17 @@ export default function App() {
         >
           <PanelLeft className="w-4 h-4" />
         </button>
-        <button
-          onClick={toggleBrowserPane}
-          className={`p-1.5 rounded-md transition-colors ${
-            state.browserOpen
-              ? 'text-droid-text bg-droid-elevated'
-              : 'text-droid-text-muted/70 hover:text-droid-text hover:bg-droid-elevated/60'
-          }`}
-          title="Toggle browser (Cmd+Shift+B)"
-        >
-          <Monitor className="w-4 h-4" />
-        </button>
       </div>
 
-      {/* The Review pane owns the top-right corner (its own refresh/close live
-          there), so suppress this floating toolbar while it is open; an empty
-          drag region would otherwise sit over and swallow those controls. */}
-      {!showReviewPane && (
+      {!showUtilityPane && (
         <div
           data-electron-drag-region
           className="absolute top-0 right-0 h-9 z-40 flex items-center gap-1 pr-3"
         >
-          {activeMission?.cwd && !state.browserOpen && (
+          {activeMission?.cwd && (
             <EditorOpenMenu cwd={activeMission.cwd} hasRepo={!!repoStatus} variant="toolbar" />
           )}
-          {canToggleContext && !state.browserOpen && (
+          {canToggleContext && (
             <button
               onClick={toggleRightPanel}
               className={`p-1.5 rounded-md transition-colors ${
@@ -460,9 +566,18 @@ export default function App() {
                   ? 'text-droid-text bg-droid-elevated'
                   : 'text-droid-text-muted/70 hover:text-droid-text hover:bg-droid-elevated/60'
               }`}
-              title="Toggle panel (Cmd+\\)"
+              title="Toggle context"
             >
               <ContextListIcon className="w-4 h-4" />
+            </button>
+          )}
+          {!!activeMission && (
+            <button
+              onClick={toggleUtilityPane}
+              className="rounded-md p-1.5 text-droid-text-muted/70 transition-colors hover:bg-droid-elevated/60 hover:text-droid-text"
+              title="Toggle utility pane (Cmd+\\)"
+            >
+              <PanelRight className="h-4 w-4" />
             </button>
           )}
         </div>
@@ -488,98 +603,28 @@ export default function App() {
   );
 }
 
-function BrowserPane({
-  animated,
-  width,
-  onResize,
-}: {
-  animated: boolean;
-  width: number;
-  onResize: (width: number) => void;
-}) {
-  const content = (
-    <>
-      <BrowserPaneResizeHandle width={width} onResize={onResize} />
-      <BrowserWorkspace />
-    </>
-  );
-
-  const className =
-    'relative shrink-0 overflow-hidden border-l border-droid-border bg-droid-bg shadow-[-24px_0_60px_rgba(0,0,0,0.18)]';
-  if (!animated) {
-    return (
-      <aside key="browser-pane" className={className} style={{ width }}>
-        {content}
-      </aside>
-    );
-  }
-
-  return (
-    <motion.aside
-      key="browser-pane"
-      initial={{ width: 0, opacity: 0 }}
-      animate={{ width, opacity: 1 }}
-      exit={{ width: 0, opacity: 0 }}
-      transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
-      className={className}
-    >
-      {content}
-    </motion.aside>
-  );
-}
-
-function BrowserPaneResizeHandle({
-  width,
-  onResize,
-}: {
-  width: number;
-  onResize: (width: number) => void;
-}) {
-  const dragStart = useRef<{ x: number; width: number } | null>(null);
-
-  return (
-    <div
-      role="separator"
-      aria-label="Resize browser pane"
-      aria-orientation="vertical"
-      className="group absolute left-0 top-0 z-20 h-full w-3 cursor-col-resize"
-      onPointerDown={(event) => {
-        dragStart.current = { x: event.clientX, width };
-        event.currentTarget.setPointerCapture(event.pointerId);
-      }}
-      onPointerMove={(event) => {
-        const start = dragStart.current;
-        if (!start) return;
-        onResize(clampBrowserPane(start.width + start.x - event.clientX));
-      }}
-      onPointerUp={(event) => {
-        dragStart.current = null;
-        if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-          event.currentTarget.releasePointerCapture(event.pointerId);
-        }
-      }}
-    >
-      <div className="absolute left-0 top-0 h-full w-px bg-droid-border-hover/60 transition-colors group-hover:bg-droid-accent/70" />
-      <div className="absolute left-1 top-1/2 h-12 w-1 -translate-y-1/2 rounded-full bg-droid-border-hover/70 opacity-70 transition-colors group-hover:bg-droid-accent" />
-    </div>
-  );
-}
-
-function initialBrowserPaneWidth(): number {
-  if (typeof window === 'undefined') return BROWSER_PANE_DEFAULT;
+function initialUtilityPaneWidth(): number {
+  if (typeof window === 'undefined') return UTILITY_PANE_DEFAULT;
   try {
-    const stored = Number(localStorage.getItem(BROWSER_PANE_WIDTH_STORAGE_KEY));
-    if (Number.isFinite(stored) && stored > 0) return clampBrowserPane(stored);
+    const stored = Number(
+      localStorage.getItem(UTILITY_PANE_WIDTH_STORAGE_KEY) ??
+        localStorage.getItem('droid-browser-pane-width'),
+    );
+    if (Number.isFinite(stored) && stored > 0) return clampUtilityPane(stored);
   } catch {
     /* ignore */
   }
-  return clampBrowserPane(Math.round(window.innerWidth * 0.44));
+  return clampUtilityPane(Math.round(window.innerWidth * 0.56));
 }
 
-function clampBrowserPane(width: number): number {
-  const viewportMax =
-    typeof window === 'undefined'
-      ? BROWSER_PANE_MAX
-      : Math.max(BROWSER_PANE_MIN, Math.min(BROWSER_PANE_MAX, Math.round(window.innerWidth - 520)));
-  return Math.min(viewportMax, Math.max(BROWSER_PANE_MIN, Math.round(width)));
+function utilityPaneMaxWidth(): number {
+  if (typeof window === 'undefined') return UTILITY_PANE_MAX;
+  return Math.max(
+    UTILITY_PANE_MIN,
+    Math.min(UTILITY_PANE_MAX, Math.round(window.innerWidth - 420)),
+  );
+}
+
+function clampUtilityPane(width: number): number {
+  return Math.min(utilityPaneMaxWidth(), Math.max(UTILITY_PANE_MIN, Math.round(width)));
 }

@@ -53,3 +53,12 @@ test('activeSessionCwds pins an idle mission that still has a running worker', (
   // no running worker (only completed/paused) leaves the worktree removable
   assert.equal(cwds.includes('/repo/done'), false);
 });
+
+test('activeSessionCwds includes directories pinned by embedded terminals', () => {
+  const cwds = activeSessionCwds({
+    missions: [],
+    activeMissionId: null,
+    pinnedCwds: ['/repo/terminal'],
+  });
+  assert.deepEqual(cwds, ['/repo/terminal']);
+});

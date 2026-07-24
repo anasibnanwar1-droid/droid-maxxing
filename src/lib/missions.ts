@@ -24,9 +24,13 @@ export function activeSessionCwds(opts: {
   activeMissionId: string | null;
   draftCwd?: string | null;
   workers?: Record<string, Pick<WorkerSummary, 'status'>[]>;
+  pinnedCwds?: Iterable<string>;
 }): string[] {
   const cwds: string[] = [];
   if (opts.draftCwd) cwds.push(opts.draftCwd);
+  if (opts.pinnedCwds) {
+    for (const cwd of opts.pinnedCwds) if (cwd) cwds.push(cwd);
+  }
   for (const m of opts.missions) {
     if (!m.cwd) continue;
     const hasRunningWorker = (opts.workers?.[m.id] ?? []).some((w) => w.status === 'running');

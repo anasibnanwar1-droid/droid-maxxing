@@ -8,11 +8,12 @@
     "build": "tsc && vite build && npm run sidecar:build && npm run electron:check",
     "electron": "npm run electron:dev",
     "electron:dev": "npm run sidecar:build && node electron/dev.cjs",
-    "electron:check": "node --check electron/main.cjs && node --check electron/preload.cjs && node --check electron/nativeBrowserPreload.cjs && node --check electron/dev.cjs && node --check electron/git.cjs && node --check electron/github.cjs",
+    "electron:check": "node --check electron/main.cjs && node --check electron/preload.cjs && node --check electron/nativeBrowserPreload.cjs && node --check electron/dev.cjs && node --check electron/git.cjs && node --check electron/github.cjs && node --check electron/terminal.cjs && node --check electron/files.cjs",
+    "electron:rebuild": "electron-rebuild -f -w node-pty",
     "sidecar:build": "npm --prefix sidecar run build",
     "sidecar:test": "npm --prefix sidecar run test",
     "sidecar:typecheck": "npm --prefix sidecar run typecheck",
-    "test": "node --import tsx --test --test-reporter=spec \"src/**/*.test.ts\"",
+    "test": "node --import tsx --test --test-reporter=spec \"src/**/*.test.ts\" && node --test electron/files.test.cjs electron/terminal.test.cjs",
     "test:coverage": "node --import tsx --test --experimental-test-coverage --test-coverage-lines=75 --test-coverage-branches=70 --test-coverage-functions=55 \"src/**/*.test.ts\"",
     "test:report": "mkdir -p reports && node --import tsx --test --test-reporter=spec --test-reporter-destination=stdout --test-reporter=junit --test-reporter-destination=reports/frontend-tests.xml \"src/**/*.test.ts\"",
     "test:flaky": "mkdir -p reports && node tools/run-flaky-check.mjs reports/frontend-reruns.json -- node --import tsx --test --test-reporter=spec \"src/**/*.test.ts\"",
@@ -40,15 +41,22 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
+    "docx-preview": "^0.4.0",
     "framer-motion": "^12.0.0",
     "lucide-react": "^0.460.0",
     "mermaid": "^11.15.0",
+    "node-pty": "^1.1.0",
+    "pdfjs-dist": "^6.1.200",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-markdown": "^9.1.0",
+    "read-excel-file": "^9.3.1",
     "remark-gfm": "^4.0.1"
   },
   "devDependencies": {
+    "@electron/rebuild": "^4.2.0",
     "@eslint/js": "^9.39.4",
     "@playwright/test": "^1.61.0",
     "@types/react": "^19.0.0",
@@ -84,5 +92,13 @@
     "*.{ts,tsx,js,cjs,mjs,json,css,md,html,yml,yaml}": [
       "prettier --write"
     ]
+  },
+  "allowScripts": {
+    "electron@39.8.10": true,
+    "esbuild@0.25.12": true,
+    "node-pty@1.1.0": true,
+    "esbuild@0.28.1": true,
+    "fsevents@2.3.3": true,
+    "fsevents@2.3.2": true
   }
 }

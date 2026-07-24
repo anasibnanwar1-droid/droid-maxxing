@@ -68,6 +68,21 @@ const textTags = new Set([
 const mediaTags = new Set(['IMG', 'SVG', 'VIDEO', 'CANVAS', 'PICTURE']);
 const INTERNAL_ATTR = 'data-droid-design';
 const PENCIL_COLOR = '#ff8a2a';
+const designHost = document.createElement('div');
+designHost.setAttribute(INTERNAL_ATTR, '1');
+designHost.style.cssText = [
+  'all:initial!important',
+  'position:fixed!important',
+  'left:0!important',
+  'top:0!important',
+  'width:0!important',
+  'height:0!important',
+  'display:block!important',
+  'overflow:visible!important',
+  'pointer-events:none!important',
+  'z-index:2147483647!important',
+].join(';');
+const designRoot = designHost.attachShadow({ mode: 'closed' });
 
 const overlay = element('div', [
   'position:fixed',
@@ -170,10 +185,11 @@ function element(tag, styles) {
 function mount() {
   const root = document.documentElement;
   if (!root) return;
-  if (!overlay.isConnected) root.appendChild(overlay);
-  if (!label.isConnected) root.appendChild(label);
-  if (!textHighlights.isConnected) root.appendChild(textHighlights);
-  if (!penSvg.isConnected) root.appendChild(penSvg);
+  if (!designHost.isConnected) root.appendChild(designHost);
+  if (!overlay.isConnected) designRoot.appendChild(overlay);
+  if (!label.isConnected) designRoot.appendChild(label);
+  if (!textHighlights.isConnected) designRoot.appendChild(textHighlights);
+  if (!penSvg.isConnected) designRoot.appendChild(penSvg);
 }
 
 function applyState(state) {
@@ -468,6 +484,7 @@ async function runAgentAction(request) {
   try {
     const action = request && request.action;
     if (action === 'click') clickAt(Number(request.x), Number(request.y));
+    else if (action === 'selectOption') selectOption(request.selector, request.text || '');
     else if (action === 'type') typeIntoFocused(request.text || '');
     else if (action === 'keypress') pressKey(request.key || '');
     else if (action === 'scroll')
@@ -520,6 +537,22 @@ function typeIntoFocused(text) {
   throw new Error('Focused element is not text-editable.');
 }
 
+function selectOption(selector, value) {
+  if (!selector) throw new Error('Select option requires a target selector.');
+  const target = document.querySelector(selector);
+  if (!(target instanceof HTMLSelectElement)) {
+    throw new Error('Target is not a select element.');
+  }
+  const expected = String(value);
+  const option = Array.from(target.options).find(
+    (item) => item.value === expected || cleanText(item.textContent) === expected,
+  );
+  if (!option) throw new Error(`Option "${expected}" is not available.`);
+  target.value = option.value;
+  target.dispatchEvent(new Event('input', { bubbles: true }));
+  target.dispatchEvent(new Event('change', { bubbles: true }));
+}
+
 function pressKey(key) {
   const active = document.activeElement || document.body;
   const value = String(key);
@@ -560,15 +593,16 @@ function collectRefs() {
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
   let node = root;
   while (node && refs.length < 80) {
-    if (isCandidate(node)) refs.push(refFor(node, refs.length + 1));
+    if (isCandidate(node)) refs.push(refFor(node));
     node = walker.nextNode();
   }
   return refs;
 }
 
-function refFor(el, index) {
+function refFor(el) {
   const rect = el.getBoundingClientRect();
   const text = cleanText(el.innerText || el.textContent);
+  const selector = selectorFor(el);
   const name = cleanText(
     el.getAttribute('aria-label') ||
       el.getAttribute('title') ||
@@ -577,8 +611,8 @@ function refFor(el, index) {
       text,
   );
   return {
-    ref: `@b${index}`,
-    selector: selectorFor(el),
+    ref: `@b-${stableHash(selector)}`,
+    selector,
     tagName: el.tagName.toLowerCase(),
     role: roleFor(el) || undefined,
     name: name || undefined,
@@ -795,19 +829,23 @@ function pickTarget(x, y, climb) {
 }
 
 function selectorFor(el) {
-  if (el.id) return `#${cssEscape(el.id)}`;
+  if (el.id) {
+    const selector = `#${cssEscape(el.id)}`;
+    if (verifySelector(el, selector)) return selector;
+  }
   const testId = el.getAttribute('data-testid');
-  if (testId) return `[data-testid="${cssEscape(testId)}"]`;
+  if (testId) {
+    const selector = `[data-testid="${cssEscape(testId)}"]`;
+    if (verifySelector(el, selector)) return selector;
+  }
   const aria = el.getAttribute('aria-label');
-  if (aria) return `${el.tagName.toLowerCase()}[aria-label="${cssEscape(aria)}"]`;
+  if (aria) {
+    const selector = `${el.tagName.toLowerCase()}[aria-label="${cssEscape(aria)}"]`;
+    if (verifySelector(el, selector)) return selector;
+  }
   const parts = [];
   let node = el;
-  while (
-    node &&
-    node.nodeType === Node.ELEMENT_NODE &&
-    node !== document.documentElement &&
-    parts.length < 5
-  ) {
+  while (node && node.nodeType === Node.ELEMENT_NODE && node !== document.documentElement) {
     let part = node.tagName.toLowerCase();
     const parent = node.parentElement;
     if (parent) {
@@ -815,6 +853,8 @@ function selectorFor(el) {
       if (same.length > 1) part += `:nth-of-type(${same.indexOf(node) + 1})`;
     }
     parts.unshift(part);
+    const selector = parts.join(' > ');
+    if (verifySelector(el, selector)) return selector;
     node = parent;
   }
   return parts.join(' > ');
@@ -1084,7 +1124,8 @@ function addAnnotation(anchor, el) {
   outline.setAttribute(INTERNAL_ATTR, '1');
   pin.setAttribute(INTERNAL_ATTR, '1');
   pin.textContent = '1';
-  document.documentElement.append(outline, pin);
+  mount();
+  designRoot.append(outline, pin);
   annotations.push({ anchor, el, outline, pin });
   repositionAnnotations();
 }
@@ -1367,6 +1408,7 @@ function mountPrompt() {
       'font:13px -apple-system,BlinkMacSystemFont,Segoe UI,sans-serif',
       'padding:8px',
       'box-sizing:border-box',
+      'pointer-events:auto',
     ]);
     promptBox.setAttribute(INTERNAL_ATTR, '1');
     const row = element('div', ['display:flex', 'align-items:center', 'gap:8px']);
@@ -1455,7 +1497,8 @@ function mountPrompt() {
       promptBox.addEventListener(type, (event) => event.stopPropagation(), true);
     }
   }
-  if (!promptBox.isConnected) document.documentElement.appendChild(promptBox);
+  mount();
+  if (!promptBox.isConnected) designRoot.appendChild(promptBox);
 }
 
 function syncPromptSend() {
