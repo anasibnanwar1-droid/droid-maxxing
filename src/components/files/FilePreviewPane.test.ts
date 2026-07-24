@@ -12,6 +12,15 @@ test('delimited previews discard columns beyond the visible column limit', () =>
   assert.deepEqual(rows[1], ['next', 'row']);
 });
 
+test('delimited previews recognize CRLF and standalone CR row endings', () => {
+  assert.deepEqual(parseDelimitedText('a,b\r\nc,d\re,f', ',', 500, 50), [
+    ['a', 'b'],
+    ['c', 'd'],
+    ['e', 'f'],
+  ]);
+  assert.deepEqual(parseDelimitedText('"a\rb",c', ',', 500, 50), [['a\rb', 'c']]);
+});
+
 test('PDF loading does not create a task after the preview is cancelled', async () => {
   let resolveLibrary:
     | ((library: { getDocument: () => PDFDocumentLoadingTask }) => void)

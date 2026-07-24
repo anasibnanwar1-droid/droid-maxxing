@@ -18,14 +18,14 @@ const os = require('node:os');
 const path = require('node:path');
 const gitVcs = require('./git.cjs');
 const githubVcs = require('./github.cjs');
-const { createTerminalManager } = require('./terminal.cjs');
+const { createTerminalManager, createTerminalSubscriptionRegistry } = require('./terminal.cjs');
 const files = require('./files.cjs');
 
 const APP_NAME = 'Droid Control';
 const BRIDGE_PORT = Number(process.env.BRIDGE_PORT ?? 8765);
 const bridge = { port: BRIDGE_PORT, token: crypto.randomBytes(16).toString('hex') };
 const terminalManager = createTerminalManager();
-const terminalSubscriptions = new Map();
+const terminalSubscriptions = createTerminalSubscriptionRegistry(terminalManager);
 
 let mainWindow = null;
 let hiddenNativeBrowserWindow = null;
@@ -57,7 +57,7 @@ app.on('window-all-closed', () => {
 app.on('before-quit', () => {
   stopSidecar();
   terminalManager.closeAll();
-  clearTerminalSubscriptions();
+  terminalSubscriptions.clear();
 });
 
 app.on('activate', () => {
@@ -92,7 +92,7 @@ function createMainWindow() {
   mainWindow.on('closed', () => {
     closeAllNativeBrowsers();
     terminalManager.closeAll();
-    clearTerminalSubscriptions();
+    terminalSubscriptions.clear();
     mainWindow = null;
   });
 }
@@ -187,7 +187,7 @@ function registerIpc() {
   });
   ipcMain.handle('terminal-kill', (event, { id }) => {
     assertMainRenderer(event);
-    unsubscribeTerminal(event.sender, id);
+    terminalSubscriptions.unsubscribe(event.sender, id);
     terminalManager.kill(id);
   });
   ipcMain.handle('terminal-list', (event, filter) => {
@@ -196,11 +196,11 @@ function registerIpc() {
   });
   ipcMain.handle('terminal-subscribe', (event, { id }) => {
     assertMainRenderer(event);
-    subscribeTerminal(event.sender, id);
+    terminalSubscriptions.subscribe(event.sender, id);
   });
   ipcMain.handle('terminal-unsubscribe', (event, { id }) => {
     assertMainRenderer(event);
-    unsubscribeTerminal(event.sender, id);
+    terminalSubscriptions.unsubscribe(event.sender, id);
   });
   ipcMain.handle('files-list', (event, { root, relative }) => {
     assertMainRenderer(event);
@@ -287,42 +287,6 @@ function registerIpc() {
 function assertMainRenderer(event) {
   if (!mainWindow || event.sender !== mainWindow.webContents) {
     throw new Error('Desktop request rejected for unknown renderer.');
-  }
-}
-
-function subscribeTerminal(sender, terminalId) {
-  unsubscribeTerminal(sender, terminalId);
-  let subscriptions = terminalSubscriptions.get(sender.id);
-  if (!subscriptions) {
-    subscriptions = new Map();
-    terminalSubscriptions.set(sender.id, subscriptions);
-    sender.once('destroyed', () => clearTerminalSubscriptions(sender.id));
-  }
-  const unsubscribe = terminalManager.subscribe(terminalId, (payload) => {
-    if (!sender.isDestroyed()) {
-      sender.send('terminal-event', { terminalId, ...payload });
-    }
-  });
-  subscriptions.set(terminalId, unsubscribe);
-}
-
-function unsubscribeTerminal(sender, terminalId) {
-  const subscriptions = terminalSubscriptions.get(sender.id);
-  const unsubscribe = subscriptions?.get(terminalId);
-  if (unsubscribe) unsubscribe();
-  subscriptions?.delete(terminalId);
-  if (subscriptions?.size === 0) terminalSubscriptions.delete(sender.id);
-}
-
-function clearTerminalSubscriptions(senderId) {
-  const entries =
-    senderId === undefined
-      ? [...terminalSubscriptions.entries()]
-      : [[senderId, terminalSubscriptions.get(senderId)]];
-  for (const [id, subscriptions] of entries) {
-    if (!subscriptions) continue;
-    for (const unsubscribe of subscriptions.values()) unsubscribe();
-    terminalSubscriptions.delete(id);
   }
 }
 
@@ -784,6 +748,7 @@ function navigateNativeBrowserHistory(sessionId, direction) {
   const contents = safeWebContents(entry?.view);
   if (!contents) throw new Error('Droid Control browser is not open.');
   const history = contents.navigationHistory;
+  if (!history) return false;
   if (direction === 'back') {
     if (!history.canGoBack()) return false;
     history.goBack();
@@ -840,7 +805,7 @@ async function runNativeBrowserAgentAction(request) {
     return withNativeBrowserHistory(contents, outcome.result);
   } finally {
     navigation.dispose();
-    if (!entry.attached || !entry.visible) contents.setBackgroundThrottling(true);
+    restoreNativeBrowserBackgroundThrottling(contents, entry);
     scheduleNativeBrowserIdleClose(entry);
   }
 }
@@ -941,8 +906,9 @@ async function snapshotNativeBrowserAfterNavigation(contents, request) {
 
 function withNativeBrowserHistory(contents, result) {
   if (!result || typeof result !== 'object') return result;
+  if (contents.isDestroyed()) return result;
   const history = contents.navigationHistory;
-  if (!result.snapshot) return result;
+  if (!history || !result.snapshot) return result;
   return {
     ...result,
     snapshot: {
@@ -1084,8 +1050,17 @@ async function captureNativeBrowser(sessionId, box, options = {}) {
     const image = rect ? await contents.capturePage(rect) : await contents.capturePage();
     return image.isEmpty() ? undefined : image.toPNG().toString('base64');
   } finally {
-    if (!entry.attached || !entry.visible) contents.setBackgroundThrottling(true);
+    restoreNativeBrowserBackgroundThrottling(contents, entry);
     scheduleNativeBrowserIdleClose(entry);
+  }
+}
+
+function restoreNativeBrowserBackgroundThrottling(contents, entry) {
+  if (entry.attached && entry.visible) return;
+  try {
+    if (!contents.isDestroyed()) contents.setBackgroundThrottling(true);
+  } catch {
+    // Cleanup is best-effort when the browser closes during an action.
   }
 }
 

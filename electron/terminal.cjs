@@ -454,8 +454,48 @@ function createTerminalManager(opts) {
   };
 }
 
+function createTerminalSubscriptionRegistry(terminalManager) {
+  const senders = new Map();
+
+  function clear(senderId) {
+    const entries =
+      senderId === undefined ? [...senders.entries()] : [[senderId, senders.get(senderId)]];
+    for (const [id, entry] of entries) {
+      if (!entry) continue;
+      entry.sender.removeListener('destroyed', entry.onDestroyed);
+      for (const unsubscribe of entry.subscriptions.values()) unsubscribe();
+      senders.delete(id);
+    }
+  }
+
+  function unsubscribe(sender, terminalId) {
+    const subscriptions = senders.get(sender.id)?.subscriptions;
+    const dispose = subscriptions?.get(terminalId);
+    if (dispose) dispose();
+    subscriptions?.delete(terminalId);
+  }
+
+  function subscribe(sender, terminalId) {
+    unsubscribe(sender, terminalId);
+    let entry = senders.get(sender.id);
+    if (!entry) {
+      const onDestroyed = () => clear(sender.id);
+      entry = { sender, onDestroyed, subscriptions: new Map() };
+      senders.set(sender.id, entry);
+      sender.once('destroyed', onDestroyed);
+    }
+    const dispose = terminalManager.subscribe(terminalId, (payload) => {
+      if (!sender.isDestroyed()) sender.send('terminal-event', { terminalId, ...payload });
+    });
+    entry.subscriptions.set(terminalId, dispose);
+  }
+
+  return { subscribe, unsubscribe, clear };
+}
+
 module.exports = {
   createTerminalManager,
+  createTerminalSubscriptionRegistry,
   defaultShell,
   buildPtyEnv,
   validateCwd,
