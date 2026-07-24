@@ -11,8 +11,9 @@ import {
 } from './MissionManager.js';
 import {
   clampCompactionTokenLimit,
+  compactionTriggerCeiling,
   compactionTokenLimitForModel,
-  createCompactionSettingsForModel,
+  effectiveCompactionTriggerLimit,
   daemonDefaultCompactionTokenLimit,
   daemonCompactionSettings,
   resolvedCompactionTokenLimit,
@@ -182,32 +183,37 @@ test('uses Factory compaction defaults when command omits them', () => {
   );
 });
 
-test('builds Droid compaction init payloads', () => {
-  assert.deepEqual(
-    createCompactionSettingsForModel('model-a', {
-      compactionTokenLimit: 200_000,
-      compactionTokenLimitPerModel: { 'model-a': 150_000 },
+test('derives the armed trigger from the UI snapshot (per-model over global)', () => {
+  assert.equal(
+    effectiveCompactionTriggerLimit({
+      modelId: 'model-a',
+      ui: {
+        compactionTokenLimit: 200_000,
+        compactionTokenLimitPerModel: { 'model-a': 150_000 },
+      },
     }),
-    {
-      compactionTokenLimit: 150_000,
-    },
+    150_000,
   );
 });
 
-test('caps Droid compaction limits to the selected model context window', () => {
-  assert.equal(clampCompactionTokenLimit(200_000, 100_000), 100_000);
-  assert.equal(clampCompactionTokenLimit(80_000, 100_000), 80_000);
+test('caps Droid compaction limits below the model context window with headroom', () => {
+  // The trigger never reaches the full window: it is capped at
+  // COMPACTION_WINDOW_FRACTION (80%) so the daemon can still run the next
+  // provider call and the compaction turn itself before the window overflows.
+  assert.equal(compactionTriggerCeiling(100_000), 80_000);
+  assert.equal(compactionTriggerCeiling(undefined), undefined);
+  // Never rounds down to an invalid zero trigger.
+  assert.equal(compactionTriggerCeiling(1), 1);
+  assert.equal(clampCompactionTokenLimit(200_000, 100_000), 80_000);
+  assert.equal(clampCompactionTokenLimit(80_000, 200_000), 80_000);
   assert.equal(clampCompactionTokenLimit(200_000), 200_000);
-  assert.deepEqual(
-    createCompactionSettingsForModel(
-      'model-a',
-      { compactionTokenLimit: 200_000, compactionTokenLimitPerModel: { 'model-a': 150_000 } },
-      {},
-      100_000,
-    ),
-    {
-      compactionTokenLimit: 100_000,
-    },
+  assert.equal(
+    effectiveCompactionTriggerLimit({
+      modelId: 'model-a',
+      ui: { compactionTokenLimit: 200_000, compactionTokenLimitPerModel: { 'model-a': 150_000 } },
+      maxContextTokens: 100_000,
+    }),
+    80_000,
   );
 });
 
@@ -217,15 +223,14 @@ test('matches the daemon model-default compaction threshold', () => {
   assert.equal(daemonDefaultCompactionTokenLimit(180_000), 180_000);
 });
 
-test('leaves unset compaction limits to Factory session defaults', () => {
-  assert.deepEqual(
-    createCompactionSettingsForModel(
-      'model-a',
-      { compactionTokenLimit: null, compactionTokenLimitPerModel: {} },
-      {},
-      100_000,
-    ),
-    {},
+test('cleared limits fall back to the daemon model default, still with headroom', () => {
+  assert.equal(
+    effectiveCompactionTriggerLimit({
+      modelId: 'model-a',
+      ui: { compactionTokenLimit: null, compactionTokenLimitPerModel: {} },
+      maxContextTokens: 100_000,
+    }),
+    80_000,
   );
 });
 
@@ -616,13 +621,15 @@ test('design turns disable TodoWrite and normal turns restore it', async () => {
   );
 });
 
-test('does not emit live compaction disable payloads', () => {
-  assert.deepEqual(
-    createCompactionSettingsForModel('model-a', {
-      compactionTokenLimit: null,
-      compactionTokenLimitPerModel: {},
+test('a cleared UI limit never disables the threshold check', () => {
+  // Clearing means "back to the daemon default trigger", never "stop
+  // auto-compacting".
+  assert.equal(
+    effectiveCompactionTriggerLimit({
+      modelId: 'model-a',
+      ui: { compactionTokenLimit: null, compactionTokenLimitPerModel: {} },
     }),
-    {},
+    250_000,
   );
 });
 
@@ -1093,14 +1100,20 @@ test('daemon compaction notifications protect orchestrator compaction from steer
   assert.equal(session.interrupts, 0);
   assert.deepEqual(mission.pendingSends, ['after compaction']);
 
+  // Stop is the user's escape hatch: it settles the auto-compacting flag and
+  // interrupts for real, so a lost session_compacted can never wedge the chat.
   await manager.handle({ type: 'mission.interrupt', missionId: 'app-compact' });
-  assert.equal(session.interrupts, 0);
+  assert.equal(session.interrupts, 1);
+  assert.equal(mission.autoCompacting, false);
   assert.deepEqual(mission.pendingSends, []);
 
+  // The late completion is now a duplicate: it must not re-enter compaction
+  // accounting (status, counter, context reset).
   internals.handleCompactionNotification('app-compact', 'app-compact', 'orchestrator', session, {
     params: { notification: { type: 'session_compacted', summaryId: 's1', removedCount: 12 } },
   });
   assert.equal(mission.autoCompacting, false);
+  assert.equal(mission.summary.autoCompactions ?? 0, 0);
 });
 
 test('daemon compaction notifications protect worker compaction from steering and Stop', async () => {
@@ -1138,18 +1151,59 @@ test('daemon compaction notifications protect worker compaction from steering an
   assert.equal(session.interrupts, 0);
   assert.deepEqual(agent.pendingSends, ['after compaction']);
 
+  // Same escape hatch as the orchestrator: Stop settles the flag and
+  // interrupts instead of being silently swallowed.
   await manager.handle({
     type: 'agent.interrupt',
     missionId: 'app-compact',
     agentSessionId: 'worker-1',
   });
-  assert.equal(session.interrupts, 0);
+  assert.equal(session.interrupts, 1);
+  assert.equal(agent.autoCompacting, false);
   assert.deepEqual(agent.pendingSends, []);
 
+  // A completion with no in-flight start is a late duplicate and stays inert.
   internals.handleCompactionNotification('app-compact', 'worker-1', 'worker', session, {
     params: { notification: { type: 'session_compacted', summaryId: 's1', removedCount: 5 } },
   });
   assert.equal(agent.autoCompacting, false);
+});
+
+test('worker post-turn watchdog re-arms on the agents-map key, not the live session id', async () => {
+  const { manager, mission } = compactionHarness(10_000);
+  // The live session's own id intentionally differs from the agents-map key.
+  const session = new FakeCompactionSession('daemon-worker-raw', 10_000);
+  const agent = {
+    session,
+    agentSessionId: 'worker-1',
+    missionId: 'app-compact',
+    role: 'worker' as const,
+    streaming: false,
+    autoCompacting: false,
+    pendingSends: [] as string[],
+    lastUsedAt: Date.now(),
+  };
+  mission.linkedSubagents.add('worker-1');
+  mission.agents.set('worker-1', agent);
+  const internals = manager as unknown as CompactionNotificationInternals & {
+    driveAgent: (agent: unknown, text: string) => Promise<void>;
+    autoCompactionWatchdogs: { isArmed: (key: string) => boolean };
+  };
+
+  internals.handleCompactionNotification('app-compact', 'worker-1', 'worker', session, {
+    params: {
+      notification: { type: 'droid_working_state_changed', newState: 'compacting_conversation' },
+    },
+  });
+  assert.equal(agent.autoCompacting, true);
+  assert.equal(internals.autoCompactionWatchdogs.isArmed('worker-1'), true);
+
+  await internals.driveAgent(agent, 'go');
+
+  // The tightened post-turn timer must replace the start-of-compaction timer,
+  // so it has to live under the same key every other watchdog op uses.
+  assert.equal(internals.autoCompactionWatchdogs.isArmed('worker-1'), true);
+  assert.equal(internals.autoCompactionWatchdogs.isArmed('daemon-worker-raw'), false);
 });
 
 test('auto-compaction settlement drains queued orchestrator and worker sends', async () => {
@@ -1217,6 +1271,7 @@ test('worker completion waits for auto-compaction before closing its transport',
   const session = new FakeCompactionSession('worker-close', 10_000);
   const agent = {
     session,
+    agentSessionId: 'worker-close',
     missionId: 'app-compact',
     role: 'worker' as const,
     streaming: false,
@@ -1240,10 +1295,53 @@ test('worker completion waits for auto-compaction before closing its transport',
   assert.equal(mission.agents.has('worker-close'), false);
 });
 
-test('a worker in-place compaction bumps the worker snapshot generation, not the mission summary', async () => {
-  const { manager, session, events, mission } = compactionHarness(10_000);
+test('deferred worker close resolves the agent by the agents-map id, not the live session id', async () => {
+  const { manager, mission } = compactionHarness(10_000);
+  const session = new FakeCompactionSession('worker-close-live', 10_000);
+  mission.agents.set('worker-close-key', {
+    session,
+    agentSessionId: 'worker-close-key',
+    missionId: 'app-compact',
+    role: 'worker' as const,
+    streaming: false,
+    autoCompacting: true,
+    pendingSends: [] as string[],
+    lastUsedAt: Date.now(),
+  });
   const internals = manager as unknown as CompactionNotificationInternals;
 
+  await internals.closeAgentWhenIdle('app-compact', 'worker-close-key');
+  assert.equal(session.closes, 0);
+
+  internals.handleCompactionNotification('app-compact', 'worker-close-key', 'worker', session, {
+    params: { notification: { type: 'session_compacted', removedCount: 5 } },
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(session.closes, 1);
+  assert.equal(mission.agents.has('worker-close-key'), false);
+});
+
+test('a worker in-place compaction bumps the worker snapshot generation, not the mission summary', async () => {
+  const { manager, events, mission } = compactionHarness(10_000);
+  const session = new FakeCompactionSession('worker-1', 10_000);
+  mission.linkedSubagents.add('worker-1');
+  mission.agents.set('worker-1', {
+    session,
+    missionId: 'app-compact',
+    role: 'worker' as const,
+    streaming: false,
+    autoCompacting: false,
+    pendingSends: [] as string[],
+    lastUsedAt: Date.now(),
+  });
+  const internals = manager as unknown as CompactionNotificationInternals;
+
+  internals.handleCompactionNotification('app-compact', 'worker-1', 'worker', session, {
+    params: {
+      notification: { type: 'droid_working_state_changed', newState: 'compacting_conversation' },
+    },
+  });
   const handled = internals.handleCompactionNotification(
     'app-compact',
     'worker-1',

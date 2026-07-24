@@ -89,6 +89,9 @@ export default function StatusBar() {
           contextAccuracy: undefined,
           contextUpdatedAt: undefined,
           maxContextTokens: undefined,
+          // The armed trigger belongs to the orchestrator session; a worker
+          // meter must not present it as its own.
+          compactionTokenLimit: undefined,
         }
       : mission;
   const isMission = (mission?.features?.length ?? 0) > 0;
