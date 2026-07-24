@@ -109,6 +109,9 @@ interface LiveAgent {
   autoCompacting: boolean;
   pendingSends: string[];
   interruptingForSteer?: boolean;
+  // Set while a user Stop is in flight so the stream catch can attribute the
+  // resulting abort to the user (settle quietly) instead of a real failure.
+  interrupting?: boolean;
   lastUsedAt: number;
   closeWhenIdle?: boolean;
   unsubscribe?: () => void;
@@ -120,6 +123,8 @@ interface Mission {
   streaming: boolean;
   pendingSends: string[];
   interruptingForSteer?: boolean;
+  // Set while a user Stop is in flight (see LiveAgent.interrupting).
+  interrupting?: boolean;
   pendingPermissions: Map<string, PendingPermission>;
   pendingQuestions: Map<string, (r: AskUserResult) => void>;
   agents: Map<string, LiveAgent>;
@@ -1567,7 +1572,7 @@ export class MissionManager {
     } catch (err) {
       if (mission.interruptingForSteer)
         this.emitStatus(appSessionId, 'Current turn interrupted for steering.');
-      else if (isUserCancellation(err))
+      else if (mission.interrupting && isUserCancellation(err))
         // The user pressed Stop; interrupt() already set the paused phase, so
         // settle quietly without surfacing an error.
         this.patch(appSessionId, { phase: 'paused' });
@@ -1578,6 +1583,7 @@ export class MissionManager {
     } finally {
       this.stopContextPolling(appSessionId);
       mission.interruptingForSteer = false;
+      mission.interrupting = false;
       // Keep streaming=true while refreshContext is in flight so concurrent
       // sends queue instead of racing a second drive().
       await this.refreshContext(appSessionId, mission.session);
@@ -2361,6 +2367,10 @@ export class MissionManager {
     // its watchdog are only cleared once the interrupt actually landed; if it
     // throws they stay in place so the watchdog can still settle the session.
     const wasAutoCompacting = mission.autoCompacting;
+    // Mark the in-flight turn as user-interrupted so drive()'s stream catch
+    // settles the abort quietly instead of surfacing it as a failure. drive()'s
+    // finally clears the flag once the turn unwinds.
+    mission.interrupting = true;
     await mission.session.interrupt();
     if (wasAutoCompacting) {
       mission.autoCompacting = false;
@@ -2527,7 +2537,7 @@ export class MissionManager {
     } catch (err) {
       if (agent.interruptingForSteer)
         this.emitStatus(agent.missionId, 'Subagent turn interrupted for steering.');
-      else if (!isUserCancellation(err)) {
+      else if (!(agent.interrupting && isUserCancellation(err))) {
         const message = errMsg(err);
         this.emit({
           type: 'agent.not_steerable',
@@ -2546,6 +2556,7 @@ export class MissionManager {
     } finally {
       this.stopContextPolling(agent.session.sessionId);
       agent.interruptingForSteer = false;
+      agent.interrupting = false;
       if (agent.pendingSends.length === 0 && agent.closeWhenIdle && !agent.autoCompacting) {
         agent.streaming = false;
         // closeAgent resolves the worker by the agents-map id, which is not
@@ -2631,6 +2642,7 @@ export class MissionManager {
     // Same escape hatch as the orchestrator: interrupt first, and settle the
     // wedged auto-compaction flag only once the interrupt landed.
     const wasAutoCompacting = agent.autoCompacting;
+    agent.interrupting = true;
     await agent.session.interrupt();
     if (wasAutoCompacting) {
       agent.autoCompacting = false;

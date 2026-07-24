@@ -52,6 +52,13 @@ function openLink(e: React.MouseEvent, url: string) {
   void openExternal(url);
 }
 
+// Only http(s) URLs are safe as an href. Parsed web-search results can carry a
+// malformed or non-http token, and onClick alone does not cover middle-click or
+// "open in new tab" from the context menu, so a bad URL must never reach href.
+function httpHref(url: string): string | undefined {
+  return /^https?:\/\//i.test(url.trim()) ? url : undefined;
+}
+
 const ACCENT = 'var(--droid-accent)';
 const EASE = [0.16, 1, 0.3, 1] as const;
 
@@ -606,29 +613,31 @@ function WebSearchCard({
       <Expand open={open}>
         {results.length > 0 ? (
           <div className="mt-2 space-y-1">
-            {results.map((r, i) => (
-              <a
-                key={`${r.url}-${i}`}
-                href={r.url}
-                onClick={(e) => openLink(e, r.url)}
-                className={`block rounded-lg px-3 py-2 transition-colors hover:bg-droid-elevated/60 ${
-                  i === 0 ? 'bg-droid-elevated/40' : ''
-                }`}
-              >
-                <div className="truncate text-[13px] font-medium text-droid-text">{r.title}</div>
-                {r.snippet && (
-                  <div className="mt-0.5 line-clamp-2 text-[12px] leading-relaxed text-droid-text-muted">
-                    {r.snippet}
+            {results.map((r, i) => {
+              const href = httpHref(r.url);
+              return (
+                <a
+                  key={`${r.url}-${i}`}
+                  {...(href ? { href, onClick: (e: React.MouseEvent) => openLink(e, href) } : {})}
+                  className={`block rounded-lg px-3 py-2 transition-colors hover:bg-droid-elevated/60 ${
+                    i === 0 ? 'bg-droid-elevated/40' : ''
+                  }`}
+                >
+                  <div className="truncate text-[13px] font-medium text-droid-text">{r.title}</div>
+                  {r.snippet && (
+                    <div className="mt-0.5 line-clamp-2 text-[12px] leading-relaxed text-droid-text-muted">
+                      {r.snippet}
+                    </div>
+                  )}
+                  <div className="mt-1.5 flex items-center gap-1.5">
+                    <Favicon url={r.url} />
+                    <span className="truncate text-[11px] text-droid-text-secondary">
+                      {webSourceName(r.url)}
+                    </span>
                   </div>
-                )}
-                <div className="mt-1.5 flex items-center gap-1.5">
-                  <Favicon url={r.url} />
-                  <span className="truncate text-[11px] text-droid-text-secondary">
-                    {webSourceName(r.url)}
-                  </span>
-                </div>
-              </a>
-            ))}
+                </a>
+              );
+            })}
           </div>
         ) : raw ? (
           <pre className="mt-1.5 max-h-44 overflow-auto rounded-md bg-droid-bg/50 px-2.5 py-2 text-[11px] leading-relaxed font-mono text-droid-text-muted/80 whitespace-pre-wrap break-words">

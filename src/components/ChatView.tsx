@@ -393,11 +393,23 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
   useEffect(() => {
     if (viewingSub || !historyMissionId || !olderCursor || loadingOlder) return;
     if (timelineAnchors.length >= TIMELINE_TARGET_ANCHORS) return;
+    // A failed older-page load leaves the cursor intact so a later user scroll
+    // can retry; without this guard the auto-pager would immediately re-fire the
+    // same failing cursor in a tight loop, since clearing loadingOlder re-arms it.
+    if (restore?.status === 'failed') return;
     const el = scrollRef.current;
     if (el) prependAnchor.current = { height: el.scrollHeight, top: el.scrollTop };
     dispatch({ type: 'MISSION_HISTORY_LOADING_OLDER', missionId: historyMissionId });
     loadOlderMissionHistory(historyMissionId, olderCursor);
-  }, [viewingSub, historyMissionId, olderCursor, loadingOlder, timelineAnchors.length, dispatch]);
+  }, [
+    viewingSub,
+    historyMissionId,
+    olderCursor,
+    loadingOlder,
+    timelineAnchors.length,
+    restore?.status,
+    dispatch,
+  ]);
 
   return (
     <div className="flex-1 min-h-0 min-w-0 flex flex-col overflow-hidden">
