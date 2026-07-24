@@ -33,6 +33,7 @@ test.before(async () => {
   await fsp.mkdir(path.join(root, 'empty'), { recursive: true });
   await fsp.writeFile(path.join(root, 'alpha.md'), '# Alpha\n');
   await fsp.writeFile(path.join(root, 'beta.txt'), 'beta contents\n');
+  await fsp.writeFile(path.join(root, '..notes.txt'), 'valid dotted name\n');
   await fsp.writeFile(path.join(root, 'zeta.json'), JSON.stringify({ ok: true }));
   await fsp.writeFile(path.join(root, 'sub', 'nested.txt'), 'nested\n');
   // 1 MiB text file (well under the 5 MiB cap) for preview read.
@@ -77,6 +78,15 @@ test('validateRelative requires string inputs', () => {
   assert.throws(() => validateRelative(root, 42), /must be a string/);
 });
 
+test('paths beginning with two dots remain valid inside the root', async () => {
+  const validated = validateRelative(root, '..notes.txt');
+  assert.equal(validated.relative, '..notes.txt');
+  const resolved = await resolveWithin(root, '..notes.txt');
+  assert.equal(resolved.relative, '..notes.txt');
+  const preview = await readPreview(root, '..notes.txt');
+  assert.equal(preview.text, 'valid dotted name\n');
+});
+
 test('resolveWithin rejects symlinks that escape the root', async () => {
   const linkPath = path.join(root, 'escape-link');
   await fsp.symlink(outside, linkPath, 'dir');
@@ -88,6 +98,14 @@ test('resolveWithin allows symlinks whose target stays inside the root', async (
   await fsp.symlink(path.join(root, 'sub'), innerLink, 'dir');
   const resolved = await resolveWithin(root, 'inner-link/nested.txt');
   assert.equal(path.basename(resolved.target), 'nested.txt');
+});
+
+test('resolveWithin rejects chained dangling symlinks that escape the root', async () => {
+  const outerLink = path.join(root, 'outer-link');
+  const innerLink = path.join(root, 'inner-escape-link');
+  await fsp.symlink(path.join(outside, 'missing.txt'), outerLink, 'file');
+  await fsp.symlink(outerLink, innerLink, 'file');
+  await assert.rejects(() => resolveWithin(root, 'inner-escape-link'), /escapes root/);
 });
 
 // ---------------------------------------------------------------------------

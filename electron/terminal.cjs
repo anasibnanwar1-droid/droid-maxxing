@@ -5,9 +5,8 @@
 // the host can be unit-tested with mock PTYs and reused outside Electron.
 //
 // Lifecycle contract:
-//   * PTYs are created on demand for a specific mission + cwd and stay alive
-//     while the utility pane or chat is hidden — only an explicit `kill` /
-//     `closeAll` (terminal tab close, app close) tears them down.
+//   * Live PTYs stay alive while the utility pane or chat is hidden. Exited
+//     entries retain replay state briefly, then release their capacity.
 //   * Output is buffered in a rolling 2 MiB replay buffer with monotonic
 //     sequence information so a late subscriber can render the recent past and
 //     detect any dropped bytes.
@@ -24,6 +23,7 @@ const crypto = require('node:crypto');
 const MAX_TERMINALS_PER_MISSION = 4;
 const MAX_GLOBAL_TERMINALS = 8;
 const MAX_REPLAY_BYTES = 2 * 1024 * 1024;
+const EXIT_RETENTION_MS = 30 * 1000;
 const DEFAULT_COLS = 80;
 const DEFAULT_ROWS = 24;
 const TERM = 'xterm-256color';
@@ -100,6 +100,9 @@ function createTerminalManager(opts) {
   const shellResolver = config.resolveShell || ((p, e) => defaultShell(p || platform, e));
   const envBuilder = config.buildEnv || ((p, e) => buildPtyEnv(p || platform, e));
   const fspLib = config.fsp || fsp;
+  const scheduleTimeout = config.setTimeout || setTimeout;
+  const cancelTimeout = config.clearTimeout || clearTimeout;
+  const exitRetentionMs = config.exitRetentionMs ?? EXIT_RETENTION_MS;
   // Lazy-load node-pty only when the first PTY is spawned. require()ing this
   // module must never throw if node-pty has not been added to package.json.
   const loadPty =
@@ -145,6 +148,7 @@ function createTerminalManager(opts) {
       exitCode: null,
       signal: null,
       createdAt: Date.now(),
+      cleanupTimer: null,
     };
   }
 
@@ -156,15 +160,15 @@ function createTerminalManager(opts) {
     if (typeof missionId !== 'string' || missionId.length === 0) {
       throw new Error('missionId is required');
     }
+    const cwdResult = await validateCwd(args.cwd, fspLib);
+    if (!cwdResult.ok) throw new Error(cwdResult.error);
+
     if (terminals.size >= MAX_GLOBAL_TERMINALS) {
       throw new Error(`Terminal limit reached (${MAX_GLOBAL_TERMINALS} global)`);
     }
     if (countByMission(missionId) >= MAX_TERMINALS_PER_MISSION) {
       throw new Error(`Mission terminal limit reached (${MAX_TERMINALS_PER_MISSION} per mission)`);
     }
-
-    const cwdResult = await validateCwd(args.cwd, fspLib);
-    if (!cwdResult.ok) throw new Error(cwdResult.error);
 
     const resolved = shellResolver(platform, args.env || process.env);
     const file =
@@ -206,9 +210,12 @@ function createTerminalManager(opts) {
       entry.buffer = Buffer.concat([entry.buffer, buf]);
       entry.totalEmittedBytes += buf.length;
       if (entry.buffer.length > MAX_REPLAY_BYTES) {
-        const excess = entry.buffer.length - MAX_REPLAY_BYTES;
-        entry.buffer = entry.buffer.subarray(excess);
-        entry.droppedBytes += excess;
+        let droppedBytes = entry.buffer.length - MAX_REPLAY_BYTES;
+        while (droppedBytes < entry.buffer.length && (entry.buffer[droppedBytes] & 0xc0) === 0x80) {
+          droppedBytes += 1;
+        }
+        entry.buffer = entry.buffer.subarray(droppedBytes);
+        entry.droppedBytes += droppedBytes;
       }
       entry.sequence += 1;
       const payload = {
@@ -251,8 +258,13 @@ function createTerminalManager(opts) {
           // swallow subscriber errors
         }
       }
-      // The entry stays in the map so summary() keeps working after an
-      // unexpected exit; it is removed when kill()/closeAll() runs.
+      entry.cleanupTimer = scheduleTimeout(() => {
+        if (terminals.get(id) !== entry || !entry.exited) return;
+        entry.subscribers.clear();
+        entry.exitSubscribers.clear();
+        terminals.delete(id);
+      }, exitRetentionMs);
+      entry.cleanupTimer?.unref?.();
     });
 
     return {
@@ -363,6 +375,7 @@ function createTerminalManager(opts) {
   function kill(id) {
     const e = terminals.get(id);
     if (!e) return;
+    if (e.cleanupTimer) cancelTimeout(e.cleanupTimer);
     e.subscribers.clear();
     e.exitSubscribers.clear();
     if (e.pty) {
@@ -450,6 +463,7 @@ module.exports = {
   MAX_TERMINALS_PER_MISSION,
   MAX_GLOBAL_TERMINALS,
   MAX_REPLAY_BYTES,
+  EXIT_RETENTION_MS,
   DEFAULT_COLS,
   DEFAULT_ROWS,
 };

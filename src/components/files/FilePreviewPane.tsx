@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { PDFDocumentProxy, PDFDocumentLoadingTask, RenderTask } from 'pdfjs-dist';
+import type { PDFDocumentLoadingTask, PDFDocumentProxy, RenderTask } from 'pdfjs-dist';
 import {
   AlertTriangle,
   ChevronLeft,
@@ -16,7 +16,7 @@ import {
   revealFile,
   type FilePreviewPayload,
 } from '../../lib/desktop';
-import { parseDelimitedText } from '../../lib/filePreview';
+import { loadPdfDocumentForPreview, parseDelimitedText } from '../../lib/filePreview';
 import { Markdown } from '../Markdown';
 import { toast } from '../../lib/toast';
 
@@ -447,11 +447,16 @@ function PdfPreview({ data }: { data?: Uint8Array }) {
     setRendering(true);
     let cancelled = false;
     let loadingTask: PDFDocumentLoadingTask | null = null;
-    loadPdfjs()
-      .then(async (pdfjsLib) => {
-        loadingTask = pdfjsLib.getDocument({ data: bytes.slice() });
-        const doc = await loadingTask.promise;
-        if (cancelled) return;
+    loadPdfDocumentForPreview(
+      loadPdfjs,
+      bytes,
+      () => cancelled,
+      (task) => {
+        loadingTask = task;
+      },
+    )
+      .then((doc) => {
+        if (!doc) return;
         documentRef.current = doc;
         setNumPages(doc.numPages);
         setRendering(false);
