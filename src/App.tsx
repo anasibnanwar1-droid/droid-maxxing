@@ -43,6 +43,7 @@ import { TerminalWorkspace } from './components/terminal/TerminalWorkspace';
 import { FilesWorkspace } from './components/files/FilesWorkspace';
 import { closeTerminalForTab } from './lib/terminal';
 import { utilityPanelForMission, type UtilityTool } from './lib/utilityPanel';
+import { isTerminalInputTarget, isTerminalTabShortcut } from './lib/keyboardShortcuts';
 
 function ContextListIcon({ className }: { className?: string }) {
   return (
@@ -292,7 +293,8 @@ export default function App() {
   // Keyboard shortcuts
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (e.ctrlKey && e.key === '`') {
+      if (isTerminalTabShortcut(e)) {
+        if (isTerminalInputTarget(e.target)) return;
         e.preventDefault();
         if (e.repeat) return;
         openUtilityTool('terminal');

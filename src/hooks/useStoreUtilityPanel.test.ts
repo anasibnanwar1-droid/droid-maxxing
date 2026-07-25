@@ -11,6 +11,18 @@ function activeState(missionId: string): AppState {
   };
 }
 
+function browser(missionId: string) {
+  return {
+    sessionId: `browser-${missionId}`,
+    missionId,
+    url: 'https://example.com/',
+    viewport: { width: 1200, height: 800, deviceScaleFactor: 1 },
+    viewportMode: 'fit' as const,
+    scroll: { x: 0, y: 0 },
+    refs: [],
+  };
+}
+
 test('utility tools are mission scoped and opening one hides Context', () => {
   let state = reducer(activeState('mission-a'), {
     type: 'OPEN_UTILITY_TOOL',
@@ -102,5 +114,35 @@ test('legacy Review and Browser actions route through utility tabs', () => {
   assert.deepEqual(
     state.utilityPanels['mission-a'].tabs.map((tab) => tab.tool),
     ['review'],
+  );
+});
+
+test('background browser updates create the mission browser tab', () => {
+  const state = reducer(activeState('mission-a'), {
+    type: 'BROWSER_UPDATED',
+    browser: browser('mission-b'),
+  });
+
+  assert.equal(state.utilityPanels['mission-b'].open, true);
+  assert.equal(state.utilityPanels['mission-b'].activeTabId, 'browser:mission-b');
+  assert.equal(state.utilityPanels['mission-b'].tabs[0].tool, 'browser');
+  assert.equal(state.activeMissionId, 'mission-a');
+});
+
+test('browser updates preserve an explicitly hidden browser pane', () => {
+  let state = reducer(activeState('mission-a'), {
+    type: 'SET_BROWSER_OPEN',
+    open: true,
+  });
+  state = reducer(state, { type: 'SET_BROWSER_OPEN', open: false });
+  state = reducer(state, {
+    type: 'BROWSER_UPDATED',
+    browser: browser('mission-a'),
+  });
+
+  assert.equal(state.browserOpenKeys['mission-a'], false);
+  assert.equal(
+    state.utilityPanels['mission-a'].tabs.some((tab) => tab.tool === 'browser'),
+    false,
   );
 });

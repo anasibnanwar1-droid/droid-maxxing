@@ -36,6 +36,7 @@ const server = createServer((req, res) => {
 });
 
 const wss = new WebSocketServer({ server });
+let shuttingDown = false;
 
 server.listen(PORT, HOST, () => {
   // Stdout line consumed by the desktop supervisor to confirm readiness.
@@ -82,10 +83,20 @@ wss.on('connection', (ws, req) => {
 });
 
 async function shutdown(): Promise<void> {
-  await manager.shutdown();
+  if (shuttingDown) return;
+  shuttingDown = true;
+  const forceExit = setTimeout(() => process.exit(1), 5_000);
+  forceExit.unref();
   wss.close();
   server.close();
-  process.exit(0);
+  try {
+    await manager.shutdown();
+  } catch (error) {
+    console.error(error);
+    process.exitCode = 1;
+  }
+  clearTimeout(forceExit);
+  process.exit();
 }
 
 function serveBrowserAsset(req: IncomingMessage, res: ServerResponse): boolean {
@@ -122,4 +133,8 @@ function contentType(filePath: string): string {
 
 process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);
-if (EXIT_ON_STDIN_CLOSE) process.stdin.on('close', shutdown);
+if (EXIT_ON_STDIN_CLOSE) {
+  process.stdin.resume();
+  process.stdin.once('end', shutdown);
+  process.stdin.once('close', shutdown);
+}

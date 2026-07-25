@@ -12,6 +12,7 @@ import {
 } from '../../lib/desktop';
 import { closeTerminalForTab, ensureTerminalForTab } from '../../lib/terminal';
 import { useStore, type ThemeConfig } from '../../hooks/useStore';
+import { isTerminalTabShortcut } from '../../lib/keyboardShortcuts';
 
 export function TerminalWorkspace({
   tabId,
@@ -73,6 +74,12 @@ export function TerminalWorkspace({
         });
         const fitAddon = new fit.FitAddon();
         instance.loadAddon(fitAddon);
+        instance.attachCustomKeyEventHandler((event) => {
+          if (!isTerminalTabShortcut(event)) return true;
+          event.preventDefault();
+          event.stopPropagation();
+          return false;
+        });
         instance.open(hostRef.current);
         terminalRef.current = instance;
         fitRef.current = fitAddon;
@@ -194,7 +201,7 @@ export function TerminalWorkspace({
             : error || 'Terminal process exited.'}
         </div>
       )}
-      <div ref={hostRef} className="min-h-0 flex-1 overflow-hidden p-2" />
+      <div ref={hostRef} data-terminal-input className="min-h-0 flex-1 overflow-hidden p-2" />
     </div>
   );
 }

@@ -8,6 +8,10 @@ export function safeBrowserUrl(value: string | undefined, appOrigin: string | un
   return isSelfBrowserUrl(normalized, appOrigin) ? DEFAULT_BROWSER_URL : normalized;
 }
 
+export function browserAddressValue(value: string): string {
+  return value === DEFAULT_BROWSER_URL || isInternalBrowserUrl(value) ? '' : value;
+}
+
 export function isSelfBrowserUrl(value: string, appOrigin: string | undefined): boolean {
   if (!appOrigin || value === DEFAULT_BROWSER_URL) return false;
   try {

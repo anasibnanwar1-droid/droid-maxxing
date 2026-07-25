@@ -1,4 +1,5 @@
 const { contextBridge, ipcRenderer } = require('electron');
+const { isSensitiveBrowserKey, redactBrowserDiagnosticUrl } = require('./browserDiagnostics.cjs');
 
 let designMode = false;
 let pencilMode = false;
@@ -66,6 +67,25 @@ const textTags = new Set([
   'TH',
 ]);
 const mediaTags = new Set(['IMG', 'SVG', 'VIDEO', 'CANVAS', 'PICTURE', 'IFRAME']);
+const redactedTextTags = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT']);
+const urlAttributes = new Set([
+  'action',
+  'archive',
+  'background',
+  'cite',
+  'codebase',
+  'data',
+  'formaction',
+  'href',
+  'itemid',
+  'manifest',
+  'poster',
+  'profile',
+  'src',
+  'usemap',
+  'xlink:href',
+]);
+const redactedUrlAttributes = new Set(['ping', 'srcdoc', 'srcset', 'style']);
 const INTERNAL_ATTR = 'data-droid-design';
 const PENCIL_COLOR = '#ff8a2a';
 const designHost = document.createElement('div');
@@ -551,7 +571,10 @@ function selectOption(selector, value) {
   }
   const expected = String(value);
   const option = Array.from(target.options).find(
-    (item) => item.value === expected || cleanText(item.textContent) === expected,
+    (item) =>
+      item.value === expected ||
+      cleanText(item.label) === expected ||
+      cleanText(item.textContent) === expected,
   );
   if (!option) throw new Error(`Option "${expected}" is not available.`);
   target.value = option.value;
@@ -607,7 +630,7 @@ function collectRefs() {
 
 function refFor(el) {
   const rect = el.getBoundingClientRect();
-  const text = cleanText(el.innerText || el.textContent);
+  const text = safeElementText(el);
   const selector = selectorFor(el);
   const name = cleanText(
     el.getAttribute('aria-label') ||
@@ -633,7 +656,7 @@ function inspectElement(selector) {
   const el = document.querySelector(selector);
   if (!el) throw new Error('The inspected browser element is no longer available.');
   const rect = el.getBoundingClientRect();
-  const text = cleanText(el.innerText || el.textContent, 1000);
+  const text = safeElementText(el, 1000);
   const name = cleanText(
     el.getAttribute('aria-label') ||
       el.getAttribute('title') ||
@@ -672,7 +695,7 @@ function canAccessFrame(frame) {
 
 function sanitizedOuterHtml(el) {
   const clone = el.cloneNode(true);
-  if (/^(SCRIPT|STYLE|NOSCRIPT)$/.test(clone.tagName)) {
+  if (redactedTextTags.has(clone.tagName)) {
     clone.textContent = '[redacted]';
   } else {
     for (const node of clone.querySelectorAll('script,style,noscript')) node.remove();
@@ -683,7 +706,9 @@ function sanitizedOuterHtml(el) {
       const name = attr.name.toLowerCase();
       if (isSensitiveAttribute(name, node)) {
         node.setAttribute(attr.name, '[redacted]');
-      } else if (name === 'href' || name === 'src' || name === 'action') {
+      } else if (redactedUrlAttributes.has(name) || isMetaRefreshContent(name, node)) {
+        node.setAttribute(attr.name, '[redacted]');
+      } else if (urlAttributes.has(name)) {
         node.setAttribute(attr.name, sanitizeUrl(attr.value));
       }
     }
@@ -785,7 +810,7 @@ function textSelection() {
           attributes: attrsFor(el),
           styles: stylesFor(el),
           ancestors: ancestorsFor(el),
-          html: cleanText(el.outerHTML, 400) || undefined,
+          html: cleanText(sanitizedOuterHtml(el), 400) || undefined,
         }
       : undefined,
     url: location.href,
@@ -824,7 +849,7 @@ function clearTextHighlights() {
 function buildAnchor(el, selector, source) {
   const rect = el.getBoundingClientRect();
   const tag = el.tagName.toLowerCase();
-  const text = cleanText(el.innerText || el.textContent, 80);
+  const text = safeElementText(el, 80);
   const name = cleanText(
     el.getAttribute('aria-label') ||
       el.getAttribute('title') ||
@@ -854,7 +879,7 @@ function buildDetail(el, selector, verified) {
     attributes: attrsFor(el),
     styles: stylesFor(el),
     ancestors: ancestorsFor(el),
-    html: cleanText(el.outerHTML, 400) || undefined,
+    html: cleanText(sanitizedOuterHtml(el), 400) || undefined,
   };
 }
 
@@ -880,7 +905,7 @@ function isCandidate(el) {
     el.tabIndex >= 0
   )
     return true;
-  if (textTags.has(el.tagName) && cleanText(el.innerText || el.textContent)) return true;
+  if (textTags.has(el.tagName) && safeElementText(el)) return true;
   if (mediaTags.has(el.tagName)) return true;
   if (el.getAttribute('aria-label') || el.getAttribute('title') || el.getAttribute('data-testid'))
     return true;
@@ -964,10 +989,9 @@ function attrsFor(el) {
       out[name] = '\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022';
       continue;
     }
-    out[name] =
-      name === 'href' || name === 'src' || name === 'action'
-        ? sanitizeUrl(value).slice(0, 500)
-        : String(value).slice(0, 160);
+    out[name] = urlAttributes.has(name)
+      ? sanitizeUrl(value).slice(0, 500)
+      : String(value).slice(0, 160);
   }
   return out;
 }
@@ -983,24 +1007,19 @@ function isSensitiveAttribute(name, el) {
     return true;
   if (name !== 'content') return false;
   const fieldName = String(el.getAttribute && el.getAttribute('name')).toLowerCase();
-  return /(token|csrf|auth|secret|password|otp|code)/.test(fieldName);
+  return isSensitiveBrowserKey(fieldName);
 }
 
 function sanitizeUrl(value) {
-  try {
-    const url = new URL(String(value), location.href);
-    for (const key of [...url.searchParams.keys()]) {
-      if (/(token|key|secret|password|auth|signature|credential|code)/i.test(key)) {
-        url.searchParams.set(key, '[redacted]');
-      }
-    }
-    url.username = '';
-    url.password = '';
-    url.hash = '';
-    return url.href;
-  } catch {
-    return String(value);
-  }
+  return redactBrowserDiagnosticUrl(value, location.href);
+}
+
+function isMetaRefreshContent(name, el) {
+  return (
+    name === 'content' &&
+    el.tagName === 'META' &&
+    String(el.getAttribute('http-equiv') || '').toLowerCase() === 'refresh'
+  );
 }
 
 // Password and one-time-code fields must never reach the agent transcript, so
@@ -1377,8 +1396,7 @@ function labelFor(el) {
       el.getAttribute('placeholder') ||
       directText(el) ||
       el.id ||
-      el.innerText ||
-      el.textContent ||
+      safeElementText(el) ||
       '',
     40,
   );
@@ -1430,12 +1448,23 @@ function roleFor(el) {
 }
 
 function directText(el) {
+  if (redactedTextTags.has(el.tagName)) return '[redacted]';
   return cleanText(
     Array.from(el.childNodes)
       .filter((node) => node.nodeType === Node.TEXT_NODE)
       .map((node) => node.textContent || '')
       .join(' '),
   );
+}
+
+function safeElementText(el, max = 180) {
+  if (redactedTextTags.has(el.tagName)) return '[redacted]';
+  if (!el.querySelector('script,style,noscript')) {
+    return cleanText(el.innerText || el.textContent, max);
+  }
+  const clone = el.cloneNode(true);
+  for (const node of clone.querySelectorAll('script,style,noscript')) node.remove();
+  return cleanText(clone.textContent, max);
 }
 
 function cleanText(value, max = 180) {

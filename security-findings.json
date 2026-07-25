@@ -1,0 +1,79 @@
+{
+  "scan_id": "scan-2026-07-25-055",
+  "scan_date": "2026-07-25T17:33:59Z",
+  "scan_type": "pr",
+  "commit_range": "origin/main..working-tree",
+  "pr_number": 55,
+  "threat_model_version": "1.0.0",
+  "findings": [],
+  "reviewed_candidates": [
+    {
+      "id": "files-path-traversal-toctou",
+      "disposition": "mitigated",
+      "reason": "Root-token authorization, lexical and realpath confinement, symlink-walk checks, O_NOFOLLOW, and post-open device/inode verification prevent file-content disclosure outside the authorized root."
+    },
+    {
+      "id": "terminal-shell-args-env-override",
+      "disposition": "not-reachable",
+      "reason": "Renderer IPC forwards only missionId, cwd, cols, and rows; internal shell, args, and env overrides are not exposed through the production bridge."
+    },
+    {
+      "id": "terminal-environment-inheritance",
+      "disposition": "accepted-functionality",
+      "reason": "The PTY is an explicitly user-opened local shell, the sender is authorized, and inherited launch environment values are already available to that same local user."
+    },
+    {
+      "id": "native-browser-ipc-authorization",
+      "disposition": "mitigated",
+      "reason": "All new privileged native-browser IPC handlers authorize the main renderer; child-view events are mapped back to an owned native browser session."
+    },
+    {
+      "id": "browser-inspection-information-disclosure",
+      "disposition": "mitigated",
+      "reason": "Inspection and design payloads remove script, style, and noscript text, redact sensitive fields and attributes, sanitize URL-bearing attributes, and bound returned text and HTML."
+    },
+    {
+      "id": "browser-diagnostic-secret-leakage-redos",
+      "disposition": "mitigated",
+      "reason": "Diagnostic URLs and console messages redact credential-like values with bounded linear scanning, and network and console buffers are capped."
+    },
+    {
+      "id": "docx-preview-active-content",
+      "disposition": "mitigated",
+      "reason": "DOCX preview removes active elements, rejects unsafe CSS constructs, disables alt-chunk rendering, and sanitizes generated content before insertion."
+    },
+    {
+      "id": "legacy-renderer-xss-and-ipc-risks",
+      "disposition": "pre-existing",
+      "reason": "Unsafe SVG/Mermaid rendering and legacy unguarded IPC channels predate this PR; the PR does not introduce or weaken those paths."
+    },
+    {
+      "id": "browser-file-url-and-shared-partition",
+      "disposition": "pre-existing-accepted-risk",
+      "reason": "Local file navigation and a shared persistent browser partition are documented product trade-offs that predate the scanned change set."
+    }
+  ],
+  "summary": {
+    "total_findings": 0,
+    "by_severity": {
+      "CRITICAL": 0,
+      "HIGH": 0,
+      "MEDIUM": 0,
+      "LOW": 0
+    },
+    "by_stride": {
+      "Spoofing": 0,
+      "Tampering": 0,
+      "Repudiation": 0,
+      "InfoDisclosure": 0,
+      "DoS": 0,
+      "ElevationOfPrivilege": 0
+    },
+    "files_analyzed": 96
+  },
+  "thresholds": {
+    "block_merge": ["CRITICAL"],
+    "require_review": ["HIGH", "CRITICAL"],
+    "triggered": []
+  }
+}

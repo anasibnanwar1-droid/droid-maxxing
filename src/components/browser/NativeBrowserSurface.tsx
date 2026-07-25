@@ -217,9 +217,9 @@ export function NativeBrowserSurface({
         detachDesignMode = attachIframeDesignMode(iframe, {
           designMode,
           pencilMode,
-          onSelection,
+          onSelection: (selection) => onSelectionRef.current(selection),
         });
-        onLoaded({
+        onLoadedRef.current({
           sessionId: visibleSessionId ?? browserKey,
           url: readIframeUrl(iframe) ?? url,
         });
@@ -233,7 +233,7 @@ export function NativeBrowserSurface({
       iframe.removeEventListener('load', attach);
       detachDesignMode();
     };
-  }, [designMode, native, onLoaded, onSelection, pencilMode, url]);
+  }, [browserKey, designMode, native, pencilMode, url, visibleSessionId]);
 
   useLayoutEffect(() => {
     if (!native) return;

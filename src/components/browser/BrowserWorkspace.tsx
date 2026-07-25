@@ -32,7 +32,8 @@ import { DesignModeComposer } from './DesignModeComposer';
 import { composerStyleForReferences } from './browserComposerPosition';
 import { browserKeyForMission } from '../../lib/browserSessionIdentity';
 import { browserTranscriptReferencesFromDesignReferences } from './browserTranscriptReferences';
-import { isSelfBrowserUrl, safeBrowserUrl } from './browserUrlSafety';
+import { browserAddressValue, isSelfBrowserUrl, safeBrowserUrl } from './browserUrlSafety';
+import { shouldResetBrowserLoading } from './browserLoading';
 import { useElementSize } from './useElementSize';
 import { isEditTool } from '../../lib/diff';
 import { createLocalDesignTranscriptEvent, newQueueId } from '../../lib/promptQueue';
@@ -72,7 +73,7 @@ export default function BrowserWorkspace({
   const frameReady = frameSize.width > 8 && frameSize.height > 8;
   const fitViewport = useMemo(() => viewportFromFrame(frameSize, expanded), [expanded, frameSize]);
   const initialUrl = safeBrowserUrl(browser?.url, appOrigin);
-  const [urlInput, setUrlInput] = useState(initialUrl);
+  const [urlInput, setUrlInput] = useState(browserAddressValue(initialUrl));
   const [activeUrl, setActiveUrl] = useState(initialUrl);
   const [viewportMode, setViewportMode] = useState<BrowserViewportMode>(
     browser?.viewportMode ?? 'fit',
@@ -87,7 +88,10 @@ export default function BrowserWorkspace({
   const [canGoBack, setCanGoBack] = useState(browser?.canGoBack ?? false);
   const [canGoForward, setCanGoForward] = useState(browser?.canGoForward ?? false);
   const loadingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const browserIdentityRef = useRef(`${browserKey ?? ''}\0${browser?.sessionId ?? ''}`);
+  const browserIdentityRef = useRef({
+    browserKey,
+    sessionId: browser?.sessionId,
+  });
   const startLoading = useCallback(() => {
     if (loadingTimerRef.current) clearTimeout(loadingTimerRef.current);
     setLoading(true);
@@ -159,7 +163,7 @@ export default function BrowserWorkspace({
     if (!browser?.url) return;
     const nextUrl = safeBrowserUrl(browser.url, appOrigin);
     if (document.activeElement !== urlInputRef.current) {
-      setUrlInput(nextUrl);
+      setUrlInput(browserAddressValue(nextUrl));
     }
     if (nextUrl !== activeUrl) {
       setActiveUrl(nextUrl);
@@ -176,17 +180,36 @@ export default function BrowserWorkspace({
   }, [browser?.canGoBack, browser?.canGoForward]);
 
   useEffect(() => {
-    const browserIdentity = `${browserKey ?? ''}\0${browser?.sessionId ?? ''}`;
-    if (browserIdentityRef.current === browserIdentity) return;
+    const browserIdentity = { browserKey, sessionId: browser?.sessionId };
+    const previousIdentity = browserIdentityRef.current;
+    if (
+      previousIdentity.browserKey === browserIdentity.browserKey &&
+      previousIdentity.sessionId === browserIdentity.sessionId
+    )
+      return;
     browserIdentityRef.current = browserIdentity;
-    if (loadingTimerRef.current) {
-      clearTimeout(loadingTimerRef.current);
-      loadingTimerRef.current = null;
+    if (shouldResetBrowserLoading(previousIdentity, browserIdentity)) {
+      if (loadingTimerRef.current) {
+        clearTimeout(loadingTimerRef.current);
+        loadingTimerRef.current = null;
+      }
+      setLoading(false);
     }
-    setLoading(false);
     setCanGoBack(browser?.canGoBack ?? false);
     setCanGoForward(browser?.canGoForward ?? false);
-  }, [browser?.canGoBack, browser?.canGoForward, browser?.sessionId, browserKey]);
+    const nextUrl = safeBrowserUrl(browser?.url, appOrigin);
+    setActiveUrl(nextUrl);
+    if (document.activeElement !== urlInputRef.current) {
+      setUrlInput(browserAddressValue(nextUrl));
+    }
+  }, [
+    appOrigin,
+    browser?.canGoBack,
+    browser?.canGoForward,
+    browser?.sessionId,
+    browser?.url,
+    browserKey,
+  ]);
 
   useEffect(() => {
     if (browser?.viewport && browser.viewportMode === 'custom') {
@@ -253,7 +276,7 @@ export default function BrowserWorkspace({
     const url = safeBrowserUrl(normalizedUrl, appOrigin);
     setLoadFailure(null);
     startLoading();
-    setUrlInput(url);
+    setUrlInput(browserAddressValue(url));
     setActiveUrl(url);
     if (browserKey) {
       openBrowser({
@@ -451,8 +474,10 @@ export default function BrowserWorkspace({
               stopLoading();
               setCanGoBack(event.canGoBack ?? canGoBack);
               setCanGoForward(event.canGoForward ?? canGoForward);
-              setActiveUrl(event.url);
-              if (document.activeElement !== urlInputRef.current) setUrlInput(event.url);
+              const nextUrl = safeBrowserUrl(event.url, appOrigin);
+              setActiveUrl(nextUrl);
+              if (document.activeElement !== urlInputRef.current)
+                setUrlInput(browserAddressValue(nextUrl));
               if (browserKey && event.sessionId) {
                 dispatch({
                   type: 'BROWSER_NAVIGATED',

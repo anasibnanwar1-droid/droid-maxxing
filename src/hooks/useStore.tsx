@@ -1877,6 +1877,16 @@ function baseReducer(state: AppState, action: Action): AppState {
         browserOpenKeys: hidden
           ? state.browserOpenKeys
           : withBrowserOpenKey(state.browserOpenKeys, missionId, true),
+        utilityPanels: hidden
+          ? state.utilityPanels
+          : {
+              ...state.utilityPanels,
+              [missionId]: openUtilityTool(
+                state.utilityPanels[missionId],
+                'browser',
+                () => `browser:${missionId}`,
+              ),
+            },
       };
     }
 
