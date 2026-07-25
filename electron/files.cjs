@@ -469,17 +469,17 @@ async function readExactBytes(handle, length) {
 
 async function readPreview(rootDir, relativePath) {
   const resolved = await resolveWithin(rootDir, relativePath);
-  const expectedStat = await fsp.lstat(resolved.target);
-  if (!expectedStat.isFile()) {
-    const err = new Error('not a file');
-    err.code = 'EINVAL';
-    throw err;
-  }
   const noFollow = process.platform === 'win32' ? 0 : fs.constants.O_NOFOLLOW;
   const handle = await fsp.open(resolved.target, fs.constants.O_RDONLY | noFollow);
   try {
     const stat = await handle.stat();
-    if (!stat.isFile() || stat.dev !== expectedStat.dev || stat.ino !== expectedStat.ino) {
+    if (!stat.isFile()) {
+      const err = new Error('not a file');
+      err.code = 'EINVAL';
+      throw err;
+    }
+    const pathStat = await fsp.lstat(resolved.target);
+    if (stat.dev !== pathStat.dev || stat.ino !== pathStat.ino) {
       throw new Error('file changed during preview');
     }
     const name = path.basename(resolved.target);
@@ -561,12 +561,6 @@ function containsBinaryProbe(buffer) {
  */
 async function openDefault(rootDir, relativePath, shell) {
   const resolved = await resolveWithin(rootDir, relativePath);
-  const expectedStat = await fsp.lstat(resolved.target);
-  if (!expectedStat.isFile()) {
-    const err = new Error('not a file');
-    err.code = 'EINVAL';
-    throw err;
-  }
   const openPath = shell?.openPath;
   if (typeof openPath !== 'function') {
     throw new Error('shell.openPath is required');
@@ -575,7 +569,13 @@ async function openDefault(rootDir, relativePath, shell) {
   const handle = await fsp.open(resolved.target, fs.constants.O_RDONLY | noFollow);
   try {
     const stat = await handle.stat();
-    if (!stat.isFile() || stat.dev !== expectedStat.dev || stat.ino !== expectedStat.ino) {
+    if (!stat.isFile()) {
+      const err = new Error('not a file');
+      err.code = 'EINVAL';
+      throw err;
+    }
+    const pathStat = await fsp.lstat(resolved.target);
+    if (stat.dev !== pathStat.dev || stat.ino !== pathStat.ino) {
       throw new Error('file changed before open');
     }
     const openError = await openPath(resolved.target);

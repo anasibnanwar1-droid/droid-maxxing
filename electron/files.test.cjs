@@ -64,6 +64,28 @@ test.after(async () => {
   ]);
 });
 
+async function expectPostOpenIdentityMismatch(operation) {
+  const originalOpen = fsp.open;
+  const originalLstat = fsp.lstat;
+  let opened = false;
+  fsp.open = async (...args) => {
+    const handle = await originalOpen(...args);
+    opened = true;
+    return handle;
+  };
+  fsp.lstat = async (...args) => {
+    assert.equal(opened, true, 'path identity must be checked after opening the descriptor');
+    const stat = await originalLstat(...args);
+    return { ...stat, ino: Number(stat.ino) + 1 };
+  };
+  try {
+    await assert.rejects(operation, /file changed/);
+  } finally {
+    fsp.open = originalOpen;
+    fsp.lstat = originalLstat;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Path safety
 // ---------------------------------------------------------------------------
@@ -281,6 +303,10 @@ test('readPreview rejects traversal into a symlink escape', async () => {
   await assert.rejects(() => readPreview(root, 'file-escape'), /escapes root/);
 });
 
+test('readPreview verifies path identity after opening the descriptor', async () => {
+  await expectPostOpenIdentityMismatch(() => readPreview(root, 'beta.txt'));
+});
+
 // ---------------------------------------------------------------------------
 // openDefault / revealInFolder with injected shell doubles
 // ---------------------------------------------------------------------------
@@ -323,6 +349,15 @@ test('openDefault rejects directories and path escapes', async () => {
   };
   await assert.rejects(() => openDefault(root, 'sub', shell), { code: 'EINVAL' });
   await assert.rejects(() => openDefault(root, '../outside', shell), /escapes root/);
+});
+
+test('openDefault verifies path identity after opening the descriptor', async () => {
+  const shell = {
+    async openPath() {
+      assert.fail('openPath must not run after an identity mismatch');
+    },
+  };
+  await expectPostOpenIdentityMismatch(() => openDefault(root, 'alpha.md', shell));
 });
 
 test('revealInFolder invokes the injected shell.showItemInFolder for files and directories', async () => {
