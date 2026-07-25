@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { loadPersistedUiState } from './useStore';
+import { loadPersistedUiState, normalizeDiffStyle } from './useStore';
 import {
   applyFactoryCompactionDefaults,
   compactionSettingsSnapshot,
@@ -11,6 +11,13 @@ test('loadPersistedUiState returns an empty snapshot when storage is empty', () 
   withLocalStorage(null, () => {
     assert.deepEqual(loadPersistedUiState(), {});
   });
+});
+
+test('normalizeDiffStyle migrates the legacy symbol style and rejects invalid values', () => {
+  assert.equal(normalizeDiffStyle('soft'), 'soft');
+  assert.equal(normalizeDiffStyle('focused'), 'focused');
+  assert.equal(normalizeDiffStyle('symbol'), 'focused');
+  assert.equal(normalizeDiffStyle('unknown'), 'soft');
 });
 
 test('loadPersistedUiState sanitizes persisted shell fields', () => {

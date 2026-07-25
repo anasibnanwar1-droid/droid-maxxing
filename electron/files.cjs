@@ -367,6 +367,7 @@ function compareEntries(a, b) {
  */
 async function listDirectory(rootDir, relativePath, options = {}) {
   const cap = clampCap(options.cap);
+  const lstat = options.lstat ?? ((target) => fsp.lstat(target));
   const resolved = await resolveWithin(rootDir, relativePath);
   const stat = await fsp.lstat(resolved.target);
   if (!stat.isDirectory()) {
@@ -397,22 +398,22 @@ async function listDirectory(rootDir, relativePath, options = {}) {
     // Skip socket / FIFO / device / unknown node types entirely; only files
     // and directories are meaningful in the Files tab.
     if (!dirent.isDirectory() && !dirent.isFile()) continue;
+    totalSeen += 1;
+    if (entries.length >= cap) {
+      capped = true;
+      continue;
+    }
     const childPath = path.join(resolved.target, dirent.name);
     let size = 0;
     let mtimeMs = 0;
     try {
-      const childStat = await fsp.lstat(childPath);
+      const childStat = await lstat(childPath);
       size = childStat.size;
       mtimeMs = Math.floor(Number(childStat.mtimeMs) || 0);
     } catch {
       // Lstat failure for a single child should not poison the whole listing.
       size = 0;
       mtimeMs = 0;
-    }
-    totalSeen += 1;
-    if (entries.length >= cap) {
-      capped = true;
-      continue;
     }
     entries.push({
       name: dirent.name,

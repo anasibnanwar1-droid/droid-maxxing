@@ -5,11 +5,11 @@ import {
   ChevronLeft,
   ChevronRight,
   ExternalLink,
-  FileText,
   FolderSearch,
   Loader2,
   X,
 } from 'lucide-react';
+import { Highlight, type PrismTheme } from 'prism-react-renderer';
 import {
   openFileDefault,
   readFilePreview,
@@ -17,6 +17,7 @@ import {
   type FilePreviewPayload,
 } from '../../lib/desktop';
 import {
+  createSanitizedDocxElementFactory,
   DOCX_PREVIEW_OPTIONS,
   loadPdfDocumentForPreview,
   parseDelimitedText,
@@ -24,8 +25,11 @@ import {
 } from '../../lib/filePreview';
 import { Markdown } from '../Markdown';
 import { toast } from '../../lib/toast';
+import { FileTypeIcon } from '../FileTypeIcon';
+import { resolveFilePresentation } from '../../lib/filePresentation';
 
 const TEXT_CHAR_LIMIT = 250_000;
+const HIGHLIGHT_CHAR_LIMIT = 120_000;
 const TABLE_ROW_LIMIT = 500;
 const TABLE_COL_LIMIT = 50;
 const PDF_RENDER_SCALE = 1.4;
@@ -42,7 +46,7 @@ type PreviewState =
   | { kind: 'error'; message: string }
   | { kind: 'ready'; payload: FilePreviewPayload };
 
-function normalizeBytes(data: unknown): Uint8Array {
+export function normalizePreviewBytes(data: unknown): Uint8Array {
   if (data instanceof Uint8Array) return data;
   if (Array.isArray(data)) return new Uint8Array(data);
   if (data && typeof data === 'object') {
@@ -67,6 +71,33 @@ function extensionOf(name: string): string {
 
 const MARKDOWN_EXTENSIONS = new Set(['md', 'markdown', 'mdx']);
 const TABULAR_EXTENSIONS = new Set(['csv', 'tsv']);
+const CODE_THEME: PrismTheme = {
+  plain: { color: 'var(--droid-text-secondary)' },
+  styles: [
+    {
+      types: ['comment', 'prolog', 'doctype', 'cdata'],
+      style: { color: 'var(--droid-text-muted)' },
+    },
+    {
+      types: ['property', 'tag', 'boolean', 'number', 'constant', 'symbol', 'deleted'],
+      style: { color: 'var(--droid-red)' },
+    },
+    {
+      types: ['selector', 'attr-name', 'string', 'char', 'builtin', 'inserted'],
+      style: { color: 'var(--droid-green)' },
+    },
+    {
+      types: ['operator', 'entity', 'url', 'string-variable'],
+      style: { color: 'var(--droid-text-secondary)' },
+    },
+    {
+      types: ['atrule', 'attr-value', 'keyword'],
+      style: { color: 'var(--droid-orange)' },
+    },
+    { types: ['function', 'class-name'], style: { color: 'var(--droid-accent)' } },
+    { types: ['regex', 'important', 'variable'], style: { color: 'var(--droid-orange)' } },
+  ],
+};
 
 function ToolbarButton({
   title,
@@ -135,7 +166,7 @@ export function FilePreviewPane({ accessToken, relative, onClear }: FilePreviewP
   return (
     <section className="flex min-h-0 min-w-0 flex-1 flex-col bg-droid-bg">
       <header className="flex h-9 shrink-0 items-center gap-2 border-b border-droid-border px-2.5">
-        <FileText className="h-3.5 w-3.5 shrink-0 text-droid-text-muted" />
+        <FileTypeIcon filename={fileName} className="h-3.5 w-3.5" />
         <span
           className="min-w-0 flex-1 truncate text-[11.5px] text-droid-text-secondary"
           title={relative}
@@ -316,11 +347,47 @@ function TextPreview({ text, fileName }: { text: string; fileName: string }) {
           <Markdown allowDiagrams={false}>{visibleText}</Markdown>
         </div>
       ) : (
-        <pre className="px-4 py-3 font-mono text-[11.5px] leading-[1.6] text-droid-text-secondary [overflow-wrap:anywhere]">
-          <code className="whitespace-pre">{visibleText}</code>
-        </pre>
+        <SyntaxCodePreview code={visibleText} fileName={fileName} />
       )}
     </div>
+  );
+}
+
+function SyntaxCodePreview({ code, fileName }: { code: string; fileName: string }) {
+  const language = resolveFilePresentation(fileName).language;
+  if (!language || code.length > HIGHLIGHT_CHAR_LIMIT) {
+    return (
+      <pre className="px-4 py-3 font-mono text-[11.5px] leading-[1.6] text-droid-text-secondary [overflow-wrap:anywhere]">
+        <code className="whitespace-pre-wrap break-all">{code}</code>
+      </pre>
+    );
+  }
+
+  return (
+    <Highlight theme={CODE_THEME} code={code} language={language}>
+      {({ tokens, getLineProps, getTokenProps, className, style }) => (
+        <pre
+          className={`${className} min-w-0 px-2 py-3 font-mono text-[11.5px] leading-[1.6]`}
+          style={{ ...style, background: 'transparent' }}
+        >
+          {tokens.map((line, lineIndex) => {
+            const lineProps = getLineProps({ line });
+            return (
+              <div {...lineProps} key={lineIndex} className={`${lineProps.className} flex min-w-0`}>
+                <span className="w-9 shrink-0 select-none pr-3 text-right text-droid-text-muted/50">
+                  {lineIndex + 1}
+                </span>
+                <span className="min-w-0 flex-1 whitespace-pre-wrap break-all">
+                  {line.map((token, tokenIndex) => (
+                    <span {...getTokenProps({ token })} key={tokenIndex} />
+                  ))}
+                </span>
+              </div>
+            );
+          })}
+        </pre>
+      )}
+    </Highlight>
   );
 }
 
@@ -376,10 +443,16 @@ function CsvPreview({
 }
 
 function ImagePreview({ data, fileName }: { data?: Uint8Array; fileName: string }) {
-  const bytes = useMemo(() => normalizeBytes(data), [data]);
+  const bytes = useMemo(() => normalizePreviewBytes(data), [data]);
   const [url, setUrl] = useState('');
+  const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   useEffect(() => {
-    if (!bytes.length) return;
+    setUrl('');
+    setStatus('loading');
+    if (!bytes.length) {
+      setStatus('error');
+      return;
+    }
     const blobUrl = URL.createObjectURL(
       new Blob([bytes as unknown as BlobPart], { type: imageMimeType(fileName) }),
     );
@@ -388,15 +461,42 @@ function ImagePreview({ data, fileName }: { data?: Uint8Array; fileName: string 
       URL.revokeObjectURL(blobUrl);
     };
   }, [bytes, fileName]);
-  if (!url) return null;
+  if (status === 'error') {
+    return (
+      <div className="flex h-full flex-col items-center justify-center gap-2 px-6 text-center">
+        <AlertTriangle className="h-5 w-5 text-amber-400" />
+        <p className="text-[12px] text-droid-text-secondary">Failed to render this image.</p>
+      </div>
+    );
+  }
+  if (!url) {
+    return (
+      <div className="flex h-full items-center justify-center gap-2 text-[12px] text-droid-text-muted">
+        <Loader2 className="h-4 w-4 animate-spin" />
+        Loading image…
+      </div>
+    );
+  }
   return (
-    <div className="flex h-full items-center justify-center overflow-auto p-4">
-      <img src={url} alt="Preview" className="max-h-full max-w-full object-contain" />
+    <div className="image-checkerboard relative flex h-full items-center justify-center overflow-auto p-4">
+      {status === 'loading' && (
+        <div className="absolute right-3 top-3 flex items-center gap-1.5 rounded-md border border-droid-border bg-droid-surface/90 px-2 py-1 text-[10px] text-droid-text-muted shadow-sm">
+          <Loader2 className="h-3 w-3 animate-spin" />
+          Decoding…
+        </div>
+      )}
+      <img
+        src={url}
+        alt={`Preview of ${fileName}`}
+        className="max-h-full max-w-full rounded-sm object-contain shadow-lg"
+        onLoad={() => setStatus('ready')}
+        onError={() => setStatus('error')}
+      />
     </div>
   );
 }
 
-function imageMimeType(fileName: string): string {
+export function imageMimeType(fileName: string): string {
   switch (extensionOf(fileName)) {
     case 'svg':
       return 'image/svg+xml';
@@ -434,7 +534,7 @@ function loadPdfjs(): ReturnType<typeof loadPdfjsImpl> {
 }
 
 function PdfPreview({ data }: { data?: Uint8Array }) {
-  const bytes = useMemo(() => normalizeBytes(data), [data]);
+  const bytes = useMemo(() => normalizePreviewBytes(data), [data]);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const documentRef = useRef<PDFDocumentProxy | null>(null);
   const [page, setPage] = useState(1);
@@ -556,28 +656,33 @@ function PdfPreview({ data }: { data?: Uint8Array }) {
 }
 
 function DocxPreview({ data }: { data?: Uint8Array }) {
-  const bytes = useMemo(() => normalizeBytes(data), [data]);
+  const bytes = useMemo(() => normalizePreviewBytes(data), [data]);
   const containerRef = useRef<HTMLDivElement>(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (!containerRef.current || !bytes.length) return;
+    if (!containerRef.current) return;
+    if (!bytes.length) {
+      containerRef.current.replaceChildren();
+      setError('');
+      setLoading(false);
+      return;
+    }
     let cancelled = false;
     const container = containerRef.current;
-    const renderedBody = document.createElement('div');
-    const renderedStyles = document.createElement('div');
+    const renderingDocument = document.implementation.createHTMLDocument('');
+    const renderedBody = renderingDocument.createElement('div');
+    const renderedStyles = renderingDocument.createElement('div');
     container.innerHTML = '';
     setLoading(true);
     setError('');
     import('docx-preview')
       .then(({ renderAsync }) =>
-        renderAsync(
-          new Blob([bytes as unknown as BlobPart]),
-          renderedBody,
-          renderedStyles,
-          DOCX_PREVIEW_OPTIONS,
-        ),
+        renderAsync(new Blob([bytes as unknown as BlobPart]), renderedBody, renderedStyles, {
+          ...DOCX_PREVIEW_OPTIONS,
+          h: createSanitizedDocxElementFactory(renderingDocument),
+        }),
       )
       .then(() => {
         if (!cancelled) {
@@ -636,14 +741,19 @@ interface XlsxSheet {
 }
 
 function XlsxPreview({ data }: { data?: Uint8Array }) {
-  const bytes = useMemo(() => normalizeBytes(data), [data]);
+  const bytes = useMemo(() => normalizePreviewBytes(data), [data]);
   const [sheets, setSheets] = useState<XlsxSheet[]>([]);
   const [activeSheet, setActiveSheet] = useState(0);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (!bytes.length) return;
+    if (!bytes.length) {
+      setSheets([]);
+      setError('');
+      setLoading(false);
+      return;
+    }
     let cancelled = false;
     setLoading(true);
     setError('');

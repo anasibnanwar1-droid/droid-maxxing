@@ -294,6 +294,7 @@ export default function App() {
     const handler = (e: KeyboardEvent) => {
       if (e.ctrlKey && e.key === '`') {
         e.preventDefault();
+        if (e.repeat) return;
         openUtilityTool('terminal');
         return;
       }

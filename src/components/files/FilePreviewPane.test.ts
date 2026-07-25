@@ -2,6 +2,16 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { PDFDocumentLoadingTask, PDFDocumentProxy } from 'pdfjs-dist';
 import { loadPdfDocumentForPreview, parseDelimitedText } from '../../lib/filePreview';
+import { imageMimeType, normalizePreviewBytes } from './FilePreviewPane';
+
+test('image previews normalize Electron Buffer payloads without losing bytes', () => {
+  assert.deepEqual(
+    Array.from(normalizePreviewBytes({ type: 'Buffer', data: [137, 80, 78, 71] })),
+    [137, 80, 78, 71],
+  );
+  assert.equal(imageMimeType('image.PNG'), 'image/png');
+  assert.equal(imageMimeType('photo.jpeg'), 'image/jpeg');
+});
 
 test('delimited previews discard columns beyond the visible column limit', () => {
   const firstRow = Array.from({ length: 60 }, (_, index) => `value${index + 1}`).join(',');
@@ -76,4 +86,28 @@ test('PDF loading destroys a completed task when cancellation wins the race', as
 
   assert.equal(await loading, null);
   assert.equal(destroyed, 1);
+});
+
+test('PDF loading disables JavaScript evaluation', async () => {
+  const document = { numPages: 1 } as PDFDocumentProxy;
+  const loadingTask = {
+    promise: Promise.resolve(document),
+    destroy: async () => {},
+  } as PDFDocumentLoadingTask;
+  let options: { data: Uint8Array; isEvalSupported: boolean } | undefined;
+
+  const result = await loadPdfDocumentForPreview(
+    async () => ({
+      getDocument: (input) => {
+        options = input;
+        return loadingTask;
+      },
+    }),
+    new Uint8Array([1, 2, 3]),
+    () => false,
+    () => {},
+  );
+
+  assert.equal(result, document);
+  assert.equal(options?.isEvalSupported, false);
 });

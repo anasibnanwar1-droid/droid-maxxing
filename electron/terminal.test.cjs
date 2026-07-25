@@ -114,6 +114,25 @@ test('terminal manager keeps a PTY alive until explicit kill', async () => {
   assert.equal(manager.list().length, 0);
 });
 
+test('explicit kill does not retain the terminal after its PTY exits', async () => {
+  const cleanups = [];
+  const { manager, instances } = fixture({
+    setTimeout: (callback) => {
+      cleanups.push(callback);
+      return { unref() {} };
+    },
+    clearTimeout: () => {},
+    exitRetentionMs: 10,
+  });
+  const terminal = await manager.create({ missionId: 'mission-1', cwd: '/repo' });
+
+  manager.kill(terminal.id);
+  instances[0].emitExit();
+
+  assert.equal(cleanups.length, 0);
+  assert.equal(manager.list().length, 0);
+});
+
 test('terminal manager caps dimensions before spawning and resizing the PTY', async () => {
   const { manager, instances } = fixture();
   const terminal = await manager.create({

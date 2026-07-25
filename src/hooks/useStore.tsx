@@ -82,6 +82,8 @@ export interface AgentModelConfig {
 
 export type AgentConfig = Record<AgentKind, AgentModelConfig>;
 
+export type DiffStyle = 'soft' | 'focused';
+
 export interface ThemeConfig {
   mode: 'dark' | 'light' | 'system';
   accent: string;
@@ -93,7 +95,7 @@ export interface ThemeConfig {
   uiFontSize: number;
   codeFontSize: number;
   translucentSidebar: boolean;
-  diffStyle: 'color' | 'symbol';
+  diffStyle: DiffStyle;
   contrast: number;
 }
 
@@ -379,7 +381,7 @@ const defaultTheme: ThemeConfig = {
   uiFontSize: 14,
   codeFontSize: 12,
   translucentSidebar: false,
-  diffStyle: 'color',
+  diffStyle: 'soft',
   contrast: 100,
 };
 
@@ -425,11 +427,17 @@ function neutralAccentFor(bg: string): string {
   return Number.isFinite(lum) && lum >= 0.4 ? '#1a1a1a' : '#f2f2f2';
 }
 
+export function normalizeDiffStyle(value: unknown): DiffStyle {
+  if (value === 'focused' || value === 'symbol') return 'focused';
+  return 'soft';
+}
+
 function loadTheme(): ThemeConfig {
   try {
     const storage = getLocalStorage();
     const saved = storage?.getItem('droid-theme');
-    const theme = saved ? { ...defaultTheme, ...JSON.parse(saved) } : defaultTheme;
+    const theme = saved ? { ...defaultTheme, ...JSON.parse(saved) } : { ...defaultTheme };
+    theme.diffStyle = normalizeDiffStyle(theme.diffStyle);
     // One-time migration: a saved accent still carrying an old fixed-orange
     // default was never deliberately chosen, so neutralize it once. Keying off a
     // persisted flag (not the accent value) lets a user later pick that same

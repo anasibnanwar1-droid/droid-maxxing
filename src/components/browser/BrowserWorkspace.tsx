@@ -87,6 +87,7 @@ export default function BrowserWorkspace({
   const [canGoBack, setCanGoBack] = useState(browser?.canGoBack ?? false);
   const [canGoForward, setCanGoForward] = useState(browser?.canGoForward ?? false);
   const loadingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const browserIdentityRef = useRef(`${browserKey ?? ''}\0${browser?.sessionId ?? ''}`);
   const startLoading = useCallback(() => {
     if (loadingTimerRef.current) clearTimeout(loadingTimerRef.current);
     setLoading(true);
@@ -173,6 +174,19 @@ export default function BrowserWorkspace({
     if (typeof browser?.canGoBack === 'boolean') setCanGoBack(browser.canGoBack);
     if (typeof browser?.canGoForward === 'boolean') setCanGoForward(browser.canGoForward);
   }, [browser?.canGoBack, browser?.canGoForward]);
+
+  useEffect(() => {
+    const browserIdentity = `${browserKey ?? ''}\0${browser?.sessionId ?? ''}`;
+    if (browserIdentityRef.current === browserIdentity) return;
+    browserIdentityRef.current = browserIdentity;
+    if (loadingTimerRef.current) {
+      clearTimeout(loadingTimerRef.current);
+      loadingTimerRef.current = null;
+    }
+    setLoading(false);
+    setCanGoBack(browser?.canGoBack ?? false);
+    setCanGoForward(browser?.canGoForward ?? false);
+  }, [browser?.canGoBack, browser?.canGoForward, browser?.sessionId, browserKey]);
 
   useEffect(() => {
     if (browser?.viewport && browser.viewportMode === 'custom') {

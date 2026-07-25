@@ -235,7 +235,7 @@ function ThinkingItem({
         onClick={() => setOpen((o) => !o)}
         className="group flex items-center gap-1.5 text-left"
       >
-        <Caret open={active ? true : open} />
+        <Caret open={open} />
         {active ? (
           <span className="shimmer-text text-[13px] font-medium">{label}</span>
         ) : (
@@ -244,7 +244,7 @@ function ThinkingItem({
           </span>
         )}
       </button>
-      <Expand open={active ? true : open}>
+      <Expand open={open}>
         <div className="mt-2 pl-[18px] text-[12.5px] text-droid-text-muted/55 leading-[1.7] whitespace-pre-wrap break-words">
           {text}
           {active && <StreamingCaret />}

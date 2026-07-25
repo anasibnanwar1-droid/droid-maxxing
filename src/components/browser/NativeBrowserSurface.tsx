@@ -4,8 +4,10 @@ import { isDesktop } from '../../lib/desktop';
 import {
   attachIframeDesignMode,
   clickIframe,
+  hoverIframe,
   keypressIframe,
   scrollIframe,
+  selectOptionIframe,
   snapshotIframe,
   typeIntoIframe,
 } from '../../lib/iframeDesignMode';
@@ -534,6 +536,11 @@ async function performIframeRequest(
     }
     if (request.action === 'click') {
       await clickIframe(iframe, Number(request.x), Number(request.y));
+    } else if (request.action === 'hover') {
+      await hoverIframe(iframe, Number(request.x), Number(request.y), request.selector);
+    } else if (request.action === 'selectOption') {
+      if (!request.selector) throw new Error('A selector is required to select an option.');
+      await selectOptionIframe(iframe, request.selector, request.text ?? '');
     } else if (request.action === 'type') {
       await typeIntoIframe(iframe, request.text ?? '');
     } else if (request.action === 'keypress') {

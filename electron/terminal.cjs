@@ -149,6 +149,7 @@ function createTerminalManager(opts) {
       exited: false,
       exitCode: null,
       signal: null,
+      disposed: false,
       createdAt: Date.now(),
       cleanupTimer: null,
     };
@@ -236,6 +237,7 @@ function createTerminalManager(opts) {
     });
 
     ptyInstance.onExit(({ exitCode, signal }) => {
+      if (entry.disposed) return;
       entry.exited = true;
       entry.exitCode = typeof exitCode === 'number' ? exitCode : null;
       entry.signal = typeof signal === 'undefined' ? null : signal;
@@ -377,6 +379,7 @@ function createTerminalManager(opts) {
   function kill(id) {
     const e = terminals.get(id);
     if (!e) return;
+    e.disposed = true;
     if (e.cleanupTimer) cancelTimeout(e.cleanupTimer);
     e.subscribers.clear();
     e.exitSubscribers.clear();

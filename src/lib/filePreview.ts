@@ -13,6 +13,7 @@
  * to render an unsupported payload.
  */
 
+import type { HElement } from 'docx-preview';
 import type { PDFDocumentLoadingTask, PDFDocumentProxy } from 'pdfjs-dist';
 
 export type PreviewCategory = 'text' | 'image' | 'pdf' | 'docx' | 'xlsx' | 'external';
@@ -37,17 +38,15 @@ const DOCX_URL_ATTRIBUTES = new Set([
   'formaction',
   'poster',
 ]);
+const DOCX_MARKUP_ATTRIBUTES = new Set(['innerhtml', 'outerhtml', 'srcdoc']);
 
-function isUnsafeDocxUrl(value: string): boolean {
+function isSafeDocxUrl(value: string): boolean {
   let normalized = '';
   for (const character of value.trim()) {
-    if (character.charCodeAt(0) > 0x20) normalized += character.toLowerCase();
+    const codePoint = character.charCodeAt(0);
+    if (codePoint > 0x20 && codePoint !== 0x7f) normalized += character;
   }
-  return (
-    normalized.startsWith('javascript:') ||
-    normalized.startsWith('vbscript:') ||
-    normalized.startsWith('data:')
-  );
+  return normalized === '' || normalized.startsWith('#') || /^blob:/i.test(normalized);
 }
 
 function normalizeCssForSecurity(value: string): string {
@@ -88,6 +87,65 @@ export function sanitizeDocxCssText(css: string): string {
   return css;
 }
 
+function sanitizeDocxStyle(style: HElement['style']): HElement['style'] | undefined {
+  if (typeof style === 'string') return sanitizeDocxCssText(style) || undefined;
+  if (!style) return undefined;
+
+  const sanitized = Object.fromEntries(
+    Object.entries(style).filter(
+      ([property, value]) => sanitizeDocxCssText(`${property}:${value}`) !== '',
+    ),
+  );
+  return Object.keys(sanitized).length > 0 ? sanitized : undefined;
+}
+
+export function createSanitizedDocxElementFactory(document: Document) {
+  const blockedTags = new Set(
+    DOCX_ACTIVE_CONTENT_SELECTOR.split(',').map((selector) => selector.trim()),
+  );
+
+  const create = (input: HElement | Node | string): Node => {
+    if (typeof input === 'string') return document.createTextNode(input);
+    if (typeof (input as Node).nodeType === 'number') return input as Node;
+
+    const { ns, tagName, className, style, children, ...props } = input as HElement;
+    const normalizedTag = tagName.toLowerCase();
+    if (normalizedTag === '#fragment') return document.createDocumentFragment();
+    if (normalizedTag === '#comment') {
+      return document.createComment(String(children?.[0] ?? ''));
+    }
+    if (blockedTags.has(normalizedTag)) return document.createDocumentFragment();
+
+    const element = ns ? document.createElementNS(ns, tagName) : document.createElement(tagName);
+    if (className) element.setAttribute('class', className);
+
+    const safeStyle = sanitizeDocxStyle(style);
+    if (typeof safeStyle === 'string') {
+      element.setAttribute('style', safeStyle);
+    } else if (safeStyle) {
+      Object.assign((element as HTMLElement).style, safeStyle);
+    }
+
+    for (const [name, value] of Object.entries(props)) {
+      const normalizedName = name.toLowerCase();
+      if (
+        value === undefined ||
+        normalizedName.startsWith('on') ||
+        DOCX_MARKUP_ATTRIBUTES.has(normalizedName) ||
+        (DOCX_URL_ATTRIBUTES.has(normalizedName) && !isSafeDocxUrl(String(value)))
+      ) {
+        continue;
+      }
+      (element as unknown as Record<string, unknown>)[name] = value;
+    }
+
+    for (const child of children ?? []) element.appendChild(create(child));
+    return element;
+  };
+
+  return create;
+}
+
 export function sanitizeDocxPreview(container: ParentNode): void {
   container.querySelectorAll('style').forEach((element) => {
     const css = sanitizeDocxCssText(element.textContent ?? '');
@@ -104,9 +162,9 @@ export function sanitizeDocxPreview(container: ParentNode): void {
       const name = attribute.name.toLowerCase();
       if (
         name.startsWith('on') ||
-        name === 'srcdoc' ||
-        (DOCX_URL_ATTRIBUTES.has(name) && isUnsafeDocxUrl(attribute.value)) ||
-        (element.tagName.toLowerCase() === 'a' && name === 'href')
+        DOCX_MARKUP_ATTRIBUTES.has(name) ||
+        (name === 'style' && !sanitizeDocxCssText(attribute.value)) ||
+        (DOCX_URL_ATTRIBUTES.has(name) && !isSafeDocxUrl(attribute.value))
       ) {
         element.removeAttribute(attribute.name);
       }
@@ -299,7 +357,7 @@ export function previewSizeLabel(category: PreviewCategory): string {
 
 export async function loadPdfDocumentForPreview(
   loadLibrary: () => Promise<{
-    getDocument: (input: { data: Uint8Array }) => PDFDocumentLoadingTask;
+    getDocument: (input: { data: Uint8Array; isEvalSupported: boolean }) => PDFDocumentLoadingTask;
   }>,
   bytes: Uint8Array,
   isCancelled: () => boolean,
@@ -307,7 +365,10 @@ export async function loadPdfDocumentForPreview(
 ): Promise<PDFDocumentProxy | null> {
   const pdfjsLib = await loadLibrary();
   if (isCancelled()) return null;
-  const loadingTask = pdfjsLib.getDocument({ data: bytes.slice() });
+  const loadingTask = pdfjsLib.getDocument({
+    data: bytes.slice(),
+    isEvalSupported: false,
+  });
   onLoadingTask(loadingTask);
   const doc = await loadingTask.promise;
   if (isCancelled()) {

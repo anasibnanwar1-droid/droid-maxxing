@@ -1,29 +1,12 @@
-import {
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-  type ReactNode,
-} from 'react';
-import {
-  ChevronDown,
-  ChevronRight,
-  File,
-  FileText,
-  Folder,
-  FolderOpen,
-  Loader2,
-  RefreshCw,
-} from 'lucide-react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { ChevronRight, Loader2, RefreshCw } from 'lucide-react';
 import {
   authorizeFilesRoot,
   listDirectory,
   type FilesEntry,
   type FilesListing,
 } from '../../lib/desktop';
-import { classifyByName } from '../../lib/filePreview';
+import { FileTypeIcon } from '../FileTypeIcon';
 import { FilePreviewPane } from './FilePreviewPane';
 
 interface VisibleEntry extends FilesEntry {
@@ -150,10 +133,10 @@ export function FilesWorkspace({
   const rootListing = listings[''];
 
   return (
-    <div className="grid h-full min-h-0 grid-cols-[minmax(150px,34%)_minmax(0,1fr)] bg-droid-bg">
+    <div className="files-workspace grid h-full min-h-0 grid-cols-[minmax(150px,34%)_minmax(0,1fr)] bg-droid-bg">
       <section className="flex min-h-0 flex-col border-r border-droid-border bg-droid-surface/25">
         <header className="flex h-9 shrink-0 items-center gap-2 border-b border-droid-border px-2.5">
-          <FolderOpen className="h-3.5 w-3.5 shrink-0 text-droid-accent" />
+          <FileTypeIcon filename={root} isDirectory expanded className="h-3.5 w-3.5" />
           <span className="min-w-0 flex-1 truncate font-mono text-[10.5px] text-droid-text-muted">
             {root}
           </span>
@@ -223,19 +206,14 @@ function FileTreeRow({
   error?: string;
   onClick: () => void;
 }) {
-  const category = entry.kind === 'file' ? classifyByName(entry.name) : null;
-  let ItemIcon: typeof File;
-  if (entry.kind === 'directory') {
-    ItemIcon = expanded ? FolderOpen : Folder;
-  } else {
-    ItemIcon = category === 'text' ? FileText : File;
-  }
-  let chevron: ReactNode = null;
-  if (entry.kind === 'directory') {
-    if (loading) chevron = <Loader2 className="h-3 w-3 animate-spin" />;
-    else if (expanded) chevron = <ChevronDown className="h-3 w-3" />;
-    else chevron = <ChevronRight className="h-3 w-3" />;
-  }
+  const chevron =
+    entry.kind !== 'directory' ? null : loading ? (
+      <Loader2 className="h-3 w-3 animate-spin" />
+    ) : (
+      <ChevronRight
+        className={`h-3 w-3 transition-transform duration-150 ${expanded ? 'rotate-90' : ''}`}
+      />
+    );
   return (
     <>
       <button
@@ -245,7 +223,7 @@ function FileTreeRow({
         aria-expanded={entry.kind === 'directory' ? expanded : undefined}
         onClick={onClick}
         title={entry.relative}
-        className={`flex h-7 w-full items-center gap-1.5 pr-2 text-left text-[11.5px] transition-colors ${
+        className={`file-tree-row flex h-7 w-full items-center gap-1.5 pr-2 text-left text-[11.5px] transition-colors ${
           selected
             ? 'bg-droid-active text-droid-text'
             : 'text-droid-text-secondary hover:bg-droid-elevated/70 hover:text-droid-text'
@@ -253,10 +231,11 @@ function FileTreeRow({
         style={{ paddingLeft: `${String(6 + entry.depth * 14)}px` }}
       >
         <span className="flex h-4 w-4 shrink-0 items-center justify-center">{chevron}</span>
-        <ItemIcon
-          className={`h-3.5 w-3.5 shrink-0 ${
-            entry.kind === 'directory' ? 'text-droid-accent' : 'text-droid-text-muted'
-          }`}
+        <FileTypeIcon
+          filename={entry.name}
+          isDirectory={entry.kind === 'directory'}
+          expanded={expanded}
+          className="h-3.5 w-3.5"
         />
         <span className="min-w-0 flex-1 truncate">{entry.name}</span>
       </button>

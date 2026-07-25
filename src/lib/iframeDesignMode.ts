@@ -338,6 +338,65 @@ export async function clickIframe(iframe: HTMLIFrameElement, x: number, y: numbe
   target.dispatchEvent(new MouseEvent('click', eventOptions));
 }
 
+export async function hoverIframe(
+  iframe: HTMLIFrameElement,
+  x: number,
+  y: number,
+  selector?: string,
+): Promise<void> {
+  const doc = iframe.contentDocument;
+  const win = iframe.contentWindow;
+  if (!doc || !win) throw new Error('Droid Control browser page is not inspectable yet.');
+  let target: Element | null = null;
+  if (selector) {
+    try {
+      target = doc.querySelector(selector);
+    } catch {
+      throw new Error(`Invalid browser selector: ${selector}`);
+    }
+  }
+  target ??= doc.elementFromPoint(x, y);
+  if (!target) throw new Error(`No browser element at ${Math.round(x)},${Math.round(y)}.`);
+
+  const eventOptions = { bubbles: true, cancelable: true, clientX: x, clientY: y };
+  const MouseEventCtor = (win as unknown as { MouseEvent: typeof MouseEvent }).MouseEvent;
+  target.dispatchEvent(new MouseEventCtor('mouseover', eventOptions));
+  target.dispatchEvent(new MouseEventCtor('mouseenter', { ...eventOptions, bubbles: false }));
+  target.dispatchEvent(new MouseEventCtor('mousemove', eventOptions));
+}
+
+export async function selectOptionIframe(
+  iframe: HTMLIFrameElement,
+  selector: string,
+  value: string,
+): Promise<void> {
+  const doc = iframe.contentDocument;
+  const win = iframe.contentWindow;
+  if (!doc || !win) throw new Error('Droid Control browser page is not inspectable yet.');
+
+  let target: Element | null;
+  try {
+    target = doc.querySelector(selector);
+  } catch {
+    throw new Error(`Invalid browser selector: ${selector}`);
+  }
+  const HTMLSelectElementCtor = (win as unknown as { HTMLSelectElement: typeof HTMLSelectElement })
+    .HTMLSelectElement;
+  if (!(target instanceof HTMLSelectElementCtor)) {
+    throw new Error(`Browser selector does not target a select element: ${selector}`);
+  }
+  const select = target as HTMLSelectElement;
+  const option = Array.from(select.options).find(
+    (candidate) => candidate.value === value || candidate.text.trim() === value,
+  );
+  if (!option) throw new Error(`No option matching "${value}" for ${selector}.`);
+
+  const EventCtor = (win as unknown as { Event: typeof Event }).Event;
+  select.value = option.value;
+  select.dispatchEvent(new EventCtor('input', { bubbles: true }));
+  select.dispatchEvent(new EventCtor('change', { bubbles: true }));
+}
+
 export async function typeIntoIframe(iframe: HTMLIFrameElement, text: string): Promise<void> {
   const doc = iframe.contentDocument;
   const win = iframe.contentWindow;

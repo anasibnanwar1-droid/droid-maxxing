@@ -181,6 +181,25 @@ test('listDirectory respects the cap and reports truncation', async () => {
   assert.ok(listing.totalSeen >= 5);
 });
 
+test('listDirectory does not read metadata beyond the listing cap', async () => {
+  const capDir = path.join(root, 'metadata-cap-dir');
+  await fsp.mkdir(capDir, { recursive: true });
+  for (let i = 0; i < 5; i += 1) {
+    await fsp.writeFile(path.join(capDir, `f${i}.txt`), String(i));
+  }
+
+  let childMetadataReads = 0;
+  await listDirectory(root, 'metadata-cap-dir', {
+    cap: 2,
+    lstat: async (target) => {
+      childMetadataReads += 1;
+      return fsp.lstat(target);
+    },
+  });
+
+  assert.equal(childMetadataReads, 2);
+});
+
 test(`listDirectory default cap is ${LISTING_CAP_DEFAULT}`, () => {
   assert.equal(LISTING_CAP_DEFAULT, 1000);
 });

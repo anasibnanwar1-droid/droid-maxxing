@@ -33,6 +33,8 @@
     --diff-del-fg: #f85149;
     --diff-del-bg: rgba(248, 81, 73, 0.15);
     --diff-del-gutter: rgba(248, 81, 73, 0.28);
+    --diff-hunk-bg: rgba(56, 139, 253, 0.1);
+    --diff-hunk-fg: #79b8ff;
     /* Fixed semantic danger color: stays red across accent/monochrome themes so
        errors and P-level callouts always read as alarming, never accent-tinted. */
     --droid-red: #cf5d54;
@@ -179,13 +181,213 @@
   }
 
   @media (prefers-reduced-motion: reduce) {
-    .skeleton-block {
+    .skeleton-block,
+    .file-tree-row {
       animation: none;
+    }
+
+    .review-pane *,
+    .files-workspace * {
+      scroll-behavior: auto !important;
+      transition-duration: 0.01ms !important;
     }
   }
 }
 
 @layer components {
+  .review-pane,
+  .files-workspace {
+    container-type: inline-size;
+  }
+
+  .review-file-sidebar {
+    width: 38%;
+    min-width: 200px;
+    max-width: 260px;
+  }
+
+  .review-diff-scroll {
+    overflow: auto;
+  }
+
+  .review-diff-row,
+  .review-split-cell {
+    border-left: 2px solid transparent;
+  }
+
+  .review-diff-add {
+    background: var(--diff-add-bg);
+  }
+
+  .review-diff-del {
+    background: var(--diff-del-bg);
+  }
+
+  html[data-diff-style='focused'] .review-diff-add {
+    border-left-color: var(--diff-add-fg);
+  }
+
+  html[data-diff-style='focused'] .review-diff-del {
+    border-left-color: var(--diff-del-fg);
+  }
+
+  .review-diff-add .review-diff-gutter {
+    background: var(--diff-add-gutter);
+  }
+
+  .review-diff-del .review-diff-gutter {
+    background: var(--diff-del-gutter);
+  }
+
+  .review-diff-gutter {
+    width: 2.5rem;
+  }
+
+  .review-diff-meta-gutter {
+    width: 5rem;
+  }
+
+  .review-diff-code {
+    white-space: pre;
+  }
+
+  .review-diff-code-wrap {
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
+  }
+
+  .review-diff-hunk {
+    background: var(--diff-hunk-bg);
+    color: var(--diff-hunk-fg);
+  }
+
+  .review-split-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 1px minmax(0, 1fr);
+  }
+
+  .diff-preview-line {
+    border-left: 2px solid transparent;
+    padding: 0 12px;
+  }
+
+  .diff-preview-add {
+    background: var(--diff-add-bg);
+    color: var(--diff-add-fg);
+  }
+
+  .diff-preview-del {
+    background: var(--diff-del-bg);
+    color: var(--diff-del-fg);
+  }
+
+  html[data-diff-style='focused'] .diff-preview-add {
+    border-left-color: var(--diff-add-fg);
+  }
+
+  html[data-diff-style='focused'] .diff-preview-del {
+    border-left-color: var(--diff-del-fg);
+  }
+
+  @container (max-width: 700px) {
+    .review-toolbar-label {
+      display: none;
+    }
+
+    .review-file-sidebar {
+      position: absolute;
+      inset: 0 auto 0 0;
+      z-index: 30;
+      width: min(82%, 280px);
+      min-width: 0;
+      max-width: none;
+      background: var(--droid-surface);
+      box-shadow: 18px 0 44px rgba(0, 0, 0, 0.34);
+    }
+
+    .review-diff-scroll {
+      overflow-x: hidden;
+    }
+
+    .review-diff-code {
+      overflow-wrap: anywhere;
+      white-space: pre-wrap;
+    }
+
+    .review-diff-gutter {
+      width: 2rem;
+      padding-inline: 0.25rem;
+    }
+
+    .review-diff-meta-gutter {
+      width: 4rem;
+    }
+  }
+
+  @container (max-width: 540px) {
+    .review-view-toggle {
+      display: none;
+    }
+
+    .review-split-row {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .review-split-divider {
+      display: none;
+    }
+
+    .review-split-left {
+      border-bottom: 1px solid var(--droid-border);
+    }
+  }
+
+  @keyframes file-tree-in {
+    from {
+      opacity: 0;
+      transform: translateY(-3px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  .file-tree-row {
+    animation: file-tree-in 160ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  .image-checkerboard {
+    background-color: var(--droid-surface);
+    background-image:
+      linear-gradient(
+        45deg,
+        color-mix(in srgb, var(--droid-text) 7%, transparent) 25%,
+        transparent 25%
+      ),
+      linear-gradient(
+        -45deg,
+        color-mix(in srgb, var(--droid-text) 7%, transparent) 25%,
+        transparent 25%
+      ),
+      linear-gradient(
+        45deg,
+        transparent 75%,
+        color-mix(in srgb, var(--droid-text) 7%, transparent) 75%
+      ),
+      linear-gradient(
+        -45deg,
+        transparent 75%,
+        color-mix(in srgb, var(--droid-text) 7%, transparent) 75%
+      );
+    background-position:
+      0 0,
+      0 8px,
+      8px -8px,
+      -8px 0;
+    background-size: 16px 16px;
+  }
+
   .droid-panel {
     @apply bg-droid-surface border border-droid-border;
   }

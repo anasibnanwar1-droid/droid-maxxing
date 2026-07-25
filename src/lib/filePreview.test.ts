@@ -153,8 +153,13 @@ test('DOCX preview sanitization removes active content and executable URLs', () 
   const link = new FakeElement('A', [{ name: 'href', value: 'https://example.com' }]);
   const image = new FakeElement('IMG', [{ name: 'src', value: 'java\nscript:alert(1)' }]);
   const paragraph = new FakeElement('P', [{ name: 'onclick', value: 'alert(1)' }]);
+  const styled = new FakeElement('P', [
+    { name: 'style', value: 'background:url(https://evil.test/pixel)' },
+  ]);
+  const remoteImage = new FakeElement('IMG', [{ name: 'src', value: '//evil.test/pixel' }]);
   const safeImage = new FakeElement('IMG', [{ name: 'src', value: 'blob:preview' }]);
-  const elements = [iframe, link, image, paragraph, safeImage];
+  const localLink = new FakeElement('A', [{ name: 'href', value: '#bookmark' }]);
+  const elements = [iframe, link, image, paragraph, styled, remoteImage, safeImage, localLink];
   const container = {
     querySelectorAll(selector: string) {
       return selector === '*' ? elements : [iframe];
@@ -167,5 +172,8 @@ test('DOCX preview sanitization removes active content and executable URLs', () 
   assert.deepEqual(link.attributes, []);
   assert.deepEqual(image.attributes, []);
   assert.deepEqual(paragraph.attributes, []);
+  assert.deepEqual(styled.attributes, []);
+  assert.deepEqual(remoteImage.attributes, []);
   assert.deepEqual(safeImage.attributes, [{ name: 'src', value: 'blob:preview' }]);
+  assert.deepEqual(localLink.attributes, [{ name: 'href', value: '#bookmark' }]);
 });
