@@ -1,5 +1,7 @@
 import type { BrowserElementRef, BrowserSnapshot } from './types.js';
 
+import { numberValue, stringValue } from '../values.js';
+
 export const DOM_SNAPSHOT_SCRIPT = String.raw`
 (() => {
   const INTERACTIVE_SELECTOR = [
@@ -241,12 +243,4 @@ function stringRecord(value: unknown): Record<string, string> {
       (entry): entry is [string, string] => typeof entry[1] === 'string',
     ),
   );
-}
-
-function stringValue(value: unknown): string | undefined {
-  return typeof value === 'string' ? value : undefined;
-}
-
-function numberValue(value: unknown): number | undefined {
-  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
 }

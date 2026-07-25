@@ -1,24 +1,5 @@
 import type { Autonomy } from './protocol.js';
 
-export function stringValue(value: unknown): string | undefined {
-  return typeof value === 'string' ? value : undefined;
-}
-
-export function numberValue(value: unknown): number | undefined {
-  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
-}
-
-export function boundedInt(
-  value: string | undefined,
-  fallback: number,
-  min: number,
-  max: number,
-): number {
-  const parsed = value ? Number.parseInt(value, 10) : fallback;
-  if (!Number.isFinite(parsed)) return fallback;
-  return Math.min(max, Math.max(min, parsed));
-}
-
 export function normalizeAutonomy(value: unknown): Autonomy | undefined {
   if (value === 'none') return 'off';
   if (value === 'off' || value === 'low' || value === 'medium' || value === 'high') return value;

@@ -11,6 +11,7 @@ import {
 import { DatabaseSync } from 'node:sqlite';
 import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
+import { numberValue, stringValue } from './values.js';
 import type {
   AgentRole,
   Autonomy,
@@ -1510,10 +1511,6 @@ function workspaceKind(value?: string): MissionSummary['workspaceKind'] | undefi
   return undefined;
 }
 
-function numberValue(value: unknown): number | undefined {
-  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
-}
-
 function sqlValue(value: string | number | undefined): string | number | null {
   return value ?? null;
 }
@@ -1543,10 +1540,6 @@ function jsonStringArray(value: unknown): string[] {
   } catch {
     return [];
   }
-}
-
-function stringValue(value: unknown): string | undefined {
-  return typeof value === 'string' ? value : undefined;
 }
 
 function objectValue(value: unknown): Record<string, unknown> | undefined {

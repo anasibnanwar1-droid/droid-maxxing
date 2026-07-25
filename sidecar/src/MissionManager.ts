@@ -38,15 +38,8 @@ import type {
   TranscriptEvent,
   WorkerHistoryLink,
 } from './protocol.js';
-import {
-  boundedInt,
-  errMsg,
-  isUserCancellation,
-  normalizeAutonomy,
-  numberValue,
-  stringValue,
-  uniqueStrings,
-} from './missionHelpers.js';
+import { errMsg, isUserCancellation, normalizeAutonomy, uniqueStrings } from './missionHelpers.js';
+import { boundedInt, numberValue, stringValue } from './values.js';
 import { DroidRuntime } from './DroidRuntime.js';
 import { detectEnvironment } from './Environment.js';
 import { buildInstallCommand, buildUpdateCommand, runStreaming } from './CliInstaller.js';
@@ -2385,6 +2378,10 @@ export class MissionManager {
       mission.autoCompacting = false;
       this.autoCompactionWatchdogs.clear(appSessionId);
     }
+    // If no drive() is active (Stop while idle or between turns), nothing will
+    // run the finally that clears the flag — clear it here so it can't persist
+    // and misclassify a later turn's cancellation as a user Stop.
+    if (!mission.streaming) mission.interrupting = false;
     this.patch(appSessionId, { phase: 'paused', streaming: false, queuedSends: 0 });
   }
 
@@ -2657,6 +2654,9 @@ export class MissionManager {
       agent.autoCompacting = false;
       this.autoCompactionWatchdogs.clear(agentSessionId);
     }
+    // If no driveAgent() is active to clear the flag in its finally, clear it
+    // here so it can't leak into a later turn and misclassify its cancellation.
+    if (!agent.streaming) agent.interrupting = false;
     agent.streaming = false;
     this.emit({
       type: 'agent.updated',
