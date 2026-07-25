@@ -38,6 +38,7 @@ import {
   MousePointerSquareDashed,
 } from 'lucide-react';
 import ModelSelectorPopover from './ModelSelectorPopover';
+import ContextStatusCluster from './ContextStatusCluster';
 import PermissionInline from './PermissionInline';
 import PlanApprovalInline from './PlanApprovalInline';
 import { ModelIcon, providerOf } from './ModelIcon';
@@ -84,6 +85,10 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
   const { state, dispatch } = useStore();
   const [input, setInput] = useState('');
   const [caret, setCaret] = useState(0);
+  // Shell-style prompt history: null while composing, otherwise an index into
+  // promptHistory. The draft is stashed so ArrowDown past the newest restores it.
+  const [historyIndex, setHistoryIndex] = useState<number | null>(null);
+  const draftBeforeHistory = useRef('');
   const [modelsOpen, setModelsOpen] = useState(false);
   const [menuIndex, setMenuIndex] = useState(0);
   const [files, setFiles] = useState<string[]>([]);
@@ -103,6 +108,20 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
 
   const activeMission = state.activeMissionId ? state.missions[state.activeMissionId] : null;
   const isLive = useMissionLive(state.activeMissionId);
+
+  // The user's own prompts in this conversation, oldest to newest, for ArrowUp
+  // recall (reuse a previous prompt). Consecutive duplicates are collapsed.
+  const promptHistory = useMemo(() => {
+    const events = activeMission ? (state.transcripts[activeMission.id] ?? []) : [];
+    const out: string[] = [];
+    for (const ev of events) {
+      if (ev.author !== 'user' || ev.kind !== 'text') continue;
+      const text = ev.text ?? '';
+      if (!text.trim()) continue;
+      if (out[out.length - 1] !== text) out.push(text);
+    }
+    return out;
+  }, [activeMission?.id, state.transcripts]);
   // For an existing chat session the mode is whatever the session actually is
   // (so a chat reopened in spec mode shows Spec); only fall back to the global
   // compose flag while drafting a brand-new chat.
@@ -252,6 +271,15 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
     setMenuIndex(0);
   }, [trigger?.kind, trigger?.query]);
 
+  // Leave history-recall mode and drop any composer draft attachments when
+  // switching conversations, so skills/files staged for one chat don't linger
+  // on another chat's prompt bar.
+  useEffect(() => {
+    setHistoryIndex(null);
+    setActiveSkills([]);
+    setAttachedFiles([]);
+  }, [activeMission?.id]);
+
   useEffect(() => {
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto';
@@ -355,6 +383,7 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
     const text = input.trim();
     const hasPayload = text || activeSkills.length > 0 || attachedFiles.length > 0;
     if (!hasPayload) return;
+    setHistoryIndex(null);
 
     if (text === '/mission' && activeSkills.length === 0 && attachedFiles.length === 0) {
       dispatch({ type: 'TOGGLE_MISSION_MODE' });
@@ -615,6 +644,36 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
       setAttachedFiles((prev) => prev.slice(0, -1));
       return;
     }
+    // Shell-style history recall. ArrowUp starts only from the top of the field
+    // (so it doesn't hijack caret movement in a multi-line draft); once in
+    // history, arrows step through past prompts and ArrowDown exits at the draft.
+    const plain = !e.shiftKey && !e.metaKey && !e.altKey && !e.ctrlKey;
+    if (e.key === 'ArrowUp' && plain && promptHistory.length > 0) {
+      const el = e.currentTarget;
+      const atStart = el.selectionStart === 0 && el.selectionEnd === 0;
+      if (historyIndex !== null || atStart) {
+        e.preventDefault();
+        if (historyIndex === null) draftBeforeHistory.current = input;
+        const nextIndex =
+          historyIndex === null ? promptHistory.length - 1 : Math.max(0, historyIndex - 1);
+        setHistoryIndex(nextIndex);
+        const text = promptHistory[nextIndex];
+        setInput(text);
+        pendingCaret.current = text.length;
+        return;
+      }
+    }
+    if (e.key === 'ArrowDown' && plain && historyIndex !== null) {
+      e.preventDefault();
+      const text =
+        historyIndex >= promptHistory.length - 1
+          ? draftBeforeHistory.current
+          : promptHistory[historyIndex + 1];
+      setHistoryIndex(historyIndex >= promptHistory.length - 1 ? null : historyIndex + 1);
+      setInput(text);
+      pendingCaret.current = text.length;
+      return;
+    }
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       const enterMode: SubmitMode =
@@ -630,6 +689,9 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
     : 'border-droid-border focus-within:border-droid-border-hover';
 
   const hasChips = activeSkills.length > 0 || attachedFiles.length > 0;
+  // The "Start in" repo/worktree/branch row only applies while drafting a brand
+  // new chat; it renders as the top section of the composer card.
+  const showStartIn = !activeMission && !missionPreview && !!cwd;
   const enterSteers = state.liveEnterBehavior === 'interrupt';
   const idleSendTooltip = 'Enter: send\nShift+Enter: newline';
   const hasContent = input.trim().length > 0 || activeSkills.length > 0 || attachedFiles.length > 0;
@@ -828,8 +890,8 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
           </div>
         )}
 
-        {!activeMission && !missionPreview && cwd && (
-          <div className="relative z-20 mx-4 -mb-3 min-w-0 rounded-t-2xl border border-b-0 border-droid-border bg-droid-elevated px-3 pb-5 pt-2">
+        {showStartIn && (
+          <div className="relative z-0 mx-[6%] -mb-3 min-w-0 rounded-t-2xl border border-droid-border bg-droid-surface px-4 pb-4 pt-1.5">
             <StartInBar />
           </div>
         )}
@@ -896,6 +958,7 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
             onChange={(e) => {
               setInput(e.target.value);
               syncCaret(e.target);
+              setHistoryIndex(null);
             }}
             onKeyUp={(e) => syncCaret(e.currentTarget)}
             onClick={(e) => syncCaret(e.currentTarget)}
@@ -988,6 +1051,8 @@ export default function PromptInput({ rightInset = false }: { rightInset?: boole
             </button>
 
             <div className="flex-1 min-w-0" />
+
+            <ContextStatusCluster />
 
             {isLive && !hasContent ? (
               <button

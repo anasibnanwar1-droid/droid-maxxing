@@ -11,6 +11,7 @@ import {
 import { DatabaseSync } from 'node:sqlite';
 import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
+import { numberValue, stringValue } from './values.js';
 import type {
   AgentRole,
   Autonomy,
@@ -1304,11 +1305,26 @@ function readSessionStart(path: string): StoredSessionStart {
   const fd = openSync(path, 'r');
   try {
     const buffer = Buffer.alloc(bytes);
-    readSync(fd, buffer, 0, bytes, 0);
-    const row = parseJsonLines<StoredSessionStart>(buffer.toString('utf8')).find(
-      (line) => line.type === 'session_start',
-    );
-    return row ?? {};
+    const read = readSync(fd, buffer, 0, bytes, 0);
+    // The session_start record is the first JSONL line, so decode and parse only
+    // the leading lines instead of the whole (up to 256 KB) head. The mission
+    // list reads every session file on startup, so parsing one line instead of
+    // thousands is what keeps the sidebar fast to populate.
+    let offset = 0;
+    for (let i = 0; i < 8 && offset < read; i++) {
+      let nl = buffer.indexOf(0x0a, offset);
+      if (nl < 0 || nl > read) nl = read;
+      const line = buffer.toString('utf8', offset, nl).trim();
+      offset = nl + 1;
+      if (!line) continue;
+      try {
+        const row = JSON.parse(line) as StoredSessionStart;
+        if (row.type === 'session_start') return row;
+      } catch {
+        // Not a complete JSON line yet; keep scanning the first few lines.
+      }
+    }
+    return {};
   } finally {
     closeSync(fd);
   }
@@ -1495,10 +1511,6 @@ function workspaceKind(value?: string): MissionSummary['workspaceKind'] | undefi
   return undefined;
 }
 
-function numberValue(value: unknown): number | undefined {
-  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
-}
-
 function sqlValue(value: string | number | undefined): string | number | null {
   return value ?? null;
 }
@@ -1528,10 +1540,6 @@ function jsonStringArray(value: unknown): string[] {
   } catch {
     return [];
   }
-}
-
-function stringValue(value: unknown): string | undefined {
-  return typeof value === 'string' ? value : undefined;
 }
 
 function objectValue(value: unknown): Record<string, unknown> | undefined {

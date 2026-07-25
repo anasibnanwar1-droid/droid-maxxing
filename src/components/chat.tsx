@@ -1,4 +1,4 @@
-import { useMemo, useState, memo, useEffect } from 'react';
+import { useMemo, useState, memo, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   ChevronRight,
@@ -10,22 +10,32 @@ import {
   FoldVertical,
   MousePointer2,
   PenLine,
+  Globe,
+  AlertTriangle,
 } from 'lucide-react';
 import type { BrowserTranscriptReference, TranscriptEvent } from '../types/bridge';
 import { Markdown } from './Markdown';
+import { SpecRenderer } from './SpecRenderer';
 import { JsonRender, splitJsonRender, hasJsonRender } from './JsonRender';
 import { extractFileChange, type FileChange } from '../lib/diff';
 import { DiffCard } from './DiffView';
 import {
+  CAT_ICON,
   CAT_LABEL,
   toolMeta,
   safeJson,
   stripAnsi,
   formatDuration,
+  parseTruncatedTail,
   isSubagentTool,
   subagentInfo,
   parseTodos,
   hasTodoPayload,
+  isWebSearchTool,
+  parseWebSearch,
+  webSourceName,
+  faviconUrl,
+  toolArgStringArray,
 } from '../lib/tools';
 import { classifyEvent } from '../lib/transcript';
 import {
@@ -34,6 +44,20 @@ import {
   type SubagentActivity,
   type SubagentTarget,
 } from '../lib/subagents';
+import { openExternal } from '../lib/onboarding';
+
+// Open a link in the OS default browser rather than inside the Electron window.
+function openLink(e: React.MouseEvent, url: string) {
+  e.preventDefault();
+  void openExternal(url);
+}
+
+// Only http(s) URLs are safe as an href. Parsed web-search results can carry a
+// malformed or non-http token, and onClick alone does not cover middle-click or
+// "open in new tab" from the context menu, so a bad URL must never reach href.
+function httpHref(url: string): string | undefined {
+  return /^https?:\/\//i.test(url.trim()) ? url : undefined;
+}
 
 const ACCENT = 'var(--droid-accent)';
 const EASE = [0.16, 1, 0.3, 1] as const;
@@ -77,6 +101,38 @@ export function WorkingIndicator({
       {label}
       {suffix}…
     </span>
+  );
+}
+
+/* ── Loading skeleton — animated neutral shimmer blocks that stand in for an
+   assistant reply while a transcript restores or a fresh turn spins up. Tones
+   come only from the grayscale token scale (see .skeleton-block in index.css). ── */
+function SkeletonLine({ width }: { width: string }) {
+  return <div className="skeleton-block h-3" style={{ width }} />;
+}
+
+export function ChatSkeleton() {
+  return (
+    <div className="space-y-2.5" aria-hidden="true">
+      <SkeletonLine width="92%" />
+      <SkeletonLine width="84%" />
+      <SkeletonLine width="67%" />
+    </div>
+  );
+}
+
+// A couple of stacked reply blocks so a restoring conversation reads like
+// content is streaming in, not like an empty or broken view.
+export function TranscriptSkeleton() {
+  return (
+    <div className="space-y-8" aria-hidden="true">
+      <ChatSkeleton />
+      <div className="space-y-2.5">
+        <SkeletonLine width="38%" />
+        <SkeletonLine width="88%" />
+        <SkeletonLine width="74%" />
+      </div>
+    </div>
   );
 }
 
@@ -189,7 +245,7 @@ function ThinkingItem({
         )}
       </button>
       <Expand open={active ? true : open}>
-        <div className="mt-2 pl-[18px] text-[12.5px] text-droid-text-muted/55 leading-[1.7] whitespace-pre-wrap [overflow-wrap:anywhere]">
+        <div className="mt-2 pl-[18px] text-[12.5px] text-droid-text-muted/55 leading-[1.7] whitespace-pre-wrap break-words">
           {text}
           {active && <StreamingCaret />}
         </div>
@@ -269,59 +325,326 @@ function CopyButton({ text }: { text: string }) {
   );
 }
 
+// Turn bare URLs in captured tool output into clickable links, so a web search
+// or page fetch shows the links it visited and the user can open them.
+const URL_RE = /(https?:\/\/[^\s<>()[\]"'`]+)/g;
+function linkify(text: string): React.ReactNode {
+  const nodes: React.ReactNode[] = [];
+  let last = 0;
+  let m: RegExpExecArray | null;
+  URL_RE.lastIndex = 0;
+  while ((m = URL_RE.exec(text)) !== null) {
+    if (m.index > last) nodes.push(text.slice(last, m.index));
+    let url = m[0];
+    const tail = url.match(/[.,;:!?)\]}]+$/)?.[0] ?? '';
+    if (tail) url = url.slice(0, url.length - tail.length);
+    nodes.push(
+      <a
+        key={m.index}
+        href={url}
+        onClick={(e) => openLink(e, url)}
+        className="underline underline-offset-2 hover:opacity-80 break-all"
+        style={{ color: ACCENT }}
+      >
+        {url}
+      </a>,
+    );
+    if (tail) nodes.push(tail);
+    last = m.index + m[0].length;
+  }
+  if (last < text.length) nodes.push(text.slice(last));
+  return nodes.length ? nodes : text;
+}
+
+const RED = 'var(--droid-red)';
+const RED_TINT = 'color-mix(in srgb, var(--droid-red) 8%, transparent)';
+
+// A small red "error" pill shown on the right of a failed tool's header row.
+function ErrorTag() {
+  return (
+    <span
+      className="ml-auto shrink-0 rounded-md px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide"
+      style={{
+        backgroundColor: 'color-mix(in srgb, var(--droid-red) 15%, transparent)',
+        color: RED,
+      }}
+    >
+      error
+    </span>
+  );
+}
+
+function firstLine(text: string): string {
+  const line = text.split('\n').find((l) => l.trim()) ?? text;
+  return line.trim();
+}
+
+// A standalone failed result (or a pure error event) rendered as a collapsible
+// row: a red "error" tag with the first line, expanding to the full message.
+function ErrorLine({ text }: { text: string }) {
+  const [open, setOpen] = useState(false);
+  const body = stripAnsi(text).trim();
+  return (
+    <div>
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="group flex w-full min-w-0 items-center gap-1.5 text-left text-[12.5px] leading-relaxed"
+      >
+        <AlertTriangle className="h-3.5 w-3.5 shrink-0" style={{ color: RED }} />
+        <span className="min-w-0 truncate text-droid-text-muted">{firstLine(body)}</span>
+        <ErrorTag />
+        <Caret open={open} />
+      </button>
+      <Expand open={open}>
+        <pre
+          className="mt-1.5 max-h-56 overflow-auto rounded-md px-2.5 py-2 text-[11px] leading-relaxed font-mono whitespace-pre-wrap break-words"
+          style={{ backgroundColor: RED_TINT, color: RED }}
+        >
+          {linkify(body)}
+        </pre>
+      </Expand>
+    </div>
+  );
+}
+
 /* ── Terminal-style command card ── */
 function CommandCard({
   command,
   output,
   title,
+  error = false,
 }: {
   command: string;
   output?: string;
   title?: string;
+  error?: boolean;
 }) {
   const out = output ? stripAnsi(output).trimEnd() : '';
+  const [open, setOpen] = useState(false);
+  const body = (
+    <div className="px-3.5 py-3 font-mono text-[11.5px] leading-[1.6]">
+      <div className="flex gap-2 break-words">
+        <span className="select-none text-droid-text-muted" style={{ color: error ? RED : ACCENT }}>
+          $
+        </span>
+        <span className="whitespace-pre-wrap text-droid-text">{command}</span>
+      </div>
+      {out && (
+        <pre
+          className="mt-2.5 pt-2.5 border-t border-droid-border/60 max-h-56 overflow-auto whitespace-pre-wrap text-[11px] leading-[1.55] break-words"
+          style={error ? { color: RED } : undefined}
+        >
+          {error ? out : linkify(out)}
+        </pre>
+      )}
+    </div>
+  );
+  // A failed command collapses to a compact header with an "error" tag; expand
+  // to inspect the command and its error output.
+  if (error) {
+    return (
+      <div
+        className="rounded-xl border overflow-hidden bg-droid-bg/40"
+        style={{ borderColor: 'color-mix(in srgb, var(--droid-red) 30%, var(--droid-border))' }}
+      >
+        <button
+          onClick={() => setOpen((o) => !o)}
+          className="group flex w-full items-center gap-2 h-8 px-3 bg-droid-surface/60 border-b border-droid-border text-left"
+        >
+          <Terminal className="w-3.5 h-3.5 shrink-0" style={{ color: RED }} />
+          <span className="min-w-0 truncate text-[10.5px] font-medium uppercase tracking-wider text-droid-text-muted">
+            {title || 'Terminal'}
+          </span>
+          <ErrorTag />
+          <Caret open={open} />
+        </button>
+        <Expand open={open}>{body}</Expand>
+      </div>
+    );
+  }
   return (
-    <div className="rounded-xl bg-droid-bg/60 overflow-hidden ring-1 ring-droid-border">
-      <div className="flex items-center gap-2 h-8 px-3 bg-droid-elevated/30">
+    <div className="rounded-xl border border-droid-border overflow-hidden bg-droid-bg/40">
+      <div className="flex items-center gap-2 h-8 px-3 bg-droid-surface/60 border-b border-droid-border">
         <Terminal className="w-3.5 h-3.5 text-droid-text-muted shrink-0" />
-        <span className="min-w-0 flex-1 truncate text-[11.5px] text-droid-text-secondary">
-          {title || 'Command'}
+        <span className="min-w-0 flex-1 truncate text-[10.5px] font-medium uppercase tracking-wider text-droid-text-muted">
+          {title || 'Terminal'}
         </span>
         <CopyButton text={out ? `${command}\n\n${out}` : command} />
       </div>
-      <div className="px-3 py-2.5 font-mono text-[11.5px] leading-[1.6]">
-        <div className="flex gap-1.5 [overflow-wrap:anywhere]">
-          <span className="select-none text-droid-text-muted/70">$</span>
-          <span className="whitespace-pre-wrap text-droid-text-secondary">{command}</span>
-        </div>
-        {out && (
-          <pre className="mt-2 max-h-56 overflow-auto whitespace-pre-wrap text-[11px] leading-[1.55] text-droid-text-muted/80 [overflow-wrap:anywhere]">
-            {out}
-          </pre>
-        )}
-      </div>
+      {body}
     </div>
   );
 }
 
-function ToolLine({ event, output }: { event: TranscriptEvent; output?: string }) {
+function ToolLine({
+  event,
+  output,
+  error = false,
+}: {
+  event: TranscriptEvent;
+  output?: string;
+  error?: boolean;
+}) {
   const { cat, detail } = toolMeta(event.toolName, event.toolArgs);
+  const Icon = CAT_ICON[cat];
   const out = output ? stripAnsi(output).trimEnd() : '';
-  return (
-    <div>
-      <div className="text-[12.5px] leading-relaxed [overflow-wrap:anywhere]">
-        <span className="text-droid-text-secondary">{CAT_LABEL[cat]}</span>
-        {(detail || event.toolName) && (
-          <span className="ml-1.5 font-mono text-[11.5px] text-droid-text-muted">
-            {detail || event.toolName}
-          </span>
+  const raw = detail || event.toolName || '';
+  const slash = raw.lastIndexOf('/');
+  const looksLikePath = slash > 0 && !raw.includes(' ');
+  const dir = looksLikePath ? raw.slice(0, slash + 1) : '';
+  const name = looksLikePath ? raw.slice(slash + 1) : raw;
+  const [open, setOpen] = useState(false);
+  const label = (
+    <>
+      <Icon
+        className={`w-3.5 h-3.5 shrink-0 ${error ? '' : 'text-droid-text-muted'}`}
+        style={error ? { color: RED } : undefined}
+      />
+      <span className="text-droid-text-secondary shrink-0">{CAT_LABEL[cat]}</span>
+      {raw && (
+        <span className="font-mono text-[11.5px] min-w-0 truncate">
+          {dir && <span className="text-droid-text-muted/50">{dir}</span>}
+          <span className="text-droid-text-muted">{name}</span>
+        </span>
+      )}
+    </>
+  );
+  // A failed tool collapses to its header row with an "error" tag; expand to
+  // read the error output.
+  if (error) {
+    return (
+      <div>
+        <button
+          onClick={() => setOpen((o) => !o)}
+          className="group flex w-full items-center gap-1.5 text-[12.5px] leading-relaxed min-w-0 text-left"
+        >
+          {label}
+          <ErrorTag />
+          <Caret open={open} />
+        </button>
+        {out && (
+          <Expand open={open}>
+            <pre
+              className="mt-1.5 max-h-56 overflow-auto rounded-md px-2.5 py-2 text-[11px] leading-relaxed font-mono whitespace-pre-wrap break-words"
+              style={{ backgroundColor: RED_TINT, color: RED }}
+            >
+              {out}
+            </pre>
+          </Expand>
         )}
       </div>
-      {cat === 'other' && out && (
-        <pre className="mt-1.5 max-h-44 overflow-auto rounded-md bg-droid-bg/50 px-2.5 py-2 text-[11px] leading-relaxed font-mono text-droid-text-muted/80 whitespace-pre-wrap [overflow-wrap:anywhere]">
-          {out}
+    );
+  }
+  return (
+    <div>
+      <div className="flex items-center gap-1.5 text-[12.5px] leading-relaxed min-w-0">{label}</div>
+      {(cat === 'other' || cat === 'search' || cat === 'web') && out && (
+        <pre className="mt-1.5 max-h-44 overflow-auto rounded-md bg-droid-bg/50 px-2.5 py-2 text-[11px] leading-relaxed font-mono text-droid-text-muted/80 whitespace-pre-wrap break-words">
+          {linkify(out)}
         </pre>
       )}
+    </div>
+  );
+}
+
+function Favicon({ url }: { url: string }) {
+  const [failed, setFailed] = useState(false);
+  const src = faviconUrl(url);
+  if (failed || !src) return <Globe className="h-3.5 w-3.5 shrink-0 text-droid-text-muted" />;
+  return (
+    <img
+      src={src}
+      alt=""
+      loading="lazy"
+      className="h-3.5 w-3.5 shrink-0 rounded-sm"
+      onError={() => setFailed(true)}
+    />
+  );
+}
+
+/* ── Web search: a collapsible search row that expands into readable result
+   cards (title, snippet, source) instead of a raw text dump ── */
+function WebSearchCard({
+  event,
+  output,
+  error = false,
+}: {
+  event: TranscriptEvent;
+  output?: string;
+  error?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const query = argStr(event.toolArgs, 'query') ?? '';
+  const { results, count } = parseWebSearch(output ?? '');
+  const total = count ?? results.length;
+  const isX = toolArgStringArray(event.toolArgs, 'includeDomains').some((d) =>
+    /(^|\.)(x|twitter)\.com$/i.test(d),
+  );
+  const raw = output ? stripAnsi(output).trim() : '';
+  return (
+    <div>
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="group flex w-full min-w-0 items-center gap-1.5 text-left"
+      >
+        {isX ? (
+          <span className="flex h-3.5 w-3.5 shrink-0 items-center justify-center text-[12px] font-bold leading-none text-droid-text-muted">
+            𝕏
+          </span>
+        ) : (
+          <Globe className="h-3.5 w-3.5 shrink-0 text-droid-text-muted" />
+        )}
+        <span className="shrink-0 text-[12.5px] text-droid-text-secondary">
+          {isX ? 'Searched X' : 'Searched web'}
+        </span>
+        {query && (
+          <span className="min-w-0 truncate font-mono text-[11.5px] text-droid-text-muted">
+            {query}
+          </span>
+        )}
+        {error ? (
+          <ErrorTag />
+        ) : total ? (
+          <span className="ml-auto shrink-0 rounded-md border border-droid-border bg-droid-elevated/60 px-1.5 py-0.5 font-mono text-[11px] text-droid-text-secondary">
+            {total}
+          </span>
+        ) : null}
+      </button>
+      <Expand open={open}>
+        {results.length > 0 ? (
+          <div className="mt-2 space-y-1">
+            {results.map((r, i) => {
+              const href = httpHref(r.url);
+              return (
+                <a
+                  key={`${r.url}-${i}`}
+                  {...(href ? { href, onClick: (e: React.MouseEvent) => openLink(e, href) } : {})}
+                  className={`block rounded-lg px-3 py-2 transition-colors hover:bg-droid-elevated/60 ${
+                    i === 0 ? 'bg-droid-elevated/40' : ''
+                  }`}
+                >
+                  <div className="truncate text-[13px] font-medium text-droid-text">{r.title}</div>
+                  {r.snippet && (
+                    <div className="mt-0.5 line-clamp-2 text-[12px] leading-relaxed text-droid-text-muted">
+                      {r.snippet}
+                    </div>
+                  )}
+                  <div className="mt-1.5 flex items-center gap-1.5">
+                    <Favicon url={r.url} />
+                    <span className="truncate text-[11px] text-droid-text-secondary">
+                      {webSourceName(r.url)}
+                    </span>
+                  </div>
+                </a>
+              );
+            })}
+          </div>
+        ) : raw ? (
+          <pre className="mt-1.5 max-h-44 overflow-auto rounded-md bg-droid-bg/50 px-2.5 py-2 text-[11px] leading-relaxed font-mono text-droid-text-muted/80 whitespace-pre-wrap break-words">
+            {linkify(raw)}
+          </pre>
+        ) : null}
+      </Expand>
     </div>
   );
 }
@@ -336,7 +659,7 @@ function TodoChecklist({ event }: { event: TranscriptEvent }) {
       {todos.map((t, i) => (
         <div
           key={i}
-          className={`flex items-start gap-2 text-[12.5px] leading-relaxed [overflow-wrap:anywhere] ${
+          className={`flex items-start gap-2 text-[12.5px] leading-relaxed break-words ${
             t.status === 'completed'
               ? 'text-droid-text-muted line-through'
               : 'text-droid-text-secondary'
@@ -394,9 +717,10 @@ export function correlateResults(events: TranscriptEvent[]): {
       if (next && next.kind === 'tool_result' && !next.toolUseId) result = next;
     }
     if (!result || consumed.has(result)) continue;
-    // A failed result must always surface (as raw activity), so never consume it
-    // or attach it as a call's inline output — mirrors isResultFor's error guard.
-    if (result.isError) continue;
+    // A failed plan result must surface (the checklist cannot convey a failure),
+    // so it is left unconsumed. Every other result — success or failure —
+    // attaches to its call so a failure folds into the tool card as an "error".
+    if (result.isError && classifyEvent(call) === 'plan_update') continue;
     if (classifyEvent(call) !== 'plan_update') resultByCall.set(call, result);
     consumed.add(result);
   }
@@ -414,8 +738,13 @@ function renderToolEvents(events: TranscriptEvent[]): React.ReactNode[] {
         continue;
       }
       const result = resultByCall.get(e);
+      const isError = !!result?.isError;
       const { cat, detail } = toolMeta(e.toolName, e.toolArgs);
-      if (cat === 'exec') {
+      // WebSearch's name matches the generic /search/ category, so route it by
+      // name (not cat) to the readable result-card renderer.
+      if (isWebSearchTool(e.toolName)) {
+        nodes.push(<WebSearchCard key={e.id} event={e} output={result?.text} error={isError} />);
+      } else if (cat === 'exec') {
         const command =
           argStr(e.toolArgs, 'command') ??
           argStr(e.toolArgs, 'cmd') ??
@@ -429,10 +758,11 @@ function renderToolEvents(events: TranscriptEvent[]): React.ReactNode[] {
             command={command}
             output={result?.text}
             title={argStr(e.toolArgs, 'summary')}
+            error={isError}
           />,
         );
       } else {
-        nodes.push(<ToolLine key={e.id} event={e} output={result?.text} />);
+        nodes.push(<ToolLine key={e.id} event={e} output={result?.text} error={isError} />);
       }
       continue;
     }
@@ -441,20 +771,34 @@ function renderToolEvents(events: TranscriptEvent[]): React.ReactNode[] {
     if (e.kind === 'tool_result' && consumed.has(e)) continue;
     const body = stripAnsi(e.text ?? safeJson(e.toolArgs)).trimEnd();
     if (!body) continue;
+    // A failed result with no call to fold into (e.g. a failed edit that broke
+    // its diff run) renders as a compact, expandable error rather than a dump.
+    if (e.kind === 'tool_result' && e.isError) {
+      nodes.push(<ErrorLine key={e.id} text={body} />);
+      continue;
+    }
     nodes.push(
       <pre
         key={e.id}
-        className="max-h-48 overflow-auto rounded-md bg-droid-bg/50 px-2.5 py-2 text-[11px] leading-relaxed font-mono text-droid-text-muted/80 whitespace-pre-wrap [overflow-wrap:anywhere]"
+        className="max-h-48 overflow-auto rounded-md bg-droid-bg/50 px-2.5 py-2 text-[11px] leading-relaxed font-mono text-droid-text-muted/80 whitespace-pre-wrap break-words"
       >
-        {body}
+        {linkify(body)}
       </pre>,
     );
   }
   return nodes;
 }
 
-function ToolGroupItem({ events, active }: { events: TranscriptEvent[]; active?: boolean }) {
-  const [open, setOpen] = useState(false);
+function ToolGroupItem({
+  events,
+  active,
+  defaultOpen = false,
+}: {
+  events: TranscriptEvent[];
+  active?: boolean;
+  defaultOpen?: boolean;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
   const summary = summarizeTools(events);
   return (
     <div>
@@ -522,7 +866,20 @@ export function collectTurnFiles(run: FeedItem[]): TurnFile[] {
   return [...byPath.values()];
 }
 
+// Artifacts the SDK persists when the user stops a run: a failed tool_result for
+// each in-flight tool ("… cancelled by user") plus a "Request interrupted/
+// cancelled by user" note. A user Stop is not a failure, so these are hidden
+// from the feed — both live and on replay.
+export function isCancellationArtifact(e: TranscriptEvent): boolean {
+  const text = (e.text ?? '').trim();
+  if (!text) return false;
+  if (e.isError && /cancell?ed by user/i.test(text)) return true;
+  if (/^request (interrupted|cancell?ed) by user\.?$/i.test(text)) return true;
+  return false;
+}
+
 export function buildFeed(events: TranscriptEvent[], subagentCards = false): FeedItem[] {
+  events = events.filter((e) => !isCancellationArtifact(e));
   const items: FeedItem[] = [];
   // toolUseId → index of its spawn item, so streaming deltas collapse into one.
   const subagentIdx = new Map<string, number>();
@@ -592,7 +949,10 @@ export function buildFeed(events: TranscriptEvent[], subagentCards = false): Fee
       i++;
       continue;
     }
-    if (ev.kind === 'error' || ev.isError) {
+    // A pure error event (no tool call) and a failed subagent/plan result surface
+    // as a standalone error. An ordinary failed tool result is not diverted here;
+    // it flows into its tool group below and folds into the tool card as an error.
+    if (ev.kind === 'error' || (ev.isError && isCardResult(ev))) {
       items.push({ type: 'error', key: ev.id, event: ev });
       i++;
       continue;
@@ -666,12 +1026,14 @@ export function buildFeed(events: TranscriptEvent[], subagentCards = false): Fee
       while (i < events.length) {
         const t = events[i];
         if (t.kind === 'tool_result') {
-          // Any failed result breaks the group so the outer loop surfaces it as
-          // an error, regardless of tool family (the classifier invariant).
-          if (t.isError) break;
+          // A failed subagent/plan result breaks the group so the outer loop
+          // surfaces it as a standalone error (its card/checklist can't convey
+          // the failure). An ordinary failed result stays so it folds into its
+          // tool card.
+          if (t.isError && isCardResult(t)) break;
           // A successful subagent/plan result is dropped (represented by its
           // card or checklist, or pure noise); other results stay in the group.
-          if (isCardResult(t)) {
+          if (!t.isError && isCardResult(t)) {
             i++;
             continue;
           }
@@ -758,6 +1120,83 @@ function dedupePlanUpdates(events: TranscriptEvent[]): TranscriptEvent[] {
 
 function isUserMessage(item: FeedItem): boolean {
   return item.type === 'message' && item.event.author === 'user';
+}
+
+// Short preview of a message for the conversation timeline tooltip: whitespace
+// (including newlines) is collapsed to single spaces so the hover reads as one
+// flowing horizontal snippet, capped in length so a large prompt can't produce
+// a huge tooltip.
+function turnLabel(text?: string): string {
+  if (!text) return 'Message';
+  const clean = text.replace(/\s+/g, ' ').trim();
+  if (!clean) return 'Message';
+  return clean.length > 160 ? `${clean.slice(0, 160).trimEnd()}…` : clean;
+}
+
+export interface ConversationAnchor {
+  id: string;
+  label: string;
+}
+
+// One anchor per turn: the turn's final model response (its summary). The id is
+// the feed item key, which MessageFeed also stamps onto the rendered row so the
+// timeline can scroll to it.
+export function finalResponseAnchorsFromItems(items: FeedItem[]): ConversationAnchor[] {
+  const out: ConversationAnchor[] = [];
+  let pendingKey: string | null = null;
+  let pendingText: string | undefined;
+  const flush = () => {
+    if (pendingKey !== null) out.push({ id: pendingKey, label: turnLabel(pendingText) });
+    pendingKey = null;
+    pendingText = undefined;
+  };
+  for (const it of items) {
+    if (isUserMessage(it)) {
+      flush();
+    } else if (it.type === 'message' && it.event.author !== 'user') {
+      pendingKey = it.key;
+      pendingText = it.event.text;
+    }
+  }
+  flush();
+  return out;
+}
+
+// One anchor per user prompt for the conversation timeline: the dot previews the
+// prompt text and scrolls that prompt to the top. Anchoring on prompts keeps the
+// dot count exactly equal to the number of prompts (a leading model/spec message
+// no longer adds a stray dot) and lets the hover preview show what was asked.
+export function promptAnchorsFromItems(items: FeedItem[]): ConversationAnchor[] {
+  const out: ConversationAnchor[] = [];
+  for (const it of items) {
+    if (it.type === 'message' && it.event.author === 'user') {
+      out.push({ id: it.key, label: turnLabel(it.event.text) });
+    }
+  }
+  return out;
+}
+
+// Build the grouped feed once so callers can share it (the chat view derives
+// timeline anchors from the same items it hands to MessageFeed, instead of
+// running buildFeed/groupTurns a second time on every render and switch).
+export function buildGroupedFeed(
+  events: TranscriptEvent[],
+  rich: boolean,
+  pending: boolean,
+  specContent?: string,
+  changes = false,
+): FeedItem[] {
+  return groupTurns(buildFeed(events, rich), pending, specContent, changes);
+}
+
+// Public helper so the chat view can derive the same anchors MessageFeed stamps.
+export function conversationAnchors(
+  events: TranscriptEvent[],
+  rich: boolean,
+  pending: boolean,
+  specContent?: string,
+): ConversationAnchor[] {
+  return promptAnchorsFromItems(buildGroupedFeed(events, rich, pending, specContent));
 }
 
 // Best-effort end timestamp of a feed item, used to time the live working cue.
@@ -988,7 +1427,11 @@ function BrowserReferenceChip({ reference }: { reference: BrowserTranscriptRefer
   );
 }
 
-function UserBubble({ event }: { event: TranscriptEvent }) {
+export function UserBubble({
+  event,
+}: {
+  event: Pick<TranscriptEvent, 'text' | 'skills' | 'files' | 'browserRefs' | 'steered'>;
+}) {
   const skills = event.skills ?? [];
   const files = event.files ?? [];
   const browserRefs = event.browserRefs ?? [];
@@ -1038,7 +1481,7 @@ function UserBubble({ event }: { event: TranscriptEvent }) {
         </div>
       )}
       {event.text && (
-        <div className="max-w-[80%] rounded-2xl rounded-br-sm bg-droid-elevated px-4 py-2.5 text-[14px] leading-relaxed text-droid-text whitespace-pre-wrap [overflow-wrap:anywhere]">
+        <div className="max-w-[80%] rounded-2xl rounded-br-sm bg-droid-elevated px-4 py-2.5 text-[14px] leading-relaxed text-droid-text whitespace-pre-wrap break-words">
           {event.text}
         </div>
       )}
@@ -1098,7 +1541,7 @@ const InlineSpecCard = memo(function InlineSpecCard({
             transition={{ duration: 0.12, ease: 'linear' }}
           >
             <div className="px-4 pb-4 pt-2 border-t border-droid-border">
-              <Markdown specMode>{content}</Markdown>
+              <SpecRenderer content={content} />
             </div>
           </motion.div>
         )}
@@ -1109,8 +1552,11 @@ const InlineSpecCard = memo(function InlineSpecCard({
 
 /* ── Assistant message body: interleaves Markdown with <json-render> blocks ── */
 const MessageBody = memo(function MessageBody({ text }: { text: string }) {
-  if (!hasJsonRender(text)) return <Markdown>{text}</Markdown>;
-  const segments = splitJsonRender(text);
+  // Strip the history "[truncated N chars]" sentinel so the raw marker never
+  // shows; the cut itself is intentionally not surfaced.
+  const { body } = parseTruncatedTail(text);
+  if (!hasJsonRender(body)) return <Markdown>{body}</Markdown>;
+  const segments = splitJsonRender(body);
   return (
     <>
       {segments.map((seg, i) =>
@@ -1124,6 +1570,65 @@ const MessageBody = memo(function MessageBody({ text }: { text: string }) {
   );
 });
 
+interface FeedItemViewProps {
+  item: FeedItem;
+  live: boolean;
+  compacting?: boolean;
+  cwd?: string;
+  onOpenDiff?: (c: FileChange) => void;
+  onOpenReviewFile?: (path: string) => void;
+  onOpenSubagent?: (target: SubagentTarget) => void;
+  subagentActivity?: (target: SubagentTarget) => SubagentActivity | undefined;
+  liveTiming?: boolean;
+  specContent?: string;
+  isFinalResponse?: boolean;
+  // When true, nested collapsible groups (tool runs, diff runs) render expanded.
+  // Set inside a "Worked for …" disclosure so opening it reveals the actual tool
+  // calls and edits directly instead of a second layer of collapsed groups.
+  expandGroups?: boolean;
+}
+
+// Two feed items render identically when they wrap the same underlying transcript
+// event objects. The store keeps prior events referentially stable and only swaps
+// the streaming tail event for a new object, so this ref check is enough: every
+// other FeedItem field (diff stats, durations, summaries) is a pure function of
+// these events.
+export function sameFeedEvents(a: FeedItem, b: FeedItem): boolean {
+  if (a.type !== b.type || a.key !== b.key) return false;
+  if (a.type === 'tools' && b.type === 'tools') {
+    return a.events.length === b.events.length && a.events.every((e, i) => e === b.events[i]);
+  }
+  if (a.type === 'diffs' && b.type === 'diffs') {
+    return (
+      a.changes.length === b.changes.length &&
+      a.changes.every((c, i) => c.event === b.changes[i].event)
+    );
+  }
+  // message | thinking | status | error | diff | subagent each carry one event.
+  return (a as { event: TranscriptEvent }).event === (b as { event: TranscriptEvent }).event;
+}
+
+// Lets memo skip the many static items while a response streams, re-rendering
+// only the growing tail. Subagent and worked items surface live, cross-transcript
+// state (running timers, latest line), so they always re-render to stay current.
+function feedItemPropsEqual(prev: FeedItemViewProps, next: FeedItemViewProps): boolean {
+  if (next.item.type === 'subagent' || next.item.type === 'worked') return false;
+  return (
+    prev.live === next.live &&
+    prev.compacting === next.compacting &&
+    prev.liveTiming === next.liveTiming &&
+    prev.specContent === next.specContent &&
+    prev.cwd === next.cwd &&
+    prev.isFinalResponse === next.isFinalResponse &&
+    prev.expandGroups === next.expandGroups &&
+    prev.onOpenDiff === next.onOpenDiff &&
+    prev.onOpenReviewFile === next.onOpenReviewFile &&
+    prev.onOpenSubagent === next.onOpenSubagent &&
+    prev.subagentActivity === next.subagentActivity &&
+    sameFeedEvents(prev.item, next.item)
+  );
+}
+
 const FeedItemView = memo(function FeedItemView({
   item,
   live,
@@ -1135,18 +1640,9 @@ const FeedItemView = memo(function FeedItemView({
   subagentActivity,
   liveTiming,
   specContent,
-}: {
-  item: FeedItem;
-  live: boolean;
-  compacting?: boolean;
-  cwd?: string;
-  onOpenDiff?: (c: FileChange) => void;
-  onOpenReviewFile?: (path: string) => void;
-  onOpenSubagent?: (target: SubagentTarget) => void;
-  subagentActivity?: (target: SubagentTarget) => SubagentActivity | undefined;
-  liveTiming?: boolean;
-  specContent?: string;
-}) {
+  isFinalResponse,
+  expandGroups,
+}: FeedItemViewProps) {
   switch (item.type) {
     case 'message': {
       if (item.event.author === 'user') return <UserBubble event={item.event} />;
@@ -1161,9 +1657,10 @@ const FeedItemView = memo(function FeedItemView({
           {live ? (
             <StreamingCaret />
           ) : (
+            isFinalResponse &&
             text.trim() && (
               <div className="mt-1.5 -ml-1 opacity-0 group-hover/msg:opacity-100 focus-within:opacity-100 transition-opacity">
-                <CopyButton text={text} />
+                <CopyButton text={parseTruncatedTail(text).body} />
               </div>
             )
           )}
@@ -1200,20 +1697,13 @@ const FeedItemView = memo(function FeedItemView({
       return live ? (
         <span className="shimmer-text text-[13px] font-medium">{text}</span>
       ) : (
-        <span className="block text-[13px] text-droid-text-muted leading-relaxed [overflow-wrap:anywhere]">
+        <span className="block text-[13px] text-droid-text-muted leading-relaxed break-words">
           {text}
         </span>
       );
     }
     case 'error':
-      return (
-        <div
-          className="text-[13px] leading-relaxed whitespace-pre-wrap [overflow-wrap:anywhere]"
-          style={{ color: ACCENT }}
-        >
-          {item.event.text}
-        </div>
-      );
+      return <ErrorLine text={item.event.text ?? ''} />;
     case 'diff':
       return (
         <DiffCard
@@ -1222,9 +1712,11 @@ const FeedItemView = memo(function FeedItemView({
         />
       );
     case 'diffs':
-      return <DiffGroup changes={item.changes} onOpenDiff={onOpenDiff} />;
+      return (
+        <DiffGroup changes={item.changes} onOpenDiff={onOpenDiff} defaultOpen={expandGroups} />
+      );
     case 'tools':
-      return <ToolGroupItem events={item.events} active={live} />;
+      return <ToolGroupItem events={item.events} active={live} defaultOpen={expandGroups} />;
     case 'turnChanges':
       return <TurnChangesPanel item={item} cwd={cwd} onOpenFile={onOpenReviewFile} />;
     case 'worked':
@@ -1238,7 +1730,7 @@ const FeedItemView = memo(function FeedItemView({
         />
       );
   }
-});
+}, feedItemPropsEqual);
 
 /* ── Worked-for group: a completed turn's steps folded into one disclosure ── */
 function WorkedGroup({
@@ -1277,6 +1769,7 @@ function WorkedGroup({
               onOpenSubagent={onOpenSubagent}
               subagentActivity={subagentActivity}
               specContent={specContent}
+              expandGroups
             />
           ))}
         </div>
@@ -1290,11 +1783,13 @@ const MAX_DIFF_CARDS = 50;
 function DiffGroup({
   changes,
   onOpenDiff,
+  defaultOpen = false,
 }: {
   changes: { event: TranscriptEvent; change: FileChange }[];
   onOpenDiff?: (c: FileChange) => void;
+  defaultOpen?: boolean;
 }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(defaultOpen);
   const added = changes.reduce((s, c) => s + c.change.added, 0);
   const removed = changes.reduce((s, c) => s + c.change.removed, 0);
   const files = new Set(changes.map((c) => c.change.path));
@@ -1499,12 +1994,12 @@ function SubagentLine({
       <Expand open={open}>
         <div className="mt-2 pl-[18px]">
           {description && (
-            <div className="text-[12.5px] text-droid-text-muted/70 leading-relaxed [overflow-wrap:anywhere]">
+            <div className="text-[12.5px] text-droid-text-muted/70 leading-relaxed break-words">
               {description}
             </div>
           )}
           {latest && (
-            <div className="mt-1.5 text-[12.5px] leading-relaxed [overflow-wrap:anywhere]">
+            <div className="mt-1.5 text-[12.5px] leading-relaxed break-words">
               <span
                 className={
                   running ? 'shimmer-text font-medium' : 'text-droid-text-secondary font-medium'
@@ -1541,6 +2036,7 @@ function SubagentLine({
 /* ── The activity feed (list only; parent owns the scroll container) ── */
 export function MessageFeed({
   events,
+  items: providedItems,
   pending,
   cwd,
   onOpenDiff,
@@ -1551,6 +2047,7 @@ export function MessageFeed({
   onOpenSpecWiki,
 }: {
   events: TranscriptEvent[];
+  items?: FeedItem[];
   pending: boolean;
   cwd?: string;
   onOpenDiff?: (c: FileChange) => void;
@@ -1567,10 +2064,53 @@ export function MessageFeed({
   // files in, so non-interactive Changes cards must not appear there.
   const rich = !!onOpenSubagent;
   const changes = !!onOpenReviewFile;
-  const items = useMemo(
-    () => groupTurns(buildFeed(events, rich), pending, specContent, changes),
-    [events, pending, rich, changes, specContent],
+
+  // The parent rebuilds these callbacks every streaming token (they close over
+  // the growing transcript). Wrap them in stable identities that read the latest
+  // version through a ref, so the memoized FeedItemView can actually skip
+  // unchanged items instead of re-rendering the whole feed on every token. Keep
+  // them undefined when the parent supplies no handler, so absent affordances
+  // (e.g. non-clickable diffs in the chat feed) stay absent.
+  const cbRef = useRef({ onOpenDiff, onOpenReviewFile, onOpenSubagent, subagentActivity });
+  cbRef.current = { onOpenDiff, onOpenReviewFile, onOpenSubagent, subagentActivity };
+  const hasOpenDiff = !!onOpenDiff;
+  const hasOpenReviewFile = !!onOpenReviewFile;
+  const hasSubagentActivity = !!subagentActivity;
+  const stableOnOpenDiff = useMemo(
+    () => (hasOpenDiff ? (c: FileChange) => cbRef.current.onOpenDiff?.(c) : undefined),
+    [hasOpenDiff],
   );
+  const stableOnOpenReviewFile = useMemo(
+    () => (hasOpenReviewFile ? (p: string) => cbRef.current.onOpenReviewFile?.(p) : undefined),
+    [hasOpenReviewFile],
+  );
+  const stableOnOpenSubagent = useMemo(
+    () => (rich ? (t: SubagentTarget) => cbRef.current.onOpenSubagent?.(t) : undefined),
+    [rich],
+  );
+  const stableSubagentActivity = useMemo(
+    () =>
+      hasSubagentActivity ? (t: SubagentTarget) => cbRef.current.subagentActivity?.(t) : undefined,
+    [hasSubagentActivity],
+  );
+
+  const items = useMemo(
+    () => providedItems ?? groupTurns(buildFeed(events, rich), pending, specContent, changes),
+    [providedItems, events, pending, rich, changes, specContent],
+  );
+
+  // The copy button appears only on a turn's final model response.
+  const finalResponseKeys = useMemo(
+    () => new Set(finalResponseAnchorsFromItems(items).map((a) => a.id)),
+    [items],
+  );
+  // The conversation timeline anchors a dot on each user prompt; stamp those
+  // rows so the rail (driven by the same data) can scroll to them.
+  const promptKeys = useMemo(
+    () => new Set(promptAnchorsFromItems(items).map((a) => a.id)),
+    [items],
+  );
+
   const lastIdx = items.length - 1;
   const last = items[lastIdx];
   const showSpecCard = (specContent?.length ?? 0) > 0;
@@ -1611,6 +2151,7 @@ export function MessageFeed({
       {items.map((item, idx) => (
         <motion.div
           key={item.key}
+          {...(promptKeys.has(item.key) ? { 'data-anchor-id': item.key } : {})}
           initial={{ opacity: 0, y: 4 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.2, ease: EASE }}
@@ -1620,12 +2161,13 @@ export function MessageFeed({
             live={pending && idx === lastIdx}
             compacting={compacting && idx === lastIdx}
             cwd={cwd}
-            onOpenDiff={onOpenDiff}
-            onOpenReviewFile={onOpenReviewFile}
-            onOpenSubagent={onOpenSubagent}
-            subagentActivity={subagentActivity}
+            onOpenDiff={stableOnOpenDiff}
+            onOpenReviewFile={stableOnOpenReviewFile}
+            onOpenSubagent={stableOnOpenSubagent}
+            subagentActivity={stableSubagentActivity}
             liveTiming={rich}
             specContent={specContent}
+            isFinalResponse={finalResponseKeys.has(item.key)}
           />
         </motion.div>
       ))}

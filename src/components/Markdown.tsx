@@ -1,6 +1,7 @@
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { useMemo, useEffect, useRef, useState, memo } from 'react';
+import { Copy, Check } from 'lucide-react';
 import type { Mermaid } from 'mermaid';
 
 let mermaidPromise: Promise<Mermaid> | null = null;
@@ -221,10 +222,95 @@ function SvgCodeBlock({ content }: { content: string }) {
   );
 }
 
+const LANG_LABEL: Record<string, string> = {
+  sh: 'Bash',
+  shell: 'Bash',
+  bash: 'Bash',
+  zsh: 'Bash',
+  console: 'Bash',
+  shellsession: 'Bash',
+  js: 'JavaScript',
+  jsx: 'JSX',
+  ts: 'TypeScript',
+  tsx: 'TSX',
+  py: 'Python',
+  rb: 'Ruby',
+  rs: 'Rust',
+  yml: 'YAML',
+  yaml: 'YAML',
+  md: 'Markdown',
+};
+
+function langLabel(className?: string): string {
+  const m = className?.match(/lang(?:uage)?-([\w+#.-]+)/i);
+  if (!m) return 'Code';
+  const l = m[1].toLowerCase();
+  return LANG_LABEL[l] ?? l.charAt(0).toUpperCase() + l.slice(1);
+}
+
+function CodeCopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => clearTimeout(timer.current ?? undefined), []);
+  return (
+    <button
+      onClick={() => {
+        navigator.clipboard
+          ?.writeText(text)
+          .then(() => {
+            setCopied(true);
+            clearTimeout(timer.current ?? undefined);
+            timer.current = setTimeout(() => setCopied(false), 1200);
+          })
+          .catch(() => {});
+      }}
+      className="flex items-center gap-1 text-[10.5px] text-droid-text-muted hover:text-droid-text transition-colors"
+      title="Copy"
+    >
+      {copied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+      {copied ? 'Copied' : 'Copy'}
+    </button>
+  );
+}
+
+// Fenced code block in a clean, theme-adaptive card: a grey header with the
+// language label and a copy action, then the code (syntax-highlighted for JSON).
+function CodeCard({
+  code,
+  className,
+  specMode,
+  highlighted,
+}: {
+  code: string;
+  className?: string;
+  specMode?: boolean;
+  highlighted?: React.ReactNode;
+}) {
+  return (
+    <div
+      className={`rounded-xl border border-droid-border overflow-hidden bg-droid-elevated/40 ${specMode ? 'my-4' : 'my-2.5'}`}
+    >
+      <div className="flex items-center justify-between h-7 px-3 bg-droid-surface/60 border-b border-droid-border">
+        <span className="text-[10px] font-medium uppercase tracking-wider text-droid-text-muted">
+          {langLabel(className)}
+        </span>
+        <CodeCopyButton text={code} />
+      </div>
+      <pre className={`overflow-x-auto ${specMode ? 'p-4' : 'p-3.5'}`}>
+        <code
+          className={`font-mono leading-[1.65] text-droid-text-secondary whitespace-pre ${specMode ? 'text-[13px]' : 'text-[12px]'}`}
+        >
+          {highlighted ?? code}
+        </code>
+      </pre>
+    </div>
+  );
+}
+
 function MarkdownImpl({ children, specMode }: { children: string; specMode?: boolean }) {
   return (
     <div
-      className={`text-droid-text [overflow-wrap:anywhere] ${specMode ? 'text-[15px] leading-[1.8] space-y-5' : 'text-[13.5px] leading-[1.7] space-y-3'}`}
+      className={`text-droid-text break-words ${specMode ? 'text-[15px] leading-[1.8] space-y-5' : 'text-[13.5px] leading-[1.7] space-y-3'}`}
     >
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
@@ -329,7 +415,7 @@ function MarkdownImpl({ children, specMode }: { children: string; specMode?: boo
             if (inline)
               return (
                 <code
-                  className={`font-mono px-1.5 py-0.5 rounded-md bg-droid-elevated/70 text-droid-text [overflow-wrap:anywhere] ${specMode ? 'text-[13px]' : 'text-[12px]'}`}
+                  className={`font-mono px-1.5 py-0.5 rounded-md bg-droid-elevated/70 text-droid-text break-words ${specMode ? 'text-[13px]' : 'text-[12px]'}`}
                 >
                   {children}
                 </code>
@@ -345,30 +431,13 @@ function MarkdownImpl({ children, specMode }: { children: string; specMode?: boo
               return <SvgCodeBlock content={codeText} />;
             }
 
-            if (isJsonLang(className)) {
-              return (
-                <pre
-                  className={`rounded-xl bg-droid-elevated/40 overflow-x-auto ${specMode ? 'my-4 p-4' : 'my-2.5 p-3.5'}`}
-                >
-                  <code
-                    className={`font-mono leading-[1.65] whitespace-pre ${specMode ? 'text-[13px]' : 'text-[12px]'}`}
-                  >
-                    <HighlightJson code={codeText} />
-                  </code>
-                </pre>
-              );
-            }
-
             return (
-              <pre
-                className={`rounded-xl bg-droid-elevated/40 overflow-x-auto ${specMode ? 'my-4 p-4' : 'my-2.5 p-3.5'}`}
-              >
-                <code
-                  className={`font-mono leading-[1.65] text-droid-text-secondary whitespace-pre ${specMode ? 'text-[13px]' : 'text-[12px]'}`}
-                >
-                  {children}
-                </code>
-              </pre>
+              <CodeCard
+                code={codeText}
+                className={className}
+                specMode={specMode}
+                highlighted={isJsonLang(className) ? <HighlightJson code={codeText} /> : undefined}
+              />
             );
           },
           table: ({ children }) => (
@@ -385,14 +454,14 @@ function MarkdownImpl({ children, specMode }: { children: string; specMode?: boo
           thead: ({ children }) => <thead className="bg-droid-elevated/25">{children}</thead>,
           th: ({ children }) => (
             <th
-              className={`border-b border-droid-border text-left font-medium text-droid-text ${specMode ? 'px-3.5 py-2.5' : 'px-2.5 py-1.5'}`}
+              className={`border-b border-droid-border text-left align-top font-medium whitespace-nowrap text-droid-text ${specMode ? 'px-3.5 py-2.5' : 'px-2.5 py-1.5'}`}
             >
               {children}
             </th>
           ),
           td: ({ children }) => (
             <td
-              className={`border-t border-droid-border text-droid-text-secondary ${specMode ? 'px-3.5 py-2.5' : 'px-2.5 py-1.5'}`}
+              className={`border-t border-droid-border align-top text-droid-text-secondary first:whitespace-nowrap first:pr-4 first:font-medium first:text-droid-text ${specMode ? 'px-3.5 py-2.5' : 'px-2.5 py-1.5'}`}
             >
               {children}
             </td>

@@ -474,6 +474,110 @@ test('sendNow interrupts the live turn and prioritizes the steering prompt', asy
   );
 });
 
+test('a stream AbortError without a user Stop surfaces as a failure, not a silent pause', async () => {
+  const events: ServerEvent[] = [];
+  const manager = new MissionManager((event) => events.push(event));
+  class AbortingSession extends FakeSession {
+    async *stream(prompt: string): AsyncGenerator<never, void, undefined> {
+      this.prompts.push(prompt);
+      const err = new Error('The operation was aborted');
+      err.name = 'AbortError';
+      throw err;
+    }
+  }
+  const session = new AbortingSession('droid-abort');
+  const mission = {
+    summary: testSummary('app-abort', session.sessionId),
+    session,
+    streaming: false,
+    pendingSends: [],
+    pendingPermissions: new Map(),
+    pendingQuestions: new Map(),
+    agents: new Map(),
+    knownSubagents: new Set(),
+    completedSubagents: new Set(),
+    terminalAgents: new Set(),
+    linkedSubagents: new Set(),
+    subagentToolUseIds: new Map(),
+    subagentSettings: new Map(),
+    pendingSubagents: [],
+    mcpServers: [],
+    compacting: false,
+  };
+  const internals = manager as unknown as {
+    history: {
+      recordEvent: () => void;
+      syncSummaries: () => void;
+      recordSubagentLink: () => void;
+      subagentLinks: () => [];
+    };
+    missions: Map<string, typeof mission>;
+  };
+  internals.history = {
+    recordEvent: () => {},
+    syncSummaries: () => {},
+    recordSubagentLink: () => {},
+    subagentLinks: () => [],
+  };
+  internals.missions.set(mission.summary.id, mission);
+
+  // No user Stop was issued, so the abort is a real failure and must be
+  // surfaced rather than masked as a quiet cancellation pause.
+  await manager.handle({ type: 'mission.send', missionId: mission.summary.id, text: 'go' });
+  await waitFor(() =>
+    events.some((event) => event.type === 'mission.error' || event.type === 'error'),
+  );
+  assert.equal(mission.summary.phase, 'failed');
+});
+
+test('an idle Stop (no active turn) does not leave the interrupt flag set to poison a later turn', async () => {
+  const events: ServerEvent[] = [];
+  const manager = new MissionManager((event) => events.push(event));
+  const session = new FakeSession('droid-idle-stop');
+  const mission = {
+    summary: testSummary('app-idle-stop', session.sessionId),
+    session,
+    streaming: false,
+    interrupting: false,
+    pendingSends: [],
+    pendingPermissions: new Map(),
+    pendingQuestions: new Map(),
+    agents: new Map(),
+    knownSubagents: new Set(),
+    completedSubagents: new Set(),
+    terminalAgents: new Set(),
+    linkedSubagents: new Set(),
+    subagentToolUseIds: new Map(),
+    subagentSettings: new Map(),
+    pendingSubagents: [],
+    mcpServers: [],
+    compacting: false,
+  };
+  const internals = manager as unknown as {
+    history: {
+      recordEvent: () => void;
+      syncSummaries: () => void;
+      recordSubagentLink: () => void;
+      subagentLinks: () => [];
+    };
+    missions: Map<string, typeof mission>;
+  };
+  internals.history = {
+    recordEvent: () => {},
+    syncSummaries: () => {},
+    recordSubagentLink: () => {},
+    subagentLinks: () => [],
+  };
+  internals.missions.set(mission.summary.id, mission);
+
+  // Stop is pressed while no drive() is active. The flag must be cleared right
+  // here (no finally will run), otherwise a later turn's cancellation would be
+  // silently misclassified as a user Stop.
+  await manager.handle({ type: 'mission.interrupt', missionId: mission.summary.id });
+  assert.equal(mission.streaming, false);
+  assert.equal(mission.interrupting, false);
+});
+
 test('sendNow queues during compaction instead of driving or interrupting', async () => {
   const events: ServerEvent[] = [];
   const manager = new MissionManager((event) => events.push(event));

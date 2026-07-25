@@ -13,6 +13,7 @@ export default {
           bg: v('--droid-bg'),
           surface: v('--droid-surface'),
           elevated: v('--droid-elevated'),
+          active: v('--droid-active'),
           border: v('--droid-border'),
           'border-hover': v('--droid-border-hover'),
           text: v('--droid-text'),
@@ -21,6 +22,7 @@ export default {
           accent: v('--droid-accent'),
           green: v('--droid-green'),
           orange: v('--droid-orange'),
+          red: v('--droid-red'),
         },
       },
       fontFamily: {

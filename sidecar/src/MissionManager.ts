@@ -38,6 +38,8 @@ import type {
   TranscriptEvent,
   WorkerHistoryLink,
 } from './protocol.js';
+import { errMsg, isUserCancellation, normalizeAutonomy, uniqueStrings } from './missionHelpers.js';
+import { boundedInt, numberValue, stringValue } from './values.js';
 import { DroidRuntime } from './DroidRuntime.js';
 import { detectEnvironment } from './Environment.js';
 import { buildInstallCommand, buildUpdateCommand, runStreaming } from './CliInstaller.js';
@@ -109,6 +111,9 @@ interface LiveAgent {
   autoCompacting: boolean;
   pendingSends: string[];
   interruptingForSteer?: boolean;
+  // Set while a user Stop is in flight so the stream catch can attribute the
+  // resulting abort to the user (settle quietly) instead of a real failure.
+  interrupting?: boolean;
   lastUsedAt: number;
   closeWhenIdle?: boolean;
   unsubscribe?: () => void;
@@ -120,6 +125,8 @@ interface Mission {
   streaming: boolean;
   pendingSends: string[];
   interruptingForSteer?: boolean;
+  // Set while a user Stop is in flight (see LiveAgent.interrupting).
+  interrupting?: boolean;
   pendingPermissions: Map<string, PendingPermission>;
   pendingQuestions: Map<string, (r: AskUserResult) => void>;
   agents: Map<string, LiveAgent>;
@@ -1567,6 +1574,10 @@ export class MissionManager {
     } catch (err) {
       if (mission.interruptingForSteer)
         this.emitStatus(appSessionId, 'Current turn interrupted for steering.');
+      else if (mission.interrupting && isUserCancellation(err))
+        // The user pressed Stop; interrupt() already set the paused phase, so
+        // settle quietly without surfacing an error.
+        this.patch(appSessionId, { phase: 'paused' });
       else {
         this.emitError({ missionId: appSessionId, message: errMsg(err) });
         this.patch(appSessionId, { phase: 'failed' });
@@ -1574,6 +1585,7 @@ export class MissionManager {
     } finally {
       this.stopContextPolling(appSessionId);
       mission.interruptingForSteer = false;
+      mission.interrupting = false;
       // Keep streaming=true while refreshContext is in flight so concurrent
       // sends queue instead of racing a second drive().
       await this.refreshContext(appSessionId, mission.session);
@@ -2357,11 +2369,19 @@ export class MissionManager {
     // its watchdog are only cleared once the interrupt actually landed; if it
     // throws they stay in place so the watchdog can still settle the session.
     const wasAutoCompacting = mission.autoCompacting;
+    // Mark the in-flight turn as user-interrupted so drive()'s stream catch
+    // settles the abort quietly instead of surfacing it as a failure. drive()'s
+    // finally clears the flag once the turn unwinds.
+    mission.interrupting = true;
     await mission.session.interrupt();
     if (wasAutoCompacting) {
       mission.autoCompacting = false;
       this.autoCompactionWatchdogs.clear(appSessionId);
     }
+    // If no drive() is active (Stop while idle or between turns), nothing will
+    // run the finally that clears the flag — clear it here so it can't persist
+    // and misclassify a later turn's cancellation as a user Stop.
+    if (!mission.streaming) mission.interrupting = false;
     this.patch(appSessionId, { phase: 'paused', streaming: false, queuedSends: 0 });
   }
 
@@ -2523,7 +2543,7 @@ export class MissionManager {
     } catch (err) {
       if (agent.interruptingForSteer)
         this.emitStatus(agent.missionId, 'Subagent turn interrupted for steering.');
-      else {
+      else if (!(agent.interrupting && isUserCancellation(err))) {
         const message = errMsg(err);
         this.emit({
           type: 'agent.not_steerable',
@@ -2542,6 +2562,7 @@ export class MissionManager {
     } finally {
       this.stopContextPolling(agent.session.sessionId);
       agent.interruptingForSteer = false;
+      agent.interrupting = false;
       if (agent.pendingSends.length === 0 && agent.closeWhenIdle && !agent.autoCompacting) {
         agent.streaming = false;
         // closeAgent resolves the worker by the agents-map id, which is not
@@ -2627,11 +2648,15 @@ export class MissionManager {
     // Same escape hatch as the orchestrator: interrupt first, and settle the
     // wedged auto-compaction flag only once the interrupt landed.
     const wasAutoCompacting = agent.autoCompacting;
+    agent.interrupting = true;
     await agent.session.interrupt();
     if (wasAutoCompacting) {
       agent.autoCompacting = false;
       this.autoCompactionWatchdogs.clear(agentSessionId);
     }
+    // If no driveAgent() is active to clear the flag in its finally, clear it
+    // here so it can't leak into a later turn and misclassify its cancellation.
+    if (!agent.streaming) agent.interrupting = false;
     agent.streaming = false;
     this.emit({
       type: 'agent.updated',
@@ -3189,26 +3214,6 @@ function contextBreakdownSnapshot(raw: unknown): ContextBreakdownSnapshot | unde
   };
 }
 
-function stringValue(value: unknown): string | undefined {
-  return typeof value === 'string' ? value : undefined;
-}
-
-function numberValue(value: unknown): number | undefined {
-  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
-}
-
-function boundedInt(value: string | undefined, fallback: number, min: number, max: number): number {
-  const parsed = value ? Number.parseInt(value, 10) : fallback;
-  if (!Number.isFinite(parsed)) return fallback;
-  return Math.min(max, Math.max(min, parsed));
-}
-
-function normalizeAutonomy(value: unknown): Autonomy | undefined {
-  if (value === 'none') return 'off';
-  if (value === 'off' || value === 'low' || value === 'medium' || value === 'high') return value;
-  return undefined;
-}
-
 export function createAutonomyForCommand(
   cmd: { autonomy?: Autonomy | 'none' },
   defaults: Pick<FactoryDefaultSettings, 'autonomy'>,
@@ -3450,14 +3455,6 @@ function reasoningDefaultForMode(
   if (mode === 'agi')
     return defaults.missionOrchestratorReasoningEffort ?? defaults.reasoningEffort;
   return defaults.reasoningEffort;
-}
-
-function uniqueStrings(values: Array<string | undefined>): string[] {
-  return [...new Set(values.filter((value): value is string => Boolean(value)))];
-}
-
-function errMsg(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
 }
 
 // Model-generated transcript kinds that, once a turn is terminal, would form a

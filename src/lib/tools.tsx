@@ -145,3 +145,85 @@ export function formatDuration(ms: number): string {
   const rem = s % 60;
   return rem ? `${m}m ${rem}s` : `${m}m`;
 }
+
+// The history reader appends a "[truncated N chars]" sentinel when a single
+// message exceeds its per-event cap. Strip that tail so the body renders as
+// normal prose and the raw sentinel never shows in the message.
+const TRUNCATION_RE = /\n*\[truncated (\d+) chars\]\s*$/;
+
+export function parseTruncatedTail(text: string): { body: string; truncatedChars: number | null } {
+  const m = TRUNCATION_RE.exec(text);
+  if (!m) return { body: text, truncatedChars: null };
+  return { body: text.slice(0, m.index).trimEnd(), truncatedChars: Number(m[1]) };
+}
+
+// A WebSearch tool call (as opposed to a plain URL fetch), identified by name.
+export function isWebSearchTool(name?: string): boolean {
+  return /web.?search/i.test(name ?? '');
+}
+
+export type WebSearchResult = { title: string; url: string; snippet: string };
+
+// Parse the WebSearch tool result text. Each result is a block separated by a
+// "---" line:
+//   Web Search Results for: "<query>"
+//
+//   **<Title>**
+//      URL: https://…
+//
+//      <snippet, possibly ending with …>
+//   ---
+//   Found N results
+export function parseWebSearch(text: string): {
+  query?: string;
+  count?: number;
+  results: WebSearchResult[];
+} {
+  const results: WebSearchResult[] = [];
+  const clean = (text ?? '').replace(/\r\n/g, '\n');
+  const query = clean.match(/Web Search Results for:\s*"([\s\S]*?)"\s*\n/)?.[1]?.trim();
+  const countMatch = clean.match(/Found\s+(\d+)\s+results?/i);
+  const re =
+    /\*\*(.+?)\*\*[ \t]*\n[ \t]*URL:[ \t]*(\S+)([\s\S]*?)(?=\n[ \t]*-{3,}[ \t]*\n|\nFound \d+ results?|$)/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(clean)) !== null) {
+    const snippet = m[3]
+      .split('\n')
+      .map((l) => l.trim())
+      .filter(Boolean)
+      .join(' ')
+      .trim();
+    results.push({ title: m[1].trim(), url: m[2].trim(), snippet });
+  }
+  const count = countMatch ? Number(countMatch[1]) : results.length || undefined;
+  return { query, count, results };
+}
+
+// Human-friendly source label from a URL: the registrable name, capitalized
+// (e.g. https://www.theregister.com/… → "Theregister"). Falls back to the URL.
+export function webSourceName(url: string): string {
+  try {
+    const host = new URL(url).hostname.replace(/^www\./, '');
+    const parts = host.split('.');
+    const label = parts.length >= 2 ? parts[parts.length - 2] : parts[0];
+    return label.charAt(0).toUpperCase() + label.slice(1);
+  } catch {
+    return url;
+  }
+}
+
+// A small favicon URL for a result's domain, or undefined if the URL is unusable.
+export function faviconUrl(url: string): string | undefined {
+  try {
+    const host = new URL(url).hostname;
+    return `https://www.google.com/s2/favicons?sz=64&domain=${encodeURIComponent(host)}`;
+  } catch {
+    return undefined;
+  }
+}
+
+export function toolArgStringArray(args: unknown, key: string): string[] {
+  const a = args && typeof args === 'object' ? (args as Record<string, unknown>) : {};
+  const v = a[key];
+  return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [];
+}

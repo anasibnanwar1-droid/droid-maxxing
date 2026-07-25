@@ -77,7 +77,7 @@ export default function AskUserModal() {
         <div className="px-5 pt-4 pb-3">
           {/* Question */}
           <div className="flex items-baseline justify-between gap-3 mb-3">
-            <div className="text-[15px] leading-relaxed text-droid-text [overflow-wrap:anywhere]">
+            <div className="text-[15px] leading-relaxed text-droid-text break-words">
               {q.question}
             </div>
             {total > 1 && (
@@ -107,7 +107,7 @@ export default function AskUserModal() {
                     {i + 1}
                   </span>
                   <span
-                    className={`text-[13.5px] [overflow-wrap:anywhere] ${selected ? 'text-droid-text' : 'text-droid-text-secondary'}`}
+                    className={`text-[13.5px] break-words ${selected ? 'text-droid-text' : 'text-droid-text-secondary'}`}
                   >
                     {opt}
                   </span>

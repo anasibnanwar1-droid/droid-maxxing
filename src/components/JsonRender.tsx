@@ -1,5 +1,5 @@
 import { Fragment, memo, useMemo, type ReactNode } from 'react';
-import { ArrowUp, ArrowDown, CheckCircle2, XCircle, AlertTriangle, Info } from 'lucide-react';
+import { ArrowDown, ArrowUp } from 'lucide-react';
 
 /* ─────────────────────────────────────────────────────────────────────────
  * Rich <json-render> renderer.
@@ -46,11 +46,11 @@ const COLOR_MAP: Record<string, string> = {
   success: 'var(--droid-green)',
   orange: 'var(--droid-orange)',
   warning: 'var(--droid-orange)',
-  red: '#d0584e',
-  error: '#d0584e',
-  danger: '#d0584e',
+  red: 'var(--droid-red)',
+  error: 'var(--droid-red)',
+  danger: 'var(--droid-red)',
   info: 'var(--droid-accent)',
-  blue: '#5b8db8',
+  blue: 'var(--droid-accent)',
   muted: 'var(--droid-text-muted)',
   secondary: 'var(--droid-text-secondary)',
   text: 'var(--droid-text)',
@@ -112,24 +112,21 @@ function mergedProps(el: RawElement): Record<string, unknown> {
   return { ...rest, ...(props && typeof props === 'object' ? props : {}) };
 }
 
-const STATUS_META: Record<string, { color: string; Icon: typeof Info }> = {
-  success: { color: 'var(--droid-green)', Icon: CheckCircle2 },
-  error: { color: '#d0584e', Icon: XCircle },
-  warning: { color: 'var(--droid-orange)', Icon: AlertTriangle },
-  info: { color: 'var(--droid-accent)', Icon: Info },
+// Semantic status → themed color. success/warning/error use the fixed semantic
+// green/amber/red so they always read by hue, even in monochrome; only info
+// follows the neutral accent so it stays part of the monochrome UI chrome.
+const STATUS_COLOR: Record<string, string> = {
+  success: 'var(--droid-green)',
+  error: 'var(--droid-red)',
+  warning: 'var(--droid-orange)',
+  info: 'var(--droid-accent)',
 };
 
-// Look up status metadata by own-property only. A model-supplied status like
-// "constructor" or "toString" would otherwise resolve to a truthy Object.proto
-// member (with no .Icon) and crash React while rendering an undefined component.
-function statusMeta(key: string): { color: string; Icon: typeof Info } {
-  return Object.prototype.hasOwnProperty.call(STATUS_META, key)
-    ? STATUS_META[key]
-    : STATUS_META.info;
-}
-
+// Look up by own-property only: a model-supplied status like "constructor" or
+// "toString" would otherwise resolve through Object.prototype to a truthy value
+// and slip past the map, so guard against prototype keys explicitly.
 function statusColor(key: string, fallback = 'var(--droid-text-muted)'): string {
-  return Object.prototype.hasOwnProperty.call(STATUS_META, key) ? STATUS_META[key].color : fallback;
+  return Object.prototype.hasOwnProperty.call(STATUS_COLOR, key) ? STATUS_COLOR[key] : fallback;
 }
 
 /* ── individual components ── */
@@ -159,7 +156,7 @@ function BoxEl({ props, children }: { props: Record<string, unknown>; children: 
 function TextEl({ props }: { props: Record<string, unknown> }) {
   return (
     <span
-      className="text-[13px] leading-relaxed [overflow-wrap:anywhere]"
+      className="text-[13px] leading-relaxed break-words"
       style={{ color: resolveColor(props.color), fontWeight: props.bold ? 600 : undefined }}
     >
       {asString(props.text)}
@@ -176,7 +173,7 @@ function HeadingEl({ props }: { props: Record<string, unknown> }) {
       : level === 'h3'
         ? 'text-[13.5px] font-semibold text-droid-text-secondary'
         : 'text-[15px] font-semibold';
-  return <div className={`${cls} text-droid-text [overflow-wrap:anywhere]`}>{text}</div>;
+  return <div className={`${cls} text-droid-text break-words`}>{text}</div>;
 }
 
 function DividerEl({ props }: { props: Record<string, unknown> }) {
@@ -258,7 +255,7 @@ function TableEl({ props }: { props: Record<string, unknown> }) {
             {cols.map((c, i) => (
               <th
                 key={i}
-                className="border-b border-droid-border text-left font-medium px-2.5 py-1.5"
+                className="border-b border-droid-border text-left align-top font-medium whitespace-nowrap px-2.5 py-1.5"
                 style={{ color: headerColor ?? 'var(--droid-text)', width: asNumber(c.width) }}
               >
                 {asString(c.header ?? c.key)}
@@ -272,7 +269,7 @@ function TableEl({ props }: { props: Record<string, unknown> }) {
               {cols.map((c, ci) => (
                 <td
                   key={ci}
-                  className="border-t border-droid-border text-droid-text-secondary px-2.5 py-1.5"
+                  className="border-t border-droid-border align-top text-droid-text-secondary first:whitespace-nowrap first:pr-4 first:font-medium first:text-droid-text px-2.5 py-1.5"
                 >
                   {asString(r[asString(c.key)])}
                 </td>
@@ -320,12 +317,13 @@ function CardEl({ props, children }: { props: Record<string, unknown>; children:
 
 function StatusLineEl({ props }: { props: Record<string, unknown> }) {
   const status = asString(props.status, 'info').toLowerCase();
-  const meta = statusMeta(status);
-  const Icon = meta.Icon;
   return (
-    <span className="inline-flex items-center gap-1.5 text-[13px]" style={{ color: meta.color }}>
-      <Icon className="w-3.5 h-3.5 shrink-0" />
-      <span className="text-droid-text">{asString(props.text)}</span>
+    <span className="inline-flex items-center gap-2 text-[13px] text-droid-text">
+      <span
+        className="h-1.5 w-1.5 shrink-0 rounded-full"
+        style={{ background: statusColor(status) }}
+      />
+      {asString(props.text)}
     </span>
   );
 }
@@ -333,8 +331,8 @@ function StatusLineEl({ props }: { props: Record<string, unknown> }) {
 function KeyValueEl({ props }: { props: Record<string, unknown> }) {
   return (
     <div className="flex items-baseline gap-2 text-[13px]">
-      <span className="text-droid-text-muted">{asString(props.label)}</span>
-      <span className="text-droid-text font-medium [overflow-wrap:anywhere]">
+      <span className="shrink-0 text-droid-text-muted">{asString(props.label)}</span>
+      <span className="min-w-0 text-droid-text font-medium break-words">
         {asString(props.value)}
       </span>
     </div>
@@ -382,7 +380,7 @@ function ProgressBarEl({ props }: { props: Record<string, unknown> }) {
 function MetricEl({ props }: { props: Record<string, unknown> }) {
   const trend = asString(props.trend).toLowerCase();
   const trendColor =
-    trend === 'up' ? 'var(--droid-green)' : trend === 'down' ? '#d0584e' : undefined;
+    trend === 'up' ? 'var(--droid-green)' : trend === 'down' ? 'var(--droid-red)' : undefined;
   const TrendIcon = trend === 'up' ? ArrowUp : trend === 'down' ? ArrowDown : null;
   return (
     <div className="flex flex-col gap-0.5">
@@ -399,25 +397,33 @@ function MetricEl({ props }: { props: Record<string, unknown> }) {
 
 function CalloutEl({ props, children }: { props: Record<string, unknown>; children: ReactNode }) {
   const type = asString(props.type, 'info').toLowerCase();
-  const meta = statusMeta(type);
-  const Icon = meta.Icon;
+  const color = statusColor(type);
   const title = asString(props.title);
   const content = asString(props.content);
+  // A single colored dot carries the severity; the card itself is a plain
+  // elevated surface so P-level/danger notes read as clean cards, not stickers.
   return (
-    <div
-      className="flex gap-2.5 rounded-xl border border-droid-border bg-droid-elevated/20 px-3.5 py-2.5 w-full"
-      style={{ borderLeftColor: meta.color, borderLeftWidth: 3 }}
-    >
-      <Icon className="w-4 h-4 shrink-0 mt-0.5" style={{ color: meta.color }} />
-      <div className="flex flex-col gap-0.5 min-w-0">
-        {title && <span className="text-[13px] font-semibold text-droid-text">{title}</span>}
-        {content && (
-          <span className="text-[13px] text-droid-text-secondary [overflow-wrap:anywhere]">
-            {content}
-          </span>
-        )}
-        {children}
-      </div>
+    <div className="w-full rounded-xl border border-droid-border bg-droid-elevated px-4 py-3">
+      {title && (
+        <div className="flex items-center gap-2 text-[13px] font-semibold text-droid-text break-words">
+          <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: color }} />
+          {title}
+        </div>
+      )}
+      {content && (
+        <div
+          className={`flex gap-2 text-[12.5px] leading-relaxed text-droid-text-secondary break-words ${title ? 'mt-1.5 pl-3.5' : ''}`}
+        >
+          {!title && (
+            <span
+              className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full"
+              style={{ background: color }}
+            />
+          )}
+          {content}
+        </div>
+      )}
+      {children && <div className={title ? 'mt-1.5 pl-3.5' : ''}>{children}</div>}
     </div>
   );
 }
@@ -434,7 +440,7 @@ function TimelineEl({ props }: { props: Record<string, unknown> }) {
           <div key={i} className="flex gap-2.5">
             <div className="flex flex-col items-center">
               <span className="mt-1 w-2 h-2 rounded-full shrink-0" style={{ background: dot }} />
-              {!last && <span className="w-px flex-1 bg-droid-border my-1" />}
+              {!last && <span className="w-px flex-1 bg-droid-text-muted/30 my-1" />}
             </div>
             <div className={`flex flex-col gap-0.5 ${last ? '' : 'pb-3'}`}>
               <span className="text-[13px] font-medium text-droid-text">{asString(it.title)}</span>
@@ -558,7 +564,7 @@ export const JsonRender = memo(function JsonRender({ source }: { source: string 
   const tree = renderNode(parsed.root, parsed, new Set(), 0, { count: 0 });
   if (tree == null) return <ErrorFallback raw={source.trim()} />;
 
-  return <div className="my-2.5 w-full max-w-full [overflow-wrap:anywhere]">{tree}</div>;
+  return <div className="my-2.5 w-full max-w-full break-words">{tree}</div>;
 });
 
 /* ── splitting helper for message bodies ── */
@@ -602,7 +608,7 @@ export function hasJsonRender(text: string): boolean {
 }
 
 export const __resolveColorForTest = resolveColor;
-export const __statusMetaForTest = statusMeta;
+export const __statusColorForTest = statusColor;
 
 // Test seam: render a spec and report how many nodes were actually expanded, so
 // the global budget can be asserted without a DOM. Returns at most MAX_NODES.

@@ -2,11 +2,21 @@ import { useRef, useEffect, useLayoutEffect, useMemo, useState, useCallback } fr
 import { GripVertical, ChevronRight, Square } from 'lucide-react';
 import { useStore } from '../hooks/useStore';
 import { useMissionLive } from '../hooks/useMissionLive';
-import { MessageFeed, WorkingIndicator } from './chat';
+import { motion } from 'framer-motion';
+import {
+  MessageFeed,
+  WorkingIndicator,
+  UserBubble,
+  ChatSkeleton,
+  TranscriptSkeleton,
+  buildGroupedFeed,
+  promptAnchorsFromItems,
+} from './chat';
 import { readFile } from '../lib/desktop';
 import { interruptAgent, loadMissionHistory, loadOlderMissionHistory } from '../lib/commands';
 import { findWorkerForTarget, resolveWorkers, subagentActivityForTarget } from '../lib/subagents';
 import type { FileChange } from '../lib/diff';
+import { ConversationTimeline } from './ConversationTimeline';
 
 function DroidWordmark() {
   return (
@@ -45,13 +55,13 @@ function EmptyState({ folder }: { folder?: string }) {
   );
 }
 
-function RestoringState({ count }: { count: number }) {
+// While a conversation restores we show an animated placeholder instead of a
+// "Restoring…" label, so switching chats feels like content loading in (the way
+// most chat apps do) rather than a blank or busy screen.
+function RestoringState() {
   return (
-    <div className="flex h-full flex-col items-center justify-center gap-3 px-8 text-center">
-      <WorkingIndicator label="Restoring conversation" />
-      {count > 0 && (
-        <span className="text-[12px] text-droid-text-muted">{count} messages loaded so far</span>
-      )}
+    <div className="mx-auto min-w-0 max-w-2xl px-6 py-6">
+      <TranscriptSkeleton />
     </div>
   );
 }
@@ -246,6 +256,9 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
   // visually fixed once the prepended messages grow the scroll height.
   const prependAnchor = useRef<{ height: number; top: number } | null>(null);
   const PREFETCH_PX = 800;
+  // Auto-page older history until the conversation timeline has at least this
+  // many anchors (or the chain ends); the rest fills in as the user scrolls up.
+  const TIMELINE_TARGET_ANCHORS = 12;
 
   // Only auto-scroll when the user is already pinned to the bottom; if they've
   // scrolled up to read, leave their position alone while the model responds.
@@ -287,6 +300,12 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
 
   const live = useMissionLive(activeMission?.id ?? null);
   const draftFolder = state.draftChat?.cwd.split('/').filter(Boolean).pop();
+
+  // Between pressing send on a fresh chat and MISSION_CREATED arriving (the
+  // sidecar spawns the session, ~1-2s), there is no active mission yet. Show the
+  // user's message immediately with a starting cue instead of a blank screen;
+  // the real feed (which seeds the same message) takes over once it exists.
+  const startingCompose = !activeMission ? Object.values(state.pendingCompose).at(-1) : undefined;
 
   const isSpec = activeMission?.kind === 'spec';
   const capturedPlan = activeMission ? state.specPlans[activeMission.id] : undefined;
@@ -353,6 +372,45 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
     dispatch({ type: 'SPEC_SET', missionId, path, title, content: specContent });
   }, [missionId, specContent, hasFileSpec, fileSpec, storedSpec?.path, dispatch]);
 
+  // Build the grouped feed once and share it: MessageFeed renders it and the
+  // timeline derives its anchors from the same items, so switching sessions
+  // doesn't run buildFeed/groupTurns twice on every render.
+  const feedItems = useMemo(
+    () => buildGroupedFeed(transcript, true, live, specContent, true),
+    [transcript, live, specContent],
+  );
+  // Dots for the conversation timeline: one per user prompt, derived from the
+  // same feed the transcript renders so the rail stays in sync.
+  const timelineAnchors = useMemo(
+    () => (viewingSub ? [] : promptAnchorsFromItems(feedItems)),
+    [feedItems, viewingSub],
+  );
+
+  // Old/large chats restore only a recent window, which can hold too few final
+  // responses for the rail to be useful. Page older history in (via the same
+  // prepend-stable path as scroll prefetch) until there are enough anchors or
+  // the compaction chain is exhausted, so the timeline works on any chat.
+  useEffect(() => {
+    if (viewingSub || !historyMissionId || !olderCursor || loadingOlder) return;
+    if (timelineAnchors.length >= TIMELINE_TARGET_ANCHORS) return;
+    // A failed older-page load leaves the cursor intact so a later user scroll
+    // can retry; without this guard the auto-pager would immediately re-fire the
+    // same failing cursor in a tight loop, since clearing loadingOlder re-arms it.
+    if (restore?.status === 'failed') return;
+    const el = scrollRef.current;
+    if (el) prependAnchor.current = { height: el.scrollHeight, top: el.scrollTop };
+    dispatch({ type: 'MISSION_HISTORY_LOADING_OLDER', missionId: historyMissionId });
+    loadOlderMissionHistory(historyMissionId, olderCursor);
+  }, [
+    viewingSub,
+    historyMissionId,
+    olderCursor,
+    loadingOlder,
+    timelineAnchors.length,
+    restore?.status,
+    dispatch,
+  ]);
+
   return (
     <div className="flex-1 min-h-0 min-w-0 flex flex-col overflow-hidden">
       {activeMission && (
@@ -375,71 +433,92 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
           }
         />
       )}
-      <div
-        ref={scrollRef}
-        onScroll={onScroll}
-        className="flex-1 min-h-0 min-w-0 overflow-y-auto overflow-x-hidden"
-        style={{
-          paddingRight: rightInset ? 312 : undefined,
-          transition: 'padding-right 0.2s ease',
-        }}
-      >
-        {activeMission && transcript.length > 0 ? (
-          <div className="mx-auto min-w-0 px-6 py-6 max-w-2xl">
-            {!viewingSub && restore?.status === 'failed' && (
-              <RestoreFailedBanner message={restore.error} onRetry={retryRestore} />
-            )}
-            {!viewingSub && loadingOlder && (
-              <div className="mb-4 flex justify-center">
-                <span className="text-[11px] text-droid-text-muted">Loading earlier messages…</span>
-              </div>
-            )}
-            <MessageFeed
-              events={transcript}
-              pending={live}
-              cwd={activeMission.cwd}
-              onOpenDiff={openDiff}
-              onOpenReviewFile={openReviewFile}
-              onOpenSubagent={openSubagent}
-              subagentActivity={subagentActivity}
-              specContent={specContent}
-              onOpenSpecWiki={
-                missionId ? () => dispatch({ type: 'SPEC_OPEN_WIKI', missionId }) : undefined
-              }
-            />
-          </div>
-        ) : activeMission && restore?.status === 'failed' ? (
-          <RestoreFailedState message={restore.error} onRetry={retryRestore} />
-        ) : activeMission && viewingSub ? (
-          <div className="mx-auto flex h-full max-w-2xl flex-col items-center justify-center gap-4 px-8 text-center">
-            {selectedWorker?.prompt && (
-              <div className="max-w-lg rounded-xl bg-droid-elevated/40 px-4 py-3 text-left">
-                <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-droid-text-muted">
-                  Task
-                </div>
-                <div className="text-[12.5px] leading-relaxed text-droid-text-secondary whitespace-pre-wrap [overflow-wrap:anywhere]">
-                  {selectedWorker.prompt}
-                </div>
-              </div>
-            )}
-            {selectedWorker?.status === 'running' ? (
-              <WorkingIndicator
-                label={`${subLabel} is working`}
-                startTs={selectedWorker.startedAt}
-              />
-            ) : selectedAgent && state.agentHistoryLoading[selectedAgent] ? (
-              <WorkingIndicator label={`Loading ${subLabel} activity`} />
-            ) : (
-              <span className="text-[13px] text-droid-text-muted">
-                No activity captured for {subLabel}.
-              </span>
-            )}
-          </div>
-        ) : activeMission && restore?.status === 'loading' ? (
-          <RestoringState count={restore.loadedCount} />
-        ) : (
-          <EmptyState folder={draftFolder} />
+      <div className="relative flex-1 min-h-0 min-w-0 flex flex-col">
+        {activeMission && timelineAnchors.length >= 2 && (
+          <ConversationTimeline scrollRef={scrollRef} anchors={timelineAnchors} />
         )}
+        <div
+          ref={scrollRef}
+          onScroll={onScroll}
+          className="flex-1 min-h-0 min-w-0 overflow-y-auto overflow-x-hidden"
+          style={{
+            paddingRight: rightInset ? 312 : undefined,
+            transition: 'padding-right 0.2s ease',
+          }}
+        >
+          {activeMission && transcript.length > 0 ? (
+            <motion.div
+              key={`${missionId ?? 'none'}:${viewingSub ? selectedAgent : 'main'}`}
+              initial={{ opacity: 0, y: 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
+              className="mx-auto min-w-0 px-6 py-6 max-w-2xl"
+            >
+              {!viewingSub && restore?.status === 'failed' && (
+                <RestoreFailedBanner message={restore.error} onRetry={retryRestore} />
+              )}
+              {!viewingSub && loadingOlder && (
+                <div className="mb-4 flex justify-center">
+                  <span className="text-[11px] text-droid-text-muted">
+                    Loading earlier messages…
+                  </span>
+                </div>
+              )}
+              <MessageFeed
+                events={transcript}
+                items={feedItems}
+                pending={live}
+                cwd={activeMission.cwd}
+                onOpenDiff={openDiff}
+                onOpenReviewFile={openReviewFile}
+                onOpenSubagent={openSubagent}
+                subagentActivity={subagentActivity}
+                specContent={specContent}
+                onOpenSpecWiki={
+                  missionId ? () => dispatch({ type: 'SPEC_OPEN_WIKI', missionId }) : undefined
+                }
+              />
+            </motion.div>
+          ) : activeMission && restore?.status === 'failed' ? (
+            <RestoreFailedState message={restore.error} onRetry={retryRestore} />
+          ) : activeMission && viewingSub ? (
+            <div className="mx-auto flex h-full max-w-2xl flex-col items-center justify-center gap-4 px-8 text-center">
+              {selectedWorker?.prompt && (
+                <div className="max-w-lg rounded-xl bg-droid-elevated/40 px-4 py-3 text-left">
+                  <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-droid-text-muted">
+                    Task
+                  </div>
+                  <div className="text-[12.5px] leading-relaxed text-droid-text-secondary whitespace-pre-wrap break-words">
+                    {selectedWorker.prompt}
+                  </div>
+                </div>
+              )}
+              {selectedWorker?.status === 'running' ? (
+                <WorkingIndicator
+                  label={`${subLabel} is working`}
+                  startTs={selectedWorker.startedAt}
+                />
+              ) : selectedAgent && state.agentHistoryLoading[selectedAgent] ? (
+                <WorkingIndicator label={`Loading ${subLabel} activity`} />
+              ) : (
+                <span className="text-[13px] text-droid-text-muted">
+                  No activity captured for {subLabel}.
+                </span>
+              )}
+            </div>
+          ) : activeMission && restore?.status === 'loading' ? (
+            <RestoringState />
+          ) : startingCompose ? (
+            <div className="mx-auto min-w-0 max-w-2xl px-6 py-6">
+              <UserBubble event={startingCompose} />
+              <div className="mt-5">
+                <ChatSkeleton />
+              </div>
+            </div>
+          ) : (
+            <EmptyState folder={draftFolder} />
+          )}
+        </div>
       </div>
     </div>
   );
