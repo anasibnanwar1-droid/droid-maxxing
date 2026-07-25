@@ -6,7 +6,10 @@ import { normalizeBrowserUrl } from './browserUrl.js';
 import { formatDesignPrompt, writeDesignPromptPack } from './designPromptPacks.js';
 import type {
   BrowserBox,
+  BrowserConsoleEvent,
+  BrowserElementInspection,
   BrowserElementRef,
+  BrowserNetworkEvent,
   BrowserScreenshotOptions,
   BrowserSnapshot,
   BrowserState,
@@ -44,12 +47,20 @@ export interface BrowserRuntime {
   screenshot(options?: BrowserScreenshotOptions): Promise<string>;
   capture(box?: BrowserBox, options?: BrowserScreenshotOptions): Promise<string>;
   snapshot(): Promise<BrowserSnapshot>;
-  click(x: number, y: number, selector?: string): Promise<void>;
-  hover(x: number, y: number, selector?: string): Promise<void>;
-  selectOption(selector: string, value: string): Promise<void>;
-  type(text: string): Promise<void>;
-  keypress(key: string): Promise<void>;
-  scroll(direction: ScrollDirection, pixels?: number, x?: number, y?: number): Promise<void>;
+  click(x: number, y: number, selector?: string): Promise<BrowserSnapshot>;
+  hover(x: number, y: number, selector?: string): Promise<BrowserSnapshot>;
+  selectOption(selector: string, value: string): Promise<BrowserSnapshot>;
+  type(text: string): Promise<BrowserSnapshot>;
+  keypress(key: string): Promise<BrowserSnapshot>;
+  scroll(
+    direction: ScrollDirection,
+    pixels?: number,
+    x?: number,
+    y?: number,
+  ): Promise<BrowserSnapshot>;
+  inspect(selector: string): Promise<BrowserElementInspection>;
+  network(clear?: boolean): Promise<BrowserNetworkEvent[]>;
+  console(clear?: boolean): Promise<BrowserConsoleEvent[]>;
   fillCredentials?(): Promise<BrowserSnapshot>;
   close(): Promise<void>;
 }
@@ -156,14 +167,14 @@ export class BrowserSessionManager {
     viewportMode: BrowserViewportMode;
   }): Promise<BrowserState> {
     const session = this.requireSession(input.missionId);
-    session.state = {
+    const nextState = {
       ...session.state,
       viewport: input.viewport,
       viewportMode: input.viewportMode,
+      refs: [],
     };
-    this.emitUpdated(session.state);
     await session.runtime.setViewport(input.viewport);
-    session.state = await this.captureState(session);
+    session.state = nextState;
     this.emitUpdated(session.state);
     return session.state;
   }
@@ -176,12 +187,11 @@ export class BrowserSessionManager {
     source?: BrowserInputSource;
   }): Promise<BrowserState> {
     const session = this.requireSession(input.missionId);
-    if (input.ref) await this.refresh(session.missionId);
     const target = input.ref ? this.requireRef(session, input.ref) : undefined;
     const point = target ? centerOf(target) : pointFrom(input);
     this.showAgentCursor(session, point, input.source);
-    await session.runtime.click(point.x, point.y, target?.selector);
-    return this.refresh(session.missionId);
+    const snapshot = await session.runtime.click(point.x, point.y, target?.selector);
+    return this.updateFromSnapshot(session, snapshot);
   }
 
   async hover(input: {
@@ -191,20 +201,18 @@ export class BrowserSessionManager {
     y?: number;
   }): Promise<BrowserState> {
     const session = this.requireSession(input.missionId);
-    if (input.ref) await this.refresh(session.missionId);
     const target = input.ref ? this.requireRef(session, input.ref) : undefined;
     const point = target ? centerOf(target) : pointFrom(input);
     this.showAgentCursor(session, point, 'agent');
-    await session.runtime.hover(point.x, point.y, target?.selector);
-    return this.refresh(session.missionId);
+    const snapshot = await session.runtime.hover(point.x, point.y, target?.selector);
+    return this.updateFromSnapshot(session, snapshot);
   }
 
   async selectOption(missionId: string, ref: string, value: string): Promise<BrowserState> {
     const session = this.requireSession(missionId);
-    await this.refresh(session.missionId);
     const target = this.requireRef(session, ref);
-    await session.runtime.selectOption(target.selector, value);
-    return this.refresh(session.missionId);
+    const snapshot = await session.runtime.selectOption(target.selector, value);
+    return this.updateFromSnapshot(session, snapshot);
   }
 
   async wait(
@@ -230,14 +238,14 @@ export class BrowserSessionManager {
 
   async type(missionId: string, text: string): Promise<BrowserState> {
     const session = this.requireSession(missionId);
-    await session.runtime.type(text);
-    return this.refresh(session.missionId);
+    const snapshot = await session.runtime.type(text);
+    return this.updateFromSnapshot(session, snapshot);
   }
 
   async keypress(missionId: string, key: string): Promise<BrowserState> {
     const session = this.requireSession(missionId);
-    await session.runtime.keypress(key);
-    return this.refresh(session.missionId);
+    const snapshot = await session.runtime.keypress(key);
+    return this.updateFromSnapshot(session, snapshot);
   }
 
   async scroll(
@@ -248,7 +256,6 @@ export class BrowserSessionManager {
     ref?: string,
   ): Promise<BrowserState> {
     const session = this.requireSession(missionId);
-    if (ref) await this.refresh(session.missionId);
     const point = ref
       ? centerOf(this.requireRef(session, ref))
       : {
@@ -256,8 +263,28 @@ export class BrowserSessionManager {
           y: Math.round(session.state.viewport.height / 2),
         };
     this.showAgentCursor(session, point, source);
-    await session.runtime.scroll(direction, pixels, point.x, point.y);
-    return this.refresh(session.missionId);
+    const snapshot = await session.runtime.scroll(direction, pixels, point.x, point.y);
+    return this.updateFromSnapshot(session, snapshot);
+  }
+
+  async inspect(
+    missionId: string,
+    input: { ref?: string; selector?: string },
+  ): Promise<BrowserElementInspection> {
+    const session = this.requireSession(missionId);
+    const selector = input.ref
+      ? this.requireRef(session, input.ref).selector
+      : input.selector?.trim();
+    if (!selector) throw new Error('Browser inspection requires a ref or selector.');
+    return session.runtime.inspect(selector);
+  }
+
+  async network(missionId: string, clear = false): Promise<BrowserNetworkEvent[]> {
+    return this.requireSession(missionId).runtime.network(clear);
+  }
+
+  async console(missionId: string, clear = false): Promise<BrowserConsoleEvent[]> {
+    return this.requireSession(missionId).runtime.console(clear);
   }
 
   async fillCredentials(missionId: string): Promise<BrowserState> {
@@ -448,6 +475,15 @@ export class BrowserSessionManager {
       ...session.state,
       ...snapshot,
     };
+  }
+
+  private updateFromSnapshot(
+    session: ManagedBrowserSession,
+    snapshot: BrowserSnapshot,
+  ): BrowserState {
+    session.state = this.stateFromSnapshot(session, snapshot);
+    this.emitUpdated(session.state);
+    return session.state;
   }
 
   private requireRef(session: ManagedBrowserSession, refId: string): BrowserElementRef {

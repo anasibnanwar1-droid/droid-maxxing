@@ -1,8 +1,12 @@
 import { isDesktop } from './desktop';
 import type {
   BrowserBox,
+  BrowserConsoleEvent,
+  BrowserElementInspection,
+  BrowserNetworkEvent,
   BrowserNativeAction,
   BrowserNativeRequest,
+  BrowserNativeResult,
   BrowserNativeSnapshot,
   BrowserScrollDirection,
   DesignAnchor,
@@ -61,12 +65,18 @@ export interface NativeBrowserAgentAction {
   key?: string;
   direction?: BrowserScrollDirection;
   pixels?: number;
+  viewport?: BrowserNativeRequest['viewport'];
+  clearNetworkLog?: boolean;
+  clearConsoleLog?: boolean;
 }
 
 export interface NativeBrowserAgentResult {
   requestId: string;
   ok: boolean;
   snapshot?: BrowserNativeSnapshot;
+  inspection?: BrowserElementInspection;
+  networkEvents?: BrowserNetworkEvent[];
+  consoleEvents?: BrowserConsoleEvent[];
   error?: string;
 }
 
@@ -84,6 +94,9 @@ export function nativeBrowserAgentActionFromRequest(
     key: request.key,
     direction: request.direction,
     pixels: request.pixels,
+    ...(request.viewport ? { viewport: request.viewport } : {}),
+    ...(request.clearNetworkLog !== undefined ? { clearNetworkLog: request.clearNetworkLog } : {}),
+    ...(request.clearConsoleLog !== undefined ? { clearConsoleLog: request.clearConsoleLog } : {}),
   };
 }
 
@@ -185,6 +198,90 @@ export async function runNativeBrowserAgentAction(
         finish(() => reject(err));
       });
   });
+}
+
+export async function performDesktopNativeBrowserRequest(
+  request: BrowserNativeRequest,
+): Promise<BrowserNativeResult> {
+  try {
+    if (!isDesktop()) throw new Error('The native browser is only available in the desktop app.');
+    if (request.action === 'close') {
+      await closeNativeBrowser(request.sessionId);
+      return nativeResult(request, true);
+    }
+    if (request.action === 'open') {
+      const targetUrl = request.url ?? 'about:blank';
+      await openNativeBrowser(request.sessionId, targetUrl, undefined, request.viewport);
+      return nativeResult(request, true, await detachedSnapshot(request, targetUrl));
+    }
+    if (request.action === 'reload') {
+      const loaded = waitForNextNativeBrowserLoad(request.sessionId).catch(() => undefined);
+      await reloadNativeBrowser(request.sessionId);
+      const event = await loaded;
+      return nativeResult(request, true, await detachedSnapshot(request, event?.url));
+    }
+    if (request.action === 'goBack' || request.action === 'goForward') {
+      const loaded = waitForNextNativeBrowserLoad(request.sessionId).catch(() => undefined);
+      const moved =
+        request.action === 'goBack'
+          ? await goBackNativeBrowser(request.sessionId)
+          : await goForwardNativeBrowser(request.sessionId);
+      const event = moved ? await loaded : undefined;
+      return nativeResult(request, true, await detachedSnapshot(request, event?.url));
+    }
+    if (request.action === 'capture') {
+      const image = await nativeBrowserCapture(request.sessionId, request.box, {
+        fullPage: request.fullPage,
+        deviceScaleFactor: request.deviceScaleFactor,
+      });
+      return { ...nativeResult(request, true), image };
+    }
+    const result = await runNativeBrowserAgentAction(nativeBrowserAgentActionFromRequest(request));
+    return {
+      ...nativeResult(request, result.ok),
+      snapshot: result.snapshot,
+      inspection: result.inspection,
+      networkEvents: result.networkEvents,
+      consoleEvents: result.consoleEvents,
+      error: result.error,
+    };
+  } catch (error) {
+    return nativeResult(
+      request,
+      false,
+      undefined,
+      error instanceof Error ? error.message : String(error),
+    );
+  }
+}
+
+function nativeResult(
+  request: BrowserNativeRequest,
+  ok: boolean,
+  snapshot?: BrowserNativeSnapshot,
+  error?: string,
+): BrowserNativeResult {
+  return {
+    requestId: request.requestId,
+    missionId: request.missionId,
+    ok,
+    snapshot,
+    error,
+  };
+}
+
+async function detachedSnapshot(
+  request: BrowserNativeRequest,
+  fallbackUrl = 'about:blank',
+): Promise<BrowserNativeSnapshot> {
+  const result = await runNativeBrowserAgentAction({
+    requestId: `${request.requestId}:snapshot`,
+    sessionId: request.sessionId,
+    action: 'snapshot',
+  }).catch(() => undefined);
+  return result?.ok && result.snapshot
+    ? result.snapshot
+    : { url: fallbackUrl, scroll: { x: 0, y: 0 }, refs: [] };
 }
 
 export interface NativeBrowserCaptureOptions {

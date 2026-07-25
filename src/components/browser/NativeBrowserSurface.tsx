@@ -471,6 +471,9 @@ async function performNativeRequest(
       missionId: request.missionId,
       ok: result.ok,
       snapshot: result.snapshot,
+      inspection: result.inspection,
+      networkEvents: result.networkEvents,
+      consoleEvents: result.consoleEvents,
       error: result.error,
     };
   } catch (err) {

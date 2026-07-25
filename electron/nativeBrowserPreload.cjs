@@ -65,7 +65,7 @@ const textTags = new Set([
   'TD',
   'TH',
 ]);
-const mediaTags = new Set(['IMG', 'SVG', 'VIDEO', 'CANVAS', 'PICTURE']);
+const mediaTags = new Set(['IMG', 'SVG', 'VIDEO', 'CANVAS', 'PICTURE', 'IFRAME']);
 const INTERNAL_ATTR = 'data-droid-design';
 const PENCIL_COLOR = '#ff8a2a';
 const designHost = document.createElement('div');
@@ -161,7 +161,6 @@ function finishCapture() {
   clearAnnotations();
 }
 
-window.addEventListener('DOMContentLoaded', mount);
 document.addEventListener('submit', onFormSubmit, true);
 document.addEventListener('mousemove', onMouseMove, true);
 document.addEventListener('mousedown', onMouseDown, true);
@@ -483,6 +482,13 @@ function isVisible(el) {
 async function runAgentAction(request) {
   try {
     const action = request && request.action;
+    if (action === 'inspect') {
+      return sendAgent({
+        requestId: request.requestId,
+        ok: true,
+        inspection: inspectElement(request.selector),
+      });
+    }
     if (action === 'click') clickAt(Number(request.x), Number(request.y));
     else if (action === 'selectOption') selectOption(request.selector, request.text || '');
     else if (action === 'type') typeIntoFocused(request.text || '');
@@ -617,8 +623,72 @@ function refFor(el) {
     role: roleFor(el) || undefined,
     name: name || undefined,
     text: text || undefined,
+    attributes: attrsFor(el),
     box: boxFor(rect),
   };
+}
+
+function inspectElement(selector) {
+  if (!selector) throw new Error('Element inspection requires a selector.');
+  const el = document.querySelector(selector);
+  if (!el) throw new Error('The inspected browser element is no longer available.');
+  const rect = el.getBoundingClientRect();
+  const text = cleanText(el.innerText || el.textContent, 1000);
+  const name = cleanText(
+    el.getAttribute('aria-label') ||
+      el.getAttribute('title') ||
+      el.getAttribute('placeholder') ||
+      directText(el) ||
+      text,
+    240,
+  );
+  const iframe =
+    el instanceof HTMLIFrameElement
+      ? {
+          src: sanitizeUrl(el.src || el.getAttribute('src') || ''),
+          accessible: canAccessFrame(el),
+        }
+      : undefined;
+  return {
+    selector,
+    tagName: el.tagName.toLowerCase(),
+    role: roleFor(el) || undefined,
+    name: name || undefined,
+    text: text || undefined,
+    attributes: attrsFor(el),
+    box: boxFor(rect),
+    html: sanitizedOuterHtml(el),
+    iframe,
+  };
+}
+
+function canAccessFrame(frame) {
+  try {
+    return Boolean(frame.contentDocument);
+  } catch {
+    return false;
+  }
+}
+
+function sanitizedOuterHtml(el) {
+  const clone = el.cloneNode(true);
+  if (/^(SCRIPT|STYLE|NOSCRIPT)$/.test(clone.tagName)) {
+    clone.textContent = '[redacted]';
+  } else {
+    for (const node of clone.querySelectorAll('script,style,noscript')) node.remove();
+  }
+  const nodes = [clone, ...clone.querySelectorAll('*')];
+  for (const node of nodes) {
+    for (const attr of Array.from(node.attributes || [])) {
+      const name = attr.name.toLowerCase();
+      if (isSensitiveAttribute(name, node)) {
+        node.setAttribute(attr.name, '[redacted]');
+      } else if (name === 'href' || name === 'src' || name === 'action') {
+        node.setAttribute(attr.name, sanitizeUrl(attr.value));
+      }
+    }
+  }
+  return String(clone.outerHTML || '').slice(0, 4000);
 }
 
 function elementSelection(el) {
@@ -882,19 +952,55 @@ function attrsFor(el) {
     'placeholder',
     'type',
     'href',
+    'src',
+    'action',
     'name',
     'value',
     'role',
   ]) {
     const value = el.getAttribute && el.getAttribute(name);
     if (!value) continue;
-    if (name === 'value' && secret) {
+    if (isSensitiveAttribute(name, el) || (name === 'value' && secret)) {
       out[name] = '\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022';
       continue;
     }
-    out[name] = String(value).slice(0, 160);
+    out[name] =
+      name === 'href' || name === 'src' || name === 'action'
+        ? sanitizeUrl(value).slice(0, 500)
+        : String(value).slice(0, 160);
   }
   return out;
+}
+
+function isSensitiveAttribute(name, el) {
+  if (name === 'nonce') return true;
+  if (name === 'value' || name.startsWith('on')) return true;
+  if (
+    /(token|secret|password|passcode|credential|authorization|api[-_]?key|private[-_]?key|cookie|session|csrf|otp)/i.test(
+      name,
+    )
+  )
+    return true;
+  if (name !== 'content') return false;
+  const fieldName = String(el.getAttribute && el.getAttribute('name')).toLowerCase();
+  return /(token|csrf|auth|secret|password|otp|code)/.test(fieldName);
+}
+
+function sanitizeUrl(value) {
+  try {
+    const url = new URL(String(value), location.href);
+    for (const key of [...url.searchParams.keys()]) {
+      if (/(token|key|secret|password|auth|signature|credential|code)/i.test(key)) {
+        url.searchParams.set(key, '[redacted]');
+      }
+    }
+    url.username = '';
+    url.password = '';
+    url.hash = '';
+    return url.href;
+  } catch {
+    return String(value);
+  }
 }
 
 // Password and one-time-code fields must never reach the agent transcript, so

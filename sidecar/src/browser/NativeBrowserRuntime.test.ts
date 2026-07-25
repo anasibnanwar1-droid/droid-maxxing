@@ -169,3 +169,53 @@ test('history navigation never reuses a stale page snapshot', async () => {
   await runtime.open('https://example.com/current');
   await assert.rejects(runtime.goBack(), /navigation completed without a fresh page snapshot/);
 });
+
+test('resize and diagnostic requests use dedicated native actions', async () => {
+  const requests: BrowserNativeRequest[] = [];
+  const runtime = new NativeBrowserRuntime({
+    missionId: 'mission-one',
+    sessionId: 'browser-one',
+    viewport: { width: 900, height: 700, deviceScaleFactor: 2 },
+    request: async (request) => {
+      requests.push(request);
+      return {
+        requestId: request.requestId,
+        missionId: request.missionId,
+        ok: true,
+        inspection:
+          request.action === 'inspect'
+            ? {
+                selector: '#frame',
+                tagName: 'iframe',
+                attributes: { src: 'https://video.example/embed' },
+                box: { x: 0, y: 0, width: 640, height: 360 },
+                html: '<iframe src="https://video.example/embed"></iframe>',
+              }
+            : undefined,
+        networkEvents:
+          request.action === 'network'
+            ? [{ timestamp: 1, method: 'GET', url: 'https://example.com/api', status: 200 }]
+            : undefined,
+        consoleEvents:
+          request.action === 'console'
+            ? [{ timestamp: 2, level: 3, message: 'frame failed' }]
+            : undefined,
+      };
+    },
+  });
+
+  await runtime.setViewport({ width: 390, height: 844, deviceScaleFactor: 2 });
+  const inspection = await runtime.inspect('#frame');
+  const network = await runtime.network(true);
+  const consoleEvents = await runtime.console(true);
+
+  assert.equal(inspection.tagName, 'iframe');
+  assert.equal(network[0]?.status, 200);
+  assert.equal(consoleEvents[0]?.message, 'frame failed');
+  assert.deepEqual(
+    requests.map((request) => request.action),
+    ['resize', 'inspect', 'network', 'console'],
+  );
+  assert.equal(requests[2]?.clearNetworkLog, true);
+  assert.equal(requests[3]?.clearConsoleLog, true);
+});

@@ -1,4 +1,6 @@
 import type { BrowserNativeRequest, BrowserNativeResult } from '../types/bridge';
+import { isDesktop } from './desktop';
+import { performDesktopNativeBrowserRequest } from './nativeBrowser';
 
 export interface NativeBrowserController {
   perform(request: BrowserNativeRequest): Promise<BrowserNativeResult>;
@@ -20,6 +22,7 @@ export async function performNativeBrowserRequest(
   request: BrowserNativeRequest,
   timeoutMs = 8_000,
 ): Promise<BrowserNativeResult> {
+  if (!controller && isDesktop()) return performDesktopNativeBrowserRequest(request);
   const active = controller ?? (await waitForController(timeoutMs));
   return active.perform(request);
 }

@@ -2,6 +2,9 @@ import type { BrowserNativeRequest, BrowserNativeResult } from '../protocol.js';
 import type { BrowserRuntime } from './BrowserSessionManager.js';
 import type {
   BrowserBox,
+  BrowserElementInspection,
+  BrowserConsoleEvent,
+  BrowserNetworkEvent,
   BrowserScreenshotOptions,
   BrowserSnapshot,
   BrowserViewport,
@@ -45,6 +48,8 @@ export class NativeBrowserRuntime implements BrowserRuntime {
   }
 
   async setViewport(viewport: BrowserViewport): Promise<void> {
+    const result = await this.send({ action: 'resize', viewport });
+    if (!result.ok) throw new Error(result.error ?? 'Native browser resize failed.');
     this.viewport = viewport;
   }
 
@@ -68,28 +73,52 @@ export class NativeBrowserRuntime implements BrowserRuntime {
     return this.snapshotFrom(await this.send({ action: 'snapshot' }));
   }
 
-  async click(x: number, y: number, selector?: string): Promise<void> {
-    await this.action({ action: 'click', x, y, selector });
+  async click(x: number, y: number, selector?: string): Promise<BrowserSnapshot> {
+    return this.action({ action: 'click', x, y, selector });
   }
 
-  async hover(x: number, y: number, selector?: string): Promise<void> {
-    await this.action({ action: 'hover', x, y, selector });
+  async hover(x: number, y: number, selector?: string): Promise<BrowserSnapshot> {
+    return this.action({ action: 'hover', x, y, selector });
   }
 
-  async selectOption(selector: string, value: string): Promise<void> {
-    await this.action({ action: 'selectOption', selector, text: value });
+  async selectOption(selector: string, value: string): Promise<BrowserSnapshot> {
+    return this.action({ action: 'selectOption', selector, text: value });
   }
 
-  async type(text: string): Promise<void> {
-    await this.action({ action: 'type', text });
+  async type(text: string): Promise<BrowserSnapshot> {
+    return this.action({ action: 'type', text });
   }
 
-  async keypress(key: string): Promise<void> {
-    await this.action({ action: 'keypress', key });
+  async keypress(key: string): Promise<BrowserSnapshot> {
+    return this.action({ action: 'keypress', key });
   }
 
-  async scroll(direction: ScrollDirection, pixels?: number, x?: number, y?: number): Promise<void> {
-    await this.action({ action: 'scroll', direction, pixels, x, y });
+  async scroll(
+    direction: ScrollDirection,
+    pixels?: number,
+    x?: number,
+    y?: number,
+  ): Promise<BrowserSnapshot> {
+    return this.action({ action: 'scroll', direction, pixels, x, y });
+  }
+
+  async inspect(selector: string): Promise<BrowserElementInspection> {
+    const result = await this.send({ action: 'inspect', selector });
+    if (!result.ok) throw new Error(result.error ?? 'Native browser inspection failed.');
+    if (!result.inspection) throw new Error('Native browser returned no element inspection.');
+    return result.inspection;
+  }
+
+  async network(clear = false): Promise<BrowserNetworkEvent[]> {
+    const result = await this.send({ action: 'network', clearNetworkLog: clear });
+    if (!result.ok) throw new Error(result.error ?? 'Native browser network inspection failed.');
+    return result.networkEvents ?? [];
+  }
+
+  async console(clear = false): Promise<BrowserConsoleEvent[]> {
+    const result = await this.send({ action: 'console', clearConsoleLog: clear });
+    if (!result.ok) throw new Error(result.error ?? 'Native browser console inspection failed.');
+    return result.consoleEvents ?? [];
   }
 
   async fillCredentials(): Promise<BrowserSnapshot> {
@@ -97,19 +126,18 @@ export class NativeBrowserRuntime implements BrowserRuntime {
   }
 
   async close(): Promise<void> {
-    await this.action({ action: 'close' }).catch(() => {});
+    await this.send({ action: 'close' }).catch(() => {});
   }
 
   private async action(
     input: Omit<BrowserNativeRequest, 'requestId' | 'missionId' | 'sessionId' | 'viewport'>,
-  ): Promise<void> {
+  ): Promise<BrowserSnapshot> {
     const result = await this.send(input);
-    if (!result.ok) throw new Error(result.error ?? 'Native browser action failed.');
-    if (result.snapshot) this.lastSnapshot = result.snapshot;
+    return this.snapshotFrom(result);
   }
 
   private send(
-    input: Omit<BrowserNativeRequest, 'requestId' | 'missionId' | 'sessionId' | 'viewport'>,
+    input: Omit<BrowserNativeRequest, 'requestId' | 'missionId' | 'sessionId'>,
   ): Promise<BrowserNativeResult> {
     return this.options.request({
       requestId:

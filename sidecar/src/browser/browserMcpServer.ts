@@ -260,6 +260,59 @@ export function createBrowserMcpServer(
         }),
       ),
       tool(
+        'browser_inspect',
+        [
+          'Inspect one element without enabling Design Mode or taking another full-page snapshot.',
+          'Returns bounded HTML, sanitized attributes, geometry, and iframe source/accessibility metadata.',
+          'Use a ref from the latest browser response when possible, or provide a CSS selector.',
+          'Credential values, auth tokens, and sensitive URL parameters are redacted.',
+        ].join(' '),
+        {
+          ref: z.string().optional().describe('Element ref from the latest browser response.'),
+          selector: z.string().optional().describe('CSS selector when no ref is available.'),
+        },
+        safeTool(async (input) => {
+          const inspection = await manager.inspect(missionId(), input);
+          return jsonResult({ ok: true, inspection });
+        }),
+      ),
+      tool(
+        'browser_network',
+        [
+          'Read the latest bounded network diagnostics for this browser session.',
+          'Returns at most 100 completed or failed requests with method, URL, resource type, status, and error.',
+          'Headers and response bodies are never captured; credentials and sensitive URL parameters are redacted.',
+        ].join(' '),
+        {
+          clear: z
+            .boolean()
+            .optional()
+            .describe('Return the current events and clear the retained buffer afterward.'),
+        },
+        safeTool(async (input) => {
+          const events = await manager.network(missionId(), input.clear ?? false);
+          return jsonResult({ ok: true, events });
+        }),
+      ),
+      tool(
+        'browser_console',
+        [
+          'Read the latest bounded JavaScript console diagnostics for this browser session.',
+          'Returns at most 100 entries with level, message, line, and source.',
+          'Messages and source URLs are length-limited and credential-like values are redacted.',
+        ].join(' '),
+        {
+          clear: z
+            .boolean()
+            .optional()
+            .describe('Return the current entries and clear the retained buffer afterward.'),
+        },
+        safeTool(async (input) => {
+          const events = await manager.console(missionId(), input.clear ?? false);
+          return jsonResult({ ok: true, events });
+        }),
+      ),
+      tool(
         'browser_fill_login',
         [
           'Fill the saved login for the current site in the live Droid Control browser.',
@@ -367,10 +420,12 @@ function stateForTool(
     canGoForward: state.canGoForward ?? false,
     refs: state.refs.map((ref) => ({
       ref: ref.ref,
+      tagName: ref.tagName,
       role: ref.role,
       name: ref.name,
       text: ref.text,
       selector: ref.selector,
+      attributes: ref.attributes,
       box: ref.box,
     })),
     designReferences: designReferences.map(designReferenceSummary),

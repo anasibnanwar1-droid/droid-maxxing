@@ -31,6 +31,38 @@ export interface BrowserElementRef {
   computedStyles?: Record<string, string>;
 }
 
+export interface BrowserElementInspection {
+  selector: string;
+  tagName: string;
+  role?: string;
+  name?: string;
+  text?: string;
+  attributes: Record<string, string>;
+  box: BrowserBox;
+  html: string;
+  iframe?: {
+    src?: string;
+    accessible: boolean;
+  };
+}
+
+export interface BrowserNetworkEvent {
+  timestamp: number;
+  method: string;
+  url: string;
+  resourceType?: string;
+  status?: number;
+  error?: string;
+}
+
+export interface BrowserConsoleEvent {
+  timestamp: number;
+  level: number;
+  message: string;
+  line?: number;
+  source?: string;
+}
+
 export interface BrowserSnapshot {
   url: string;
   title?: string;

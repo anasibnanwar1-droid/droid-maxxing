@@ -249,7 +249,7 @@ export default function App() {
       if (nextActiveMissionId !== state.activeMissionId) {
         dispatch({ type: 'SET_ACTIVE_MISSION', id: nextActiveMissionId });
       }
-      if (!state.activeMissionId || requestIsForActiveChat) {
+      if (event.request.action === 'open' && (!state.activeMissionId || requestIsForActiveChat)) {
         dispatch({ type: 'SET_RIGHT_PANEL', open: false });
         dispatch({ type: 'OPEN_UTILITY_TOOL', tool: 'browser' });
       }

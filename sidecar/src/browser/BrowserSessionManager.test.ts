@@ -12,6 +12,7 @@ import type {
   BrowserBox,
   BrowserElementRef,
   BrowserScreenshotOptions,
+  BrowserState,
   BrowserViewport,
   DesignAnchor,
   DesignAnchorDetail,
@@ -42,6 +43,9 @@ class FakeRuntime implements BrowserRuntime {
   canGoBack = false;
   canGoForward = false;
   omitHistory = false;
+  snapshotRequests = 0;
+  clickError?: Error;
+  viewportError?: Error;
 
   constructor(viewport: BrowserViewport) {
     this.viewport = viewport;
@@ -49,25 +53,26 @@ class FakeRuntime implements BrowserRuntime {
 
   async open(url: string) {
     this.openedUrls.push(url);
-    return this.snapshot(url);
+    return this.stateSnapshot(url);
   }
 
   async reload() {
     this.reloads += 1;
-    return this.snapshot('https://example.com/reloaded');
+    return this.stateSnapshot('https://example.com/reloaded');
   }
 
   async goBack() {
     this.history.push('back');
-    return this.snapshot('https://example.com/back');
+    return this.stateSnapshot('https://example.com/back');
   }
 
   async goForward() {
     this.history.push('forward');
-    return this.snapshot('https://example.com/forward');
+    return this.stateSnapshot('https://example.com/forward');
   }
 
   async setViewport(viewport: BrowserViewport): Promise<void> {
+    if (this.viewportError) throw this.viewportError;
     this.viewport = viewport;
   }
 
@@ -82,6 +87,11 @@ class FakeRuntime implements BrowserRuntime {
   }
 
   async snapshot(url = 'http://127.0.0.1:1420/') {
+    this.snapshotRequests += 1;
+    return this.stateSnapshot(url);
+  }
+
+  private stateSnapshot(url = 'http://127.0.0.1:1420/') {
     return {
       url,
       title: 'Droid Control',
@@ -91,20 +101,50 @@ class FakeRuntime implements BrowserRuntime {
     };
   }
 
-  async click(x: number, y: number, selector?: string): Promise<void> {
+  async click(x: number, y: number, selector?: string) {
     this.clicks.push({ x, y, selector });
+    if (this.clickError) throw this.clickError;
+    return this.stateSnapshot();
   }
 
-  async hover(x: number, y: number, selector?: string): Promise<void> {
+  async hover(x: number, y: number, selector?: string) {
     this.hovers.push({ x, y, selector });
+    return this.stateSnapshot();
   }
 
-  async selectOption(selector: string, value: string): Promise<void> {
+  async selectOption(selector: string, value: string) {
     this.selections.push({ selector, value });
+    return this.stateSnapshot();
   }
-  async type(): Promise<void> {}
-  async keypress(): Promise<void> {}
-  async scroll(_direction: ScrollDirection): Promise<void> {}
+  async type() {
+    return this.stateSnapshot();
+  }
+  async keypress() {
+    return this.stateSnapshot();
+  }
+  async scroll(_direction: ScrollDirection) {
+    return this.stateSnapshot();
+  }
+  async inspect(selector: string) {
+    const ref = this.refs.find((item) => item.selector === selector);
+    if (!ref) throw new Error('Element not found');
+    return {
+      selector,
+      tagName: ref.tagName,
+      role: ref.role,
+      name: ref.name,
+      text: ref.text,
+      attributes: ref.attributes ?? {},
+      box: ref.box,
+      html: '<button>Save</button>',
+    };
+  }
+  async network() {
+    return [];
+  }
+  async console() {
+    return [];
+  }
   async close(): Promise<void> {}
 }
 
@@ -150,7 +190,7 @@ test('opening a new page clears stale history when its snapshot omits navigation
   assert.equal(opened.canGoForward, false);
 });
 
-test('click by ref refreshes and uses the current element center', async () => {
+test('click by ref uses the cached selector without a redundant pre-action snapshot', async () => {
   let runtime!: FakeRuntime;
   const manager = createManager({
     runtimeFactory: (_id, viewport) => {
@@ -159,34 +199,85 @@ test('click by ref refreshes and uses the current element center', async () => {
     },
   });
   await manager.open({ missionId: 'm1', url: 'http://127.0.0.1:1420/' });
-  runtime.refs = [
-    {
-      ...buttonRef(),
-      box: { x: 80, y: 60, width: 100, height: 50 },
-    },
-  ];
-
   await manager.click({ missionId: 'm1', ref: '@e1' });
 
-  assert.deepEqual(runtime.clicks[0], { x: 130, y: 85, selector: 'button' });
+  assert.deepEqual(runtime.clicks[0], { x: 50, y: 35, selector: 'button' });
+  assert.equal(runtime.snapshotRequests, 0);
 });
 
-test('click by ref fails instead of using stale coordinates when the target disappears', async () => {
-  let runtime!: FakeRuntime;
+test('click by missing ref fails without issuing a runtime action', async () => {
+  const runtime = new FakeRuntime({ width: 1200, height: 800, deviceScaleFactor: 2 });
+  runtime.refs = [];
   const manager = createManager({
-    runtimeFactory: (_id, viewport) => {
-      runtime = new FakeRuntime(viewport);
-      return runtime;
-    },
+    runtimeFactory: () => runtime,
   });
   await manager.open({ missionId: 'm1', url: 'http://127.0.0.1:1420/' });
-  runtime.refs = [];
 
   await assert.rejects(
     manager.click({ missionId: 'm1', ref: '@e1' }),
     /Browser ref @e1 is not available/,
   );
   assert.deepEqual(runtime.clicks, []);
+});
+
+test('inspect resolves a current ref to its selector', async () => {
+  const manager = createManager();
+  await manager.open({ missionId: 'm1', url: 'http://127.0.0.1:1420/' });
+
+  const inspection = await manager.inspect('m1', { ref: '@e1' });
+
+  assert.equal(inspection.selector, 'button');
+  assert.equal(inspection.html, '<button>Save</button>');
+});
+
+test('resize clears stale refs without requesting a snapshot', async () => {
+  let runtime!: FakeRuntime;
+  const manager = createManager({
+    runtimeFactory: (_id, viewport) => {
+      runtime = new FakeRuntime(viewport);
+      return runtime;
+    },
+  });
+  await manager.open({ missionId: 'm1', url: 'http://127.0.0.1:1420/' });
+
+  const state = await manager.resizeViewport({
+    missionId: 'm1',
+    viewport: { width: 390, height: 844, deviceScaleFactor: 2 },
+    viewportMode: 'mobile',
+  });
+
+  assert.deepEqual(state.refs, []);
+  assert.equal(runtime.snapshotRequests, 0);
+});
+
+test('failed resize preserves the previous viewport and emits no optimistic update', async () => {
+  const updates: BrowserState[] = [];
+  const runtime = new FakeRuntime({ width: 1200, height: 800, deviceScaleFactor: 2 });
+  const manager = createManager({
+    runtimeFactory: () => runtime,
+    emit: (event) => {
+      if (event.type === 'browser.updated') updates.push(event.state);
+    },
+  });
+  await manager.open({ missionId: 'm1', url: 'http://127.0.0.1:1420/' });
+  const updateCount = updates.length;
+  runtime.viewportError = new Error('resize failed');
+
+  await assert.rejects(
+    manager.resizeViewport({
+      missionId: 'm1',
+      viewport: { width: 390, height: 844, deviceScaleFactor: 2 },
+      viewportMode: 'mobile',
+    }),
+    /resize failed/,
+  );
+
+  assert.equal(updates.length, updateCount);
+  assert.deepEqual(manager.state('m1')?.viewport, {
+    width: 1200,
+    height: 800,
+    deviceScaleFactor: 2,
+  });
 });
 
 test('agent click updates the visible agent cursor', async () => {
@@ -196,6 +287,25 @@ test('agent click updates the visible agent cursor', async () => {
   const state = await manager.click({ missionId: 'm1', ref: '@e1' });
 
   assert.deepEqual(state.agentCursor, { x: 50, y: 35 });
+});
+
+test('failed agent click still emits the attempted cursor position', async () => {
+  const updates: BrowserState[] = [];
+  const runtime = new FakeRuntime({ width: 1200, height: 800, deviceScaleFactor: 2 });
+  const manager = createManager({
+    runtimeFactory: () => runtime,
+    emit: (event) => {
+      if (event.type === 'browser.updated') updates.push(event.state);
+    },
+  });
+  await manager.open({ missionId: 'm1', url: 'http://127.0.0.1:1420/' });
+  const updateCount = updates.length;
+  runtime.clickError = new Error('click failed');
+
+  await assert.rejects(manager.click({ missionId: 'm1', ref: '@e1' }), /click failed/);
+
+  assert.equal(updates.length, updateCount + 1);
+  assert.deepEqual(updates.at(-1)?.agentCursor, { x: 50, y: 35 });
 });
 
 test('user click does not move the visible agent cursor', async () => {

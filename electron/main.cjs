@@ -20,6 +20,10 @@ const gitVcs = require('./git.cjs');
 const githubVcs = require('./github.cjs');
 const { createTerminalManager, createTerminalSubscriptionRegistry } = require('./terminal.cjs');
 const files = require('./files.cjs');
+const {
+  redactBrowserDiagnosticText,
+  redactBrowserDiagnosticUrl,
+} = require('./browserDiagnostics.cjs');
 
 const APP_NAME = 'Droid Control';
 const BRIDGE_PORT = Number(process.env.BRIDGE_PORT ?? 8765);
@@ -33,7 +37,9 @@ let hiddenNativeBrowserWindow = null;
 let sidecar = null;
 let attachedBrowserSessionId = null;
 const nativeBrowsers = new Map();
-const HIDDEN_BROWSER_IDLE_MS = Number(process.env.DROID_NATIVE_BROWSER_IDLE_MS ?? 300_000);
+// Keep hidden browser sessions warm by default so authenticated pages and
+// compositor state survive while the Browser pane is closed.
+const HIDDEN_BROWSER_IDLE_MS = Number(process.env.DROID_NATIVE_BROWSER_IDLE_MS ?? 0);
 // A single persistent partition keeps cookies, localStorage, and registered
 // passkeys alive across reloads, dev-server restarts, and app restarts so the
 // user does not have to sign in again every time.
@@ -435,6 +441,12 @@ function configureBrowserSession() {
   // (and auto-selecting a device) would only open a hardware-permission
   // escalation path with no upside.
   ses.setDevicePermissionHandler(() => false);
+  ses.webRequest.onCompleted({ urls: ['http://*/*', 'https://*/*'] }, (details) => {
+    recordNativeBrowserNetworkEvent(details);
+  });
+  ses.webRequest.onErrorOccurred({ urls: ['http://*/*', 'https://*/*'] }, (details) => {
+    recordNativeBrowserNetworkEvent(details);
+  });
   browserSessionConfigured = true;
 }
 
@@ -616,6 +628,9 @@ function createNativeBrowserEntry(sessionId) {
     idleTimer: null,
     loadingUrl: null,
     loadingPromise: null,
+    viewport: { width: 1200, height: 800, deviceScaleFactor: 2 },
+    networkEvents: [],
+    consoleEvents: [],
   };
 }
 
@@ -640,6 +655,18 @@ function ensureNativeBrowserView(sessionId) {
     if (entry.view === view) loadNativeBrowserUrl(entry, nextUrl);
     return { action: 'deny' };
   });
+  contents.on('console-message', (_event, level, message, line, sourceId) => {
+    entry.consoleEvents.push({
+      timestamp: Date.now(),
+      level: Number.isFinite(level) ? level : 0,
+      message: redactBrowserDiagnosticText(message),
+      line: Number.isFinite(line) ? line : undefined,
+      source: sourceId ? redactBrowserDiagnosticUrl(sourceId) : undefined,
+    });
+    if (entry.consoleEvents.length > 100) {
+      entry.consoleEvents.splice(0, entry.consoleEvents.length - 100);
+    }
+  });
   contents.on('did-finish-load', () => {
     const current = safeWebContents(view);
     if (entry.view !== view || !current) return;
@@ -651,7 +678,7 @@ function ensureNativeBrowserView(sessionId) {
     }
     entry.targetUrl = loadedUrl;
     emitNativeBrowserLoaded(entry, loadedUrl);
-    applyNativeBrowserDesignState(entry);
+    if (entry.state.designMode) applyNativeBrowserDesignState(entry);
     void autofillSavedCredential(entry);
   });
   contents.on('did-fail-load', (_event, errorCode, errorDescription, failedUrl, isMainFrame) => {
@@ -664,7 +691,7 @@ function ensureNativeBrowserView(sessionId) {
     emitNativeBrowserLoadFailed(entry, failedUrl, errorDescription || `net error ${errorCode}`);
   });
   contents.on('dom-ready', () => {
-    if (entry.view === view) applyNativeBrowserDesignState(entry);
+    if (entry.view === view && entry.state.designMode) applyNativeBrowserDesignState(entry);
   });
   contents.on('destroyed', () => {
     if (entry.view === view) {
@@ -679,19 +706,22 @@ function ensureNativeBrowserView(sessionId) {
     if (entry.view !== view) return;
     entry.targetUrl = nextUrl;
     emitNativeBrowserLoaded(entry, nextUrl);
-    applyNativeBrowserDesignState(entry);
+    if (entry.state.designMode) applyNativeBrowserDesignState(entry);
   });
+  applyNativeBrowserDeviceMetrics(entry);
   return entry;
 }
 
 async function openNativeBrowser(sessionId, url, bounds, viewport) {
   const entry = ensureNativeBrowserView(sessionId);
+  if (viewport) entry.viewport = normalizeBrowserViewport(viewport);
+  applyNativeBrowserDeviceMetrics(entry);
   rejectHostAppUrl(url);
   url = normalizeNativeBrowserUrl(entry, url);
   validateUrl(url);
   if (bounds) await attachNativeBrowser(entry.sessionId, bounds, { restore: false });
   else {
-    setHiddenNativeBrowserBounds(entry, viewport);
+    setHiddenNativeBrowserBounds(entry, entry.viewport);
     addHiddenNativeBrowserViewToWindow(entry);
   }
   await loadNativeBrowserUrl(entry, url, { force: true });
@@ -711,7 +741,7 @@ async function attachNativeBrowser(sessionId, bounds, options = {}) {
   entry.attached = true;
   view.setBounds(normalizeBounds(bounds));
   clearNativeBrowserIdleTimer(entry);
-  applyNativeBrowserDesignState(entry);
+  if (entry.state.designMode) applyNativeBrowserDesignState(entry);
   if (options.restore !== false) {
     const targetUrl =
       restorableUrlForEntry(entry, entry.targetUrl) ??
@@ -736,8 +766,9 @@ function detachNativeBrowser(sessionId) {
   if (attachedBrowserSessionId === targetSessionId) attachedBrowserSessionId = null;
   entry.attached = false;
   safeWebContents(entry.view)?.setBackgroundThrottling(true);
-  setHiddenNativeBrowserBounds(entry);
   removeNativeBrowserViewFromWindow(entry, entry.view);
+  setHiddenNativeBrowserBounds(entry, entry.viewport);
+  addHiddenNativeBrowserViewToWindow(entry);
   scheduleNativeBrowserIdleClose(entry);
 }
 
@@ -803,34 +834,55 @@ function setNativeBrowserPencilMode(sessionId, active) {
 
 async function runNativeBrowserAgentAction(request) {
   const entry = await restoreNativeBrowserForAction(request.sessionId);
-  const contents = safeWebContents(entry.view);
-  if (!contents) throw new Error('Droid Control browser is not open.');
-  const navigation = observeAgentNavigation(contents);
-  contents.setBackgroundThrottling(false);
   try {
-    if (request.action === 'fillCredentials') {
-      return withNativeBrowserHistory(contents, await fillCredentialsForAgent(contents, request));
+    const contents = safeWebContents(entry.view);
+    if (!contents) throw new Error('Droid Control browser is not open.');
+    if (request.action === 'resize') {
+      entry.viewport = normalizeBrowserViewport(request.viewport);
+      applyNativeBrowserDeviceMetrics(entry);
+      // Attached bounds remain owned by the Browser pane layout.
+      if (!entry.attached) setHiddenNativeBrowserBounds(entry, entry.viewport);
+      return { requestId: request.requestId, ok: true };
     }
-    const execution = executeNativeBrowserAgentAction(contents, request).then(
-      (result) => ({ type: 'result', result }),
-      (error) => ({ type: 'error', error }),
-    );
-    const outcome = await Promise.race([
-      execution,
-      navigation.wait().then(() => ({ type: 'navigation' })),
-    ]);
-    if (outcome.type === 'navigation') {
-      return await snapshotNativeBrowserAfterNavigation(contents, request);
+    if (request.action === 'network') {
+      const networkEvents = entry.networkEvents.slice();
+      if (request.clearNetworkLog) entry.networkEvents.length = 0;
+      return { requestId: request.requestId, ok: true, networkEvents };
     }
-    if (outcome.type === 'error') {
-      if (!navigation.started() || !isNavigationExecutionError(outcome.error)) throw outcome.error;
-      await navigation.wait();
-      return await snapshotNativeBrowserAfterNavigation(contents, request);
+    if (request.action === 'console') {
+      const consoleEvents = entry.consoleEvents.slice();
+      if (request.clearConsoleLog) entry.consoleEvents.length = 0;
+      return { requestId: request.requestId, ok: true, consoleEvents };
     }
-    return withNativeBrowserHistory(contents, outcome.result);
+    const navigation = observeAgentNavigation(contents);
+    contents.setBackgroundThrottling(false);
+    try {
+      if (request.action === 'fillCredentials') {
+        return withNativeBrowserHistory(contents, await fillCredentialsForAgent(contents, request));
+      }
+      const execution = executeNativeBrowserAgentAction(contents, request).then(
+        (result) => ({ type: 'result', result }),
+        (error) => ({ type: 'error', error }),
+      );
+      const outcome = await Promise.race([
+        execution,
+        navigation.wait().then(() => ({ type: 'navigation' })),
+      ]);
+      if (outcome.type === 'navigation') {
+        return await snapshotNativeBrowserAfterNavigation(contents, request);
+      }
+      if (outcome.type === 'error') {
+        if (!navigation.started() || !isNavigationExecutionError(outcome.error))
+          throw outcome.error;
+        await navigation.wait();
+        return await snapshotNativeBrowserAfterNavigation(contents, request);
+      }
+      return withNativeBrowserHistory(contents, outcome.result);
+    } finally {
+      navigation.dispose();
+      restoreNativeBrowserBackgroundThrottling(contents, entry);
+    }
   } finally {
-    navigation.dispose();
-    restoreNativeBrowserBackgroundThrottling(contents, entry);
     scheduleNativeBrowserIdleClose(entry);
   }
 }
@@ -1175,6 +1227,24 @@ function findNativeBrowserEntryForWebContents(contents) {
   return undefined;
 }
 
+function recordNativeBrowserNetworkEvent(details) {
+  const entry = [...nativeBrowsers.values()].find(
+    (candidate) => safeWebContents(candidate.view)?.id === details.webContentsId,
+  );
+  if (!entry) return;
+  entry.networkEvents.push({
+    timestamp: Date.now(),
+    method: String(details.method || 'GET').slice(0, 16),
+    url: redactBrowserDiagnosticUrl(details.url),
+    resourceType: details.resourceType ? String(details.resourceType) : undefined,
+    status: Number.isFinite(details.statusCode) ? details.statusCode : undefined,
+    error: details.error ? String(details.error).slice(0, 200) : undefined,
+  });
+  if (entry.networkEvents.length > 100) {
+    entry.networkEvents.splice(0, entry.networkEvents.length - 100);
+  }
+}
+
 function normalizeCaptureRect(entry, box) {
   if (!box) return undefined;
   const bounds = entry.view?.getBounds?.() ?? { width: 0, height: 0 };
@@ -1279,7 +1349,7 @@ async function loadNativeBrowserUrl(entry, url, options = {}) {
 async function restoreNativeBrowserForAction(sessionId) {
   const entry = ensureNativeBrowserView(sessionId);
   if (!entry.attached) {
-    setHiddenNativeBrowserBounds(entry);
+    setHiddenNativeBrowserBounds(entry, entry.viewport);
     addHiddenNativeBrowserViewToWindow(entry);
   }
   if (entry.targetUrl) await loadNativeBrowserUrl(entry, entry.targetUrl);
@@ -1303,12 +1373,13 @@ function addHiddenNativeBrowserViewToWindow(entry) {
   const host = ensureHiddenNativeBrowserWindow();
   if (entry.windowAttached && entry.hostWindow !== host)
     removeNativeBrowserViewFromWindow(entry, entry.view);
-  if (entry.windowAttached) return;
-  const bounds = entry.view.getBounds();
-  host.setContentSize(Math.max(1, bounds.width), Math.max(1, bounds.height));
+  // addChildView is idempotent and raises the session being automated above
+  // other persistent hidden sessions.
   host.contentView.addChildView(entry.view);
+  entry.view.setVisible(true);
   entry.windowAttached = true;
   entry.hostWindow = host;
+  resizeHiddenNativeBrowserWindow();
 }
 
 function removeNativeBrowserViewFromWindow(entry, view) {
@@ -1325,7 +1396,23 @@ function removeNativeBrowserViewFromWindow(entry, view) {
   }
   entry.windowAttached = false;
   entry.hostWindow = null;
-  if (host === hiddenNativeBrowserWindow) closeHiddenNativeBrowserWindowIfUnused();
+  if (host === hiddenNativeBrowserWindow) {
+    closeHiddenNativeBrowserWindowIfUnused();
+    resizeHiddenNativeBrowserWindow();
+  }
+}
+
+function resizeHiddenNativeBrowserWindow() {
+  if (!isWindowUsable(hiddenNativeBrowserWindow)) return;
+  let width = 1;
+  let height = 1;
+  for (const entry of nativeBrowsers.values()) {
+    if (!entry.windowAttached || entry.hostWindow !== hiddenNativeBrowserWindow) continue;
+    const bounds = entry.view?.getBounds();
+    width = Math.max(width, bounds?.width ?? 1);
+    height = Math.max(height, bounds?.height ?? 1);
+  }
+  hiddenNativeBrowserWindow.setContentSize(width, height);
 }
 
 function setHiddenNativeBrowserBounds(entry, viewport) {
@@ -1334,8 +1421,30 @@ function setHiddenNativeBrowserBounds(entry, viewport) {
   const height = Math.max(1, Math.round(Number(viewport?.height) || 800));
   entry.view.setBounds({ x: 0, y: 0, width, height });
   if (entry.hostWindow === hiddenNativeBrowserWindow && isWindowUsable(hiddenNativeBrowserWindow)) {
-    hiddenNativeBrowserWindow.setContentSize(width, height);
+    resizeHiddenNativeBrowserWindow();
   }
+}
+
+function applyNativeBrowserDeviceMetrics(entry) {
+  const contents = safeWebContents(entry.view);
+  if (!contents) return;
+  const { width, height, deviceScaleFactor } = entry.viewport;
+  contents.enableDeviceEmulation({
+    screenPosition: 'desktop',
+    screenSize: { width, height },
+    viewPosition: { x: 0, y: 0 },
+    deviceScaleFactor,
+    viewSize: { width, height },
+    scale: 1,
+  });
+}
+
+function normalizeBrowserViewport(viewport) {
+  return {
+    width: Math.max(1, Math.round(Number(viewport?.width) || 1200)),
+    height: Math.max(1, Math.round(Number(viewport?.height) || 800)),
+    deviceScaleFactor: Math.max(0.1, Number(viewport?.deviceScaleFactor) || 2),
+  };
 }
 
 function scheduleNativeBrowserIdleClose(entry) {
