@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { loadPersistedUiState } from './useStore';
+import { loadPersistedUiState, normalizeDiffStyle } from './useStore';
 import {
   applyFactoryCompactionDefaults,
   compactionSettingsSnapshot,
@@ -13,6 +13,13 @@ test('loadPersistedUiState returns an empty snapshot when storage is empty', () 
   });
 });
 
+test('normalizeDiffStyle migrates the legacy symbol style and rejects invalid values', () => {
+  assert.equal(normalizeDiffStyle('soft'), 'soft');
+  assert.equal(normalizeDiffStyle('focused'), 'focused');
+  assert.equal(normalizeDiffStyle('symbol'), 'focused');
+  assert.equal(normalizeDiffStyle('unknown'), 'soft');
+});
+
 test('loadPersistedUiState sanitizes persisted shell fields', () => {
   withLocalStorage(
     JSON.stringify({
@@ -21,6 +28,21 @@ test('loadPersistedUiState sanitizes persisted shell fields', () => {
       sidebarCollapsed: true,
       specMode: true,
       missionMode: false,
+      utilityPanels: {
+        m1: {
+          open: true,
+          activeTabId: 'terminal-1',
+          tabs: [
+            { id: 'review', tool: 'review', label: 'Review' },
+            {
+              id: 'terminal-1',
+              tool: 'terminal',
+              label: 'Terminal',
+              terminalId: 'pty-1',
+            },
+          ],
+        },
+      },
       browserOpenKeys: { 'chat-1': true, 'chat-2': false, '': true },
       browsers: {
         'chat-1': {
@@ -48,6 +70,13 @@ test('loadPersistedUiState sanitizes persisted shell fields', () => {
         sidebarCollapsed: true,
         specMode: true,
         missionMode: false,
+        utilityPanels: {
+          m1: {
+            open: true,
+            activeTabId: 'review',
+            tabs: [{ id: 'review', tool: 'review', label: 'Review' }],
+          },
+        },
         browserOpenKeys: { 'chat-1': true, 'chat-2': false },
         browsers: {
           'chat-1': {

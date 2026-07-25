@@ -336,6 +336,8 @@ export interface BrowserState {
   screenshotUrl?: string;
   scroll: { x: number; y: number };
   refs: BrowserElementRef[];
+  canGoBack?: boolean;
+  canGoForward?: boolean;
   agentCursor?: { x: number; y: number };
   error?: string;
 }
@@ -345,16 +347,58 @@ export interface BrowserNativeSnapshot {
   title?: string;
   scroll: { x: number; y: number };
   refs: BrowserElementRef[];
+  canGoBack?: boolean;
+  canGoForward?: boolean;
+}
+
+export interface BrowserElementInspection {
+  selector: string;
+  tagName: string;
+  role?: string;
+  name?: string;
+  text?: string;
+  attributes: Record<string, string>;
+  box: BrowserBox;
+  html: string;
+  iframe?: {
+    src?: string;
+    accessible: boolean;
+  };
+}
+
+export interface BrowserNetworkEvent {
+  timestamp: number;
+  method: string;
+  url: string;
+  resourceType?: string;
+  status?: number;
+  error?: string;
+}
+
+export interface BrowserConsoleEvent {
+  timestamp: number;
+  level: number;
+  message: string;
+  line?: number;
+  source?: string;
 }
 
 export type BrowserNativeAction =
   | 'open'
   | 'reload'
+  | 'goBack'
+  | 'goForward'
   | 'snapshot'
   | 'click'
+  | 'hover'
+  | 'selectOption'
   | 'type'
   | 'keypress'
   | 'scroll'
+  | 'resize'
+  | 'inspect'
+  | 'network'
+  | 'console'
   | 'capture'
   | 'close'
   | 'fillCredentials';
@@ -369,6 +413,7 @@ export interface BrowserNativeRequest {
   viewportMode?: BrowserViewportMode;
   x?: number;
   y?: number;
+  selector?: string;
   text?: string;
   key?: string;
   direction?: BrowserScrollDirection;
@@ -376,6 +421,8 @@ export interface BrowserNativeRequest {
   box?: BrowserBox;
   fullPage?: boolean;
   deviceScaleFactor?: number;
+  clearNetworkLog?: boolean;
+  clearConsoleLog?: boolean;
 }
 
 export interface BrowserNativeResult {
@@ -383,6 +430,9 @@ export interface BrowserNativeResult {
   missionId: string;
   ok: boolean;
   snapshot?: BrowserNativeSnapshot;
+  inspection?: BrowserElementInspection;
+  networkEvents?: BrowserNetworkEvent[];
+  consoleEvents?: BrowserConsoleEvent[];
   image?: string;
   error?: string;
 }
@@ -611,6 +661,7 @@ export type ClientCommand =
       missionId: string;
       direction: BrowserScrollDirection;
       pixels?: number;
+      ref?: string;
       source?: 'agent' | 'user';
     }
   | {

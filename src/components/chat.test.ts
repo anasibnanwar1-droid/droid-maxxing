@@ -708,6 +708,17 @@ test('#14 a normal assistant response still renders in chat while a spec exists'
   assert.ok(html.includes('a perfectly normal answer'));
 });
 
+test('live thinking stays collapsed until the user opens it', () => {
+  const events = [
+    userMsg('inspect this'),
+    ev({ kind: 'thinking', text: 'private live reasoning detail' }),
+  ];
+  const html = renderToStaticMarkup(createElement(MessageFeed, { events, pending: true }));
+
+  assert.ok(html.includes('Thinking'));
+  assert.equal(html.includes('private live reasoning detail'), false);
+});
+
 test('#14 an assistant message that is exactly the spec text is not double-rendered in chat', () => {
   const spec = '# Specification\n\nThe one and only spec body';
   const events = [userMsg('hi'), asst(spec)];

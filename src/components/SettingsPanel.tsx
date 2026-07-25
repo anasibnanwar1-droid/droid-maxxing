@@ -1,4 +1,9 @@
-import { useStore, type DiffViewMode, type LiveEnterBehavior } from '../hooks/useStore';
+import {
+  useStore,
+  type DiffStyle,
+  type DiffViewMode,
+  type LiveEnterBehavior,
+} from '../hooks/useStore';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   ChevronLeft,
@@ -26,8 +31,10 @@ import { getAppVersion, type AppUpdateInfo } from '../lib/onboarding';
 import { refreshAppUpdate, startAppUpdate } from '../lib/appUpdate';
 import { getGitWorktrees, isWorktreeInUse, removeGitWorktree, worktreeName } from '../lib/git';
 import { activeSessionCwds } from '../lib/missions';
+import { utilityTerminalCwds } from '../lib/utilityPanel';
 import { workspaceName } from '../lib/workspaces';
 import { toast } from '../lib/toast';
+import { diffPaletteForTheme } from '../lib/diffTheme';
 
 const PRESET_ACCENTS = [
   '#ee6018',
@@ -246,39 +253,11 @@ function DiffPreview() {
       <div className="px-3 py-1.5 bg-droid-elevated border-b border-droid-border text-droid-text-muted">
         themePreview.ts
       </div>
-      <div className="px-3 py-1.5">
-        <div
-          style={{
-            backgroundColor: 'color-mix(in srgb, var(--droid-red) 15%, transparent)',
-            color: 'var(--droid-red)',
-          }}
-        >
-          − accent: "#ff5d2e",
-        </div>
-        <div
-          style={{
-            backgroundColor: 'color-mix(in srgb, var(--droid-green) 16%, transparent)',
-            color: 'var(--droid-green)',
-          }}
-        >
-          + accent: "#f2f2f2",
-        </div>
-        <div
-          style={{
-            backgroundColor: 'color-mix(in srgb, var(--droid-red) 15%, transparent)',
-            color: 'var(--droid-red)',
-          }}
-        >
-          − surface: "#181818",
-        </div>
-        <div
-          style={{
-            backgroundColor: 'color-mix(in srgb, var(--droid-green) 16%, transparent)',
-            color: 'var(--droid-green)',
-          }}
-        >
-          + surface: "#111111",
-        </div>
+      <div className="py-1.5 text-droid-text-secondary">
+        <div className="diff-preview-line diff-preview-del">− accent: "#ff5d2e",</div>
+        <div className="diff-preview-line diff-preview-add">+ accent: "#f2f2f2",</div>
+        <div className="diff-preview-line diff-preview-del">− surface: "#181818",</div>
+        <div className="diff-preview-line diff-preview-add">+ surface: "#111111",</div>
       </div>
     </div>
   );
@@ -910,6 +889,25 @@ function GeneralSection() {
             onChange={(mode) => dispatch({ type: 'SET_DIFF_VIEW', mode: mode as DiffViewMode })}
           />
         </SettingRow>
+        <SettingRow
+          label="Diff theme"
+          description="Choose a softer GitHub-style tint or a stronger focused change treatment."
+        >
+          <Dropdown
+            value={state.theme.diffStyle}
+            width="w-44"
+            options={[
+              { value: 'soft', label: 'Soft contrast' },
+              { value: 'focused', label: 'Focused contrast' },
+            ]}
+            onChange={(value) => {
+              const diffStyle = value as DiffStyle;
+              const theme = { ...state.theme, diffStyle };
+              dispatch({ type: 'SET_THEME', theme: { diffStyle } });
+              applyTheme(theme);
+            }}
+          />
+        </SettingRow>
       </div>
 
       {/* Compaction */}
@@ -1214,6 +1212,10 @@ function WorktreesSection() {
     activeMissionId: state.activeMissionId,
     draftCwd: state.draftChat?.cwd,
     workers: state.workers,
+    pinnedCwds: utilityTerminalCwds(
+      state.utilityPanels,
+      Object.fromEntries(Object.entries(state.missions).map(([id, mission]) => [id, mission.cwd])),
+    ),
   });
 
   return (
@@ -1456,6 +1458,16 @@ export function applyTheme(theme: ReturnType<typeof useStore>['state']['theme'])
   root.style.setProperty('--droid-green', '#4fae82');
   root.style.setProperty('--droid-orange', '#d9913a');
   root.style.setProperty('--droid-red', '#cf5d54');
+  root.setAttribute('data-diff-style', theme.diffStyle);
+  const diffPalette = diffPaletteForTheme(bgIsDark, theme.diffStyle);
+  root.style.setProperty('--diff-add-fg', diffPalette.addFg);
+  root.style.setProperty('--diff-add-bg', diffPalette.addBg);
+  root.style.setProperty('--diff-add-gutter', diffPalette.addGutter);
+  root.style.setProperty('--diff-del-fg', diffPalette.delFg);
+  root.style.setProperty('--diff-del-bg', diffPalette.delBg);
+  root.style.setProperty('--diff-del-gutter', diffPalette.delGutter);
+  root.style.setProperty('--diff-hunk-bg', diffPalette.hunkBg);
+  root.style.setProperty('--diff-hunk-fg', diffPalette.hunkFg);
 
   root.style.setProperty('--ui-font-family', uiFontStack(theme.uiFont));
   root.style.setProperty('--ui-font-size', `${theme.uiFontSize}px`);

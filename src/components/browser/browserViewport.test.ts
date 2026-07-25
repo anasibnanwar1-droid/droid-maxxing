@@ -2,23 +2,28 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { normalizeUrl, viewportForMode, viewportFromFrame } from './browserViewport';
 
-test('viewportFromFrame creates a clean even fit viewport inside the canvas frame', () => {
+test('viewportFromFrame matches the fit browser surface inside the canvas frame', () => {
   assert.deepEqual(viewportFromFrame({ width: 1325, height: 857 }), {
-    width: 1254,
-    height: 762,
+    width: 1289,
+    height: 821,
     deviceScaleFactor: 2,
   });
 });
 
-test('viewportFromFrame clamps tiny and very large canvas frames', () => {
+test('viewportFromFrame follows the available browser surface', () => {
   assert.deepEqual(viewportFromFrame({ width: 320, height: 300 }), {
-    width: 390,
-    height: 360,
+    width: 284,
+    height: 264,
     deviceScaleFactor: 2,
   });
   assert.deepEqual(viewportFromFrame({ width: 5000, height: 3000 }), {
-    width: 1440,
-    height: 1100,
+    width: 4964,
+    height: 2964,
+    deviceScaleFactor: 2,
+  });
+  assert.deepEqual(viewportFromFrame({ width: 1325, height: 857 }, true), {
+    width: 1325,
+    height: 857,
     deviceScaleFactor: 2,
   });
 });

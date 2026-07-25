@@ -1,4 +1,4 @@
-import type { DiffFileStatus, DiffScope, DiffStatMode } from '../types/vcs';
+import type { DiffScope, DiffStatMode } from '../types/vcs';
 
 export interface ReviewScopeOption {
   scope: DiffScope;
@@ -28,25 +28,4 @@ export function diffModeToReviewScope(mode: DiffStatMode): DiffScope {
   if (mode === 'branch') return 'branch';
   if (mode === 'worktree') return 'worktree';
   return 'uncommitted';
-}
-
-const STATUS_SYMBOL: Record<DiffFileStatus, string> = {
-  added: 'A',
-  modified: 'M',
-  deleted: 'D',
-  renamed: 'R',
-  copied: 'C',
-  type: 'T',
-  untracked: 'U',
-};
-
-export function fileStatusSymbol(status: DiffFileStatus): string {
-  return STATUS_SYMBOL[status] ?? 'M';
-}
-
-export function fileStatusColor(status: DiffFileStatus): string {
-  if (status === 'deleted') return 'var(--diff-del-fg)';
-  if (status === 'added' || status === 'untracked') return 'var(--diff-add-fg)';
-  if (status === 'renamed' || status === 'copied') return 'var(--droid-accent)';
-  return 'var(--droid-text-secondary)';
 }

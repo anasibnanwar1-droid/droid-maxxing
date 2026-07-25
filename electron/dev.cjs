@@ -24,9 +24,10 @@ waitFor(`${startUrl}/@vite/client`)
       stdio: 'inherit',
       env: { ...process.env, ELECTRON_START_URL: startUrl },
     });
-    electronProcess.on('exit', (code) => {
+    electronProcess.on('exit', (code, signal) => {
       stop(vite);
-      process.exit(code ?? 0);
+      if (signal) console.error(`Electron exited from signal ${signal}`);
+      process.exit(code ?? (signal ? 1 : 0));
     });
   })
   .catch((err) => {

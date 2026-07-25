@@ -4,12 +4,6 @@ import type { DiffViewMode } from '../../hooks/useStore';
 
 // Shared per-type style objects: a large diff renders thousands of lines, so
 // inline object literals would allocate on every line every render.
-const ROW_STYLE: Record<DiffLine['type'], CSSProperties> = {
-  add: { background: 'var(--diff-add-bg)' },
-  del: { background: 'var(--diff-del-bg)' },
-  ctx: { background: 'transparent' },
-  meta: { background: 'transparent' },
-};
 const SIGN_STYLE: Record<DiffLine['type'], CSSProperties> = {
   add: { color: 'var(--diff-add-fg)' },
   del: { color: 'var(--diff-del-fg)' },
@@ -33,26 +27,32 @@ const EST_ROW_PX = 19.2; // 12px font at 1.6 line-height
 
 function Gutter({ value }: { value: number | null }) {
   return (
-    <span className="w-10 shrink-0 select-none px-1.5 text-right text-droid-text-muted/50">
+    <span className="review-diff-gutter shrink-0 select-none px-1.5 text-right text-droid-text-muted/60">
       {value ?? ''}
     </span>
   );
 }
 
+function rowClass(type: DiffLine['type']): string {
+  if (type === 'add') return 'review-diff-add';
+  if (type === 'del') return 'review-diff-del';
+  return '';
+}
+
 // Memoized: hunk line arrays are stable across parent re-renders (memoized
 // parse), so thousands of line rows can skip reconciliation during polling.
 const UnifiedLine = memo(function UnifiedLine({ line, wrap }: { line: DiffLine; wrap: boolean }) {
-  const textClass = wrap ? 'whitespace-pre-wrap break-all' : 'whitespace-pre';
+  const textClass = wrap ? 'review-diff-code-wrap' : 'review-diff-code';
   if (line.type === 'meta') {
     return (
       <div className="flex text-droid-text-muted/60">
-        <span className="w-20 shrink-0" />
+        <span className="review-diff-meta-gutter shrink-0" />
         <span className={`${textClass} px-2 italic`}>{line.text}</span>
       </div>
     );
   }
   return (
-    <div className="flex" style={ROW_STYLE[line.type]}>
+    <div className={`review-diff-row flex ${rowClass(line.type)}`}>
       <Gutter value={line.oldLine} />
       <Gutter value={line.newLine} />
       <span className="w-4 shrink-0 select-none text-center" style={SIGN_STYLE[line.type]}>
@@ -74,11 +74,13 @@ const SplitCell = memo(function SplitCell({
   side: 'left' | 'right';
   wrap: boolean;
 }) {
-  if (!line) return <div className="flex flex-1 bg-droid-bg/30" />;
-  const textClass = wrap ? 'whitespace-pre-wrap break-all' : 'whitespace-pre';
+  if (!line) return <div className="review-split-cell flex min-w-0 bg-droid-bg/30" />;
+  const textClass = wrap ? 'review-diff-code-wrap' : 'review-diff-code';
   const isMeta = line.type === 'meta';
   return (
-    <div className="flex min-w-0 flex-1" style={ROW_STYLE[line.type]}>
+    <div
+      className={`review-split-cell flex min-w-0 ${side === 'left' ? 'review-split-left' : ''} ${rowClass(line.type)}`}
+    >
       {/* The left pane is the old file, the right pane the new one; a context
           row carries both numbers, so pick by side rather than by line type. */}
       <Gutter value={side === 'left' ? line.oldLine : line.newLine} />
@@ -103,17 +105,13 @@ type Row =
 
 function RowView({ row, wrap }: { row: Row; wrap: boolean }) {
   if (row.kind === 'header') {
-    return (
-      <div className="bg-droid-elevated/50 px-2 py-0.5 text-[11px] text-droid-accent/80">
-        {row.text}
-      </div>
-    );
+    return <div className="review-diff-hunk px-2 py-0.5 text-[11px]">{row.text}</div>;
   }
   if (row.kind === 'line') return <UnifiedLine line={row.line} wrap={wrap} />;
   return (
-    <div className="flex">
+    <div className="review-split-row">
       <SplitCell line={row.left} side="left" wrap={wrap} />
-      <div className="w-px shrink-0 bg-droid-border" />
+      <div className="review-split-divider bg-droid-border" />
       <SplitCell line={row.right} side="right" wrap={wrap} />
     </div>
   );

@@ -20,22 +20,33 @@ import {
 } from './browserViewport';
 import { NativeBrowserSurface } from './NativeBrowserSurface';
 import { isDesktop } from '../../lib/desktop';
-import type {
-  NativeBrowserDesignPrompt,
-  NativeBrowserLoadFailed,
-  NativeBrowserSelection,
+import {
+  goBackNativeBrowser,
+  goForwardNativeBrowser,
+  type NativeBrowserDesignPrompt,
+  type NativeBrowserLoadFailed,
+  type NativeBrowserSelection,
 } from '../../lib/nativeBrowser';
 import { BrowserToolbar } from './BrowserToolbar';
 import { DesignModeComposer } from './DesignModeComposer';
 import { composerStyleForReferences } from './browserComposerPosition';
 import { browserKeyForMission } from '../../lib/browserSessionIdentity';
 import { browserTranscriptReferencesFromDesignReferences } from './browserTranscriptReferences';
-import { isSelfBrowserUrl, safeBrowserUrl } from './browserUrlSafety';
+import { browserAddressValue, isSelfBrowserUrl, safeBrowserUrl } from './browserUrlSafety';
+import { shouldResetBrowserLoading } from './browserLoading';
 import { useElementSize } from './useElementSize';
 import { isEditTool } from '../../lib/diff';
 import { createLocalDesignTranscriptEvent, newQueueId } from '../../lib/promptQueue';
 
-export default function BrowserWorkspace() {
+export default function BrowserWorkspace({
+  expanded = false,
+  externalObscured = false,
+  onToggleExpanded,
+}: {
+  expanded?: boolean;
+  externalObscured?: boolean;
+  onToggleExpanded?: () => void;
+}) {
   const { state, dispatch } = useStore();
   const requestedChatId = state.activeMissionId ?? undefined;
   const activeMission = requestedChatId ? state.missions[requestedChatId] : undefined;
@@ -49,6 +60,7 @@ export default function BrowserWorkspace() {
   // so any full-screen overlay would otherwise be punched through by it. Detach
   // it while such an overlay is visible and re-attach once it closes.
   const obscured =
+    externalObscured ||
     state.settingsOpen ||
     state.commandPaletteOpen ||
     state.contextMeterOpen ||
@@ -59,9 +71,9 @@ export default function BrowserWorkspace() {
   const appOrigin = typeof window === 'undefined' ? undefined : window.location.origin;
   const frameSize = useElementSize(frameRef);
   const frameReady = frameSize.width > 8 && frameSize.height > 8;
-  const fitViewport = useMemo(() => viewportFromFrame(frameSize), [frameSize]);
+  const fitViewport = useMemo(() => viewportFromFrame(frameSize, expanded), [expanded, frameSize]);
   const initialUrl = safeBrowserUrl(browser?.url, appOrigin);
-  const [urlInput, setUrlInput] = useState(initialUrl);
+  const [urlInput, setUrlInput] = useState(browserAddressValue(initialUrl));
   const [activeUrl, setActiveUrl] = useState(initialUrl);
   const [viewportMode, setViewportMode] = useState<BrowserViewportMode>(
     browser?.viewportMode ?? 'fit',
@@ -72,6 +84,36 @@ export default function BrowserWorkspace() {
   const [instruction, setInstruction] = useState('');
   const [references, setReferences] = useState<DesignReference[]>([]);
   const [loadFailure, setLoadFailure] = useState<NativeBrowserLoadFailed | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [canGoBack, setCanGoBack] = useState(browser?.canGoBack ?? false);
+  const [canGoForward, setCanGoForward] = useState(browser?.canGoForward ?? false);
+  const loadingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const browserIdentityRef = useRef({
+    browserKey,
+    sessionId: browser?.sessionId,
+  });
+  const startLoading = useCallback(() => {
+    if (loadingTimerRef.current) clearTimeout(loadingTimerRef.current);
+    setLoading(true);
+    loadingTimerRef.current = setTimeout(() => {
+      loadingTimerRef.current = null;
+      setLoading(false);
+    }, 10_000);
+  }, []);
+  const stopLoading = useCallback(() => {
+    if (loadingTimerRef.current) {
+      clearTimeout(loadingTimerRef.current);
+      loadingTimerRef.current = null;
+    }
+    setLoading(false);
+  }, []);
+
+  useEffect(
+    () => () => {
+      if (loadingTimerRef.current) clearTimeout(loadingTimerRef.current);
+    },
+    [],
+  );
 
   // Auto-reload: when the agent edits files and the browser shows a local
   // dev server URL, reload the pane after a short debounce so the new code
@@ -121,7 +163,7 @@ export default function BrowserWorkspace() {
     if (!browser?.url) return;
     const nextUrl = safeBrowserUrl(browser.url, appOrigin);
     if (document.activeElement !== urlInputRef.current) {
-      setUrlInput(nextUrl);
+      setUrlInput(browserAddressValue(nextUrl));
     }
     if (nextUrl !== activeUrl) {
       setActiveUrl(nextUrl);
@@ -131,6 +173,43 @@ export default function BrowserWorkspace() {
   useEffect(() => {
     if (browser?.viewportMode) setViewportMode(browser.viewportMode);
   }, [browser?.viewportMode]);
+
+  useEffect(() => {
+    if (typeof browser?.canGoBack === 'boolean') setCanGoBack(browser.canGoBack);
+    if (typeof browser?.canGoForward === 'boolean') setCanGoForward(browser.canGoForward);
+  }, [browser?.canGoBack, browser?.canGoForward]);
+
+  useEffect(() => {
+    const browserIdentity = { browserKey, sessionId: browser?.sessionId };
+    const previousIdentity = browserIdentityRef.current;
+    if (
+      previousIdentity.browserKey === browserIdentity.browserKey &&
+      previousIdentity.sessionId === browserIdentity.sessionId
+    )
+      return;
+    browserIdentityRef.current = browserIdentity;
+    if (shouldResetBrowserLoading(previousIdentity, browserIdentity)) {
+      if (loadingTimerRef.current) {
+        clearTimeout(loadingTimerRef.current);
+        loadingTimerRef.current = null;
+      }
+      setLoading(false);
+    }
+    setCanGoBack(browser?.canGoBack ?? false);
+    setCanGoForward(browser?.canGoForward ?? false);
+    const nextUrl = safeBrowserUrl(browser?.url, appOrigin);
+    setActiveUrl(nextUrl);
+    if (document.activeElement !== urlInputRef.current) {
+      setUrlInput(browserAddressValue(nextUrl));
+    }
+  }, [
+    appOrigin,
+    browser?.canGoBack,
+    browser?.canGoForward,
+    browser?.sessionId,
+    browser?.url,
+    browserKey,
+  ]);
 
   useEffect(() => {
     if (browser?.viewport && browser.viewportMode === 'custom') {
@@ -196,7 +275,8 @@ export default function BrowserWorkspace() {
     }
     const url = safeBrowserUrl(normalizedUrl, appOrigin);
     setLoadFailure(null);
-    setUrlInput(url);
+    startLoading();
+    setUrlInput(browserAddressValue(url));
     setActiveUrl(url);
     if (browserKey) {
       openBrowser({
@@ -207,6 +287,29 @@ export default function BrowserWorkspace() {
       });
     }
   };
+
+  const navigateHistory = useCallback(
+    async (direction: 'back' | 'forward') => {
+      if (!browser?.sessionId) return;
+      setLoadFailure(null);
+      startLoading();
+      try {
+        const moved =
+          direction === 'back'
+            ? await goBackNativeBrowser(browser.sessionId)
+            : await goForwardNativeBrowser(browser.sessionId);
+        if (!moved) stopLoading();
+      } catch (error) {
+        stopLoading();
+        setLoadFailure({
+          sessionId: browser.sessionId,
+          url: activeUrl,
+          error: error instanceof Error ? error.message : `Could not go ${direction}.`,
+        });
+      }
+    },
+    [activeUrl, browser?.sessionId, startLoading, stopLoading],
+  );
 
   const emitDesignTranscript = useCallback(
     (text: string, refs: DesignReference[]) => {
@@ -296,12 +399,19 @@ export default function BrowserWorkspace() {
       <BrowserToolbar
         urlInputRef={urlInputRef}
         urlInput={urlInput}
+        canGoBack={canGoBack}
+        canGoForward={canGoForward}
+        loading={loading}
         designMode={designMode}
         designModeDisabled={!browserKey}
         pencilMode={pencilMode}
+        expanded={expanded}
         onUrlInputChange={setUrlInput}
         onOpen={openCurrentUrl}
+        onGoBack={() => void navigateHistory('back')}
+        onGoForward={() => void navigateHistory('forward')}
         onReload={() => {
+          startLoading();
           if (browserKey && browser) reloadBrowser(browserKey);
           else openCurrentUrl();
         }}
@@ -309,11 +419,7 @@ export default function BrowserWorkspace() {
           if (browserKey) dispatch({ type: 'TOGGLE_DESIGN_MODE', sessionId: browserKey });
         }}
         onTogglePencilMode={() => setPencilMode((value) => !value)}
-        onClose={() => {
-          // Hide the pane but keep this chat's browser session alive so it can
-          // be reopened (and resumes after an app restart).
-          dispatch({ type: 'SET_BROWSER_OPEN', open: false });
-        }}
+        onToggleExpanded={onToggleExpanded}
       />
 
       {browserError && (
@@ -333,6 +439,7 @@ export default function BrowserWorkspace() {
             className="shrink-0 rounded border border-droid-border px-2 py-0.5 text-[11px] text-droid-text-muted hover:text-droid-text"
             onClick={() => {
               setLoadFailure(null);
+              startLoading();
               if (browserKey && browser) reloadBrowser(browserKey);
               else openCurrentUrl();
             }}
@@ -361,15 +468,35 @@ export default function BrowserWorkspace() {
             viewportMode={viewportMode}
             designMode={designMode}
             pencilMode={designMode && pencilMode}
-            onLoaded={(url) => {
+            frameSize={frameSize}
+            onLoaded={(event) => {
               setLoadFailure(null);
-              setActiveUrl(url);
-              if (document.activeElement !== urlInputRef.current) setUrlInput(url);
+              stopLoading();
+              setCanGoBack(event.canGoBack ?? canGoBack);
+              setCanGoForward(event.canGoForward ?? canGoForward);
+              const nextUrl = safeBrowserUrl(event.url, appOrigin);
+              setActiveUrl(nextUrl);
+              if (document.activeElement !== urlInputRef.current)
+                setUrlInput(browserAddressValue(nextUrl));
+              if (browserKey && event.sessionId) {
+                dispatch({
+                  type: 'BROWSER_NAVIGATED',
+                  missionId: browserKey,
+                  sessionId: event.sessionId,
+                  url: event.url,
+                  canGoBack: event.canGoBack,
+                  canGoForward: event.canGoForward,
+                });
+              }
             }}
             onSelection={handleSelection}
             onPrompt={handleNativePrompt}
-            onLoadFailed={handleLoadFailed}
+            onLoadFailed={(failure) => {
+              stopLoading();
+              handleLoadFailed(failure);
+            }}
             onViewportSizeChange={setActualViewport}
+            expanded={expanded}
           />
         ) : (
           <div className="flex h-full items-center justify-center bg-[#070707] px-6 text-sm text-droid-text-muted">

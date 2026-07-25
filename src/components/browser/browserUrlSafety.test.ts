@@ -1,6 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { DEFAULT_BROWSER_URL, isSelfBrowserUrl, safeBrowserUrl } from './browserUrlSafety';
+import {
+  browserAddressValue,
+  DEFAULT_BROWSER_URL,
+  isSelfBrowserUrl,
+  safeBrowserUrl,
+} from './browserUrlSafety';
 
 test('safeBrowserUrl keeps the host app out of the browser pane', () => {
   assert.equal(
@@ -23,4 +28,10 @@ test('safeBrowserUrl drops Chromium internal error pages', () => {
     safeBrowserUrl('chrome-error://chromewebdata/', 'http://127.0.0.1:1427'),
     DEFAULT_BROWSER_URL,
   );
+});
+
+test('browserAddressValue hides internal blank and error pages', () => {
+  assert.equal(browserAddressValue(DEFAULT_BROWSER_URL), '');
+  assert.equal(browserAddressValue('chrome-error://chromewebdata/'), '');
+  assert.equal(browserAddressValue('https://example.com'), 'https://example.com');
 });

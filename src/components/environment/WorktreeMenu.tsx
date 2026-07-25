@@ -4,6 +4,7 @@ import { Popover } from './Popover';
 import { useStore } from '../../hooks/useStore';
 import { createGitWorktree, isWorktreeInUse, removeGitWorktree, worktreeName } from '../../lib/git';
 import { activeSessionCwds } from '../../lib/missions';
+import { utilityTerminalCwds } from '../../lib/utilityPanel';
 import { useBusyAction } from '../../hooks/useBusyAction';
 import { toast } from '../../lib/toast';
 import type { GitBranchList, GitEnvironment, GitWorktree } from '../../types/vcs';
@@ -59,8 +60,20 @@ export function WorktreeMenu({
         activeMissionId: state.activeMissionId,
         draftCwd: state.draftChat?.cwd,
         workers: state.workers,
+        pinnedCwds: utilityTerminalCwds(
+          state.utilityPanels,
+          Object.fromEntries(
+            Object.entries(state.missions).map(([id, mission]) => [id, mission.cwd]),
+          ),
+        ),
       }),
-    [state.missions, state.activeMissionId, state.draftChat?.cwd, state.workers],
+    [
+      state.missions,
+      state.activeMissionId,
+      state.draftChat?.cwd,
+      state.workers,
+      state.utilityPanels,
+    ],
   );
 
   const openInNewChat = (path: string, branch?: string | null) => {

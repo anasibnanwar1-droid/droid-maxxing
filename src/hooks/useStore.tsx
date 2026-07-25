@@ -39,6 +39,19 @@ import {
 import { sanitizeForLog } from '../lib/sensitiveLogRedaction';
 import { composePrompt } from '../lib/composePrompt';
 import { DIFF_SCOPES, type DiffScope } from '../types/vcs';
+import {
+  activateUtilityTab,
+  closeUtilityTab,
+  openUtilityTool,
+  persistUtilityPanels,
+  removeUtilityTool,
+  sanitizeUtilityPanels,
+  setUtilityPanelOpen,
+  updateUtilityTab,
+  utilityPanelForMission,
+  type UtilityPanelState,
+  type UtilityTool,
+} from '../lib/utilityPanel';
 
 export type AgentKind = 'orchestrator' | 'worker' | 'validator';
 export type LiveEnterBehavior = 'queue' | 'interrupt';
@@ -69,6 +82,8 @@ export interface AgentModelConfig {
 
 export type AgentConfig = Record<AgentKind, AgentModelConfig>;
 
+export type DiffStyle = 'soft' | 'focused';
+
 export interface ThemeConfig {
   mode: 'dark' | 'light' | 'system';
   accent: string;
@@ -80,7 +95,7 @@ export interface ThemeConfig {
   uiFontSize: number;
   codeFontSize: number;
   translucentSidebar: boolean;
-  diffStyle: 'color' | 'symbol';
+  diffStyle: DiffStyle;
   contrast: number;
 }
 
@@ -140,6 +155,7 @@ export interface AppState {
 
   // UI flags
   rightPanelOpen: boolean;
+  utilityPanels: Record<string, UtilityPanelState>;
   // The Review diff tab: a wide right-side pane, opened from the Context panel's
   // changes button. Scope + view mode persist; open state is per-session — we
   // track the mission it was opened for so switching chats doesn't carry it over.
@@ -289,6 +305,24 @@ type Action =
   // UI
   | { type: 'SET_ACTIVE_MISSION'; id: string | null }
   | { type: 'SET_RIGHT_PANEL'; open: boolean }
+  | {
+      type: 'OPEN_UTILITY_TOOL';
+      tool: UtilityTool;
+      tabId?: string;
+      terminalId?: string;
+      filePath?: string;
+    }
+  | { type: 'CLOSE_UTILITY_TAB'; tabId: string; missionId?: string }
+  | { type: 'ACTIVATE_UTILITY_TAB'; tabId: string }
+  | {
+      type: 'UPDATE_UTILITY_TAB';
+      tabId: string;
+      missionId?: string;
+      terminalId?: string;
+      filePath?: string;
+      label?: string;
+    }
+  | { type: 'SET_UTILITY_PANEL_OPEN'; open: boolean }
   | { type: 'SET_REVIEW_OPEN'; open: boolean }
   | { type: 'SET_REVIEW_SCOPE'; scope: DiffScope }
   | { type: 'OPEN_REVIEW_AT'; scope: DiffScope; path?: string | null }
@@ -307,6 +341,14 @@ type Action =
   | { type: 'TOGGLE_BROWSER' }
   | { type: 'SET_BROWSER_OPEN'; open: boolean }
   | { type: 'BROWSER_UPDATED'; browser: BrowserState }
+  | {
+      type: 'BROWSER_NAVIGATED';
+      missionId: string;
+      sessionId: string;
+      url: string;
+      canGoBack?: boolean;
+      canGoForward?: boolean;
+    }
   | { type: 'BROWSER_CLOSED'; missionId: string }
   | { type: 'BROWSER_ERROR'; missionId?: string; message: string }
   | { type: 'TOGGLE_DESIGN_MODE'; sessionId: string }
@@ -339,7 +381,7 @@ const defaultTheme: ThemeConfig = {
   uiFontSize: 14,
   codeFontSize: 12,
   translucentSidebar: false,
-  diffStyle: 'color',
+  diffStyle: 'soft',
   contrast: 100,
 };
 
@@ -385,11 +427,17 @@ function neutralAccentFor(bg: string): string {
   return Number.isFinite(lum) && lum >= 0.4 ? '#1a1a1a' : '#f2f2f2';
 }
 
+export function normalizeDiffStyle(value: unknown): DiffStyle {
+  if (value === 'focused' || value === 'symbol') return 'focused';
+  return 'soft';
+}
+
 function loadTheme(): ThemeConfig {
   try {
     const storage = getLocalStorage();
     const saved = storage?.getItem('droid-theme');
-    const theme = saved ? { ...defaultTheme, ...JSON.parse(saved) } : defaultTheme;
+    const theme = saved ? { ...defaultTheme, ...JSON.parse(saved) } : { ...defaultTheme };
+    theme.diffStyle = normalizeDiffStyle(theme.diffStyle);
     // One-time migration: a saved accent still carrying an old fixed-orange
     // default was never deliberately chosen, so neutralize it once. Keying off a
     // persisted flag (not the accent value) lets a user later pick that same
@@ -473,6 +521,7 @@ const BROWSER_VIEWPORT_MODES = new Set<BrowserViewportMode>([
 interface PersistedUiState {
   activeMissionId: string | null;
   rightPanelOpen: boolean;
+  utilityPanels: Record<string, UtilityPanelState>;
   sidebarCollapsed: boolean;
   specMode: boolean;
   missionMode: boolean;
@@ -591,6 +640,7 @@ export function loadPersistedUiState(): Partial<PersistedUiState> {
       activeMissionId: typeof parsed.activeMissionId === 'string' ? parsed.activeMissionId : null,
       rightPanelOpen:
         typeof parsed.rightPanelOpen === 'boolean' ? parsed.rightPanelOpen : undefined,
+      utilityPanels: sanitizeUtilityPanels(parsed.utilityPanels),
       sidebarCollapsed:
         typeof parsed.sidebarCollapsed === 'boolean' ? parsed.sidebarCollapsed : undefined,
       specMode: typeof parsed.specMode === 'boolean' ? parsed.specMode : undefined,
@@ -611,6 +661,7 @@ function savePersistedUiState(state: AppState): void {
   const snapshot: PersistedUiState = {
     activeMissionId: state.activeMissionId,
     rightPanelOpen: state.rightPanelOpen,
+    utilityPanels: persistUtilityPanels(state.utilityPanels),
     sidebarCollapsed: state.sidebarCollapsed,
     specMode: state.specMode,
     missionMode: state.missionMode,
@@ -711,6 +762,7 @@ export const initialState: AppState = {
   specWikiMissionId: null,
   promptQueue: {},
   rightPanelOpen: persistedUiState.rightPanelOpen ?? true,
+  utilityPanels: persistedUiState.utilityPanels ?? {},
   sidebarCollapsed: persistedUiState.sidebarCollapsed ?? false,
   specMode: persistedUiState.specMode ?? false,
   settingsOpen: false,
@@ -824,6 +876,16 @@ function syncBrowserOpen(state: AppState): AppState {
   const key = activeBrowserKey(state);
   const open = key ? Boolean(state.browserOpenKeys[key]) : false;
   return state.browserOpen === open ? state : { ...state, browserOpen: open };
+}
+
+function closeActiveUtilityPanel(state: AppState): AppState {
+  const missionId = state.activeMissionId;
+  if (!missionId) return state;
+  const current = utilityPanelForMission(state.utilityPanels, missionId);
+  const panel = setUtilityPanelOpen(current, false);
+  return panel === current
+    ? state
+    : { ...state, utilityPanels: { ...state.utilityPanels, [missionId]: panel } };
 }
 
 export function reducer(state: AppState, action: Action): AppState {
@@ -1540,7 +1602,94 @@ function baseReducer(state: AppState, action: Action): AppState {
     }
 
     case 'SET_RIGHT_PANEL':
-      return { ...state, rightPanelOpen: action.open };
+      return action.open
+        ? closeActiveUtilityPanel({ ...state, rightPanelOpen: true })
+        : { ...state, rightPanelOpen: false };
+
+    case 'OPEN_UTILITY_TOOL': {
+      const missionId = state.activeMissionId;
+      if (!missionId) return state;
+      const panel = openUtilityTool(
+        state.utilityPanels[missionId],
+        action.tool,
+        () => action.tabId ?? `${action.tool}:${missionId}`,
+        { terminalId: action.terminalId, filePath: action.filePath },
+      );
+      return {
+        ...state,
+        rightPanelOpen: false,
+        utilityPanels: { ...state.utilityPanels, [missionId]: panel },
+        reviewOpenMissionId: action.tool === 'review' ? missionId : state.reviewOpenMissionId,
+        browserOpenKeys:
+          action.tool === 'browser'
+            ? withBrowserOpenKey(state.browserOpenKeys, missionId, true)
+            : state.browserOpenKeys,
+      };
+    }
+
+    case 'CLOSE_UTILITY_TAB': {
+      const missionId = action.missionId ?? state.activeMissionId;
+      if (!missionId) return state;
+      const current = state.utilityPanels[missionId];
+      const closing = current?.tabs.find((tab) => tab.id === action.tabId);
+      const panel = closeUtilityTab(current, action.tabId);
+      if (panel === current) return state;
+      return {
+        ...state,
+        utilityPanels: { ...state.utilityPanels, [missionId]: panel },
+        reviewOpenMissionId:
+          closing?.tool === 'review' && state.reviewOpenMissionId === missionId
+            ? null
+            : state.reviewOpenMissionId,
+        reviewFocusPath: closing?.tool === 'review' ? null : state.reviewFocusPath,
+        browserOpenKeys:
+          closing?.tool === 'browser'
+            ? withBrowserOpenKey(state.browserOpenKeys, missionId, false)
+            : state.browserOpenKeys,
+      };
+    }
+
+    case 'ACTIVATE_UTILITY_TAB': {
+      const missionId = state.activeMissionId;
+      if (!missionId) return state;
+      const current = state.utilityPanels[missionId];
+      const panel = activateUtilityTab(current, action.tabId);
+      if (panel === current) return state;
+      return {
+        ...state,
+        rightPanelOpen: false,
+        utilityPanels: { ...state.utilityPanels, [missionId]: panel },
+      };
+    }
+
+    case 'UPDATE_UTILITY_TAB': {
+      const missionId = action.missionId ?? state.activeMissionId;
+      if (!missionId) return state;
+      const current = state.utilityPanels[missionId];
+      const panel = updateUtilityTab(current, action.tabId, {
+        terminalId: action.terminalId,
+        filePath: action.filePath,
+        label: action.label,
+      });
+      if (panel === current) return state;
+      return {
+        ...state,
+        utilityPanels: { ...state.utilityPanels, [missionId]: panel },
+      };
+    }
+
+    case 'SET_UTILITY_PANEL_OPEN': {
+      const missionId = state.activeMissionId;
+      if (!missionId) return state;
+      const current = utilityPanelForMission(state.utilityPanels, missionId);
+      const panel = setUtilityPanelOpen(current, action.open);
+      if (panel === current && (!action.open || !state.rightPanelOpen)) return state;
+      return {
+        ...state,
+        rightPanelOpen: action.open ? false : state.rightPanelOpen,
+        utilityPanels: { ...state.utilityPanels, [missionId]: panel },
+      };
+    }
 
     case 'SET_REVIEW_OPEN':
       // Closing while already closed AND no pending focus is a true no-op; bail
@@ -1548,14 +1697,46 @@ function baseReducer(state: AppState, action: Action): AppState {
       // reviewFocusPath check is essential: a close dispatched when the pane is
       // already shut but a focus path is still pending would otherwise skip the
       // clear and leave the stale focus request to fire on the next open.
-      if (!action.open && state.reviewOpenMissionId === null && state.reviewFocusPath === null)
+      if (
+        !action.open &&
+        state.reviewOpenMissionId === null &&
+        state.reviewFocusPath === null &&
+        !utilityPanelForMission(state.utilityPanels, state.activeMissionId).tabs.some(
+          (tab) => tab.tool === 'review',
+        )
+      )
         return state;
       // Scope the open state to the active mission so it never leaks into the
       // next chat; switching back to this mission restores it.
+      if (action.open && state.activeMissionId) {
+        const missionId = state.activeMissionId;
+        return {
+          ...state,
+          rightPanelOpen: false,
+          reviewOpenMissionId: missionId,
+          utilityPanels: {
+            ...state.utilityPanels,
+            [missionId]: openUtilityTool(
+              state.utilityPanels[missionId],
+              'review',
+              () => `review:${missionId}`,
+            ),
+          },
+        };
+      }
       return {
         ...state,
-        reviewOpenMissionId: action.open ? state.activeMissionId : null,
-        reviewFocusPath: action.open ? state.reviewFocusPath : null,
+        reviewOpenMissionId: null,
+        reviewFocusPath: null,
+        utilityPanels: state.activeMissionId
+          ? {
+              ...state.utilityPanels,
+              [state.activeMissionId]: removeUtilityTool(
+                state.utilityPanels[state.activeMissionId],
+                'review',
+              ),
+            }
+          : state.utilityPanels,
       };
 
     case 'SET_REVIEW_SCOPE':
@@ -1564,11 +1745,27 @@ function baseReducer(state: AppState, action: Action): AppState {
     case 'OPEN_REVIEW_AT':
       // Open the Review pane for the active mission at a given scope, optionally
       // asking it to jump to a specific file once the diff list has loaded.
+      if (!state.activeMissionId) {
+        return {
+          ...state,
+          reviewScope: saveReviewScope(action.scope),
+          reviewFocusPath: action.path ?? null,
+        };
+      }
       return {
         ...state,
+        rightPanelOpen: false,
         reviewOpenMissionId: state.activeMissionId,
         reviewScope: saveReviewScope(action.scope),
         reviewFocusPath: action.path ?? null,
+        utilityPanels: {
+          ...state.utilityPanels,
+          [state.activeMissionId]: openUtilityTool(
+            state.utilityPanels[state.activeMissionId],
+            'review',
+            () => `review:${state.activeMissionId}`,
+          ),
+        },
       };
 
     case 'CLEAR_REVIEW_FOCUS':
@@ -1634,13 +1831,19 @@ function baseReducer(state: AppState, action: Action): AppState {
     case 'TOGGLE_BROWSER': {
       const key = activeBrowserKey(state);
       if (!key) return state;
+      const current = utilityPanelForMission(state.utilityPanels, key);
+      const existing = current.tabs.find((tab) => tab.tool === 'browser');
+      const opening = !existing || !current.open || current.activeTabId !== existing.id;
       return {
         ...state,
-        browserOpenKeys: withBrowserOpenKey(
-          state.browserOpenKeys,
-          key,
-          !state.browserOpenKeys[key],
-        ),
+        rightPanelOpen: opening ? false : state.rightPanelOpen,
+        utilityPanels: {
+          ...state.utilityPanels,
+          [key]: opening
+            ? openUtilityTool(current, 'browser', () => `browser:${key}`)
+            : setUtilityPanelOpen(current, false),
+        },
+        browserOpenKeys: withBrowserOpenKey(state.browserOpenKeys, key, opening),
       };
     }
 
@@ -1649,6 +1852,13 @@ function baseReducer(state: AppState, action: Action): AppState {
       if (!key) return state;
       return {
         ...state,
+        rightPanelOpen: action.open ? false : state.rightPanelOpen,
+        utilityPanels: {
+          ...state.utilityPanels,
+          [key]: action.open
+            ? openUtilityTool(state.utilityPanels[key], 'browser', () => `browser:${key}`)
+            : removeUtilityTool(state.utilityPanels[key], 'browser'),
+        },
         browserOpenKeys: withBrowserOpenKey(state.browserOpenKeys, key, action.open),
       };
     }
@@ -1667,6 +1877,33 @@ function baseReducer(state: AppState, action: Action): AppState {
         browserOpenKeys: hidden
           ? state.browserOpenKeys
           : withBrowserOpenKey(state.browserOpenKeys, missionId, true),
+        utilityPanels: hidden
+          ? state.utilityPanels
+          : {
+              ...state.utilityPanels,
+              [missionId]: openUtilityTool(
+                state.utilityPanels[missionId],
+                'browser',
+                () => `browser:${missionId}`,
+              ),
+            },
+      };
+    }
+
+    case 'BROWSER_NAVIGATED': {
+      const browser = state.browsers[action.missionId];
+      if (!browser || browser.sessionId !== action.sessionId) return state;
+      return {
+        ...state,
+        browsers: {
+          ...state.browsers,
+          [action.missionId]: {
+            ...browser,
+            url: action.url,
+            canGoBack: action.canGoBack ?? browser.canGoBack,
+            canGoForward: action.canGoForward ?? browser.canGoForward,
+          },
+        },
       };
     }
 
@@ -1683,6 +1920,10 @@ function baseReducer(state: AppState, action: Action): AppState {
         ),
         designModes: clearDesignMode(state.designModes, action.missionId),
         browserOpenKeys: clearBrowserOpenKey(state.browserOpenKeys, action.missionId),
+        utilityPanels: {
+          ...state.utilityPanels,
+          [action.missionId]: removeUtilityTool(state.utilityPanels[action.missionId], 'browser'),
+        },
       };
 
     case 'BROWSER_ERROR':
@@ -1893,6 +2134,8 @@ function sanitizePersistedBrowser(key: string, value: unknown): BrowserState | u
     viewportMode: sanitizeBrowserViewportMode(browser.viewportMode),
     scroll: sanitizeBrowserScroll(browser.scroll),
     refs: [],
+    ...(browser.canGoBack === true ? { canGoBack: true } : {}),
+    ...(browser.canGoForward === true ? { canGoForward: true } : {}),
   };
 }
 
@@ -2061,6 +2304,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     state.browsers,
     state.missionMode,
     state.rightPanelOpen,
+    state.utilityPanels,
     state.selectedAgentSessionId,
     state.selectedFeatureId,
     state.sidebarCollapsed,

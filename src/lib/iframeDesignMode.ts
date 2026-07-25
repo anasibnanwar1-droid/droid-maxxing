@@ -338,6 +338,65 @@ export async function clickIframe(iframe: HTMLIFrameElement, x: number, y: numbe
   target.dispatchEvent(new MouseEvent('click', eventOptions));
 }
 
+export async function hoverIframe(
+  iframe: HTMLIFrameElement,
+  x: number,
+  y: number,
+  selector?: string,
+): Promise<void> {
+  const doc = iframe.contentDocument;
+  const win = iframe.contentWindow;
+  if (!doc || !win) throw new Error('Droid Control browser page is not inspectable yet.');
+  let target: Element | null = null;
+  if (selector) {
+    try {
+      target = doc.querySelector(selector);
+    } catch {
+      throw new Error(`Invalid browser selector: ${selector}`);
+    }
+  }
+  target ??= doc.elementFromPoint(x, y);
+  if (!target) throw new Error(`No browser element at ${Math.round(x)},${Math.round(y)}.`);
+
+  const eventOptions = { bubbles: true, cancelable: true, clientX: x, clientY: y };
+  const MouseEventCtor = (win as unknown as { MouseEvent: typeof MouseEvent }).MouseEvent;
+  target.dispatchEvent(new MouseEventCtor('mouseover', eventOptions));
+  target.dispatchEvent(new MouseEventCtor('mouseenter', { ...eventOptions, bubbles: false }));
+  target.dispatchEvent(new MouseEventCtor('mousemove', eventOptions));
+}
+
+export async function selectOptionIframe(
+  iframe: HTMLIFrameElement,
+  selector: string,
+  value: string,
+): Promise<void> {
+  const doc = iframe.contentDocument;
+  const win = iframe.contentWindow;
+  if (!doc || !win) throw new Error('Droid Control browser page is not inspectable yet.');
+
+  let target: Element | null;
+  try {
+    target = doc.querySelector(selector);
+  } catch {
+    throw new Error(`Invalid browser selector: ${selector}`);
+  }
+  const HTMLSelectElementCtor = (win as unknown as { HTMLSelectElement: typeof HTMLSelectElement })
+    .HTMLSelectElement;
+  if (!(target instanceof HTMLSelectElementCtor)) {
+    throw new Error(`Browser selector does not target a select element: ${selector}`);
+  }
+  const select = target as HTMLSelectElement;
+  const option = Array.from(select.options).find(
+    (candidate) => candidate.value === value || candidate.text.trim() === value,
+  );
+  if (!option) throw new Error(`No option matching "${value}" for ${selector}.`);
+
+  const EventCtor = (win as unknown as { Event: typeof Event }).Event;
+  select.value = option.value;
+  select.dispatchEvent(new EventCtor('input', { bubbles: true }));
+  select.dispatchEvent(new EventCtor('change', { bubbles: true }));
+}
+
 export async function typeIntoIframe(iframe: HTMLIFrameElement, text: string): Promise<void> {
   const doc = iframe.contentDocument;
   const win = iframe.contentWindow;
@@ -416,7 +475,7 @@ function collectRefs(doc: Document): BrowserElementRef[] {
   let node: Node | null = root;
   while (node && refs.length < 80) {
     if (node.nodeType === Node.ELEMENT_NODE && isCandidate(node as Element)) {
-      refs.push(refFor(node as Element, refs.length + 1));
+      refs.push(refFor(node as Element));
     }
     node = walker.nextNode();
   }
@@ -485,19 +544,23 @@ function pickTarget(start: Element | null): Element | null {
 }
 
 function selectorFor(el: Element): string {
-  if (el.id) return `#${cssEscape(el.id)}`;
+  if (el.id) {
+    const selector = `#${cssEscape(el.id)}`;
+    if (isUniqueSelector(el, selector)) return selector;
+  }
   const testId = el.getAttribute('data-testid');
-  if (testId) return `[data-testid="${cssEscape(testId)}"]`;
+  if (testId) {
+    const selector = `[data-testid="${cssEscape(testId)}"]`;
+    if (isUniqueSelector(el, selector)) return selector;
+  }
   const aria = el.getAttribute('aria-label');
-  if (aria) return `${el.tagName.toLowerCase()}[aria-label="${cssEscape(aria)}"]`;
+  if (aria) {
+    const selector = `${el.tagName.toLowerCase()}[aria-label="${cssEscape(aria)}"]`;
+    if (isUniqueSelector(el, selector)) return selector;
+  }
   const parts: string[] = [];
   let node: Element | null = el;
-  while (
-    node &&
-    node.nodeType === Node.ELEMENT_NODE &&
-    node !== el.ownerDocument.documentElement &&
-    parts.length < 5
-  ) {
+  while (node && node.nodeType === Node.ELEMENT_NODE && node !== el.ownerDocument.documentElement) {
     let part = node.tagName.toLowerCase();
     const parent: Element | null = node.parentElement;
     if (parent) {
@@ -505,9 +568,20 @@ function selectorFor(el: Element): string {
       if (same.length > 1) part += `:nth-of-type(${same.indexOf(node) + 1})`;
     }
     parts.unshift(part);
+    const selector = parts.join(' > ');
+    if (isUniqueSelector(el, selector)) return selector;
     node = parent;
   }
   return parts.join(' > ');
+}
+
+function isUniqueSelector(el: Element, selector: string): boolean {
+  try {
+    const matches = el.ownerDocument.querySelectorAll(selector);
+    return matches.length === 1 && matches[0] === el;
+  } catch {
+    return false;
+  }
 }
 
 function cssEscape(value: string): string {
@@ -517,11 +591,16 @@ function cssEscape(value: string): string {
 }
 
 function stableId(value: string): string {
-  let hash = 0;
+  return `@live-${stableDesignHash(value)}`;
+}
+
+export function stableDesignHash(value: string): string {
+  let hash = 0xcbf29ce484222325n;
   for (let index = 0; index < value.length; index += 1) {
-    hash = (Math.imul(31, hash) + value.charCodeAt(index)) | 0;
+    hash ^= BigInt(value.charCodeAt(index));
+    hash = BigInt.asUintN(64, hash * 0x100000001b3n);
   }
-  return `@live-${Math.abs(hash).toString(36)}`;
+  return hash.toString(36);
 }
 
 function selectionFor(
@@ -608,9 +687,10 @@ function labelFor(el: Element): string {
   return `${label || tag} · ${tag}`;
 }
 
-function refFor(el: Element, index: number): BrowserElementRef {
+function refFor(el: Element): BrowserElementRef {
   const rect = el.getBoundingClientRect();
   const text = cleanText((el as HTMLElement).innerText || el.textContent);
+  const selector = selectorFor(el);
   const name = cleanText(
     el.getAttribute('aria-label') ||
       el.getAttribute('title') ||
@@ -619,8 +699,8 @@ function refFor(el: Element, index: number): BrowserElementRef {
       text,
   );
   return {
-    ref: `@b${index}`,
-    selector: selectorFor(el),
+    ref: `@b-${stableDesignHash(selector)}`,
+    selector,
     tagName: el.tagName.toLowerCase(),
     role: roleFor(el) || undefined,
     name: name || undefined,

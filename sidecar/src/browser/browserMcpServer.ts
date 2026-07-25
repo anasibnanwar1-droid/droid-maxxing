@@ -59,14 +59,14 @@ export function createBrowserMcpServer(
           });
           return jsonResult({
             message:
-              'Opened the live Droid Control browser. Use browser_snapshot next for refs, then browser_click/browser_type/browser_scroll for interaction.',
+              'Opened the live Droid Control browser. The response includes current page refs; use them directly with browser_click, browser_type, and browser_scroll.',
             ...stateForTool(state),
           });
         }),
       ),
       tool(
         'browser_snapshot',
-        'Return compact DOM refs and visible page state from the live Droid Control browser. Use this after browser_open and after each navigation or interaction.',
+        'Refresh compact DOM refs and visible page state when the page changed or current refs became stale.',
         {},
         safeTool(async () => {
           const state = await manager.refresh(missionId());
@@ -79,6 +79,24 @@ export function createBrowserMcpServer(
         {},
         safeTool(async () => {
           const state = await manager.reload(missionId());
+          return jsonResult(stateForTool(state));
+        }),
+      ),
+      tool(
+        'browser_back',
+        'Go back one page in the live Droid Control browser history and return fresh page refs.',
+        {},
+        safeTool(async () => {
+          const state = await manager.goBack(missionId());
+          return jsonResult(stateForTool(state));
+        }),
+      ),
+      tool(
+        'browser_forward',
+        'Go forward one page in the live Droid Control browser history and return fresh page refs.',
+        {},
+        safeTool(async () => {
+          const state = await manager.goForward(missionId());
           return jsonResult(stateForTool(state));
         }),
       ),
@@ -125,6 +143,36 @@ export function createBrowserMcpServer(
             x: input.x,
             y: input.y,
           });
+          return jsonResult(stateForTool(state));
+        }),
+      ),
+      tool(
+        'browser_hover',
+        'Move the trusted browser pointer over an element by ref or viewport coordinates, then return fresh page refs.',
+        {
+          ref: z.string().optional().describe('Element ref returned by browser_snapshot.'),
+          x: z.number().optional().describe('Viewport x coordinate when hovering by coordinate.'),
+          y: z.number().optional().describe('Viewport y coordinate when hovering by coordinate.'),
+        },
+        safeTool(async (input) => {
+          const state = await manager.hover({
+            missionId: missionId(),
+            ref: input.ref,
+            x: input.x,
+            y: input.y,
+          });
+          return jsonResult(stateForTool(state));
+        }),
+      ),
+      tool(
+        'browser_select',
+        'Choose an option in a native select element by ref. The value may be the option value or visible label.',
+        {
+          ref: z.string().describe('Select element ref returned by browser_snapshot.'),
+          value: z.string().describe('Option value or exact visible label to select.'),
+        },
+        safeTool(async (input) => {
+          const state = await manager.selectOption(missionId(), input.ref, input.value);
           return jsonResult(stateForTool(state));
         }),
       ),
@@ -178,10 +226,90 @@ export function createBrowserMcpServer(
         {
           direction: scrollDirectionSchema.describe('Direction to scroll.'),
           pixels: z.number().positive().max(4000).optional().describe('Scroll amount in pixels.'),
+          ref: z.string().optional().describe('Optional ref inside a nested scroll container.'),
         },
         safeTool(async (input) => {
-          const state = await manager.scroll(missionId(), input.direction, input.pixels);
+          const state = await manager.scroll(
+            missionId(),
+            input.direction,
+            input.pixels,
+            undefined,
+            input.ref,
+          );
           return jsonResult(stateForTool(state));
+        }),
+      ),
+      tool(
+        'browser_wait',
+        'Wait for browser text, a ref, or a URL fragment before continuing. With no condition, waits for the requested duration.',
+        {
+          text: z.string().optional().describe('Visible ref text or accessible name to wait for.'),
+          ref: z.string().optional().describe('Element ref to wait for.'),
+          urlIncludes: z.string().optional().describe('URL fragment to wait for.'),
+          timeoutMs: z
+            .number()
+            .int()
+            .min(0)
+            .max(15_000)
+            .optional()
+            .describe('Maximum wait in milliseconds. Defaults to 5000.'),
+        },
+        safeTool(async (input) => {
+          const state = await manager.wait(missionId(), input);
+          return jsonResult(stateForTool(state));
+        }),
+      ),
+      tool(
+        'browser_inspect',
+        [
+          'Inspect one element without enabling Design Mode or taking another full-page snapshot.',
+          'Returns bounded HTML, sanitized attributes, geometry, and iframe source/accessibility metadata.',
+          'Use a ref from the latest browser response when possible, or provide a CSS selector.',
+          'Credential values, auth tokens, and sensitive URL parameters are redacted.',
+        ].join(' '),
+        {
+          ref: z.string().optional().describe('Element ref from the latest browser response.'),
+          selector: z.string().optional().describe('CSS selector when no ref is available.'),
+        },
+        safeTool(async (input) => {
+          const inspection = await manager.inspect(missionId(), input);
+          return jsonResult({ ok: true, inspection });
+        }),
+      ),
+      tool(
+        'browser_network',
+        [
+          'Read the latest bounded network diagnostics for this browser session.',
+          'Returns at most 100 completed or failed requests with method, URL, resource type, status, and error.',
+          'Headers and response bodies are never captured; credentials and sensitive URL parameters are redacted.',
+        ].join(' '),
+        {
+          clear: z
+            .boolean()
+            .optional()
+            .describe('Return the current events and clear the retained buffer afterward.'),
+        },
+        safeTool(async (input) => {
+          const events = await manager.network(missionId(), input.clear ?? false);
+          return jsonResult({ ok: true, events });
+        }),
+      ),
+      tool(
+        'browser_console',
+        [
+          'Read the latest bounded JavaScript console diagnostics for this browser session.',
+          'Returns at most 100 entries with level, message, line, and source.',
+          'Messages and source URLs are length-limited and credential-like values are redacted.',
+        ].join(' '),
+        {
+          clear: z
+            .boolean()
+            .optional()
+            .describe('Return the current entries and clear the retained buffer afterward.'),
+        },
+        safeTool(async (input) => {
+          const events = await manager.console(missionId(), input.clear ?? false);
+          return jsonResult({ ok: true, events });
         }),
       ),
       tool(
@@ -288,12 +416,16 @@ function stateForTool(
     viewportMode: state.viewportMode,
     screenshotPath: state.screenshotPath,
     scroll: state.scroll,
+    canGoBack: state.canGoBack ?? false,
+    canGoForward: state.canGoForward ?? false,
     refs: state.refs.map((ref) => ({
       ref: ref.ref,
+      tagName: ref.tagName,
       role: ref.role,
       name: ref.name,
       text: ref.text,
       selector: ref.selector,
+      attributes: ref.attributes,
       box: ref.box,
     })),
     designReferences: designReferences.map(designReferenceSummary),

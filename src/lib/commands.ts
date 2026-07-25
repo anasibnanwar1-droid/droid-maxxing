@@ -173,6 +173,7 @@ export const scrollBrowser = (p: {
   missionId: string;
   direction: BrowserScrollDirection;
   pixels?: number;
+  ref?: string;
   source?: 'agent' | 'user';
 }) => bridge.send({ type: 'browser.scroll', ...p });
 
