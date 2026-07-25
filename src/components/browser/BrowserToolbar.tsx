@@ -53,23 +53,23 @@ export function BrowserToolbar({
   onToggleExpanded,
 }: BrowserToolbarProps) {
   return (
-    <header className="flex h-12 shrink-0 items-center gap-1.5 border-b border-droid-border bg-droid-bg/95 px-2.5">
+    <header className="flex h-9 shrink-0 items-center gap-1 border-b border-droid-border bg-droid-bg px-1.5">
       <IconButton
         title="Back: return to the previous page (⌘[)"
         disabled={!canGoBack || loading}
         onClick={onGoBack}
       >
-        <ArrowLeft className="h-4 w-4" />
+        <ArrowLeft className="h-3.5 w-3.5" />
       </IconButton>
       <IconButton
         title="Forward: go to the next page in history (⌘])"
         disabled={!canGoForward || loading}
         onClick={onGoForward}
       >
-        <ArrowRight className="h-4 w-4" />
+        <ArrowRight className="h-3.5 w-3.5" />
       </IconButton>
       <form
-        className="group flex h-8 min-w-0 flex-1 items-center rounded-lg border border-droid-border bg-droid-surface/75 px-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.025)] transition-colors focus-within:border-droid-border-hover focus-within:bg-droid-surface"
+        className="group flex h-7 min-w-0 flex-1 items-center rounded-lg border border-droid-border bg-droid-surface px-2 transition-colors focus-within:border-droid-border-hover"
         onSubmit={(event) => {
           event.preventDefault();
           onOpen();
@@ -82,7 +82,7 @@ export function BrowserToolbar({
           onChange={(event) => {
             onUrlInputChange(event.target.value);
           }}
-          className="h-full min-w-0 flex-1 bg-transparent text-[13px] font-medium tracking-[-0.01em] text-droid-text outline-none placeholder:font-normal placeholder:text-droid-text-muted/70"
+          className="h-full min-w-0 flex-1 bg-transparent text-[12px] font-medium tracking-[-0.01em] text-droid-text outline-none placeholder:font-normal placeholder:text-droid-text-muted/70"
           placeholder="Search or enter URL"
           aria-label="Browser address"
         />
@@ -90,7 +90,7 @@ export function BrowserToolbar({
           <button
             type="submit"
             aria-label="Open address"
-            className="ml-1 flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-droid-text-muted transition-colors hover:bg-droid-elevated hover:text-droid-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-droid-accent"
+            className="ml-1 flex h-5 w-5 shrink-0 items-center justify-center rounded-md text-droid-text-muted transition-colors hover:bg-droid-elevated hover:text-droid-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-droid-accent"
           >
             <CornerDownLeft className="h-3.5 w-3.5" />
           </button>
@@ -102,9 +102,9 @@ export function BrowserToolbar({
         onClick={onReload}
       >
         {loading ? (
-          <LoaderCircle className="h-4 w-4 animate-spin" />
+          <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
         ) : (
-          <RefreshCw className="h-4 w-4" />
+          <RefreshCw className="h-3.5 w-3.5" />
         )}
       </IconButton>
 
@@ -172,9 +172,9 @@ function IconButton({
         aria-pressed={active}
         disabled={disabled}
         onClick={onClick}
-        className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-md transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-droid-accent disabled:cursor-not-allowed disabled:opacity-35 ${
+        className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-droid-accent disabled:cursor-not-allowed disabled:opacity-35 ${
           active
-            ? 'bg-droid-accent/15 text-droid-accent'
+            ? 'bg-droid-active text-droid-text'
             : 'text-droid-text-muted hover:bg-droid-elevated hover:text-droid-text'
         }`}
       >

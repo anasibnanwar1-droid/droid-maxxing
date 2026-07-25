@@ -11,6 +11,7 @@ import {
   writeTerminal,
 } from '../../lib/desktop';
 import { closeTerminalForTab, ensureTerminalForTab } from '../../lib/terminal';
+import { useStore, type ThemeConfig } from '../../hooks/useStore';
 
 export function TerminalWorkspace({
   tabId,
@@ -25,11 +26,13 @@ export function TerminalWorkspace({
   cwd: string;
   onCreated: (terminalId: string, label: string) => void;
 }) {
+  const { state } = useStore();
   const hostRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
   const terminalIdRef = useRef(terminalId);
   const onCreatedRef = useRef(onCreated);
+  const themeRef = useRef(state.theme);
   const lastSizeRef = useRef({ cols: 0, rows: 0 });
   const [status, setStatus] = useState<'starting' | 'running' | 'exited' | 'error'>(
     terminalId ? 'running' : 'starting',
@@ -66,15 +69,7 @@ export function TerminalWorkspace({
           scrollback: 5_000,
           smoothScrollDuration: 90,
           allowProposedApi: false,
-          theme: {
-            background: '#070707',
-            foreground: '#e7e7e7',
-            cursor: '#ee6018',
-            cursorAccent: '#070707',
-            selectionBackground: '#ee601833',
-            black: '#171717',
-            brightBlack: '#777777',
-          },
+          theme: terminalTheme(themeRef.current),
         });
         const fitAddon = new fit.FitAddon();
         instance.loadAddon(fitAddon);
@@ -159,9 +154,14 @@ export function TerminalWorkspace({
     };
   }, [cwd, missionId, tabId]);
 
+  useEffect(() => {
+    themeRef.current = state.theme;
+    if (terminalRef.current) terminalRef.current.options.theme = terminalTheme(state.theme);
+  }, [state.theme]);
+
   return (
-    <div className="flex h-full min-h-0 flex-col bg-[#070707]">
-      <div className="flex h-9 shrink-0 items-center gap-1 border-b border-droid-border bg-droid-bg px-3">
+    <div className="flex h-full min-h-0 flex-col bg-droid-bg">
+      <div className="flex h-9 shrink-0 items-center gap-1 border-b border-droid-border bg-droid-bg px-2.5">
         <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-droid-text-muted">
           {cwd}
         </span>
@@ -213,9 +213,21 @@ function TerminalButton({
       type="button"
       title={title}
       onClick={onClick}
-      className="flex h-7 w-7 items-center justify-center rounded-md text-droid-text-muted transition-colors hover:bg-droid-elevated hover:text-droid-text"
+      className="flex h-7 w-7 items-center justify-center rounded-lg text-droid-text-muted transition-colors hover:bg-droid-elevated hover:text-droid-text"
     >
       {children}
     </button>
   );
+}
+
+function terminalTheme(theme: ThemeConfig) {
+  return {
+    background: theme.bg,
+    foreground: theme.fg,
+    cursor: theme.accent,
+    cursorAccent: theme.bg,
+    selectionBackground: /^#[0-9a-f]{6}$/i.test(theme.accent) ? `${theme.accent}33` : theme.accent,
+    black: theme.surface,
+    brightBlack: theme.border,
+  };
 }

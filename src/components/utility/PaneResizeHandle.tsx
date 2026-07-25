@@ -76,8 +76,8 @@ export function PaneResizeHandle({
       onPointerUp={finishDrag}
       onPointerCancel={finishDrag}
     >
-      <div className="absolute left-0 top-0 h-full w-px bg-droid-border-hover/60 transition-colors group-hover:bg-droid-accent/70 group-focus:bg-droid-accent" />
-      <div className="absolute left-1 top-1/2 h-12 w-1 -translate-y-1/2 rounded-full bg-droid-border-hover/70 opacity-70 transition-colors group-hover:bg-droid-accent group-focus:bg-droid-accent" />
+      <div className="absolute left-0 top-0 h-full w-px bg-droid-border-hover/30 transition-colors group-hover:bg-droid-accent/70 group-focus:bg-droid-accent" />
+      <div className="absolute left-1 top-1/2 h-10 w-1 -translate-y-1/2 rounded-full bg-droid-border-hover/40 opacity-50 transition-colors group-hover:bg-droid-accent group-hover:opacity-100 group-focus:bg-droid-accent group-focus:opacity-100" />
     </div>
   );
 }

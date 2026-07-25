@@ -125,13 +125,13 @@ function ToolbarButton({
       ref={innerRef}
       onClick={onClick}
       title={title}
-      className={`flex items-center gap-1.5 rounded-md px-2 py-1.5 text-[12px] transition-colors ${
+      className={`flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-[12px] transition-colors ${
         active
-          ? 'bg-droid-elevated text-droid-text'
+          ? 'bg-droid-active text-droid-text'
           : 'text-droid-text-muted hover:bg-droid-elevated/60 hover:text-droid-text'
       }`}
     >
-      <Icon className="h-4 w-4 shrink-0" />
+      <Icon className="h-3.5 w-3.5 shrink-0" />
       {label && <span>{label}</span>}
     </button>
   );
@@ -183,7 +183,7 @@ const FileRow = memo(function FileRow({
       onClick={() => onSelect(file.path)}
       title={file.path}
       className={`flex w-full items-center gap-2 px-2.5 py-1.5 text-left transition-colors ${
-        selected ? 'bg-droid-elevated' : 'hover:bg-droid-elevated/50'
+        selected ? 'bg-droid-active' : 'hover:bg-droid-elevated/50'
       }`}
     >
       <span
@@ -428,8 +428,7 @@ export function ReviewPanel({ cwd, onClose }: { cwd: string; onClose?: () => voi
 
   return (
     <div className="flex h-full flex-col bg-droid-bg">
-      <div className="flex items-center gap-2 border-b border-droid-border px-3 py-2">
-        <span className="text-[13px] font-semibold text-droid-text">Review</span>
+      <div className="flex h-9 shrink-0 items-center gap-1.5 border-b border-droid-border px-2">
         <ScopeSelector />
         <div className="flex-1" />
         <ToolbarButton
@@ -547,7 +546,7 @@ export function ReviewPanel({ cwd, onClose }: { cwd: string; onClose?: () => voi
 
       <div className="flex min-h-0 flex-1">
         {filesOpen && (
-          <div className="flex w-[280px] shrink-0 flex-col border-r border-droid-border">
+          <div className="flex w-[38%] min-w-[200px] max-w-[260px] shrink-0 flex-col border-r border-droid-border">
             <div className="flex items-center justify-between px-2.5 py-1.5 text-[11px] text-droid-text-muted">
               <span>
                 {review.files.length} file{review.files.length === 1 ? '' : 's'}

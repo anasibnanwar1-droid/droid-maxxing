@@ -62,9 +62,10 @@ function ContextListIcon({ className }: { className?: string }) {
   );
 }
 
-const UTILITY_PANE_MIN = 460;
-const UTILITY_PANE_MAX = 1280;
-const UTILITY_PANE_DEFAULT = 760;
+const UTILITY_PANE_MIN = 420;
+const UTILITY_PANE_MAX = 980;
+const UTILITY_PANE_DEFAULT = 560;
+const UTILITY_PANE_CONTENT_RESERVE = 520;
 const UTILITY_PANE_WIDTH_STORAGE_KEY = 'droid-utility-pane-width';
 
 export default function App() {
@@ -132,8 +133,9 @@ export default function App() {
 
   useEffect(() => {
     const onResize = () => {
-      setUtilityPaneMax(utilityPaneMaxWidth());
-      setUtilityPaneWidth((width) => clampUtilityPane(width));
+      const available = contentRowRef.current?.getBoundingClientRect().width ?? window.innerWidth;
+      setUtilityPaneMax(utilityPaneMaxWidth(available));
+      setUtilityPaneWidth((width) => clampUtilityPane(width, available));
     };
     window.addEventListener('resize', onResize);
     return () => window.removeEventListener('resize', onResize);
@@ -143,7 +145,10 @@ export default function App() {
     const node = contentRowRef.current;
     if (!node) return;
     const update = () => {
-      setContentRowWidth(Math.round(node.getBoundingClientRect().width));
+      const available = Math.round(node.getBoundingClientRect().width);
+      setContentRowWidth(available);
+      setUtilityPaneMax(utilityPaneMaxWidth(available));
+      setUtilityPaneWidth((width) => clampUtilityPane(width, available));
     };
     update();
     const observer = new ResizeObserver(update);
@@ -402,7 +407,7 @@ export default function App() {
                     opacity: 1,
                   }}
                   exit={{ width: 0, opacity: 0 }}
-                  transition={{ duration: 0.24, ease: [0.16, 1, 0.3, 1] }}
+                  transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
                   className="h-full min-w-0 shrink-0 overflow-hidden"
                 >
                   <UtilityPane
@@ -413,7 +418,7 @@ export default function App() {
                     maxWidth={utilityPaneMax}
                     onResize={setUtilityPaneWidth}
                     onResizeEnd={(width) => {
-                      const next = clampUtilityPane(width);
+                      const next = clampUtilityPane(width, contentRowWidth || undefined);
                       setUtilityPaneWidth(next);
                       try {
                         localStorage.setItem(UTILITY_PANE_WIDTH_STORAGE_KEY, String(next));
@@ -611,17 +616,21 @@ function initialUtilityPaneWidth(): number {
   } catch {
     /* ignore */
   }
-  return clampUtilityPane(Math.round(window.innerWidth * 0.56));
+  return clampUtilityPane(Math.min(UTILITY_PANE_DEFAULT, Math.round(window.innerWidth * 0.42)));
 }
 
-function utilityPaneMaxWidth(): number {
+function utilityPaneMaxWidth(availableWidth?: number): number {
   if (typeof window === 'undefined') return UTILITY_PANE_MAX;
+  const available = availableWidth ?? window.innerWidth;
   return Math.max(
     UTILITY_PANE_MIN,
-    Math.min(UTILITY_PANE_MAX, Math.round(window.innerWidth - 420)),
+    Math.min(UTILITY_PANE_MAX, Math.round(available - UTILITY_PANE_CONTENT_RESERVE)),
   );
 }
 
-function clampUtilityPane(width: number): number {
-  return Math.min(utilityPaneMaxWidth(), Math.max(UTILITY_PANE_MIN, Math.round(width)));
+function clampUtilityPane(width: number, availableWidth?: number): number {
+  return Math.min(
+    utilityPaneMaxWidth(availableWidth),
+    Math.max(UTILITY_PANE_MIN, Math.round(width)),
+  );
 }

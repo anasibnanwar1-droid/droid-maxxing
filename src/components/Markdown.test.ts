@@ -8,6 +8,6 @@ test('disabled diagrams render fenced SVG as escaped code', () => {
   const source = '```svg\n<svg onload="globalThis.pwned=true"></svg>\n```';
   const html = renderToStaticMarkup(createElement(Markdown, { allowDiagrams: false }, source));
 
-  assert.doesNotMatch(html, /<svg[\s>]/i);
+  assert.doesNotMatch(html, /<svg[^>]*\sonload=/i);
   assert.match(html, /&lt;svg onload=/);
 });

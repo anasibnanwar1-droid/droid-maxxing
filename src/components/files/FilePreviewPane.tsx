@@ -82,7 +82,7 @@ function ToolbarButton({
       type="button"
       title={title}
       onClick={onClick}
-      className="flex h-7 w-7 items-center justify-center rounded-md text-droid-text-muted transition-colors hover:bg-droid-elevated hover:text-droid-text"
+      className="flex h-7 w-7 items-center justify-center rounded-lg text-droid-text-muted transition-colors hover:bg-droid-elevated hover:text-droid-text"
     >
       {children}
     </button>
@@ -134,7 +134,7 @@ export function FilePreviewPane({ accessToken, relative, onClear }: FilePreviewP
 
   return (
     <section className="flex min-h-0 min-w-0 flex-1 flex-col bg-droid-bg">
-      <header className="flex h-10 shrink-0 items-center gap-2 border-b border-droid-border px-3">
+      <header className="flex h-9 shrink-0 items-center gap-2 border-b border-droid-border px-2.5">
         <FileText className="h-3.5 w-3.5 shrink-0 text-droid-text-muted" />
         <span
           className="min-w-0 flex-1 truncate text-[11.5px] text-droid-text-secondary"
@@ -420,9 +420,6 @@ function imageMimeType(fileName: string): string {
 
 async function loadPdfjsImpl() {
   const pdfjsLib = await import('pdfjs-dist');
-  // Vite resolves the worker bundle inline; the ?worker&inline suffix is
-  // not in the project's TS ambient declarations, so suppress the error.
-  // @ts-expect-error -- Vite virtual module handled at build time
   const workerModule = (await import('pdfjs-dist/build/pdf.worker.min.mjs?worker&inline')) as {
     default: new () => Worker;
   };

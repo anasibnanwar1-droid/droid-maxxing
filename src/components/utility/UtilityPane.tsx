@@ -45,11 +45,14 @@ export function UtilityPane({
   return (
     <aside
       aria-label="Utility pane"
-      className={`relative flex h-full min-w-0 flex-col overflow-hidden bg-droid-bg ${
-        expanded
-          ? 'w-full border-l-0 shadow-none'
-          : 'w-full border-l border-droid-border shadow-[-24px_0_60px_rgba(0,0,0,0.18)]'
+      className={`relative flex h-full min-w-0 flex-col overflow-hidden ${
+        expanded ? 'w-full border-l-0' : 'w-full border-l border-droid-border'
       }`}
+      style={{
+        background: 'var(--sidebar-bg)',
+        backdropFilter: 'var(--sidebar-blur)',
+        WebkitBackdropFilter: 'var(--sidebar-blur)',
+      }}
     >
       {!expanded && (
         <PaneResizeHandle
@@ -63,7 +66,7 @@ export function UtilityPane({
 
       <header
         data-electron-drag-region
-        className="flex h-9 shrink-0 items-center gap-1 border-b border-droid-border bg-droid-bg/95 pl-3 pr-2"
+        className="flex h-9 shrink-0 items-center gap-1 border-b border-droid-border pl-2 pr-1.5"
       >
         <div
           role="tablist"
@@ -76,9 +79,9 @@ export function UtilityPane({
             return (
               <div
                 key={tab.id}
-                className={`group flex h-7 max-w-44 shrink-0 items-center gap-1.5 rounded-md px-2 text-[12px] transition-colors ${
+                className={`group flex h-7 max-w-44 shrink-0 items-center gap-1.5 rounded-lg px-2 text-[12px] transition-colors ${
                   active
-                    ? 'bg-droid-elevated text-droid-text'
+                    ? 'bg-droid-active text-droid-text'
                     : 'text-droid-text-muted hover:bg-droid-elevated/45 hover:text-droid-text'
                 }`}
               >
@@ -98,7 +101,7 @@ export function UtilityPane({
                   <button
                     type="button"
                     aria-label={`Close ${tab.label}`}
-                    className="ml-0.5 rounded p-0.5 text-droid-text-muted opacity-60 transition hover:bg-droid-border hover:text-droid-text group-hover:opacity-100"
+                    className="ml-0.5 rounded-md p-0.5 text-droid-text-muted opacity-50 transition hover:bg-droid-elevated hover:text-droid-text group-hover:opacity-100"
                     onClick={(event) => {
                       event.stopPropagation();
                       onCloseTab(tab);

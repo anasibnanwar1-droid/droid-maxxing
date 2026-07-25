@@ -152,7 +152,7 @@ export function FilesWorkspace({
   return (
     <div className="grid h-full min-h-0 grid-cols-[minmax(150px,34%)_minmax(0,1fr)] bg-droid-bg">
       <section className="flex min-h-0 flex-col border-r border-droid-border bg-droid-surface/25">
-        <header className="flex h-10 shrink-0 items-center gap-2 border-b border-droid-border px-3">
+        <header className="flex h-9 shrink-0 items-center gap-2 border-b border-droid-border px-2.5">
           <FolderOpen className="h-3.5 w-3.5 shrink-0 text-droid-accent" />
           <span className="min-w-0 flex-1 truncate font-mono text-[10.5px] text-droid-text-muted">
             {root}
@@ -247,7 +247,7 @@ function FileTreeRow({
         title={entry.relative}
         className={`flex h-7 w-full items-center gap-1.5 pr-2 text-left text-[11.5px] transition-colors ${
           selected
-            ? 'bg-droid-accent/12 text-droid-text'
+            ? 'bg-droid-active text-droid-text'
             : 'text-droid-text-secondary hover:bg-droid-elevated/70 hover:text-droid-text'
         }`}
         style={{ paddingLeft: `${String(6 + entry.depth * 14)}px` }}
