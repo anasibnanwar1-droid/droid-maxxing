@@ -73,6 +73,8 @@ test('open remains usable when navigation succeeds before a DOM snapshot is read
     url: 'https://example.com/',
     scroll: { x: 0, y: 0 },
     refs: [],
+    canGoBack: false,
+    canGoForward: false,
   });
 });
 
@@ -106,6 +108,8 @@ test('open fallback clears metadata from the previous page', async () => {
     url: 'https://example.com/second',
     scroll: { x: 0, y: 0 },
     refs: [],
+    canGoBack: false,
+    canGoForward: false,
   });
 });
 

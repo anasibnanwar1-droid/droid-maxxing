@@ -103,6 +103,8 @@ export class BrowserSessionManager {
       ...session.state,
       url,
       refs: [],
+      canGoBack: false,
+      canGoForward: false,
       viewport: input.viewport ?? session.state.viewport,
       viewportMode: input.viewportMode ?? session.state.viewportMode,
     };

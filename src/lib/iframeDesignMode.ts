@@ -532,15 +532,16 @@ function cssEscape(value: string): string {
 }
 
 function stableId(value: string): string {
-  return `@live-${stableHash(value)}`;
+  return `@live-${stableDesignHash(value)}`;
 }
 
-function stableHash(value: string): string {
-  let hash = 0;
+export function stableDesignHash(value: string): string {
+  let hash = 0xcbf29ce484222325n;
   for (let index = 0; index < value.length; index += 1) {
-    hash = (Math.imul(31, hash) + value.charCodeAt(index)) | 0;
+    hash ^= BigInt(value.charCodeAt(index));
+    hash = BigInt.asUintN(64, hash * 0x100000001b3n);
   }
-  return Math.abs(hash).toString(36);
+  return hash.toString(36);
 }
 
 function selectionFor(
@@ -639,7 +640,7 @@ function refFor(el: Element): BrowserElementRef {
       text,
   );
   return {
-    ref: `@b-${stableHash(selector)}`,
+    ref: `@b-${stableDesignHash(selector)}`,
     selector,
     tagName: el.tagName.toLowerCase(),
     role: roleFor(el) || undefined,

@@ -26,6 +26,8 @@ const MAX_REPLAY_BYTES = 2 * 1024 * 1024;
 const EXIT_RETENTION_MS = 30 * 1000;
 const DEFAULT_COLS = 80;
 const DEFAULT_ROWS = 24;
+const MAX_COLS = 1000;
+const MAX_ROWS = 500;
 const TERM = 'xterm-256color';
 const COLORTERM = 'truecolor';
 
@@ -78,10 +80,10 @@ async function validateCwd(input, fspApi) {
   }
 }
 
-function resolveDimension(value, fallback) {
+function resolveDimension(value, fallback, maximum) {
   const n = Math.floor(Number(value));
   if (!Number.isFinite(n) || n < 1) return fallback;
-  return n;
+  return Math.min(n, maximum);
 }
 
 function defaultRandomId() {
@@ -176,8 +178,8 @@ function createTerminalManager(opts) {
     const fileArgs = Array.isArray(args.args) && args.args.length > 0 ? args.args : resolved.args;
     const finalEnv = envBuilder(platform, args.env || process.env);
     const dims = {
-      cols: resolveDimension(args.cols, DEFAULT_COLS),
-      rows: resolveDimension(args.rows, DEFAULT_ROWS),
+      cols: resolveDimension(args.cols, DEFAULT_COLS, MAX_COLS),
+      rows: resolveDimension(args.rows, DEFAULT_ROWS, MAX_ROWS),
     };
 
     const id = idGen();
@@ -295,8 +297,8 @@ function createTerminalManager(opts) {
 
   function resize(id, cols, rows) {
     const e = requireEntry(id);
-    const c = resolveDimension(cols, e.cols);
-    const r = resolveDimension(rows, e.rows);
+    const c = resolveDimension(cols, e.cols, MAX_COLS);
+    const r = resolveDimension(rows, e.rows, MAX_ROWS);
     e.cols = c;
     e.rows = r;
     if (e.pty && typeof e.pty.resize === 'function' && !e.exited) {
@@ -506,4 +508,6 @@ module.exports = {
   EXIT_RETENTION_MS,
   DEFAULT_COLS,
   DEFAULT_ROWS,
+  MAX_COLS,
+  MAX_ROWS,
 };

@@ -9,6 +9,7 @@ import {
   isPreviewable,
   previewSizeCapBytes,
   previewSizeLabel,
+  sanitizeDocxCssText,
   sanitizeDocxPreview,
 } from './filePreview';
 
@@ -107,6 +108,26 @@ test('previewSizeLabel keeps text and external distinct from binary', () => {
 
 test('DOCX previews disable HTML alt chunks', () => {
   assert.equal(DOCX_PREVIEW_OPTIONS.renderAltChunks, false);
+});
+
+test('DOCX CSS sanitization preserves local formatting and blob resources', () => {
+  const css =
+    '@font-face { font-family: docx; src: url("blob:https://app.test/font"); }\n' +
+    '.docx-preview { color: var(--docx-accent1-color); width: 8.5in; }';
+
+  assert.equal(sanitizeDocxCssText(css), css);
+});
+
+test('DOCX CSS sanitization rejects imports, remote URLs, and escaped fetch syntax', () => {
+  for (const css of [
+    '@import url("https://evil.test/styles.css");',
+    '.x { background: url(https://evil.test/pixel); }',
+    '.x { background: u/**/rl(//evil.test/pixel); }',
+    '.x { background: \\75rl(data:image/png;base64,AA); }',
+    '.x { content: "https://evil.test/pixel"; }',
+  ]) {
+    assert.equal(sanitizeDocxCssText(css), '');
+  }
 });
 
 test('DOCX preview sanitization removes active content and executable URLs', () => {

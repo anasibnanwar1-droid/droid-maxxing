@@ -17,7 +17,12 @@ import {
   Loader2,
   RefreshCw,
 } from 'lucide-react';
-import { listDirectory, type FilesEntry, type FilesListing } from '../../lib/desktop';
+import {
+  authorizeFilesRoot,
+  listDirectory,
+  type FilesEntry,
+  type FilesListing,
+} from '../../lib/desktop';
 import { classifyByName } from '../../lib/filePreview';
 import { FilePreviewPane } from './FilePreviewPane';
 
@@ -47,7 +52,9 @@ export function FilesWorkspace({
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set(['']));
   const [loading, setLoading] = useState<Set<string>>(() => new Set());
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [authorization, setAuthorization] = useState({ root: '', accessToken: '' });
   const rootVersionRef = useRef(0);
+  const accessToken = authorization.root === root ? authorization.accessToken : '';
 
   useLayoutEffect(() => {
     rootVersionRef.current += 1;
@@ -56,14 +63,14 @@ export function FilesWorkspace({
   const load = useCallback(
     async (relative: string, force = false) => {
       const key = normalizeRelative(relative);
-      if (!force && key in listings) return;
+      if (!accessToken || (!force && key in listings)) return;
       const requestVersion = rootVersionRef.current;
       setLoading((current) => new Set(current).add(key));
       setErrors((current) =>
         Object.fromEntries(Object.entries(current).filter(([k]) => k !== key)),
       );
       try {
-        const listing = await listDirectory(root, key);
+        const listing = await listDirectory(accessToken, key);
         if (rootVersionRef.current !== requestVersion) return;
         setListings((current) => ({ ...current, [key]: listing }));
       } catch (reason) {
@@ -82,7 +89,7 @@ export function FilesWorkspace({
         }
       }
     },
-    [listings, root],
+    [accessToken, listings],
   );
 
   useEffect(() => {
@@ -91,9 +98,18 @@ export function FilesWorkspace({
     setExpanded(new Set(['']));
     setLoading(new Set());
     setErrors({});
-    void listDirectory(root, '')
-      .then((listing) => {
-        if (!cancelled) setListings({ '': listing });
+    setAuthorization({ root: '', accessToken: '' });
+    if (!root.trim()) {
+      setErrors({ '': 'This session has no workspace folder.' });
+      return;
+    }
+    void authorizeFilesRoot(root)
+      .then(async (token) => ({ token, listing: await listDirectory(token, '') }))
+      .then(({ token, listing }) => {
+        if (!cancelled) {
+          setAuthorization({ root, accessToken: token });
+          setListings({ '': listing });
+        }
       })
       .catch((reason: unknown) => {
         if (!cancelled) {
@@ -182,7 +198,7 @@ export function FilesWorkspace({
         </div>
       </section>
       <FilePreviewPane
-        root={root}
+        accessToken={accessToken}
         relative={selectedPath ?? ''}
         onClear={() => {
           onSelectPath('');

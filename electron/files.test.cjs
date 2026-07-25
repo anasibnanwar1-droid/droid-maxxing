@@ -11,6 +11,7 @@ const {
   openDefault,
   revealInFolder,
   classifyByName,
+  createRootAccessRegistry,
   validateRelative,
   resolveWithin,
   LISTING_CAP_DEFAULT,
@@ -106,6 +107,21 @@ test('resolveWithin rejects chained dangling symlinks that escape the root', asy
   await fsp.symlink(path.join(outside, 'missing.txt'), outerLink, 'file');
   await fsp.symlink(outerLink, innerLink, 'file');
   await assert.rejects(() => resolveWithin(root, 'inner-escape-link'), /escapes root/);
+});
+
+test('root access registry resolves only opaque tokens for authorized canonical roots', async () => {
+  const registry = createRootAccessRegistry({
+    createToken: () => 'test-files-token-0000000000000001',
+  });
+  const token = await registry.authorize(root);
+
+  assert.equal(registry.resolve(token), rootReal);
+  assert.equal(await registry.tokenFor(root), token);
+  await assert.rejects(() => registry.authorize(''), /rootDir is required/);
+  assert.throws(() => registry.resolve(root), { code: 'EACCES' });
+  assert.throws(() => registry.resolve('/'), { code: 'EACCES' });
+  registry.clear();
+  assert.throws(() => registry.resolve(token), { code: 'EACCES' });
 });
 
 // ---------------------------------------------------------------------------

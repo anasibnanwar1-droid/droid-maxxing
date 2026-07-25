@@ -41,6 +41,7 @@ class FakeRuntime implements BrowserRuntime {
   history: ('back' | 'forward')[] = [];
   canGoBack = false;
   canGoForward = false;
+  omitHistory = false;
 
   constructor(viewport: BrowserViewport) {
     this.viewport = viewport;
@@ -86,8 +87,7 @@ class FakeRuntime implements BrowserRuntime {
       title: 'Droid Control',
       scroll: { x: 0, y: 0 },
       refs: this.refs,
-      canGoBack: this.canGoBack,
-      canGoForward: this.canGoForward,
+      ...(this.omitHistory ? {} : { canGoBack: this.canGoBack, canGoForward: this.canGoForward }),
     };
   }
 
@@ -129,6 +129,25 @@ test('runtime snapshots propagate navigation history state', async () => {
   const reloaded = await manager.reload('m1');
   assert.equal(reloaded.canGoBack, true);
   assert.equal(reloaded.canGoForward, true);
+});
+
+test('opening a new page clears stale history when its snapshot omits navigation state', async () => {
+  let runtime!: FakeRuntime;
+  const manager = createManager({
+    runtimeFactory: (_id, viewport) => {
+      runtime = new FakeRuntime(viewport);
+      runtime.canGoBack = true;
+      runtime.canGoForward = true;
+      return runtime;
+    },
+  });
+
+  await manager.open({ missionId: 'm1', url: 'https://example.com/first' });
+  runtime.omitHistory = true;
+  const opened = await manager.open({ missionId: 'm1', url: 'https://example.com/second' });
+
+  assert.equal(opened.canGoBack, false);
+  assert.equal(opened.canGoForward, false);
 });
 
 test('click by ref refreshes and uses the current element center', async () => {

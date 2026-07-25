@@ -50,7 +50,51 @@ function isUnsafeDocxUrl(value: string): boolean {
   );
 }
 
+function normalizeCssForSecurity(value: string): string {
+  return value
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/\\(?:\r\n|[\n\r\f])/g, '')
+    .replace(
+      /\\([0-9a-f]{1,6})(?:[ \n\r\t\f])?|\\([^0-9a-f\n\r\f])/gi,
+      (_match, hex: string | undefined, escaped: string | undefined) => {
+        if (!hex) return escaped ?? '';
+        const codePoint = Number.parseInt(hex, 16);
+        return codePoint > 0 && codePoint <= 0x10ffff ? String.fromCodePoint(codePoint) : '\ufffd';
+      },
+    )
+    .toLowerCase();
+}
+
+export function sanitizeDocxCssText(css: string): string {
+  const normalized = normalizeCssForSecurity(css);
+  if (/@import(?:\s|["'(;]|$)/i.test(normalized)) return '';
+
+  let unsafeUrl = false;
+  const withoutBlobUrls = normalized.replace(
+    /url\s*\(\s*(['"]?)([^)]*?)\1\s*\)/gi,
+    (match, _quote: string, value: string) => {
+      if (/^blob:[^'"\s()]+$/i.test(value.trim())) return '';
+      unsafeUrl = true;
+      return match;
+    },
+  );
+  if (unsafeUrl || /url\s*\(/i.test(withoutBlobUrls)) return '';
+  if (
+    /(?:https?|ftp|file|data|javascript|vbscript)\s*:/i.test(withoutBlobUrls) ||
+    /(^|[^:])\/\//.test(withoutBlobUrls)
+  ) {
+    return '';
+  }
+  return css;
+}
+
 export function sanitizeDocxPreview(container: ParentNode): void {
+  container.querySelectorAll('style').forEach((element) => {
+    const css = sanitizeDocxCssText(element.textContent ?? '');
+    if (!css) element.remove();
+    else element.textContent = css;
+  });
+
   container.querySelectorAll(DOCX_ACTIVE_CONTENT_SELECTOR).forEach((element) => {
     element.remove();
   });

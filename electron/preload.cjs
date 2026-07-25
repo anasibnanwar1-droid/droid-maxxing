@@ -58,10 +58,13 @@ contextBridge.exposeInMainWorld('droidControl', {
   terminalSubscribe: (id) => ipcRenderer.invoke('terminal-subscribe', { id }),
   terminalUnsubscribe: (id) => ipcRenderer.invoke('terminal-unsubscribe', { id }),
   onTerminalEvent: (handler) => on('terminal-event', handler),
-  filesList: (root, relative) => ipcRenderer.invoke('files-list', { root, relative }),
-  filesPreview: (root, relative) => ipcRenderer.invoke('files-preview', { root, relative }),
-  filesOpen: (root, relative) => ipcRenderer.invoke('files-open', { root, relative }),
-  filesReveal: (root, relative) => ipcRenderer.invoke('files-reveal', { root, relative }),
+  filesAuthorizeRoot: (root) => ipcRenderer.invoke('files-authorize-root', { root }),
+  filesList: (accessToken, relative) => ipcRenderer.invoke('files-list', { accessToken, relative }),
+  filesPreview: (accessToken, relative) =>
+    ipcRenderer.invoke('files-preview', { accessToken, relative }),
+  filesOpen: (accessToken, relative) => ipcRenderer.invoke('files-open', { accessToken, relative }),
+  filesReveal: (accessToken, relative) =>
+    ipcRenderer.invoke('files-reveal', { accessToken, relative }),
 
   nativeBrowserOpen: (sessionId, url, bounds, viewport) =>
     ipcRenderer.invoke('native-browser-open', { sessionId, url, bounds, viewport }),

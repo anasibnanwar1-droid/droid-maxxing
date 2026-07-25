@@ -26,6 +26,7 @@ const BRIDGE_PORT = Number(process.env.BRIDGE_PORT ?? 8765);
 const bridge = { port: BRIDGE_PORT, token: crypto.randomBytes(16).toString('hex') };
 const terminalManager = createTerminalManager();
 const terminalSubscriptions = createTerminalSubscriptionRegistry(terminalManager);
+const filesRootAccess = files.createRootAccessRegistry();
 
 let mainWindow = null;
 let hiddenNativeBrowserWindow = null;
@@ -58,6 +59,7 @@ app.on('before-quit', () => {
   stopSidecar();
   terminalManager.closeAll();
   terminalSubscriptions.clear();
+  filesRootAccess.clear();
 });
 
 app.on('activate', () => {
@@ -93,6 +95,7 @@ function createMainWindow() {
     closeAllNativeBrowsers();
     terminalManager.closeAll();
     terminalSubscriptions.clear();
+    filesRootAccess.clear();
     mainWindow = null;
   });
 }
@@ -104,7 +107,9 @@ function registerIpc() {
   });
   ipcMain.handle('pick-directory', async () => {
     const result = await dialog.showOpenDialog({ properties: ['openDirectory'] });
-    return result.canceled ? null : (result.filePaths[0] ?? null);
+    const selected = result.canceled ? null : (result.filePaths[0] ?? null);
+    if (selected) await filesRootAccess.authorize(selected);
+    return selected;
   });
   ipcMain.handle('notify', (_event, { title, body }) => {
     new Notification({ title, body }).show();
@@ -202,21 +207,41 @@ function registerIpc() {
     assertMainRenderer(event);
     terminalSubscriptions.unsubscribe(event.sender, id);
   });
-  ipcMain.handle('files-list', (event, { root, relative }) => {
+  ipcMain.handle('files-authorize-root', async (event, { root }) => {
     assertMainRenderer(event);
-    return files.listDirectory(root, relative);
+    const authorized = await filesRootAccess.tokenFor(root);
+    if (authorized) return authorized;
+    const expectedRoot = await files.canonicalDirectory(root);
+    const result = await dialog.showOpenDialog(mainWindow, {
+      title: 'Allow Files access to this workspace',
+      buttonLabel: 'Allow Files Access',
+      defaultPath: expectedRoot,
+      properties: ['openDirectory', 'dontAddToRecent'],
+    });
+    if (result.canceled || !result.filePaths[0]) {
+      throw new Error('Files access was not authorized.');
+    }
+    const selectedRoot = await files.canonicalDirectory(result.filePaths[0]);
+    if (selectedRoot !== expectedRoot) {
+      throw new Error('Select the current workspace folder to authorize Files access.');
+    }
+    return filesRootAccess.authorize(selectedRoot);
   });
-  ipcMain.handle('files-preview', (event, { root, relative }) => {
+  ipcMain.handle('files-list', (event, { accessToken, relative }) => {
     assertMainRenderer(event);
-    return files.readPreview(root, relative);
+    return files.listDirectory(filesRootAccess.resolve(accessToken), relative);
   });
-  ipcMain.handle('files-open', (event, { root, relative }) => {
+  ipcMain.handle('files-preview', (event, { accessToken, relative }) => {
     assertMainRenderer(event);
-    return files.openDefault(root, relative, shell);
+    return files.readPreview(filesRootAccess.resolve(accessToken), relative);
   });
-  ipcMain.handle('files-reveal', (event, { root, relative }) => {
+  ipcMain.handle('files-open', (event, { accessToken, relative }) => {
     assertMainRenderer(event);
-    return files.revealInFolder(root, relative, shell);
+    return files.openDefault(filesRootAccess.resolve(accessToken), relative, shell);
+  });
+  ipcMain.handle('files-reveal', (event, { accessToken, relative }) => {
+    assertMainRenderer(event);
+    return files.revealInFolder(filesRootAccess.resolve(accessToken), relative, shell);
   });
 
   ipcMain.handle('native-browser-open', (_event, { sessionId, url, bounds, viewport }) =>

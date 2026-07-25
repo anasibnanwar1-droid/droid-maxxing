@@ -174,10 +174,11 @@ interface DroidControlApi {
   terminalSubscribe: (id: string) => Promise<void>;
   terminalUnsubscribe: (id: string) => Promise<void>;
   onTerminalEvent: (handler: (event: TerminalEvent) => void) => () => void;
-  filesList: (root: string, relative: string) => Promise<FilesListing>;
-  filesPreview: (root: string, relative: string) => Promise<FilePreviewPayload>;
-  filesOpen: (root: string, relative: string) => Promise<void>;
-  filesReveal: (root: string, relative: string) => Promise<void>;
+  filesAuthorizeRoot: (root: string) => Promise<string>;
+  filesList: (accessToken: string, relative: string) => Promise<FilesListing>;
+  filesPreview: (accessToken: string, relative: string) => Promise<FilePreviewPayload>;
+  filesOpen: (accessToken: string, relative: string) => Promise<void>;
+  filesReveal: (accessToken: string, relative: string) => Promise<void>;
   nativeBrowserOpen: (
     sessionId: string,
     url: string,
@@ -296,24 +297,32 @@ export function onTerminalEvent(handler: (event: TerminalEvent) => void): () => 
   return window.droidControl!.onTerminalEvent(handler);
 }
 
-export async function listDirectory(root: string, relative = ''): Promise<FilesListing> {
+export async function authorizeFilesRoot(root: string): Promise<string> {
   if (!isDesktop()) throw new Error('Files are only available in the desktop app.');
-  return window.droidControl!.filesList(root, relative);
+  return window.droidControl!.filesAuthorizeRoot(root);
 }
 
-export async function readFilePreview(root: string, relative: string): Promise<FilePreviewPayload> {
+export async function listDirectory(accessToken: string, relative = ''): Promise<FilesListing> {
   if (!isDesktop()) throw new Error('Files are only available in the desktop app.');
-  return window.droidControl!.filesPreview(root, relative);
+  return window.droidControl!.filesList(accessToken, relative);
 }
 
-export async function openFileDefault(root: string, relative: string): Promise<void> {
-  if (!isDesktop()) return;
-  await window.droidControl!.filesOpen(root, relative);
+export async function readFilePreview(
+  accessToken: string,
+  relative: string,
+): Promise<FilePreviewPayload> {
+  if (!isDesktop()) throw new Error('Files are only available in the desktop app.');
+  return window.droidControl!.filesPreview(accessToken, relative);
 }
 
-export async function revealFile(root: string, relative: string): Promise<void> {
+export async function openFileDefault(accessToken: string, relative: string): Promise<void> {
   if (!isDesktop()) return;
-  await window.droidControl!.filesReveal(root, relative);
+  await window.droidControl!.filesOpen(accessToken, relative);
+}
+
+export async function revealFile(accessToken: string, relative: string): Promise<void> {
+  if (!isDesktop()) return;
+  await window.droidControl!.filesReveal(accessToken, relative);
 }
 
 export async function listFiles(dir: string): Promise<string[]> {

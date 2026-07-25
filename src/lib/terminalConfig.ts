@@ -12,6 +12,8 @@ export const MAX_GLOBAL_TERMINALS = 8;
 export const MAX_REPLAY_BYTES = 2 * 1024 * 1024;
 export const DEFAULT_TERMINAL_COLS = 80;
 export const DEFAULT_TERMINAL_ROWS = 24;
+export const MAX_TERMINAL_COLS = 1000;
+export const MAX_TERMINAL_ROWS = 500;
 export const TERMINAL_TERM = 'xterm-256color';
 export const TERMINAL_COLORTERM = 'truecolor';
 
@@ -129,18 +131,27 @@ export function selectForReplay(
   if (bytes.length <= cap) {
     return { data: bytes.toString('utf8'), truncated: false, droppedBytes: 0 };
   }
-  const trimmed = bytes.subarray(bytes.length - cap);
-  return { data: trimmed.toString('utf8'), truncated: true, droppedBytes: bytes.length - cap };
+  let start = bytes.length - cap;
+  while (start < bytes.length && (bytes[start] & 0xc0) === 0x80) start += 1;
+  return {
+    data: bytes.subarray(start).toString('utf8'),
+    truncated: true,
+    droppedBytes: start,
+  };
 }
 
 // Coerce a user-supplied dimension (cols or rows) to a positive finite integer,
 // falling back to the supplied default when the value is missing, non-numeric,
 // or out of range. Used by both the host module and the renderer when sizing
 // the PTY before the first measurement arrives.
-export function resolveDimension(value: unknown, fallback: number): number {
+export function resolveDimension(
+  value: unknown,
+  fallback: number,
+  maximum = MAX_TERMINAL_COLS,
+): number {
   const n = Math.floor(Number(value));
   if (!Number.isFinite(n) || n < 1) return fallback;
-  return n;
+  return Math.min(n, maximum);
 }
 
 // Factory for ID generators; the default uses Web Crypto / Node crypto. Keeping

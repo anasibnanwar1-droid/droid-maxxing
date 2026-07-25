@@ -3,6 +3,8 @@ import assert from 'node:assert';
 import {
   MAX_GLOBAL_TERMINALS,
   MAX_REPLAY_BYTES,
+  MAX_TERMINAL_COLS,
+  MAX_TERMINAL_ROWS,
   MAX_TERMINALS_PER_MISSION,
   TERMINAL_LIMITS,
   buildPtyEnv,
@@ -123,6 +125,13 @@ test('selectForReplay accepts a Uint8Array', () => {
   assert.equal(r.droppedBytes, 2);
 });
 
+test('selectForReplay drops partial UTF-8 code points at the truncation boundary', () => {
+  const r = selectForReplay('x🎉y', 3);
+  assert.equal(r.data, 'y');
+  assert.equal(r.truncated, true);
+  assert.equal(r.droppedBytes, 5);
+});
+
 test('resolveDimension falls back for missing / non-finite / non-positive values', () => {
   assert.equal(resolveDimension(undefined, 80), 80);
   assert.equal(resolveDimension(null, 24), 24);
@@ -132,6 +141,8 @@ test('resolveDimension falls back for missing / non-finite / non-positive values
   assert.equal(resolveDimension(-5, 80), 80);
   assert.equal(resolveDimension(132.7, 80), 132);
   assert.equal(resolveDimension('100', 80), 100);
+  assert.equal(resolveDimension(Number.MAX_SAFE_INTEGER, 80), MAX_TERMINAL_COLS);
+  assert.equal(resolveDimension(Number.MAX_SAFE_INTEGER, 24, MAX_TERMINAL_ROWS), MAX_TERMINAL_ROWS);
 });
 
 test('makeIdGenerator returns the underlying generator on each call', () => {

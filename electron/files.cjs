@@ -26,6 +26,7 @@
 const fs = require('node:fs');
 const fsp = require('node:fs/promises');
 const path = require('node:path');
+const crypto = require('node:crypto');
 
 const LISTING_CAP_DEFAULT = 1000;
 const LISTING_CAP_MAX = 5000;
@@ -153,6 +154,59 @@ function assertString(value, name) {
   if (typeof value !== 'string') {
     throw new Error(`${name} must be a string`);
   }
+}
+
+async function canonicalDirectory(rootDir) {
+  assertString(rootDir, 'rootDir');
+  if (!rootDir.trim()) throw new Error('rootDir is required');
+  const root = await fsp.realpath(path.resolve(rootDir));
+  const stat = await fsp.stat(root);
+  if (!stat.isDirectory()) {
+    const err = new Error('not a directory');
+    err.code = 'ENOTDIR';
+    throw err;
+  }
+  return root;
+}
+
+function createRootAccessRegistry(options = {}) {
+  const rootsByToken = new Map();
+  const tokensByRoot = new Map();
+  const createToken = options.createToken ?? (() => crypto.randomBytes(32).toString('base64url'));
+
+  return {
+    async authorize(rootDir) {
+      const root = await canonicalDirectory(rootDir);
+      const existing = tokensByRoot.get(root);
+      if (existing) return existing;
+      const token = createToken();
+      if (typeof token !== 'string' || token.length < 16 || rootsByToken.has(token)) {
+        throw new Error('failed to create a unique files access token');
+      }
+      rootsByToken.set(token, root);
+      tokensByRoot.set(root, token);
+      return token;
+    },
+
+    async tokenFor(rootDir) {
+      const root = await canonicalDirectory(rootDir);
+      return tokensByRoot.get(root) ?? null;
+    },
+
+    resolve(token) {
+      if (typeof token !== 'string' || !rootsByToken.has(token)) {
+        const err = new Error('Files access has not been authorized for this workspace.');
+        err.code = 'EACCES';
+        throw err;
+      }
+      return rootsByToken.get(token);
+    },
+
+    clear() {
+      rootsByToken.clear();
+      tokensByRoot.clear();
+    },
+  };
 }
 
 function extensionOf(name) {
@@ -506,8 +560,8 @@ function containsBinaryProbe(buffer) {
  */
 async function openDefault(rootDir, relativePath, shell) {
   const resolved = await resolveWithin(rootDir, relativePath);
-  const stat = await fsp.lstat(resolved.target);
-  if (!stat.isFile()) {
+  const expectedStat = await fsp.lstat(resolved.target);
+  if (!expectedStat.isFile()) {
     const err = new Error('not a file');
     err.code = 'EINVAL';
     throw err;
@@ -516,9 +570,19 @@ async function openDefault(rootDir, relativePath, shell) {
   if (typeof openPath !== 'function') {
     throw new Error('shell.openPath is required');
   }
-  const openError = await openPath(resolved.target);
-  if (typeof openError === 'string' && openError !== '') {
-    throw new Error(openError);
+  const noFollow = process.platform === 'win32' ? 0 : fs.constants.O_NOFOLLOW;
+  const handle = await fsp.open(resolved.target, fs.constants.O_RDONLY | noFollow);
+  try {
+    const stat = await handle.stat();
+    if (!stat.isFile() || stat.dev !== expectedStat.dev || stat.ino !== expectedStat.ino) {
+      throw new Error('file changed before open');
+    }
+    const openError = await openPath(resolved.target);
+    if (typeof openError === 'string' && openError !== '') {
+      throw new Error(openError);
+    }
+  } finally {
+    await handle.close();
   }
   return { opened: true, target: resolved.target, root: resolved.root };
 }
@@ -548,6 +612,8 @@ module.exports = {
   classifyByName,
   validateRelative,
   resolveWithin,
+  canonicalDirectory,
+  createRootAccessRegistry,
   // constants (also useful to consumers / tests)
   LISTING_CAP_DEFAULT,
   LISTING_CAP_MAX,

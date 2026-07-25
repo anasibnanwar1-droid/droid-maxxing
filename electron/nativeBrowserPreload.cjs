@@ -1350,10 +1350,12 @@ function cssEscape(value) {
 }
 
 function stableHash(value) {
-  let hash = 0;
-  for (let index = 0; index < value.length; index += 1)
-    hash = (Math.imul(31, hash) + value.charCodeAt(index)) | 0;
-  return Math.abs(hash).toString(36);
+  let hash = 0xcbf29ce484222325n;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= BigInt(value.charCodeAt(index));
+    hash = BigInt.asUintN(64, hash * 0x100000001b3n);
+  }
+  return hash.toString(36);
 }
 
 function promptVisible() {

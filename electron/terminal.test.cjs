@@ -4,7 +4,9 @@ const test = require('node:test');
 const {
   createTerminalManager,
   createTerminalSubscriptionRegistry,
+  MAX_COLS,
   MAX_REPLAY_BYTES,
+  MAX_ROWS,
 } = require('./terminal.cjs');
 
 function fixture(options = {}) {
@@ -110,6 +112,22 @@ test('terminal manager keeps a PTY alive until explicit kill', async () => {
   manager.kill(terminal.id);
   assert.equal(instances[0].killed, true);
   assert.equal(manager.list().length, 0);
+});
+
+test('terminal manager caps dimensions before spawning and resizing the PTY', async () => {
+  const { manager, instances } = fixture();
+  const terminal = await manager.create({
+    missionId: 'mission-1',
+    cwd: '/repo',
+    cols: Number.MAX_SAFE_INTEGER,
+    rows: Number.MAX_SAFE_INTEGER,
+  });
+
+  assert.equal(terminal.cols, MAX_COLS);
+  assert.equal(terminal.rows, MAX_ROWS);
+
+  manager.resize(terminal.id, Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER);
+  assert.deepEqual(instances[0].resizes, [[MAX_COLS, MAX_ROWS]]);
 });
 
 test('terminal subscribers receive bounded replay and exit state', async () => {

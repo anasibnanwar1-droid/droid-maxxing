@@ -135,6 +135,8 @@ export class NativeBrowserRuntime implements BrowserRuntime {
       url: fallbackUrl,
       scroll: { x: 0, y: 0 },
       refs: [],
+      canGoBack: false,
+      canGoForward: false,
     };
     return this.lastSnapshot;
   }

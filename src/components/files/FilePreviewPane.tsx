@@ -31,7 +31,7 @@ const TABLE_COL_LIMIT = 50;
 const PDF_RENDER_SCALE = 1.4;
 
 interface FilePreviewPaneProps {
-  root: string;
+  accessToken: string;
   relative: string;
   onClear?: () => void;
 }
@@ -89,17 +89,17 @@ function ToolbarButton({
   );
 }
 
-export function FilePreviewPane({ root, relative, onClear }: FilePreviewPaneProps) {
+export function FilePreviewPane({ accessToken, relative, onClear }: FilePreviewPaneProps) {
   const [state, setState] = useState<PreviewState>({ kind: 'idle' });
 
   useEffect(() => {
-    if (!relative) {
+    if (!accessToken || !relative) {
       setState({ kind: 'idle' });
       return;
     }
     let cancelled = false;
     setState({ kind: 'loading' });
-    readFilePreview(root, relative)
+    readFilePreview(accessToken, relative)
       .then((payload) => {
         if (!cancelled) setState({ kind: 'ready', payload });
       })
@@ -114,21 +114,21 @@ export function FilePreviewPane({ root, relative, onClear }: FilePreviewPaneProp
     return () => {
       cancelled = true;
     };
-  }, [root, relative]);
+  }, [accessToken, relative]);
 
   const handleOpenExternal = useCallback(() => {
-    if (!relative) return;
-    void openFileDefault(root, relative).catch((reason: unknown) =>
+    if (!accessToken || !relative) return;
+    void openFileDefault(accessToken, relative).catch((reason: unknown) =>
       toast.error(reason instanceof Error ? reason.message : String(reason)),
     );
-  }, [root, relative]);
+  }, [accessToken, relative]);
 
   const handleReveal = useCallback(() => {
-    if (!relative) return;
-    void revealFile(root, relative).catch((reason: unknown) =>
+    if (!accessToken || !relative) return;
+    void revealFile(accessToken, relative).catch((reason: unknown) =>
       toast.error(reason instanceof Error ? reason.message : String(reason)),
     );
-  }, [root, relative]);
+  }, [accessToken, relative]);
 
   const fileName = useMemo(() => relative.split(/[\\/]/).pop() ?? relative, [relative]);
 
@@ -568,6 +568,8 @@ function DocxPreview({ data }: { data?: Uint8Array }) {
     if (!containerRef.current || !bytes.length) return;
     let cancelled = false;
     const container = containerRef.current;
+    const renderedBody = document.createElement('div');
+    const renderedStyles = document.createElement('div');
     container.innerHTML = '';
     setLoading(true);
     setError('');
@@ -575,13 +577,19 @@ function DocxPreview({ data }: { data?: Uint8Array }) {
       .then(({ renderAsync }) =>
         renderAsync(
           new Blob([bytes as unknown as BlobPart]),
-          container,
-          undefined,
+          renderedBody,
+          renderedStyles,
           DOCX_PREVIEW_OPTIONS,
         ),
       )
       .then(() => {
         if (!cancelled) {
+          sanitizeDocxPreview(renderedBody);
+          sanitizeDocxPreview(renderedStyles);
+          container.replaceChildren(
+            ...Array.from(renderedStyles.childNodes),
+            ...Array.from(renderedBody.childNodes),
+          );
           sanitizeDocxPreview(container);
           setLoading(false);
         }
