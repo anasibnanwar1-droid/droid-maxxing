@@ -10,18 +10,17 @@ import {
 import type {
   FactoryDefaultSettings,
   ServerEvent,
-  MissionSummary,
+  SessionSummary,
   TranscriptEvent,
   ProgressEntry,
   PermissionRequest,
-  MissionQuestion,
+  SessionQuestion,
   ModelInfo,
-  WorkerSummary,
-  WorkerHistoryLink,
+  ChildSessionSummary,
+  ChildSessionHistoryLink,
   SkillInfo,
   ReasoningEffort,
   ContextStatsSnapshot,
-  SessionKind,
   BrowserState,
   BrowserViewportMode,
   DesignReference,
@@ -48,16 +47,16 @@ import {
   sanitizeUtilityPanels,
   setUtilityPanelOpen,
   updateUtilityTab,
-  utilityPanelForMission,
+  utilityPanelForSession,
   type UtilityPanelState,
   type UtilityTool,
 } from '../lib/utilityPanel';
 
-export type AgentKind = 'orchestrator' | 'worker' | 'validator';
+export type AgentKind = 'primary' | 'worker' | 'validator';
 export type LiveEnterBehavior = 'queue' | 'interrupt';
 export type DiffViewMode = 'unified' | 'split';
 
-export interface WorkerInfo extends WorkerSummary {
+export interface ChildSessionInfo extends ChildSessionSummary {
   startedAt: number;
 }
 
@@ -113,43 +112,43 @@ export interface AppState {
   connection: 'idle' | 'connecting' | 'connected' | 'error';
   connectionError?: string;
 
-  // Missions domain
-  missions: Record<string, MissionSummary>;
-  missionOrder: string[];
-  activeMissionId: string | null;
-  // missionId -> last time the user viewed it. A session reads as "unread" when
+  // Sessions domain
+  sessions: Record<string, SessionSummary>;
+  sessionOrder: string[];
+  activeAppSessionId: string | null;
+  // appSessionId -> last time the user viewed it. A session reads as "unread" when
   // its updatedAt (latest model activity) is newer than this. Internal only:
   // surfaced as a bold row in the sidebar, never shown as a timestamp.
-  missionLastSeen: Record<string, number>;
+  sessionLastSeen: Record<string, number>;
   transcripts: Record<string, TranscriptEvent[]>;
   progress: Record<string, ProgressEntry[]>;
-  workers: Record<string, WorkerInfo[]>; // subagents spawned per mission
+  childSessions: Record<string, ChildSessionInfo[]>; // keyed by parent app session
   historyLoaded: Record<string, boolean>;
-  // Cursor for the next older page of orchestrator scrollback per mission;
+  // Cursor for the next older page of primary-session scrollback;
   // undefined/absent once the oldest compaction segment has been loaded.
   historyCursor: Record<string, string | undefined>;
   // Whether an older-history page is currently in flight (prevents duplicate
   // prefetches while the user keeps scrolling up).
   historyLoadingOlder: Record<string, boolean>;
-  // Explicit transcript-restore state per mission: whether the initial replay
+  // Explicit transcript-restore state per session: whether the initial replay
   // is loading, partially loaded (older pages remain), fully loaded, or failed.
   // Lets the chat show an honest restoring/partial/retry surface instead of a
   // blank or silently truncated transcript (#29).
   sessionRestore: Record<string, SessionRestore>;
-  // Whether a subagent's inner transcript is currently being fetched, keyed by
-  // worker session id. A worker's events only stream after its card is opened,
+  // Whether a child session's inner transcript is currently being fetched, keyed by
+  // child provider session id. A child's events only stream after its card is opened,
   // so the view shows a loading state until the first event (or the opened ack)
   // arrives instead of a misleading "no activity" empty state.
-  agentHistoryLoading: Record<string, boolean>;
+  childHistoryLoading: Record<string, boolean>;
   pendingPermission: PermissionRequest | null;
-  pendingQuestion: MissionQuestion | null;
+  pendingQuestion: SessionQuestion | null;
   contextStats: Record<string, ContextStatsSnapshot>;
   specPlans: Record<string, string>; // latest ExitSpecMode plan per session
-  // Persisted spec per mission (file path + rendered content). Survives exiting
+  // Persisted spec per session (file path + rendered content). Survives exiting
   // spec mode so the inline card, mermaid, and the wiki reader stay available.
-  missionSpecs: Record<string, { path?: string; title: string; content: string }>;
-  // Which mission's spec is open in the full wiki reader (null = closed).
-  specWikiMissionId: string | null;
+  sessionSpecs: Record<string, { path?: string; title: string; content: string }>;
+  // Which session's spec is open in the full wiki reader (null = closed).
+  specWikiAppSessionId: string | null;
   // Held locally until the current turn finishes, then delivered one at a time.
   promptQueue: Record<string, QueuedPrompt[]>;
 
@@ -158,8 +157,8 @@ export interface AppState {
   utilityPanels: Record<string, UtilityPanelState>;
   // The Review diff tab: a wide right-side pane, opened from the Context panel's
   // changes button. Scope + view mode persist; open state is per-session — we
-  // track the mission it was opened for so switching chats doesn't carry it over.
-  reviewOpenMissionId: string | null;
+  // track the session it was opened for so switching chats doesn't carry it over.
+  reviewOpenAppSessionId: string | null;
   reviewScope: DiffScope;
   // A file path the Review pane should jump to once its list loads, set when a
   // per-turn changes summary (or diff card) is clicked. Cleared after the jump.
@@ -175,7 +174,7 @@ export interface AppState {
   // swallows outside-click dismissal).
   contextMeterOpen: boolean;
   theme: ThemeConfig;
-  missionMode: boolean;
+  missionControlMode: boolean;
   draftChat: { cwd: string; branch?: string } | null;
   workspaceCwds: string[];
   // Derived (synced by the reducer): whether the browser pane is open for the
@@ -192,7 +191,7 @@ export interface AppState {
 
   // Mission Control view
   selectedFeatureId: string | null;
-  selectedAgentSessionId: string | null; // 'orchestrator' or worker session id
+  selectedProviderSessionId: string | null; // 'primary' or child provider session id
 
   // Models / per-agent config
   models: ModelInfo[];
@@ -213,16 +212,16 @@ export interface AppState {
   compactionSettingsRev: number;
   liveEnterBehavior: LiveEnterBehavior;
 
-  // Per-mission model/reasoning the user picked in the selector. These are
+  // Per-session model/reasoning the user picked in the selector. These are
   // authoritative: a stale server summary (e.g. an in-flight resume) must not
   // revert the user's choice back to the session default.
-  missionSettingOverrides: Record<string, { modelId?: string; reasoningEffort?: ReasoningEffort }>;
+  sessionSettingOverrides: Record<string, { modelId?: string; reasoningEffort?: ReasoningEffort }>;
 
   // Skills catalog (for / invocation)
   skills: SkillInfo[];
-  skillsSessionId?: string | null;
+  skillsProviderSessionId?: string | null;
 
-  // Attachments for the first message of a not-yet-created mission, keyed by clientRef.
+  // Attachments for the first message of a not-yet-created session, keyed by clientRef.
   pendingCompose: Record<string, { text: string; skills: string[]; files: string[] }>;
 }
 
@@ -234,8 +233,8 @@ type Action =
       message?: string;
     }
 
-  // Mission lifecycle
-  | { type: 'MISSION_CREATED'; clientRef: string; mission: MissionSummary }
+  // Session lifecycle
+  | { type: 'SESSION_CREATED'; clientRef: string; session: SessionSummary }
   | {
       type: 'SET_PENDING_COMPOSE';
       clientRef: string;
@@ -243,14 +242,14 @@ type Action =
       skills: string[];
       files: string[];
     }
-  | { type: 'MISSION_UPDATED'; mission: MissionSummary }
-  | { type: 'MISSION_FEATURES'; missionId: string; features: MissionSummary['features'] }
-  | { type: 'MISSION_PROGRESS'; missionId: string; entries: ProgressEntry[] }
+  | { type: 'SESSION_UPDATED'; session: SessionSummary }
+  | { type: 'SESSION_FEATURES'; appSessionId: string; features: SessionSummary['features'] }
+  | { type: 'SESSION_PROGRESS'; appSessionId: string; entries: ProgressEntry[] }
   | {
-      type: 'MISSION_WORKER';
-      missionId: string;
+      type: 'SESSION_CHILD';
+      appSessionId: string;
       event: 'started' | 'updated' | 'completed';
-      workerSessionId: string;
+      providerSessionId: string;
       label?: string;
       prompt?: string;
       modelId?: string;
@@ -258,52 +257,62 @@ type Action =
       toolUseId?: string;
     }
   | {
-      type: 'AGENT_UPDATED';
-      missionId: string;
-      agentSessionId: string;
+      type: 'CHILD_UPDATED';
+      appSessionId: string;
+      providerSessionId: string;
       role: AgentKind;
       status: 'opened' | 'running' | 'paused' | 'completed';
     }
   | {
-      type: 'MISSION_TOKENS';
-      missionId: string;
+      type: 'SESSION_TOKENS';
+      appSessionId: string;
       tokensIn: number;
       tokensOut: number;
       contextTokens: number;
       maxContextTokens?: number;
     }
-  | { type: 'CONTEXT_UPDATED'; sessionId: string; stats: ContextStatsSnapshot }
-  | { type: 'MISSION_TRANSCRIPT'; event: TranscriptEvent }
-  | { type: 'QUEUE_PROMPT'; missionId: string; prompt: QueuedPrompt }
-  | { type: 'REMOVE_QUEUED_PROMPT'; missionId: string; id: string }
-  | { type: 'REORDER_QUEUE'; missionId: string; from: number; to: number }
-  | { type: 'SPEC_SET'; missionId: string; path?: string; title: string; content: string }
-  | { type: 'SPEC_OPEN_WIKI'; missionId: string }
-  | { type: 'SPEC_CLOSE_WIKI' }
-  | { type: 'MISSION_PERMISSION'; request: PermissionRequest }
-  | { type: 'MISSION_QUESTION'; question: MissionQuestion }
-  | { type: 'MISSION_ERROR'; missionId?: string; message: string }
-  | { type: 'MISSION_LIST'; missions: MissionSummary[] }
   | {
-      type: 'MISSION_HISTORY';
-      missionId: string;
+      type: 'CONTEXT_UPDATED';
+      appSessionId: string;
+      sourceSessionId: string;
+      stats: ContextStatsSnapshot;
+    }
+  | { type: 'SESSION_TRANSCRIPT'; event: TranscriptEvent }
+  | { type: 'QUEUE_PROMPT'; appSessionId: string; prompt: QueuedPrompt }
+  | { type: 'REMOVE_QUEUED_PROMPT'; appSessionId: string; id: string }
+  | { type: 'REORDER_QUEUE'; appSessionId: string; from: number; to: number }
+  | { type: 'SPEC_SET'; appSessionId: string; path?: string; title: string; content: string }
+  | { type: 'SPEC_OPEN_WIKI'; appSessionId: string }
+  | { type: 'SPEC_CLOSE_WIKI' }
+  | { type: 'SESSION_PERMISSION'; request: PermissionRequest }
+  | { type: 'SESSION_QUESTION'; question: SessionQuestion }
+  | {
+      type: 'SESSION_ERROR';
+      appSessionId?: string;
+      providerSessionId?: string;
+      message: string;
+    }
+  | { type: 'SESSION_LIST'; sessions: SessionSummary[] }
+  | {
+      type: 'SESSION_HISTORY';
+      appSessionId: string;
       progress: ProgressEntry[];
       transcripts: TranscriptEvent[];
-      workers?: WorkerHistoryLink[];
+      childSessions?: ChildSessionHistoryLink[];
       mode?: 'replace' | 'prepend';
       olderCursor?: string;
       loadedCount?: number;
       hasMore?: boolean;
     }
-  | { type: 'SESSION_RESTORE_START'; missionId: string }
-  | { type: 'MISSION_HISTORY_FAILED'; missionId: string; message: string }
-  | { type: 'MISSION_HISTORY_LOADING_OLDER'; missionId: string }
-  | { type: 'AGENT_HISTORY_LOADING'; agentSessionId: string; loading: boolean }
+  | { type: 'SESSION_RESTORE_START'; appSessionId: string }
+  | { type: 'SESSION_HISTORY_FAILED'; appSessionId: string; message: string }
+  | { type: 'SESSION_HISTORY_LOADING_OLDER'; appSessionId: string }
+  | { type: 'CHILD_HISTORY_LOADING'; providerSessionId: string; loading: boolean }
   | { type: 'CLEAR_PERMISSION' }
   | { type: 'CLEAR_QUESTION' }
 
   // UI
-  | { type: 'SET_ACTIVE_MISSION'; id: string | null }
+  | { type: 'SET_ACTIVE_SESSION'; id: string | null }
   | { type: 'SET_RIGHT_PANEL'; open: boolean }
   | {
       type: 'OPEN_UTILITY_TOOL';
@@ -312,12 +321,12 @@ type Action =
       terminalId?: string;
       filePath?: string;
     }
-  | { type: 'CLOSE_UTILITY_TAB'; tabId: string; missionId?: string }
+  | { type: 'CLOSE_UTILITY_TAB'; tabId: string; appSessionId?: string }
   | { type: 'ACTIVATE_UTILITY_TAB'; tabId: string }
   | {
       type: 'UPDATE_UTILITY_TAB';
       tabId: string;
-      missionId?: string;
+      appSessionId?: string;
       terminalId?: string;
       filePath?: string;
       label?: string;
@@ -333,9 +342,13 @@ type Action =
   | { type: 'SET_CONTEXT_METER_OPEN'; open: boolean }
   | { type: 'TOGGLE_SIDEBAR' }
   | { type: 'TOGGLE_SPEC_MODE' }
-  | { type: 'MISSION_SET_KIND'; missionId: string; kind: SessionKind }
+  | {
+      type: 'SESSION_SET_INTERACTION_MODE';
+      appSessionId: string;
+      interactionMode: SessionSummary['interactionMode'];
+    }
   | { type: 'TOGGLE_SETTINGS' }
-  | { type: 'TOGGLE_MISSION_MODE' }
+  | { type: 'TOGGLE_MISSION_CONTROL' }
   | { type: 'START_CHAT'; cwd: string; branch?: string }
   | { type: 'ADD_WORKSPACE'; cwd: string }
   | { type: 'TOGGLE_BROWSER' }
@@ -343,28 +356,28 @@ type Action =
   | { type: 'BROWSER_UPDATED'; browser: BrowserState }
   | {
       type: 'BROWSER_NAVIGATED';
-      missionId: string;
-      sessionId: string;
+      appSessionId: string;
+      browserSessionId: string;
       url: string;
       canGoBack?: boolean;
       canGoForward?: boolean;
     }
-  | { type: 'BROWSER_CLOSED'; missionId: string }
-  | { type: 'BROWSER_ERROR'; missionId?: string; message: string }
-  | { type: 'TOGGLE_DESIGN_MODE'; sessionId: string }
-  | { type: 'SET_DESIGN_MODE'; sessionId: string; open: boolean }
+  | { type: 'BROWSER_CLOSED'; appSessionId: string }
+  | { type: 'BROWSER_ERROR'; appSessionId?: string; message: string }
+  | { type: 'TOGGLE_DESIGN_MODE'; appSessionId: string }
+  | { type: 'SET_DESIGN_MODE'; appSessionId: string; open: boolean }
   | { type: 'SET_THEME'; theme: Partial<ThemeConfig> }
   | { type: 'SELECT_FEATURE'; id: string | null }
-  | { type: 'SELECT_AGENT'; id: string | null }
+  | { type: 'SELECT_PROVIDER_SESSION'; id: string | null }
 
   // Models / per-agent config
   | { type: 'MODELS_LIST'; models: ModelInfo[] }
-  | { type: 'SKILLS_LIST'; skills: SkillInfo[]; sessionId: string | null }
+  | { type: 'SKILLS_LIST'; skills: SkillInfo[]; providerSessionId: string | null }
   | { type: 'FACTORY_DEFAULTS'; defaults: FactoryDefaultSettings }
   | { type: 'SET_AGENT_MODEL'; agent: AgentKind; modelId?: string }
   | { type: 'SET_AGENT_REASONING'; agent: AgentKind; reasoning: ReasoningEffort }
-  | { type: 'MISSION_SET_MODEL'; missionId: string; modelId?: string }
-  | { type: 'MISSION_SET_REASONING'; missionId: string; reasoning: ReasoningEffort }
+  | { type: 'SESSION_SET_MODEL'; appSessionId: string; modelId?: string }
+  | { type: 'SESSION_SET_REASONING'; appSessionId: string; reasoning: ReasoningEffort }
   | { type: 'SET_COMPACTION_MODEL_GLOBAL'; compactionModel: string }
   | { type: 'SET_COMPACTION_TOKEN_LIMIT_GLOBAL'; limit?: number }
   | { type: 'SET_COMPACTION_TOKEN_LIMIT_FOR_MODEL'; modelId: string; limit?: number }
@@ -386,9 +399,8 @@ const defaultTheme: ThemeConfig = {
 };
 
 const AGENT_CONFIG_STORAGE_KEY = 'droid-agent-config-v2';
-const OLD_AGENT_CONFIG_STORAGE_KEYS = ['droid-agent-config'];
 const defaultAgentConfig: AgentConfig = {
-  orchestrator: { modelId: undefined, reasoning: 'high' },
+  primary: { modelId: undefined, reasoning: 'high' },
   worker: { modelId: undefined, reasoning: 'medium' },
   validator: { modelId: undefined, reasoning: 'medium' },
 };
@@ -466,12 +478,11 @@ function loadAgentConfig(): AgentConfig {
   try {
     const storage = getLocalStorage();
     if (!storage) return defaultAgentConfig;
-    OLD_AGENT_CONFIG_STORAGE_KEYS.forEach((key) => storage.removeItem(key));
     const raw = storage.getItem(AGENT_CONFIG_STORAGE_KEY);
     if (!raw) return defaultAgentConfig;
     const parsed = JSON.parse(raw) as Partial<Record<AgentKind, Partial<AgentModelConfig>>>;
     return {
-      orchestrator: readAgentConfig(parsed.orchestrator, defaultAgentConfig.orchestrator),
+      primary: readAgentConfig(parsed.primary, defaultAgentConfig.primary),
       worker: readAgentConfig(parsed.worker, defaultAgentConfig.worker),
       validator: readAgentConfig(parsed.validator, defaultAgentConfig.validator),
     };
@@ -507,7 +518,7 @@ const LIVE_ENTER_BEHAVIOR_STORAGE_KEY = 'droid-live-enter-behavior';
 const DIFF_VIEW_STORAGE_KEY = 'droid-diff-view';
 const REVIEW_SCOPE_STORAGE_KEY = 'droid-review-scope';
 const WORKSPACES_STORAGE_KEY = 'droid-workspaces';
-const MISSION_LAST_SEEN_STORAGE_KEY = 'droid-mission-last-seen-v1';
+const SESSION_LAST_SEEN_STORAGE_KEY = 'droid-session-last-seen-v1';
 const UI_STATE_STORAGE_KEY = 'droid-ui-state-v1';
 const BROWSER_VIEWPORT_MODES = new Set<BrowserViewportMode>([
   'fit',
@@ -519,16 +530,16 @@ const BROWSER_VIEWPORT_MODES = new Set<BrowserViewportMode>([
 ]);
 
 interface PersistedUiState {
-  activeMissionId: string | null;
+  activeAppSessionId: string | null;
   rightPanelOpen: boolean;
   utilityPanels: Record<string, UtilityPanelState>;
   sidebarCollapsed: boolean;
   specMode: boolean;
-  missionMode: boolean;
+  missionControlMode: boolean;
   browsers: Record<string, BrowserState>;
   browserOpenKeys: Record<string, boolean>;
   selectedFeatureId: string | null;
-  selectedAgentSessionId: string | null;
+  selectedProviderSessionId: string | null;
 }
 
 function loadCompactionModel(): string {
@@ -637,20 +648,24 @@ export function loadPersistedUiState(): Partial<PersistedUiState> {
     if (!raw) return {};
     const parsed = JSON.parse(raw) as Partial<PersistedUiState>;
     return {
-      activeMissionId: typeof parsed.activeMissionId === 'string' ? parsed.activeMissionId : null,
+      activeAppSessionId:
+        typeof parsed.activeAppSessionId === 'string' ? parsed.activeAppSessionId : null,
       rightPanelOpen:
         typeof parsed.rightPanelOpen === 'boolean' ? parsed.rightPanelOpen : undefined,
       utilityPanels: sanitizeUtilityPanels(parsed.utilityPanels),
       sidebarCollapsed:
         typeof parsed.sidebarCollapsed === 'boolean' ? parsed.sidebarCollapsed : undefined,
       specMode: typeof parsed.specMode === 'boolean' ? parsed.specMode : undefined,
-      missionMode: typeof parsed.missionMode === 'boolean' ? parsed.missionMode : undefined,
+      missionControlMode:
+        typeof parsed.missionControlMode === 'boolean' ? parsed.missionControlMode : undefined,
       browsers: loadPersistedBrowsers(parsed.browsers),
       browserOpenKeys: loadPersistedBrowserOpenKeys(parsed.browserOpenKeys),
       selectedFeatureId:
         typeof parsed.selectedFeatureId === 'string' ? parsed.selectedFeatureId : null,
-      selectedAgentSessionId:
-        typeof parsed.selectedAgentSessionId === 'string' ? parsed.selectedAgentSessionId : null,
+      selectedProviderSessionId:
+        typeof parsed.selectedProviderSessionId === 'string'
+          ? parsed.selectedProviderSessionId
+          : null,
     };
   } catch {
     return {};
@@ -659,16 +674,16 @@ export function loadPersistedUiState(): Partial<PersistedUiState> {
 
 function savePersistedUiState(state: AppState): void {
   const snapshot: PersistedUiState = {
-    activeMissionId: state.activeMissionId,
+    activeAppSessionId: state.activeAppSessionId,
     rightPanelOpen: state.rightPanelOpen,
     utilityPanels: persistUtilityPanels(state.utilityPanels),
     sidebarCollapsed: state.sidebarCollapsed,
     specMode: state.specMode,
-    missionMode: state.missionMode,
+    missionControlMode: state.missionControlMode,
     browsers: persistBrowsers(state.browsers),
     browserOpenKeys: state.browserOpenKeys,
     selectedFeatureId: state.selectedFeatureId,
-    selectedAgentSessionId: state.selectedAgentSessionId,
+    selectedProviderSessionId: state.selectedProviderSessionId,
   };
   try {
     getLocalStorage()?.setItem(UI_STATE_STORAGE_KEY, JSON.stringify(snapshot));
@@ -677,9 +692,9 @@ function savePersistedUiState(state: AppState): void {
   }
 }
 
-function loadMissionLastSeen(): Record<string, number> {
+function loadSessionLastSeen(): Record<string, number> {
   try {
-    const raw = getLocalStorage()?.getItem(MISSION_LAST_SEEN_STORAGE_KEY);
+    const raw = getLocalStorage()?.getItem(SESSION_LAST_SEEN_STORAGE_KEY);
     if (!raw) return {};
     const parsed = JSON.parse(raw) as Record<string, unknown>;
     const out: Record<string, number> = {};
@@ -692,9 +707,9 @@ function loadMissionLastSeen(): Record<string, number> {
   }
 }
 
-function saveMissionLastSeen(map: Record<string, number>): void {
+function saveSessionLastSeen(map: Record<string, number>): void {
   try {
-    getLocalStorage()?.setItem(MISSION_LAST_SEEN_STORAGE_KEY, JSON.stringify(map));
+    getLocalStorage()?.setItem(SESSION_LAST_SEEN_STORAGE_KEY, JSON.stringify(map));
   } catch {
     /* ignore */
   }
@@ -703,7 +718,7 @@ function saveMissionLastSeen(map: Record<string, number>): void {
 function sanitizeAgentConfig(config: AgentConfig, models: ModelInfo[]): AgentConfig {
   if (models.length === 0) return config;
   return {
-    orchestrator: sanitizeAgent(config.orchestrator, models),
+    primary: sanitizeAgent(config.primary, models),
     worker: sanitizeAgent(config.worker, models),
     validator: sanitizeAgent(config.validator, models),
   };
@@ -727,10 +742,10 @@ function sanitizeAgent(config: AgentModelConfig, models: ModelInfo[]): AgentMode
   return config;
 }
 
-function applyMissionOverride(
-  summary: MissionSummary,
+function applySessionOverride(
+  summary: SessionSummary,
   override?: { modelId?: string; reasoningEffort?: ReasoningEffort },
-): MissionSummary {
+): SessionSummary {
   if (!override) return summary;
   const next = { ...summary };
   if ('modelId' in override) next.modelId = override.modelId;
@@ -742,24 +757,24 @@ const persistedUiState = loadPersistedUiState();
 
 export const initialState: AppState = {
   connection: 'idle',
-  missions: {},
-  missionOrder: [],
-  activeMissionId: persistedUiState.activeMissionId ?? null,
-  missionLastSeen: loadMissionLastSeen(),
+  sessions: {},
+  sessionOrder: [],
+  activeAppSessionId: persistedUiState.activeAppSessionId ?? null,
+  sessionLastSeen: loadSessionLastSeen(),
   transcripts: {},
   progress: {},
-  workers: {},
+  childSessions: {},
   historyLoaded: {},
   historyCursor: {},
   historyLoadingOlder: {},
   sessionRestore: {},
-  agentHistoryLoading: {},
+  childHistoryLoading: {},
   pendingPermission: null,
   pendingQuestion: null,
   contextStats: {},
   specPlans: {},
-  missionSpecs: {},
-  specWikiMissionId: null,
+  sessionSpecs: {},
+  specWikiAppSessionId: null,
   promptQueue: {},
   rightPanelOpen: persistedUiState.rightPanelOpen ?? true,
   utilityPanels: persistedUiState.utilityPanels ?? {},
@@ -769,7 +784,7 @@ export const initialState: AppState = {
   commandPaletteOpen: false,
   contextMeterOpen: false,
   theme: loadTheme(),
-  missionMode: persistedUiState.missionMode ?? false,
+  missionControlMode: persistedUiState.missionControlMode ?? false,
   draftChat: null,
   workspaceCwds: loadWorkspaceCwds(),
   browserOpen: false,
@@ -779,34 +794,34 @@ export const initialState: AppState = {
   browserGlobalError: undefined,
   designModes: {},
   selectedFeatureId: persistedUiState.selectedFeatureId ?? null,
-  selectedAgentSessionId: persistedUiState.selectedAgentSessionId ?? null,
+  selectedProviderSessionId: persistedUiState.selectedProviderSessionId ?? null,
   models: [],
   compactionModel: loadCompactionModel(),
   compactionTokenLimit: loadCompactionTokenLimit(),
   compactionTokenLimitPerModel: loadCompactionTokenLimitPerModel(),
   compactionSettingsRev: 0,
   liveEnterBehavior: loadLiveEnterBehavior(),
-  reviewOpenMissionId: null,
+  reviewOpenAppSessionId: null,
   reviewScope: loadReviewScope(),
   reviewFocusPath: null,
   diffView: loadDiffView(),
-  missionSettingOverrides: {},
+  sessionSettingOverrides: {},
   skills: [],
-  skillsSessionId: undefined,
+  skillsProviderSessionId: undefined,
   agentConfig: loadAgentConfig(),
   pendingCompose: {},
 };
 
 function progressKey(entry: ProgressEntry): string {
-  return `${entry.timestamp}|${entry.type}|${entry.featureId ?? ''}|${entry.workerSessionId ?? ''}|${entry.title ?? ''}`;
+  return `${entry.timestamp}|${entry.type}|${entry.featureId ?? ''}|${entry.workerProviderSessionId ?? ''}|${entry.title ?? ''}`;
 }
 
 function activeBrowserKey(state: AppState): string | undefined {
-  if (!state.activeMissionId) return undefined;
+  if (!state.activeAppSessionId) return undefined;
   // Browser state and open-keys are keyed by the stable app session id
-  // (mission.id), matching the backend; the droid sessionId is swapped by
+  // (`appSessionId`), matching the backend; the provider session is swapped by
   // compaction and would desync the open state from the backend's updates.
-  return state.missions[state.activeMissionId]?.id ?? state.activeMissionId;
+  return state.sessions[state.activeAppSessionId]?.appSessionId ?? state.activeAppSessionId;
 }
 
 // Record an explicit open (true) or hidden (false) decision for a browser key.
@@ -828,31 +843,6 @@ function clearBrowserOpenKey(keys: Record<string, boolean>, key: string): Record
   const next = { ...keys };
   delete next[key];
   return next;
-}
-
-// One-time upgrade migration for browser state. Panes used to be keyed by the
-// volatile droid session id (mission.sessionId, which compaction swaps); they
-// are now keyed by the stable app id (mission.id). When missions first load,
-// move any persisted entry from a mission's current session id to its stable id
-// so an open pane survives the upgrade instead of being orphaned. Stale
-// pre-compaction keys (which match no live mission.sessionId) are left behind
-// and never read by the new stable-key lookups.
-function migrateBrowserStateByMission<T>(
-  record: Record<string, T>,
-  missions: MissionSummary[],
-  rekeyValue: (value: T, stableId: string) => T = (value) => value,
-): Record<string, T> {
-  let next: Record<string, T> | undefined;
-  for (const m of missions) {
-    const oldKey = m.sessionId;
-    if (!oldKey || oldKey === m.id) continue;
-    const source = next ?? record;
-    if (source[oldKey] === undefined || source[m.id] !== undefined) continue;
-    next = next ?? { ...record };
-    next[m.id] = rekeyValue(next[oldKey], m.id);
-    delete next[oldKey];
-  }
-  return next ?? record;
 }
 
 // Re-derive `browserOpen` from the per-session open set and the active session.
@@ -879,13 +869,13 @@ function syncBrowserOpen(state: AppState): AppState {
 }
 
 function closeActiveUtilityPanel(state: AppState): AppState {
-  const missionId = state.activeMissionId;
-  if (!missionId) return state;
-  const current = utilityPanelForMission(state.utilityPanels, missionId);
+  const appSessionId = state.activeAppSessionId;
+  if (!appSessionId) return state;
+  const current = utilityPanelForSession(state.utilityPanels, appSessionId);
   const panel = setUtilityPanelOpen(current, false);
   return panel === current
     ? state
-    : { ...state, utilityPanels: { ...state.utilityPanels, [missionId]: panel } };
+    : { ...state, utilityPanels: { ...state.utilityPanels, [appSessionId]: panel } };
 }
 
 export function reducer(state: AppState, action: Action): AppState {
@@ -912,30 +902,30 @@ function baseReducer(state: AppState, action: Action): AppState {
     case 'SET_CONNECTION':
       return { ...state, connection: action.status, connectionError: action.message };
 
-    case 'MISSION_CREATED': {
-      const order = state.missionOrder.includes(action.mission.id)
-        ? state.missionOrder
-        : [action.mission.id, ...state.missionOrder];
+    case 'SESSION_CREATED': {
+      const order = state.sessionOrder.includes(action.session.appSessionId)
+        ? state.sessionOrder
+        : [action.session.appSessionId, ...state.sessionOrder];
 
       // Seed the first user message: the goal is the user's opening prompt and the
       // backend never echoes it back, so without this the first message never shows.
       let transcripts = state.transcripts;
-      const hasTranscript = (state.transcripts[action.mission.id]?.length ?? 0) > 0;
+      const hasTranscript = (state.transcripts[action.session.appSessionId]?.length ?? 0) > 0;
       const pending = state.pendingCompose[action.clientRef];
-      if (action.mission.goal && !hasTranscript) {
+      if (action.session.goal && !hasTranscript) {
         const seed: TranscriptEvent = {
-          id: `seed-${action.mission.id}`,
-          missionId: action.mission.id,
-          agentSessionId: 'user',
-          role: 'orchestrator',
-          ts: action.mission.createdAt || Date.now(),
+          id: `seed-${action.session.appSessionId}`,
+          appSessionId: action.session.appSessionId,
+          sourceSessionId: 'user',
+          role: 'primary',
+          ts: action.session.createdAt || Date.now(),
           kind: 'text',
-          text: pending ? pending.text : action.mission.goal,
+          text: pending ? pending.text : action.session.goal,
           author: 'user',
           skills: pending?.skills.length ? pending.skills : undefined,
           files: pending?.files.length ? pending.files : undefined,
         };
-        transcripts = { ...state.transcripts, [action.mission.id]: [seed] };
+        transcripts = { ...state.transcripts, [action.session.appSessionId]: [seed] };
       }
 
       const pendingCompose = pending
@@ -946,22 +936,22 @@ function baseReducer(state: AppState, action: Action): AppState {
 
       const next = {
         ...state,
-        missions: {
-          ...state.missions,
-          [action.mission.id]: applyMissionOverride(
-            action.mission,
-            state.missionSettingOverrides[action.mission.id],
+        sessions: {
+          ...state.sessions,
+          [action.session.appSessionId]: applySessionOverride(
+            action.session,
+            state.sessionSettingOverrides[action.session.appSessionId],
           ),
         },
-        missionOrder: order,
+        sessionOrder: order,
         transcripts,
-        activeMissionId: action.mission.id,
+        activeAppSessionId: action.session.appSessionId,
         draftChat: null,
         pendingCompose,
         // A chat you just started is, by definition, already seen.
-        missionLastSeen: {
-          ...state.missionLastSeen,
-          [action.mission.id]: action.mission.updatedAt,
+        sessionLastSeen: {
+          ...state.sessionLastSeen,
+          [action.session.appSessionId]: action.session.updatedAt,
         },
       };
       return next;
@@ -976,40 +966,43 @@ function baseReducer(state: AppState, action: Action): AppState {
         },
       };
 
-    case 'MISSION_UPDATED': {
-      const previous = state.missions[action.mission.id];
-      const m = applyMissionOverride(
-        action.mission,
-        state.missionSettingOverrides[action.mission.id],
+    case 'SESSION_UPDATED': {
+      const previous = state.sessions[action.session.appSessionId];
+      const m = applySessionOverride(
+        action.session,
+        state.sessionSettingOverrides[action.session.appSessionId],
       );
       const previousCompactions =
-        (previous?.compactedFromSessionIds?.length ?? 0) + (previous?.autoCompactions ?? 0);
-      const nextCompactions = (m.compactedFromSessionIds?.length ?? 0) + (m.autoCompactions ?? 0);
+        (previous?.compactedFromProviderSessionIds?.length ?? 0) + (previous?.autoCompactions ?? 0);
+      const nextCompactions =
+        (m.compactedFromProviderSessionIds?.length ?? 0) + (m.autoCompactions ?? 0);
       const contextStats =
-        nextCompactions > previousCompactions && state.contextStats[m.id]
+        nextCompactions > previousCompactions && previous?.providerSessionId
           ? Object.fromEntries(
-              Object.entries(state.contextStats).filter(([sessionId]) => sessionId !== m.id),
+              Object.entries(state.contextStats).filter(
+                ([sourceSessionId]) => sourceSessionId !== previous.providerSessionId,
+              ),
             )
           : state.contextStats;
       return {
         ...state,
-        missions: { ...state.missions, [m.id]: m },
+        sessions: { ...state.sessions, [m.appSessionId]: m },
         contextStats,
       };
     }
 
-    case 'MISSION_FEATURES': {
-      const mid = action.missionId;
-      const existing = state.missions[mid];
+    case 'SESSION_FEATURES': {
+      const mid = action.appSessionId;
+      const existing = state.sessions[mid];
       if (!existing) return state;
       return {
         ...state,
-        missions: { ...state.missions, [mid]: { ...existing, features: action.features } },
+        sessions: { ...state.sessions, [mid]: { ...existing, features: action.features } },
       };
     }
 
-    case 'MISSION_PROGRESS': {
-      const mid = action.missionId;
+    case 'SESSION_PROGRESS': {
+      const mid = action.appSessionId;
       const prev = state.progress[mid] ?? [];
       const seen = new Set(prev.map(progressKey));
       const next = [...prev];
@@ -1025,11 +1018,11 @@ function baseReducer(state: AppState, action: Action): AppState {
       };
     }
 
-    case 'MISSION_WORKER': {
-      const mid = action.missionId;
-      const prev = state.workers[mid] ?? [];
-      const idx = prev.findIndex((w) => w.sessionId === action.workerSessionId);
-      let next: WorkerInfo[];
+    case 'SESSION_CHILD': {
+      const mid = action.appSessionId;
+      const prev = state.childSessions[mid] ?? [];
+      const idx = prev.findIndex((w) => w.providerSessionId === action.providerSessionId);
+      let next: ChildSessionInfo[];
       if (idx >= 0) {
         next = [...prev];
         next[idx] = {
@@ -1051,7 +1044,7 @@ function baseReducer(state: AppState, action: Action): AppState {
         next = [
           ...prev,
           {
-            sessionId: action.workerSessionId,
+            providerSessionId: action.providerSessionId,
             status: action.event === 'completed' ? 'completed' : 'running',
             startedAt: Date.now(),
             label: action.label,
@@ -1062,52 +1055,55 @@ function baseReducer(state: AppState, action: Action): AppState {
           },
         ];
       }
-      return { ...state, workers: { ...state.workers, [mid]: next } };
+      return { ...state, childSessions: { ...state.childSessions, [mid]: next } };
     }
 
-    case 'AGENT_HISTORY_LOADING': {
-      if ((state.agentHistoryLoading[action.agentSessionId] ?? false) === action.loading)
+    case 'CHILD_HISTORY_LOADING': {
+      if ((state.childHistoryLoading[action.providerSessionId] ?? false) === action.loading)
         return state;
       return {
         ...state,
-        agentHistoryLoading: {
-          ...state.agentHistoryLoading,
-          [action.agentSessionId]: action.loading,
+        childHistoryLoading: {
+          ...state.childHistoryLoading,
+          [action.providerSessionId]: action.loading,
         },
       };
     }
 
-    case 'AGENT_UPDATED': {
+    case 'CHILD_UPDATED': {
       // The 'opened' ack fires after a worker's history replay completes (even
       // when nothing was captured), so it reliably ends the loading state.
       const base =
-        action.status === 'opened' && state.agentHistoryLoading[action.agentSessionId]
+        action.status === 'opened' && state.childHistoryLoading[action.providerSessionId]
           ? {
               ...state,
-              agentHistoryLoading: {
-                ...state.agentHistoryLoading,
-                [action.agentSessionId]: false,
+              childHistoryLoading: {
+                ...state.childHistoryLoading,
+                [action.providerSessionId]: false,
               },
             }
           : state;
       if (action.role !== 'worker' || action.status === 'opened') return base;
       // Past this point status is running/paused/completed, so base === state.
-      const prev = state.workers[action.missionId] ?? [];
-      const idx = prev.findIndex((w) => w.sessionId === action.agentSessionId);
+      const prev = state.childSessions[action.appSessionId] ?? [];
+      const idx = prev.findIndex((w) => w.providerSessionId === action.providerSessionId);
       if (idx < 0) return state;
       const next = [...prev];
       next[idx] = { ...next[idx], status: action.status };
-      return { ...state, workers: { ...state.workers, [action.missionId]: next } };
+      return {
+        ...state,
+        childSessions: { ...state.childSessions, [action.appSessionId]: next },
+      };
     }
 
-    case 'MISSION_TOKENS': {
-      const mid = action.missionId;
-      const existing = state.missions[mid];
+    case 'SESSION_TOKENS': {
+      const mid = action.appSessionId;
+      const existing = state.sessions[mid];
       if (!existing) return state;
       return {
         ...state,
-        missions: {
-          ...state.missions,
+        sessions: {
+          ...state.sessions,
           [mid]: {
             ...existing,
             tokensIn: action.tokensIn,
@@ -1120,14 +1116,14 @@ function baseReducer(state: AppState, action: Action): AppState {
     }
 
     case 'CONTEXT_UPDATED': {
-      const existing = state.missions[action.sessionId];
+      const existing = state.sessions[action.appSessionId];
       return {
         ...state,
-        contextStats: { ...state.contextStats, [action.sessionId]: action.stats },
-        missions: existing
+        contextStats: { ...state.contextStats, [action.sourceSessionId]: action.stats },
+        sessions: existing
           ? {
-              ...state.missions,
-              [action.sessionId]: {
+              ...state.sessions,
+              [action.appSessionId]: {
                 ...existing,
                 contextTokens: action.stats.used,
                 contextRemainingTokens: action.stats.remaining,
@@ -1136,24 +1132,24 @@ function baseReducer(state: AppState, action: Action): AppState {
                 contextUpdatedAt: action.stats.updatedAt,
               },
             }
-          : state.missions,
+          : state.sessions,
       };
     }
 
-    case 'MISSION_TRANSCRIPT': {
+    case 'SESSION_TRANSCRIPT': {
       const ev = action.event;
-      const mid = ev.missionId;
+      const mid = ev.appSessionId;
       const prev = state.transcripts[mid] ?? [];
       if (prev.some((event) => event.id === ev.id)) return state;
 
-      // Delta merging: if last event has same kind + agentSessionId, append text
+      // Delta merging: if the last event has the same kind + sourceSessionId, append text
       // Only merge backend streaming deltas (author is absent); do NOT merge explicit user echoes
       const last = prev[prev.length - 1];
       if (
         last &&
         !ev.author && // backend streaming delta (user echoes have author:'user')
         last.kind === ev.kind &&
-        last.agentSessionId === ev.agentSessionId &&
+        last.sourceSessionId === ev.sourceSessionId &&
         last.author === ev.author &&
         (ev.kind === 'text' || ev.kind === 'thinking') &&
         ev.text &&
@@ -1174,7 +1170,7 @@ function baseReducer(state: AppState, action: Action): AppState {
         !ev.author &&
         ev.kind === 'tool_call' &&
         last.kind === 'tool_call' &&
-        last.agentSessionId === ev.agentSessionId &&
+        last.sourceSessionId === ev.sourceSessionId &&
         !!ev.toolUseId &&
         last.toolUseId === ev.toolUseId
       ) {
@@ -1195,26 +1191,26 @@ function baseReducer(state: AppState, action: Action): AppState {
     }
 
     case 'QUEUE_PROMPT': {
-      const prev = state.promptQueue[action.missionId] ?? [];
+      const prev = state.promptQueue[action.appSessionId] ?? [];
       return {
         ...state,
-        promptQueue: { ...state.promptQueue, [action.missionId]: [...prev, action.prompt] },
+        promptQueue: { ...state.promptQueue, [action.appSessionId]: [...prev, action.prompt] },
       };
     }
 
     case 'REMOVE_QUEUED_PROMPT': {
-      const prev = state.promptQueue[action.missionId] ?? [];
+      const prev = state.promptQueue[action.appSessionId] ?? [];
       return {
         ...state,
         promptQueue: {
           ...state.promptQueue,
-          [action.missionId]: prev.filter((p) => p.id !== action.id),
+          [action.appSessionId]: prev.filter((p) => p.id !== action.id),
         },
       };
     }
 
     case 'REORDER_QUEUE': {
-      const prev = state.promptQueue[action.missionId] ?? [];
+      const prev = state.promptQueue[action.appSessionId] ?? [];
       if (
         action.from === action.to ||
         action.from < 0 ||
@@ -1227,11 +1223,11 @@ function baseReducer(state: AppState, action: Action): AppState {
       const next = [...prev];
       const [moved] = next.splice(action.from, 1);
       next.splice(action.to, 0, moved);
-      return { ...state, promptQueue: { ...state.promptQueue, [action.missionId]: next } };
+      return { ...state, promptQueue: { ...state.promptQueue, [action.appSessionId]: next } };
     }
 
     case 'SPEC_SET': {
-      const prev = state.missionSpecs[action.missionId];
+      const prev = state.sessionSpecs[action.appSessionId];
       if (
         prev &&
         prev.content === action.content &&
@@ -1242,104 +1238,121 @@ function baseReducer(state: AppState, action: Action): AppState {
       }
       return {
         ...state,
-        missionSpecs: {
-          ...state.missionSpecs,
-          [action.missionId]: { path: action.path, title: action.title, content: action.content },
+        sessionSpecs: {
+          ...state.sessionSpecs,
+          [action.appSessionId]: {
+            path: action.path,
+            title: action.title,
+            content: action.content,
+          },
         },
       };
     }
 
     case 'SPEC_OPEN_WIKI':
-      return { ...state, specWikiMissionId: action.missionId };
+      return { ...state, specWikiAppSessionId: action.appSessionId };
 
     case 'SPEC_CLOSE_WIKI':
-      return { ...state, specWikiMissionId: null };
+      return { ...state, specWikiAppSessionId: null };
 
-    case 'MISSION_PERMISSION': {
+    case 'SESSION_PERMISSION': {
       const r = action.request;
       const specPlans =
         r.kind === 'spec' && r.plan
-          ? { ...state.specPlans, [r.missionId]: r.plan }
+          ? { ...state.specPlans, [r.appSessionId]: r.plan }
           : state.specPlans;
       // Seed the persistent spec/plan so the inline card and wiki reader work
       // immediately (a richer spec file, if any, overrides this via SPEC_SET).
       // Seed/refresh the persistent spec whenever a (revised) plan arrives so the
       // card/wiki never go stale. The path is preserved; ChatView reloads the
       // file on revision and overrides with the richer on-disk content.
-      const existingSpec = state.missionSpecs[r.missionId];
-      const missionSpecs =
+      const existingSpec = state.sessionSpecs[r.appSessionId];
+      const sessionSpecs =
         (r.kind === 'spec' || r.kind === 'mission_plan') &&
         r.plan &&
         existingSpec?.content !== r.plan
           ? {
-              ...state.missionSpecs,
-              [r.missionId]: { path: existingSpec?.path, title: r.title, content: r.plan },
+              ...state.sessionSpecs,
+              [r.appSessionId]: { path: existingSpec?.path, title: r.title, content: r.plan },
             }
-          : state.missionSpecs;
-      return { ...state, pendingPermission: r, specPlans, missionSpecs };
+          : state.sessionSpecs;
+      return { ...state, pendingPermission: r, specPlans, sessionSpecs };
     }
 
-    case 'MISSION_QUESTION':
+    case 'SESSION_QUESTION':
       return { ...state, pendingQuestion: action.question };
 
-    case 'MISSION_ERROR': {
-      if (action.missionId && state.missions[action.missionId]) {
-        const m = state.missions[action.missionId];
-        return {
+    case 'SESSION_ERROR': {
+      let next = state;
+      if (action.appSessionId && state.sessions[action.appSessionId]) {
+        const m = state.sessions[action.appSessionId];
+        next = {
           ...state,
-          missions: { ...state.missions, [action.missionId]: { ...m, phase: 'failed' as const } },
+          sessions: {
+            ...state.sessions,
+            [action.appSessionId]: { ...m, phase: 'failed' as const },
+          },
         };
       }
-      return state;
+      if (action.providerSessionId) {
+        next = {
+          ...next,
+          childHistoryLoading: {
+            ...next.childHistoryLoading,
+            [action.providerSessionId]: false,
+          },
+        };
+      }
+      return next;
     }
 
-    case 'MISSION_LIST': {
-      const map: Record<string, MissionSummary> = { ...state.missions };
-      for (const m of action.missions) {
-        map[m.id] = applyMissionOverride(m, state.missionSettingOverrides[m.id]);
+    case 'SESSION_LIST': {
+      const map: Record<string, SessionSummary> = { ...state.sessions };
+      for (const m of action.sessions) {
+        map[m.appSessionId] = applySessionOverride(
+          m,
+          state.sessionSettingOverrides[m.appSessionId],
+        );
       }
-      const order = [...new Set([...action.missions.map((m) => m.id), ...state.missionOrder])]
+      const order = [
+        ...new Set([...action.sessions.map((m) => m.appSessionId), ...state.sessionOrder]),
+      ]
         .filter((id) => map[id])
         .sort((a, b) => map[b].updatedAt - map[a].updatedAt);
       // Seed last-seen for sessions this client has never tracked so existing
       // history is not retroactively marked unread; only activity that arrives
       // after this point (a newer updatedAt) flips a row to unread.
-      const seededLastSeen = { ...state.missionLastSeen };
-      for (const m of action.missions) {
-        if (seededLastSeen[m.id] === undefined) seededLastSeen[m.id] = m.updatedAt;
+      const seededLastSeen = { ...state.sessionLastSeen };
+      for (const m of action.sessions) {
+        if (seededLastSeen[m.appSessionId] === undefined) {
+          seededLastSeen[m.appSessionId] = m.updatedAt;
+        }
       }
       return {
         ...state,
-        missions: map,
-        missionOrder: order,
-        missionLastSeen: seededLastSeen,
-        // Carry any pre-upgrade browser panes from the old session-id key to the
-        // stable mission id so a re-keyed/compacted session keeps its open pane.
-        browsers: migrateBrowserStateByMission(state.browsers, action.missions, (b, id) => ({
-          ...b,
-          missionId: id,
-        })),
-        browserOpenKeys: migrateBrowserStateByMission(state.browserOpenKeys, action.missions),
-        activeMissionId:
-          state.activeMissionId && map[state.activeMissionId]
-            ? state.activeMissionId
-            : state.activeMissionId,
+        sessions: map,
+        sessionOrder: order,
+        sessionLastSeen: seededLastSeen,
+        activeAppSessionId:
+          state.activeAppSessionId && map[state.activeAppSessionId]
+            ? state.activeAppSessionId
+            : state.activeAppSessionId,
       };
     }
 
-    case 'MISSION_HISTORY_LOADING_OLDER':
+    case 'SESSION_HISTORY_LOADING_OLDER':
       return {
         ...state,
-        historyLoadingOlder: { ...state.historyLoadingOlder, [action.missionId]: true },
+        historyLoadingOlder: { ...state.historyLoadingOlder, [action.appSessionId]: true },
       };
 
     case 'SESSION_RESTORE_START': {
-      const prev = state.sessionRestore[action.missionId];
+      const prev = state.sessionRestore[action.appSessionId];
       return {
         ...state,
         sessionRestore: {
           ...state.sessionRestore,
-          [action.missionId]: {
+          [action.appSessionId]: {
             status: 'loading',
             loadedCount: prev?.loadedCount ?? 0,
             hasMore: prev?.hasMore ?? false,
@@ -1348,14 +1361,14 @@ function baseReducer(state: AppState, action: Action): AppState {
       };
     }
 
-    case 'MISSION_HISTORY_FAILED': {
-      const prev = state.sessionRestore[action.missionId];
+    case 'SESSION_HISTORY_FAILED': {
+      const prev = state.sessionRestore[action.appSessionId];
       return {
         ...state,
-        historyLoadingOlder: { ...state.historyLoadingOlder, [action.missionId]: false },
+        historyLoadingOlder: { ...state.historyLoadingOlder, [action.appSessionId]: false },
         sessionRestore: {
           ...state.sessionRestore,
-          [action.missionId]: {
+          [action.appSessionId]: {
             status: 'failed',
             loadedCount: prev?.loadedCount ?? 0,
             hasMore: prev?.hasMore ?? false,
@@ -1365,8 +1378,8 @@ function baseReducer(state: AppState, action: Action): AppState {
       };
     }
 
-    case 'MISSION_HISTORY': {
-      const existing = state.transcripts[action.missionId] ?? [];
+    case 'SESSION_HISTORY': {
+      const existing = state.transcripts[action.appSessionId] ?? [];
       // An older page prepends its events to the front of the existing scrollback
       // (deduping by id so a trimmed/overlapping boundary never doubles a message).
       if (action.mode === 'prepend') {
@@ -1395,13 +1408,13 @@ function baseReducer(state: AppState, action: Action): AppState {
         return {
           ...state,
           transcripts: changed
-            ? { ...state.transcripts, [action.missionId]: merged }
+            ? { ...state.transcripts, [action.appSessionId]: merged }
             : state.transcripts,
-          historyCursor: { ...state.historyCursor, [action.missionId]: action.olderCursor },
-          historyLoadingOlder: { ...state.historyLoadingOlder, [action.missionId]: false },
+          historyCursor: { ...state.historyCursor, [action.appSessionId]: action.olderCursor },
+          historyLoadingOlder: { ...state.historyLoadingOlder, [action.appSessionId]: false },
           sessionRestore: {
             ...state.sessionRestore,
-            [action.missionId]: {
+            [action.appSessionId]: {
               status: hasMore ? 'paged' : 'loaded',
               loadedCount: merged.length,
               hasMore,
@@ -1411,8 +1424,8 @@ function baseReducer(state: AppState, action: Action): AppState {
       }
       // No-clobber replace: reconcile the authoritative, correctly-ordered
       // replay page with any live events already in state (a reconnect to a
-      // running mission can deliver live mission.transcript events first, and a
-      // brand-new mission carries a locally-seeded opening prompt).
+      // running session can deliver live events first, and a brand-new session
+      // carries a locally seeded opening prompt).
       //   - Shared ids: the page wins.
       //   - Optimistic user echoes (seed-/local- ids) the page already contains
       //     (matched by author + text within the page's time window) are dropped
@@ -1425,10 +1438,10 @@ function baseReducer(state: AppState, action: Action): AppState {
       //     live ids are transient (nextId) and live ts is receipt-time, so a
       //     reconnect-race event and its persisted twin share neither id nor ts
       //     and would otherwise both render. They are matched by a content
-      //     signature (agentSessionId + toolUseId for tools, else
-      //     agentSessionId + author/role + kind + text) consumed once per page
+      //     signature (sourceSessionId + toolUseId for tools, else
+      //     sourceSessionId + author/role + kind + text) consumed once per page
       //     occurrence so a genuinely repeated message is kept. Scoping by
-      //     agentSessionId stops one worker's output from masking another's.
+      //     sourceSessionId stops one child session's output masking another's.
       //   - Remaining live-only events keep their place by timestamp relative to
       //     the page: an un-persisted opening prompt stays above it, a just-sent
       //     prompt (reconnect race) stays below it.
@@ -1453,14 +1466,12 @@ function baseReducer(state: AppState, action: Action): AppState {
         e.ts <= lastTs &&
         (pageIsComplete || e.ts >= firstTs) &&
         echoMatchesPersisted(e, pageUserText);
-      // Live orchestrator events carry agentSessionId = appSessionId while the
-      // restored history canonicalizes it to 'orchestrator' (mirroring the
+      // Live primary events carry the current provider identity while restored
+      // history canonicalizes that source to 'primary' (mirroring the
       // sidecar). Normalize so a reconnect-race twin matches instead of both the
       // live and persisted copy surviving and duplicating main-agent output.
       const sessionKey = (e: TranscriptEvent) =>
-        e.role === 'orchestrator' && e.agentSessionId !== 'user'
-          ? 'orchestrator'
-          : e.agentSessionId;
+        e.role === 'primary' && e.sourceSessionId !== 'user' ? 'primary' : e.sourceSessionId;
       const contentSig = (e: TranscriptEvent) =>
         e.toolUseId
           ? `tool:${sessionKey(e)}:${e.kind}:${e.toolUseId}`
@@ -1512,24 +1523,29 @@ function baseReducer(state: AppState, action: Action): AppState {
       const before = liveOnly.filter((e) => e.ts < firstTs);
       const after = liveOnly.filter((e) => e.ts >= firstTs);
       const mergedTranscript = page.length > 0 ? [...before, ...page, ...after] : existing;
-      const transcripts = { ...state.transcripts, [action.missionId]: mergedTranscript };
-      // Merge the exact spawn->worker mapping from history with any live workers
-      // already in state (a live mission.worker may arrive before history). Live
-      // entries win; history links add missing workers and backfill toolUseId.
-      const histLinks = action.workers ?? [];
-      const existingWorkers = state.workers[action.missionId] ?? [];
-      let workers = state.workers;
+      const transcripts = { ...state.transcripts, [action.appSessionId]: mergedTranscript };
+      // Merge exact child-session links from history with any live child sessions
+      // already in state (a live session.child may arrive before history). Live
+      // entries win; history links add missing sessions and backfill toolUseId.
+      const histLinks = action.childSessions ?? [];
+      const existingChildSessions = state.childSessions[action.appSessionId] ?? [];
+      let childSessions = state.childSessions;
       if (histLinks.length > 0) {
-        const bySession = new Map(existingWorkers.map((w) => [w.sessionId, w]));
+        const bySession = new Map(
+          existingChildSessions.map((childSession) => [
+            childSession.providerSessionId,
+            childSession,
+          ]),
+        );
         let changed = false;
         for (const link of histLinks) {
-          const existing = bySession.get(link.workerSessionId);
+          const existing = bySession.get(link.providerSessionId);
           if (!existing) {
-            bySession.set(link.workerSessionId, {
-              sessionId: link.workerSessionId,
+            bySession.set(link.providerSessionId, {
+              providerSessionId: link.providerSessionId,
               // Honor the live run state the backend attaches for active
-              // missions so a reconnect/reload doesn't mark a still-running
-              // subagent as finished; historical loads omit it (-> completed).
+              // sessions so a reconnect/reload doesn't mark a still-running
+              // child session as finished; historical loads omit it (-> completed).
               status: link.status ?? 'completed',
               // A running link has no persisted start time; seed "now" so the
               // elapsed timer counts from reconnect rather than the Unix epoch.
@@ -1540,7 +1556,7 @@ function baseReducer(state: AppState, action: Action): AppState {
             });
             changed = true;
           } else if (existing.toolUseId === undefined && link.toolUseId !== undefined) {
-            bySession.set(link.workerSessionId, {
+            bySession.set(link.providerSessionId, {
               ...existing,
               toolUseId: link.toolUseId,
               label: existing.label ?? link.label,
@@ -1549,25 +1565,28 @@ function baseReducer(state: AppState, action: Action): AppState {
           }
         }
         if (changed)
-          workers = { ...state.workers, [action.missionId]: Array.from(bySession.values()) };
+          childSessions = {
+            ...state.childSessions,
+            [action.appSessionId]: Array.from(bySession.values()),
+          };
       }
       const hasMore = Boolean(action.olderCursor);
-      // An empty restore (e.g. a live mission with no persisted history yet)
+      // An empty restore (e.g. a live session with no persisted history yet)
       // must not wipe progress already delivered by live events; only adopt the
       // replayed progress when it actually carries entries.
-      const existingProgress = state.progress[action.missionId] ?? [];
+      const existingProgress = state.progress[action.appSessionId] ?? [];
       const mergedProgress = action.progress.length > 0 ? action.progress : existingProgress;
       return {
         ...state,
-        progress: { ...state.progress, [action.missionId]: mergedProgress },
+        progress: { ...state.progress, [action.appSessionId]: mergedProgress },
         transcripts,
-        workers,
-        historyLoaded: { ...state.historyLoaded, [action.missionId]: true },
-        historyCursor: { ...state.historyCursor, [action.missionId]: action.olderCursor },
-        historyLoadingOlder: { ...state.historyLoadingOlder, [action.missionId]: false },
+        childSessions,
+        historyLoaded: { ...state.historyLoaded, [action.appSessionId]: true },
+        historyCursor: { ...state.historyCursor, [action.appSessionId]: action.olderCursor },
+        historyLoadingOlder: { ...state.historyLoadingOlder, [action.appSessionId]: false },
         sessionRestore: {
           ...state.sessionRestore,
-          [action.missionId]: {
+          [action.appSessionId]: {
             status: hasMore ? 'paged' : 'loaded',
             loadedCount: mergedTranscript.length,
             hasMore,
@@ -1582,22 +1601,22 @@ function baseReducer(state: AppState, action: Action): AppState {
     case 'CLEAR_QUESTION':
       return { ...state, pendingQuestion: null };
 
-    case 'SET_ACTIVE_MISSION': {
+    case 'SET_ACTIVE_SESSION': {
       // Stamp "seen now" on both the session being left (so responses received
       // while it was open count as read) and the one being opened (clears its
       // unread state immediately).
       const now = Date.now();
-      const missionLastSeen = { ...state.missionLastSeen };
-      if (state.activeMissionId && state.missions[state.activeMissionId]) {
-        missionLastSeen[state.activeMissionId] = now;
+      const sessionLastSeen = { ...state.sessionLastSeen };
+      if (state.activeAppSessionId && state.sessions[state.activeAppSessionId]) {
+        sessionLastSeen[state.activeAppSessionId] = now;
       }
-      if (action.id) missionLastSeen[action.id] = now;
+      if (action.id) sessionLastSeen[action.id] = now;
       return {
         ...state,
-        activeMissionId: action.id,
-        missionLastSeen,
+        activeAppSessionId: action.id,
+        sessionLastSeen,
         draftChat: null,
-        selectedAgentSessionId: null,
+        selectedProviderSessionId: null,
       };
     }
 
@@ -1607,65 +1626,66 @@ function baseReducer(state: AppState, action: Action): AppState {
         : { ...state, rightPanelOpen: false };
 
     case 'OPEN_UTILITY_TOOL': {
-      const missionId = state.activeMissionId;
-      if (!missionId) return state;
+      const appSessionId = state.activeAppSessionId;
+      if (!appSessionId) return state;
       const panel = openUtilityTool(
-        state.utilityPanels[missionId],
+        state.utilityPanels[appSessionId],
         action.tool,
-        () => action.tabId ?? `${action.tool}:${missionId}`,
+        () => action.tabId ?? `${action.tool}:${appSessionId}`,
         { terminalId: action.terminalId, filePath: action.filePath },
       );
       return {
         ...state,
         rightPanelOpen: false,
-        utilityPanels: { ...state.utilityPanels, [missionId]: panel },
-        reviewOpenMissionId: action.tool === 'review' ? missionId : state.reviewOpenMissionId,
+        utilityPanels: { ...state.utilityPanels, [appSessionId]: panel },
+        reviewOpenAppSessionId:
+          action.tool === 'review' ? appSessionId : state.reviewOpenAppSessionId,
         browserOpenKeys:
           action.tool === 'browser'
-            ? withBrowserOpenKey(state.browserOpenKeys, missionId, true)
+            ? withBrowserOpenKey(state.browserOpenKeys, appSessionId, true)
             : state.browserOpenKeys,
       };
     }
 
     case 'CLOSE_UTILITY_TAB': {
-      const missionId = action.missionId ?? state.activeMissionId;
-      if (!missionId) return state;
-      const current = state.utilityPanels[missionId];
+      const appSessionId = action.appSessionId ?? state.activeAppSessionId;
+      if (!appSessionId) return state;
+      const current = state.utilityPanels[appSessionId];
       const closing = current?.tabs.find((tab) => tab.id === action.tabId);
       const panel = closeUtilityTab(current, action.tabId);
       if (panel === current) return state;
       return {
         ...state,
-        utilityPanels: { ...state.utilityPanels, [missionId]: panel },
-        reviewOpenMissionId:
-          closing?.tool === 'review' && state.reviewOpenMissionId === missionId
+        utilityPanels: { ...state.utilityPanels, [appSessionId]: panel },
+        reviewOpenAppSessionId:
+          closing?.tool === 'review' && state.reviewOpenAppSessionId === appSessionId
             ? null
-            : state.reviewOpenMissionId,
+            : state.reviewOpenAppSessionId,
         reviewFocusPath: closing?.tool === 'review' ? null : state.reviewFocusPath,
         browserOpenKeys:
           closing?.tool === 'browser'
-            ? withBrowserOpenKey(state.browserOpenKeys, missionId, false)
+            ? withBrowserOpenKey(state.browserOpenKeys, appSessionId, false)
             : state.browserOpenKeys,
       };
     }
 
     case 'ACTIVATE_UTILITY_TAB': {
-      const missionId = state.activeMissionId;
-      if (!missionId) return state;
-      const current = state.utilityPanels[missionId];
+      const appSessionId = state.activeAppSessionId;
+      if (!appSessionId) return state;
+      const current = state.utilityPanels[appSessionId];
       const panel = activateUtilityTab(current, action.tabId);
       if (panel === current) return state;
       return {
         ...state,
         rightPanelOpen: false,
-        utilityPanels: { ...state.utilityPanels, [missionId]: panel },
+        utilityPanels: { ...state.utilityPanels, [appSessionId]: panel },
       };
     }
 
     case 'UPDATE_UTILITY_TAB': {
-      const missionId = action.missionId ?? state.activeMissionId;
-      if (!missionId) return state;
-      const current = state.utilityPanels[missionId];
+      const appSessionId = action.appSessionId ?? state.activeAppSessionId;
+      if (!appSessionId) return state;
+      const current = state.utilityPanels[appSessionId];
       const panel = updateUtilityTab(current, action.tabId, {
         terminalId: action.terminalId,
         filePath: action.filePath,
@@ -1674,20 +1694,20 @@ function baseReducer(state: AppState, action: Action): AppState {
       if (panel === current) return state;
       return {
         ...state,
-        utilityPanels: { ...state.utilityPanels, [missionId]: panel },
+        utilityPanels: { ...state.utilityPanels, [appSessionId]: panel },
       };
     }
 
     case 'SET_UTILITY_PANEL_OPEN': {
-      const missionId = state.activeMissionId;
-      if (!missionId) return state;
-      const current = utilityPanelForMission(state.utilityPanels, missionId);
+      const appSessionId = state.activeAppSessionId;
+      if (!appSessionId) return state;
+      const current = utilityPanelForSession(state.utilityPanels, appSessionId);
       const panel = setUtilityPanelOpen(current, action.open);
       if (panel === current && (!action.open || !state.rightPanelOpen)) return state;
       return {
         ...state,
         rightPanelOpen: action.open ? false : state.rightPanelOpen,
-        utilityPanels: { ...state.utilityPanels, [missionId]: panel },
+        utilityPanels: { ...state.utilityPanels, [appSessionId]: panel },
       };
     }
 
@@ -1699,40 +1719,40 @@ function baseReducer(state: AppState, action: Action): AppState {
       // clear and leave the stale focus request to fire on the next open.
       if (
         !action.open &&
-        state.reviewOpenMissionId === null &&
+        state.reviewOpenAppSessionId === null &&
         state.reviewFocusPath === null &&
-        !utilityPanelForMission(state.utilityPanels, state.activeMissionId).tabs.some(
+        !utilityPanelForSession(state.utilityPanels, state.activeAppSessionId).tabs.some(
           (tab) => tab.tool === 'review',
         )
       )
         return state;
-      // Scope the open state to the active mission so it never leaks into the
-      // next chat; switching back to this mission restores it.
-      if (action.open && state.activeMissionId) {
-        const missionId = state.activeMissionId;
+      // Scope the open state to the active session so it never leaks into the
+      // next chat; switching back to this session restores it.
+      if (action.open && state.activeAppSessionId) {
+        const appSessionId = state.activeAppSessionId;
         return {
           ...state,
           rightPanelOpen: false,
-          reviewOpenMissionId: missionId,
+          reviewOpenAppSessionId: appSessionId,
           utilityPanels: {
             ...state.utilityPanels,
-            [missionId]: openUtilityTool(
-              state.utilityPanels[missionId],
+            [appSessionId]: openUtilityTool(
+              state.utilityPanels[appSessionId],
               'review',
-              () => `review:${missionId}`,
+              () => `review:${appSessionId}`,
             ),
           },
         };
       }
       return {
         ...state,
-        reviewOpenMissionId: null,
+        reviewOpenAppSessionId: null,
         reviewFocusPath: null,
-        utilityPanels: state.activeMissionId
+        utilityPanels: state.activeAppSessionId
           ? {
               ...state.utilityPanels,
-              [state.activeMissionId]: removeUtilityTool(
-                state.utilityPanels[state.activeMissionId],
+              [state.activeAppSessionId]: removeUtilityTool(
+                state.utilityPanels[state.activeAppSessionId],
                 'review',
               ),
             }
@@ -1743,9 +1763,9 @@ function baseReducer(state: AppState, action: Action): AppState {
       return { ...state, reviewScope: saveReviewScope(action.scope) };
 
     case 'OPEN_REVIEW_AT':
-      // Open the Review pane for the active mission at a given scope, optionally
+      // Open the Review pane for the active session at a given scope, optionally
       // asking it to jump to a specific file once the diff list has loaded.
-      if (!state.activeMissionId) {
+      if (!state.activeAppSessionId) {
         return {
           ...state,
           reviewScope: saveReviewScope(action.scope),
@@ -1755,15 +1775,15 @@ function baseReducer(state: AppState, action: Action): AppState {
       return {
         ...state,
         rightPanelOpen: false,
-        reviewOpenMissionId: state.activeMissionId,
+        reviewOpenAppSessionId: state.activeAppSessionId,
         reviewScope: saveReviewScope(action.scope),
         reviewFocusPath: action.path ?? null,
         utilityPanels: {
           ...state.utilityPanels,
-          [state.activeMissionId]: openUtilityTool(
-            state.utilityPanels[state.activeMissionId],
+          [state.activeAppSessionId]: openUtilityTool(
+            state.utilityPanels[state.activeAppSessionId],
             'review',
-            () => `review:${state.activeMissionId}`,
+            () => `review:${state.activeAppSessionId}`,
           ),
         },
       };
@@ -1789,36 +1809,39 @@ function baseReducer(state: AppState, action: Action): AppState {
     case 'TOGGLE_SPEC_MODE':
       return { ...state, specMode: !state.specMode };
 
-    case 'MISSION_SET_KIND': {
+    case 'SESSION_SET_INTERACTION_MODE': {
       // Optimistic interaction-mode flip so the spec toggle reflects instantly;
-      // a later MISSION_UPDATED from the backend confirms (or corrects) it.
-      const m = state.missions[action.missionId];
-      if (!m || m.kind === action.kind) return state;
+      // a later SESSION_UPDATED from the backend confirms (or corrects) it.
+      const session = state.sessions[action.appSessionId];
+      if (!session || session.interactionMode === action.interactionMode) return state;
       return {
         ...state,
-        missions: { ...state.missions, [action.missionId]: { ...m, kind: action.kind } },
+        sessions: {
+          ...state.sessions,
+          [action.appSessionId]: { ...session, interactionMode: action.interactionMode },
+        },
       };
     }
 
     case 'TOGGLE_SETTINGS':
       return { ...state, settingsOpen: !state.settingsOpen };
 
-    case 'TOGGLE_MISSION_MODE':
-      return { ...state, missionMode: !state.missionMode };
+    case 'TOGGLE_MISSION_CONTROL':
+      return { ...state, missionControlMode: !state.missionControlMode };
 
     case 'START_CHAT': {
       // Stamp the session being left so model output produced while it was
       // open doesn't surface as an unread badge after starting a new chat.
-      const missionLastSeen = { ...state.missionLastSeen };
-      if (state.activeMissionId && state.missions[state.activeMissionId]) {
-        missionLastSeen[state.activeMissionId] = Date.now();
+      const sessionLastSeen = { ...state.sessionLastSeen };
+      if (state.activeAppSessionId && state.sessions[state.activeAppSessionId]) {
+        sessionLastSeen[state.activeAppSessionId] = Date.now();
       }
       return {
         ...state,
         draftChat: { cwd: action.cwd, branch: action.branch },
-        activeMissionId: null,
-        missionMode: false,
-        missionLastSeen,
+        activeAppSessionId: null,
+        missionControlMode: false,
+        sessionLastSeen,
       };
     }
 
@@ -1831,7 +1854,7 @@ function baseReducer(state: AppState, action: Action): AppState {
     case 'TOGGLE_BROWSER': {
       const key = activeBrowserKey(state);
       if (!key) return state;
-      const current = utilityPanelForMission(state.utilityPanels, key);
+      const current = utilityPanelForSession(state.utilityPanels, key);
       const existing = current.tabs.find((tab) => tab.tool === 'browser');
       const opening = !existing || !current.open || current.activeTabId !== existing.id;
       return {
@@ -1864,40 +1887,40 @@ function baseReducer(state: AppState, action: Action): AppState {
     }
 
     case 'BROWSER_UPDATED': {
-      if (!action.browser.missionId) return state;
-      const missionId = action.browser.missionId;
+      if (!action.browser.appSessionId) return state;
+      const appSessionId = action.browser.appSessionId;
       // Surface a freshly opened browser, but never re-open a pane the user hid.
-      const hidden = state.browserOpenKeys[missionId] === false;
+      const hidden = state.browserOpenKeys[appSessionId] === false;
       return {
         ...state,
-        browsers: { ...state.browsers, [missionId]: action.browser },
+        browsers: { ...state.browsers, [appSessionId]: action.browser },
         browserErrors: Object.fromEntries(
-          Object.entries(state.browserErrors).filter(([id]) => id !== missionId),
+          Object.entries(state.browserErrors).filter(([id]) => id !== appSessionId),
         ),
         browserOpenKeys: hidden
           ? state.browserOpenKeys
-          : withBrowserOpenKey(state.browserOpenKeys, missionId, true),
+          : withBrowserOpenKey(state.browserOpenKeys, appSessionId, true),
         utilityPanels: hidden
           ? state.utilityPanels
           : {
               ...state.utilityPanels,
-              [missionId]: openUtilityTool(
-                state.utilityPanels[missionId],
+              [appSessionId]: openUtilityTool(
+                state.utilityPanels[appSessionId],
                 'browser',
-                () => `browser:${missionId}`,
+                () => `browser:${appSessionId}`,
               ),
             },
       };
     }
 
     case 'BROWSER_NAVIGATED': {
-      const browser = state.browsers[action.missionId];
-      if (!browser || browser.sessionId !== action.sessionId) return state;
+      const browser = state.browsers[action.appSessionId];
+      if (!browser || browser.browserSessionId !== action.browserSessionId) return state;
       return {
         ...state,
         browsers: {
           ...state.browsers,
-          [action.missionId]: {
+          [action.appSessionId]: {
             ...browser,
             url: action.url,
             canGoBack: action.canGoBack ?? browser.canGoBack,
@@ -1913,38 +1936,44 @@ function baseReducer(state: AppState, action: Action): AppState {
       return {
         ...state,
         browsers: Object.fromEntries(
-          Object.entries(state.browsers).filter(([id]) => id !== action.missionId),
+          Object.entries(state.browsers).filter(([id]) => id !== action.appSessionId),
         ),
         browserErrors: Object.fromEntries(
-          Object.entries(state.browserErrors).filter(([id]) => id !== action.missionId),
+          Object.entries(state.browserErrors).filter(([id]) => id !== action.appSessionId),
         ),
-        designModes: clearDesignMode(state.designModes, action.missionId),
-        browserOpenKeys: clearBrowserOpenKey(state.browserOpenKeys, action.missionId),
+        designModes: clearDesignMode(state.designModes, action.appSessionId),
+        browserOpenKeys: clearBrowserOpenKey(state.browserOpenKeys, action.appSessionId),
         utilityPanels: {
           ...state.utilityPanels,
-          [action.missionId]: removeUtilityTool(state.utilityPanels[action.missionId], 'browser'),
+          [action.appSessionId]: removeUtilityTool(
+            state.utilityPanels[action.appSessionId],
+            'browser',
+          ),
         },
       };
 
     case 'BROWSER_ERROR':
-      if (!action.missionId) return { ...state, browserGlobalError: action.message };
+      if (!action.appSessionId) return { ...state, browserGlobalError: action.message };
       return {
         ...state,
-        browserErrors: { ...state.browserErrors, [action.missionId]: action.message },
+        browserErrors: { ...state.browserErrors, [action.appSessionId]: action.message },
         // Respect an explicit hide; otherwise surface the errored browser.
         browserOpenKeys:
-          state.browserOpenKeys[action.missionId] === false
+          state.browserOpenKeys[action.appSessionId] === false
             ? state.browserOpenKeys
-            : withBrowserOpenKey(state.browserOpenKeys, action.missionId, true),
+            : withBrowserOpenKey(state.browserOpenKeys, action.appSessionId, true),
       };
 
     case 'TOGGLE_DESIGN_MODE':
-      return { ...state, designModes: toggleDesignMode(state.designModes, action.sessionId) };
+      return {
+        ...state,
+        designModes: toggleDesignMode(state.designModes, action.appSessionId),
+      };
 
     case 'SET_DESIGN_MODE':
       return {
         ...state,
-        designModes: setDesignMode(state.designModes, action.sessionId, action.open),
+        designModes: setDesignMode(state.designModes, action.appSessionId, action.open),
       };
 
     case 'SET_THEME': {
@@ -1960,8 +1989,8 @@ function baseReducer(state: AppState, action: Action): AppState {
     case 'SELECT_FEATURE':
       return { ...state, selectedFeatureId: action.id };
 
-    case 'SELECT_AGENT':
-      return { ...state, selectedAgentSessionId: action.id };
+    case 'SELECT_PROVIDER_SESSION':
+      return { ...state, selectedProviderSessionId: action.id };
 
     case 'MODELS_LIST':
       return {
@@ -1971,16 +2000,16 @@ function baseReducer(state: AppState, action: Action): AppState {
       };
 
     case 'SKILLS_LIST':
-      return { ...state, skills: action.skills, skillsSessionId: action.sessionId };
+      return { ...state, skills: action.skills, skillsProviderSessionId: action.providerSessionId };
 
     case 'FACTORY_DEFAULTS': {
       const next = sanitizeAgentConfig(
         {
-          orchestrator: {
-            modelId: state.agentConfig.orchestrator.modelId ?? action.defaults.modelId,
-            reasoning: state.agentConfig.orchestrator.modelId
-              ? state.agentConfig.orchestrator.reasoning
-              : (action.defaults.reasoningEffort ?? state.agentConfig.orchestrator.reasoning),
+          primary: {
+            modelId: state.agentConfig.primary.modelId ?? action.defaults.modelId,
+            reasoning: state.agentConfig.primary.modelId
+              ? state.agentConfig.primary.reasoning
+              : (action.defaults.reasoningEffort ?? state.agentConfig.primary.reasoning),
           },
           worker: {
             modelId: state.agentConfig.worker.modelId ?? action.defaults.workerModelId,
@@ -2029,33 +2058,33 @@ function baseReducer(state: AppState, action: Action): AppState {
         }),
       };
 
-    case 'MISSION_SET_MODEL': {
-      const m = state.missions[action.missionId];
+    case 'SESSION_SET_MODEL': {
+      const m = state.sessions[action.appSessionId];
       if (!m) return state;
-      const prevOverride = state.missionSettingOverrides[action.missionId] ?? {};
+      const prevOverride = state.sessionSettingOverrides[action.appSessionId] ?? {};
       return {
         ...state,
-        missions: { ...state.missions, [action.missionId]: { ...m, modelId: action.modelId } },
-        missionSettingOverrides: {
-          ...state.missionSettingOverrides,
-          [action.missionId]: { ...prevOverride, modelId: action.modelId },
+        sessions: { ...state.sessions, [action.appSessionId]: { ...m, modelId: action.modelId } },
+        sessionSettingOverrides: {
+          ...state.sessionSettingOverrides,
+          [action.appSessionId]: { ...prevOverride, modelId: action.modelId },
         },
       };
     }
 
-    case 'MISSION_SET_REASONING': {
-      const m = state.missions[action.missionId];
+    case 'SESSION_SET_REASONING': {
+      const m = state.sessions[action.appSessionId];
       if (!m) return state;
-      const prevOverride = state.missionSettingOverrides[action.missionId] ?? {};
+      const prevOverride = state.sessionSettingOverrides[action.appSessionId] ?? {};
       return {
         ...state,
-        missions: {
-          ...state.missions,
-          [action.missionId]: { ...m, reasoningEffort: action.reasoning },
+        sessions: {
+          ...state.sessions,
+          [action.appSessionId]: { ...m, reasoningEffort: action.reasoning },
         },
-        missionSettingOverrides: {
-          ...state.missionSettingOverrides,
-          [action.missionId]: { ...prevOverride, reasoningEffort: action.reasoning },
+        sessionSettingOverrides: {
+          ...state.sessionSettingOverrides,
+          [action.appSessionId]: { ...prevOverride, reasoningEffort: action.reasoning },
         },
       };
     }
@@ -2121,13 +2150,14 @@ function loadPersistedBrowserOpenKeys(value: unknown): Record<string, boolean> {
 function sanitizePersistedBrowser(key: string, value: unknown): BrowserState | undefined {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
   const browser = value as Partial<BrowserState>;
-  if (typeof browser.sessionId !== 'string' || !browser.sessionId) return undefined;
+  if (typeof browser.browserSessionId !== 'string' || !browser.browserSessionId) return undefined;
   if (typeof browser.url !== 'string' || !browser.url) return undefined;
   const viewport = sanitizeBrowserViewport(browser.viewport);
   if (!viewport) return undefined;
   return {
-    sessionId: browser.sessionId,
-    missionId: typeof browser.missionId === 'string' && browser.missionId ? browser.missionId : key,
+    browserSessionId: browser.browserSessionId,
+    appSessionId:
+      typeof browser.appSessionId === 'string' && browser.appSessionId ? browser.appSessionId : key,
     url: browser.url,
     title: typeof browser.title === 'string' ? browser.title : undefined,
     viewport,
@@ -2186,7 +2216,7 @@ function finiteNumber(value: unknown): number | undefined {
 }
 
 /* ── Bridge event adapter ── */
-function adaptEvent(ev: ServerEvent): Action | null {
+export function adaptEvent(ev: ServerEvent): Action | null {
   switch (ev.type) {
     case 'connection':
       return {
@@ -2194,84 +2224,111 @@ function adaptEvent(ev: ServerEvent): Action | null {
         status: ev.status === 'connected' ? 'connected' : 'error',
         message: ev.message,
       };
-    case 'mission.created':
-      return { type: 'MISSION_CREATED', clientRef: ev.clientRef, mission: ev.mission };
-    case 'mission.updated':
-      return { type: 'MISSION_UPDATED', mission: ev.mission };
+    case 'session.created':
+      return { type: 'SESSION_CREATED', clientRef: ev.clientRef, session: ev.session };
+    case 'session.updated':
+      return { type: 'SESSION_UPDATED', session: ev.session };
     case 'mission.features':
-      return { type: 'MISSION_FEATURES', missionId: ev.missionId, features: ev.features };
+      return { type: 'SESSION_FEATURES', appSessionId: ev.appSessionId, features: ev.features };
     case 'mission.progress':
-      return { type: 'MISSION_PROGRESS', missionId: ev.missionId, entries: ev.entries };
-    case 'mission.worker':
+      return { type: 'SESSION_PROGRESS', appSessionId: ev.appSessionId, entries: ev.entries };
+    case 'session.child':
       return {
-        type: 'MISSION_WORKER',
-        missionId: ev.missionId,
+        type: 'SESSION_CHILD',
+        appSessionId: ev.appSessionId,
         event: ev.event,
-        workerSessionId: ev.workerSessionId,
+        providerSessionId: ev.providerSessionId,
         label: ev.label,
         prompt: ev.prompt,
         modelId: ev.modelId,
         reasoningEffort: ev.reasoningEffort,
         toolUseId: ev.toolUseId,
       };
-    case 'agent.updated':
+    case 'child.updated':
       return {
-        type: 'AGENT_UPDATED',
-        missionId: ev.missionId,
-        agentSessionId: ev.agentSessionId,
+        type: 'CHILD_UPDATED',
+        appSessionId: ev.appSessionId,
+        providerSessionId: ev.providerSessionId,
         role: ev.role,
         status: ev.status,
       };
-    case 'mission.tokens':
-      return {
-        type: 'MISSION_TOKENS',
-        missionId: ev.missionId,
-        tokensIn: ev.tokensIn,
-        tokensOut: ev.tokensOut,
-        contextTokens: ev.contextTokens,
-        maxContextTokens: ev.maxContextTokens,
-      };
-    case 'mission.transcript':
-      return { type: 'MISSION_TRANSCRIPT', event: ev.event };
-    case 'mission.permission':
-      return { type: 'MISSION_PERMISSION', request: ev.request };
-    case 'mission.question':
-      return { type: 'MISSION_QUESTION', question: ev.question };
-    case 'mission.error':
-      return { type: 'MISSION_ERROR', missionId: ev.missionId, message: ev.message };
+    case 'event.appended':
+      return { type: 'SESSION_TRANSCRIPT', event: ev.event };
+    case 'approval.requested':
+      return { type: 'SESSION_PERMISSION', request: ev.request };
+    case 'question.requested':
+      return { type: 'SESSION_QUESTION', question: ev.question };
     case 'error':
-      // A failed worker open (capacity, load failure) carries the agent session
-      // id; settle its loading flag so the card stops showing "Loading …
-      // activity" forever. The mission.error companion event surfaces the toast.
-      return ev.sessionId
-        ? { type: 'AGENT_HISTORY_LOADING', agentSessionId: ev.sessionId, loading: false }
-        : null;
-    case 'mission.list':
-      return { type: 'MISSION_LIST', missions: ev.missions };
-    case 'mission.history':
+      if (ev.providerSessionId && ev.code?.startsWith('child.')) {
+        return {
+          type: 'CHILD_HISTORY_LOADING',
+          providerSessionId: ev.providerSessionId,
+          loading: false,
+        };
+      }
+      if (ev.recoverable) {
+        return ev.providerSessionId
+          ? {
+              type: 'CHILD_HISTORY_LOADING',
+              providerSessionId: ev.providerSessionId,
+              loading: false,
+            }
+          : null;
+      }
+      // Session-level failures can also carry a child provider id. Preserve both
+      // effects: fail the parent session and settle the child loading state.
+      if (ev.appSessionId) {
+        return {
+          type: 'SESSION_ERROR',
+          appSessionId: ev.appSessionId,
+          providerSessionId: ev.providerSessionId,
+          message: ev.message,
+        };
+      }
+      if (ev.providerSessionId) {
+        return {
+          type: 'CHILD_HISTORY_LOADING',
+          providerSessionId: ev.providerSessionId,
+          loading: false,
+        };
+      }
+      return { type: 'SESSION_ERROR', message: ev.message };
+    case 'sessions.list':
+      return { type: 'SESSION_LIST', sessions: ev.sessions };
+    case 'session.history':
       return {
-        type: 'MISSION_HISTORY',
-        missionId: ev.missionId,
+        type: 'SESSION_HISTORY',
+        appSessionId: ev.appSessionId,
         progress: ev.progress,
         transcripts: ev.transcripts,
-        workers: ev.workers,
+        childSessions: ev.childSessions,
         mode: ev.mode,
         olderCursor: ev.olderCursor,
         loadedCount: ev.loadedCount,
         hasMore: ev.hasMore,
       };
-    case 'mission.history.error':
-      return { type: 'MISSION_HISTORY_FAILED', missionId: ev.missionId, message: ev.message };
-    case 'models.list':
-      return { type: 'MODELS_LIST', models: ev.models };
+    case 'session.history.error':
+      return { type: 'SESSION_HISTORY_FAILED', appSessionId: ev.appSessionId, message: ev.message };
     case 'context.updated':
-      return { type: 'CONTEXT_UPDATED', sessionId: ev.sessionId, stats: ev.stats };
+      return {
+        type: 'CONTEXT_UPDATED',
+        appSessionId: ev.appSessionId,
+        sourceSessionId: ev.sourceSessionId,
+        stats: ev.stats,
+      };
     case 'catalog.updated':
+      if (ev.catalog === 'models') {
+        return { type: 'MODELS_LIST', models: ev.items as ModelInfo[] };
+      }
       if (ev.catalog === 'skills') {
         const skills = (ev.items as SkillInfo[]).filter(
           (s) => s && typeof s.name === 'string' && s.name.length > 0,
         );
-        return { type: 'SKILLS_LIST', skills, sessionId: ev.sessionId ?? null };
+        return {
+          type: 'SKILLS_LIST',
+          skills,
+          providerSessionId: ev.providerSessionId ?? null,
+        };
       }
       return null;
     case 'settings.defaults':
@@ -2279,9 +2336,9 @@ function adaptEvent(ev: ServerEvent): Action | null {
     case 'browser.updated':
       return { type: 'BROWSER_UPDATED', browser: ev.state };
     case 'browser.closed':
-      return { type: 'BROWSER_CLOSED', missionId: ev.missionId };
+      return { type: 'BROWSER_CLOSED', appSessionId: ev.appSessionId };
     case 'browser.error':
-      return { type: 'BROWSER_ERROR', missionId: ev.missionId, message: ev.message };
+      return { type: 'BROWSER_ERROR', appSessionId: ev.appSessionId, message: ev.message };
     default:
       return null;
   }
@@ -2296,16 +2353,16 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     savePersistedUiState(state);
-    saveMissionLastSeen(state.missionLastSeen);
+    saveSessionLastSeen(state.sessionLastSeen);
   }, [
-    state.missionLastSeen,
-    state.activeMissionId,
+    state.sessionLastSeen,
+    state.activeAppSessionId,
     state.browserOpenKeys,
     state.browsers,
-    state.missionMode,
+    state.missionControlMode,
     state.rightPanelOpen,
     state.utilityPanels,
-    state.selectedAgentSessionId,
+    state.selectedProviderSessionId,
     state.selectedFeatureId,
     state.sidebarCollapsed,
     state.specMode,

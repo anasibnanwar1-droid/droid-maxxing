@@ -10,7 +10,7 @@
 //   * Output is buffered in a rolling 2 MiB replay buffer with monotonic
 //     sequence information so a late subscriber can render the recent past and
 //     detect any dropped bytes.
-//   * Up to 4 PTYs per mission and 8 across the whole app; IDs are random.
+//   * Up to 4 PTYs per session and 8 across the whole app; IDs are random.
 //
 // The host takes dependency-injected pty/fs/os/crypto/random factories so the
 // manager can be exercised without node-pty or the disk; the default singleton
@@ -20,7 +20,7 @@
 const fsp = require('node:fs/promises');
 const crypto = require('node:crypto');
 
-const MAX_TERMINALS_PER_MISSION = 4;
+const MAX_TERMINALS_PER_SESSION = 4;
 const MAX_GLOBAL_TERMINALS = 8;
 const MAX_REPLAY_BYTES = 2 * 1024 * 1024;
 const EXIT_RETENTION_MS = 30 * 1000;
@@ -122,18 +122,18 @@ function createTerminalManager(opts) {
   // id -> entry
   const terminals = new Map();
 
-  function countByMission(missionId) {
+  function countBySession(appSessionId) {
     let n = 0;
     for (const e of terminals.values()) {
-      if (e.missionId === missionId) n += 1;
+      if (e.appSessionId === appSessionId) n += 1;
     }
     return n;
   }
 
-  function makeEntry(id, missionId, cwd, file, args, dims) {
+  function makeEntry(id, appSessionId, cwd, file, args, dims) {
     return {
       id,
-      missionId,
+      appSessionId,
       cwd,
       shell: file,
       shellArgs: args,
@@ -159,9 +159,9 @@ function createTerminalManager(opts) {
     if (!args || typeof args !== 'object') {
       throw new Error('create() requires an options object');
     }
-    const missionId = args.missionId;
-    if (typeof missionId !== 'string' || missionId.length === 0) {
-      throw new Error('missionId is required');
+    const appSessionId = args.appSessionId;
+    if (typeof appSessionId !== 'string' || appSessionId.length === 0) {
+      throw new Error('appSessionId is required');
     }
     const cwdResult = await validateCwd(args.cwd, fspLib);
     if (!cwdResult.ok) throw new Error(cwdResult.error);
@@ -169,8 +169,8 @@ function createTerminalManager(opts) {
     if (terminals.size >= MAX_GLOBAL_TERMINALS) {
       throw new Error(`Terminal limit reached (${MAX_GLOBAL_TERMINALS} global)`);
     }
-    if (countByMission(missionId) >= MAX_TERMINALS_PER_MISSION) {
-      throw new Error(`Mission terminal limit reached (${MAX_TERMINALS_PER_MISSION} per mission)`);
+    if (countBySession(appSessionId) >= MAX_TERMINALS_PER_SESSION) {
+      throw new Error(`Session terminal limit reached (${MAX_TERMINALS_PER_SESSION} per session)`);
     }
 
     const resolved = shellResolver(platform, args.env || process.env);
@@ -184,7 +184,7 @@ function createTerminalManager(opts) {
     };
 
     const id = idGen();
-    const entry = makeEntry(id, missionId, cwdResult.cwd, file, fileArgs, dims);
+    const entry = makeEntry(id, appSessionId, cwdResult.cwd, file, fileArgs, dims);
     // Register before spawn so an early exit still has somewhere to land.
     terminals.set(id, entry);
 
@@ -273,7 +273,7 @@ function createTerminalManager(opts) {
 
     return {
       id,
-      missionId,
+      appSessionId,
       cwd: entry.cwd,
       shell: entry.shell,
       cols: entry.cols,
@@ -399,7 +399,7 @@ function createTerminalManager(opts) {
     if (!e) return null;
     return {
       id: e.id,
-      missionId: e.missionId,
+      appSessionId: e.appSessionId,
       cwd: e.cwd,
       shell: e.shell,
       shellArgs: e.shellArgs,
@@ -416,11 +416,11 @@ function createTerminalManager(opts) {
     };
   }
 
-  // Snapshot of all terminals (optionally filtered by missionId).
+  // Snapshot of all terminals (optionally filtered by appSessionId).
   function list(filter) {
     const out = [];
     for (const e of terminals.values()) {
-      if (filter && filter.missionId && e.missionId !== filter.missionId) continue;
+      if (filter && filter.appSessionId && e.appSessionId !== filter.appSessionId) continue;
       out.push(summary(e.id));
     }
     return out;
@@ -430,7 +430,7 @@ function createTerminalManager(opts) {
   function closeAll(filter) {
     const ids = [];
     for (const e of terminals.values()) {
-      if (filter && filter.missionId && e.missionId !== filter.missionId) continue;
+      if (filter && filter.appSessionId && e.appSessionId !== filter.appSessionId) continue;
       ids.push(e.id);
     }
     for (const id of ids) kill(id);
@@ -439,7 +439,7 @@ function createTerminalManager(opts) {
 
   function limits() {
     return {
-      maxPerMission: MAX_TERMINALS_PER_MISSION,
+      maxPerSession: MAX_TERMINALS_PER_SESSION,
       maxGlobal: MAX_GLOBAL_TERMINALS,
       maxReplayBytes: MAX_REPLAY_BYTES,
     };
@@ -505,7 +505,7 @@ module.exports = {
   buildPtyEnv,
   validateCwd,
   defaultRandomId,
-  MAX_TERMINALS_PER_MISSION,
+  MAX_TERMINALS_PER_SESSION,
   MAX_GLOBAL_TERMINALS,
   MAX_REPLAY_BYTES,
   EXIT_RETENTION_MS,

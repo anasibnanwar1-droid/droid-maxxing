@@ -5,7 +5,7 @@ import {
   MAX_REPLAY_BYTES,
   MAX_TERMINAL_COLS,
   MAX_TERMINAL_ROWS,
-  MAX_TERMINALS_PER_MISSION,
+  MAX_TERMINALS_PER_SESSION,
   TERMINAL_LIMITS,
   buildPtyEnv,
   defaultShell,
@@ -153,11 +153,11 @@ test('makeIdGenerator returns the underlying generator on each call', () => {
 });
 
 test('terminal limits match the spec', () => {
-  assert.equal(MAX_TERMINALS_PER_MISSION, 4);
+  assert.equal(MAX_TERMINALS_PER_SESSION, 4);
   assert.equal(MAX_GLOBAL_TERMINALS, 8);
   assert.equal(MAX_REPLAY_BYTES, 2 * 1024 * 1024);
   assert.deepEqual(TERMINAL_LIMITS, {
-    maxPerMission: 4,
+    maxPerSession: 4,
     maxGlobal: 8,
     maxReplayBytes: 2 * 1024 * 1024,
   });

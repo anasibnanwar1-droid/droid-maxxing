@@ -53,7 +53,7 @@ export default function AskUserModal() {
         question: qq.question,
         answer: (answers[qq.index] ?? '').trim(),
       }));
-      respondQuestion(question.missionId, question.requestId, false, payload);
+      respondQuestion(question.appSessionId, question.requestId, false, payload);
       dispatch({ type: 'CLEAR_QUESTION' });
     } else {
       setCurrent((c) => c + 1);
@@ -61,7 +61,7 @@ export default function AskUserModal() {
   };
 
   const cancel = () => {
-    respondQuestion(question.missionId, question.requestId, true, []);
+    respondQuestion(question.appSessionId, question.requestId, true, []);
     dispatch({ type: 'CLEAR_QUESTION' });
   };
 

@@ -19,7 +19,7 @@ test('design mode is scoped by session id', () => {
   assert.equal(isDesignModeOpen(state, 'session-b'), true);
 });
 
-test('clears one mission without changing other design mode state', () => {
+test('clears one session without changing other design mode state', () => {
   const state = clearDesignMode(
     setDesignMode({ 'session-a': true }, 'session-b', true),
     'session-a',

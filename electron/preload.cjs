@@ -25,8 +25,8 @@ contextBridge.exposeInMainWorld('droidControl', {
   gitDiffStat: (dir, options) => ipcRenderer.invoke('git-diff-stat', { dir, options }),
   gitDiffFiles: (dir, options) => ipcRenderer.invoke('git-diff-files', { dir, options }),
   gitFileDiff: (dir, options) => ipcRenderer.invoke('git-file-diff', { dir, options }),
-  gitMarkTurnStart: (dir, sessionId) =>
-    ipcRenderer.invoke('git-mark-turn-start', { dir, sessionId }),
+  gitMarkTurnStart: (dir, appSessionId) =>
+    ipcRenderer.invoke('git-mark-turn-start', { dir, appSessionId }),
   gitCreateBranch: (dir, options) => ipcRenderer.invoke('git-create-branch', { dir, options }),
   gitCheckout: (dir, options) => ipcRenderer.invoke('git-checkout', { dir, options }),
   gitCreateWorktree: (dir, options) => ipcRenderer.invoke('git-create-worktree', { dir, options }),
@@ -54,7 +54,7 @@ contextBridge.exposeInMainWorld('droidControl', {
   terminalWrite: (id, data) => ipcRenderer.invoke('terminal-write', { id, data }),
   terminalResize: (id, cols, rows) => ipcRenderer.invoke('terminal-resize', { id, cols, rows }),
   terminalKill: (id) => ipcRenderer.invoke('terminal-kill', { id }),
-  terminalList: (missionId) => ipcRenderer.invoke('terminal-list', { missionId }),
+  terminalList: (appSessionId) => ipcRenderer.invoke('terminal-list', { appSessionId }),
   terminalSubscribe: (id) => ipcRenderer.invoke('terminal-subscribe', { id }),
   terminalUnsubscribe: (id) => ipcRenderer.invoke('terminal-unsubscribe', { id }),
   onTerminalEvent: (handler) => on('terminal-event', handler),
@@ -66,28 +66,32 @@ contextBridge.exposeInMainWorld('droidControl', {
   filesReveal: (accessToken, relative) =>
     ipcRenderer.invoke('files-reveal', { accessToken, relative }),
 
-  nativeBrowserOpen: (sessionId, url, bounds, viewport) =>
-    ipcRenderer.invoke('native-browser-open', { sessionId, url, bounds, viewport }),
-  nativeBrowserAttach: (sessionId, bounds, url) =>
-    ipcRenderer.invoke('native-browser-attach', { sessionId, bounds, url }),
-  nativeBrowserDetach: (sessionId) => ipcRenderer.invoke('native-browser-detach', { sessionId }),
-  nativeBrowserSetBounds: (sessionId, bounds) =>
-    ipcRenderer.invoke('native-browser-set-bounds', { sessionId, bounds }),
-  nativeBrowserSetVisible: (sessionId, visible) =>
-    ipcRenderer.invoke('native-browser-visible', { sessionId, visible }),
-  nativeBrowserClose: (sessionId) => ipcRenderer.invoke('native-browser-close', { sessionId }),
-  nativeBrowserReload: (sessionId) => ipcRenderer.invoke('native-browser-reload', { sessionId }),
-  nativeBrowserGoBack: (sessionId) => ipcRenderer.invoke('native-browser-go-back', { sessionId }),
-  nativeBrowserGoForward: (sessionId) =>
-    ipcRenderer.invoke('native-browser-go-forward', { sessionId }),
-  nativeBrowserSetDesignMode: (sessionId, active) =>
-    ipcRenderer.invoke('native-browser-set-design-mode', { sessionId, active }),
-  nativeBrowserSetPencilMode: (sessionId, active) =>
-    ipcRenderer.invoke('native-browser-set-pencil-mode', { sessionId, active }),
+  nativeBrowserOpen: (browserSessionId, url, bounds, viewport) =>
+    ipcRenderer.invoke('native-browser-open', { browserSessionId, url, bounds, viewport }),
+  nativeBrowserAttach: (browserSessionId, bounds, url) =>
+    ipcRenderer.invoke('native-browser-attach', { browserSessionId, bounds, url }),
+  nativeBrowserDetach: (browserSessionId) =>
+    ipcRenderer.invoke('native-browser-detach', { browserSessionId }),
+  nativeBrowserSetBounds: (browserSessionId, bounds) =>
+    ipcRenderer.invoke('native-browser-set-bounds', { browserSessionId, bounds }),
+  nativeBrowserSetVisible: (browserSessionId, visible) =>
+    ipcRenderer.invoke('native-browser-visible', { browserSessionId, visible }),
+  nativeBrowserClose: (browserSessionId) =>
+    ipcRenderer.invoke('native-browser-close', { browserSessionId }),
+  nativeBrowserReload: (browserSessionId) =>
+    ipcRenderer.invoke('native-browser-reload', { browserSessionId }),
+  nativeBrowserGoBack: (browserSessionId) =>
+    ipcRenderer.invoke('native-browser-go-back', { browserSessionId }),
+  nativeBrowserGoForward: (browserSessionId) =>
+    ipcRenderer.invoke('native-browser-go-forward', { browserSessionId }),
+  nativeBrowserSetDesignMode: (browserSessionId, active) =>
+    ipcRenderer.invoke('native-browser-set-design-mode', { browserSessionId, active }),
+  nativeBrowserSetPencilMode: (browserSessionId, active) =>
+    ipcRenderer.invoke('native-browser-set-pencil-mode', { browserSessionId, active }),
   nativeBrowserAgentAction: (request) =>
     ipcRenderer.invoke('native-browser-agent-action', { request }),
-  nativeBrowserCapture: (sessionId, box, options) =>
-    ipcRenderer.invoke('native-browser-capture', { sessionId, box, options }),
+  nativeBrowserCapture: (browserSessionId, box, options) =>
+    ipcRenderer.invoke('native-browser-capture', { browserSessionId, box, options }),
 
   onNativeBrowserSelection: (handler) => on('native-browser-selection', handler),
   onNativeBrowserDesignPrompt: (handler) => on('native-browser-design-prompt', handler),

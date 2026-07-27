@@ -14,13 +14,13 @@ import {
 } from 'lucide-react';
 import {
   buildWorkspaceSections,
-  isSubagentSession,
+  isChildSession,
   SIDEBAR_VISIBLE_SESSION_LIMIT,
 } from '../lib/workspaces';
-import { useMissionLive } from '../hooks/useMissionLive';
+import { useSessionLive } from '../hooks/useSessionLive';
 import { useAppUpdate } from '../lib/appUpdate';
 import { formatRelativeTime } from '../lib/time';
-import type { MissionSummary } from '../types/bridge';
+import type { SessionSummary } from '../types/bridge';
 
 // Shown in the title-bar strip when a newer DROIDEX build is available.
 function UpdatePill() {
@@ -75,20 +75,20 @@ function WorkingDots() {
 }
 
 function SessionRow({
-  mission,
+  session,
   active,
   unread,
   now,
   onClick,
 }: {
-  mission: MissionSummary;
+  session: SessionSummary;
   active: boolean;
   unread: boolean;
   now: number;
   onClick: () => void;
 }) {
-  const running = useMissionLive(mission.id);
-  const timeLabel = formatRelativeTime(mission.updatedAt, now);
+  const running = useSessionLive(session.appSessionId);
+  const timeLabel = formatRelativeTime(session.updatedAt, now);
   return (
     <div>
       <button
@@ -111,7 +111,7 @@ function SessionRow({
                 : 'text-droid-text-secondary group-hover:text-droid-text'
           }`}
         >
-          {mission.title}
+          {session.title}
         </span>
         {running ? (
           <span className="shrink-0 text-droid-text-secondary">
@@ -135,7 +135,7 @@ function SessionRow({
 
 export default function Sidebar() {
   const { state, dispatch } = useStore();
-  const activeMission = state.activeMissionId ? state.missions[state.activeMissionId] : null;
+  const activeSession = state.activeAppSessionId ? state.sessions[state.activeAppSessionId] : null;
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   // Per-section count of rows to show; grows by SIDEBAR_VISIBLE_SESSION_LIMIT on
   // each "Show more" so long lists page in (5 + 5 + 5...) rather than loading all.
@@ -173,8 +173,9 @@ export default function Sidebar() {
 
   // A session reads as unread when the model has newer activity than the last
   // time the user opened it. The active session is always considered read.
-  const isUnread = (m: MissionSummary) =>
-    m.id !== state.activeMissionId && m.updatedAt > (state.missionLastSeen[m.id] ?? m.updatedAt);
+  const isUnread = (m: SessionSummary) =>
+    m.appSessionId !== state.activeAppSessionId &&
+    m.updatedAt > (state.sessionLastSeen[m.appSessionId] ?? m.updatedAt);
 
   const startChat = (cwd: string) => dispatch({ type: 'START_CHAT', cwd });
 
@@ -188,34 +189,34 @@ export default function Sidebar() {
   // New chat respects context: if the user is currently in a workspace session,
   // start another chat in that workspace; otherwise start a plain no-folder chat.
   const newChat = () => {
-    const cwd = activeMission?.cwd ?? state.draftChat?.cwd ?? '';
+    const cwd = activeSession?.cwd ?? state.draftChat?.cwd ?? '';
     startChat(cwd);
   };
 
-  // Plain, folder-less chats (subagent sessions never appear as standalone rows).
-  const chatMissions = useMemo<MissionSummary[]>(() => {
-    return (state.missionOrder.map((id) => state.missions[id]).filter(Boolean) as MissionSummary[])
-      .filter((m) => !m.cwd && !isSubagentSession(m))
+  // Plain, folder-less chats (child session sessions never appear as standalone rows).
+  const chatSessions = useMemo<SessionSummary[]>(() => {
+    return (state.sessionOrder.map((id) => state.sessions[id]).filter(Boolean) as SessionSummary[])
+      .filter((m) => !m.cwd && !isChildSession(m))
       .sort((a, b) => b.updatedAt - a.updatedAt);
-  }, [state.missionOrder, state.missions]);
+  }, [state.sessionOrder, state.sessions]);
 
   const workspaces = useMemo(() => {
-    const missions = (
-      state.missionOrder.map((id) => state.missions[id]).filter(Boolean) as MissionSummary[]
-    ).filter((m) => !isSubagentSession(m));
-    return buildWorkspaceSections(state.workspaceCwds, missions);
-  }, [state.missionOrder, state.missions, state.workspaceCwds]);
+    const sessions = (
+      state.sessionOrder.map((id) => state.sessions[id]).filter(Boolean) as SessionSummary[]
+    ).filter((m) => !isChildSession(m));
+    return buildWorkspaceSections(state.workspaceCwds, sessions);
+  }, [state.sessionOrder, state.sessions, state.workspaceCwds]);
 
-  const renderRow = (m: MissionSummary) => (
+  const renderRow = (m: SessionSummary) => (
     <SessionRow
-      key={m.id}
-      mission={m}
-      active={state.activeMissionId === m.id}
+      key={m.appSessionId}
+      session={m}
+      active={state.activeAppSessionId === m.appSessionId}
       unread={isUnread(m)}
       now={now}
       onClick={() => {
-        dispatch({ type: 'SET_ACTIVE_MISSION', id: m.id });
-        dispatch({ type: 'SELECT_AGENT', id: null });
+        dispatch({ type: 'SET_ACTIVE_SESSION', id: m.appSessionId });
+        dispatch({ type: 'SELECT_PROVIDER_SESSION', id: null });
       }}
     />
   );
@@ -223,18 +224,18 @@ export default function Sidebar() {
   // Show the latest sessions and tuck the rest behind a "Show more" toggle. The
   // active session is always kept visible so selecting an older one never hides
   // it on the next render.
-  const renderSessionList = (sectionKey: string, sessions: MissionSummary[]) => {
+  const renderSessionList = (sectionKey: string, sessions: SessionSummary[]) => {
     const total = sessions.length;
     const count = Math.min(visibleCountFor(sectionKey), total);
     let visible = sessions.slice(0, count);
     // Keep the active session visible even if it sits below the paged window so
     // selecting an older chat never hides it on the next render.
     if (
-      activeMission &&
-      sessions.some((m) => m.id === activeMission.id) &&
-      !visible.some((m) => m.id === activeMission.id)
+      activeSession &&
+      sessions.some((m) => m.appSessionId === activeSession.appSessionId) &&
+      !visible.some((m) => m.appSessionId === activeSession.appSessionId)
     ) {
-      visible = [...visible, state.missions[activeMission.id]];
+      visible = [...visible, state.sessions[activeSession.appSessionId]];
     }
     const remaining = total - count;
     const isExpanded = count > SIDEBAR_VISIBLE_SESSION_LIMIT;
@@ -290,7 +291,7 @@ export default function Sidebar() {
       </div>
 
       <div className="flex-1 overflow-y-auto px-2 pb-2 space-y-3">
-        {/* Workspaces — folder-scoped, where missions run (main area) */}
+        {/* Workspaces — folder-scoped, where sessions run (main area) */}
         {(() => {
           const open = !collapsed.has('__workspaces__');
           return (
@@ -382,12 +383,12 @@ export default function Sidebar() {
                 </button>
               </div>
               {open &&
-                (chatMissions.length === 0 ? (
+                (chatSessions.length === 0 ? (
                   <div className="mt-0.5 px-3 py-2 text-[12px] text-droid-text-muted">
                     No chats yet.
                   </div>
                 ) : (
-                  renderSessionList('__chats__', chatMissions)
+                  renderSessionList('__chats__', chatSessions)
                 ))}
             </div>
           );

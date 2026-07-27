@@ -122,7 +122,7 @@ function required<T>(value: T | undefined, label: string): T {
 
 export function contextUpdateCount(h: SessionCharacterizationHarness, sessionId: string): number {
   return h.events.filter(
-    (event) => event.type === 'context.updated' && event.sessionId === sessionId,
+    (event) => event.type === 'context.updated' && event.sourceSessionId === sessionId,
   ).length;
 }
 
@@ -130,6 +130,7 @@ export async function runAutoCompactionScenario(h: SessionCharacterizationHarnes
   const parent = new ParentStreamEventSession('provider-1', {}, h.calls);
   h.runtime.createQueue.push(parent);
   await h.create({
+    sessionPurpose: 'mission-control',
     clientRef: 'c4',
     title: 'C4',
     goal: 'go',
@@ -138,18 +139,18 @@ export async function runAutoCompactionScenario(h: SessionCharacterizationHarnes
   });
   await h.waitForIdle();
   await h.handle({
-    type: 'agent.open',
-    missionId: 'provider-1',
-    agentSessionId: 'worker-c4',
+    type: 'child.open',
+    appSessionId: 'provider-1',
+    providerSessionId: 'worker-c4',
     role: 'worker',
   });
   notifyCompaction(h, 'provider-1', 'started');
   notifyCompaction(h, 'worker-c4', 'started');
-  await h.handle({ type: 'mission.interrupt', missionId: 'provider-1' });
+  await h.handle({ type: 'session.interrupt', appSessionId: 'provider-1' });
   await h.handle({
-    type: 'agent.interrupt',
-    missionId: 'provider-1',
-    agentSessionId: 'worker-c4',
+    type: 'child.interrupt',
+    appSessionId: 'provider-1',
+    providerSessionId: 'worker-c4',
   });
   const interruptCounts = () => [
     h.calls.filter(
@@ -164,8 +165,8 @@ export async function runAutoCompactionScenario(h: SessionCharacterizationHarnes
   const interruptsAfterExplicitCommands = interruptCounts();
   const parentGate = h.provider.deferNextStream('provider-1');
   const parentRun = h.handle({
-    type: 'mission.send',
-    missionId: 'provider-1',
+    type: 'session.send',
+    appSessionId: 'provider-1',
     text: 'parent running',
   });
   await h.provider.waitForPrompts('provider-1', 2);
@@ -173,9 +174,9 @@ export async function runAutoCompactionScenario(h: SessionCharacterizationHarnes
   const parentQueuedGate = h.provider.deferNextStream('provider-1');
   const workerGate = h.provider.deferNextStream('worker-c4');
   const workerRun = h.handle({
-    type: 'agent.send',
-    missionId: 'provider-1',
-    agentSessionId: 'worker-c4',
+    type: 'child.send',
+    appSessionId: 'provider-1',
+    providerSessionId: 'worker-c4',
     text: 'worker running',
   });
   await h.provider.waitForPrompts('worker-c4', 1);
@@ -186,18 +187,18 @@ export async function runAutoCompactionScenario(h: SessionCharacterizationHarnes
   const workerQueuedGate = h.provider.deferNextStream('worker-c4');
   notifyCompaction(h, 'provider-1', 'started');
   notifyCompaction(h, 'worker-c4', 'started');
-  await h.handle({ type: 'mission.send', missionId: 'provider-1', text: 'parent queued' });
+  await h.handle({ type: 'session.send', appSessionId: 'provider-1', text: 'parent queued' });
   await h.handle({
-    type: 'agent.send',
-    missionId: 'provider-1',
-    agentSessionId: 'worker-c4',
+    type: 'child.send',
+    appSessionId: 'provider-1',
+    providerSessionId: 'worker-c4',
     text: 'worker queued',
   });
-  await h.handle({ type: 'mission.sendNow', missionId: 'provider-1', text: 'parent steer' });
+  await h.handle({ type: 'session.sendNow', appSessionId: 'provider-1', text: 'parent steer' });
   await h.handle({
-    type: 'agent.sendNow',
-    missionId: 'provider-1',
-    agentSessionId: 'worker-c4',
+    type: 'child.sendNow',
+    appSessionId: 'provider-1',
+    providerSessionId: 'worker-c4',
     text: 'worker steer',
   });
   const contextsBefore = [contextUpdateCount(h, 'provider-1'), contextUpdateCount(h, 'worker-c4')];
@@ -236,7 +237,7 @@ export async function runAutoCompactionScenario(h: SessionCharacterizationHarnes
 
 export function liveCleanupCounts(
   h: SessionCharacterizationHarness,
-  parentSessionId: string,
+  parentProviderSessionId: string,
   childSessionId: string,
 ): number[] {
   const count = (method: string, sessionId: string) =>
@@ -244,9 +245,9 @@ export function liveCleanupCounts(
       (call) => call.target === 'cleanup' && call.method === method && call.args[0] === sessionId,
     ).length;
   return [
-    count('session.close', parentSessionId),
+    count('session.close', parentProviderSessionId),
     count('session.close', childSessionId),
-    count('unsubscribe', parentSessionId),
+    count('unsubscribe', parentProviderSessionId),
     count('unsubscribe', childSessionId),
     h.mcpServerCloseCalls,
   ];
@@ -266,6 +267,7 @@ export async function runCloseCleanupScenario() {
   h.runtime.loadQueue.set(workerKey, [new FakeDroidSession(workerLive, {}, h.calls)]);
   try {
     await h.create({
+      sessionPurpose: 'mission-control',
       clientRef: 'c6',
       title: 'C6',
       goal: 'go',
@@ -275,16 +277,16 @@ export async function runCloseCleanupScenario() {
     await h.provider.waitForPrompts(parentKey, 1);
     const initialParentPoller = required(timers.latestInterval(), 'initial parent poller');
     await h.handle({
-      type: 'agent.open',
-      missionId: parentKey,
-      agentSessionId: workerKey,
+      type: 'child.open',
+      appSessionId: parentKey,
+      providerSessionId: workerKey,
       role: 'worker',
     });
     const workerGate = h.provider.deferNextStream(workerLive);
     void h.handle({
-      type: 'agent.send',
-      missionId: parentKey,
-      agentSessionId: workerKey,
+      type: 'child.send',
+      appSessionId: parentKey,
+      providerSessionId: workerKey,
       text: 'worker running',
     });
     await h.provider.waitForPrompts(workerLive, 1);
@@ -295,11 +297,11 @@ export async function runCloseCleanupScenario() {
     const workerStart = required(timers.latestWatchdog(), 'worker watchdog');
     const parentStartUntouchedByWorkerStart = parentStart.clears === 0;
     const watchdogHandlesDistinct = parentStart.timer !== workerStart.timer;
-    await h.handle({ type: 'mission.send', missionId: parentKey, text: 'parent buffered' });
+    await h.handle({ type: 'session.send', appSessionId: parentKey, text: 'parent buffered' });
     await h.handle({
-      type: 'agent.send',
-      missionId: parentKey,
-      agentSessionId: workerKey,
+      type: 'child.send',
+      appSessionId: parentKey,
+      providerSessionId: workerKey,
       text: 'worker buffered',
     });
 
@@ -330,7 +332,7 @@ export async function runCloseCleanupScenario() {
     const workerCloseWatchdog = required(timers.latestWatchdog(), 'close worker watchdog');
     const watchdogsActiveAtClose = [parentCloseWatchdog.clears, workerCloseWatchdog.clears];
 
-    await h.handle({ type: 'mission.close', missionId: parentKey });
+    await h.handle({ type: 'session.close', appSessionId: parentKey });
     const cleanupAtClose = liveCleanupCounts(h, parentKey, workerLive);
     const closeTimerState = [
       timers.intervalClears(parentClosePoller),
@@ -372,6 +374,7 @@ export async function runShutdownOnlyCleanupScenario() {
   h.runtime.loadQueue.set(workerKey, [new FakeDroidSession(workerLive, {}, h.calls)]);
   try {
     await h.create({
+      sessionPurpose: 'mission-control',
       clientRef: 'c6-shutdown',
       title: 'C6 shutdown',
       goal: 'go',
@@ -381,16 +384,16 @@ export async function runShutdownOnlyCleanupScenario() {
     await h.provider.waitForPrompts(parentKey, 1);
     const parentPoller = required(timers.latestInterval(), 'shutdown parent poller');
     await h.handle({
-      type: 'agent.open',
-      missionId: parentKey,
-      agentSessionId: workerKey,
+      type: 'child.open',
+      appSessionId: parentKey,
+      providerSessionId: workerKey,
       role: 'worker',
     });
     h.provider.deferNextStream(workerLive);
     void h.handle({
-      type: 'agent.send',
-      missionId: parentKey,
-      agentSessionId: workerKey,
+      type: 'child.send',
+      appSessionId: parentKey,
+      providerSessionId: workerKey,
       text: 'worker running',
     });
     await h.provider.waitForPrompts(workerLive, 1);

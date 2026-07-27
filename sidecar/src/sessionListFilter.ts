@@ -1,28 +1,24 @@
-import type { MissionSummary } from './protocol.js';
+import type { SessionSummary } from './protocol.js';
 
-export interface MissionListFilterOptions {
+export interface SessionListFilterOptions {
   workspaceCwds?: string[];
   includePlainChats?: boolean;
   limitPerWorkspace?: number;
 }
 
-// Subagents (Task workers / mission workers and validators) are spawned by a
-// parent session and must never appear as standalone sidebar sessions.
-export function isSubagentSummary(summary: MissionSummary): boolean {
+// Task workers plus Mission Control workers and validators are child sessions.
+// They never appear as standalone sidebar sessions.
+export function isChildSessionSummary(summary: SessionSummary): boolean {
   return (
-    summary.role === 'worker' ||
-    summary.role === 'validator' ||
-    summary.kind === 'mission_worker' ||
-    summary.kind === 'mission_validator' ||
-    !!summary.parentSessionId
+    summary.role === 'worker' || summary.role === 'validator' || !!summary.parentProviderSessionId
   );
 }
 
-export function filterMissionListSummaries(
-  summaries: MissionSummary[],
-  options: MissionListFilterOptions = {},
-): MissionSummary[] {
-  const visible = summaries.filter((summary) => !isSubagentSummary(summary));
+export function filterSessionListSummaries(
+  summaries: SessionSummary[],
+  options: SessionListFilterOptions = {},
+): SessionSummary[] {
+  const visible = summaries.filter((summary) => !isChildSessionSummary(summary));
   if (!options.workspaceCwds && !options.includePlainChats) return visible;
 
   const workspaceCwds = [...new Set((options.workspaceCwds ?? []).filter(Boolean))];
@@ -36,8 +32,8 @@ export function filterMissionListSummaries(
       ? undefined
       : Math.max(1, Math.min(options.limitPerWorkspace, 50));
   const requested = new Set(workspaceCwds);
-  const grouped = new Map<string, MissionSummary[]>();
-  const plain: MissionSummary[] = [];
+  const grouped = new Map<string, SessionSummary[]>();
+  const plain: SessionSummary[] = [];
 
   for (const summary of visible) {
     if (!summary.cwd) {

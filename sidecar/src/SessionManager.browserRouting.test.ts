@@ -28,7 +28,7 @@ test('[B1] Browser command routing', { concurrency: false }, async () => {
   try {
     await h.handle({
       type: 'browser.open',
-      missionId: 'app-b1',
+      appSessionId: 'app-b1',
       url: 'https://example.test',
       viewport,
       viewportMode: 'custom',
@@ -40,7 +40,7 @@ test('[B1] Browser command routing', { concurrency: false }, async () => {
       args: [
         {
           type: 'browser.open',
-          missionId: 'app-b1',
+          appSessionId: 'app-b1',
           url: 'https://example.test',
           viewport,
           viewportMode: 'custom',
@@ -50,8 +50,8 @@ test('[B1] Browser command routing', { concurrency: false }, async () => {
     assert.deepEqual(h.events.at(-1), {
       type: 'browser.updated',
       state: {
-        sessionId: 'browser-app-b1',
-        missionId: 'app-b1',
+        browserSessionId: 'browser-app-b1',
+        appSessionId: 'app-b1',
         url: 'https://example.test',
         viewport,
         viewportMode: 'custom',
@@ -62,7 +62,7 @@ test('[B1] Browser command routing', { concurrency: false }, async () => {
 
     await h.handle({
       type: 'browser.open',
-      missionId: 'app-b1',
+      appSessionId: 'app-b1',
       url: 'https://example.test/reopened-viewport',
       viewport: resizedViewport,
     });
@@ -70,8 +70,8 @@ test('[B1] Browser command routing', { concurrency: false }, async () => {
     assert.deepEqual(h.events.at(-1), {
       type: 'browser.updated',
       state: {
-        sessionId: 'browser-app-b1',
-        missionId: 'app-b1',
+        browserSessionId: 'browser-app-b1',
+        appSessionId: 'app-b1',
         url: 'https://example.test/reopened-viewport',
         viewport: resizedViewport,
         viewportMode: 'custom',
@@ -82,7 +82,7 @@ test('[B1] Browser command routing', { concurrency: false }, async () => {
 
     await h.handle({
       type: 'browser.open',
-      missionId: 'app-b1',
+      appSessionId: 'app-b1',
       url: 'https://example.test/reopened-mode',
       viewportMode: 'mobile',
     });
@@ -90,8 +90,8 @@ test('[B1] Browser command routing', { concurrency: false }, async () => {
     assert.deepEqual(h.events.at(-1), {
       type: 'browser.updated',
       state: {
-        sessionId: 'browser-app-b1',
-        missionId: 'app-b1',
+        browserSessionId: 'browser-app-b1',
+        appSessionId: 'app-b1',
         url: 'https://example.test/reopened-mode',
         viewport: resizedViewport,
         viewportMode: 'mobile',
@@ -102,15 +102,15 @@ test('[B1] Browser command routing', { concurrency: false }, async () => {
 
     await h.handle({
       type: 'browser.open',
-      missionId: 'app-b1',
+      appSessionId: 'app-b1',
       url: 'https://example.test/reopened',
     });
 
     assert.deepEqual(h.events.at(-1), {
       type: 'browser.updated',
       state: {
-        sessionId: 'browser-app-b1',
-        missionId: 'app-b1',
+        browserSessionId: 'browser-app-b1',
+        appSessionId: 'app-b1',
         url: 'https://example.test/reopened',
         viewport: resizedViewport,
         viewportMode: 'mobile',
@@ -121,15 +121,15 @@ test('[B1] Browser command routing', { concurrency: false }, async () => {
 
     await h.handle({
       type: 'browser.open',
-      missionId: 'app-b1-default',
+      appSessionId: 'app-b1-default',
       url: 'https://example.test/default',
     });
 
     assert.deepEqual(h.events.at(-1), {
       type: 'browser.updated',
       state: {
-        sessionId: 'browser-app-b1-default',
-        missionId: 'app-b1-default',
+        browserSessionId: 'browser-app-b1-default',
+        appSessionId: 'app-b1-default',
         url: 'https://example.test/default',
         viewport: { width: 1200, height: 800, deviceScaleFactor: 2 },
         viewportMode: 'fit',
@@ -138,13 +138,13 @@ test('[B1] Browser command routing', { concurrency: false }, async () => {
       },
     });
 
-    await h.handle({ type: 'browser.reload', missionId: 'missing' });
+    await h.handle({ type: 'browser.reload', appSessionId: 'missing' });
 
     assert.equal(
       h.events.some(
         (event) =>
           event.type === 'browser.error' &&
-          event.missionId === 'missing' &&
+          event.appSessionId === 'missing' &&
           event.message === 'Browser session is not open yet.',
       ),
       true,
@@ -162,7 +162,7 @@ test('[B2] Native request and result correlation', { concurrency: false }, async
     let opened = false;
     const open = h.handle({
       type: 'browser.open',
-      missionId: 'app-b2',
+      appSessionId: 'app-b2',
       url: 'https://example.test',
     });
     void open.then(() => {
@@ -173,7 +173,12 @@ test('[B2] Native request and result correlation', { concurrency: false }, async
 
     await h.handle({
       type: 'browser.native.result',
-      result: { requestId: 'unknown', missionId: 'app-b2', ok: true },
+      result: {
+        requestId: 'unknown',
+        appSessionId: 'app-b2',
+        browserSessionId: 'browser-b2',
+        ok: true,
+      },
     });
     assert.equal(opened, false);
 
@@ -187,13 +192,13 @@ test('[B2] Native request and result correlation', { concurrency: false }, async
       h.events.some(
         (event) =>
           event.type === 'browser.updated' &&
-          event.state.missionId === 'app-b2' &&
+          event.state.appSessionId === 'app-b2' &&
           event.state.url === 'https://example.test',
       ),
       true,
     );
 
-    const reload = h.handle({ type: 'browser.reload', missionId: 'app-b2' });
+    const reload = h.handle({ type: 'browser.reload', appSessionId: 'app-b2' });
     const timedOutRequest = nativeRequests(h.events).at(-1)?.request;
     assert.ok(timedOutRequest);
     timeouts.fireCurrent();
@@ -202,7 +207,7 @@ test('[B2] Native request and result correlation', { concurrency: false }, async
       h.events.some(
         (event) =>
           event.type === 'browser.error' &&
-          event.missionId === 'app-b2' &&
+          event.appSessionId === 'app-b2' &&
           /Droid Control browser did not respond to reload within \d+ms\./.test(event.message),
       ),
       true,
@@ -215,7 +220,7 @@ test('[B2] Native request and result correlation', { concurrency: false }, async
     });
     assert.equal(h.events.length, eventCountBeforeLateResult);
 
-    const close = h.handle({ type: 'browser.close', missionId: 'app-b2' });
+    const close = h.handle({ type: 'browser.close', appSessionId: 'app-b2' });
     const closeRequest = nativeRequests(h.events).at(-1)?.request;
     assert.ok(closeRequest);
     await h.handle({ type: 'browser.native.result', result: nativeSuccess(closeRequest) });
@@ -228,10 +233,11 @@ test('[B2] Native request and result correlation', { concurrency: false }, async
 
 test('[B3] Browser continuity across compaction', { concurrency: false }, async () => {
   const h = createSessionCharacterizationHarness();
-  const appMissionId = 'provider-1';
+  const appSessionId = 'provider-1';
 
   try {
     await h.create({
+      sessionPurpose: 'chat',
       clientRef: 'b3',
       title: 'Browser continuity',
       goal: 'go',
@@ -239,7 +245,7 @@ test('[B3] Browser continuity across compaction', { concurrency: false }, async 
       autonomy: 'low',
     });
     await h.waitForIdle();
-    h.provider.session(appMissionId).nextCompactResult = {
+    h.provider.session(appSessionId).nextCompactResult = {
       newSessionId: 'provider-2',
       removedCount: 1,
     };
@@ -247,28 +253,28 @@ test('[B3] Browser continuity across compaction', { concurrency: false }, async 
 
     await h.handle({
       type: 'browser.open',
-      missionId: appMissionId,
+      appSessionId: appSessionId,
       url: 'https://example.test',
     });
-    await h.handle({ type: 'mission.compact', missionId: appMissionId });
+    await h.handle({ type: 'session.compact', appSessionId: appSessionId });
     const browserUpdatesBeforeReload = h.events.filter((event) => event.type === 'browser.updated');
-    await h.handle({ type: 'browser.reload', missionId: appMissionId });
+    await h.handle({ type: 'browser.reload', appSessionId: appSessionId });
 
     assert.deepEqual(
       h.browsers.calls
         .filter((call) => call.target === 'browser')
         .map((call) => [call.method, call.args[0]]),
       [
-        ['open', { type: 'browser.open', missionId: appMissionId, url: 'https://example.test' }],
-        ['reload', appMissionId],
+        ['open', { type: 'browser.open', appSessionId: appSessionId, url: 'https://example.test' }],
+        ['reload', appSessionId],
       ],
     );
     assert.equal(
       h.events.some(
         (event) =>
-          event.type === 'mission.updated' &&
-          event.mission.id === appMissionId &&
-          event.mission.sessionId === 'provider-2',
+          event.type === 'session.updated' &&
+          event.session.appSessionId === appSessionId &&
+          event.session.providerSessionId === 'provider-2',
       ),
       true,
     );
@@ -277,15 +283,15 @@ test('[B3] Browser continuity across compaction', { concurrency: false }, async 
         event.type === 'browser.updated',
     );
     assert.equal(browserUpdates.length > browserUpdatesBeforeReload.length, true);
-    assert.equal(browserUpdates.at(-1)?.state.missionId, appMissionId);
+    assert.equal(browserUpdates.at(-1)?.state.appSessionId, appSessionId);
 
-    await h.handle({ type: 'mission.close', missionId: appMissionId });
+    await h.handle({ type: 'session.close', appSessionId: appSessionId });
     assert.equal(
       h.calls.filter(
         (call) =>
           call.target === 'cleanup' &&
           call.method === 'browser.close' &&
-          call.args[0] === appMissionId,
+          call.args[0] === appSessionId,
       ).length,
       1,
     );
@@ -297,6 +303,7 @@ test('[B3] Browser continuity across compaction', { concurrency: false }, async 
   let shutdownDisposed = false;
   try {
     await shutdown.create({
+      sessionPurpose: 'chat',
       clientRef: 'b3-shutdown',
       title: 'Browser shutdown',
       goal: 'go',
@@ -305,7 +312,7 @@ test('[B3] Browser continuity across compaction', { concurrency: false }, async 
     });
     await shutdown.handle({
       type: 'browser.open',
-      missionId: 'provider-1',
+      appSessionId: 'provider-1',
       url: 'https://example.test/shutdown',
     });
     await shutdown.dispose();

@@ -6,9 +6,9 @@ import type { TranscriptEvent } from '../types/bridge';
 function ev(extra: Partial<TranscriptEvent>): TranscriptEvent {
   return {
     id: 'e',
-    missionId: 'm',
-    agentSessionId: 'orchestrator',
-    role: 'orchestrator',
+    appSessionId: 'm',
+    sourceSessionId: 'primary',
+    role: 'primary',
     ts: 0,
     kind: 'text',
     ...extra,
@@ -32,9 +32,9 @@ test('TodoWrite classifies as plan_update, not a file edit', () => {
   assert.equal(classifyEvent(e), 'plan_update');
 });
 
-test('Task spawn classifies as subagent_event', () => {
+test('Task spawn classifies as child_session_event', () => {
   const e = ev({ kind: 'tool_call', toolName: 'Task', toolArgs: { subagent_type: 'worker' } });
-  assert.equal(classifyEvent(e), 'subagent_event');
+  assert.equal(classifyEvent(e), 'child_session_event');
 });
 
 test('edit tool classifies as file_edit', () => {

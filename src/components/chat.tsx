@@ -27,8 +27,8 @@ import {
   stripAnsi,
   formatDuration,
   parseTruncatedTail,
-  isSubagentTool,
-  subagentInfo,
+  isChildSessionTool,
+  childSessionInfo,
   parseTodos,
   hasTodoPayload,
   isWebSearchTool,
@@ -39,11 +39,11 @@ import {
 } from '../lib/tools';
 import { classifyEvent } from '../lib/transcript';
 import {
-  richerSubagent,
-  subagentLatest,
-  type SubagentActivity,
-  type SubagentTarget,
-} from '../lib/subagents';
+  mergeChildSessionSpawn,
+  childSessionLatest,
+  type ChildSessionActivity,
+  type ChildSessionTarget,
+} from '../lib/childSessions';
 import { openExternal } from '../lib/onboarding';
 
 // Open a link in the OS default browser rather than inside the Electron window.
@@ -830,7 +830,7 @@ export type FeedItem =
   | { type: 'error'; key: string; event: TranscriptEvent }
   | { type: 'diff'; key: string; event: TranscriptEvent; change: FileChange }
   | { type: 'diffs'; key: string; changes: { event: TranscriptEvent; change: FileChange }[] }
-  | { type: 'subagent'; key: string; event: TranscriptEvent }
+  | { type: 'child_session'; key: string; event: TranscriptEvent }
   | { type: 'tools'; key: string; events: TranscriptEvent[] }
   | { type: 'worked'; key: string; items: FeedItem[]; durationMs: number }
   | { type: 'turnChanges'; key: string; files: TurnFile[]; added: number; removed: number };
@@ -878,32 +878,33 @@ export function isCancellationArtifact(e: TranscriptEvent): boolean {
   return false;
 }
 
-export function buildFeed(events: TranscriptEvent[], subagentCards = false): FeedItem[] {
+export function buildFeed(events: TranscriptEvent[], childSessionCards = false): FeedItem[] {
   events = events.filter((e) => !isCancellationArtifact(e));
   const items: FeedItem[] = [];
   // toolUseId → index of its spawn item, so streaming deltas collapse into one.
-  const subagentIdx = new Map<string, number>();
+  const childSessionIndex = new Map<string, number>();
   // toolUseIds whose successful completion result must be dropped wherever it
-  // lands: a subagent spawn's result is represented by its card, and a plan
+  // lands: a child session spawn's result is represented by its card, and a plan
   // (TodoWrite) result is pure orchestration noise. History results carry no
   // toolName, and replay can batch a result into a different tool group than its
-  // call (e.g. a subagent spawn splits the group between a plan call and its
+  // call (e.g. a child session spawn splits the group between a plan call and its
   // result), so adjacency/positional checks are not enough — correlate by id
   // across the whole feed. A *failed* such result is never dropped; it surfaces
   // as an error instead. Pre-scanned so it works regardless of call/result order.
-  const subagentResultIds = new Set<string>();
+  const childSessionResultIds = new Set<string>();
   const planResultIds = new Set<string>();
   for (const e of events) {
     if (e.kind !== 'tool_call' || !e.toolUseId) continue;
-    if (subagentCards && isSubagentTool(e.toolName, e.toolArgs)) subagentResultIds.add(e.toolUseId);
+    if (childSessionCards && isChildSessionTool(e.toolName, e.toolArgs))
+      childSessionResultIds.add(e.toolUseId);
     else if (classifyEvent(e) === 'plan_update') planResultIds.add(e.toolUseId);
   }
   const isCardResult = (e: TranscriptEvent) =>
     e.kind === 'tool_result' &&
     !!e.toolUseId &&
-    (subagentResultIds.has(e.toolUseId) || planResultIds.has(e.toolUseId));
+    (childSessionResultIds.has(e.toolUseId) || planResultIds.has(e.toolUseId));
   // toolUseId → its successful result, so a tools group can reclaim a result that
-  // a subagent spawn split away from its call (the spawn breaks the group, so the
+  // a child session spawn split away from its call (the spawn breaks the group, so the
   // call is finalized before its result is reached). Pulled results are marked
   // claimed and skipped when iteration later reaches them, instead of rendering
   // as a detached raw "Tool result".
@@ -915,12 +916,12 @@ export function buildFeed(events: TranscriptEvent[], subagentCards = false): Fee
   while (i < events.length) {
     const ev = events[i];
     // A result reclaimed by an earlier group (its call was split from it by a
-    // subagent spawn) must not also start a new group here.
+    // child session spawn) must not also start a new group here.
     if (ev.kind === 'tool_result' && claimed.has(ev)) {
       i++;
       continue;
     }
-    // A successful subagent/plan completion result is already represented by its
+    // A successful child session/plan completion result is already represented by its
     // card or checklist (or is noise); drop it wherever it lands. Failed ones
     // fall through to the error branch below so the failure still surfaces.
     if (isCardResult(ev) && !ev.isError) {
@@ -949,7 +950,7 @@ export function buildFeed(events: TranscriptEvent[], subagentCards = false): Fee
       i++;
       continue;
     }
-    // A pure error event (no tool call) and a failed subagent/plan result surface
+    // A pure error event (no tool call) and a failed child session/plan result surface
     // as a standalone error. An ordinary failed tool result is not diverted here;
     // it flows into its tool group below and folds into the tool card as an error.
     if (ev.kind === 'error' || (ev.isError && isCardResult(ev))) {
@@ -1003,15 +1004,15 @@ export function buildFeed(events: TranscriptEvent[], subagentCards = false): Fee
         else items.push({ type: 'diffs', key: `diffs-${ev.id}`, changes });
         continue;
       }
-      if (subagentCards && isSubagentTool(ev.toolName, ev.toolArgs)) {
+      if (childSessionCards && isChildSessionTool(ev.toolName, ev.toolArgs)) {
         const key = ev.toolUseId ?? ev.id;
-        const at = subagentIdx.get(key);
+        const at = childSessionIndex.get(key);
         if (at == null) {
-          subagentIdx.set(key, items.length);
-          items.push({ type: 'subagent', key: `subagent-${key}`, event: ev });
+          childSessionIndex.set(key, items.length);
+          items.push({ type: 'child_session', key: `child-session-${key}`, event: ev });
         } else {
-          const cur = items[at] as Extract<FeedItem, { type: 'subagent' }>;
-          items[at] = { ...cur, event: richerSubagent(cur.event, ev) };
+          const cur = items[at] as Extract<FeedItem, { type: 'child_session' }>;
+          items[at] = { ...cur, event: mergeChildSessionSpawn(cur.event, ev) };
         }
         i++;
         // Advance past an adjacent successful completion result (the common live
@@ -1026,19 +1027,19 @@ export function buildFeed(events: TranscriptEvent[], subagentCards = false): Fee
       while (i < events.length) {
         const t = events[i];
         if (t.kind === 'tool_result') {
-          // A failed subagent/plan result breaks the group so the outer loop
+          // A failed child session/plan result breaks the group so the outer loop
           // surfaces it as a standalone error (its card/checklist can't convey
           // the failure). An ordinary failed result stays so it folds into its
           // tool card.
           if (t.isError && isCardResult(t)) break;
-          // A successful subagent/plan result is dropped (represented by its
+          // A successful child session/plan result is dropped (represented by its
           // card or checklist, or pure noise); other results stay in the group.
           if (!t.isError && isCardResult(t)) {
             i++;
             continue;
           }
           // A result already reclaimed inline by an earlier group (its call was
-          // split from it by a subagent spawn) must not be re-emitted here as
+          // split from it by a child session spawn) must not be re-emitted here as
           // raw activity, which would duplicate the output.
           if (claimed.has(t)) {
             i++;
@@ -1048,9 +1049,13 @@ export function buildFeed(events: TranscriptEvent[], subagentCards = false): Fee
           i++;
           continue;
         }
-        // A subagent spawn must break the group so the outer loop can render it
+        // A child session spawn must break the group so the outer loop can render it
         // as its own card instead of folding it into the generic tools group.
-        if (subagentCards && t.kind === 'tool_call' && isSubagentTool(t.toolName, t.toolArgs))
+        if (
+          childSessionCards &&
+          t.kind === 'tool_call' &&
+          isChildSessionTool(t.toolName, t.toolArgs)
+        )
           break;
         if (t.kind === 'tool_call' && !extractFileChange(t.toolName, t.toolArgs)) {
           group.push(t);
@@ -1061,7 +1066,7 @@ export function buildFeed(events: TranscriptEvent[], subagentCards = false): Fee
       }
       if (group.length) {
         // Reclaim any successful result whose call is in this group but was
-        // separated from it (a subagent spawn broke the group before the result
+        // separated from it (a child session spawn broke the group before the result
         // was reached) so it renders inline with its call rather than as a
         // detached raw result later. Card/plan results are intentionally left
         // out (handled by their card/checklist or dropped as noise).
@@ -1274,7 +1279,7 @@ function mergeAssistantMessages(
 }
 
 // Collapse a completed assistant turn: thinking/tool/file activity folds into
-// "Worked for …" groups while assistant chat messages, subagent cards, and
+// "Worked for …" groups while assistant chat messages, child session cards, and
 // compaction dividers stay top-level. Invariant (#18): an assistant message is
 // ALWAYS a top-level boundary and can never be nested inside a Worked group,
 // no matter what trailing compaction/tool status follows it.
@@ -1286,7 +1291,7 @@ function collapseRun(run: FeedItem[], specContent?: string): FeedItem[] {
   // would defeat the match and render the spec body twice).
   const spec = specContent?.trim();
   const isSpecBody = (text: string | undefined) => !!spec && (text ?? '').trim() === spec;
-  // Fold contiguous work into "Worked for …" groups, but keep subagent spawn
+  // Fold contiguous work into "Worked for …" groups, but keep child session spawn
   // cards at the top level so they stay visible (and navigable) after a turn.
   let buf: FeedItem[] = [];
   const flush = () => {
@@ -1328,7 +1333,7 @@ function collapseRun(run: FeedItem[], specContent?: string): FeedItem[] {
       }
       flush();
       out.push(it);
-    } else if (it.type === 'subagent') {
+    } else if (it.type === 'child_session') {
       flush();
       out.push(it);
     } else if (it.type === 'error') {
@@ -1577,8 +1582,8 @@ interface FeedItemViewProps {
   cwd?: string;
   onOpenDiff?: (c: FileChange) => void;
   onOpenReviewFile?: (path: string) => void;
-  onOpenSubagent?: (target: SubagentTarget) => void;
-  subagentActivity?: (target: SubagentTarget) => SubagentActivity | undefined;
+  onOpenChildSession?: (target: ChildSessionTarget) => void;
+  childSessionActivity?: (target: ChildSessionTarget) => ChildSessionActivity | undefined;
   liveTiming?: boolean;
   specContent?: string;
   isFinalResponse?: boolean;
@@ -1604,15 +1609,15 @@ export function sameFeedEvents(a: FeedItem, b: FeedItem): boolean {
       a.changes.every((c, i) => c.event === b.changes[i].event)
     );
   }
-  // message | thinking | status | error | diff | subagent each carry one event.
+  // message | thinking | status | error | diff | child session each carry one event.
   return (a as { event: TranscriptEvent }).event === (b as { event: TranscriptEvent }).event;
 }
 
 // Lets memo skip the many static items while a response streams, re-rendering
-// only the growing tail. Subagent and worked items surface live, cross-transcript
+// only the growing tail. Child session and worked items surface live, cross-transcript
 // state (running timers, latest line), so they always re-render to stay current.
 function feedItemPropsEqual(prev: FeedItemViewProps, next: FeedItemViewProps): boolean {
-  if (next.item.type === 'subagent' || next.item.type === 'worked') return false;
+  if (next.item.type === 'child_session' || next.item.type === 'worked') return false;
   return (
     prev.live === next.live &&
     prev.compacting === next.compacting &&
@@ -1623,8 +1628,8 @@ function feedItemPropsEqual(prev: FeedItemViewProps, next: FeedItemViewProps): b
     prev.expandGroups === next.expandGroups &&
     prev.onOpenDiff === next.onOpenDiff &&
     prev.onOpenReviewFile === next.onOpenReviewFile &&
-    prev.onOpenSubagent === next.onOpenSubagent &&
-    prev.subagentActivity === next.subagentActivity &&
+    prev.onOpenChildSession === next.onOpenChildSession &&
+    prev.childSessionActivity === next.childSessionActivity &&
     sameFeedEvents(prev.item, next.item)
   );
 }
@@ -1636,8 +1641,8 @@ const FeedItemView = memo(function FeedItemView({
   cwd,
   onOpenDiff,
   onOpenReviewFile,
-  onOpenSubagent,
-  subagentActivity,
+  onOpenChildSession,
+  childSessionActivity,
   liveTiming,
   specContent,
   isFinalResponse,
@@ -1676,15 +1681,15 @@ const FeedItemView = memo(function FeedItemView({
           startTs={liveTiming ? item.event.ts : undefined}
         />
       );
-    case 'subagent':
+    case 'child_session':
       return (
-        <SubagentLine
+        <ChildSessionLine
           event={item.event}
           active={live}
-          onOpen={onOpenSubagent}
-          activity={subagentActivity?.({
+          onOpen={onOpenChildSession}
+          activity={childSessionActivity?.({
             toolUseId: item.event.toolUseId,
-            label: subagentInfo(item.event.toolArgs).label,
+            label: childSessionInfo(item.event.toolArgs).label,
           })}
         />
       );
@@ -1724,8 +1729,8 @@ const FeedItemView = memo(function FeedItemView({
         <WorkedGroup
           item={item}
           onOpenDiff={onOpenDiff}
-          onOpenSubagent={onOpenSubagent}
-          subagentActivity={subagentActivity}
+          onOpenChildSession={onOpenChildSession}
+          childSessionActivity={childSessionActivity}
           specContent={specContent}
         />
       );
@@ -1736,14 +1741,14 @@ const FeedItemView = memo(function FeedItemView({
 function WorkedGroup({
   item,
   onOpenDiff,
-  onOpenSubagent,
-  subagentActivity,
+  onOpenChildSession,
+  childSessionActivity,
   specContent,
 }: {
   item: Extract<FeedItem, { type: 'worked' }>;
   onOpenDiff?: (c: FileChange) => void;
-  onOpenSubagent?: (target: SubagentTarget) => void;
-  subagentActivity?: (target: SubagentTarget) => SubagentActivity | undefined;
+  onOpenChildSession?: (target: ChildSessionTarget) => void;
+  childSessionActivity?: (target: ChildSessionTarget) => ChildSessionActivity | undefined;
   specContent?: string;
 }) {
   const [open, setOpen] = useState(false);
@@ -1766,8 +1771,8 @@ function WorkedGroup({
               item={child}
               live={false}
               onOpenDiff={onOpenDiff}
-              onOpenSubagent={onOpenSubagent}
-              subagentActivity={subagentActivity}
+              onOpenChildSession={onOpenChildSession}
+              childSessionActivity={childSessionActivity}
               specContent={specContent}
               expandGroups
             />
@@ -1925,7 +1930,7 @@ function TurnChangesPanel({
 }
 
 /* ── Per-agent name color: deterministic pick so each droid keeps one hue ── */
-const SUBAGENT_COLORS = [
+const CHILD_SESSION_COLORS = [
   '#e0a458',
   '#6ea8fe',
   '#5cc8a8',
@@ -1935,14 +1940,14 @@ const SUBAGENT_COLORS = [
   '#f0a06a',
   '#9d8cff',
 ] as const;
-function subagentColor(label: string): string {
+function childSessionColor(label: string): string {
   let h = 0;
   for (let i = 0; i < label.length; i++) h = (h * 31 + label.charCodeAt(i)) >>> 0;
-  return SUBAGENT_COLORS[h % SUBAGENT_COLORS.length];
+  return CHILD_SESSION_COLORS[h % CHILD_SESSION_COLORS.length];
 }
 
-/* ── In-chat spawned subagent: inline thinking-style line + click to navigate ── */
-function SubagentLine({
+/* ── In-chat spawned child session: inline thinking-style line + click to navigate ── */
+function ChildSessionLine({
   event,
   active,
   onOpen,
@@ -1950,23 +1955,23 @@ function SubagentLine({
 }: {
   event: TranscriptEvent;
   active?: boolean;
-  onOpen?: (target: SubagentTarget) => void;
-  activity?: SubagentActivity;
+  onOpen?: (target: ChildSessionTarget) => void;
+  activity?: ChildSessionActivity;
 }) {
   const [open, setOpen] = useState(false);
-  const { label, description } = subagentInfo(event.toolArgs);
-  const name = label ?? 'subagent';
-  const color = subagentColor(name);
+  const { label, description } = childSessionInfo(event.toolArgs);
+  const name = label ?? 'child session';
+  const color = childSessionColor(name);
   const running = activity?.status === 'running' || (!!active && activity?.status !== 'completed');
   const startTs = activity?.startedAt;
   const elapsed = useElapsed(startTs, running);
   const timer = running && startTs != null && elapsed >= 1000 ? formatDuration(elapsed) : '';
   const verb = running ? 'Running' : 'Spawned';
-  // Append the literal "subagent" only when the name is a real droid label, so a
-  // nameless spawn reads "Spawned subagent" instead of "Spawned subagent subagent".
-  const tail = [label ? 'subagent' : '', timer].filter(Boolean).join(' ');
+  // Append the literal "child session" only when the name is a real droid label, so a
+  // nameless spawn reads "Spawned child session" instead of "Spawned child session child session".
+  const tail = [label ? 'child session' : '', timer].filter(Boolean).join(' ');
   const muted = running ? 'shimmer-text font-medium' : 'text-droid-text-muted';
-  const latest = subagentLatest(activity?.latest);
+  const latest = childSessionLatest(activity?.latest);
   const navigate = () => onOpen?.({ toolUseId: event.toolUseId, label });
   return (
     <div>
@@ -1975,7 +1980,7 @@ function SubagentLine({
           type="button"
           onClick={() => setOpen((o) => !o)}
           className="flex items-center"
-          aria-label="Toggle subagent activity"
+          aria-label="Toggle child session activity"
         >
           <Caret open={open} />
         </button>
@@ -1985,7 +1990,7 @@ function SubagentLine({
           onClick={navigate}
           className="font-semibold underline-offset-2 hover:underline"
           style={{ color }}
-          title="Open subagent session"
+          title="Open child session session"
         >
           {name}
         </button>
@@ -2041,8 +2046,8 @@ export function MessageFeed({
   cwd,
   onOpenDiff,
   onOpenReviewFile,
-  onOpenSubagent,
-  subagentActivity,
+  onOpenChildSession,
+  childSessionActivity,
   specContent,
   onOpenSpecWiki,
 }: {
@@ -2052,17 +2057,17 @@ export function MessageFeed({
   cwd?: string;
   onOpenDiff?: (c: FileChange) => void;
   onOpenReviewFile?: (path: string) => void;
-  onOpenSubagent?: (target: SubagentTarget) => void;
-  subagentActivity?: (target: SubagentTarget) => SubagentActivity | undefined;
+  onOpenChildSession?: (target: ChildSessionTarget) => void;
+  childSessionActivity?: (target: ChildSessionTarget) => ChildSessionActivity | undefined;
   specContent?: string;
   onOpenSpecWiki?: () => void;
 }) {
-  // Subagent cards, waiting label, and live timers are enabled only for the
-  // chat/spec feed (which supplies onOpenSubagent). Per-turn change summaries
+  // Child session cards, waiting label, and live timers are enabled only for the
+  // chat/spec feed (which supplies onOpenChildSession). Per-turn change summaries
   // are gated separately on onOpenReviewFile: Mission Control supplies
-  // onOpenSubagent for its orchestrator view but has no Review tab to open
+  // onOpenChildSession for its orchestrator view but has no Review tab to open
   // files in, so non-interactive Changes cards must not appear there.
-  const rich = !!onOpenSubagent;
+  const rich = !!onOpenChildSession;
   const changes = !!onOpenReviewFile;
 
   // The parent rebuilds these callbacks every streaming token (they close over
@@ -2071,11 +2076,11 @@ export function MessageFeed({
   // unchanged items instead of re-rendering the whole feed on every token. Keep
   // them undefined when the parent supplies no handler, so absent affordances
   // (e.g. non-clickable diffs in the chat feed) stay absent.
-  const cbRef = useRef({ onOpenDiff, onOpenReviewFile, onOpenSubagent, subagentActivity });
-  cbRef.current = { onOpenDiff, onOpenReviewFile, onOpenSubagent, subagentActivity };
+  const cbRef = useRef({ onOpenDiff, onOpenReviewFile, onOpenChildSession, childSessionActivity });
+  cbRef.current = { onOpenDiff, onOpenReviewFile, onOpenChildSession, childSessionActivity };
   const hasOpenDiff = !!onOpenDiff;
   const hasOpenReviewFile = !!onOpenReviewFile;
-  const hasSubagentActivity = !!subagentActivity;
+  const hasChildSessionActivity = !!childSessionActivity;
   const stableOnOpenDiff = useMemo(
     () => (hasOpenDiff ? (c: FileChange) => cbRef.current.onOpenDiff?.(c) : undefined),
     [hasOpenDiff],
@@ -2084,14 +2089,16 @@ export function MessageFeed({
     () => (hasOpenReviewFile ? (p: string) => cbRef.current.onOpenReviewFile?.(p) : undefined),
     [hasOpenReviewFile],
   );
-  const stableOnOpenSubagent = useMemo(
-    () => (rich ? (t: SubagentTarget) => cbRef.current.onOpenSubagent?.(t) : undefined),
+  const stableOnOpenChildSession = useMemo(
+    () => (rich ? (t: ChildSessionTarget) => cbRef.current.onOpenChildSession?.(t) : undefined),
     [rich],
   );
-  const stableSubagentActivity = useMemo(
+  const stableChildSessionActivity = useMemo(
     () =>
-      hasSubagentActivity ? (t: SubagentTarget) => cbRef.current.subagentActivity?.(t) : undefined,
-    [hasSubagentActivity],
+      hasChildSessionActivity
+        ? (t: ChildSessionTarget) => cbRef.current.childSessionActivity?.(t)
+        : undefined,
+    [hasChildSessionActivity],
   );
 
   const items = useMemo(
@@ -2119,21 +2126,21 @@ export function MessageFeed({
   // completion line has arrived yet. Drives the centered "Compacting…" shimmer.
   const compacting = last?.type === 'status' && isCompactingStatus(last.event.text);
 
-  // A subagent line self-indicates only while it is still running (it shows its
+  // A child session line self-indicates only while it is still running (it shows its
   // own "Running … <timer>"). Once it completes, the orchestrator may still be
   // working, so let the global cue show instead of looking idle.
-  const lastSubagentRunning =
-    last?.type === 'subagent' &&
-    subagentActivity?.({
+  const lastChildSessionRunning =
+    last?.type === 'child_session' &&
+    childSessionActivity?.({
       toolUseId: last.event.toolUseId,
-      label: subagentInfo(last.event.toolArgs).label,
+      label: childSessionInfo(last.event.toolArgs).label,
     })?.status === 'running';
   // The tail already animates its own shimmer/caret for these; otherwise show an explicit cue.
   const tailSelfIndicates =
     !!last &&
     (last.type === 'thinking' ||
       last.type === 'status' ||
-      (last.type === 'subagent' && lastSubagentRunning) ||
+      (last.type === 'child_session' && lastChildSessionRunning) ||
       (last.type === 'message' && last.event.author !== 'user'));
   const showWorking = pending && !tailSelfIndicates;
   const workingLabel =
@@ -2163,8 +2170,8 @@ export function MessageFeed({
             cwd={cwd}
             onOpenDiff={stableOnOpenDiff}
             onOpenReviewFile={stableOnOpenReviewFile}
-            onOpenSubagent={stableOnOpenSubagent}
-            subagentActivity={stableSubagentActivity}
+            onOpenChildSession={stableOnOpenChildSession}
+            childSessionActivity={stableChildSessionActivity}
             liveTiming={rich}
             specContent={specContent}
             isFinalResponse={finalResponseKeys.has(item.key)}

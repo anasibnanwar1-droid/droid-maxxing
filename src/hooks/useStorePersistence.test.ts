@@ -23,11 +23,11 @@ test('normalizeDiffStyle migrates the legacy symbol style and rejects invalid va
 test('loadPersistedUiState sanitizes persisted shell fields', () => {
   withLocalStorage(
     JSON.stringify({
-      activeMissionId: 'm1',
+      activeAppSessionId: 'm1',
       rightPanelOpen: false,
       sidebarCollapsed: true,
       specMode: true,
-      missionMode: false,
+      missionControlMode: false,
       utilityPanels: {
         m1: {
           open: true,
@@ -46,8 +46,8 @@ test('loadPersistedUiState sanitizes persisted shell fields', () => {
       browserOpenKeys: { 'chat-1': true, 'chat-2': false, '': true },
       browsers: {
         'chat-1': {
-          sessionId: 'browser-chat-1',
-          missionId: 'chat-1',
+          browserSessionId: 'browser-chat-1',
+          appSessionId: 'chat-1',
           url: 'http://127.0.0.1:17777/',
           title: 'Local app',
           viewport: { width: 1200, height: 800, deviceScaleFactor: 2 },
@@ -60,16 +60,16 @@ test('loadPersistedUiState sanitizes persisted shell fields', () => {
         bad: { url: 'https://example.com' },
       },
       selectedFeatureId: 'f1',
-      selectedAgentSessionId: 'orchestrator',
+      selectedProviderSessionId: 'primary',
       settingsOpen: true,
     }),
     () => {
       assert.deepEqual(loadPersistedUiState(), {
-        activeMissionId: 'm1',
+        activeAppSessionId: 'm1',
         rightPanelOpen: false,
         sidebarCollapsed: true,
         specMode: true,
-        missionMode: false,
+        missionControlMode: false,
         utilityPanels: {
           m1: {
             open: true,
@@ -80,8 +80,8 @@ test('loadPersistedUiState sanitizes persisted shell fields', () => {
         browserOpenKeys: { 'chat-1': true, 'chat-2': false },
         browsers: {
           'chat-1': {
-            sessionId: 'browser-chat-1',
-            missionId: 'chat-1',
+            browserSessionId: 'browser-chat-1',
+            appSessionId: 'chat-1',
             url: 'http://127.0.0.1:17777/',
             title: 'Local app',
             viewport: { width: 1200, height: 800, deviceScaleFactor: 2 },
@@ -91,7 +91,7 @@ test('loadPersistedUiState sanitizes persisted shell fields', () => {
           },
         },
         selectedFeatureId: 'f1',
-        selectedAgentSessionId: 'orchestrator',
+        selectedProviderSessionId: 'primary',
       });
     },
   );

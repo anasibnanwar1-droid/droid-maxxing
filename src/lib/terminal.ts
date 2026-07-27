@@ -5,12 +5,12 @@ const terminalsByTab = new Map<string, Promise<TerminalSessionInfo>>();
 export function ensureTerminalForTab(
   tabId: string,
   existingId: string | undefined,
-  options: { missionId: string; cwd: string; cols: number; rows: number },
+  options: { appSessionId: string; cwd: string; cols: number; rows: number },
 ): Promise<TerminalSessionInfo> {
   const pending = terminalsByTab.get(tabId);
   if (pending) return pending;
   const promise = existingId
-    ? listTerminals(options.missionId).then((terminals) => {
+    ? listTerminals(options.appSessionId).then((terminals) => {
         const terminal = terminals.find((candidate) => candidate.id === existingId);
         return terminal ?? createTerminal(options);
       })

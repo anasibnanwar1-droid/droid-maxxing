@@ -20,7 +20,7 @@ export function useReviewDiff(
   cwd: string,
   scope: DiffScope,
   enabled: boolean,
-  sessionId?: string,
+  appSessionId?: string,
 ): ReviewDiffState {
   const [files, setFiles] = useState<DiffFile[]>([]);
   const [base, setBase] = useState<string | null>(null);
@@ -32,7 +32,7 @@ export function useReviewDiff(
   // guard via the effect, so a cwd/scope switch always starts a fresh load
   // instead of being blocked by a lingering request for the old scope.
   const inFlight = useRef(false);
-  // Tracks the (cwd, scope, sessionId) tuple that loadingList was last shown
+  // Tracks the (cwd, scope, appSessionId) tuple that loadingList was last shown
   // for. Background poll ticks must NOT toggle loadingList — only the first
   // load for a given scope/cwd shows the spinner, so the list doesn't flash
   // every POLL_MS cycle.
@@ -51,12 +51,12 @@ export function useReviewDiff(
       setLoadingList(false);
       return;
     }
-    const key = `${cwd}|${scope}|${sessionId ?? ''}`;
+    const key = `${cwd}|${scope}|${appSessionId ?? ''}`;
     const isFirstLoad = loadedKey.current !== key;
     const id = ++listReq.current;
     inFlight.current = true;
     if (isFirstLoad) setLoadingList(true);
-    getGitDiffFiles(cwd, scope, sessionId)
+    getGitDiffFiles(cwd, scope, appSessionId)
       .then((res) => {
         if (id !== listReq.current) return;
         // Poll results are freshly deserialized; keep the previous array when
@@ -74,7 +74,7 @@ export function useReviewDiff(
           if (isFirstLoad) setLoadingList(false);
         }
       });
-  }, [cwd, scope, enabled, sessionId]);
+  }, [cwd, scope, enabled, appSessionId]);
 
   // Poll only while the window is visible (no git subprocess churn when the
   // app is in the background); refresh immediately on becoming visible again.

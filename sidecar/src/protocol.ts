@@ -1,7 +1,7 @@
 // Bridge protocol shared between the Node sidecar and the React frontend.
 // The frontend keeps a mirror copy at src/types/bridge.ts — keep them in sync.
 
-export type MissionPhase =
+export type SessionPhase =
   | 'intake'
   | 'planning'
   | 'awaiting_plan_approval'
@@ -14,13 +14,8 @@ export type MissionPhase =
   | 'failed';
 
 export type FeatureStatus = 'pending' | 'in_progress' | 'completed' | 'cancelled';
-export type AgentRole = 'orchestrator' | 'worker' | 'validator';
-export type SessionKind =
-  | 'chat'
-  | 'spec'
-  | 'mission_orchestrator'
-  | 'mission_worker'
-  | 'mission_validator';
+export type SessionRole = 'primary' | 'worker' | 'validator';
+export type SessionPurpose = 'chat' | 'design' | 'mission-control';
 export type SessionInteractionMode = 'auto' | 'spec' | 'agi';
 export type RunStatus = 'pending' | 'running' | 'paused' | 'done' | 'failed' | 'blocked';
 export type Autonomy = 'off' | 'low' | 'medium' | 'high';
@@ -45,9 +40,9 @@ export interface BridgeFeature {
   verificationSteps: string[];
   fulfills?: string[];
   milestone?: string;
-  workerSessionIds?: string[];
-  currentWorkerSessionId?: string | null;
-  completedWorkerSessionId?: string | null;
+  workerProviderSessionIds?: string[];
+  currentWorkerProviderSessionId?: string | null;
+  completedWorkerProviderSessionId?: string | null;
 }
 
 export interface ProgressEntry {
@@ -56,41 +51,42 @@ export interface ProgressEntry {
   title?: string;
   message?: string;
   featureId?: string;
-  workerSessionId?: string;
+  workerProviderSessionId?: string;
 }
 
-export interface WorkerSummary {
-  sessionId: string;
+export interface ChildSessionSummary {
+  providerSessionId: string;
   status: 'running' | 'paused' | 'completed';
   label?: string;
   prompt?: string;
   modelId?: string;
   reasoningEffort?: ReasoningEffort;
-  // The orchestrator Task tool_call id that spawned this worker; links an
-  // in-chat spawn line to its subagent session.
+  // The primary Task tool_call id that spawned this child session; links an in-chat
+  // spawn line to its child session.
   toolUseId?: string;
 }
 
-// The exact toolUseId -> workerSessionId mapping persisted for a mission, so
-// historical loads can rebuild precise subagent links instead of guessing.
-export interface WorkerHistoryLink {
-  workerSessionId: string;
+// The exact toolUseId -> providerSessionId mapping persisted for an application
+// session, so historical loads can rebuild precise child links.
+export interface ChildSessionHistoryLink {
+  providerSessionId: string;
   toolUseId?: string;
   label?: string;
-  // Live run state for the linked worker, set only when the mission is still
-  // active so a reconnect/reload doesn't render a running subagent as finished.
+  // Live run state for the linked worker, set only while the parent session is
+  // active so a reconnect/reload doesn't render a running child as finished.
   // Omitted (treated as completed) for historical loads.
   status?: 'running' | 'paused' | 'completed';
 }
 
-export interface MissionSummary {
-  id: string; // stable app conversation id
-  sessionId?: string; // active Droid session id
-  compactedFromSessionIds?: string[];
+export interface SessionSummary {
+  appSessionId: string;
+  providerSessionId?: string;
+  compactedFromProviderSessionIds?: string[];
   missionId?: string;
-  parentSessionId?: string;
-  kind: SessionKind;
-  role: AgentRole | 'user';
+  parentProviderSessionId?: string;
+  sessionPurpose: SessionPurpose;
+  interactionMode: SessionInteractionMode;
+  role: SessionRole | 'user';
   title: string;
   goal: string;
   cwd: string;
@@ -103,7 +99,7 @@ export interface MissionSummary {
   validatorModelId?: string;
   validatorReasoningEffort?: ReasoningEffort;
   autonomy: Autonomy;
-  phase: MissionPhase;
+  phase: SessionPhase;
   streaming?: boolean; // true while a turn is actively generating
   queuedSends?: number;
   proposal?: string; // markdown plan from propose_mission
@@ -129,11 +125,11 @@ export interface MissionSummary {
 
 export interface TranscriptEvent {
   id: string;
-  missionId: string;
-  agentSessionId: string; // orchestrator session id or a worker session id
-  role: AgentRole;
+  appSessionId: string;
+  sourceSessionId: string;
+  role: SessionRole;
   ts: number;
-  // Monotonic canonical order for orchestrator scrollback, stamped during
+  // Monotonic canonical order for primary-session scrollback, stamped during
   // replay from the compaction-chain position. Survives equal `ts` collisions
   // so restored history never reorders. Live events omit it (they are newest).
   seq?: number;
@@ -175,10 +171,10 @@ export type PermissionKind =
   | 'spec'
   | 'mission_plan'
   | 'other';
-export type ConfigurableAgent = 'orchestrator' | 'worker' | 'validator';
+export type ConfigurableSessionRole = 'primary' | 'worker' | 'validator';
 
 export interface PermissionRequest {
-  missionId: string;
+  appSessionId: string;
   requestId: string;
   kind: PermissionKind;
   title: string;
@@ -188,8 +184,8 @@ export interface PermissionRequest {
   raw: unknown;
 }
 
-export interface MissionQuestion {
-  missionId: string;
+export interface SessionQuestion {
+  appSessionId: string;
   requestId: string;
   questions: { index: number; question: string; options: string[] }[];
 }
@@ -257,7 +253,7 @@ export interface ContextStatsSnapshot {
   updatedAt: string;
   breakdown?: ContextBreakdownSnapshot;
   // In-place compactions completed on this agent session; set for worker
-  // snapshots (missions carry their generation on the summary instead).
+  // snapshots (top-level sessions carry their generation on the summary instead).
   compactions?: number;
 }
 
@@ -276,8 +272,8 @@ export interface ContextBreakdownSnapshot {
   categories: ContextBreakdownCategory[];
 }
 
-export interface HistoryMission {
-  sessionId: string;
+export interface SessionHistoryEntry {
+  providerSessionId: string;
   title: string;
   cwd?: string;
   modifiedTime: number;
@@ -315,8 +311,8 @@ export interface BrowserElementRef {
 }
 
 export interface BrowserState {
-  sessionId: string;
-  missionId?: string;
+  browserSessionId: string;
+  appSessionId?: string;
   url: string;
   title?: string;
   viewport: BrowserViewport;
@@ -394,8 +390,8 @@ export type BrowserNativeAction =
 
 export interface BrowserNativeRequest {
   requestId: string;
-  missionId: string;
-  sessionId: string;
+  appSessionId: string;
+  browserSessionId: string;
   action: BrowserNativeAction;
   url?: string;
   viewport?: BrowserViewport;
@@ -416,7 +412,8 @@ export interface BrowserNativeRequest {
 
 export interface BrowserNativeResult {
   requestId: string;
-  missionId: string;
+  appSessionId: string;
+  browserSessionId: string;
   ok: boolean;
   snapshot?: BrowserNativeSnapshot;
   inspection?: BrowserElementInspection;
@@ -512,16 +509,17 @@ export type ClientCommand =
   | { type: 'cli.install'; channel: InstallChannel }
   | { type: 'cli.update'; channel?: InstallChannel }
   | { type: 'catalog.models' }
-  | { type: 'catalog.tools'; sessionId?: string }
-  | { type: 'catalog.skills'; sessionId?: string }
-  | { type: 'catalog.mcp'; sessionId?: string }
+  | { type: 'catalog.tools'; providerSessionId?: string }
+  | { type: 'catalog.skills'; providerSessionId?: string }
+  | { type: 'catalog.mcp'; providerSessionId?: string }
   | { type: 'settings.defaults' }
   | {
-      type: 'mission.create';
+      type: 'session.create';
       clientRef: string;
       cwd?: string;
       title: string;
       goal: string;
+      sessionPurpose: SessionPurpose;
       interactionMode?: SessionInteractionMode;
       modelId?: string;
       reasoningEffort?: ReasoningEffort;
@@ -534,80 +532,54 @@ export type ClientCommand =
       validatorModel?: string;
       validatorReasoning?: ReasoningEffort;
     }
-  | {
-      type: 'session.create';
-      clientRef: string;
-      cwd?: string;
-      title: string;
-      goal: string;
-      interactionMode?: SessionInteractionMode;
-      modelId?: string;
-      reasoningEffort?: ReasoningEffort;
-      compactionModel?: string;
-      compactionTokenLimit?: number | null;
-      compactionTokenLimitPerModel?: Record<string, number>;
-      autonomy?: Autonomy;
-    }
-  | { type: 'session.send'; sessionId: string; text: string }
-  | { type: 'session.sendNow'; sessionId: string; text: string }
-  | { type: 'session.resume'; sessionId: string }
-  | { type: 'session.interrupt'; sessionId: string }
+  | { type: 'session.send'; appSessionId: string; text: string }
+  | { type: 'session.sendNow'; appSessionId: string; text: string }
+  | { type: 'session.resume'; appSessionId: string }
+  | { type: 'session.interrupt'; appSessionId: string }
   | {
       type: 'session.updateSettings';
-      sessionId: string;
+      appSessionId: string;
       modelId?: string | null;
       reasoningEffort?: ReasoningEffort;
       autonomy?: Autonomy;
+      interactionMode?: SessionInteractionMode;
     }
-  | { type: 'session.compact'; sessionId: string; customInstructions?: string }
-  | { type: 'session.fork'; sessionId: string }
-  | { type: 'session.rename'; sessionId: string; title: string }
-  | { type: 'session.rewindInfo'; sessionId: string }
-  | { type: 'session.rewind'; sessionId: string; rewindId?: string }
-  | { type: 'agent.open'; missionId: string; agentSessionId: string; role?: AgentRole }
-  | { type: 'agent.send'; missionId: string; agentSessionId: string; text: string }
-  | { type: 'agent.sendNow'; missionId: string; agentSessionId: string; text: string }
-  | { type: 'agent.interrupt'; missionId: string; agentSessionId: string }
-  | { type: 'approval.respond'; missionId: string; requestId: string; outcome: PermissionOutcome }
+  | { type: 'session.compact'; appSessionId: string; customInstructions?: string }
+  | { type: 'session.fork'; appSessionId: string }
+  | { type: 'session.rename'; appSessionId: string; title: string }
+  | { type: 'session.rewindInfo'; appSessionId: string }
+  | { type: 'session.rewind'; appSessionId: string; rewindId?: string }
+  | { type: 'session.close'; appSessionId: string }
+  | {
+      type: 'sessions.list';
+      workspaceCwds?: string[];
+      includePlainChats?: boolean;
+      limitPerWorkspace?: number;
+    }
+  | { type: 'session.loadHistory'; appSessionId: string; cursor?: string }
+  | { type: 'child.open'; appSessionId: string; providerSessionId: string; role?: SessionRole }
+  | { type: 'child.send'; appSessionId: string; providerSessionId: string; text: string }
+  | { type: 'child.sendNow'; appSessionId: string; providerSessionId: string; text: string }
+  | { type: 'child.interrupt'; appSessionId: string; providerSessionId: string }
+  | {
+      type: 'approval.respond';
+      appSessionId: string;
+      requestId: string;
+      outcome: PermissionOutcome;
+    }
   | {
       type: 'question.respond';
-      missionId: string;
+      appSessionId: string;
       requestId: string;
       cancelled: boolean;
       answers: { index: number; question: string; answer: string }[];
     }
   | { type: 'history.list' }
-  | { type: 'history.page'; sessionId: string; cursor?: string; limit?: number }
-  | { type: 'mission.send'; missionId: string; text: string }
-  | { type: 'mission.sendNow'; missionId: string; text: string }
-  | {
-      type: 'mission.respondPermission';
-      missionId: string;
-      requestId: string;
-      outcome: PermissionOutcome;
-    }
-  | {
-      type: 'mission.respondQuestion';
-      missionId: string;
-      requestId: string;
-      cancelled: boolean;
-      answers: { index: number; question: string; answer: string }[];
-    }
-  | { type: 'mission.interrupt'; missionId: string }
-  | { type: 'mission.compact'; missionId: string; customInstructions?: string }
-  | { type: 'mission.subscribeWorker'; missionId: string; workerSessionId: string }
-  | { type: 'mission.close'; missionId: string }
-  | {
-      type: 'mission.list';
-      workspaceCwds?: string[];
-      includePlainChats?: boolean;
-      limitPerWorkspace?: number;
-    }
-  | { type: 'mission.loadHistory'; missionId: string; cursor?: string }
+  | { type: 'history.page'; providerSessionId: string; cursor?: string; limit?: number }
   | {
       type: 'settings.agent.update';
-      missionId?: string;
-      agent: ConfigurableAgent;
+      appSessionId?: string;
+      agent: ConfigurableSessionRole;
       modelId?: string | null;
       reasoningEffort?: ReasoningEffort;
     }
@@ -619,37 +591,35 @@ export type ClientCommand =
       compactionTokenLimit?: number | null;
       compactionTokenLimitPerModel?: Record<string, number>;
     }
-  | { type: 'mission.setAutonomy'; missionId: string; autonomy: Autonomy }
-  | { type: 'mission.setInteractionMode'; missionId: string; mode: SessionInteractionMode }
   | {
       type: 'browser.open';
-      missionId: string;
+      appSessionId: string;
       url: string;
       viewport?: BrowserViewport;
       viewportMode?: BrowserViewportMode;
     }
-  | { type: 'browser.close'; missionId: string }
-  | { type: 'browser.reload'; missionId: string }
-  | { type: 'browser.refresh'; missionId: string }
+  | { type: 'browser.close'; appSessionId: string }
+  | { type: 'browser.reload'; appSessionId: string }
+  | { type: 'browser.refresh'; appSessionId: string }
   | {
       type: 'browser.resizeViewport';
-      missionId: string;
+      appSessionId: string;
       viewport: BrowserViewport;
       viewportMode: BrowserViewportMode;
     }
   | {
       type: 'browser.click';
-      missionId: string;
+      appSessionId: string;
       ref?: string;
       x?: number;
       y?: number;
       source?: 'agent' | 'user';
     }
-  | { type: 'browser.type'; missionId: string; text: string }
-  | { type: 'browser.keypress'; missionId: string; key: string }
+  | { type: 'browser.type'; appSessionId: string; text: string }
+  | { type: 'browser.keypress'; appSessionId: string; key: string }
   | {
       type: 'browser.scroll';
-      missionId: string;
+      appSessionId: string;
       direction: BrowserScrollDirection;
       pixels?: number;
       ref?: string;
@@ -657,23 +627,20 @@ export type ClientCommand =
     }
   | {
       type: 'browser.screenshot';
-      missionId: string;
+      appSessionId: string;
       fullPage?: boolean;
       deviceScaleFactor?: number;
     }
-  | { type: 'browser.inspectPoint'; missionId: string; x: number; y: number }
-  | { type: 'browser.design.addReference'; missionId: string; reference: DesignReference }
+  | { type: 'browser.inspectPoint'; appSessionId: string; x: number; y: number }
+  | { type: 'browser.design.addReference'; appSessionId: string; reference: DesignReference }
   | {
       type: 'browser.design.sendPrompt';
-      missionId: string;
+      appSessionId: string;
       instruction: string;
       referenceIds: string[];
     }
   | { type: 'browser.native.result'; result: BrowserNativeResult }
-  | { type: 'spec.read'; missionId: string; path: string }
-  | { type: 'sessions.list' }
-  | { type: 'mission.resume'; sessionId: string }
-  | { type: 'models.list' };
+  | { type: 'spec.read'; appSessionId: string; path: string };
 
 // ── Sidecar -> Frontend ──────────────────────────────────────────────
 export type ServerEvent =
@@ -690,21 +657,28 @@ export type ServerEvent =
       line: string;
     }
   | { type: 'cli.install.done'; phase: 'install' | 'update'; ok: boolean; exitCode: number }
-  | { type: 'session.updated'; session: MissionSummary }
+  | { type: 'session.created'; clientRef: string; session: SessionSummary }
+  | { type: 'session.updated'; session: SessionSummary }
   | {
-      type: 'agent.updated';
-      missionId: string;
-      agentSessionId: string;
-      role: AgentRole;
+      type: 'child.updated';
+      appSessionId: string;
+      providerSessionId: string;
+      role: SessionRole;
       status: 'opened' | 'running' | 'paused' | 'completed';
     }
   | { type: 'event.appended'; event: TranscriptEvent }
   | { type: 'approval.requested'; request: PermissionRequest }
-  | { type: 'question.requested'; question: MissionQuestion }
-  | { type: 'context.updated'; sessionId: string; stats: ContextStatsSnapshot; breakdown?: unknown }
+  | { type: 'question.requested'; question: SessionQuestion }
+  | {
+      type: 'context.updated';
+      appSessionId: string;
+      sourceSessionId: string;
+      stats: ContextStatsSnapshot;
+      breakdown?: unknown;
+    }
   | {
       type: 'mcp.authRequested';
-      sessionId: string;
+      providerSessionId: string;
       serverName?: string;
       authUrl?: string;
       message?: string;
@@ -713,20 +687,35 @@ export type ServerEvent =
       type: 'catalog.updated';
       catalog: 'models' | 'tools' | 'skills' | 'mcp';
       items: unknown[];
-      sessionId?: string | null;
+      providerSessionId?: string | null;
     }
   | { type: 'settings.defaults'; defaults: FactoryDefaultSettings }
-  | { type: 'error'; code?: string; sessionId?: string; missionId?: string; message: string }
-  | { type: 'agent.not_steerable'; missionId: string; agentSessionId: string; message: string }
-  | { type: 'mission.created'; clientRef: string; mission: MissionSummary }
-  | { type: 'mission.updated'; mission: MissionSummary }
-  | { type: 'mission.features'; missionId: string; features: BridgeFeature[] }
-  | { type: 'mission.progress'; missionId: string; entries: ProgressEntry[] }
   | {
-      type: 'mission.worker';
-      missionId: string;
+      type: 'error';
+      code?: string;
+      appSessionId?: string;
+      providerSessionId?: string;
+      message: string;
+      recoverable?: boolean;
+    }
+  | {
+      type: 'child.not_steerable';
+      appSessionId: string;
+      providerSessionId: string;
+      message: string;
+    }
+  | {
+      type: 'mission.features';
+      appSessionId: string;
+      missionId?: string;
+      features: BridgeFeature[];
+    }
+  | { type: 'mission.progress'; appSessionId: string; missionId?: string; entries: ProgressEntry[] }
+  | {
+      type: 'session.child';
+      appSessionId: string;
       event: 'started' | 'updated' | 'completed';
-      workerSessionId: string;
+      providerSessionId: string;
       exitCode?: number;
       label?: string;
       prompt?: string;
@@ -734,26 +723,14 @@ export type ServerEvent =
       reasoningEffort?: ReasoningEffort;
       toolUseId?: string;
     }
+  | { type: 'spec.content'; appSessionId: string; path: string; content: string }
+  | { type: 'sessions.list'; sessions: SessionSummary[] }
   | {
-      type: 'mission.tokens';
-      missionId: string;
-      tokensIn: number;
-      tokensOut: number;
-      contextTokens: number;
-      maxContextTokens?: number;
-    }
-  | { type: 'mission.transcript'; event: TranscriptEvent }
-  | { type: 'mission.permission'; request: PermissionRequest }
-  | { type: 'mission.question'; question: MissionQuestion }
-  | { type: 'spec.content'; missionId: string; path: string; content: string }
-  | { type: 'mission.error'; missionId?: string; message: string }
-  | { type: 'mission.list'; missions: MissionSummary[] }
-  | {
-      type: 'mission.history';
-      missionId: string;
+      type: 'session.history';
+      appSessionId: string;
       progress: ProgressEntry[];
       transcripts: TranscriptEvent[];
-      workers?: WorkerHistoryLink[];
+      childSessions?: ChildSessionHistoryLink[];
       mode?: 'replace' | 'prepend';
       olderCursor?: string;
       // Restore telemetry: how many transcript events this page delivered and
@@ -762,10 +739,9 @@ export type ServerEvent =
       loadedCount?: number;
       hasMore?: boolean;
     }
-  | { type: 'mission.history.error'; missionId: string; message: string }
-  | { type: 'sessions.history'; missions: HistoryMission[] }
-  | { type: 'models.list'; models: ModelInfo[] }
+  | { type: 'session.history.error'; appSessionId: string; message: string }
+  | { type: 'history.list'; sessions: SessionHistoryEntry[] }
   | { type: 'browser.updated'; state: BrowserState }
   | { type: 'browser.native.request'; request: BrowserNativeRequest }
-  | { type: 'browser.closed'; missionId: string }
-  | { type: 'browser.error'; missionId?: string; message: string };
+  | { type: 'browser.closed'; appSessionId: string }
+  | { type: 'browser.error'; appSessionId?: string; message: string };

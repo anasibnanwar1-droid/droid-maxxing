@@ -253,14 +253,14 @@ export function ReviewPanel({ cwd, onClose }: { cwd: string; onClose?: () => voi
     return () => observer.disconnect();
   }, []);
 
-  const sessionId = state.activeMissionId ?? undefined;
-  const review = useReviewDiff(cwd, state.reviewScope, true, sessionId);
+  const appSessionId = state.activeAppSessionId ?? undefined;
+  const review = useReviewDiff(cwd, state.reviewScope, true, appSessionId);
   const { entries: diffEntries, ensure } = useReviewFileDiffs(
     cwd,
     state.reviewScope,
     hideWhitespace,
     review.signature,
-    sessionId,
+    appSessionId,
   );
   const git = useGitEnvironment(cwd, 'worktree');
   const isGitHub = !!git.env?.isGitHub;

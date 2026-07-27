@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { ChevronDown, ChevronUp } from 'lucide-react';
 import { useStore } from '../../hooks/useStore';
-import { useMissionLive } from '../../hooks/useMissionLive';
+import { useSessionLive } from '../../hooks/useSessionLive';
 import type { TranscriptEvent } from '../../types/bridge';
 import PromptInput from '../PromptInput';
 import BrowserWorkspace from './BrowserWorkspace';
@@ -21,19 +21,18 @@ export function BrowserFocusWorkspace({
   const { state } = useStore();
   const [activityOpen, setActivityOpen] = useState(false);
   const [promptOverlayOpen, setPromptOverlayOpen] = useState(false);
-  const activeMission = state.activeMissionId ? state.missions[state.activeMissionId] : null;
-  const live = useMissionLive(activeMission?.id ?? null);
+  const activeSession = state.activeAppSessionId ? state.sessions[state.activeAppSessionId] : null;
+  const live = useSessionLive(activeSession?.appSessionId ?? null);
   const recent = useMemo(() => {
-    if (!activeMission) return [];
-    const transcript = state.transcripts[activeMission.id] ?? [];
+    if (!activeSession) return [];
+    const transcript = state.transcripts[activeSession.appSessionId] ?? [];
     return transcript
       .filter(
         (event) =>
-          event.role === 'orchestrator' ||
-          (event.author === 'user' && event.agentSessionId === 'user'),
+          event.role === 'primary' || (event.author === 'user' && event.sourceSessionId === 'user'),
       )
       .slice(-RECENT_ACTIVITY_LIMIT);
-  }, [activeMission, state.transcripts]);
+  }, [activeSession, state.transcripts]);
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-droid-bg">

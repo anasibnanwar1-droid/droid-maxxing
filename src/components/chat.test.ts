@@ -20,9 +20,9 @@ let seq = 0;
 function ev(extra: Partial<TranscriptEvent>): TranscriptEvent {
   return {
     id: `e${seq++}`,
-    missionId: 'm',
-    agentSessionId: 'orchestrator',
-    role: 'orchestrator',
+    appSessionId: 'm',
+    sourceSessionId: 'primary',
+    role: 'primary',
     ts: seq,
     kind: 'text',
     ...extra,
@@ -394,8 +394,8 @@ test('a user cancellation is hidden from the feed', () => {
   );
 });
 
-test('#20 a tool result split from its call by a subagent spawn still pairs inline', () => {
-  // A subagent spawn breaks the tools group, so a batched replay like
+test('#20 a tool result split from its call by a child session spawn still pairs inline', () => {
+  // A child session spawn breaks the tools group, so a batched replay like
   // Grep(g), Task(t), result(g), result(t) finalizes the Grep call before
   // result(g) is reached. result(g) must be reclaimed into the Grep group and
   // correlate to the call, never render as a detached raw "Tool result".
@@ -433,8 +433,8 @@ test('#20 a tool result split from its call by a subagent spawn still pairs inli
     .flatMap((it) => it.events)
     .some((e) => e.kind === 'tool_result' && e.toolUseId === 'g');
   assert.equal(detached, false);
-  // The subagent still renders as its own card.
-  assert.ok(items.some((it) => it.type === 'subagent'));
+  // The child session still renders as its own card.
+  assert.ok(items.some((it) => it.type === 'child_session'));
 });
 
 test('#20 a reclaimed result is not re-emitted as raw activity in a later group', () => {
@@ -471,8 +471,8 @@ test('#20 a reclaimed result is not re-emitted as raw activity in a later group'
   assert.equal(occurrences, 1);
 });
 
-test('#20 a subagent completion result is dropped group-wide even when batched', () => {
-  // Replay can place a subagent (Task) result far from its call and with no
+test('#20 a child session completion result is dropped group-wide even when batched', () => {
+  // Replay can place a child session (Task) result far from its call and with no
   // toolName; it must still be folded into the card, never leak as raw activity.
   const taskCall = ev({
     kind: 'tool_call',
@@ -490,15 +490,15 @@ test('#20 a subagent completion result is dropped group-wide even when batched',
     kind: 'tool_result',
     toolName: '',
     toolUseId: 'tA',
-    text: 'subagent done',
+    text: 'child session done',
   });
   const grepResult = ev({ kind: 'tool_result', toolName: '', toolUseId: 'g', text: 'hit' });
   const items = buildFeed([taskCall, grepCall, taskResult, grepResult], true);
-  assert.ok(items.some((it) => it.type === 'subagent'));
+  assert.ok(items.some((it) => it.type === 'child_session'));
   const toolEvents = items
     .filter((it): it is Extract<FeedItem, { type: 'tools' }> => it.type === 'tools')
     .flatMap((it) => it.events);
-  // The subagent's completion result never appears as a raw tool event.
+  // The child session's completion result never appears as a raw tool event.
   assert.equal(
     toolEvents.some((e) => e.toolUseId === 'tA'),
     false,
@@ -510,7 +510,7 @@ test('#20 a subagent completion result is dropped group-wide even when batched',
   );
 });
 
-test('#20 a failed subagent completion result still surfaces', () => {
+test('#20 a failed child session completion result still surfaces', () => {
   const taskCall = ev({
     kind: 'tool_call',
     toolName: 'Task',
@@ -532,8 +532,8 @@ test('#20 a failed subagent completion result still surfaces', () => {
   );
 });
 
-test('#20 a plan result does not leak when a subagent spawn splits its call and result', () => {
-  // Replay order: TodoWrite call, Task spawn, then TodoWrite result. The subagent
+test('#20 a plan result does not leak when a child session spawn splits its call and result', () => {
+  // Replay order: TodoWrite call, Task spawn, then TodoWrite result. The child session
   // card breaks the group, so the plan call and its result land in different
   // groups; the result must still be dropped group-wide, never leak as activity.
   const todoCall = ev({
@@ -563,12 +563,12 @@ test('#20 a plan result does not leak when a subagent spawn splits its call and 
     toolEvents.some((e) => e.kind === 'tool_result' && e.toolUseId === 't1'),
     false,
   );
-  // The subagent still renders as a card and the plan checklist call remains.
-  assert.ok(items.some((it) => it.type === 'subagent'));
+  // The child session still renders as a card and the plan checklist call remains.
+  assert.ok(items.some((it) => it.type === 'child_session'));
   assert.ok(toolEvents.some((e) => e.kind === 'tool_call' && e.toolName === 'TodoWrite'));
 });
 
-test('#20 a failed subagent result batched after another tool call surfaces as an error', () => {
+test('#20 a failed child session result batched after another tool call surfaces as an error', () => {
   // The failed Task result trails a Grep call, so the generic grouping loop sees
   // it; it must break out and surface as an error, not fold into the tools group.
   const taskCall = ev({
@@ -594,7 +594,7 @@ test('#20 a failed subagent result batched after another tool call surfaces as a
   const toolEvents = items
     .filter((it): it is Extract<FeedItem, { type: 'tools' }> => it.type === 'tools')
     .flatMap((it) => it.events);
-  // The failed subagent result is not folded into the generic tools group.
+  // The failed child session result is not folded into the generic tools group.
   assert.equal(
     toolEvents.some((e) => e.toolUseId === 'tA'),
     false,

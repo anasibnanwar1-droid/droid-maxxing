@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { MissionSummary } from './protocol.js';
+import type { SessionSummary } from './protocol.js';
 
 const originalHome = process.env.HOME;
 const home = mkdtempSync(join(tmpdir(), 'droid-history-home-'));
@@ -32,13 +32,14 @@ function writeSession(id: string, cwd: string, extra: Record<string, unknown> = 
   );
 }
 
-function summary(id: string, cwd: string): MissionSummary {
+function summary(appSessionId: string, cwd: string): SessionSummary {
   const now = Date.now();
   return {
-    id,
-    sessionId: id,
-    kind: 'chat',
-    role: 'orchestrator',
+    appSessionId,
+    providerSessionId: appSessionId,
+    sessionPurpose: 'chat',
+    interactionMode: 'auto',
+    role: 'primary',
     title: 'Plain chat',
     goal: 'Plain chat',
     cwd,
@@ -65,7 +66,7 @@ test('loadHistoricalSessions applies app summaries before plain chat filtering',
   const rows = loadHistoricalSessions({ includePlainChats: true, limitPerWorkspace: 5 });
 
   assert.deepEqual(
-    rows.map((row) => row.summary.id),
+    rows.map((row) => row.summary.appSessionId),
     ['plain-runtime-home'],
   );
   assert.equal(rows[0].summary.cwd, '');
@@ -81,45 +82,47 @@ test('syncSummaries persists autoCompactions and loadHistoricalSessions restores
 
   const rows = loadHistoricalSessions({ workspaceCwds: [cwd] });
 
-  const row = rows.find((r) => r.summary.id === 'autocompact-chat');
+  const row = rows.find((r) => r.summary.appSessionId === 'autocompact-chat');
   assert.equal(row?.summary.autoCompactions, 3);
 });
 
-test('loadHistoricalSessions hides a Task-spawned subagent that has a persisted worker link', () => {
-  const cwd = join(home, 'workspace-subagent');
+test('loadHistoricalSessions hides a Task-spawned child with a persisted link', () => {
+  const cwd = join(home, 'workspace-child');
   writeSession('real-session', cwd);
-  writeSession('subagent-session', cwd, {
+  writeSession('child-session', cwd, {
     callingSessionId: 'real-session',
     callingToolUseId: 'tool-1',
   });
   // A persisted link lets the parent chat open it as a worker, so it must not
   // also surface as a standalone session.
   const index = new HistoryIndex();
-  index.recordSubagentLink('real-session', 'tool-1', 'subagent-session');
+  index.recordChildSessionLink('real-session', 'tool-1', 'child-session');
   index.close();
 
   const rows = loadHistoricalSessions({ workspaceCwds: [cwd] });
 
   assert.deepEqual(
-    rows.map((row) => row.summary.id),
+    rows.map((row) => row.summary.appSessionId),
     ['real-session'],
   );
 });
 
-test('loadHistoricalSessions keeps a marker-only Task subagent visible when it has no persisted link', () => {
+test('loadHistoricalSessions hides a Task child session even when its link is missing', () => {
   const cwd = join(home, 'workspace-orphan');
   writeSession('orphan-parent', cwd);
-  // Recorded before links were persisted: spawn markers but no subagent_links
-  // row. Hiding it would orphan it (the parent has no link to open it), so it
-  // must remain a standalone, openable session.
-  writeSession('orphan-subagent', cwd, {
+  // Task children never appear as top-level sessions. A missing canonical link
+  // is an invalid local state, not a second history behavior.
+  writeSession('orphan-child', cwd, {
     callingSessionId: 'orphan-parent',
     callingToolUseId: 'tool-7',
   });
 
   const rows = loadHistoricalSessions({ workspaceCwds: [cwd] });
 
-  assert.deepEqual(rows.map((row) => row.summary.id).sort(), ['orphan-parent', 'orphan-subagent']);
+  assert.deepEqual(
+    rows.map((row) => row.summary.appSessionId),
+    ['orphan-parent'],
+  );
 });
 
 test('loadHistoricalSessions keeps a rekeyed worker hidden under its superseded id', () => {
@@ -128,16 +131,16 @@ test('loadHistoricalSessions keeps a rekeyed worker hidden under its superseded 
   writeSession('worker-old', cwd, { callingSessionId: 'rekey-parent', callingToolUseId: 'tool-r' });
   writeSession('worker-new', cwd, { callingSessionId: 'rekey-parent', callingToolUseId: 'tool-r' });
   const index = new HistoryIndex();
-  index.recordSubagentLink('rekey-parent', 'tool-r', 'worker-old', 'builder');
+  index.recordChildSessionLink('rekey-parent', 'tool-r', 'worker-old', 'builder');
   // Worker compaction rekeys the spawn, repointing the link at the new id.
-  index.recordSubagentLink('rekey-parent', 'tool-r', 'worker-new', 'builder');
+  index.recordChildSessionLink('rekey-parent', 'tool-r', 'worker-new', 'builder');
   index.close();
 
   const rows = loadHistoricalSessions({ workspaceCwds: [cwd] });
 
   // Both the pre- and post-rekey worker sessions stay hidden; only the parent shows.
   assert.deepEqual(
-    rows.map((row) => row.summary.id),
+    rows.map((row) => row.summary.appSessionId),
     ['rekey-parent'],
   );
 });
@@ -148,20 +151,23 @@ test('loadHistoricalSessions keeps forked chats (bare parent, no spawn markers) 
   // A forked chat carries a `parent` link but no callingSessionId/callingToolUseId;
   // it is a standalone conversation and must stay in history.
   writeSession('forked-session', cwd, { parent: 'source-session' });
-  // A real Task subagent (spawn markers present) with a persisted link must still
+  // A real Task child (spawn markers present) with a persisted link must still
   // be hidden (it is openable from the parent as a worker).
-  writeSession('task-subagent', cwd, {
+  writeSession('task-child', cwd, {
     parent: 'source-session',
     callingSessionId: 'source-session',
     callingToolUseId: 'tool-9',
   });
   const index = new HistoryIndex();
-  index.recordSubagentLink('source-session', 'tool-9', 'task-subagent');
+  index.recordChildSessionLink('source-session', 'tool-9', 'task-child');
   index.close();
 
   const rows = loadHistoricalSessions({ workspaceCwds: [cwd] });
 
-  assert.deepEqual(rows.map((row) => row.summary.id).sort(), ['forked-session', 'source-session']);
+  assert.deepEqual(rows.map((row) => row.summary.appSessionId).sort(), [
+    'forked-session',
+    'source-session',
+  ]);
 });
 
 test('loadHistoricalSessions returns every session when no limit is requested', () => {

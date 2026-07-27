@@ -70,7 +70,7 @@ test('extractDroidWorkingState detects transitions that settle compaction', () =
 });
 
 test('token usage maps context to the daemon threshold formula (in + out + cacheRead)', () => {
-  const normalized = normalizeStreamEvent('mission-1', 'mission-1', 'orchestrator', {
+  const normalized = normalizeStreamEvent('app-session-1', 'app-session-1', 'primary', {
     type: 'session_token_usage_changed',
     inclusiveTokenUsage: {
       inputTokens: 100,
@@ -150,7 +150,7 @@ test('classifyPermission reads the SDK toolUses shape for exec', () => {
 });
 
 test('captures Task prompt metadata before the subagent session id exists', () => {
-  const normalized = normalizeStreamEvent('mission-1', 'mission-1', 'orchestrator', {
+  const normalized = normalizeStreamEvent('app-session-1', 'app-session-1', 'primary', {
     type: 'tool_call',
     toolUse: {
       id: 'tool-1',
@@ -163,12 +163,12 @@ test('captures Task prompt metadata before the subagent session id exists', () =
     },
   } as never);
 
-  assert.equal(normalized?.subagent?.label, 'code-reviewer');
+  assert.equal(normalized?.childSession?.label, 'code-reviewer');
   assert.equal(
-    normalized?.subagent?.prompt,
+    normalized?.childSession?.prompt,
     'Inspect the current diff and report correctness risks.',
   );
-  assert.equal(normalized?.subagent?.toolUseId, 'tool-1');
+  assert.equal(normalized?.childSession?.toolUseId, 'tool-1');
   // The spawn's transcript copy must carry the tool_call id so the chat feed
   // can collapse streaming deltas into one line and link it to the worker.
   assert.equal(normalized?.transcript?.kind, 'tool_call');
@@ -176,7 +176,7 @@ test('captures Task prompt metadata before the subagent session id exists', () =
 });
 
 test('stamps toolUseId on ordinary (non-subagent) tool_call transcripts', () => {
-  const normalized = normalizeStreamEvent('mission-1', 'mission-1', 'orchestrator', {
+  const normalized = normalizeStreamEvent('app-session-1', 'app-session-1', 'primary', {
     type: 'tool_call',
     toolUse: {
       id: 'edit-1',
@@ -185,13 +185,13 @@ test('stamps toolUseId on ordinary (non-subagent) tool_call transcripts', () => 
     },
   } as never);
 
-  assert.equal(normalized?.subagent, undefined);
+  assert.equal(normalized?.childSession, undefined);
   assert.equal(normalized?.transcript?.kind, 'tool_call');
   assert.equal(normalized?.transcript?.toolUseId, 'edit-1');
 });
 
 test('stamps toolUseId on ordinary (non-subagent) tool_result transcripts', () => {
-  const normalized = normalizeStreamEvent('mission-1', 'mission-1', 'orchestrator', {
+  const normalized = normalizeStreamEvent('app-session-1', 'app-session-1', 'primary', {
     type: 'tool_result',
     toolName: 'edit',
     toolUseId: 'edit-1',
@@ -199,13 +199,13 @@ test('stamps toolUseId on ordinary (non-subagent) tool_result transcripts', () =
     isError: false,
   } as never);
 
-  assert.equal(normalized?.subagent, undefined);
+  assert.equal(normalized?.childSession, undefined);
   assert.equal(normalized?.transcript?.kind, 'tool_result');
   assert.equal(normalized?.transcript?.toolUseId, 'edit-1');
 });
 
 test('captures subagent session ids from Task progress events', () => {
-  const normalized = normalizeStreamEvent('mission-1', 'mission-1', 'orchestrator', {
+  const normalized = normalizeStreamEvent('app-session-1', 'app-session-1', 'primary', {
     type: 'tool_progress',
     toolUseId: 'tool-1',
     update: {
@@ -214,13 +214,13 @@ test('captures subagent session ids from Task progress events', () => {
     },
   } as never);
 
-  assert.equal(normalized?.subagent?.sessionId, 'worker-1');
-  assert.equal(normalized?.subagent?.label, 'code-reviewer');
-  assert.equal(normalized?.subagent?.toolUseId, 'tool-1');
+  assert.equal(normalized?.childSession?.providerSessionId, 'worker-1');
+  assert.equal(normalized?.childSession?.label, 'code-reviewer');
+  assert.equal(normalized?.childSession?.toolUseId, 'tool-1');
 });
 
 test('marks Task results as correlated subagent completion', () => {
-  const normalized = normalizeStreamEvent('mission-1', 'mission-1', 'orchestrator', {
+  const normalized = normalizeStreamEvent('app-session-1', 'app-session-1', 'primary', {
     type: 'tool_result',
     toolName: 'Task',
     toolUseId: 'tool-1',
@@ -228,6 +228,6 @@ test('marks Task results as correlated subagent completion', () => {
     isError: false,
   } as never);
 
-  assert.equal(normalized?.subagent?.done, true);
-  assert.equal(normalized?.subagent?.toolUseId, 'tool-1');
+  assert.equal(normalized?.childSession?.done, true);
+  assert.equal(normalized?.childSession?.toolUseId, 'tool-1');
 });

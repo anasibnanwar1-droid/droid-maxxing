@@ -1,37 +1,27 @@
-import type { BrowserNativeRequest, MissionSummary } from '../types/bridge';
+import type { BrowserNativeRequest, SessionSummary } from '../types/bridge';
 
-export function browserKeyForMission(mission: MissionSummary | undefined): string | undefined {
-  if (!mission) return undefined;
+export function browserKeyForSession(session: SessionSummary | undefined): string | undefined {
+  if (!session) return undefined;
   // The backend keys browser sessions by the stable app session id, which never
-  // changes (compaction swaps mission.sessionId, but the browser key must not).
-  return mission.id;
+  // changes (compaction swaps providerSessionId, but the browser key must not).
+  return session.appSessionId;
 }
 
-export function activeMissionAfterNativeBrowserRequest(
-  activeMissionId: string | null,
+export function activeSessionAfterNativeBrowserRequest(
+  activeAppSessionId: string | null,
   request: BrowserNativeRequest,
-  missions: Record<string, MissionSummary> = {},
 ): string | null {
-  return activeMissionId ?? missionIdForBrowserKey(missions, request.missionId);
-}
-
-export function missionIdForBrowserKey(
-  missions: Record<string, MissionSummary>,
-  browserKey: string,
-): string {
-  return (
-    Object.values(missions).find((mission) => browserKeyForMission(mission) === browserKey)?.id ??
-    browserKey
-  );
+  return activeAppSessionId ?? request.appSessionId;
 }
 
 export function nativeBrowserRequestTargetsVisibleSurface(input: {
   browserKey: string;
-  visibleSessionId?: string;
-  requestMissionId: string;
-  requestSessionId: string;
+  visibleBrowserSessionId?: string;
+  requestAppSessionId: string;
+  requestBrowserSessionId: string;
 }): boolean {
   return (
-    input.browserKey === input.requestMissionId || input.visibleSessionId === input.requestSessionId
+    input.browserKey === input.requestAppSessionId ||
+    input.visibleBrowserSessionId === input.requestBrowserSessionId
   );
 }

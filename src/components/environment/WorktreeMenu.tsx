@@ -3,7 +3,7 @@ import { Check, ChevronDown, Columns2, ExternalLink, Loader2, Plus, Trash2, X } 
 import { Popover } from './Popover';
 import { useStore } from '../../hooks/useStore';
 import { createGitWorktree, isWorktreeInUse, removeGitWorktree, worktreeName } from '../../lib/git';
-import { activeSessionCwds } from '../../lib/missions';
+import { activeSessionCwds } from '../../lib/sessions';
 import { utilityTerminalCwds } from '../../lib/utilityPanel';
 import { useBusyAction } from '../../hooks/useBusyAction';
 import { toast } from '../../lib/toast';
@@ -56,22 +56,22 @@ export function WorktreeMenu({
   const sessionCwds = useMemo(
     () =>
       activeSessionCwds({
-        missions: Object.values(state.missions),
-        activeMissionId: state.activeMissionId,
+        sessions: Object.values(state.sessions),
+        activeAppSessionId: state.activeAppSessionId,
         draftCwd: state.draftChat?.cwd,
-        workers: state.workers,
+        childSessions: state.childSessions,
         pinnedCwds: utilityTerminalCwds(
           state.utilityPanels,
           Object.fromEntries(
-            Object.entries(state.missions).map(([id, mission]) => [id, mission.cwd]),
+            Object.entries(state.sessions).map(([id, session]) => [id, session.cwd]),
           ),
         ),
       }),
     [
-      state.missions,
-      state.activeMissionId,
+      state.sessions,
+      state.activeAppSessionId,
       state.draftChat?.cwd,
-      state.workers,
+      state.childSessions,
       state.utilityPanels,
     ],
   );

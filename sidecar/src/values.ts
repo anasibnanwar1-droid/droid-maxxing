@@ -1,5 +1,5 @@
 // Generic, sidecar-wide value coercion guards. Several parsing paths
-// (MissionManager, history, browser/domSnapshot) need the same strict
+// (SessionManager, history, browser/domSnapshot) need the same strict
 // string/number extraction from untyped JSON; centralizing it keeps the
 // behavior from silently diverging across copies. Catalog parsers
 // (modelCatalog, DroidCliCatalog) intentionally use looser coercion and

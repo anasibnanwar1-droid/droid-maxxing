@@ -4,7 +4,7 @@ import { ModelIcon } from './ModelIcon';
 const EASE = [0.16, 1, 0.3, 1] as const;
 
 /*
- * MissionPixelBanner — reusable retro "LED board" design element.
+ * PixelBanner — reusable retro "LED board" design element.
  *
  * A dot-matrix headline + a pixel-fragment sweep + a slowly spinning Factory
  * mark. This was originally the "MISSION CONTROL" flourish in the bottom status
@@ -12,7 +12,7 @@ const EASE = [0.16, 1, 0.3, 1] as const;
  * restoring states, or a "starting a droid" splash).
  *
  * NOTE: intentionally NOT wired into any screen right now. Drop
- * <MissionPixelBanner text="…" /> wherever a lively accent moment is wanted, or
+ * <PixelBanner text="…" /> wherever a lively accent moment is wanted, or
  * reuse the exported DotMatrix / PixelSweep pieces on their own. Bump
  * `sweepTrigger` (a changing number) to replay the sweep, e.g. on hover.
  */
@@ -83,7 +83,7 @@ export function PixelSweep({ trigger }: { trigger: number }) {
 }
 
 /* Composed banner: spinning mark + dot-matrix label over a pixel sweep. */
-export default function MissionPixelBanner({
+export default function PixelBanner({
   text = 'MISSION CONTROL',
   sweepTrigger = 0,
 }: {

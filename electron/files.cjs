@@ -1,7 +1,7 @@
 /**
  * Secure root-bound Files-domain backend helpers.
  *
- * Every operation takes a canonical mission root plus a relative path and
+ * Every operation takes a canonical session root plus a relative path and
  * refuses to follow absolute paths, traversal segments, out-of-root targets,
  * or symlink escapes. The resolved target must additionally be a regular file
  * (or directory for listDirectory) before any bytes are read.
@@ -440,7 +440,7 @@ function clampCap(value) {
 }
 
 /**
- * Reads a preview payload for a single file under the mission root.
+ * Reads a preview payload for a single file under the session root.
  *
  * Behaviour by category:
  *   - text:  returns `{ text }` decoded as UTF-8, capped at TEXT_PREVIEW_CAP_BYTES.

@@ -5,8 +5,8 @@ import { SpecModal } from './SpecModal';
 // opened from the inline chat card, the approval bar, or the right panel.
 export default function SpecWikiModal() {
   const { state, dispatch } = useStore();
-  const missionId = state.specWikiMissionId;
-  const spec = missionId ? state.missionSpecs[missionId] : undefined;
+  const appSessionId = state.specWikiAppSessionId;
+  const spec = appSessionId ? state.sessionSpecs[appSessionId] : undefined;
 
   return (
     <SpecModal

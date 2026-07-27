@@ -7,9 +7,9 @@ import type { TranscriptEvent } from '../types/bridge';
 function ev(id: string, ts: number, text = id): TranscriptEvent {
   return {
     id,
-    missionId: 'm1',
-    agentSessionId: 'orchestrator',
-    role: 'orchestrator',
+    appSessionId: 'm1',
+    sourceSessionId: 'primary',
+    role: 'primary',
     kind: 'text',
     text,
     ts,
@@ -19,9 +19,9 @@ function ev(id: string, ts: number, text = id): TranscriptEvent {
 function userEv(id: string, ts: number, text: string): TranscriptEvent {
   return {
     id,
-    missionId: 'm1',
-    agentSessionId: 'user',
-    role: 'orchestrator',
+    appSessionId: 'm1',
+    sourceSessionId: 'user',
+    role: 'primary',
     kind: 'text',
     text,
     ts,
@@ -32,15 +32,15 @@ function userEv(id: string, ts: number, text: string): TranscriptEvent {
 test('#29 SESSION_RESTORE_START marks the transcript as loading', () => {
   const next = reducer(initialState as unknown as AppState, {
     type: 'SESSION_RESTORE_START',
-    missionId: 'm1',
+    appSessionId: 'm1',
   });
   assert.deepEqual(next.sessionRestore.m1, { status: 'loading', loadedCount: 0, hasMore: false });
 });
 
 test('#29 a fully-loaded replace reports loaded with the event count and no more pages', () => {
   const next = reducer(initialState as unknown as AppState, {
-    type: 'MISSION_HISTORY',
-    missionId: 'm1',
+    type: 'SESSION_HISTORY',
+    appSessionId: 'm1',
     progress: [],
     transcripts: [ev('a', 1), ev('b', 2)],
     mode: 'replace',
@@ -53,8 +53,8 @@ test('#29 a fully-loaded replace reports loaded with the event count and no more
 
 test('#29 a replace that leaves an older cursor reports a partial (paged) restore', () => {
   const next = reducer(initialState as unknown as AppState, {
-    type: 'MISSION_HISTORY',
-    missionId: 'm1',
+    type: 'SESSION_HISTORY',
+    appSessionId: 'm1',
     progress: [],
     transcripts: [ev('c', 3), ev('d', 4)],
     mode: 'replace',
@@ -67,7 +67,7 @@ test('#29 a replace that leaves an older cursor reports a partial (paged) restor
 });
 
 test('#29 a replace never clobbers live events that streamed in before the snapshot', () => {
-  // A reconnect to a running mission can deliver a live transcript event before
+  // A reconnect to a running session can deliver a live transcript event before
   // the history snapshot; that event must survive the replace.
   const seeded = {
     ...initialState,
@@ -75,8 +75,8 @@ test('#29 a replace never clobbers live events that streamed in before the snaps
   } as unknown as AppState;
 
   const next = reducer(seeded, {
-    type: 'MISSION_HISTORY',
-    missionId: 'm1',
+    type: 'SESSION_HISTORY',
+    appSessionId: 'm1',
     progress: [],
     transcripts: [ev('a', 1), ev('b', 2)],
     mode: 'replace',
@@ -98,8 +98,8 @@ test('#29 a replace prefers the authoritative page for events shared with live s
   } as unknown as AppState;
 
   const next = reducer(seeded, {
-    type: 'MISSION_HISTORY',
-    missionId: 'm1',
+    type: 'SESSION_HISTORY',
+    appSessionId: 'm1',
     progress: [],
     transcripts: [ev('a', 1, 'complete')],
     mode: 'replace',
@@ -122,8 +122,8 @@ test('#29 a replace drops the optimistic opening prompt the restored page alread
   } as unknown as AppState;
 
   const next = reducer(seeded, {
-    type: 'MISSION_HISTORY',
-    missionId: 'm1',
+    type: 'SESSION_HISTORY',
+    appSessionId: 'm1',
     progress: [],
     transcripts: [userEv('real-user', 1, 'hello there'), ev('asst', 2, 'hi')],
     mode: 'replace',
@@ -145,8 +145,8 @@ test('#29 a replace keeps a new local prompt sent during restore even if it repe
   } as unknown as AppState;
 
   const next = reducer(seeded, {
-    type: 'MISSION_HISTORY',
-    missionId: 'm1',
+    type: 'SESSION_HISTORY',
+    appSessionId: 'm1',
     progress: [],
     transcripts: [userEv('real-user', 1, 'do it again'), ev('asst', 2, 'done')],
     mode: 'replace',
@@ -168,8 +168,8 @@ test('#29 a replace keeps an un-persisted opening prompt above the restored page
   } as unknown as AppState;
 
   const next = reducer(seeded, {
-    type: 'MISSION_HISTORY',
-    missionId: 'm1',
+    type: 'SESSION_HISTORY',
+    appSessionId: 'm1',
     progress: [],
     transcripts: [ev('asst', 5, 'response only')],
     mode: 'replace',
@@ -192,8 +192,8 @@ test('#29 a paged replace keeps the opening prompt when a later page message rep
   } as unknown as AppState;
 
   const next = reducer(seeded, {
-    type: 'MISSION_HISTORY',
-    missionId: 'm1',
+    type: 'SESSION_HISTORY',
+    appSessionId: 'm1',
     progress: [],
     transcripts: [userEv('later-user', 50, 'run the build'), ev('asst', 51, 'ok')],
     mode: 'replace',
@@ -217,8 +217,8 @@ test('#29 a prepend drops the optimistic echo superseded by the persisted prompt
   } as unknown as AppState;
 
   const next = reducer(seeded, {
-    type: 'MISSION_HISTORY',
-    missionId: 'm1',
+    type: 'SESSION_HISTORY',
+    appSessionId: 'm1',
     progress: [],
     transcripts: [userEv('real-user', 1, 'run the build'), ev('asst-old', 2, 'older reply')],
     mode: 'prepend',
@@ -242,8 +242,8 @@ test('#29 a replace drops a live event that duplicates a replayed one by content
   } as unknown as AppState;
 
   const next = reducer(seeded, {
-    type: 'MISSION_HISTORY',
-    missionId: 'm1',
+    type: 'SESSION_HISTORY',
+    appSessionId: 'm1',
     progress: [],
     transcripts: [userEv('real-user', 1, 'go'), ev('sess:1:0:text', 1000, 'all done')],
     mode: 'replace',
@@ -257,12 +257,12 @@ test('#29 a replace drops a live event that duplicates a replayed one by content
 });
 
 test('#29 a replace keeps a live event from a different worker with identical text', () => {
-  // Same role/kind/text but a different agentSessionId is a distinct worker's
-  // output; scoping the signature by agentSessionId must not drop it.
+  // Same role/kind/text but a different sourceSessionId is a distinct worker's
+  // output; scoping the signature by sourceSessionId must not drop it.
   const liveFromWorkerB: TranscriptEvent = {
     id: 'live-b',
-    missionId: 'm1',
-    agentSessionId: 'worker-b',
+    appSessionId: 'm1',
+    sourceSessionId: 'worker-b',
     role: 'worker',
     kind: 'text',
     text: 'all done',
@@ -274,8 +274,8 @@ test('#29 a replace keeps a live event from a different worker with identical te
   } as unknown as AppState;
 
   const next = reducer(seeded, {
-    type: 'MISSION_HISTORY',
-    missionId: 'm1',
+    type: 'SESSION_HISTORY',
+    appSessionId: 'm1',
     progress: [],
     transcripts: [ev('sess:1:0:text', 1000, 'all done')],
     mode: 'replace',
@@ -297,8 +297,8 @@ test('#29 a replace keeps a new live event that only matches an OLD restored mes
   } as unknown as AppState;
 
   const next = reducer(seeded, {
-    type: 'MISSION_HISTORY',
-    missionId: 'm1',
+    type: 'SESSION_HISTORY',
+    appSessionId: 'm1',
     progress: [],
     transcripts: [ev('sess:1:0:text', 1000, 'ok'), ev('sess:2:0:text', 1001, 'later')],
     mode: 'replace',
@@ -320,8 +320,8 @@ test('#29 a replace keeps a genuinely repeated live message the page only contai
   } as unknown as AppState;
 
   const next = reducer(seeded, {
-    type: 'MISSION_HISTORY',
-    missionId: 'm1',
+    type: 'SESSION_HISTORY',
+    appSessionId: 'm1',
     progress: [],
     transcripts: [ev('sess:1:0:text', 990, 'ok')],
     mode: 'replace',
@@ -334,15 +334,15 @@ test('#29 a replace keeps a genuinely repeated live message the page only contai
   );
 });
 
-test('#29 a replace dedups a live orchestrator event against its persisted twin', () => {
-  // Live orchestrator events carry agentSessionId = appSessionId while history
-  // canonicalizes it to 'orchestrator'; the normalized signature must still
+test('#29 a replace dedups a live primary event against its persisted twin', () => {
+  // Live primary events carry sourceSessionId = appSessionId while history
+  // canonicalizes it to 'primary'; the normalized signature must still
   // match so the twin is not duplicated.
   const liveOrch: TranscriptEvent = {
     id: 'live-orch',
-    missionId: 'm1',
-    agentSessionId: 'm1',
-    role: 'orchestrator',
+    appSessionId: 'm1',
+    sourceSessionId: 'm1',
+    role: 'primary',
     kind: 'text',
     text: 'done',
     ts: 1002,
@@ -353,8 +353,8 @@ test('#29 a replace dedups a live orchestrator event against its persisted twin'
   } as unknown as AppState;
 
   const next = reducer(seeded, {
-    type: 'MISSION_HISTORY',
-    missionId: 'm1',
+    type: 'SESSION_HISTORY',
+    appSessionId: 'm1',
     progress: [],
     transcripts: [ev('sess:1:0:text', 1000, 'done')],
     mode: 'replace',
@@ -372,9 +372,9 @@ test('#29 a replace dedups a long-streamed live event whose start is outside tol
   // timestamped near completion, so matching must use the live [ts, endTs] span.
   const streamed: TranscriptEvent = {
     id: 'live-stream',
-    missionId: 'm1',
-    agentSessionId: 'orchestrator',
-    role: 'orchestrator',
+    appSessionId: 'm1',
+    sourceSessionId: 'primary',
+    role: 'primary',
     kind: 'text',
     text: 'long answer',
     ts: 1000,
@@ -386,8 +386,8 @@ test('#29 a replace dedups a long-streamed live event whose start is outside tol
   } as unknown as AppState;
 
   const next = reducer(seeded, {
-    type: 'MISSION_HISTORY',
-    missionId: 'm1',
+    type: 'SESSION_HISTORY',
+    appSessionId: 'm1',
     progress: [],
     transcripts: [ev('sess:1:0:text', 29900, 'long answer')],
     mode: 'replace',
@@ -405,9 +405,9 @@ test('#29 a replace supersedes a skill/file echo whose persisted prompt is compo
   // the composed prompt, so dedup must recompose to recognize it.
   const echo: TranscriptEvent = {
     id: 'local-1',
-    missionId: 'm1',
-    agentSessionId: 'user',
-    role: 'orchestrator',
+    appSessionId: 'm1',
+    sourceSessionId: 'user',
+    role: 'primary',
     kind: 'text',
     text: 'fix the bug',
     ts: 500,
@@ -422,8 +422,8 @@ test('#29 a replace supersedes a skill/file echo whose persisted prompt is compo
   } as unknown as AppState;
 
   const next = reducer(seeded, {
-    type: 'MISSION_HISTORY',
-    missionId: 'm1',
+    type: 'SESSION_HISTORY',
+    appSessionId: 'm1',
     progress: [],
     transcripts: [userEv('sess:1:0:text', 1000, composed)],
     mode: 'replace',
@@ -437,7 +437,7 @@ test('#29 a replace supersedes a skill/file echo whose persisted prompt is compo
 });
 
 test('#29 an empty replace keeps live progress instead of clearing it', () => {
-  // A live mission with no persisted history answers with an empty replace; that
+  // A live session with no persisted history answers with an empty replace; that
   // must not wipe progress already delivered by live events.
   const seeded = {
     ...initialState,
@@ -445,8 +445,8 @@ test('#29 an empty replace keeps live progress instead of clearing it', () => {
   } as unknown as AppState;
 
   const next = reducer(seeded, {
-    type: 'MISSION_HISTORY',
-    missionId: 'm1',
+    type: 'SESSION_HISTORY',
+    appSessionId: 'm1',
     progress: [],
     transcripts: [],
     mode: 'replace',
@@ -457,15 +457,15 @@ test('#29 an empty replace keeps live progress instead of clearing it', () => {
   assert.equal(next.progress.m1[0].title, 'work');
 });
 
-test('#29 MISSION_HISTORY_FAILED records a failed restore but keeps any prior count', () => {
+test('#29 SESSION_HISTORY_FAILED records a failed restore but keeps any prior count', () => {
   const seeded = {
     ...initialState,
     sessionRestore: { m1: { status: 'loading', loadedCount: 5, hasMore: true } },
   } as unknown as AppState;
 
   const next = reducer(seeded, {
-    type: 'MISSION_HISTORY_FAILED',
-    missionId: 'm1',
+    type: 'SESSION_HISTORY_FAILED',
+    appSessionId: 'm1',
     message: 'session file unreadable',
   });
 
@@ -486,8 +486,8 @@ test('#29 prepend grows the restore count and resolves to loaded when no cursor 
   } as unknown as AppState;
 
   const next = reducer(seeded, {
-    type: 'MISSION_HISTORY',
-    missionId: 'm1',
+    type: 'SESSION_HISTORY',
+    appSessionId: 'm1',
     progress: [],
     transcripts: [ev('a', 1), ev('b', 2)],
     mode: 'prepend',

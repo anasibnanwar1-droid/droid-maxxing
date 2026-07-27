@@ -30,7 +30,7 @@ import { useOnboarding } from '../hooks/useOnboarding';
 import { getAppVersion, type AppUpdateInfo } from '../lib/onboarding';
 import { refreshAppUpdate, startAppUpdate } from '../lib/appUpdate';
 import { getGitWorktrees, isWorktreeInUse, removeGitWorktree, worktreeName } from '../lib/git';
-import { activeSessionCwds } from '../lib/missions';
+import { activeSessionCwds } from '../lib/sessions';
 import { utilityTerminalCwds } from '../lib/utilityPanel';
 import { workspaceName } from '../lib/workspaces';
 import { toast } from '../lib/toast';
@@ -291,7 +291,7 @@ function AppearanceSection() {
 
   return (
     <div className="max-w-2xl mx-auto">
-      <SectionTitle title="Appearance" sub="Tune the look and feel of Mission Control." />
+      <SectionTitle title="Appearance" sub="Tune the look and feel of Droid Control." />
 
       {/* Theme mode + preview */}
       <div className="rounded-xl border border-droid-border bg-droid-surface p-4 mb-6">
@@ -413,7 +413,7 @@ function AppearanceSection() {
         </div>
         <Slider
           label="UI font size"
-          sub="Base size used for the Mission Control UI"
+          sub="Base size used across the Droid Control UI"
           value={theme.uiFontSize}
           min={12}
           max={18}
@@ -851,7 +851,10 @@ function GeneralSection() {
 
   return (
     <div className="max-w-2xl mx-auto">
-      <SectionTitle title="General" sub="Defaults that apply across all chats and missions." />
+      <SectionTitle
+        title="General"
+        sub="Defaults that apply across chats and Mission Control sessions."
+      />
 
       <GroupLabel>Composer</GroupLabel>
       <div className="rounded-xl border border-droid-border bg-droid-surface divide-y divide-droid-border mb-8">
@@ -1208,13 +1211,13 @@ function WorktreesSection() {
   // session's cwd would break its subsequent agent and git operations. Idle
   // historical chats are excluded so their old worktrees can still be cleaned up.
   const sessionCwds = activeSessionCwds({
-    missions: Object.values(state.missions),
-    activeMissionId: state.activeMissionId,
+    sessions: Object.values(state.sessions),
+    activeAppSessionId: state.activeAppSessionId,
     draftCwd: state.draftChat?.cwd,
-    workers: state.workers,
+    childSessions: state.childSessions,
     pinnedCwds: utilityTerminalCwds(
       state.utilityPanels,
-      Object.fromEntries(Object.entries(state.missions).map(([id, mission]) => [id, mission.cwd])),
+      Object.fromEntries(Object.entries(state.sessions).map(([id, session]) => [id, session.cwd])),
     ),
   });
 

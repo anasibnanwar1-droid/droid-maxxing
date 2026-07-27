@@ -1,6 +1,6 @@
 # Droid Control
 
-Droid Control is an Electron and React desktop app for running Factory Droid sessions, managing mission workspaces, and connecting the UI to the local Droid sidecar process.
+Droid Control is an Electron and React desktop app for running Factory Droid sessions, managing session workspaces, and connecting the UI to the local Droid sidecar process.
 
 ## Prerequisites
 

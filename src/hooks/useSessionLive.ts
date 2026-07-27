@@ -1,15 +1,15 @@
-import { missionIsLive } from '../lib/missions';
+import { sessionIsLive } from '../lib/sessions';
 import { useStore } from './useStore';
 
 /**
- * Whether a mission is *actively generating* right now.
+ * Whether a session is actively generating right now.
  *
  * The sidecar now reports an authoritative `streaming` flag that is true for the
  * whole turn (from send until the stream ends), so we no longer have to guess
  * from transcript freshness. We still respect phase for terminal/awaiting states.
  */
-export function useMissionLive(missionId: string | null): boolean {
+export function useSessionLive(appSessionId: string | null): boolean {
   const { state } = useStore();
-  const mission = missionId ? state.missions[missionId] : null;
-  return mission ? missionIsLive(mission) : false;
+  const session = appSessionId ? state.sessions[appSessionId] : null;
+  return session ? sessionIsLive(session) : false;
 }

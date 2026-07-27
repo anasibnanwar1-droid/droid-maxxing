@@ -141,7 +141,7 @@ export function daemonCompactionSettings(limit: number | undefined): DaemonCompa
 // ---------------------------------------------------------------------------
 // Manual compaction layer (the /compact command and the session.compact RPC).
 // The daemon returns a new backing session id on success; the owner adopts it
-// via the optional `reload` hook (the orchestrator swaps its backing session
+// via the optional `reload` hook (the primary session swaps its backing session
 // behind a stable app id). A caller without a reload hook reports the swap as
 // 'stale'. Automatic compaction never flows through here: the daemon's own
 // threshold check compacts in place and announces itself through the
@@ -157,7 +157,7 @@ export interface CompactionSink {
   // Re-read context stats so the meter reflects the compacted window.
   refresh(): Promise<void>;
   // Invoked only when the SDK returns a different backing session id. The owner
-  // adopts it here (the orchestrator swaps its backing session behind a stable
+  // adopts it here (the primary session swaps its backing session behind a stable
   // app id). Omitted only by callers that cannot adopt a swap.
   reload?: (newSessionId: string, removedCount: number) => Promise<void>;
 }

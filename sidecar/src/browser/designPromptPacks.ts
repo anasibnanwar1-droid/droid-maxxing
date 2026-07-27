@@ -4,7 +4,7 @@ import { browserDesignReferenceDir } from './browserPaths.js';
 import type { DesignPromptPack, DesignReference } from './types.js';
 
 export interface WriteDesignPromptPackOptions {
-  missionId: string;
+  appSessionId: string;
   browserSessionId: string;
   instruction: string;
   references: DesignReference[];
@@ -17,13 +17,13 @@ export async function writeDesignPromptPack(
 ): Promise<{ pack: DesignPromptPack; path: string }> {
   const createdAt = (options.now?.() ?? new Date()).toISOString();
   const pack: DesignPromptPack = {
-    missionId: options.missionId,
+    appSessionId: options.appSessionId,
     browserSessionId: options.browserSessionId,
     createdAt,
     instruction: options.instruction,
     references: options.references,
   };
-  const dir = browserDesignReferenceDir(options.missionId, options.baseDir);
+  const dir = browserDesignReferenceDir(options.appSessionId, options.baseDir);
   await mkdir(dir, { recursive: true });
   const path = join(dir, `pack-${createdAt.replace(/[:.]/g, '-')}.json`);
   await writeFile(path, `${JSON.stringify(pack, null, 2)}\n`, 'utf8');

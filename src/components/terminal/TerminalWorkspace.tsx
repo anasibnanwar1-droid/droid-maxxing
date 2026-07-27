@@ -17,13 +17,13 @@ import { isTerminalTabShortcut } from '../../lib/keyboardShortcuts';
 export function TerminalWorkspace({
   tabId,
   terminalId,
-  missionId,
+  appSessionId,
   cwd,
   onCreated,
 }: {
   tabId: string;
   terminalId?: string;
-  missionId: string;
+  appSessionId: string;
   cwd: string;
   onCreated: (terminalId: string, label: string) => void;
 }) {
@@ -106,7 +106,7 @@ export function TerminalWorkspace({
 
         const requestedTerminalId = terminalIdRef.current;
         const info = await ensureTerminalForTab(tabId, requestedTerminalId, {
-          missionId,
+          appSessionId,
           cwd,
           cols: instance.cols,
           rows: instance.rows,
@@ -159,7 +159,7 @@ export function TerminalWorkspace({
       terminalRef.current = null;
       fitRef.current = null;
     };
-  }, [cwd, missionId, tabId]);
+  }, [cwd, appSessionId, tabId]);
 
   useEffect(() => {
     themeRef.current = state.theme;

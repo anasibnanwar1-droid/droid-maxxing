@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { FileText, ChevronRight } from 'lucide-react';
 import { useStore } from '../hooks/useStore';
-import { respondPermission, sendToMission, sendToMissionNow } from '../lib/commands';
+import { respondPermission, sendToSession, sendToSessionNow } from '../lib/commands';
 import type { Autonomy, PermissionOutcome } from '../types/bridge';
 
 const EASE = [0.16, 1, 0.3, 1] as const;
@@ -43,21 +43,27 @@ export default function PlanApprovalInline() {
     const outcome: PermissionOutcome = isSpec
       ? AUTONOMY.find((a) => a.value === autonomy)!.outcome
       : 'proceed_once';
-    respondPermission(req.missionId, req.requestId, outcome);
-    if (isSpec) dispatch({ type: 'MISSION_SET_KIND', missionId: req.missionId, kind: 'chat' });
-    if (text) sendToMissionNow(req.missionId, text);
+    respondPermission(req.appSessionId, req.requestId, outcome);
+    if (isSpec) {
+      dispatch({
+        type: 'SESSION_SET_INTERACTION_MODE',
+        appSessionId: req.appSessionId,
+        interactionMode: 'auto',
+      });
+    }
+    if (text) sendToSessionNow(req.appSessionId, text);
     finish();
   };
 
   // Keep iterating: reject the plan and (optionally) hand the comment back as a
   // normal message so planning continues with the feedback.
   const iterate = () => {
-    respondPermission(req.missionId, req.requestId, 'cancel');
-    if (text) sendToMission(req.missionId, text);
+    respondPermission(req.appSessionId, req.requestId, 'cancel');
+    if (text) sendToSession(req.appSessionId, text);
     finish();
   };
 
-  const openWiki = () => dispatch({ type: 'SPEC_OPEN_WIKI', missionId: req.missionId });
+  const openWiki = () => dispatch({ type: 'SPEC_OPEN_WIKI', appSessionId: req.appSessionId });
 
   return (
     <AnimatePresence>

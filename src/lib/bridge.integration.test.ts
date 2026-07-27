@@ -43,15 +43,16 @@ test('[R1] Renderer command round trip', { concurrency: false }, async () => {
       },
       WebSocket: FakeWebSocket,
     });
-    const { createMission } = await import('./commands.js');
+    const { createSession } = await import('./commands.js');
     const { bridge } = await import('./bridge.js');
     const seen: ServerEvent[] = [];
     const unsubscribe = bridge.subscribe((event) => seen.push(event));
 
-    createMission({
+    createSession({
       clientRef: 'r1-create',
       title: 'R1',
       goal: 'hello',
+      sessionPurpose: 'chat',
       interactionMode: 'auto',
       autonomy: 'low',
     });
@@ -63,18 +64,20 @@ test('[R1] Renderer command round trip', { concurrency: false }, async () => {
     socket.open();
     assert.equal(socket.sent.length, 1);
     assert.deepEqual(JSON.parse(socket.sent[0]), {
-      type: 'mission.create',
+      type: 'session.create',
       clientRef: 'r1-create',
       title: 'R1',
       goal: 'hello',
+      sessionPurpose: 'chat',
       interactionMode: 'auto',
       autonomy: 'low',
     });
-    const mission = {
-      id: 'r1',
-      sessionId: 'r1',
-      kind: 'chat',
-      role: 'orchestrator',
+    const session = {
+      appSessionId: 'r1',
+      providerSessionId: 'provider-r1',
+      sessionPurpose: 'chat',
+      interactionMode: 'auto',
+      role: 'primary',
       title: 'R1',
       goal: 'hello',
       cwd: '',
@@ -88,10 +91,10 @@ test('[R1] Renderer command round trip', { concurrency: false }, async () => {
       updatedAt: 0,
     } as const;
 
-    socket.message({ type: 'mission.created', clientRef: 'r1-create', mission });
+    socket.message({ type: 'session.created', clientRef: 'r1-create', session });
     assert.equal(seen.length, 1);
     unsubscribe();
-    socket.message({ type: 'mission.updated', mission });
+    socket.message({ type: 'session.updated', session });
     assert.equal(seen.length, 1);
     assert.equal(FakeWebSocket.instances.length, 1);
   } finally {

@@ -1,20 +1,20 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  activeMissionAfterNativeBrowserRequest,
-  browserKeyForMission,
-  missionIdForBrowserKey,
+  activeSessionAfterNativeBrowserRequest,
+  browserKeyForSession,
   nativeBrowserRequestTargetsVisibleSurface,
 } from './browserSessionIdentity';
-import type { BrowserNativeRequest, MissionSummary } from '../types/bridge';
+import type { BrowserNativeRequest, SessionSummary } from '../types/bridge';
 
-const mission = (id: string, sessionId?: string): MissionSummary => ({
-  id,
-  sessionId,
-  kind: 'mission_orchestrator',
-  role: 'orchestrator',
-  title: id,
-  goal: id,
+const session = (appSessionId: string, providerSessionId?: string): SessionSummary => ({
+  appSessionId,
+  providerSessionId,
+  sessionPurpose: 'chat',
+  interactionMode: 'auto',
+  role: 'primary',
+  title: appSessionId,
+  goal: appSessionId,
   cwd: '',
   workspaceKind: 'none',
   autonomy: 'low',
@@ -27,53 +27,31 @@ const mission = (id: string, sessionId?: string): MissionSummary => ({
   updatedAt: 1,
 });
 
-test('browserKeyForMission uses the stable app session id (survives compaction)', () => {
-  // The droid session id (mission.sessionId) changes on compaction; the browser
+test('browserKeyForSession uses the stable app session id through compaction', () => {
+  // The provider session id changes on compaction; the browser
   // key must stay the app id so browser tools keep targeting the visible chat.
-  assert.equal(browserKeyForMission(mission('app-1', 'droid-session-after-compaction')), 'app-1');
-  assert.equal(browserKeyForMission(mission('app-2')), 'app-2');
+  assert.equal(browserKeyForSession(session('app-1', 'provider-after-compaction')), 'app-1');
+  assert.equal(browserKeyForSession(session('app-2')), 'app-2');
 });
 
-test('activeMissionAfterNativeBrowserRequest does not steal the current chat', () => {
+test('activeSessionAfterNativeBrowserRequest does not steal the current chat', () => {
   const request: BrowserNativeRequest = {
     requestId: 'req-1',
-    missionId: 'background-chat',
-    sessionId: 'browser-background-chat',
+    appSessionId: 'background-chat',
+    browserSessionId: 'browser-background-chat',
     action: 'snapshot',
   };
 
-  assert.equal(activeMissionAfterNativeBrowserRequest('visible-chat', request), 'visible-chat');
-  assert.equal(activeMissionAfterNativeBrowserRequest(null, request), 'background-chat');
-});
-
-test('missionIdForBrowserKey resolves the app chat id from the stable browser key', () => {
-  const missions = {
-    'chat-app-id': mission('chat-app-id', 'droid-session-after-compaction'),
-  };
-
-  // The backend keys browser requests by the app session id (mission.id).
-  assert.equal(missionIdForBrowserKey(missions, 'chat-app-id'), 'chat-app-id');
-  assert.equal(
-    activeMissionAfterNativeBrowserRequest(
-      null,
-      {
-        requestId: 'req-1',
-        missionId: 'chat-app-id',
-        sessionId: 'browser-chat-app-id',
-        action: 'snapshot',
-      },
-      missions,
-    ),
-    'chat-app-id',
-  );
+  assert.equal(activeSessionAfterNativeBrowserRequest('visible-chat', request), 'visible-chat');
+  assert.equal(activeSessionAfterNativeBrowserRequest(null, request), 'background-chat');
 });
 
 test('nativeBrowserRequestTargetsVisibleSurface only attaches the active browser request', () => {
   assert.equal(
     nativeBrowserRequestTargetsVisibleSurface({
       browserKey: 'visible-chat',
-      requestMissionId: 'visible-chat',
-      requestSessionId: 'browser-visible-chat',
+      requestAppSessionId: 'visible-chat',
+      requestBrowserSessionId: 'browser-visible-chat',
     }),
     true,
   );
@@ -81,9 +59,9 @@ test('nativeBrowserRequestTargetsVisibleSurface only attaches the active browser
   assert.equal(
     nativeBrowserRequestTargetsVisibleSurface({
       browserKey: 'visible-chat',
-      visibleSessionId: 'browser-visible-chat',
-      requestMissionId: 'background-chat',
-      requestSessionId: 'browser-visible-chat',
+      visibleBrowserSessionId: 'browser-visible-chat',
+      requestAppSessionId: 'background-chat',
+      requestBrowserSessionId: 'browser-visible-chat',
     }),
     true,
   );
@@ -91,8 +69,8 @@ test('nativeBrowserRequestTargetsVisibleSurface only attaches the active browser
   assert.equal(
     nativeBrowserRequestTargetsVisibleSurface({
       browserKey: 'visible-chat',
-      requestMissionId: 'background-chat',
-      requestSessionId: 'browser-background-chat',
+      requestAppSessionId: 'background-chat',
+      requestBrowserSessionId: 'browser-background-chat',
     }),
     false,
   );

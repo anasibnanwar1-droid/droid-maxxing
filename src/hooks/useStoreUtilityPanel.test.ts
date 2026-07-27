@@ -2,19 +2,19 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { initialState, reducer, type AppState } from './useStore';
 
-function activeState(missionId: string): AppState {
+function activeState(appSessionId: string): AppState {
   return {
     ...initialState,
-    activeMissionId: missionId,
+    activeAppSessionId: appSessionId,
     rightPanelOpen: true,
     utilityPanels: {},
   };
 }
 
-function browser(missionId: string) {
+function browser(appSessionId: string) {
   return {
-    sessionId: `browser-${missionId}`,
-    missionId,
+    browserSessionId: `browser-${appSessionId}`,
+    appSessionId,
     url: 'https://example.com/',
     viewport: { width: 1200, height: 800, deviceScaleFactor: 1 },
     viewportMode: 'fit' as const,
@@ -23,40 +23,40 @@ function browser(missionId: string) {
   };
 }
 
-test('utility tools are mission scoped and opening one hides Context', () => {
-  let state = reducer(activeState('mission-a'), {
+test('utility tools are session scoped and opening one hides Context', () => {
+  let state = reducer(activeState('session-a'), {
     type: 'OPEN_UTILITY_TOOL',
     tool: 'browser',
   });
   assert.equal(state.rightPanelOpen, false);
-  assert.equal(state.utilityPanels['mission-a'].open, true);
-  assert.equal(state.utilityPanels['mission-a'].tabs[0].tool, 'browser');
+  assert.equal(state.utilityPanels['session-a'].open, true);
+  assert.equal(state.utilityPanels['session-a'].tabs[0].tool, 'browser');
 
-  state = reducer(state, { type: 'SET_ACTIVE_MISSION', id: 'mission-b' });
+  state = reducer(state, { type: 'SET_ACTIVE_SESSION', id: 'session-b' });
   state = reducer(state, { type: 'OPEN_UTILITY_TOOL', tool: 'files' });
-  assert.equal(state.utilityPanels['mission-b'].tabs[0].tool, 'files');
-  assert.equal(state.utilityPanels['mission-a'].tabs[0].tool, 'browser');
+  assert.equal(state.utilityPanels['session-b'].tabs[0].tool, 'files');
+  assert.equal(state.utilityPanels['session-a'].tabs[0].tool, 'browser');
 });
 
-test('opening Context collapses the active mission utility pane without closing tabs', () => {
-  let state = reducer(activeState('mission-a'), {
+test('opening Context collapses the active session utility pane without closing tabs', () => {
+  let state = reducer(activeState('session-a'), {
     type: 'OPEN_UTILITY_TOOL',
     tool: 'terminal',
     tabId: 'terminal-1',
   });
   state = reducer(state, { type: 'SET_RIGHT_PANEL', open: true });
   assert.equal(state.rightPanelOpen, true);
-  assert.equal(state.utilityPanels['mission-a'].open, false);
-  assert.equal(state.utilityPanels['mission-a'].tabs[0].id, 'terminal-1');
+  assert.equal(state.utilityPanels['session-a'].open, false);
+  assert.equal(state.utilityPanels['session-a'].tabs[0].id, 'terminal-1');
 });
 
-test('an explicit mission id keeps delayed tab closes scoped to their origin', () => {
-  let state = reducer(activeState('mission-a'), {
+test('an explicit session id keeps delayed tab closes scoped to their origin', () => {
+  let state = reducer(activeState('session-a'), {
     type: 'OPEN_UTILITY_TOOL',
     tool: 'terminal',
     tabId: 'terminal-a',
   });
-  state = reducer(state, { type: 'SET_ACTIVE_MISSION', id: 'mission-b' });
+  state = reducer(state, { type: 'SET_ACTIVE_SESSION', id: 'session-b' });
   state = reducer(state, {
     type: 'OPEN_UTILITY_TOOL',
     tool: 'terminal',
@@ -66,20 +66,20 @@ test('an explicit mission id keeps delayed tab closes scoped to their origin', (
   state = reducer(state, {
     type: 'CLOSE_UTILITY_TAB',
     tabId: 'terminal-a',
-    missionId: 'mission-a',
+    appSessionId: 'session-a',
   });
 
-  assert.equal(state.utilityPanels['mission-a'].tabs.length, 0);
-  assert.equal(state.utilityPanels['mission-b'].tabs[0].id, 'terminal-b');
+  assert.equal(state.utilityPanels['session-a'].tabs.length, 0);
+  assert.equal(state.utilityPanels['session-b'].tabs[0].id, 'terminal-b');
 });
 
-test('an explicit mission id keeps delayed tab updates scoped to their origin', () => {
-  let state = reducer(activeState('mission-a'), {
+test('an explicit session id keeps delayed tab updates scoped to their origin', () => {
+  let state = reducer(activeState('session-a'), {
     type: 'OPEN_UTILITY_TOOL',
     tool: 'terminal',
     tabId: 'terminal-a',
   });
-  state = reducer(state, { type: 'SET_ACTIVE_MISSION', id: 'mission-b' });
+  state = reducer(state, { type: 'SET_ACTIVE_SESSION', id: 'session-b' });
   state = reducer(state, {
     type: 'OPEN_UTILITY_TOOL',
     tool: 'terminal',
@@ -89,60 +89,60 @@ test('an explicit mission id keeps delayed tab updates scoped to their origin', 
   state = reducer(state, {
     type: 'UPDATE_UTILITY_TAB',
     tabId: 'terminal-a',
-    missionId: 'mission-a',
+    appSessionId: 'session-a',
     terminalId: 'pty-a',
     label: 'zsh',
   });
 
-  assert.equal(state.utilityPanels['mission-a'].tabs[0].terminalId, 'pty-a');
-  assert.equal(state.utilityPanels['mission-a'].tabs[0].label, 'zsh');
-  assert.equal(state.utilityPanels['mission-b'].tabs[0].terminalId, undefined);
+  assert.equal(state.utilityPanels['session-a'].tabs[0].terminalId, 'pty-a');
+  assert.equal(state.utilityPanels['session-a'].tabs[0].label, 'zsh');
+  assert.equal(state.utilityPanels['session-b'].tabs[0].terminalId, undefined);
 });
 
 test('legacy Review and Browser actions route through utility tabs', () => {
-  let state = reducer(activeState('mission-a'), {
+  let state = reducer(activeState('session-a'), {
     type: 'SET_REVIEW_OPEN',
     open: true,
   });
-  assert.equal(state.utilityPanels['mission-a'].tabs[0].tool, 'review');
+  assert.equal(state.utilityPanels['session-a'].tabs[0].tool, 'review');
   state = reducer(state, { type: 'SET_BROWSER_OPEN', open: true });
   assert.deepEqual(
-    state.utilityPanels['mission-a'].tabs.map((tab) => tab.tool),
+    state.utilityPanels['session-a'].tabs.map((tab) => tab.tool),
     ['review', 'browser'],
   );
   state = reducer(state, { type: 'SET_BROWSER_OPEN', open: false });
   assert.deepEqual(
-    state.utilityPanels['mission-a'].tabs.map((tab) => tab.tool),
+    state.utilityPanels['session-a'].tabs.map((tab) => tab.tool),
     ['review'],
   );
 });
 
-test('background browser updates create the mission browser tab', () => {
-  const state = reducer(activeState('mission-a'), {
+test('background browser updates create the session browser tab', () => {
+  const state = reducer(activeState('session-a'), {
     type: 'BROWSER_UPDATED',
-    browser: browser('mission-b'),
+    browser: browser('session-b'),
   });
 
-  assert.equal(state.utilityPanels['mission-b'].open, true);
-  assert.equal(state.utilityPanels['mission-b'].activeTabId, 'browser:mission-b');
-  assert.equal(state.utilityPanels['mission-b'].tabs[0].tool, 'browser');
-  assert.equal(state.activeMissionId, 'mission-a');
+  assert.equal(state.utilityPanels['session-b'].open, true);
+  assert.equal(state.utilityPanels['session-b'].activeTabId, 'browser:session-b');
+  assert.equal(state.utilityPanels['session-b'].tabs[0].tool, 'browser');
+  assert.equal(state.activeAppSessionId, 'session-a');
 });
 
 test('browser updates preserve an explicitly hidden browser pane', () => {
-  let state = reducer(activeState('mission-a'), {
+  let state = reducer(activeState('session-a'), {
     type: 'SET_BROWSER_OPEN',
     open: true,
   });
   state = reducer(state, { type: 'SET_BROWSER_OPEN', open: false });
   state = reducer(state, {
     type: 'BROWSER_UPDATED',
-    browser: browser('mission-a'),
+    browser: browser('session-a'),
   });
 
-  assert.equal(state.browserOpenKeys['mission-a'], false);
+  assert.equal(state.browserOpenKeys['session-a'], false);
   assert.equal(
-    state.utilityPanels['mission-a'].tabs.some((tab) => tab.tool === 'browser'),
+    state.utilityPanels['session-a'].tabs.some((tab) => tab.tool === 'browser'),
     false,
   );
 });

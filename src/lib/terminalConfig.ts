@@ -5,7 +5,7 @@
 // and the unit tests can exercise the rules without spinning up node-pty or
 // touching the filesystem.
 
-export const MAX_TERMINALS_PER_MISSION = 4;
+export const MAX_TERMINALS_PER_SESSION = 4;
 export const MAX_GLOBAL_TERMINALS = 8;
 // 2 MiB cap on the rolling replay buffer that is handed to a late subscriber
 // when it attaches to an already-running PTY.
@@ -18,13 +18,13 @@ export const TERMINAL_TERM = 'xterm-256color';
 export const TERMINAL_COLORTERM = 'truecolor';
 
 export interface TerminalLimits {
-  maxPerMission: number;
+  maxPerSession: number;
   maxGlobal: number;
   maxReplayBytes: number;
 }
 
 export const TERMINAL_LIMITS: TerminalLimits = {
-  maxPerMission: MAX_TERMINALS_PER_MISSION,
+  maxPerSession: MAX_TERMINALS_PER_SESSION,
   maxGlobal: MAX_GLOBAL_TERMINALS,
   maxReplayBytes: MAX_REPLAY_BYTES,
 };

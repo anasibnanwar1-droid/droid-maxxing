@@ -3,18 +3,19 @@ import test from 'node:test';
 import { NativeBrowserRuntime } from './NativeBrowserRuntime.js';
 import type { BrowserNativeRequest } from '../protocol.js';
 
-test('NativeBrowserRuntime sends live browser requests with mission and session context', async () => {
+test('NativeBrowserRuntime sends live requests with application and browser session context', async () => {
   const requests: BrowserNativeRequest[] = [];
   const runtime = new NativeBrowserRuntime({
-    missionId: 'mission-one',
-    sessionId: 'browser-one',
+    appSessionId: 'app-session-one',
+    browserSessionId: 'browser-one',
     viewport: { width: 900, height: 700, deviceScaleFactor: 2 },
     nextRequestId: () => `req-${requests.length + 1}`,
     request: async (request) => {
       requests.push(request);
       return {
         requestId: request.requestId,
-        missionId: request.missionId,
+        appSessionId: request.appSessionId,
+        browserSessionId: request.browserSessionId,
         ok: true,
         snapshot: {
           url: request.url ?? 'https://example.com/',
@@ -39,8 +40,8 @@ test('NativeBrowserRuntime sends live browser requests with mission and session 
     requests.map((request) => request.action),
     ['open', 'reload', 'goBack', 'goForward', 'click', 'hover', 'selectOption'],
   );
-  assert.equal(requests[0].missionId, 'mission-one');
-  assert.equal(requests[0].sessionId, 'browser-one');
+  assert.equal(requests[0].appSessionId, 'app-session-one');
+  assert.equal(requests[0].browserSessionId, 'browser-one');
   assert.deepEqual(requests[0].viewport, { width: 900, height: 700, deviceScaleFactor: 2 });
   assert.deepEqual(
     { x: requests[4].x, y: requests[4].y, selector: requests[4].selector },
@@ -58,12 +59,13 @@ test('NativeBrowserRuntime sends live browser requests with mission and session 
 
 test('open remains usable when navigation succeeds before a DOM snapshot is ready', async () => {
   const runtime = new NativeBrowserRuntime({
-    missionId: 'mission-one',
-    sessionId: 'browser-one',
+    appSessionId: 'app-session-one',
+    browserSessionId: 'browser-one',
     viewport: { width: 900, height: 700, deviceScaleFactor: 2 },
     request: async (request) => ({
       requestId: request.requestId,
-      missionId: request.missionId,
+      appSessionId: request.appSessionId,
+      browserSessionId: request.browserSessionId,
       ok: true,
     }),
   });
@@ -80,12 +82,13 @@ test('open remains usable when navigation succeeds before a DOM snapshot is read
 
 test('open fallback clears metadata from the previous page', async () => {
   const runtime = new NativeBrowserRuntime({
-    missionId: 'mission-one',
-    sessionId: 'browser-one',
+    appSessionId: 'app-session-one',
+    browserSessionId: 'browser-one',
     viewport: { width: 900, height: 700, deviceScaleFactor: 2 },
     request: async (request) => ({
       requestId: request.requestId,
-      missionId: request.missionId,
+      appSessionId: request.appSessionId,
+      browserSessionId: request.browserSessionId,
       ok: true,
       snapshot:
         request.url === 'https://example.com/first'
@@ -115,12 +118,13 @@ test('open fallback clears metadata from the previous page', async () => {
 
 test('reload and snapshot actions never reuse a stale page snapshot', async () => {
   const runtime = new NativeBrowserRuntime({
-    missionId: 'mission-one',
-    sessionId: 'browser-one',
+    appSessionId: 'app-session-one',
+    browserSessionId: 'browser-one',
     viewport: { width: 900, height: 700, deviceScaleFactor: 2 },
     request: async (request) => ({
       requestId: request.requestId,
-      missionId: request.missionId,
+      appSessionId: request.appSessionId,
+      browserSessionId: request.browserSessionId,
       ok: true,
       snapshot:
         request.action === 'open'
@@ -141,12 +145,13 @@ test('reload and snapshot actions never reuse a stale page snapshot', async () =
 
 test('history navigation never reuses a stale page snapshot', async () => {
   const runtime = new NativeBrowserRuntime({
-    missionId: 'mission-one',
-    sessionId: 'browser-one',
+    appSessionId: 'app-session-one',
+    browserSessionId: 'browser-one',
     viewport: { width: 900, height: 700, deviceScaleFactor: 2 },
     request: async (request) => ({
       requestId: request.requestId,
-      missionId: request.missionId,
+      appSessionId: request.appSessionId,
+      browserSessionId: request.browserSessionId,
       ok: true,
       snapshot:
         request.action === 'open'
@@ -173,14 +178,15 @@ test('history navigation never reuses a stale page snapshot', async () => {
 test('resize and diagnostic requests use dedicated native actions', async () => {
   const requests: BrowserNativeRequest[] = [];
   const runtime = new NativeBrowserRuntime({
-    missionId: 'mission-one',
-    sessionId: 'browser-one',
+    appSessionId: 'app-session-one',
+    browserSessionId: 'browser-one',
     viewport: { width: 900, height: 700, deviceScaleFactor: 2 },
     request: async (request) => {
       requests.push(request);
       return {
         requestId: request.requestId,
-        missionId: request.missionId,
+        appSessionId: request.appSessionId,
+        browserSessionId: request.browserSessionId,
         ok: true,
         inspection:
           request.action === 'inspect'

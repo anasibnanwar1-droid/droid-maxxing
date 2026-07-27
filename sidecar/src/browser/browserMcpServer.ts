@@ -16,11 +16,11 @@ const scrollDirectionSchema = z.enum(['up', 'down', 'left', 'right']);
 
 export function createBrowserMcpServer(
   manager: BrowserSessionManager,
-  missionIdForTool: () => string | undefined,
+  appSessionIdForTool: () => string | undefined,
 ) {
-  const missionId = () => {
-    const id = missionIdForTool();
-    if (!id) throw new Error('Browser tools are not attached to a live Droid Control mission yet.');
+  const appSessionId = () => {
+    const id = appSessionIdForTool();
+    if (!id) throw new Error('Browser tools are not attached to a live Droid Control session yet.');
     return id;
   };
 
@@ -50,7 +50,7 @@ export function createBrowserMcpServer(
         },
         safeTool(async (input) => {
           const state = await manager.open({
-            missionId: missionId(),
+            appSessionId: appSessionId(),
             url: input.url,
             viewport: input.viewport
               ? { ...input.viewport, deviceScaleFactor: input.viewport.deviceScaleFactor ?? 2 }
@@ -69,7 +69,7 @@ export function createBrowserMcpServer(
         'Refresh compact DOM refs and visible page state when the page changed or current refs became stale.',
         {},
         safeTool(async () => {
-          const state = await manager.refresh(missionId());
+          const state = await manager.refresh(appSessionId());
           return jsonResult(stateForTool(state));
         }),
       ),
@@ -78,7 +78,7 @@ export function createBrowserMcpServer(
         'Reload the current live Droid Control browser page. Use browser_snapshot after reload when fresh refs are needed.',
         {},
         safeTool(async () => {
-          const state = await manager.reload(missionId());
+          const state = await manager.reload(appSessionId());
           return jsonResult(stateForTool(state));
         }),
       ),
@@ -87,7 +87,7 @@ export function createBrowserMcpServer(
         'Go back one page in the live Droid Control browser history and return fresh page refs.',
         {},
         safeTool(async () => {
-          const state = await manager.goBack(missionId());
+          const state = await manager.goBack(appSessionId());
           return jsonResult(stateForTool(state));
         }),
       ),
@@ -96,7 +96,7 @@ export function createBrowserMcpServer(
         'Go forward one page in the live Droid Control browser history and return fresh page refs.',
         {},
         safeTool(async () => {
-          const state = await manager.goForward(missionId());
+          const state = await manager.goForward(appSessionId());
           return jsonResult(stateForTool(state));
         }),
       ),
@@ -118,7 +118,7 @@ export function createBrowserMcpServer(
             ),
         },
         safeTool(async (input) => {
-          const path = await manager.screenshot(missionId(), {
+          const path = await manager.screenshot(appSessionId(), {
             fullPage: input.fullPage ?? false,
             deviceScaleFactor: input.deviceScaleFactor,
           });
@@ -138,7 +138,7 @@ export function createBrowserMcpServer(
         },
         safeTool(async (input) => {
           const state = await manager.click({
-            missionId: missionId(),
+            appSessionId: appSessionId(),
             ref: input.ref,
             x: input.x,
             y: input.y,
@@ -156,7 +156,7 @@ export function createBrowserMcpServer(
         },
         safeTool(async (input) => {
           const state = await manager.hover({
-            missionId: missionId(),
+            appSessionId: appSessionId(),
             ref: input.ref,
             x: input.x,
             y: input.y,
@@ -172,7 +172,7 @@ export function createBrowserMcpServer(
           value: z.string().describe('Option value or exact visible label to select.'),
         },
         safeTool(async (input) => {
-          const state = await manager.selectOption(missionId(), input.ref, input.value);
+          const state = await manager.selectOption(appSessionId(), input.ref, input.value);
           return jsonResult(stateForTool(state));
         }),
       ),
@@ -183,7 +183,7 @@ export function createBrowserMcpServer(
           text: z.string().describe('Text to type into the currently focused browser element.'),
         },
         safeTool(async (input) => {
-          const state = await manager.type(missionId(), input.text);
+          const state = await manager.type(appSessionId(), input.text);
           return jsonResult(stateForTool(state));
         }),
       ),
@@ -197,7 +197,7 @@ export function createBrowserMcpServer(
             .describe('Key name to press, such as Enter, Escape, Tab, ArrowDown.'),
         },
         safeTool(async (input) => {
-          const state = await manager.keypress(missionId(), input.key);
+          const state = await manager.keypress(appSessionId(), input.key);
           return jsonResult(stateForTool(state));
         }),
       ),
@@ -210,7 +210,7 @@ export function createBrowserMcpServer(
         },
         safeTool(async (input) => {
           const state = await manager.resizeViewport({
-            missionId: missionId(),
+            appSessionId: appSessionId(),
             viewport: {
               ...input.viewport,
               deviceScaleFactor: input.viewport.deviceScaleFactor ?? 2,
@@ -230,7 +230,7 @@ export function createBrowserMcpServer(
         },
         safeTool(async (input) => {
           const state = await manager.scroll(
-            missionId(),
+            appSessionId(),
             input.direction,
             input.pixels,
             undefined,
@@ -255,7 +255,7 @@ export function createBrowserMcpServer(
             .describe('Maximum wait in milliseconds. Defaults to 5000.'),
         },
         safeTool(async (input) => {
-          const state = await manager.wait(missionId(), input);
+          const state = await manager.wait(appSessionId(), input);
           return jsonResult(stateForTool(state));
         }),
       ),
@@ -272,7 +272,7 @@ export function createBrowserMcpServer(
           selector: z.string().optional().describe('CSS selector when no ref is available.'),
         },
         safeTool(async (input) => {
-          const inspection = await manager.inspect(missionId(), input);
+          const inspection = await manager.inspect(appSessionId(), input);
           return jsonResult({ ok: true, inspection });
         }),
       ),
@@ -290,7 +290,7 @@ export function createBrowserMcpServer(
             .describe('Return the current events and clear the retained buffer afterward.'),
         },
         safeTool(async (input) => {
-          const events = await manager.network(missionId(), input.clear ?? false);
+          const events = await manager.network(appSessionId(), input.clear ?? false);
           return jsonResult({ ok: true, events });
         }),
       ),
@@ -308,7 +308,7 @@ export function createBrowserMcpServer(
             .describe('Return the current entries and clear the retained buffer afterward.'),
         },
         safeTool(async (input) => {
-          const events = await manager.console(missionId(), input.clear ?? false);
+          const events = await manager.console(appSessionId(), input.clear ?? false);
           return jsonResult({ ok: true, events });
         }),
       ),
@@ -322,7 +322,7 @@ export function createBrowserMcpServer(
         ].join(' '),
         {},
         safeTool(async () => {
-          const state = await manager.fillCredentials(missionId());
+          const state = await manager.fillCredentials(appSessionId());
           return jsonResult(stateForTool(state));
         }),
       ),
@@ -342,7 +342,7 @@ export function createBrowserMcpServer(
             .describe('Optional user design instruction to keep alongside the returned context.'),
         },
         safeTool(async (input) => {
-          const context = manager.designContext(missionId());
+          const context = manager.designContext(appSessionId());
           const refs = context.references;
           const images = refs
             .filter((r) => r.screenshot)
@@ -377,7 +377,7 @@ export function createBrowserMcpServer(
             ),
         },
         safeTool(async (input) => {
-          const ref = manager.referenceDetail(missionId(), input.id);
+          const ref = manager.referenceDetail(appSessionId(), input.id);
           if (!ref) {
             return jsonResult({
               ok: false,

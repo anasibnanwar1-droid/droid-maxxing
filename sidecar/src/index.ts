@@ -2,7 +2,7 @@ import { WebSocketServer, type WebSocket } from 'ws';
 import { createReadStream } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { MissionManager } from './MissionManager.js';
+import { SessionManager } from './SessionManager.js';
 import type { ClientCommand, ServerEvent } from './protocol.js';
 import { isBrowserAssetPath } from './browser/browserPaths.js';
 
@@ -28,7 +28,7 @@ function browserAssetUrl(filePath: string): string {
   return url.toString();
 }
 
-const manager = new MissionManager(broadcast, { assetUrlFor: browserAssetUrl });
+const manager = new SessionManager(broadcast, { assetUrlFor: browserAssetUrl });
 
 const server = createServer((req, res) => {
   if (serveBrowserAsset(req, res)) return;
@@ -60,7 +60,7 @@ wss.on('connection', (ws, req) => {
     } catch {
       ws.send(
         JSON.stringify({
-          type: 'mission.error',
+          type: 'error',
           message: 'Invalid JSON command',
         } satisfies ServerEvent),
       );
@@ -71,7 +71,7 @@ wss.on('connection', (ws, req) => {
     } catch (err) {
       ws.send(
         JSON.stringify({
-          type: 'mission.error',
+          type: 'error',
           message: err instanceof Error ? err.message : String(err),
         } satisfies ServerEvent),
       );

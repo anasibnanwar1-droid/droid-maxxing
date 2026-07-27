@@ -5,7 +5,7 @@ import test from 'node:test';
 
 import { DecompSessionType } from '@factory/droid-sdk';
 
-import type { MissionSummary } from './protocol.js';
+import type { SessionSummary } from './protocol.js';
 import { writeProviderSessionStart } from './testing/historyCharacterizationSupport.js';
 import {
   FakeDroidSession,
@@ -17,6 +17,7 @@ test('[L1] Ordinary create', { concurrency: false }, async () => {
 
   try {
     await h.create({
+      sessionPurpose: 'chat',
       clientRef: 'l1',
       title: 'ordinary',
       goal: 'hello',
@@ -28,7 +29,10 @@ test('[L1] Ordinary create', { concurrency: false }, async () => {
     assert.ok(options);
     assert.equal(options.interactionMode, 'auto');
     assert.equal(options.autonomyLevel, 'low');
-    assert.equal(h.events.find((event) => event.type === 'mission.created')?.mission.kind, 'chat');
+    assert.equal(
+      h.events.find((event) => event.type === 'session.created')?.session.sessionPurpose,
+      'chat',
+    );
     assert.deepEqual(h.provider.session('provider-1').prompts, ['hello']);
   } finally {
     await h.dispose();
@@ -40,6 +44,7 @@ test('[L2] Spec create', { concurrency: false }, async () => {
 
   try {
     await h.create({
+      sessionPurpose: 'chat',
       clientRef: 'l2',
       title: 'spec',
       goal: 'write',
@@ -54,17 +59,75 @@ test('[L2] Spec create', { concurrency: false }, async () => {
     assert.equal(options.interactionMode, 'spec');
     assert.equal(options.specModeModelId, 'spec-model');
     assert.equal(options.workerModelId, undefined);
-    assert.equal(h.events.find((event) => event.type === 'mission.created')?.mission.kind, 'spec');
+    assert.equal(
+      h.events.find((event) => event.type === 'session.created')?.session.interactionMode,
+      'spec',
+    );
   } finally {
     await h.dispose();
   }
 });
+
+test(
+  'design purpose is independent from auto interaction mode',
+  { concurrency: false },
+  async () => {
+    const h = createSessionCharacterizationHarness();
+
+    try {
+      await h.create({
+        sessionPurpose: 'design',
+        clientRef: 'design-purpose',
+        title: 'design',
+        goal: 'draw',
+        interactionMode: 'auto',
+        autonomy: 'low',
+      });
+
+      const created = h.events.find((event) => event.type === 'session.created');
+      assert.equal(created?.session.sessionPurpose, 'design');
+      assert.equal(created?.session.interactionMode, 'auto');
+      assert.equal(created?.session.missionId, undefined);
+      assert.equal(h.runtime.createCalls[0]?.decompSessionType, undefined);
+    } finally {
+      await h.dispose();
+    }
+  },
+);
+
+test(
+  'AGI interaction mode does not imply Mission Control purpose',
+  { concurrency: false },
+  async () => {
+    const h = createSessionCharacterizationHarness();
+
+    try {
+      await h.create({
+        sessionPurpose: 'chat',
+        clientRef: 'agi-chat',
+        title: 'agi chat',
+        goal: 'reason',
+        interactionMode: 'agi',
+        autonomy: 'low',
+      });
+
+      const created = h.events.find((event) => event.type === 'session.created');
+      assert.equal(created?.session.sessionPurpose, 'chat');
+      assert.equal(created?.session.interactionMode, 'agi');
+      assert.equal(created?.session.missionId, undefined);
+      assert.equal(h.runtime.createCalls[0]?.decompSessionType, undefined);
+    } finally {
+      await h.dispose();
+    }
+  },
+);
 
 test('[L3] AGI create', { concurrency: false }, async () => {
   const h = createSessionCharacterizationHarness();
 
   try {
     await h.create({
+      sessionPurpose: 'mission-control',
       clientRef: 'l3',
       title: 'agi',
       goal: 'plan',
@@ -80,8 +143,8 @@ test('[L3] AGI create', { concurrency: false }, async () => {
     assert.equal(options.workerModelId, 'worker');
     assert.equal(options.validatorModelId, 'validator');
     assert.equal(
-      h.events.find((event) => event.type === 'mission.created')?.mission.kind,
-      'mission_orchestrator',
+      h.events.find((event) => event.type === 'session.created')?.session.sessionPurpose,
+      'mission-control',
     );
   } finally {
     await h.dispose();
@@ -94,6 +157,7 @@ test('[L4] Create failure cleanup', { concurrency: false }, async () => {
 
   try {
     await h.create({
+      sessionPurpose: 'chat',
       clientRef: 'l4',
       title: 'failure',
       goal: 'fail',
@@ -102,7 +166,7 @@ test('[L4] Create failure cleanup', { concurrency: false }, async () => {
     });
 
     assert.equal(
-      h.events.some((event) => event.type === 'mission.created'),
+      h.events.some((event) => event.type === 'session.created'),
       false,
     );
     assert.equal(
@@ -137,11 +201,14 @@ test(
       );
       writeProviderSessionStart(h.home, 'provider-5', 'Historical app-5');
       h.runtime.loadQueue.set('provider-5', [new FakeDroidSession('provider-5', {}, h.calls)]);
-      await h.handle({ type: 'mission.resume', sessionId: 'app-5' });
+      await h.handle({ type: 'session.resume', appSessionId: 'app-5' });
 
       assert.equal(h.runtime.loadCalls.length, 1);
       assert.equal(h.runtime.loadCalls[0]?.sessionId, 'provider-5');
-      assert.equal(h.events.find((event) => event.type === 'mission.created')?.mission.id, 'app-5');
+      assert.equal(
+        h.events.find((event) => event.type === 'session.created')?.session.appSessionId,
+        'app-5',
+      );
       assert.ok(h.runtime.loadCalls[0]?.handlers.permissionHandler);
       assert.ok(h.runtime.loadCalls[0]?.handlers.askUserHandler);
     } finally {
@@ -150,7 +217,43 @@ test(
   },
 );
 
-test('[L6] Send lazily resumes a historical mission', { concurrency: false }, async () => {
+test(
+  'resuming an AGI chat preserves its explicit non-Mission-Control purpose',
+  { concurrency: false },
+  async () => {
+    const h = createSessionCharacterizationHarness();
+
+    try {
+      h.fixture.seedHistorySummaries([
+        { ...summary('app-agi-chat', 'provider-agi-chat'), interactionMode: 'agi' },
+      ]);
+      writeProviderSessionStart(h.home, 'provider-agi-chat', 'AGI chat');
+      h.runtime.loadQueue.set('provider-agi-chat', [
+        new FakeDroidSession('provider-agi-chat', {}, h.calls, {
+          settings: { interactionMode: 'agi' },
+          mission: { state: 'running', features: [] },
+        }),
+      ]);
+
+      await h.handle({ type: 'session.resume', appSessionId: 'app-agi-chat' });
+
+      const resumed = h.events.find((event) => event.type === 'session.created')?.session;
+      assert.equal(resumed?.sessionPurpose, 'chat');
+      assert.equal(resumed?.interactionMode, 'agi');
+      assert.equal(resumed?.missionId, undefined);
+      assert.deepEqual(resumed?.features, []);
+      assert.equal(resumed?.phase, 'paused');
+      assert.equal(
+        h.events.some((event) => event.type === 'mission.features'),
+        false,
+      );
+    } finally {
+      await h.dispose();
+    }
+  },
+);
+
+test('[L6] Send lazily resumes a historical session', { concurrency: false }, async () => {
   const h = createSessionCharacterizationHarness();
 
   try {
@@ -162,7 +265,7 @@ test('[L6] Send lazily resumes a historical mission', { concurrency: false }, as
     );
     writeProviderSessionStart(h.home, 'provider-6', 'Historical app-6');
     h.runtime.loadQueue.set('provider-6', [new FakeDroidSession('provider-6', {}, h.calls)]);
-    await h.handle({ type: 'mission.send', missionId: 'app-6', text: 'once' });
+    await h.handle({ type: 'session.send', appSessionId: 'app-6', text: 'once' });
 
     assert.equal(h.runtime.loadCalls.length, 1);
     assert.deepEqual(h.provider.session('provider-6').prompts, ['once']);
@@ -177,14 +280,15 @@ test('[L7] Send-now steers ahead of queued sends', { concurrency: false }, async
 
   try {
     await h.create({
+      sessionPurpose: 'chat',
       clientRef: 'l7',
       title: 'L7',
       goal: 'first',
       interactionMode: 'auto',
       autonomy: 'low',
     });
-    await h.handle({ type: 'mission.send', missionId: 'provider-1', text: 'second' });
-    await h.handle({ type: 'mission.sendNow', missionId: 'provider-1', text: 'steer' });
+    await h.handle({ type: 'session.send', appSessionId: 'provider-1', text: 'second' });
+    await h.handle({ type: 'session.sendNow', appSessionId: 'provider-1', text: 'steer' });
 
     assert.equal(h.calls.filter((call) => call.method === 'interrupt').length, 1);
     gate.resolve();
@@ -201,6 +305,7 @@ test('[L8] Stop state matrix', { concurrency: false }, async () => {
 
   try {
     await h.create({
+      sessionPurpose: 'chat',
       clientRef: 'l8',
       title: 'L8',
       goal: 'idle',
@@ -208,27 +313,27 @@ test('[L8] Stop state matrix', { concurrency: false }, async () => {
       autonomy: 'low',
     });
     await h.waitForIdle();
-    await h.handle({ type: 'mission.interrupt', missionId: 'provider-1' });
-    await h.handle({ type: 'mission.send', missionId: 'provider-1', text: 'after idle stop' });
+    await h.handle({ type: 'session.interrupt', appSessionId: 'provider-1' });
+    await h.handle({ type: 'session.send', appSessionId: 'provider-1', text: 'after idle stop' });
     assert.deepEqual(h.provider.session('provider-1').prompts, ['idle', 'after idle stop']);
 
     const streamGate = h.provider.deferNextStream('provider-1');
-    const sending = h.handle({ type: 'mission.send', missionId: 'provider-1', text: 'stream' });
+    const sending = h.handle({ type: 'session.send', appSessionId: 'provider-1', text: 'stream' });
     await h.provider.waitForPrompts('provider-1', 3);
-    await h.handle({ type: 'mission.interrupt', missionId: 'provider-1' });
+    await h.handle({ type: 'session.interrupt', appSessionId: 'provider-1' });
     assert.equal(h.calls.filter((call) => call.method === 'interrupt').length, 2);
     streamGate.resolve();
     await sending;
     await h.waitForIdle();
 
     const compactGate = h.provider.deferNextCompaction('provider-1');
-    const compacting = h.handle({ type: 'mission.compact', missionId: 'provider-1' });
+    const compacting = h.handle({ type: 'session.compact', appSessionId: 'provider-1' });
     await h.handle({
-      type: 'mission.send',
-      missionId: 'provider-1',
+      type: 'session.send',
+      appSessionId: 'provider-1',
       text: 'drop while compacting',
     });
-    await h.handle({ type: 'mission.interrupt', missionId: 'provider-1' });
+    await h.handle({ type: 'session.interrupt', appSessionId: 'provider-1' });
     assert.equal(h.calls.filter((call) => call.method === 'interrupt').length, 2);
     compactGate.resolve();
     await compacting;
@@ -250,31 +355,40 @@ test(
 
     try {
       await h.create({
+        sessionPurpose: 'chat',
         clientRef: 'l9',
         title: 'L9',
         goal: 'go',
         interactionMode: 'auto',
         autonomy: 'low',
       });
-      await h.handle({ type: 'mission.setInteractionMode', missionId: 'provider-1', mode: 'spec' });
+      await h.handle({
+        type: 'session.updateSettings',
+        appSessionId: 'provider-1',
+        interactionMode: 'spec',
+      });
       assert.equal(
         h.calls.some((call) => call.method === 'enterSpecMode'),
         true,
       );
       assert.equal(
-        h.events.filter((event) => event.type === 'mission.updated').pop()?.mission.kind,
+        h.events.filter((event) => event.type === 'session.updated').pop()?.session.interactionMode,
         'spec',
       );
       assert.equal(
-        h.events.filter((event) => event.type === 'mission.updated').pop()?.mission.autonomy,
+        h.events.filter((event) => event.type === 'session.updated').pop()?.session.autonomy,
         'low',
       );
 
       const updatesBeforeFailure = h.events.filter(
-        (event) => event.type === 'mission.updated',
+        (event) => event.type === 'session.updated',
       ).length;
       h.provider.session('provider-1').nextEnterSpecModeError = new Error('mode rejected');
-      await h.handle({ type: 'mission.setInteractionMode', missionId: 'provider-1', mode: 'spec' });
+      await h.handle({
+        type: 'session.updateSettings',
+        appSessionId: 'provider-1',
+        interactionMode: 'spec',
+      });
 
       assert.equal(
         h.events.some(
@@ -285,7 +399,7 @@ test(
         true,
       );
       assert.equal(
-        h.events.filter((event) => event.type === 'mission.updated').length,
+        h.events.filter((event) => event.type === 'session.updated').length,
         updatesBeforeFailure,
       );
     } finally {
@@ -299,13 +413,14 @@ test('[L10] Autonomy mutation reports provider rejection', { concurrency: false 
 
   try {
     await h.create({
+      sessionPurpose: 'chat',
       clientRef: 'l10',
       title: 'L10',
       goal: 'go',
       interactionMode: 'auto',
       autonomy: 'off',
     });
-    await h.handle({ type: 'mission.setAutonomy', missionId: 'provider-1', autonomy: 'low' });
+    await h.handle({ type: 'session.updateSettings', appSessionId: 'provider-1', autonomy: 'low' });
     assert.equal(
       h.provider
         .session('provider-1')
@@ -313,15 +428,19 @@ test('[L10] Autonomy mutation reports provider rejection', { concurrency: false 
       true,
     );
     assert.equal(
-      h.events.filter((event) => event.type === 'mission.updated').pop()?.mission.autonomy,
+      h.events.filter((event) => event.type === 'session.updated').pop()?.session.autonomy,
       'low',
     );
 
     const updatesBeforeFailure = h.events.filter(
-      (event) => event.type === 'mission.updated',
+      (event) => event.type === 'session.updated',
     ).length;
     h.provider.session('provider-1').nextUpdateSettingsError = new Error('autonomy rejected');
-    await h.handle({ type: 'mission.setAutonomy', missionId: 'provider-1', autonomy: 'high' });
+    await h.handle({
+      type: 'session.updateSettings',
+      appSessionId: 'provider-1',
+      autonomy: 'high',
+    });
 
     assert.equal(
       h.events.some(
@@ -332,7 +451,7 @@ test('[L10] Autonomy mutation reports provider rejection', { concurrency: false 
       true,
     );
     assert.equal(
-      h.events.filter((event) => event.type === 'mission.updated').length,
+      h.events.filter((event) => event.type === 'session.updated').length,
       updatesBeforeFailure,
     );
   } finally {
@@ -345,6 +464,7 @@ test('Summary patches preserve existing provider transcripts', { concurrency: fa
 
   try {
     await h.create({
+      sessionPurpose: 'chat',
       clientRef: 'l11',
       title: 'L11',
       goal: 'go',
@@ -371,14 +491,18 @@ test('Summary patches preserve existing provider transcripts', { concurrency: fa
       (call) => call.target === 'history' && call.method === 'syncSummaries',
     ).length;
 
-    await h.handle({ type: 'mission.setAutonomy', missionId: 'provider-1', autonomy: 'high' });
+    await h.handle({
+      type: 'session.updateSettings',
+      appSessionId: 'provider-1',
+      autonomy: 'high',
+    });
 
     assert.equal(
       h.calls.filter((call) => call.target === 'history' && call.method === 'syncSummaries').length,
       syncSummariesBefore + 1,
     );
     assert.equal(
-      h.events.filter((event) => event.type === 'mission.updated').at(-1)?.mission.autonomy,
+      h.events.filter((event) => event.type === 'session.updated').at(-1)?.session.autonomy,
       'high',
     );
     assert.equal(h.history.summaryPatches().get('provider-1')?.autonomy, 'high');
@@ -393,9 +517,9 @@ test(
   { concurrency: false },
   async () => {
     const h = createSessionCharacterizationHarness();
-    const seeded: MissionSummary = {
+    const seeded: SessionSummary = {
       ...summary('app-history', 'provider-old'),
-      compactedFromSessionIds: [
+      compactedFromProviderSessionIds: [
         'provider-older',
         'provider-oldest',
         'app-history',
@@ -405,7 +529,7 @@ test(
       title: 'Persisted title',
       goal: 'transient goal',
       workspaceKind: 'folder',
-      modelId: 'orchestrator-model',
+      modelId: 'primary-model',
       reasoningEffort: 'high',
       compactionModel: 'compaction-model',
       workerModelId: 'worker-model',
@@ -431,25 +555,28 @@ test(
 
     try {
       h.fixture.seedHistorySummaries([seeded]);
-      h.fixture.seedHistorySummaries([{ ...seeded, sessionId: 'provider-current', updatedAt: 19 }]);
+      h.fixture.seedHistorySummaries([
+        { ...seeded, providerSessionId: 'provider-current', updatedAt: 19 },
+      ]);
 
       const patches = h.history.summaryPatches();
       const patch = patches.get('app-history');
       assert.deepEqual(patch, {
-        id: 'app-history',
-        sessionId: 'provider-current',
-        compactedFromSessionIds: [
+        appSessionId: 'app-history',
+        providerSessionId: 'provider-current',
+        compactedFromProviderSessionIds: [
           'provider-older',
           'provider-oldest',
           'app-history',
           '',
           'provider-older',
         ],
-        kind: 'chat',
+        sessionPurpose: 'chat',
+        interactionMode: 'auto',
         title: 'Persisted title',
         cwd: '',
         workspaceKind: 'folder',
-        modelId: 'orchestrator-model',
+        modelId: 'primary-model',
         reasoningEffort: 'high',
         compactionModel: 'compaction-model',
         workerModelId: 'worker-model',
@@ -470,7 +597,7 @@ test(
       assert.equal(patches.get('provider-current'), patch);
       assert.equal(patches.has('provider-old'), false);
       assert.deepEqual(
-        h.history.hiddenDroidSessionIds(),
+        h.history.hiddenProviderSessionIds(),
         new Set(['provider-older', 'provider-oldest']),
       );
     } finally {
@@ -479,14 +606,15 @@ test(
   },
 );
 
-function summary(id: string, sessionId: string) {
+function summary(appSessionId: string, providerSessionId: string) {
   const now = Date.now();
   return {
-    id,
-    sessionId,
-    kind: 'chat' as const,
-    role: 'orchestrator' as const,
-    title: `Historical ${id}`,
+    appSessionId,
+    providerSessionId,
+    sessionPurpose: 'chat' as const,
+    interactionMode: 'auto' as const,
+    role: 'primary' as const,
+    title: `Historical ${appSessionId}`,
     goal: '',
     cwd: '',
     workspaceKind: 'none' as const,

@@ -42,7 +42,7 @@ interface BridgeInfo {
 
 export interface TerminalSessionInfo {
   id: string;
-  missionId: string;
+  appSessionId: string;
   cwd: string;
   shell: string;
   cols: number;
@@ -122,15 +122,15 @@ interface DroidControlApi {
   gitDiffStat: (dir: string, options: { mode: DiffStatMode }) => Promise<GitDiffStat>;
   gitDiffFiles: (
     dir: string,
-    options: { mode: DiffScope; sessionId?: string },
+    options: { mode: DiffScope; appSessionId?: string },
   ) => Promise<DiffFileList>;
   gitFileDiff: (
     dir: string,
-    options: { mode: DiffScope; path: string; ignoreWhitespace?: boolean; sessionId?: string },
+    options: { mode: DiffScope; path: string; ignoreWhitespace?: boolean; appSessionId?: string },
   ) => Promise<FileDiffResult>;
   gitMarkTurnStart: (
     dir: string,
-    sessionId?: string,
+    appSessionId?: string,
   ) => Promise<{ ok: boolean; baseline?: string | null }>;
   gitCreateBranch: (dir: string, options: CreateBranchOptions) => Promise<GitActionResult>;
   gitCheckout: (
@@ -162,7 +162,7 @@ interface DroidControlApi {
   relaunchApp: () => Promise<void>;
   openExternal: (url: string) => Promise<void>;
   terminalCreate: (options: {
-    missionId: string;
+    appSessionId: string;
     cwd: string;
     cols: number;
     rows: number;
@@ -170,7 +170,7 @@ interface DroidControlApi {
   terminalWrite: (id: string, data: string) => Promise<void>;
   terminalResize: (id: string, cols: number, rows: number) => Promise<void>;
   terminalKill: (id: string) => Promise<void>;
-  terminalList: (missionId: string) => Promise<TerminalSessionInfo[]>;
+  terminalList: (appSessionId: string) => Promise<TerminalSessionInfo[]>;
   terminalSubscribe: (id: string) => Promise<void>;
   terminalUnsubscribe: (id: string) => Promise<void>;
   onTerminalEvent: (handler: (event: TerminalEvent) => void) => () => void;
@@ -180,30 +180,30 @@ interface DroidControlApi {
   filesOpen: (accessToken: string, relative: string) => Promise<void>;
   filesReveal: (accessToken: string, relative: string) => Promise<void>;
   nativeBrowserOpen: (
-    sessionId: string,
+    browserSessionId: string,
     url: string,
     bounds?: NativeBrowserBounds,
     viewport?: { width: number; height: number; deviceScaleFactor: number },
   ) => Promise<void>;
   nativeBrowserAttach: (
-    sessionId: string,
+    browserSessionId: string,
     bounds: NativeBrowserBounds,
     url?: string,
   ) => Promise<void>;
-  nativeBrowserDetach: (sessionId?: string) => Promise<void>;
-  nativeBrowserSetBounds: (sessionId: string, bounds: NativeBrowserBounds) => Promise<void>;
-  nativeBrowserSetVisible: (sessionId: string, visible: boolean) => Promise<void>;
-  nativeBrowserClose: (sessionId: string) => Promise<void>;
-  nativeBrowserReload: (sessionId: string) => Promise<void>;
-  nativeBrowserGoBack: (sessionId: string) => Promise<boolean>;
-  nativeBrowserGoForward: (sessionId: string) => Promise<boolean>;
-  nativeBrowserSetDesignMode: (sessionId: string, active: boolean) => Promise<void>;
-  nativeBrowserSetPencilMode: (sessionId: string, active: boolean) => Promise<void>;
+  nativeBrowserDetach: (browserSessionId?: string) => Promise<void>;
+  nativeBrowserSetBounds: (browserSessionId: string, bounds: NativeBrowserBounds) => Promise<void>;
+  nativeBrowserSetVisible: (browserSessionId: string, visible: boolean) => Promise<void>;
+  nativeBrowserClose: (browserSessionId: string) => Promise<void>;
+  nativeBrowserReload: (browserSessionId: string) => Promise<void>;
+  nativeBrowserGoBack: (browserSessionId: string) => Promise<boolean>;
+  nativeBrowserGoForward: (browserSessionId: string) => Promise<boolean>;
+  nativeBrowserSetDesignMode: (browserSessionId: string, active: boolean) => Promise<void>;
+  nativeBrowserSetPencilMode: (browserSessionId: string, active: boolean) => Promise<void>;
   nativeBrowserAgentAction: (
     request: NativeBrowserAgentAction,
   ) => Promise<NativeBrowserAgentResult | undefined>;
   nativeBrowserCapture: (
-    sessionId: string,
+    browserSessionId: string,
     box?: NativeBrowserBox,
     options?: NativeBrowserCaptureOptions,
   ) => Promise<string | undefined>;
@@ -253,7 +253,7 @@ export async function clearApiKey(): Promise<void> {
 }
 
 export async function createTerminal(options: {
-  missionId: string;
+  appSessionId: string;
   cwd: string;
   cols: number;
   rows: number;
@@ -277,9 +277,9 @@ export async function killTerminal(id: string): Promise<void> {
   await window.droidControl!.terminalKill(id);
 }
 
-export async function listTerminals(missionId: string): Promise<TerminalSessionInfo[]> {
+export async function listTerminals(appSessionId: string): Promise<TerminalSessionInfo[]> {
   if (!isDesktop()) return [];
-  return window.droidControl!.terminalList(missionId);
+  return window.droidControl!.terminalList(appSessionId);
 }
 
 export async function subscribeTerminal(id: string): Promise<void> {

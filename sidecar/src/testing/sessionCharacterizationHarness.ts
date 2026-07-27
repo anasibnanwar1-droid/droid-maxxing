@@ -4,7 +4,7 @@ import path from 'node:path';
 
 import { SdkMcpServer } from '@factory/droid-sdk';
 
-import { MissionManager } from '../MissionManager.js';
+import { SessionManager } from '../SessionManager.js';
 import { FakeBrowserSessionManager } from './browserCharacterizationSupport.js';
 import { FakeHistoryIndex } from './historyCharacterizationSupport.js';
 import type * as Runtime from '../DroidRuntime.js';
@@ -23,6 +23,13 @@ export interface StreamGate {
 }
 
 type DeferredStream = StreamGate & { readonly promise: Promise<void> };
+type FakeDroidInitResult = {
+  sessionId: string;
+  modelId: string;
+  reasoningEffort: string;
+  settings?: { interactionMode?: 'auto' | 'spec' | 'agi' };
+  mission?: { state?: string; features?: unknown[] };
+};
 
 export class FakeDroidSession {
   readonly prompts: string[] = [];
@@ -34,13 +41,19 @@ export class FakeDroidSession {
   private readonly streamGates: DeferredStream[] = [];
   private nextCompactGate?: DeferredStream;
   private readonly promptWaiters: { count: number; resolve(): void }[] = [];
-  readonly initResult: { sessionId: string; modelId: string; reasoningEffort: string };
+  readonly initResult: FakeDroidInitResult;
   constructor(
     readonly sessionId: string,
     readonly handlers: Runtime.RuntimeHandlers,
     private readonly calls: RecordedCall[],
+    initResult: Partial<FakeDroidInitResult> = {},
   ) {
-    this.initResult = { sessionId, modelId: 'model-default', reasoningEffort: 'medium' };
+    this.initResult = {
+      sessionId,
+      modelId: 'model-default',
+      reasoningEffort: 'medium',
+      ...initResult,
+    };
   }
   async *stream(
     prompt: string,
@@ -245,15 +258,15 @@ export interface SessionCharacterizationHarness {
   };
   readonly history: FakeHistoryIndex;
   readonly fixture: {
-    seedHistorySummaries(summaries: Protocol.MissionSummary[]): void;
-    seedSubagentLinks(missionId: string, links: Protocol.WorkerHistoryLink[]): void;
+    seedHistorySummaries(summaries: Protocol.SessionSummary[]): void;
+    seedChildSessionLinks(appSessionId: string, links: Protocol.ChildSessionHistoryLink[]): void;
   };
   readonly browsers: FakeBrowserSessionManager;
   readonly home: string;
   readonly mcpServerCloseCalls: number;
   handle(command: Protocol.ClientCommand): Promise<void>;
   create(
-    command: Omit<Extract<Protocol.ClientCommand, { type: 'mission.create' }>, 'type'>,
+    command: Omit<Extract<Protocol.ClientCommand, { type: 'session.create' }>, 'type'>,
   ): Promise<void>;
   waitForIdle(): Promise<void>;
   dispose(): Promise<void>;
@@ -268,13 +281,13 @@ export function createSessionCharacterizationHarness(
     events.push(event);
     calls.push({ target: 'protocol', method: 'event', args: [event] });
   };
-  const home = mkdtempSync(path.join(tmpdir(), 'mission-manager-characterization-'));
+  const home = mkdtempSync(path.join(tmpdir(), 'session-manager-characterization-'));
   writeDefaults(home, options.defaults);
 
-  let manager: MissionManager | undefined;
+  let manager: SessionManager | undefined;
   try {
     withHomeSync(home, () => {
-      manager = new MissionManager(recordEvent);
+      manager = new SessionManager(recordEvent);
     });
   } catch (error) {
     rmSync(home, { recursive: true, force: true });
@@ -282,7 +295,7 @@ export function createSessionCharacterizationHarness(
   }
   if (!manager) {
     rmSync(home, { recursive: true, force: true });
-    throw new Error('MissionManager construction did not complete.');
+    throw new Error('SessionManager construction did not complete.');
   }
 
   const readyManager = manager;
@@ -347,8 +360,8 @@ export function createSessionCharacterizationHarness(
       seedHistorySummaries: (summaries) => {
         history.seedSummaries(summaries);
       },
-      seedSubagentLinks: (missionId, links) => {
-        history.seedSubagentLinks(missionId, links);
+      seedChildSessionLinks: (appSessionId, links) => {
+        history.seedChildSessionLinks(appSessionId, links);
       },
     },
     browsers,
@@ -357,7 +370,7 @@ export function createSessionCharacterizationHarness(
       return mcpCloseObserver.calls();
     },
     handle,
-    create: (command) => handle({ type: 'mission.create', ...command }),
+    create: (command) => handle({ type: 'session.create', ...command }),
     waitForIdle: () => new Promise((resolve) => setImmediate(resolve)),
     dispose: async () => {
       if (disposed) return;

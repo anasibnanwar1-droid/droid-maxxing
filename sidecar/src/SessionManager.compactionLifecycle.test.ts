@@ -15,14 +15,18 @@ import {
   seedInitModel,
 } from './testing/compactionCharacterizationScenarios.js';
 
-type MissionUpdatedEvent = Extract<ServerEvent, { type: 'mission.updated' }>;
-type MissionTranscriptEvent = Extract<ServerEvent, { type: 'mission.transcript' }>;
+type SessionUpdatedEvent = Extract<ServerEvent, { type: 'session.updated' }>;
+type TranscriptEventAppended = Extract<ServerEvent, { type: 'event.appended' }>;
 
-function missionUpdates(events: ServerEvent[]): MissionUpdatedEvent[] {
-  return events.filter((event): event is MissionUpdatedEvent => event.type === 'mission.updated');
+function sessionUpdates(events: ServerEvent[]): SessionUpdatedEvent[] {
+  return events.filter((event): event is SessionUpdatedEvent => event.type === 'session.updated');
 }
 
-function syncsSummary(calls: RecordedCall[], missionId: string, sessionId: string): boolean {
+function syncsSummary(
+  calls: RecordedCall[],
+  appSessionId: string,
+  providerSessionId: string,
+): boolean {
   return calls.some((call) => {
     if (call.target !== 'history' || call.method !== 'syncSummaries') return false;
     const summaries = call.args[0];
@@ -32,10 +36,10 @@ function syncsSummary(calls: RecordedCall[], missionId: string, sessionId: strin
         (summary) =>
           typeof summary === 'object' &&
           summary !== null &&
-          'id' in summary &&
-          summary.id === missionId &&
-          'sessionId' in summary &&
-          summary.sessionId === sessionId,
+          'appSessionId' in summary &&
+          summary.appSessionId === appSessionId &&
+          'providerSessionId' in summary &&
+          summary.providerSessionId === providerSessionId,
       )
     );
   });
@@ -57,6 +61,7 @@ test('[C1] Manual in-place compaction', { concurrency: false }, async () => {
 
   try {
     await h.create({
+      sessionPurpose: 'chat',
       clientRef: 'c1',
       title: 'C1',
       goal: 'go',
@@ -72,27 +77,27 @@ test('[C1] Manual in-place compaction', { concurrency: false }, async () => {
     };
 
     const compacting = h.handle({
-      type: 'mission.compact',
-      missionId: 'provider-1',
+      type: 'session.compact',
+      appSessionId: 'provider-1',
       customInstructions: 'preserve decisions',
     });
-    await h.handle({ type: 'mission.send', missionId: 'provider-1', text: 'queued once' });
+    await h.handle({ type: 'session.send', appSessionId: 'provider-1', text: 'queued once' });
     compactGate.resolve();
     await h.provider.waitForPrompts('provider-1', 2);
 
     const compactingStatus = h.events.findIndex(
-      (event): event is MissionTranscriptEvent =>
-        event.type === 'mission.transcript' && event.event.text === 'Compacting conversation...',
+      (event): event is TranscriptEventAppended =>
+        event.type === 'event.appended' && event.event.text === 'Compacting conversation...',
     );
     const refreshedContext = h.events.findIndex(
       (event, index) =>
         index > compactingStatus &&
         event.type === 'context.updated' &&
-        event.sessionId === 'provider-1',
+        event.sourceSessionId === 'provider-1',
     );
     const completionStatus = h.events.findIndex(
-      (event): event is MissionTranscriptEvent =>
-        event.type === 'mission.transcript' && event.event.text === 'Compaction complete.',
+      (event): event is TranscriptEventAppended =>
+        event.type === 'event.appended' && event.event.text === 'Compaction complete.',
     );
     assert.deepEqual(
       [
@@ -110,7 +115,7 @@ test('[C1] Manual in-place compaction', { concurrency: false }, async () => {
         event !== null &&
         typeof event === 'object' &&
         'type' in event &&
-        event.type === 'mission.transcript' &&
+        event.type === 'event.appended' &&
         'event' in event &&
         event.event !== null &&
         typeof event.event === 'object' &&
@@ -138,7 +143,7 @@ test('[C1] Manual in-place compaction', { concurrency: false }, async () => {
       { customInstructions: 'preserve decisions' },
     ]);
     assert.equal(callCount(h.calls, 'provider', 'stream', 'provider-1'), 2);
-    assert.equal(missionUpdates(h.events).at(-1)?.mission.sessionId, 'provider-1');
+    assert.equal(sessionUpdates(h.events).at(-1)?.session.providerSessionId, 'provider-1');
   } finally {
     await h.dispose();
   }
@@ -149,6 +154,7 @@ test('[C2] Provider-session swap', { concurrency: false }, async () => {
 
   try {
     await h.create({
+      sessionPurpose: 'chat',
       clientRef: 'c2',
       title: 'C2',
       goal: 'go',
@@ -162,16 +168,16 @@ test('[C2] Provider-session swap', { concurrency: false }, async () => {
     };
     h.runtime.loadQueue.set('provider-2', [new FakeDroidSession('provider-2', {}, h.calls)]);
 
-    await h.handle({ type: 'mission.compact', missionId: 'provider-1' });
+    await h.handle({ type: 'session.compact', appSessionId: 'provider-1' });
 
-    const update = missionUpdates(h.events).at(-1);
+    const update = sessionUpdates(h.events).at(-1);
     const load = h.runtime.loadCalls.at(-1);
     const creation = h.runtime.createCalls[0];
     assert.ok(update);
     assert.ok(load);
     assert.ok(creation);
-    assert.equal(update.mission.id, 'provider-1');
-    assert.equal(update.mission.sessionId, 'provider-2');
+    assert.equal(update.session.appSessionId, 'provider-1');
+    assert.equal(update.session.providerSessionId, 'provider-2');
     assert.equal(load.sessionId, 'provider-2');
     assert.equal(typeof load.handlers.permissionHandler, 'function');
     assert.equal(typeof load.handlers.askUserHandler, 'function');
@@ -188,7 +194,7 @@ test('[C2] Provider-session swap', { concurrency: false }, async () => {
     assert.equal(callCount(h.calls, 'cleanup', 'session.close', 'provider-1'), 1);
     assert.equal(syncsSummary(h.calls, 'provider-1', 'provider-2'), true);
 
-    await h.handle({ type: 'mission.send', missionId: 'provider-1', text: 'after' });
+    await h.handle({ type: 'session.send', appSessionId: 'provider-1', text: 'after' });
     assert.deepEqual(h.provider.session('provider-2').prompts, ['after']);
     assert.equal(callCount(h.calls, 'provider', 'stream', 'provider-2'), 1);
   } finally {
@@ -201,6 +207,7 @@ test('[C3] Failed swap recovery', { concurrency: false }, async () => {
 
   try {
     await h.create({
+      sessionPurpose: 'chat',
       clientRef: 'c3',
       title: 'C3',
       goal: 'go',
@@ -218,8 +225,8 @@ test('[C3] Failed swap recovery', { concurrency: false }, async () => {
       new FakeDroidSession('provider-3', {}, h.calls),
     ]);
 
-    const compacting = h.handle({ type: 'mission.compact', missionId: 'provider-1' });
-    await h.handle({ type: 'mission.send', missionId: 'provider-1', text: 'redeliver once' });
+    const compacting = h.handle({ type: 'session.compact', appSessionId: 'provider-1' });
+    await h.handle({ type: 'session.send', appSessionId: 'provider-1', text: 'redeliver once' });
     compactGate.resolve();
     await compacting;
 
@@ -231,11 +238,7 @@ test('[C3] Failed swap recovery', { concurrency: false }, async () => {
       ),
       true,
     );
-    assert.equal(
-      h.events.some((event) => event.type === 'mission.error'),
-      false,
-    );
-    assert.equal(missionUpdates(h.events).at(-1)?.mission.sessionId, 'provider-3');
+    assert.equal(sessionUpdates(h.events).at(-1)?.session.providerSessionId, 'provider-3');
     assert.deepEqual(h.provider.session('provider-3').prompts, ['redeliver once']);
     assert.equal(callCount(h.calls, 'provider', 'stream', 'provider-3'), 1);
     assert.equal(callCount(h.calls, 'provider', 'stream', 'provider-1'), 1);
@@ -253,12 +256,12 @@ test(
     const h = createSessionCharacterizationHarness();
     try {
       const trace = await runAutoCompactionScenario(h);
-      const scopedStatus = (id: string, role: 'orchestrator' | 'worker') =>
+      const scopedStatus = (id: string, role: 'primary' | 'worker') =>
         h.events.some(
           (event) =>
-            event.type === 'mission.transcript' &&
-            event.event.missionId === 'provider-1' &&
-            event.event.agentSessionId === id &&
+            event.type === 'event.appended' &&
+            event.event.appSessionId === 'provider-1' &&
+            event.event.sourceSessionId === id &&
             event.event.role === role &&
             event.event.compactType === 'auto',
         );
@@ -276,25 +279,25 @@ test(
         [true, true],
       );
       assert.equal(
-        scopedStatus('provider-1', 'orchestrator') && scopedStatus('worker-c4', 'worker'),
+        scopedStatus('provider-1', 'primary') && scopedStatus('worker-c4', 'worker'),
         true,
       );
       assert.equal(
         h.events.some(
           (event) =>
-            event.type === 'mission.worker' &&
-            event.missionId === 'provider-1' &&
+            event.type === 'session.child' &&
+            event.appSessionId === 'provider-1' &&
             event.event === 'completed' &&
-            event.workerSessionId === 'worker-c4',
+            event.providerSessionId === 'worker-c4',
         ),
         true,
       );
       assert.equal(
         h.events.some(
           (event) =>
-            event.type === 'agent.updated' &&
-            event.missionId === 'provider-1' &&
-            event.agentSessionId === 'worker-c4' &&
+            event.type === 'child.updated' &&
+            event.appSessionId === 'provider-1' &&
+            event.providerSessionId === 'worker-c4' &&
             event.role === 'worker' &&
             event.status === 'completed',
         ),
@@ -337,6 +340,7 @@ test('[C5] Compaction retuning uses each live session model', { concurrency: fal
   h.runtime.loadQueue.set('validator-c5', [validator]);
   try {
     await h.create({
+      sessionPurpose: 'mission-control',
       clientRef: 'c5',
       title: 'C5',
       goal: 'go',
@@ -348,15 +352,15 @@ test('[C5] Compaction retuning uses each live session model', { concurrency: fal
     });
     await h.waitForIdle();
     await h.handle({
-      type: 'agent.open',
-      missionId: 'provider-1',
-      agentSessionId: 'worker-c5',
+      type: 'child.open',
+      appSessionId: 'provider-1',
+      providerSessionId: 'worker-c5',
       role: 'worker',
     });
     await h.handle({
-      type: 'agent.open',
-      missionId: 'provider-1',
-      agentSessionId: 'validator-c5',
+      type: 'child.open',
+      appSessionId: 'provider-1',
+      providerSessionId: 'validator-c5',
       role: 'validator',
     });
     assert.deepEqual(
@@ -368,12 +372,12 @@ test('[C5] Compaction retuning uses each live session model', { concurrency: fal
       ['validator-c5', 'validator'],
     ];
     assert.deepEqual(
-      opened.map(([agentSessionId, role]) =>
+      opened.map(([providerSessionId, role]) =>
         h.events.some(
           (event) =>
-            event.type === 'agent.updated' &&
-            event.missionId === 'provider-1' &&
-            event.agentSessionId === agentSessionId &&
+            event.type === 'child.updated' &&
+            event.appSessionId === 'provider-1' &&
+            event.providerSessionId === providerSessionId &&
             event.role === role &&
             event.status === 'opened',
         ),

@@ -27,7 +27,7 @@ function categoryOf(model: ModelInfo): ModelCategory {
 }
 
 const AGENTS: { kind: AgentKind; label: string; hint: string }[] = [
-  { kind: 'orchestrator', label: 'Orchestrator', hint: 'Plans the mission & delegates' },
+  { kind: 'primary', label: 'Primary', hint: 'Runs the session' },
   { kind: 'worker', label: 'Worker', hint: 'Executes each feature' },
   { kind: 'validator', label: 'Validator', hint: 'Verifies the work' },
 ];
@@ -52,7 +52,7 @@ export default function ModelSelectorPopover({
   singleAgent?: boolean;
 }) {
   const { state, dispatch } = useStore();
-  const [agent, setAgent] = useState<AgentKind>('orchestrator');
+  const [agent, setAgent] = useState<AgentKind>('primary');
   const [query, setQuery] = useState('');
   const [cat, setCat] = useState<ModelCategory | 'all'>('all');
   const [filterOpen, setFilterOpen] = useState(false);
@@ -63,11 +63,11 @@ export default function ModelSelectorPopover({
   const cfg = state.agentConfig[agent];
 
   // For a single chat, the model/reasoning belong to that session, not the global default.
-  const activeMission = state.activeMissionId ? state.missions[state.activeMissionId] : null;
-  const missionScoped = singleAgent && !!activeMission;
-  const effModelId = missionScoped ? activeMission!.modelId : cfg.modelId;
-  const effReasoning = missionScoped
-    ? (activeMission!.reasoningEffort ?? cfg.reasoning)
+  const activeSession = state.activeAppSessionId ? state.sessions[state.activeAppSessionId] : null;
+  const sessionScoped = singleAgent && !!activeSession;
+  const effModelId = sessionScoped ? activeSession!.modelId : cfg.modelId;
+  const effReasoning = sessionScoped
+    ? (activeSession!.reasoningEffort ?? cfg.reasoning)
     : cfg.reasoning;
 
   const hasRealModels = state.models.length > 0;
@@ -138,22 +138,30 @@ export default function ModelSelectorPopover({
     : BASE_REASONING;
 
   const updateReasoning = (reasoning: ReasoningEffort) => {
-    if (missionScoped)
-      dispatch({ type: 'MISSION_SET_REASONING', missionId: activeMission!.id, reasoning });
+    if (sessionScoped)
+      dispatch({
+        type: 'SESSION_SET_REASONING',
+        appSessionId: activeSession!.appSessionId,
+        reasoning,
+      });
     else dispatch({ type: 'SET_AGENT_REASONING', agent, reasoning });
     updateAgentSettings({
-      missionId: state.activeMissionId ?? undefined,
+      appSessionId: state.activeAppSessionId ?? undefined,
       agent,
       reasoningEffort: reasoning,
     });
   };
 
   const updateModel = (modelId?: string) => {
-    if (missionScoped)
-      dispatch({ type: 'MISSION_SET_MODEL', missionId: activeMission!.id, modelId });
+    if (sessionScoped)
+      dispatch({
+        type: 'SESSION_SET_MODEL',
+        appSessionId: activeSession!.appSessionId,
+        modelId,
+      });
     else dispatch({ type: 'SET_AGENT_MODEL', agent, modelId });
     updateAgentSettings({
-      missionId: state.activeMissionId ?? undefined,
+      appSessionId: state.activeAppSessionId ?? undefined,
       agent,
       modelId: modelId ?? null,
     });

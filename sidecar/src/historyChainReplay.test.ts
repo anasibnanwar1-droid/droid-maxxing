@@ -9,7 +9,7 @@ const originalHome = process.env.HOME;
 const home = mkdtempSync(join(tmpdir(), 'droid-chain-replay-'));
 process.env.HOME = home;
 
-const { loadMissionTranscriptWindow, resolveSessionChain } = await import('./history.js');
+const { loadSessionTranscriptWindow, resolveSessionChain } = await import('./history.js');
 
 test.after(() => {
   if (originalHome === undefined) delete process.env.HOME;
@@ -67,9 +67,9 @@ function seedChain(): string[] {
   return ['s0', 's1', 's2'];
 }
 
-test('loadMissionTranscriptWindow replays the FULL compaction chain in order', () => {
+test('loadSessionTranscriptWindow replays the FULL compaction chain in order', () => {
   const chain = seedChain();
-  const { events, olderCursor } = loadMissionTranscriptWindow('m', chain, { limit: 100 });
+  const { events, olderCursor } = loadSessionTranscriptWindow('m', chain, { limit: 100 });
 
   const texts = events.filter((e) => e.kind === 'text').map((e) => e.text);
   assert.deepEqual(texts, ['a0-1', 'a0-2', 'a1-1', 'a1-2', 'a2-1', 'a2-2']);
@@ -79,7 +79,7 @@ test('loadMissionTranscriptWindow replays the FULL compaction chain in order', (
 
 test('each post-original chain segment surfaces a compaction divider with removedCount', () => {
   const chain = seedChain();
-  const { events } = loadMissionTranscriptWindow('m', chain, { limit: 100 });
+  const { events } = loadSessionTranscriptWindow('m', chain, { limit: 100 });
 
   const dividers = events.filter((e) => e.kind === 'compaction');
   assert.deepEqual(
@@ -99,7 +99,7 @@ test('cursor pages older history across the chain with no gaps or duplicates', (
   let pages = 0;
 
   do {
-    const page = loadMissionTranscriptWindow('m', chain, { limit: 3, cursor });
+    const page = loadSessionTranscriptWindow('m', chain, { limit: 3, cursor });
     // Prepend each older page to rebuild the transcript oldest -> newest.
     collected.unshift(
       ...page.events.map((e) => (e.kind === 'compaction' ? `divider:${e.removedCount}` : e.text!)),
@@ -127,7 +127,7 @@ test('cursor pages older history across the chain with no gaps or duplicates', (
 
 test('replayed events carry a monotonically increasing seq across the chain', () => {
   const chain = seedChain();
-  const { events } = loadMissionTranscriptWindow('m', chain, { limit: 100 });
+  const { events } = loadSessionTranscriptWindow('m', chain, { limit: 100 });
 
   assert.ok(
     events.every((e) => typeof e.seq === 'number'),
@@ -145,7 +145,7 @@ test('equal-timestamp events keep chain order via seq, not wall-clock', () => {
     assistantAt('second', 5000),
     assistantAt('third', 5000),
   ]);
-  const { events } = loadMissionTranscriptWindow('m', ['eqts'], { limit: 100 });
+  const { events } = loadSessionTranscriptWindow('m', ['eqts'], { limit: 100 });
   const texts = events.filter((e) => e.kind === 'text');
 
   assert.deepEqual(
@@ -163,7 +163,7 @@ test('an oversized compacted segment still surfaces its divider (read from the h
   writeSession('orig', [assistant('first')]);
   writeSession('big', [compactionState(42), assistant('after-1'), assistant(huge)]);
 
-  const { events } = loadMissionTranscriptWindow('m', ['orig', 'big'], { limit: 100 });
+  const { events } = loadSessionTranscriptWindow('m', ['orig', 'big'], { limit: 100 });
   const divider = events.find((e) => e.kind === 'compaction');
   assert.ok(divider, 'expected a compaction divider for the oversized segment');
   assert.equal(divider!.removedCount, 42);
@@ -171,7 +171,7 @@ test('an oversized compacted segment still surfaces its divider (read from the h
 
 test('a single (never-compacted) session yields no divider and no older cursor', () => {
   writeSession('solo', [assistant('only-1'), assistant('only-2')]);
-  const { events, olderCursor } = loadMissionTranscriptWindow('m', ['solo'], { limit: 100 });
+  const { events, olderCursor } = loadSessionTranscriptWindow('m', ['solo'], { limit: 100 });
 
   assert.equal(events.filter((e) => e.kind === 'compaction').length, 0);
   assert.equal(olderCursor, undefined);
@@ -186,7 +186,7 @@ test('an in-place-compacted single segment still surfaces its divider', () => {
   // with a compaction_state: position can no longer flag it, so the divider
   // must be detected by reading the record itself.
   writeSession('inplace', [compactionState(9), assistant('after')]);
-  const { events } = loadMissionTranscriptWindow('m', ['inplace'], { limit: 100 });
+  const { events } = loadSessionTranscriptWindow('m', ['inplace'], { limit: 100 });
 
   const divider = events.find((e) => e.kind === 'compaction');
   assert.ok(divider, 'expected a divider for the in-place-compacted segment');
@@ -203,7 +203,7 @@ test('a mid-file compaction_state (in-place auto-compaction) replays as a divide
     compactionState(86),
     assistant('after-1'),
   ]);
-  const { events } = loadMissionTranscriptWindow('m', ['midfile'], { limit: 100 });
+  const { events } = loadSessionTranscriptWindow('m', ['midfile'], { limit: 100 });
 
   const kinds = events.map((e) => (e.kind === 'compaction' ? `divider:${e.removedCount}` : e.text));
   assert.deepEqual(kinds, ['before-1', 'before-2', 'divider:86', 'after-1']);
@@ -211,7 +211,7 @@ test('a mid-file compaction_state (in-place auto-compaction) replays as a divide
 
 test('a leading compaction_state yields exactly one divider (head read deduped)', () => {
   writeSession('leadonly', [compactionState(11), assistant('m1')]);
-  const { events } = loadMissionTranscriptWindow('m', ['leadonly'], { limit: 100 });
+  const { events } = loadSessionTranscriptWindow('m', ['leadonly'], { limit: 100 });
 
   const dividers = events.filter((e) => e.kind === 'compaction');
   assert.equal(dividers.length, 1);
@@ -219,7 +219,7 @@ test('a leading compaction_state yields exactly one divider (head read deduped)'
 });
 
 test('resolveSessionChain rebuilds the chain from the persisted app-session row', () => {
-  // Plain chats have no mission dir, so the chain must come from the sqlite
+  // Plain chats have no Mission Control directory, so the chain comes from sqlite
   // app-session row (original + previous backing ids + current), oldest first.
   writeSession('app0', [assistant('c0')]);
   writeSession('mid1', [compactionState(3), assistant('c1')]);
@@ -228,16 +228,16 @@ test('resolveSessionChain rebuilds the chain from the persisted app-session row'
   mkdirSync(dbDir, { recursive: true });
   const db = new DatabaseSync(join(dbDir, 'index.sqlite'));
   db.exec(
-    'CREATE TABLE app_sessions (app_session_id TEXT, droid_session_id TEXT, previous_droid_session_ids TEXT)',
+    'CREATE TABLE app_sessions (app_session_id TEXT, provider_session_id TEXT, compacted_from_provider_session_ids TEXT)',
   );
   db.prepare(
-    'INSERT INTO app_sessions (app_session_id, droid_session_id, previous_droid_session_ids) VALUES (?, ?, ?)',
+    'INSERT INTO app_sessions (app_session_id, provider_session_id, compacted_from_provider_session_ids) VALUES (?, ?, ?)',
   ).run('app0', 'cur2', JSON.stringify(['app0', 'mid1']));
   db.close();
 
   assert.deepEqual(resolveSessionChain('app0', 'cur2'), ['app0', 'mid1', 'cur2']);
   // Replaying that chain yields the full conversation in order.
-  const { events } = loadMissionTranscriptWindow('app0', resolveSessionChain('app0', 'cur2'), {
+  const { events } = loadSessionTranscriptWindow('app0', resolveSessionChain('app0', 'cur2'), {
     limit: 100,
   });
   assert.deepEqual(
