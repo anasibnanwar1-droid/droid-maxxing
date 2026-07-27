@@ -3022,7 +3022,7 @@ export class SessionManager {
       // compaction path and the live session id on the polling path.
       this.contextSnapshots.delete(agent.session.sessionId);
       this.contextSnapshots.delete(childProviderSessionId);
-      // Keyed by the app-level agent session id (like closeChildSession), which is
+      // Keyed by the child provider session id (like closeChildSession), which is
       // never reused, so a missed delete would linger forever.
       this.childSessionCompactions.delete(childProviderSessionId);
       this.autoCompactionWatchdogs.clear(childProviderSessionId);

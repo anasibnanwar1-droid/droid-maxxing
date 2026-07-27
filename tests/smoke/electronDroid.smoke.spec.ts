@@ -24,7 +24,7 @@ import {
 
 import { resolveDroidPath } from '../../sidecar/src/Environment.ts';
 
-type SmokeResult = { missionId: string; assistantText: string };
+type SmokeResult = { appSessionId: string; assistantText: string };
 type BridgeInfo = { port: number; token: string };
 type SidecarReadyProof = { port: number; pid: number; tokenHash: string };
 const PRELOAD_ONLY_BOOTSTRAP_DOCUMENT =
@@ -293,27 +293,27 @@ async function runRoundTrip(page: Page): Promise<SmokeResult> {
     const ws = new WebSocket(`ws://127.0.0.1:${port}${token ? `?token=${token}` : ''}`);
     return new Promise<SmokeResult>((resolve, reject) => {
       const clientRef = `e1-${Date.now()}`;
-      let missionId = '';
+      let appSessionId = '';
       let assistantText = '';
       let settled = false;
       let closeSent = false;
-      const sendMissionClose = () => {
-        if (!missionId || closeSent || ws.readyState !== WebSocket.OPEN) return;
+      const sendSessionClose = () => {
+        if (!appSessionId || closeSent || ws.readyState !== WebSocket.OPEN) return;
         closeSent = true;
         try {
-          ws.send(JSON.stringify({ type: 'mission.close', missionId }));
+          ws.send(JSON.stringify({ type: 'session.close', appSessionId }));
         } catch {}
       };
       const settle = (error?: Error) => {
         if (settled) return;
         settled = true;
         window.clearTimeout(timer);
-        if (error) sendMissionClose();
+        if (error) sendSessionClose();
         try {
           ws.close();
         } catch {}
         if (error) reject(error);
-        else resolve({ missionId, assistantText });
+        else resolve({ appSessionId, assistantText });
       };
       const timer = window.setTimeout(() => settle(new Error('E1 timed out')), 120_000);
       ws.onopen = () => {
@@ -321,10 +321,11 @@ async function runRoundTrip(page: Page): Promise<SmokeResult> {
         try {
           ws.send(
             JSON.stringify({
-              type: 'mission.create',
+              type: 'session.create',
               clientRef,
               title: 'E1 authenticated smoke',
               goal: 'Reply with exactly E1_OK.',
+              sessionPurpose: 'chat',
               interactionMode: 'auto',
               autonomy: 'off',
             }),
@@ -345,28 +346,29 @@ async function runRoundTrip(page: Page): Promise<SmokeResult> {
         }
         if (!event || typeof event !== 'object' || !('type' in event)) return;
         const value = event as Record<string, unknown>;
-        if (value.type === 'mission.error' || value.type === 'error') {
+        if (value.type === 'error') {
           settle(new Error(String(value.message ?? 'E1 sidecar error')));
           return;
         }
-        if (value.type === 'mission.created' && value.clientRef === clientRef) {
-          const mission = value.mission as Record<string, unknown>;
-          missionId = String(mission.id ?? '');
+        if (value.type === 'session.created' && value.clientRef === clientRef) {
+          const session = value.session as Record<string, unknown>;
+          appSessionId = String(session.appSessionId ?? '');
           if (
-            !missionId ||
-            mission.kind !== 'chat' ||
-            mission.autonomy !== 'off' ||
-            mission.goal !== 'Reply with exactly E1_OK.'
+            !appSessionId ||
+            session.sessionPurpose !== 'chat' ||
+            session.interactionMode !== 'auto' ||
+            session.autonomy !== 'off' ||
+            session.goal !== 'Reply with exactly E1_OK.'
           )
             settle(new Error('E1 creation contract drift'));
           return;
         }
-        if (value.type === 'mission.transcript') {
+        if (value.type === 'event.appended') {
           const transcript = value.event as Record<string, unknown>;
           if (
-            transcript.missionId === missionId &&
-            transcript.agentSessionId === missionId &&
-            transcript.role === 'orchestrator' &&
+            transcript.appSessionId === appSessionId &&
+            transcript.sourceSessionId === 'primary' &&
+            transcript.role === 'primary' &&
             transcript.kind === 'text' &&
             transcript.author === undefined &&
             typeof transcript.text === 'string' &&
@@ -375,18 +377,18 @@ async function runRoundTrip(page: Page): Promise<SmokeResult> {
             assistantText += transcript.text;
           return;
         }
-        if (value.type === 'mission.updated') {
-          const mission = value.mission as Record<string, unknown>;
+        if (value.type === 'session.updated') {
+          const session = value.session as Record<string, unknown>;
           if (
-            mission.id === missionId &&
-            mission.streaming === false &&
+            session.appSessionId === appSessionId &&
+            session.streaming === false &&
             assistantText.trim() &&
             !closeSent
           )
-            sendMissionClose();
+            sendSessionClose();
           return;
         }
-        if (value.type === 'mission.list' && closeSent) settle();
+        if (value.type === 'sessions.list' && closeSent) settle();
       };
     });
   });

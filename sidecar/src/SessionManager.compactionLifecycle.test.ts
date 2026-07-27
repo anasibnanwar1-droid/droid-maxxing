@@ -16,7 +16,7 @@ import {
 } from './testing/compactionCharacterizationScenarios.js';
 
 type MissionUpdatedEvent = Extract<ServerEvent, { type: 'session.updated' }>;
-type MissionTranscriptEvent = Extract<ServerEvent, { type: 'event.appended' }>;
+type TranscriptEventAppended = Extract<ServerEvent, { type: 'event.appended' }>;
 
 function missionUpdates(events: ServerEvent[]): MissionUpdatedEvent[] {
   return events.filter((event): event is MissionUpdatedEvent => event.type === 'session.updated');
@@ -82,7 +82,7 @@ test('[C1] Manual in-place compaction', { concurrency: false }, async () => {
     await h.provider.waitForPrompts('provider-1', 2);
 
     const compactingStatus = h.events.findIndex(
-      (event): event is MissionTranscriptEvent =>
+      (event): event is TranscriptEventAppended =>
         event.type === 'event.appended' && event.event.text === 'Compacting conversation...',
     );
     const refreshedContext = h.events.findIndex(
@@ -92,7 +92,7 @@ test('[C1] Manual in-place compaction', { concurrency: false }, async () => {
         event.sourceSessionId === 'provider-1',
     );
     const completionStatus = h.events.findIndex(
-      (event): event is MissionTranscriptEvent =>
+      (event): event is TranscriptEventAppended =>
         event.type === 'event.appended' && event.event.text === 'Compaction complete.',
     );
     assert.deepEqual(

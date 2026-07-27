@@ -291,7 +291,7 @@ function AppearanceSection() {
 
   return (
     <div className="max-w-2xl mx-auto">
-      <SectionTitle title="Appearance" sub="Tune the look and feel of Mission Control." />
+      <SectionTitle title="Appearance" sub="Tune the look and feel of Droid Control." />
 
       {/* Theme mode + preview */}
       <div className="rounded-xl border border-droid-border bg-droid-surface p-4 mb-6">
@@ -413,7 +413,7 @@ function AppearanceSection() {
         </div>
         <Slider
           label="UI font size"
-          sub="Base size used for the Mission Control UI"
+          sub="Base size used across the Droid Control UI"
           value={theme.uiFontSize}
           min={12}
           max={18}
