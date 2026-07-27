@@ -1,7 +1,6 @@
 import type { Autonomy } from './protocol.js';
 
 export function normalizeAutonomy(value: unknown): Autonomy | undefined {
-  if (value === 'none') return 'off';
   if (value === 'off' || value === 'low' || value === 'medium' || value === 'high') return value;
   return undefined;
 }

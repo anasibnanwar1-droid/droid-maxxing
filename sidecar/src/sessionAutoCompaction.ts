@@ -11,12 +11,7 @@ import {
 } from './autoCompactionWatchdog.js';
 import type { SessionRole } from './protocol.js';
 
-interface SessionLike {
-  sessionId: string;
-}
-
 export interface CompactingChildState {
-  session: SessionLike;
   providerSessionId: string;
   appSessionId: string;
   role: SessionRole;
@@ -38,7 +33,7 @@ export interface CompactingSessionState<C extends CompactingChildState> {
 export interface AutoCompactionHost<
   C extends CompactingChildState,
   L extends CompactingSessionState<C>,
-  S extends SessionLike,
+  S,
 > {
   watchdogs: AutoCompactionWatchdogs;
   sessions(): Iterable<L>;
@@ -61,9 +56,9 @@ export interface AutoCompactionHost<
   ): void;
   refreshContext(providerSessionId: string, session: S): Promise<void>;
   drive(appSessionId: string, text: string): Promise<void>;
-  driveChildSession(agent: C, text: string): Promise<void>;
+  driveChildSession(childSession: C, text: string): Promise<void>;
   closeChildSession(appSessionId: string, providerSessionId: string): Promise<void>;
-  emitChildSessionPaused(agent: C): void;
+  emitChildSessionPaused(childSession: C): void;
 }
 
 // Returns true when the notification belonged to the compaction lifecycle and
@@ -71,7 +66,7 @@ export interface AutoCompactionHost<
 export function handleCompactionNotification<
   C extends CompactingChildState,
   L extends CompactingSessionState<C>,
-  S extends SessionLike,
+  S,
 >(
   host: AutoCompactionHost<C, L, S>,
   appSessionId: string,
@@ -123,7 +118,7 @@ export function handleCompactionNotification<
 export function onAutoCompactionWatchdogExpired<
   C extends CompactingChildState,
   L extends CompactingSessionState<C>,
-  S extends SessionLike,
+  S,
 >(host: AutoCompactionHost<C, L, S>, sessionKey: string): void {
   const liveSession = host.findSession(sessionKey);
   if (liveSession?.autoCompacting) {
@@ -138,20 +133,16 @@ export function onAutoCompactionWatchdogExpired<
     return;
   }
   for (const owner of host.sessions()) {
-    const agent = owner.childSessions.get(sessionKey);
-    if (agent?.autoCompacting) {
+    const childSession = owner.childSessions.get(sessionKey);
+    if (childSession?.autoCompacting) {
       console.warn(`[compaction] watchdog settled a stale auto-compaction on ${sessionKey}`);
-      setAutoCompacting(host, owner.summary.appSessionId, sessionKey, agent.role, false);
+      setAutoCompacting(host, owner.summary.appSessionId, sessionKey, childSession.role, false);
       return;
     }
   }
 }
 
-function setAutoCompacting<
-  C extends CompactingChildState,
-  L extends CompactingSessionState<C>,
-  S extends SessionLike,
->(
+function setAutoCompacting<C extends CompactingChildState, L extends CompactingSessionState<C>, S>(
   host: AutoCompactionHost<C, L, S>,
   appSessionId: string,
   providerSessionId: string,
@@ -174,18 +165,18 @@ function setAutoCompacting<
     return;
   }
 
-  const agent = liveSession.childSessions.get(providerSessionId);
-  if (!agent) return;
-  const wasActive = agent.autoCompacting;
-  agent.autoCompacting = active;
+  const childSession = liveSession.childSessions.get(providerSessionId);
+  if (!childSession) return;
+  const wasActive = childSession.autoCompacting;
+  childSession.autoCompacting = active;
   if (active) host.watchdogs.arm(providerSessionId, AUTO_COMPACTION_WATCHDOG_MS);
   else host.watchdogs.clear(providerSessionId);
-  if (active || !wasActive || agent.streaming) return;
-  if (agent.pendingSends.length === 0 && agent.closeWhenIdle) {
-    void host.closeChildSession(agent.appSessionId, agent.providerSessionId);
+  if (active || !wasActive || childSession.streaming) return;
+  if (childSession.pendingSends.length === 0 && childSession.closeWhenIdle) {
+    void host.closeChildSession(childSession.appSessionId, childSession.providerSessionId);
     return;
   }
-  const next = agent.pendingSends.shift();
-  if (next !== undefined) void host.driveChildSession(agent, next);
-  else host.emitChildSessionPaused(agent);
+  const next = childSession.pendingSends.shift();
+  if (next !== undefined) void host.driveChildSession(childSession, next);
+  else host.emitChildSessionPaused(childSession);
 }

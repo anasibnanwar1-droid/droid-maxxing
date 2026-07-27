@@ -15,11 +15,11 @@ import {
   seedInitModel,
 } from './testing/compactionCharacterizationScenarios.js';
 
-type MissionUpdatedEvent = Extract<ServerEvent, { type: 'session.updated' }>;
+type SessionUpdatedEvent = Extract<ServerEvent, { type: 'session.updated' }>;
 type TranscriptEventAppended = Extract<ServerEvent, { type: 'event.appended' }>;
 
-function missionUpdates(events: ServerEvent[]): MissionUpdatedEvent[] {
-  return events.filter((event): event is MissionUpdatedEvent => event.type === 'session.updated');
+function sessionUpdates(events: ServerEvent[]): SessionUpdatedEvent[] {
+  return events.filter((event): event is SessionUpdatedEvent => event.type === 'session.updated');
 }
 
 function syncsSummary(calls: RecordedCall[], appSessionId: string, sessionId: string): boolean {
@@ -139,7 +139,7 @@ test('[C1] Manual in-place compaction', { concurrency: false }, async () => {
       { customInstructions: 'preserve decisions' },
     ]);
     assert.equal(callCount(h.calls, 'provider', 'stream', 'provider-1'), 2);
-    assert.equal(missionUpdates(h.events).at(-1)?.session.providerSessionId, 'provider-1');
+    assert.equal(sessionUpdates(h.events).at(-1)?.session.providerSessionId, 'provider-1');
   } finally {
     await h.dispose();
   }
@@ -166,7 +166,7 @@ test('[C2] Provider-session swap', { concurrency: false }, async () => {
 
     await h.handle({ type: 'session.compact', appSessionId: 'provider-1' });
 
-    const update = missionUpdates(h.events).at(-1);
+    const update = sessionUpdates(h.events).at(-1);
     const load = h.runtime.loadCalls.at(-1);
     const creation = h.runtime.createCalls[0];
     assert.ok(update);
@@ -234,7 +234,7 @@ test('[C3] Failed swap recovery', { concurrency: false }, async () => {
       ),
       true,
     );
-    assert.equal(missionUpdates(h.events).at(-1)?.session.providerSessionId, 'provider-3');
+    assert.equal(sessionUpdates(h.events).at(-1)?.session.providerSessionId, 'provider-3');
     assert.deepEqual(h.provider.session('provider-3').prompts, ['redeliver once']);
     assert.equal(callCount(h.calls, 'provider', 'stream', 'provider-3'), 1);
     assert.equal(callCount(h.calls, 'provider', 'stream', 'provider-1'), 1);

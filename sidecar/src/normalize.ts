@@ -70,7 +70,11 @@ export interface NormalizedEvent {
   features?: BridgeFeature[];
   progress?: ProgressEntry[];
   missionState?: string;
-  worker?: { event: 'started' | 'completed'; workerSessionId: string; exitCode?: number };
+  missionChild?: {
+    event: 'started' | 'completed';
+    providerSessionId: string;
+    exitCode?: number;
+  };
   childSession?: {
     providerSessionId?: string;
     toolUseId?: string;
@@ -279,12 +283,14 @@ export function normalizeStreamEvent(
     case 'mission_state_changed':
       return { missionState: ev.state };
     case 'mission_worker_started':
-      return { worker: { event: 'started', workerSessionId: ev.workerSessionId } };
+      return {
+        missionChild: { event: 'started', providerSessionId: ev.workerSessionId },
+      };
     case 'mission_worker_completed':
       return {
-        worker: {
+        missionChild: {
           event: 'completed',
-          workerSessionId: ev.workerSessionId,
+          providerSessionId: ev.workerSessionId,
           exitCode: ev.exitCode,
         },
       };

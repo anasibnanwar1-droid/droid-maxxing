@@ -102,7 +102,7 @@ interface SessionManagerOptions {
 interface LiveChildSession {
   session: DroidSession;
   // The parent session's child map key (and watchdog key). Kept explicitly so paths
-  // that only hold the agent never key timers off session.sessionId, which is
+  // that only hold the child session never key timers off session.sessionId, which is
   // not guaranteed to match the map key.
   providerSessionId: string;
   appSessionId: string;
@@ -200,7 +200,12 @@ const STATE_TO_PHASE: Record<string, SessionPhase> = {
   awaiting_input: 'running',
 };
 
-const MAX_OPEN_CHILD_SESSIONS = boundedInt(process.env.DROID_CONTROL_MAX_OPEN_AGENTS, 4, 1, 24);
+const MAX_OPEN_CHILD_SESSIONS = boundedInt(
+  process.env.DROID_CONTROL_MAX_OPEN_CHILD_SESSIONS,
+  4,
+  1,
+  24,
+);
 const BROWSER_NATIVE_TIMEOUT_MS = boundedInt(
   process.env.DROID_CONTROL_BROWSER_NATIVE_TIMEOUT_MS,
   12_000,
@@ -250,7 +255,7 @@ export class SessionManager {
   private readonly usageOffsets = new Map<string, UsageOffset>();
   private readonly contextSnapshots = new Map<string, ContextStatsSnapshot>();
   // In-place compactions completed per worker session; carried on that
-  // session's context snapshots so the meter's ratchet resets (workers have no
+  // session's context snapshots so the meter's ratchet resets (child sessions have no
   // summary-level generation counter of their own).
   private readonly childSessionCompactions = new Map<string, number>();
   private readonly contextPollers = new Map<string, ReturnType<typeof setInterval>>();
@@ -565,7 +570,7 @@ export class SessionManager {
         if (emit) this.emit({ type: 'catalog.updated', catalog: 'models', items: models });
         return models;
       } catch (err) {
-        this.emitError({ message: `models.list failed: ${errMsg(err)}` });
+        this.emitError({ message: `catalog.models failed: ${errMsg(err)}` });
         return null;
       } finally {
         this.modelRefresh = null;
@@ -835,12 +840,16 @@ export class SessionManager {
     const retunes: Promise<unknown>[] = [];
     for (const liveSession of this.sessions.values()) {
       retunes.push(this.recomputeSessionCompactionLimit(liveSession, stillCurrent));
-      for (const [childProviderSessionId, agent] of liveSession.childSessions) {
-        const modelId = this.childSessionModelId(liveSession, childProviderSessionId, agent.role);
+      for (const [childProviderSessionId, childSession] of liveSession.childSessions) {
+        const modelId = this.childSessionModelId(
+          liveSession,
+          childProviderSessionId,
+          childSession.role,
+        );
         retunes.push(
           this.compactionLimit(modelId).then((limit) => {
             if (!stillCurrent()) return;
-            return this.enableDaemonAutoCompaction(agent.session, limit);
+            return this.enableDaemonAutoCompaction(childSession.session, limit);
           }),
         );
       }
@@ -986,9 +995,12 @@ export class SessionManager {
         mcpServers: mcp.configs,
       });
       const init = session.initResult as InitResultLike;
-      const features = (init.mission?.features ?? []).map((f) => mapFeature(f as never));
       const defaults = await this.getFactoryDefaults();
       const classification = classifySession(init, historical);
+      const features =
+        classification.sessionPurpose === 'mission-control'
+          ? (init.mission?.features ?? []).map((feature) => mapFeature(feature as never))
+          : [];
       const now = Date.now();
       const cwd =
         historical?.workspaceKind === 'none'
@@ -1032,7 +1044,10 @@ export class SessionManager {
           historical?.autonomy ??
           defaults.autonomy ??
           'low',
-        phase: phaseFromInit(init),
+        phase:
+          classification.sessionPurpose === 'mission-control'
+            ? phaseFromInit(init)
+            : (historical?.phase ?? 'paused'),
         streaming: false,
         queuedSends: 0,
         features,
@@ -1075,7 +1090,7 @@ export class SessionManager {
       this.history.syncSummaries([summary]);
       this.emit({ type: 'session.created', clientRef: `resume:${appSessionId}`, session: summary });
       this.emit({ type: 'session.updated', session: summary });
-      if (features.length)
+      if (summary.sessionPurpose === 'mission-control' && features.length)
         this.emit({
           type: 'mission.features',
           appSessionId,
@@ -1137,7 +1152,7 @@ export class SessionManager {
   // session so a renderer reconnect/reload doesn't render a still-running
   // child session as finished. Historical loads leave status undefined,
   // which the renderer treats as completed.
-  private withLiveWorkerStatus(
+  private withLiveChildSessionStatus(
     appSessionId: string,
     links: ChildSessionHistoryLink[],
   ): ChildSessionHistoryLink[] {
@@ -1166,7 +1181,7 @@ export class SessionManager {
     appSessionId: string;
     progress: ProgressEntry[];
     transcripts: TranscriptEvent[];
-    workers?: ChildSessionHistoryLink[];
+    childSessions?: ChildSessionHistoryLink[];
     mode: 'replace' | 'prepend';
     olderCursor?: string;
   }): void {
@@ -1175,7 +1190,7 @@ export class SessionManager {
       appSessionId: args.appSessionId,
       progress: args.progress,
       transcripts: args.transcripts,
-      workers: args.workers,
+      childSessions: args.childSessions,
       mode: args.mode,
       olderCursor: args.olderCursor,
       loadedCount: args.transcripts.length,
@@ -1209,7 +1224,7 @@ export class SessionManager {
         });
         return;
       }
-      const workers = this.withLiveWorkerStatus(
+      const childSessions = this.withLiveChildSessionStatus(
         appSessionId,
         this.history.childSessionLinks(appSessionId),
       );
@@ -1217,7 +1232,7 @@ export class SessionManager {
         appSessionId,
         progress: history.progress,
         transcripts,
-        workers,
+        childSessions,
         mode: 'replace',
         olderCursor: history.olderCursor,
       });
@@ -1242,7 +1257,7 @@ export class SessionManager {
           appSessionId,
           progress: [],
           transcripts: [],
-          workers: this.withLiveWorkerStatus(
+          childSessions: this.withLiveChildSessionStatus(
             appSessionId,
             this.history.childSessionLinks(appSessionId),
           ),
@@ -1846,23 +1861,23 @@ export class SessionManager {
       const phase = STATE_TO_PHASE[n.missionState];
       if (phase) this.patch(appSessionId, { phase });
     }
-    if (n.worker) {
+    if (n.missionChild) {
       this.emit({
         type: 'session.child',
         appSessionId: appSessionId,
-        event: n.worker.event,
-        providerSessionId: n.worker.workerSessionId,
-        exitCode: n.worker.exitCode,
+        event: n.missionChild.event,
+        providerSessionId: n.missionChild.providerSessionId,
+        exitCode: n.missionChild.exitCode,
       });
       this.emit({
         type: 'child.updated',
         appSessionId: appSessionId,
-        providerSessionId: n.worker.workerSessionId,
+        providerSessionId: n.missionChild.providerSessionId,
         role: 'worker',
-        status: n.worker.event === 'completed' ? 'completed' : 'running',
+        status: n.missionChild.event === 'completed' ? 'completed' : 'running',
       });
-      if (n.worker.event === 'completed')
-        void this.closeChildSessionWhenIdle(appSessionId, n.worker.workerSessionId);
+      if (n.missionChild.event === 'completed')
+        void this.closeChildSessionWhenIdle(appSessionId, n.missionChild.providerSessionId);
     }
     if (n.childSession) this.applyChildSession(appSessionId, n.childSession);
     if (n.tokens) {
@@ -1981,15 +1996,15 @@ export class SessionManager {
       refreshContext: (providerSessionId, session) =>
         this.refreshContext(providerSessionId, session),
       drive: (appSessionId, text) => this.drive(appSessionId, text),
-      driveChildSession: (agent, text) => this.driveChildSession(agent, text),
+      driveChildSession: (childSession, text) => this.driveChildSession(childSession, text),
       closeChildSession: (appSessionId, providerSessionId) =>
         this.closeChildSession(appSessionId, providerSessionId),
-      emitChildSessionPaused: (agent) =>
+      emitChildSessionPaused: (childSession) =>
         this.emit({
           type: 'child.updated',
-          appSessionId: agent.appSessionId,
-          providerSessionId: agent.session.sessionId,
-          role: agent.role,
+          appSessionId: childSession.appSessionId,
+          providerSessionId: childSession.session.sessionId,
+          role: childSession.role,
           status: 'paused',
         }),
     };
@@ -2253,7 +2268,7 @@ export class SessionManager {
     }
   }
 
-  private async setAutonomy(appSessionId: string, autonomy: Autonomy | 'none'): Promise<void> {
+  private async setAutonomy(appSessionId: string, autonomy: Autonomy): Promise<void> {
     const liveSession = this.findSession(appSessionId);
     if (!liveSession) {
       this.emitError({
@@ -2289,7 +2304,7 @@ export class SessionManager {
     if (!liveSession) {
       this.emitError({
         appSessionId,
-        message: 'Spec mode can only be toggled on a live session.',
+        message: 'Interaction mode can only be changed on a live session.',
       });
       return;
     }
@@ -2436,8 +2451,8 @@ export class SessionManager {
       return;
     }
     if (liveSession.childSessions.has(childProviderSessionId)) {
-      const agent = liveSession.childSessions.get(childProviderSessionId);
-      if (agent) agent.lastUsedAt = Date.now();
+      const childSession = liveSession.childSessions.get(childProviderSessionId);
+      if (childSession) childSession.lastUsedAt = Date.now();
       this.emit({
         type: 'child.updated',
         appSessionId,
@@ -2475,7 +2490,7 @@ export class SessionManager {
           ...resolvedSettings,
         });
       }
-      // When the loaded agent session doesn't report its own model, fall back to
+      // When the loaded child session doesn't report its own model, use
       // the role's configured model (not the primary's), so per-model limits
       // and context-window clamps stay correct for differing worker/validator models.
       const workerModelId =
@@ -2485,7 +2500,7 @@ export class SessionManager {
       // using the worker model's effective limit (so differing worker/validator
       // models keep their own thresholds).
       await this.enableDaemonAutoCompaction(session, await this.compactionLimit(workerModelId));
-      const agent: LiveChildSession = {
+      const childSession: LiveChildSession = {
         session,
         providerSessionId: childProviderSessionId,
         appSessionId,
@@ -2495,9 +2510,9 @@ export class SessionManager {
         pendingSends: [],
         lastUsedAt: Date.now(),
       };
-      agent.unsubscribe = session.onNotification((note: Record<string, unknown>) => {
+      childSession.unsubscribe = session.onNotification((note: Record<string, unknown>) => {
         // The daemon's auto-compaction notifications are handled by
-        // handleCompactionNotification, which owns the agent's status and
+        // handleCompactionNotification, which owns the child session's status and
         // refresh; any other notification is normalized and applied here.
         if (
           this.handleCompactionNotification(
@@ -2512,7 +2527,7 @@ export class SessionManager {
         for (const n of normalizeNotification(appSessionId, childProviderSessionId, role, note))
           this.applyNormalizedForSource(appSessionId, childProviderSessionId, n);
       });
-      liveSession.childSessions.set(childProviderSessionId, agent);
+      liveSession.childSessions.set(childProviderSessionId, childSession);
       this.emitChildSessionHistory(appSessionId, childProviderSessionId);
       this.emit({
         type: 'child.updated',
@@ -2551,84 +2566,95 @@ export class SessionManager {
     if (!this.childBelongsToSession(liveSession, childProviderSessionId)) return;
     if (!liveSession.childSessions.has(childProviderSessionId))
       await this.openChildSession(appSessionId, childProviderSessionId, 'worker');
-    const agent = liveSession.childSessions.get(childProviderSessionId);
-    if (!agent) return;
-    agent.lastUsedAt = Date.now();
-    if (agent.streaming || agent.autoCompacting) {
-      agent.pendingSends.push(text);
+    const childSession = liveSession.childSessions.get(childProviderSessionId);
+    if (!childSession) return;
+    childSession.lastUsedAt = Date.now();
+    if (childSession.streaming || childSession.autoCompacting) {
+      childSession.pendingSends.push(text);
       return;
     }
-    await this.driveChildSession(agent, text);
+    await this.driveChildSession(childSession, text);
   }
 
-  private async driveChildSession(agent: LiveChildSession, text: string): Promise<void> {
-    agent.streaming = true;
-    agent.lastUsedAt = Date.now();
-    this.findSession(agent.appSessionId)?.terminalSources.delete(agent.session.sessionId);
+  private async driveChildSession(childSession: LiveChildSession, text: string): Promise<void> {
+    childSession.streaming = true;
+    childSession.lastUsedAt = Date.now();
+    this.findSession(childSession.appSessionId)?.terminalSources.delete(
+      childSession.session.sessionId,
+    );
     this.emit({
       type: 'child.updated',
-      appSessionId: agent.appSessionId,
-      providerSessionId: agent.session.sessionId,
-      role: agent.role,
+      appSessionId: childSession.appSessionId,
+      providerSessionId: childSession.session.sessionId,
+      role: childSession.role,
       status: 'running',
     });
-    this.startContextPolling(agent.session.sessionId, agent.session);
+    this.startContextPolling(childSession.session.sessionId, childSession.session);
     try {
-      const stream = agent.session.stream(text, { includePartialMessages: true });
+      const stream = childSession.session.stream(text, { includePartialMessages: true });
       for await (const ev of stream)
-        this.applyEvent(agent.appSessionId, agent.session.sessionId, agent.role, ev);
+        this.applyEvent(
+          childSession.appSessionId,
+          childSession.session.sessionId,
+          childSession.role,
+          ev,
+        );
     } catch (err) {
-      if (agent.interruptingForSteer)
-        this.emitStatus(agent.appSessionId, 'Child-session turn interrupted for steering.');
-      else if (!(agent.interrupting && isUserCancellation(err))) {
+      if (childSession.interruptingForSteer)
+        this.emitStatus(childSession.appSessionId, 'Child-session turn interrupted for steering.');
+      else if (!(childSession.interrupting && isUserCancellation(err))) {
         const message = errMsg(err);
         this.emit({
           type: 'child.not_steerable',
-          appSessionId: agent.appSessionId,
-          providerSessionId: agent.session.sessionId,
+          appSessionId: childSession.appSessionId,
+          providerSessionId: childSession.session.sessionId,
           message,
         });
         this.emit({
           type: 'error',
           code: 'child.not_steerable',
-          appSessionId: agent.appSessionId,
-          providerSessionId: agent.session.sessionId,
+          appSessionId: childSession.appSessionId,
+          providerSessionId: childSession.session.sessionId,
           message,
         });
       }
     } finally {
-      this.stopContextPolling(agent.session.sessionId);
-      agent.interruptingForSteer = false;
-      agent.interrupting = false;
-      if (agent.pendingSends.length === 0 && agent.closeWhenIdle && !agent.autoCompacting) {
-        agent.streaming = false;
+      this.stopContextPolling(childSession.session.sessionId);
+      childSession.interruptingForSteer = false;
+      childSession.interrupting = false;
+      if (
+        childSession.pendingSends.length === 0 &&
+        childSession.closeWhenIdle &&
+        !childSession.autoCompacting
+      ) {
+        childSession.streaming = false;
         // closeChildSession resolves the worker by the child-map id, which is not
         // guaranteed to match the live session id.
-        await this.closeChildSession(agent.appSessionId, agent.providerSessionId);
+        await this.closeChildSession(childSession.appSessionId, childSession.providerSessionId);
       } else {
         // Refresh while streaming stays true so concurrent sends queue instead
         // of racing a second driveChildSession(). The daemon auto-compacts the worker
         // in place (same session id), so no swap handling is needed here.
-        await this.refreshContext(agent.session.sessionId, agent.session);
-        agent.streaming = false;
-        if (agent.autoCompacting) {
+        await this.refreshContext(childSession.session.sessionId, childSession.session);
+        childSession.streaming = false;
+        if (childSession.autoCompacting) {
           // Key by the child-map id: every other watchdog op (initial arm,
           // interrupt, close, expiry lookup) uses it, so the tightened timer
           // actually replaces the 5-minute one.
           this.autoCompactionWatchdogs.arm(
-            agent.providerSessionId,
+            childSession.providerSessionId,
             POST_TURN_AUTO_COMPACTION_WATCHDOG_MS,
           );
           return;
         }
-        const next = agent.pendingSends.shift();
-        if (next !== undefined) void this.driveChildSession(agent, next);
+        const next = childSession.pendingSends.shift();
+        if (next !== undefined) void this.driveChildSession(childSession, next);
         else
           this.emit({
             type: 'child.updated',
-            appSessionId: agent.appSessionId,
-            providerSessionId: agent.session.sessionId,
-            role: agent.role,
+            appSessionId: childSession.appSessionId,
+            providerSessionId: childSession.session.sessionId,
+            role: childSession.role,
             status: 'paused',
           });
       }
@@ -2645,21 +2671,21 @@ export class SessionManager {
     if (!this.childBelongsToSession(liveSession, childProviderSessionId)) return;
     if (!liveSession.childSessions.has(childProviderSessionId))
       await this.openChildSession(appSessionId, childProviderSessionId, 'worker');
-    const agent = liveSession.childSessions.get(childProviderSessionId);
-    if (!agent) return;
-    agent.lastUsedAt = Date.now();
-    if (!agent.streaming && !agent.autoCompacting) {
-      await this.driveChildSession(agent, text);
+    const childSession = liveSession.childSessions.get(childProviderSessionId);
+    if (!childSession) return;
+    childSession.lastUsedAt = Date.now();
+    if (!childSession.streaming && !childSession.autoCompacting) {
+      await this.driveChildSession(childSession, text);
       return;
     }
-    agent.pendingSends.unshift(text);
-    if (agent.autoCompacting) return;
-    agent.interruptingForSteer = true;
+    childSession.pendingSends.unshift(text);
+    if (childSession.autoCompacting) return;
+    childSession.interruptingForSteer = true;
     this.emitStatus(appSessionId, 'Steering child session now...');
     try {
-      await agent.session.interrupt();
+      await childSession.session.interrupt();
     } catch (err) {
-      agent.interruptingForSteer = false;
+      childSession.interruptingForSteer = false;
       this.emit({
         type: 'error',
         code: 'child.send_now_failed',
@@ -2679,28 +2705,28 @@ export class SessionManager {
     if (!this.childBelongsToSession(liveSession, childProviderSessionId)) return;
     if (!liveSession.childSessions.has(childProviderSessionId))
       await this.openChildSession(appSessionId, childProviderSessionId, 'worker');
-    const agent = liveSession.childSessions.get(childProviderSessionId);
-    if (!agent) return;
-    agent.pendingSends = [];
-    agent.lastUsedAt = Date.now();
+    const childSession = liveSession.childSessions.get(childProviderSessionId);
+    if (!childSession) return;
+    childSession.pendingSends = [];
+    childSession.lastUsedAt = Date.now();
     // Same escape hatch as the primary session: interrupt first, and settle the
     // wedged auto-compaction flag only once the interrupt landed.
-    const wasAutoCompacting = agent.autoCompacting;
-    agent.interrupting = true;
-    await agent.session.interrupt();
+    const wasAutoCompacting = childSession.autoCompacting;
+    childSession.interrupting = true;
+    await childSession.session.interrupt();
     if (wasAutoCompacting) {
-      agent.autoCompacting = false;
+      childSession.autoCompacting = false;
       this.autoCompactionWatchdogs.clear(childProviderSessionId);
     }
     // If no driveChildSession() is active to clear the flag in its finally, clear it
     // here so it can't leak into a later turn and misclassify its cancellation.
-    if (!agent.streaming) agent.interrupting = false;
-    agent.streaming = false;
+    if (!childSession.streaming) childSession.interrupting = false;
+    childSession.streaming = false;
     this.emit({
       type: 'child.updated',
       appSessionId,
       providerSessionId: childProviderSessionId,
-      role: agent.role,
+      role: childSession.role,
       status: 'paused',
     });
   }
@@ -2722,16 +2748,16 @@ export class SessionManager {
 
   private async ensureChildSessionCapacity(
     liveSession: LiveSession,
-    requestedAgentSessionId: string,
+    requestedProviderSessionId: string,
   ): Promise<boolean> {
     if (liveSession.childSessions.size < MAX_OPEN_CHILD_SESSIONS) return true;
     const idle = [...liveSession.childSessions.entries()]
       .filter(
-        ([sessionId, agent]) =>
-          sessionId !== requestedAgentSessionId &&
-          !agent.streaming &&
-          !agent.autoCompacting &&
-          agent.pendingSends.length === 0,
+        ([providerSessionId, childSession]) =>
+          providerSessionId !== requestedProviderSessionId &&
+          !childSession.streaming &&
+          !childSession.autoCompacting &&
+          childSession.pendingSends.length === 0,
       )
       .sort((a, b) => a[1].lastUsedAt - b[1].lastUsedAt)[0];
     if (idle) {
@@ -2740,10 +2766,10 @@ export class SessionManager {
     }
     this.emitError({
       appSessionId: liveSession.summary.appSessionId,
-      // Scope to the requested worker so its loading state settles, not just the
+      // Scope to the requested child session so its loading state settles, not just the
       // session-level toast.
-      providerSessionId: requestedAgentSessionId,
-      message: `Open live agent transport limit reached (${MAX_OPEN_CHILD_SESSIONS}). Wait for one running worker view to finish before opening another live worker view.`,
+      providerSessionId: requestedProviderSessionId,
+      message: `Open child-session limit reached (${MAX_OPEN_CHILD_SESSIONS}). Wait for one running child view to finish before opening another.`,
     });
     return false;
   }
@@ -2753,16 +2779,16 @@ export class SessionManager {
     childProviderSessionId: string,
   ): Promise<void> {
     const liveSession = this.findSession(appSessionId);
-    const agent = liveSession?.childSessions.get(childProviderSessionId);
-    if (!liveSession || !agent) return;
+    const childSession = liveSession?.childSessions.get(childProviderSessionId);
+    if (!liveSession || !childSession) return;
     liveSession.childSessions.delete(childProviderSessionId);
     this.childSessionCompactions.delete(childProviderSessionId);
     this.contextSnapshots.delete(childProviderSessionId);
     this.autoCompactionWatchdogs.clear(childProviderSessionId);
-    this.stopContextPolling(agent.session.sessionId);
-    agent.unsubscribe?.();
+    this.stopContextPolling(childSession.session.sessionId);
+    childSession.unsubscribe?.();
     try {
-      await agent.session.close();
+      await childSession.session.close();
     } catch {
       /* ignore */
     }
@@ -2773,10 +2799,14 @@ export class SessionManager {
     childProviderSessionId: string,
   ): Promise<void> {
     const liveSession = this.findSession(appSessionId);
-    const agent = liveSession?.childSessions.get(childProviderSessionId);
-    if (!liveSession || !agent) return;
-    agent.closeWhenIdle = true;
-    if (!agent.streaming && !agent.autoCompacting && agent.pendingSends.length === 0)
+    const childSession = liveSession?.childSessions.get(childProviderSessionId);
+    if (!liveSession || !childSession) return;
+    childSession.closeWhenIdle = true;
+    if (
+      !childSession.streaming &&
+      !childSession.autoCompacting &&
+      childSession.pendingSends.length === 0
+    )
       await this.closeChildSession(appSessionId, childProviderSessionId);
   }
 
@@ -2858,24 +2888,24 @@ export class SessionManager {
     }
   }
 
-  private startContextPolling(sessionId: string, session: DroidSession): void {
-    if (this.contextPollers.has(sessionId)) return;
-    const poll = () => void this.refreshContext(sessionId, session, { persist: false });
+  private startContextPolling(sourceSessionId: string, session: DroidSession): void {
+    if (this.contextPollers.has(sourceSessionId)) return;
+    const poll = () => void this.refreshContext(sourceSessionId, session, { persist: false });
     const timer = setInterval(poll, 2_500);
-    this.contextPollers.set(sessionId, timer);
+    this.contextPollers.set(sourceSessionId, timer);
     poll();
   }
 
-  private stopContextPolling(sessionId: string): void {
-    const timer = this.contextPollers.get(sessionId);
+  private stopContextPolling(sourceSessionId: string): void {
+    const timer = this.contextPollers.get(sourceSessionId);
     if (!timer) return;
     clearInterval(timer);
-    this.contextPollers.delete(sessionId);
+    this.contextPollers.delete(sourceSessionId);
   }
 
-  private emitContextEstimate(sessionId: string, summary: SessionSummary): void {
+  private emitContextEstimate(sourceSessionId: string, summary: SessionSummary): void {
     if (summary.contextTokens <= 0) return;
-    const previous = this.contextSnapshots.get(sessionId);
+    const previous = this.contextSnapshots.get(sourceSessionId);
     const limit =
       this.maxContextTokensForSummary(summary) ?? summary.maxContextTokens ?? previous?.limit;
     if (!limit || limit <= 0) return;
@@ -2896,17 +2926,17 @@ export class SessionManager {
       updatedAt: new Date().toISOString(),
       breakdown,
     };
-    this.contextSnapshots.set(sessionId, snapshot);
+    this.contextSnapshots.set(sourceSessionId, snapshot);
     this.emit({
       type: 'context.updated',
       appSessionId: summary.appSessionId,
-      sourceSessionId: sessionId,
+      sourceSessionId,
       stats: snapshot,
     });
   }
 
   private async refreshContext(
-    sessionId: string,
+    sourceSessionId: string,
     session: DroidSession,
     options: { persist?: boolean } = {},
   ): Promise<void> {
@@ -2915,13 +2945,15 @@ export class SessionManager {
       const breakdown = await this.readContextBreakdown(session);
       let snapshot = contextStatsSnapshot(stats, breakdown);
       const liveSession =
-        this.findSession(sessionId) ??
-        [...this.sessions.values()].find((candidate) => candidate.childSessions.has(sessionId));
-      const appSessionId = liveSession?.summary.appSessionId ?? sessionId;
+        this.findSession(sourceSessionId) ??
+        [...this.sessions.values()].find((candidate) =>
+          candidate.childSessions.has(sourceSessionId),
+        );
+      const appSessionId = liveSession?.summary.appSessionId ?? sourceSessionId;
       const isPrimarySession =
         liveSession !== undefined &&
-        (sessionId === liveSession.summary.appSessionId ||
-          sessionId === liveSession.summary.providerSessionId);
+        (sourceSessionId === liveSession.summary.appSessionId ||
+          sourceSessionId === liveSession.summary.providerSessionId);
       // The daemon's get_context_stats is a chars/4 estimate that over-counts;
       // when a provider-reported reading exists it matches the compaction
       // threshold count exactly, so it wins over the estimate. The stats call
@@ -2949,12 +2981,15 @@ export class SessionManager {
       // Child sessions have no top-level session summary to carry a compaction
       // generation, so the snapshot carries it for the meter's ratchet reset.
       if (!isPrimarySession)
-        snapshot = { ...snapshot, compactions: this.childSessionCompactions.get(sessionId) ?? 0 };
-      this.contextSnapshots.set(sessionId, snapshot);
+        snapshot = {
+          ...snapshot,
+          compactions: this.childSessionCompactions.get(sourceSessionId) ?? 0,
+        };
+      this.contextSnapshots.set(sourceSessionId, snapshot);
       this.emit({
         type: 'context.updated',
         appSessionId,
-        sourceSessionId: sessionId,
+        sourceSessionId,
         stats: snapshot,
       });
       if (liveSession && isPrimarySession) {
@@ -3015,20 +3050,20 @@ export class SessionManager {
       this.stopContextPolling(liveSession.summary.providerSessionId);
     this.autoCompactionWatchdogs.clear(liveSession.summary.appSessionId);
     liveSession.unsubscribe?.();
-    for (const [childProviderSessionId, agent] of liveSession.childSessions) {
-      this.stopContextPolling(agent.session.sessionId);
+    for (const [childProviderSessionId, childSession] of liveSession.childSessions) {
+      this.stopContextPolling(childSession.session.sessionId);
       // Worker snapshots can live under either key: refreshContext stores by
       // the id it was called with, which is the child-map id on the
       // compaction path and the live session id on the polling path.
-      this.contextSnapshots.delete(agent.session.sessionId);
+      this.contextSnapshots.delete(childSession.session.sessionId);
       this.contextSnapshots.delete(childProviderSessionId);
       // Keyed by the child provider session id (like closeChildSession), which is
       // never reused, so a missed delete would linger forever.
       this.childSessionCompactions.delete(childProviderSessionId);
       this.autoCompactionWatchdogs.clear(childProviderSessionId);
-      agent.unsubscribe?.();
+      childSession.unsubscribe?.();
       try {
-        await agent.session.close();
+        await childSession.session.close();
       } catch {
         /* ignore */
       }
@@ -3186,9 +3221,9 @@ function classifySession(
   const mode = init.settings?.interactionMode ?? (init.mission ? 'agi' : undefined);
   if (
     decompType === 'orchestrator' ||
-    Boolean(init.mission) ||
     Boolean(missionControlId) ||
-    historical?.sessionPurpose === 'mission-control'
+    historical?.sessionPurpose === 'mission-control' ||
+    (Boolean(init.mission) && !historical?.sessionPurpose)
   ) {
     return {
       sessionPurpose: 'mission-control',
@@ -3272,7 +3307,7 @@ function contextBreakdownSnapshot(raw: unknown): ContextBreakdownSnapshot | unde
 }
 
 export function createAutonomyForCommand(
-  cmd: { autonomy?: Autonomy | 'none' },
+  cmd: { autonomy?: Autonomy },
   defaults: Pick<FactoryDefaultSettings, 'autonomy'>,
 ): Autonomy {
   return normalizeAutonomy(cmd.autonomy) ?? defaults.autonomy ?? 'low';
@@ -3532,5 +3567,12 @@ function isPostTerminalGeneration(
 function hasNormalizedSideEffects(
   n: Omit<NonNullable<ReturnType<typeof normalizeStreamEvent>>, 'transcript'>,
 ): boolean {
-  return !!(n.features || n.progress || n.missionState || n.worker || n.childSession || n.tokens);
+  return !!(
+    n.features ||
+    n.progress ||
+    n.missionState ||
+    n.missionChild ||
+    n.childSession ||
+    n.tokens
+  );
 }

@@ -367,7 +367,7 @@ test('without any UI signal the resolver follows exposed limits, then CLI defaul
   );
 });
 
-test('withLiveWorkerStatus annotates live links and leaves historical/unknown ones untouched', () => {
+test('withLiveChildSessionStatus annotates live links and leaves unknown ones untouched', () => {
   const manager = new SessionManager(() => {});
   const liveSession = {
     summary: testSummary('app-live', 'droid-live'),
@@ -379,13 +379,13 @@ test('withLiveWorkerStatus annotates live links and leaves historical/unknown on
   };
   const internals = manager as unknown as {
     sessions: Map<string, typeof liveSession>;
-    withLiveWorkerStatus: (
+    withLiveChildSessionStatus: (
       id: string,
       links: ChildSessionHistoryLink[],
     ) => ChildSessionHistoryLink[];
   };
   internals.sessions.set(liveSession.summary.appSessionId, liveSession);
-  const out = internals.withLiveWorkerStatus(liveSession.summary.appSessionId, [
+  const out = internals.withLiveChildSessionStatus(liveSession.summary.appSessionId, [
     { providerSessionId: 'run-1', toolUseId: 't1' },
     { providerSessionId: 'done-1', toolUseId: 't2' },
     { providerSessionId: 'open-1', toolUseId: 't3' },
@@ -413,16 +413,16 @@ test('childBelongsToSession accepts persisted child links for chat/spec sessions
   assert.equal(internals.childBelongsToSession(liveSession, 'unknown-worker'), false);
 });
 
-test('withLiveWorkerStatus leaves links untouched for historical sessions', () => {
+test('withLiveChildSessionStatus leaves links untouched for historical sessions', () => {
   const manager = new SessionManager(() => {});
   const internals = manager as unknown as {
-    withLiveWorkerStatus: (
+    withLiveChildSessionStatus: (
       id: string,
       links: ChildSessionHistoryLink[],
     ) => ChildSessionHistoryLink[];
   };
   const links: ChildSessionHistoryLink[] = [{ providerSessionId: 'w1', toolUseId: 't1' }];
-  assert.deepEqual(internals.withLiveWorkerStatus('not-live', links), links);
+  assert.deepEqual(internals.withLiveChildSessionStatus('not-live', links), links);
 });
 
 test('sendNow interrupts the live turn and prioritizes the steering prompt', async () => {

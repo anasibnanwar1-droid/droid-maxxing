@@ -23,6 +23,13 @@ export interface StreamGate {
 }
 
 type DeferredStream = StreamGate & { readonly promise: Promise<void> };
+type FakeDroidInitResult = {
+  sessionId: string;
+  modelId: string;
+  reasoningEffort: string;
+  settings?: { interactionMode?: 'auto' | 'spec' | 'agi' };
+  mission?: { state?: string; features?: unknown[] };
+};
 
 export class FakeDroidSession {
   readonly prompts: string[] = [];
@@ -34,13 +41,19 @@ export class FakeDroidSession {
   private readonly streamGates: DeferredStream[] = [];
   private nextCompactGate?: DeferredStream;
   private readonly promptWaiters: { count: number; resolve(): void }[] = [];
-  readonly initResult: { sessionId: string; modelId: string; reasoningEffort: string };
+  readonly initResult: FakeDroidInitResult;
   constructor(
     readonly sessionId: string,
     readonly handlers: Runtime.RuntimeHandlers,
     private readonly calls: RecordedCall[],
+    initResult: Partial<FakeDroidInitResult> = {},
   ) {
-    this.initResult = { sessionId, modelId: 'model-default', reasoningEffort: 'medium' };
+    this.initResult = {
+      sessionId,
+      modelId: 'model-default',
+      reasoningEffort: 'medium',
+      ...initResult,
+    };
   }
   async *stream(
     prompt: string,

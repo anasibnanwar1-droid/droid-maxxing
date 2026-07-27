@@ -476,7 +476,7 @@ export class HistoryIndex {
   recordChildSessionLink(
     appSessionId: string,
     toolUseId: string,
-    workerSessionId: string,
+    providerSessionId: string,
     label?: string,
   ): void {
     const now = Date.now();
@@ -491,10 +491,10 @@ export class HistoryIndex {
         updated_at = excluded.updated_at
     `,
       )
-      .run(appSessionId, toolUseId, workerSessionId, sqlValue(label), now);
-    // Remember every worker session ever linked to a spawn. A rekey (worker
+      .run(appSessionId, toolUseId, providerSessionId, sqlValue(label), now);
+    // Remember every child provider session ever linked to a spawn. A rekey
     // compaction) repoints child_session_links at the new id, dropping the old id
-    // from the current mapping; this append-only set keeps superseded worker
+    // from the current mapping; this append-only set keeps superseded child
     // sessions hidden so they never resurface as standalone history chats.
     this.db
       .prepare(
@@ -504,7 +504,7 @@ export class HistoryIndex {
       ON CONFLICT(provider_session_id) DO UPDATE SET updated_at = excluded.updated_at
     `,
       )
-      .run(workerSessionId, now);
+      .run(providerSessionId, now);
   }
 
   childSessionLinks(appSessionId: string): ChildSessionHistoryLink[] {

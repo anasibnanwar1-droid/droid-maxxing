@@ -16,14 +16,14 @@ test.after(() => {
   rmSync(home, { recursive: true, force: true });
 });
 
-test('childSessionLinks preserves the exact toolUseId -> workerSessionId mapping with duplicate labels and out-of-order sessions', () => {
+test('childSessionLinks preserves exact toolUseId -> providerSessionId links', () => {
   const index = new HistoryIndex();
   // Two spawns share the same label, and the worker sessions resolve in an order
   // that does NOT match the spawn order (order-based pairing would mismatch).
-  index.recordChildSessionLink('m1', 'tool-A', 'sess-B', 'worker');
-  index.recordChildSessionLink('m1', 'tool-B', 'sess-A', 'worker');
+  index.recordChildSessionLink('app-1', 'tool-A', 'sess-B', 'worker');
+  index.recordChildSessionLink('app-1', 'tool-B', 'sess-A', 'worker');
 
-  const links = index.childSessionLinks('m1');
+  const links = index.childSessionLinks('app-1');
   index.close();
 
   const byTool = new Map(links.map((l) => [l.toolUseId, l.providerSessionId]));

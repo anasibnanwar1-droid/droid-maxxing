@@ -7,14 +7,14 @@ import test from 'node:test';
 import { createSessionCharacterizationHarness } from './testing/sessionCharacterizationHarness.js';
 import type { SessionSummary, ServerEvent, ChildSessionHistoryLink } from './protocol.js';
 
-type MissionHistoryEvent = Extract<ServerEvent, { type: 'session.history' }>;
-type MissionUpdatedEvent = Extract<ServerEvent, { type: 'session.updated' }>;
+type SessionHistoryEvent = Extract<ServerEvent, { type: 'session.history' }>;
+type SessionUpdatedEvent = Extract<ServerEvent, { type: 'session.updated' }>;
 
-function isMissionHistory(event: ServerEvent): event is MissionHistoryEvent {
+function isSessionHistory(event: ServerEvent): event is SessionHistoryEvent {
   return event.type === 'session.history';
 }
 
-function isMissionUpdated(event: ServerEvent): event is MissionUpdatedEvent {
+function isSessionUpdated(event: ServerEvent): event is SessionUpdatedEvent {
   return event.type === 'session.updated';
 }
 
@@ -128,7 +128,7 @@ test('[H1] Initial history restore', { concurrency: false }, async () => {
 
     await h.handle({ type: 'session.loadHistory', appSessionId: 'app-h1' });
 
-    const event = h.events.filter(isMissionHistory).at(-1);
+    const event = h.events.filter(isSessionHistory).at(-1);
     assert.ok(event);
     assert.equal(event.appSessionId, 'app-h1');
     assert.equal(event.mode, 'replace');
@@ -155,7 +155,7 @@ test('[H2] Paging, empty history, and retry', { concurrency: false }, async () =
     });
     rmSync(path.join(empty.home, '.factory', 'sessions'), { recursive: true, force: true });
     await empty.handle({ type: 'session.loadHistory', appSessionId: 'provider-1' });
-    const restored = empty.events.filter(isMissionHistory).at(-1);
+    const restored = empty.events.filter(isSessionHistory).at(-1);
     assert.ok(restored);
     assert.equal(restored.mode, 'replace');
     assert.deepEqual(restored.transcripts, []);
@@ -184,7 +184,7 @@ test('[H2] Paging, empty history, and retry', { concurrency: false }, async () =
 
     await h.handle({ type: 'session.loadHistory', appSessionId: 'app-h2' });
 
-    const newest = h.events.filter(isMissionHistory).at(-1);
+    const newest = h.events.filter(isSessionHistory).at(-1);
     assert.ok(newest);
     assert.equal(newest.mode, 'replace');
     assert.equal(newest.transcripts.length, 400);
@@ -198,7 +198,7 @@ test('[H2] Paging, empty history, and retry', { concurrency: false }, async () =
       cursor: newest.olderCursor,
     });
 
-    const oldest = h.events.filter(isMissionHistory).at(-1);
+    const oldest = h.events.filter(isSessionHistory).at(-1);
     assert.ok(oldest);
     assert.equal(oldest.mode, 'prepend');
     assert.equal(oldest.transcripts.length, 1);
@@ -221,7 +221,7 @@ test('[H2] Paging, empty history, and retry', { concurrency: false }, async () =
 
     writeHistorySession(h.home, 'missing-h2', [assistantMessage('retry', 'retried', 402)]);
     await h.handle({ type: 'session.loadHistory', appSessionId: 'missing-h2' });
-    const retried = h.events.filter(isMissionHistory).at(-1);
+    const retried = h.events.filter(isSessionHistory).at(-1);
     assert.ok(retried);
     assert.equal(retried.mode, 'replace');
     assert.equal(retried.transcripts[0]?.text, 'retried');
@@ -370,7 +370,7 @@ test('[A3] Child send, steer, and interrupt', { concurrency: false }, async () =
     });
 
     const parentUpdates = h.events.filter(
-      (event) => isMissionUpdated(event) && event.session.appSessionId === 'app-a3',
+      (event) => isSessionUpdated(event) && event.session.appSessionId === 'app-a3',
     );
     h.runtime.loadQueue.set('worker-failed-a3', [new Error('child load failed')]);
     await h.handle({
@@ -399,7 +399,7 @@ test('[A3] Child send, steer, and interrupt', { concurrency: false }, async () =
     );
     assert.deepEqual(
       h.events.filter(
-        (event) => isMissionUpdated(event) && event.session.appSessionId === 'app-a3',
+        (event) => isSessionUpdated(event) && event.session.appSessionId === 'app-a3',
       ),
       parentUpdates,
     );

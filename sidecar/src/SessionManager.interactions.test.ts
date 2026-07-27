@@ -12,13 +12,13 @@ import type { SessionSummary, ServerEvent } from './protocol.js';
 import { writeProviderSessionStart } from './testing/historyCharacterizationSupport.js';
 import { createSessionCharacterizationHarness } from './testing/sessionCharacterizationHarness.js';
 
-type MissionPermissionEvent = Extract<ServerEvent, { type: 'approval.requested' }>;
+type PermissionRequestedEvent = Extract<ServerEvent, { type: 'approval.requested' }>;
 type ApprovalRequestedEvent = Extract<ServerEvent, { type: 'approval.requested' }>;
 type SessionQuestionEvent = Extract<ServerEvent, { type: 'question.requested' }>;
 type QuestionRequestedEvent = Extract<ServerEvent, { type: 'question.requested' }>;
-type MissionUpdatedEvent = Extract<ServerEvent, { type: 'session.updated' }>;
+type SessionUpdatedEvent = Extract<ServerEvent, { type: 'session.updated' }>;
 
-const isMissionPermission = (event: ServerEvent): event is MissionPermissionEvent =>
+const isPermissionRequested = (event: ServerEvent): event is PermissionRequestedEvent =>
   event.type === 'approval.requested';
 const isApprovalRequested = (event: ServerEvent): event is ApprovalRequestedEvent =>
   event.type === 'approval.requested';
@@ -26,7 +26,7 @@ const isSessionQuestion = (event: ServerEvent): event is SessionQuestionEvent =>
   event.type === 'question.requested';
 const isQuestionRequested = (event: ServerEvent): event is QuestionRequestedEvent =>
   event.type === 'question.requested';
-const isMissionUpdated = (event: ServerEvent): event is MissionUpdatedEvent =>
+const isSessionUpdated = (event: ServerEvent): event is SessionUpdatedEvent =>
   event.type === 'session.updated';
 
 function permissionInput(toolUseId: string): RequestPermissionRequestParams {
@@ -111,8 +111,8 @@ function historicalSummary(id: string, sessionId: string): SessionSummary {
   };
 }
 
-function permissionRequest(events: ServerEvent[]): MissionPermissionEvent {
-  const event = events.find(isMissionPermission);
+function permissionRequest(events: ServerEvent[]): PermissionRequestedEvent {
+  const event = events.find(isPermissionRequested);
   assert.ok(event);
   return event;
 }
@@ -149,7 +149,7 @@ test(
       assert.equal(requested.request.appSessionId, 'app-p1');
       assert.equal(h.runtime.loadCalls[0]?.sessionId, 'provider-p1');
       assert.deepEqual(mirrored.request, requested.request);
-      assert.equal(h.events.filter(isMissionPermission).length, 1);
+      assert.equal(h.events.filter(isPermissionRequested).length, 1);
       assert.equal(h.events.filter(isApprovalRequested).length, 1);
 
       await h.handle({
@@ -196,7 +196,7 @@ test(
 
       assert.equal(await first, ToolConfirmationOutcome.ProceedAlways);
       assert.equal(await handler(permissionInput('p2')), ToolConfirmationOutcome.ProceedAlways);
-      assert.equal(h.events.filter(isMissionPermission).length, 1);
+      assert.equal(h.events.filter(isPermissionRequested).length, 1);
       assert.equal(h.events.filter(isApprovalRequested).length, 1);
     } finally {
       await h.dispose();
@@ -320,7 +320,7 @@ test(
           .settings.some((settings) => settings['interactionMode'] === 'auto'),
         true,
       );
-      const transition = h.events.filter(isMissionUpdated).at(-1);
+      const transition = h.events.filter(isSessionUpdated).at(-1);
       assert.ok(transition);
       assert.equal(transition.session.interactionMode, 'auto');
       assert.equal(transition.session.sessionPurpose, 'chat');

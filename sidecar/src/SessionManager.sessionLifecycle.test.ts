@@ -217,6 +217,42 @@ test(
   },
 );
 
+test(
+  'resuming an AGI chat preserves its explicit non-Mission-Control purpose',
+  { concurrency: false },
+  async () => {
+    const h = createSessionCharacterizationHarness();
+
+    try {
+      h.fixture.seedHistorySummaries([
+        { ...summary('app-agi-chat', 'provider-agi-chat'), interactionMode: 'agi' },
+      ]);
+      writeProviderSessionStart(h.home, 'provider-agi-chat', 'AGI chat');
+      h.runtime.loadQueue.set('provider-agi-chat', [
+        new FakeDroidSession('provider-agi-chat', {}, h.calls, {
+          settings: { interactionMode: 'agi' },
+          mission: { state: 'running', features: [] },
+        }),
+      ]);
+
+      await h.handle({ type: 'session.resume', appSessionId: 'app-agi-chat' });
+
+      const resumed = h.events.find((event) => event.type === 'session.created')?.session;
+      assert.equal(resumed?.sessionPurpose, 'chat');
+      assert.equal(resumed?.interactionMode, 'agi');
+      assert.equal(resumed?.missionId, undefined);
+      assert.deepEqual(resumed?.features, []);
+      assert.equal(resumed?.phase, 'paused');
+      assert.equal(
+        h.events.some((event) => event.type === 'mission.features'),
+        false,
+      );
+    } finally {
+      await h.dispose();
+    }
+  },
+);
+
 test('[L6] Send lazily resumes a historical session', { concurrency: false }, async () => {
   const h = createSessionCharacterizationHarness();
 
