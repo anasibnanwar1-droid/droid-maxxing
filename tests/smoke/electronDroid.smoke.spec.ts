@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
 import { createHash, timingSafeEqual } from 'node:crypto';
 import {
   existsSync,
@@ -23,21 +22,18 @@ import {
   type Page,
 } from '@playwright/test';
 
-import { resolveDroidPath, wrapDroidInvocation } from '../../sidecar/src/Environment.ts';
+import { resolveDroidPath } from '../../sidecar/src/Environment.ts';
 
 type SmokeResult = { missionId: string; assistantText: string };
 type BridgeInfo = { port: number; token: string };
 type SidecarReadyProof = { port: number; pid: number; tokenHash: string };
-
 const PRELOAD_ONLY_BOOTSTRAP_DOCUMENT =
   '<!doctype html><html><head><meta charset="utf-8"></head><body>E1 bootstrap</body></html>';
-
 function createPreloadOnlyBootstrapUrl(): string {
   const url = `data:text/html;charset=utf-8,${encodeURIComponent(PRELOAD_ONLY_BOOTSTRAP_DOCUMENT)}`;
   assertPreloadOnlyBootstrapUrl(url);
   return url;
 }
-
 function assertPreloadOnlyBootstrapUrl(url: string): void {
   assert.equal(new URL(url).protocol, 'data:', 'E1 bootstrap must use a data URL.');
   const documentSource = decodeURIComponent(url.slice(url.indexOf(',') + 1));
@@ -53,7 +49,6 @@ function assertPreloadOnlyBootstrapUrl(url: string): void {
     'E1 bootstrap must not load subresources.',
   );
 }
-
 async function assertPreloadOnlyBootstrap(page: Page, url: string): Promise<void> {
   const state = await page.evaluate(() => ({
     url: window.location.href,
@@ -63,7 +58,6 @@ async function assertPreloadOnlyBootstrap(page: Page, url: string): Promise<void
   }));
   assert.deepEqual(state, { url, scriptCount: 0, hasReactRoot: false, hasPreload: true });
 }
-
 function isWithin(root: string, candidate: string): boolean {
   const relative = path.relative(root, candidate);
   return (
@@ -71,7 +65,6 @@ function isWithin(root: string, candidate: string): boolean {
     (!path.isAbsolute(relative) && relative !== '..' && !relative.startsWith(`..${path.sep}`))
   );
 }
-
 async function allocateLoopbackPort(): Promise<number> {
   const server = createServer();
   await new Promise<void>((resolve, reject) => {
@@ -88,7 +81,6 @@ async function allocateLoopbackPort(): Promise<number> {
   );
   return address.port;
 }
-
 function writeIsolatedSidecarEntry(home: string, sidecar: string): string {
   const entry = path.join(home, 'e1-sidecar-entry.mjs');
   writeFileSync(
@@ -128,7 +120,6 @@ function writeIsolatedSidecarEntry(home: string, sidecar: string): string {
   );
   return entry;
 }
-
 function waitForSidecarReadyProof(proofPath: string): Promise<string> {
   return new Promise((resolve, reject) => {
     let settled = false;
@@ -273,8 +264,24 @@ async function verifyOwnedBridge(page: Page, bridge: BridgeInfo): Promise<void> 
           settle(new Error('E1 environment probe received invalid JSON.'));
           return;
         }
-        if (event && typeof event === 'object' && 'type' in event && event.type === 'env.report')
-          settle();
+        if (!event || typeof event !== 'object' || Array.isArray(event)) return;
+        const value = event as Record<string, unknown>;
+        if (value.type !== 'env.report') return;
+        const report = value.report;
+        if (
+          !report ||
+          typeof report !== 'object' ||
+          Array.isArray(report) ||
+          !('cli' in report) ||
+          !report.cli ||
+          typeof report.cli !== 'object' ||
+          Array.isArray(report.cli) ||
+          report.cli.present !== true
+        ) {
+          settle(new Error('E1 env.report did not confirm CLI readiness.'));
+          return;
+        }
+        settle();
       };
     });
   }, bridge);
@@ -396,8 +403,6 @@ test('[E1] Authenticated desktop round trip', async () => {
   for (const artifact of ['dist/index.html', 'sidecar/dist/sidecar.mjs', 'electron/main.cjs'])
     assert.ok(existsSync(artifact), `missing ${artifact}`);
   const droidPath = resolveDroidPath();
-  const { execPath, execArgs } = wrapDroidInvocation(droidPath, ['--version']);
-  execFileSync(execPath, execArgs, { stdio: 'pipe' });
 
   const home = mkdtempSync(path.join(tmpdir(), 'droid-control-e1-'));
   const profile = {
@@ -484,7 +489,7 @@ test('[E1] Authenticated desktop round trip', async () => {
       { completed: true, cliAutoUpdate: false, appAutoUpdate: false },
     );
     const result = await runRoundTrip(page);
-    expect(result.assistantText.trim()).not.toBe('');
+    expect(result.assistantText.trim()).toBe('E1_OK');
   } finally {
     try {
       await app?.close();
