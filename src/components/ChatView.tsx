@@ -14,7 +14,11 @@ import {
 } from './chat';
 import { readFile } from '../lib/desktop';
 import { interruptChild, loadSessionHistory } from '../lib/commands';
-import { findWorkerForTarget, resolveWorkers, subagentActivityForTarget } from '../lib/subagents';
+import {
+  findChildSessionForTarget,
+  resolveChildSessions,
+  childSessionActivityForTarget,
+} from '../lib/childSessions';
 import type { FileChange } from '../lib/diff';
 import { ConversationTimeline } from './ConversationTimeline';
 
@@ -165,7 +169,7 @@ function ChatHeader({
         <button
           type="button"
           onClick={sub.onStop}
-          title="Stop subagent"
+          title="Stop child session"
           className="flex shrink-0 items-center gap-1 rounded-lg bg-droid-elevated/60 px-2.5 py-1.5 text-[11px] text-droid-text-muted transition-colors hover:bg-droid-elevated hover:text-droid-text"
         >
           <Square className="h-3 w-3" />
@@ -189,7 +193,7 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
   // Historical chat/spec sessions receive exact persisted child links in
   // state.workers, matching live session.child events.
   const resolvedWorkers = useMemo(
-    () => resolveWorkers(childSessions, allTranscript),
+    () => resolveChildSessions(childSessions, allTranscript),
     [childSessions, allTranscript],
   );
   const workerIndex = resolvedWorkers.findIndex((w) => w.providerSessionId === selectedAgent);
@@ -203,10 +207,10 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
     : undefined;
   const subMeta = [subModel, selectedWorker?.reasoningEffort].filter(Boolean).join(' · ');
 
-  // Click a spawn name → switch the main chat view to that subagent's session.
-  const openSubagent = useCallback(
+  // Click a spawn name → switch the main chat view to that child session's session.
+  const openChildSession = useCallback(
     (target: { toolUseId?: string; label?: string }) => {
-      const worker = findWorkerForTarget(resolvedWorkers, target);
+      const worker = findChildSessionForTarget(resolvedWorkers, target);
       if (worker) dispatch({ type: 'SELECT_PROVIDER_SESSION', id: worker.providerSessionId });
     },
     [resolvedWorkers, dispatch],
@@ -225,9 +229,9 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
 
   // Latest activity for a spawn line's inline disclosure: the worker's status,
   // start time (for the timer), and its newest meaningful transcript event.
-  const subagentActivity = useCallback(
+  const childSessionActivity = useCallback(
     (target: { toolUseId?: string; label?: string }) => {
-      return subagentActivityForTarget(resolvedWorkers, allTranscript, target);
+      return childSessionActivityForTarget(resolvedWorkers, allTranscript, target);
     },
     [resolvedWorkers, allTranscript],
   );
@@ -470,8 +474,8 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
                 cwd={activeSession.cwd}
                 onOpenDiff={openDiff}
                 onOpenReviewFile={openReviewFile}
-                onOpenSubagent={openSubagent}
-                subagentActivity={subagentActivity}
+                onOpenChildSession={openChildSession}
+                childSessionActivity={childSessionActivity}
                 specContent={specContent}
                 onOpenSpecWiki={
                   appSessionId

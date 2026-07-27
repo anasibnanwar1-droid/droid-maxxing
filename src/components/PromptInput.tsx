@@ -1011,7 +1011,7 @@ export default function PromptInput({
               missionPreview
                 ? activeSession
                   ? targetAgentSessionId
-                    ? 'Steer the selected subagent…'
+                    ? 'Steer the selected child session…'
                     : 'Direct the orchestrator…'
                   : 'Describe the mission objective…'
                 : isSpecMode

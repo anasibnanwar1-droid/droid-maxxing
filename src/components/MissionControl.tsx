@@ -49,7 +49,11 @@ import { environmentLabels } from '../lib/repoEnvironment';
 import { DiffFull } from './DiffView';
 import { ModelIcon, providerOf } from './ModelIcon';
 import { CAT_ICON, CAT_LABEL, toolMeta } from '../lib/tools';
-import { findWorkerForTarget, resolveWorkers, subagentActivityForTarget } from '../lib/subagents';
+import {
+  findChildSessionForTarget,
+  resolveChildSessions,
+  childSessionActivityForTarget,
+} from '../lib/childSessions';
 import type { WorkerInfo } from '../hooks/useStore';
 import { MessageFeed } from './chat';
 import EditorOpenMenu, { openCodebase, openCurrentDiff } from './EditorOpenMenu';
@@ -72,16 +76,16 @@ function ChatArea({
   live,
   pending,
   onOpenDiff,
-  onOpenSubagent,
-  subagentActivity,
+  onOpenChildSession,
+  childSessionActivity,
   big,
 }: {
   events: TranscriptEvent[];
   live: boolean;
   pending: boolean;
   onOpenDiff?: (c: FileChange) => void;
-  onOpenSubagent?: (target: { toolUseId?: string; label?: string }) => void;
-  subagentActivity?: (target: { toolUseId?: string; label?: string }) =>
+  onOpenChildSession?: (target: { toolUseId?: string; label?: string }) => void;
+  childSessionActivity?: (target: { toolUseId?: string; label?: string }) =>
     | {
         status?: 'running' | 'paused' | 'completed';
         startedAt?: number;
@@ -119,8 +123,8 @@ function ChatArea({
           events={renderEvents}
           pending={pending}
           onOpenDiff={onOpenDiff}
-          onOpenSubagent={onOpenSubagent}
-          subagentActivity={subagentActivity}
+          onOpenChildSession={onOpenChildSession}
+          childSessionActivity={childSessionActivity}
         />
 
         {events.length === 0 && !pending && (
@@ -228,7 +232,7 @@ function FeaturesColumn({
   );
 }
 
-/* ════════════════════════ right: environment / subagents / sources ════════════════════════ */
+/* ════════════════════════ right: environment / child sessions / sources ════════════════════════ */
 
 function EnvRow({
   icon,
@@ -912,16 +916,16 @@ export default function MissionControl() {
   // state.workers from the persisted exact mapping, and only fall back to
   // transcript reconstruction for older history that predates persisted links.
   const resolvedWorkers = useMemo<WorkerInfo[]>(
-    () => resolveWorkers(childSessions, allTx),
+    () => resolveChildSessions(childSessions, allTx),
     [childSessions, allTx],
   );
 
   // Click a spawn name in the orchestrator transcript → focus that worker.
   // Mission orchestrators are skipped by App's subscribe effect, so open the
   // worker session here to load its history/live events before switching.
-  const openSubagent = useCallback(
+  const openChildSession = useCallback(
     (target: { toolUseId?: string; label?: string }) => {
-      const worker = findWorkerForTarget(resolvedWorkers, target);
+      const worker = findChildSessionForTarget(resolvedWorkers, target);
       if (!worker || !mission) return;
       openChild(mission.appSessionId, worker.providerSessionId);
       setViewedAgent(worker.providerSessionId);
@@ -929,9 +933,9 @@ export default function MissionControl() {
     [resolvedWorkers, mission],
   );
 
-  const subagentActivity = useCallback(
+  const childSessionActivity = useCallback(
     (target: { toolUseId?: string; label?: string }) => {
-      return subagentActivityForTarget(resolvedWorkers, allTx, target);
+      return childSessionActivityForTarget(resolvedWorkers, allTx, target);
     },
     [resolvedWorkers, allTx],
   );
@@ -1167,8 +1171,8 @@ export default function MissionControl() {
               live={isLive}
               pending={isLive && viewedAgent === activeAgentId}
               onOpenDiff={setOpenDiff}
-              onOpenSubagent={onOrchestrator ? openSubagent : undefined}
-              subagentActivity={onOrchestrator ? subagentActivity : undefined}
+              onOpenChildSession={onOrchestrator ? openChildSession : undefined}
+              childSessionActivity={onOrchestrator ? childSessionActivity : undefined}
             />
           )}
           <PromptInput />

@@ -4,7 +4,7 @@ import type { SessionSummary } from '../types/bridge';
 import {
   addWorkspaceCwd,
   buildWorkspaceSections,
-  isSubagentSession,
+  isChildSession,
   SIDEBAR_VISIBLE_SESSION_LIMIT,
 } from './workspaces';
 
@@ -91,12 +91,12 @@ test('buildWorkspaceSections keeps nested worktree sessions under the repository
   assert.equal(sections[0].cwd, '/repo/app');
 });
 
-test('isSubagentSession flags workers, validators and parented sessions', () => {
-  assert.equal(isSubagentSession(session('a', '/repo/app', 1)), false);
-  assert.equal(isSubagentSession({ ...session('w', '/repo/app', 1), role: 'worker' }), true);
-  assert.equal(isSubagentSession({ ...session('v', '/repo/app', 1), role: 'validator' }), true);
+test('isChildSession flags workers, validators and parented sessions', () => {
+  assert.equal(isChildSession(session('a', '/repo/app', 1)), false);
+  assert.equal(isChildSession({ ...session('w', '/repo/app', 1), role: 'worker' }), true);
+  assert.equal(isChildSession({ ...session('v', '/repo/app', 1), role: 'validator' }), true);
   assert.equal(
-    isSubagentSession({ ...session('p', '/repo/app', 1), parentProviderSessionId: 'parent' }),
+    isChildSession({ ...session('p', '/repo/app', 1), parentProviderSessionId: 'parent' }),
     true,
   );
 });

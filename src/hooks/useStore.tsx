@@ -135,7 +135,7 @@ export interface AppState {
   // Lets the chat show an honest restoring/partial/retry surface instead of a
   // blank or silently truncated transcript (#29).
   sessionRestore: Record<string, SessionRestore>;
-  // Whether a subagent's inner transcript is currently being fetched, keyed by
+  // Whether a child session's inner transcript is currently being fetched, keyed by
   // worker session id. A worker's events only stream after its card is opened,
   // so the view shows a loading state until the first event (or the opened ack)
   // arrives instead of a misleading "no activity" empty state.
@@ -1521,7 +1521,7 @@ function baseReducer(state: AppState, action: Action): AppState {
               providerSessionId: link.providerSessionId,
               // Honor the live run state the backend attaches for active
               // sessions so a reconnect/reload doesn't mark a still-running
-              // subagent as finished; historical loads omit it (-> completed).
+              // child session as finished; historical loads omit it (-> completed).
               status: link.status ?? 'completed',
               // A running link has no persisted start time; seed "now" so the
               // elapsed timer counts from reconnect rather than the Unix epoch.

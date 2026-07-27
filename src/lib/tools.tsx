@@ -41,7 +41,7 @@ export const CAT_LABEL: Record<ToolCat, string> = {
   search: 'Search',
   web: 'Fetch',
   skill: 'Skill',
-  task: 'Subagent',
+  task: 'Child session',
   other: 'Tool',
 };
 
@@ -53,7 +53,7 @@ export function toolMeta(name?: string, args?: unknown): { cat: ToolCat; detail:
   const cmd = s('command') ?? s('cmd') ?? s('script');
   const pattern = s('pattern') ?? s('query');
   const url = s('url');
-  const subagent = s('subagent_type') ?? s('subagentType') ?? s('description');
+  const childSessionDetail = s('subagent_type') ?? s('subagentType') ?? s('description');
   const skill = s('skill');
 
   let cat: ToolCat = 'other';
@@ -62,11 +62,11 @@ export function toolMeta(name?: string, args?: unknown): { cat: ToolCat; detail:
   else if (/exec|run|bash|shell|command|terminal/.test(n)) cat = 'exec';
   else if (/grep|search|glob|find/.test(n)) cat = 'search';
   else if (/fetch|web|url|http/.test(n)) cat = 'web';
-  else if (/task|subagent|delegate/.test(n) || subagent) cat = 'task';
+  else if (/task|subagent|delegate/.test(n) || childSessionDetail) cat = 'task';
   else if (/skill/.test(n)) cat = 'skill';
   else if (/read|cat|view|open|list|ls/.test(n)) cat = 'read';
 
-  return { cat, detail: file ?? cmd ?? pattern ?? url ?? subagent ?? skill ?? '' };
+  return { cat, detail: file ?? cmd ?? pattern ?? url ?? childSessionDetail ?? skill ?? '' };
 }
 
 export type TodoStatus = 'completed' | 'in_progress' | 'pending';
@@ -100,17 +100,17 @@ export function hasTodoPayload(args: unknown): boolean {
   return typeof a.todos === 'string';
 }
 
-// A Task/subagent spawn is identified by the tool name or a `subagent_type` arg.
-export function isSubagentTool(name?: string, args?: unknown): boolean {
+// Factory Task/subagent metadata identifies a child-session spawn.
+export function isChildSessionTool(name?: string, args?: unknown): boolean {
   // Whole-word match so unrelated tools (e.g. `create_task`) aren't mistaken
-  // for a subagent spawn; the strong signal is the `subagent_type` arg.
+  // for a child spawn; the strong Factory signal is the `subagent_type` arg.
   if (/\b(task|subagent|delegate)\b/i.test(name ?? '')) return true;
   const a = args && typeof args === 'object' ? (args as Record<string, unknown>) : {};
   return typeof a.subagent_type === 'string' || typeof a.subagentType === 'string';
 }
 
 // The droid name and short description carried by a Task spawn's arguments.
-export function subagentInfo(args: unknown): { label?: string; description?: string } {
+export function childSessionInfo(args: unknown): { label?: string; description?: string } {
   const a = args && typeof args === 'object' ? (args as Record<string, unknown>) : {};
   const s = (k: string) =>
     typeof a[k] === 'string' ? (a[k] as string).trim() || undefined : undefined;

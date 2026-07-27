@@ -1,10 +1,10 @@
 import type { TranscriptEvent } from '../types/bridge';
 import type { WorkerInfo } from '../hooks/useStore';
-import { subagentInfo, toolMeta, CAT_LABEL } from './tools';
+import { childSessionInfo, toolMeta, CAT_LABEL } from './tools';
 
 // Child-session links are canonical protocol data. The renderer never guesses
 // provider identities from transcript order.
-export function resolveWorkers(
+export function resolveChildSessions(
   workers: WorkerInfo[],
   _transcript: TranscriptEvent[],
 ): WorkerInfo[] {
@@ -15,9 +15,12 @@ export function resolveWorkers(
 // toolUseId; the subagent_type (label) and description can arrive in separate
 // deltas, so merge their args rather than picking one event and dropping the
 // field the other carried.
-export function richerSubagent(existing: TranscriptEvent, next: TranscriptEvent): TranscriptEvent {
-  const e = subagentInfo(existing.toolArgs);
-  const n = subagentInfo(next.toolArgs);
+export function mergeChildSessionSpawn(
+  existing: TranscriptEvent,
+  next: TranscriptEvent,
+): TranscriptEvent {
+  const e = childSessionInfo(existing.toolArgs);
+  const n = childSessionInfo(next.toolArgs);
   const label = n.label ?? e.label;
   const description = n.description ?? e.description;
   // The latest delta is the freshest base; only rebuild its args when an earlier
@@ -37,7 +40,7 @@ export function richerSubagent(existing: TranscriptEvent, next: TranscriptEvent)
   };
 }
 
-export type SubagentLatest = {
+export type ChildSessionLatest = {
   kind: TranscriptEvent['kind'];
   text?: string;
   toolName?: string;
@@ -45,17 +48,17 @@ export type SubagentLatest = {
   isError?: boolean;
 };
 
-export type SubagentTarget = { toolUseId?: string; label?: string };
+export type ChildSessionTarget = { toolUseId?: string; label?: string };
 
-export type SubagentActivity = {
+export type ChildSessionActivity = {
   status?: WorkerInfo['status'];
   startedAt?: number;
-  latest?: SubagentLatest;
+  latest?: ChildSessionLatest;
 };
 
-export function findWorkerForTarget(
+export function findChildSessionForTarget(
   workers: WorkerInfo[],
-  target: SubagentTarget,
+  target: ChildSessionTarget,
 ): WorkerInfo | undefined {
   if (target.toolUseId) {
     const byId = workers.find((w) => w.toolUseId === target.toolUseId);
@@ -67,14 +70,14 @@ export function findWorkerForTarget(
   return matches.find((w) => w.status === 'running') ?? matches[matches.length - 1];
 }
 
-export function subagentActivityForTarget(
+export function childSessionActivityForTarget(
   workers: WorkerInfo[],
   allTx: TranscriptEvent[],
-  target: SubagentTarget,
-): SubagentActivity | undefined {
-  const worker = findWorkerForTarget(workers, target);
+  target: ChildSessionTarget,
+): ChildSessionActivity | undefined {
+  const worker = findChildSessionForTarget(workers, target);
   if (!worker) return undefined;
-  let latest: SubagentLatest | undefined;
+  let latest: ChildSessionLatest | undefined;
   for (let i = allTx.length - 1; i >= 0; i--) {
     const t = allTx[i];
     if (
@@ -102,10 +105,10 @@ export function previewLine(text?: string): string | undefined {
   return line.length > 160 ? `${line.slice(0, 159)}…` : line || undefined;
 }
 
-// Map the subagent's newest transcript event to a short head + body, mirroring
+// Map the child session's newest transcript event to a short head + body, mirroring
 // how the main feed labels thinking/tool steps.
-export function subagentLatest(
-  latest: SubagentLatest | undefined,
+export function childSessionLatest(
+  latest: ChildSessionLatest | undefined,
 ): { head: string; body?: string } | null {
   if (!latest) return null;
   // A failed tool result is surfaced by the activity scanners (which skip only

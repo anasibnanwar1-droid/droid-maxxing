@@ -62,18 +62,18 @@ export interface WorkerSummary {
   modelId?: string;
   reasoningEffort?: ReasoningEffort;
   // The primary session's Task tool_call id that spawned this worker; links an
-  // in-chat spawn line to its subagent session.
+  // in-chat spawn line to its child session session.
   toolUseId?: string;
 }
 
 // The exact toolUseId -> providerSessionId mapping persisted for a parent session, so
-// historical loads can rebuild precise subagent links instead of guessing.
+// historical loads can rebuild precise child session links instead of guessing.
 export interface ChildSessionHistoryLink {
   providerSessionId: string;
   toolUseId?: string;
   label?: string;
   // Live run state for the linked worker, set only when the parent session is still
-  // active so a reconnect/reload doesn't render a running subagent as finished.
+  // active so a reconnect/reload doesn't render a running child session as finished.
   // Omitted (treated as completed) for historical loads.
   status?: 'running' | 'paused' | 'completed';
 }

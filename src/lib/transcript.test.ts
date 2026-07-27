@@ -34,7 +34,7 @@ test('TodoWrite classifies as plan_update, not a file edit', () => {
 
 test('Task spawn classifies as subagent_event', () => {
   const e = ev({ kind: 'tool_call', toolName: 'Task', toolArgs: { subagent_type: 'worker' } });
-  assert.equal(classifyEvent(e), 'subagent_event');
+  assert.equal(classifyEvent(e), 'child_session_event');
 });
 
 test('edit tool classifies as file_edit', () => {

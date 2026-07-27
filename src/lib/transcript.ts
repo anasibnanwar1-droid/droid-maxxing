@@ -1,5 +1,5 @@
 import type { TranscriptEvent } from '../types/bridge';
-import { isSubagentTool, isTodoTool } from './tools';
+import { isChildSessionTool, isTodoTool } from './tools';
 import { extractFileChange } from './diff';
 
 // The explicit content taxonomy the transcript renderer is driven by. Classifying
@@ -15,7 +15,7 @@ export type ContentType =
   | 'file_edit'
   | 'plan_update'
   | 'compaction'
-  | 'subagent_event'
+  | 'child_session_event'
   | 'error'
   | 'status'
   | 'spec_content';
@@ -48,7 +48,7 @@ export function classifyEvent(ev: TranscriptEvent): ContentType {
       return 'status';
     case 'tool_call':
     case 'tool_result':
-      if (isSubagentTool(ev.toolName, ev.toolArgs)) return 'subagent_event';
+      if (isChildSessionTool(ev.toolName, ev.toolArgs)) return 'child_session_event';
       if (isTodoTool(ev.toolName)) return 'plan_update';
       if (ev.kind === 'tool_call' && extractFileChange(ev.toolName, ev.toolArgs))
         return 'file_edit';

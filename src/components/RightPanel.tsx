@@ -77,7 +77,7 @@ function AgentRow({
       {running && onStop && (
         <button
           type="button"
-          title="Stop subagent"
+          title="Stop child session"
           onClick={onStop}
           className="shrink-0 rounded p-1 text-droid-text-muted transition-colors hover:bg-droid-elevated hover:text-droid-text"
         >

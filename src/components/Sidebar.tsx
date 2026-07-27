@@ -14,7 +14,7 @@ import {
 } from 'lucide-react';
 import {
   buildWorkspaceSections,
-  isSubagentSession,
+  isChildSession,
   SIDEBAR_VISIBLE_SESSION_LIMIT,
 } from '../lib/workspaces';
 import { useSessionLive } from '../hooks/useSessionLive';
@@ -193,17 +193,17 @@ export default function Sidebar() {
     startChat(cwd);
   };
 
-  // Plain, folder-less chats (subagent sessions never appear as standalone rows).
+  // Plain, folder-less chats (child session sessions never appear as standalone rows).
   const chatSessions = useMemo<SessionSummary[]>(() => {
     return (state.sessionOrder.map((id) => state.sessions[id]).filter(Boolean) as SessionSummary[])
-      .filter((m) => !m.cwd && !isSubagentSession(m))
+      .filter((m) => !m.cwd && !isChildSession(m))
       .sort((a, b) => b.updatedAt - a.updatedAt);
   }, [state.sessionOrder, state.sessions]);
 
   const workspaces = useMemo(() => {
     const sessions = (
       state.sessionOrder.map((id) => state.sessions[id]).filter(Boolean) as SessionSummary[]
-    ).filter((m) => !isSubagentSession(m));
+    ).filter((m) => !isChildSession(m));
     return buildWorkspaceSections(state.workspaceCwds, sessions);
   }, [state.sessionOrder, state.sessions, state.workspaceCwds]);
 
