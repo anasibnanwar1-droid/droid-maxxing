@@ -32,7 +32,7 @@ export interface CompactingSessionState<C extends CompactingChildState> {
   compacting?: boolean;
   autoCompacting: boolean;
   pendingSends: string[];
-  agents: Map<string, C>;
+  childSessions: Map<string, C>;
 }
 
 export interface AutoCompactionHost<
@@ -43,7 +43,7 @@ export interface AutoCompactionHost<
   watchdogs: AutoCompactionWatchdogs;
   sessions(): Iterable<L>;
   findSession(appSessionId: string): L | undefined;
-  agentCompactions: Map<string, number>;
+  childSessionCompactions: Map<string, number>;
   emitCompactionStatus(
     appSessionId: string,
     text: string,
@@ -61,9 +61,9 @@ export interface AutoCompactionHost<
   ): void;
   refreshContext(providerSessionId: string, session: S): Promise<void>;
   drive(appSessionId: string, text: string): Promise<void>;
-  driveAgent(agent: C, text: string): Promise<void>;
-  closeAgent(appSessionId: string, providerSessionId: string): Promise<void>;
-  emitAgentPaused(agent: C): void;
+  driveChildSession(agent: C, text: string): Promise<void>;
+  closeChildSession(appSessionId: string, providerSessionId: string): Promise<void>;
+  emitChildSessionPaused(agent: C): void;
 }
 
 // Returns true when the notification belonged to the compaction lifecycle and
@@ -84,18 +84,12 @@ export function handleCompactionNotification<
   if (!compaction) {
     // Only an idle state settles a missing session_compacted notification.
     const state = extractDroidWorkingState(note);
-    if (state === 'idle')
-      setAutoCompacting(host, appSessionId, providerSessionId, role, false);
+    if (state === 'idle') setAutoCompacting(host, appSessionId, providerSessionId, role, false);
     return false;
   }
   if (compaction.kind === 'started') {
     setAutoCompacting(host, appSessionId, providerSessionId, role, true);
-    host.emitCompactionStatus(
-      appSessionId,
-      'Compacting conversation...',
-      providerSessionId,
-      role,
-    );
+    host.emitCompactionStatus(appSessionId, 'Compacting conversation...', providerSessionId, role);
     return true;
   }
 
@@ -103,7 +97,7 @@ export function handleCompactionNotification<
   const active =
     providerSessionId === appSessionId
       ? liveSession?.autoCompacting
-      : liveSession?.agents.get(providerSessionId)?.autoCompacting;
+      : liveSession?.childSessions.get(providerSessionId)?.autoCompacting;
   if (!active) return true;
   setAutoCompacting(host, appSessionId, providerSessionId, role, false);
   host.emitCompactionStatus(appSessionId, 'Compaction complete.', providerSessionId, role);
@@ -117,9 +111,9 @@ export function handleCompactionNotification<
       });
     }
   } else {
-    host.agentCompactions.set(
+    host.childSessionCompactions.set(
       providerSessionId,
-      (host.agentCompactions.get(providerSessionId) ?? 0) + 1,
+      (host.childSessionCompactions.get(providerSessionId) ?? 0) + 1,
     );
   }
   void host.refreshContext(providerSessionId, session).catch(() => {});
@@ -144,7 +138,7 @@ export function onAutoCompactionWatchdogExpired<
     return;
   }
   for (const owner of host.sessions()) {
-    const agent = owner.agents.get(sessionKey);
+    const agent = owner.childSessions.get(sessionKey);
     if (agent?.autoCompacting) {
       console.warn(`[compaction] watchdog settled a stale auto-compaction on ${sessionKey}`);
       setAutoCompacting(host, owner.summary.appSessionId, sessionKey, agent.role, false);
@@ -169,8 +163,7 @@ function setAutoCompacting<
   if (role === 'primary') {
     const wasActive = liveSession.autoCompacting;
     liveSession.autoCompacting = active;
-    if (active)
-      host.watchdogs.arm(liveSession.summary.appSessionId, AUTO_COMPACTION_WATCHDOG_MS);
+    if (active) host.watchdogs.arm(liveSession.summary.appSessionId, AUTO_COMPACTION_WATCHDOG_MS);
     else host.watchdogs.clear(liveSession.summary.appSessionId);
     if (active || !wasActive || liveSession.streaming || liveSession.compacting) return;
     const next = liveSession.pendingSends.shift();
@@ -181,7 +174,7 @@ function setAutoCompacting<
     return;
   }
 
-  const agent = liveSession.agents.get(providerSessionId);
+  const agent = liveSession.childSessions.get(providerSessionId);
   if (!agent) return;
   const wasActive = agent.autoCompacting;
   agent.autoCompacting = active;
@@ -189,10 +182,10 @@ function setAutoCompacting<
   else host.watchdogs.clear(providerSessionId);
   if (active || !wasActive || agent.streaming) return;
   if (agent.pendingSends.length === 0 && agent.closeWhenIdle) {
-    void host.closeAgent(agent.appSessionId, agent.providerSessionId);
+    void host.closeChildSession(agent.appSessionId, agent.providerSessionId);
     return;
   }
   const next = agent.pendingSends.shift();
-  if (next !== undefined) void host.driveAgent(agent, next);
-  else host.emitAgentPaused(agent);
+  if (next !== undefined) void host.driveChildSession(agent, next);
+  else host.emitChildSessionPaused(agent);
 }

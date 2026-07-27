@@ -232,6 +232,7 @@ test('[B3] Browser continuity across compaction', { concurrency: false }, async 
 
   try {
     await h.create({
+      sessionPurpose: 'chat',
       clientRef: 'b3',
       title: 'Browser continuity',
       goal: 'go',
@@ -297,6 +298,7 @@ test('[B3] Browser continuity across compaction', { concurrency: false }, async 
   let shutdownDisposed = false;
   try {
     await shutdown.create({
+      sessionPurpose: 'chat',
       clientRef: 'b3-shutdown',
       title: 'Browser shutdown',
       goal: 'go',

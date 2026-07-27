@@ -61,19 +61,19 @@ export interface WorkerSummary {
   prompt?: string;
   modelId?: string;
   reasoningEffort?: ReasoningEffort;
-  // The orchestrator Task tool_call id that spawned this worker; links an
-  // in-chat spawn line to its subagent session.
+  // The primary Task tool_call id that spawned this worker; links an in-chat
+  // spawn line to its child session.
   toolUseId?: string;
 }
 
-// The exact toolUseId -> workerSessionId mapping persisted for a mission, so
-// historical loads can rebuild precise subagent links instead of guessing.
+// The exact toolUseId -> providerSessionId mapping persisted for an application
+// session, so historical loads can rebuild precise child links.
 export interface ChildSessionHistoryLink {
   providerSessionId: string;
   toolUseId?: string;
   label?: string;
-  // Live run state for the linked worker, set only when the mission is still
-  // active so a reconnect/reload doesn't render a running subagent as finished.
+  // Live run state for the linked worker, set only while the parent session is
+  // active so a reconnect/reload doesn't render a running child as finished.
   // Omitted (treated as completed) for historical loads.
   status?: 'running' | 'paused' | 'completed';
 }
@@ -129,7 +129,7 @@ export interface TranscriptEvent {
   sourceSessionId: string;
   role: SessionRole;
   ts: number;
-  // Monotonic canonical order for orchestrator scrollback, stamped during
+  // Monotonic canonical order for primary-session scrollback, stamped during
   // replay from the compaction-chain position. Survives equal `ts` collisions
   // so restored history never reorders. Live events omit it (they are newest).
   seq?: number;
@@ -253,7 +253,7 @@ export interface ContextStatsSnapshot {
   updatedAt: string;
   breakdown?: ContextBreakdownSnapshot;
   // In-place compactions completed on this agent session; set for worker
-  // snapshots (missions carry their generation on the summary instead).
+  // snapshots (top-level sessions carry their generation on the summary instead).
   compactions?: number;
 }
 
@@ -508,9 +508,9 @@ export type ClientCommand =
   | { type: 'cli.install'; channel: InstallChannel }
   | { type: 'cli.update'; channel?: InstallChannel }
   | { type: 'catalog.models' }
-  | { type: 'catalog.tools'; sessionId?: string }
-  | { type: 'catalog.skills'; sessionId?: string }
-  | { type: 'catalog.mcp'; sessionId?: string }
+  | { type: 'catalog.tools'; providerSessionId?: string }
+  | { type: 'catalog.skills'; providerSessionId?: string }
+  | { type: 'catalog.mcp'; providerSessionId?: string }
   | { type: 'settings.defaults' }
   | {
       type: 'session.create';
@@ -677,7 +677,7 @@ export type ServerEvent =
     }
   | {
       type: 'mcp.authRequested';
-      sessionId: string;
+      providerSessionId: string;
       serverName?: string;
       authUrl?: string;
       message?: string;
@@ -686,7 +686,7 @@ export type ServerEvent =
       type: 'catalog.updated';
       catalog: 'models' | 'tools' | 'skills' | 'mcp';
       items: unknown[];
-      sessionId?: string | null;
+      providerSessionId?: string | null;
     }
   | { type: 'settings.defaults'; defaults: FactoryDefaultSettings }
   | {
@@ -702,7 +702,12 @@ export type ServerEvent =
       providerSessionId: string;
       message: string;
     }
-  | { type: 'mission.features'; appSessionId: string; missionId?: string; features: BridgeFeature[] }
+  | {
+      type: 'mission.features';
+      appSessionId: string;
+      missionId?: string;
+      features: BridgeFeature[];
+    }
   | { type: 'mission.progress'; appSessionId: string; missionId?: string; entries: ProgressEntry[] }
   | {
       type: 'session.child';

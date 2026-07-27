@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { SessionSummary } from './protocol.js';
-import { filterSessionListSummaries, isSubagentSummary } from './sessionListFilter.js';
+import { filterSessionListSummaries, isChildSessionSummary } from './sessionListFilter.js';
 
 const summary = (
   id: string,
@@ -48,17 +48,17 @@ test('filterSessionListSummaries returns only five latest summaries per requeste
   );
 });
 
-test('isSubagentSummary flags workers, validators and parented sessions', () => {
-  assert.equal(isSubagentSummary(summary('a', '/repo/app', 1)), false);
-  assert.equal(isSubagentSummary(summary('w', '/repo/app', 1, { role: 'worker' })), true);
-  assert.equal(isSubagentSummary(summary('v', '/repo/app', 1, { role: 'validator' })), true);
+test('isChildSessionSummary flags workers, validators and parented sessions', () => {
+  assert.equal(isChildSessionSummary(summary('a', '/repo/app', 1)), false);
+  assert.equal(isChildSessionSummary(summary('w', '/repo/app', 1, { role: 'worker' })), true);
+  assert.equal(isChildSessionSummary(summary('v', '/repo/app', 1, { role: 'validator' })), true);
   assert.equal(
-    isSubagentSummary(summary('p', '/repo/app', 1, { parentProviderSessionId: 'parent' })),
+    isChildSessionSummary(summary('p', '/repo/app', 1, { parentProviderSessionId: 'parent' })),
     true,
   );
 });
 
-test('filterSessionListSummaries excludes subagent sessions', () => {
+test('filterSessionListSummaries excludes child sessions', () => {
   const summaries = [
     summary('chat', '/repo/app', 3),
     summary('worker', '/repo/app', 2, { role: 'worker' }),

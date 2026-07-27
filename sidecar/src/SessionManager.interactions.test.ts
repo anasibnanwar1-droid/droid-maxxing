@@ -174,6 +174,7 @@ test(
 
     try {
       await h.create({
+        sessionPurpose: 'chat',
         clientRef: 'p2',
         title: 'P2',
         goal: 'go',
@@ -211,6 +212,7 @@ test(
 
     try {
       await h.create({
+        sessionPurpose: 'chat',
         clientRef: 'p3',
         title: 'P3',
         goal: 'go',
@@ -252,7 +254,7 @@ test(
       });
       await h.handle({
         type: 'approval.respond',
-        appSessionId: 'late-mission',
+        appSessionId: 'late-session',
         requestId: requested.request.requestId,
         outcome: 'proceed_once',
       });
@@ -273,6 +275,7 @@ test(
 
     try {
       await h.create({
+        sessionPurpose: 'chat',
         clientRef: 'p4',
         title: 'P4',
         goal: 'go',
@@ -320,6 +323,8 @@ test(
       const transition = h.events.filter(isMissionUpdated).at(-1);
       assert.ok(transition);
       assert.equal(transition.session.interactionMode, 'auto');
+      assert.equal(transition.session.sessionPurpose, 'chat');
+      assert.equal(transition.session.missionId, undefined);
       assert.equal(transition.session.phase, 'running');
     } finally {
       await h.dispose();
@@ -335,6 +340,7 @@ test(
 
     try {
       await h.create({
+        sessionPurpose: 'chat',
         clientRef: 'q1',
         title: 'Q1',
         goal: 'go',

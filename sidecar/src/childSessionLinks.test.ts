@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const originalHome = process.env.HOME;
-const home = mkdtempSync(join(tmpdir(), 'droid-subagent-links-'));
+const home = mkdtempSync(join(tmpdir(), 'droid-child-session-links-'));
 process.env.HOME = home;
 
 const { HistoryIndex } = await import('./history.js');
@@ -16,14 +16,14 @@ test.after(() => {
   rmSync(home, { recursive: true, force: true });
 });
 
-test('subagentLinks preserves the exact toolUseId -> workerSessionId mapping with duplicate labels and out-of-order sessions', () => {
+test('childSessionLinks preserves the exact toolUseId -> workerSessionId mapping with duplicate labels and out-of-order sessions', () => {
   const index = new HistoryIndex();
   // Two spawns share the same label, and the worker sessions resolve in an order
   // that does NOT match the spawn order (order-based pairing would mismatch).
-  index.recordSubagentLink('m1', 'tool-A', 'sess-B', 'worker');
-  index.recordSubagentLink('m1', 'tool-B', 'sess-A', 'worker');
+  index.recordChildSessionLink('m1', 'tool-A', 'sess-B', 'worker');
+  index.recordChildSessionLink('m1', 'tool-B', 'sess-A', 'worker');
 
-  const links = index.subagentLinks('m1');
+  const links = index.childSessionLinks('m1');
   index.close();
 
   const byTool = new Map(links.map((l) => [l.toolUseId, l.providerSessionId]));
@@ -33,14 +33,14 @@ test('subagentLinks preserves the exact toolUseId -> workerSessionId mapping wit
   assert.ok(links.every((l) => l.label === 'worker'));
 });
 
-test('subagentLinks scopes mappings per mission and upserts on repeated toolUseId', () => {
+test('childSessionLinks scopes mappings per app session and upserts repeated toolUseIds', () => {
   const index = new HistoryIndex();
-  index.recordSubagentLink('m2', 'tool-X', 'sess-old', 'reviewer');
-  index.recordSubagentLink('m2', 'tool-X', 'sess-new', 'reviewer'); // re-resolve same spawn
-  index.recordSubagentLink('m3', 'tool-Y', 'sess-other', 'builder');
+  index.recordChildSessionLink('m2', 'tool-X', 'sess-old', 'reviewer');
+  index.recordChildSessionLink('m2', 'tool-X', 'sess-new', 'reviewer'); // re-resolve same spawn
+  index.recordChildSessionLink('m3', 'tool-Y', 'sess-other', 'builder');
 
-  const m2 = index.subagentLinks('m2');
-  const m3 = index.subagentLinks('m3');
+  const m2 = index.childSessionLinks('m2');
+  const m3 = index.childSessionLinks('m3');
   index.close();
 
   assert.equal(m2.length, 1);

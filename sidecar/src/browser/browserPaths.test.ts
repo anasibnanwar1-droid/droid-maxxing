@@ -2,10 +2,10 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { browserDesignReferenceDir, isBrowserAssetPath } from './browserPaths.js';
 
-test('browser paths sanitize mission ids', () => {
+test('browser paths sanitize app session ids', () => {
   assert.equal(
-    browserDesignReferenceDir('mission:one', '/tmp/droid'),
-    '/tmp/droid/design-references/mission-one',
+    browserDesignReferenceDir('app-session:one', '/tmp/droid'),
+    '/tmp/droid/design-references/app-session-one',
   );
 });
 

@@ -142,10 +142,11 @@ test('[H1] Initial history restore', { concurrency: false }, async () => {
   }
 });
 
-test('[H2] Paging, fallback, empty history, and retry', { concurrency: false }, async () => {
+test('[H2] Paging, empty history, and retry', { concurrency: false }, async () => {
   const empty = createSessionCharacterizationHarness();
   try {
     await empty.create({
+      sessionPurpose: 'chat',
       clientRef: 'empty-h2',
       title: 'Empty H2',
       goal: 'go',
@@ -240,6 +241,7 @@ test('[A1] Child-session link persistence', { concurrency: false }, async () => 
 
   try {
     await h.create({
+      sessionPurpose: 'mission-control',
       clientRef: 'a1',
       title: 'A1',
       goal: 'go',
@@ -264,7 +266,7 @@ test('[A1] Child-session link persistence', { concurrency: false }, async () => 
     });
 
     assert.deepEqual(
-      h.calls.find((call) => call.target === 'history' && call.method === 'recordSubagentLink')
+      h.calls.find((call) => call.target === 'history' && call.method === 'recordChildSessionLink')
         ?.args,
       ['provider-1', 'tool-a1', 'worker-a1', 'worker'],
     );
@@ -288,7 +290,7 @@ test('[A2] Open and replay a linked child session', { concurrency: false }, asyn
 
   try {
     h.fixture.seedHistorySummaries([summary('app-a2', 'provider-a2')]);
-    h.fixture.seedSubagentLinks('app-a2', [linkedWorker('worker-a2', 'tool-a2')]);
+    h.fixture.seedChildSessionLinks('app-a2', [linkedWorker('worker-a2', 'tool-a2')]);
     writeHistorySession(h.home, 'worker-a2', [assistantMessage('child-a2', 'child replay', 0)], {
       callingSessionId: 'provider-a2',
       callingToolUseId: 'tool-a2',
@@ -331,7 +333,7 @@ test('[A3] Child send, steer, and interrupt', { concurrency: false }, async () =
 
   try {
     h.fixture.seedHistorySummaries([summary('app-a3', 'provider-a3')]);
-    h.fixture.seedSubagentLinks('app-a3', [
+    h.fixture.seedChildSessionLinks('app-a3', [
       linkedWorker('worker-a3', 'tool-a3'),
       linkedWorker('worker-failed-a3', 'tool-failed-a3'),
     ]);
@@ -390,7 +392,7 @@ test('[A3] Child send, steer, and interrupt', { concurrency: false }, async () =
       h.events.some(
         (event) =>
           event.type === 'error' &&
-          event.code === 'agent.open_failed' &&
+          event.code === 'child.open_failed' &&
           event.providerSessionId === 'worker-failed-a3',
       ),
       true,

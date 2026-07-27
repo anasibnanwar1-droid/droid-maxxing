@@ -130,6 +130,7 @@ export async function runAutoCompactionScenario(h: SessionCharacterizationHarnes
   const parent = new ParentStreamEventSession('provider-1', {}, h.calls);
   h.runtime.createQueue.push(parent);
   await h.create({
+    sessionPurpose: 'mission-control',
     clientRef: 'c4',
     title: 'C4',
     goal: 'go',
@@ -266,6 +267,7 @@ export async function runCloseCleanupScenario() {
   h.runtime.loadQueue.set(workerKey, [new FakeDroidSession(workerLive, {}, h.calls)]);
   try {
     await h.create({
+      sessionPurpose: 'mission-control',
       clientRef: 'c6',
       title: 'C6',
       goal: 'go',
@@ -372,6 +374,7 @@ export async function runShutdownOnlyCleanupScenario() {
   h.runtime.loadQueue.set(workerKey, [new FakeDroidSession(workerLive, {}, h.calls)]);
   try {
     await h.create({
+      sessionPurpose: 'mission-control',
       clientRef: 'c6-shutdown',
       title: 'C6 shutdown',
       goal: 'go',

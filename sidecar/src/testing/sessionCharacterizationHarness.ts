@@ -246,17 +246,14 @@ export interface SessionCharacterizationHarness {
   readonly history: FakeHistoryIndex;
   readonly fixture: {
     seedHistorySummaries(summaries: Protocol.SessionSummary[]): void;
-    seedSubagentLinks(appSessionId: string, links: Protocol.ChildSessionHistoryLink[]): void;
+    seedChildSessionLinks(appSessionId: string, links: Protocol.ChildSessionHistoryLink[]): void;
   };
   readonly browsers: FakeBrowserSessionManager;
   readonly home: string;
   readonly mcpServerCloseCalls: number;
   handle(command: Protocol.ClientCommand): Promise<void>;
   create(
-    command: Omit<
-      Extract<Protocol.ClientCommand, { type: 'session.create' }>,
-      'type' | 'sessionPurpose'
-    >,
+    command: Omit<Extract<Protocol.ClientCommand, { type: 'session.create' }>, 'type'>,
   ): Promise<void>;
   waitForIdle(): Promise<void>;
   dispose(): Promise<void>;
@@ -271,7 +268,7 @@ export function createSessionCharacterizationHarness(
     events.push(event);
     calls.push({ target: 'protocol', method: 'event', args: [event] });
   };
-  const home = mkdtempSync(path.join(tmpdir(), 'mission-manager-characterization-'));
+  const home = mkdtempSync(path.join(tmpdir(), 'session-manager-characterization-'));
   writeDefaults(home, options.defaults);
 
   let manager: SessionManager | undefined;
@@ -350,8 +347,8 @@ export function createSessionCharacterizationHarness(
       seedHistorySummaries: (summaries) => {
         history.seedSummaries(summaries);
       },
-      seedSubagentLinks: (appSessionId, links) => {
-        history.seedSubagentLinks(appSessionId, links);
+      seedChildSessionLinks: (appSessionId, links) => {
+        history.seedChildSessionLinks(appSessionId, links);
       },
     },
     browsers,
@@ -360,12 +357,7 @@ export function createSessionCharacterizationHarness(
       return mcpCloseObserver.calls();
     },
     handle,
-    create: (command) =>
-      handle({
-        type: 'session.create',
-        sessionPurpose: command.interactionMode === 'agi' ? 'mission-control' : 'chat',
-        ...command,
-      }),
+    create: (command) => handle({ type: 'session.create', ...command }),
     waitForIdle: () => new Promise((resolve) => setImmediate(resolve)),
     dispose: async () => {
       if (disposed) return;

@@ -17,6 +17,7 @@ test('[L1] Ordinary create', { concurrency: false }, async () => {
 
   try {
     await h.create({
+      sessionPurpose: 'chat',
       clientRef: 'l1',
       title: 'ordinary',
       goal: 'hello',
@@ -43,6 +44,7 @@ test('[L2] Spec create', { concurrency: false }, async () => {
 
   try {
     await h.create({
+      sessionPurpose: 'chat',
       clientRef: 'l2',
       title: 'spec',
       goal: 'write',
@@ -66,11 +68,66 @@ test('[L2] Spec create', { concurrency: false }, async () => {
   }
 });
 
+test(
+  'design purpose is independent from auto interaction mode',
+  { concurrency: false },
+  async () => {
+    const h = createSessionCharacterizationHarness();
+
+    try {
+      await h.create({
+        sessionPurpose: 'design',
+        clientRef: 'design-purpose',
+        title: 'design',
+        goal: 'draw',
+        interactionMode: 'auto',
+        autonomy: 'low',
+      });
+
+      const created = h.events.find((event) => event.type === 'session.created');
+      assert.equal(created?.session.sessionPurpose, 'design');
+      assert.equal(created?.session.interactionMode, 'auto');
+      assert.equal(created?.session.missionId, undefined);
+      assert.equal(h.runtime.createCalls[0]?.decompSessionType, undefined);
+    } finally {
+      await h.dispose();
+    }
+  },
+);
+
+test(
+  'AGI interaction mode does not imply Mission Control purpose',
+  { concurrency: false },
+  async () => {
+    const h = createSessionCharacterizationHarness();
+
+    try {
+      await h.create({
+        sessionPurpose: 'chat',
+        clientRef: 'agi-chat',
+        title: 'agi chat',
+        goal: 'reason',
+        interactionMode: 'agi',
+        autonomy: 'low',
+      });
+
+      const created = h.events.find((event) => event.type === 'session.created');
+      assert.equal(created?.session.sessionPurpose, 'chat');
+      assert.equal(created?.session.interactionMode, 'agi');
+      assert.equal(created?.session.missionId, undefined);
+      assert.equal(h.runtime.createCalls[0]?.decompSessionType, undefined);
+    } finally {
+      await h.dispose();
+    }
+  },
+);
+
 test('[L3] AGI create', { concurrency: false }, async () => {
   const h = createSessionCharacterizationHarness();
 
   try {
     await h.create({
+      sessionPurpose: 'mission-control',
       clientRef: 'l3',
       title: 'agi',
       goal: 'plan',
@@ -100,6 +157,7 @@ test('[L4] Create failure cleanup', { concurrency: false }, async () => {
 
   try {
     await h.create({
+      sessionPurpose: 'chat',
       clientRef: 'l4',
       title: 'failure',
       goal: 'fail',
@@ -159,7 +217,7 @@ test(
   },
 );
 
-test('[L6] Send lazily resumes a historical mission', { concurrency: false }, async () => {
+test('[L6] Send lazily resumes a historical session', { concurrency: false }, async () => {
   const h = createSessionCharacterizationHarness();
 
   try {
@@ -186,6 +244,7 @@ test('[L7] Send-now steers ahead of queued sends', { concurrency: false }, async
 
   try {
     await h.create({
+      sessionPurpose: 'chat',
       clientRef: 'l7',
       title: 'L7',
       goal: 'first',
@@ -210,6 +269,7 @@ test('[L8] Stop state matrix', { concurrency: false }, async () => {
 
   try {
     await h.create({
+      sessionPurpose: 'chat',
       clientRef: 'l8',
       title: 'L8',
       goal: 'idle',
@@ -259,6 +319,7 @@ test(
 
     try {
       await h.create({
+        sessionPurpose: 'chat',
         clientRef: 'l9',
         title: 'L9',
         goal: 'go',
@@ -316,6 +377,7 @@ test('[L10] Autonomy mutation reports provider rejection', { concurrency: false 
 
   try {
     await h.create({
+      sessionPurpose: 'chat',
       clientRef: 'l10',
       title: 'L10',
       goal: 'go',
@@ -338,7 +400,11 @@ test('[L10] Autonomy mutation reports provider rejection', { concurrency: false 
       (event) => event.type === 'session.updated',
     ).length;
     h.provider.session('provider-1').nextUpdateSettingsError = new Error('autonomy rejected');
-    await h.handle({ type: 'session.updateSettings', appSessionId: 'provider-1', autonomy: 'high' });
+    await h.handle({
+      type: 'session.updateSettings',
+      appSessionId: 'provider-1',
+      autonomy: 'high',
+    });
 
     assert.equal(
       h.events.some(
@@ -362,6 +428,7 @@ test('Summary patches preserve existing provider transcripts', { concurrency: fa
 
   try {
     await h.create({
+      sessionPurpose: 'chat',
       clientRef: 'l11',
       title: 'L11',
       goal: 'go',
@@ -388,7 +455,11 @@ test('Summary patches preserve existing provider transcripts', { concurrency: fa
       (call) => call.target === 'history' && call.method === 'syncSummaries',
     ).length;
 
-    await h.handle({ type: 'session.updateSettings', appSessionId: 'provider-1', autonomy: 'high' });
+    await h.handle({
+      type: 'session.updateSettings',
+      appSessionId: 'provider-1',
+      autonomy: 'high',
+    });
 
     assert.equal(
       h.calls.filter((call) => call.target === 'history' && call.method === 'syncSummaries').length,
@@ -422,7 +493,7 @@ test(
       title: 'Persisted title',
       goal: 'transient goal',
       workspaceKind: 'folder',
-      modelId: 'orchestrator-model',
+      modelId: 'primary-model',
       reasoningEffort: 'high',
       compactionModel: 'compaction-model',
       workerModelId: 'worker-model',
@@ -469,7 +540,7 @@ test(
         title: 'Persisted title',
         cwd: '',
         workspaceKind: 'folder',
-        modelId: 'orchestrator-model',
+        modelId: 'primary-model',
         reasoningEffort: 'high',
         compactionModel: 'compaction-model',
         workerModelId: 'worker-model',

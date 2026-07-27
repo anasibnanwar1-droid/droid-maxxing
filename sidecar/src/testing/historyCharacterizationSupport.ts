@@ -51,7 +51,7 @@ export class FakeHistoryIndex {
     }
   }
 
-  seedSubagentLinks(appSessionId: string, links: Protocol.ChildSessionHistoryLink[]): void {
+  seedChildSessionLinks(appSessionId: string, links: Protocol.ChildSessionHistoryLink[]): void {
     this.links.set(appSessionId, links);
   }
 
@@ -75,22 +75,24 @@ export class FakeHistoryIndex {
     return hidden;
   }
 
-  recordSubagentLink(
+  recordChildSessionLink(
     ...[appSessionId, toolUseId, providerSessionId, label]: [string, string, string, string?]
   ): void {
     const links = this.links.get(appSessionId) ?? [];
     const index = links.findIndex((existing) => existing.toolUseId === toolUseId);
     links[index < 0 ? links.length : index] =
-      label === undefined ? { providerSessionId, toolUseId } : { providerSessionId, toolUseId, label };
+      label === undefined
+        ? { providerSessionId, toolUseId }
+        : { providerSessionId, toolUseId, label };
     this.links.set(appSessionId, links);
     this.calls.push({
       target: 'history',
-      method: 'recordSubagentLink',
+      method: 'recordChildSessionLink',
       args: [appSessionId, toolUseId, providerSessionId, label],
     });
   }
 
-  subagentLinks(appSessionId: string): Protocol.ChildSessionHistoryLink[] {
+  childSessionLinks(appSessionId: string): Protocol.ChildSessionHistoryLink[] {
     return (this.links.get(appSessionId) ?? []).map((link) => ({ ...link }));
   }
 

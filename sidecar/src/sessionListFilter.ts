@@ -6,13 +6,11 @@ export interface SessionListFilterOptions {
   limitPerWorkspace?: number;
 }
 
-// Subagents (Task workers / mission workers and validators) are spawned by a
-// parent session and must never appear as standalone sidebar sessions.
-export function isSubagentSummary(summary: SessionSummary): boolean {
+// Task workers plus Mission Control workers and validators are child sessions.
+// They never appear as standalone sidebar sessions.
+export function isChildSessionSummary(summary: SessionSummary): boolean {
   return (
-    summary.role === 'worker' ||
-    summary.role === 'validator' ||
-    !!summary.parentProviderSessionId
+    summary.role === 'worker' || summary.role === 'validator' || !!summary.parentProviderSessionId
   );
 }
 
@@ -20,7 +18,7 @@ export function filterSessionListSummaries(
   summaries: SessionSummary[],
   options: SessionListFilterOptions = {},
 ): SessionSummary[] {
-  const visible = summaries.filter((summary) => !isSubagentSummary(summary));
+  const visible = summaries.filter((summary) => !isChildSessionSummary(summary));
   if (!options.workspaceCwds && !options.includePlainChats) return visible;
 
   const workspaceCwds = [...new Set((options.workspaceCwds ?? []).filter(Boolean))];

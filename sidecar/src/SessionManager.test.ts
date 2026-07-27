@@ -19,7 +19,12 @@ import {
   resolvedCompactionTokenLimit,
   resumedCompactionTokenLimit,
 } from './compaction.js';
-import type { SessionSummary, ModelInfo, ServerEvent, ChildSessionHistoryLink } from './protocol.js';
+import type {
+  SessionSummary,
+  ModelInfo,
+  ServerEvent,
+  ChildSessionHistoryLink,
+} from './protocol.js';
 
 class FakeSession {
   prompts: string[] = [];
@@ -106,7 +111,7 @@ test('uses explicit session autonomy ahead of Factory default autonomy', () => {
   assert.equal(createAutonomyForCommand({ autonomy: 'low' }, { autonomy: 'high' }), 'low');
 });
 
-test('uses mission orchestrator defaults for AGI missions', () => {
+test('uses Mission Control orchestrator defaults for Mission Control sessions', () => {
   assert.deepEqual(
     createModelDefaultsForMode(
       'agi',
@@ -364,20 +369,23 @@ test('without any UI signal the resolver follows exposed limits, then CLI defaul
 
 test('withLiveWorkerStatus annotates live links and leaves historical/unknown ones untouched', () => {
   const manager = new SessionManager(() => {});
-  const mission = {
+  const liveSession = {
     summary: testSummary('app-live', 'droid-live'),
-    knownSubagents: new Set(['run-1', 'done-1']),
-    completedSubagents: new Set(['done-1']),
-    // A resumed worker the user has opened is live in agents but not in
-    // knownSubagents (which only a live spawn populates).
-    agents: new Map<string, unknown>([['open-1', {}]]),
+    knownChildSessions: new Set(['run-1', 'done-1']),
+    completedChildSessions: new Set(['done-1']),
+    // A resumed worker the user has opened is live in childSessions but not in
+    // knownChildSessions (which only a live spawn populates).
+    childSessions: new Map<string, unknown>([['open-1', {}]]),
   };
   const internals = manager as unknown as {
-    sessions: Map<string, typeof mission>;
-    withLiveWorkerStatus: (id: string, links: ChildSessionHistoryLink[]) => ChildSessionHistoryLink[];
+    sessions: Map<string, typeof liveSession>;
+    withLiveWorkerStatus: (
+      id: string,
+      links: ChildSessionHistoryLink[],
+    ) => ChildSessionHistoryLink[];
   };
-  internals.sessions.set(mission.summary.appSessionId, mission);
-  const out = internals.withLiveWorkerStatus(mission.summary.appSessionId, [
+  internals.sessions.set(liveSession.summary.appSessionId, liveSession);
+  const out = internals.withLiveWorkerStatus(liveSession.summary.appSessionId, [
     { providerSessionId: 'run-1', toolUseId: 't1' },
     { providerSessionId: 'done-1', toolUseId: 't2' },
     { providerSessionId: 'open-1', toolUseId: 't3' },
@@ -385,30 +393,33 @@ test('withLiveWorkerStatus annotates live links and leaves historical/unknown on
   ]);
   assert.equal(out.find((l) => l.providerSessionId === 'run-1')?.status, 'running');
   assert.equal(out.find((l) => l.providerSessionId === 'done-1')?.status, 'completed');
-  // An opened resumed worker (in agents only) is marked running, not completed.
+  // An opened resumed worker (in childSessions only) is running, not completed.
   assert.equal(out.find((l) => l.providerSessionId === 'open-1')?.status, 'running');
   assert.equal(out.find((l) => l.providerSessionId === 'gone-1')?.status, undefined);
 });
 
-test('agentBelongsToMission accepts persisted-linked subagents for chat/spec missions', () => {
+test('childBelongsToSession accepts persisted child links for chat/spec sessions', () => {
   const manager = new SessionManager(() => {});
-  const mission = {
+  const liveSession = {
     summary: testSummary('app-linked', 'droid-linked'),
-    knownSubagents: new Set<string>(),
-    linkedSubagents: new Set(['hist-worker-1']),
+    knownChildSessions: new Set<string>(),
+    linkedChildSessions: new Set(['hist-worker-1']),
   };
   const internals = manager as unknown as {
-    agentBelongsToMission: (m: typeof mission, id: string) => boolean;
+    childBelongsToSession: (session: typeof liveSession, id: string) => boolean;
   };
-  // A historical subagent known only from a persisted link is still openable.
-  assert.equal(internals.agentBelongsToMission(mission, 'hist-worker-1'), true);
-  assert.equal(internals.agentBelongsToMission(mission, 'unknown-worker'), false);
+  // A historical child known only from a persisted link is still openable.
+  assert.equal(internals.childBelongsToSession(liveSession, 'hist-worker-1'), true);
+  assert.equal(internals.childBelongsToSession(liveSession, 'unknown-worker'), false);
 });
 
-test('withLiveWorkerStatus leaves links untouched for historical (non-live) missions', () => {
+test('withLiveWorkerStatus leaves links untouched for historical sessions', () => {
   const manager = new SessionManager(() => {});
   const internals = manager as unknown as {
-    withLiveWorkerStatus: (id: string, links: ChildSessionHistoryLink[]) => ChildSessionHistoryLink[];
+    withLiveWorkerStatus: (
+      id: string,
+      links: ChildSessionHistoryLink[],
+    ) => ChildSessionHistoryLink[];
   };
   const links: ChildSessionHistoryLink[] = [{ providerSessionId: 'w1', toolUseId: 't1' }];
   assert.deepEqual(internals.withLiveWorkerStatus('not-live', links), links);
@@ -418,21 +429,21 @@ test('sendNow interrupts the live turn and prioritizes the steering prompt', asy
   const events: ServerEvent[] = [];
   const manager = new SessionManager((event) => events.push(event));
   const session = new FakeSession('droid-1');
-  const mission = {
+  const liveSession = {
     summary: testSummary('app-1', session.sessionId),
     session,
     streaming: false,
     pendingSends: [],
     pendingPermissions: new Map(),
     pendingQuestions: new Map(),
-    agents: new Map(),
-    knownSubagents: new Set(),
-    completedSubagents: new Set(),
-    terminalAgents: new Set(),
-    linkedSubagents: new Set(),
-    subagentToolUseIds: new Map(),
-    subagentSettings: new Map(),
-    pendingSubagents: [],
+    childSessions: new Map(),
+    knownChildSessions: new Set(),
+    completedChildSessions: new Set(),
+    terminalSources: new Set(),
+    linkedChildSessions: new Set(),
+    childSessionToolUseIds: new Map(),
+    childSessionSettings: new Map(),
+    pendingChildSessions: [],
     mcpServers: [],
     compacting: false,
   };
@@ -440,35 +451,43 @@ test('sendNow interrupts the live turn and prioritizes the steering prompt', asy
     history: {
       recordEvent: () => void;
       syncSummaries: () => void;
-      recordSubagentLink: () => void;
-      subagentLinks: () => [];
+      recordChildSessionLink: () => void;
+      childSessionLinks: () => [];
     };
-    sessions: Map<string, typeof mission>;
+    sessions: Map<string, typeof liveSession>;
   };
   internals.history = {
     recordEvent: () => {},
     syncSummaries: () => {},
-    recordSubagentLink: () => {},
-    subagentLinks: () => [],
+    recordChildSessionLink: () => {},
+    childSessionLinks: () => [],
   };
-  internals.sessions.set(mission.summary.appSessionId, mission);
+  internals.sessions.set(liveSession.summary.appSessionId, liveSession);
 
   const firstTurn = manager.handle({
     type: 'session.send',
-    appSessionId: mission.summary.appSessionId,
+    appSessionId: liveSession.summary.appSessionId,
     text: 'first',
   });
   await waitFor(() => session.prompts.includes('first'));
 
-  await manager.handle({ type: 'session.send', appSessionId: mission.summary.appSessionId, text: 'queued' });
-  await manager.handle({ type: 'session.sendNow', appSessionId: mission.summary.appSessionId, text: 'now' });
+  await manager.handle({
+    type: 'session.send',
+    appSessionId: liveSession.summary.appSessionId,
+    text: 'queued',
+  });
+  await manager.handle({
+    type: 'session.sendNow',
+    appSessionId: liveSession.summary.appSessionId,
+    text: 'now',
+  });
 
   await waitFor(() => session.prompts.length >= 3);
   await firstTurn;
 
   assert.equal(session.interrupts, 1);
   assert.deepEqual(session.prompts, ['first', 'now', 'queued']);
-  assert.equal(mission.pendingSends.length, 0);
+  assert.equal(liveSession.pendingSends.length, 0);
   assert.equal(
     events.some((event) => event.type === 'error'),
     false,
@@ -487,21 +506,21 @@ test('a stream AbortError without a user Stop surfaces as a failure, not a silen
     }
   }
   const session = new AbortingSession('droid-abort');
-  const mission = {
+  const liveSession = {
     summary: testSummary('app-abort', session.sessionId),
     session,
     streaming: false,
     pendingSends: [],
     pendingPermissions: new Map(),
     pendingQuestions: new Map(),
-    agents: new Map(),
-    knownSubagents: new Set(),
-    completedSubagents: new Set(),
-    terminalAgents: new Set(),
-    linkedSubagents: new Set(),
-    subagentToolUseIds: new Map(),
-    subagentSettings: new Map(),
-    pendingSubagents: [],
+    childSessions: new Map(),
+    knownChildSessions: new Set(),
+    completedChildSessions: new Set(),
+    terminalSources: new Set(),
+    linkedChildSessions: new Set(),
+    childSessionToolUseIds: new Map(),
+    childSessionSettings: new Map(),
+    pendingChildSessions: [],
     mcpServers: [],
     compacting: false,
   };
@@ -509,33 +528,35 @@ test('a stream AbortError without a user Stop surfaces as a failure, not a silen
     history: {
       recordEvent: () => void;
       syncSummaries: () => void;
-      recordSubagentLink: () => void;
-      subagentLinks: () => [];
+      recordChildSessionLink: () => void;
+      childSessionLinks: () => [];
     };
-    sessions: Map<string, typeof mission>;
+    sessions: Map<string, typeof liveSession>;
   };
   internals.history = {
     recordEvent: () => {},
     syncSummaries: () => {},
-    recordSubagentLink: () => {},
-    subagentLinks: () => [],
+    recordChildSessionLink: () => {},
+    childSessionLinks: () => [],
   };
-  internals.sessions.set(mission.summary.appSessionId, mission);
+  internals.sessions.set(liveSession.summary.appSessionId, liveSession);
 
   // No user Stop was issued, so the abort is a real failure and must be
   // surfaced rather than masked as a quiet cancellation pause.
-  await manager.handle({ type: 'session.send', appSessionId: mission.summary.appSessionId, text: 'go' });
-  await waitFor(() =>
-    events.some((event) => event.type === 'error'),
-  );
-  assert.equal(mission.summary.phase, 'failed');
+  await manager.handle({
+    type: 'session.send',
+    appSessionId: liveSession.summary.appSessionId,
+    text: 'go',
+  });
+  await waitFor(() => events.some((event) => event.type === 'error'));
+  assert.equal(liveSession.summary.phase, 'failed');
 });
 
 test('an idle Stop (no active turn) does not leave the interrupt flag set to poison a later turn', async () => {
   const events: ServerEvent[] = [];
   const manager = new SessionManager((event) => events.push(event));
   const session = new FakeSession('droid-idle-stop');
-  const mission = {
+  const liveSession = {
     summary: testSummary('app-idle-stop', session.sessionId),
     session,
     streaming: false,
@@ -543,14 +564,14 @@ test('an idle Stop (no active turn) does not leave the interrupt flag set to poi
     pendingSends: [],
     pendingPermissions: new Map(),
     pendingQuestions: new Map(),
-    agents: new Map(),
-    knownSubagents: new Set(),
-    completedSubagents: new Set(),
-    terminalAgents: new Set(),
-    linkedSubagents: new Set(),
-    subagentToolUseIds: new Map(),
-    subagentSettings: new Map(),
-    pendingSubagents: [],
+    childSessions: new Map(),
+    knownChildSessions: new Set(),
+    completedChildSessions: new Set(),
+    terminalSources: new Set(),
+    linkedChildSessions: new Set(),
+    childSessionToolUseIds: new Map(),
+    childSessionSettings: new Map(),
+    pendingChildSessions: [],
     mcpServers: [],
     compacting: false,
   };
@@ -558,46 +579,49 @@ test('an idle Stop (no active turn) does not leave the interrupt flag set to poi
     history: {
       recordEvent: () => void;
       syncSummaries: () => void;
-      recordSubagentLink: () => void;
-      subagentLinks: () => [];
+      recordChildSessionLink: () => void;
+      childSessionLinks: () => [];
     };
-    sessions: Map<string, typeof mission>;
+    sessions: Map<string, typeof liveSession>;
   };
   internals.history = {
     recordEvent: () => {},
     syncSummaries: () => {},
-    recordSubagentLink: () => {},
-    subagentLinks: () => [],
+    recordChildSessionLink: () => {},
+    childSessionLinks: () => [],
   };
-  internals.sessions.set(mission.summary.appSessionId, mission);
+  internals.sessions.set(liveSession.summary.appSessionId, liveSession);
 
   // Stop is pressed while no drive() is active. The flag must be cleared right
   // here (no finally will run), otherwise a later turn's cancellation would be
   // silently misclassified as a user Stop.
-  await manager.handle({ type: 'session.interrupt', appSessionId: mission.summary.appSessionId });
-  assert.equal(mission.streaming, false);
-  assert.equal(mission.interrupting, false);
+  await manager.handle({
+    type: 'session.interrupt',
+    appSessionId: liveSession.summary.appSessionId,
+  });
+  assert.equal(liveSession.streaming, false);
+  assert.equal(liveSession.interrupting, false);
 });
 
 test('sendNow queues during compaction instead of driving or interrupting', async () => {
   const events: ServerEvent[] = [];
   const manager = new SessionManager((event) => events.push(event));
   const session = new FakeSession('droid-compact-now');
-  const mission = {
+  const liveSession = {
     summary: testSummary('app-compact-now', session.sessionId),
     session,
     streaming: false,
     pendingSends: [],
     pendingPermissions: new Map(),
     pendingQuestions: new Map(),
-    agents: new Map(),
-    knownSubagents: new Set(),
-    completedSubagents: new Set(),
-    terminalAgents: new Set(),
-    linkedSubagents: new Set(),
-    subagentToolUseIds: new Map(),
-    subagentSettings: new Map(),
-    pendingSubagents: [],
+    childSessions: new Map(),
+    knownChildSessions: new Set(),
+    completedChildSessions: new Set(),
+    terminalSources: new Set(),
+    linkedChildSessions: new Set(),
+    childSessionToolUseIds: new Map(),
+    childSessionSettings: new Map(),
+    pendingChildSessions: [],
     mcpServers: [],
     compacting: true,
   };
@@ -605,23 +629,23 @@ test('sendNow queues during compaction instead of driving or interrupting', asyn
     history: {
       recordEvent: () => void;
       syncSummaries: () => void;
-      recordSubagentLink: () => void;
-      subagentLinks: () => [];
+      recordChildSessionLink: () => void;
+      childSessionLinks: () => [];
     };
-    sessions: Map<string, typeof mission>;
+    sessions: Map<string, typeof liveSession>;
   };
   internals.history = {
     recordEvent: () => {},
     syncSummaries: () => {},
-    recordSubagentLink: () => {},
-    subagentLinks: () => [],
+    recordChildSessionLink: () => {},
+    childSessionLinks: () => [],
   };
-  internals.sessions.set(mission.summary.appSessionId, mission);
+  internals.sessions.set(liveSession.summary.appSessionId, liveSession);
 
   // Manual compaction (compacting=true, streaming=false): must not drive() concurrently.
   await manager.handle({
     type: 'session.sendNow',
-    appSessionId: mission.summary.appSessionId,
+    appSessionId: liveSession.summary.appSessionId,
     text: 'steer-manual',
   });
   assert.deepEqual(session.prompts, []);
@@ -629,16 +653,16 @@ test('sendNow queues during compaction instead of driving or interrupting', asyn
 
   // Compaction overlapping a turn (compacting=true, streaming=true): must not
   // interrupt the compaction.
-  mission.streaming = true;
+  liveSession.streaming = true;
   await manager.handle({
     type: 'session.sendNow',
-    appSessionId: mission.summary.appSessionId,
+    appSessionId: liveSession.summary.appSessionId,
     text: 'steer-auto',
   });
   assert.equal(session.interrupts, 0);
 
   // Both steers are preserved at the front of the queue for delivery after compaction.
-  assert.deepEqual(mission.pendingSends, ['steer-auto', 'steer-manual']);
+  assert.deepEqual(liveSession.pendingSends, ['steer-auto', 'steer-manual']);
   assert.equal(
     events.some((event) => event.type === 'error'),
     false,
@@ -649,21 +673,21 @@ test('design turns disable TodoWrite and normal turns restore it', async () => {
   const events: ServerEvent[] = [];
   const manager = new SessionManager((event) => events.push(event));
   const session = new FakeSession('droid-design');
-  const mission = {
+  const liveSession = {
     summary: testSummary('app-design', session.sessionId),
     session,
     streaming: false,
     pendingSends: [],
     pendingPermissions: new Map(),
     pendingQuestions: new Map(),
-    agents: new Map(),
-    knownSubagents: new Set(),
-    completedSubagents: new Set(),
-    terminalAgents: new Set(),
-    linkedSubagents: new Set(),
-    subagentToolUseIds: new Map(),
-    subagentSettings: new Map(),
-    pendingSubagents: [],
+    childSessions: new Map(),
+    knownChildSessions: new Set(),
+    completedChildSessions: new Set(),
+    terminalSources: new Set(),
+    linkedChildSessions: new Set(),
+    childSessionToolUseIds: new Map(),
+    childSessionSettings: new Map(),
+    pendingChildSessions: [],
     mcpServers: [],
     compacting: false,
   };
@@ -671,18 +695,18 @@ test('design turns disable TodoWrite and normal turns restore it', async () => {
     history: {
       recordEvent: () => void;
       syncSummaries: () => void;
-      recordSubagentLink: () => void;
-      subagentLinks: () => [];
+      recordChildSessionLink: () => void;
+      childSessionLinks: () => [];
     };
-    sessions: Map<string, typeof mission>;
+    sessions: Map<string, typeof liveSession>;
   };
   internals.history = {
     recordEvent: () => {},
     syncSummaries: () => {},
-    recordSubagentLink: () => {},
-    subagentLinks: () => [],
+    recordChildSessionLink: () => {},
+    childSessionLinks: () => [],
   };
-  internals.sessions.set(mission.summary.appSessionId, mission);
+  internals.sessions.set(liveSession.summary.appSessionId, liveSession);
 
   const designPrompt =
     'Design Mode reference pack:\n- URL: about:blank\n\nUser instruction:\nMake the hero cleaner';
@@ -692,21 +716,25 @@ test('design turns disable TodoWrite and normal turns restore it', async () => {
   // prior design turn before the in-memory flag was lost to a page reload.
   await manager.handle({
     type: 'session.send',
-    appSessionId: mission.summary.appSessionId,
+    appSessionId: liveSession.summary.appSessionId,
     text: 'just a normal question',
   });
   await waitFor(() => session.prompts.includes('just a normal question'));
   assert.deepEqual(session.settingsUpdates.at(-1), { disabledToolIds: [] });
 
   // Design turn disables TodoWrite.
-  await manager.handle({ type: 'session.send', appSessionId: mission.summary.appSessionId, text: designPrompt });
+  await manager.handle({
+    type: 'session.send',
+    appSessionId: liveSession.summary.appSessionId,
+    text: designPrompt,
+  });
   await waitFor(() => session.prompts.includes(designPrompt));
   assert.deepEqual(session.settingsUpdates.at(-1), { disabledToolIds: ['TodoWrite'] });
 
   // Normal turn restores it.
   await manager.handle({
     type: 'session.send',
-    appSessionId: mission.summary.appSessionId,
+    appSessionId: liveSession.summary.appSessionId,
     text: 'another normal one',
   });
   await waitFor(() => session.prompts.includes('another normal one'));
@@ -715,7 +743,7 @@ test('design turns disable TodoWrite and normal turns restore it', async () => {
   // A second design turn re-disables it after the normal turn restored it.
   await manager.handle({
     type: 'session.send',
-    appSessionId: mission.summary.appSessionId,
+    appSessionId: liveSession.summary.appSessionId,
     text: `${designPrompt} again`,
   });
   await waitFor(() => session.prompts.includes(`${designPrompt} again`));
@@ -940,21 +968,21 @@ function compactionHarness(used: number) {
   const events: ServerEvent[] = [];
   const manager = new SessionManager((event) => events.push(event));
   const session = new FakeCompactionSession('droid-compact', used);
-  const mission = {
+  const liveSession = {
     summary: testSummary('app-compact', session.sessionId),
     session,
     streaming: false,
     pendingSends: [],
     pendingPermissions: new Map(),
     pendingQuestions: new Map(),
-    agents: new Map(),
-    knownSubagents: new Set(),
-    completedSubagents: new Set(),
-    terminalAgents: new Set(),
-    linkedSubagents: new Set(),
-    subagentToolUseIds: new Map(),
-    subagentSettings: new Map(),
-    pendingSubagents: [],
+    childSessions: new Map(),
+    knownChildSessions: new Set(),
+    completedChildSessions: new Set(),
+    terminalSources: new Set(),
+    linkedChildSessions: new Set(),
+    childSessionToolUseIds: new Map(),
+    childSessionSettings: new Map(),
+    pendingChildSessions: [],
     mcpServers: [],
     compacting: false,
     autoCompacting: false,
@@ -965,21 +993,21 @@ function compactionHarness(used: number) {
       syncSummaries: () => void;
       summaryPatches: () => Map<string, unknown>;
       hiddenProviderSessionIds: () => Set<string>;
-      recordSubagentLink: () => void;
-      subagentLinks: () => [];
+      recordChildSessionLink: () => void;
+      childSessionLinks: () => [];
     };
-    sessions: Map<string, typeof mission>;
+    sessions: Map<string, typeof liveSession>;
   };
   internals.history = {
     recordEvent: () => {},
     syncSummaries: () => {},
     summaryPatches: () => new Map(),
     hiddenProviderSessionIds: () => new Set(),
-    recordSubagentLink: () => {},
-    subagentLinks: () => [],
+    recordChildSessionLink: () => {},
+    childSessionLinks: () => [],
   };
-  internals.sessions.set(mission.summary.appSessionId, mission);
-  return { manager, session, events, mission };
+  internals.sessions.set(liveSession.summary.appSessionId, liveSession);
+  return { manager, session, events, liveSession };
 }
 
 test('session creation immediately pushes daemon auto-compaction settings', async () => {
@@ -1033,7 +1061,7 @@ test('manual compaction compacts an idle session and stays live', async () => {
   );
 });
 
-test('compaction failure surfaces a recoverable error and terminal status without failing the mission', async () => {
+test('compaction failure surfaces a recoverable error and terminal status without failing the session', async () => {
   const { manager, session, events } = compactionHarness(250_000);
   session.failCompaction = true;
   await manager.handle({ type: 'session.compact', appSessionId: 'app-compact' });
@@ -1074,19 +1102,19 @@ test('compaction status transcript IDs are unique within the same millisecond', 
 });
 
 test('Stop during compaction drops queued sends but does not interrupt the compaction', async () => {
-  const { manager, session, mission } = compactionHarness(0);
-  mission.compacting = true;
+  const { manager, session, liveSession } = compactionHarness(0);
+  liveSession.compacting = true;
   let interrupts = 0;
   (session as unknown as { interrupt: () => Promise<void> }).interrupt = async () => {
     interrupts += 1;
   };
   // A send during compaction queues instead of driving.
   await manager.handle({ type: 'session.send', appSessionId: 'app-compact', text: 'queued' });
-  assert.equal(mission.pendingSends.length, 1);
+  assert.equal(liveSession.pendingSends.length, 1);
   // Stop must clear the queue but never interrupt the in-flight compaction.
   await manager.handle({ type: 'session.interrupt', appSessionId: 'app-compact' });
   assert.equal(interrupts, 0);
-  assert.equal(mission.pendingSends.length, 0);
+  assert.equal(liveSession.pendingSends.length, 0);
 });
 
 test('a normal turn never triggers client-side compaction', async () => {
@@ -1096,14 +1124,14 @@ test('a normal turn never triggers client-side compaction', async () => {
 });
 
 test('rejects manual compaction while streaming', async () => {
-  const { manager, mission, events } = compactionHarness(250_000);
-  mission.streaming = true;
+  const { manager, liveSession, events } = compactionHarness(250_000);
+  liveSession.streaming = true;
   await manager.handle({
     type: 'session.compact',
     appSessionId: 'app-compact',
     customInstructions: undefined,
   });
-  assert.equal(mission.streaming, true);
+  assert.equal(liveSession.streaming, true);
   const hasRejection = events.some(
     (e) =>
       e.type === 'event.appended' &&
@@ -1131,7 +1159,7 @@ type CompactionNotificationInternals = {
     session: unknown,
     note: Record<string, unknown>,
   ) => boolean;
-  closeAgentWhenIdle: (appSessionId: string, providerSessionId: string) => Promise<void>;
+  closeChildSessionWhenIdle: (appSessionId: string, providerSessionId: string) => Promise<void>;
 };
 
 test('daemon compaction notifications surface start and completion statuses', async () => {
@@ -1180,8 +1208,8 @@ test('daemon compaction notifications surface start and completion statuses', as
   assert.equal(session.compactions, 0);
 });
 
-test('daemon compaction notifications protect orchestrator compaction from steering and Stop', async () => {
-  const { manager, session, mission } = compactionHarness(10_000);
+test('daemon compaction notifications protect primary compaction from steering and Stop', async () => {
+  const { manager, session, liveSession } = compactionHarness(10_000);
   const internals = manager as unknown as CompactionNotificationInternals;
 
   internals.handleCompactionNotification('app-compact', 'app-compact', 'primary', session, {
@@ -1192,7 +1220,7 @@ test('daemon compaction notifications protect orchestrator compaction from steer
       },
     },
   });
-  assert.equal(mission.autoCompacting, true);
+  assert.equal(liveSession.autoCompacting, true);
 
   await manager.handle({
     type: 'session.sendNow',
@@ -1200,26 +1228,26 @@ test('daemon compaction notifications protect orchestrator compaction from steer
     text: 'after compaction',
   });
   assert.equal(session.interrupts, 0);
-  assert.deepEqual(mission.pendingSends, ['after compaction']);
+  assert.deepEqual(liveSession.pendingSends, ['after compaction']);
 
   // Stop is the user's escape hatch: it settles the auto-compacting flag and
   // interrupts for real, so a lost session_compacted can never wedge the chat.
   await manager.handle({ type: 'session.interrupt', appSessionId: 'app-compact' });
   assert.equal(session.interrupts, 1);
-  assert.equal(mission.autoCompacting, false);
-  assert.deepEqual(mission.pendingSends, []);
+  assert.equal(liveSession.autoCompacting, false);
+  assert.deepEqual(liveSession.pendingSends, []);
 
   // The late completion is now a duplicate: it must not re-enter compaction
   // accounting (status, counter, context reset).
   internals.handleCompactionNotification('app-compact', 'app-compact', 'primary', session, {
     params: { notification: { type: 'session_compacted', summaryId: 's1', removedCount: 12 } },
   });
-  assert.equal(mission.autoCompacting, false);
-  assert.equal(mission.summary.autoCompactions ?? 0, 0);
+  assert.equal(liveSession.autoCompacting, false);
+  assert.equal(liveSession.summary.autoCompactions ?? 0, 0);
 });
 
 test('daemon compaction notifications protect worker compaction from steering and Stop', async () => {
-  const { manager, mission } = compactionHarness(10_000);
+  const { manager, liveSession } = compactionHarness(10_000);
   const session = new FakeCompactionSession('worker-1', 10_000);
   const agent = {
     session,
@@ -1230,8 +1258,8 @@ test('daemon compaction notifications protect worker compaction from steering an
     pendingSends: [] as string[],
     lastUsedAt: Date.now(),
   };
-  mission.linkedSubagents.add('worker-1');
-  mission.agents.set('worker-1', agent);
+  liveSession.linkedChildSessions.add('worker-1');
+  liveSession.childSessions.set('worker-1', agent);
   const internals = manager as unknown as CompactionNotificationInternals;
 
   internals.handleCompactionNotification('app-compact', 'worker-1', 'worker', session, {
@@ -1253,7 +1281,7 @@ test('daemon compaction notifications protect worker compaction from steering an
   assert.equal(session.interrupts, 0);
   assert.deepEqual(agent.pendingSends, ['after compaction']);
 
-  // Same escape hatch as the orchestrator: Stop settles the flag and
+  // Same escape hatch as the primary session: Stop settles the flag and
   // interrupts instead of being silently swallowed.
   await manager.handle({
     type: 'child.interrupt',
@@ -1271,9 +1299,9 @@ test('daemon compaction notifications protect worker compaction from steering an
   assert.equal(agent.autoCompacting, false);
 });
 
-test('worker post-turn watchdog re-arms on the agents-map key, not the live session id', async () => {
-  const { manager, mission } = compactionHarness(10_000);
-  // The live session's own id intentionally differs from the agents-map key.
+test('worker post-turn watchdog re-arms on the child-map key, not the live provider id', async () => {
+  const { manager, liveSession } = compactionHarness(10_000);
+  // The live provider id intentionally differs from the child-map key.
   const session = new FakeCompactionSession('daemon-worker-raw', 10_000);
   const agent = {
     session,
@@ -1285,10 +1313,10 @@ test('worker post-turn watchdog re-arms on the agents-map key, not the live sess
     pendingSends: [] as string[],
     lastUsedAt: Date.now(),
   };
-  mission.linkedSubagents.add('worker-1');
-  mission.agents.set('worker-1', agent);
+  liveSession.linkedChildSessions.add('worker-1');
+  liveSession.childSessions.set('worker-1', agent);
   const internals = manager as unknown as CompactionNotificationInternals & {
-    driveAgent: (agent: unknown, text: string) => Promise<void>;
+    driveChildSession: (agent: unknown, text: string) => Promise<void>;
     autoCompactionWatchdogs: { isArmed: (key: string) => boolean };
   };
 
@@ -1300,7 +1328,7 @@ test('worker post-turn watchdog re-arms on the agents-map key, not the live sess
   assert.equal(agent.autoCompacting, true);
   assert.equal(internals.autoCompactionWatchdogs.isArmed('worker-1'), true);
 
-  await internals.driveAgent(agent, 'go');
+  await internals.driveChildSession(agent, 'go');
 
   // The tightened post-turn timer must replace the start-of-compaction timer,
   // so it has to live under the same key every other watchdog op uses.
@@ -1308,8 +1336,8 @@ test('worker post-turn watchdog re-arms on the agents-map key, not the live sess
   assert.equal(internals.autoCompactionWatchdogs.isArmed('daemon-worker-raw'), false);
 });
 
-test('auto-compaction settlement drains queued orchestrator and worker sends', async () => {
-  const { manager, session, mission } = compactionHarness(10_000);
+test('auto-compaction settlement drains queued primary and worker sends', async () => {
+  const { manager, session, liveSession } = compactionHarness(10_000);
   const internals = manager as unknown as CompactionNotificationInternals;
 
   internals.handleCompactionNotification('app-compact', 'app-compact', 'primary', session, {
@@ -1323,7 +1351,7 @@ test('auto-compaction settlement drains queued orchestrator and worker sends', a
   await manager.handle({
     type: 'session.send',
     appSessionId: 'app-compact',
-    text: 'orchestrator next',
+    text: 'primary next',
   });
   internals.handleCompactionNotification('app-compact', 'app-compact', 'primary', session, {
     params: {
@@ -1341,8 +1369,8 @@ test('auto-compaction settlement drains queued orchestrator and worker sends', a
     pendingSends: [] as string[],
     lastUsedAt: Date.now(),
   };
-  mission.linkedSubagents.add('worker-drain');
-  mission.agents.set('worker-drain', worker);
+  liveSession.linkedChildSessions.add('worker-drain');
+  liveSession.childSessions.set('worker-drain', worker);
   internals.handleCompactionNotification('app-compact', 'worker-drain', 'worker', workerSession, {
     params: {
       notification: {
@@ -1362,14 +1390,14 @@ test('auto-compaction settlement drains queued orchestrator and worker sends', a
   });
   await new Promise((resolve) => setImmediate(resolve));
 
-  assert.deepEqual(session.prompts, ['orchestrator next']);
-  assert.deepEqual(mission.pendingSends, []);
+  assert.deepEqual(session.prompts, ['primary next']);
+  assert.deepEqual(liveSession.pendingSends, []);
   assert.deepEqual(workerSession.prompts, ['worker next']);
   assert.deepEqual(worker.pendingSends, []);
 });
 
 test('worker completion waits for auto-compaction before closing its transport', async () => {
-  const { manager, mission } = compactionHarness(10_000);
+  const { manager, liveSession } = compactionHarness(10_000);
   const session = new FakeCompactionSession('worker-close', 10_000);
   const agent = {
     session,
@@ -1381,12 +1409,12 @@ test('worker completion waits for auto-compaction before closing its transport',
     pendingSends: [] as string[],
     lastUsedAt: Date.now(),
   };
-  mission.agents.set('worker-close', agent);
+  liveSession.childSessions.set('worker-close', agent);
   const internals = manager as unknown as CompactionNotificationInternals;
 
-  await internals.closeAgentWhenIdle('app-compact', 'worker-close');
+  await internals.closeChildSessionWhenIdle('app-compact', 'worker-close');
   assert.equal(session.closes, 0);
-  assert.equal(mission.agents.has('worker-close'), true);
+  assert.equal(liveSession.childSessions.has('worker-close'), true);
 
   internals.handleCompactionNotification('app-compact', 'worker-close', 'worker', session, {
     params: { notification: { type: 'session_compacted', removedCount: 5 } },
@@ -1394,13 +1422,13 @@ test('worker completion waits for auto-compaction before closing its transport',
   await new Promise((resolve) => setImmediate(resolve));
 
   assert.equal(session.closes, 1);
-  assert.equal(mission.agents.has('worker-close'), false);
+  assert.equal(liveSession.childSessions.has('worker-close'), false);
 });
 
-test('deferred worker close resolves the agent by the agents-map id, not the live session id', async () => {
-  const { manager, mission } = compactionHarness(10_000);
+test('deferred worker close resolves the child by its map key, not its live provider id', async () => {
+  const { manager, liveSession } = compactionHarness(10_000);
   const session = new FakeCompactionSession('worker-close-live', 10_000);
-  mission.agents.set('worker-close-key', {
+  liveSession.childSessions.set('worker-close-key', {
     session,
     providerSessionId: 'worker-close-key',
     appSessionId: 'app-compact',
@@ -1412,7 +1440,7 @@ test('deferred worker close resolves the agent by the agents-map id, not the liv
   });
   const internals = manager as unknown as CompactionNotificationInternals;
 
-  await internals.closeAgentWhenIdle('app-compact', 'worker-close-key');
+  await internals.closeChildSessionWhenIdle('app-compact', 'worker-close-key');
   assert.equal(session.closes, 0);
 
   internals.handleCompactionNotification('app-compact', 'worker-close-key', 'worker', session, {
@@ -1421,14 +1449,14 @@ test('deferred worker close resolves the agent by the agents-map id, not the liv
   await new Promise((resolve) => setImmediate(resolve));
 
   assert.equal(session.closes, 1);
-  assert.equal(mission.agents.has('worker-close-key'), false);
+  assert.equal(liveSession.childSessions.has('worker-close-key'), false);
 });
 
-test('a worker in-place compaction bumps the worker snapshot generation, not the mission summary', async () => {
-  const { manager, events, mission } = compactionHarness(10_000);
+test('worker in-place compaction bumps its snapshot generation, not the parent summary', async () => {
+  const { manager, events, liveSession } = compactionHarness(10_000);
   const session = new FakeCompactionSession('worker-1', 10_000);
-  mission.linkedSubagents.add('worker-1');
-  mission.agents.set('worker-1', {
+  liveSession.linkedChildSessions.add('worker-1');
+  liveSession.childSessions.set('worker-1', {
     session,
     appSessionId: 'app-compact',
     role: 'worker' as const,
@@ -1463,33 +1491,33 @@ test('a worker in-place compaction bumps the worker snapshot generation, not the
       (e as { sourceSessionId?: string }).sourceSessionId === 'worker-1',
   ) as { stats: { compactions?: number } } | undefined;
   assert.equal(ctx?.stats.compactions, 1);
-  assert.equal(mission.summary.autoCompactions ?? 0, 0);
+  assert.equal(liveSession.summary.autoCompactions ?? 0, 0);
 });
 
-test('worker token readings never mark the mission summary exact; orchestrator readings do', () => {
-  const { manager, mission } = compactionHarness(10_000);
+test('worker token readings never mark the parent summary exact; primary readings do', () => {
+  const { manager, liveSession } = compactionHarness(10_000);
   const internals = manager as unknown as {
-    applyNormalizedForAgent: (
+    applyNormalizedForSource: (
       appSessionId: string,
       providerSessionId: string,
       n: { tokens: { tokensIn: number; tokensOut: number; contextTokens: number } },
     ) => void;
   };
 
-  internals.applyNormalizedForAgent('app-compact', 'app-compact', {
+  internals.applyNormalizedForSource('app-compact', 'app-compact', {
     tokens: { tokensIn: 5, tokensOut: 2, contextTokens: 9 },
   });
-  assert.equal(mission.summary.contextAccuracy, 'exact');
-  assert.equal(mission.summary.contextTokens, 9);
+  assert.equal(liveSession.summary.contextAccuracy, 'exact');
+  assert.equal(liveSession.summary.contextTokens, 9);
 
-  // A later worker turn must not clobber the orchestrator's context reading
+  // A later worker turn must not clobber the primary session's context reading
   // (value or accuracy); only the running totals move.
-  internals.applyNormalizedForAgent('app-compact', 'worker-1', {
+  internals.applyNormalizedForSource('app-compact', 'worker-1', {
     tokens: { tokensIn: 50, tokensOut: 20, contextTokens: 70 },
   });
-  assert.equal(mission.summary.contextTokens, 9);
-  assert.equal(mission.summary.contextAccuracy, 'exact');
-  assert.equal(mission.summary.tokensIn, 50);
+  assert.equal(liveSession.summary.contextTokens, 9);
+  assert.equal(liveSession.summary.contextAccuracy, 'exact');
+  assert.equal(liveSession.summary.tokensIn, 50);
 });
 
 test('non-compaction notifications are ignored by the compaction handler', () => {
@@ -1517,21 +1545,21 @@ function primarySwapHarness(used: number, swapTo: string) {
   const events: ServerEvent[] = [];
   const manager = new SessionManager((event) => events.push(event));
   const session = new FakeCompactionSession('droid-old', used, swapTo);
-  const mission = {
+  const liveSession = {
     summary: testSummary('app-swap', session.sessionId),
     session,
     streaming: false,
     pendingSends: [] as string[],
     pendingPermissions: new Map(),
     pendingQuestions: new Map(),
-    agents: new Map(),
-    knownSubagents: new Set<string>(),
-    completedSubagents: new Set<string>(),
-    terminalAgents: new Set<string>(),
-    linkedSubagents: new Set<string>(),
-    subagentToolUseIds: new Map(),
-    subagentSettings: new Map(),
-    pendingSubagents: [],
+    childSessions: new Map(),
+    knownChildSessions: new Set<string>(),
+    completedChildSessions: new Set<string>(),
+    terminalSources: new Set<string>(),
+    linkedChildSessions: new Set<string>(),
+    childSessionToolUseIds: new Map(),
+    childSessionSettings: new Map(),
+    pendingChildSessions: [],
     mcpServers: [],
     mcpConfigs: [],
     compacting: false,
@@ -1543,10 +1571,10 @@ function primarySwapHarness(used: number, swapTo: string) {
       syncSummaries: () => void;
       summaryPatches: () => Map<string, unknown>;
       hiddenProviderSessionIds: () => Set<string>;
-      recordSubagentLink: () => void;
-      subagentLinks: () => [];
+      recordChildSessionLink: () => void;
+      childSessionLinks: () => [];
     };
-    sessions: Map<string, typeof mission>;
+    sessions: Map<string, typeof liveSession>;
     runtime: { loadSession: (id: string, handlers: unknown) => Promise<FakeCompactionSession> };
   };
   internals.history = {
@@ -1554,15 +1582,15 @@ function primarySwapHarness(used: number, swapTo: string) {
     syncSummaries: () => {},
     summaryPatches: () => new Map(),
     hiddenProviderSessionIds: () => new Set(),
-    recordSubagentLink: () => {},
-    subagentLinks: () => [],
+    recordChildSessionLink: () => {},
+    childSessionLinks: () => [],
   };
-  internals.sessions.set(mission.summary.appSessionId, mission);
-  return { manager, session, events, mission, internals };
+  internals.sessions.set(liveSession.summary.appSessionId, liveSession);
+  return { manager, session, events, liveSession, internals };
 }
 
-test('orchestrator compaction swap re-enables daemon auto-compaction on the new session', async () => {
-  const { manager, mission, internals } = primarySwapHarness(250_000, 'droid-new');
+test('primary compaction swap re-enables daemon auto-compaction on the new provider session', async () => {
+  const { manager, liveSession, internals } = primarySwapHarness(250_000, 'droid-new');
   const swapped = new FakeCompactionSession('droid-new', 10_000);
   internals.runtime = { loadSession: async () => swapped };
   (
@@ -1571,7 +1599,7 @@ test('orchestrator compaction swap re-enables daemon auto-compaction on the new 
 
   await manager.handle({ type: 'session.compact', appSessionId: 'app-swap' });
 
-  assert.equal(mission.session.sessionId, 'droid-new');
+  assert.equal(liveSession.session.sessionId, 'droid-new');
   // Settings live on the daemon session, not the persisted file, so the swap
   // must re-push the threshold check with the ContextMeter limit.
   assert.deepEqual(swapped.settingsUpdates, [
@@ -1579,8 +1607,8 @@ test('orchestrator compaction swap re-enables daemon auto-compaction on the new 
   ]);
 });
 
-test('orchestrator compaction swap recovers when the first reload fails but a retry succeeds', async () => {
-  const { manager, session, events, mission, internals } = primarySwapHarness(
+test('primary compaction swap recovers when the first reload fails but a retry succeeds', async () => {
+  const { manager, session, events, liveSession, internals } = primarySwapHarness(
     250_000,
     'droid-new',
   );
@@ -1593,13 +1621,13 @@ test('orchestrator compaction swap recovers when the first reload fails but a re
       return swapped;
     },
   };
-  mission.pendingSends.push('queued');
+  liveSession.pendingSends.push('queued');
   await manager.handle({ type: 'session.compact', appSessionId: 'app-swap' });
   // Adopted on retry: the live session is the new backing id, persisted on the summary.
-  assert.equal(mission.session.sessionId, 'droid-new');
-  assert.equal(mission.summary.providerSessionId, 'droid-new');
+  assert.equal(liveSession.session.sessionId, 'droid-new');
+  assert.equal(liveSession.summary.providerSessionId, 'droid-new');
   assert.equal(loadCalls, 2);
-  // The mission stays live (not dropped) and the queued send drains to the new session.
+  // The application session stays live and its queued send drains to the new provider.
   assert.equal(internals.sessions.has('app-swap'), true);
   await waitFor(() => swapped.prompts.includes('queued'));
   assert.equal(swapped.prompts.includes('queued'), true);
@@ -1612,8 +1640,8 @@ test('orchestrator compaction swap recovers when the first reload fails but a re
   );
 });
 
-test('orchestrator compaction swap that never reloads drops the mission and re-delivers queued sends through resume', async () => {
-  const { manager, session, events, mission, internals } = primarySwapHarness(
+test('failed primary compaction adoption drops the live session and re-delivers through resume', async () => {
+  const { manager, session, events, liveSession, internals } = primarySwapHarness(
     250_000,
     'droid-new',
   );
@@ -1623,14 +1651,14 @@ test('orchestrator compaction swap that never reloads drops the mission and re-d
     },
   };
   let closedId: string | undefined;
-  // Stub the disk-backed teardown; assert the mission is dropped for re-resume.
+  // Stub disk-backed teardown; assert the live session is dropped for re-resume.
   (manager as unknown as { closeSession: (id: string) => Promise<void> }).closeSession = async (
     id: string,
   ) => {
     closedId = id;
     internals.sessions.delete(id);
   };
-  // Simulate a successful lazy resume: re-register a live mission on the new id.
+  // Simulate a successful lazy resume: re-register the live session on the new id.
   const resumed = new FakeCompactionSession('droid-new', 10_000);
   let resumeCalls = 0;
   (manager as unknown as { resumeSession: (id: string) => Promise<void> }).resumeSession = async (
@@ -1638,18 +1666,18 @@ test('orchestrator compaction swap that never reloads drops the mission and re-d
   ) => {
     resumeCalls += 1;
     internals.sessions.set(id, {
-      ...mission,
+      ...liveSession,
       session: resumed,
       streaming: false,
       compacting: false,
       pendingSends: [],
     });
   };
-  mission.pendingSends.push('queued-after-recovery');
+  liveSession.pendingSends.push('queued-after-recovery');
   await manager.handle({ type: 'session.compact', appSessionId: 'app-swap' });
   // The daemon's new backing id is persisted so a later send re-resumes the live session...
-  assert.equal(mission.summary.providerSessionId, 'droid-new');
-  // ...the live mission is dropped (the next send re-resumes it)...
+  assert.equal(liveSession.summary.providerSessionId, 'droid-new');
+  // ...the live session is dropped (the next send re-resumes it)...
   assert.equal(closedId, 'app-swap');
   // ...a recoverable error is surfaced without changing the session phase...
   assert.equal(
@@ -1668,7 +1696,7 @@ test('orchestrator compaction swap that never reloads drops the mission and re-d
 });
 
 test('manual compaction swap that never reloads re-delivers sends queued during compaction', async () => {
-  const { manager, session, events, mission, internals } = primarySwapHarness(
+  const { manager, session, events, liveSession, internals } = primarySwapHarness(
     10_000,
     'droid-new',
   );
@@ -1691,7 +1719,7 @@ test('manual compaction swap that never reloads re-delivers sends queued during 
   ) => {
     resumeCalls += 1;
     internals.sessions.set(id, {
-      ...mission,
+      ...liveSession,
       session: resumed,
       streaming: false,
       compacting: false,
@@ -1699,11 +1727,11 @@ test('manual compaction swap that never reloads re-delivers sends queued during 
     });
   };
   // A prompt queued while the manual compaction was running.
-  mission.pendingSends.push('queued-during-manual');
+  liveSession.pendingSends.push('queued-during-manual');
   await manager.handle({ type: 'session.compact', appSessionId: 'app-swap' });
-  // The live mission is dropped and the new backing id is persisted...
+  // The live session is dropped and the new provider id is persisted...
   assert.equal(closedId, 'app-swap');
-  assert.equal(mission.summary.providerSessionId, 'droid-new');
+  assert.equal(liveSession.summary.providerSessionId, 'droid-new');
   // ...the queued prompt is re-delivered through resume (not discarded)...
   await waitFor(() => resumed.prompts.includes('queued-during-manual'));
   assert.equal(resumeCalls >= 1, true);
@@ -1717,15 +1745,15 @@ test('manual compaction swap that never reloads re-delivers sends queued during 
 
 // ── #30/#17: opening a worker always settles its loading state ──
 
-test('#30/#17 opening a worker on a non-live mission settles loading with an honest open', async () => {
+test('#30/#17 opening a worker on a non-live session settles loading with an honest open', async () => {
   const events: ServerEvent[] = [];
   const manager = new SessionManager((event) => events.push(event));
-  // No mission is registered, so openAgent cannot resume one. It must still ack
+  // No session is registered, so openChildSession cannot resume one. It must still ack
   // 'opened' (honest empty) so the worker card stops loading forever instead of
   // hanging on the optimistic loading flag the client set before subscribing.
   await manager.handle({
     type: 'child.open',
-    appSessionId: 'ghost-mission',
+    appSessionId: 'ghost-session',
     providerSessionId: 'w1',
   });
   assert.ok(
@@ -1774,21 +1802,21 @@ function terminalHarness(turns: Record<string, unknown>[][]) {
   const events: ServerEvent[] = [];
   const manager = new SessionManager((event) => events.push(event));
   const session = new FakeScriptedSession('droid-term', turns);
-  const mission = {
+  const liveSession = {
     summary: testSummary('app-term', session.sessionId),
     session,
     streaming: false,
     pendingSends: [] as string[],
     pendingPermissions: new Map(),
     pendingQuestions: new Map(),
-    agents: new Map(),
-    knownSubagents: new Set(),
-    completedSubagents: new Set(),
-    terminalAgents: new Set<string>(),
-    linkedSubagents: new Set(),
-    subagentToolUseIds: new Map(),
-    subagentSettings: new Map(),
-    pendingSubagents: [],
+    childSessions: new Map(),
+    knownChildSessions: new Set(),
+    completedChildSessions: new Set(),
+    terminalSources: new Set<string>(),
+    linkedChildSessions: new Set(),
+    childSessionToolUseIds: new Map(),
+    childSessionSettings: new Map(),
+    pendingChildSessions: [],
     mcpServers: [],
     compacting: false,
   };
@@ -1796,38 +1824,38 @@ function terminalHarness(turns: Record<string, unknown>[][]) {
     history: {
       recordEvent: () => void;
       syncSummaries: () => void;
-      recordSubagentLink: () => void;
-      subagentLinks: () => [];
+      recordChildSessionLink: () => void;
+      childSessionLinks: () => [];
     };
-    sessions: Map<string, typeof mission>;
+    sessions: Map<string, typeof liveSession>;
     applyEvent: (
       appSessionId: string,
       providerSessionId: string,
       role: string,
       ev: Record<string, unknown>,
     ) => void;
-    applyNormalizedForAgent: (
+    applyNormalizedForSource: (
       appSessionId: string,
       providerSessionId: string,
-      n: { transcript?: Record<string, unknown>; done?: boolean; subagent?: unknown },
+      n: { transcript?: Record<string, unknown>; done?: boolean; childSession?: unknown },
     ) => void;
   };
   internals.history = {
     recordEvent: () => {},
     syncSummaries: () => {},
-    recordSubagentLink: () => {},
-    subagentLinks: () => [],
+    recordChildSessionLink: () => {},
+    childSessionLinks: () => [],
   };
-  internals.sessions.set(mission.summary.appSessionId, mission);
+  internals.sessions.set(liveSession.summary.appSessionId, liveSession);
   const transcriptTexts = () =>
     events
       .filter((e) => e.type === 'event.appended')
       .map((e) => (e as { event: { text?: string } }).event.text);
-  return { manager, events, mission, internals, session, transcriptTexts };
+  return { manager, events, liveSession, internals, session, transcriptTexts };
 }
 
 test('#19 a turn keeps its pre-terminal answer but drops generation after the result', async () => {
-  const { manager, mission, transcriptTexts } = terminalHarness([
+  const { manager, liveSession, transcriptTexts } = terminalHarness([
     [
       { type: 'assistant_text_delta', text: 'final answer' },
       { type: 'result' },
@@ -1838,34 +1866,36 @@ test('#19 a turn keeps its pre-terminal answer but drops generation after the re
   ]);
 
   await manager.handle({ type: 'session.send', appSessionId: 'app-term', text: 'first' });
-  await waitFor(() => mission.streaming === false && transcriptTexts().includes('final answer'));
+  await waitFor(
+    () => liveSession.streaming === false && transcriptTexts().includes('final answer'),
+  );
 
   // The pre-terminal answer is kept; post-terminal generation is quarantined.
   assert.ok(transcriptTexts().includes('final answer'));
   assert.ok(!transcriptTexts().includes('leaked tail'));
   // The session is flagged terminal for this turn.
-  assert.ok(mission.terminalAgents.has('app-term'));
+  assert.ok(liveSession.terminalSources.has('app-term'));
 
   // The next turn resets the flag so its answer flows again.
   await manager.handle({ type: 'session.send', appSessionId: 'app-term', text: 'second' });
   await waitFor(() => transcriptTexts().includes('second turn answer'));
-  assert.ok(!mission.terminalAgents.has('app-term'));
+  assert.ok(!liveSession.terminalSources.has('app-term'));
 });
 
 test('#19 terminal enforcement is scoped per agent session', () => {
-  const { mission, internals, transcriptTexts } = terminalHarness([]);
-  // The orchestrator turn is terminal, but a worker on the same mission is not.
-  mission.terminalAgents.add('app-term');
+  const { liveSession, internals, transcriptTexts } = terminalHarness([]);
+  // The primary turn is terminal, but a worker on the same app session is not.
+  liveSession.terminalSources.add('app-term');
   internals.applyEvent('app-term', 'worker-1', 'worker', {
     type: 'assistant_text_delta',
     text: 'worker still talking',
   });
   internals.applyEvent('app-term', 'app-term', 'primary', {
     type: 'assistant_text_delta',
-    text: 'orchestrator blocked',
+    text: 'primary blocked',
   });
   assert.ok(transcriptTexts().includes('worker still talking'));
-  assert.ok(!transcriptTexts().includes('orchestrator blocked'));
+  assert.ok(!transcriptTexts().includes('primary blocked'));
 });
 
 test('#19 a failed result after the terminal result still surfaces', () => {
@@ -1881,7 +1911,7 @@ test('#19 a failed result after the terminal result still surfaces', () => {
   assert.ok(transcriptTexts().includes('boom'));
 });
 
-test('#19 a post-terminal subagent spawn keeps its worker signal, drops only the tool transcript', () => {
+test('#19 a post-terminal child spawn keeps its worker signal and drops only tool transcript', () => {
   const { events, internals } = terminalHarness([]);
   internals.applyEvent('app-term', 'app-term', 'primary', { type: 'result' });
   internals.applyEvent('app-term', 'app-term', 'primary', {
@@ -1889,7 +1919,7 @@ test('#19 a post-terminal subagent spawn keeps its worker signal, drops only the
     subagentSessionId: 'w1',
     toolUse: { id: 'tA', name: 'Task', input: { subagent_type: 'worker', prompt: 'go' } },
   });
-  // The subagent side effect still flows (worker started)...
+  // The child-session side effect still flows (worker started)...
   assert.ok(
     events.some(
       (e) =>
@@ -1898,7 +1928,7 @@ test('#19 a post-terminal subagent spawn keeps its worker signal, drops only the
         (e as { providerSessionId?: string }).providerSessionId === 'w1',
     ),
   );
-  // ...but the orchestrator's own Task tool_call transcript is quarantined.
+  // ...but the primary session's own Task tool_call transcript is quarantined.
   assert.ok(
     !events.some(
       (e) =>
@@ -1910,12 +1940,12 @@ test('#19 a post-terminal subagent spawn keeps its worker signal, drops only the
 });
 
 test('#19 post-terminal generation is dropped on the shared agent entry (notification path)', () => {
-  const { mission, internals, transcriptTexts } = terminalHarness([]);
-  // Worker notifications now route through applyNormalizedForAgent, so a late
+  const { liveSession, internals, transcriptTexts } = terminalHarness([]);
+  // Worker notifications now route through applyNormalizedForSource, so a late
   // text delta for a terminal worker is quarantined here too, not just on the
   // stream loop.
-  mission.terminalAgents.add('w1');
-  internals.applyNormalizedForAgent('app-term', 'w1', {
+  liveSession.terminalSources.add('w1');
+  internals.applyNormalizedForSource('app-term', 'w1', {
     transcript: {
       id: 'late-1',
       appSessionId: 'app-term',

@@ -54,10 +54,10 @@ import {
 import {
   applyCachedSummary,
   HistoryIndex,
-  hydrateHistoricalMission,
-  loadHistoricalMissions,
+  hydrateHistoricalSession,
   loadHistoricalSessions,
-  loadMissionTranscriptWindow,
+  loadMissionControlSessions,
+  loadSessionTranscriptWindow,
   loadSessionHistory,
   loadSessionPage,
   readFactoryDefaults,
@@ -74,10 +74,7 @@ import {
   isApprovalOutcome,
   normalizePermissionOutcome,
 } from './permissionOutcomes.js';
-import {
-  filterSessionListSummaries,
-  type SessionListFilterOptions,
-} from './sessionListFilter.js';
+import { filterSessionListSummaries, type SessionListFilterOptions } from './sessionListFilter.js';
 import {
   daemonCompactionSettings,
   effectiveCompactionTriggerLimit,
@@ -102,9 +99,9 @@ interface SessionManagerOptions {
   assetUrlFor?: (path: string) => string;
 }
 
-interface LiveAgent {
+interface LiveChildSession {
   session: DroidSession;
-  // The parent session's agents map key (and watchdog key). Kept explicitly so paths
+  // The parent session's child map key (and watchdog key). Kept explicitly so paths
   // that only hold the agent never key timers off session.sessionId, which is
   // not guaranteed to match the map key.
   providerSessionId: string;
@@ -128,26 +125,26 @@ interface LiveSession {
   streaming: boolean;
   pendingSends: string[];
   interruptingForSteer?: boolean;
-  // Set while a user Stop is in flight (see LiveAgent.interrupting).
+  // Set while a user Stop is in flight (see LiveChildSession.interrupting).
   interrupting?: boolean;
   pendingPermissions: Map<string, PendingPermission>;
   pendingQuestions: Map<string, (r: AskUserResult) => void>;
-  agents: Map<string, LiveAgent>;
-  knownSubagents: Set<string>;
-  completedSubagents: Set<string>;
-  // Session ids (orchestrator or a worker) whose current streaming turn has
+  childSessions: Map<string, LiveChildSession>;
+  knownChildSessions: Set<string>;
+  completedChildSessions: Set<string>;
+  // Provider session ids (primary or child) whose current streaming turn has
   // already produced its terminal `result`. Further model generation in the
   // same turn is quarantined so a turn renders exactly one final response, and
   // the set is cleared when that session's next turn starts.
-  terminalAgents: Set<string>;
-  // Worker session ids tied to this mission by persisted spawn->worker links,
-  // seeded on resume so historical subagents stay openable even before any live
-  // spawn re-populates knownSubagents. Kept separate from knownSubagents so live
-  // run-status reporting only reflects subagents actually seen this session.
-  linkedSubagents: Set<string>;
-  subagentToolUseIds: Map<string, string>;
-  subagentSettings: Map<string, SubagentSettings>;
-  pendingSubagents: PendingSubagent[];
+  terminalSources: Set<string>;
+  // Child provider ids tied to this session by persisted spawn links. Seeded on
+  // resume so historical children stay openable before a live spawn repopulates
+  // knownChildSessions. Kept separate so live status reflects children actually
+  // seen during this process lifetime.
+  linkedChildSessions: Set<string>;
+  childSessionToolUseIds: Map<string, string>;
+  childSessionSettings: Map<string, ChildSessionSettings>;
+  pendingChildSessions: PendingChildSession[];
   mcpServers: SdkMcpServer[];
   // The started local MCP server configs (handles to the running servers above),
   // retained so a post-compaction session swap can re-attach the same tools.
@@ -160,7 +157,7 @@ interface LiveSession {
   // a streaming turn (the SDK session swap is not safe to overlap with either).
   compacting?: boolean;
   autoCompacting: boolean;
-  // Raw daemon-notification subscription for the orchestrator session, used to
+  // Raw daemon-notification subscription for the primary session, used to
   // surface the daemon's in-place auto-compaction (compacting_conversation /
   // session_compacted). Re-created when a manual compaction swaps the session.
   unsubscribe?: () => void;
@@ -172,13 +169,13 @@ interface PendingPermission {
   signature?: string;
 }
 
-interface PendingSubagent {
+interface PendingChildSession {
   toolUseId?: string;
   label?: string;
   prompt?: string;
 }
 
-interface SubagentSettings {
+interface ChildSessionSettings {
   modelId?: string;
   reasoningEffort?: ReasoningEffort;
 }
@@ -203,7 +200,7 @@ const STATE_TO_PHASE: Record<string, SessionPhase> = {
   awaiting_input: 'running',
 };
 
-const MAX_OPEN_AGENT_TRANSPORTS = boundedInt(process.env.DROID_CONTROL_MAX_OPEN_AGENTS, 4, 1, 24);
+const MAX_OPEN_CHILD_SESSIONS = boundedInt(process.env.DROID_CONTROL_MAX_OPEN_AGENTS, 4, 1, 24);
 const BROWSER_NATIVE_TIMEOUT_MS = boundedInt(
   process.env.DROID_CONTROL_BROWSER_NATIVE_TIMEOUT_MS,
   12_000,
@@ -255,7 +252,7 @@ export class SessionManager {
   // In-place compactions completed per worker session; carried on that
   // session's context snapshots so the meter's ratchet resets (workers have no
   // summary-level generation counter of their own).
-  private readonly agentCompactions = new Map<string, number>();
+  private readonly childSessionCompactions = new Map<string, number>();
   private readonly contextPollers = new Map<string, ReturnType<typeof setInterval>>();
   private readonly pendingNativeBrowserRequests = new Map<string, PendingNativeBrowserRequest>();
   private readonly browsers: BrowserSessionManager;
@@ -315,13 +312,13 @@ export class SessionManager {
         return;
       }
       case 'catalog.tools':
-        await this.emitToolCatalog(cmd.sessionId);
+        await this.emitToolCatalog(cmd.providerSessionId);
         return;
       case 'catalog.skills':
-        await this.emitSkillCatalog(cmd.sessionId);
+        await this.emitSkillCatalog(cmd.providerSessionId);
         return;
       case 'catalog.mcp':
-        await this.emitMcpCatalog(cmd.sessionId);
+        await this.emitMcpCatalog(cmd.providerSessionId);
         return;
       case 'settings.defaults':
         await this.emitFactoryDefaults();
@@ -345,16 +342,16 @@ export class SessionManager {
         await this.interrupt(cmd.appSessionId);
         return;
       case 'child.open':
-        await this.openAgent(cmd.appSessionId, cmd.providerSessionId, cmd.role ?? 'worker');
+        await this.openChildSession(cmd.appSessionId, cmd.providerSessionId, cmd.role ?? 'worker');
         return;
       case 'child.send':
-        await this.sendAgent(cmd.appSessionId, cmd.providerSessionId, cmd.text);
+        await this.sendChildSession(cmd.appSessionId, cmd.providerSessionId, cmd.text);
         return;
       case 'child.sendNow':
-        await this.sendAgentNow(cmd.appSessionId, cmd.providerSessionId, cmd.text);
+        await this.sendChildSessionNow(cmd.appSessionId, cmd.providerSessionId, cmd.text);
         return;
       case 'child.interrupt':
-        await this.interruptAgent(cmd.appSessionId, cmd.providerSessionId);
+        await this.interruptChildSession(cmd.appSessionId, cmd.providerSessionId);
         return;
       case 'session.updateSettings':
         await this.updateSessionSettings(cmd.appSessionId, cmd);
@@ -388,12 +385,14 @@ export class SessionManager {
         ) {
           const next = compacted.pendingSends.shift();
           if (next !== undefined) {
-            this.patch(compacted.summary.appSessionId, { queuedSends: compacted.pendingSends.length });
+            this.patch(compacted.summary.appSessionId, {
+              queuedSends: compacted.pendingSends.length,
+            });
             await this.drive(compacted.summary.appSessionId, next);
           }
         } else if (!compacted && liveSession) {
-          // Stale-swap recovery dropped the live mission during compaction; the
-          // queued prompts live on the detached mission object, so re-deliver
+          // Stale-swap recovery dropped the live session during compaction; the
+          // queued prompts live on the detached object, so re-deliver
           // them through the resume path instead of discarding them.
           const queued = liveSession.pendingSends.splice(0);
           if (queued.length > 0) await this.redeliverQueuedSends(appSessionId, queued);
@@ -563,8 +562,7 @@ export class SessionManager {
           await readDroidCliModelCatalog(this.runtime.status().droidPath),
         );
         this.cachedModels = models;
-        if (emit)
-          this.emit({ type: 'catalog.updated', catalog: 'models', items: models });
+        if (emit) this.emit({ type: 'catalog.updated', catalog: 'models', items: models });
         return models;
       } catch (err) {
         this.emitError({ message: `models.list failed: ${errMsg(err)}` });
@@ -756,33 +754,35 @@ export class SessionManager {
   }
 
   private async applyAgentSessionSettings(
-    mission: LiveSession,
+    liveSession: LiveSession,
     agent: ConfigurableSessionRole,
     settings: AgentSettingPatch,
   ): Promise<void> {
     const next = createSessionSettingsForAgent(agent, settings);
-    if (Object.keys(next).length > 0) await mission.session.updateSettings(next as never);
+    if (Object.keys(next).length > 0) await liveSession.session.updateSettings(next as never);
   }
 
-  // Refresh the daemon's auto-compaction threshold from the mission's effective
-  // orchestrator model. When the model was reset to Default, summary.modelId is
+  // Refresh the daemon's auto-compaction threshold from the session's effective
+  // primary model. When the model was reset to Default, summary.modelId is
   // undefined, so resolve the actual default model (its per-model limit and
   // context-window clamp would otherwise be ignored).
   private async recomputeSessionCompactionLimit(
-    mission: LiveSession,
+    liveSession: LiveSession,
     stillCurrent: () => boolean = () => true,
   ): Promise<void> {
     const defaults = await this.getFactoryDefaults();
     const modelId =
-      mission.summary.modelId ??
-      defaultModelForAgent('primary', modeForSummary(mission.summary), defaults);
+      liveSession.summary.modelId ??
+      defaultModelForAgent('primary', defaultsModeForSummary(liveSession.summary), defaults);
     const limit = await this.compactionLimit(modelId);
     if (!stillCurrent()) return;
-    const armed = await this.enableDaemonAutoCompaction(mission.session, limit);
+    const armed = await this.enableDaemonAutoCompaction(liveSession.session, limit);
     if (!stillCurrent()) return;
     // The summary records the trigger the daemon actually accepted; an arm
     // failure clears it instead of advertising a limit that is not in force.
-    this.patch(mission.summary.appSessionId, { compactionTokenLimit: armed ? limit : undefined });
+    this.patch(liveSession.summary.appSessionId, {
+      compactionTokenLimit: armed ? limit : undefined,
+    });
   }
 
   // Thin binding of the shared derivation to this manager's state (UI settings
@@ -801,18 +801,18 @@ export class SessionManager {
     });
   }
 
-  private agentModelId(
-    mission: LiveSession,
-    agentSessionId: string,
+  private childSessionModelId(
+    liveSession: LiveSession,
+    childProviderSessionId: string,
     role: SessionRole,
   ): string | undefined {
     let roleModelId: string | undefined;
-    if (role === 'worker') roleModelId = mission.summary.workerModelId;
-    else if (role === 'validator') roleModelId = mission.summary.validatorModelId;
+    if (role === 'worker') roleModelId = liveSession.summary.workerModelId;
+    else if (role === 'validator') roleModelId = liveSession.summary.validatorModelId;
     return (
-      mission.subagentSettings.get(agentSessionId)?.modelId ??
+      liveSession.childSessionSettings.get(childProviderSessionId)?.modelId ??
       roleModelId ??
-      mission.summary.modelId
+      liveSession.summary.modelId
     );
   }
 
@@ -825,7 +825,7 @@ export class SessionManager {
     if (cmd.compactionTokenLimitPerModel !== undefined)
       next.compactionTokenLimitPerModel = cmd.compactionTokenLimitPerModel;
     this.uiCompactionSettings = next;
-    // Retune every live session (orchestrators and opened agents) so concurrent
+    // Retune every live provider session (primary and opened children) so concurrent
     // chats on different models each follow their own effective limit. Sessions
     // retune in parallel so one hung updateSettings cannot stall the rest; the
     // revision guard keeps a slow batch from re-arming stale limits after a
@@ -833,10 +833,10 @@ export class SessionManager {
     const rev = ++this.compactionRetuneRev;
     const stillCurrent = () => rev === this.compactionRetuneRev;
     const retunes: Promise<unknown>[] = [];
-    for (const mission of this.sessions.values()) {
-      retunes.push(this.recomputeSessionCompactionLimit(mission, stillCurrent));
-      for (const [agentSessionId, agent] of mission.agents) {
-        const modelId = this.agentModelId(mission, agentSessionId, agent.role);
+    for (const liveSession of this.sessions.values()) {
+      retunes.push(this.recomputeSessionCompactionLimit(liveSession, stillCurrent));
+      for (const [childProviderSessionId, agent] of liveSession.childSessions) {
+        const modelId = this.childSessionModelId(liveSession, childProviderSessionId, agent.role);
         retunes.push(
           this.compactionLimit(modelId).then((limit) => {
             if (!stillCurrent()) return;
@@ -870,7 +870,7 @@ export class SessionManager {
   }
 
   private async runtimeAgentSettings(
-    mission: LiveSession,
+    liveSession: LiveSession,
     agent: ConfigurableSessionRole,
     settings: AgentSettingPatch,
   ): Promise<AgentSettingPatch> {
@@ -878,15 +878,14 @@ export class SessionManager {
     const defaults = await this.getFactoryDefaults();
     return {
       ...settings,
-      modelId: defaultModelForAgent(agent, modeForSummary(mission.summary), defaults),
+      modelId: defaultModelForAgent(agent, defaultsModeForSummary(liveSession.summary), defaults),
     };
   }
 
-  private async applyPendingSessionSettings(missionId: string): Promise<boolean> {
-    const mission = this.findSession(missionId);
-    const appSessionId = mission?.summary.appSessionId ?? missionId;
+  private async applyPendingSessionSettings(appSessionId: string): Promise<boolean> {
+    const liveSession = this.findSession(appSessionId);
     const pending = this.pendingAgentSettings.get(appSessionId);
-    if (!mission || !pending) return true;
+    if (!liveSession || !pending) return true;
     try {
       let patch: Partial<SessionSummary> = {};
       for (const [agent, settings] of Object.entries(pending) as [
@@ -894,9 +893,9 @@ export class SessionManager {
         AgentSettingPatch,
       ][]) {
         await this.applyAgentSessionSettings(
-          mission,
+          liveSession,
           agent,
-          await this.runtimeAgentSettings(mission, agent, settings),
+          await this.runtimeAgentSettings(liveSession, agent, settings),
         );
         patch = { ...patch, ...this.summaryPatchForAgent(agent, settings) };
       }
@@ -904,7 +903,7 @@ export class SessionManager {
       if (pending.primary?.modelId !== undefined) {
         // A pending primary model applied before send changes the
         // auto-compaction threshold; recompute it to match the new model.
-        await this.recomputeSessionCompactionLimit(mission);
+        await this.recomputeSessionCompactionLimit(liveSession);
       }
       return true;
     } catch (err) {
@@ -929,17 +928,20 @@ export class SessionManager {
     return (
       this.sessions.get(id) ??
       [...this.sessions.values()].find(
-        (mission) =>
-          mission.summary.providerSessionId === id ||
-          Boolean(mission.summary.compactedFromProviderSessionIds?.includes(id)),
+        (liveSession) =>
+          liveSession.summary.providerSessionId === id ||
+          Boolean(liveSession.summary.compactedFromProviderSessionIds?.includes(id)),
       )
     );
   }
 
   private findSessionKey(id: string): string | undefined {
     if (this.sessions.has(id)) return id;
-    for (const [key, mission] of this.sessions) {
-      if (mission.summary.providerSessionId === id || mission.summary.compactedFromProviderSessionIds?.includes(id))
+    for (const [key, liveSession] of this.sessions) {
+      if (
+        liveSession.summary.providerSessionId === id ||
+        liveSession.summary.compactedFromProviderSessionIds?.includes(id)
+      )
         return key;
     }
     return undefined;
@@ -954,11 +956,11 @@ export class SessionManager {
     );
   }
 
-  private async resumeSession(sessionId: string): Promise<void> {
+  private async resumeSession(requestedAppSessionId: string): Promise<void> {
     if (!this.ready) this.connect();
-    const historical = this.resolveSummary(sessionId);
-    const appSessionId = historical?.appSessionId ?? sessionId;
-    const providerSessionId = historical?.providerSessionId ?? sessionId;
+    const historical = this.resolveSummary(requestedAppSessionId);
+    const appSessionId = historical?.appSessionId ?? requestedAppSessionId;
+    const providerSessionId = historical?.providerSessionId ?? requestedAppSessionId;
     const existing = this.findSession(appSessionId);
     if (existing) {
       this.emit({
@@ -1054,22 +1056,32 @@ export class SessionManager {
       });
       const armed = await this.enableDaemonAutoCompaction(session, resumeCompactionLimit);
       if (armed) summary.compactionTokenLimit = resumeCompactionLimit;
-      const mission: LiveSession = this.createLiveSession(summary, session, mcp.servers, mcp.configs);
-      this.subscribeSessionCompaction(mission);
-      // Seed the spawn->worker links persisted for this mission so historical
-      // subagents are recognized (and thus openable/steerable) after a resume,
-      // even before any live spawn re-populates knownSubagents.
-      for (const link of this.history.subagentLinks(appSessionId)) {
-        mission.linkedSubagents.add(link.providerSessionId);
+      const liveSession: LiveSession = this.createLiveSession(
+        summary,
+        session,
+        mcp.servers,
+        mcp.configs,
+      );
+      this.subscribeSessionCompaction(liveSession);
+      // Seed the spawn-to-child links persisted for this session so historical
+      // child sessions are recognized (and thus openable/steerable) after a resume,
+      // even before any live spawn re-populates knownChildSessions.
+      for (const link of this.history.childSessionLinks(appSessionId)) {
+        liveSession.linkedChildSessions.add(link.providerSessionId);
         if (link.toolUseId)
-          mission.subagentToolUseIds.set(link.toolUseId, link.providerSessionId);
+          liveSession.childSessionToolUseIds.set(link.toolUseId, link.providerSessionId);
       }
-      this.sessions.set(appSessionId, mission);
+      this.sessions.set(appSessionId, liveSession);
       this.history.syncSummaries([summary]);
       this.emit({ type: 'session.created', clientRef: `resume:${appSessionId}`, session: summary });
       this.emit({ type: 'session.updated', session: summary });
       if (features.length)
-        this.emit({ type: 'mission.features', appSessionId, missionId: summary.missionId, features });
+        this.emit({
+          type: 'mission.features',
+          appSessionId,
+          missionId: summary.missionId,
+          features,
+        });
       void this.refreshContext(appSessionId, session);
     } catch (err) {
       await Promise.all(pendingMcpServers.map((server) => server.close().catch(() => {})));
@@ -1097,7 +1109,7 @@ export class SessionManager {
       );
       map.set(summary.appSessionId, summary);
     }
-    for (const historical of loadHistoricalMissions(options)) {
+    for (const historical of loadMissionControlSessions(options)) {
       if (
         hiddenProviderSessionIds.has(
           historical.summary.providerSessionId ?? historical.summary.appSessionId,
@@ -1121,9 +1133,9 @@ export class SessionManager {
     this.emit({ type: 'sessions.list', sessions: this.listAllSummaries(options) });
   }
 
-  // Annotate persisted subagent links with the live run state from the active
-  // mission so a renderer reconnect/reload doesn't render a still-running
-  // subagent as finished. Historical (non-live) loads leave status undefined,
+  // Annotate persisted child links with the live run state from the active
+  // session so a renderer reconnect/reload doesn't render a still-running
+  // child session as finished. Historical loads leave status undefined,
   // which the renderer treats as completed.
   private withLiveWorkerStatus(
     appSessionId: string,
@@ -1131,15 +1143,15 @@ export class SessionManager {
   ): ChildSessionHistoryLink[] {
     const session = this.findSession(appSessionId);
     if (!session) return links;
-    // A resumed worker that the user has opened is live in session.agents but is
-    // not re-added to knownSubagents (that only happens on a live spawn), so
+    // A resumed worker that the user has opened is live in session.childSessions but is
+    // not re-added to knownChildSessions (that only happens on a live spawn), so
     // check both; otherwise a history reload would render it as completed.
     return links.map((link) =>
-      session.knownSubagents.has(link.providerSessionId) ||
-      session.agents.has(link.providerSessionId)
+      session.knownChildSessions.has(link.providerSessionId) ||
+      session.childSessions.has(link.providerSessionId)
         ? {
             ...link,
-            status: session.completedSubagents.has(link.providerSessionId)
+            status: session.completedChildSessions.has(link.providerSessionId)
               ? 'completed'
               : 'running',
           }
@@ -1174,17 +1186,19 @@ export class SessionManager {
   private loadSessionHistory(appSessionIdOrProviderSessionId: string, cursor?: string): void {
     const summary = this.resolveSummary(appSessionIdOrProviderSessionId);
     const appSessionId = summary?.appSessionId ?? appSessionIdOrProviderSessionId;
-    const providerSessionId =
-      summary?.providerSessionId ?? appSessionIdOrProviderSessionId;
+    const providerSessionId = summary?.providerSessionId ?? appSessionIdOrProviderSessionId;
     try {
-      const history = this.hydrateMissionHistory(appSessionId, providerSessionId, { cursor });
+      const history =
+        summary?.sessionPurpose === 'mission-control'
+          ? hydrateHistoricalSession(appSessionId, { cursor })
+          : this.loadStandardSessionHistory(appSessionId, providerSessionId, cursor);
       const transcripts = history.transcripts.map((event) => ({
         ...event,
         appSessionId,
       }));
       transcripts.forEach((event) => this.history.recordEvent(event));
-      // An older page only extends the orchestrator scrollback upward; prepend it
-      // without touching the already-delivered workers/progress.
+      // An older page only extends primary scrollback upward; prepend it without
+      // touching the already-delivered child sessions or progress.
       if (cursor) {
         this.emitSessionHistory({
           appSessionId,
@@ -1197,7 +1211,7 @@ export class SessionManager {
       }
       const workers = this.withLiveWorkerStatus(
         appSessionId,
-        this.history.subagentLinks(appSessionId),
+        this.history.childSessionLinks(appSessionId),
       );
       this.emitSessionHistory({
         appSessionId,
@@ -1207,90 +1221,63 @@ export class SessionManager {
         mode: 'replace',
         olderCursor: history.olderCursor,
       });
-    } catch {
-      // No mission directory (plain chat / spec session). These have no workers
-      // or progress, but their orchestrator transcript can still span a
-      // compaction CHAIN, so replay the full chain - not just the newest backing
-      // file - and page it with the same cursor the mission path uses.
-      try {
-        const chain = resolveSessionChain(appSessionId, providerSessionId);
-        if (chain.length === 0)
-          throw new Error(`Session history not found for ${providerSessionId}`);
-        const window = loadMissionTranscriptWindow(appSessionId, chain, { cursor });
-        const transcripts = window.events.map((event) => ({ ...event, appSessionId }));
-        transcripts.forEach((event) => this.history.recordEvent(event));
-        if (cursor) {
-          this.emitSessionHistory({
-            appSessionId,
-            progress: [],
-            transcripts,
-            mode: 'prepend',
-            olderCursor: window.olderCursor,
-          });
-          return;
-        }
-        const workers = this.withLiveWorkerStatus(
-          appSessionId,
-          this.history.subagentLinks(appSessionId),
-        );
+    } catch (err) {
+      // Always answer an older-page request, even on failure, so the client's
+      // historyLoadingOlder flag clears instead of sticking and blocking all
+      // further pagination.
+      if (cursor) {
         this.emitSessionHistory({
           appSessionId,
           progress: [],
-          transcripts,
-          workers,
-          mode: 'replace',
-          olderCursor: window.olderCursor,
+          transcripts: [],
+          mode: 'prepend',
+          olderCursor: undefined,
         });
-      } catch (err) {
-        // Always answer an older-page request, even on failure, so the client's
-        // historyLoadingOlder flag clears instead of sticking and blocking all
-        // further pagination.
-        if (cursor) {
-          this.emitSessionHistory({
+        return;
+      }
+      if (this.findSession(appSessionId)) {
+        // A live session with no persisted history yet is an empty restore.
+        // Live events seed it; this authoritative snapshot settles the client.
+        this.emitSessionHistory({
+          appSessionId,
+          progress: [],
+          transcripts: [],
+          workers: this.withLiveWorkerStatus(
             appSessionId,
-            progress: [],
-            transcripts: [],
-            mode: 'prepend',
-            olderCursor: undefined,
-          });
-          return;
-        }
-        if (this.findSession(appSessionId)) {
-          // A live mission with no persisted history yet is an empty (not
-          // failed) restore; live events seed it. Answer with an empty
-          // authoritative snapshot so the client settles to a loaded state
-          // instead of hanging on "Restoring" forever.
-          this.emitSessionHistory({
-            appSessionId,
-            progress: [],
-            transcripts: [],
-            workers: this.withLiveWorkerStatus(
-              appSessionId,
-              this.history.subagentLinks(appSessionId),
-            ),
-            mode: 'replace',
-            olderCursor: undefined,
-          });
-        } else {
-          // No live mission to fall back on: signal a restore failure so the
-          // client can show a retry affordance instead of a silent blank.
-          this.emit({
-            type: 'session.history.error',
-            appSessionId,
-            message: errMsg(err),
-          });
-          // Recoverable: a restore failure surfaces a toast and the retry
-          // affordance (via mission.history.error) but must not mark the session
-          // phase failed, so a later successful retry restores it intact.
-          this.emitError({
-            appSessionId,
-            providerSessionId,
-            message: errMsg(err),
-            recoverable: true,
-          });
-        }
+            this.history.childSessionLinks(appSessionId),
+          ),
+          mode: 'replace',
+          olderCursor: undefined,
+        });
+      } else {
+        this.emit({
+          type: 'session.history.error',
+          appSessionId,
+          message: errMsg(err),
+        });
+        this.emitError({
+          appSessionId,
+          providerSessionId,
+          message: errMsg(err),
+          recoverable: true,
+        });
       }
     }
+  }
+
+  private loadStandardSessionHistory(
+    appSessionId: string,
+    providerSessionId: string,
+    cursor?: string,
+  ): ReturnType<typeof hydrateHistoricalSession> {
+    const chain = resolveSessionChain(appSessionId, providerSessionId);
+    if (chain.length === 0) throw new Error(`Session history not found for ${providerSessionId}`);
+    const window = loadSessionTranscriptWindow(appSessionId, chain, { cursor });
+    return {
+      progress: [],
+      transcripts: window.events,
+      olderCursor: window.olderCursor,
+    };
   }
 
   private loadHistoryPage(providerSessionId: string, cursor?: string, limit?: number): void {
@@ -1298,7 +1285,7 @@ export class SessionManager {
     const appSessionId = summary?.appSessionId ?? providerSessionId;
     const resolvedProviderSessionId = summary?.providerSessionId ?? providerSessionId;
     try {
-      const page = loadSessionPage(resolvedProviderSessionId, cursor, limit, appSessionId);
+      const page = loadSessionPage(resolvedProviderSessionId, appSessionId, cursor, limit);
       page.events.forEach((event) => this.history.recordEvent(event));
       this.emit({
         type: 'session.history',
@@ -1315,18 +1302,6 @@ export class SessionManager {
     }
   }
 
-  private hydrateMissionHistory(
-    appSessionId: string,
-    providerSessionId: string,
-    opts: { cursor?: string; limit?: number } = {},
-  ): ReturnType<typeof hydrateHistoricalMission> {
-    try {
-      return hydrateHistoricalMission(appSessionId, opts);
-    } catch {
-      return hydrateHistoricalMission(providerSessionId, opts);
-    }
-  }
-
   private async createSession(
     cmd: Extract<ClientCommand, { type: 'session.create' }>,
   ): Promise<void> {
@@ -1337,10 +1312,14 @@ export class SessionManager {
     let pendingMcpServers: SdkMcpServer[] = [];
     try {
       const defaults = await this.getFactoryDefaults();
-      const mode = cmd.interactionMode ?? defaults.interactionMode ?? 'agi';
+      const mode =
+        cmd.interactionMode ??
+        (cmd.sessionPurpose === 'mission-control' ? 'agi' : (defaults.interactionMode ?? 'auto'));
       const autonomy = createAutonomyForCommand(cmd, defaults);
+      const defaultsMode =
+        cmd.sessionPurpose === 'mission-control' ? 'agi' : mode === 'spec' ? 'spec' : 'auto';
       const { modelId: primaryModelId, reasoningEffort: primaryReasoning } =
-        createModelDefaultsForMode(mode, cmd, defaults);
+        createModelDefaultsForMode(defaultsMode, cmd, defaults);
       const compactionModel = cmd.compactionModel ?? defaults.compactionModel ?? 'current-model';
       const compactionTokenLimit = effectiveCompactionTriggerLimit({
         modelId: primaryModelId,
@@ -1357,7 +1336,7 @@ export class SessionManager {
         maxContextTokens: this.maxContextTokensForModel(primaryModelId),
       });
       const { workerModelId, workerReasoningEffort, validatorModelId, validatorReasoningEffort } =
-        createMissionAgentDefaultsForMode(mode, cmd, defaults);
+        createMissionAgentDefaultsForMode(defaultsMode, cmd, defaults);
       const mcp = await this.startLocalMcpServers(ref);
       pendingMcpServers = mcp.servers;
       const session = await this.runtime.createSession({
@@ -1377,7 +1356,8 @@ export class SessionManager {
           mode === 'spec' || cmd.modelId || cmd.reasoningEffort
             ? primaryReasoning
             : defaults.specReasoningEffort,
-        decompSessionType: mode === 'agi' ? DecompSessionType.Orchestrator : undefined,
+        decompSessionType:
+          cmd.sessionPurpose === 'mission-control' ? DecompSessionType.Orchestrator : undefined,
         workerModelId,
         workerReasoningEffort,
         validatorModelId,
@@ -1399,7 +1379,7 @@ export class SessionManager {
       const summary: SessionSummary = {
         appSessionId,
         providerSessionId: session.sessionId,
-        missionId: mode === 'agi' ? appSessionId : undefined,
+        missionId: cmd.sessionPurpose === 'mission-control' ? appSessionId : undefined,
         sessionPurpose: cmd.sessionPurpose,
         interactionMode: mode,
         role: 'primary',
@@ -1453,14 +1433,14 @@ export class SessionManager {
       pendingSends: [],
       pendingPermissions: new Map(),
       pendingQuestions: new Map(),
-      agents: new Map(),
-      knownSubagents: new Set(),
-      completedSubagents: new Set(),
-      terminalAgents: new Set(),
-      linkedSubagents: new Set(),
-      subagentToolUseIds: new Map(),
-      subagentSettings: new Map(),
-      pendingSubagents: [],
+      childSessions: new Map(),
+      knownChildSessions: new Set(),
+      completedChildSessions: new Set(),
+      terminalSources: new Set(),
+      linkedChildSessions: new Set(),
+      childSessionToolUseIds: new Map(),
+      childSessionSettings: new Map(),
+      pendingChildSessions: [],
       mcpServers,
       mcpConfigs,
       permissionGrants: new Set(),
@@ -1471,17 +1451,17 @@ export class SessionManager {
   private makePermissionHandler(ref: { id: string }): PermissionHandler {
     return (params: RequestPermissionRequestParams) =>
       new Promise<RequestPermissionHandlerResult>((resolve) => {
-        const mission = this.findSession(ref.id);
+        const liveSession = this.findSession(ref.id);
         const requestId = nextRequestId();
         const type = confirmationType(params);
         const request = classifyPermission(ref.id, requestId, params);
         const signature = permissionSignature(params);
-        if (mission && signature && mission.permissionGrants.has(signature)) {
+        if (liveSession && signature && liveSession.permissionGrants.has(signature)) {
           resolve(normalizePermissionOutcome('proceed_always'));
           return;
         }
-        if (mission) {
-          mission.pendingPermissions.set(requestId, {
+        if (liveSession) {
+          liveSession.pendingPermissions.set(requestId, {
             resolve,
             kind: request.kind,
             signature: signature || undefined,
@@ -1499,52 +1479,54 @@ export class SessionManager {
   private makeAskUserHandler(ref: { id: string }): AskUserHandler {
     return (params: AskUserRequestParams) =>
       new Promise<AskUserResult>((resolve) => {
-        const mission = this.findSession(ref.id);
+        const liveSession = this.findSession(ref.id);
         const requestId = nextRequestId();
         const questions = (params.questions ?? []).map((q) => ({
           index: q.index,
           question: q.question,
           options: q.options ?? [],
         }));
-        if (mission) mission.pendingQuestions.set(requestId, resolve);
+        if (liveSession) liveSession.pendingQuestions.set(requestId, resolve);
         const question = { appSessionId: ref.id, requestId, questions };
         this.emit({ type: 'question.requested', question });
       });
   }
 
   private async resolvePermission(
-    missionId: string,
+    appSessionId: string,
     requestId: string,
     outcome: string,
   ): Promise<void> {
-    const mission = this.findSession(missionId);
-    const pending = mission?.pendingPermissions.get(requestId);
-    if (!mission || !pending) return;
-    mission.pendingPermissions.delete(requestId);
+    const liveSession = this.findSession(appSessionId);
+    const pending = liveSession?.pendingPermissions.get(requestId);
+    if (!liveSession || !pending) return;
+    liveSession.pendingPermissions.delete(requestId);
     let normalized: RequestPermissionHandlerResult;
     try {
       normalized = normalizePermissionOutcome(outcome);
     } catch (err) {
       this.emitError({
         code: 'permission.invalid_outcome',
-        appSessionId: missionId,
+        appSessionId: appSessionId,
         message: errMsg(err),
       });
       normalized = normalizePermissionOutcome('cancel');
     }
     if (pending.signature && isAlwaysOutcome(outcome)) {
-      mission.permissionGrants.add(pending.signature);
+      liveSession.permissionGrants.add(pending.signature);
     }
     if (pending.kind === 'spec' && isApprovalOutcome(normalized))
-      await this.prepareSpecExitForRun(mission);
+      await this.prepareSpecExitForRun(liveSession);
     pending.resolve(normalized);
   }
 
-  private async prepareSpecExitForRun(mission: LiveSession): Promise<void> {
-    const appSessionId = mission.summary.appSessionId;
+  private async prepareSpecExitForRun(liveSession: LiveSession): Promise<void> {
+    const appSessionId = liveSession.summary.appSessionId;
     this.patch(appSessionId, { interactionMode: 'auto', phase: 'running' });
     try {
-      await mission.session.updateSettings({ interactionMode: DroidInteractionMode.Auto } as never);
+      await liveSession.session.updateSettings({
+        interactionMode: DroidInteractionMode.Auto,
+      } as never);
     } catch (err) {
       this.emitError({
         code: 'spec.exit_failed',
@@ -1555,39 +1537,37 @@ export class SessionManager {
   }
 
   private resolveQuestion(
-    missionId: string,
+    appSessionId: string,
     requestId: string,
     cancelled: boolean,
     answers: { index: number; question: string; answer: string }[],
   ): void {
-    const mission = this.findSession(missionId);
-    const resolver = mission?.pendingQuestions.get(requestId);
-    if (!mission || !resolver) return;
-    mission.pendingQuestions.delete(requestId);
+    const liveSession = this.findSession(appSessionId);
+    const resolver = liveSession?.pendingQuestions.get(requestId);
+    if (!liveSession || !resolver) return;
+    liveSession.pendingQuestions.delete(requestId);
     resolver({ cancelled, answers });
   }
 
-  private async drive(missionId: string, prompt: string): Promise<void> {
-    const mission = this.findSession(missionId);
-    if (!mission) return;
-    const appSessionId = mission.summary.appSessionId;
-    mission.streaming = true;
-    mission.terminalAgents.delete(appSessionId);
+  private async drive(appSessionId: string, prompt: string): Promise<void> {
+    const liveSession = this.findSession(appSessionId);
+    if (!liveSession) return;
+    liveSession.streaming = true;
+    liveSession.terminalSources.delete(appSessionId);
     this.patch(appSessionId, {
-      phase: mission.summary.sessionPurpose === 'mission-control' ? 'planning' : 'running',
+      phase: liveSession.summary.sessionPurpose === 'mission-control' ? 'planning' : 'running',
       streaming: true,
-      queuedSends: mission.pendingSends.length,
+      queuedSends: liveSession.pendingSends.length,
     });
-    this.startContextPolling(appSessionId, mission.session);
-    await this.applyDesignToolPolicy(mission, isDesignPrompt(prompt));
+    this.startContextPolling(appSessionId, liveSession.session);
+    await this.applyDesignToolPolicy(liveSession, isDesignPrompt(prompt));
     try {
-      const stream = mission.session.stream(prompt, { includePartialMessages: true });
-      for await (const ev of stream)
-        this.applyEvent(appSessionId, appSessionId, 'primary', ev);
+      const stream = liveSession.session.stream(prompt, { includePartialMessages: true });
+      for await (const ev of stream) this.applyEvent(appSessionId, appSessionId, 'primary', ev);
     } catch (err) {
-      if (mission.interruptingForSteer)
+      if (liveSession.interruptingForSteer)
         this.emitStatus(appSessionId, 'Current turn interrupted for steering.');
-      else if (mission.interrupting && isUserCancellation(err))
+      else if (liveSession.interrupting && isUserCancellation(err))
         // The user pressed Stop; interrupt() already set the paused phase, so
         // settle quietly without surfacing an error.
         this.patch(appSessionId, { phase: 'paused' });
@@ -1597,29 +1577,35 @@ export class SessionManager {
       }
     } finally {
       this.stopContextPolling(appSessionId);
-      mission.interruptingForSteer = false;
-      mission.interrupting = false;
+      liveSession.interruptingForSteer = false;
+      liveSession.interrupting = false;
       // Keep streaming=true while refreshContext is in flight so concurrent
       // sends queue instead of racing a second drive().
-      await this.refreshContext(appSessionId, mission.session);
-      mission.streaming = false;
+      await this.refreshContext(appSessionId, liveSession.session);
+      liveSession.streaming = false;
       if (!this.findSession(appSessionId)) {
         // A manual compaction's stale-swap recovery (or a concurrent close) can
-        // drop the live mission. A drive() against the now-missing mission would
+        // drop the live session. A drive() against the now-missing session would
         // silently discard the queued sends, so re-deliver them through the
         // resume path instead.
-        const queued = mission.pendingSends.splice(0);
+        const queued = liveSession.pendingSends.splice(0);
         if (queued.length > 0) void this.redeliverQueuedSends(appSessionId, queued);
       } else {
-        if (mission.autoCompacting) {
+        if (liveSession.autoCompacting) {
           // The turn is over, so any mid-turn compaction already finished; if
           // the completion notification got lost, settle quickly instead of
           // holding queued sends until the long start-of-compaction watchdog.
           this.autoCompactionWatchdogs.arm(appSessionId, POST_TURN_AUTO_COMPACTION_WATCHDOG_MS);
-          this.patch(appSessionId, { streaming: false, queuedSends: mission.pendingSends.length });
+          this.patch(appSessionId, {
+            streaming: false,
+            queuedSends: liveSession.pendingSends.length,
+          });
         } else {
-          const next = mission.pendingSends.shift();
-          this.patch(appSessionId, { streaming: false, queuedSends: mission.pendingSends.length });
+          const next = liveSession.pendingSends.shift();
+          this.patch(appSessionId, {
+            streaming: false,
+            queuedSends: liveSession.pendingSends.length,
+          });
           if (next !== undefined) void this.drive(appSessionId, next);
         }
       }
@@ -1627,16 +1613,16 @@ export class SessionManager {
   }
 
   // Re-deliver sends that were queued while a turn streamed, after stale-compaction
-  // recovery dropped the live mission. send() re-resumes the mission from the
+  // recovery dropped the live session. send() re-resumes the session from the
   // persisted (compacted) backing id; delivering sequentially resumes it once and
   // preserves prompt order rather than racing multiple resumes.
-  private async redeliverQueuedSends(missionId: string, queued: string[]): Promise<void> {
+  private async redeliverQueuedSends(appSessionId: string, queued: string[]): Promise<void> {
     for (const text of queued) {
       try {
-        await this.send(missionId, text);
+        await this.send(appSessionId, text);
       } catch (err) {
         this.emitError({
-          appSessionId: missionId,
+          appSessionId: appSessionId,
           message: `Could not deliver a queued message after compaction recovery: ${errMsg(err)}`,
         });
       }
@@ -1647,121 +1633,123 @@ export class SessionManager {
   // does not need TodoWrite — it otherwise loops updating the list after it has
   // already answered. Disable TodoWrite for design turns and restore it for
   // normal turns, calling updateSettings only when the policy changes.
-  private async applyDesignToolPolicy(mission: LiveSession, design: boolean): Promise<void> {
+  private async applyDesignToolPolicy(liveSession: LiveSession, design: boolean): Promise<void> {
     // When the in-memory flag is unset (cold start / page reload) we don't
     // know the session's current disabledToolIds, so always call updateSettings
     // to synchronize. Once the flag is set we skip redundant calls.
-    if (mission.todoDisabledForDesign !== undefined && mission.todoDisabledForDesign === design)
+    if (
+      liveSession.todoDisabledForDesign !== undefined &&
+      liveSession.todoDisabledForDesign === design
+    )
       return;
     try {
-      await mission.session.updateSettings({ disabledToolIds: design ? ['TodoWrite'] : [] });
-      mission.todoDisabledForDesign = design;
+      await liveSession.session.updateSettings({ disabledToolIds: design ? ['TodoWrite'] : [] });
+      liveSession.todoDisabledForDesign = design;
     } catch (err) {
       this.emitError({
-        appSessionId: mission.summary.appSessionId,
+        appSessionId: liveSession.summary.appSessionId,
         message: `Could not update design tool policy: ${errMsg(err)}`,
       });
     }
   }
 
   private applyEvent(
-    missionId: string,
-    agentSessionId: string,
+    appSessionId: string,
+    sourceProviderSessionId: string,
     role: SessionRole,
     ev: Parameters<typeof normalizeStreamEvent>[3],
   ): void {
-    const n = normalizeStreamEvent(missionId, agentSessionId, role, ev);
+    const n = normalizeStreamEvent(appSessionId, sourceProviderSessionId, role, ev);
     if (!n) return;
-    this.applyNormalizedForAgent(missionId, agentSessionId, n);
+    this.applyNormalizedForSource(appSessionId, sourceProviderSessionId, n);
   }
 
   // Single live entry point that enforces per-turn terminal gating before
-  // applying a normalized event. Both the orchestrator/worker stream loops and
+  // applying a normalized event. Both primary/child stream loops and
   // the worker notification subscriptions route through here so post-terminal
   // generation is dropped no matter which channel delivers it. History replay
   // does not pass through this path (it uses emitTranscript directly).
-  private applyNormalizedForAgent(
-    missionId: string,
-    agentSessionId: string,
+  private applyNormalizedForSource(
+    appSessionId: string,
+    sourceProviderSessionId: string,
     n: NonNullable<ReturnType<typeof normalizeStreamEvent>>,
   ): void {
-    const mission = this.findSession(missionId);
-    if (mission) {
+    const liveSession = this.findSession(appSessionId);
+    if (liveSession) {
       // The first `result` of a streaming turn is its terminal final. Mark the
       // producing session terminal so any further model generation in the same
       // turn is dropped, keeping one final response per turn.
       if (n.done) {
-        mission.terminalAgents.add(agentSessionId);
+        liveSession.terminalSources.add(sourceProviderSessionId);
         return;
       }
       // After terminal, quarantine only this session's model-generated chat/tool
-      // transcript. Any side effects attached to the same event (a subagent
-      // spawn/completion, tokens, mission state) and errors still flow.
-      if (mission.terminalAgents.has(agentSessionId) && isPostTerminalGeneration(n)) {
+      // transcript. Child spawn/completion, token, Mission Control state, and
+      // error side effects still flow.
+      if (liveSession.terminalSources.has(sourceProviderSessionId) && isPostTerminalGeneration(n)) {
         const { transcript: _quarantined, ...sideEffects } = n;
         if (hasNormalizedSideEffects(sideEffects))
-          this.applyNormalized(missionId, sideEffects, agentSessionId);
+          this.applyNormalized(appSessionId, sideEffects, sourceProviderSessionId);
         return;
       }
     }
-    this.applyNormalized(missionId, n, agentSessionId);
+    this.applyNormalized(appSessionId, n, sourceProviderSessionId);
   }
 
-  private applySubagent(
-    missionId: string,
-    sub: {
-      sessionId?: string;
+  private applyChildSession(
+    appSessionId: string,
+    child: {
+      providerSessionId?: string;
       toolUseId?: string;
       label?: string;
       prompt?: string;
       done?: boolean;
     },
   ): void {
-    const mission = this.findSession(missionId);
-    if (!mission) return;
-    const appSessionId = mission.summary.appSessionId;
-    const sessionId = sub.sessionId;
-    if (!sessionId) {
-      if (sub.done) {
-        if (sub.toolUseId) this.completeSubagentForToolUse(mission, sub.toolUseId);
-      } else if (sub.toolUseId || sub.label || sub.prompt) {
-        mission.pendingSubagents.push({
-          toolUseId: sub.toolUseId,
-          label: sub.label,
-          prompt: sub.prompt,
+    const liveSession = this.findSession(appSessionId);
+    if (!liveSession) return;
+    const providerSessionId = child.providerSessionId;
+    if (!providerSessionId) {
+      if (child.done) {
+        if (child.toolUseId) this.completeChildSessionForToolUse(liveSession, child.toolUseId);
+      } else if (child.toolUseId || child.label || child.prompt) {
+        liveSession.pendingChildSessions.push({
+          toolUseId: child.toolUseId,
+          label: child.label,
+          prompt: child.prompt,
         });
       }
       return;
     }
-    if (sub.done) {
-      this.completeSubagent(mission, sessionId);
+    if (child.done) {
+      this.completeChildSession(liveSession, providerSessionId);
       return;
     }
-    if (mission.knownSubagents.has(sessionId)) return;
-    const pending = this.takePendingSubagent(mission, sub);
-    const toolUseId = sub.toolUseId ?? pending?.toolUseId;
-    const label = sub.label ?? pending?.label;
-    const prompt = sub.prompt ?? pending?.prompt;
-    mission.knownSubagents.add(sessionId);
-    mission.completedSubagents.delete(sessionId);
+    if (liveSession.knownChildSessions.has(providerSessionId)) return;
+    const pending = this.takePendingChildSession(liveSession, child);
+    const toolUseId = child.toolUseId ?? pending?.toolUseId;
+    const label = child.label ?? pending?.label;
+    const prompt = child.prompt ?? pending?.prompt;
+    liveSession.knownChildSessions.add(providerSessionId);
+    liveSession.completedChildSessions.delete(providerSessionId);
     if (toolUseId) {
-      mission.subagentToolUseIds.set(toolUseId, sessionId);
-      this.history.recordSubagentLink(appSessionId, toolUseId, sessionId, label);
+      liveSession.childSessionToolUseIds.set(toolUseId, providerSessionId);
+      this.history.recordChildSessionLink(appSessionId, toolUseId, providerSessionId, label);
     }
     this.emit({
       type: 'session.child',
       appSessionId,
       event: 'started',
-      providerSessionId: sessionId,
+      providerSessionId,
       label,
       prompt,
       toolUseId,
     });
     if (prompt) {
       this.emitTranscript({
-        id: `subagent-task-${sessionId}`,
+        id: `child-session-task-${providerSessionId}`,
         appSessionId,
-        sourceSessionId: sessionId,
+        sourceSessionId: providerSessionId,
         role: 'worker',
         ts: Date.now(),
         kind: 'status',
@@ -1771,107 +1759,114 @@ export class SessionManager {
     this.emit({
       type: 'child.updated',
       appSessionId,
-      providerSessionId: sessionId,
+      providerSessionId,
       role: 'worker',
       status: 'running',
     });
   }
 
-  private takePendingSubagent(mission: LiveSession, sub: PendingSubagent): PendingSubagent | undefined {
-    if (mission.pendingSubagents.length === 0) return undefined;
-    if (sub.toolUseId) {
-      const index = mission.pendingSubagents.findIndex(
-        (pending) => pending.toolUseId === sub.toolUseId,
+  private takePendingChildSession(
+    liveSession: LiveSession,
+    child: PendingChildSession,
+  ): PendingChildSession | undefined {
+    if (liveSession.pendingChildSessions.length === 0) return undefined;
+    if (child.toolUseId) {
+      const index = liveSession.pendingChildSessions.findIndex(
+        (pending) => pending.toolUseId === child.toolUseId,
       );
-      if (index >= 0) return mission.pendingSubagents.splice(index, 1)[0];
+      if (index >= 0) return liveSession.pendingChildSessions.splice(index, 1)[0];
     }
-    const label = sub.label?.toLowerCase();
+    const label = child.label?.toLowerCase();
     if (label) {
-      const index = mission.pendingSubagents.findIndex(
+      const index = liveSession.pendingChildSessions.findIndex(
         (pending) => pending.label?.toLowerCase() === label,
       );
-      if (index >= 0) return mission.pendingSubagents.splice(index, 1)[0];
+      if (index >= 0) return liveSession.pendingChildSessions.splice(index, 1)[0];
     }
-    return mission.pendingSubagents.shift();
+    return liveSession.pendingChildSessions.shift();
   }
 
-  private completeSubagentForToolUse(mission: LiveSession, toolUseId: string): void {
-    const sessionId = mission.subagentToolUseIds.get(toolUseId);
-    if (sessionId) this.completeSubagent(mission, sessionId);
+  private completeChildSessionForToolUse(liveSession: LiveSession, toolUseId: string): void {
+    const providerSessionId = liveSession.childSessionToolUseIds.get(toolUseId);
+    if (providerSessionId) this.completeChildSession(liveSession, providerSessionId);
   }
 
-  private completeSubagent(mission: LiveSession, sessionId: string): void {
-    if (!mission.knownSubagents.has(sessionId) || mission.completedSubagents.has(sessionId)) return;
-    const appSessionId = mission.summary.appSessionId;
-    mission.completedSubagents.add(sessionId);
-    const settings = mission.subagentSettings.get(sessionId) ?? {};
+  private completeChildSession(liveSession: LiveSession, providerSessionId: string): void {
+    if (
+      !liveSession.knownChildSessions.has(providerSessionId) ||
+      liveSession.completedChildSessions.has(providerSessionId)
+    )
+      return;
+    const appSessionId = liveSession.summary.appSessionId;
+    liveSession.completedChildSessions.add(providerSessionId);
+    const settings = liveSession.childSessionSettings.get(providerSessionId) ?? {};
     this.emit({
       type: 'session.child',
       appSessionId,
       event: 'completed',
-      providerSessionId: sessionId,
+      providerSessionId,
       ...settings,
     });
     this.emit({
       type: 'child.updated',
       appSessionId,
-      providerSessionId: sessionId,
+      providerSessionId,
       role: 'worker',
       status: 'completed',
     });
-    void this.closeAgentWhenIdle(appSessionId, sessionId);
+    void this.closeChildSessionWhenIdle(appSessionId, providerSessionId);
   }
 
   private applyNormalized(
-    missionId: string,
+    appSessionId: string,
     n: NonNullable<ReturnType<typeof normalizeStreamEvent>>,
-    agentSessionId?: string,
+    childProviderSessionId?: string,
   ): void {
     if (n.transcript) this.emitTranscript(n.transcript);
     if (n.features) {
-      this.patch(missionId, { features: n.features });
-      const missionControlId = this.findSession(missionId)?.summary.missionId;
+      this.patch(appSessionId, { features: n.features });
+      const missionControlId = this.findSession(appSessionId)?.summary.missionId;
       this.emit({
         type: 'mission.features',
-        appSessionId: missionId,
+        appSessionId: appSessionId,
         missionId: missionControlId,
         features: n.features,
       });
     }
     if (n.progress) {
-      const missionControlId = this.findSession(missionId)?.summary.missionId;
+      const missionControlId = this.findSession(appSessionId)?.summary.missionId;
       this.emit({
         type: 'mission.progress',
-        appSessionId: missionId,
+        appSessionId: appSessionId,
         missionId: missionControlId,
         entries: n.progress,
       });
     }
     if (n.missionState) {
       const phase = STATE_TO_PHASE[n.missionState];
-      if (phase) this.patch(missionId, { phase });
+      if (phase) this.patch(appSessionId, { phase });
     }
     if (n.worker) {
       this.emit({
         type: 'session.child',
-        appSessionId: missionId,
+        appSessionId: appSessionId,
         event: n.worker.event,
         providerSessionId: n.worker.workerSessionId,
         exitCode: n.worker.exitCode,
       });
       this.emit({
         type: 'child.updated',
-        appSessionId: missionId,
+        appSessionId: appSessionId,
         providerSessionId: n.worker.workerSessionId,
         role: 'worker',
         status: n.worker.event === 'completed' ? 'completed' : 'running',
       });
       if (n.worker.event === 'completed')
-        void this.closeAgentWhenIdle(missionId, n.worker.workerSessionId);
+        void this.closeChildSessionWhenIdle(appSessionId, n.worker.workerSessionId);
     }
-    if (n.subagent) this.applySubagent(missionId, n.subagent);
+    if (n.childSession) this.applyChildSession(appSessionId, n.childSession);
     if (n.tokens) {
-      const m = this.findSession(missionId);
+      const m = this.findSession(appSessionId);
       if (m) {
         const appSessionId = m.summary.appSessionId;
         const offset = this.usageOffsets.get(appSessionId);
@@ -1880,10 +1875,11 @@ export class SessionManager {
         // The summary's context reading belongs to the primary session
         // only. Worker turns still update the running totals above, but their
         // context usage must never land on the summary: it would repaint the
-        // mission meter with the worker's window, and a leftover 'exact'
+        // primary context meter with the worker's window, and a leftover 'exact'
         // marker would make refreshContext pin the meter there. Workers get
         // their own context.updated snapshots keyed by their session id.
-        const fromOrchestrator = agentSessionId === undefined || agentSessionId === missionId;
+        const fromOrchestrator =
+          childProviderSessionId === undefined || childProviderSessionId === appSessionId;
         if (fromOrchestrator) {
           m.summary.contextTokens = n.tokens.contextTokens;
           // Provider-reported usage of the last call is exactly what the
@@ -1913,16 +1909,16 @@ export class SessionManager {
   }
 
   private emitStatus(
-    missionId: string,
+    appSessionId: string,
     text: string,
     compactType?: CompactType,
-    agentSessionId?: string,
+    childProviderSessionId?: string,
     role: SessionRole = 'primary',
   ): void {
     this.emitTranscript({
       id: `status-${Date.now().toString(36)}-${(this.statusSeq++).toString(36)}`,
-      appSessionId: missionId,
-      sourceSessionId: agentSessionId ?? missionId,
+      appSessionId: appSessionId,
+      sourceSessionId: childProviderSessionId ?? appSessionId,
       role,
       ts: Date.now(),
       kind: 'status',
@@ -1933,17 +1929,17 @@ export class SessionManager {
 
   // Subscribe the primary session to raw daemon notifications so the
   // daemon's in-place auto-compaction surfaces in the transcript. Everything
-  // else the orchestrator needs already arrives through the streaming turn, so
+  // else the primary session needs already arrives through the streaming turn, so
   // only compaction notifications are handled here.
-  private subscribeSessionCompaction(mission: LiveSession): void {
-    const session = mission.session;
-    mission.unsubscribe?.();
-    mission.unsubscribe = session.onNotification((note: Record<string, unknown>) => {
+  private subscribeSessionCompaction(liveSession: LiveSession): void {
+    const session = liveSession.session;
+    liveSession.unsubscribe?.();
+    liveSession.unsubscribe = session.onNotification((note: Record<string, unknown>) => {
       // The daemon emits the same compacting/compacted notifications during a
       // manual compactSession RPC; runCompaction owns that path's statuses and
       // refresh, so reacting here too would duplicate them.
-      if (mission.compacting) return;
-      const appSessionId = mission.summary.appSessionId;
+      if (liveSession.compacting) return;
+      const appSessionId = liveSession.summary.appSessionId;
       this.handleCompactionNotification(appSessionId, appSessionId, 'primary', session, note);
     });
   }
@@ -1953,16 +1949,16 @@ export class SessionManager {
   // then the context meter is refreshed against the compacted window. Returns
   // whether the notification was a compaction event.
   private handleCompactionNotification(
-    missionId: string,
-    agentSessionId: string,
+    appSessionId: string,
+    childProviderSessionId: string,
     role: SessionRole,
     session: DroidSession,
     note: Record<string, unknown>,
   ): boolean {
     return runCompactionNotification(
       this.compactionHost(),
-      missionId,
-      agentSessionId,
+      appSessionId,
+      childProviderSessionId,
       role,
       session,
       note,
@@ -1973,22 +1969,22 @@ export class SessionManager {
     settleExpiredAutoCompaction(this.compactionHost(), sessionKey);
   }
 
-  private compactionHost(): AutoCompactionHost<LiveAgent, LiveSession, DroidSession> {
+  private compactionHost(): AutoCompactionHost<LiveChildSession, LiveSession, DroidSession> {
     return {
       watchdogs: this.autoCompactionWatchdogs,
       sessions: () => this.sessions.values(),
       findSession: (appSessionId) => this.findSession(appSessionId),
-      agentCompactions: this.agentCompactions,
+      childSessionCompactions: this.childSessionCompactions,
       emitCompactionStatus: (appSessionId, text, providerSessionId, role) =>
         this.emitStatus(appSessionId, text, 'auto', providerSessionId, role),
       patchSummary: (appSessionId, patch) => this.patch(appSessionId, patch),
       refreshContext: (providerSessionId, session) =>
         this.refreshContext(providerSessionId, session),
       drive: (appSessionId, text) => this.drive(appSessionId, text),
-      driveAgent: (agent, text) => this.driveAgent(agent, text),
-      closeAgent: (appSessionId, providerSessionId) =>
-        this.closeAgent(appSessionId, providerSessionId),
-      emitAgentPaused: (agent) =>
+      driveChildSession: (agent, text) => this.driveChildSession(agent, text),
+      closeChildSession: (appSessionId, providerSessionId) =>
+        this.closeChildSession(appSessionId, providerSessionId),
+      emitChildSessionPaused: (agent) =>
         this.emit({
           type: 'child.updated',
           appSessionId: agent.appSessionId,
@@ -2000,44 +1996,44 @@ export class SessionManager {
   }
 
   private async compactSession(
-    sessionId: string,
+    appSessionId: string,
     customInstructions?: string,
     compactType: CompactType = 'manual',
   ): Promise<void> {
-    const mission = this.findSession(sessionId);
-    if (mission) {
-      await this.compactMission(mission, customInstructions, compactType);
+    const liveSession = this.findSession(appSessionId);
+    if (liveSession) {
+      await this.compactLiveSession(liveSession, customInstructions, compactType);
       return;
     }
-    await this.compactHistoricalSession(sessionId, customInstructions);
+    await this.compactHistoricalSession(appSessionId, customInstructions);
   }
 
-  // Orchestrator (live chat) compaction. Runs the shared in-place path; if the
+  // Primary live-session compaction. Runs the shared in-place path; if the
   // daemon returns a new backing id the `reload` hook swaps the session while
   // keeping the stable app id (summary.appSessionId) so the visible chat is unchanged.
-  private async compactMission(
-    mission: LiveSession,
+  private async compactLiveSession(
+    liveSession: LiveSession,
     customInstructions: string | undefined,
     compactType: CompactType,
   ): Promise<void> {
-    const appSessionId = mission.summary.appSessionId;
-    const preCompactSessionId = mission.summary.providerSessionId;
+    const appSessionId = liveSession.summary.appSessionId;
+    const preCompactSessionId = liveSession.summary.providerSessionId;
     const carryover: UsageOffset = {
-      tokensIn: mission.summary.tokensIn ?? 0,
-      tokensOut: mission.summary.tokensOut ?? 0,
+      tokensIn: liveSession.summary.tokensIn ?? 0,
+      tokensOut: liveSession.summary.tokensOut ?? 0,
     };
-    mission.compacting = true;
+    liveSession.compacting = true;
     // Remembers the daemon's new backing id so a reload failure can be recovered
     // after runCompaction returns 'stale' (the hook sets it before adopting).
     let swapTarget: string | undefined;
     try {
       const outcome = await runCompaction(
-        mission.session,
+        liveSession.session,
         {
           status: (text, ct) => this.emitStatus(appSessionId, text, ct),
           error: (message) =>
             this.emitError({
-              providerSessionId: mission.summary.providerSessionId,
+              providerSessionId: liveSession.summary.providerSessionId,
               appSessionId,
               message: `Could not compact session: ${message}`,
               recoverable: true,
@@ -2057,57 +2053,57 @@ export class SessionManager {
                   : {}),
               });
             }
-            return this.refreshContext(appSessionId, mission.session);
+            return this.refreshContext(appSessionId, liveSession.session);
           },
           reload: async (newSessionId) => {
             swapTarget = newSessionId;
-            await this.swapMissionSession(mission, newSessionId, carryover);
+            await this.swapSessionProvider(liveSession, newSessionId, carryover);
           },
         },
         { customInstructions, compactType },
       );
       // The daemon swapped to a new backing id but adopting it threw, so
-      // mission.session still points at the swapped-away (now-dead) old id.
+      // liveSession.session still points at the swapped-away (now-dead) old id.
       // Recover before later sends stream into that stale session.
       if (outcome === 'stale' && swapTarget) {
-        await this.recoverStaleMissionSwap(mission, swapTarget, carryover);
+        await this.recoverStaleSessionSwap(liveSession, swapTarget, carryover);
       }
     } finally {
-      mission.compacting = false;
+      liveSession.compacting = false;
     }
   }
 
   // Adopt the daemon's compacted backing session behind the stable app id:
   // load the new id, swap it in, retire the old session, and persist the new id
   // with carried-over usage. Throws if the new session cannot be loaded.
-  private async swapMissionSession(
-    mission: LiveSession,
+  private async swapSessionProvider(
+    liveSession: LiveSession,
     newSessionId: string,
     carryover: UsageOffset,
   ): Promise<void> {
-    const appSessionId = mission.summary.appSessionId;
+    const appSessionId = liveSession.summary.appSessionId;
     const compactedFromProviderSessionIds = uniqueStrings([
-      ...(mission.summary.compactedFromProviderSessionIds ?? []),
-      mission.summary.providerSessionId,
+      ...(liveSession.summary.compactedFromProviderSessionIds ?? []),
+      liveSession.summary.providerSessionId,
     ]);
     const ref = { id: appSessionId };
-    const oldSession = mission.session;
-    mission.session = await this.runtime.loadSession(newSessionId, {
+    const oldSession = liveSession.session;
+    liveSession.session = await this.runtime.loadSession(newSessionId, {
       permissionHandler: this.makePermissionHandler(ref),
       askUserHandler: this.makeAskUserHandler(ref),
       // Re-attach the same local MCP servers (still running) so the swapped
       // session keeps browser tools on subsequent turns.
-      mcpServers: mission.mcpConfigs,
+      mcpServers: liveSession.mcpConfigs,
     });
-    this.subscribeSessionCompaction(mission);
+    this.subscribeSessionCompaction(liveSession);
     // Settings live on the daemon session, not the persisted file, so the
     // replacement session starts without the auto-compaction threshold check.
     // Re-push it; a failure must not turn a successful swap into a stale one.
-    await this.recomputeSessionCompactionLimit(mission).catch(() => {});
+    await this.recomputeSessionCompactionLimit(liveSession).catch(() => {});
     // The replacement session starts with default tool settings, so the cached
     // design-tool policy no longer reflects reality. Clear it so the next turn
     // re-synchronizes disabledToolIds.
-    mission.todoDisabledForDesign = undefined;
+    liveSession.todoDisabledForDesign = undefined;
     await oldSession.close().catch(() => {});
     this.usageOffsets.set(appSessionId, carryover);
     this.patch(appSessionId, {
@@ -2119,35 +2115,35 @@ export class SessionManager {
     });
   }
 
-  // Recovery for an orchestrator compaction that swapped backing sessions but
-  // failed to adopt the new one (mission.session is now a dead id). Retry the
+  // Recovery for a primary-session compaction that swapped provider sessions but
+  // failed to adopt the new one (liveSession.session is now a dead id). Retry the
   // adoption once for a transient failure; if it still fails, persist the new
-  // id and drop the live mission so the next send re-resumes against the live
+  // id and drop the live session so the next send re-resumes against the live
   // (compacted) session instead of streaming into the dead one.
-  private async recoverStaleMissionSwap(
-    mission: LiveSession,
+  private async recoverStaleSessionSwap(
+    liveSession: LiveSession,
     newSessionId: string,
     carryover: UsageOffset,
   ): Promise<void> {
-    const appSessionId = mission.summary.appSessionId;
+    const appSessionId = liveSession.summary.appSessionId;
     try {
-      await this.swapMissionSession(mission, newSessionId, carryover);
+      await this.swapSessionProvider(liveSession, newSessionId, carryover);
       return;
     } catch {
-      /* adoption still failing; persist the new id and drop the mission below */
+      /* adoption still failing; persist the new id and drop the live session below */
     }
     this.patch(appSessionId, {
       providerSessionId: newSessionId,
       compactedFromProviderSessionIds: uniqueStrings([
-        ...(mission.summary.compactedFromProviderSessionIds ?? []),
-        mission.summary.providerSessionId,
+        ...(liveSession.summary.compactedFromProviderSessionIds ?? []),
+        liveSession.summary.providerSessionId,
       ]),
       tokensIn: carryover.tokensIn,
       tokensOut: carryover.tokensOut,
       contextTokens: 0,
     });
     await this.closeSession(appSessionId);
-    // closeMission clears the usage offset for this app id, so seed it AFTER the
+    // closeSession clears the usage offset for this app id, so seed it AFTER the
     // teardown: when the next message re-resumes against the compacted backing
     // session (whose token counts restart low), the carried-over totals are
     // added back instead of the displayed usage collapsing to the new segment.
@@ -2165,13 +2161,13 @@ export class SessionManager {
   // history). There is no live session to refresh; the swapped backing id is
   // persisted to history so the next resume continues from the compacted state.
   private async compactHistoricalSession(
-    sessionId: string,
+    appSessionId: string,
     customInstructions?: string,
   ): Promise<void> {
-    const historical = this.resolveSummary(sessionId);
-    const oldProviderSessionId = historical?.providerSessionId ?? sessionId;
+    const historical = this.resolveSummary(appSessionId);
+    const oldProviderSessionId = historical?.providerSessionId ?? appSessionId;
     try {
-      const result = await this.withSession(sessionId, (session) =>
+      const result = await this.withSession(appSessionId, (session) =>
         session.compactSession(customInstructions ? { customInstructions } : {}),
       );
       if (!result) return;
@@ -2192,59 +2188,63 @@ export class SessionManager {
     } catch (err) {
       this.emitError({
         providerSessionId: oldProviderSessionId,
-        appSessionId: historical?.appSessionId ?? sessionId,
+        appSessionId: historical?.appSessionId ?? appSessionId,
         message: `Could not compact session: ${errMsg(err)}`,
       });
     }
   }
 
-  private async send(missionId: string, text: string): Promise<void> {
-    let mission = this.findSession(missionId);
-    if (!mission) {
-      await this.resumeSession(missionId);
-      mission = this.findSession(missionId);
+  private async send(appSessionId: string, text: string): Promise<void> {
+    let liveSession = this.findSession(appSessionId);
+    if (!liveSession) {
+      await this.resumeSession(appSessionId);
+      liveSession = this.findSession(appSessionId);
     }
-    if (!mission) {
-      this.emitError({ appSessionId: missionId, message: `Session ${missionId} is not resumable` });
+    if (!liveSession) {
+      this.emitError({
+        appSessionId: appSessionId,
+        message: `Session ${appSessionId} is not resumable`,
+      });
       return;
     }
-    const appSessionId = mission.summary.appSessionId;
     if (!(await this.applyPendingSessionSettings(appSessionId))) return;
-    if (mission.streaming || mission.compacting || mission.autoCompacting) {
-      mission.pendingSends.push(text);
-      this.patch(appSessionId, { queuedSends: mission.pendingSends.length });
+    if (liveSession.streaming || liveSession.compacting || liveSession.autoCompacting) {
+      liveSession.pendingSends.push(text);
+      this.patch(appSessionId, { queuedSends: liveSession.pendingSends.length });
       return;
     }
     await this.drive(appSessionId, text);
   }
 
-  private async sendNow(missionId: string, text: string): Promise<void> {
-    let mission = this.findSession(missionId);
-    if (!mission) {
-      await this.resumeSession(missionId);
-      mission = this.findSession(missionId);
+  private async sendNow(appSessionId: string, text: string): Promise<void> {
+    let liveSession = this.findSession(appSessionId);
+    if (!liveSession) {
+      await this.resumeSession(appSessionId);
+      liveSession = this.findSession(appSessionId);
     }
-    if (!mission) {
-      this.emitError({ appSessionId: missionId, message: `Session ${missionId} is not resumable` });
+    if (!liveSession) {
+      this.emitError({
+        appSessionId: appSessionId,
+        message: `Session ${appSessionId} is not resumable`,
+      });
       return;
     }
-    const appSessionId = mission.summary.appSessionId;
     if (!(await this.applyPendingSessionSettings(appSessionId))) return;
-    if (!mission.streaming && !mission.compacting && !mission.autoCompacting) {
+    if (!liveSession.streaming && !liveSession.compacting && !liveSession.autoCompacting) {
       await this.drive(appSessionId, text);
       return;
     }
     // Run next after the in-flight turn/compaction; never interrupt a compaction
     // (driving or interrupting against it risks a failed compaction or lost steering).
-    mission.pendingSends.unshift(text);
-    this.patch(appSessionId, { queuedSends: mission.pendingSends.length });
-    if (mission.compacting || mission.autoCompacting) return;
-    mission.interruptingForSteer = true;
+    liveSession.pendingSends.unshift(text);
+    this.patch(appSessionId, { queuedSends: liveSession.pendingSends.length });
+    if (liveSession.compacting || liveSession.autoCompacting) return;
+    liveSession.interruptingForSteer = true;
     this.emitStatus(appSessionId, 'Steering now...');
     try {
-      await mission.session.interrupt();
+      await liveSession.session.interrupt();
     } catch (err) {
-      mission.interruptingForSteer = false;
+      liveSession.interruptingForSteer = false;
       this.emitError({
         code: 'session.send_now_failed',
         appSessionId,
@@ -2253,16 +2253,15 @@ export class SessionManager {
     }
   }
 
-  private async setAutonomy(missionId: string, autonomy: Autonomy | 'none'): Promise<void> {
-    const mission = this.findSession(missionId);
-    if (!mission) {
+  private async setAutonomy(appSessionId: string, autonomy: Autonomy | 'none'): Promise<void> {
+    const liveSession = this.findSession(appSessionId);
+    if (!liveSession) {
       this.emitError({
-        appSessionId: missionId,
+        appSessionId: appSessionId,
         message: 'Autonomy can only be changed on a live session.',
       });
       return;
     }
-    const appSessionId = mission.summary.appSessionId;
     const nextAutonomy = normalizeAutonomy(autonomy);
     if (!nextAutonomy) {
       this.emitError({
@@ -2272,7 +2271,7 @@ export class SessionManager {
       return;
     }
     try {
-      await mission.session.updateSettings({ autonomyLevel: nextAutonomy } as never);
+      await liveSession.session.updateSettings({ autonomyLevel: nextAutonomy } as never);
       this.patch(appSessionId, { autonomy: nextAutonomy });
     } catch (err) {
       this.emitError({
@@ -2282,61 +2281,58 @@ export class SessionManager {
     }
   }
 
-  private async setInteractionMode(missionId: string, mode: SessionInteractionMode): Promise<void> {
-    const mission = this.findSession(missionId);
-    if (!mission) {
+  private async setInteractionMode(
+    appSessionId: string,
+    mode: SessionInteractionMode,
+  ): Promise<void> {
+    const liveSession = this.findSession(appSessionId);
+    if (!liveSession) {
       this.emitError({
-        appSessionId: missionId,
+        appSessionId,
         message: 'Spec mode can only be toggled on a live session.',
       });
       return;
     }
-    const appSessionId = mission.summary.appSessionId;
+    const stableAppSessionId = liveSession.summary.appSessionId;
     try {
       if (mode === 'spec') {
-        await mission.session.enterSpecMode();
-        await this.alignSpecModeModel(mission);
+        await liveSession.session.enterSpecMode();
+        await this.alignSpecModeModel(liveSession);
       } else {
-        await mission.session.updateSettings({ interactionMode: DroidInteractionMode.Auto });
+        await liveSession.session.updateSettings({
+          interactionMode: mode === 'agi' ? DroidInteractionMode.AGI : DroidInteractionMode.Auto,
+        });
       }
-      this.patch(appSessionId, {
-        interactionMode: mode,
-        sessionPurpose: mode === 'agi' ? 'mission-control' : mission.summary.sessionPurpose,
-        missionId: mode === 'agi' ? (mission.summary.missionId ?? appSessionId) : undefined,
-      });
+      this.patch(stableAppSessionId, { interactionMode: mode });
     } catch (err) {
       this.emitError({
-        appSessionId,
+        appSessionId: stableAppSessionId,
         message: `Could not switch interaction mode: ${errMsg(err)}`,
       });
     }
   }
 
-  // Best effort: spec-mode turns run on specModeModelId, which the daemon may
-  // have seeded from the CLI spec default at create time. Align it with the
-  // chat's visible model so toggling into spec never switches models silently.
-  private async alignSpecModeModel(mission: LiveSession): Promise<void> {
-    const { modelId, reasoningEffort } = mission.summary;
+  // Spec-mode turns run on specModeModelId. Align it with the session's visible
+  // model so toggling into spec never switches models silently.
+  private async alignSpecModeModel(liveSession: LiveSession): Promise<void> {
+    const { modelId, reasoningEffort } = liveSession.summary;
     if (!modelId) return;
     const specSettings: Record<string, unknown> = { specModeModelId: modelId };
     if (reasoningEffort) specSettings.specModeReasoningEffort = reasoningEffort;
-    try {
-      await mission.session.updateSettings(specSettings as never);
-    } catch {
-      /* older daemons may reject the setting; spec mode still works on its default model */
-    }
+    await liveSession.session.updateSettings(specSettings as never);
   }
 
   private async updateSessionSettings(
-    sessionId: string,
+    requestedAppSessionId: string,
     settings: {
       modelId?: string | null;
       reasoningEffort?: ReasoningEffort;
     },
   ): Promise<void> {
-    const mission = this.findSession(sessionId);
-    const historical = this.resolveSummary(sessionId);
-    const appSessionId = mission?.summary.appSessionId ?? historical?.appSessionId ?? sessionId;
+    const liveSession = this.findSession(requestedAppSessionId);
+    const historical = this.resolveSummary(requestedAppSessionId);
+    const appSessionId =
+      liveSession?.summary.appSessionId ?? historical?.appSessionId ?? requestedAppSessionId;
     const patch: Partial<SessionSummary> = {};
     const next: Record<string, unknown> = {};
     if (settings.modelId !== undefined) {
@@ -2344,12 +2340,12 @@ export class SessionManager {
       // so resolve the actual default and push it; silently dropping the update
       // would leave the daemon generating with the previously selected model.
       // specModeModelId mirrors it because spec-mode turns run on that setting.
-      const summaryForMode = mission?.summary ?? historical;
+      const summaryForMode = liveSession?.summary ?? historical;
       const effectiveModelId =
         settings.modelId ??
         defaultModelForAgent(
           'primary',
-          summaryForMode ? modeForSummary(summaryForMode) : 'auto',
+          summaryForMode ? defaultsModeForSummary(summaryForMode) : 'auto',
           await this.getFactoryDefaults(),
         );
       if (effectiveModelId) {
@@ -2369,24 +2365,23 @@ export class SessionManager {
       await activeSession.updateSettings(next as never);
       return activeSession;
     });
-    if (mission) this.patch(appSessionId, patch);
-    if (mission && settings.modelId !== undefined) {
+    if (liveSession) this.patch(appSessionId, patch);
+    if (liveSession && settings.modelId !== undefined) {
       // The model drives the auto-compaction threshold; recompute it so the
       // daemon doesn't keep compacting against the old model's limit.
-      await this.recomputeSessionCompactionLimit(mission);
+      await this.recomputeSessionCompactionLimit(liveSession);
     }
-    if (mission && session) await this.refreshContext(appSessionId, session);
+    if (liveSession && session) await this.refreshContext(appSessionId, session);
   }
 
-  private async interrupt(missionId: string): Promise<void> {
-    const mission = this.findSession(missionId);
-    if (!mission) return;
-    const appSessionId = mission.summary.appSessionId;
-    mission.pendingSends = [];
+  private async interrupt(appSessionId: string): Promise<void> {
+    const liveSession = this.findSession(appSessionId);
+    if (!liveSession) return;
+    liveSession.pendingSends = [];
     // Never interrupt an in-flight manual compaction (it risks a failed/
     // corrupt swap). Dropping queued sends is enough; compaction finishes on
     // its own and its drive()/command drain then settles streaming/phase.
-    if (mission.compacting) {
+    if (liveSession.compacting) {
       this.patch(appSessionId, { queuedSends: 0 });
       return;
     }
@@ -2394,91 +2389,89 @@ export class SessionManager {
     // auto-compaction: interrupt for real, then settle the flag. The flag and
     // its watchdog are only cleared once the interrupt actually landed; if it
     // throws they stay in place so the watchdog can still settle the session.
-    const wasAutoCompacting = mission.autoCompacting;
+    const wasAutoCompacting = liveSession.autoCompacting;
     // Mark the in-flight turn as user-interrupted so drive()'s stream catch
     // settles the abort quietly instead of surfacing it as a failure. drive()'s
     // finally clears the flag once the turn unwinds.
-    mission.interrupting = true;
-    await mission.session.interrupt();
+    liveSession.interrupting = true;
+    await liveSession.session.interrupt();
     if (wasAutoCompacting) {
-      mission.autoCompacting = false;
+      liveSession.autoCompacting = false;
       this.autoCompactionWatchdogs.clear(appSessionId);
     }
     // If no drive() is active (Stop while idle or between turns), nothing will
     // run the finally that clears the flag — clear it here so it can't persist
     // and misclassify a later turn's cancellation as a user Stop.
-    if (!mission.streaming) mission.interrupting = false;
+    if (!liveSession.streaming) liveSession.interrupting = false;
     this.patch(appSessionId, { phase: 'paused', streaming: false, queuedSends: 0 });
   }
 
-  private async openAgent(
-    missionId: string,
-    agentSessionId: string,
+  private async openChildSession(
+    appSessionId: string,
+    childProviderSessionId: string,
     role: SessionRole,
   ): Promise<void> {
-    const mission = this.findSession(missionId);
-    if (!mission) {
-      // No live mission to open against (e.g. a not-yet-resumed/historical
+    const liveSession = this.findSession(appSessionId);
+    if (!liveSession) {
+      // No live session to open against (e.g. a not-yet-resumed/historical
       // session). Settle the worker's loading state with an honest empty open
       // instead of leaving its card spinning forever.
       this.emit({
         type: 'child.updated',
-        appSessionId: missionId,
-        providerSessionId: agentSessionId,
+        appSessionId: appSessionId,
+        providerSessionId: childProviderSessionId,
         role,
         status: 'opened',
       });
       return;
     }
-    const appSessionId = mission.summary.appSessionId;
-    if (!this.agentBelongsToMission(mission, agentSessionId)) {
+    if (!this.childBelongsToSession(liveSession, childProviderSessionId)) {
       this.emit({
         type: 'child.updated',
         appSessionId,
-        providerSessionId: agentSessionId,
+        providerSessionId: childProviderSessionId,
         role,
         status: 'opened',
       });
       return;
     }
-    if (mission.agents.has(agentSessionId)) {
-      const agent = mission.agents.get(agentSessionId);
+    if (liveSession.childSessions.has(childProviderSessionId)) {
+      const agent = liveSession.childSessions.get(childProviderSessionId);
       if (agent) agent.lastUsedAt = Date.now();
       this.emit({
         type: 'child.updated',
         appSessionId,
-        providerSessionId: agentSessionId,
+        providerSessionId: childProviderSessionId,
         role,
         status: 'opened',
       });
       return;
     }
     try {
-      if (!(await this.ensureAgentCapacity(mission, agentSessionId))) return;
+      if (!(await this.ensureChildSessionCapacity(liveSession, childProviderSessionId))) return;
       const ref = { id: appSessionId };
-      const session = await this.runtime.loadSession(agentSessionId, {
+      const session = await this.runtime.loadSession(childProviderSessionId, {
         permissionHandler: this.makePermissionHandler(ref),
         askUserHandler: this.makeAskUserHandler(ref),
       });
-      const actualSettings = subagentSettingsFromInit(session.initResult as InitResultLike);
-      // For a chat/spec subagent, fall back to the session's model when the
+      const actualSettings = childSessionSettingsFromInit(session.initResult as InitResultLike);
+      // A chat/spec child inherits the parent session model when the
       // droid inherits it. Mission Control workers/validators keep their own
       // configured model selection untouched.
-      const inheritsSessionModel =
-        mission.summary.sessionPurpose !== 'mission-control';
-      const resolvedSettings: SubagentSettings = inheritsSessionModel
+      const inheritsSessionModel = liveSession.summary.sessionPurpose !== 'mission-control';
+      const resolvedSettings: ChildSessionSettings = inheritsSessionModel
         ? {
-            modelId: actualSettings.modelId ?? mission.summary.modelId,
-            reasoningEffort: actualSettings.reasoningEffort ?? mission.summary.reasoningEffort,
+            modelId: actualSettings.modelId ?? liveSession.summary.modelId,
+            reasoningEffort: actualSettings.reasoningEffort ?? liveSession.summary.reasoningEffort,
           }
         : actualSettings;
       if (resolvedSettings.modelId || resolvedSettings.reasoningEffort) {
-        mission.subagentSettings.set(agentSessionId, resolvedSettings);
+        liveSession.childSessionSettings.set(childProviderSessionId, resolvedSettings);
         this.emit({
           type: 'session.child',
           appSessionId,
           event: 'updated',
-          providerSessionId: agentSessionId,
+          providerSessionId: childProviderSessionId,
           ...resolvedSettings,
         });
       }
@@ -2486,14 +2479,15 @@ export class SessionManager {
       // the role's configured model (not the primary's), so per-model limits
       // and context-window clamps stay correct for differing worker/validator models.
       const workerModelId =
-        resolvedSettings.modelId ?? this.agentModelId(mission, agentSessionId, role);
+        resolvedSettings.modelId ??
+        this.childSessionModelId(liveSession, childProviderSessionId, role);
       // Workers auto-compact in place via the daemon's own threshold check,
       // using the worker model's effective limit (so differing worker/validator
       // models keep their own thresholds).
       await this.enableDaemonAutoCompaction(session, await this.compactionLimit(workerModelId));
-      const agent: LiveAgent = {
+      const agent: LiveChildSession = {
         session,
-        providerSessionId: agentSessionId,
+        providerSessionId: childProviderSessionId,
         appSessionId,
         role,
         streaming: false,
@@ -2505,61 +2499,72 @@ export class SessionManager {
         // The daemon's auto-compaction notifications are handled by
         // handleCompactionNotification, which owns the agent's status and
         // refresh; any other notification is normalized and applied here.
-        if (this.handleCompactionNotification(appSessionId, agentSessionId, role, session, note))
+        if (
+          this.handleCompactionNotification(
+            appSessionId,
+            childProviderSessionId,
+            role,
+            session,
+            note,
+          )
+        )
           return;
-        for (const n of normalizeNotification(appSessionId, agentSessionId, role, note))
-          this.applyNormalizedForAgent(appSessionId, agentSessionId, n);
+        for (const n of normalizeNotification(appSessionId, childProviderSessionId, role, note))
+          this.applyNormalizedForSource(appSessionId, childProviderSessionId, n);
       });
-      mission.agents.set(agentSessionId, agent);
-      this.emitAgentHistory(appSessionId, agentSessionId);
+      liveSession.childSessions.set(childProviderSessionId, agent);
+      this.emitChildSessionHistory(appSessionId, childProviderSessionId);
       this.emit({
         type: 'child.updated',
         appSessionId,
-        providerSessionId: agentSessionId,
+        providerSessionId: childProviderSessionId,
         role,
         status: 'opened',
       });
     } catch (err) {
       this.emit({
         type: 'error',
-        code: 'agent.open_failed',
+        code: 'child.open_failed',
         appSessionId,
-        providerSessionId: agentSessionId,
+        providerSessionId: childProviderSessionId,
         message: errMsg(err),
       });
     }
   }
 
-  private emitAgentHistory(appSessionId: string, agentSessionId: string): void {
+  private emitChildSessionHistory(appSessionId: string, childProviderSessionId: string): void {
     try {
-      const page = loadSessionPage(agentSessionId, undefined, 200, appSessionId);
+      const page = loadSessionPage(childProviderSessionId, appSessionId, undefined, 200);
       for (const event of page.events) this.emitTranscript(event);
     } catch {
-      /* Some live subagents have not flushed local history yet. Live notifications still stream after open. */
+      /* Some live child sessions have not flushed history yet. Notifications still stream after open. */
     }
   }
 
-  private async sendAgent(missionId: string, agentSessionId: string, text: string): Promise<void> {
-    const mission = this.findSession(missionId);
-    if (!mission) return;
-    const appSessionId = mission.summary.appSessionId;
-    if (!this.agentBelongsToMission(mission, agentSessionId)) return;
-    if (!mission.agents.has(agentSessionId))
-      await this.openAgent(appSessionId, agentSessionId, 'worker');
-    const agent = mission.agents.get(agentSessionId);
+  private async sendChildSession(
+    appSessionId: string,
+    childProviderSessionId: string,
+    text: string,
+  ): Promise<void> {
+    const liveSession = this.findSession(appSessionId);
+    if (!liveSession) return;
+    if (!this.childBelongsToSession(liveSession, childProviderSessionId)) return;
+    if (!liveSession.childSessions.has(childProviderSessionId))
+      await this.openChildSession(appSessionId, childProviderSessionId, 'worker');
+    const agent = liveSession.childSessions.get(childProviderSessionId);
     if (!agent) return;
     agent.lastUsedAt = Date.now();
     if (agent.streaming || agent.autoCompacting) {
       agent.pendingSends.push(text);
       return;
     }
-    await this.driveAgent(agent, text);
+    await this.driveChildSession(agent, text);
   }
 
-  private async driveAgent(agent: LiveAgent, text: string): Promise<void> {
+  private async driveChildSession(agent: LiveChildSession, text: string): Promise<void> {
     agent.streaming = true;
     agent.lastUsedAt = Date.now();
-    this.findSession(agent.appSessionId)?.terminalAgents.delete(agent.session.sessionId);
+    this.findSession(agent.appSessionId)?.terminalSources.delete(agent.session.sessionId);
     this.emit({
       type: 'child.updated',
       appSessionId: agent.appSessionId,
@@ -2574,7 +2579,7 @@ export class SessionManager {
         this.applyEvent(agent.appSessionId, agent.session.sessionId, agent.role, ev);
     } catch (err) {
       if (agent.interruptingForSteer)
-        this.emitStatus(agent.appSessionId, 'Subagent turn interrupted for steering.');
+        this.emitStatus(agent.appSessionId, 'Child-session turn interrupted for steering.');
       else if (!(agent.interrupting && isUserCancellation(err))) {
         const message = errMsg(err);
         this.emit({
@@ -2585,7 +2590,7 @@ export class SessionManager {
         });
         this.emit({
           type: 'error',
-          code: 'agent.not_steerable',
+          code: 'child.not_steerable',
           appSessionId: agent.appSessionId,
           providerSessionId: agent.session.sessionId,
           message,
@@ -2597,17 +2602,17 @@ export class SessionManager {
       agent.interrupting = false;
       if (agent.pendingSends.length === 0 && agent.closeWhenIdle && !agent.autoCompacting) {
         agent.streaming = false;
-        // closeAgent resolves the worker by the agents-map id, which is not
+        // closeChildSession resolves the worker by the child-map id, which is not
         // guaranteed to match the live session id.
-        await this.closeAgent(agent.appSessionId, agent.providerSessionId);
+        await this.closeChildSession(agent.appSessionId, agent.providerSessionId);
       } else {
         // Refresh while streaming stays true so concurrent sends queue instead
-        // of racing a second driveAgent(). The daemon auto-compacts the worker
+        // of racing a second driveChildSession(). The daemon auto-compacts the worker
         // in place (same session id), so no swap handling is needed here.
         await this.refreshContext(agent.session.sessionId, agent.session);
         agent.streaming = false;
         if (agent.autoCompacting) {
-          // Key by the agents-map id: every other watchdog op (initial arm,
+          // Key by the child-map id: every other watchdog op (initial arm,
           // interrupt, close, expiry lookup) uses it, so the tightened timer
           // actually replaces the 5-minute one.
           this.autoCompactionWatchdogs.arm(
@@ -2617,7 +2622,7 @@ export class SessionManager {
           return;
         }
         const next = agent.pendingSends.shift();
-        if (next !== undefined) void this.driveAgent(agent, next);
+        if (next !== undefined) void this.driveChildSession(agent, next);
         else
           this.emit({
             type: 'child.updated',
@@ -2630,50 +2635,51 @@ export class SessionManager {
     }
   }
 
-  private async sendAgentNow(
-    missionId: string,
-    agentSessionId: string,
+  private async sendChildSessionNow(
+    appSessionId: string,
+    childProviderSessionId: string,
     text: string,
   ): Promise<void> {
-    const mission = this.findSession(missionId);
-    if (!mission) return;
-    const appSessionId = mission.summary.appSessionId;
-    if (!this.agentBelongsToMission(mission, agentSessionId)) return;
-    if (!mission.agents.has(agentSessionId))
-      await this.openAgent(appSessionId, agentSessionId, 'worker');
-    const agent = mission.agents.get(agentSessionId);
+    const liveSession = this.findSession(appSessionId);
+    if (!liveSession) return;
+    if (!this.childBelongsToSession(liveSession, childProviderSessionId)) return;
+    if (!liveSession.childSessions.has(childProviderSessionId))
+      await this.openChildSession(appSessionId, childProviderSessionId, 'worker');
+    const agent = liveSession.childSessions.get(childProviderSessionId);
     if (!agent) return;
     agent.lastUsedAt = Date.now();
     if (!agent.streaming && !agent.autoCompacting) {
-      await this.driveAgent(agent, text);
+      await this.driveChildSession(agent, text);
       return;
     }
     agent.pendingSends.unshift(text);
     if (agent.autoCompacting) return;
     agent.interruptingForSteer = true;
-    this.emitStatus(appSessionId, 'Steering subagent now...');
+    this.emitStatus(appSessionId, 'Steering child session now...');
     try {
       await agent.session.interrupt();
     } catch (err) {
       agent.interruptingForSteer = false;
       this.emit({
         type: 'error',
-        code: 'agent.send_now_failed',
+        code: 'child.send_now_failed',
         appSessionId,
-        providerSessionId: agentSessionId,
-        message: `Could not interrupt subagent for steering: ${errMsg(err)}`,
+        providerSessionId: childProviderSessionId,
+        message: `Could not interrupt child session for steering: ${errMsg(err)}`,
       });
     }
   }
 
-  private async interruptAgent(missionId: string, agentSessionId: string): Promise<void> {
-    const mission = this.findSession(missionId);
-    if (!mission) return;
-    const appSessionId = mission.summary.appSessionId;
-    if (!this.agentBelongsToMission(mission, agentSessionId)) return;
-    if (!mission.agents.has(agentSessionId))
-      await this.openAgent(appSessionId, agentSessionId, 'worker');
-    const agent = mission.agents.get(agentSessionId);
+  private async interruptChildSession(
+    appSessionId: string,
+    childProviderSessionId: string,
+  ): Promise<void> {
+    const liveSession = this.findSession(appSessionId);
+    if (!liveSession) return;
+    if (!this.childBelongsToSession(liveSession, childProviderSessionId)) return;
+    if (!liveSession.childSessions.has(childProviderSessionId))
+      await this.openChildSession(appSessionId, childProviderSessionId, 'worker');
+    const agent = liveSession.childSessions.get(childProviderSessionId);
     if (!agent) return;
     agent.pendingSends = [];
     agent.lastUsedAt = Date.now();
@@ -2684,42 +2690,42 @@ export class SessionManager {
     await agent.session.interrupt();
     if (wasAutoCompacting) {
       agent.autoCompacting = false;
-      this.autoCompactionWatchdogs.clear(agentSessionId);
+      this.autoCompactionWatchdogs.clear(childProviderSessionId);
     }
-    // If no driveAgent() is active to clear the flag in its finally, clear it
+    // If no driveChildSession() is active to clear the flag in its finally, clear it
     // here so it can't leak into a later turn and misclassify its cancellation.
     if (!agent.streaming) agent.interrupting = false;
     agent.streaming = false;
     this.emit({
       type: 'child.updated',
       appSessionId,
-      providerSessionId: agentSessionId,
+      providerSessionId: childProviderSessionId,
       role: agent.role,
       status: 'paused',
     });
   }
 
-  private agentBelongsToMission(mission: LiveSession, agentSessionId: string): boolean {
-    if (mission.summary.sessionPurpose === 'mission-control') return true;
-    if (mission.knownSubagents.has(agentSessionId)) return true;
-    if (mission.linkedSubagents.has(agentSessionId)) return true;
-    const appSessionId = mission.summary.appSessionId;
+  private childBelongsToSession(liveSession: LiveSession, childProviderSessionId: string): boolean {
+    if (liveSession.summary.sessionPurpose === 'mission-control') return true;
+    if (liveSession.knownChildSessions.has(childProviderSessionId)) return true;
+    if (liveSession.linkedChildSessions.has(childProviderSessionId)) return true;
+    const appSessionId = liveSession.summary.appSessionId;
     this.emit({
       type: 'error',
-      code: 'agent.not_in_session',
+      code: 'child.not_in_session',
       appSessionId,
-      providerSessionId: agentSessionId,
-      message: `Subagent ${agentSessionId} is not tied to session ${appSessionId}.`,
+      providerSessionId: childProviderSessionId,
+      message: `Child session ${childProviderSessionId} is not tied to session ${appSessionId}.`,
     });
     return false;
   }
 
-  private async ensureAgentCapacity(
-    mission: LiveSession,
+  private async ensureChildSessionCapacity(
+    liveSession: LiveSession,
     requestedAgentSessionId: string,
   ): Promise<boolean> {
-    if (mission.agents.size < MAX_OPEN_AGENT_TRANSPORTS) return true;
-    const idle = [...mission.agents.entries()]
+    if (liveSession.childSessions.size < MAX_OPEN_CHILD_SESSIONS) return true;
+    const idle = [...liveSession.childSessions.entries()]
       .filter(
         ([sessionId, agent]) =>
           sessionId !== requestedAgentSessionId &&
@@ -2729,27 +2735,30 @@ export class SessionManager {
       )
       .sort((a, b) => a[1].lastUsedAt - b[1].lastUsedAt)[0];
     if (idle) {
-      await this.closeAgent(mission.summary.appSessionId, idle[0]);
+      await this.closeChildSession(liveSession.summary.appSessionId, idle[0]);
       return true;
     }
     this.emitError({
-      appSessionId: mission.summary.appSessionId,
+      appSessionId: liveSession.summary.appSessionId,
       // Scope to the requested worker so its loading state settles, not just the
-      // mission-level toast.
+      // session-level toast.
       providerSessionId: requestedAgentSessionId,
-      message: `Open live agent transport limit reached (${MAX_OPEN_AGENT_TRANSPORTS}). Wait for one running worker view to finish before opening another live worker view.`,
+      message: `Open live agent transport limit reached (${MAX_OPEN_CHILD_SESSIONS}). Wait for one running worker view to finish before opening another live worker view.`,
     });
     return false;
   }
 
-  private async closeAgent(missionId: string, agentSessionId: string): Promise<void> {
-    const mission = this.findSession(missionId);
-    const agent = mission?.agents.get(agentSessionId);
-    if (!mission || !agent) return;
-    mission.agents.delete(agentSessionId);
-    this.agentCompactions.delete(agentSessionId);
-    this.contextSnapshots.delete(agentSessionId);
-    this.autoCompactionWatchdogs.clear(agentSessionId);
+  private async closeChildSession(
+    appSessionId: string,
+    childProviderSessionId: string,
+  ): Promise<void> {
+    const liveSession = this.findSession(appSessionId);
+    const agent = liveSession?.childSessions.get(childProviderSessionId);
+    if (!liveSession || !agent) return;
+    liveSession.childSessions.delete(childProviderSessionId);
+    this.childSessionCompactions.delete(childProviderSessionId);
+    this.contextSnapshots.delete(childProviderSessionId);
+    this.autoCompactionWatchdogs.clear(childProviderSessionId);
     this.stopContextPolling(agent.session.sessionId);
     agent.unsubscribe?.();
     try {
@@ -2759,31 +2768,34 @@ export class SessionManager {
     }
   }
 
-  private async closeAgentWhenIdle(missionId: string, agentSessionId: string): Promise<void> {
-    const mission = this.findSession(missionId);
-    const agent = mission?.agents.get(agentSessionId);
-    if (!mission || !agent) return;
+  private async closeChildSessionWhenIdle(
+    appSessionId: string,
+    childProviderSessionId: string,
+  ): Promise<void> {
+    const liveSession = this.findSession(appSessionId);
+    const agent = liveSession?.childSessions.get(childProviderSessionId);
+    if (!liveSession || !agent) return;
     agent.closeWhenIdle = true;
     if (!agent.streaming && !agent.autoCompacting && agent.pendingSends.length === 0)
-      await this.closeAgent(missionId, agentSessionId);
+      await this.closeChildSession(appSessionId, childProviderSessionId);
   }
 
-  private async renameSession(sessionId: string, title: string): Promise<void> {
-    await this.withSession(sessionId, (session) => session.renameSession({ title }));
+  private async renameSession(requestedAppSessionId: string, title: string): Promise<void> {
+    await this.withSession(requestedAppSessionId, (session) => session.renameSession({ title }));
     const appSessionId =
-      this.findSession(sessionId)?.summary.appSessionId ??
-      this.resolveSummary(sessionId)?.appSessionId;
+      this.findSession(requestedAppSessionId)?.summary.appSessionId ??
+      this.resolveSummary(requestedAppSessionId)?.appSessionId;
     if (appSessionId) this.patch(appSessionId, { title });
   }
 
   private async withSession<T>(
-    sessionId: string,
+    appSessionId: string,
     fn: (session: DroidSession) => Promise<T>,
   ): Promise<T | undefined> {
-    const liveMission = this.findSession(sessionId);
-    const live = liveMission?.session;
+    const liveSession = this.findSession(appSessionId);
+    const live = liveSession?.session;
     if (live) return fn(live);
-    const providerSessionId = this.resolveSummary(sessionId)?.providerSessionId ?? sessionId;
+    const providerSessionId = this.resolveSummary(appSessionId)?.providerSessionId ?? appSessionId;
     const session = await this.runtime.loadSession(providerSessionId);
     try {
       return await fn(session);
@@ -2793,11 +2805,11 @@ export class SessionManager {
   }
 
   private async catalogSession(
-    sessionId?: string,
+    providerSessionId?: string,
   ): Promise<{ session: DroidSession; close: () => Promise<void> }> {
     const first = this.listSummaries()[0];
-    const live = sessionId
-      ? this.findSession(sessionId)?.session
+    const live = providerSessionId
+      ? this.findSession(providerSessionId)?.session
       : first
         ? this.findSession(first.appSessionId)?.session
         : undefined;
@@ -2810,8 +2822,8 @@ export class SessionManager {
     return { session, close: () => session.close() };
   }
 
-  private async emitToolCatalog(sessionId?: string): Promise<void> {
-    const { session, close } = await this.catalogSession(sessionId);
+  private async emitToolCatalog(providerSessionId?: string): Promise<void> {
+    const { session, close } = await this.catalogSession(providerSessionId);
     try {
       const result = await session.listTools();
       this.emit({ type: 'catalog.updated', catalog: 'tools', items: arrayItems(result, 'tools') });
@@ -2820,23 +2832,23 @@ export class SessionManager {
     }
   }
 
-  private async emitSkillCatalog(sessionId?: string): Promise<void> {
-    const { session, close } = await this.catalogSession(sessionId);
+  private async emitSkillCatalog(providerSessionId?: string): Promise<void> {
+    const { session, close } = await this.catalogSession(providerSessionId);
     try {
       const result = await session.listSkills();
       this.emit({
         type: 'catalog.updated',
         catalog: 'skills',
         items: arrayItems(result, 'skills'),
-        sessionId: sessionId ?? null,
+        providerSessionId: providerSessionId ?? null,
       });
     } finally {
       await close();
     }
   }
 
-  private async emitMcpCatalog(sessionId?: string): Promise<void> {
-    const { session, close } = await this.catalogSession(sessionId);
+  private async emitMcpCatalog(providerSessionId?: string): Promise<void> {
+    const { session, close } = await this.catalogSession(providerSessionId);
     try {
       const servers = await session.listMcpServers();
       const tools = await session.listMcpTools();
@@ -2902,21 +2914,21 @@ export class SessionManager {
       const stats = await session.getContextStats();
       const breakdown = await this.readContextBreakdown(session);
       let snapshot = contextStatsSnapshot(stats, breakdown);
-      const mission =
+      const liveSession =
         this.findSession(sessionId) ??
-        [...this.sessions.values()].find((candidate) => candidate.agents.has(sessionId));
-      const appSessionId = mission?.summary.appSessionId ?? sessionId;
+        [...this.sessions.values()].find((candidate) => candidate.childSessions.has(sessionId));
+      const appSessionId = liveSession?.summary.appSessionId ?? sessionId;
       const isPrimarySession =
-        mission !== undefined &&
-        (sessionId === mission.summary.appSessionId ||
-          sessionId === mission.summary.providerSessionId);
+        liveSession !== undefined &&
+        (sessionId === liveSession.summary.appSessionId ||
+          sessionId === liveSession.summary.providerSessionId);
       // The daemon's get_context_stats is a chars/4 estimate that over-counts;
       // when a provider-reported reading exists it matches the compaction
       // threshold count exactly, so it wins over the estimate. The stats call
       // still supplies the limit and breakdown.
       const exact =
-        mission?.summary.contextAccuracy === 'exact' && mission.summary.contextTokens > 0
-          ? mission.summary.contextTokens
+        liveSession?.summary.contextAccuracy === 'exact' && liveSession.summary.contextTokens > 0
+          ? liveSession.summary.contextTokens
           : undefined;
       if (exact !== undefined && snapshot.limit > 0) {
         const used = Math.min(exact, snapshot.limit);
@@ -2934,10 +2946,10 @@ export class SessionManager {
             : undefined,
         };
       }
-      // Worker sessions have no mission summary to carry a compaction
+      // Child sessions have no top-level session summary to carry a compaction
       // generation, so the snapshot carries it for the meter's ratchet reset.
       if (!isPrimarySession)
-        snapshot = { ...snapshot, compactions: this.agentCompactions.get(sessionId) ?? 0 };
+        snapshot = { ...snapshot, compactions: this.childSessionCompactions.get(sessionId) ?? 0 };
       this.contextSnapshots.set(sessionId, snapshot);
       this.emit({
         type: 'context.updated',
@@ -2945,18 +2957,19 @@ export class SessionManager {
         sourceSessionId: sessionId,
         stats: snapshot,
       });
-      if (mission && isPrimarySession) {
+      if (liveSession && isPrimarySession) {
         const contextPatch = {
           contextTokens: snapshot.used,
           contextRemainingTokens: snapshot.remaining,
           // summary.maxContextTokens means "model window". The catalog wins;
           // the daemon's stats limit only fills in for unknown models, so the
           // meter's window row stops flip-flopping between the two sources.
-          maxContextTokens: this.maxContextTokensForSummary(mission.summary) ?? snapshot.limit,
+          maxContextTokens: this.maxContextTokensForSummary(liveSession.summary) ?? snapshot.limit,
           contextAccuracy: snapshot.accuracy,
           contextUpdatedAt: snapshot.updatedAt,
         };
-        if (options.persist === false) mission.summary = { ...mission.summary, ...contextPatch };
+        if (options.persist === false)
+          liveSession.summary = { ...liveSession.summary, ...contextPatch };
         else this.patch(appSessionId, contextPatch);
       }
     } catch {
@@ -2992,26 +3005,27 @@ export class SessionManager {
     }
   }
 
-  private async closeSession(missionId: string): Promise<void> {
-    const key = this.findSessionKey(missionId);
+  private async closeSession(appSessionId: string): Promise<void> {
+    const key = this.findSessionKey(appSessionId);
     if (!key) return;
-    const mission = this.sessions.get(key);
-    if (!mission) return;
+    const liveSession = this.sessions.get(key);
+    if (!liveSession) return;
     this.stopContextPolling(key);
-    if (mission.summary.providerSessionId) this.stopContextPolling(mission.summary.providerSessionId);
-    this.autoCompactionWatchdogs.clear(mission.summary.appSessionId);
-    mission.unsubscribe?.();
-    for (const [agentSessionId, agent] of mission.agents) {
+    if (liveSession.summary.providerSessionId)
+      this.stopContextPolling(liveSession.summary.providerSessionId);
+    this.autoCompactionWatchdogs.clear(liveSession.summary.appSessionId);
+    liveSession.unsubscribe?.();
+    for (const [childProviderSessionId, agent] of liveSession.childSessions) {
       this.stopContextPolling(agent.session.sessionId);
       // Worker snapshots can live under either key: refreshContext stores by
-      // the id it was called with, which is the agents-map id on the
+      // the id it was called with, which is the child-map id on the
       // compaction path and the live session id on the polling path.
       this.contextSnapshots.delete(agent.session.sessionId);
-      this.contextSnapshots.delete(agentSessionId);
-      // Keyed by the app-level agent session id (like closeAgent), which is
+      this.contextSnapshots.delete(childProviderSessionId);
+      // Keyed by the app-level agent session id (like closeChildSession), which is
       // never reused, so a missed delete would linger forever.
-      this.agentCompactions.delete(agentSessionId);
-      this.autoCompactionWatchdogs.clear(agentSessionId);
+      this.childSessionCompactions.delete(childProviderSessionId);
+      this.autoCompactionWatchdogs.clear(childProviderSessionId);
       agent.unsubscribe?.();
       try {
         await agent.session.close();
@@ -3019,32 +3033,33 @@ export class SessionManager {
         /* ignore */
       }
     }
-    for (const server of mission.mcpServers) {
+    for (const server of liveSession.mcpServers) {
       await server.close().catch(() => {});
     }
     try {
-      await mission.session.close();
+      await liveSession.session.close();
     } catch {
       /* ignore */
     }
-    // Browser sessions are keyed by the stable app session id (mission.id), not
+    // Browser sessions are keyed by the stable app session id, not
     // the droid sessionId, which compaction swaps. Close by the app id so a
-    // compacted mission's native browser is actually torn down.
-    await this.browsers.close(mission.summary.appSessionId).catch(() => {});
+    // compacted session's native browser is actually torn down.
+    await this.browsers.close(liveSession.summary.appSessionId).catch(() => {});
     this.sessions.delete(key);
     this.usageOffsets.delete(key);
     this.contextSnapshots.delete(key);
-    if (mission.summary.providerSessionId) this.contextSnapshots.delete(mission.summary.providerSessionId);
+    if (liveSession.summary.providerSessionId)
+      this.contextSnapshots.delete(liveSession.summary.providerSessionId);
     this.emitSessionList();
   }
 
-  private patch(missionId: string, partial: Partial<SessionSummary>): void {
-    const key = this.findSessionKey(missionId);
-    const mission = key ? this.sessions.get(key) : undefined;
-    if (!mission) return;
-    mission.summary = { ...mission.summary, ...partial, updatedAt: Date.now() };
-    this.history.syncSummaries([mission.summary]);
-    this.emit({ type: 'session.updated', session: mission.summary });
+  private patch(appSessionId: string, partial: Partial<SessionSummary>): void {
+    const key = this.findSessionKey(appSessionId);
+    const liveSession = key ? this.sessions.get(key) : undefined;
+    if (!liveSession) return;
+    liveSession.summary = { ...liveSession.summary, ...partial, updatedAt: Date.now() };
+    this.history.syncSummaries([liveSession.summary]);
+    this.emit({ type: 'session.updated', session: liveSession.summary });
   }
 
   private emitError(error: {
@@ -3126,7 +3141,7 @@ interface InitResultLike {
   mission?: { state?: string; features?: unknown[] };
 }
 
-function subagentSettingsFromInit(init: InitResultLike): SubagentSettings {
+function childSessionSettingsFromInit(init: InitResultLike): ChildSessionSettings {
   return {
     modelId: init.settings?.modelId,
     reasoningEffort: reasoningValue(init.settings?.reasoningEffort),
@@ -3154,35 +3169,35 @@ function classifySession(
   historical?: SessionSummary,
 ): Pick<
   SessionSummary,
-  | 'sessionPurpose'
-  | 'interactionMode'
-  | 'role'
-  | 'missionId'
-  | 'parentProviderSessionId'
+  'sessionPurpose' | 'interactionMode' | 'role' | 'missionId' | 'parentProviderSessionId'
 > {
   const session = init.session ?? {};
   const decompType = stringValue(session.decompSessionType);
-  const missionId = stringValue(session.decompMissionId) ?? historical?.missionId;
+  const missionControlId = stringValue(session.decompMissionId) ?? historical?.missionId;
   if (decompType === 'worker') {
     return {
       sessionPurpose: 'mission-control',
       interactionMode: 'agi',
       role: historical?.role === 'validator' ? 'validator' : 'worker',
-      missionId,
+      missionId: missionControlId,
       parentProviderSessionId: historical?.parentProviderSessionId,
     };
   }
   const mode = init.settings?.interactionMode ?? (init.mission ? 'agi' : undefined);
   if (
-    mode === 'agi' ||
     decompType === 'orchestrator' ||
+    Boolean(init.mission) ||
+    Boolean(missionControlId) ||
     historical?.sessionPurpose === 'mission-control'
   ) {
     return {
       sessionPurpose: 'mission-control',
-      interactionMode: 'agi',
+      interactionMode:
+        mode === 'auto' || mode === 'spec' || mode === 'agi'
+          ? mode
+          : (historical?.interactionMode ?? 'agi'),
       role: 'primary',
-      missionId: missionId ?? historical?.appSessionId,
+      missionId: missionControlId ?? historical?.appSessionId,
       parentProviderSessionId: undefined,
     };
   }
@@ -3196,7 +3211,7 @@ function classifySession(
     };
   return {
     sessionPurpose: historical?.sessionPurpose ?? 'chat',
-    interactionMode: 'auto',
+    interactionMode: mode === 'agi' ? 'agi' : 'auto',
     role: 'primary',
     missionId: undefined,
     parentProviderSessionId: undefined,
@@ -3480,8 +3495,10 @@ function defaultModelForAgent(
   return modelDefaultForMode(mode, defaults);
 }
 
-function modeForSummary(summary: SessionSummary): SessionInteractionMode {
-  return summary.interactionMode;
+function defaultsModeForSummary(summary: SessionSummary): SessionInteractionMode {
+  if (summary.sessionPurpose === 'mission-control') return 'agi';
+  if (summary.interactionMode === 'spec') return 'spec';
+  return 'auto';
 }
 
 function reasoningDefaultForMode(
@@ -3499,7 +3516,7 @@ function reasoningDefaultForMode(
 
 // Model-generated transcript kinds that, once a turn is terminal, would form a
 // second/buried final response if appended. A failed result (isError) and
-// non-transcript signals (tokens, state, worker, subagent) are never quarantined.
+// non-transcript signals (tokens, state, worker, child session) are never quarantined.
 const POST_TERMINAL_GENERATION_KINDS = new Set(['text', 'thinking', 'tool_call', 'tool_result']);
 
 function isPostTerminalGeneration(
@@ -3515,5 +3532,5 @@ function isPostTerminalGeneration(
 function hasNormalizedSideEffects(
   n: Omit<NonNullable<ReturnType<typeof normalizeStreamEvent>>, 'transcript'>,
 ): boolean {
-  return !!(n.features || n.progress || n.missionState || n.worker || n.subagent || n.tokens);
+  return !!(n.features || n.progress || n.missionState || n.worker || n.childSession || n.tokens);
 }

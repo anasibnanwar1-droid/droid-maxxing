@@ -57,6 +57,7 @@ test('[C1] Manual in-place compaction', { concurrency: false }, async () => {
 
   try {
     await h.create({
+      sessionPurpose: 'chat',
       clientRef: 'c1',
       title: 'C1',
       goal: 'go',
@@ -149,6 +150,7 @@ test('[C2] Provider-session swap', { concurrency: false }, async () => {
 
   try {
     await h.create({
+      sessionPurpose: 'chat',
       clientRef: 'c2',
       title: 'C2',
       goal: 'go',
@@ -201,6 +203,7 @@ test('[C3] Failed swap recovery', { concurrency: false }, async () => {
 
   try {
     await h.create({
+      sessionPurpose: 'chat',
       clientRef: 'c3',
       title: 'C3',
       goal: 'go',
@@ -333,6 +336,7 @@ test('[C5] Compaction retuning uses each live session model', { concurrency: fal
   h.runtime.loadQueue.set('validator-c5', [validator]);
   try {
     await h.create({
+      sessionPurpose: 'mission-control',
       clientRef: 'c5',
       title: 'C5',
       goal: 'go',

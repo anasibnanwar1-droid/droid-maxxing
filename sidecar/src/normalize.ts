@@ -71,8 +71,8 @@ export interface NormalizedEvent {
   progress?: ProgressEntry[];
   missionState?: string;
   worker?: { event: 'started' | 'completed'; workerSessionId: string; exitCode?: number };
-  subagent?: {
-    sessionId?: string;
+  childSession?: {
+    providerSessionId?: string;
     toolUseId?: string;
     label?: string;
     prompt?: string;
@@ -108,31 +108,31 @@ function toolUseIdFrom(...values: unknown[]): string | undefined {
 const isTaskToolName = (name: unknown): boolean =>
   typeof name === 'string' && /\btask\b/i.test(name);
 
-// A chat (non-mission) session spawns subagents via the Task tool; those surface
-// as ToolProgress events carrying `subagentSessionId` plus a Task tool name/input.
-function detectSubagent(
+// A standard chat can spawn Factory subagents via the Task tool; those surface
+// as ToolProgress events carrying raw `subagentSessionId` metadata.
+function detectChildSession(
   toolName: unknown,
   input: Record<string, unknown>,
-  sessionId: string | undefined,
+  providerSessionId: string | undefined,
   toolUseId: string | undefined,
-): NormalizedEvent['subagent'] | undefined {
+): NormalizedEvent['childSession'] | undefined {
   const isTask =
     isTaskToolName(toolName) ||
     typeof input.subagent_type === 'string' ||
     typeof input.subagentType === 'string';
-  if (!isTask && !sessionId) return undefined;
+  if (!isTask && !providerSessionId) return undefined;
   const label =
     str(input.subagent_type) ??
     str(input.subagentType) ??
     str(input.description) ??
     (typeof toolName === 'string' ? toolName : undefined);
-  return { sessionId, toolUseId, label, prompt: taskPrompt(input) };
+  return { providerSessionId, toolUseId, label, prompt: taskPrompt(input) };
 }
 
-// The orchestrator's Task tool_call carries the entire subagent prompt in its
+// The primary session's Task tool_call carries the entire subagent prompt in its
 // input. That prompt belongs in the subagent's own pane, not the main feed, so
 // we keep only the lightweight label fields on the transcript copy.
-function slimSubagentArgs(input: Record<string, unknown>): Record<string, unknown> {
+function slimChildSessionArgs(input: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const key of ['subagent_type', 'subagentType', 'description']) {
     if (typeof input[key] === 'string') out[key] = input[key];
@@ -142,8 +142,8 @@ function slimSubagentArgs(input: Record<string, unknown>): Record<string, unknow
 
 // Translate a single SDK stream event into zero-or-one normalized bridge updates.
 export function normalizeStreamEvent(
-  missionId: string,
-  agentSessionId: string,
+  appSessionId: string,
+  sourceProviderSessionId: string,
   role: SessionRole,
   ev: DroidStreamEvent,
 ): NormalizedEvent | null {
@@ -185,15 +185,28 @@ export function normalizeStreamEvent(
     const label = str(params.subagent_type) ?? str(params.subagentType);
     const prompt = taskPrompt(params);
     if (!subagentSessionId && !label && !prompt) return null;
-    return { subagent: { sessionId: subagentSessionId, toolUseId: eventToolUseId, label, prompt } };
+    return {
+      childSession: {
+        providerSessionId: subagentSessionId,
+        toolUseId: eventToolUseId,
+        label,
+        prompt,
+      },
+    };
   }
 
   switch (ev.type) {
     case 'assistant_text_delta':
-      return { transcript: transcript(missionId, agentSessionId, role, 'text', { text: ev.text }) };
+      return {
+        transcript: transcript(appSessionId, sourceProviderSessionId, role, 'text', {
+          text: ev.text,
+        }),
+      };
     case 'thinking_text_delta':
       return {
-        transcript: transcript(missionId, agentSessionId, role, 'thinking', { text: ev.text }),
+        transcript: transcript(appSessionId, sourceProviderSessionId, role, 'thinking', {
+          text: ev.text,
+        }),
       };
     case 'tool_call':
     case 'tool_call_delta': {
@@ -201,22 +214,22 @@ export function normalizeStreamEvent(
         (ev as { toolUse?: { id?: string; name?: string; input?: Record<string, unknown> } })
           .toolUse ?? {};
       const toolUseId = toolUseIdFrom(toolUse.id, eventToolUseId);
-      const subagent = detectSubagent(
+      const childSession = detectChildSession(
         toolUse.name,
         toolUse.input ?? {},
         subagentSessionId,
         toolUseId,
       );
       return {
-        transcript: transcript(missionId, agentSessionId, role, 'tool_call', {
+        transcript: transcript(appSessionId, sourceProviderSessionId, role, 'tool_call', {
           toolName: toolUse.name,
-          toolArgs: subagent ? slimSubagentArgs(toolUse.input ?? {}) : toolUse.input,
+          toolArgs: childSession ? slimChildSessionArgs(toolUse.input ?? {}) : toolUse.input,
           // Stamp every tool_call with its stable id so the store/chat feed can
           // collapse the many streaming deltas of one call into a single event
           // (matching the replay path, which derives one block per tool-use).
           ...(toolUseId ? { toolUseId } : {}),
         }),
-        ...(subagent ? { subagent } : {}),
+        ...(childSession ? { childSession } : {}),
       };
     }
     case 'tool_result': {
@@ -226,11 +239,17 @@ export function normalizeStreamEvent(
       // surfaces only as a completion signal and never leaks into the main feed.
       // A *failed* spawn must stay visible, so keep its error transcript.
       if (subagentSessionId || isTask) {
-        const done = { subagent: { sessionId: subagentSessionId, toolUseId, done: true } };
+        const done = {
+          childSession: {
+            providerSessionId: subagentSessionId,
+            toolUseId,
+            done: true,
+          },
+        };
         if (!ev.isError) return done;
         return {
           ...done,
-          transcript: transcript(missionId, agentSessionId, role, 'tool_result', {
+          transcript: transcript(appSessionId, sourceProviderSessionId, role, 'tool_result', {
             toolName: ev.toolName,
             text: typeof ev.content === 'string' ? ev.content : JSON.stringify(ev.content),
             isError: true,
@@ -238,7 +257,7 @@ export function normalizeStreamEvent(
         };
       }
       return {
-        transcript: transcript(missionId, agentSessionId, role, 'tool_result', {
+        transcript: transcript(appSessionId, sourceProviderSessionId, role, 'tool_result', {
           toolName: ev.toolName,
           text: typeof ev.content === 'string' ? ev.content : JSON.stringify(ev.content),
           isError: ev.isError,
@@ -248,7 +267,7 @@ export function normalizeStreamEvent(
     }
     case 'error':
       return {
-        transcript: transcript(missionId, agentSessionId, role, 'error', {
+        transcript: transcript(appSessionId, sourceProviderSessionId, role, 'error', {
           text: ev.message,
           isError: true,
         }),
@@ -273,7 +292,12 @@ export function normalizeStreamEvent(
       return { done: true };
     default:
       if (subagentSessionId)
-        return { subagent: { sessionId: subagentSessionId, toolUseId: eventToolUseId } };
+        return {
+          childSession: {
+            providerSessionId: subagentSessionId,
+            toolUseId: eventToolUseId,
+          },
+        };
       return null;
   }
 }
@@ -313,8 +337,8 @@ export function extractDroidWorkingState(
 }
 
 export function normalizeNotification(
-  missionId: string,
-  agentSessionId: string,
+  appSessionId: string,
+  sourceProviderSessionId: string,
   role: SessionRole,
   notification: Record<string, unknown>,
 ): NormalizedEvent[] {
@@ -323,7 +347,12 @@ export function normalizeNotification(
   const messages = Array.isArray(converted) ? converted : converted ? [converted] : [];
   return messages
     .map((message) =>
-      normalizeStreamEvent(missionId, agentSessionId, role, message as DroidStreamEvent),
+      normalizeStreamEvent(
+        appSessionId,
+        sourceProviderSessionId,
+        role,
+        message as DroidStreamEvent,
+      ),
     )
     .filter((event): event is NormalizedEvent => event !== null);
 }
@@ -400,7 +429,7 @@ function mcpToolDetail(c: ConfirmationDetail, input: Record<string, unknown>): s
 }
 
 export function classifyPermission(
-  missionId: string,
+  appSessionId: string,
   requestId: string,
   params: RequestPermissionRequestParams,
 ): PermissionRequest {
@@ -467,7 +496,7 @@ export function classifyPermission(
       detail = JSON.stringify(c);
   }
 
-  return { appSessionId: missionId, requestId, kind, title, detail, plan, options, raw: params };
+  return { appSessionId: appSessionId, requestId, kind, title, detail, plan, options, raw: params };
 }
 
 export function confirmationType(params: RequestPermissionRequestParams): string {
