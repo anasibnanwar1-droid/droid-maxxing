@@ -22,12 +22,12 @@ owned by a Mission Control mission.
 
 | Old | New |
 | --- | --- |
-| `SessionManager` | `SessionManager` |
+| `MissionManager` | `SessionManager` |
 | internal `Mission` | `LiveSession` |
-| `SessionSummary` | `SessionSummary` |
-| `SessionPhase` | `SessionPhase` |
-| `SessionQuestion` | `SessionQuestion` |
-| `SessionHistoryEntry` | `SessionHistoryEntry` |
+| `MissionSummary` | `SessionSummary` |
+| `MissionPhase` | `SessionPhase` |
+| `MissionQuestion` | `SessionQuestion` |
+| `HistoryMission` | `SessionHistoryEntry` |
 | `HistoricalMission` | `HistoricalSession` |
 | `HydratedMissionHistory` | `HydratedSessionHistory` |
 | `summary.id` | `summary.appSessionId` |
@@ -104,7 +104,7 @@ duplicates collapse to the following canonical names:
 | `sendToMission` / `sendToMissionNow` | `sendToSession` / `sendToSessionNow` |
 | `interruptMission` | `interruptSession` |
 | `listMissions` / `loadMissionHistory` | `listSessions` / `loadSessionHistory` |
-| `missionIsLive` / `useSessionLive` | `sessionIsLive` / `useSessionLive` |
+| `missionIsLive` / `useMissionLive` | `sessionIsLive` / `useSessionLive` |
 | `utilityPanelForMission` | `utilityPanelForSession` |
 | generic `missionMode` | `missionControlMode` |
 
@@ -116,10 +116,10 @@ Mission Control mission.
 
 | Old | New |
 | --- | --- |
-| `SessionManager.ts` and characterization test names | `SessionManager.ts` and matching test names |
-| `sessionHelpers.ts` | `sessionHelpers.ts` |
-| `sessionListFilter.ts` | `sessionListFilter.ts` |
-| `sessionAutoCompaction.ts` | `sessionAutoCompaction.ts` |
+| `MissionManager.ts` and characterization test names | `SessionManager.ts` and matching test names |
+| `missionHelpers.ts` | `sessionHelpers.ts` |
+| `missionListFilter.ts` | `sessionListFilter.ts` |
+| `missionAutoCompaction.ts` | `sessionAutoCompaction.ts` |
 | generic `missions` map / `findMission` | `sessions` map / `findSession` |
 | `createMission` / `resumeMission` / `closeMission` | `createSession` / `resumeSession` / `closeSession` |
 | generic historical summary type `HistoricalMission` | `HistoricalSession` |
