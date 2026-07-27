@@ -7,6 +7,13 @@ import {
 } from './testing/sessionCharacterizationHarness.js';
 import type { RecordedCall } from './testing/sessionCharacterizationHarness.js';
 import type { ServerEvent } from './protocol.js';
+import {
+  contextUpdateCount,
+  runAutoCompactionScenario,
+  runCloseCleanupScenario,
+  runShutdownOnlyCleanupScenario,
+  seedInitModel,
+} from './testing/compactionCharacterizationScenarios.js';
 
 type MissionUpdatedEvent = Extract<ServerEvent, { type: 'mission.updated' }>;
 type MissionTranscriptEvent = Extract<ServerEvent, { type: 'mission.transcript' }>;
@@ -237,4 +244,194 @@ test('[C3] Failed swap recovery', { concurrency: false }, async () => {
   } finally {
     await h.dispose();
   }
+});
+
+test(
+  '[C4] Automatic compaction retains the current interrupt escape hatch',
+  { concurrency: false },
+  async () => {
+    const h = createSessionCharacterizationHarness();
+    try {
+      const trace = await runAutoCompactionScenario(h);
+      const scopedStatus = (id: string, role: 'orchestrator' | 'worker') =>
+        h.events.some(
+          (event) =>
+            event.type === 'mission.transcript' &&
+            event.event.missionId === 'provider-1' &&
+            event.event.agentSessionId === id &&
+            event.event.role === role &&
+            event.event.compactType === 'auto',
+        );
+      assert.deepEqual(trace.interruptsAfterExplicitCommands, [1, 1]);
+      assert.deepEqual(trace.interruptsAfterSteering, [1, 1]);
+      assert.deepEqual(trace.closeCounts, [0, 0, 0]);
+      const [parentContextsBefore, workerContextsBefore] = trace.contextsBefore;
+      assert.ok(parentContextsBefore !== undefined);
+      assert.ok(workerContextsBefore !== undefined);
+      assert.deepEqual(
+        [
+          contextUpdateCount(h, 'provider-1') > parentContextsBefore,
+          contextUpdateCount(h, 'worker-c4') > workerContextsBefore,
+        ],
+        [true, true],
+      );
+      assert.equal(
+        scopedStatus('provider-1', 'orchestrator') && scopedStatus('worker-c4', 'worker'),
+        true,
+      );
+      assert.equal(
+        h.events.some(
+          (event) =>
+            event.type === 'mission.worker' &&
+            event.missionId === 'provider-1' &&
+            event.event === 'completed' &&
+            event.workerSessionId === 'worker-c4',
+        ),
+        true,
+      );
+      assert.equal(
+        h.events.some(
+          (event) =>
+            event.type === 'agent.updated' &&
+            event.missionId === 'provider-1' &&
+            event.agentSessionId === 'worker-c4' &&
+            event.role === 'worker' &&
+            event.status === 'completed',
+        ),
+        true,
+      );
+      assert.deepEqual(h.provider.session('provider-1').prompts, [
+        'go',
+        'parent running',
+        'parent steer',
+        'parent queued',
+      ]);
+      assert.deepEqual(h.provider.session('worker-c4').prompts, [
+        'worker running',
+        'worker steer',
+        'worker queued',
+      ]);
+      assert.deepEqual(
+        [
+          callCount(h.calls, 'cleanup', 'session.close', 'worker-c4'),
+          callCount(h.calls, 'cleanup', 'unsubscribe', 'worker-c4'),
+        ],
+        [1, 1],
+      );
+    } finally {
+      await h.dispose();
+    }
+  },
+);
+
+test('[C5] Compaction retuning uses each live session model', { concurrency: false }, async () => {
+  const h = createSessionCharacterizationHarness();
+  const parent = new FakeDroidSession('provider-1', {}, h.calls);
+  const worker = new FakeDroidSession('worker-c5', {}, h.calls);
+  const validator = new FakeDroidSession('validator-c5', {}, h.calls);
+  seedInitModel(parent, 'model-parent-loaded');
+  seedInitModel(worker, 'model-worker-loaded');
+  seedInitModel(validator, 'model-validator-loaded');
+  h.runtime.createQueue.push(parent);
+  h.runtime.loadQueue.set('worker-c5', [worker]);
+  h.runtime.loadQueue.set('validator-c5', [validator]);
+  try {
+    await h.create({
+      clientRef: 'c5',
+      title: 'C5',
+      goal: 'go',
+      interactionMode: 'agi',
+      autonomy: 'low',
+      modelId: 'model-parent-effective',
+      workerModel: 'model-worker-fallback',
+      validatorModel: 'model-validator-fallback',
+    });
+    await h.waitForIdle();
+    await h.handle({
+      type: 'agent.open',
+      missionId: 'provider-1',
+      agentSessionId: 'worker-c5',
+      role: 'worker',
+    });
+    await h.handle({
+      type: 'agent.open',
+      missionId: 'provider-1',
+      agentSessionId: 'validator-c5',
+      role: 'validator',
+    });
+    assert.deepEqual(
+      h.runtime.loadCalls.map((call) => call.sessionId),
+      ['worker-c5', 'validator-c5'],
+    );
+    const opened: ReadonlyArray<readonly [string, 'worker' | 'validator']> = [
+      ['worker-c5', 'worker'],
+      ['validator-c5', 'validator'],
+    ];
+    assert.deepEqual(
+      opened.map(([agentSessionId, role]) =>
+        h.events.some(
+          (event) =>
+            event.type === 'agent.updated' &&
+            event.missionId === 'provider-1' &&
+            event.agentSessionId === agentSessionId &&
+            event.role === role &&
+            event.status === 'opened',
+        ),
+      ),
+      [true, true],
+    );
+    await h.handle({
+      type: 'settings.compaction.update',
+      compactionTokenLimit: 400,
+      compactionTokenLimitPerModel: {
+        'model-parent-effective': 100,
+        'model-worker-loaded': 200,
+        'model-validator-loaded': 300,
+        'model-worker-fallback': 201,
+        'model-validator-fallback': 301,
+      },
+    });
+    const limits: ReadonlyArray<readonly [string, number]> = [
+      ['provider-1', 100],
+      ['worker-c5', 200],
+      ['validator-c5', 300],
+    ];
+    for (const [id, limit] of limits)
+      assert.equal(
+        h.provider
+          .session(id)
+          .settings.filter((settings) => settings['compactionThresholdCheckEnabled'] === true)
+          .at(-1)?.['compactionTokenLimit'],
+        limit,
+      );
+  } finally {
+    await h.dispose();
+  }
+});
+
+test.todo(
+  "active worker/validator model changes must re-arm that exact child session with the new model's effective threshold without altering parent/other children",
+);
+test.todo(
+  "closing or shutting down with an active worker stream must prevent its later unwind from re-arming that worker's watchdog or context poller",
+);
+
+test('[C6] Close and shutdown clean keyed resources', { concurrency: false }, async () => {
+  const close = await runCloseCleanupScenario();
+  assert.equal(close.initialPollersDistinct, true);
+  assert.equal(close.parentStartUntouchedByWorkerStart, true);
+  assert.equal(close.watchdogHandlesDistinct, true);
+  assert.equal(close.replacementPollersDistinct, true);
+  assert.deepEqual(close.watchdogsActiveAtClose, [0, 0]);
+  assert.deepEqual(close.initialClearState, [1, 1, 1, 1]);
+  assert.deepEqual(close.cleanupAtClose, [1, 1, 1, 1, 1]);
+  assert.deepEqual(close.closeTimerState, [1, 1, 1, 1]);
+  assert.deepEqual(close.cleanupAfterShutdown, [1, 1, 1, 1, 1]);
+  assert.deepEqual([close.browserClose, close.browserCloseAll, close.historyClose], [1, 1, 1]);
+
+  const shutdown = await runShutdownOnlyCleanupScenario();
+  assert.deepEqual(shutdown.cleanup, [1, 1, 1, 1, 1]);
+  assert.deepEqual(shutdown.timerClears, [1, 1, 1, 1]);
+  assert.deepEqual(shutdown.browserCounts, [1, 1]);
+  assert.equal(shutdown.historyClose, 1);
 });
