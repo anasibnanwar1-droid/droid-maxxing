@@ -64,3 +64,24 @@ test('a direct child error settles loading without failing the parent session', 
   assert.equal(next.sessions['app-1']?.phase, 'running');
   assert.equal(next.childHistoryLoading['child-1'], false);
 });
+
+test('a recoverable parent error settles loading without failing the session', () => {
+  const action = adaptEvent({
+    type: 'error',
+    appSessionId: 'app-1',
+    providerSessionId: 'provider-1',
+    message: 'history restore failed',
+    recoverable: true,
+  });
+  assert.ok(action);
+
+  const state = {
+    ...initialState,
+    sessions: { 'app-1': session },
+    childHistoryLoading: { 'provider-1': true },
+  };
+  const next = reducer(state, action);
+
+  assert.equal(next.sessions['app-1']?.phase, 'running');
+  assert.equal(next.childHistoryLoading['provider-1'], false);
+});

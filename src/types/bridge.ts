@@ -708,6 +708,7 @@ export type ServerEvent =
       appSessionId?: string;
       providerSessionId?: string;
       message: string;
+      recoverable?: boolean;
     }
   | {
       type: 'child.not_steerable';

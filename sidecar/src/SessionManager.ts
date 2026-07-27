@@ -3104,8 +3104,7 @@ export class SessionManager {
     message: string;
     recoverable?: boolean;
   }): void {
-    const { recoverable, ...rest } = error;
-    this.emit({ type: 'error', ...rest });
+    this.emit({ type: 'error', ...error });
   }
 
   private async handleBrowser(

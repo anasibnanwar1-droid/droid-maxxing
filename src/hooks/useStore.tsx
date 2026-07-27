@@ -2266,6 +2266,15 @@ export function adaptEvent(ev: ServerEvent): Action | null {
           loading: false,
         };
       }
+      if (ev.recoverable) {
+        return ev.providerSessionId
+          ? {
+              type: 'CHILD_HISTORY_LOADING',
+              providerSessionId: ev.providerSessionId,
+              loading: false,
+            }
+          : null;
+      }
       // Session-level failures can also carry a child provider id. Preserve both
       // effects: fail the parent session and settle the child loading state.
       if (ev.appSessionId) {

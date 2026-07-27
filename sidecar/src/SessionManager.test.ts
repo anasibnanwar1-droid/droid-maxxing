@@ -69,11 +69,11 @@ class FakeSession {
   }
 }
 
-function testSummary(id: string, sessionId: string): SessionSummary {
+function testSummary(appSessionId: string, providerSessionId: string): SessionSummary {
   const now = Date.now();
   return {
-    appSessionId: id,
-    providerSessionId: sessionId,
+    appSessionId,
+    providerSessionId,
     sessionPurpose: 'chat',
     interactionMode: 'auto',
     role: 'primary',
@@ -1070,6 +1070,7 @@ test('compaction failure surfaces a recoverable error and terminal status withou
     events.some(
       (e) =>
         e.type === 'error' &&
+        e.recoverable === true &&
         /could not compact session/i.test((e as { message?: string }).message ?? ''),
     ),
     true,
@@ -1684,6 +1685,7 @@ test('failed primary compaction adoption drops the live session and re-delivers 
     events.some(
       (e) =>
         e.type === 'error' &&
+        e.recoverable === true &&
         /reloading it failed/i.test((e as { message?: string }).message ?? ''),
     ),
     true,
