@@ -25,29 +25,21 @@ type DeferredStream = StreamGate & { readonly promise: Promise<void> };
 export class FakeDroidSession {
   readonly prompts: string[] = [];
   readonly settings: Record<string, unknown>[] = [];
+  nextCompactResult?: { newSessionId: string; removedCount: number };
   nextEnterSpecModeError?: Error;
   nextUpdateSettingsError?: Error;
   readonly notifications = new Set<(note: Record<string, unknown>) => void>();
   private readonly streamGates: DeferredStream[] = [];
+  private nextCompactGate?: DeferredStream;
   private readonly promptWaiters: { count: number; resolve(): void }[] = [];
-  readonly initResult: {
-    sessionId: string;
-    modelId: string;
-    reasoningEffort: string;
-  };
-
+  readonly initResult: { sessionId: string; modelId: string; reasoningEffort: string };
   constructor(
     readonly sessionId: string,
     readonly handlers: Runtime.RuntimeHandlers,
     private readonly calls: RecordedCall[],
   ) {
-    this.initResult = {
-      sessionId,
-      modelId: 'model-default',
-      reasoningEffort: 'medium',
-    };
+    this.initResult = { sessionId, modelId: 'model-default', reasoningEffort: 'medium' };
   }
-
   async *stream(
     prompt: string,
     _options: { includePartialMessages: true },
@@ -61,18 +53,40 @@ export class FakeDroidSession {
   }
 
   deferNextStream(): StreamGate {
+    return this.defer(this.streamGates);
+  }
+
+  deferNextCompaction(): StreamGate {
+    return (this.nextCompactGate = this.defer());
+  }
+
+  private defer(gates?: DeferredStream[]): DeferredStream {
     let release: (() => void) | undefined;
     const promise = new Promise<void>((resolve) => {
       release = resolve;
     });
-    const gate: DeferredStream = { promise, resolve: () => release?.() };
-    this.streamGates.push(gate);
+    const gate = { promise, resolve: () => release?.() };
+    gates?.push(gate);
     return gate;
   }
 
   waitForPrompts(count: number): Promise<void> {
     if (this.prompts.length >= count) return Promise.resolve();
     return new Promise((resolve) => this.promptWaiters.push({ count, resolve }));
+  }
+
+  async compactSession(
+    options: { customInstructions?: string } = {},
+  ): Promise<{ newSessionId: string; removedCount: number }> {
+    this.calls.push({
+      target: 'provider',
+      method: 'compactSession',
+      args: [this.sessionId, options],
+    });
+    const gate = this.nextCompactGate;
+    delete this.nextCompactGate;
+    await gate?.promise;
+    return this.nextCompactResult ?? { newSessionId: this.sessionId, removedCount: 0 };
   }
 
   interrupt(): Promise<void> {
@@ -112,13 +126,7 @@ export class FakeDroidSession {
     for (const listener of this.notifications) listener(note);
   }
 
-  getContextStats(): Promise<{
-    used: number;
-    remaining: number;
-    limit: number;
-    accuracy: 'estimated';
-    updatedAt: string;
-  }> {
+  getContextStats() {
     return Promise.resolve({
       used: 0,
       remaining: 1_000,
@@ -161,11 +169,7 @@ export class FakeRuntime {
   }
 
   status(): Runtime.RuntimeStatus {
-    return {
-      mode: 'cli_auth',
-      droidPath: '/test/droid',
-      apiKeyConfigured: this.apiKey.length > 0,
-    };
+    return { mode: 'cli_auth', droidPath: '/test/droid', apiKeyConfigured: this.apiKey.length > 0 };
   }
 
   createSession(options: Runtime.CreateRuntimeSessionOptions): Promise<FakeDroidSession> {
@@ -181,9 +185,8 @@ export class FakeRuntime {
 
   deferNextCreateStream(sessionId: string): StreamGate {
     const session = new FakeDroidSession(sessionId, {}, this.calls);
-    const gate = session.deferNextStream();
     this.createQueue.push(session);
-    return gate;
+    return session.deferNextStream();
   }
 
   loadSession(sessionId: string, handlers: Runtime.RuntimeHandlers): Promise<FakeDroidSession> {
@@ -231,10 +234,7 @@ export class FakeHistoryIndex {
   }
 
   recordSubagentLink(
-    missionId: string,
-    toolUseId: string,
-    workerSessionId: string,
-    label?: string,
+    ...[missionId, toolUseId, workerSessionId, label]: [string, string, string, string?]
   ): void {
     const links = this.links.get(missionId) ?? [];
     const index = links.findIndex((existing) => existing.toolUseId === toolUseId);
@@ -327,6 +327,7 @@ export interface SessionCharacterizationHarness {
   readonly provider: {
     session(id: string): FakeDroidSession;
     deferNextStream(id: string): StreamGate;
+    deferNextCompaction(id: string): StreamGate;
     waitForPrompts(id: string, count: number): Promise<void>;
     emitNotification(id: string, note: Record<string, unknown>): void;
   };
@@ -423,6 +424,7 @@ export function createSessionCharacterizationHarness(
     provider: {
       session: providerSession,
       deferNextStream: (id) => providerSession(id).deferNextStream(),
+      deferNextCompaction: (id) => providerSession(id).deferNextCompaction(),
       waitForPrompts: (id, count) => providerSession(id).waitForPrompts(count),
       emitNotification: (id, note) => {
         providerSession(id).emitNotification(note);
