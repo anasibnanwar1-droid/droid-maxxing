@@ -6,6 +6,7 @@ import test from 'node:test';
 import { DecompSessionType } from '@factory/droid-sdk';
 
 import type { MissionSummary } from './protocol.js';
+import { writeProviderSessionStart } from './testing/historyCharacterizationSupport.js';
 import {
   FakeDroidSession,
   createSessionCharacterizationHarness,
@@ -394,7 +395,13 @@ test(
     const h = createSessionCharacterizationHarness();
     const seeded: MissionSummary = {
       ...summary('app-history', 'provider-old'),
-      compactedFromSessionIds: ['provider-older'],
+      compactedFromSessionIds: [
+        'provider-older',
+        'provider-oldest',
+        'app-history',
+        '',
+        'provider-older',
+      ],
       title: 'Persisted title',
       goal: 'transient goal',
       workspaceKind: 'folder',
@@ -431,7 +438,13 @@ test(
       assert.deepEqual(patch, {
         id: 'app-history',
         sessionId: 'provider-current',
-        compactedFromSessionIds: ['provider-older'],
+        compactedFromSessionIds: [
+          'provider-older',
+          'provider-oldest',
+          'app-history',
+          '',
+          'provider-older',
+        ],
         kind: 'chat',
         title: 'Persisted title',
         cwd: '',
@@ -456,6 +469,10 @@ test(
       });
       assert.equal(patches.get('provider-current'), patch);
       assert.equal(patches.has('provider-old'), false);
+      assert.deepEqual(
+        h.history.hiddenDroidSessionIds(),
+        new Set(['provider-older', 'provider-oldest']),
+      );
     } finally {
       await h.dispose();
     }
@@ -484,13 +501,4 @@ function summary(id: string, sessionId: string) {
     createdAt: now,
     updatedAt: now,
   };
-}
-
-function writeProviderSessionStart(home: string, sessionId: string, sessionTitle: string): void {
-  const file = path.join(home, '.factory', 'sessions', `${sessionId}.jsonl`);
-  mkdirSync(path.dirname(file), { recursive: true });
-  writeFileSync(
-    file,
-    `${JSON.stringify({ type: 'session_start', sessionId, sessionTitle, cwd: '' })}\n`,
-  );
 }

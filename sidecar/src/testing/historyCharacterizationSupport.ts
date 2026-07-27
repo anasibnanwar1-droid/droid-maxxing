@@ -1,3 +1,6 @@
+import { mkdirSync, writeFileSync } from 'node:fs';
+import path from 'node:path';
+
 import type * as Protocol from '../protocol.js';
 import type { RecordedCall } from './sessionCharacterizationHarness.js';
 
@@ -61,7 +64,13 @@ export class FakeHistoryIndex {
   }
 
   hiddenDroidSessionIds(): Set<string> {
-    return new Set();
+    const hidden = new Set<string>();
+    for (const patch of this.summariesByAppId.values()) {
+      for (const droidSessionId of patch.compactedFromSessionIds ?? []) {
+        if (droidSessionId && droidSessionId !== patch.id) hidden.add(droidSessionId);
+      }
+    }
+    return hidden;
   }
 
   recordSubagentLink(
@@ -90,6 +99,19 @@ export class FakeHistoryIndex {
   close(): void {
     this.calls.push({ target: 'cleanup', method: 'history.close', args: [] });
   }
+}
+
+export function writeProviderSessionStart(
+  home: string,
+  sessionId: string,
+  sessionTitle: string,
+): void {
+  const file = path.join(home, '.factory', 'sessions', `${sessionId}.jsonl`);
+  mkdirSync(path.dirname(file), { recursive: true });
+  writeFileSync(
+    file,
+    `${JSON.stringify({ type: 'session_start', sessionId, sessionTitle, cwd: '' })}\n`,
+  );
 }
 
 function materializePersistedSummaryPatch(summary: Protocol.MissionSummary): PersistedSummaryPatch {

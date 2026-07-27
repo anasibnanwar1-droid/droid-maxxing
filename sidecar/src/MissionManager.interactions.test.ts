@@ -1,6 +1,4 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, writeFileSync } from 'node:fs';
-import path from 'node:path';
 import test from 'node:test';
 
 import {
@@ -10,8 +8,9 @@ import {
   type RequestPermissionRequestParams,
 } from '@factory/droid-sdk';
 
-import { createSessionCharacterizationHarness } from './testing/sessionCharacterizationHarness.js';
 import type { MissionSummary, ServerEvent } from './protocol.js';
+import { writeProviderSessionStart } from './testing/historyCharacterizationSupport.js';
+import { createSessionCharacterizationHarness } from './testing/sessionCharacterizationHarness.js';
 
 type MissionPermissionEvent = Extract<ServerEvent, { type: 'mission.permission' }>;
 type ApprovalRequestedEvent = Extract<ServerEvent, { type: 'approval.requested' }>;
@@ -109,15 +108,6 @@ function historicalSummary(id: string, sessionId: string): MissionSummary {
     createdAt: now,
     updatedAt: now,
   };
-}
-
-function writeProviderSessionStart(home: string, sessionId: string, sessionTitle: string): void {
-  const file = path.join(home, '.factory', 'sessions', `${sessionId}.jsonl`);
-  mkdirSync(path.dirname(file), { recursive: true });
-  writeFileSync(
-    file,
-    `${JSON.stringify({ type: 'session_start', sessionId, sessionTitle, cwd: '' })}\n`,
-  );
 }
 
 function permissionRequest(events: ServerEvent[]): MissionPermissionEvent {
