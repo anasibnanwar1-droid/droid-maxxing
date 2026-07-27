@@ -137,7 +137,7 @@ export default function PromptInput({
     activeSession?.sessionPurpose !== 'mission-control'
       ? activeSession?.interactionMode === 'spec' || (!activeSession && state.specMode)
       : false;
-  const targetAgentSessionId =
+  const targetProviderSessionId =
     activeSession?.sessionPurpose !== 'mission-control' &&
     state.selectedProviderSessionId &&
     state.selectedProviderSessionId !== 'primary'
@@ -145,10 +145,11 @@ export default function PromptInput({
       : null;
 
   const cwd = activeSession?.cwd ?? state.draftChat?.cwd ?? null;
-  const skillsSessionId = activeSession?.providerSessionId ?? null;
-  const pendingSkillsRequest = useRef<{ sessionId: string | null; requestedAt: number } | null>(
-    null,
-  );
+  const skillsProviderSessionId = activeSession?.providerSessionId ?? null;
+  const pendingSkillsRequest = useRef<{
+    providerSessionId: string | null;
+    requestedAt: number;
+  } | null>(null);
 
   // Toggle spec mode. When a live chat session exists, switch its interaction
   // mode for real (not just the compose flag used for brand-new chats).
@@ -176,7 +177,7 @@ export default function PromptInput({
     {
       cmd: '/mission',
       desc: 'Enter Mission Control',
-      run: () => dispatch({ type: 'TOGGLE_MISSION_MODE' }),
+      run: () => dispatch({ type: 'TOGGLE_MISSION_CONTROL' }),
     },
     { cmd: '/model', desc: 'Open model selector', run: () => setModelsOpen(true) },
     {
@@ -218,10 +219,10 @@ export default function PromptInput({
 
   const invocableSkills = useMemo(
     () =>
-      state.skillsSessionId === skillsSessionId
+      state.skillsProviderSessionId === skillsProviderSessionId
         ? state.skills.filter((s) => s.userInvocable !== false && s.enabled !== false)
         : [],
-    [skillsSessionId, state.skills, state.skillsSessionId],
+    [skillsProviderSessionId, state.skills, state.skillsProviderSessionId],
   );
 
   useEffect(() => {
@@ -229,19 +230,23 @@ export default function PromptInput({
       pendingSkillsRequest.current = null;
       return;
     }
-    if (state.skillsSessionId === skillsSessionId) {
+    if (state.skillsProviderSessionId === skillsProviderSessionId) {
       pendingSkillsRequest.current = null;
       return;
     }
     const pending = pendingSkillsRequest.current;
     const now = Date.now();
-    if (pending?.sessionId === skillsSessionId && now - pending.requestedAt < 2_000) return;
-    pendingSkillsRequest.current = { sessionId: skillsSessionId, requestedAt: now };
+    if (pending?.providerSessionId === skillsProviderSessionId && now - pending.requestedAt < 2_000)
+      return;
+    pendingSkillsRequest.current = {
+      providerSessionId: skillsProviderSessionId,
+      requestedAt: now,
+    };
     listSkills(activeSession?.providerSessionId);
   }, [
     activeSession?.providerSessionId,
-    skillsSessionId,
-    state.skillsSessionId,
+    skillsProviderSessionId,
+    state.skillsProviderSessionId,
     trigger?.kind,
     trigger?.query,
     trigger?.start,
@@ -411,7 +416,7 @@ export default function PromptInput({
     setHistoryIndex(null);
 
     if (text === '/mission' && activeSkills.length === 0 && attachedFiles.length === 0) {
-      dispatch({ type: 'TOGGLE_MISSION_MODE' });
+      dispatch({ type: 'TOGGLE_MISSION_CONTROL' });
       setInput('');
       return;
     }
@@ -502,7 +507,7 @@ export default function PromptInput({
 
     // Model is working and the user chose to queue: stage the prompt locally.
     // It is held client-side and delivered automatically when the turn finishes.
-    if (isLive && mode === 'queue' && !targetAgentSessionId) {
+    if (isLive && mode === 'queue' && !targetProviderSessionId) {
       dispatch({
         type: 'QUEUE_PROMPT',
         appSessionId: activeSession.appSessionId,
@@ -518,8 +523,8 @@ export default function PromptInput({
       event: {
         id: `local-${Date.now()}`,
         appSessionId: activeSession.appSessionId,
-        sourceSessionId: targetAgentSessionId ?? 'user',
-        role: targetAgentSessionId ? 'worker' : 'primary',
+        sourceSessionId: targetProviderSessionId ?? 'user',
+        role: targetProviderSessionId ? 'worker' : 'primary',
         ts: Date.now(),
         kind: 'text',
         text,
@@ -540,10 +545,10 @@ export default function PromptInput({
     if (activeSession.cwd) await markGitTurnStart(activeSession.cwd, activeSession.appSessionId);
 
     try {
-      if (targetAgentSessionId) {
+      if (targetProviderSessionId) {
         if (mode === 'now')
-          sendToChildNow(activeSession.appSessionId, targetAgentSessionId, composed);
-        else sendToChild(activeSession.appSessionId, targetAgentSessionId, composed);
+          sendToChildNow(activeSession.appSessionId, targetProviderSessionId, composed);
+        else sendToChild(activeSession.appSessionId, targetProviderSessionId, composed);
       } else if (mode === 'now') sendToSessionNow(activeSession.appSessionId, composed);
       else sendToSession(activeSession.appSessionId, composed);
     } catch (err) {
@@ -1010,7 +1015,7 @@ export default function PromptInput({
             placeholder={
               missionPreview
                 ? activeSession
-                  ? targetAgentSessionId
+                  ? targetProviderSessionId
                     ? 'Steer the selected child session…'
                     : 'Direct the orchestrator…'
                   : 'Describe the mission objective…'
@@ -1098,8 +1103,8 @@ export default function PromptInput({
               <button
                 onClick={() =>
                   activeSession &&
-                  (targetAgentSessionId
-                    ? interruptChild(activeSession.appSessionId, targetAgentSessionId)
+                  (targetProviderSessionId
+                    ? interruptChild(activeSession.appSessionId, targetProviderSessionId)
                     : interruptSession(activeSession.appSessionId))
                 }
                 title="Working — click to stop"

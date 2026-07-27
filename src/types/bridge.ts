@@ -520,9 +520,9 @@ export type ClientCommand =
   | { type: 'cli.install'; channel: InstallChannel }
   | { type: 'cli.update'; channel?: InstallChannel }
   | { type: 'catalog.models' }
-  | { type: 'catalog.tools'; sessionId?: string }
-  | { type: 'catalog.skills'; sessionId?: string }
-  | { type: 'catalog.mcp'; sessionId?: string }
+  | { type: 'catalog.tools'; providerSessionId?: string }
+  | { type: 'catalog.skills'; providerSessionId?: string }
+  | { type: 'catalog.mcp'; providerSessionId?: string }
   | { type: 'settings.defaults' }
   | {
       type: 'session.create';
@@ -689,7 +689,7 @@ export type ServerEvent =
     }
   | {
       type: 'mcp.authRequested';
-      sessionId: string;
+      providerSessionId: string;
       serverName?: string;
       authUrl?: string;
       message?: string;
@@ -698,7 +698,7 @@ export type ServerEvent =
       type: 'catalog.updated';
       catalog: 'models' | 'tools' | 'skills' | 'mcp';
       items: unknown[];
-      sessionId?: string | null;
+      providerSessionId?: string | null;
     }
   | { type: 'settings.defaults'; defaults: FactoryDefaultSettings }
   | {

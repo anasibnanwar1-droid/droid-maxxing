@@ -219,7 +219,7 @@ export interface AppState {
 
   // Skills catalog (for / invocation)
   skills: SkillInfo[];
-  skillsSessionId?: string | null;
+  skillsProviderSessionId?: string | null;
 
   // Attachments for the first message of a not-yet-created session, keyed by clientRef.
   pendingCompose: Record<string, { text: string; skills: string[]; files: string[] }>;
@@ -343,7 +343,7 @@ type Action =
       interactionMode: SessionSummary['interactionMode'];
     }
   | { type: 'TOGGLE_SETTINGS' }
-  | { type: 'TOGGLE_MISSION_MODE' }
+  | { type: 'TOGGLE_MISSION_CONTROL' }
   | { type: 'START_CHAT'; cwd: string; branch?: string }
   | { type: 'ADD_WORKSPACE'; cwd: string }
   | { type: 'TOGGLE_BROWSER' }
@@ -367,7 +367,7 @@ type Action =
 
   // Models / per-agent config
   | { type: 'MODELS_LIST'; models: ModelInfo[] }
-  | { type: 'SKILLS_LIST'; skills: SkillInfo[]; sessionId: string | null }
+  | { type: 'SKILLS_LIST'; skills: SkillInfo[]; providerSessionId: string | null }
   | { type: 'FACTORY_DEFAULTS'; defaults: FactoryDefaultSettings }
   | { type: 'SET_AGENT_MODEL'; agent: AgentKind; modelId?: string }
   | { type: 'SET_AGENT_REASONING'; agent: AgentKind; reasoning: ReasoningEffort }
@@ -801,7 +801,7 @@ export const initialState: AppState = {
   diffView: loadDiffView(),
   sessionSettingOverrides: {},
   skills: [],
-  skillsSessionId: undefined,
+  skillsProviderSessionId: undefined,
   agentConfig: loadAgentConfig(),
   pendingCompose: {},
 };
@@ -1133,7 +1133,7 @@ function baseReducer(state: AppState, action: Action): AppState {
       const prev = state.transcripts[mid] ?? [];
       if (prev.some((event) => event.id === ev.id)) return state;
 
-      // Delta merging: if last event has same kind + agentSessionId, append text
+      // Delta merging: if the last event has the same kind + sourceSessionId, append text
       // Only merge backend streaming deltas (author is absent); do NOT merge explicit user echoes
       const last = prev[prev.length - 1];
       if (
@@ -1419,10 +1419,10 @@ function baseReducer(state: AppState, action: Action): AppState {
       //     live ids are transient (nextId) and live ts is receipt-time, so a
       //     reconnect-race event and its persisted twin share neither id nor ts
       //     and would otherwise both render. They are matched by a content
-      //     signature (agentSessionId + toolUseId for tools, else
-      //     agentSessionId + author/role + kind + text) consumed once per page
+      //     signature (sourceSessionId + toolUseId for tools, else
+      //     sourceSessionId + author/role + kind + text) consumed once per page
       //     occurrence so a genuinely repeated message is kept. Scoping by
-      //     agentSessionId stops one worker's output from masking another's.
+      //     sourceSessionId stops one child session's output masking another's.
       //   - Remaining live-only events keep their place by timestamp relative to
       //     the page: an un-persisted opening prompt stays above it, a just-sent
       //     prompt (reconnect race) stays below it.
@@ -1799,7 +1799,7 @@ function baseReducer(state: AppState, action: Action): AppState {
     case 'TOGGLE_SETTINGS':
       return { ...state, settingsOpen: !state.settingsOpen };
 
-    case 'TOGGLE_MISSION_MODE':
+    case 'TOGGLE_MISSION_CONTROL':
       return { ...state, missionMode: !state.missionMode };
 
     case 'START_CHAT': {
@@ -1973,7 +1973,7 @@ function baseReducer(state: AppState, action: Action): AppState {
       };
 
     case 'SKILLS_LIST':
-      return { ...state, skills: action.skills, skillsSessionId: action.sessionId };
+      return { ...state, skills: action.skills, skillsProviderSessionId: action.providerSessionId };
 
     case 'FACTORY_DEFAULTS': {
       const next = sanitizeAgentConfig(
@@ -2274,7 +2274,11 @@ function adaptEvent(ev: ServerEvent): Action | null {
         const skills = (ev.items as SkillInfo[]).filter(
           (s) => s && typeof s.name === 'string' && s.name.length > 0,
         );
-        return { type: 'SKILLS_LIST', skills, sessionId: ev.sessionId ?? null };
+        return {
+          type: 'SKILLS_LIST',
+          skills,
+          providerSessionId: ev.providerSessionId ?? null,
+        };
       }
       return null;
     case 'settings.defaults':

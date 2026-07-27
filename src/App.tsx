@@ -85,7 +85,7 @@ export default function App() {
   const repoStatus = useRepoStatus(activeSession?.cwd ?? '');
   // Mission Control is active only for a session explicitly created for it,
   // not merely because the compose preview is open.
-  const isMissionView = activeSession?.sessionPurpose === 'mission-control';
+  const isMissionControlView = activeSession?.sessionPurpose === 'mission-control';
   const utilityPanel = utilityPanelForSession(state.utilityPanels, activeSession?.appSessionId);
   const activeUtilityTab =
     utilityPanel.tabs.find((tab) => tab.id === utilityPanel.activeTabId) ?? null;
@@ -95,14 +95,14 @@ export default function App() {
     activeUtilityTab?.tool === 'browser' &&
     expandedBrowserAppSessionId === activeSession?.appSessionId,
   );
-  const focused = isMissionView;
+  const focused = isMissionControlView;
   // A normal/spec session only has something worth showing once a message has
   // been sent (the first transcript is seeded from the opening prompt).
   const hasSessionContent =
     !!activeSession && (state.transcripts[activeSession.appSessionId]?.length ?? 0) > 0;
   // The context toggle is meaningful in Mission Control (always) and in a normal
   // chat only after it has content; otherwise there is nothing to open.
-  const canToggleContext = isMissionView || hasSessionContent;
+  const canToggleContext = isMissionControlView || hasSessionContent;
   // The context panel floats *over* the chat as an overlay (it does not shrink
   // the main scroll area), so the page scrollbar stays pinned to the window's
   // right edge instead of sliding inward and looking like a divider.
@@ -389,7 +389,7 @@ export default function App() {
                 browserExpanded ? 'pointer-events-none' : ''
               }`}
             >
-              {isMissionView ? (
+              {isMissionControlView ? (
                 <motion.div
                   key="mission-control"
                   className="flex-1 min-h-0 min-w-0 flex flex-col overflow-hidden"

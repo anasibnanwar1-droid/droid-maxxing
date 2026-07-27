@@ -55,8 +55,8 @@ export const startCliLogin = () => bridge.send({ type: 'auth.startCliLogin' });
 export const requestRuntimeStatus = () => bridge.send({ type: 'runtime.status' });
 
 export const listModels = () => bridge.send({ type: 'catalog.models' });
-export const listSkills = (sessionId?: string) =>
-  bridge.send({ type: 'catalog.skills', sessionId });
+export const listSkills = (providerSessionId?: string) =>
+  bridge.send({ type: 'catalog.skills', providerSessionId });
 export const listFactoryDefaults = () => bridge.send({ type: 'settings.defaults' });
 
 export const sendToSession = (appSessionId: string, text: string) =>

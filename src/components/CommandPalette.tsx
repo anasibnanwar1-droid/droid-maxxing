@@ -60,7 +60,7 @@ export default function CommandPalette() {
         dispatch({ type: 'TOGGLE_SETTINGS' });
         break;
       case 'mission':
-        dispatch({ type: 'TOGGLE_MISSION_MODE' });
+        dispatch({ type: 'TOGGLE_MISSION_CONTROL' });
         break;
       // other actions can be wired here
     }

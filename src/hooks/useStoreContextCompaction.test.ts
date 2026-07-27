@@ -33,7 +33,7 @@ const snapshot = (used: number): ContextStatsSnapshot => ({
   updatedAt: '2026-07-11T07:49:46.824Z',
 });
 
-test('MISSION_UPDATED invalidates stale context stats when compaction generation advances', () => {
+test('SESSION_UPDATED invalidates stale context stats when compaction generation advances', () => {
   const start: AppState = {
     ...initialState,
     sessions: {

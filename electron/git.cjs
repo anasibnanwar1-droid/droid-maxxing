@@ -1205,7 +1205,7 @@ async function scopeRange(root, scope, sessionId) {
   }
   if (scope === 'last_turn') {
     // Try the session-scoped baseline first, then fall back to the repo-level
-    // key (used by the first turn of a brand-new mission before it has an ID).
+    // key (used by the first turn of a brand-new session before it has an ID).
     const entry =
       turnBaselines.get(turnBaselineKey(root, sessionId)) ??
       turnBaselines.get(turnBaselineKey(root, undefined));

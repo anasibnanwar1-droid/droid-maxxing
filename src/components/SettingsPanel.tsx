@@ -851,7 +851,10 @@ function GeneralSection() {
 
   return (
     <div className="max-w-2xl mx-auto">
-      <SectionTitle title="General" sub="Defaults that apply across all chats and missions." />
+      <SectionTitle
+        title="General"
+        sub="Defaults that apply across chats and Mission Control sessions."
+      />
 
       <GroupLabel>Composer</GroupLabel>
       <div className="rounded-xl border border-droid-border bg-droid-surface divide-y divide-droid-border mb-8">

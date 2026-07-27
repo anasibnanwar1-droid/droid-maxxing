@@ -912,7 +912,7 @@ export default function MissionControl() {
   const progress = mission ? (state.progress[mission.appSessionId] ?? []) : [];
   const childSessions = mission ? (state.workers[mission.appSessionId] ?? []) : [];
 
-  // Live workers come from session.child events; historical missions seed
+  // Live workers come from session.child events; Mission Control history seeds
   // state.workers from the persisted exact mapping, and only fall back to
   // transcript reconstruction for older history that predates persisted links.
   const resolvedWorkers = useMemo<WorkerInfo[]>(

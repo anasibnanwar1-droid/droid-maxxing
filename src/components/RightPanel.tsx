@@ -154,7 +154,7 @@ export default function RightPanel() {
   const [progressManual, setProgressManual] = useState<boolean | null>(null);
   const progressOpen = progressManual ?? working;
 
-  // Sub-agents spawned in this session (same source the sidebar uses).
+  // Child sessions spawned here (the same source the sidebar uses).
   const workers = activeSession ? (state.workers[activeSession.appSessionId] ?? []) : [];
   const agentsRunning = workers.some((w) => w.status === 'running');
   const [agentsOpen, setAgentsOpen] = useState(true);

@@ -304,7 +304,7 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
   const live = useSessionLive(activeSession?.appSessionId ?? null);
   const draftFolder = state.draftChat?.cwd.split('/').filter(Boolean).pop();
 
-  // Between pressing send on a fresh chat and MISSION_CREATED arriving (the
+  // Between pressing send on a fresh chat and SESSION_CREATED arriving (the
   // sidecar spawns the session, ~1-2s), there is no active session yet. Show the
   // user's message immediately with a starting cue instead of a blank screen;
   // the real feed (which seeds the same message) takes over once it exists.
