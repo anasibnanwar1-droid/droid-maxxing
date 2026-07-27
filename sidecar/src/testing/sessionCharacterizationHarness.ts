@@ -26,11 +26,22 @@ export interface RecordedCall {
   args: unknown[];
 }
 
+export interface StreamGate {
+  resolve(): void;
+}
+
+interface DeferredStream extends StreamGate {
+  readonly promise: Promise<void>;
+}
+
 export class FakeDroidSession {
   readonly prompts: string[] = [];
   readonly settings: Record<string, unknown>[] = [];
+  nextEnterSpecModeError?: Error;
   nextUpdateSettingsError?: Error;
   readonly notifications = new Set<(note: Record<string, unknown>) => void>();
+  private readonly streamGates: DeferredStream[] = [];
+  private readonly promptWaiters: { count: number; resolve(): void }[] = [];
   readonly initResult: {
     sessionId: string;
     modelId: string;
@@ -56,8 +67,36 @@ export class FakeDroidSession {
     void _options;
     this.prompts.push(prompt);
     this.calls.push({ target: 'provider', method: 'stream', args: [this.sessionId, prompt] });
-    await Promise.resolve();
+    this.resolvePromptWaiters();
+    await this.streamGates.shift()?.promise;
     yield { type: 'result' };
+  }
+
+  deferNextStream(): StreamGate {
+    let release: (() => void) | undefined;
+    const promise = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const gate: DeferredStream = { promise, resolve: () => release?.() };
+    this.streamGates.push(gate);
+    return gate;
+  }
+
+  waitForPrompts(count: number): Promise<void> {
+    if (this.prompts.length >= count) return Promise.resolve();
+    return new Promise((resolve) => this.promptWaiters.push({ count, resolve }));
+  }
+
+  interrupt(): Promise<void> {
+    this.calls.push({ target: 'provider', method: 'interrupt', args: [this.sessionId] });
+    return Promise.resolve();
+  }
+
+  enterSpecMode(): Promise<void> {
+    this.calls.push({ target: 'provider', method: 'enterSpecMode', args: [this.sessionId] });
+    const error = this.nextEnterSpecModeError;
+    delete this.nextEnterSpecModeError;
+    return error ? Promise.reject(error) : Promise.resolve();
   }
 
   updateSettings(settings: Record<string, unknown>): Promise<Record<string, never>> {
@@ -105,11 +144,24 @@ export class FakeDroidSession {
     this.calls.push({ target: 'cleanup', method: 'session.close', args: [this.sessionId] });
     return Promise.resolve();
   }
+
+  private resolvePromptWaiters(): void {
+    for (let index = this.promptWaiters.length - 1; index >= 0; index -= 1) {
+      const waiter = this.promptWaiters.at(index);
+      if (!waiter) continue;
+      if (this.prompts.length >= waiter.count) {
+        this.promptWaiters.splice(index, 1);
+        waiter.resolve();
+      }
+    }
+  }
 }
 
 export class FakeRuntime {
   readonly createCalls: CreateRuntimeSessionOptions[] = [];
   readonly createQueue: (FakeDroidSession | Error)[] = [];
+  readonly loadCalls: { sessionId: string; handlers: RuntimeHandlers }[] = [];
+  readonly loadQueue = new Map<string, (FakeDroidSession | Error)[]>();
   readonly sessions = new Map<string, FakeDroidSession>();
   private apiKey = '';
 
@@ -138,24 +190,55 @@ export class FakeRuntime {
     this.sessions.set(next.sessionId, next);
     return Promise.resolve(next);
   }
+
+  deferNextCreateStream(sessionId: string): StreamGate {
+    const session = new FakeDroidSession(sessionId, {}, this.calls);
+    const gate = session.deferNextStream();
+    this.createQueue.push(session);
+    return gate;
+  }
+
+  loadSession(sessionId: string, handlers: RuntimeHandlers): Promise<FakeDroidSession> {
+    this.loadCalls.push({ sessionId, handlers });
+    this.calls.push({ target: 'runtime', method: 'loadSession', args: [sessionId, handlers] });
+    const next =
+      this.loadQueue.get(sessionId)?.shift() ??
+      new FakeDroidSession(sessionId, handlers, this.calls);
+    if (next instanceof Error) return Promise.reject(next);
+    this.sessions.set(next.sessionId, next);
+    return Promise.resolve(next);
+  }
 }
 
 export class FakeHistoryIndex {
   readonly summaries: MissionSummary[] = [];
 
-  constructor(private readonly calls: RecordedCall[]) {}
+  constructor(
+    private readonly calls: RecordedCall[],
+    private readonly home: string,
+  ) {}
 
   syncSummaries(summaries: MissionSummary[]): void {
     this.summaries.push(...summaries);
+    for (const summary of summaries) this.writeSessionStart(summary);
     this.calls.push({ target: 'history', method: 'syncSummaries', args: [summaries] });
   }
 
   summaryPatches(): Map<string, Partial<MissionSummary>> {
-    return new Map(this.summaries.map((summary) => [summary.id, summary]));
+    return new Map(
+      this.summaries.flatMap((summary) => [
+        [summary.id, summary],
+        [summary.sessionId ?? summary.id, summary],
+      ]),
+    );
   }
 
   hiddenDroidSessionIds(): Set<string> {
     return new Set();
+  }
+
+  subagentLinks(): [] {
+    return [];
   }
 
   recordEvent(event: unknown): void {
@@ -164,6 +247,21 @@ export class FakeHistoryIndex {
 
   close(): void {
     this.calls.push({ target: 'cleanup', method: 'history.close', args: [] });
+  }
+
+  private writeSessionStart(summary: MissionSummary): void {
+    const sessionId = summary.sessionId ?? summary.id;
+    const sessions = path.join(this.home, '.factory', 'sessions');
+    mkdirSync(sessions, { recursive: true });
+    writeFileSync(
+      path.join(sessions, `${sessionId}.jsonl`),
+      `${JSON.stringify({
+        type: 'session_start',
+        sessionId,
+        sessionTitle: summary.title,
+        cwd: summary.cwd,
+      })}\n`,
+    );
   }
 }
 
@@ -222,6 +320,8 @@ export interface SessionCharacterizationHarness {
   readonly runtime: FakeRuntime;
   readonly provider: {
     session(id: string): FakeDroidSession;
+    deferNextStream(id: string): StreamGate;
+    waitForPrompts(id: string, count: number): Promise<void>;
     emitNotification(id: string, note: Record<string, unknown>): void;
   };
   readonly history: FakeHistoryIndex;
@@ -230,6 +330,7 @@ export interface SessionCharacterizationHarness {
   readonly mcpServerCloseCalls: number;
   handle(command: ClientCommand): Promise<void>;
   create(command: Omit<Extract<ClientCommand, { type: 'mission.create' }>, 'type'>): Promise<void>;
+  waitForIdle(): Promise<void>;
   dispose(): Promise<void>;
 }
 
@@ -261,7 +362,7 @@ export function createSessionCharacterizationHarness(
 
   const readyManager = manager;
   const runtime = new FakeRuntime(calls);
-  const history = new FakeHistoryIndex(calls);
+  const history = new FakeHistoryIndex(calls, home);
   const browsers = new FakeBrowserSessionManager(calls);
   const privateManager = readyManager as unknown as {
     runtime: unknown;
@@ -308,6 +409,16 @@ export function createSessionCharacterizationHarness(
         if (!session) throw new Error(`Unknown fake provider session ${id}`);
         return session;
       },
+      deferNextStream: (id) => {
+        const session = runtime.sessions.get(id);
+        if (!session) throw new Error(`Unknown fake provider session ${id}`);
+        return session.deferNextStream();
+      },
+      waitForPrompts: (id, count) => {
+        const session = runtime.sessions.get(id);
+        if (!session) throw new Error(`Unknown fake provider session ${id}`);
+        return session.waitForPrompts(count);
+      },
       emitNotification: (id, note) => {
         const session = runtime.sessions.get(id);
         if (!session) throw new Error(`Unknown fake provider session ${id}`);
@@ -322,6 +433,7 @@ export function createSessionCharacterizationHarness(
     },
     handle,
     create: (command) => handle({ type: 'mission.create', ...command }),
+    waitForIdle: () => new Promise((resolve) => setImmediate(resolve)),
     dispose: async () => {
       if (disposed) return;
       disposed = true;
