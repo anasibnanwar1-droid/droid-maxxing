@@ -28,7 +28,8 @@ Canonical engine:
 
 - Google Chrome for macOS at `/Applications/Google Chrome.app/Contents/MacOS/Google Chrome`.
 - CDP over a random local port bound to `127.0.0.1`.
-- Dedicated profile directory under `~/Library/Application Support/Droid Control/browser-profiles/<sessionId>`.
+- Dedicated profile directory under
+  `~/Library/Application Support/Droid Control/browser-profiles/<browserSessionId>`.
 - Default presentation mode is `fit`: the app chooses a clean preview size from the available canvas area while preserving the active browser viewport ratio.
 - The browser viewport is explicit state, independent from how large the screenshot is rendered on screen.
 - Headless Chrome for the first build so the browser is truly in-app through the Droid canvas.
@@ -323,7 +324,8 @@ Runtime modules must split responsibility:
 - Navigate with `Page.navigate` and wait for load or a bounded timeout.
 - Set viewport with `Emulation.setDeviceMetricsOverride`.
 - Capture screenshots with `Page.getLayoutMetrics` and `Page.captureScreenshot`.
-- Save screenshots under `~/Library/Application Support/Droid Control/browser-screenshots/<sessionId>/`.
+- Save screenshots under
+  `~/Library/Application Support/Droid Control/browser-screenshots/<browserSessionId>/`.
 - Click with `Input.dispatchMouseEvent`.
 - Type with `Input.insertText`.
 - Send keys with `Input.dispatchKeyEvent`.

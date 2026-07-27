@@ -67,6 +67,8 @@ duplicates collapse to the following canonical names:
 | `mission.respondQuestion` | `question.respond` |
 | `mission.subscribeWorker` / `agent.open` | `child.open` |
 | `agent.send` / `agent.sendNow` / `agent.interrupt` | `child.send` / `child.sendNow` / `child.interrupt` |
+| `agent.updated` | `child.updated` |
+| `agent.not_steerable` | `child.not_steerable` |
 | generic `subagent` helpers and state | child-session helpers and state |
 | `mission.created` | `session.created` |
 | duplicate `mission.updated` | the single `session.updated` event |
@@ -77,9 +79,12 @@ duplicates collapse to the following canonical names:
 | `mission.error` | existing `error` |
 | `mission.history` / `mission.history.error` | `session.history` / `session.history.error` |
 | generic `mission.worker` | `session.child` |
-| `sessions.history` payload `missions` | `sessions.history` payload `sessions` |
+| `sessions.history` with payload `missions` | `history.list` with payload `sessions` |
+| `models.list` command / event | `catalog.models` command / `catalog.updated` event |
 | generic command/event `missionId` | `appSessionId` |
+| generic `session.*` payload `sessionId` | `appSessionId` |
 | raw history/backend `sessionId` | `providerSessionId` |
+| catalog/history payload `sessionId` | `providerSessionId` |
 | child backend `agentSessionId` / `workerSessionId` | `providerSessionId` / `workerProviderSessionId` |
 
 `mission.features` and `mission.progress` remain Mission Control events and use
@@ -90,6 +95,8 @@ duplicates collapse to the following canonical names:
 | Old | New |
 | --- | --- |
 | `missions` / `missionOrder` | `sessions` / `sessionOrder` |
+| generic `WorkerSummary` / `WorkerInfo` | `ChildSessionSummary` / `ChildSessionInfo` |
+| generic `workers` state / history payload | `childSessions` |
 | `activeMissionId` | `activeAppSessionId` |
 | generic `activeMission` | `activeSession` |
 | `missionLastSeen` | `sessionLastSeen` |
@@ -129,10 +136,13 @@ Mission Control mission.
 | `loadMissionTranscriptWindow` | `loadSessionTranscriptWindow` |
 | browser routing `missionId` | `appSessionId` |
 | `browserKeyForMission` | `browserKeyForSession` |
+| native-browser `sessionId` | `browserSessionId` |
+| git/review stable `sessionId` | `appSessionId` |
 | terminal ownership `missionId` | `appSessionId` |
 | `MAX_TERMINALS_PER_MISSION` / `maxPerMission` | `MAX_TERMINALS_PER_SESSION` / `maxPerSession` |
 | persisted generic mission columns and keys | `app_session_*` / `provider_session_*` names |
 | `subagent_links` | `child_session_links` |
+| `DROID_CONTROL_MAX_OPEN_AGENTS` | `DROID_CONTROL_MAX_OPEN_CHILD_SESSIONS` |
 
 There is no schema migration or fallback. Existing local development state is
 outside the current-state contract and may be cleared explicitly.
