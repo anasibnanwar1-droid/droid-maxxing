@@ -130,7 +130,10 @@ export class NativeBrowserRuntime implements BrowserRuntime {
   }
 
   private async action(
-    input: Omit<BrowserNativeRequest, 'requestId' | 'appSessionId' | 'browserSessionId' | 'viewport'>,
+    input: Omit<
+      BrowserNativeRequest,
+      'requestId' | 'appSessionId' | 'browserSessionId' | 'viewport'
+    >,
   ): Promise<BrowserSnapshot> {
     const result = await this.send(input);
     return this.snapshotFrom(result);

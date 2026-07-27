@@ -406,7 +406,11 @@ test('designPrompt requires a selected or sketched reference', async () => {
 
   await assert.rejects(
     () =>
-      manager.designPrompt({ appSessionId: 'm1', instruction: 'Make this clearer', referenceIds: [] }),
+      manager.designPrompt({
+        appSessionId: 'm1',
+        instruction: 'Make this clearer',
+        referenceIds: [],
+      }),
     /Select or sketch at least one browser reference/,
   );
 });
