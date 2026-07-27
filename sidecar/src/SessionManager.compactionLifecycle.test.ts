@@ -22,7 +22,11 @@ function sessionUpdates(events: ServerEvent[]): SessionUpdatedEvent[] {
   return events.filter((event): event is SessionUpdatedEvent => event.type === 'session.updated');
 }
 
-function syncsSummary(calls: RecordedCall[], appSessionId: string, sessionId: string): boolean {
+function syncsSummary(
+  calls: RecordedCall[],
+  appSessionId: string,
+  providerSessionId: string,
+): boolean {
   return calls.some((call) => {
     if (call.target !== 'history' || call.method !== 'syncSummaries') return false;
     const summaries = call.args[0];
@@ -35,7 +39,7 @@ function syncsSummary(calls: RecordedCall[], appSessionId: string, sessionId: st
           'appSessionId' in summary &&
           summary.appSessionId === appSessionId &&
           'providerSessionId' in summary &&
-          summary.providerSessionId === sessionId,
+          summary.providerSessionId === providerSessionId,
       )
     );
   });

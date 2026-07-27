@@ -86,15 +86,15 @@ function questionInput(toolCallId: string): AskUserRequestParams {
   };
 }
 
-function historicalSummary(id: string, sessionId: string): SessionSummary {
+function historicalSummary(appSessionId: string, providerSessionId: string): SessionSummary {
   const now = Date.now();
   return {
-    appSessionId: id,
-    providerSessionId: sessionId,
+    appSessionId,
+    providerSessionId,
     sessionPurpose: 'chat',
     interactionMode: 'auto',
     role: 'primary',
-    title: `Historical ${id}`,
+    title: `Historical ${appSessionId}`,
     goal: '',
     cwd: '',
     workspaceKind: 'none',

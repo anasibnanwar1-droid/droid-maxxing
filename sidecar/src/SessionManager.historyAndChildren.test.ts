@@ -91,15 +91,15 @@ function assistantMessage(id: string, text: string, timestamp: number): Record<s
   };
 }
 
-function summary(id: string, sessionId: string): SessionSummary {
+function summary(appSessionId: string, providerSessionId: string): SessionSummary {
   const now = Date.now();
   return {
-    appSessionId: id,
-    providerSessionId: sessionId,
+    appSessionId,
+    providerSessionId,
     sessionPurpose: 'chat',
     interactionMode: 'auto',
     role: 'primary',
-    title: `Historical ${id}`,
+    title: `Historical ${appSessionId}`,
     goal: '',
     cwd: '',
     workspaceKind: 'none',

@@ -493,7 +493,7 @@ export class HistoryIndex {
       )
       .run(appSessionId, toolUseId, providerSessionId, sqlValue(label), now);
     // Remember every child provider session ever linked to a spawn. A rekey
-    // compaction) repoints child_session_links at the new id, dropping the old id
+    // compaction repoints child_session_links at the new id, dropping the old id
     // from the current mapping; this append-only set keeps superseded child
     // sessions hidden so they never resurface as standalone history chats.
     this.db

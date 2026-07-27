@@ -606,15 +606,15 @@ test(
   },
 );
 
-function summary(id: string, sessionId: string) {
+function summary(appSessionId: string, providerSessionId: string) {
   const now = Date.now();
   return {
-    appSessionId: id,
-    providerSessionId: sessionId,
+    appSessionId,
+    providerSessionId,
     sessionPurpose: 'chat' as const,
     interactionMode: 'auto' as const,
     role: 'primary' as const,
-    title: `Historical ${id}`,
+    title: `Historical ${appSessionId}`,
     goal: '',
     cwd: '',
     workspaceKind: 'none' as const,

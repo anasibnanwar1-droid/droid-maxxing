@@ -41,9 +41,10 @@ owned by a Mission Control mission.
 | `mission_orchestrator` kind | `sessionPurpose: mission-control`, `interactionMode: agi` |
 | `mission_worker` / `mission_validator` kind | Mission Control child role plus `sessionPurpose: mission-control` |
 
-Provider session objects and raw Factory transcript fields use
-`providerSessionId`. Presentation-only transcript routing uses
-`sourceSessionId`; it is not another application or provider identity.
+Normalized application data uses `providerSessionId`. Raw Factory boundary
+fields remain Factory-native (`sessionId`, `subagentSessionId`, and
+`workerSessionId`) until normalization. Presentation-only transcript routing
+uses `sourceSessionId`; it is not another application or provider identity.
 
 ### Commands and events
 

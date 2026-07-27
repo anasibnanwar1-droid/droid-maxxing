@@ -32,11 +32,11 @@ function writeSession(id: string, cwd: string, extra: Record<string, unknown> = 
   );
 }
 
-function summary(id: string, cwd: string): SessionSummary {
+function summary(appSessionId: string, cwd: string): SessionSummary {
   const now = Date.now();
   return {
-    appSessionId: id,
-    providerSessionId: id,
+    appSessionId,
+    providerSessionId: appSessionId,
     sessionPurpose: 'chat',
     interactionMode: 'auto',
     role: 'primary',

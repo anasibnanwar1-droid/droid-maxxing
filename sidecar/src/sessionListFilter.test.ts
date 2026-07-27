@@ -4,18 +4,18 @@ import type { SessionSummary } from './protocol.js';
 import { filterSessionListSummaries, isChildSessionSummary } from './sessionListFilter.js';
 
 const summary = (
-  id: string,
+  appSessionId: string,
   cwd: string,
   updatedAt: number,
   extra: Partial<SessionSummary> = {},
 ): SessionSummary => ({
-  appSessionId: id,
-  providerSessionId: id,
+  appSessionId,
+  providerSessionId: appSessionId,
   sessionPurpose: 'chat',
   interactionMode: 'auto',
   role: 'primary',
-  title: id,
-  goal: id,
+  title: appSessionId,
+  goal: appSessionId,
   cwd,
   workspaceKind: cwd ? 'folder' : 'none',
   autonomy: 'low',
