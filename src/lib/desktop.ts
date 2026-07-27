@@ -42,7 +42,7 @@ interface BridgeInfo {
 
 export interface TerminalSessionInfo {
   id: string;
-  missionId: string;
+  appSessionId: string;
   cwd: string;
   shell: string;
   cols: number;
@@ -162,7 +162,7 @@ interface DroidControlApi {
   relaunchApp: () => Promise<void>;
   openExternal: (url: string) => Promise<void>;
   terminalCreate: (options: {
-    missionId: string;
+    appSessionId: string;
     cwd: string;
     cols: number;
     rows: number;
@@ -170,7 +170,7 @@ interface DroidControlApi {
   terminalWrite: (id: string, data: string) => Promise<void>;
   terminalResize: (id: string, cols: number, rows: number) => Promise<void>;
   terminalKill: (id: string) => Promise<void>;
-  terminalList: (missionId: string) => Promise<TerminalSessionInfo[]>;
+  terminalList: (appSessionId: string) => Promise<TerminalSessionInfo[]>;
   terminalSubscribe: (id: string) => Promise<void>;
   terminalUnsubscribe: (id: string) => Promise<void>;
   onTerminalEvent: (handler: (event: TerminalEvent) => void) => () => void;
@@ -253,7 +253,7 @@ export async function clearApiKey(): Promise<void> {
 }
 
 export async function createTerminal(options: {
-  missionId: string;
+  appSessionId: string;
   cwd: string;
   cols: number;
   rows: number;
@@ -277,9 +277,9 @@ export async function killTerminal(id: string): Promise<void> {
   await window.droidControl!.terminalKill(id);
 }
 
-export async function listTerminals(missionId: string): Promise<TerminalSessionInfo[]> {
+export async function listTerminals(appSessionId: string): Promise<TerminalSessionInfo[]> {
   if (!isDesktop()) return [];
-  return window.droidControl!.terminalList(missionId);
+  return window.droidControl!.terminalList(appSessionId);
 }
 
 export async function subscribeTerminal(id: string): Promise<void> {

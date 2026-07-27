@@ -192,7 +192,7 @@ function registerIpc() {
   ipcMain.handle('terminal-create', (event, args) => {
     assertMainRenderer(event);
     return terminalManager.create({
-      missionId: args?.missionId,
+      appSessionId: args?.appSessionId,
       cwd: args?.cwd,
       cols: args?.cols,
       rows: args?.rows,
@@ -213,7 +213,7 @@ function registerIpc() {
   });
   ipcMain.handle('terminal-list', (event, filter) => {
     assertMainRenderer(event);
-    return terminalManager.list({ missionId: filter?.missionId });
+    return terminalManager.list({ appSessionId: filter?.appSessionId });
   });
   ipcMain.handle('terminal-subscribe', (event, { id }) => {
     assertMainRenderer(event);

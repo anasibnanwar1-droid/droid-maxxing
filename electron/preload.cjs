@@ -54,7 +54,7 @@ contextBridge.exposeInMainWorld('droidControl', {
   terminalWrite: (id, data) => ipcRenderer.invoke('terminal-write', { id, data }),
   terminalResize: (id, cols, rows) => ipcRenderer.invoke('terminal-resize', { id, cols, rows }),
   terminalKill: (id) => ipcRenderer.invoke('terminal-kill', { id }),
-  terminalList: (missionId) => ipcRenderer.invoke('terminal-list', { missionId }),
+  terminalList: (appSessionId) => ipcRenderer.invoke('terminal-list', { appSessionId }),
   terminalSubscribe: (id) => ipcRenderer.invoke('terminal-subscribe', { id }),
   terminalUnsubscribe: (id) => ipcRenderer.invoke('terminal-unsubscribe', { id }),
   onTerminalEvent: (handler) => on('terminal-event', handler),
