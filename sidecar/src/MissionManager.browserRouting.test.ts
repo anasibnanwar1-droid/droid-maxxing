@@ -1,0 +1,223 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+
+import type { ServerEvent } from './protocol.js';
+import {
+  nativeSnapshot,
+  nativeSuccess,
+  observeNativeBrowserTimeouts,
+} from './testing/browserCharacterizationSupport.js';
+import {
+  FakeDroidSession,
+  createSessionCharacterizationHarness,
+} from './testing/sessionCharacterizationHarness.js';
+
+type NativeBrowserRequestEvent = Extract<ServerEvent, { type: 'browser.native.request' }>;
+
+function nativeRequests(events: ServerEvent[]): NativeBrowserRequestEvent[] {
+  return events.filter(
+    (event): event is NativeBrowserRequestEvent => event.type === 'browser.native.request',
+  );
+}
+
+test('[B1] Browser command routing', { concurrency: false }, async () => {
+  const h = createSessionCharacterizationHarness();
+
+  try {
+    await h.handle({
+      type: 'browser.open',
+      missionId: 'app-b1',
+      url: 'https://example.test',
+    });
+
+    assert.deepEqual(h.browsers.calls.at(-1), {
+      target: 'browser',
+      method: 'open',
+      args: [{ type: 'browser.open', missionId: 'app-b1', url: 'https://example.test' }],
+    });
+
+    await h.handle({ type: 'browser.reload', missionId: 'missing' });
+
+    assert.equal(
+      h.events.some(
+        (event) =>
+          event.type === 'browser.error' &&
+          event.missionId === 'missing' &&
+          event.message === 'Browser session is not open yet.',
+      ),
+      true,
+    );
+  } finally {
+    await h.dispose();
+  }
+});
+
+test('[B2] Native request and result correlation', { concurrency: false }, async () => {
+  const timeouts = observeNativeBrowserTimeouts();
+  const h = createSessionCharacterizationHarness({ browser: 'native' });
+
+  try {
+    let opened = false;
+    const open = h.handle({
+      type: 'browser.open',
+      missionId: 'app-b2',
+      url: 'https://example.test',
+    });
+    void open.then(() => {
+      opened = true;
+    });
+    const request = nativeRequests(h.events).at(-1)?.request;
+    assert.ok(request);
+
+    await h.handle({
+      type: 'browser.native.result',
+      result: { requestId: 'unknown', missionId: 'app-b2', ok: true },
+    });
+    assert.equal(opened, false);
+
+    await h.handle({
+      type: 'browser.native.result',
+      result: nativeSuccess(request, nativeSnapshot('https://example.test')),
+    });
+    await open;
+    assert.equal(opened, true);
+    assert.equal(
+      h.events.some(
+        (event) =>
+          event.type === 'browser.updated' &&
+          event.state.missionId === 'app-b2' &&
+          event.state.url === 'https://example.test',
+      ),
+      true,
+    );
+
+    const reload = h.handle({ type: 'browser.reload', missionId: 'app-b2' });
+    const timedOutRequest = nativeRequests(h.events).at(-1)?.request;
+    assert.ok(timedOutRequest);
+    timeouts.fireCurrent();
+    await reload;
+    assert.equal(
+      h.events.some(
+        (event) =>
+          event.type === 'browser.error' &&
+          event.missionId === 'app-b2' &&
+          /Droid Control browser did not respond to reload within \d+ms\./.test(event.message),
+      ),
+      true,
+    );
+
+    const eventCountBeforeLateResult = h.events.length;
+    await h.handle({
+      type: 'browser.native.result',
+      result: nativeSuccess(timedOutRequest, nativeSnapshot('https://example.test/reloaded')),
+    });
+    assert.equal(h.events.length, eventCountBeforeLateResult);
+
+    const close = h.handle({ type: 'browser.close', missionId: 'app-b2' });
+    const closeRequest = nativeRequests(h.events).at(-1)?.request;
+    assert.ok(closeRequest);
+    await h.handle({ type: 'browser.native.result', result: nativeSuccess(closeRequest) });
+    await close;
+  } finally {
+    await h.dispose();
+    timeouts.restore();
+  }
+});
+
+test('[B3] Browser continuity across compaction', { concurrency: false }, async () => {
+  const h = createSessionCharacterizationHarness();
+  const appMissionId = 'provider-1';
+
+  try {
+    await h.create({
+      clientRef: 'b3',
+      title: 'Browser continuity',
+      goal: 'go',
+      interactionMode: 'auto',
+      autonomy: 'low',
+    });
+    await h.waitForIdle();
+    h.provider.session(appMissionId).nextCompactResult = {
+      newSessionId: 'provider-2',
+      removedCount: 1,
+    };
+    h.runtime.loadQueue.set('provider-2', [new FakeDroidSession('provider-2', {}, h.calls)]);
+
+    await h.handle({
+      type: 'browser.open',
+      missionId: appMissionId,
+      url: 'https://example.test',
+    });
+    await h.handle({ type: 'mission.compact', missionId: appMissionId });
+    const browserUpdatesBeforeReload = h.events.filter((event) => event.type === 'browser.updated');
+    await h.handle({ type: 'browser.reload', missionId: appMissionId });
+
+    assert.deepEqual(
+      h.browsers.calls
+        .filter((call) => call.target === 'browser')
+        .map((call) => [call.method, call.args[0]]),
+      [
+        ['open', { type: 'browser.open', missionId: appMissionId, url: 'https://example.test' }],
+        ['reload', appMissionId],
+      ],
+    );
+    assert.equal(
+      h.events.some(
+        (event) =>
+          event.type === 'mission.updated' &&
+          event.mission.id === appMissionId &&
+          event.mission.sessionId === 'provider-2',
+      ),
+      true,
+    );
+    const browserUpdates = h.events.filter(
+      (event): event is Extract<ServerEvent, { type: 'browser.updated' }> =>
+        event.type === 'browser.updated',
+    );
+    assert.equal(browserUpdates.length > browserUpdatesBeforeReload.length, true);
+    assert.equal(browserUpdates.at(-1)?.state.missionId, appMissionId);
+
+    await h.handle({ type: 'mission.close', missionId: appMissionId });
+    assert.equal(
+      h.calls.filter(
+        (call) =>
+          call.target === 'cleanup' &&
+          call.method === 'browser.close' &&
+          call.args[0] === appMissionId,
+      ).length,
+      1,
+    );
+  } finally {
+    await h.dispose();
+  }
+
+  const shutdown = createSessionCharacterizationHarness();
+  let shutdownDisposed = false;
+  try {
+    await shutdown.create({
+      clientRef: 'b3-shutdown',
+      title: 'Browser shutdown',
+      goal: 'go',
+      interactionMode: 'auto',
+      autonomy: 'low',
+    });
+    await shutdown.handle({
+      type: 'browser.open',
+      missionId: 'provider-1',
+      url: 'https://example.test/shutdown',
+    });
+    await shutdown.dispose();
+    shutdownDisposed = true;
+    assert.equal(
+      shutdown.calls.filter(
+        (call) =>
+          call.target === 'cleanup' &&
+          call.method === 'browser.close' &&
+          call.args[0] === 'provider-1',
+      ).length,
+      1,
+    );
+  } finally {
+    if (!shutdownDisposed) await shutdown.dispose();
+  }
+});

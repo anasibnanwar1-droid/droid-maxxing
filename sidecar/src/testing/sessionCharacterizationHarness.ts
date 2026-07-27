@@ -5,6 +5,7 @@ import path from 'node:path';
 import { SdkMcpServer } from '@factory/droid-sdk';
 
 import { MissionManager } from '../MissionManager.js';
+import { FakeBrowserSessionManager } from './browserCharacterizationSupport.js';
 import type * as Runtime from '../DroidRuntime.js';
 import type * as Protocol from '../protocol.js';
 
@@ -51,7 +52,6 @@ export class FakeDroidSession {
     await this.streamGates.shift()?.promise;
     yield { type: 'result' };
   }
-
   deferNextStream(): StreamGate {
     return this.defer(this.streamGates);
   }
@@ -276,20 +276,6 @@ export class FakeHistoryIndex {
   }
 }
 
-export class FakeBrowserSessionManager {
-  constructor(private readonly calls: RecordedCall[]) {}
-
-  close(missionId: string): Promise<void> {
-    this.calls.push({ target: 'cleanup', method: 'browser.close', args: [missionId] });
-    return Promise.resolve();
-  }
-
-  closeAll(): Promise<void> {
-    this.calls.push({ target: 'cleanup', method: 'browser.closeAll', args: [] });
-    return Promise.resolve();
-  }
-}
-
 let mcpCloseObserverActive = false;
 
 function observeMcpServerClose() {
@@ -348,7 +334,7 @@ export interface SessionCharacterizationHarness {
 }
 
 export function createSessionCharacterizationHarness(
-  options: { defaults?: Protocol.FactoryDefaultSettings } = {},
+  options: { browser?: 'fake' | 'native'; defaults?: Protocol.FactoryDefaultSettings } = {},
 ): SessionCharacterizationHarness {
   const calls: RecordedCall[] = [];
   const events: Protocol.ServerEvent[] = [];
@@ -376,7 +362,7 @@ export function createSessionCharacterizationHarness(
   const readyManager = manager;
   const runtime = new FakeRuntime(calls);
   const history = new FakeHistoryIndex(calls, home);
-  const browsers = new FakeBrowserSessionManager(calls);
+  const browsers = new FakeBrowserSessionManager((call) => calls.push(call), recordEvent);
   const privateManager = readyManager as unknown as {
     runtime: unknown;
     history: { close(): void };
@@ -386,7 +372,7 @@ export function createSessionCharacterizationHarness(
   privateManager.history.close();
   privateManager.runtime = runtime;
   privateManager.history = history;
-  privateManager.browsers = browsers;
+  if (options.browser !== 'native') privateManager.browsers = browsers;
   privateManager.cachedModels = [
     {
       id: 'model-default',
