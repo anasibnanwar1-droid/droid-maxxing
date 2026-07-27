@@ -5,18 +5,8 @@ import path from 'node:path';
 import { SdkMcpServer } from '@factory/droid-sdk';
 
 import { MissionManager } from '../MissionManager.js';
-import type {
-  CreateRuntimeSessionOptions,
-  RuntimeHandlers,
-  RuntimeStatus,
-} from '../DroidRuntime.js';
-import type {
-  ClientCommand,
-  FactoryDefaultSettings,
-  ModelInfo,
-  MissionSummary,
-  ServerEvent,
-} from '../protocol.js';
+import type * as Runtime from '../DroidRuntime.js';
+import type * as Protocol from '../protocol.js';
 
 /* eslint-disable @typescript-eslint/dot-notation -- ProcessEnv requires indexed access under strict TypeScript. */
 
@@ -30,9 +20,7 @@ export interface StreamGate {
   resolve(): void;
 }
 
-interface DeferredStream extends StreamGate {
-  readonly promise: Promise<void>;
-}
+type DeferredStream = StreamGate & { readonly promise: Promise<void> };
 
 export class FakeDroidSession {
   readonly prompts: string[] = [];
@@ -50,7 +38,7 @@ export class FakeDroidSession {
 
   constructor(
     readonly sessionId: string,
-    readonly handlers: RuntimeHandlers,
+    readonly handlers: Runtime.RuntimeHandlers,
     private readonly calls: RecordedCall[],
   ) {
     this.initResult = {
@@ -158,9 +146,9 @@ export class FakeDroidSession {
 }
 
 export class FakeRuntime {
-  readonly createCalls: CreateRuntimeSessionOptions[] = [];
+  readonly createCalls: Runtime.CreateRuntimeSessionOptions[] = [];
   readonly createQueue: (FakeDroidSession | Error)[] = [];
-  readonly loadCalls: { sessionId: string; handlers: RuntimeHandlers }[] = [];
+  readonly loadCalls: { sessionId: string; handlers: Runtime.RuntimeHandlers }[] = [];
   readonly loadQueue = new Map<string, (FakeDroidSession | Error)[]>();
   readonly sessions = new Map<string, FakeDroidSession>();
   private apiKey = '';
@@ -172,7 +160,7 @@ export class FakeRuntime {
     this.calls.push({ target: 'runtime', method: 'connect', args: [apiKey] });
   }
 
-  status(): RuntimeStatus {
+  status(): Runtime.RuntimeStatus {
     return {
       mode: 'cli_auth',
       droidPath: '/test/droid',
@@ -180,7 +168,7 @@ export class FakeRuntime {
     };
   }
 
-  createSession(options: CreateRuntimeSessionOptions): Promise<FakeDroidSession> {
+  createSession(options: Runtime.CreateRuntimeSessionOptions): Promise<FakeDroidSession> {
     this.createCalls.push(options);
     this.calls.push({ target: 'runtime', method: 'createSession', args: [options] });
     const next =
@@ -198,7 +186,7 @@ export class FakeRuntime {
     return gate;
   }
 
-  loadSession(sessionId: string, handlers: RuntimeHandlers): Promise<FakeDroidSession> {
+  loadSession(sessionId: string, handlers: Runtime.RuntimeHandlers): Promise<FakeDroidSession> {
     this.loadCalls.push({ sessionId, handlers });
     this.calls.push({ target: 'runtime', method: 'loadSession', args: [sessionId, handlers] });
     const next =
@@ -211,20 +199,25 @@ export class FakeRuntime {
 }
 
 export class FakeHistoryIndex {
-  readonly summaries: MissionSummary[] = [];
+  readonly summaries: Protocol.MissionSummary[] = [];
+  private readonly links = new Map<string, Protocol.WorkerHistoryLink[]>();
 
   constructor(
     private readonly calls: RecordedCall[],
     private readonly home: string,
   ) {}
 
-  syncSummaries(summaries: MissionSummary[]): void {
+  syncSummaries(summaries: Protocol.MissionSummary[]): void {
     this.summaries.push(...summaries);
     for (const summary of summaries) this.writeSessionStart(summary);
     this.calls.push({ target: 'history', method: 'syncSummaries', args: [summaries] });
   }
 
-  summaryPatches(): Map<string, Partial<MissionSummary>> {
+  seedSubagentLinks(missionId: string, links: Protocol.WorkerHistoryLink[]): void {
+    this.links.set(missionId, links);
+  }
+
+  summaryPatches(): Map<string, Partial<Protocol.MissionSummary>> {
     return new Map(
       this.summaries.flatMap((summary) => [
         [summary.id, summary],
@@ -237,8 +230,26 @@ export class FakeHistoryIndex {
     return new Set();
   }
 
-  subagentLinks(): [] {
-    return [];
+  recordSubagentLink(
+    missionId: string,
+    toolUseId: string,
+    workerSessionId: string,
+    label?: string,
+  ): void {
+    const links = this.links.get(missionId) ?? [];
+    const index = links.findIndex((existing) => existing.toolUseId === toolUseId);
+    links[index < 0 ? links.length : index] =
+      label === undefined ? { workerSessionId, toolUseId } : { workerSessionId, toolUseId, label };
+    this.links.set(missionId, links);
+    this.calls.push({
+      target: 'history',
+      method: 'recordSubagentLink',
+      args: [missionId, toolUseId, workerSessionId, label],
+    });
+  }
+
+  subagentLinks(missionId: string): Protocol.WorkerHistoryLink[] {
+    return (this.links.get(missionId) ?? []).map((link) => ({ ...link }));
   }
 
   recordEvent(event: unknown): void {
@@ -249,7 +260,7 @@ export class FakeHistoryIndex {
     this.calls.push({ target: 'cleanup', method: 'history.close', args: [] });
   }
 
-  private writeSessionStart(summary: MissionSummary): void {
+  private writeSessionStart(summary: Protocol.MissionSummary): void {
     const sessionId = summary.sessionId ?? summary.id;
     const sessions = path.join(this.home, '.factory', 'sessions');
     mkdirSync(sessions, { recursive: true });
@@ -279,14 +290,9 @@ export class FakeBrowserSessionManager {
   }
 }
 
-interface McpCloseObserver {
-  readonly calls: () => number;
-  restore(): void;
-}
-
 let mcpCloseObserverActive = false;
 
-function observeMcpServerClose(): McpCloseObserver {
+function observeMcpServerClose() {
   if (mcpCloseObserverActive)
     throw new Error('Session characterization harnesses must not overlap.');
 
@@ -315,7 +321,7 @@ function observeMcpServerClose(): McpCloseObserver {
 }
 
 export interface SessionCharacterizationHarness {
-  readonly events: ServerEvent[];
+  readonly events: Protocol.ServerEvent[];
   readonly calls: RecordedCall[];
   readonly runtime: FakeRuntime;
   readonly provider: {
@@ -325,21 +331,27 @@ export interface SessionCharacterizationHarness {
     emitNotification(id: string, note: Record<string, unknown>): void;
   };
   readonly history: FakeHistoryIndex;
+  readonly fixture: {
+    seedHistorySummaries(summaries: Protocol.MissionSummary[]): void;
+    seedSubagentLinks(missionId: string, links: Protocol.WorkerHistoryLink[]): void;
+  };
   readonly browsers: FakeBrowserSessionManager;
   readonly home: string;
   readonly mcpServerCloseCalls: number;
-  handle(command: ClientCommand): Promise<void>;
-  create(command: Omit<Extract<ClientCommand, { type: 'mission.create' }>, 'type'>): Promise<void>;
+  handle(command: Protocol.ClientCommand): Promise<void>;
+  create(
+    command: Omit<Extract<Protocol.ClientCommand, { type: 'mission.create' }>, 'type'>,
+  ): Promise<void>;
   waitForIdle(): Promise<void>;
   dispose(): Promise<void>;
 }
 
 export function createSessionCharacterizationHarness(
-  options: { defaults?: FactoryDefaultSettings } = {},
+  options: { defaults?: Protocol.FactoryDefaultSettings } = {},
 ): SessionCharacterizationHarness {
   const calls: RecordedCall[] = [];
-  const events: ServerEvent[] = [];
-  const recordEvent = (event: ServerEvent) => {
+  const events: Protocol.ServerEvent[] = [];
+  const recordEvent = (event: Protocol.ServerEvent) => {
     events.push(event);
     calls.push({ target: 'protocol', method: 'event', args: [event] });
   };
@@ -368,7 +380,7 @@ export function createSessionCharacterizationHarness(
     runtime: unknown;
     history: { close(): void };
     browsers: unknown;
-    cachedModels: ModelInfo[] | null;
+    cachedModels: Protocol.ModelInfo[] | null;
   };
   privateManager.history.close();
   privateManager.runtime = runtime;
@@ -393,10 +405,15 @@ export function createSessionCharacterizationHarness(
   })();
   let disposed = false;
 
-  const handle = async (command: ClientCommand): Promise<void> => {
+  const handle = async (command: Protocol.ClientCommand): Promise<void> => {
     await withHome(home, () => readyManager.handle(command));
     await Promise.resolve();
     await Promise.resolve();
+  };
+  const providerSession = (id: string): FakeDroidSession => {
+    const session = runtime.sessions.get(id);
+    if (!session) throw new Error(`Unknown fake provider session ${id}`);
+    return session;
   };
 
   return {
@@ -404,28 +421,22 @@ export function createSessionCharacterizationHarness(
     calls,
     runtime,
     provider: {
-      session: (id) => {
-        const session = runtime.sessions.get(id);
-        if (!session) throw new Error(`Unknown fake provider session ${id}`);
-        return session;
-      },
-      deferNextStream: (id) => {
-        const session = runtime.sessions.get(id);
-        if (!session) throw new Error(`Unknown fake provider session ${id}`);
-        return session.deferNextStream();
-      },
-      waitForPrompts: (id, count) => {
-        const session = runtime.sessions.get(id);
-        if (!session) throw new Error(`Unknown fake provider session ${id}`);
-        return session.waitForPrompts(count);
-      },
+      session: providerSession,
+      deferNextStream: (id) => providerSession(id).deferNextStream(),
+      waitForPrompts: (id, count) => providerSession(id).waitForPrompts(count),
       emitNotification: (id, note) => {
-        const session = runtime.sessions.get(id);
-        if (!session) throw new Error(`Unknown fake provider session ${id}`);
-        session.emitNotification(note);
+        providerSession(id).emitNotification(note);
       },
     },
     history,
+    fixture: {
+      seedHistorySummaries: (summaries) => {
+        history.syncSummaries(summaries);
+      },
+      seedSubagentLinks: (missionId, links) => {
+        history.seedSubagentLinks(missionId, links);
+      },
+    },
     browsers,
     home,
     get mcpServerCloseCalls() {
@@ -469,7 +480,7 @@ function withHomeSync<T>(home: string, action: () => T): T {
   }
 }
 
-function writeDefaults(home: string, defaults?: FactoryDefaultSettings): void {
+function writeDefaults(home: string, defaults?: Protocol.FactoryDefaultSettings): void {
   if (!defaults) return;
   const factoryDir = path.join(home, '.factory');
   mkdirSync(factoryDir, { recursive: true });
