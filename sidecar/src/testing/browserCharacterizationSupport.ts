@@ -118,6 +118,7 @@ export function nativeSuccess(
   return {
     requestId: request.requestId,
     appSessionId: request.appSessionId,
+    browserSessionId: request.browserSessionId,
     ok: true,
     snapshot,
   };

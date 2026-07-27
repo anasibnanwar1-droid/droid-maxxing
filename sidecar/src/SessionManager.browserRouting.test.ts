@@ -173,7 +173,12 @@ test('[B2] Native request and result correlation', { concurrency: false }, async
 
     await h.handle({
       type: 'browser.native.result',
-      result: { requestId: 'unknown', appSessionId: 'app-b2', ok: true },
+      result: {
+        requestId: 'unknown',
+        appSessionId: 'app-b2',
+        browserSessionId: 'browser-b2',
+        ok: true,
+      },
     });
     assert.equal(opened, false);
 

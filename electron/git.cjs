@@ -1050,12 +1050,12 @@ const REVIEW_SCOPES = [
 
 // Per-worktree baseline captured at the start of an agent turn so the
 // "Last turn" scope can diff the working tree against that point in time.
-// Keyed by `${root}\u0000${sessionId}` so two sessions sharing a repo don't
+// Keyed by `${root}\u0000${appSessionId}` so two sessions sharing a repo don't
 // clobber each other's baseline.
 const turnBaselines = new Map();
 
-function turnBaselineKey(root, sessionId) {
-  return `${root}\u0000${sessionId ?? ''}`;
+function turnBaselineKey(root, appSessionId) {
+  return `${root}\u0000${appSessionId ?? ''}`;
 }
 
 function normalizeScope(value) {
@@ -1176,7 +1176,7 @@ async function untrackedFileList(root) {
 
 // Resolve a review scope to the `git diff` arguments, the base ref it compares
 // against, and whether untracked working-tree files should be folded in.
-async function scopeRange(root, scope, sessionId) {
+async function scopeRange(root, scope, appSessionId) {
   if (scope === 'staged') return { args: ['--cached'], base: null, includeUntracked: false };
   if (scope === 'uncommitted') {
     // Everything not yet committed: working tree vs HEAD (staged + unstaged)
@@ -1207,7 +1207,7 @@ async function scopeRange(root, scope, sessionId) {
     // Try the session-scoped baseline first, then fall back to the repo-level
     // key (used by the first turn of a brand-new session before it has an ID).
     const entry =
-      turnBaselines.get(turnBaselineKey(root, sessionId)) ??
+      turnBaselines.get(turnBaselineKey(root, appSessionId)) ??
       turnBaselines.get(turnBaselineKey(root, undefined));
     const baseline = entry?.baseline || 'HEAD';
     return {
@@ -1234,7 +1234,7 @@ async function diffFiles(dir, options = {}) {
     priorUntracked,
     priorUntrackedTruncated,
     priorUntrackedNames,
-  } = await scopeRange(root, scope, options.sessionId);
+  } = await scopeRange(root, scope, options.appSessionId);
   if (!args) return { mode: scope, base: null, files: [] };
   const [numstat, nameStatus] = await Promise.all([
     runSoft(root, ['diff', ...args, '--numstat', '-z']).catch(() => ''),
@@ -1294,7 +1294,7 @@ async function fileDiff(dir, options = {}) {
   // Diff paths are repo-relative; anything resolving outside the root (absolute
   // path, ../ escape) would let the --no-index fallback read arbitrary files.
   if (!isWithin(root, path.resolve(root, file))) return { path: file, diff: '', binary: false };
-  const { args, includeUntracked } = await scopeRange(root, scope, options.sessionId);
+  const { args, includeUntracked } = await scopeRange(root, scope, options.appSessionId);
   if (!args) return { path: file, diff: '', binary: false };
   const ws = options.ignoreWhitespace ? ['-w'] : [];
   // A rename restricted to just the new path can't be paired with its deleted
@@ -1329,7 +1329,7 @@ async function fileSignature(root, rel) {
   }
 }
 
-async function markTurnStart(dir, sessionId) {
+async function markTurnStart(dir, appSessionId) {
   const root = await repoRootOf(dir);
   if (!root) return { ok: false };
   let baseline = await tryRun(root, ['stash', 'create']);
@@ -1373,7 +1373,7 @@ async function markTurnStart(dir, sessionId) {
   );
   const priorUntracked = new Map(priorNames.map((rel, i) => [rel, sigs[i]]));
   if (baseline)
-    setRepoCache(turnBaselines, turnBaselineKey(root, sessionId), {
+    setRepoCache(turnBaselines, turnBaselineKey(root, appSessionId), {
       baseline,
       priorUntracked,
       untrackedTruncated,

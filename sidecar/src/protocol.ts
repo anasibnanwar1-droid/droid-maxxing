@@ -54,14 +54,14 @@ export interface ProgressEntry {
   workerProviderSessionId?: string;
 }
 
-export interface WorkerSummary {
+export interface ChildSessionSummary {
   providerSessionId: string;
   status: 'running' | 'paused' | 'completed';
   label?: string;
   prompt?: string;
   modelId?: string;
   reasoningEffort?: ReasoningEffort;
-  // The primary Task tool_call id that spawned this worker; links an in-chat
+  // The primary Task tool_call id that spawned this child session; links an in-chat
   // spawn line to its child session.
   toolUseId?: string;
 }
@@ -413,6 +413,7 @@ export interface BrowserNativeRequest {
 export interface BrowserNativeResult {
   requestId: string;
   appSessionId: string;
+  browserSessionId: string;
   ok: boolean;
   snapshot?: BrowserNativeSnapshot;
   inspection?: BrowserElementInspection;
@@ -728,7 +729,7 @@ export type ServerEvent =
       appSessionId: string;
       progress: ProgressEntry[];
       transcripts: TranscriptEvent[];
-      workers?: ChildSessionHistoryLink[];
+      childSessions?: ChildSessionHistoryLink[];
       mode?: 'replace' | 'prepend';
       olderCursor?: string;
       // Restore telemetry: how many transcript events this page delivered and

@@ -10,19 +10,8 @@ export function browserKeyForSession(session: SessionSummary | undefined): strin
 export function activeSessionAfterNativeBrowserRequest(
   activeAppSessionId: string | null,
   request: BrowserNativeRequest,
-  sessions: Record<string, SessionSummary> = {},
 ): string | null {
-  return activeAppSessionId ?? appSessionIdForBrowserKey(sessions, request.appSessionId);
-}
-
-export function appSessionIdForBrowserKey(
-  sessions: Record<string, SessionSummary>,
-  browserKey: string,
-): string {
-  return (
-    Object.values(sessions).find((session) => browserKeyForSession(session) === browserKey)
-      ?.appSessionId ?? browserKey
-  );
+  return activeAppSessionId ?? request.appSessionId;
 }
 
 export function nativeBrowserRequestTargetsVisibleSurface(input: {

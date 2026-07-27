@@ -267,6 +267,7 @@ function nativeResult(
   return {
     requestId: request.requestId,
     appSessionId: request.appSessionId,
+    browserSessionId: request.browserSessionId,
     ok,
     snapshot,
     error,

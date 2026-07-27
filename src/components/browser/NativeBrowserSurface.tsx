@@ -399,7 +399,12 @@ async function performNativeRequest(
   try {
     if (request.action === 'close') {
       await closeNativeBrowser(request.browserSessionId);
-      return { requestId: request.requestId, appSessionId: request.appSessionId, ok: true };
+      return {
+        requestId: request.requestId,
+        appSessionId: request.appSessionId,
+        browserSessionId: request.browserSessionId,
+        ok: true,
+      };
     }
     const bounds = options.bounds();
     // While a full-screen overlay (settings, context meter, spec/question modal)
@@ -431,6 +436,7 @@ async function performNativeRequest(
       return {
         requestId: request.requestId,
         appSessionId: request.appSessionId,
+        browserSessionId: request.browserSessionId,
         ok: true,
         snapshot: await snapshotAfterNavigation(request, loadedEvent?.url ?? targetUrl),
       };
@@ -442,6 +448,7 @@ async function performNativeRequest(
       return {
         requestId: request.requestId,
         appSessionId: request.appSessionId,
+        browserSessionId: request.browserSessionId,
         ok: true,
         snapshot: await snapshotAfterNavigation(request, loadedEvent?.url ?? options.currentUrl),
       };
@@ -456,6 +463,7 @@ async function performNativeRequest(
         return {
           requestId: request.requestId,
           appSessionId: request.appSessionId,
+          browserSessionId: request.browserSessionId,
           ok: true,
           snapshot: await snapshotAfterNavigation(request, options.currentUrl),
         };
@@ -464,6 +472,7 @@ async function performNativeRequest(
       return {
         requestId: request.requestId,
         appSessionId: request.appSessionId,
+        browserSessionId: request.browserSessionId,
         ok: true,
         snapshot: await snapshotAfterNavigation(request, loadedEvent?.url ?? options.currentUrl),
       };
@@ -473,12 +482,19 @@ async function performNativeRequest(
         fullPage: request.fullPage,
         deviceScaleFactor: request.deviceScaleFactor,
       });
-      return { requestId: request.requestId, appSessionId: request.appSessionId, ok: true, image };
+      return {
+        requestId: request.requestId,
+        appSessionId: request.appSessionId,
+        browserSessionId: request.browserSessionId,
+        ok: true,
+        image,
+      };
     }
     const result = await runNativeBrowserAgentAction(nativeBrowserAgentActionFromRequest(request));
     return {
       requestId: request.requestId,
       appSessionId: request.appSessionId,
+      browserSessionId: request.browserSessionId,
       ok: result.ok,
       snapshot: result.snapshot,
       inspection: result.inspection,
@@ -490,6 +506,7 @@ async function performNativeRequest(
     return {
       requestId: request.requestId,
       appSessionId: request.appSessionId,
+      browserSessionId: request.browserSessionId,
       ok: false,
       error: err instanceof Error ? err.message : String(err),
     };
@@ -524,7 +541,12 @@ async function performIframeRequest(
     if (request.action === 'close') {
       iframe.src = 'about:blank';
       options.onLoaded('about:blank');
-      return { requestId: request.requestId, appSessionId: request.appSessionId, ok: true };
+      return {
+        requestId: request.requestId,
+        appSessionId: request.appSessionId,
+        browserSessionId: request.browserSessionId,
+        ok: true,
+      };
     }
     if (request.action === 'open') {
       const targetUrl = request.url ?? options.currentUrl;
@@ -533,6 +555,7 @@ async function performIframeRequest(
       return {
         requestId: request.requestId,
         appSessionId: request.appSessionId,
+        browserSessionId: request.browserSessionId,
         ok: true,
         snapshot: safeIframeSnapshot(iframe, targetUrl),
       };
@@ -543,6 +566,7 @@ async function performIframeRequest(
       return {
         requestId: request.requestId,
         appSessionId: request.appSessionId,
+        browserSessionId: request.browserSessionId,
         ok: true,
         snapshot: safeIframeSnapshot(iframe, options.currentUrl),
       };
@@ -561,7 +585,12 @@ async function performIframeRequest(
     } else if (request.action === 'scroll') {
       await scrollIframe(iframe, request.direction ?? 'down', request.pixels);
     } else if (request.action === 'capture') {
-      return { requestId: request.requestId, appSessionId: request.appSessionId, ok: true };
+      return {
+        requestId: request.requestId,
+        appSessionId: request.appSessionId,
+        browserSessionId: request.browserSessionId,
+        ok: true,
+      };
     } else if (request.action !== 'snapshot') {
       throw new Error(`Unsupported browser action: ${request.action}`);
     }
@@ -569,6 +598,7 @@ async function performIframeRequest(
     return {
       requestId: request.requestId,
       appSessionId: request.appSessionId,
+      browserSessionId: request.browserSessionId,
       ok: true,
       snapshot: safeIframeSnapshot(iframe, options.currentUrl),
     };
@@ -576,6 +606,7 @@ async function performIframeRequest(
     return {
       requestId: request.requestId,
       appSessionId: request.appSessionId,
+      browserSessionId: request.browserSessionId,
       ok: false,
       error: err instanceof Error ? err.message : String(err),
     };

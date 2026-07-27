@@ -15,6 +15,7 @@ test('NativeBrowserRuntime sends live requests with application and browser sess
       return {
         requestId: request.requestId,
         appSessionId: request.appSessionId,
+        browserSessionId: request.browserSessionId,
         ok: true,
         snapshot: {
           url: request.url ?? 'https://example.com/',
@@ -64,6 +65,7 @@ test('open remains usable when navigation succeeds before a DOM snapshot is read
     request: async (request) => ({
       requestId: request.requestId,
       appSessionId: request.appSessionId,
+      browserSessionId: request.browserSessionId,
       ok: true,
     }),
   });
@@ -86,6 +88,7 @@ test('open fallback clears metadata from the previous page', async () => {
     request: async (request) => ({
       requestId: request.requestId,
       appSessionId: request.appSessionId,
+      browserSessionId: request.browserSessionId,
       ok: true,
       snapshot:
         request.url === 'https://example.com/first'
@@ -121,6 +124,7 @@ test('reload and snapshot actions never reuse a stale page snapshot', async () =
     request: async (request) => ({
       requestId: request.requestId,
       appSessionId: request.appSessionId,
+      browserSessionId: request.browserSessionId,
       ok: true,
       snapshot:
         request.action === 'open'
@@ -147,6 +151,7 @@ test('history navigation never reuses a stale page snapshot', async () => {
     request: async (request) => ({
       requestId: request.requestId,
       appSessionId: request.appSessionId,
+      browserSessionId: request.browserSessionId,
       ok: true,
       snapshot:
         request.action === 'open'
@@ -181,6 +186,7 @@ test('resize and diagnostic requests use dedicated native actions', async () => 
       return {
         requestId: request.requestId,
         appSessionId: request.appSessionId,
+        browserSessionId: request.browserSessionId,
         ok: true,
         inspection:
           request.action === 'inspect'

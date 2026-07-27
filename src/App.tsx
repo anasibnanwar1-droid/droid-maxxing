@@ -247,7 +247,6 @@ export default function App() {
       const nextActiveAppSessionId = activeSessionAfterNativeBrowserRequest(
         state.activeAppSessionId,
         event.request,
-        state.sessions,
       );
       if (nextActiveAppSessionId !== state.activeAppSessionId) {
         dispatch({ type: 'SET_ACTIVE_SESSION', id: nextActiveAppSessionId });
@@ -265,6 +264,7 @@ export default function App() {
           sendNativeBrowserResult({
             requestId: event.request.requestId,
             appSessionId: event.request.appSessionId,
+            browserSessionId: event.request.browserSessionId,
             ok: false,
             error: err instanceof Error ? err.message : String(err),
           });

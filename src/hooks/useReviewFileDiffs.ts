@@ -42,7 +42,7 @@ export function useReviewFileDiffs(
   scope: DiffScope,
   ignoreWhitespace: boolean,
   signature: string,
-  sessionId?: string,
+  appSessionId?: string,
 ): ReviewFileDiffs {
   const [entries, setEntries] = useState<Record<string, FileDiffEntry>>({});
   // A Map avoids the Object.prototype lookup collision that lets a file path
@@ -108,7 +108,7 @@ export function useReviewFileDiffs(
           },
         };
       });
-      getGitFileDiff(cwd, scope, path, ignoreWhitespace, sessionId)
+      getGitFileDiff(cwd, scope, path, ignoreWhitespace, appSessionId)
         .then((res) => {
           if (stale()) return;
           status.current.set(path, 'loaded');
@@ -128,7 +128,7 @@ export function useReviewFileDiffs(
           }));
         });
     },
-    [cwd, scope, ignoreWhitespace, sessionId],
+    [cwd, scope, ignoreWhitespace, appSessionId],
   );
 
   return { entries, ensure };

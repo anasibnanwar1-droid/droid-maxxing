@@ -3,7 +3,6 @@ import assert from 'node:assert/strict';
 import {
   activeSessionAfterNativeBrowserRequest,
   browserKeyForSession,
-  appSessionIdForBrowserKey,
   nativeBrowserRequestTargetsVisibleSurface,
 } from './browserSessionIdentity';
 import type { BrowserNativeRequest, SessionSummary } from '../types/bridge';
@@ -45,28 +44,6 @@ test('activeSessionAfterNativeBrowserRequest does not steal the current chat', (
 
   assert.equal(activeSessionAfterNativeBrowserRequest('visible-chat', request), 'visible-chat');
   assert.equal(activeSessionAfterNativeBrowserRequest(null, request), 'background-chat');
-});
-
-test('appSessionIdForBrowserKey resolves the app identity from the stable browser key', () => {
-  const sessions = {
-    'chat-app-id': session('chat-app-id', 'provider-after-compaction'),
-  };
-
-  // The backend keys browser requests by appSessionId.
-  assert.equal(appSessionIdForBrowserKey(sessions, 'chat-app-id'), 'chat-app-id');
-  assert.equal(
-    activeSessionAfterNativeBrowserRequest(
-      null,
-      {
-        requestId: 'req-1',
-        appSessionId: 'chat-app-id',
-        browserSessionId: 'browser-chat-app-id',
-        action: 'snapshot',
-      },
-      sessions,
-    ),
-    'chat-app-id',
-  );
 });
 
 test('nativeBrowserRequestTargetsVisibleSurface only attaches the active browser request', () => {
