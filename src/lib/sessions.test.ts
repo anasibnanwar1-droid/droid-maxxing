@@ -43,7 +43,7 @@ test('activeSessionCwds pins an idle session that still has a running worker', (
   const cwds = activeSessionCwds({
     sessions,
     activeAppSessionId: null,
-    workers: {
+    childSessions: {
       idle: [{ status: 'completed' }, { status: 'running' }],
       done: [{ status: 'completed' }, { status: 'paused' }],
     },

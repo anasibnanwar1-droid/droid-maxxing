@@ -25,7 +25,7 @@ import type { DiffStatMode } from '../types/vcs';
 import { diffModeToReviewScope } from '../lib/reviewScopes';
 
 // Mirrors the sub-agent row design used in the left sidebar.
-function AgentRow({
+function ChildSessionRow({
   label,
   meta,
   prompt,
@@ -155,9 +155,13 @@ export default function RightPanel() {
   const progressOpen = progressManual ?? working;
 
   // Child sessions spawned here (the same source the sidebar uses).
-  const workers = activeSession ? (state.workers[activeSession.appSessionId] ?? []) : [];
-  const agentsRunning = workers.some((w) => w.status === 'running');
-  const [agentsOpen, setAgentsOpen] = useState(true);
+  const childSessions = activeSession
+    ? (state.childSessions[activeSession.appSessionId] ?? [])
+    : [];
+  const childSessionsRunning = childSessions.some(
+    (childSession) => childSession.status === 'running',
+  );
+  const [childSessionsOpen, setChildSessionsOpen] = useState(true);
 
   const modelInfo = activeSession?.modelId
     ? state.models.find((m) => m.id === activeSession.modelId)
@@ -204,7 +208,7 @@ export default function RightPanel() {
                   diffMode={diffMode}
                   onDiffModeChange={setDiffMode}
                   refresh={git.refresh}
-                  live={working || agentsRunning}
+                  live={working || childSessionsRunning}
                   pr={pr.pr}
                   onOpenPr={() => setView('pr')}
                   onOpenReview={() => {
@@ -221,61 +225,69 @@ export default function RightPanel() {
                   meta={activeSession.autonomy}
                 />
 
-                {/* Agents — collapsible, nested under the model */}
-                {workers.length > 0 && (
+                {/* Child sessions — collapsible, nested under the model */}
+                {childSessions.length > 0 && (
                   <div>
                     <button
-                      onClick={() => setAgentsOpen((v) => !v)}
+                      onClick={() => setChildSessionsOpen((open) => !open)}
                       className="w-full flex items-center gap-1.5 px-3 py-1.5 text-left"
                     >
                       <ChevronRight
-                        className={`w-3.5 h-3.5 text-droid-text-muted transition-transform ${agentsOpen ? 'rotate-90' : ''}`}
+                        className={`w-3.5 h-3.5 text-droid-text-muted transition-transform ${childSessionsOpen ? 'rotate-90' : ''}`}
                       />
-                      <span className="text-[12px] font-medium text-droid-text-muted">Agents</span>
-                      <span className="font-mono text-[11px] text-droid-text-muted/70">
-                        {workers.length}
+                      <span className="text-[12px] font-medium text-droid-text-muted">
+                        Child sessions
                       </span>
-                      {agentsRunning && (
+                      <span className="font-mono text-[11px] text-droid-text-muted/70">
+                        {childSessions.length}
+                      </span>
+                      {childSessionsRunning && (
                         <Loader2 className="ml-auto w-3 h-3 shrink-0 animate-spin text-droid-accent" />
                       )}
                     </button>
                     <AnimatePresence initial={false}>
-                      {agentsOpen && (
+                      {childSessionsOpen && (
                         <motion.div
                           initial={{ height: 0, opacity: 0 }}
                           animate={{ height: 'auto', opacity: 1 }}
                           exit={{ height: 0, opacity: 0 }}
                           className="overflow-hidden"
                         >
-                          {workers.map((w, i) => (
-                            <AgentRow
-                              key={w.providerSessionId}
-                              label={w.label ?? `Sub-agent ${i + 1}`}
+                          {childSessions.map((childSession, index) => (
+                            <ChildSessionRow
+                              key={childSession.providerSessionId}
+                              label={childSession.label ?? `Child ${index + 1}`}
                               meta={
                                 [
-                                  w.modelId
-                                    ? (state.models.find((m) => m.id === w.modelId)?.displayName ??
-                                      w.modelId)
+                                  childSession.modelId
+                                    ? (state.models.find(
+                                        (model) => model.id === childSession.modelId,
+                                      )?.displayName ?? childSession.modelId)
                                     : undefined,
-                                  w.reasoningEffort,
+                                  childSession.reasoningEffort,
                                 ]
                                   .filter(Boolean)
                                   .join(' · ') || undefined
                               }
-                              prompt={w.prompt}
-                              running={w.status === 'running'}
+                              prompt={childSession.prompt}
+                              running={childSession.status === 'running'}
                               depth={0}
-                              selected={state.selectedProviderSessionId === w.providerSessionId}
+                              selected={
+                                state.selectedProviderSessionId === childSession.providerSessionId
+                              }
                               onClick={() => {
                                 const next =
-                                  state.selectedProviderSessionId === w.providerSessionId
+                                  state.selectedProviderSessionId === childSession.providerSessionId
                                     ? null
-                                    : w.providerSessionId;
+                                    : childSession.providerSessionId;
                                 dispatch({ type: 'SELECT_PROVIDER_SESSION', id: next });
                               }}
                               onStop={() =>
                                 activeSession &&
-                                interruptChild(activeSession.appSessionId, w.providerSessionId)
+                                interruptChild(
+                                  activeSession.appSessionId,
+                                  childSession.providerSessionId,
+                                )
                               }
                             />
                           ))}

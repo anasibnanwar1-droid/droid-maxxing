@@ -1,15 +1,6 @@
 import type { TranscriptEvent } from '../types/bridge';
-import type { WorkerInfo } from '../hooks/useStore';
+import type { ChildSessionInfo } from '../hooks/useStore';
 import { childSessionInfo, toolMeta, CAT_LABEL } from './tools';
-
-// Child-session links are canonical protocol data. The renderer never guesses
-// provider identities from transcript order.
-export function resolveChildSessions(
-  workers: WorkerInfo[],
-  _transcript: TranscriptEvent[],
-): WorkerInfo[] {
-  return workers;
-}
 
 // A single Task spawn streams many tool_call/tool_call_delta events sharing one
 // toolUseId; the subagent_type (label) and description can arrive in separate
@@ -51,37 +42,41 @@ export type ChildSessionLatest = {
 export type ChildSessionTarget = { toolUseId?: string; label?: string };
 
 export type ChildSessionActivity = {
-  status?: WorkerInfo['status'];
+  status?: ChildSessionInfo['status'];
   startedAt?: number;
   latest?: ChildSessionLatest;
 };
 
 export function findChildSessionForTarget(
-  workers: WorkerInfo[],
+  childSessions: ChildSessionInfo[],
   target: ChildSessionTarget,
-): WorkerInfo | undefined {
+): ChildSessionInfo | undefined {
   if (target.toolUseId) {
-    const byId = workers.find((w) => w.toolUseId === target.toolUseId);
+    const byId = childSessions.find((childSession) => childSession.toolUseId === target.toolUseId);
     if (byId) return byId;
   }
   const label = target.label?.toLowerCase();
   if (!label) return undefined;
-  const matches = workers.filter((w) => (w.label ?? '').toLowerCase() === label);
-  return matches.find((w) => w.status === 'running') ?? matches[matches.length - 1];
+  const matches = childSessions.filter(
+    (childSession) => (childSession.label ?? '').toLowerCase() === label,
+  );
+  return (
+    matches.find((childSession) => childSession.status === 'running') ?? matches[matches.length - 1]
+  );
 }
 
 export function childSessionActivityForTarget(
-  workers: WorkerInfo[],
+  childSessions: ChildSessionInfo[],
   allTx: TranscriptEvent[],
   target: ChildSessionTarget,
 ): ChildSessionActivity | undefined {
-  const worker = findChildSessionForTarget(workers, target);
-  if (!worker) return undefined;
+  const childSession = findChildSessionForTarget(childSessions, target);
+  if (!childSession) return undefined;
   let latest: ChildSessionLatest | undefined;
   for (let i = allTx.length - 1; i >= 0; i--) {
     const t = allTx[i];
     if (
-      t.sourceSessionId !== worker.providerSessionId ||
+      t.sourceSessionId !== childSession.providerSessionId ||
       (t.kind === 'tool_result' && !t.isError) ||
       t.author === 'user'
     )
@@ -95,7 +90,7 @@ export function childSessionActivityForTarget(
     };
     break;
   }
-  return { status: worker.status, startedAt: worker.startedAt, latest };
+  return { status: childSession.status, startedAt: childSession.startedAt, latest };
 }
 
 // Last non-empty line, capped, so a long thinking block stays a one-line cue.

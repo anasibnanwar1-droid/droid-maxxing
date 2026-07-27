@@ -332,7 +332,7 @@ export default function PromptInput({
 
   const missionPreview = activeSession
     ? activeSession.sessionPurpose === 'mission-control'
-    : state.missionMode;
+    : state.missionControlMode;
 
   // A single chat carries its own model/reasoning; only fall back to the global
   // default while composing a brand-new chat that has no session yet.

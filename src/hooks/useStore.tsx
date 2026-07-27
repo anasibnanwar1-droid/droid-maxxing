@@ -16,7 +16,7 @@ import type {
   PermissionRequest,
   SessionQuestion,
   ModelInfo,
-  WorkerSummary,
+  ChildSessionSummary,
   ChildSessionHistoryLink,
   SkillInfo,
   ReasoningEffort,
@@ -56,7 +56,7 @@ export type AgentKind = 'primary' | 'worker' | 'validator';
 export type LiveEnterBehavior = 'queue' | 'interrupt';
 export type DiffViewMode = 'unified' | 'split';
 
-export interface WorkerInfo extends WorkerSummary {
+export interface ChildSessionInfo extends ChildSessionSummary {
   startedAt: number;
 }
 
@@ -122,7 +122,7 @@ export interface AppState {
   sessionLastSeen: Record<string, number>;
   transcripts: Record<string, TranscriptEvent[]>;
   progress: Record<string, ProgressEntry[]>;
-  workers: Record<string, WorkerInfo[]>; // child sessions keyed by parent app session
+  childSessions: Record<string, ChildSessionInfo[]>; // keyed by parent app session
   historyLoaded: Record<string, boolean>;
   // Cursor for the next older page of primary-session scrollback;
   // undefined/absent once the oldest compaction segment has been loaded.
@@ -136,7 +136,7 @@ export interface AppState {
   // blank or silently truncated transcript (#29).
   sessionRestore: Record<string, SessionRestore>;
   // Whether a child session's inner transcript is currently being fetched, keyed by
-  // worker session id. A worker's events only stream after its card is opened,
+  // child provider session id. A child's events only stream after its card is opened,
   // so the view shows a loading state until the first event (or the opened ack)
   // arrives instead of a misleading "no activity" empty state.
   childHistoryLoading: Record<string, boolean>;
@@ -174,7 +174,7 @@ export interface AppState {
   // swallows outside-click dismissal).
   contextMeterOpen: boolean;
   theme: ThemeConfig;
-  missionMode: boolean;
+  missionControlMode: boolean;
   draftChat: { cwd: string; branch?: string } | null;
   workspaceCwds: string[];
   // Derived (synced by the reducer): whether the browser pane is open for the
@@ -191,7 +191,7 @@ export interface AppState {
 
   // Mission Control view
   selectedFeatureId: string | null;
-  selectedProviderSessionId: string | null; // 'primary' or worker session id
+  selectedProviderSessionId: string | null; // 'primary' or child provider session id
 
   // Models / per-agent config
   models: ModelInfo[];
@@ -286,14 +286,19 @@ type Action =
   | { type: 'SPEC_CLOSE_WIKI' }
   | { type: 'SESSION_PERMISSION'; request: PermissionRequest }
   | { type: 'SESSION_QUESTION'; question: SessionQuestion }
-  | { type: 'SESSION_ERROR'; appSessionId?: string; message: string }
+  | {
+      type: 'SESSION_ERROR';
+      appSessionId?: string;
+      providerSessionId?: string;
+      message: string;
+    }
   | { type: 'SESSION_LIST'; sessions: SessionSummary[] }
   | {
       type: 'SESSION_HISTORY';
       appSessionId: string;
       progress: ProgressEntry[];
       transcripts: TranscriptEvent[];
-      workers?: ChildSessionHistoryLink[];
+      childSessions?: ChildSessionHistoryLink[];
       mode?: 'replace' | 'prepend';
       olderCursor?: string;
       loadedCount?: number;
@@ -530,7 +535,7 @@ interface PersistedUiState {
   utilityPanels: Record<string, UtilityPanelState>;
   sidebarCollapsed: boolean;
   specMode: boolean;
-  missionMode: boolean;
+  missionControlMode: boolean;
   browsers: Record<string, BrowserState>;
   browserOpenKeys: Record<string, boolean>;
   selectedFeatureId: string | null;
@@ -651,7 +656,8 @@ export function loadPersistedUiState(): Partial<PersistedUiState> {
       sidebarCollapsed:
         typeof parsed.sidebarCollapsed === 'boolean' ? parsed.sidebarCollapsed : undefined,
       specMode: typeof parsed.specMode === 'boolean' ? parsed.specMode : undefined,
-      missionMode: typeof parsed.missionMode === 'boolean' ? parsed.missionMode : undefined,
+      missionControlMode:
+        typeof parsed.missionControlMode === 'boolean' ? parsed.missionControlMode : undefined,
       browsers: loadPersistedBrowsers(parsed.browsers),
       browserOpenKeys: loadPersistedBrowserOpenKeys(parsed.browserOpenKeys),
       selectedFeatureId:
@@ -673,7 +679,7 @@ function savePersistedUiState(state: AppState): void {
     utilityPanels: persistUtilityPanels(state.utilityPanels),
     sidebarCollapsed: state.sidebarCollapsed,
     specMode: state.specMode,
-    missionMode: state.missionMode,
+    missionControlMode: state.missionControlMode,
     browsers: persistBrowsers(state.browsers),
     browserOpenKeys: state.browserOpenKeys,
     selectedFeatureId: state.selectedFeatureId,
@@ -757,7 +763,7 @@ export const initialState: AppState = {
   sessionLastSeen: loadSessionLastSeen(),
   transcripts: {},
   progress: {},
-  workers: {},
+  childSessions: {},
   historyLoaded: {},
   historyCursor: {},
   historyLoadingOlder: {},
@@ -778,7 +784,7 @@ export const initialState: AppState = {
   commandPaletteOpen: false,
   contextMeterOpen: false,
   theme: loadTheme(),
-  missionMode: persistedUiState.missionMode ?? false,
+  missionControlMode: persistedUiState.missionControlMode ?? false,
   draftChat: null,
   workspaceCwds: loadWorkspaceCwds(),
   browserOpen: false,
@@ -1014,9 +1020,9 @@ function baseReducer(state: AppState, action: Action): AppState {
 
     case 'SESSION_CHILD': {
       const mid = action.appSessionId;
-      const prev = state.workers[mid] ?? [];
+      const prev = state.childSessions[mid] ?? [];
       const idx = prev.findIndex((w) => w.providerSessionId === action.providerSessionId);
-      let next: WorkerInfo[];
+      let next: ChildSessionInfo[];
       if (idx >= 0) {
         next = [...prev];
         next[idx] = {
@@ -1049,7 +1055,7 @@ function baseReducer(state: AppState, action: Action): AppState {
           },
         ];
       }
-      return { ...state, workers: { ...state.workers, [mid]: next } };
+      return { ...state, childSessions: { ...state.childSessions, [mid]: next } };
     }
 
     case 'CHILD_HISTORY_LOADING': {
@@ -1079,12 +1085,15 @@ function baseReducer(state: AppState, action: Action): AppState {
           : state;
       if (action.role !== 'worker' || action.status === 'opened') return base;
       // Past this point status is running/paused/completed, so base === state.
-      const prev = state.workers[action.appSessionId] ?? [];
+      const prev = state.childSessions[action.appSessionId] ?? [];
       const idx = prev.findIndex((w) => w.providerSessionId === action.providerSessionId);
       if (idx < 0) return state;
       const next = [...prev];
       next[idx] = { ...next[idx], status: action.status };
-      return { ...state, workers: { ...state.workers, [action.appSessionId]: next } };
+      return {
+        ...state,
+        childSessions: { ...state.childSessions, [action.appSessionId]: next },
+      };
     }
 
     case 'SESSION_TOKENS': {
@@ -1274,9 +1283,10 @@ function baseReducer(state: AppState, action: Action): AppState {
       return { ...state, pendingQuestion: action.question };
 
     case 'SESSION_ERROR': {
+      let next = state;
       if (action.appSessionId && state.sessions[action.appSessionId]) {
         const m = state.sessions[action.appSessionId];
-        return {
+        next = {
           ...state,
           sessions: {
             ...state.sessions,
@@ -1284,7 +1294,16 @@ function baseReducer(state: AppState, action: Action): AppState {
           },
         };
       }
-      return state;
+      if (action.providerSessionId) {
+        next = {
+          ...next,
+          childHistoryLoading: {
+            ...next.childHistoryLoading,
+            [action.providerSessionId]: false,
+          },
+        };
+      }
+      return next;
     }
 
     case 'SESSION_LIST': {
@@ -1505,14 +1524,19 @@ function baseReducer(state: AppState, action: Action): AppState {
       const after = liveOnly.filter((e) => e.ts >= firstTs);
       const mergedTranscript = page.length > 0 ? [...before, ...page, ...after] : existing;
       const transcripts = { ...state.transcripts, [action.appSessionId]: mergedTranscript };
-      // Merge the exact spawn->worker mapping from history with any live workers
+      // Merge exact child-session links from history with any live child sessions
       // already in state (a live session.child may arrive before history). Live
-      // entries win; history links add missing workers and backfill toolUseId.
-      const histLinks = action.workers ?? [];
-      const existingWorkers = state.workers[action.appSessionId] ?? [];
-      let workers = state.workers;
+      // entries win; history links add missing sessions and backfill toolUseId.
+      const histLinks = action.childSessions ?? [];
+      const existingChildSessions = state.childSessions[action.appSessionId] ?? [];
+      let childSessions = state.childSessions;
       if (histLinks.length > 0) {
-        const bySession = new Map(existingWorkers.map((w) => [w.providerSessionId, w]));
+        const bySession = new Map(
+          existingChildSessions.map((childSession) => [
+            childSession.providerSessionId,
+            childSession,
+          ]),
+        );
         let changed = false;
         for (const link of histLinks) {
           const existing = bySession.get(link.providerSessionId);
@@ -1541,7 +1565,10 @@ function baseReducer(state: AppState, action: Action): AppState {
           }
         }
         if (changed)
-          workers = { ...state.workers, [action.appSessionId]: Array.from(bySession.values()) };
+          childSessions = {
+            ...state.childSessions,
+            [action.appSessionId]: Array.from(bySession.values()),
+          };
       }
       const hasMore = Boolean(action.olderCursor);
       // An empty restore (e.g. a live session with no persisted history yet)
@@ -1553,7 +1580,7 @@ function baseReducer(state: AppState, action: Action): AppState {
         ...state,
         progress: { ...state.progress, [action.appSessionId]: mergedProgress },
         transcripts,
-        workers,
+        childSessions,
         historyLoaded: { ...state.historyLoaded, [action.appSessionId]: true },
         historyCursor: { ...state.historyCursor, [action.appSessionId]: action.olderCursor },
         historyLoadingOlder: { ...state.historyLoadingOlder, [action.appSessionId]: false },
@@ -1800,7 +1827,7 @@ function baseReducer(state: AppState, action: Action): AppState {
       return { ...state, settingsOpen: !state.settingsOpen };
 
     case 'TOGGLE_MISSION_CONTROL':
-      return { ...state, missionMode: !state.missionMode };
+      return { ...state, missionControlMode: !state.missionControlMode };
 
     case 'START_CHAT': {
       // Stamp the session being left so model output produced while it was
@@ -1813,7 +1840,7 @@ function baseReducer(state: AppState, action: Action): AppState {
         ...state,
         draftChat: { cwd: action.cwd, branch: action.branch },
         activeAppSessionId: null,
-        missionMode: false,
+        missionControlMode: false,
         sessionLastSeen,
       };
     }
@@ -2189,7 +2216,7 @@ function finiteNumber(value: unknown): number | undefined {
 }
 
 /* ── Bridge event adapter ── */
-function adaptEvent(ev: ServerEvent): Action | null {
+export function adaptEvent(ev: ServerEvent): Action | null {
   switch (ev.type) {
     case 'connection':
       return {
@@ -2232,9 +2259,16 @@ function adaptEvent(ev: ServerEvent): Action | null {
     case 'question.requested':
       return { type: 'SESSION_QUESTION', question: ev.question };
     case 'error':
-      // A failed worker open (capacity, load failure) carries the agent session
-      // id; settle its loading flag so the card stops showing "Loading …
-      // activity" forever.
+      // Session-level failures can also carry a child provider id. Preserve both
+      // effects: fail the parent session and settle the child loading state.
+      if (ev.appSessionId) {
+        return {
+          type: 'SESSION_ERROR',
+          appSessionId: ev.appSessionId,
+          providerSessionId: ev.providerSessionId,
+          message: ev.message,
+        };
+      }
       if (ev.providerSessionId) {
         return {
           type: 'CHILD_HISTORY_LOADING',
@@ -2242,7 +2276,7 @@ function adaptEvent(ev: ServerEvent): Action | null {
           loading: false,
         };
       }
-      return { type: 'SESSION_ERROR', appSessionId: ev.appSessionId, message: ev.message };
+      return { type: 'SESSION_ERROR', message: ev.message };
     case 'sessions.list':
       return { type: 'SESSION_LIST', sessions: ev.sessions };
     case 'session.history':
@@ -2251,7 +2285,7 @@ function adaptEvent(ev: ServerEvent): Action | null {
         appSessionId: ev.appSessionId,
         progress: ev.progress,
         transcripts: ev.transcripts,
-        workers: ev.workers,
+        childSessions: ev.childSessions,
         mode: ev.mode,
         olderCursor: ev.olderCursor,
         loadedCount: ev.loadedCount,
@@ -2309,7 +2343,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     state.activeAppSessionId,
     state.browserOpenKeys,
     state.browsers,
-    state.missionMode,
+    state.missionControlMode,
     state.rightPanelOpen,
     state.utilityPanels,
     state.selectedProviderSessionId,

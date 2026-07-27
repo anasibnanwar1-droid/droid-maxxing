@@ -1,8 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import type { TranscriptEvent, ChildSessionHistoryLink } from '../types/bridge';
-import type { WorkerInfo } from '../hooks/useStore';
-import { resolveChildSessions, mergeChildSessionSpawn, childSessionLatest } from './childSessions';
+import type { TranscriptEvent } from '../types/bridge';
+import { mergeChildSessionSpawn, childSessionLatest } from './childSessions';
 import { childSessionInfo } from './tools';
 
 function ev(
@@ -11,31 +10,6 @@ function ev(
 ): TranscriptEvent {
   return { appSessionId: 'app-1', ...p } as TranscriptEvent;
 }
-
-function workersFromLinks(links: ChildSessionHistoryLink[]): WorkerInfo[] {
-  return links.map((link) => ({
-    providerSessionId: link.providerSessionId,
-    status: link.status ?? 'completed',
-    startedAt: 0,
-    label: link.label,
-    toolUseId: link.toolUseId,
-  }));
-}
-
-test('resolveChildSessions preserves canonical child-session links', () => {
-  const links = [
-    { providerSessionId: 'provider-b', toolUseId: 'tool-a', label: 'worker' },
-    { providerSessionId: 'provider-a', toolUseId: 'tool-b', label: 'validator' },
-  ];
-  const workers = workersFromLinks(links);
-  const resolved = resolveChildSessions(workers, []);
-
-  assert.equal(resolved, workers);
-  assert.equal(resolved[0].providerSessionId, 'provider-b');
-  assert.equal(resolved[0].toolUseId, 'tool-a');
-  assert.equal(resolved[1].providerSessionId, 'provider-a');
-  assert.equal(resolved[1].toolUseId, 'tool-b');
-});
 
 const spawn = (toolArgs: Record<string, unknown>): TranscriptEvent =>
   ev({

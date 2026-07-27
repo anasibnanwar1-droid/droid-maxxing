@@ -27,7 +27,7 @@ test('loadPersistedUiState sanitizes persisted shell fields', () => {
       rightPanelOpen: false,
       sidebarCollapsed: true,
       specMode: true,
-      missionMode: false,
+      missionControlMode: false,
       utilityPanels: {
         m1: {
           open: true,
@@ -69,7 +69,7 @@ test('loadPersistedUiState sanitizes persisted shell fields', () => {
         rightPanelOpen: false,
         sidebarCollapsed: true,
         specMode: true,
-        missionMode: false,
+        missionControlMode: false,
         utilityPanels: {
           m1: {
             open: true,

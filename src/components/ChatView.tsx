@@ -14,11 +14,7 @@ import {
 } from './chat';
 import { readFile } from '../lib/desktop';
 import { interruptChild, loadSessionHistory } from '../lib/commands';
-import {
-  findChildSessionForTarget,
-  resolveChildSessions,
-  childSessionActivityForTarget,
-} from '../lib/childSessions';
+import { findChildSessionForTarget, childSessionActivityForTarget } from '../lib/childSessions';
 import type { FileChange } from '../lib/diff';
 import { ConversationTimeline } from './ConversationTimeline';
 
@@ -137,7 +133,7 @@ function ChatHeader({
           <button
             type="button"
             onClick={sub.onBack}
-            title="Back to main agent"
+            title="Back to primary session"
             className="truncate text-[13px] font-medium text-droid-text-muted transition-colors hover:text-droid-text max-w-[200px]"
           >
             {title}
@@ -186,34 +182,36 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
   const activeSession = state.activeAppSessionId ? state.sessions[state.activeAppSessionId] : null;
   const allTranscript = activeSession ? (state.transcripts[activeSession.appSessionId] ?? []) : [];
 
-  const selectedAgent = state.selectedProviderSessionId;
-  const viewingSub = !!selectedAgent && selectedAgent !== 'primary';
+  const selectedProviderSessionId = state.selectedProviderSessionId;
+  const viewingChildSession =
+    !!selectedProviderSessionId && selectedProviderSessionId !== 'primary';
 
-  const childSessions = activeSession ? (state.workers[activeSession.appSessionId] ?? []) : [];
-  // Historical chat/spec sessions receive exact persisted child links in
-  // state.workers, matching live session.child events.
-  const resolvedWorkers = useMemo(
-    () => resolveChildSessions(childSessions, allTranscript),
-    [childSessions, allTranscript],
+  const childSessions = activeSession
+    ? (state.childSessions[activeSession.appSessionId] ?? [])
+    : [];
+  const childSessionIndex = childSessions.findIndex(
+    (childSession) => childSession.providerSessionId === selectedProviderSessionId,
   );
-  const workerIndex = resolvedWorkers.findIndex((w) => w.providerSessionId === selectedAgent);
-  const selectedWorker = workerIndex >= 0 ? resolvedWorkers[workerIndex] : undefined;
-  const subLabel = selectedWorker
-    ? (selectedWorker.label ?? `Sub-agent ${workerIndex + 1}`)
-    : 'Sub-agent';
-  const subModel = selectedWorker?.modelId
-    ? (state.models.find((m) => m.id === selectedWorker.modelId)?.displayName ??
-      selectedWorker.modelId)
+  const selectedChildSession =
+    childSessionIndex >= 0 ? childSessions[childSessionIndex] : undefined;
+  const childSessionLabel = selectedChildSession
+    ? (selectedChildSession.label ?? `Child session ${childSessionIndex + 1}`)
+    : 'Child session';
+  const childSessionModel = selectedChildSession?.modelId
+    ? (state.models.find((model) => model.id === selectedChildSession.modelId)?.displayName ??
+      selectedChildSession.modelId)
     : undefined;
-  const subMeta = [subModel, selectedWorker?.reasoningEffort].filter(Boolean).join(' · ');
+  const childSessionMeta = [childSessionModel, selectedChildSession?.reasoningEffort]
+    .filter(Boolean)
+    .join(' · ');
 
   // Click a spawn name → switch the main chat view to that child session's session.
   const openChildSession = useCallback(
     (target: { toolUseId?: string; label?: string }) => {
-      const worker = findChildSessionForTarget(resolvedWorkers, target);
+      const worker = findChildSessionForTarget(childSessions, target);
       if (worker) dispatch({ type: 'SELECT_PROVIDER_SESSION', id: worker.providerSessionId });
     },
-    [resolvedWorkers, dispatch],
+    [childSessions, dispatch],
   );
 
   // Open the Review pane scoped to the agent's last turn and jump to the clicked
@@ -231,17 +229,18 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
   // start time (for the timer), and its newest meaningful transcript event.
   const childSessionActivity = useCallback(
     (target: { toolUseId?: string; label?: string }) => {
-      return childSessionActivityForTarget(resolvedWorkers, allTranscript, target);
+      return childSessionActivityForTarget(childSessions, allTranscript, target);
     },
-    [resolvedWorkers, allTranscript],
+    [childSessions, allTranscript],
   );
 
   const transcript = useMemo(() => {
-    if (viewingSub) return allTranscript.filter((t) => t.sourceSessionId === selectedAgent);
+    if (viewingChildSession)
+      return allTranscript.filter((event) => event.sourceSessionId === selectedProviderSessionId);
     return allTranscript.filter(
       (t) => t.role === 'primary' || (t.author === 'user' && t.sourceSessionId === 'user'),
     );
-  }, [allTranscript, viewingSub, selectedAgent]);
+  }, [allTranscript, viewingChildSession, selectedProviderSessionId]);
 
   // Lazily page older primary-session history (across the compaction chain) in as
   // the user scrolls toward the top, prefetching well before the edge so the
@@ -271,7 +270,7 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
     if (!el) return;
     stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
     if (
-      !viewingSub &&
+      !viewingChildSession &&
       historyAppSessionId &&
       olderCursor &&
       !loadingOlder &&
@@ -385,8 +384,8 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
   // Dots for the conversation timeline: one per user prompt, derived from the
   // same feed the transcript renders so the rail stays in sync.
   const timelineAnchors = useMemo(
-    () => (viewingSub ? [] : promptAnchorsFromItems(feedItems)),
-    [feedItems, viewingSub],
+    () => (viewingChildSession ? [] : promptAnchorsFromItems(feedItems)),
+    [feedItems, viewingChildSession],
   );
 
   // Old/large chats restore only a recent window, which can hold too few final
@@ -394,7 +393,7 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
   // prepend-stable path as scroll prefetch) until there are enough anchors or
   // the compaction chain is exhausted, so the timeline works on any chat.
   useEffect(() => {
-    if (viewingSub || !historyAppSessionId || !olderCursor || loadingOlder) return;
+    if (viewingChildSession || !historyAppSessionId || !olderCursor || loadingOlder) return;
     if (timelineAnchors.length >= TIMELINE_TARGET_ANCHORS) return;
     // A failed older-page load leaves the cursor intact so a later user scroll
     // can retry; without this guard the auto-pager would immediately re-fire the
@@ -405,7 +404,7 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
     dispatch({ type: 'SESSION_HISTORY_LOADING_OLDER', appSessionId: historyAppSessionId });
     loadSessionHistory(historyAppSessionId, olderCursor);
   }, [
-    viewingSub,
+    viewingChildSession,
     historyAppSessionId,
     olderCursor,
     loadingOlder,
@@ -421,15 +420,17 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
           title={activeSession.title}
           live={live}
           sub={
-            viewingSub
+            viewingChildSession
               ? {
-                  label: subLabel,
-                  meta: subMeta || undefined,
-                  running: selectedWorker?.status === 'running',
+                  label: childSessionLabel,
+                  meta: childSessionMeta || undefined,
+                  running: selectedChildSession?.status === 'running',
                   onBack: () => dispatch({ type: 'SELECT_PROVIDER_SESSION', id: null }),
                   onStop:
-                    activeSession && selectedAgent && selectedWorker?.status === 'running'
-                      ? () => interruptChild(activeSession.appSessionId, selectedAgent)
+                    activeSession &&
+                    selectedProviderSessionId &&
+                    selectedChildSession?.status === 'running'
+                      ? () => interruptChild(activeSession.appSessionId, selectedProviderSessionId)
                       : undefined,
                 }
               : undefined
@@ -451,16 +452,16 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
         >
           {activeSession && transcript.length > 0 ? (
             <motion.div
-              key={`${appSessionId ?? 'none'}:${viewingSub ? selectedAgent : 'main'}`}
+              key={`${appSessionId ?? 'none'}:${viewingChildSession ? selectedProviderSessionId : 'primary'}`}
               initial={{ opacity: 0, y: 6 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
               className="mx-auto min-w-0 px-6 py-6 max-w-2xl"
             >
-              {!viewingSub && restore?.status === 'failed' && (
+              {!viewingChildSession && restore?.status === 'failed' && (
                 <RestoreFailedBanner message={restore.error} onRetry={retryRestore} />
               )}
-              {!viewingSub && loadingOlder && (
+              {!viewingChildSession && loadingOlder && (
                 <div className="mb-4 flex justify-center">
                   <span className="text-[11px] text-droid-text-muted">
                     Loading earlier messages…
@@ -486,28 +487,29 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
             </motion.div>
           ) : activeSession && restore?.status === 'failed' ? (
             <RestoreFailedState message={restore.error} onRetry={retryRestore} />
-          ) : activeSession && viewingSub ? (
+          ) : activeSession && viewingChildSession ? (
             <div className="mx-auto flex h-full max-w-2xl flex-col items-center justify-center gap-4 px-8 text-center">
-              {selectedWorker?.prompt && (
+              {selectedChildSession?.prompt && (
                 <div className="max-w-lg rounded-xl bg-droid-elevated/40 px-4 py-3 text-left">
                   <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-droid-text-muted">
                     Task
                   </div>
                   <div className="text-[12.5px] leading-relaxed text-droid-text-secondary whitespace-pre-wrap break-words">
-                    {selectedWorker.prompt}
+                    {selectedChildSession.prompt}
                   </div>
                 </div>
               )}
-              {selectedWorker?.status === 'running' ? (
+              {selectedChildSession?.status === 'running' ? (
                 <WorkingIndicator
-                  label={`${subLabel} is working`}
-                  startTs={selectedWorker.startedAt}
+                  label={`${childSessionLabel} is working`}
+                  startTs={selectedChildSession.startedAt}
                 />
-              ) : selectedAgent && state.childHistoryLoading[selectedAgent] ? (
-                <WorkingIndicator label={`Loading ${subLabel} activity`} />
+              ) : selectedProviderSessionId &&
+                state.childHistoryLoading[selectedProviderSessionId] ? (
+                <WorkingIndicator label={`Loading ${childSessionLabel} activity`} />
               ) : (
                 <span className="text-[13px] text-droid-text-muted">
-                  No activity captured for {subLabel}.
+                  No activity captured for {childSessionLabel}.
                 </span>
               )}
             </div>

@@ -49,12 +49,7 @@ import { environmentLabels } from '../lib/repoEnvironment';
 import { DiffFull } from './DiffView';
 import { ModelIcon, providerOf } from './ModelIcon';
 import { CAT_ICON, CAT_LABEL, toolMeta } from '../lib/tools';
-import {
-  findChildSessionForTarget,
-  resolveChildSessions,
-  childSessionActivityForTarget,
-} from '../lib/childSessions';
-import type { WorkerInfo } from '../hooks/useStore';
+import { findChildSessionForTarget, childSessionActivityForTarget } from '../lib/childSessions';
 import { MessageFeed } from './chat';
 import EditorOpenMenu, { openCodebase, openCurrentDiff } from './EditorOpenMenu';
 import PromptInput from './PromptInput';
@@ -910,34 +905,26 @@ export default function MissionControl() {
   const features = mission?.features ?? [];
   const allTx = mission ? (state.transcripts[mission.appSessionId] ?? []) : [];
   const progress = mission ? (state.progress[mission.appSessionId] ?? []) : [];
-  const childSessions = mission ? (state.workers[mission.appSessionId] ?? []) : [];
-
-  // Live workers come from session.child events; Mission Control history seeds
-  // state.workers from the persisted exact mapping, and only fall back to
-  // transcript reconstruction for older history that predates persisted links.
-  const resolvedWorkers = useMemo<WorkerInfo[]>(
-    () => resolveChildSessions(childSessions, allTx),
-    [childSessions, allTx],
-  );
+  const childSessions = mission ? (state.childSessions[mission.appSessionId] ?? []) : [];
 
   // Click a spawn name in the orchestrator transcript → focus that worker.
   // Mission orchestrators are skipped by App's subscribe effect, so open the
   // worker session here to load its history/live events before switching.
   const openChildSession = useCallback(
     (target: { toolUseId?: string; label?: string }) => {
-      const worker = findChildSessionForTarget(resolvedWorkers, target);
+      const worker = findChildSessionForTarget(childSessions, target);
       if (!worker || !mission) return;
       openChild(mission.appSessionId, worker.providerSessionId);
       setViewedAgent(worker.providerSessionId);
     },
-    [resolvedWorkers, mission],
+    [childSessions, mission],
   );
 
   const childSessionActivity = useCallback(
     (target: { toolUseId?: string; label?: string }) => {
-      return childSessionActivityForTarget(resolvedWorkers, allTx, target);
+      return childSessionActivityForTarget(childSessions, allTx, target);
     },
-    [resolvedWorkers, allTx],
+    [childSessions, allTx],
   );
   const phaseLive = mission
     ? ['running', 'initializing', 'orchestrator_turn'].includes(mission.phase)
