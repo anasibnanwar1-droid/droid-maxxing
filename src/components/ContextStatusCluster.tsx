@@ -15,7 +15,7 @@ export default function ContextStatusCluster() {
       : session?.providerSessionId;
   const contextStats = contextSessionId ? state.contextStats[contextSessionId] : undefined;
   const contextSessionSummary =
-    session && contextSessionId !== session.appSessionId && !contextStats
+    session && contextSessionId !== session.providerSessionId && !contextStats
       ? {
           ...session,
           contextTokens: 0,

@@ -367,7 +367,7 @@ async function runRoundTrip(page: Page): Promise<SmokeResult> {
           const transcript = value.event as Record<string, unknown>;
           if (
             transcript.appSessionId === appSessionId &&
-            transcript.sourceSessionId === 'primary' &&
+            transcript.sourceSessionId === appSessionId &&
             transcript.role === 'primary' &&
             transcript.kind === 'text' &&
             transcript.author === undefined &&
