@@ -1,5 +1,11 @@
 import type { BrowserSnapshot, BrowserState } from '../browser/types.js';
-import type { BrowserNativeRequest, BrowserNativeResult, ServerEvent } from '../protocol.js';
+import type {
+  BrowserNativeRequest,
+  BrowserNativeResult,
+  BrowserViewport,
+  BrowserViewportMode,
+  ServerEvent,
+} from '../protocol.js';
 
 export interface BrowserRecordedCall {
   target: 'browser' | 'cleanup';
@@ -8,6 +14,19 @@ export interface BrowserRecordedCall {
 }
 
 type BrowserEventEmitter = (event: Extract<ServerEvent, { type: 'browser.updated' }>) => void;
+
+interface BrowserOpenInput {
+  missionId: string;
+  url: string;
+  viewport?: BrowserViewport;
+  viewportMode?: BrowserViewportMode;
+}
+
+const DEFAULT_BROWSER_VIEWPORT: BrowserViewport = {
+  width: 1200,
+  height: 800,
+  deviceScaleFactor: 2,
+};
 
 export class FakeBrowserSessionManager {
   readonly calls: BrowserRecordedCall[] = [];
@@ -18,8 +37,14 @@ export class FakeBrowserSessionManager {
     private readonly emit?: BrowserEventEmitter,
   ) {}
 
-  open(input: { missionId: string; url: string; [key: string]: unknown }): Promise<void> {
-    const state = browserState(input.missionId, input.url);
+  open(input: BrowserOpenInput): Promise<void> {
+    const existing = this.states.get(input.missionId);
+    const state = browserState(
+      input.missionId,
+      input.url,
+      input.viewport ?? existing?.viewport ?? DEFAULT_BROWSER_VIEWPORT,
+      input.viewportMode ?? existing?.viewportMode ?? 'fit',
+    );
     this.states.set(input.missionId, state);
     this.recordCall('browser', 'open', [input]);
     this.emit?.({ type: 'browser.updated', state });
@@ -58,13 +83,18 @@ export class FakeBrowserSessionManager {
   }
 }
 
-function browserState(missionId: string, url: string): BrowserState {
+function browserState(
+  missionId: string,
+  url: string,
+  viewport: BrowserViewport,
+  viewportMode: BrowserViewportMode,
+): BrowserState {
   return {
     sessionId: `browser-${missionId}`,
     missionId,
     url,
-    viewport: { width: 1280, height: 800, deviceScaleFactor: 1 },
-    viewportMode: 'fit',
+    viewport: { ...viewport },
+    viewportMode,
     scroll: { x: 0, y: 0 },
     refs: [],
   };

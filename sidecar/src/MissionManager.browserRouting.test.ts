@@ -22,18 +22,120 @@ function nativeRequests(events: ServerEvent[]): NativeBrowserRequestEvent[] {
 
 test('[B1] Browser command routing', { concurrency: false }, async () => {
   const h = createSessionCharacterizationHarness();
+  const viewport = { width: 1024, height: 768, deviceScaleFactor: 1 };
+  const resizedViewport = { width: 1280, height: 720, deviceScaleFactor: 2 };
 
   try {
     await h.handle({
       type: 'browser.open',
       missionId: 'app-b1',
       url: 'https://example.test',
+      viewport,
+      viewportMode: 'custom',
     });
 
     assert.deepEqual(h.browsers.calls.at(-1), {
       target: 'browser',
       method: 'open',
-      args: [{ type: 'browser.open', missionId: 'app-b1', url: 'https://example.test' }],
+      args: [
+        {
+          type: 'browser.open',
+          missionId: 'app-b1',
+          url: 'https://example.test',
+          viewport,
+          viewportMode: 'custom',
+        },
+      ],
+    });
+    assert.deepEqual(h.events.at(-1), {
+      type: 'browser.updated',
+      state: {
+        sessionId: 'browser-app-b1',
+        missionId: 'app-b1',
+        url: 'https://example.test',
+        viewport,
+        viewportMode: 'custom',
+        scroll: { x: 0, y: 0 },
+        refs: [],
+      },
+    });
+
+    await h.handle({
+      type: 'browser.open',
+      missionId: 'app-b1',
+      url: 'https://example.test/reopened-viewport',
+      viewport: resizedViewport,
+    });
+
+    assert.deepEqual(h.events.at(-1), {
+      type: 'browser.updated',
+      state: {
+        sessionId: 'browser-app-b1',
+        missionId: 'app-b1',
+        url: 'https://example.test/reopened-viewport',
+        viewport: resizedViewport,
+        viewportMode: 'custom',
+        scroll: { x: 0, y: 0 },
+        refs: [],
+      },
+    });
+
+    await h.handle({
+      type: 'browser.open',
+      missionId: 'app-b1',
+      url: 'https://example.test/reopened-mode',
+      viewportMode: 'mobile',
+    });
+
+    assert.deepEqual(h.events.at(-1), {
+      type: 'browser.updated',
+      state: {
+        sessionId: 'browser-app-b1',
+        missionId: 'app-b1',
+        url: 'https://example.test/reopened-mode',
+        viewport: resizedViewport,
+        viewportMode: 'mobile',
+        scroll: { x: 0, y: 0 },
+        refs: [],
+      },
+    });
+
+    await h.handle({
+      type: 'browser.open',
+      missionId: 'app-b1',
+      url: 'https://example.test/reopened',
+    });
+
+    assert.deepEqual(h.events.at(-1), {
+      type: 'browser.updated',
+      state: {
+        sessionId: 'browser-app-b1',
+        missionId: 'app-b1',
+        url: 'https://example.test/reopened',
+        viewport: resizedViewport,
+        viewportMode: 'mobile',
+        scroll: { x: 0, y: 0 },
+        refs: [],
+      },
+    });
+
+    await h.handle({
+      type: 'browser.open',
+      missionId: 'app-b1-default',
+      url: 'https://example.test/default',
+    });
+
+    assert.deepEqual(h.events.at(-1), {
+      type: 'browser.updated',
+      state: {
+        sessionId: 'browser-app-b1-default',
+        missionId: 'app-b1-default',
+        url: 'https://example.test/default',
+        viewport: { width: 1200, height: 800, deviceScaleFactor: 2 },
+        viewportMode: 'fit',
+        scroll: { x: 0, y: 0 },
+        refs: [],
+      },
     });
 
     await h.handle({ type: 'browser.reload', missionId: 'missing' });
