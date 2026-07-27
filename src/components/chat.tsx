@@ -32,7 +32,10 @@ import {
   parseTodos,
   hasTodoPayload,
   isWebSearchTool,
+  isWebFetchTool,
   parseWebSearch,
+  parseWebFetch,
+  formatCharCount,
   webSourceName,
   faviconUrl,
   toolArgStringArray,
@@ -538,7 +541,9 @@ function ToolLine({
   return (
     <div>
       <div className="flex items-center gap-1.5 text-[12.5px] leading-relaxed min-w-0">{label}</div>
-      {(cat === 'other' || cat === 'search' || cat === 'web') && out && (
+      {/* web/fetch tools render via WebFetchCard; keep a collapsible dump only
+          for generic search/other tools that still land here. */}
+      {(cat === 'other' || cat === 'search') && out && (
         <pre className="mt-1.5 max-h-44 overflow-auto rounded-md bg-droid-bg/50 px-2.5 py-2 text-[11px] leading-relaxed font-mono text-droid-text-muted/80 whitespace-pre-wrap break-words">
           {linkify(out)}
         </pre>
@@ -562,8 +567,81 @@ function Favicon({ url }: { url: string }) {
   );
 }
 
+/* ── Shared source-row chrome for web search results + fetched pages ── */
+function WebSourceRow({
+  title,
+  snippet,
+  url,
+  emphasize = false,
+}: {
+  title: string;
+  snippet?: string;
+  url: string;
+  emphasize?: boolean;
+}) {
+  const href = httpHref(url);
+  return (
+    <a
+      {...(href ? { href, onClick: (e: React.MouseEvent) => openLink(e, href) } : {})}
+      className={`block rounded-lg px-3 py-2 transition-colors hover:bg-droid-elevated/60 ${
+        emphasize ? 'bg-droid-elevated/40' : ''
+      }`}
+    >
+      <div className="truncate text-[13px] font-medium text-droid-text">{title}</div>
+      {snippet && (
+        <div className="mt-0.5 line-clamp-2 text-[12px] leading-relaxed text-droid-text-muted">
+          {snippet}
+        </div>
+      )}
+      {url && (
+        <div className="mt-1.5 flex items-center gap-1.5">
+          <Favicon url={url} />
+          <span className="truncate text-[11px] text-droid-text-secondary">
+            {webSourceName(url)}
+          </span>
+        </div>
+      )}
+    </a>
+  );
+}
+
+function CountBadge({ label }: { label: string }) {
+  return (
+    <span className="ml-auto shrink-0 rounded-md border border-droid-border bg-droid-elevated/60 px-1.5 py-0.5 font-mono text-[11px] text-droid-text-secondary">
+      {label}
+    </span>
+  );
+}
+
+function useAutoOpen(shouldOpen: boolean): [boolean, (next: boolean | ((o: boolean) => boolean)) => void] {
+  const [open, setOpen] = useState(shouldOpen);
+  const autoOpened = useRef(false);
+  useEffect(() => {
+    if (autoOpened.current || !shouldOpen) return;
+    autoOpened.current = true;
+    setOpen(true);
+  }, [shouldOpen]);
+  return [open, setOpen];
+}
+
+function fetchSnippet(body: string): string {
+  return body
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .join(' ')
+    .slice(0, 280);
+}
+
+function fetchSizeBadge(chars: number, truncatedChars: number | null): string | null {
+  if (truncatedChars != null) return `${formatCharCount(chars)}+`;
+  if (chars > 0) return formatCharCount(chars);
+  return null;
+}
+
 /* ── Web search: a collapsible search row that expands into readable result
-   cards (title, snippet, source) instead of a raw text dump ── */
+   cards (title, snippet, source) instead of a raw text dump. Defaults open
+   once results are present so expanding a tool group shows the cards. ── */
 function WebSearchCard({
   event,
   output,
@@ -573,18 +651,48 @@ function WebSearchCard({
   output?: string;
   error?: boolean;
 }) {
-  const [open, setOpen] = useState(false);
   const query = argStr(event.toolArgs, 'query') ?? '';
   const { results, count } = parseWebSearch(output ?? '');
   const total = count ?? results.length;
+  const raw = output ? stripAnsi(output).trim() : '';
+  const hasContent = results.length > 0 || raw.length > 0;
+  const [open, setOpen] = useAutoOpen(hasContent && !error);
   const isX = toolArgStringArray(event.toolArgs, 'includeDomains').some((d) =>
     /(^|\.)(x|twitter)\.com$/i.test(d),
   );
-  const raw = output ? stripAnsi(output).trim() : '';
+  let trailing: React.ReactNode = null;
+  if (error) trailing = <ErrorTag />;
+  else if (total > 0) trailing = <CountBadge label={String(total)} />;
+
+  let body: React.ReactNode = null;
+  if (results.length > 0) {
+    body = (
+      <div className="mt-2 space-y-1">
+        {results.map((r, i) => (
+          <WebSourceRow
+            key={`${r.url}-${String(i)}`}
+            title={r.title}
+            snippet={r.snippet}
+            url={r.url}
+            emphasize={i === 0}
+          />
+        ))}
+      </div>
+    );
+  } else if (raw) {
+    body = (
+      <pre className="mt-1.5 max-h-44 overflow-auto rounded-md bg-droid-bg/50 px-2.5 py-2 text-[11px] leading-relaxed font-mono text-droid-text-muted/80 whitespace-pre-wrap break-words">
+        {linkify(raw)}
+      </pre>
+    );
+  }
+
   return (
     <div>
       <button
-        onClick={() => setOpen((o) => !o)}
+        onClick={() => {
+          setOpen((o) => !o);
+        }}
         className="group flex w-full min-w-0 items-center gap-1.5 text-left"
       >
         {isX ? (
@@ -597,53 +705,119 @@ function WebSearchCard({
         <span className="shrink-0 text-[12.5px] text-droid-text-secondary">
           {isX ? 'Searched X' : 'Searched web'}
         </span>
-        {query && (
+        {query ? (
           <span className="min-w-0 truncate font-mono text-[11.5px] text-droid-text-muted">
             {query}
           </span>
-        )}
-        {error ? (
-          <ErrorTag />
-        ) : total ? (
-          <span className="ml-auto shrink-0 rounded-md border border-droid-border bg-droid-elevated/60 px-1.5 py-0.5 font-mono text-[11px] text-droid-text-secondary">
-            {total}
-          </span>
         ) : null}
+        {trailing}
+        <Caret open={open} />
+      </button>
+      <Expand open={open}>{body}</Expand>
+    </div>
+  );
+}
+
+function WebFetchBody({
+  error,
+  hasBody,
+  body,
+  url,
+  title,
+  snippet,
+}: {
+  error: boolean;
+  hasBody: boolean;
+  body: string;
+  url: string;
+  title: string;
+  snippet: string;
+}) {
+  if (error && hasBody) {
+    return (
+      <pre
+        className="mt-1.5 max-h-56 overflow-auto rounded-md px-2.5 py-2 text-[11px] leading-relaxed font-mono whitespace-pre-wrap break-words"
+        style={{ backgroundColor: RED_TINT, color: RED }}
+      >
+        {body}
+      </pre>
+    );
+  }
+  if (!hasBody && url.length === 0) return null;
+  return (
+    <div className="mt-2 space-y-1">
+      <WebSourceRow
+        title={title}
+        snippet={snippet.length > 0 ? snippet : undefined}
+        url={url}
+        emphasize
+      />
+      {hasBody && body.length > 280 ? (
+        <pre className="max-h-44 overflow-auto rounded-lg bg-droid-elevated/30 px-3 py-2 text-[12px] leading-relaxed text-droid-text-muted whitespace-pre-wrap break-words">
+          {linkify(body)}
+        </pre>
+      ) : null}
+    </div>
+  );
+}
+
+/* ── Page fetch: same card language as web search (favicon, source, title,
+   readable body) so expanded tool groups never dump raw mono fetch text.
+   Stays collapsed by default — header alone is enough until the user expands. ── */
+function WebFetchCard({
+  event,
+  output,
+  error = false,
+}: {
+  event: TranscriptEvent;
+  output?: string;
+  error?: boolean;
+}) {
+  const urlArg =
+    argStr(event.toolArgs, 'url') ??
+    argStr(event.toolArgs, 'uri') ??
+    argStr(event.toolArgs, 'href') ??
+    '';
+  const page = parseWebFetch(output ?? '', urlArg.length > 0 ? urlArg : undefined);
+  const url = page.url ?? urlArg;
+  const hasBody = page.body.length > 0;
+  const [open, setOpen] = useState(false);
+  const displayTitle = page.title ?? (url.length > 0 ? webSourceName(url) : 'Page');
+  const snippet = hasBody ? fetchSnippet(page.body) : '';
+  const badge = fetchSizeBadge(page.chars, page.truncatedChars);
+  let trailing: React.ReactNode = null;
+  if (error) trailing = <ErrorTag />;
+  else if (badge) trailing = <CountBadge label={badge} />;
+
+  return (
+    <div>
+      <button
+        onClick={() => {
+          setOpen((o) => !o);
+        }}
+        className="group flex w-full min-w-0 items-center gap-1.5 text-left"
+      >
+        {url.length > 0 ? (
+          <Favicon url={url} />
+        ) : (
+          <Globe className="h-3.5 w-3.5 shrink-0 text-droid-text-muted" />
+        )}
+        <span className="shrink-0 text-[12.5px] text-droid-text-secondary">Fetched</span>
+        <span className="min-w-0 truncate font-mono text-[11.5px] text-droid-text-muted">
+          {url.length > 0 ? url : displayTitle}
+        </span>
+        {trailing}
+        <Caret open={open} />
       </button>
       <Expand open={open}>
-        {results.length > 0 ? (
-          <div className="mt-2 space-y-1">
-            {results.map((r, i) => {
-              const href = httpHref(r.url);
-              return (
-                <a
-                  key={`${r.url}-${i}`}
-                  {...(href ? { href, onClick: (e: React.MouseEvent) => openLink(e, href) } : {})}
-                  className={`block rounded-lg px-3 py-2 transition-colors hover:bg-droid-elevated/60 ${
-                    i === 0 ? 'bg-droid-elevated/40' : ''
-                  }`}
-                >
-                  <div className="truncate text-[13px] font-medium text-droid-text">{r.title}</div>
-                  {r.snippet && (
-                    <div className="mt-0.5 line-clamp-2 text-[12px] leading-relaxed text-droid-text-muted">
-                      {r.snippet}
-                    </div>
-                  )}
-                  <div className="mt-1.5 flex items-center gap-1.5">
-                    <Favicon url={r.url} />
-                    <span className="truncate text-[11px] text-droid-text-secondary">
-                      {webSourceName(r.url)}
-                    </span>
-                  </div>
-                </a>
-              );
-            })}
-          </div>
-        ) : raw ? (
-          <pre className="mt-1.5 max-h-44 overflow-auto rounded-md bg-droid-bg/50 px-2.5 py-2 text-[11px] leading-relaxed font-mono text-droid-text-muted/80 whitespace-pre-wrap break-words">
-            {linkify(raw)}
-          </pre>
-        ) : null}
+        <WebFetchBody
+          error={error}
+          hasBody={hasBody}
+          body={page.body}
+          url={url}
+          title={displayTitle}
+          snippet={snippet}
+        />
       </Expand>
     </div>
   );
@@ -744,6 +918,9 @@ function renderToolEvents(events: TranscriptEvent[]): React.ReactNode[] {
       // name (not cat) to the readable result-card renderer.
       if (isWebSearchTool(e.toolName)) {
         nodes.push(<WebSearchCard key={e.id} event={e} output={result?.text} error={isError} />);
+      } else if (isWebFetchTool(e.toolName) || cat === 'web') {
+        // FetchUrl / page fetches get the same source-card treatment as search.
+        nodes.push(<WebFetchCard key={e.id} event={e} output={result?.text} error={isError} />);
       } else if (cat === 'exec') {
         const command =
           argStr(e.toolArgs, 'command') ??

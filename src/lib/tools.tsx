@@ -162,6 +162,14 @@ export function isWebSearchTool(name?: string): boolean {
   return /web.?search/i.test(name ?? '');
 }
 
+// A page-fetch tool (FetchUrl, WebFetch, …) — not a multi-result web search.
+// Prefer this over cat === 'web' when the tool name is known; cat still works
+// as a fallback for unnamed MCP/url tools that only carry a `url` arg.
+export function isWebFetchTool(name?: string): boolean {
+  if (isWebSearchTool(name)) return false;
+  return /fetch|browse|open.?url|get.?url|web.?page|read.?url|scrape|http/i.test(name ?? '');
+}
+
 export type WebSearchResult = { title: string; url: string; snippet: string };
 
 // Parse the WebSearch tool result text. Each result is a block separated by a
@@ -197,6 +205,78 @@ export function parseWebSearch(text: string): {
   }
   const count = countMatch ? Number(countMatch[1]) : results.length || undefined;
   return { query, count, results };
+}
+
+export interface WebFetchPage {
+  url?: string;
+  title?: string;
+  /** Readable page body with the history truncation sentinel stripped. */
+  body: string;
+  /** Character count of the cleaned body (for a compact badge). */
+  chars: number;
+  truncatedChars: number | null;
+}
+
+function firstNonEmptyLine(text: string): string | undefined {
+  return text
+    .split('\n')
+    .map((l) => l.trim())
+    .find((l) => l.length > 0);
+}
+
+function inferFetchTitle(clean: string, h1?: string, titleMeta?: string): string | undefined {
+  if (h1) return h1;
+  if (titleMeta) return titleMeta;
+  const first = firstNonEmptyLine(clean);
+  if (!first || first.length > 120) return undefined;
+  if (/^https?:\/\//i.test(first) || /^URL:/i.test(first)) return undefined;
+  const stripped = first
+    .replace(/^#+\s*/, '')
+    .replace(/^\*+|\*+$/g, '')
+    .trim();
+  return stripped.length > 0 ? stripped : undefined;
+}
+
+function stripFetchMeta(clean: string, opts: { h1?: string; titleMeta?: string; urlLine?: string }): string {
+  let preview = clean;
+  if (opts.titleMeta) preview = preview.replace(/^Title:\s*.+$/im, '');
+  if (opts.urlLine) preview = preview.replace(/^URL:\s*\S+$/im, '');
+  if (opts.h1) preview = preview.replace(/^#\s+.+$/m, '');
+  preview = preview.replace(/^\n+/, '').trim();
+  return preview.length > 0 ? preview : clean;
+}
+
+// Pull a title + clean body out of a FetchUrl-style tool result so the UI can
+// render a source card instead of a mono dump. Title sources (first match wins):
+//   1. markdown `# heading`
+//   2. `Title: …` metadata line
+//   3. first short non-URL line
+// The URL prefers the tool arg; a `URL: …` body line is the fallback.
+export function parseWebFetch(text: string, urlFromArgs?: string): WebFetchPage {
+  const { body: stripped, truncatedChars } = parseTruncatedTail(text);
+  const clean = stripped.replace(/\r\n/g, '\n').trim();
+  const urlLine = /^URL:\s*(\S+)/im.exec(clean)?.[1]?.trim();
+  const argUrl = urlFromArgs?.trim();
+  const url = argUrl && argUrl.length > 0 ? argUrl : urlLine;
+
+  const h1 = /^#\s+(.+)$/m.exec(clean)?.[1]?.trim();
+  const titleMeta = /^Title:\s*(.+)$/im.exec(clean)?.[1]?.trim();
+  const title = inferFetchTitle(clean, h1, titleMeta);
+  const body = stripFetchMeta(clean, { h1: title ? h1 : undefined, titleMeta, urlLine });
+
+  return { url, title, body, chars: body.length, truncatedChars };
+}
+
+// Compact badge label for a character count (e.g. 1240 → "1.2k").
+export function formatCharCount(n: number): string {
+  if (!Number.isFinite(n) || n < 0) return '0';
+  if (n < 1000) return String(Math.round(n));
+  if (n < 10_000) {
+    const v = Math.round(n / 100) / 10;
+    const label = v % 1 === 0 ? v.toFixed(0) : v.toFixed(1);
+    return `${label}k`;
+  }
+  return `${String(Math.round(n / 1000))}k`;
 }
 
 // Human-friendly source label from a URL: the registrable name, capitalized

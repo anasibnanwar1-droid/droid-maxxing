@@ -2,7 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   isWebSearchTool,
+  isWebFetchTool,
   parseWebSearch,
+  parseWebFetch,
+  formatCharCount,
   webSourceName,
   faviconUrl,
   toolArgStringArray,
@@ -30,6 +33,16 @@ test('isWebSearchTool matches WebSearch tool names only', () => {
   assert.equal(isWebSearchTool(undefined), false);
 });
 
+test('isWebFetchTool matches fetch tools and excludes web search', () => {
+  assert.equal(isWebFetchTool('FetchUrl'), true);
+  assert.equal(isWebFetchTool('WebFetch'), true);
+  assert.equal(isWebFetchTool('browse_page'), true);
+  assert.equal(isWebFetchTool('WebSearch'), false);
+  assert.equal(isWebFetchTool('web_search'), false);
+  assert.equal(isWebFetchTool('Grep'), false);
+  assert.equal(isWebFetchTool(undefined), false);
+});
+
 test('parseWebSearch extracts query, count and result blocks', () => {
   const { query, count, results } = parseWebSearch(SAMPLE);
   assert.equal(query, 'electron auto update best practices 2026');
@@ -47,6 +60,35 @@ test('parseWebSearch returns no results for an empty search', () => {
   );
   assert.equal(results.length, 0);
   assert.equal(count, undefined);
+});
+
+test('parseWebFetch prefers the arg URL and a markdown title', () => {
+  const page = parseWebFetch(
+    '# Electron auto-update\n\nShip updates safely with differential releases.\n\nMore detail here.',
+    'https://www.electronjs.org/docs/latest/tutorial/updates',
+  );
+  assert.equal(page.url, 'https://www.electronjs.org/docs/latest/tutorial/updates');
+  assert.equal(page.title, 'Electron auto-update');
+  assert.match(page.body, /Ship updates safely/);
+  assert.ok(!page.body.startsWith('#'));
+  assert.ok(page.chars > 20);
+  assert.equal(page.truncatedChars, null);
+});
+
+test('parseWebFetch reads Title/URL meta lines and strips the truncation sentinel', () => {
+  const page = parseWebFetch(
+    'Title: Sentry for Electron\nURL: https://docs.sentry.io/platforms/javascript/guides/electron/\n\nLearn how to set up Sentry.\n\n[truncated 4096 chars]',
+  );
+  assert.equal(page.title, 'Sentry for Electron');
+  assert.equal(page.url, 'https://docs.sentry.io/platforms/javascript/guides/electron/');
+  assert.equal(page.body, 'Learn how to set up Sentry.');
+  assert.equal(page.truncatedChars, 4096);
+});
+
+test('formatCharCount uses compact k labels', () => {
+  assert.equal(formatCharCount(42), '42');
+  assert.equal(formatCharCount(1240), '1.2k');
+  assert.equal(formatCharCount(10_500), '11k');
 });
 
 test('webSourceName derives a capitalized registrable label', () => {
