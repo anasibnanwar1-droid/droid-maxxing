@@ -46,7 +46,7 @@ test('activation rejects unknown tab ids', () => {
 test('persisted utility panels are bounded and sanitized', () => {
   assert.deepEqual(
     sanitizeUtilityPanels({
-      mission: {
+      session: {
         open: true,
         activeTabId: 'duplicate-review',
         tabs: [
@@ -59,7 +59,7 @@ test('persisted utility panels are bounded and sanitized', () => {
       },
     }),
     {
-      mission: {
+      session: {
         open: true,
         activeTabId: 'review',
         tabs: [{ id: 'review', tool: 'review', label: 'Review' }],
@@ -70,15 +70,15 @@ test('persisted utility panels are bounded and sanitized', () => {
 
 test('terminal tabs are never persisted across app restarts', () => {
   const terminal = openUtilityTool(undefined, 'terminal', () => 'terminal');
-  assert.deepEqual(persistUtilityPanels({ mission: terminal }), {
-    mission: { open: false, tabs: [], activeTabId: null },
+  assert.deepEqual(persistUtilityPanels({ session: terminal }), {
+    session: { open: false, tabs: [], activeTabId: null },
   });
 });
 
-test('running terminal tabs pin their mission worktree', () => {
+test('running terminal tabs pin their session worktree', () => {
   let panel = openUtilityTool(undefined, 'terminal', () => 'terminal');
   panel = updateUtilityTab(panel, 'terminal', { terminalId: 'pty-1' });
-  assert.deepEqual(utilityTerminalCwds({ mission: panel }, { mission: '/repo/worktree' }), [
+  assert.deepEqual(utilityTerminalCwds({ session: panel }, { session: '/repo/worktree' }), [
     '/repo/worktree',
   ]);
 });

@@ -30,7 +30,7 @@ import { useOnboarding } from '../hooks/useOnboarding';
 import { getAppVersion, type AppUpdateInfo } from '../lib/onboarding';
 import { refreshAppUpdate, startAppUpdate } from '../lib/appUpdate';
 import { getGitWorktrees, isWorktreeInUse, removeGitWorktree, worktreeName } from '../lib/git';
-import { activeSessionCwds } from '../lib/missions';
+import { activeSessionCwds } from '../lib/sessions';
 import { utilityTerminalCwds } from '../lib/utilityPanel';
 import { workspaceName } from '../lib/workspaces';
 import { toast } from '../lib/toast';
@@ -1208,13 +1208,13 @@ function WorktreesSection() {
   // session's cwd would break its subsequent agent and git operations. Idle
   // historical chats are excluded so their old worktrees can still be cleaned up.
   const sessionCwds = activeSessionCwds({
-    missions: Object.values(state.missions),
-    activeMissionId: state.activeMissionId,
+    sessions: Object.values(state.sessions),
+    activeAppSessionId: state.activeAppSessionId,
     draftCwd: state.draftChat?.cwd,
     workers: state.workers,
     pinnedCwds: utilityTerminalCwds(
       state.utilityPanels,
-      Object.fromEntries(Object.entries(state.missions).map(([id, mission]) => [id, mission.cwd])),
+      Object.fromEntries(Object.entries(state.sessions).map(([id, session]) => [id, session.cwd])),
     ),
   });
 

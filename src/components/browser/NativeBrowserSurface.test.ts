@@ -9,6 +9,6 @@ test('iframe lifecycle uses callback refs instead of callback dependencies', () 
   assert.match(source, /onLoadedRef\.current\(\{/);
   assert.match(
     source,
-    /}, \[browserKey, designMode, native, pencilMode, url, visibleSessionId\]\);/,
+    /}, \[browserKey, designMode, native, pencilMode, url, visibleBrowserSessionId\]\);/,
   );
 });

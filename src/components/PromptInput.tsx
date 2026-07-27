@@ -2,18 +2,18 @@ import { useState, useRef, useEffect, useMemo } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { useStore } from '../hooks/useStore';
 import type { QueuedPrompt } from '../hooks/useStore';
-import { useMissionLive } from '../hooks/useMissionLive';
+import { useSessionLive } from '../hooks/useSessionLive';
 import {
-  sendToMission,
-  sendToMissionNow,
-  sendToAgent,
-  sendToAgentNow,
+  sendToSession,
+  sendToSessionNow,
+  sendToChild,
+  sendToChildNow,
   sendDesignPrompt,
-  createMission,
-  interruptMission,
-  interruptAgent,
+  createSession,
+  interruptSession,
+  interruptChild,
   compactSession,
-  setInteractionMode,
+  updateSessionSettings,
   newClientRef,
   listSkills,
 } from '../lib/commands';
@@ -109,18 +109,18 @@ export default function PromptInput({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const submittingRef = useRef(false);
   const pendingCaret = useRef<number | null>(null);
-  const prevLive = useRef<{ missionId: string | null; live: boolean }>({
-    missionId: null,
+  const prevLive = useRef<{ appSessionId: string | null; live: boolean }>({
+    appSessionId: null,
     live: false,
   });
 
-  const activeMission = state.activeMissionId ? state.missions[state.activeMissionId] : null;
-  const isLive = useMissionLive(state.activeMissionId);
+  const activeSession = state.activeAppSessionId ? state.sessions[state.activeAppSessionId] : null;
+  const isLive = useSessionLive(state.activeAppSessionId);
 
   // The user's own prompts in this conversation, oldest to newest, for ArrowUp
   // recall (reuse a previous prompt). Consecutive duplicates are collapsed.
   const promptHistory = useMemo(() => {
-    const events = activeMission ? (state.transcripts[activeMission.id] ?? []) : [];
+    const events = activeSession ? (state.transcripts[activeSession.appSessionId] ?? []) : [];
     const out: string[] = [];
     for (const ev of events) {
       if (ev.author !== 'user' || ev.kind !== 'text') continue;
@@ -129,23 +129,23 @@ export default function PromptInput({
       if (out[out.length - 1] !== text) out.push(text);
     }
     return out;
-  }, [activeMission?.id, state.transcripts]);
+  }, [activeSession?.appSessionId, state.transcripts]);
   // For an existing chat session the mode is whatever the session actually is
   // (so a chat reopened in spec mode shows Spec); only fall back to the global
   // compose flag while drafting a brand-new chat.
   const isSpecMode =
-    activeMission && (activeMission.kind === 'chat' || activeMission.kind === 'spec')
-      ? activeMission.kind === 'spec'
-      : state.specMode;
+    activeSession?.sessionPurpose !== 'mission-control'
+      ? activeSession?.interactionMode === 'spec' || (!activeSession && state.specMode)
+      : false;
   const targetAgentSessionId =
-    activeMission?.kind !== 'mission_orchestrator' &&
-    state.selectedAgentSessionId &&
-    state.selectedAgentSessionId !== 'orchestrator'
-      ? state.selectedAgentSessionId
+    activeSession?.sessionPurpose !== 'mission-control' &&
+    state.selectedProviderSessionId &&
+    state.selectedProviderSessionId !== 'primary'
+      ? state.selectedProviderSessionId
       : null;
 
-  const cwd = activeMission?.cwd ?? state.draftChat?.cwd ?? null;
-  const skillsSessionId = activeMission?.id ?? null;
+  const cwd = activeSession?.cwd ?? state.draftChat?.cwd ?? null;
+  const skillsSessionId = activeSession?.providerSessionId ?? null;
   const pendingSkillsRequest = useRef<{ sessionId: string | null; requestedAt: number } | null>(
     null,
   );
@@ -153,16 +153,19 @@ export default function PromptInput({
   // Toggle spec mode. When a live chat session exists, switch its interaction
   // mode for real (not just the compose flag used for brand-new chats).
   const toggleSpec = () => {
-    if (activeMission && (activeMission.kind === 'chat' || activeMission.kind === 'spec')) {
+    if (activeSession && activeSession.sessionPurpose !== 'mission-control') {
       // Existing live chat: flip the session's real interaction mode and
-      // optimistically update its kind so the toggle reflects immediately.
+      // optimistically update its interaction mode so the toggle reflects immediately.
       const turningOn = !isSpecMode;
       dispatch({
-        type: 'MISSION_SET_KIND',
-        missionId: activeMission.id,
-        kind: turningOn ? 'spec' : 'chat',
+        type: 'SESSION_SET_INTERACTION_MODE',
+        appSessionId: activeSession.appSessionId,
+        interactionMode: turningOn ? 'spec' : 'auto',
       });
-      setInteractionMode(activeMission.id, turningOn ? 'spec' : 'auto');
+      updateSessionSettings({
+        appSessionId: activeSession.appSessionId,
+        interactionMode: turningOn ? 'spec' : 'auto',
+      });
     } else {
       // Brand-new draft chat with no session yet: just flip the compose flag.
       dispatch({ type: 'TOGGLE_SPEC_MODE' });
@@ -179,17 +182,17 @@ export default function PromptInput({
     {
       cmd: '/compact',
       desc: 'Compact current session',
-      run: () => activeMission && compactSession(activeMission.id),
+      run: () => activeSession && compactSession(activeSession.appSessionId),
     },
     {
       cmd: '/compaction',
       desc: 'Compact current session',
-      run: () => activeMission && compactSession(activeMission.id),
+      run: () => activeSession && compactSession(activeSession.appSessionId),
     },
     {
       cmd: '/compression',
       desc: 'Compact current session',
-      run: () => activeMission && compactSession(activeMission.id),
+      run: () => activeSession && compactSession(activeSession.appSessionId),
     },
     { cmd: '/spec', desc: 'Toggle spec mode', run: () => toggleSpec() },
     { cmd: '/settings', desc: 'Open settings', run: () => dispatch({ type: 'TOGGLE_SETTINGS' }) },
@@ -234,9 +237,9 @@ export default function PromptInput({
     const now = Date.now();
     if (pending?.sessionId === skillsSessionId && now - pending.requestedAt < 2_000) return;
     pendingSkillsRequest.current = { sessionId: skillsSessionId, requestedAt: now };
-    listSkills(activeMission?.id);
+    listSkills(activeSession?.providerSessionId);
   }, [
-    activeMission?.id,
+    activeSession?.providerSessionId,
     skillsSessionId,
     state.skillsSessionId,
     trigger?.kind,
@@ -302,7 +305,7 @@ export default function PromptInput({
     setHistoryIndex(null);
     setActiveSkills([]);
     setAttachedFiles([]);
-  }, [activeMission?.id]);
+  }, [activeSession?.appSessionId]);
 
   useEffect(() => {
     if (textareaRef.current) {
@@ -322,24 +325,22 @@ export default function PromptInput({
     }
   }, [input]);
 
-  const missionPreview = activeMission
-    ? activeMission.kind === 'mission_orchestrator'
+  const missionPreview = activeSession
+    ? activeSession.sessionPurpose === 'mission-control'
     : state.missionMode;
 
   // A single chat carries its own model/reasoning; only fall back to the global
   // default while composing a brand-new chat that has no session yet.
-  const chatScoped = !missionPreview && !!activeMission;
-  const orchestratorModelId = chatScoped
-    ? activeMission!.modelId
-    : state.agentConfig.orchestrator.modelId;
-  const orchestratorReasoning = chatScoped
-    ? (activeMission!.reasoningEffort ?? state.agentConfig.orchestrator.reasoning)
-    : state.agentConfig.orchestrator.reasoning;
-  const selectedModel = orchestratorModelId
-    ? state.models.find((m) => m.id === orchestratorModelId)
+  const chatScoped = !missionPreview && !!activeSession;
+  const primaryModelId = chatScoped ? activeSession!.modelId : state.agentConfig.primary.modelId;
+  const primaryReasoning = chatScoped
+    ? (activeSession!.reasoningEffort ?? state.agentConfig.primary.reasoning)
+    : state.agentConfig.primary.reasoning;
+  const selectedModel = primaryModelId
+    ? state.models.find((m) => m.id === primaryModelId)
     : undefined;
-  const selectedModelLabel = orchestratorModelId
-    ? (selectedModel?.displayName ?? orchestratorModelId)
+  const selectedModelLabel = primaryModelId
+    ? (selectedModel?.displayName ?? primaryModelId)
     : 'Default model';
   const showReasoningBadge =
     !selectedModel || (selectedModel.supportedReasoningEfforts?.length ?? 0) > 0;
@@ -392,7 +393,7 @@ export default function PromptInput({
 
   // Re-entry guard: a send awaits markGitTurnStart before the input is cleared,
   // so without this a second Enter/click during that window would resend the
-  // same payload (and create a duplicate mission/turn).
+  // same payload (and create a duplicate session turn).
   const handleSubmit = async (mode: SubmitMode = 'queue') => {
     if (submittingRef.current) return;
     submittingRef.current = true;
@@ -416,7 +417,7 @@ export default function PromptInput({
     }
 
     if (COMPACT_COMMANDS.has(text) && activeSkills.length === 0 && attachedFiles.length === 0) {
-      if (activeMission) compactSession(activeMission.id);
+      if (activeSession) compactSession(activeSession.appSessionId);
       setInput('');
       return;
     }
@@ -433,11 +434,11 @@ export default function PromptInput({
         files: [...attachedFiles],
       });
 
-    // Mission preview with no active mission: prompt is the objective.
-    if (missionPreview && !activeMission) {
+    // Mission Control preview with no active session: prompt is the objective.
+    if (missionPreview && !activeSession) {
       const dir = state.draftChat?.cwd ?? (await pickDirectory());
       if (!dir) return;
-      const { orchestrator, worker, validator } = state.agentConfig;
+      const { primary, worker, validator } = state.agentConfig;
       const clientRef = newClientRef();
       registerPending(clientRef);
       // Clear the composer before the git-baseline await below so a prompt the
@@ -447,15 +448,16 @@ export default function PromptInput({
       // Snapshot the tree before the agent's first turn so the Review "Last
       // turn" scope only attributes changes this session actually makes.
       await markGitTurnStart(dir);
-      createMission({
+      createSession({
         clientRef,
         cwd: dir,
         title: (text || activeSkills[0]?.name || 'Mission').slice(0, 48),
         goal: composed,
+        sessionPurpose: 'mission-control',
         interactionMode: 'agi',
         autonomy: 'medium',
-        modelId: orchestrator.modelId,
-        reasoningEffort: orchestrator.reasoning,
+        modelId: primary.modelId,
+        reasoningEffort: primary.reasoning,
         compactionModel:
           state.compactionModel === 'current-model' ? undefined : state.compactionModel,
         compactionTokenLimit: state.compactionTokenLimit,
@@ -469,24 +471,25 @@ export default function PromptInput({
     }
 
     // Draft/default chat: first message creates the session. No workspace is required.
-    if (!activeMission) {
+    if (!activeSession) {
       const dir = state.draftChat?.cwd ?? '';
-      const { orchestrator } = state.agentConfig;
+      const { primary } = state.agentConfig;
       const clientRef = newClientRef();
       registerPending(clientRef);
       // Clear before the baseline await (see above) so fast typing isn't lost.
       setInput('');
       resetAttachments();
       if (dir) await markGitTurnStart(dir);
-      createMission({
+      createSession({
         clientRef,
         cwd: dir,
         title: (text || activeSkills[0]?.name || 'Chat').slice(0, 48),
         goal: composed,
+        sessionPurpose: 'chat',
         interactionMode: isSpecMode ? 'spec' : 'auto',
         autonomy: 'medium',
-        modelId: orchestrator.modelId,
-        reasoningEffort: orchestrator.reasoning,
+        modelId: primary.modelId,
+        reasoningEffort: primary.reasoning,
         compactionModel:
           state.compactionModel === 'current-model' ? undefined : state.compactionModel,
         compactionTokenLimit: state.compactionTokenLimit,
@@ -495,14 +498,14 @@ export default function PromptInput({
       return;
     }
 
-    if (!activeMission) return;
+    if (!activeSession) return;
 
     // Model is working and the user chose to queue: stage the prompt locally.
     // It is held client-side and delivered automatically when the turn finishes.
     if (isLive && mode === 'queue' && !targetAgentSessionId) {
       dispatch({
         type: 'QUEUE_PROMPT',
-        missionId: activeMission.id,
+        appSessionId: activeSession.appSessionId,
         prompt: { id: newQueueId(), text, skills: skillNames, files: [...attachedFiles] },
       });
       setInput('');
@@ -511,12 +514,12 @@ export default function PromptInput({
     }
 
     dispatch({
-      type: 'MISSION_TRANSCRIPT',
+      type: 'SESSION_TRANSCRIPT',
       event: {
         id: `local-${Date.now()}`,
-        missionId: activeMission.id,
-        agentSessionId: targetAgentSessionId ?? 'user',
-        role: targetAgentSessionId ? 'worker' : 'orchestrator',
+        appSessionId: activeSession.appSessionId,
+        sourceSessionId: targetAgentSessionId ?? 'user',
+        role: targetAgentSessionId ? 'worker' : 'primary',
         ts: Date.now(),
         kind: 'text',
         text,
@@ -534,20 +537,23 @@ export default function PromptInput({
 
     // Capture the last-turn baseline before the agent can touch the tree;
     // a fire-and-forget call here races the first edit and corrupts the diff.
-    if (activeMission.cwd) await markGitTurnStart(activeMission.cwd, activeMission.id);
+    if (activeSession.cwd) await markGitTurnStart(activeSession.cwd, activeSession.appSessionId);
 
     try {
       if (targetAgentSessionId) {
-        if (mode === 'now') sendToAgentNow(activeMission.id, targetAgentSessionId, composed);
-        else sendToAgent(activeMission.id, targetAgentSessionId, composed);
-      } else if (mode === 'now') sendToMissionNow(activeMission.id, composed);
-      else sendToMission(activeMission.id, composed);
+        if (mode === 'now')
+          sendToChildNow(activeSession.appSessionId, targetAgentSessionId, composed);
+        else sendToChild(activeSession.appSessionId, targetAgentSessionId, composed);
+      } else if (mode === 'now') sendToSessionNow(activeSession.appSessionId, composed);
+      else sendToSession(activeSession.appSessionId, composed);
     } catch (err) {
-      console.error('[PromptInput] sendToMission failed:', err);
+      console.error('[PromptInput] sendToSession failed:', err);
     }
   };
 
-  const queue: QueuedPrompt[] = activeMission ? (state.promptQueue[activeMission.id] ?? []) : [];
+  const queue: QueuedPrompt[] = activeSession
+    ? (state.promptQueue[activeSession.appSessionId] ?? [])
+    : [];
 
   // Mirror the live queue so an async delivery can re-check membership after an
   // await, even though deliverPrompt closes over a stale render snapshot.
@@ -555,14 +561,14 @@ export default function PromptInput({
   promptQueueRef.current = state.promptQueue;
 
   const deliverPrompt = async () => {
-    if (!activeMission) return;
+    if (!activeSession) return;
     // Capture the Last-turn git baseline before sending ANY prompt (design
     // included) so the Review tab diffs the turn from the right starting point.
-    if (activeMission.cwd) await markGitTurnStart(activeMission.cwd, activeMission.id);
+    if (activeSession.cwd) await markGitTurnStart(activeSession.cwd, activeSession.appSessionId);
     // The queue stays editable while that runs, so deliver whatever is now at
     // the head: this honors deletes and edits (both remove the item) as well as
     // reorders, and never sends a stale prompt out of the visible order.
-    const head = (promptQueueRef.current[activeMission.id] ?? [])[0];
+    const head = (promptQueueRef.current[activeSession.appSessionId] ?? [])[0];
     if (!head) return;
 
     if (head.design) {
@@ -574,15 +580,19 @@ export default function PromptInput({
       }
       const browserRefs = browserTranscriptReferencesFromDesignReferences(head.design.references);
       dispatch({
-        type: 'MISSION_TRANSCRIPT',
-        event: createLocalDesignTranscriptEvent(activeMission.id, head.text, browserRefs),
+        type: 'SESSION_TRANSCRIPT',
+        event: createLocalDesignTranscriptEvent(activeSession.appSessionId, head.text, browserRefs),
       });
-      dispatch({ type: 'REMOVE_QUEUED_PROMPT', missionId: activeMission.id, id: head.id });
+      dispatch({
+        type: 'REMOVE_QUEUED_PROMPT',
+        appSessionId: activeSession.appSessionId,
+        id: head.id,
+      });
       return;
     }
 
     try {
-      sendToMission(activeMission.id, composeFrom(head.text, head.skills, head.files));
+      sendToSession(activeSession.appSessionId, composeFrom(head.text, head.skills, head.files));
     } catch (err) {
       // Keep the prompt staged and skip the transcript echo so a send failure
       // neither loses queued input nor leaves a duplicate user message behind.
@@ -590,12 +600,12 @@ export default function PromptInput({
       return;
     }
     dispatch({
-      type: 'MISSION_TRANSCRIPT',
+      type: 'SESSION_TRANSCRIPT',
       event: {
         id: `local-${Date.now()}`,
-        missionId: activeMission.id,
-        agentSessionId: 'user',
-        role: 'orchestrator',
+        appSessionId: activeSession.appSessionId,
+        sourceSessionId: 'user',
+        role: 'primary',
         ts: Date.now(),
         kind: 'text',
         text: head.text,
@@ -604,35 +614,44 @@ export default function PromptInput({
         files: head.files,
       },
     });
-    dispatch({ type: 'REMOVE_QUEUED_PROMPT', missionId: activeMission.id, id: head.id });
+    dispatch({
+      type: 'REMOVE_QUEUED_PROMPT',
+      appSessionId: activeSession.appSessionId,
+      id: head.id,
+    });
   };
 
   // When the current turn finishes, deliver the next staged prompt. Delivering
   // it restarts the turn, so the effect drains the queue one prompt at a time.
   useEffect(() => {
     const prev = prevLive.current;
-    // Only deliver when the *same* mission transitioned live -> idle. Switching
-    // missions mid-turn must not drain a different mission's queue.
-    if (prev.live && !isLive && activeMission && prev.missionId === activeMission.id) {
-      const next = (state.promptQueue[activeMission.id] ?? [])[0];
+    // Only deliver when the same session transitioned live -> idle. Switching
+    // sessions mid-turn must not drain a different session's queue.
+    if (prev.live && !isLive && activeSession && prev.appSessionId === activeSession.appSessionId) {
+      const next = (state.promptQueue[activeSession.appSessionId] ?? [])[0];
       if (next) void deliverPrompt();
     }
-    prevLive.current = { missionId: activeMission?.id ?? null, live: isLive };
+    prevLive.current = { appSessionId: activeSession?.appSessionId ?? null, live: isLive };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isLive, activeMission?.id]);
+  }, [isLive, activeSession?.appSessionId]);
 
   const editQueuedInComposer = (p: QueuedPrompt) => {
-    if (!activeMission) return;
+    if (!activeSession) return;
     setInput(p.text);
     setAttachedFiles(p.files);
     setActiveSkills(invocableSkills.filter((s) => p.skills.includes(s.name)));
-    dispatch({ type: 'REMOVE_QUEUED_PROMPT', missionId: activeMission.id, id: p.id });
+    dispatch({ type: 'REMOVE_QUEUED_PROMPT', appSessionId: activeSession.appSessionId, id: p.id });
     requestAnimationFrame(() => textareaRef.current?.focus());
   };
 
   const handleQueueDrop = (to: number) => {
-    if (activeMission && dragIndex !== null && dragIndex !== to) {
-      dispatch({ type: 'REORDER_QUEUE', missionId: activeMission.id, from: dragIndex, to });
+    if (activeSession && dragIndex !== null && dragIndex !== to) {
+      dispatch({
+        type: 'REORDER_QUEUE',
+        appSessionId: activeSession.appSessionId,
+        from: dragIndex,
+        to,
+      });
     }
     setDragIndex(null);
     setDragOverIndex(null);
@@ -715,7 +734,7 @@ export default function PromptInput({
   const hasChips = activeSkills.length > 0 || attachedFiles.length > 0;
   // The "Start in" repo/worktree/branch row only applies while drafting a brand
   // new chat; it renders as the top section of the composer card.
-  const showStartIn = !activeMission && !missionPreview && !!cwd;
+  const showStartIn = !activeSession && !missionPreview && !!cwd;
   const enterSteers = state.liveEnterBehavior === 'interrupt';
   const idleSendTooltip = 'Enter: send\nShift+Enter: newline';
   const hasContent = input.trim().length > 0 || activeSkills.length > 0 || attachedFiles.length > 0;
@@ -896,10 +915,10 @@ export default function PromptInput({
                   )}
                   <button
                     onClick={() =>
-                      activeMission &&
+                      activeSession &&
                       dispatch({
                         type: 'REMOVE_QUEUED_PROMPT',
-                        missionId: activeMission.id,
+                        appSessionId: activeSession.appSessionId,
                         id: p.id,
                       })
                     }
@@ -990,7 +1009,7 @@ export default function PromptInput({
             onKeyDown={handleKeyDown}
             placeholder={
               missionPreview
-                ? activeMission
+                ? activeSession
                   ? targetAgentSessionId
                     ? 'Steer the selected subagent…'
                     : 'Direct the orchestrator…'
@@ -1026,12 +1045,9 @@ export default function PromptInput({
                   </>
                 ) : (
                   <>
-                    <ModelIcon
-                      provider={providerOf(selectedModel, orchestratorModelId)}
-                      size={14}
-                    />
+                    <ModelIcon provider={providerOf(selectedModel, primaryModelId)} size={14} />
                     <span className="truncate">{selectedModelLabel}</span>
-                    {showReasoningBadge && orchestratorReasoning && (
+                    {showReasoningBadge && primaryReasoning && (
                       <span
                         className="shrink-0 px-1.5 py-0.5 rounded-md text-[9px] font-medium capitalize leading-none"
                         style={{
@@ -1039,9 +1055,9 @@ export default function PromptInput({
                           backgroundColor:
                             'color-mix(in srgb, var(--droid-accent) 13%, transparent)',
                         }}
-                        title={`Reasoning: ${orchestratorReasoning}`}
+                        title={`Reasoning: ${primaryReasoning}`}
                       >
-                        {orchestratorReasoning}
+                        {primaryReasoning}
                       </span>
                     )}
                   </>
@@ -1081,10 +1097,10 @@ export default function PromptInput({
             {isLive && !hasContent ? (
               <button
                 onClick={() =>
-                  activeMission &&
+                  activeSession &&
                   (targetAgentSessionId
-                    ? interruptAgent(activeMission.id, targetAgentSessionId)
-                    : interruptMission(activeMission.id))
+                    ? interruptChild(activeSession.appSessionId, targetAgentSessionId)
+                    : interruptSession(activeSession.appSessionId))
                 }
                 title="Working — click to stop"
                 className="p-2 rounded-xl text-droid-bg shrink-0 transition-colors"

@@ -25,7 +25,7 @@ export interface NativeBrowserBounds {
 export type NativeBrowserBox = BrowserBox;
 
 export interface NativeBrowserSelection {
-  sessionId?: string;
+  browserSessionId?: string;
   anchor: DesignAnchor;
   detail?: DesignAnchorDetail;
   url: string;
@@ -36,14 +36,14 @@ export interface NativeBrowserSelection {
 }
 
 export interface NativeBrowserLoaded {
-  sessionId?: string;
+  browserSessionId?: string;
   url: string;
   canGoBack?: boolean;
   canGoForward?: boolean;
 }
 
 export interface NativeBrowserLoadFailed {
-  sessionId?: string;
+  browserSessionId?: string;
   url: string;
   error?: string;
 }
@@ -55,7 +55,7 @@ export interface NativeBrowserDesignPrompt {
 
 export interface NativeBrowserAgentAction {
   requestId: string;
-  sessionId: string;
+  browserSessionId: string;
   action: BrowserNativeAction;
   url?: string;
   x?: number;
@@ -85,7 +85,7 @@ export function nativeBrowserAgentActionFromRequest(
 ): NativeBrowserAgentAction {
   return {
     requestId: request.requestId,
-    sessionId: request.sessionId,
+    browserSessionId: request.browserSessionId,
     action: request.action,
     x: request.x,
     y: request.y,
@@ -101,14 +101,14 @@ export function nativeBrowserAgentActionFromRequest(
 }
 
 export async function openNativeBrowser(
-  sessionId: string,
+  browserSessionId: string,
   url: string,
   bounds?: NativeBrowserBounds,
   viewport?: { width: number; height: number; deviceScaleFactor: number },
 ): Promise<void> {
   if (!isDesktop()) return;
   await window.droidControl!.nativeBrowserOpen(
-    sessionId,
+    browserSessionId,
     url,
     bounds ? normalizeBounds(bounds) : undefined,
     viewport,
@@ -116,50 +116,53 @@ export async function openNativeBrowser(
 }
 
 export async function attachNativeBrowser(
-  sessionId: string,
+  browserSessionId: string,
   bounds: NativeBrowserBounds,
   url?: string,
 ): Promise<void> {
   if (!isDesktop()) return;
-  await window.droidControl!.nativeBrowserAttach(sessionId, normalizeBounds(bounds), url);
+  await window.droidControl!.nativeBrowserAttach(browserSessionId, normalizeBounds(bounds), url);
 }
 
-export async function detachNativeBrowser(sessionId?: string): Promise<void> {
+export async function detachNativeBrowser(browserSessionId?: string): Promise<void> {
   if (!isDesktop()) return;
-  await window.droidControl!.nativeBrowserDetach(sessionId);
+  await window.droidControl!.nativeBrowserDetach(browserSessionId);
 }
 
 export async function setNativeBrowserBounds(
-  sessionId: string,
+  browserSessionId: string,
   bounds: NativeBrowserBounds,
 ): Promise<void> {
   if (!isDesktop()) return;
-  await window.droidControl!.nativeBrowserSetBounds(sessionId, normalizeBounds(bounds));
+  await window.droidControl!.nativeBrowserSetBounds(browserSessionId, normalizeBounds(bounds));
 }
 
-export async function setNativeBrowserVisible(sessionId: string, visible: boolean): Promise<void> {
+export async function setNativeBrowserVisible(
+  browserSessionId: string,
+  visible: boolean,
+): Promise<void> {
   if (!isDesktop()) return;
-  await window.droidControl!.nativeBrowserSetVisible(sessionId, visible);
+  await window.droidControl!.nativeBrowserSetVisible(browserSessionId, visible);
 }
 
-export async function closeNativeBrowser(sessionId: string): Promise<void> {
+export async function closeNativeBrowser(browserSessionId: string): Promise<void> {
   if (!isDesktop()) return;
-  await window.droidControl!.nativeBrowserClose(sessionId);
+  await window.droidControl!.nativeBrowserClose(browserSessionId);
 }
 
-export async function reloadNativeBrowser(sessionId: string): Promise<void> {
+export async function reloadNativeBrowser(browserSessionId: string): Promise<void> {
   if (!isDesktop()) return;
-  await window.droidControl!.nativeBrowserReload(sessionId);
+  await window.droidControl!.nativeBrowserReload(browserSessionId);
 }
 
-export async function goBackNativeBrowser(sessionId: string): Promise<boolean> {
+export async function goBackNativeBrowser(browserSessionId: string): Promise<boolean> {
   if (!isDesktop()) return false;
-  return window.droidControl!.nativeBrowserGoBack(sessionId);
+  return window.droidControl!.nativeBrowserGoBack(browserSessionId);
 }
 
-export async function goForwardNativeBrowser(sessionId: string): Promise<boolean> {
+export async function goForwardNativeBrowser(browserSessionId: string): Promise<boolean> {
   if (!isDesktop()) return false;
-  return window.droidControl!.nativeBrowserGoForward(sessionId);
+  return window.droidControl!.nativeBrowserGoForward(browserSessionId);
 }
 
 export async function runNativeBrowserAgentAction(
@@ -206,31 +209,31 @@ export async function performDesktopNativeBrowserRequest(
   try {
     if (!isDesktop()) throw new Error('The native browser is only available in the desktop app.');
     if (request.action === 'close') {
-      await closeNativeBrowser(request.sessionId);
+      await closeNativeBrowser(request.browserSessionId);
       return nativeResult(request, true);
     }
     if (request.action === 'open') {
       const targetUrl = request.url ?? 'about:blank';
-      await openNativeBrowser(request.sessionId, targetUrl, undefined, request.viewport);
+      await openNativeBrowser(request.browserSessionId, targetUrl, undefined, request.viewport);
       return nativeResult(request, true, await detachedSnapshot(request, targetUrl));
     }
     if (request.action === 'reload') {
-      const loaded = waitForNextNativeBrowserLoad(request.sessionId).catch(() => undefined);
-      await reloadNativeBrowser(request.sessionId);
+      const loaded = waitForNextNativeBrowserLoad(request.browserSessionId).catch(() => undefined);
+      await reloadNativeBrowser(request.browserSessionId);
       const event = await loaded;
       return nativeResult(request, true, await detachedSnapshot(request, event?.url));
     }
     if (request.action === 'goBack' || request.action === 'goForward') {
-      const loaded = waitForNextNativeBrowserLoad(request.sessionId).catch(() => undefined);
+      const loaded = waitForNextNativeBrowserLoad(request.browserSessionId).catch(() => undefined);
       const moved =
         request.action === 'goBack'
-          ? await goBackNativeBrowser(request.sessionId)
-          : await goForwardNativeBrowser(request.sessionId);
+          ? await goBackNativeBrowser(request.browserSessionId)
+          : await goForwardNativeBrowser(request.browserSessionId);
       const event = moved ? await loaded : undefined;
       return nativeResult(request, true, await detachedSnapshot(request, event?.url));
     }
     if (request.action === 'capture') {
-      const image = await nativeBrowserCapture(request.sessionId, request.box, {
+      const image = await nativeBrowserCapture(request.browserSessionId, request.box, {
         fullPage: request.fullPage,
         deviceScaleFactor: request.deviceScaleFactor,
       });
@@ -263,7 +266,7 @@ function nativeResult(
 ): BrowserNativeResult {
   return {
     requestId: request.requestId,
-    missionId: request.missionId,
+    appSessionId: request.appSessionId,
     ok,
     snapshot,
     error,
@@ -276,7 +279,7 @@ async function detachedSnapshot(
 ): Promise<BrowserNativeSnapshot> {
   const result = await runNativeBrowserAgentAction({
     requestId: `${request.requestId}:snapshot`,
-    sessionId: request.sessionId,
+    browserSessionId: request.browserSessionId,
     action: 'snapshot',
   }).catch(() => undefined);
   return result?.ok && result.snapshot
@@ -290,28 +293,28 @@ export interface NativeBrowserCaptureOptions {
 }
 
 export async function nativeBrowserCapture(
-  sessionId: string,
+  browserSessionId: string,
   box?: NativeBrowserBox,
   options?: NativeBrowserCaptureOptions,
 ): Promise<string | undefined> {
   if (!isDesktop()) return undefined;
-  return window.droidControl!.nativeBrowserCapture(sessionId, box, options);
+  return window.droidControl!.nativeBrowserCapture(browserSessionId, box, options);
 }
 
 export async function setNativeBrowserDesignMode(
-  sessionId: string,
+  browserSessionId: string,
   active: boolean,
 ): Promise<void> {
   if (!isDesktop()) return;
-  await window.droidControl!.nativeBrowserSetDesignMode(sessionId, active);
+  await window.droidControl!.nativeBrowserSetDesignMode(browserSessionId, active);
 }
 
 export async function setNativeBrowserPencilMode(
-  sessionId: string,
+  browserSessionId: string,
   active: boolean,
 ): Promise<void> {
   if (!isDesktop()) return;
-  await window.droidControl!.nativeBrowserSetPencilMode(sessionId, active);
+  await window.droidControl!.nativeBrowserSetPencilMode(browserSessionId, active);
 }
 
 export async function onNativeBrowserSelection(
@@ -343,7 +346,7 @@ export async function onNativeBrowserLoadFailed(
 }
 
 export async function waitForNextNativeBrowserLoad(
-  sessionId: string,
+  browserSessionId: string,
   timeoutMs = 8_000,
 ): Promise<NativeBrowserLoaded> {
   if (!isDesktop())
@@ -362,7 +365,7 @@ export async function waitForNextNativeBrowserLoad(
       timeoutMs,
     );
     void onNativeBrowserLoaded((event) => {
-      if (event.sessionId !== sessionId) return;
+      if (event.browserSessionId !== browserSessionId) return;
       window.clearTimeout(timeout);
       finish(() => resolve(event));
     })

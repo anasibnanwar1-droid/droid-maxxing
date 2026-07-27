@@ -41,7 +41,7 @@ export default function PermissionInline() {
     req.title && req.title !== 'Permission required' && req.title !== reason ? req.title : '';
 
   const respond = (outcome: PermissionOutcome) => {
-    respondPermission(req.missionId, req.requestId, outcome);
+    respondPermission(req.appSessionId, req.requestId, outcome);
     dispatch({ type: 'CLEAR_PERMISSION' });
   };
 

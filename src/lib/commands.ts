@@ -5,12 +5,13 @@ import type {
   BrowserScrollDirection,
   BrowserViewport,
   BrowserViewportMode,
-  ConfigurableAgent,
+  ConfigurableSessionRole,
   DesignReference,
   InstallChannel,
   PermissionOutcome,
   ReasoningEffort,
   SessionInteractionMode,
+  SessionPurpose,
 } from '../types/bridge';
 
 let refCounter = 0;
@@ -19,11 +20,12 @@ export const newClientRef = () => `c-${Date.now().toString(36)}-${refCounter++}`
 
 export const connect = (apiKey: string) => bridge.send({ type: 'connect', apiKey });
 
-export const createMission = (p: {
+export const createSession = (input: {
   clientRef: string;
   cwd?: string;
   title: string;
   goal: string;
+  sessionPurpose: SessionPurpose;
   interactionMode?: SessionInteractionMode;
   modelId?: string;
   reasoningEffort?: ReasoningEffort;
@@ -35,15 +37,15 @@ export const createMission = (p: {
   workerReasoning?: ReasoningEffort;
   validatorModel?: string;
   validatorReasoning?: ReasoningEffort;
-}) => bridge.send({ type: 'mission.create', ...p });
+}) => bridge.send({ type: 'session.create', ...input });
 
-// Update live model/reasoning/autonomy for an existing Droid session.
-export const updateSessionSettings = (p: {
-  sessionId: string;
+export const updateSessionSettings = (input: {
+  appSessionId: string;
   modelId?: string | null;
   reasoningEffort?: ReasoningEffort;
   autonomy?: Autonomy;
-}) => bridge.send({ type: 'session.updateSettings', ...p });
+  interactionMode?: SessionInteractionMode;
+}) => bridge.send({ type: 'session.updateSettings', ...input });
 
 export const detectEnv = () => bridge.send({ type: 'env.detect' });
 export const installCli = (channel: InstallChannel) =>
@@ -52,136 +54,133 @@ export const updateCli = (channel?: InstallChannel) => bridge.send({ type: 'cli.
 export const startCliLogin = () => bridge.send({ type: 'auth.startCliLogin' });
 export const requestRuntimeStatus = () => bridge.send({ type: 'runtime.status' });
 
-export const listModels = () => bridge.send({ type: 'models.list' });
+export const listModels = () => bridge.send({ type: 'catalog.models' });
 export const listSkills = (sessionId?: string) =>
   bridge.send({ type: 'catalog.skills', sessionId });
 export const listFactoryDefaults = () => bridge.send({ type: 'settings.defaults' });
 
-export const sendToMission = (missionId: string, text: string) =>
-  bridge.send({ type: 'mission.send', missionId, text });
+export const sendToSession = (appSessionId: string, text: string) =>
+  bridge.send({ type: 'session.send', appSessionId, text });
 
-export const sendToMissionNow = (missionId: string, text: string) =>
-  bridge.send({ type: 'mission.sendNow', missionId, text });
+export const sendToSessionNow = (appSessionId: string, text: string) =>
+  bridge.send({ type: 'session.sendNow', appSessionId, text });
 
-export const sendToAgent = (missionId: string, agentSessionId: string, text: string) =>
-  bridge.send({ type: 'agent.send', missionId, agentSessionId, text });
+export const sendToChild = (appSessionId: string, providerSessionId: string, text: string) =>
+  bridge.send({ type: 'child.send', appSessionId, providerSessionId, text });
 
-export const sendToAgentNow = (missionId: string, agentSessionId: string, text: string) =>
-  bridge.send({ type: 'agent.sendNow', missionId, agentSessionId, text });
+export const sendToChildNow = (appSessionId: string, providerSessionId: string, text: string) =>
+  bridge.send({ type: 'child.sendNow', appSessionId, providerSessionId, text });
 
 export const respondPermission = (
-  missionId: string,
+  appSessionId: string,
   requestId: string,
   outcome: PermissionOutcome,
-) => bridge.send({ type: 'mission.respondPermission', missionId, requestId, outcome });
+) => bridge.send({ type: 'approval.respond', appSessionId, requestId, outcome });
 
 export const respondQuestion = (
-  missionId: string,
+  appSessionId: string,
   requestId: string,
   cancelled: boolean,
   answers: { index: number; question: string; answer: string }[],
-) => bridge.send({ type: 'mission.respondQuestion', missionId, requestId, cancelled, answers });
+) => bridge.send({ type: 'question.respond', appSessionId, requestId, cancelled, answers });
 
-export const interruptMission = (missionId: string) =>
-  bridge.send({ type: 'mission.interrupt', missionId });
+export const interruptSession = (appSessionId: string) =>
+  bridge.send({ type: 'session.interrupt', appSessionId });
 
-export const compactSession = (missionId: string, customInstructions?: string) =>
-  bridge.send({ type: 'mission.compact', missionId, customInstructions });
+export const compactSession = (appSessionId: string, customInstructions?: string) =>
+  bridge.send({ type: 'session.compact', appSessionId, customInstructions });
 
-export const interruptAgent = (missionId: string, agentSessionId: string) =>
-  bridge.send({ type: 'agent.interrupt', missionId, agentSessionId });
+export const interruptChild = (appSessionId: string, providerSessionId: string) =>
+  bridge.send({ type: 'child.interrupt', appSessionId, providerSessionId });
 
-export const setMissionAutonomy = (missionId: string, autonomy: Autonomy) =>
-  bridge.send({ type: 'mission.setAutonomy', missionId, autonomy });
+export const openChild = (appSessionId: string, providerSessionId: string) =>
+  bridge.send({ type: 'child.open', appSessionId, providerSessionId });
 
-export const setInteractionMode = (missionId: string, mode: SessionInteractionMode) =>
-  bridge.send({ type: 'mission.setInteractionMode', missionId, mode });
+export const closeSession = (appSessionId: string) =>
+  bridge.send({ type: 'session.close', appSessionId });
 
-export const subscribeWorker = (missionId: string, workerSessionId: string) =>
-  bridge.send({ type: 'mission.subscribeWorker', missionId, workerSessionId });
-
-export const closeMission = (missionId: string) =>
-  bridge.send({ type: 'mission.close', missionId });
-
-export const listMissions = (options?: {
+export const listSessions = (options?: {
   workspaceCwds?: string[];
   includePlainChats?: boolean;
   limitPerWorkspace?: number;
-}) => bridge.send({ type: 'mission.list', ...options });
+}) => bridge.send({ type: 'sessions.list', ...options });
 
-export const loadMissionHistory = (missionId: string) =>
-  bridge.send({ type: 'mission.loadHistory', missionId });
+export const loadSessionHistory = (appSessionId: string, cursor?: string) =>
+  bridge.send({ type: 'session.loadHistory', appSessionId, cursor });
 
-export const loadOlderMissionHistory = (missionId: string, cursor: string) =>
-  bridge.send({ type: 'mission.loadHistory', missionId, cursor });
+export const resumeSession = (appSessionId: string) =>
+  bridge.send({ type: 'session.resume', appSessionId });
 
-export const resumeMission = (sessionId: string) =>
-  bridge.send({ type: 'mission.resume', sessionId });
-
-export const updateAgentSettings = (p: {
-  missionId?: string;
-  agent: ConfigurableAgent;
+export const updateAgentSettings = (input: {
+  appSessionId?: string;
+  agent: ConfigurableSessionRole;
   modelId?: string | null;
   reasoningEffort?: ReasoningEffort;
-}) => bridge.send({ type: 'settings.agent.update', ...p });
+}) => bridge.send({ type: 'settings.agent.update', ...input });
 
-// Snapshot semantics: null/empty means the user explicitly cleared a setting
-// (suppress CLI-file defaults); fields are omitted when the user never
-// configured them, so the sidecar keeps falling back to those defaults.
-export const updateCompactionSettings = (p: {
+export const updateCompactionSettings = (input: {
   compactionTokenLimit?: number | null;
   compactionTokenLimitPerModel?: Record<string, number>;
-}) => bridge.send({ type: 'settings.compaction.update', ...p });
+}) => bridge.send({ type: 'settings.compaction.update', ...input });
 
-export const openBrowser = (p: {
-  missionId: string;
+export const openBrowser = (input: {
+  appSessionId: string;
   url: string;
   viewport?: BrowserViewport;
   viewportMode?: BrowserViewportMode;
-}) => bridge.send({ type: 'browser.open', ...p });
+}) => bridge.send({ type: 'browser.open', ...input });
 
-export const closeBrowser = (missionId: string) =>
-  bridge.send({ type: 'browser.close', missionId });
+export const closeBrowser = (appSessionId: string) =>
+  bridge.send({ type: 'browser.close', appSessionId });
 
-export const reloadBrowser = (missionId: string) =>
-  bridge.send({ type: 'browser.reload', missionId });
+export const reloadBrowser = (appSessionId: string) =>
+  bridge.send({ type: 'browser.reload', appSessionId });
 
-export const refreshBrowser = (missionId: string) =>
-  bridge.send({ type: 'browser.refresh', missionId });
+export const refreshBrowser = (appSessionId: string) =>
+  bridge.send({ type: 'browser.refresh', appSessionId });
 
-export const resizeBrowserViewport = (p: {
-  missionId: string;
+export const resizeBrowserViewport = (input: {
+  appSessionId: string;
   viewport: BrowserViewport;
   viewportMode: BrowserViewportMode;
-}) => bridge.send({ type: 'browser.resizeViewport', ...p });
+}) => bridge.send({ type: 'browser.resizeViewport', ...input });
 
-export const clickBrowser = (p: {
-  missionId: string;
+export const clickBrowser = (input: {
+  appSessionId: string;
   ref?: string;
   x?: number;
   y?: number;
   source?: 'agent' | 'user';
-}) => bridge.send({ type: 'browser.click', ...p });
+}) => bridge.send({ type: 'browser.click', ...input });
 
-export const typeBrowser = (missionId: string, text: string) =>
-  bridge.send({ type: 'browser.type', missionId, text });
+export const typeBrowser = (appSessionId: string, text: string) =>
+  bridge.send({ type: 'browser.type', appSessionId, text });
 
-export const keypressBrowser = (missionId: string, key: string) =>
-  bridge.send({ type: 'browser.keypress', missionId, key });
+export const keypressBrowser = (appSessionId: string, key: string) =>
+  bridge.send({ type: 'browser.keypress', appSessionId, key });
 
-export const scrollBrowser = (p: {
-  missionId: string;
+export const scrollBrowser = (input: {
+  appSessionId: string;
   direction: BrowserScrollDirection;
   pixels?: number;
   ref?: string;
   source?: 'agent' | 'user';
-}) => bridge.send({ type: 'browser.scroll', ...p });
+}) => bridge.send({ type: 'browser.scroll', ...input });
 
-export const addDesignReference = (missionId: string, reference: DesignReference) =>
-  bridge.send({ type: 'browser.design.addReference', missionId, reference });
+export const addDesignReference = (appSessionId: string, reference: DesignReference) =>
+  bridge.send({ type: 'browser.design.addReference', appSessionId, reference });
 
-export const sendDesignPrompt = (missionId: string, instruction: string, referenceIds: string[]) =>
-  bridge.send({ type: 'browser.design.sendPrompt', missionId, instruction, referenceIds });
+export const sendDesignPrompt = (
+  appSessionId: string,
+  instruction: string,
+  referenceIds: string[],
+) =>
+  bridge.send({
+    type: 'browser.design.sendPrompt',
+    appSessionId,
+    instruction,
+    referenceIds,
+  });
 
 export const sendNativeBrowserResult = (result: BrowserNativeResult) =>
   bridge.send({ type: 'browser.native.result', result });

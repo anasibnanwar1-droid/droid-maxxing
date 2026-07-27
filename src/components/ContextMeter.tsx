@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { AnimatePresence, motion } from 'framer-motion';
 import { X } from 'lucide-react';
 import { useStore } from '../hooks/useStore';
-import type { ContextStatsSnapshot, MissionSummary } from '../types/bridge';
+import type { ContextStatsSnapshot, SessionSummary } from '../types/bridge';
 
 const EASE = [0.16, 1, 0.3, 1] as const;
 
@@ -109,11 +109,11 @@ function useStableUsed(
 }
 
 export default function ContextMeter({
-  mission,
+  session,
   stats,
   sessionKey,
 }: {
-  mission: MissionSummary;
+  session: SessionSummary;
   stats?: ContextStatsSnapshot;
   sessionKey?: string;
 }) {
@@ -127,17 +127,17 @@ export default function ContextMeter({
 
   const measured =
     stats ??
-    (mission.contextUpdatedAt
+    (session.contextUpdatedAt
       ? {
-          used: mission.contextTokens,
-          remaining: mission.contextRemainingTokens ?? 0,
-          limit: mission.maxContextTokens ?? 0,
-          accuracy: mission.contextAccuracy ?? 'estimated',
-          updatedAt: mission.contextUpdatedAt,
+          used: session.contextTokens,
+          remaining: session.contextRemainingTokens ?? 0,
+          limit: session.maxContextTokens ?? 0,
+          accuracy: session.contextAccuracy ?? 'estimated',
+          updatedAt: session.contextUpdatedAt,
         }
       : undefined);
   const modelWindow =
-    mission.maxContextTokens && mission.maxContextTokens > 0 ? mission.maxContextTokens : undefined;
+    session.maxContextTokens && session.maxContextTokens > 0 ? session.maxContextTokens : undefined;
   const statLimit = measured?.limit && measured.limit > 0 ? measured.limit : modelWindow;
 
   // The meter measures usage against the session's context window only. When
@@ -155,8 +155,13 @@ export default function ContextMeter({
   // summary-level counters.
   const generation =
     stats?.compactions ??
-    (mission.compactedFromSessionIds?.length ?? 0) + (mission.autoCompactions ?? 0);
-  const used = useStableUsed(sessionKey ?? mission.id, measured?.used, !isEstimating, generation);
+    (session.compactedFromProviderSessionIds?.length ?? 0) + (session.autoCompactions ?? 0);
+  const used = useStableUsed(
+    sessionKey ?? session.appSessionId,
+    measured?.used,
+    !isEstimating,
+    generation,
+  );
   const remaining =
     used !== undefined && max !== undefined ? Math.max(0, max - used) : measured?.remaining;
   const categories = measured?.breakdown?.categories ?? [];
@@ -306,9 +311,9 @@ export default function ContextMeter({
                 <Row
                   color="var(--droid-text-muted)"
                   label="Session input"
-                  value={mission.tokensIn}
+                  value={session.tokensIn}
                 />
-                <Row color="var(--droid-green)" label="Session output" value={mission.tokensOut} />
+                <Row color="var(--droid-green)" label="Session output" value={session.tokensOut} />
               </div>
 
               {categories.length > 0 && (

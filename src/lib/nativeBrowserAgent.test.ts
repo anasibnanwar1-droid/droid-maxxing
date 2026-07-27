@@ -33,14 +33,14 @@ test('native browser requests run through Electron without a mounted Browser con
   try {
     const result = await performNativeBrowserRequest({
       requestId: 'request-1',
-      missionId: 'mission-1',
-      sessionId: 'browser-1',
+      appSessionId: 'app-1',
+      browserSessionId: 'browser-1',
       action: 'network',
     });
 
     assert.equal(requests.length, 1);
     assert.equal(result.ok, true);
-    assert.equal(result.missionId, 'mission-1');
+    assert.equal(result.appSessionId, 'app-1');
     assert.equal(result.networkEvents?.[0]?.status, 200);
   } finally {
     if (previousWindow === undefined) delete globals.window;
@@ -71,7 +71,7 @@ test('open waits briefly for a visible Browser controller to mount', async () =>
       unregister = registerNativeBrowserController({
         perform: async (request) => {
           controllerRequests.push(request);
-          return { requestId: request.requestId, missionId: request.missionId, ok: true };
+          return { requestId: request.requestId, appSessionId: request.appSessionId, ok: true };
         },
       });
     }, 0);
@@ -79,8 +79,8 @@ test('open waits briefly for a visible Browser controller to mount', async () =>
     const result = await performNativeBrowserRequest(
       {
         requestId: 'request-open',
-        missionId: 'mission-1',
-        sessionId: 'browser-1',
+        appSessionId: 'app-1',
+        browserSessionId: 'browser-1',
         action: 'open',
         url: 'https://example.com',
       },
@@ -121,8 +121,8 @@ test('open falls back to Electron when no Browser controller mounts', async () =
     const result = await performNativeBrowserRequest(
       {
         requestId: 'request-open-fallback',
-        missionId: 'mission-1',
-        sessionId: 'browser-1',
+        appSessionId: 'app-1',
+        browserSessionId: 'browser-1',
         action: 'open',
         url: 'https://example.com',
       },

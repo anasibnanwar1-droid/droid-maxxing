@@ -22,12 +22,12 @@ export const CLOSED_UTILITY_PANEL: UtilityPanelState = {
 
 const SINGLETON_TOOLS = new Set<UtilityTool>(['review', 'browser', 'files']);
 
-export function utilityPanelForMission(
+export function utilityPanelForSession(
   panels: Record<string, UtilityPanelState>,
-  missionId: string | null | undefined,
+  appSessionId: string | null | undefined,
 ): UtilityPanelState {
-  if (!missionId) return CLOSED_UTILITY_PANEL;
-  return missionId in panels ? panels[missionId] : CLOSED_UTILITY_PANEL;
+  if (!appSessionId) return CLOSED_UTILITY_PANEL;
+  return appSessionId in panels ? panels[appSessionId] : CLOSED_UTILITY_PANEL;
 }
 
 export function openUtilityTool(
@@ -126,8 +126,8 @@ export function removeUtilityTool(
 export function sanitizeUtilityPanels(value: unknown): Record<string, UtilityPanelState> {
   if (!isRecord(value)) return {};
   const panels: Record<string, UtilityPanelState> = {};
-  for (const [missionId, rawPanel] of Object.entries(value)) {
-    if (!missionId || !isRecord(rawPanel) || !Array.isArray(rawPanel.tabs)) continue;
+  for (const [appSessionId, rawPanel] of Object.entries(value)) {
+    if (!appSessionId || !isRecord(rawPanel) || !Array.isArray(rawPanel.tabs)) continue;
     const seenIds = new Set<string>();
     const singletonTools = new Set<UtilityTool>();
     const tabs: UtilityTab[] = [];
@@ -157,7 +157,7 @@ export function sanitizeUtilityPanels(value: unknown): Record<string, UtilityPan
       tabs.some((tab) => tab.id === rawPanel.activeTabId)
         ? rawPanel.activeTabId
         : (tabs[0]?.id ?? null);
-    panels[missionId] = {
+    panels[appSessionId] = {
       open: rawPanel.open === true && tabs.length > 0,
       tabs,
       activeTabId,
@@ -170,13 +170,13 @@ export function persistUtilityPanels(
   panels: Record<string, UtilityPanelState>,
 ): Record<string, UtilityPanelState> {
   return Object.fromEntries(
-    Object.entries(panels).map(([missionId, panel]) => {
+    Object.entries(panels).map(([appSessionId, panel]) => {
       const tabs = panel.tabs.filter((tab) => tab.tool !== 'terminal');
       const activeTabId = tabs.some((tab) => tab.id === panel.activeTabId)
         ? panel.activeTabId
         : (tabs[0]?.id ?? null);
       return [
-        missionId,
+        appSessionId,
         {
           open: panel.open && tabs.length > 0,
           tabs,
@@ -189,11 +189,11 @@ export function persistUtilityPanels(
 
 export function utilityTerminalCwds(
   panels: Record<string, UtilityPanelState>,
-  missionCwds: Record<string, string | undefined>,
+  sessionCwds: Record<string, string | undefined>,
 ): string[] {
   return Object.entries(panels)
     .filter(([, panel]) => panel.tabs.some((tab) => tab.tool === 'terminal'))
-    .map(([missionId]) => missionCwds[missionId])
+    .map(([appSessionId]) => sessionCwds[appSessionId])
     .filter((cwd): cwd is string => Boolean(cwd));
 }
 

@@ -3,15 +3,15 @@ import type { BrowserTranscriptReference, TranscriptEvent } from '../types/bridg
 export const newQueueId = () => `q-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 
 export function createLocalDesignTranscriptEvent(
-  missionId: string,
+  appSessionId: string,
   text: string,
   browserRefs: BrowserTranscriptReference[],
 ): TranscriptEvent {
   return {
     id: `local-design-${Date.now()}`,
-    missionId,
-    agentSessionId: 'user',
-    role: 'orchestrator',
+    appSessionId,
+    sourceSessionId: 'user',
+    role: 'primary',
     ts: Date.now(),
     kind: 'text',
     text,

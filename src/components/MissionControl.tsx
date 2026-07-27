@@ -1,8 +1,8 @@
 import { useRef, useEffect, useMemo, useState, useCallback } from 'react';
 import { useStore } from '../hooks/useStore';
 import { useRepoStatus } from '../hooks/useRepoStatus';
-import { interruptMission, setMissionAutonomy, subscribeWorker } from '../lib/commands';
-import { utilityPanelForMission } from '../lib/utilityPanel';
+import { interruptSession, updateSessionSettings, openChild } from '../lib/commands';
+import { utilityPanelForSession } from '../lib/utilityPanel';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   FileDiff,
@@ -26,20 +26,20 @@ import {
 interface AgentEntry {
   id: string;
   label: string;
-  role: 'orchestrator' | 'worker' | 'validator';
+  role: 'primary' | 'worker' | 'validator';
 }
 
 interface RoleAgent {
-  role: AgentRole;
-  sessionId: string | null;
+  role: SessionRole;
+  providerSessionId: string | null;
   working: boolean;
   subAgents: AgentEntry[];
 }
 import type {
   TranscriptEvent,
   BridgeFeature,
-  MissionSummary,
-  AgentRole,
+  SessionSummary,
+  SessionRole,
   ProgressEntry,
   ModelInfo,
   Autonomy,
@@ -265,7 +265,7 @@ function ContextColumn({
   onSelectAgent,
   big,
 }: {
-  mission: MissionSummary;
+  mission: SessionSummary;
   roleAgents: RoleAgent[];
   progress: ProgressEntry[];
   viewedAgent: string;
@@ -360,7 +360,7 @@ function ContextColumn({
   );
 }
 
-function modelOf(role: AgentRole, mission: MissionSummary): { id?: string; reasoning?: string } {
+function modelOf(role: SessionRole, mission: SessionSummary): { id?: string; reasoning?: string } {
   if (role === 'validator')
     return { id: mission.validatorModelId, reasoning: mission.validatorReasoningEffort };
   if (role === 'worker')
@@ -373,8 +373,8 @@ function modelLabel(models: ModelInfo[], id?: string): string {
   return models.find((m) => m.id === id)?.displayName ?? id;
 }
 
-const ROLE_TITLE: Record<AgentRole, string> = {
-  orchestrator: 'Orchestrator',
+const ROLE_TITLE: Record<SessionRole, string> = {
+  primary: 'Orchestrator',
   worker: 'Worker',
   validator: 'Validator',
 };
@@ -387,7 +387,7 @@ function AgentsSection({
   activeAgentId,
   onSelectAgent,
 }: {
-  mission: MissionSummary;
+  mission: SessionSummary;
   roleAgents: RoleAgent[];
   viewedAgent: string;
   activeAgentId: string | null;
@@ -398,8 +398,8 @@ function AgentsSection({
   const cycleAutonomy = () => {
     const i = AUTONOMY_CYCLE.indexOf(mission.autonomy);
     const next = AUTONOMY_CYCLE[(i + 1) % AUTONOMY_CYCLE.length];
-    dispatch({ type: 'MISSION_UPDATED', mission: { ...mission, autonomy: next } });
-    setMissionAutonomy(mission.id, next);
+    dispatch({ type: 'SESSION_UPDATED', session: { ...mission, autonomy: next } });
+    updateSessionSettings({ appSessionId: mission.appSessionId, autonomy: next });
   };
 
   return (
@@ -440,7 +440,7 @@ function RoleBlock({
   activeAgentId,
   onSelectAgent,
 }: {
-  mission: MissionSummary;
+  mission: SessionSummary;
   role: RoleAgent;
   models: ModelInfo[];
   viewedAgent: string;
@@ -458,10 +458,10 @@ function RoleBlock({
         id={id}
         reasoning={reasoning}
         models={models}
-        selected={role.sessionId !== null && viewedAgent === role.sessionId}
+        selected={role.providerSessionId !== null && viewedAgent === role.providerSessionId}
         working={role.working}
-        disabled={role.sessionId === null}
-        onClick={() => role.sessionId && onSelectAgent(role.sessionId)}
+        disabled={role.providerSessionId === null}
+        onClick={() => role.providerSessionId && onSelectAgent(role.providerSessionId)}
       />
 
       {role.subAgents.length > 0 && (
@@ -525,7 +525,7 @@ function AgentRow({
   disabled,
   onClick,
 }: {
-  role: AgentRole;
+  role: SessionRole;
   title: string;
   id?: string;
   reasoning?: string;
@@ -793,13 +793,13 @@ function FeatureFocus({
   const [showAll, setShowAll] = useState(false);
   const sessionIds = new Set(
     [
-      feature.currentWorkerSessionId,
-      feature.completedWorkerSessionId,
-      ...(feature.workerSessionIds ?? []),
+      feature.currentWorkerProviderSessionId,
+      feature.completedWorkerProviderSessionId,
+      ...(feature.workerProviderSessionIds ?? []),
     ].filter(Boolean) as string[],
   );
   const toolCalls = events.filter(
-    (e) => e.kind === 'tool_call' && sessionIds.has(e.agentSessionId),
+    (e) => e.kind === 'tool_call' && sessionIds.has(e.sourceSessionId),
   );
   const curated = toolCalls.filter((e) => toolMeta(e.toolName, e.toolArgs).cat !== 'other');
   const shown = showAll ? toolCalls : curated;
@@ -894,9 +894,9 @@ function FeatureFocus({
 
 export default function MissionControl() {
   const { state } = useStore();
-  const mission = state.activeMissionId ? state.missions[state.activeMissionId] : null;
-  const utilityOpen = utilityPanelForMission(state.utilityPanels, state.activeMissionId).open;
-  const [viewedAgent, setViewedAgent] = useState<string>('orchestrator');
+  const mission = state.activeAppSessionId ? state.sessions[state.activeAppSessionId] : null;
+  const utilityOpen = utilityPanelForSession(state.utilityPanels, state.activeAppSessionId).open;
+  const [viewedAgent, setViewedAgent] = useState<string>('primary');
   const [selectedFeatureId, setSelectedFeatureId] = useState<string | null>(null);
   const [focusOpen, setFocusOpen] = useState(false);
   const [railCollapsed, setRailCollapsed] = useState(false);
@@ -904,16 +904,16 @@ export default function MissionControl() {
   const [openDiff, setOpenDiff] = useState<FileChange | null>(null);
 
   const features = mission?.features ?? [];
-  const allTx = mission ? (state.transcripts[mission.id] ?? []) : [];
-  const progress = mission ? (state.progress[mission.id] ?? []) : [];
-  const missionWorkers = mission ? (state.workers[mission.id] ?? []) : [];
+  const allTx = mission ? (state.transcripts[mission.appSessionId] ?? []) : [];
+  const progress = mission ? (state.progress[mission.appSessionId] ?? []) : [];
+  const childSessions = mission ? (state.workers[mission.appSessionId] ?? []) : [];
 
-  // Live workers come from mission.worker events; historical missions seed
+  // Live workers come from session.child events; historical missions seed
   // state.workers from the persisted exact mapping, and only fall back to
   // transcript reconstruction for older history that predates persisted links.
   const resolvedWorkers = useMemo<WorkerInfo[]>(
-    () => resolveWorkers(missionWorkers, allTx),
-    [missionWorkers, allTx],
+    () => resolveWorkers(childSessions, allTx),
+    [childSessions, allTx],
   );
 
   // Click a spawn name in the orchestrator transcript → focus that worker.
@@ -923,8 +923,8 @@ export default function MissionControl() {
     (target: { toolUseId?: string; label?: string }) => {
       const worker = findWorkerForTarget(resolvedWorkers, target);
       if (!worker || !mission) return;
-      subscribeWorker(mission.id, worker.sessionId);
-      setViewedAgent(worker.sessionId);
+      openChild(mission.appSessionId, worker.providerSessionId);
+      setViewedAgent(worker.providerSessionId);
     },
     [resolvedWorkers, mission],
   );
@@ -979,13 +979,14 @@ export default function MissionControl() {
     const map = new Map<string, AgentEntry['role']>();
     features.forEach((f) => {
       const role = featureAgentRole(f);
-      f.workerSessionIds?.forEach((id) => map.set(id, role));
-      if (f.currentWorkerSessionId) map.set(f.currentWorkerSessionId, role);
-      if (f.completedWorkerSessionId) map.set(f.completedWorkerSessionId, role);
+      f.workerProviderSessionIds?.forEach((id) => map.set(id, role));
+      if (f.currentWorkerProviderSessionId) map.set(f.currentWorkerProviderSessionId, role);
+      if (f.completedWorkerProviderSessionId) map.set(f.completedWorkerProviderSessionId, role);
     });
     progress.forEach((entry) => {
-      if (entry.workerSessionId && !map.has(entry.workerSessionId))
-        map.set(entry.workerSessionId, 'worker');
+      if (entry.workerProviderSessionId && !map.has(entry.workerProviderSessionId)) {
+        map.set(entry.workerProviderSessionId, 'worker');
+      }
     });
     return map;
   }, [features, progress]);
@@ -994,16 +995,16 @@ export default function MissionControl() {
   const workerNumber = useMemo(() => {
     const order: string[] = [];
     const add = (id?: string | null) => {
-      if (id && id !== 'orchestrator' && id !== 'user' && !order.includes(id)) order.push(id);
+      if (id && id !== 'primary' && id !== 'user' && !order.includes(id)) order.push(id);
     };
     features.forEach((f) => {
-      (f.workerSessionIds ?? []).forEach(add);
-      add(f.currentWorkerSessionId);
-      add(f.completedWorkerSessionId);
+      (f.workerProviderSessionIds ?? []).forEach(add);
+      add(f.currentWorkerProviderSessionId);
+      add(f.completedWorkerProviderSessionId);
     });
-    progress.forEach((p) => add(p.workerSessionId));
+    progress.forEach((p) => add(p.workerProviderSessionId));
     allTx.forEach((t) => {
-      if (t.role !== 'orchestrator') add(t.agentSessionId);
+      if (t.role !== 'primary') add(t.sourceSessionId);
     });
     const map = new Map<string, number>();
     order.forEach((id, i) => map.set(id, i + 1));
@@ -1016,59 +1017,59 @@ export default function MissionControl() {
     for (let i = allTx.length - 1; i >= 0; i--) {
       const t = allTx[i];
       if (t.author === 'user' || t.kind === 'status') continue;
-      return t.role === 'orchestrator' ? 'orchestrator' : t.agentSessionId;
+      return t.role === 'primary' ? 'primary' : t.sourceSessionId;
     }
-    return 'orchestrator';
+    return 'primary';
   }, [isLive, allTx]);
 
   // Three fixed roles always shown. Each resolves to a session to open on click,
   // and worker/validator expose only their currently-live sub-agent sessions.
   const roleAgents = useMemo<RoleAgent[]>(() => {
-    const roleOf = (id: string): AgentRole =>
-      id === 'orchestrator' ? 'orchestrator' : (workerRoles.get(id) ?? 'worker');
+    const roleOf = (id: string): SessionRole =>
+      id === 'primary' ? 'primary' : (workerRoles.get(id) ?? 'worker');
     const activeRole = activeAgentId ? roleOf(activeAgentId) : null;
-    const liveSessions = (role: AgentRole) => {
+    const liveSessions = (role: SessionRole) => {
       const ids: string[] = [];
       features.forEach((f) => {
-        const id = f.currentWorkerSessionId;
+        const id = f.currentWorkerProviderSessionId;
         if (f.status === 'in_progress' && id && featureAgentRole(f) === role && !ids.includes(id))
           ids.push(id);
       });
       return ids;
     };
-    const allSessions = (role: AgentRole) =>
+    const allSessions = (role: SessionRole) =>
       Array.from(workerNumber.keys()).filter((id) => (workerRoles.get(id) ?? 'worker') === role);
-    const build = (role: AgentRole): RoleAgent => {
-      if (role === 'orchestrator')
+    const build = (role: SessionRole): RoleAgent => {
+      if (role === 'primary')
         return {
           role,
-          sessionId: 'orchestrator',
-          working: activeAgentId === 'orchestrator',
+          providerSessionId: 'primary',
+          working: activeAgentId === 'primary',
           subAgents: [],
         };
       const live = liveSessions(role);
       const all = allSessions(role);
       const working = activeRole === role;
-      const sessionId =
+      const providerSessionId =
         working && activeAgentId ? activeAgentId : (live[0] ?? all[all.length - 1] ?? null);
       const subAgents = live.map((id) => ({
         id,
         role,
         label: `Sub-agent ${workerNumber.get(id) ?? '?'}`,
       }));
-      return { role, sessionId, working, subAgents };
+      return { role, providerSessionId, working, subAgents };
     };
-    return [build('orchestrator'), build('worker'), build('validator')];
+    return [build('primary'), build('worker'), build('validator')];
   }, [features, activeAgentId, workerRoles, workerNumber]);
 
   const activeAgentLabel =
-    !activeAgentId || activeAgentId === 'orchestrator'
+    !activeAgentId || activeAgentId === 'primary'
       ? 'Orchestrator'
       : `Sub-agent ${workerNumber.get(activeAgentId) ?? '?'}`;
 
   if (!mission) return null;
 
-  const onOrchestrator = viewedAgent === 'orchestrator';
+  const onOrchestrator = viewedAgent === 'primary';
   const visible = (t: TranscriptEvent) =>
     t.author === 'user' ||
     t.kind === 'text' ||
@@ -1080,14 +1081,14 @@ export default function MissionControl() {
     t.isError;
   const events = (
     onOrchestrator
-      ? allTx.filter((t) => t.role === 'orchestrator')
-      : allTx.filter((t) => t.agentSessionId === viewedAgent)
+      ? allTx.filter((t) => t.role === 'primary')
+      : allTx.filter((t) => t.sourceSessionId === viewedAgent)
   ).filter(visible);
 
   const selectFeature = (f: BridgeFeature) => {
     setSelectedFeatureId(f.id);
-    const session = f.currentWorkerSessionId ?? f.completedWorkerSessionId ?? null;
-    setViewedAgent(session ?? 'orchestrator');
+    const session = f.currentWorkerProviderSessionId ?? f.completedWorkerProviderSessionId ?? null;
+    setViewedAgent(session ?? 'primary');
     setFocusOpen(true);
   };
 
@@ -1142,7 +1143,7 @@ export default function MissionControl() {
                     {activeAgentLabel} working
                   </span>
                   <button
-                    onClick={() => interruptMission(mission.id)}
+                    onClick={() => interruptSession(mission.appSessionId)}
                     className="px-2 py-1 rounded-md text-[11px] text-droid-text-muted hover:text-droid-text border border-droid-border hover:border-droid-border-hover transition-colors"
                   >
                     Stop

@@ -1,92 +1,14 @@
 import type { TranscriptEvent } from '../types/bridge';
 import type { WorkerInfo } from '../hooks/useStore';
-import { isSubagentTool, subagentInfo, toolMeta, CAT_LABEL } from './tools';
+import { subagentInfo, toolMeta, CAT_LABEL } from './tools';
 
-type ReconstructExclude = { sessions?: Set<string>; toolUseIds?: Set<string> };
-
-// Fallback for older history that predates persisted links: reconstruct a worker
-// list from the transcript by pairing each orchestrator subagent spawn with the
-// worker session it launched (mirrors the live pendingSubagent fallback).
-//
-// `exclude` lets the caller drop sessions/spawns already covered by persisted
-// links so the remaining unlinked workers are paired only against the remaining
-// unlinked spawns. Pairing is CAUSAL rather than positional: a spawn always
-// precedes the worker it starts, so each worker (in first-event order) claims
-// the oldest not-yet-claimed spawn that occurred before it. This keeps Task
-// lines mapped to the right worker even when workers run concurrently, their
-// events interleave out of spawn order, or an unrelated session (e.g. a
-// validator with no spawn) appears between spawns.
-export function reconstructWorkersFromTranscript(
-  allTx: TranscriptEvent[],
-  exclude?: ReconstructExclude,
-): WorkerInfo[] {
-  const workers: { sessionId: string; firstTs: number }[] = [];
-  const seenSession = new Set<string>();
-  const spawns: { toolUseId?: string; label?: string; ts: number }[] = [];
-  const seenSpawn = new Set<string>();
-  for (const t of allTx) {
-    if (t.role === 'orchestrator') {
-      if (t.kind !== 'tool_call' || !isSubagentTool(t.toolName, t.toolArgs)) continue;
-      const key = t.toolUseId ?? t.id;
-      if (seenSpawn.has(key)) continue;
-      seenSpawn.add(key);
-      if (exclude?.toolUseIds && t.toolUseId && exclude.toolUseIds.has(t.toolUseId)) continue;
-      spawns.push({ toolUseId: t.toolUseId, label: subagentInfo(t.toolArgs).label, ts: t.ts });
-      continue;
-    }
-    if (t.author === 'user') continue;
-    if (seenSession.has(t.agentSessionId)) continue;
-    seenSession.add(t.agentSessionId);
-    if (exclude?.sessions?.has(t.agentSessionId)) continue;
-    workers.push({ sessionId: t.agentSessionId, firstTs: t.ts });
-  }
-  if (workers.length === 0) return [];
-
-  const byTsWorkers = [...workers].sort((a, b) => a.firstTs - b.firstTs);
-  const byTsSpawns = [...spawns].sort((a, b) => a.ts - b.ts);
-  const assigned = new Map<string, { toolUseId?: string; label?: string }>();
-  const pending: { toolUseId?: string; label?: string }[] = [];
-  let si = 0;
-  for (const w of byTsWorkers) {
-    while (si < byTsSpawns.length && byTsSpawns[si].ts <= w.firstTs) {
-      pending.push({ toolUseId: byTsSpawns[si].toolUseId, label: byTsSpawns[si].label });
-      si++;
-    }
-    const spawn = pending.shift();
-    if (spawn) assigned.set(w.sessionId, spawn);
-  }
-  // Preserve first-seen worker order in the returned list (callers render it as
-  // the worker panel order); only the spawn->worker pairing used time.
-  return workers.map((w) => ({
-    sessionId: w.sessionId,
-    status: 'completed' as const,
-    startedAt: 0,
-    label: assigned.get(w.sessionId)?.label,
-    toolUseId: assigned.get(w.sessionId)?.toolUseId,
-  }));
-}
-
-// Prefer live/persisted workers, then merge in any transcript-reconstructed
-// workers whose session isn't already covered. A long-lived session can mix
-// older unlinked spawns with newer persisted links, so returning only the
-// linked workers would leave the older historical subagent lines unopenable.
+// Child-session links are canonical protocol data. The renderer never guesses
+// provider identities from transcript order.
 export function resolveWorkers(
-  missionWorkers: WorkerInfo[],
-  allTx: TranscriptEvent[],
+  workers: WorkerInfo[],
+  _transcript: TranscriptEvent[],
 ): WorkerInfo[] {
-  if (missionWorkers.length === 0) return reconstructWorkersFromTranscript(allTx);
-  const known = new Set(missionWorkers.map((w) => w.sessionId));
-  // Exclude the spawns already claimed by linked workers before pairing, so a
-  // linked worker can't consume an unlinked worker's spawn (and vice versa) and
-  // mis-map the remaining Task lines.
-  const claimedToolUseIds = new Set(
-    missionWorkers.map((w) => w.toolUseId).filter((id): id is string => Boolean(id)),
-  );
-  const extra = reconstructWorkersFromTranscript(allTx, {
-    sessions: known,
-    toolUseIds: claimedToolUseIds,
-  });
-  return extra.length === 0 ? missionWorkers : [...missionWorkers, ...extra];
+  return workers;
 }
 
 // A single Task spawn streams many tool_call/tool_call_delta events sharing one
@@ -156,7 +78,7 @@ export function subagentActivityForTarget(
   for (let i = allTx.length - 1; i >= 0; i--) {
     const t = allTx[i];
     if (
-      t.agentSessionId !== worker.sessionId ||
+      t.sourceSessionId !== worker.providerSessionId ||
       (t.kind === 'tool_result' && !t.isError) ||
       t.author === 'user'
     )

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import type { MissionSummary } from '../types/bridge';
+import type { SessionSummary } from '../types/bridge';
 import {
   addWorkspaceCwd,
   buildWorkspaceSections,
@@ -8,13 +8,14 @@ import {
   SIDEBAR_VISIBLE_SESSION_LIMIT,
 } from './workspaces';
 
-const mission = (id: string, cwd: string, updatedAt: number): MissionSummary => ({
-  id,
-  sessionId: id,
-  kind: 'chat',
-  role: 'orchestrator',
-  title: id,
-  goal: id,
+const session = (appSessionId: string, cwd: string, updatedAt: number): SessionSummary => ({
+  appSessionId,
+  providerSessionId: `provider-${appSessionId}`,
+  sessionPurpose: 'chat',
+  interactionMode: 'auto',
+  role: 'primary',
+  title: appSessionId,
+  goal: appSessionId,
   cwd,
   workspaceKind: cwd ? 'folder' : 'none',
   autonomy: 'low',
@@ -37,33 +38,33 @@ test('addWorkspaceCwd keeps explicit workspaces unique and ordered newest first'
 });
 
 test('buildWorkspaceSections includes every known session for explicitly added workspaces', () => {
-  const missions = [
-    mission('plain-chat', '', 100),
-    mission('other-workspace', '/repo/other', 200),
+  const sessions = [
+    session('plain-chat', '', 100),
+    session('other-workspace', '/repo/other', 200),
     ...Array.from({ length: SIDEBAR_VISIBLE_SESSION_LIMIT + 2 }, (_, i) =>
-      mission(`repo-${i}`, '/repo/app', i + 1),
+      session(`repo-${i}`, '/repo/app', i + 1),
     ),
   ];
 
-  const sections = buildWorkspaceSections(['/repo/app'], missions);
+  const sections = buildWorkspaceSections(['/repo/app'], sessions);
 
   assert.equal(sections.length, 1);
   assert.equal(sections[0].cwd, '/repo/app');
   assert.deepEqual(
-    sections[0].sessions.map((m) => m.id),
+    sections[0].sessions.map((item) => item.appSessionId),
     ['repo-6', 'repo-5', 'repo-4', 'repo-3', 'repo-2', 'repo-1', 'repo-0'],
   );
 });
 
 test('buildWorkspaceSections can still cap an explicit bootstrap list', () => {
-  const missions = Array.from({ length: SIDEBAR_VISIBLE_SESSION_LIMIT + 2 }, (_, i) =>
-    mission(`repo-${i}`, '/repo/app', i + 1),
+  const sessions = Array.from({ length: SIDEBAR_VISIBLE_SESSION_LIMIT + 2 }, (_, i) =>
+    session(`repo-${i}`, '/repo/app', i + 1),
   );
 
-  const sections = buildWorkspaceSections(['/repo/app'], missions, SIDEBAR_VISIBLE_SESSION_LIMIT);
+  const sections = buildWorkspaceSections(['/repo/app'], sessions, SIDEBAR_VISIBLE_SESSION_LIMIT);
 
   assert.deepEqual(
-    sections[0].sessions.map((m) => m.id),
+    sections[0].sessions.map((item) => item.appSessionId),
     ['repo-6', 'repo-5', 'repo-4', 'repo-3', 'repo-2'],
   );
 });
@@ -72,18 +73,18 @@ test('buildWorkspaceSections keeps nested worktree sessions under the repository
   const sections = buildWorkspaceSections(
     ['/repo/app/.worktrees/feature-a', '/repo/app', '/repo/app/packages/ui'],
     [
-      mission('main', '/repo/app', 1),
-      mission('worktree', '/repo/app/.worktrees/feature-a', 3),
-      mission('nested-workspace', '/repo/app/packages/ui', 2),
+      session('main', '/repo/app', 1),
+      session('worktree', '/repo/app/.worktrees/feature-a', 3),
+      session('nested-workspace', '/repo/app/packages/ui', 2),
     ],
   );
 
   assert.deepEqual(
-    sections[0].sessions.map((m) => m.id),
+    sections[0].sessions.map((item) => item.appSessionId),
     ['worktree', 'main'],
   );
   assert.deepEqual(
-    sections[1].sessions.map((m) => m.id),
+    sections[1].sessions.map((item) => item.appSessionId),
     ['nested-workspace'],
   );
   assert.equal(sections.length, 2);
@@ -91,14 +92,11 @@ test('buildWorkspaceSections keeps nested worktree sessions under the repository
 });
 
 test('isSubagentSession flags workers, validators and parented sessions', () => {
-  assert.equal(isSubagentSession(mission('a', '/repo/app', 1)), false);
-  assert.equal(isSubagentSession({ ...mission('w', '/repo/app', 1), role: 'worker' }), true);
+  assert.equal(isSubagentSession(session('a', '/repo/app', 1)), false);
+  assert.equal(isSubagentSession({ ...session('w', '/repo/app', 1), role: 'worker' }), true);
+  assert.equal(isSubagentSession({ ...session('v', '/repo/app', 1), role: 'validator' }), true);
   assert.equal(
-    isSubagentSession({ ...mission('v', '/repo/app', 1), kind: 'mission_validator' }),
-    true,
-  );
-  assert.equal(
-    isSubagentSession({ ...mission('p', '/repo/app', 1), parentSessionId: 'parent' }),
+    isSubagentSession({ ...session('p', '/repo/app', 1), parentProviderSessionId: 'parent' }),
     true,
   );
 });

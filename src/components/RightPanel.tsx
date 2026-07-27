@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useStore } from '../hooks/useStore';
 import { parseTodos, isTodoTool, hasTodoPayload, type TodoItem } from '../lib/tools';
-import { useMissionLive } from '../hooks/useMissionLive';
+import { useSessionLive } from '../hooks/useSessionLive';
 import { useGitEnvironment } from '../hooks/useGitEnvironment';
 import { usePullRequest } from '../hooks/usePullRequest';
-import { interruptAgent } from '../lib/commands';
+import { interruptChild } from '../lib/commands';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Hash,
@@ -98,9 +98,9 @@ function statusIcon(status: string) {
 
 export default function RightPanel() {
   const { state, dispatch } = useStore();
-  const activeMission = state.activeMissionId ? state.missions[state.activeMissionId] : null;
-  const features = activeMission?.features ?? [];
-  const cwd = activeMission?.cwd ?? '';
+  const activeSession = state.activeAppSessionId ? state.sessions[state.activeAppSessionId] : null;
+  const features = activeSession?.features ?? [];
+  const cwd = activeSession?.cwd ?? '';
 
   const [diffMode, setDiffMode] = useState<DiffStatMode>('worktree');
   const [view, setView] = useState<'context' | 'pr'>('context');
@@ -114,19 +114,19 @@ export default function RightPanel() {
   // A PR view belongs to one session+branch; reset it when either changes.
   useEffect(() => {
     setView('context');
-  }, [activeMission?.id, git.env?.branch]);
+  }, [activeSession?.appSessionId, git.env?.branch]);
 
   // Mission control owns its own feature-based progress; for chat/spec sessions
   // we always prefer the model's own TodoWrite list as the source of truth.
-  const transcript = activeMission ? (state.transcripts[activeMission.id] ?? []) : [];
-  const selectedAgent = state.selectedAgentSessionId;
+  const transcript = activeSession ? (state.transcripts[activeSession.appSessionId] ?? []) : [];
+  const selectedAgent = state.selectedProviderSessionId;
   const todoResult = useMemo(() => {
-    if (!activeMission || activeMission.kind === 'mission_orchestrator')
+    if (!activeSession || activeSession.sessionPurpose === 'mission-control')
       return { todos: [] as TodoItem[], foundPayload: false };
     const scoped =
-      selectedAgent && selectedAgent !== 'orchestrator'
-        ? transcript.filter((t) => t.agentSessionId === selectedAgent)
-        : transcript.filter((t) => t.role === 'orchestrator');
+      selectedAgent && selectedAgent !== 'primary'
+        ? transcript.filter((t) => t.sourceSessionId === selectedAgent)
+        : transcript.filter((t) => t.role === 'primary');
     // The latest real Todo update wins, even if it emptied the list; skip only
     // partial/streaming calls that haven't received the `todos` payload yet.
     for (let i = scoped.length - 1; i >= 0; i--) {
@@ -136,7 +136,7 @@ export default function RightPanel() {
       }
     }
     return { todos: [] as TodoItem[], foundPayload: false };
-  }, [activeMission, transcript, selectedAgent]);
+  }, [activeSession, transcript, selectedAgent]);
   const todos = todoResult.todos;
   const useTodos = todoResult.foundPayload;
 
@@ -148,22 +148,22 @@ export default function RightPanel() {
 
   // Authoritative "is the model generating right now" signal — respects the
   // backend `streaming` flag and terminal phases, so the spinner stops on reply.
-  const working = useMissionLive(activeMission?.id ?? null);
+  const working = useSessionLive(activeSession?.appSessionId ?? null);
 
   // Auto-expand the step list while the model is working; otherwise collapse it.
   const [progressManual, setProgressManual] = useState<boolean | null>(null);
   const progressOpen = progressManual ?? working;
 
   // Sub-agents spawned in this session (same source the sidebar uses).
-  const workers = activeMission ? (state.workers[activeMission.id] ?? []) : [];
+  const workers = activeSession ? (state.workers[activeSession.appSessionId] ?? []) : [];
   const agentsRunning = workers.some((w) => w.status === 'running');
   const [agentsOpen, setAgentsOpen] = useState(true);
 
-  const modelInfo = activeMission?.modelId
-    ? state.models.find((m) => m.id === activeMission.modelId)
+  const modelInfo = activeSession?.modelId
+    ? state.models.find((m) => m.id === activeSession.modelId)
     : undefined;
-  const modelLabel = activeMission
-    ? (modelInfo?.displayName ?? activeMission.modelId ?? 'default')
+  const modelLabel = activeSession
+    ? (modelInfo?.displayName ?? activeSession.modelId ?? 'default')
     : 'default';
 
   return (
@@ -192,11 +192,11 @@ export default function RightPanel() {
         ) : (
           <div className="flex-1 min-h-0 overflow-y-auto px-1.5 pb-2">
             {/* Environment */}
-            {activeMission && (
+            {activeSession && (
               <div>
                 <SectionHeader label="Environment" />
                 <EnvironmentSection
-                  cwd={activeMission.cwd}
+                  cwd={activeSession.cwd}
                   env={git.env}
                   branches={git.branches}
                   worktrees={git.worktrees}
@@ -215,10 +215,10 @@ export default function RightPanel() {
                 />
                 <Row
                   icon={
-                    <ModelIcon provider={providerOf(modelInfo, activeMission.modelId)} size={16} />
+                    <ModelIcon provider={providerOf(modelInfo, activeSession.modelId)} size={16} />
                   }
                   label={modelLabel}
-                  meta={activeMission.autonomy}
+                  meta={activeSession.autonomy}
                 />
 
                 {/* Agents — collapsible, nested under the model */}
@@ -249,7 +249,7 @@ export default function RightPanel() {
                         >
                           {workers.map((w, i) => (
                             <AgentRow
-                              key={w.sessionId}
+                              key={w.providerSessionId}
                               label={w.label ?? `Sub-agent ${i + 1}`}
                               meta={
                                 [
@@ -265,14 +265,17 @@ export default function RightPanel() {
                               prompt={w.prompt}
                               running={w.status === 'running'}
                               depth={0}
-                              selected={state.selectedAgentSessionId === w.sessionId}
+                              selected={state.selectedProviderSessionId === w.providerSessionId}
                               onClick={() => {
                                 const next =
-                                  state.selectedAgentSessionId === w.sessionId ? null : w.sessionId;
-                                dispatch({ type: 'SELECT_AGENT', id: next });
+                                  state.selectedProviderSessionId === w.providerSessionId
+                                    ? null
+                                    : w.providerSessionId;
+                                dispatch({ type: 'SELECT_PROVIDER_SESSION', id: next });
                               }}
                               onStop={() =>
-                                activeMission && interruptAgent(activeMission.id, w.sessionId)
+                                activeSession &&
+                                interruptChild(activeSession.appSessionId, w.providerSessionId)
                               }
                             />
                           ))}
@@ -284,12 +287,14 @@ export default function RightPanel() {
               </div>
             )}
 
-            {/* Spec — opens the full wiki reader for missions that produced one */}
-            {activeMission && state.missionSpecs[activeMission.id] && (
+            {/* Spec — opens the full wiki reader for sessions that produced one */}
+            {activeSession && state.sessionSpecs[activeSession.appSessionId] && (
               <div>
                 <Divider />
                 <button
-                  onClick={() => dispatch({ type: 'SPEC_OPEN_WIKI', missionId: activeMission.id })}
+                  onClick={() =>
+                    dispatch({ type: 'SPEC_OPEN_WIKI', appSessionId: activeSession.appSessionId })
+                  }
                   className="w-full flex items-center gap-1.5 px-3 pt-2 pb-1.5 text-[12.5px] font-medium text-droid-text-muted hover:text-droid-text transition-colors"
                 >
                   <FileText className="w-3.5 h-3.5" />
@@ -300,7 +305,7 @@ export default function RightPanel() {
             )}
 
             {/* Progress (collapsible) — under Environment */}
-            {activeMission && (
+            {activeSession && (
               <div>
                 <Divider />
                 <button
@@ -387,10 +392,10 @@ export default function RightPanel() {
 
             {/* Selected step detail */}
             <AnimatePresence>
-              {activeMission &&
+              {activeSession &&
                 state.selectedFeatureId &&
                 (() => {
-                  const f = activeMission.features.find((x) => x.id === state.selectedFeatureId);
+                  const f = activeSession.features.find((x) => x.id === state.selectedFeatureId);
                   if (!f) return null;
                   return (
                     <motion.div
@@ -412,11 +417,11 @@ export default function RightPanel() {
                             </span>
                           </div>
                         )}
-                        {f.currentWorkerSessionId && (
+                        {f.currentWorkerProviderSessionId && (
                           <div className="flex items-center gap-2">
                             <Activity className="w-3.5 h-3.5 text-droid-accent" />
                             <span className="font-mono text-[11px] text-droid-accent">
-                              {f.currentWorkerSessionId.slice(0, 12)}
+                              {f.currentWorkerProviderSessionId.slice(0, 12)}
                             </span>
                           </div>
                         )}

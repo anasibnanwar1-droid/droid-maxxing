@@ -1,4 +1,4 @@
-// Builds the prompt text actually sent to a mission from the raw user input plus
+// Builds the prompt text actually sent to a session from the raw user input plus
 // the selected skills and @file mentions. Shared so the optimistic echo dedup
 // can reconstruct the same composed string that gets persisted to history.
 export function composePrompt(text: string, skillNames: string[], files: string[]): string {

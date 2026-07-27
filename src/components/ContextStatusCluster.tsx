@@ -8,33 +8,37 @@ import ContextMeter from './ContextMeter';
 // stretch to the bottom edge while this stays tucked in a corner of the composer.
 export default function ContextStatusCluster() {
   const { state } = useStore();
-  const mission = state.activeMissionId ? state.missions[state.activeMissionId] : null;
+  const session = state.activeAppSessionId ? state.sessions[state.activeAppSessionId] : null;
   const contextSessionId =
-    state.selectedAgentSessionId && state.selectedAgentSessionId !== 'orchestrator'
-      ? state.selectedAgentSessionId
-      : mission?.id;
+    state.selectedProviderSessionId && state.selectedProviderSessionId !== 'primary'
+      ? state.selectedProviderSessionId
+      : session?.providerSessionId;
   const contextStats = contextSessionId ? state.contextStats[contextSessionId] : undefined;
-  const contextMission =
-    mission && contextSessionId !== mission.id && !contextStats
+  const contextSessionSummary =
+    session && contextSessionId !== session.appSessionId && !contextStats
       ? {
-          ...mission,
+          ...session,
           contextTokens: 0,
           contextRemainingTokens: undefined,
           contextAccuracy: undefined,
           contextUpdatedAt: undefined,
           maxContextTokens: undefined,
         }
-      : mission;
-  if (!contextMission) return null;
+      : session;
+  if (!contextSessionSummary) return null;
 
   return (
     <div className="flex shrink-0 items-center gap-2">
-      {mission?.queuedSends ? (
+      {session?.queuedSends ? (
         <span className="rounded-md border border-droid-border bg-droid-elevated/70 px-1.5 py-0.5 font-mono text-[10px] text-droid-text-secondary">
-          {mission.queuedSends} queued
+          {session.queuedSends} queued
         </span>
       ) : null}
-      <ContextMeter mission={contextMission} stats={contextStats} sessionKey={contextSessionId} />
+      <ContextMeter
+        session={contextSessionSummary}
+        stats={contextStats}
+        sessionKey={contextSessionId}
+      />
     </div>
   );
 }

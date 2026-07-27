@@ -1,7 +1,7 @@
 import { useRef, useEffect, useLayoutEffect, useMemo, useState, useCallback } from 'react';
 import { GripVertical, ChevronRight, Square } from 'lucide-react';
 import { useStore } from '../hooks/useStore';
-import { useMissionLive } from '../hooks/useMissionLive';
+import { useSessionLive } from '../hooks/useSessionLive';
 import { motion } from 'framer-motion';
 import {
   MessageFeed,
@@ -13,7 +13,7 @@ import {
   promptAnchorsFromItems,
 } from './chat';
 import { readFile } from '../lib/desktop';
-import { interruptAgent, loadMissionHistory, loadOlderMissionHistory } from '../lib/commands';
+import { interruptChild, loadSessionHistory } from '../lib/commands';
 import { findWorkerForTarget, resolveWorkers, subagentActivityForTarget } from '../lib/subagents';
 import type { FileChange } from '../lib/diff';
 import { ConversationTimeline } from './ConversationTimeline';
@@ -179,21 +179,20 @@ function ChatHeader({
 export default function ChatView({ rightInset = false }: { rightInset?: boolean }) {
   const { state, dispatch } = useStore();
   const scrollRef = useRef<HTMLDivElement>(null);
-  const activeMission = state.activeMissionId ? state.missions[state.activeMissionId] : null;
-  const allTranscript = activeMission ? (state.transcripts[activeMission.id] ?? []) : [];
+  const activeSession = state.activeAppSessionId ? state.sessions[state.activeAppSessionId] : null;
+  const allTranscript = activeSession ? (state.transcripts[activeSession.appSessionId] ?? []) : [];
 
-  const selectedAgent = state.selectedAgentSessionId;
-  const viewingSub = !!selectedAgent && selectedAgent !== 'orchestrator';
+  const selectedAgent = state.selectedProviderSessionId;
+  const viewingSub = !!selectedAgent && selectedAgent !== 'primary';
 
-  const missionWorkers = activeMission ? (state.workers[activeMission.id] ?? []) : [];
-  // Historical chat/spec sessions don't receive live mission.worker events; seed
-  // from the persisted exact mapping (in state.workers) and fall back to
-  // transcript reconstruction for older history so subagent links stay navigable.
+  const childSessions = activeSession ? (state.workers[activeSession.appSessionId] ?? []) : [];
+  // Historical chat/spec sessions receive exact persisted child links in
+  // state.workers, matching live session.child events.
   const resolvedWorkers = useMemo(
-    () => resolveWorkers(missionWorkers, allTranscript),
-    [missionWorkers, allTranscript],
+    () => resolveWorkers(childSessions, allTranscript),
+    [childSessions, allTranscript],
   );
-  const workerIndex = resolvedWorkers.findIndex((w) => w.sessionId === selectedAgent);
+  const workerIndex = resolvedWorkers.findIndex((w) => w.providerSessionId === selectedAgent);
   const selectedWorker = workerIndex >= 0 ? resolvedWorkers[workerIndex] : undefined;
   const subLabel = selectedWorker
     ? (selectedWorker.label ?? `Sub-agent ${workerIndex + 1}`)
@@ -208,7 +207,7 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
   const openSubagent = useCallback(
     (target: { toolUseId?: string; label?: string }) => {
       const worker = findWorkerForTarget(resolvedWorkers, target);
-      if (worker) dispatch({ type: 'SELECT_AGENT', id: worker.sessionId });
+      if (worker) dispatch({ type: 'SELECT_PROVIDER_SESSION', id: worker.providerSessionId });
     },
     [resolvedWorkers, dispatch],
   );
@@ -234,24 +233,24 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
   );
 
   const transcript = useMemo(() => {
-    if (viewingSub) return allTranscript.filter((t) => t.agentSessionId === selectedAgent);
+    if (viewingSub) return allTranscript.filter((t) => t.sourceSessionId === selectedAgent);
     return allTranscript.filter(
-      (t) => t.role === 'orchestrator' || (t.author === 'user' && t.agentSessionId === 'user'),
+      (t) => t.role === 'primary' || (t.author === 'user' && t.sourceSessionId === 'user'),
     );
   }, [allTranscript, viewingSub, selectedAgent]);
 
-  // Lazily page older orchestrator history (across the compaction chain) in as
+  // Lazily page older primary-session history (across the compaction chain) in as
   // the user scrolls toward the top, prefetching well before the edge so the
   // scrollback feels endless and smooth rather than hitting a hard stop.
-  const historyMissionId = activeMission?.id;
-  const olderCursor = historyMissionId ? state.historyCursor[historyMissionId] : undefined;
-  const loadingOlder = historyMissionId ? state.historyLoadingOlder[historyMissionId] : false;
-  const restore = historyMissionId ? state.sessionRestore[historyMissionId] : undefined;
+  const historyAppSessionId = activeSession?.appSessionId;
+  const olderCursor = historyAppSessionId ? state.historyCursor[historyAppSessionId] : undefined;
+  const loadingOlder = historyAppSessionId ? state.historyLoadingOlder[historyAppSessionId] : false;
+  const restore = historyAppSessionId ? state.sessionRestore[historyAppSessionId] : undefined;
   const retryRestore = useCallback(() => {
-    if (!historyMissionId) return;
-    dispatch({ type: 'SESSION_RESTORE_START', missionId: historyMissionId });
-    loadMissionHistory(historyMissionId);
-  }, [historyMissionId, dispatch]);
+    if (!historyAppSessionId) return;
+    dispatch({ type: 'SESSION_RESTORE_START', appSessionId: historyAppSessionId });
+    loadSessionHistory(historyAppSessionId);
+  }, [historyAppSessionId, dispatch]);
   // Anchor captured when an older page is requested, used to keep the viewport
   // visually fixed once the prepended messages grow the scroll height.
   const prependAnchor = useRef<{ height: number; top: number } | null>(null);
@@ -269,14 +268,14 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
     stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
     if (
       !viewingSub &&
-      historyMissionId &&
+      historyAppSessionId &&
       olderCursor &&
       !loadingOlder &&
       el.scrollTop < PREFETCH_PX
     ) {
       prependAnchor.current = { height: el.scrollHeight, top: el.scrollTop };
-      dispatch({ type: 'MISSION_HISTORY_LOADING_OLDER', missionId: historyMissionId });
-      loadOlderMissionHistory(historyMissionId, olderCursor);
+      dispatch({ type: 'SESSION_HISTORY_LOADING_OLDER', appSessionId: historyAppSessionId });
+      loadSessionHistory(historyAppSessionId, olderCursor);
     }
   };
 
@@ -298,20 +297,20 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
     }
   }, [transcript.length, tailLen]);
 
-  const live = useMissionLive(activeMission?.id ?? null);
+  const live = useSessionLive(activeSession?.appSessionId ?? null);
   const draftFolder = state.draftChat?.cwd.split('/').filter(Boolean).pop();
 
   // Between pressing send on a fresh chat and MISSION_CREATED arriving (the
-  // sidecar spawns the session, ~1-2s), there is no active mission yet. Show the
+  // sidecar spawns the session, ~1-2s), there is no active session yet. Show the
   // user's message immediately with a starting cue instead of a blank screen;
   // the real feed (which seeds the same message) takes over once it exists.
-  const startingCompose = !activeMission ? Object.values(state.pendingCompose).at(-1) : undefined;
+  const startingCompose = !activeSession ? Object.values(state.pendingCompose).at(-1) : undefined;
 
-  const isSpec = activeMission?.kind === 'spec';
-  const capturedPlan = activeMission ? state.specPlans[activeMission.id] : undefined;
-  const storedSpec = activeMission ? state.missionSpecs[activeMission.id] : undefined;
+  const isSpec = activeSession?.interactionMode === 'spec';
+  const capturedPlan = activeSession ? state.specPlans[activeSession.appSessionId] : undefined;
+  const storedSpec = activeSession ? state.sessionSpecs[activeSession.appSessionId] : undefined;
   // The spec stays available after exiting spec mode: keep detecting/loading it
-  // whenever this mission ever produced one (live kind, captured plan, or a
+  // whenever this session ever produced one (live mode, captured plan, or a
   // previously stored spec).
   const hadSpec = isSpec || !!capturedPlan || !!storedSpec;
 
@@ -355,22 +354,22 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
     if (hasFileSpec) return fileSpec!.content;
     // 2) The plan the agent submitted via ExitSpecMode.
     if (capturedPlan) return capturedPlan;
-    // 3) Previously persisted spec (e.g. after switching missions and back).
+    // 3) Previously persisted spec (e.g. after switching sessions and back).
     if (storedSpec?.content) return storedSpec.content;
     return '';
   }, [hadSpec, hasFileSpec, fileSpec, capturedPlan, storedSpec]);
 
   // Persist the best spec we have so the card, wiki reader, and right-panel
   // button survive exiting spec mode and switching between sessions.
-  const missionId = activeMission?.id;
+  const appSessionId = activeSession?.appSessionId;
   useEffect(() => {
-    if (!missionId || !specContent) return;
+    if (!appSessionId || !specContent) return;
     const title = specContent.match(/^#{1,3}\s+(.+)$/m)?.[1]?.trim() ?? 'Specification';
     // Preserve the existing file path when the current source is not file-backed
     // (e.g. a captured plan), so the store never loses a known path on refresh.
     const path = hasFileSpec ? fileSpec!.path : storedSpec?.path;
-    dispatch({ type: 'SPEC_SET', missionId, path, title, content: specContent });
-  }, [missionId, specContent, hasFileSpec, fileSpec, storedSpec?.path, dispatch]);
+    dispatch({ type: 'SPEC_SET', appSessionId, path, title, content: specContent });
+  }, [appSessionId, specContent, hasFileSpec, fileSpec, storedSpec?.path, dispatch]);
 
   // Build the grouped feed once and share it: MessageFeed renders it and the
   // timeline derives its anchors from the same items, so switching sessions
@@ -391,7 +390,7 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
   // prepend-stable path as scroll prefetch) until there are enough anchors or
   // the compaction chain is exhausted, so the timeline works on any chat.
   useEffect(() => {
-    if (viewingSub || !historyMissionId || !olderCursor || loadingOlder) return;
+    if (viewingSub || !historyAppSessionId || !olderCursor || loadingOlder) return;
     if (timelineAnchors.length >= TIMELINE_TARGET_ANCHORS) return;
     // A failed older-page load leaves the cursor intact so a later user scroll
     // can retry; without this guard the auto-pager would immediately re-fire the
@@ -399,11 +398,11 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
     if (restore?.status === 'failed') return;
     const el = scrollRef.current;
     if (el) prependAnchor.current = { height: el.scrollHeight, top: el.scrollTop };
-    dispatch({ type: 'MISSION_HISTORY_LOADING_OLDER', missionId: historyMissionId });
-    loadOlderMissionHistory(historyMissionId, olderCursor);
+    dispatch({ type: 'SESSION_HISTORY_LOADING_OLDER', appSessionId: historyAppSessionId });
+    loadSessionHistory(historyAppSessionId, olderCursor);
   }, [
     viewingSub,
-    historyMissionId,
+    historyAppSessionId,
     olderCursor,
     loadingOlder,
     timelineAnchors.length,
@@ -413,9 +412,9 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
 
   return (
     <div className="flex-1 min-h-0 min-w-0 flex flex-col overflow-hidden">
-      {activeMission && (
+      {activeSession && (
         <ChatHeader
-          title={activeMission.title}
+          title={activeSession.title}
           live={live}
           sub={
             viewingSub
@@ -423,10 +422,10 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
                   label: subLabel,
                   meta: subMeta || undefined,
                   running: selectedWorker?.status === 'running',
-                  onBack: () => dispatch({ type: 'SELECT_AGENT', id: null }),
+                  onBack: () => dispatch({ type: 'SELECT_PROVIDER_SESSION', id: null }),
                   onStop:
-                    activeMission && selectedAgent && selectedWorker?.status === 'running'
-                      ? () => interruptAgent(activeMission.id, selectedAgent)
+                    activeSession && selectedAgent && selectedWorker?.status === 'running'
+                      ? () => interruptChild(activeSession.appSessionId, selectedAgent)
                       : undefined,
                 }
               : undefined
@@ -434,7 +433,7 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
         />
       )}
       <div className="relative flex-1 min-h-0 min-w-0 flex flex-col">
-        {activeMission && timelineAnchors.length >= 2 && (
+        {activeSession && timelineAnchors.length >= 2 && (
           <ConversationTimeline scrollRef={scrollRef} anchors={timelineAnchors} />
         )}
         <div
@@ -446,9 +445,9 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
             transition: 'padding-right 0.2s ease',
           }}
         >
-          {activeMission && transcript.length > 0 ? (
+          {activeSession && transcript.length > 0 ? (
             <motion.div
-              key={`${missionId ?? 'none'}:${viewingSub ? selectedAgent : 'main'}`}
+              key={`${appSessionId ?? 'none'}:${viewingSub ? selectedAgent : 'main'}`}
               initial={{ opacity: 0, y: 6 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
@@ -468,20 +467,22 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
                 events={transcript}
                 items={feedItems}
                 pending={live}
-                cwd={activeMission.cwd}
+                cwd={activeSession.cwd}
                 onOpenDiff={openDiff}
                 onOpenReviewFile={openReviewFile}
                 onOpenSubagent={openSubagent}
                 subagentActivity={subagentActivity}
                 specContent={specContent}
                 onOpenSpecWiki={
-                  missionId ? () => dispatch({ type: 'SPEC_OPEN_WIKI', missionId }) : undefined
+                  appSessionId
+                    ? () => dispatch({ type: 'SPEC_OPEN_WIKI', appSessionId })
+                    : undefined
                 }
               />
             </motion.div>
-          ) : activeMission && restore?.status === 'failed' ? (
+          ) : activeSession && restore?.status === 'failed' ? (
             <RestoreFailedState message={restore.error} onRetry={retryRestore} />
-          ) : activeMission && viewingSub ? (
+          ) : activeSession && viewingSub ? (
             <div className="mx-auto flex h-full max-w-2xl flex-col items-center justify-center gap-4 px-8 text-center">
               {selectedWorker?.prompt && (
                 <div className="max-w-lg rounded-xl bg-droid-elevated/40 px-4 py-3 text-left">
@@ -498,7 +499,7 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
                   label={`${subLabel} is working`}
                   startTs={selectedWorker.startedAt}
                 />
-              ) : selectedAgent && state.agentHistoryLoading[selectedAgent] ? (
+              ) : selectedAgent && state.childHistoryLoading[selectedAgent] ? (
                 <WorkingIndicator label={`Loading ${subLabel} activity`} />
               ) : (
                 <span className="text-[13px] text-droid-text-muted">
@@ -506,7 +507,7 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
                 </span>
               )}
             </div>
-          ) : activeMission && restore?.status === 'loading' ? (
+          ) : activeSession && restore?.status === 'loading' ? (
             <RestoringState />
           ) : startingCompose ? (
             <div className="mx-auto min-w-0 max-w-2xl px-6 py-6">

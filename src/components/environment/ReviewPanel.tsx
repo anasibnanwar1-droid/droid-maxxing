@@ -253,7 +253,7 @@ export function ReviewPanel({ cwd, onClose }: { cwd: string; onClose?: () => voi
     return () => observer.disconnect();
   }, []);
 
-  const sessionId = state.activeMissionId ?? undefined;
+  const sessionId = state.activeAppSessionId ?? undefined;
   const review = useReviewDiff(cwd, state.reviewScope, true, sessionId);
   const { entries: diffEntries, ensure } = useReviewFileDiffs(
     cwd,

@@ -6,11 +6,11 @@ import type { TranscriptEvent } from '../types/bridge';
 
 function delta(id: string, toolUseId: string, args: Record<string, unknown>, ts: number) {
   return {
-    type: 'MISSION_TRANSCRIPT',
+    type: 'SESSION_TRANSCRIPT',
     event: {
       id,
-      missionId: 'm1',
-      agentSessionId: 'orchestrator',
+      appSessionId: 'm1',
+      sourceSessionId: 'primary',
       kind: 'tool_call',
       toolName: 'edit',
       toolUseId,

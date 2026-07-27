@@ -6,9 +6,9 @@ import type { TranscriptEvent } from '../types/bridge';
 function ev(extra: Partial<TranscriptEvent>): TranscriptEvent {
   return {
     id: 'e',
-    missionId: 'm',
-    agentSessionId: 'orchestrator',
-    role: 'orchestrator',
+    appSessionId: 'm',
+    sourceSessionId: 'primary',
+    role: 'primary',
     ts: 0,
     kind: 'text',
     ...extra,

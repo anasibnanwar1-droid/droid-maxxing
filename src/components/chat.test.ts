@@ -20,9 +20,9 @@ let seq = 0;
 function ev(extra: Partial<TranscriptEvent>): TranscriptEvent {
   return {
     id: `e${seq++}`,
-    missionId: 'm',
-    agentSessionId: 'orchestrator',
-    role: 'orchestrator',
+    appSessionId: 'm',
+    sourceSessionId: 'primary',
+    role: 'primary',
     ts: seq,
     kind: 'text',
     ...extra,

@@ -61,18 +61,18 @@ export interface WorkerSummary {
   prompt?: string;
   modelId?: string;
   reasoningEffort?: ReasoningEffort;
-  // The orchestrator Task tool_call id that spawned this worker; links an
+  // The primary session's Task tool_call id that spawned this worker; links an
   // in-chat spawn line to its subagent session.
   toolUseId?: string;
 }
 
-// The exact toolUseId -> workerSessionId mapping persisted for a mission, so
+// The exact toolUseId -> providerSessionId mapping persisted for a parent session, so
 // historical loads can rebuild precise subagent links instead of guessing.
 export interface ChildSessionHistoryLink {
   providerSessionId: string;
   toolUseId?: string;
   label?: string;
-  // Live run state for the linked worker, set only when the mission is still
+  // Live run state for the linked worker, set only when the parent session is still
   // active so a reconnect/reload doesn't render a running subagent as finished.
   // Omitted (treated as completed) for historical loads.
   status?: 'running' | 'paused' | 'completed';
@@ -129,7 +129,7 @@ export interface TranscriptEvent {
   sourceSessionId: string;
   role: SessionRole;
   ts: number;
-  // Monotonic canonical order for orchestrator scrollback, stamped during
+  // Monotonic canonical order for primary-session scrollback, stamped during
   // replay from the compaction-chain position. Survives equal `ts` collisions
   // so restored history never reorders. Live events omit it (they are newest).
   seq?: number;
@@ -265,7 +265,7 @@ export interface ContextStatsSnapshot {
   updatedAt: string;
   breakdown?: ContextBreakdownSnapshot;
   // In-place compactions completed on this agent session; set for worker
-  // snapshots (missions carry their generation on the summary instead).
+  // snapshots (parent sessions carry their generation on the summary instead).
   compactions?: number;
 }
 
@@ -714,7 +714,12 @@ export type ServerEvent =
       providerSessionId: string;
       message: string;
     }
-  | { type: 'mission.features'; appSessionId: string; missionId?: string; features: BridgeFeature[] }
+  | {
+      type: 'mission.features';
+      appSessionId: string;
+      missionId?: string;
+      features: BridgeFeature[];
+    }
   | { type: 'mission.progress'; appSessionId: string; missionId?: string; entries: ProgressEntry[] }
   | {
       type: 'session.child';

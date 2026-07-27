@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { isDesignModeOpen } from '../../hooks/designModeState';
 import { useStore } from '../../hooks/useStore';
-import { useMissionLive } from '../../hooks/useMissionLive';
+import { useSessionLive } from '../../hooks/useSessionLive';
 import {
   addDesignReference,
   openBrowser,
@@ -30,7 +30,7 @@ import {
 import { BrowserToolbar } from './BrowserToolbar';
 import { DesignModeComposer } from './DesignModeComposer';
 import { composerStyleForReferences } from './browserComposerPosition';
-import { browserKeyForMission } from '../../lib/browserSessionIdentity';
+import { browserKeyForSession } from '../../lib/browserSessionIdentity';
 import { browserTranscriptReferencesFromDesignReferences } from './browserTranscriptReferences';
 import { browserAddressValue, isSelfBrowserUrl, safeBrowserUrl } from './browserUrlSafety';
 import { shouldResetBrowserLoading } from './browserLoading';
@@ -48,13 +48,13 @@ export default function BrowserWorkspace({
   onToggleExpanded?: () => void;
 }) {
   const { state, dispatch } = useStore();
-  const requestedChatId = state.activeMissionId ?? undefined;
-  const activeMission = requestedChatId ? state.missions[requestedChatId] : undefined;
-  const browserKey = browserKeyForMission(activeMission);
+  const requestedChatId = state.activeAppSessionId ?? undefined;
+  const activeSession = requestedChatId ? state.sessions[requestedChatId] : undefined;
+  const browserKey = browserKeyForSession(activeSession);
   const browser = browserKey ? state.browsers[browserKey] : undefined;
   const browserError = browserKey ? state.browserErrors[browserKey] : state.browserGlobalError;
   const designMode = isDesignModeOpen(state.designModes, browserKey);
-  const missionLive = useMissionLive(requestedChatId ?? null);
+  const sessionLive = useSessionLive(requestedChatId ?? null);
   const nativeBrowser = isDesktop();
   // The native BrowserView is an OS-level layer painted above the React tree,
   // so any full-screen overlay would otherwise be punched through by it. Detach
@@ -90,7 +90,7 @@ export default function BrowserWorkspace({
   const loadingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const browserIdentityRef = useRef({
     browserKey,
-    sessionId: browser?.sessionId,
+    browserSessionId: browser?.browserSessionId,
   });
   const startLoading = useCallback(() => {
     if (loadingTimerRef.current) clearTimeout(loadingTimerRef.current);
@@ -180,11 +180,11 @@ export default function BrowserWorkspace({
   }, [browser?.canGoBack, browser?.canGoForward]);
 
   useEffect(() => {
-    const browserIdentity = { browserKey, sessionId: browser?.sessionId };
+    const browserIdentity = { browserKey, browserSessionId: browser?.browserSessionId };
     const previousIdentity = browserIdentityRef.current;
     if (
       previousIdentity.browserKey === browserIdentity.browserKey &&
-      previousIdentity.sessionId === browserIdentity.sessionId
+      previousIdentity.browserSessionId === browserIdentity.browserSessionId
     )
       return;
     browserIdentityRef.current = browserIdentity;
@@ -206,7 +206,7 @@ export default function BrowserWorkspace({
     appOrigin,
     browser?.canGoBack,
     browser?.canGoForward,
-    browser?.sessionId,
+    browser?.browserSessionId,
     browser?.url,
     browserKey,
   ]);
@@ -222,7 +222,7 @@ export default function BrowserWorkspace({
     setInstruction('');
     setPencilMode(false);
     setLoadFailure(null);
-  }, [browser?.sessionId, browser?.url, browserKey]);
+  }, [browser?.browserSessionId, browser?.url, browserKey]);
 
   useEffect(() => {
     if (!designMode) setPencilMode(false);
@@ -246,7 +246,11 @@ export default function BrowserWorkspace({
     if (browser.viewportMode === viewportMode && sameViewport(browser.viewport, requestedViewport))
       return;
     const id = window.setTimeout(() => {
-      resizeBrowserViewport({ missionId: browserKey, viewport: requestedViewport, viewportMode });
+      resizeBrowserViewport({
+        appSessionId: browserKey,
+        viewport: requestedViewport,
+        viewportMode,
+      });
     }, 120);
     return () => window.clearTimeout(id);
   }, [
@@ -267,7 +271,7 @@ export default function BrowserWorkspace({
       setUrlInput(normalizedUrl);
       dispatch({
         type: 'BROWSER_ERROR',
-        missionId: browserKey,
+        appSessionId: browserKey,
         message:
           'Cannot open the Droid Control shell inside its own browser pane. Use a different local app port.',
       });
@@ -280,7 +284,7 @@ export default function BrowserWorkspace({
     setActiveUrl(url);
     if (browserKey) {
       openBrowser({
-        missionId: browserKey,
+        appSessionId: browserKey,
         url,
         viewport: requestedViewport,
         viewportMode,
@@ -290,25 +294,25 @@ export default function BrowserWorkspace({
 
   const navigateHistory = useCallback(
     async (direction: 'back' | 'forward') => {
-      if (!browser?.sessionId) return;
+      if (!browser?.browserSessionId) return;
       setLoadFailure(null);
       startLoading();
       try {
         const moved =
           direction === 'back'
-            ? await goBackNativeBrowser(browser.sessionId)
-            : await goForwardNativeBrowser(browser.sessionId);
+            ? await goBackNativeBrowser(browser.browserSessionId)
+            : await goForwardNativeBrowser(browser.browserSessionId);
         if (!moved) stopLoading();
       } catch (error) {
         stopLoading();
         setLoadFailure({
-          sessionId: browser.sessionId,
+          browserSessionId: browser.browserSessionId,
           url: activeUrl,
           error: error instanceof Error ? error.message : `Could not go ${direction}.`,
         });
       }
     },
-    [activeUrl, browser?.sessionId, startLoading, stopLoading],
+    [activeUrl, browser?.browserSessionId, startLoading, stopLoading],
   );
 
   const emitDesignTranscript = useCallback(
@@ -316,7 +320,7 @@ export default function BrowserWorkspace({
       if (!requestedChatId) return;
       const browserRefs = browserTranscriptReferencesFromDesignReferences(refs);
       dispatch({
-        type: 'MISSION_TRANSCRIPT',
+        type: 'SESSION_TRANSCRIPT',
         event: createLocalDesignTranscriptEvent(requestedChatId, text, browserRefs),
       });
     },
@@ -331,7 +335,7 @@ export default function BrowserWorkspace({
       if (!browserKey || !requestedChatId) return;
       dispatch({
         type: 'QUEUE_PROMPT',
-        missionId: requestedChatId,
+        appSessionId: requestedChatId,
         prompt: {
           id: newQueueId(),
           text,
@@ -347,7 +351,7 @@ export default function BrowserWorkspace({
   const sendPrompt = () => {
     if (!browserKey || !canSend) return;
     const text = instruction.trim();
-    if (missionLive) {
+    if (sessionLive) {
       queueDesignPrompt(text, references, selectedIds);
     } else {
       sendDesignPrompt(browserKey, text, selectedIds);
@@ -357,7 +361,7 @@ export default function BrowserWorkspace({
     setInstruction('');
     // Re-arm like Cursor: disarm after sending so the user clicks Design Mode
     // again to start a new selection instead of staying live.
-    dispatch({ type: 'SET_DESIGN_MODE', sessionId: browserKey, open: false });
+    dispatch({ type: 'SET_DESIGN_MODE', appSessionId: browserKey, open: false });
   };
 
   const handleSelection = useCallback(
@@ -382,16 +386,16 @@ export default function BrowserWorkspace({
       const referenceId = reference.id;
       if (!referenceId) return;
       addDesignReference(browserKey, reference);
-      if (missionLive) {
+      if (sessionLive) {
         queueDesignPrompt(text, [reference], [referenceId]);
       } else {
         window.setTimeout(() => sendDesignPrompt(browserKey, text, [referenceId]), 0);
         emitDesignTranscript(text, [reference]);
       }
       setReferences([]);
-      dispatch({ type: 'SET_DESIGN_MODE', sessionId: browserKey, open: false });
+      dispatch({ type: 'SET_DESIGN_MODE', appSessionId: browserKey, open: false });
     },
-    [browserKey, dispatch, emitDesignTranscript, missionLive, queueDesignPrompt],
+    [browserKey, dispatch, emitDesignTranscript, sessionLive, queueDesignPrompt],
   );
 
   return (
@@ -416,7 +420,7 @@ export default function BrowserWorkspace({
           else openCurrentUrl();
         }}
         onToggleDesignMode={() => {
-          if (browserKey) dispatch({ type: 'TOGGLE_DESIGN_MODE', sessionId: browserKey });
+          if (browserKey) dispatch({ type: 'TOGGLE_DESIGN_MODE', appSessionId: browserKey });
         }}
         onTogglePencilMode={() => setPencilMode((value) => !value)}
         onToggleExpanded={onToggleExpanded}
@@ -461,7 +465,7 @@ export default function BrowserWorkspace({
         {browserKey && frameReady ? (
           <NativeBrowserSurface
             browserKey={browserKey}
-            visibleSessionId={browser?.sessionId}
+            visibleBrowserSessionId={browser?.browserSessionId}
             obscured={obscured}
             url={activeUrl}
             viewport={requestedViewport}
@@ -478,11 +482,11 @@ export default function BrowserWorkspace({
               setActiveUrl(nextUrl);
               if (document.activeElement !== urlInputRef.current)
                 setUrlInput(browserAddressValue(nextUrl));
-              if (browserKey && event.sessionId) {
+              if (browserKey && event.browserSessionId) {
                 dispatch({
                   type: 'BROWSER_NAVIGATED',
-                  missionId: browserKey,
-                  sessionId: event.sessionId,
+                  appSessionId: browserKey,
+                  browserSessionId: event.browserSessionId,
                   url: event.url,
                   canGoBack: event.canGoBack,
                   canGoForward: event.canGoForward,

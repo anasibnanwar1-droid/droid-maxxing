@@ -1,4 +1,4 @@
-import type { MissionSummary } from '../types/bridge';
+import type { SessionSummary } from '../types/bridge';
 
 // How many sessions a sidebar section shows before collapsing the rest behind
 // a "Show more" control. This is a display default, not a hard cap: every
@@ -8,18 +8,14 @@ export const SIDEBAR_VISIBLE_SESSION_LIMIT = 5;
 export interface WorkspaceSection {
   cwd: string;
   name: string;
-  sessions: MissionSummary[];
+  sessions: SessionSummary[];
 }
 
-// Subagent sessions (mission workers/validators or Task-tool children) are
+// Child sessions (workers, validators, and Task-tool children) are
 // never standalone conversations, so they must not appear in the sidebar.
-export function isSubagentSession(summary: MissionSummary): boolean {
+export function isSubagentSession(summary: SessionSummary): boolean {
   return (
-    summary.role === 'worker' ||
-    summary.role === 'validator' ||
-    summary.kind === 'mission_worker' ||
-    summary.kind === 'mission_validator' ||
-    !!summary.parentSessionId
+    summary.role === 'worker' || summary.role === 'validator' || !!summary.parentProviderSessionId
   );
 }
 
@@ -41,7 +37,7 @@ function repositoryWorkspaceCwd(cwd: string): string {
 
 export function buildWorkspaceSections(
   workspaceCwds: string[],
-  missions: MissionSummary[],
+  sessions: SessionSummary[],
   limit?: number,
 ): WorkspaceSection[] {
   const seen = new Set<string>();
@@ -50,14 +46,14 @@ export function buildWorkspaceSections(
     seen.add(cwd);
     return true;
   });
-  const ownerFor = (missionCwd: string) => {
-    const normalizedMissionCwd = missionCwd.replace(/\\/g, '/');
+  const ownerFor = (sessionCwd: string) => {
+    const normalizedSessionCwd = sessionCwd.replace(/\\/g, '/');
     return workspaces
       .filter((cwd) => {
         const normalizedCwd = cwd.replace(/\\/g, '/');
         return (
-          normalizedMissionCwd === normalizedCwd ||
-          normalizedMissionCwd.startsWith(`${normalizedCwd}/`)
+          normalizedSessionCwd === normalizedCwd ||
+          normalizedSessionCwd.startsWith(`${normalizedCwd}/`)
         );
       })
       .sort((a, b) => b.length - a.length)[0];
@@ -67,8 +63,8 @@ export function buildWorkspaceSections(
     cwd,
     name: workspaceName(cwd),
     sessions: maybeLimit(
-      missions
-        .filter((mission) => ownerFor(mission.cwd) === cwd)
+      sessions
+        .filter((session) => ownerFor(session.cwd) === cwd)
         .sort((a, b) => b.updatedAt - a.updatedAt),
       limit,
     ),

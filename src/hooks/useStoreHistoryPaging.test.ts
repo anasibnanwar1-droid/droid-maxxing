@@ -7,19 +7,19 @@ import type { TranscriptEvent } from '../types/bridge';
 function ev(id: string, ts: number, text = id): TranscriptEvent {
   return {
     id,
-    missionId: 'm1',
-    agentSessionId: 'orchestrator',
-    role: 'orchestrator',
+    appSessionId: 'm1',
+    sourceSessionId: 'primary',
+    role: 'primary',
     kind: 'text',
     text,
     ts,
   };
 }
 
-test('MISSION_HISTORY replace seeds the transcript and the older cursor', () => {
+test('SESSION_HISTORY replace seeds the transcript and the older cursor', () => {
   const next = reducer(initialState as unknown as AppState, {
-    type: 'MISSION_HISTORY',
-    missionId: 'm1',
+    type: 'SESSION_HISTORY',
+    appSessionId: 'm1',
     progress: [],
     transcripts: [ev('c', 3), ev('d', 4)],
     mode: 'replace',
@@ -35,7 +35,7 @@ test('MISSION_HISTORY replace seeds the transcript and the older cursor', () => 
   assert.equal(next.historyLoaded.m1, true);
 });
 
-test('MISSION_HISTORY prepend prepends older events ahead of the existing scrollback', () => {
+test('SESSION_HISTORY prepend prepends older events ahead of the existing scrollback', () => {
   const seeded = {
     ...initialState,
     transcripts: { m1: [ev('c', 3), ev('d', 4)] },
@@ -44,8 +44,8 @@ test('MISSION_HISTORY prepend prepends older events ahead of the existing scroll
   } as unknown as AppState;
 
   const next = reducer(seeded, {
-    type: 'MISSION_HISTORY',
-    missionId: 'm1',
+    type: 'SESSION_HISTORY',
+    appSessionId: 'm1',
     progress: [],
     transcripts: [ev('a', 1), ev('b', 2)],
     mode: 'prepend',
@@ -60,7 +60,7 @@ test('MISSION_HISTORY prepend prepends older events ahead of the existing scroll
   assert.equal(next.historyLoadingOlder.m1, false);
 });
 
-test('MISSION_HISTORY prepend dedups events already present at the boundary', () => {
+test('SESSION_HISTORY prepend dedups events already present at the boundary', () => {
   const seeded = {
     ...initialState,
     transcripts: { m1: [ev('b', 2), ev('c', 3)] },
@@ -68,8 +68,8 @@ test('MISSION_HISTORY prepend dedups events already present at the boundary', ()
   } as unknown as AppState;
 
   const next = reducer(seeded, {
-    type: 'MISSION_HISTORY',
-    missionId: 'm1',
+    type: 'SESSION_HISTORY',
+    appSessionId: 'm1',
     progress: [],
     transcripts: [ev('a', 1), ev('b', 2)],
     mode: 'prepend',
@@ -85,7 +85,7 @@ test('MISSION_HISTORY prepend dedups events already present at the boundary', ()
   assert.equal(next.historyLoadingOlder.m1, false);
 });
 
-test('MISSION_HISTORY prepend with a fully-duplicate page only clears the loading flag', () => {
+test('SESSION_HISTORY prepend with a fully-duplicate page only clears the loading flag', () => {
   const existing = [ev('a', 1), ev('b', 2)];
   const seeded = {
     ...initialState,
@@ -94,8 +94,8 @@ test('MISSION_HISTORY prepend with a fully-duplicate page only clears the loadin
   } as unknown as AppState;
 
   const next = reducer(seeded, {
-    type: 'MISSION_HISTORY',
-    missionId: 'm1',
+    type: 'SESSION_HISTORY',
+    appSessionId: 'm1',
     progress: [],
     transcripts: [ev('a', 1)],
     mode: 'prepend',
@@ -106,10 +106,10 @@ test('MISSION_HISTORY prepend with a fully-duplicate page only clears the loadin
   assert.equal(next.historyLoadingOlder.m1, false);
 });
 
-test('MISSION_HISTORY_LOADING_OLDER marks the in-flight prefetch', () => {
+test('SESSION_HISTORY_LOADING_OLDER marks the in-flight prefetch', () => {
   const next = reducer(initialState as unknown as AppState, {
-    type: 'MISSION_HISTORY_LOADING_OLDER',
-    missionId: 'm1',
+    type: 'SESSION_HISTORY_LOADING_OLDER',
+    appSessionId: 'm1',
   });
   assert.equal(next.historyLoadingOlder.m1, true);
 });

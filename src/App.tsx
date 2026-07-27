@@ -6,17 +6,17 @@ import { bridge } from './lib/bridge';
 import {
   connect,
   listFactoryDefaults,
-  listMissions,
-  loadMissionHistory,
+  listSessions,
+  loadSessionHistory,
   sendNativeBrowserResult,
-  subscribeWorker,
+  openChild,
 } from './lib/commands';
 import { isEmbedded } from './lib/embed';
 import { getApiKey } from './lib/desktop';
 import { performNativeBrowserRequest } from './lib/nativeBrowserAgent';
 import {
-  activeMissionAfterNativeBrowserRequest,
-  browserKeyForMission,
+  activeSessionAfterNativeBrowserRequest,
+  browserKeyForSession,
 } from './lib/browserSessionIdentity';
 import Sidebar from './components/Sidebar';
 import ChatView from './components/ChatView';
@@ -42,7 +42,7 @@ import { UtilityPane } from './components/utility/UtilityPane';
 import { TerminalWorkspace } from './components/terminal/TerminalWorkspace';
 import { FilesWorkspace } from './components/files/FilesWorkspace';
 import { closeTerminalForTab } from './lib/terminal';
-import { utilityPanelForMission, type UtilityTool } from './lib/utilityPanel';
+import { utilityPanelForSession, type UtilityTool } from './lib/utilityPanel';
 import { isTerminalInputTarget, isTerminalTabShortcut } from './lib/keyboardShortcuts';
 
 function ContextListIcon({ className }: { className?: string }) {
@@ -75,29 +75,31 @@ export default function App() {
   const onboard = useOnboarding();
   const [forceWizard, setForceWizard] = useState(false);
   const [bannerDismissed, setBannerDismissed] = useState(false);
-  const [expandedBrowserMissionId, setExpandedBrowserMissionId] = useState<string | null>(null);
+  const [expandedBrowserAppSessionId, setExpandedBrowserAppSessionId] = useState<string | null>(
+    null,
+  );
   const launchHandled = useRef(false);
   const showWizard =
     !embedded && onboard.ready && (forceWizard || shouldShowOnboarding(onboard.onboarding));
-  const activeMission = state.activeMissionId ? state.missions[state.activeMissionId] : null;
-  const repoStatus = useRepoStatus(activeMission?.cwd ?? '');
-  // The view is a real mission only when the active session is a mission orchestrator,
-  // not merely because the global mission-compose flag is on.
-  const isMissionView = !!activeMission && activeMission.kind === 'mission_orchestrator';
-  const utilityPanel = utilityPanelForMission(state.utilityPanels, activeMission?.id);
+  const activeSession = state.activeAppSessionId ? state.sessions[state.activeAppSessionId] : null;
+  const repoStatus = useRepoStatus(activeSession?.cwd ?? '');
+  // Mission Control is active only for a session explicitly created for it,
+  // not merely because the compose preview is open.
+  const isMissionView = activeSession?.sessionPurpose === 'mission-control';
+  const utilityPanel = utilityPanelForSession(state.utilityPanels, activeSession?.appSessionId);
   const activeUtilityTab =
     utilityPanel.tabs.find((tab) => tab.id === utilityPanel.activeTabId) ?? null;
-  const showUtilityPane = !embedded && !!activeMission && utilityPanel.open && !showWizard;
+  const showUtilityPane = !embedded && !!activeSession && utilityPanel.open && !showWizard;
   const browserExpanded = Boolean(
     showUtilityPane &&
     activeUtilityTab?.tool === 'browser' &&
-    expandedBrowserMissionId === activeMission?.id,
+    expandedBrowserAppSessionId === activeSession?.appSessionId,
   );
   const focused = isMissionView;
   // A normal/spec session only has something worth showing once a message has
   // been sent (the first transcript is seeded from the opening prompt).
   const hasSessionContent =
-    !!activeMission && (state.transcripts[activeMission.id]?.length ?? 0) > 0;
+    !!activeSession && (state.transcripts[activeSession.appSessionId]?.length ?? 0) > 0;
   // The context toggle is meaningful in Mission Control (always) and in a normal
   // chat only after it has content; otherwise there is nothing to open.
   const canToggleContext = isMissionView || hasSessionContent;
@@ -183,7 +185,7 @@ export default function App() {
     if (embedded) return;
     // Load every known session for the chosen workspaces; the sidebar shows the
     // latest few and reveals the rest behind "Show more" rather than capping.
-    listMissions({ workspaceCwds: state.workspaceCwds, includePlainChats: true });
+    listSessions({ workspaceCwds: state.workspaceCwds, includePlainChats: true });
   }, [embedded, state.workspaceCwds]);
 
   // Post-onboarding launch tasks: silent CLI update + non-blocking app update
@@ -238,19 +240,22 @@ export default function App() {
     if (embedded) return;
     const unsub = bridge.subscribe((event) => {
       if (event.type !== 'browser.native.request') return;
-      const activeBrowserKey = browserKeyForMission(
-        state.activeMissionId ? state.missions[state.activeMissionId] : undefined,
+      const activeBrowserKey = browserKeyForSession(
+        state.activeAppSessionId ? state.sessions[state.activeAppSessionId] : undefined,
       );
-      const requestIsForActiveChat = activeBrowserKey === event.request.missionId;
-      const nextActiveMissionId = activeMissionAfterNativeBrowserRequest(
-        state.activeMissionId,
+      const requestIsForActiveChat = activeBrowserKey === event.request.appSessionId;
+      const nextActiveAppSessionId = activeSessionAfterNativeBrowserRequest(
+        state.activeAppSessionId,
         event.request,
-        state.missions,
+        state.sessions,
       );
-      if (nextActiveMissionId !== state.activeMissionId) {
-        dispatch({ type: 'SET_ACTIVE_MISSION', id: nextActiveMissionId });
+      if (nextActiveAppSessionId !== state.activeAppSessionId) {
+        dispatch({ type: 'SET_ACTIVE_SESSION', id: nextActiveAppSessionId });
       }
-      if (event.request.action === 'open' && (!state.activeMissionId || requestIsForActiveChat)) {
+      if (
+        event.request.action === 'open' &&
+        (!state.activeAppSessionId || requestIsForActiveChat)
+      ) {
         dispatch({ type: 'SET_RIGHT_PANEL', open: false });
         dispatch({ type: 'OPEN_UTILITY_TOOL', tool: 'browser' });
       }
@@ -259,36 +264,39 @@ export default function App() {
         .catch((err) => {
           sendNativeBrowserResult({
             requestId: event.request.requestId,
-            missionId: event.request.missionId,
+            appSessionId: event.request.appSessionId,
             ok: false,
             error: err instanceof Error ? err.message : String(err),
           });
         });
     });
     return () => unsub();
-  }, [dispatch, embedded, state.activeMissionId, state.missions]);
+  }, [dispatch, embedded, state.activeAppSessionId, state.sessions]);
 
   useEffect(() => {
     if (embedded) return;
-    if (!activeMission) return;
-    if (state.historyLoaded[activeMission.id] || requestedHistory.current.has(activeMission.id))
+    if (!activeSession) return;
+    if (
+      state.historyLoaded[activeSession.appSessionId] ||
+      requestedHistory.current.has(activeSession.appSessionId)
+    )
       return;
-    requestedHistory.current.add(activeMission.id);
-    dispatch({ type: 'SESSION_RESTORE_START', missionId: activeMission.id });
-    loadMissionHistory(activeMission.id);
-  }, [activeMission, embedded, state.historyLoaded, dispatch]);
+    requestedHistory.current.add(activeSession.appSessionId);
+    dispatch({ type: 'SESSION_RESTORE_START', appSessionId: activeSession.appSessionId });
+    loadSessionHistory(activeSession.appSessionId);
+  }, [activeSession, embedded, state.historyLoaded, dispatch]);
 
   useEffect(() => {
-    if (embedded || !activeMission) return;
-    if (activeMission.kind === 'mission_orchestrator') return;
-    const agentSessionId = state.selectedAgentSessionId;
-    if (!agentSessionId || agentSessionId === 'orchestrator') return;
+    if (embedded || !activeSession) return;
+    if (activeSession.sessionPurpose === 'mission-control') return;
+    const sourceSessionId = state.selectedProviderSessionId;
+    if (!sourceSessionId || sourceSessionId === 'primary') return;
     // A worker's inner events only stream once we subscribe, so mark its
     // transcript as loading until the backend replays history and acks with
     // 'opened'. This keeps the card honest instead of flashing "no activity".
-    dispatch({ type: 'AGENT_HISTORY_LOADING', agentSessionId, loading: true });
-    subscribeWorker(activeMission.id, agentSessionId);
-  }, [activeMission?.id, embedded, state.selectedAgentSessionId, dispatch]);
+    dispatch({ type: 'CHILD_HISTORY_LOADING', providerSessionId: sourceSessionId, loading: true });
+    openChild(activeSession.appSessionId, sourceSessionId);
+  }, [activeSession?.appSessionId, embedded, state.selectedProviderSessionId, dispatch]);
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -432,7 +440,7 @@ export default function App() {
                     onOpenTool={openUtilityTool}
                     onActivateTab={(tabId) => {
                       const nextTab = utilityPanel.tabs.find((tab) => tab.id === tabId);
-                      if (nextTab?.tool !== 'browser') setExpandedBrowserMissionId(null);
+                      if (nextTab?.tool !== 'browser') setExpandedBrowserAppSessionId(null);
                       dispatch({ type: 'ACTIVATE_UTILITY_TAB', tabId });
                     }}
                     onCloseTab={(tab) => {
@@ -447,21 +455,21 @@ export default function App() {
                           dispatch({
                             type: 'CLOSE_UTILITY_TAB',
                             tabId: tab.id,
-                            missionId: activeMission.id,
+                            appSessionId: activeSession.appSessionId,
                           });
                         });
                         return;
                       }
-                      if (tab.tool === 'browser') setExpandedBrowserMissionId(null);
+                      if (tab.tool === 'browser') setExpandedBrowserAppSessionId(null);
                       dispatch({ type: 'CLOSE_UTILITY_TAB', tabId: tab.id });
                     }}
                     onClosePane={() => {
-                      setExpandedBrowserMissionId(null);
+                      setExpandedBrowserAppSessionId(null);
                       dispatch({ type: 'SET_UTILITY_PANEL_OPEN', open: false });
                     }}
                     renderTab={(tab, { overlayOpen }) => {
                       if (tab.tool === 'review') {
-                        return <ReviewPanel cwd={activeMission.cwd} />;
+                        return <ReviewPanel cwd={activeSession.cwd} />;
                       }
                       if (tab.tool === 'browser') {
                         return (
@@ -469,8 +477,8 @@ export default function App() {
                             expanded={browserExpanded}
                             externalObscured={overlayOpen}
                             onToggleExpanded={() => {
-                              setExpandedBrowserMissionId(
-                                browserExpanded ? null : activeMission.id,
+                              setExpandedBrowserAppSessionId(
+                                browserExpanded ? null : activeSession.appSessionId,
                               );
                             }}
                           />
@@ -481,13 +489,13 @@ export default function App() {
                           <TerminalWorkspace
                             tabId={tab.id}
                             terminalId={tab.terminalId}
-                            missionId={activeMission.id}
-                            cwd={activeMission.cwd}
+                            appSessionId={activeSession.appSessionId}
+                            cwd={activeSession.cwd}
                             onCreated={(terminalId, label) => {
                               dispatch({
                                 type: 'UPDATE_UTILITY_TAB',
                                 tabId: tab.id,
-                                missionId: activeMission.id,
+                                appSessionId: activeSession.appSessionId,
                                 terminalId,
                                 label,
                               });
@@ -497,13 +505,13 @@ export default function App() {
                       }
                       return (
                         <FilesWorkspace
-                          root={activeMission.cwd}
+                          root={activeSession.cwd}
                           selectedPath={tab.filePath}
                           onSelectPath={(filePath) => {
                             dispatch({
                               type: 'UPDATE_UTILITY_TAB',
                               tabId: tab.id,
-                              missionId: activeMission.id,
+                              appSessionId: activeSession.appSessionId,
                               filePath,
                             });
                           }}
@@ -538,7 +546,7 @@ export default function App() {
 
       {/* Floating window controls — rendered LAST so their `no-drag` regions are
           accumulated after the full-width header drag regions (sidebar/chat/
-          mission headers). Earlier in the DOM, those overlapping drag regions
+          session headers). Earlier in the DOM, those overlapping drag regions
           would re-assert `drag` over these buttons and swallow their clicks
           (Electron #27149). They stay absolutely positioned, so paint order and
           layout are unchanged. */}
@@ -560,8 +568,8 @@ export default function App() {
           data-electron-drag-region
           className="absolute top-0 right-0 h-9 z-40 flex items-center gap-1 pr-3"
         >
-          {activeMission?.cwd && (
-            <EditorOpenMenu cwd={activeMission.cwd} hasRepo={!!repoStatus} variant="toolbar" />
+          {activeSession?.cwd && (
+            <EditorOpenMenu cwd={activeSession.cwd} hasRepo={!!repoStatus} variant="toolbar" />
           )}
           {canToggleContext && (
             <button
@@ -576,7 +584,7 @@ export default function App() {
               <ContextListIcon className="w-4 h-4" />
             </button>
           )}
-          {!!activeMission && (
+          {!!activeSession && (
             <button
               onClick={toggleUtilityPane}
               className="rounded-md p-1.5 text-droid-text-muted/70 transition-colors hover:bg-droid-elevated/60 hover:text-droid-text"
