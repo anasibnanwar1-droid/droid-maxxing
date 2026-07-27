@@ -43,3 +43,24 @@ test('a primary error with a provider identity fails the session and settles chi
   assert.equal(next.sessions['app-1']?.phase, 'failed');
   assert.equal(next.childHistoryLoading['provider-1'], false);
 });
+
+test('a direct child error settles loading without failing the parent session', () => {
+  const action = adaptEvent({
+    type: 'error',
+    code: 'child.open_failed',
+    appSessionId: 'app-1',
+    providerSessionId: 'child-1',
+    message: 'child failed to open',
+  });
+  assert.ok(action);
+
+  const state = {
+    ...initialState,
+    sessions: { 'app-1': session },
+    childHistoryLoading: { 'child-1': true },
+  };
+  const next = reducer(state, action);
+
+  assert.equal(next.sessions['app-1']?.phase, 'running');
+  assert.equal(next.childHistoryLoading['child-1'], false);
+});

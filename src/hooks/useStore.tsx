@@ -2259,6 +2259,13 @@ export function adaptEvent(ev: ServerEvent): Action | null {
     case 'question.requested':
       return { type: 'SESSION_QUESTION', question: ev.question };
     case 'error':
+      if (ev.providerSessionId && ev.code?.startsWith('child.')) {
+        return {
+          type: 'CHILD_HISTORY_LOADING',
+          providerSessionId: ev.providerSessionId,
+          loading: false,
+        };
+      }
       // Session-level failures can also carry a child provider id. Preserve both
       // effects: fail the parent session and settle the child loading state.
       if (ev.appSessionId) {
