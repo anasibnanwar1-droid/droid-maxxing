@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import path from 'node:path';
 import test from 'node:test';
 
 import {
@@ -109,6 +111,15 @@ function historicalSummary(id: string, sessionId: string): MissionSummary {
   };
 }
 
+function writeProviderSessionStart(home: string, sessionId: string, sessionTitle: string): void {
+  const file = path.join(home, '.factory', 'sessions', `${sessionId}.jsonl`);
+  mkdirSync(path.dirname(file), { recursive: true });
+  writeFileSync(
+    file,
+    `${JSON.stringify({ type: 'session_start', sessionId, sessionTitle, cwd: '' })}\n`,
+  );
+}
+
 function permissionRequest(events: ServerEvent[]): MissionPermissionEvent {
   const event = events.find(isMissionPermission);
   assert.ok(event);
@@ -134,7 +145,8 @@ test(
     const h = createSessionCharacterizationHarness();
 
     try {
-      h.history.syncSummaries([historicalSummary('app-p1', 'provider-p1')]);
+      h.fixture.seedHistorySummaries([historicalSummary('app-p1', 'provider-p1')]);
+      writeProviderSessionStart(h.home, 'provider-p1', 'Historical app-p1');
       await h.handle({ type: 'mission.resume', sessionId: 'app-p1' });
 
       const handler = h.provider.session('provider-p1').handlers.permissionHandler;

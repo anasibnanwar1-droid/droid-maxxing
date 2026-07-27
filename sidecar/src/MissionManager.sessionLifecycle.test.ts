@@ -1,8 +1,11 @@
 import assert from 'node:assert/strict';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import path from 'node:path';
 import test from 'node:test';
 
 import { DecompSessionType } from '@factory/droid-sdk';
 
+import type { MissionSummary } from './protocol.js';
 import {
   FakeDroidSession,
   createSessionCharacterizationHarness,
@@ -122,10 +125,20 @@ test(
     const h = createSessionCharacterizationHarness();
 
     try {
-      h.history.syncSummaries([summary('app-5', 'provider-5')]);
+      h.fixture.seedHistorySummaries([summary('app-5', 'provider-5')]);
+      assert.equal(
+        existsSync(path.join(h.home, '.factory', 'sessions', 'provider-5.jsonl')),
+        false,
+      );
+      assert.equal(
+        h.calls.some((call) => call.target === 'history' && call.method === 'syncSummaries'),
+        false,
+      );
+      writeProviderSessionStart(h.home, 'provider-5', 'Historical app-5');
       h.runtime.loadQueue.set('provider-5', [new FakeDroidSession('provider-5', {}, h.calls)]);
       await h.handle({ type: 'mission.resume', sessionId: 'app-5' });
 
+      assert.equal(h.runtime.loadCalls.length, 1);
       assert.equal(h.runtime.loadCalls[0]?.sessionId, 'provider-5');
       assert.equal(h.events.find((event) => event.type === 'mission.created')?.mission.id, 'app-5');
       assert.ok(h.runtime.loadCalls[0]?.handlers.permissionHandler);
@@ -140,7 +153,13 @@ test('[L6] Send lazily resumes a historical mission', { concurrency: false }, as
   const h = createSessionCharacterizationHarness();
 
   try {
-    h.history.syncSummaries([summary('app-6', 'provider-6')]);
+    h.fixture.seedHistorySummaries([summary('app-6', 'provider-6')]);
+    assert.equal(existsSync(path.join(h.home, '.factory', 'sessions', 'provider-6.jsonl')), false);
+    assert.equal(
+      h.calls.some((call) => call.target === 'history' && call.method === 'syncSummaries'),
+      false,
+    );
+    writeProviderSessionStart(h.home, 'provider-6', 'Historical app-6');
     h.runtime.loadQueue.set('provider-6', [new FakeDroidSession('provider-6', {}, h.calls)]);
     await h.handle({ type: 'mission.send', missionId: 'app-6', text: 'once' });
 
@@ -320,6 +339,129 @@ test('[L10] Autonomy mutation reports provider rejection', { concurrency: false 
   }
 });
 
+test('Summary patches preserve existing provider transcripts', { concurrency: false }, async () => {
+  const h = createSessionCharacterizationHarness();
+
+  try {
+    await h.create({
+      clientRef: 'l11',
+      title: 'L11',
+      goal: 'go',
+      interactionMode: 'auto',
+      autonomy: 'low',
+    });
+    const file = path.join(h.home, '.factory', 'sessions', 'provider-1.jsonl');
+    const transcript =
+      `${JSON.stringify({
+        type: 'session_start',
+        sessionId: 'provider-1',
+        sessionTitle: 'L11',
+        cwd: '',
+      })}\n` +
+      `${JSON.stringify({
+        type: 'message',
+        message: { role: 'assistant', content: [{ type: 'text', text: 'preserve me' }] },
+      })}\n`;
+    mkdirSync(path.dirname(file), { recursive: true });
+    writeFileSync(file, transcript);
+
+    await h.waitForIdle();
+    const syncSummariesBefore = h.calls.filter(
+      (call) => call.target === 'history' && call.method === 'syncSummaries',
+    ).length;
+
+    await h.handle({ type: 'mission.setAutonomy', missionId: 'provider-1', autonomy: 'high' });
+
+    assert.equal(
+      h.calls.filter((call) => call.target === 'history' && call.method === 'syncSummaries').length,
+      syncSummariesBefore + 1,
+    );
+    assert.equal(
+      h.events.filter((event) => event.type === 'mission.updated').at(-1)?.mission.autonomy,
+      'high',
+    );
+    assert.equal(h.history.summaryPatches().get('provider-1')?.autonomy, 'high');
+    assert.equal(readFileSync(file, 'utf8'), transcript);
+  } finally {
+    await h.dispose();
+  }
+});
+
+test(
+  'History fixture materializes only persisted summary metadata',
+  { concurrency: false },
+  async () => {
+    const h = createSessionCharacterizationHarness();
+    const seeded: MissionSummary = {
+      ...summary('app-history', 'provider-old'),
+      compactedFromSessionIds: ['provider-older'],
+      title: 'Persisted title',
+      goal: 'transient goal',
+      workspaceKind: 'folder',
+      modelId: 'orchestrator-model',
+      reasoningEffort: 'high',
+      compactionModel: 'compaction-model',
+      workerModelId: 'worker-model',
+      workerReasoningEffort: 'medium',
+      validatorModelId: 'validator-model',
+      validatorReasoningEffort: 'low',
+      autonomy: 'high',
+      phase: 'running',
+      streaming: true,
+      queuedSends: 2,
+      features: [],
+      tokensIn: 11,
+      tokensOut: 12,
+      contextTokens: 13,
+      contextRemainingTokens: 14,
+      contextAccuracy: 'exact',
+      contextUpdatedAt: '2026-07-27T00:00:00.000Z',
+      maxContextTokens: 15,
+      autoCompactions: 16,
+      createdAt: 17,
+      updatedAt: 18,
+    };
+
+    try {
+      h.fixture.seedHistorySummaries([seeded]);
+      h.fixture.seedHistorySummaries([{ ...seeded, sessionId: 'provider-current', updatedAt: 19 }]);
+
+      const patches = h.history.summaryPatches();
+      const patch = patches.get('app-history');
+      assert.deepEqual(patch, {
+        id: 'app-history',
+        sessionId: 'provider-current',
+        compactedFromSessionIds: ['provider-older'],
+        kind: 'chat',
+        title: 'Persisted title',
+        cwd: '',
+        workspaceKind: 'folder',
+        modelId: 'orchestrator-model',
+        reasoningEffort: 'high',
+        compactionModel: 'compaction-model',
+        workerModelId: 'worker-model',
+        workerReasoningEffort: 'medium',
+        validatorModelId: 'validator-model',
+        validatorReasoningEffort: 'low',
+        autonomy: 'high',
+        tokensIn: 11,
+        tokensOut: 12,
+        contextTokens: 13,
+        contextRemainingTokens: 14,
+        contextAccuracy: 'exact',
+        contextUpdatedAt: '2026-07-27T00:00:00.000Z',
+        maxContextTokens: 15,
+        autoCompactions: 16,
+        updatedAt: 19,
+      });
+      assert.equal(patches.get('provider-current'), patch);
+      assert.equal(patches.has('provider-old'), false);
+    } finally {
+      await h.dispose();
+    }
+  },
+);
+
 function summary(id: string, sessionId: string) {
   const now = Date.now();
   return {
@@ -342,4 +484,13 @@ function summary(id: string, sessionId: string) {
     createdAt: now,
     updatedAt: now,
   };
+}
+
+function writeProviderSessionStart(home: string, sessionId: string, sessionTitle: string): void {
+  const file = path.join(home, '.factory', 'sessions', `${sessionId}.jsonl`);
+  mkdirSync(path.dirname(file), { recursive: true });
+  writeFileSync(
+    file,
+    `${JSON.stringify({ type: 'session_start', sessionId, sessionTitle, cwd: '' })}\n`,
+  );
 }

@@ -6,6 +6,7 @@ import { SdkMcpServer } from '@factory/droid-sdk';
 
 import { MissionManager } from '../MissionManager.js';
 import { FakeBrowserSessionManager } from './browserCharacterizationSupport.js';
+import { FakeHistoryIndex } from './historyCharacterizationSupport.js';
 import type * as Runtime from '../DroidRuntime.js';
 import type * as Protocol from '../protocol.js';
 
@@ -201,81 +202,6 @@ export class FakeRuntime {
   }
 }
 
-export class FakeHistoryIndex {
-  readonly summaries: Protocol.MissionSummary[] = [];
-  private readonly links = new Map<string, Protocol.WorkerHistoryLink[]>();
-
-  constructor(
-    private readonly calls: RecordedCall[],
-    private readonly home: string,
-  ) {}
-
-  syncSummaries(summaries: Protocol.MissionSummary[]): void {
-    this.summaries.push(...summaries);
-    for (const summary of summaries) this.writeSessionStart(summary);
-    this.calls.push({ target: 'history', method: 'syncSummaries', args: [summaries] });
-  }
-
-  seedSubagentLinks(missionId: string, links: Protocol.WorkerHistoryLink[]): void {
-    this.links.set(missionId, links);
-  }
-
-  summaryPatches(): Map<string, Partial<Protocol.MissionSummary>> {
-    return new Map(
-      this.summaries.flatMap((summary) => [
-        [summary.id, summary],
-        [summary.sessionId ?? summary.id, summary],
-      ]),
-    );
-  }
-
-  hiddenDroidSessionIds(): Set<string> {
-    return new Set();
-  }
-
-  recordSubagentLink(
-    ...[missionId, toolUseId, workerSessionId, label]: [string, string, string, string?]
-  ): void {
-    const links = this.links.get(missionId) ?? [];
-    const index = links.findIndex((existing) => existing.toolUseId === toolUseId);
-    links[index < 0 ? links.length : index] =
-      label === undefined ? { workerSessionId, toolUseId } : { workerSessionId, toolUseId, label };
-    this.links.set(missionId, links);
-    this.calls.push({
-      target: 'history',
-      method: 'recordSubagentLink',
-      args: [missionId, toolUseId, workerSessionId, label],
-    });
-  }
-
-  subagentLinks(missionId: string): Protocol.WorkerHistoryLink[] {
-    return (this.links.get(missionId) ?? []).map((link) => ({ ...link }));
-  }
-
-  recordEvent(event: unknown): void {
-    this.calls.push({ target: 'history', method: 'recordEvent', args: [event] });
-  }
-
-  close(): void {
-    this.calls.push({ target: 'cleanup', method: 'history.close', args: [] });
-  }
-
-  private writeSessionStart(summary: Protocol.MissionSummary): void {
-    const sessionId = summary.sessionId ?? summary.id;
-    const sessions = path.join(this.home, '.factory', 'sessions');
-    mkdirSync(sessions, { recursive: true });
-    writeFileSync(
-      path.join(sessions, `${sessionId}.jsonl`),
-      `${JSON.stringify({
-        type: 'session_start',
-        sessionId,
-        sessionTitle: summary.title,
-        cwd: summary.cwd,
-      })}\n`,
-    );
-  }
-}
-
 let mcpCloseObserverActive = false;
 
 function observeMcpServerClose() {
@@ -361,7 +287,7 @@ export function createSessionCharacterizationHarness(
 
   const readyManager = manager;
   const runtime = new FakeRuntime(calls);
-  const history = new FakeHistoryIndex(calls, home);
+  const history = new FakeHistoryIndex(calls);
   const browsers = new FakeBrowserSessionManager((call) => calls.push(call), recordEvent);
   const privateManager = readyManager as unknown as {
     runtime: unknown;
@@ -419,7 +345,7 @@ export function createSessionCharacterizationHarness(
     history,
     fixture: {
       seedHistorySummaries: (summaries) => {
-        history.syncSummaries(summaries);
+        history.seedSummaries(summaries);
       },
       seedSubagentLinks: (missionId, links) => {
         history.seedSubagentLinks(missionId, links);
