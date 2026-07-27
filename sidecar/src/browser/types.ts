@@ -75,8 +75,8 @@ export interface BrowserSnapshot {
 export type ScrollDirection = 'up' | 'down' | 'left' | 'right';
 
 export interface BrowserState extends BrowserSnapshot {
-  sessionId: string;
-  missionId?: string;
+  browserSessionId: string;
+  appSessionId?: string;
   viewport: BrowserViewport;
   viewportMode: BrowserViewportMode;
   screenshotPath?: string;
@@ -148,7 +148,7 @@ export interface DesignReference {
 }
 
 export interface DesignPromptPack {
-  missionId: string;
+  appSessionId: string;
   browserSessionId: string;
   createdAt: string;
   instruction: string;

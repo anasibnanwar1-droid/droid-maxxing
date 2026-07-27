@@ -5,8 +5,8 @@ export function browserDataRoot(baseDir = defaultBrowserDataRoot()): string {
   return baseDir;
 }
 
-export function browserDesignReferenceDir(missionId: string, baseDir?: string): string {
-  return join(browserDataRoot(baseDir), 'design-references', sanitizeSegment(missionId));
+export function browserDesignReferenceDir(appSessionId: string, baseDir?: string): string {
+  return join(browserDataRoot(baseDir), 'design-references', sanitizeSegment(appSessionId));
 }
 
 export function isBrowserAssetPath(filePath: string, baseDir?: string): boolean {

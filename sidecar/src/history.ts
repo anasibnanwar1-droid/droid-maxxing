@@ -13,18 +13,18 @@ import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
 import { numberValue, stringValue } from './values.js';
 import type {
-  AgentRole,
+  SessionRole,
   Autonomy,
   BridgeFeature,
   FeatureStatus,
   FactoryDefaultSettings,
-  HistoryMission,
-  MissionPhase,
-  MissionSummary,
+  SessionHistoryEntry,
+  SessionPhase,
+  SessionSummary,
   ProgressEntry,
   ReasoningEffort,
   TranscriptEvent,
-  WorkerHistoryLink,
+  ChildSessionHistoryLink,
 } from './protocol.js';
 import { mapFeature } from './normalize.js';
 import { designPromptDisplayFromText } from './browser/designPromptDisplay.js';
@@ -84,7 +84,7 @@ interface StoredModelSettings {
 }
 
 export interface HistoricalMission {
-  summary: MissionSummary;
+  summary: SessionSummary;
   progress: ProgressEntry[];
 }
 
@@ -109,7 +109,7 @@ export interface HistoryPage {
   nextCursor?: string;
 }
 
-const STATE_TO_PHASE: Record<string, MissionPhase> = {
+const STATE_TO_PHASE: Record<string, SessionPhase> = {
   initializing: 'initializing',
   running: 'running',
   paused: 'paused',
@@ -175,11 +175,12 @@ export function loadHistoricalSessions(options: HistoricalSummaryFilter = {}): H
     const settings = readSessionModelSettings(start, path);
     const summary = applyCachedSummary(
       {
-        id: sessionId,
-        sessionId,
+        appSessionId: sessionId,
+        providerSessionId: sessionId,
         missionId: classification.missionId,
-        parentSessionId: classification.parentSessionId,
-        kind: classification.kind,
+        parentProviderSessionId: classification.parentProviderSessionId,
+        sessionPurpose: classification.sessionPurpose,
+        interactionMode: classification.interactionMode,
         role: classification.role,
         title,
         goal: title,
@@ -217,13 +218,13 @@ export function loadHistoricalSessions(options: HistoricalSummaryFilter = {}): H
   );
 }
 
-export function loadSessionHistory(): HistoryMission[] {
-  const rows: HistoryMission[] = [];
+export function loadSessionHistory(): SessionHistoryEntry[] {
+  const rows: SessionHistoryEntry[] = [];
   for (const [sessionId, path] of buildSessionIndex()) {
     const start = readSessionStart(path);
     const stat = statSync(path);
     rows.push({
-      sessionId,
+      providerSessionId: sessionId,
       title: start.sessionTitle || start.title || `Session ${sessionId.slice(0, 8)}`,
       cwd: start.cwd,
       modifiedTime: stat.mtimeMs,
@@ -250,7 +251,7 @@ export function loadSessionPage(
   // transcript is loaded inside its parent mission (missionId !== sessionId),
   // where it is shown in the worker panel keyed to its own id.
   const role =
-    missionId === sessionId ? 'orchestrator' : roleFromSessionStart(readSessionStart(path));
+    missionId === sessionId ? 'primary' : roleFromSessionStart(readSessionStart(path));
   const all = parseSessionTranscript(missionId, sessionId, path, role);
   const safeLimit = Math.max(1, Math.min(limit, 500));
   const end = cursor ? Math.max(0, Number(cursor) || 0) : all.length;
@@ -272,9 +273,10 @@ export class HistoryIndex {
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS app_sessions (
         app_session_id TEXT PRIMARY KEY,
-        droid_session_id TEXT NOT NULL,
-        previous_droid_session_ids TEXT NOT NULL DEFAULT '[]',
-        kind TEXT NOT NULL,
+        provider_session_id TEXT NOT NULL,
+        compacted_from_provider_session_ids TEXT NOT NULL DEFAULT '[]',
+        session_purpose TEXT NOT NULL,
+        interaction_mode TEXT NOT NULL,
         title TEXT NOT NULL,
         cwd TEXT,
         workspace_kind TEXT,
@@ -296,17 +298,17 @@ export class HistoryIndex {
         max_context_tokens INTEGER,
         auto_compactions INTEGER
       );
-      CREATE TABLE IF NOT EXISTS agent_sessions (
-        session_id TEXT PRIMARY KEY,
-        parent_session_id TEXT,
+      CREATE TABLE IF NOT EXISTS child_sessions (
+        provider_session_id TEXT PRIMARY KEY,
+        parent_provider_session_id TEXT,
         mission_id TEXT,
         role TEXT NOT NULL,
         updated_at INTEGER NOT NULL
       );
       CREATE TABLE IF NOT EXISTS events (
         id TEXT PRIMARY KEY,
-        session_id TEXT NOT NULL,
-        mission_id TEXT,
+        source_session_id TEXT NOT NULL,
+        app_session_id TEXT,
         kind TEXT NOT NULL,
         ts INTEGER NOT NULL
       );
@@ -324,26 +326,26 @@ export class HistoryIndex {
         PRIMARY KEY (mission_id, key)
       );
       CREATE TABLE IF NOT EXISTS subagent_links (
-        mission_id TEXT NOT NULL,
+        app_session_id TEXT NOT NULL,
         tool_use_id TEXT NOT NULL,
-        worker_session_id TEXT NOT NULL,
+        provider_session_id TEXT NOT NULL,
         label TEXT,
         updated_at INTEGER NOT NULL,
-        PRIMARY KEY (mission_id, tool_use_id)
+        PRIMARY KEY (app_session_id, tool_use_id)
       );
-      CREATE TABLE IF NOT EXISTS linked_worker_sessions (
-        worker_session_id TEXT PRIMARY KEY,
+      CREATE TABLE IF NOT EXISTS linked_child_sessions (
+        provider_session_id TEXT PRIMARY KEY,
         updated_at INTEGER NOT NULL
       );
       CREATE TABLE IF NOT EXISTS approvals (
         request_id TEXT PRIMARY KEY,
-        mission_id TEXT NOT NULL,
+        app_session_id TEXT NOT NULL,
         kind TEXT NOT NULL,
         created_at INTEGER NOT NULL
       );
       CREATE TABLE IF NOT EXISTS questions (
         request_id TEXT PRIMARY KEY,
-        mission_id TEXT NOT NULL,
+        app_session_id TEXT NOT NULL,
         created_at INTEGER NOT NULL
       );
       CREATE TABLE IF NOT EXISTS settings (
@@ -357,25 +359,16 @@ export class HistoryIndex {
         updated_at INTEGER NOT NULL
       );
     `);
-    // Databases created before the column existed; ADD COLUMN throws when it
-    // is already present, so that failure is the idempotence check. Anything
-    // else (locked db, I/O error) must surface, or the missing column only
-    // shows up later as a confusing "no such column" from syncSummaries.
-    try {
-      this.db.exec('ALTER TABLE app_sessions ADD COLUMN auto_compactions INTEGER');
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      if (!/duplicate column/i.test(message)) throw err;
-    }
   }
 
-  syncSummaries(summaries: MissionSummary[]): void {
+  syncSummaries(summaries: SessionSummary[]): void {
     const stmt = this.db.prepare(`
       INSERT INTO app_sessions (
         app_session_id,
-        droid_session_id,
-        previous_droid_session_ids,
-        kind,
+        provider_session_id,
+        compacted_from_provider_session_ids,
+        session_purpose,
+        interaction_mode,
         title,
         cwd,
         workspace_kind,
@@ -397,11 +390,12 @@ export class HistoryIndex {
         max_context_tokens,
         auto_compactions
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(app_session_id) DO UPDATE SET
-        droid_session_id = excluded.droid_session_id,
-        previous_droid_session_ids = excluded.previous_droid_session_ids,
-        kind = excluded.kind,
+        provider_session_id = excluded.provider_session_id,
+        compacted_from_provider_session_ids = excluded.compacted_from_provider_session_ids,
+        session_purpose = excluded.session_purpose,
+        interaction_mode = excluded.interaction_mode,
         title = excluded.title,
         cwd = excluded.cwd,
         workspace_kind = excluded.workspace_kind,
@@ -425,10 +419,11 @@ export class HistoryIndex {
     `);
     for (const summary of summaries) {
       stmt.run(
-        summary.id,
-        summary.sessionId ?? summary.id,
-        JSON.stringify(summary.compactedFromSessionIds ?? []),
-        summary.kind,
+        summary.appSessionId,
+        summary.providerSessionId ?? summary.appSessionId,
+        JSON.stringify(summary.compactedFromProviderSessionIds ?? []),
+        summary.sessionPurpose,
+        summary.interactionMode,
         summary.title,
         sqlValue(summary.cwd),
         sqlValue(summary.workspaceKind),
@@ -453,20 +448,22 @@ export class HistoryIndex {
     }
   }
 
-  summaryPatches(): Map<string, Partial<MissionSummary>> {
+  summaryPatches(): Map<string, Partial<SessionSummary>> {
     const rows = this.db.prepare('SELECT * FROM app_sessions').all() as Record<string, unknown>[];
     return summaryPatchesFromRows(rows);
   }
 
-  hiddenDroidSessionIds(): Set<string> {
+  hiddenProviderSessionIds(): Set<string> {
     const rows = this.db
-      .prepare('SELECT app_session_id, previous_droid_session_ids FROM app_sessions')
+      .prepare('SELECT app_session_id, compacted_from_provider_session_ids FROM app_sessions')
       .all() as Record<string, unknown>[];
     const hidden = new Set<string>();
     for (const row of rows) {
       const appSessionId = stringValue(row.app_session_id);
-      for (const droidSessionId of jsonStringArray(row.previous_droid_session_ids)) {
-        if (droidSessionId && droidSessionId !== appSessionId) hidden.add(droidSessionId);
+      for (const providerSessionId of jsonStringArray(
+        row.compacted_from_provider_session_ids,
+      )) {
+        if (providerSessionId && providerSessionId !== appSessionId) hidden.add(providerSessionId);
       }
     }
     return hidden;
@@ -476,11 +473,11 @@ export class HistoryIndex {
     this.db
       .prepare(
         `
-      INSERT OR IGNORE INTO events (id, session_id, mission_id, kind, ts)
+      INSERT OR IGNORE INTO events (id, source_session_id, app_session_id, kind, ts)
       VALUES (?, ?, ?, ?, ?)
     `,
       )
-      .run(event.id, event.agentSessionId, event.missionId, event.kind, event.ts);
+      .run(event.id, event.sourceSessionId, event.appSessionId, event.kind, event.ts);
   }
 
   // Persist the exact spawn->worker mapping the moment a live subagent resolves,
@@ -495,10 +492,10 @@ export class HistoryIndex {
     this.db
       .prepare(
         `
-      INSERT INTO subagent_links (mission_id, tool_use_id, worker_session_id, label, updated_at)
+      INSERT INTO subagent_links (app_session_id, tool_use_id, provider_session_id, label, updated_at)
       VALUES (?, ?, ?, ?, ?)
-      ON CONFLICT(mission_id, tool_use_id) DO UPDATE SET
-        worker_session_id = excluded.worker_session_id,
+      ON CONFLICT(app_session_id, tool_use_id) DO UPDATE SET
+        provider_session_id = excluded.provider_session_id,
         label = excluded.label,
         updated_at = excluded.updated_at
     `,
@@ -511,27 +508,27 @@ export class HistoryIndex {
     this.db
       .prepare(
         `
-      INSERT INTO linked_worker_sessions (worker_session_id, updated_at)
+      INSERT INTO linked_child_sessions (provider_session_id, updated_at)
       VALUES (?, ?)
-      ON CONFLICT(worker_session_id) DO UPDATE SET updated_at = excluded.updated_at
+      ON CONFLICT(provider_session_id) DO UPDATE SET updated_at = excluded.updated_at
     `,
       )
       .run(workerSessionId, now);
   }
 
-  subagentLinks(missionId: string): WorkerHistoryLink[] {
+  subagentLinks(missionId: string): ChildSessionHistoryLink[] {
     const rows = this.db
       .prepare(
-        'SELECT tool_use_id, worker_session_id, label FROM subagent_links WHERE mission_id = ? ORDER BY updated_at ASC',
+        'SELECT tool_use_id, provider_session_id, label FROM subagent_links WHERE app_session_id = ? ORDER BY updated_at ASC',
       )
       .all(missionId) as Record<string, unknown>[];
     return rows
       .map((row) => ({
-        workerSessionId: stringValue(row.worker_session_id) ?? '',
+        providerSessionId: stringValue(row.provider_session_id) ?? '',
         toolUseId: stringValue(row.tool_use_id),
         label: stringValue(row.label),
       }))
-      .filter((link) => link.workerSessionId);
+      .filter((link) => link.providerSessionId);
   }
 
   close(): void {
@@ -559,7 +556,7 @@ function readLinkedWorkerSessionIds(): Set<string> {
   const collect = (sql: string) => {
     try {
       for (const row of db.prepare(sql).all() as Record<string, unknown>[]) {
-        const id = stringValue(row.worker_session_id);
+        const id = stringValue(row.provider_session_id);
         if (id) ids.add(id);
       }
     } catch {
@@ -567,15 +564,15 @@ function readLinkedWorkerSessionIds(): Set<string> {
     }
   };
   try {
-    collect('SELECT DISTINCT worker_session_id FROM subagent_links');
-    collect('SELECT worker_session_id FROM linked_worker_sessions');
+    collect('SELECT DISTINCT provider_session_id FROM subagent_links');
+    collect('SELECT provider_session_id FROM linked_child_sessions');
     return ids;
   } finally {
     db.close();
   }
 }
 
-function readStoredSummaryPatches(): Map<string, Partial<MissionSummary>> {
+function readStoredSummaryPatches(): Map<string, Partial<SessionSummary>> {
   const path = join(homedir(), '.factory', 'droid-control', 'index.sqlite');
   if (!existsSync(path)) return new Map();
   let db: DatabaseSync;
@@ -596,17 +593,20 @@ function readStoredSummaryPatches(): Map<string, Partial<MissionSummary>> {
 
 function summaryPatchesFromRows(
   rows: Record<string, unknown>[],
-): Map<string, Partial<MissionSummary>> {
-  const patches = new Map<string, Partial<MissionSummary>>();
+): Map<string, Partial<SessionSummary>> {
+  const patches = new Map<string, Partial<SessionSummary>>();
   for (const row of rows) {
     const appSessionId = stringValue(row.app_session_id);
-    const droidSessionId = stringValue(row.droid_session_id);
-    if (!appSessionId || !droidSessionId) continue;
-    const patch: Partial<MissionSummary> = {
-      id: appSessionId,
-      sessionId: droidSessionId,
-      compactedFromSessionIds: jsonStringArray(row.previous_droid_session_ids),
-      kind: sessionKind(stringValue(row.kind)),
+    const providerSessionId = stringValue(row.provider_session_id);
+    if (!appSessionId || !providerSessionId) continue;
+    const patch: Partial<SessionSummary> = {
+      appSessionId,
+      providerSessionId,
+      compactedFromProviderSessionIds: jsonStringArray(
+        row.compacted_from_provider_session_ids,
+      ),
+      sessionPurpose: sessionPurpose(stringValue(row.session_purpose)),
+      interactionMode: sessionInteractionModeValue(stringValue(row.interaction_mode)),
       title: stringValue(row.title),
       cwd: stringValue(row.cwd),
       workspaceKind: workspaceKind(stringValue(row.workspace_kind)),
@@ -629,34 +629,35 @@ function summaryPatchesFromRows(
       updatedAt: numberValue(row.updated_at),
     };
     patches.set(appSessionId, patch);
-    patches.set(droidSessionId, patch);
+    patches.set(providerSessionId, patch);
   }
   return patches;
 }
 
 export function applyCachedSummary(
-  summary: MissionSummary,
-  cached: Map<string, Partial<MissionSummary>>,
-): MissionSummary {
-  const patch = cached.get(summary.sessionId ?? summary.id) ?? cached.get(summary.id);
+  summary: SessionSummary,
+  cached: Map<string, Partial<SessionSummary>>,
+): SessionSummary {
+  const patch = cached.get(summary.providerSessionId ?? summary.appSessionId) ?? cached.get(summary.appSessionId);
   if (!patch) return summary;
   const defined = definedPatch(patch);
   return {
     ...summary,
     ...defined,
-    id: defined.id ?? summary.id,
-    sessionId: defined.sessionId ?? summary.sessionId,
+    appSessionId: defined.appSessionId ?? summary.appSessionId,
+    providerSessionId: defined.providerSessionId ?? summary.providerSessionId,
     missionId: defined.missionId ?? summary.missionId,
-    parentSessionId: defined.parentSessionId ?? summary.parentSessionId,
-    kind: defined.kind ?? summary.kind,
+    parentProviderSessionId: defined.parentProviderSessionId ?? summary.parentProviderSessionId,
+    sessionPurpose: defined.sessionPurpose ?? summary.sessionPurpose,
+    interactionMode: defined.interactionMode ?? summary.interactionMode,
     role: defined.role ?? summary.role,
   };
 }
 
-function definedPatch(patch: Partial<MissionSummary>): Partial<MissionSummary> {
+function definedPatch(patch: Partial<SessionSummary>): Partial<SessionSummary> {
   return Object.fromEntries(
     Object.entries(patch).filter(([, value]) => value !== undefined),
-  ) as Partial<MissionSummary>;
+  ) as Partial<SessionSummary>;
 }
 
 // Order merged transcript events chronologically, tie-breaking by the
@@ -684,7 +685,7 @@ export function hydrateHistoricalMission(
   // chain (oldest -> newest) from the persisted app-session row; replaying only
   // the latest segment is what made compacted chats lose their scrollback.
   const chain = orchestratorChain(summary, sessionIndex);
-  const window = loadMissionTranscriptWindow(summary.id, chain, opts);
+  const window = loadMissionTranscriptWindow(summary.appSessionId, chain, opts);
 
   // Older pages only extend the orchestrator scrollback upward; workers and
   // progress were already delivered with the initial (newest) page.
@@ -699,7 +700,7 @@ export function hydrateHistoricalMission(
     if (chainSet.has(sessionId)) continue;
     const path = sessionIndex.get(sessionId);
     if (!path) continue;
-    workerEvents.push(...parseSessionTranscript(summary.id, sessionId, path, role));
+    workerEvents.push(...parseSessionTranscript(summary.appSessionId, sessionId, path, role));
   }
   // The orchestrator scrollback is paged via the cursor; only the (bounded)
   // worker events need a safety cap so a worker-heavy mission stays responsive.
@@ -716,12 +717,13 @@ export function hydrateHistoricalMission(
 // ids) for a mission. The persisted app-session row keeps the authoritative
 // chain (previous backing ids + current); fall back to the summary when it is
 // already hydrated with one. Filtered to ids that still have a session file.
-function orchestratorChain(summary: MissionSummary, sessionIndex: Map<string, string>): string[] {
+function orchestratorChain(summary: SessionSummary, sessionIndex: Map<string, string>): string[] {
   const patches = readStoredSummaryPatches();
-  const patch = patches.get(summary.id) ?? patches.get(summary.sessionId ?? summary.id);
-  const currentSession = patch?.sessionId ?? summary.sessionId ?? summary.id;
-  const compactedFrom = patch?.compactedFromSessionIds ?? summary.compactedFromSessionIds ?? [];
-  return dedupeStrings([summary.id, ...compactedFrom, currentSession]).filter((id) =>
+  const patch = patches.get(summary.appSessionId) ?? patches.get(summary.providerSessionId ?? summary.appSessionId);
+  const currentSession =
+    patch?.providerSessionId ?? summary.providerSessionId ?? summary.appSessionId;
+  const compactedFrom = patch?.compactedFromProviderSessionIds ?? summary.compactedFromProviderSessionIds ?? [];
+  return dedupeStrings([summary.appSessionId, ...compactedFrom, currentSession]).filter((id) =>
     sessionIndex.has(id),
   );
 }
@@ -732,12 +734,12 @@ function orchestratorChain(summary: MissionSummary, sessionIndex: Map<string, st
 // newest backing file and lose all pre-compaction scrollback. Reads the chain
 // straight from the persisted app-session row (keyed by either id) and filters
 // to ids that still have a session file on disk.
-export function resolveSessionChain(appSessionId: string, droidSessionId: string): string[] {
+export function resolveSessionChain(appSessionId: string, providerSessionId: string): string[] {
   const sessionIndex = buildSessionIndex();
   const patches = readStoredSummaryPatches();
-  const patch = patches.get(appSessionId) ?? patches.get(droidSessionId);
-  const currentSession = patch?.sessionId ?? droidSessionId;
-  const compactedFrom = patch?.compactedFromSessionIds ?? [];
+  const patch = patches.get(appSessionId) ?? patches.get(providerSessionId);
+  const currentSession = patch?.providerSessionId ?? providerSessionId;
+  const compactedFrom = patch?.compactedFromProviderSessionIds ?? [];
   return dedupeStrings([appSessionId, ...compactedFrom, currentSession]).filter((id) =>
     sessionIndex.has(id),
   );
@@ -793,9 +795,9 @@ function compactionDividerEvent(
 ): TranscriptEvent {
   return {
     id: `${sessionId}:compaction`,
-    missionId,
-    agentSessionId: 'orchestrator',
-    role: 'orchestrator',
+    appSessionId: missionId,
+    sourceSessionId: 'primary',
+    role: 'primary',
     ts: comp.ts,
     kind: 'compaction',
     removedCount: comp.removedCount,
@@ -810,7 +812,7 @@ function compactionDividerEvent(
 // it instead of silently dropping the boundary.
 function segmentItems(missionId: string, sessionId: string, path: string): TranscriptEvent[] {
   const items: TranscriptEvent[] = [];
-  const parsed = parseSessionTranscript(missionId, sessionId, path, 'orchestrator');
+  const parsed = parseSessionTranscript(missionId, sessionId, path, 'primary');
   // The head read backstops oversized files whose leading compaction_state was
   // tail-windowed away; when the parse already replayed that same record as a
   // divider, adding the head copy would duplicate it.
@@ -945,11 +947,12 @@ function loadHistoricalMission(dir: string): HistoricalMission & {
 
   return {
     summary: {
-      id: sessionId,
-      sessionId,
+      appSessionId: sessionId,
+      providerSessionId: sessionId,
       missionId: state.missionId ?? dirId,
-      kind: 'mission_orchestrator',
-      role: 'orchestrator',
+      sessionPurpose: 'mission-control',
+      interactionMode: 'agi',
+      role: 'primary',
       title,
       goal: progress[0]?.message || title,
       cwd,
@@ -1003,7 +1006,7 @@ function readProgress(path: string): ProgressEntry[] {
         stringValue(validation?.summary) ||
         stringValue(entry.reason),
       featureId: stringValue(entry.featureId),
-      workerSessionId: stringValue(entry.workerSessionId),
+      workerProviderSessionId: stringValue(entry.workerSessionId),
     };
   });
 }
@@ -1029,9 +1032,9 @@ function mapStoredFeature(feature: unknown): BridgeFeature {
       verificationSteps: stringArray(f.verificationSteps),
       fulfills: stringArray(f.fulfills),
       milestone: stringValue(f.milestone),
-      workerSessionIds: stringArray(f.workerSessionIds),
-      currentWorkerSessionId: stringValue(f.currentWorkerSessionId) ?? null,
-      completedWorkerSessionId: stringValue(f.completedWorkerSessionId) ?? null,
+      workerProviderSessionIds: stringArray(f.workerSessionIds),
+      currentWorkerProviderSessionId: stringValue(f.currentWorkerSessionId) ?? null,
+      completedWorkerProviderSessionId: stringValue(f.completedWorkerSessionId) ?? null,
     };
   }
 }
@@ -1040,7 +1043,7 @@ function parseSessionTranscript(
   missionId: string,
   sessionId: string,
   path: string,
-  role: AgentRole,
+  role: SessionRole,
 ): TranscriptEvent[] {
   const events: TranscriptEvent[] = [];
   const sessionLines = readSessionJsonLines<StoredMessageLine | StoredSessionStart>(path);
@@ -1115,13 +1118,13 @@ function parseSessionTranscript(
             toolUseId: stringValue(block.tool_use_id ?? block.toolUseId) || undefined,
           }),
         );
-      } else if (messageRole === 'user' && role === 'orchestrator' && type === 'text') {
+      } else if (messageRole === 'user' && role === 'primary' && type === 'text') {
         const rawText = trimText(stringValue(block.text) || '');
         const display = designPromptDisplayFromText(rawText);
         const text = display?.text ?? rawText;
         if (text && !isSystemText(text)) {
           events.push(
-            event(missionId, 'user', 'orchestrator', messageId, index, ts, 'text', {
+            event(missionId, 'user', 'primary', messageId, index, ts, 'text', {
               text,
               author: 'user',
               browserRefs: display?.browserRefs,
@@ -1135,9 +1138,9 @@ function parseSessionTranscript(
 }
 
 function event(
-  missionId: string,
+  appSessionId: string,
   sessionId: string,
-  role: AgentRole,
+  role: SessionRole,
   messageId: string,
   index: number,
   ts: number,
@@ -1146,8 +1149,8 @@ function event(
 ): TranscriptEvent {
   return {
     id: `${sessionId}:${messageId}:${index}:${kind}`,
-    missionId,
-    agentSessionId: role === 'orchestrator' && sessionId !== 'user' ? 'orchestrator' : sessionId,
+    appSessionId,
+    sourceSessionId: role === 'primary' && sessionId !== 'user' ? 'primary' : sessionId,
     role,
     ts,
     kind,
@@ -1159,8 +1162,8 @@ function buildAgentRoles(
   state: StoredMissionState,
   features: BridgeFeature[],
   progress: ProgressEntry[],
-): Map<string, AgentRole> {
-  const roles = new Map<string, AgentRole>();
+): Map<string, SessionRole> {
+  const roles = new Map<string, SessionRole>();
   const stateWorkers = state.workerSessionIds ?? [];
   stateWorkers.forEach((id) => roles.set(id, 'worker'));
 
@@ -1170,8 +1173,12 @@ function buildAgentRoles(
   });
 
   progress.forEach((entry) => {
-    if (entry.workerSessionId && !roles.has(entry.workerSessionId))
-      roles.set(entry.workerSessionId, 'worker');
+    if (
+      entry.workerProviderSessionId &&
+      !roles.has(entry.workerProviderSessionId)
+    ) {
+      roles.set(entry.workerProviderSessionId, 'worker');
+    }
   });
 
   return roles;
@@ -1179,9 +1186,9 @@ function buildAgentRoles(
 
 function featureWorkerIds(feature: BridgeFeature): string[] {
   return [
-    ...(feature.workerSessionIds ?? []),
-    feature.currentWorkerSessionId,
-    feature.completedWorkerSessionId,
+    ...(feature.workerProviderSessionIds ?? []),
+    feature.currentWorkerProviderSessionId,
+    feature.completedWorkerProviderSessionId,
   ].filter(Boolean) as string[];
 }
 
@@ -1333,7 +1340,10 @@ function readSessionStart(path: string): StoredSessionStart {
 function classifyStoredSession(
   start: StoredSessionStart,
   hasPersistedLink: boolean,
-): Pick<MissionSummary, 'kind' | 'role' | 'missionId' | 'parentSessionId'> | null {
+): Pick<
+  SessionSummary,
+  'sessionPurpose' | 'interactionMode' | 'role' | 'missionId' | 'parentProviderSessionId'
+> | null {
   if (start.decompSessionType === 'worker') return null;
   if (start.decompSessionType === 'validator') return null;
   // Task-tool subagents run as their own droid sessions but are spawned by a
@@ -1348,15 +1358,29 @@ function classifyStoredSession(
   const missionId = start.decompMissionId;
   if (start.decompSessionType === 'orchestrator' || missionId || mode === 'agi') {
     return {
-      kind: 'mission_orchestrator',
-      role: 'orchestrator',
+      sessionPurpose: 'mission-control',
+      interactionMode: 'agi',
+      role: 'primary',
       missionId,
-      parentSessionId: undefined,
+      parentProviderSessionId: undefined,
     };
   }
-  if (mode === 'spec')
-    return { kind: 'spec', role: 'orchestrator', missionId: undefined, parentSessionId: undefined };
-  return { kind: 'chat', role: 'orchestrator', missionId: undefined, parentSessionId: undefined };
+  if (mode === 'spec') {
+    return {
+      sessionPurpose: 'chat',
+      interactionMode: 'spec',
+      role: 'primary',
+      missionId: undefined,
+      parentProviderSessionId: undefined,
+    };
+  }
+  return {
+    sessionPurpose: 'chat',
+    interactionMode: 'auto',
+    role: 'primary',
+    missionId: undefined,
+    parentProviderSessionId: undefined,
+  };
 }
 
 function sessionInteractionMode(start: StoredSessionStart): string | undefined {
@@ -1488,25 +1512,24 @@ function mapAutonomy(value?: string): Autonomy | undefined {
   return undefined;
 }
 
-function contextAccuracy(value: unknown): MissionSummary['contextAccuracy'] | undefined {
+function contextAccuracy(value: unknown): SessionSummary['contextAccuracy'] | undefined {
   if (value === 'exact' || value === 'estimated') return value;
   return undefined;
 }
 
-function sessionKind(value?: string): MissionSummary['kind'] | undefined {
-  if (
-    value === 'chat' ||
-    value === 'spec' ||
-    value === 'mission_orchestrator' ||
-    value === 'mission_worker' ||
-    value === 'mission_validator'
-  ) {
-    return value;
-  }
+function sessionPurpose(value?: string): SessionSummary['sessionPurpose'] | undefined {
+  if (value === 'chat' || value === 'design' || value === 'mission-control') return value;
   return undefined;
 }
 
-function workspaceKind(value?: string): MissionSummary['workspaceKind'] | undefined {
+function sessionInteractionModeValue(
+  value?: string,
+): SessionSummary['interactionMode'] | undefined {
+  if (value === 'auto' || value === 'spec' || value === 'agi') return value;
+  return undefined;
+}
+
+function workspaceKind(value?: string): SessionSummary['workspaceKind'] | undefined {
   if (value === 'folder' || value === 'none') return value;
   return undefined;
 }
@@ -1515,15 +1538,15 @@ function sqlValue(value: string | number | undefined): string | number | null {
   return value ?? null;
 }
 
-function roleFromSessionStart(start: StoredSessionStart): AgentRole {
+function roleFromSessionStart(start: StoredSessionStart): SessionRole {
   if (start.decompSessionType === 'validator') return 'validator';
   if (start.decompSessionType === 'worker') return 'worker';
   // Task-tool subagents carry no decompSessionType but are spawned by a parent
   // session's tool call (callingSessionId/callingToolUseId). Replay them as
   // workers so their transcript keys to their own session id instead of being
-  // folded into 'orchestrator' (which would leave the opened subagent blank).
+  // folded into 'primary' (which would leave the opened subagent blank).
   if (start.callingSessionId || start.callingToolUseId) return 'worker';
-  return 'orchestrator';
+  return 'primary';
 }
 
 function stringArray(value: unknown): string[] {

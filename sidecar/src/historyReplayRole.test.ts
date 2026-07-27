@@ -41,9 +41,9 @@ test('loadSessionPage replays a marker-only Task subagent with worker role keyed
   const text = page.events.find((e) => e.kind === 'text');
 
   assert.ok(text, 'expected a text event');
-  // The subagent's transcript must key to its own session id (not 'orchestrator'),
+  // The subagent's transcript must key to its own session id (not 'primary'),
   // otherwise opening the persisted subagent link shows an empty feed.
-  assert.equal(text!.agentSessionId, 'subagent-session');
+  assert.equal(text!.sourceSessionId, 'subagent-session');
   assert.equal(text!.role, 'worker');
 });
 
@@ -54,8 +54,8 @@ test('loadSessionPage still replays a plain session as orchestrator', () => {
   const text = page.events.find((e) => e.kind === 'text');
 
   assert.ok(text, 'expected a text event');
-  assert.equal(text!.agentSessionId, 'orchestrator');
-  assert.equal(text!.role, 'orchestrator');
+  assert.equal(text!.sourceSessionId, 'primary');
+  assert.equal(text!.role, 'primary');
 });
 
 test('loadSessionPage replays an orphan Task subagent opened standalone as orchestrator so it renders', () => {
@@ -72,6 +72,6 @@ test('loadSessionPage replays an orphan Task subagent opened standalone as orche
   assert.ok(text, 'expected a text event');
   // Must replay as orchestrator; otherwise ChatView's main feed filters out the
   // worker-role events and the standalone session shows blank.
-  assert.equal(text!.role, 'orchestrator');
-  assert.equal(text!.agentSessionId, 'orchestrator');
+  assert.equal(text!.role, 'primary');
+  assert.equal(text!.sourceSessionId, 'primary');
 });

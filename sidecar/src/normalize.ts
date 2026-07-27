@@ -7,7 +7,7 @@ import type {
 } from '@factory/droid-sdk';
 import { convertNotificationToStreamMessage } from '@factory/droid-sdk';
 import type {
-  AgentRole,
+  SessionRole,
   BridgeFeature,
   PermissionKind,
   PermissionRequest,
@@ -29,9 +29,9 @@ export function mapFeature(f: MissionFeature): BridgeFeature {
     verificationSteps: (f as { verificationSteps?: string[] }).verificationSteps ?? [],
     fulfills: f.fulfills,
     milestone: f.milestone,
-    workerSessionIds: f.workerSessionIds,
-    currentWorkerSessionId: f.currentWorkerSessionId ?? null,
-    completedWorkerSessionId: f.completedWorkerSessionId ?? null,
+    workerProviderSessionIds: f.workerSessionIds,
+    currentWorkerProviderSessionId: f.currentWorkerSessionId ?? null,
+    completedWorkerProviderSessionId: f.completedWorkerSessionId ?? null,
   };
 }
 
@@ -49,20 +49,20 @@ export function mapProgress(entries: ProgressLogEntry[]): ProgressEntry[] {
             ? (any.summary as string)
             : undefined,
       featureId: typeof any.featureId === 'string' ? (any.featureId as string) : undefined,
-      workerSessionId:
+      workerProviderSessionId:
         typeof any.workerSessionId === 'string' ? (any.workerSessionId as string) : undefined,
     };
   });
 }
 
 function transcript(
-  missionId: string,
-  agentSessionId: string,
-  role: AgentRole,
+  appSessionId: string,
+  sourceSessionId: string,
+  role: SessionRole,
   kind: TranscriptEvent['kind'],
   extra: Partial<TranscriptEvent>,
 ): TranscriptEvent {
-  return { id: nextId(), missionId, agentSessionId, role, ts: Date.now(), kind, ...extra };
+  return { id: nextId(), appSessionId, sourceSessionId, role, ts: Date.now(), kind, ...extra };
 }
 
 export interface NormalizedEvent {
@@ -144,7 +144,7 @@ function slimSubagentArgs(input: Record<string, unknown>): Record<string, unknow
 export function normalizeStreamEvent(
   missionId: string,
   agentSessionId: string,
-  role: AgentRole,
+  role: SessionRole,
   ev: DroidStreamEvent,
 ): NormalizedEvent | null {
   const raw = ev as unknown as Record<string, unknown>;
@@ -315,7 +315,7 @@ export function extractDroidWorkingState(
 export function normalizeNotification(
   missionId: string,
   agentSessionId: string,
-  role: AgentRole,
+  role: SessionRole,
   notification: Record<string, unknown>,
 ): NormalizedEvent[] {
   const raw = extractNotification(notification);
@@ -467,7 +467,7 @@ export function classifyPermission(
       detail = JSON.stringify(c);
   }
 
-  return { missionId, requestId, kind, title, detail, plan, options, raw: params };
+  return { appSessionId: missionId, requestId, kind, title, detail, plan, options, raw: params };
 }
 
 export function confirmationType(params: RequestPermissionRequestParams): string {

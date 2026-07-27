@@ -8,26 +8,26 @@ import {
   type RequestPermissionRequestParams,
 } from '@factory/droid-sdk';
 
-import type { MissionSummary, ServerEvent } from './protocol.js';
+import type { SessionSummary, ServerEvent } from './protocol.js';
 import { writeProviderSessionStart } from './testing/historyCharacterizationSupport.js';
 import { createSessionCharacterizationHarness } from './testing/sessionCharacterizationHarness.js';
 
-type MissionPermissionEvent = Extract<ServerEvent, { type: 'mission.permission' }>;
+type MissionPermissionEvent = Extract<ServerEvent, { type: 'approval.requested' }>;
 type ApprovalRequestedEvent = Extract<ServerEvent, { type: 'approval.requested' }>;
-type MissionQuestionEvent = Extract<ServerEvent, { type: 'mission.question' }>;
+type SessionQuestionEvent = Extract<ServerEvent, { type: 'question.requested' }>;
 type QuestionRequestedEvent = Extract<ServerEvent, { type: 'question.requested' }>;
-type MissionUpdatedEvent = Extract<ServerEvent, { type: 'mission.updated' }>;
+type MissionUpdatedEvent = Extract<ServerEvent, { type: 'session.updated' }>;
 
 const isMissionPermission = (event: ServerEvent): event is MissionPermissionEvent =>
-  event.type === 'mission.permission';
+  event.type === 'approval.requested';
 const isApprovalRequested = (event: ServerEvent): event is ApprovalRequestedEvent =>
   event.type === 'approval.requested';
-const isMissionQuestion = (event: ServerEvent): event is MissionQuestionEvent =>
-  event.type === 'mission.question';
+const isSessionQuestion = (event: ServerEvent): event is SessionQuestionEvent =>
+  event.type === 'question.requested';
 const isQuestionRequested = (event: ServerEvent): event is QuestionRequestedEvent =>
   event.type === 'question.requested';
 const isMissionUpdated = (event: ServerEvent): event is MissionUpdatedEvent =>
-  event.type === 'mission.updated';
+  event.type === 'session.updated';
 
 function permissionInput(toolUseId: string): RequestPermissionRequestParams {
   return {
@@ -86,13 +86,14 @@ function questionInput(toolCallId: string): AskUserRequestParams {
   };
 }
 
-function historicalSummary(id: string, sessionId: string): MissionSummary {
+function historicalSummary(id: string, sessionId: string): SessionSummary {
   const now = Date.now();
   return {
-    id,
-    sessionId,
-    kind: 'chat',
-    role: 'orchestrator',
+    appSessionId: id,
+    providerSessionId: sessionId,
+    sessionPurpose: 'chat',
+    interactionMode: 'auto',
+    role: 'primary',
     title: `Historical ${id}`,
     goal: '',
     cwd: '',
@@ -122,8 +123,8 @@ function approvalRequested(events: ServerEvent[]): ApprovalRequestedEvent {
   return event;
 }
 
-function latestQuestion(events: ServerEvent[]): MissionQuestionEvent {
-  const event = events.filter(isMissionQuestion).at(-1);
+function latestQuestion(events: ServerEvent[]): SessionQuestionEvent {
+  const event = events.filter(isSessionQuestion).at(-1);
   assert.ok(event);
   return event;
 }
@@ -137,7 +138,7 @@ test(
     try {
       h.fixture.seedHistorySummaries([historicalSummary('app-p1', 'provider-p1')]);
       writeProviderSessionStart(h.home, 'provider-p1', 'Historical app-p1');
-      await h.handle({ type: 'mission.resume', sessionId: 'app-p1' });
+      await h.handle({ type: 'session.resume', appSessionId: 'app-p1' });
 
       const handler = h.provider.session('provider-p1').handlers.permissionHandler;
       assert.ok(handler);
@@ -145,15 +146,15 @@ test(
       const requested = permissionRequest(h.events);
       const mirrored = approvalRequested(h.events);
 
-      assert.equal(requested.request.missionId, 'app-p1');
+      assert.equal(requested.request.appSessionId, 'app-p1');
       assert.equal(h.runtime.loadCalls[0]?.sessionId, 'provider-p1');
       assert.deepEqual(mirrored.request, requested.request);
       assert.equal(h.events.filter(isMissionPermission).length, 1);
       assert.equal(h.events.filter(isApprovalRequested).length, 1);
 
       await h.handle({
-        type: 'mission.respondPermission',
-        missionId: requested.request.missionId,
+        type: 'approval.respond',
+        appSessionId: requested.request.appSessionId,
         requestId: requested.request.requestId,
         outcome: 'proceed_once',
       });
@@ -186,8 +187,8 @@ test(
       const requested = permissionRequest(h.events);
 
       await h.handle({
-        type: 'mission.respondPermission',
-        missionId: requested.request.missionId,
+        type: 'approval.respond',
+        appSessionId: requested.request.appSessionId,
         requestId: requested.request.requestId,
         outcome: 'proceed_always',
       });
@@ -227,8 +228,8 @@ test(
       const requested = permissionRequest(h.events);
 
       await h.handle({
-        type: 'mission.respondPermission',
-        missionId: requested.request.missionId,
+        type: 'approval.respond',
+        appSessionId: requested.request.appSessionId,
         requestId: `${requested.request.requestId}-unknown`,
         outcome: 'proceed_once',
       });
@@ -236,22 +237,22 @@ test(
       assert.equal(resolutionCount, 0);
 
       await h.handle({
-        type: 'mission.respondPermission',
-        missionId: requested.request.missionId,
+        type: 'approval.respond',
+        appSessionId: requested.request.appSessionId,
         requestId: requested.request.requestId,
         outcome: 'cancel',
       });
       assert.equal(await pending, ToolConfirmationOutcome.Cancel);
 
       await h.handle({
-        type: 'mission.respondPermission',
-        missionId: requested.request.missionId,
+        type: 'approval.respond',
+        appSessionId: requested.request.appSessionId,
         requestId: requested.request.requestId,
         outcome: 'proceed_once',
       });
       await h.handle({
-        type: 'mission.respondPermission',
-        missionId: 'late-mission',
+        type: 'approval.respond',
+        appSessionId: 'late-mission',
         requestId: requested.request.requestId,
         outcome: 'proceed_once',
       });
@@ -295,8 +296,8 @@ test(
       });
 
       await h.handle({
-        type: 'mission.respondPermission',
-        missionId: requested.request.missionId,
+        type: 'approval.respond',
+        appSessionId: requested.request.appSessionId,
         requestId: requested.request.requestId,
         outcome: 'proceed_once',
       });
@@ -318,8 +319,8 @@ test(
       );
       const transition = h.events.filter(isMissionUpdated).at(-1);
       assert.ok(transition);
-      assert.equal(transition.mission.kind, 'chat');
-      assert.equal(transition.mission.phase, 'running');
+      assert.equal(transition.session.interactionMode, 'auto');
+      assert.equal(transition.session.phase, 'running');
     } finally {
       await h.dispose();
     }
@@ -353,12 +354,12 @@ test(
       const answerMirror = h.events.find(isQuestionRequested);
       assert.ok(answerMirror);
       assert.deepEqual(answerMirror.question, answerRequest.question);
-      assert.equal(h.events.filter(isMissionQuestion).length, 1);
+      assert.equal(h.events.filter(isSessionQuestion).length, 1);
       assert.equal(h.events.filter(isQuestionRequested).length, 1);
 
       await h.handle({
-        type: 'mission.respondQuestion',
-        missionId: answerRequest.question.missionId,
+        type: 'question.respond',
+        appSessionId: answerRequest.question.appSessionId,
         requestId: answerRequest.question.requestId,
         cancelled: false,
         answers: [{ index: 0, question: 'Proceed?', answer: 'yes' }],
@@ -369,8 +370,8 @@ test(
       });
 
       await h.handle({
-        type: 'mission.respondQuestion',
-        missionId: answerRequest.question.missionId,
+        type: 'question.respond',
+        appSessionId: answerRequest.question.appSessionId,
         requestId: answerRequest.question.requestId,
         cancelled: true,
         answers: [],
@@ -386,8 +387,8 @@ test(
       const cancellationRequest = latestQuestion(h.events);
 
       await h.handle({
-        type: 'mission.respondQuestion',
-        missionId: cancellationRequest.question.missionId,
+        type: 'question.respond',
+        appSessionId: cancellationRequest.question.appSessionId,
         requestId: cancellationRequest.question.requestId,
         cancelled: true,
         answers: [],
@@ -395,8 +396,8 @@ test(
       assert.deepEqual(await cancelled, { cancelled: true, answers: [] });
 
       await h.handle({
-        type: 'mission.respondQuestion',
-        missionId: cancellationRequest.question.missionId,
+        type: 'question.respond',
+        appSessionId: cancellationRequest.question.appSessionId,
         requestId: cancellationRequest.question.requestId,
         cancelled: false,
         answers: [{ index: 0, question: 'Proceed?', answer: 'no' }],
@@ -404,7 +405,7 @@ test(
       await h.waitForIdle();
 
       assert.equal(cancellationResolutionCount, 1);
-      assert.equal(h.events.filter(isMissionQuestion).length, 2);
+      assert.equal(h.events.filter(isSessionQuestion).length, 2);
       assert.equal(h.events.filter(isQuestionRequested).length, 2);
     } finally {
       await h.dispose();

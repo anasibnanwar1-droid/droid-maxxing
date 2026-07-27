@@ -16,7 +16,7 @@ export interface BrowserRecordedCall {
 type BrowserEventEmitter = (event: Extract<ServerEvent, { type: 'browser.updated' }>) => void;
 
 interface BrowserOpenInput {
-  missionId: string;
+  appSessionId: string;
   url: string;
   viewport?: BrowserViewport;
   viewportMode?: BrowserViewportMode;
@@ -38,29 +38,29 @@ export class FakeBrowserSessionManager {
   ) {}
 
   open(input: BrowserOpenInput): Promise<void> {
-    const existing = this.states.get(input.missionId);
+    const existing = this.states.get(input.appSessionId);
     const state = browserState(
-      input.missionId,
+      input.appSessionId,
       input.url,
       input.viewport ?? existing?.viewport ?? DEFAULT_BROWSER_VIEWPORT,
       input.viewportMode ?? existing?.viewportMode ?? 'fit',
     );
-    this.states.set(input.missionId, state);
+    this.states.set(input.appSessionId, state);
     this.recordCall('browser', 'open', [input]);
     this.emit?.({ type: 'browser.updated', state });
     return Promise.resolve();
   }
 
-  reload(missionId: string): Promise<void> {
-    const state = this.requireOpenSession(missionId);
-    this.recordCall('browser', 'reload', [missionId]);
+  reload(appSessionId: string): Promise<void> {
+    const state = this.requireOpenSession(appSessionId);
+    this.recordCall('browser', 'reload', [appSessionId]);
     this.emit?.({ type: 'browser.updated', state });
     return Promise.resolve();
   }
 
-  close(missionId: string): Promise<void> {
-    this.states.delete(missionId);
-    this.recordCall('cleanup', 'browser.close', [missionId]);
+  close(appSessionId: string): Promise<void> {
+    this.states.delete(appSessionId);
+    this.recordCall('cleanup', 'browser.close', [appSessionId]);
     return Promise.resolve();
   }
 
@@ -70,8 +70,8 @@ export class FakeBrowserSessionManager {
     return Promise.resolve();
   }
 
-  private requireOpenSession(missionId: string): BrowserState {
-    const state = this.states.get(missionId);
+  private requireOpenSession(appSessionId: string): BrowserState {
+    const state = this.states.get(appSessionId);
     if (!state) throw new Error('Browser session is not open yet.');
     return state;
   }
@@ -84,14 +84,14 @@ export class FakeBrowserSessionManager {
 }
 
 function browserState(
-  missionId: string,
+  appSessionId: string,
   url: string,
   viewport: BrowserViewport,
   viewportMode: BrowserViewportMode,
 ): BrowserState {
   return {
-    sessionId: `browser-${missionId}`,
-    missionId,
+    browserSessionId: `browser-${appSessionId}`,
+    appSessionId,
     url,
     viewport: { ...viewport },
     viewportMode,
@@ -117,7 +117,7 @@ export function nativeSuccess(
 ): BrowserNativeResult {
   return {
     requestId: request.requestId,
-    missionId: request.missionId,
+    appSessionId: request.appSessionId,
     ok: true,
     snapshot,
   };

@@ -228,10 +228,10 @@ test('resolveSessionChain rebuilds the chain from the persisted app-session row'
   mkdirSync(dbDir, { recursive: true });
   const db = new DatabaseSync(join(dbDir, 'index.sqlite'));
   db.exec(
-    'CREATE TABLE app_sessions (app_session_id TEXT, droid_session_id TEXT, previous_droid_session_ids TEXT)',
+    'CREATE TABLE app_sessions (app_session_id TEXT, provider_session_id TEXT, compacted_from_provider_session_ids TEXT)',
   );
   db.prepare(
-    'INSERT INTO app_sessions (app_session_id, droid_session_id, previous_droid_session_ids) VALUES (?, ?, ?)',
+    'INSERT INTO app_sessions (app_session_id, provider_session_id, compacted_from_provider_session_ids) VALUES (?, ?, ?)',
   ).run('app0', 'cur2', JSON.stringify(['app0', 'mid1']));
   db.close();
 

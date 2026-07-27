@@ -26,7 +26,7 @@ test('subagentLinks preserves the exact toolUseId -> workerSessionId mapping wit
   const links = index.subagentLinks('m1');
   index.close();
 
-  const byTool = new Map(links.map((l) => [l.toolUseId, l.workerSessionId]));
+  const byTool = new Map(links.map((l) => [l.toolUseId, l.providerSessionId]));
   assert.equal(byTool.get('tool-A'), 'sess-B');
   assert.equal(byTool.get('tool-B'), 'sess-A');
   assert.equal(links.length, 2);
@@ -44,9 +44,9 @@ test('subagentLinks scopes mappings per mission and upserts on repeated toolUseI
   index.close();
 
   assert.equal(m2.length, 1);
-  assert.equal(m2[0].workerSessionId, 'sess-new');
+  assert.equal(m2[0].providerSessionId, 'sess-new');
   assert.deepEqual(
-    m3.map((l) => l.workerSessionId),
+    m3.map((l) => l.providerSessionId),
     ['sess-other'],
   );
 });

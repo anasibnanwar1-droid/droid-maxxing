@@ -70,7 +70,7 @@ test('extractDroidWorkingState detects transitions that settle compaction', () =
 });
 
 test('token usage maps context to the daemon threshold formula (in + out + cacheRead)', () => {
-  const normalized = normalizeStreamEvent('mission-1', 'mission-1', 'orchestrator', {
+  const normalized = normalizeStreamEvent('mission-1', 'mission-1', 'primary', {
     type: 'session_token_usage_changed',
     inclusiveTokenUsage: {
       inputTokens: 100,
@@ -150,7 +150,7 @@ test('classifyPermission reads the SDK toolUses shape for exec', () => {
 });
 
 test('captures Task prompt metadata before the subagent session id exists', () => {
-  const normalized = normalizeStreamEvent('mission-1', 'mission-1', 'orchestrator', {
+  const normalized = normalizeStreamEvent('mission-1', 'mission-1', 'primary', {
     type: 'tool_call',
     toolUse: {
       id: 'tool-1',
@@ -176,7 +176,7 @@ test('captures Task prompt metadata before the subagent session id exists', () =
 });
 
 test('stamps toolUseId on ordinary (non-subagent) tool_call transcripts', () => {
-  const normalized = normalizeStreamEvent('mission-1', 'mission-1', 'orchestrator', {
+  const normalized = normalizeStreamEvent('mission-1', 'mission-1', 'primary', {
     type: 'tool_call',
     toolUse: {
       id: 'edit-1',
@@ -191,7 +191,7 @@ test('stamps toolUseId on ordinary (non-subagent) tool_call transcripts', () => 
 });
 
 test('stamps toolUseId on ordinary (non-subagent) tool_result transcripts', () => {
-  const normalized = normalizeStreamEvent('mission-1', 'mission-1', 'orchestrator', {
+  const normalized = normalizeStreamEvent('mission-1', 'mission-1', 'primary', {
     type: 'tool_result',
     toolName: 'edit',
     toolUseId: 'edit-1',
@@ -205,7 +205,7 @@ test('stamps toolUseId on ordinary (non-subagent) tool_result transcripts', () =
 });
 
 test('captures subagent session ids from Task progress events', () => {
-  const normalized = normalizeStreamEvent('mission-1', 'mission-1', 'orchestrator', {
+  const normalized = normalizeStreamEvent('mission-1', 'mission-1', 'primary', {
     type: 'tool_progress',
     toolUseId: 'tool-1',
     update: {
@@ -220,7 +220,7 @@ test('captures subagent session ids from Task progress events', () => {
 });
 
 test('marks Task results as correlated subagent completion', () => {
-  const normalized = normalizeStreamEvent('mission-1', 'mission-1', 'orchestrator', {
+  const normalized = normalizeStreamEvent('mission-1', 'mission-1', 'primary', {
     type: 'tool_result',
     toolName: 'Task',
     toolUseId: 'tool-1',

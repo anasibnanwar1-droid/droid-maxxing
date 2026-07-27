@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { MissionSummary } from './protocol.js';
+import type { SessionSummary } from './protocol.js';
 
 const originalHome = process.env.HOME;
 const home = mkdtempSync(join(tmpdir(), 'droid-history-home-'));
@@ -32,13 +32,14 @@ function writeSession(id: string, cwd: string, extra: Record<string, unknown> = 
   );
 }
 
-function summary(id: string, cwd: string): MissionSummary {
+function summary(id: string, cwd: string): SessionSummary {
   const now = Date.now();
   return {
-    id,
-    sessionId: id,
-    kind: 'chat',
-    role: 'orchestrator',
+    appSessionId: id,
+    providerSessionId: id,
+    sessionPurpose: 'chat',
+    interactionMode: 'auto',
+    role: 'primary',
     title: 'Plain chat',
     goal: 'Plain chat',
     cwd,
@@ -65,7 +66,7 @@ test('loadHistoricalSessions applies app summaries before plain chat filtering',
   const rows = loadHistoricalSessions({ includePlainChats: true, limitPerWorkspace: 5 });
 
   assert.deepEqual(
-    rows.map((row) => row.summary.id),
+    rows.map((row) => row.summary.appSessionId),
     ['plain-runtime-home'],
   );
   assert.equal(rows[0].summary.cwd, '');
@@ -81,7 +82,7 @@ test('syncSummaries persists autoCompactions and loadHistoricalSessions restores
 
   const rows = loadHistoricalSessions({ workspaceCwds: [cwd] });
 
-  const row = rows.find((r) => r.summary.id === 'autocompact-chat');
+  const row = rows.find((r) => r.summary.appSessionId === 'autocompact-chat');
   assert.equal(row?.summary.autoCompactions, 3);
 });
 
@@ -101,7 +102,7 @@ test('loadHistoricalSessions hides a Task-spawned subagent that has a persisted 
   const rows = loadHistoricalSessions({ workspaceCwds: [cwd] });
 
   assert.deepEqual(
-    rows.map((row) => row.summary.id),
+    rows.map((row) => row.summary.appSessionId),
     ['real-session'],
   );
 });
@@ -119,7 +120,7 @@ test('loadHistoricalSessions keeps a marker-only Task subagent visible when it h
 
   const rows = loadHistoricalSessions({ workspaceCwds: [cwd] });
 
-  assert.deepEqual(rows.map((row) => row.summary.id).sort(), ['orphan-parent', 'orphan-subagent']);
+  assert.deepEqual(rows.map((row) => row.summary.appSessionId).sort(), ['orphan-parent', 'orphan-subagent']);
 });
 
 test('loadHistoricalSessions keeps a rekeyed worker hidden under its superseded id', () => {
@@ -137,7 +138,7 @@ test('loadHistoricalSessions keeps a rekeyed worker hidden under its superseded 
 
   // Both the pre- and post-rekey worker sessions stay hidden; only the parent shows.
   assert.deepEqual(
-    rows.map((row) => row.summary.id),
+    rows.map((row) => row.summary.appSessionId),
     ['rekey-parent'],
   );
 });
@@ -161,7 +162,7 @@ test('loadHistoricalSessions keeps forked chats (bare parent, no spawn markers) 
 
   const rows = loadHistoricalSessions({ workspaceCwds: [cwd] });
 
-  assert.deepEqual(rows.map((row) => row.summary.id).sort(), ['forked-session', 'source-session']);
+  assert.deepEqual(rows.map((row) => row.summary.appSessionId).sort(), ['forked-session', 'source-session']);
 });
 
 test('loadHistoricalSessions returns every session when no limit is requested', () => {

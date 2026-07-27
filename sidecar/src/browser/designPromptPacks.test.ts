@@ -9,7 +9,7 @@ test('writeDesignPromptPack stores compact JSON on disk', async () => {
   const baseDir = join(tmpdir(), `droid-pack-test-${Date.now()}`);
   const { pack, path } = await writeDesignPromptPack({
     baseDir,
-    missionId: 'mission-one',
+    appSessionId: 'mission-one',
     browserSessionId: 'browser-one',
     instruction: 'Remove this dot pattern',
     now: () => new Date('2026-06-06T12:00:00.000Z'),

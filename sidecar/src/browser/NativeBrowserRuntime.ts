@@ -12,8 +12,8 @@ import type {
 } from './types.js';
 
 export interface NativeBrowserRuntimeOptions {
-  sessionId: string;
-  missionId: string;
+  browserSessionId: string;
+  appSessionId: string;
   viewport: BrowserViewport;
   request: (request: BrowserNativeRequest) => Promise<BrowserNativeResult>;
   nextRequestId?: () => string;
@@ -130,21 +130,21 @@ export class NativeBrowserRuntime implements BrowserRuntime {
   }
 
   private async action(
-    input: Omit<BrowserNativeRequest, 'requestId' | 'missionId' | 'sessionId' | 'viewport'>,
+    input: Omit<BrowserNativeRequest, 'requestId' | 'appSessionId' | 'browserSessionId' | 'viewport'>,
   ): Promise<BrowserSnapshot> {
     const result = await this.send(input);
     return this.snapshotFrom(result);
   }
 
   private send(
-    input: Omit<BrowserNativeRequest, 'requestId' | 'missionId' | 'sessionId'>,
+    input: Omit<BrowserNativeRequest, 'requestId' | 'appSessionId' | 'browserSessionId'>,
   ): Promise<BrowserNativeResult> {
     return this.options.request({
       requestId:
         this.options.nextRequestId?.() ??
         `native-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`,
-      missionId: this.options.missionId,
-      sessionId: this.options.sessionId,
+      appSessionId: this.options.appSessionId,
+      browserSessionId: this.options.browserSessionId,
       viewport: this.viewport,
       ...input,
     });

@@ -5,11 +5,12 @@ import type * as Protocol from '../protocol.js';
 import type { RecordedCall } from './sessionCharacterizationHarness.js';
 
 type PersistedSummaryPatch = Pick<
-  Protocol.MissionSummary,
-  | 'id'
-  | 'sessionId'
-  | 'compactedFromSessionIds'
-  | 'kind'
+  Protocol.SessionSummary,
+  | 'appSessionId'
+  | 'providerSessionId'
+  | 'compactedFromProviderSessionIds'
+  | 'sessionPurpose'
+  | 'interactionMode'
   | 'title'
   | 'cwd'
   | 'workspaceKind'
@@ -34,62 +35,63 @@ type PersistedSummaryPatch = Pick<
 
 export class FakeHistoryIndex {
   private readonly summariesByAppId = new Map<string, PersistedSummaryPatch>();
-  private readonly links = new Map<string, Protocol.WorkerHistoryLink[]>();
+  private readonly links = new Map<string, Protocol.ChildSessionHistoryLink[]>();
 
   constructor(private readonly calls: RecordedCall[]) {}
 
-  syncSummaries(summaries: Protocol.MissionSummary[]): void {
+  syncSummaries(summaries: Protocol.SessionSummary[]): void {
     this.seedSummaries(summaries);
     this.calls.push({ target: 'history', method: 'syncSummaries', args: [summaries] });
   }
 
-  seedSummaries(summaries: Protocol.MissionSummary[]): void {
+  seedSummaries(summaries: Protocol.SessionSummary[]): void {
     for (const summary of summaries) {
       const patch = materializePersistedSummaryPatch(summary);
-      this.summariesByAppId.set(patch.id, patch);
+      this.summariesByAppId.set(patch.appSessionId, patch);
     }
   }
 
-  seedSubagentLinks(missionId: string, links: Protocol.WorkerHistoryLink[]): void {
-    this.links.set(missionId, links);
+  seedSubagentLinks(appSessionId: string, links: Protocol.ChildSessionHistoryLink[]): void {
+    this.links.set(appSessionId, links);
   }
 
-  summaryPatches(): Map<string, Partial<Protocol.MissionSummary>> {
-    const patches = new Map<string, Partial<Protocol.MissionSummary>>();
+  summaryPatches(): Map<string, Partial<Protocol.SessionSummary>> {
+    const patches = new Map<string, Partial<Protocol.SessionSummary>>();
     for (const patch of this.summariesByAppId.values()) {
-      patches.set(patch.id, patch);
-      patches.set(patch.sessionId ?? patch.id, patch);
+      patches.set(patch.appSessionId, patch);
+      patches.set(patch.providerSessionId ?? patch.appSessionId, patch);
     }
     return patches;
   }
 
-  hiddenDroidSessionIds(): Set<string> {
+  hiddenProviderSessionIds(): Set<string> {
     const hidden = new Set<string>();
     for (const patch of this.summariesByAppId.values()) {
-      for (const droidSessionId of patch.compactedFromSessionIds ?? []) {
-        if (droidSessionId && droidSessionId !== patch.id) hidden.add(droidSessionId);
+      for (const providerSessionId of patch.compactedFromProviderSessionIds ?? []) {
+        if (providerSessionId && providerSessionId !== patch.appSessionId)
+          hidden.add(providerSessionId);
       }
     }
     return hidden;
   }
 
   recordSubagentLink(
-    ...[missionId, toolUseId, workerSessionId, label]: [string, string, string, string?]
+    ...[appSessionId, toolUseId, providerSessionId, label]: [string, string, string, string?]
   ): void {
-    const links = this.links.get(missionId) ?? [];
+    const links = this.links.get(appSessionId) ?? [];
     const index = links.findIndex((existing) => existing.toolUseId === toolUseId);
     links[index < 0 ? links.length : index] =
-      label === undefined ? { workerSessionId, toolUseId } : { workerSessionId, toolUseId, label };
-    this.links.set(missionId, links);
+      label === undefined ? { providerSessionId, toolUseId } : { providerSessionId, toolUseId, label };
+    this.links.set(appSessionId, links);
     this.calls.push({
       target: 'history',
       method: 'recordSubagentLink',
-      args: [missionId, toolUseId, workerSessionId, label],
+      args: [appSessionId, toolUseId, providerSessionId, label],
     });
   }
 
-  subagentLinks(missionId: string): Protocol.WorkerHistoryLink[] {
-    return (this.links.get(missionId) ?? []).map((link) => ({ ...link }));
+  subagentLinks(appSessionId: string): Protocol.ChildSessionHistoryLink[] {
+    return (this.links.get(appSessionId) ?? []).map((link) => ({ ...link }));
   }
 
   recordEvent(event: unknown): void {
@@ -114,12 +116,13 @@ export function writeProviderSessionStart(
   );
 }
 
-function materializePersistedSummaryPatch(summary: Protocol.MissionSummary): PersistedSummaryPatch {
+function materializePersistedSummaryPatch(summary: Protocol.SessionSummary): PersistedSummaryPatch {
   return {
-    id: summary.id,
-    sessionId: summary.sessionId ?? summary.id,
-    compactedFromSessionIds: [...(summary.compactedFromSessionIds ?? [])],
-    kind: summary.kind,
+    appSessionId: summary.appSessionId,
+    providerSessionId: summary.providerSessionId ?? summary.appSessionId,
+    compactedFromProviderSessionIds: [...(summary.compactedFromProviderSessionIds ?? [])],
+    sessionPurpose: summary.sessionPurpose,
+    interactionMode: summary.interactionMode,
     title: summary.title,
     cwd: summary.cwd,
     ...whenDefined(summary.workspaceKind, (workspaceKind) => ({ workspaceKind })),

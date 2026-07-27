@@ -14,7 +14,7 @@ test('designPromptDisplayFromText extracts instruction and browser chips from a 
   writeFileSync(
     packPath,
     JSON.stringify({
-      missionId: 'm1',
+      appSessionId: 'm1',
       browserSessionId: 'b1',
       createdAt: new Date().toISOString(),
       instruction: 'What font is this?',

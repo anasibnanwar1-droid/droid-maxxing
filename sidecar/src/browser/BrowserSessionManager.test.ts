@@ -159,7 +159,7 @@ test('runtime snapshots propagate navigation history state', async () => {
   });
 
   const opened = await manager.open({
-    missionId: 'm1',
+    appSessionId: 'm1',
     url: 'http://127.0.0.1:1420/',
   });
   assert.equal(opened.canGoBack, true);
@@ -182,9 +182,9 @@ test('opening a new page clears stale history when its snapshot omits navigation
     },
   });
 
-  await manager.open({ missionId: 'm1', url: 'https://example.com/first' });
+  await manager.open({ appSessionId: 'm1', url: 'https://example.com/first' });
   runtime.omitHistory = true;
-  const opened = await manager.open({ missionId: 'm1', url: 'https://example.com/second' });
+  const opened = await manager.open({ appSessionId: 'm1', url: 'https://example.com/second' });
 
   assert.equal(opened.canGoBack, false);
   assert.equal(opened.canGoForward, false);
@@ -198,8 +198,8 @@ test('click by ref uses the cached selector without a redundant pre-action snaps
       return runtime;
     },
   });
-  await manager.open({ missionId: 'm1', url: 'http://127.0.0.1:1420/' });
-  await manager.click({ missionId: 'm1', ref: '@e1' });
+  await manager.open({ appSessionId: 'm1', url: 'http://127.0.0.1:1420/' });
+  await manager.click({ appSessionId: 'm1', ref: '@e1' });
 
   assert.deepEqual(runtime.clicks[0], { x: 50, y: 35, selector: 'button' });
   assert.equal(runtime.snapshotRequests, 0);
@@ -211,10 +211,10 @@ test('click by missing ref fails without issuing a runtime action', async () => 
   const manager = createManager({
     runtimeFactory: () => runtime,
   });
-  await manager.open({ missionId: 'm1', url: 'http://127.0.0.1:1420/' });
+  await manager.open({ appSessionId: 'm1', url: 'http://127.0.0.1:1420/' });
 
   await assert.rejects(
-    manager.click({ missionId: 'm1', ref: '@e1' }),
+    manager.click({ appSessionId: 'm1', ref: '@e1' }),
     /Browser ref @e1 is not available/,
   );
   assert.deepEqual(runtime.clicks, []);
@@ -222,7 +222,7 @@ test('click by missing ref fails without issuing a runtime action', async () => 
 
 test('inspect resolves a current ref to its selector', async () => {
   const manager = createManager();
-  await manager.open({ missionId: 'm1', url: 'http://127.0.0.1:1420/' });
+  await manager.open({ appSessionId: 'm1', url: 'http://127.0.0.1:1420/' });
 
   const inspection = await manager.inspect('m1', { ref: '@e1' });
 
@@ -238,10 +238,10 @@ test('resize clears stale refs without requesting a snapshot', async () => {
       return runtime;
     },
   });
-  await manager.open({ missionId: 'm1', url: 'http://127.0.0.1:1420/' });
+  await manager.open({ appSessionId: 'm1', url: 'http://127.0.0.1:1420/' });
 
   const state = await manager.resizeViewport({
-    missionId: 'm1',
+    appSessionId: 'm1',
     viewport: { width: 390, height: 844, deviceScaleFactor: 2 },
     viewportMode: 'mobile',
   });
@@ -259,13 +259,13 @@ test('failed resize preserves the previous viewport and emits no optimistic upda
       if (event.type === 'browser.updated') updates.push(event.state);
     },
   });
-  await manager.open({ missionId: 'm1', url: 'http://127.0.0.1:1420/' });
+  await manager.open({ appSessionId: 'm1', url: 'http://127.0.0.1:1420/' });
   const updateCount = updates.length;
   runtime.viewportError = new Error('resize failed');
 
   await assert.rejects(
     manager.resizeViewport({
-      missionId: 'm1',
+      appSessionId: 'm1',
       viewport: { width: 390, height: 844, deviceScaleFactor: 2 },
       viewportMode: 'mobile',
     }),
@@ -282,9 +282,9 @@ test('failed resize preserves the previous viewport and emits no optimistic upda
 
 test('agent click updates the visible agent cursor', async () => {
   const manager = createManager();
-  await manager.open({ missionId: 'm1', url: 'http://127.0.0.1:1420/' });
+  await manager.open({ appSessionId: 'm1', url: 'http://127.0.0.1:1420/' });
 
-  const state = await manager.click({ missionId: 'm1', ref: '@e1' });
+  const state = await manager.click({ appSessionId: 'm1', ref: '@e1' });
 
   assert.deepEqual(state.agentCursor, { x: 50, y: 35 });
 });
@@ -298,11 +298,11 @@ test('failed agent click still emits the attempted cursor position', async () =>
       if (event.type === 'browser.updated') updates.push(event.state);
     },
   });
-  await manager.open({ missionId: 'm1', url: 'http://127.0.0.1:1420/' });
+  await manager.open({ appSessionId: 'm1', url: 'http://127.0.0.1:1420/' });
   const updateCount = updates.length;
   runtime.clickError = new Error('click failed');
 
-  await assert.rejects(manager.click({ missionId: 'm1', ref: '@e1' }), /click failed/);
+  await assert.rejects(manager.click({ appSessionId: 'm1', ref: '@e1' }), /click failed/);
 
   assert.equal(updates.length, updateCount + 1);
   assert.deepEqual(updates.at(-1)?.agentCursor, { x: 50, y: 35 });
@@ -310,9 +310,9 @@ test('failed agent click still emits the attempted cursor position', async () =>
 
 test('user click does not move the visible agent cursor', async () => {
   const manager = createManager();
-  await manager.open({ missionId: 'm1', url: 'http://127.0.0.1:1420/' });
+  await manager.open({ appSessionId: 'm1', url: 'http://127.0.0.1:1420/' });
 
-  const state = await manager.click({ missionId: 'm1', ref: '@e1', source: 'user' });
+  const state = await manager.click({ appSessionId: 'm1', ref: '@e1', source: 'user' });
 
   assert.equal(state.agentCursor, undefined);
 });
@@ -325,9 +325,9 @@ test('hover and select target current snapshot refs', async () => {
       return runtime;
     },
   });
-  await manager.open({ missionId: 'm1', url: 'http://127.0.0.1:1420/' });
+  await manager.open({ appSessionId: 'm1', url: 'http://127.0.0.1:1420/' });
 
-  await manager.hover({ missionId: 'm1', ref: '@e1' });
+  await manager.hover({ appSessionId: 'm1', ref: '@e1' });
   await manager.selectOption('m1', '@e1', 'active');
 
   assert.deepEqual(runtime.hovers, [{ x: 50, y: 35, selector: 'button' }]);
@@ -342,7 +342,7 @@ test('addReference captures an anchor crop and current browser context', async (
       return runtime;
     },
   });
-  await manager.open({ missionId: 'm1', url: 'http://127.0.0.1:1420/' });
+  await manager.open({ appSessionId: 'm1', url: 'http://127.0.0.1:1420/' });
 
   const reference = await manager.addReference('m1', { anchor: buttonAnchor() });
 
@@ -355,7 +355,7 @@ test('addReference captures an anchor crop and current browser context', async (
 
 test('referenceDetail returns the stored reference with detail', async () => {
   const manager = createManager();
-  await manager.open({ missionId: 'm1', url: 'http://127.0.0.1:1420/' });
+  await manager.open({ appSessionId: 'm1', url: 'http://127.0.0.1:1420/' });
 
   const reference = await manager.addReference('m1', {
     anchor: buttonAnchor(),
@@ -377,7 +377,7 @@ test('designPrompt writes selected references and trims the instruction', async 
       return {
         path: '/tmp/droid/pack.json',
         pack: {
-          missionId: options.missionId,
+          appSessionId: options.appSessionId,
           browserSessionId: options.browserSessionId,
           createdAt: '2026-06-07T00:00:00.000Z',
           instruction: options.instruction,
@@ -386,11 +386,11 @@ test('designPrompt writes selected references and trims the instruction', async 
       };
     },
   });
-  await manager.open({ missionId: 'm1', url: 'http://127.0.0.1:1420/' });
+  await manager.open({ appSessionId: 'm1', url: 'http://127.0.0.1:1420/' });
   const reference = await manager.addReference('m1', { anchor: buttonAnchor() });
 
   const result = await manager.designPrompt({
-    missionId: 'm1',
+    appSessionId: 'm1',
     instruction: '  Make the button clearer  ',
     referenceIds: [reference.id],
   });
@@ -402,11 +402,11 @@ test('designPrompt writes selected references and trims the instruction', async 
 
 test('designPrompt requires a selected or sketched reference', async () => {
   const manager = createManager();
-  await manager.open({ missionId: 'm1', url: 'http://127.0.0.1:1420/' });
+  await manager.open({ appSessionId: 'm1', url: 'http://127.0.0.1:1420/' });
 
   await assert.rejects(
     () =>
-      manager.designPrompt({ missionId: 'm1', instruction: 'Make this clearer', referenceIds: [] }),
+      manager.designPrompt({ appSessionId: 'm1', instruction: 'Make this clearer', referenceIds: [] }),
     /Select or sketch at least one browser reference/,
   );
 });
@@ -419,7 +419,7 @@ test('screenshot forwards high-detail capture options', async () => {
       return runtime;
     },
   });
-  await manager.open({ missionId: 'm1', url: 'http://127.0.0.1:1420/' });
+  await manager.open({ appSessionId: 'm1', url: 'http://127.0.0.1:1420/' });
 
   await manager.screenshot('m1', { fullPage: true, deviceScaleFactor: 3 });
 
@@ -435,13 +435,13 @@ test('open resizes an existing runtime before capture', async () => {
     },
   });
   await manager.open({
-    missionId: 'm1',
+    appSessionId: 'm1',
     url: 'https://example.com',
     viewport: { width: 1200, height: 800, deviceScaleFactor: 2 },
   });
 
   const state = await manager.open({
-    missionId: 'm1',
+    appSessionId: 'm1',
     url: 'https://example.com',
     viewport: { width: 524, height: 898, deviceScaleFactor: 2 },
     viewportMode: 'fit',
@@ -460,13 +460,13 @@ test('open preserves existing viewport when agent omits viewport', async () => {
     },
   });
   await manager.open({
-    missionId: 'm1',
+    appSessionId: 'm1',
     url: 'https://example.com',
     viewport: { width: 820, height: 620, deviceScaleFactor: 2 },
     viewportMode: 'custom',
   });
 
-  const state = await manager.open({ missionId: 'm1', url: 'https://example.org' });
+  const state = await manager.open({ appSessionId: 'm1', url: 'https://example.org' });
 
   assert.deepEqual(runtime.viewport, { width: 820, height: 620, deviceScaleFactor: 2 });
   assert.deepEqual(state.viewport, { width: 820, height: 620, deviceScaleFactor: 2 });
@@ -482,7 +482,7 @@ test('open normalizes bare domains before the native runtime sees them', async (
     },
   });
 
-  const state = await manager.open({ missionId: 'm1', url: 'skeina.tech' });
+  const state = await manager.open({ appSessionId: 'm1', url: 'skeina.tech' });
 
   assert.equal(runtime.openedUrls[0], 'https://skeina.tech');
   assert.equal(state.url, 'https://skeina.tech');
@@ -496,7 +496,7 @@ test('reload updates the managed browser state from the runtime snapshot', async
       return runtime;
     },
   });
-  await manager.open({ missionId: 'm1', url: 'https://example.com' });
+  await manager.open({ appSessionId: 'm1', url: 'https://example.com' });
 
   const state = await manager.reload('m1');
 
@@ -512,7 +512,7 @@ test('history navigation updates browser state through the runtime', async () =>
       return runtime;
     },
   });
-  await manager.open({ missionId: 'm1', url: 'https://example.com' });
+  await manager.open({ appSessionId: 'm1', url: 'https://example.com' });
 
   const back = await manager.goBack('m1');
   const forward = await manager.goForward('m1');
@@ -531,7 +531,7 @@ test('open and refresh do not force screenshot capture', async () => {
     },
   });
 
-  await manager.open({ missionId: 'm1', url: 'https://example.com' });
+  await manager.open({ appSessionId: 'm1', url: 'https://example.com' });
   await manager.refresh('m1');
 
   assert.equal(runtime.screenshots.length, 0);
