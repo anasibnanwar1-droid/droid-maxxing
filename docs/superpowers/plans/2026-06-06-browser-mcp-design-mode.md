@@ -125,7 +125,7 @@ flowchart LR
   Cdp --> Chrome["Chrome headless + CDP"]
   Process --> Chrome
   Manager --> Pack["Design prompt packs on disk"]
-  Pack --> Mission["Active Droid mission"]
+  Pack --> Session["Active app session"]
 ```
 
 Core pieces:
@@ -134,7 +134,7 @@ Core pieces:
 - `CdpClient`: own websocket transport, request ids, timeouts, and typed CDP calls.
 - `MacChromeCdpRuntime`: compose process and CDP helpers into browser actions.
 - `domSnapshot`: extract compact visible refs and point inspection data.
-- `BrowserSessionManager`: own per-mission browser sessions, latest state, coordinate scaling, selected references, and prompt packs.
+- `BrowserSessionManager`: own per-app-session browser sessions, latest state, coordinate scaling, selected references, and prompt packs.
 - `browserMcpServer`: expose safe browser tools to Droid sessions over stdio MCP.
 - React Browser workspace: render screenshots, forward user events, show overlays, and package Design Mode prompts.
 
@@ -180,7 +180,7 @@ Modify:
 
 - `sidecar/package.json`
 - `sidecar/src/DroidRuntime.ts`
-- `sidecar/src/MissionManager.ts`
+- `sidecar/src/SessionManager.ts`
 - `sidecar/src/protocol.ts`
 - `src/types/bridge.ts`
 - `src/lib/commands.ts`
@@ -227,8 +227,8 @@ export interface BrowserElementRef {
 }
 
 export interface BrowserState {
-  sessionId: string;
-  missionId?: string;
+  browserSessionId: string;
+  appSessionId: string;
   url: string;
   title?: string;
   viewport: BrowserViewport;
@@ -255,7 +255,7 @@ export interface DesignReference {
 }
 
 export interface DesignPromptPack {
-  missionId: string;
+  appSessionId: string;
   browserSessionId: string;
   createdAt: string;
   instruction: string;
@@ -383,7 +383,7 @@ Use `Runtime.evaluate` for a small visible-DOM snapshot:
 
 ### Task 6: Browser Session Manager
 
-- [ ] Implement session creation keyed by mission id.
+- [ ] Implement browser-session creation keyed by `appSessionId`.
 - [ ] Implement viewport-to-canvas and canvas-to-viewport coordinate conversion.
 - [ ] Implement viewport presets and `fit` mode without hardcoding one default desktop viewport.
 - [ ] Implement open, refresh, snapshot, click, type, keypress, scroll, and close.
@@ -432,9 +432,9 @@ Events:
 
 - [ ] Extend `DroidRuntime.createSession` options to accept browser MCP config.
 - [ ] Pass `mcpServers` into the low-level Droid session creation path.
-- [ ] Attach browser MCP only when Browser Mode is active for the mission.
+- [ ] Attach browser MCP only when Browser Mode is active for the app session.
 - [ ] Fail fast if the browser sidecar session is not available.
-- [ ] Do not retrofit old sessions. The user can start a new mission when browser tools are needed.
+- [ ] Treat missing browser MCP configuration as invalid current state and fail fast.
 
 ### Task 10: React Browser Workspace
 
@@ -452,7 +452,7 @@ Events:
 - [ ] Shift-click multi-selects.
 - [ ] Escape clears pending selection.
 - [ ] Add sketch mode with frozen screenshot, box/circle/freehand strokes, and screenshot-relative coordinates.
-- [ ] Add prompt bar validation: active mission, non-empty instruction, at least one reference.
+- [ ] Add prompt bar validation: active app session, non-empty instruction, at least one reference.
 - [ ] Send compact prompt pack paths to the active Droid chat.
 
 Prompt format:

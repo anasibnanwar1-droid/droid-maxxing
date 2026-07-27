@@ -1,8 +1,8 @@
-# Refactor PR 1: MissionManager Characterization Baseline
+# Refactor PR 1: SessionManager Characterization Baseline
 
 ## Status and scope
 
-This document specifies Refactor PR 1 only: a behavior-preserving characterization baseline for the current `MissionManager` boundary. It does not extract production services, rename the wire protocol, or change runtime behavior.
+This document specifies Refactor PR 1 only: a behavior-preserving characterization baseline for the current `SessionManager` boundary. It does not extract production services, rename the wire protocol, or change runtime behavior.
 
 The canonical `Session*` naming contract is mandatory for Refactor PR 2. Refactor PR 1 tests the current protocol exactly as it exists at the verified baseline so the later hard cut can be reviewed against observable behavior.
 
@@ -45,40 +45,40 @@ Tests must not assert private maps, flags, helper selection, method decompositio
 ### Target files
 
 - `sidecar/src/testing/sessionCharacterizationHarness.ts`
-- `sidecar/src/MissionManager.sessionLifecycle.test.ts`
+- `sidecar/src/SessionManager.sessionLifecycle.test.ts`
 
 ### Temporary harness contract
 
-`sessionCharacterizationHarness.ts` is the only location permitted to replace private `MissionManager` dependencies. It contains the single private-property cast required to install deterministic fakes and exposes a public test interface for commands, emitted events, provider calls, history calls, browser calls, deferred provider responses, deterministic time, and cleanup records.
+`sessionCharacterizationHarness.ts` is the only location permitted to replace private `SessionManager` dependencies. It contains the single private-property cast required to install deterministic fakes and exposes a public test interface for commands, emitted events, provider calls, history calls, browser calls, deferred provider responses, deterministic time, and cleanup records.
 
-All sidecar suites in Sections A through E consume this harness. No individual test may cast `MissionManager`, read private properties, invoke private methods, or construct fabricated private mission state. No second dependency-replacement harness is permitted.
+All sidecar suites in Sections A through E consume this harness. No individual test may cast `SessionManager`, read private properties, invoke private methods, or construct fabricated private session state. No second dependency-replacement harness is permitted.
 
-The harness is temporary because `MissionManager` has no dependency-injection seam. Its deletion criterion is Refactor PR 3, when `FactoryCoreAdapter`, `SessionService`, `SessionRegistry`, and related session modules expose proper test interfaces.
+The harness is temporary because `SessionManager` has no dependency-injection seam. Its deletion criterion is Refactor PR 3, when `FactoryCoreAdapter`, `SessionService`, `SessionRegistry`, and related session modules expose proper test interfaces.
 
 | ID | Characterization | Observable evidence |
 | --- | --- | --- |
 | L1 | Ordinary create | The current create command produces one provider-session creation call with `auto`, regular model/reasoning defaults, default autonomy, MCP configuration, and provider handlers. Existing creation/update events use the stable application identity, and the opening prompt reaches the provider once. |
 | L2 | Spec create | Provider creation receives `spec` and the current spec model/reasoning fields without AGI worker/validator configuration. Emitted state reports the current spec mode. |
-| L3 | AGI create | Provider creation receives `agi`, orchestrator classification, and current worker/validator configuration. Existing Mission Control events and summary fields remain unchanged. |
+| L3 | Mission Control create | Provider creation receives `agi`, Factory orchestrator classification, and current worker/validator configuration. Existing Mission Control events and summary fields remain unchanged. |
 | L4 | Create failure cleanup | When provider creation fails after MCP startup, the MCP resource closes exactly once, no successful creation event is emitted, no false history summary is persisted, and the current error event is emitted. |
 | L5 | Resume with split identities | A stable application identity resolves to its persisted provider identity. The provider load call uses the provider identity, subsequent provider calls use the loaded session, and outward events retain the stable application identity. Provider handlers, MCP settings, notification registration, and persisted child links are verified through recorded calls. |
 | L6 | Lazy resume then send | Sending to a persisted non-live session performs one provider load and delivers the prompt once to the restored provider session. No stale provider session receives it. |
 | L7 | Queue and steering order | Recorded provider prompt calls preserve FIFO ordering for ordinary queued messages. A steering prompt moves ahead of queued ordinary work and interrupts only when a provider turn is actively streaming. |
 | L8 | Stop state matrix | Public stop commands characterize idle, streaming, and compacting states. Idle stop leaves the next prompt deliverable, streaming stop calls provider interrupt once, and compacting stop does not interrupt compaction while preventing queued prompts from being delivered. |
 | L9 | Interaction-mode mutation | Public mode changes produce the correct provider settings calls and current update events. Autonomy remains unchanged. Provider rejection emits the current error without a false successful mode update. |
-| L10 | Autonomy mutation | Current aliases and defaults produce the correct provider settings call. Success emits the current update event; provider rejection emits the current error and no false autonomy update. |
+| L10 | Autonomy mutation | Supported values and defaults produce the correct provider settings call. Success emits the current update event; provider rejection emits the current error and no false autonomy update. |
 
 ## B. Permission and structured-question lifecycle
 
 ### Target file
 
-- `sidecar/src/MissionManager.interactions.test.ts`
+- `sidecar/src/SessionManager.interactions.test.ts`
 
 | ID | Characterization | Observable evidence |
 | --- | --- | --- |
 | P1 | Permission request and response | Invoking the provider permission callback emits the current permission events with stable application identity and request correlation. A valid allow-once command resolves the provider callback exactly once with the current normalized outcome. |
 | P2 | Always-grant scope | An always-grant response resolves the provider callback and records the current permission signature. A later equivalent request resolves without another user-facing permission event. |
-| P3 | Invalid, duplicate, and late permission responses | Invalid responses follow the existing fallback result. Duplicate and unknown request identities do not resolve another provider callback or emit false session updates. |
+| P3 | Invalid, duplicate, and late permission responses | Invalid responses resolve to the canonical cancel result. Duplicate and unknown request identities do not resolve another provider callback or emit false session updates. |
 | P4 | Spec approval transition | Approving the current spec-exit permission produces the required provider mode/settings call before the provider continues. Existing mode and phase events retain their current application-visible order. |
 | Q1 | Question answer and cancellation | The provider question callback emits the current question events. Answers preserve question identities and selected values. Cancellation, duplicate responses, and unknown request identities settle a provider callback at most once. |
 
@@ -88,12 +88,12 @@ This PR does not define new shutdown semantics for unresolved permission or ques
 
 ### Target file
 
-- `sidecar/src/MissionManager.historyAndChildren.test.ts`
+- `sidecar/src/SessionManager.historyAndChildren.test.ts`
 
 | ID | Characterization | Observable evidence |
 | --- | --- | --- |
 | H1 | Initial history restore | A public history command produces the expected history-provider calls and emits the ordered page, cursor, stable application identity, and current replace behavior. |
-| H2 | Paging, fallback, and failure | Table-driven cases characterize older-page loading, fallback across an existing compacted provider-session chain, empty history, and restore failure/retry through history calls and emitted history/error events. |
+| H2 | Paging and failure | Table-driven cases characterize older-page loading across an existing compacted provider-session chain, empty history, and restore failure/retry through history calls and emitted history/error events. |
 | A1 | Child-session link persistence | Task metadata followed by provider child-session discovery produces the exact `(stable application identity, tool-use identity) -> worker session identity` history write. Duplicate labels and out-of-order discoveries do not change the recorded mapping. |
 | A2 | Open and replay a linked child session | Public child-open produces the expected provider load, handler registration, settings calls, compaction configuration, history reads, and opened/history events. Non-member and capacity failures emit current errors without loading an unrelated provider session. |
 | A3 | Child send, steer, and interrupt | Public child commands call the intended worker provider session. Failures emit child-scoped errors and do not send, interrupt, or update the parent provider session. |
@@ -102,7 +102,7 @@ This PR does not define new shutdown semantics for unresolved permission or ques
 
 ### Target file
 
-- `sidecar/src/MissionManager.compactionLifecycle.test.ts`
+- `sidecar/src/SessionManager.compactionLifecycle.test.ts`
 
 | ID | Characterization | Observable evidence |
 | --- | --- | --- |
@@ -121,7 +121,7 @@ Pending native-browser request settlement is excluded because current intended s
 
 ### Target file
 
-- `sidecar/src/MissionManager.browserRouting.test.ts`
+- `sidecar/src/SessionManager.browserRouting.test.ts`
 
 | ID | Characterization | Observable evidence |
 | --- | --- | --- |
@@ -175,7 +175,7 @@ Every commit has one reviewable purpose. Its targeted tests and regular typechec
 
 2. `test(sidecar): characterize session creation modes`
    - Add the sole temporary harness.
-   - Add ordinary, spec, and AGI creation plus creation-failure cleanup.
+   - Add ordinary, spec, and Mission Control creation plus creation-failure cleanup.
    - Consume the harness immediately so no orphan infrastructure commit exists.
 
 3. `test(sidecar): characterize live session lifecycle`
@@ -185,7 +185,7 @@ Every commit has one reviewable purpose. Its targeted tests and regular typechec
    - Add permission request/response, always-grant, invalid/duplicate handling, spec approval, and structured-question coverage.
 
 5. `test(sidecar): characterize history and child sessions`
-   - Add history restore/paging/fallback/failure and child-session link/open/replay/command coverage.
+   - Add history restore/paging/failure and child-session link/open/replay/command coverage.
 
 6. `test(sidecar): characterize manual compaction and swaps`
    - Add manual in-place compaction, provider-session replacement, and failed-swap recovery coverage.

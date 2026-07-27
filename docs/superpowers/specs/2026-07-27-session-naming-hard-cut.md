@@ -22,12 +22,12 @@ owned by a Mission Control mission.
 
 | Old | New |
 | --- | --- |
-| `MissionManager` | `SessionManager` |
+| `SessionManager` | `SessionManager` |
 | internal `Mission` | `LiveSession` |
-| `MissionSummary` | `SessionSummary` |
-| `MissionPhase` | `SessionPhase` |
-| `MissionQuestion` | `SessionQuestion` |
-| `HistoryMission` | `SessionHistoryEntry` |
+| `SessionSummary` | `SessionSummary` |
+| `SessionPhase` | `SessionPhase` |
+| `SessionQuestion` | `SessionQuestion` |
+| `SessionHistoryEntry` | `SessionHistoryEntry` |
 | `HistoricalMission` | `HistoricalSession` |
 | `HydratedMissionHistory` | `HydratedSessionHistory` |
 | `summary.id` | `summary.appSessionId` |
@@ -61,12 +61,13 @@ duplicates collapse to the following canonical names:
 | `mission.resume` | `session.resume` |
 | `mission.list` | `sessions.list` |
 | `mission.loadHistory` | `session.loadHistory` |
-| `mission.setAutonomy` | `session.setAutonomy` |
-| `mission.setInteractionMode` | `session.setInteractionMode` |
-| `mission.respondPermission` | `permission.respond` |
+| `mission.setAutonomy` | `session.updateSettings` with `autonomy` |
+| `mission.setInteractionMode` | `session.updateSettings` with `interactionMode` |
+| `mission.respondPermission` | `approval.respond` |
 | `mission.respondQuestion` | `question.respond` |
 | `mission.subscribeWorker` / `agent.open` | `child.open` |
 | `agent.send` / `agent.sendNow` / `agent.interrupt` | `child.send` / `child.sendNow` / `child.interrupt` |
+| generic `subagent` helpers and state | child-session helpers and state |
 | `mission.created` | `session.created` |
 | duplicate `mission.updated` | the single `session.updated` event |
 | `mission.tokens` | existing `context.updated` |
@@ -103,7 +104,7 @@ duplicates collapse to the following canonical names:
 | `sendToMission` / `sendToMissionNow` | `sendToSession` / `sendToSessionNow` |
 | `interruptMission` | `interruptSession` |
 | `listMissions` / `loadMissionHistory` | `listSessions` / `loadSessionHistory` |
-| `missionIsLive` / `useMissionLive` | `sessionIsLive` / `useSessionLive` |
+| `missionIsLive` / `useSessionLive` | `sessionIsLive` / `useSessionLive` |
 | `utilityPanelForMission` | `utilityPanelForSession` |
 | generic `missionMode` | `missionControlMode` |
 
@@ -115,19 +116,23 @@ Mission Control mission.
 
 | Old | New |
 | --- | --- |
-| `MissionManager.ts` and characterization test names | `SessionManager.ts` and matching test names |
-| `missionHelpers.ts` | `sessionHelpers.ts` |
-| `missionListFilter.ts` | `sessionListFilter.ts` |
-| `missionAutoCompaction.ts` | `sessionAutoCompaction.ts` |
+| `SessionManager.ts` and characterization test names | `SessionManager.ts` and matching test names |
+| `sessionHelpers.ts` | `sessionHelpers.ts` |
+| `sessionListFilter.ts` | `sessionListFilter.ts` |
+| `sessionAutoCompaction.ts` | `sessionAutoCompaction.ts` |
 | generic `missions` map / `findMission` | `sessions` map / `findSession` |
 | `createMission` / `resumeMission` / `closeMission` | `createSession` / `resumeSession` / `closeSession` |
-| `loadHistoricalMissions` / `hydrateHistoricalMission` | `loadHistoricalSessions` / `hydrateHistoricalSession` |
+| generic historical summary type `HistoricalMission` | `HistoricalSession` |
+| `loadHistoricalMissions` | `loadMissionControlSessions` for actual Mission Control directories |
+| generic transcript history loader | `loadHistoricalSessions` |
+| `hydrateHistoricalMission` | `hydrateHistoricalSession` |
 | `loadMissionTranscriptWindow` | `loadSessionTranscriptWindow` |
 | browser routing `missionId` | `appSessionId` |
 | `browserKeyForMission` | `browserKeyForSession` |
 | terminal ownership `missionId` | `appSessionId` |
 | `MAX_TERMINALS_PER_MISSION` / `maxPerMission` | `MAX_TERMINALS_PER_SESSION` / `maxPerSession` |
-| persisted `mission_*` columns and generic mission storage keys | canonical `session_*` names |
+| persisted generic mission columns and keys | `app_session_*` / `provider_session_*` names |
+| `subagent_links` | `child_session_links` |
 
 There is no schema migration or fallback. Existing local development state is
 outside the current-state contract and may be cleared explicitly.

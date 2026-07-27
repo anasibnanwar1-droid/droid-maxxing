@@ -19,11 +19,11 @@ flowchart LR
 
 | Area | Path | Responsibility |
 | --- | --- | --- |
-| Renderer | `src/` | React UI, local state, settings, onboarding, mission and session views |
+| Renderer | `src/` | React UI, local state, settings, onboarding, session and Mission Control views |
 | Electron main | `electron/main.cjs` | Window lifecycle, bridge process management, native browser lifecycle, downloads, update checks |
 | Electron preload | `electron/preload.cjs` | Narrow API boundary between renderer and Electron main process |
 | Native browser preload | `electron/nativeBrowserPreload.cjs` | Browser automation bridge for embedded native browser flows |
-| Sidecar | `sidecar/src/` | Local WebSocket bridge, Droid SDK orchestration, mission management, CLI discovery |
+| Sidecar | `sidecar/src/` | Local WebSocket bridge, Droid SDK session lifecycle, Mission Control integration, CLI discovery |
 
 ## Data and control boundaries
 
