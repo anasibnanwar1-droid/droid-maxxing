@@ -83,10 +83,10 @@ export class SessionRegistry<TLive extends RegisteredSession> {
     providerSessionId: string,
     patch: SessionSummaryPatch = {},
   ): SessionSummary | undefined {
-    const liveSession = this.getLive(id);
-    const current = liveSession?.summary ?? this.resolveCanonicalSummary(id);
+    const current = this.resolveCanonicalSummary(id);
     if (!current) return undefined;
     if (current.providerSessionId === providerSessionId) return current;
+    const liveSession = this.sessions.get(current.appSessionId);
 
     const updated = {
       ...this.withPatch(current, patch),
@@ -183,14 +183,7 @@ export class SessionRegistry<TLive extends RegisteredSession> {
   private project(summary: SessionSummary): SessionSummary {
     const canonical = copySummary(summary);
     const projected = this.dependencies.projectSummary(canonical);
-    return {
-      ...copySummary(projected),
-      appSessionId: canonical.appSessionId,
-      providerSessionId: canonical.providerSessionId,
-      compactedFromProviderSessionIds: canonical.compactedFromProviderSessionIds,
-      missionId: canonical.missionId,
-      parentProviderSessionId: canonical.parentProviderSessionId,
-    };
+    return copySummary({ ...canonical, ...withoutIdentityFields(projected) });
   }
 
   private persist(summary: SessionSummary): void {
@@ -199,7 +192,7 @@ export class SessionRegistry<TLive extends RegisteredSession> {
 
   private persistAndPublish(summary: SessionSummary): void {
     this.persist(summary);
-    this.dependencies.onSummaryUpdated(summary);
+    this.dependencies.onSummaryUpdated(this.project(summary));
   }
 
   private indexAliases(summary: SessionSummary): void {
@@ -237,9 +230,9 @@ function withoutIdentityFields(patch: Partial<SessionSummary>): SessionSummaryPa
 function copySummary(summary: SessionSummary): SessionSummary {
   return {
     ...summary,
-    compactedFromProviderSessionIds: summary.compactedFromProviderSessionIds
-      ? [...summary.compactedFromProviderSessionIds]
-      : undefined,
+    ...(summary.compactedFromProviderSessionIds
+      ? { compactedFromProviderSessionIds: [...summary.compactedFromProviderSessionIds] }
+      : {}),
     features: [...summary.features],
   };
 }

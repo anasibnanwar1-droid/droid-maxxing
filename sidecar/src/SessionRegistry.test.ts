@@ -105,9 +105,9 @@ function summary(appSessionId: string, overrides: Partial<SessionSummary> = {}):
 function copySummary(value: Readonly<SessionSummary>): SessionSummary {
   return {
     ...value,
-    compactedFromProviderSessionIds: value.compactedFromProviderSessionIds
-      ? [...value.compactedFromProviderSessionIds]
-      : undefined,
+    ...(value.compactedFromProviderSessionIds
+      ? { compactedFromProviderSessionIds: [...value.compactedFromProviderSessionIds] }
+      : {}),
     features: [...value.features],
   };
 }
@@ -258,7 +258,7 @@ test('resolve and list project copies after ordinary, Mission Control, and live 
       updatedAt: 60,
     }),
   ];
-  const { history, registry } = createHarness({
+  const { history, published, registry } = createHarness({
     ordinary,
     missionControl,
     projectSummary: (canonical) => ({
@@ -285,6 +285,8 @@ test('resolve and list project copies after ordinary, Mission Control, and live 
   history.clearPatches();
 
   const listed = registry.listSummaries();
+  const firstListed = listed[0];
+  assert.ok(firstListed);
 
   assert.deepEqual(
     listed.map((item) => [item.appSessionId, item.title]),
@@ -294,15 +296,15 @@ test('resolve and list project copies after ordinary, Mission Control, and live 
       ['ordinary-only', 'projected: ordinary'],
     ],
   );
-  assert.equal(listed[0].providerSessionId, 'live-provider');
-  assert.deepEqual(listed[0].compactedFromProviderSessionIds, ['live-provider-old']);
-  assert.equal(listed[0].missionId, undefined);
-  assert.equal(listed[0].parentProviderSessionId, undefined);
-  assert.equal(listed[0].modelId, 'projected-model');
+  assert.equal(firstListed.providerSessionId, 'live-provider');
+  assert.deepEqual(firstListed.compactedFromProviderSessionIds, ['live-provider-old']);
+  assert.equal(firstListed.missionId, undefined);
+  assert.equal(firstListed.parentProviderSessionId, undefined);
+  assert.equal(firstListed.modelId, 'projected-model');
   assert.equal(liveSession.summary.title, 'live');
   assert.equal(liveSession.summary.modelId, undefined);
 
-  listed[0].compactedFromProviderSessionIds?.push('caller-mutation');
+  firstListed.compactedFromProviderSessionIds?.push('caller-mutation');
   assert.deepEqual(liveSession.summary.compactedFromProviderSessionIds, ['live-provider-old']);
 
   const resolved = registry.resolveSummary('live-provider-old');
@@ -315,6 +317,13 @@ test('resolve and list project copies after ordinary, Mission Control, and live 
       .map((item) => item.appSessionId),
     ['live-wins'],
   );
+
+  registry.updateSummary('live-wins', { title: 'canonical update' });
+  assert.equal(history.persisted.at(-1)?.modelId, undefined);
+  assert.equal(history.persisted.at(-1)?.title, 'canonical update');
+  assert.equal(published.at(-1)?.modelId, 'projected-model');
+  assert.equal(published.at(-1)?.title, 'projected: canonical update');
+  assert.equal(registry.resolveSummary('live-wins')?.title, 'projected: canonical update');
 });
 
 test('snapshot permits sequential unregister without skipping sessions', () => {
