@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import type { HistoricalSession } from './history.js';
-import type { SessionSummary } from './protocol.js';
+import type { BridgeFeature, SessionSummary } from './protocol.js';
 import {
   SessionRegistry,
   type RegisteredSession,
@@ -108,7 +108,20 @@ function copySummary(value: Readonly<SessionSummary>): SessionSummary {
     ...(value.compactedFromProviderSessionIds
       ? { compactedFromProviderSessionIds: [...value.compactedFromProviderSessionIds] }
       : {}),
-    features: [...value.features],
+    features: value.features.map(copyFeature),
+  };
+}
+
+function copyFeature(feature: BridgeFeature): BridgeFeature {
+  return {
+    ...feature,
+    preconditions: [...feature.preconditions],
+    expectedBehavior: [...feature.expectedBehavior],
+    verificationSteps: [...feature.verificationSteps],
+    ...(feature.fulfills ? { fulfills: [...feature.fulfills] } : {}),
+    ...(feature.workerProviderSessionIds
+      ? { workerProviderSessionIds: [...feature.workerProviderSessionIds] }
+      : {}),
   };
 }
 
@@ -330,6 +343,55 @@ test('resolve and list project copies after ordinary, Mission Control, and live 
   assert.equal(published.at(-1)?.modelId, 'projected-model');
   assert.equal(published.at(-1)?.title, 'projected: canonical update');
   assert.equal(registry.resolveSummary('live-wins')?.title, 'projected: canonical update');
+});
+
+test('projected and caller-owned feature state cannot mutate canonical summaries', () => {
+  const sourceFeature: BridgeFeature = {
+    id: 'feature-a',
+    description: 'Keep nested summary state isolated',
+    status: 'pending',
+    skillName: 'registry',
+    preconditions: ['source-precondition'],
+    expectedBehavior: ['source-behavior'],
+    verificationSteps: ['source-verification'],
+    fulfills: ['source-requirement'],
+    workerProviderSessionIds: ['source-worker'],
+  };
+  const { registry } = createHarness({
+    projectSummary: (canonical) => {
+      const projectedFeature = canonical.features[0];
+      assert.ok(projectedFeature);
+      projectedFeature.preconditions.push('projected-precondition');
+      projectedFeature.fulfills?.push('projected-requirement');
+      projectedFeature.workerProviderSessionIds?.push('projected-worker');
+      return copySummary(canonical);
+    },
+  });
+  const liveSession = live(summary('isolated', { features: [sourceFeature] }));
+  registry.register(liveSession);
+
+  const resolved = registry.resolveSummary('isolated');
+  const resolvedFeature = resolved?.features[0];
+  assert.ok(resolvedFeature);
+  assert.deepEqual(resolvedFeature.preconditions, [
+    'source-precondition',
+    'projected-precondition',
+  ]);
+  resolvedFeature.preconditions.push('resolved-caller-mutation');
+  resolvedFeature.expectedBehavior.push('resolved-caller-mutation');
+
+  const listedFeature = registry.listSummaries()[0]?.features[0];
+  assert.ok(listedFeature);
+  listedFeature.verificationSteps.push('listed-caller-mutation');
+  listedFeature.fulfills?.push('listed-caller-mutation');
+
+  const canonical = registry.getCanonicalSummary('isolated');
+  const canonicalFeature = canonical?.features[0];
+  assert.ok(canonicalFeature);
+  canonicalFeature.workerProviderSessionIds?.push('canonical-caller-mutation');
+
+  assert.deepEqual(liveSession.summary.features, [sourceFeature]);
+  assert.deepEqual(registry.getCanonicalSummary('isolated')?.features, [sourceFeature]);
 });
 
 test('snapshot permits sequential unregister without skipping sessions', () => {

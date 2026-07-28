@@ -1,5 +1,5 @@
 import { applyCachedSummary, type HistoricalSession, type HistoryIndex } from './history.js';
-import type { SessionSummary } from './protocol.js';
+import type { BridgeFeature, SessionSummary } from './protocol.js';
 import { filterSessionListSummaries, type SessionListFilterOptions } from './sessionListFilter.js';
 import { uniqueStrings } from './sessionHelpers.js';
 
@@ -238,6 +238,19 @@ function copySummary(summary: SessionSummary): SessionSummary {
     ...(summary.compactedFromProviderSessionIds
       ? { compactedFromProviderSessionIds: [...summary.compactedFromProviderSessionIds] }
       : {}),
-    features: [...summary.features],
+    features: summary.features.map(copyFeature),
+  };
+}
+
+function copyFeature(feature: BridgeFeature): BridgeFeature {
+  return {
+    ...feature,
+    preconditions: [...feature.preconditions],
+    expectedBehavior: [...feature.expectedBehavior],
+    verificationSteps: [...feature.verificationSteps],
+    ...(feature.fulfills ? { fulfills: [...feature.fulfills] } : {}),
+    ...(feature.workerProviderSessionIds
+      ? { workerProviderSessionIds: [...feature.workerProviderSessionIds] }
+      : {}),
   };
 }
