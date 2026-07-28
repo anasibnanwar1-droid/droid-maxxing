@@ -4,7 +4,7 @@ import { DatabaseSync } from 'node:sqlite';
 import path from 'node:path';
 import test from 'node:test';
 
-import { createSessionCharacterizationHarness } from './testing/sessionCharacterizationHarness.js';
+import { createSessionManagerTestContext } from './testing/sessionManagerTestContext.js';
 import type { SessionSummary, ServerEvent, ChildSessionHistoryLink } from './protocol.js';
 
 type SessionHistoryEvent = Extract<ServerEvent, { type: 'session.history' }>;
@@ -121,7 +121,7 @@ function linkedWorker(providerSessionId: string, toolUseId: string): ChildSessio
 }
 
 test('[H1] Initial history restore', { concurrency: false }, async () => {
-  const h = createSessionCharacterizationHarness();
+  const h = createSessionManagerTestContext();
 
   try {
     writeHistorySession(h.home, 'app-h1', [assistantMessage('m1', 'restored', 0)]);
@@ -143,7 +143,7 @@ test('[H1] Initial history restore', { concurrency: false }, async () => {
 });
 
 test('[H2] Paging, empty history, and retry', { concurrency: false }, async () => {
-  const empty = createSessionCharacterizationHarness();
+  const empty = createSessionManagerTestContext();
   try {
     await empty.create({
       sessionPurpose: 'chat',
@@ -170,7 +170,7 @@ test('[H2] Paging, empty history, and retry', { concurrency: false }, async () =
     await empty.dispose();
   }
 
-  const h = createSessionCharacterizationHarness();
+  const h = createSessionManagerTestContext();
   try {
     writeHistorySession(h.home, 'old-h2', [assistantMessage('old', 'old', 0)]);
     writeHistorySession(
@@ -237,7 +237,7 @@ test('[H2] Paging, empty history, and retry', { concurrency: false }, async () =
 });
 
 test('[A1] Child-session link persistence', { concurrency: false }, async () => {
-  const h = createSessionCharacterizationHarness();
+  const h = createSessionManagerTestContext();
 
   try {
     await h.create({
@@ -286,7 +286,7 @@ test('[A1] Child-session link persistence', { concurrency: false }, async () => 
 });
 
 test('[A2] Open and replay a linked child session', { concurrency: false }, async () => {
-  const h = createSessionCharacterizationHarness();
+  const h = createSessionManagerTestContext();
 
   try {
     h.fixture.seedHistorySummaries([summary('app-a2', 'provider-a2')]);
@@ -329,7 +329,7 @@ test('[A2] Open and replay a linked child session', { concurrency: false }, asyn
 });
 
 test('[A3] Child send, steer, and interrupt', { concurrency: false }, async () => {
-  const h = createSessionCharacterizationHarness();
+  const h = createSessionManagerTestContext();
 
   try {
     h.fixture.seedHistorySummaries([summary('app-a3', 'provider-a3')]);

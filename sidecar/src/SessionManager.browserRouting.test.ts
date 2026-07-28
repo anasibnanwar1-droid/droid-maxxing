@@ -7,10 +7,11 @@ import {
   nativeSuccess,
   observeNativeBrowserTimeouts,
 } from './testing/browserCharacterizationSupport.js';
+import { FakeFactorySession } from './testing/fakeFactoryRuntime.js';
 import {
-  FakeDroidSession,
-  createSessionCharacterizationHarness,
-} from './testing/sessionCharacterizationHarness.js';
+  createNativeBrowserTestContext,
+  createSessionManagerTestContext,
+} from './testing/sessionManagerTestContext.js';
 
 type NativeBrowserRequestEvent = Extract<ServerEvent, { type: 'browser.native.request' }>;
 
@@ -21,7 +22,7 @@ function nativeRequests(events: ServerEvent[]): NativeBrowserRequestEvent[] {
 }
 
 test('[B1] Browser command routing', { concurrency: false }, async () => {
-  const h = createSessionCharacterizationHarness();
+  const h = createSessionManagerTestContext();
   const viewport = { width: 1024, height: 768, deviceScaleFactor: 1 };
   const resizedViewport = { width: 1280, height: 720, deviceScaleFactor: 2 };
 
@@ -156,7 +157,7 @@ test('[B1] Browser command routing', { concurrency: false }, async () => {
 
 test('[B2] Native request and result correlation', { concurrency: false }, async () => {
   const timeouts = observeNativeBrowserTimeouts();
-  const h = createSessionCharacterizationHarness({ browser: 'native' });
+  const h = createNativeBrowserTestContext();
 
   try {
     let opened = false;
@@ -232,7 +233,7 @@ test('[B2] Native request and result correlation', { concurrency: false }, async
 });
 
 test('[B3] Browser continuity across compaction', { concurrency: false }, async () => {
-  const h = createSessionCharacterizationHarness();
+  const h = createSessionManagerTestContext();
   const appSessionId = 'provider-1';
 
   try {
@@ -249,7 +250,7 @@ test('[B3] Browser continuity across compaction', { concurrency: false }, async 
       newSessionId: 'provider-2',
       removedCount: 1,
     };
-    h.runtime.loadQueue.set('provider-2', [new FakeDroidSession('provider-2', {}, h.calls)]);
+    h.runtime.loadQueue.set('provider-2', [new FakeFactorySession('provider-2', {}, h.calls)]);
 
     await h.handle({
       type: 'browser.open',
@@ -299,7 +300,7 @@ test('[B3] Browser continuity across compaction', { concurrency: false }, async 
     await h.dispose();
   }
 
-  const shutdown = createSessionCharacterizationHarness();
+  const shutdown = createSessionManagerTestContext();
   let shutdownDisposed = false;
   try {
     await shutdown.create({

@@ -1,11 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import {
-  FakeDroidSession,
-  createSessionCharacterizationHarness,
-} from './testing/sessionCharacterizationHarness.js';
-import type { RecordedCall } from './testing/sessionCharacterizationHarness.js';
+import { FakeFactorySession, type RecordedCall } from './testing/fakeFactoryRuntime.js';
+import { createSessionManagerTestContext } from './testing/sessionManagerTestContext.js';
 import type { ServerEvent } from './protocol.js';
 import {
   contextUpdateCount,
@@ -57,7 +54,7 @@ function callCount(
 }
 
 test('[C1] Manual in-place compaction', { concurrency: false }, async () => {
-  const h = createSessionCharacterizationHarness();
+  const h = createSessionManagerTestContext();
 
   try {
     await h.create({
@@ -150,7 +147,7 @@ test('[C1] Manual in-place compaction', { concurrency: false }, async () => {
 });
 
 test('[C2] Provider-session swap', { concurrency: false }, async () => {
-  const h = createSessionCharacterizationHarness();
+  const h = createSessionManagerTestContext();
 
   try {
     await h.create({
@@ -166,7 +163,7 @@ test('[C2] Provider-session swap', { concurrency: false }, async () => {
       newSessionId: 'provider-2',
       removedCount: 1,
     };
-    h.runtime.loadQueue.set('provider-2', [new FakeDroidSession('provider-2', {}, h.calls)]);
+    h.runtime.loadQueue.set('provider-2', [new FakeFactorySession('provider-2', {}, h.calls)]);
 
     await h.handle({ type: 'session.compact', appSessionId: 'provider-1' });
 
@@ -203,7 +200,7 @@ test('[C2] Provider-session swap', { concurrency: false }, async () => {
 });
 
 test('[C3] Failed swap recovery', { concurrency: false }, async () => {
-  const h = createSessionCharacterizationHarness();
+  const h = createSessionManagerTestContext();
 
   try {
     await h.create({
@@ -222,7 +219,7 @@ test('[C3] Failed swap recovery', { concurrency: false }, async () => {
     };
     h.runtime.loadQueue.set('provider-3', [
       new Error('first load fails'),
-      new FakeDroidSession('provider-3', {}, h.calls),
+      new FakeFactorySession('provider-3', {}, h.calls),
     ]);
 
     const compacting = h.handle({ type: 'session.compact', appSessionId: 'provider-1' });
@@ -253,7 +250,7 @@ test(
   '[C4] Automatic compaction retains the current interrupt escape hatch',
   { concurrency: false },
   async () => {
-    const h = createSessionCharacterizationHarness();
+    const h = createSessionManagerTestContext();
     try {
       const trace = await runAutoCompactionScenario(h);
       const scopedStatus = (id: string, role: 'primary' | 'worker') =>
@@ -328,10 +325,10 @@ test(
 );
 
 test('[C5] Compaction retuning uses each live session model', { concurrency: false }, async () => {
-  const h = createSessionCharacterizationHarness();
-  const parent = new FakeDroidSession('provider-1', {}, h.calls);
-  const worker = new FakeDroidSession('worker-c5', {}, h.calls);
-  const validator = new FakeDroidSession('validator-c5', {}, h.calls);
+  const h = createSessionManagerTestContext();
+  const parent = new FakeFactorySession('provider-1', {}, h.calls);
+  const worker = new FakeFactorySession('worker-c5', {}, h.calls);
+  const validator = new FakeFactorySession('validator-c5', {}, h.calls);
   seedInitModel(parent, 'model-parent-loaded');
   seedInitModel(worker, 'model-worker-loaded');
   seedInitModel(validator, 'model-validator-loaded');

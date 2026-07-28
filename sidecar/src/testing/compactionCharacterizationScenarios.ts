@@ -1,8 +1,8 @@
+import { FakeFactorySession } from './fakeFactoryRuntime.js';
 import {
-  FakeDroidSession,
-  createSessionCharacterizationHarness,
-} from './sessionCharacterizationHarness.js';
-import type { SessionCharacterizationHarness } from './sessionCharacterizationHarness.js';
+  createSessionManagerTestContext,
+  type SessionManagerTestContext,
+} from './sessionManagerTestContext.js';
 
 export function daemonCompactionNotification(
   kind: 'started' | 'completed',
@@ -25,32 +25,15 @@ export function daemonCompactionNotification(
 }
 
 export function notifyCompaction(
-  h: SessionCharacterizationHarness,
+  h: SessionManagerTestContext,
   sessionId: string,
   kind: 'started' | 'completed',
 ): void {
   h.provider.emitNotification(sessionId, daemonCompactionNotification(kind));
 }
 
-export function seedInitModel(session: FakeDroidSession, modelId: string): void {
-  Object.defineProperty(session.initResult, 'settings', { value: { modelId } });
-}
-
-// Injects stream events while retaining the base fake's public recording and
-// deferred-stream behavior. Queue the events before the next stream starts.
-export class ParentStreamEventSession extends FakeDroidSession {
-  readonly queuedStreamEvents: unknown[][] = [];
-
-  override async *stream(
-    prompt: string,
-    options: { includePartialMessages: true },
-  ): AsyncGenerator<unknown, void, undefined> {
-    const events = this.queuedStreamEvents.shift() ?? [];
-    for await (const event of super.stream(prompt, options)) {
-      yield* events;
-      yield event;
-    }
-  }
+export function seedInitModel(session: FakeFactorySession, modelId: string): void {
+  session.setInitModel(modelId);
 }
 
 export interface ObservedWatchdog {
@@ -120,14 +103,14 @@ function required<T>(value: T | undefined, label: string): T {
   return value;
 }
 
-export function contextUpdateCount(h: SessionCharacterizationHarness, sessionId: string): number {
+export function contextUpdateCount(h: SessionManagerTestContext, sessionId: string): number {
   return h.events.filter(
     (event) => event.type === 'context.updated' && event.sourceSessionId === sessionId,
   ).length;
 }
 
-export async function runAutoCompactionScenario(h: SessionCharacterizationHarness) {
-  const parent = new ParentStreamEventSession('provider-1', {}, h.calls);
+export async function runAutoCompactionScenario(h: SessionManagerTestContext) {
+  const parent = new FakeFactorySession('provider-1', {}, h.calls);
   h.runtime.createQueue.push(parent);
   await h.create({
     sessionPurpose: 'mission-control',
@@ -180,7 +163,7 @@ export async function runAutoCompactionScenario(h: SessionCharacterizationHarnes
     text: 'worker running',
   });
   await h.provider.waitForPrompts('worker-c4', 1);
-  parent.queuedStreamEvents.push([
+  parent.queueStreamEvents([
     { type: 'mission_worker_completed', workerSessionId: 'worker-c4', exitCode: 0 },
   ]);
   const workerSteerGate = h.provider.deferNextStream('worker-c4');
@@ -236,7 +219,7 @@ export async function runAutoCompactionScenario(h: SessionCharacterizationHarnes
 }
 
 export function liveCleanupCounts(
-  h: SessionCharacterizationHarness,
+  h: SessionManagerTestContext,
   parentProviderSessionId: string,
   childSessionId: string,
 ): number[] {
@@ -253,18 +236,18 @@ export function liveCleanupCounts(
   ];
 }
 
-const cleanupMethodCount = (h: SessionCharacterizationHarness, method: string) =>
+const cleanupMethodCount = (h: SessionManagerTestContext, method: string) =>
   h.calls.filter((call) => call.target === 'cleanup' && call.method === method).length;
 
 export async function runCloseCleanupScenario() {
-  const h = createSessionCharacterizationHarness();
+  const h = createSessionManagerTestContext();
   const timers = observeCompactionTimers();
   let disposed = false;
   const parentKey = 'provider-1';
   const workerKey = 'worker-c6-key';
   const workerLive = 'worker-c6-live';
   const parentGate = h.runtime.deferNextCreateStream(parentKey);
-  h.runtime.loadQueue.set(workerKey, [new FakeDroidSession(workerLive, {}, h.calls)]);
+  h.runtime.loadQueue.set(workerKey, [new FakeFactorySession(workerLive, {}, h.calls)]);
   try {
     await h.create({
       sessionPurpose: 'mission-control',
@@ -364,14 +347,14 @@ export async function runCloseCleanupScenario() {
 }
 
 export async function runShutdownOnlyCleanupScenario() {
-  const h = createSessionCharacterizationHarness();
+  const h = createSessionManagerTestContext();
   const timers = observeCompactionTimers();
   let disposed = false;
   const parentKey = 'provider-1';
   const workerKey = 'worker-shutdown-key';
   const workerLive = 'worker-shutdown-live';
   h.runtime.deferNextCreateStream(parentKey);
-  h.runtime.loadQueue.set(workerKey, [new FakeDroidSession(workerLive, {}, h.calls)]);
+  h.runtime.loadQueue.set(workerKey, [new FakeFactorySession(workerLive, {}, h.calls)]);
   try {
     await h.create({
       sessionPurpose: 'mission-control',
