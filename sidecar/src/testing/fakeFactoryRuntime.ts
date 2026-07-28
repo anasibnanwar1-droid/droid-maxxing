@@ -66,6 +66,7 @@ export class FakeFactorySession implements FactorySession {
   nextStreamError?: Error;
   nextEnterSpecModeError?: Error;
   nextUpdateSettingsError?: Error;
+  nextCloseError?: Error;
   nextContextStats?: Awaited<ReturnType<FactorySession['getContextStats']>>;
   nextContextStatsError?: Error;
   readonly notifications = new Set<NotificationListener>();
@@ -253,11 +254,14 @@ export class FakeFactorySession implements FactorySession {
     );
   }
 
-  close(): Promise<void> {
+  async close(): Promise<void> {
     this.calls.push({ target: 'cleanup', method: 'session.close', args: [this.sessionId] });
     const gate = this.nextCloseGate;
     delete this.nextCloseGate;
-    return gate?.promise ?? Promise.resolve();
+    const error = this.nextCloseError;
+    delete this.nextCloseError;
+    await gate?.promise;
+    if (error) throw error;
   }
 
   readonly forkSession: FactorySession['forkSession'] = () =>

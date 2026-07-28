@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import type { AskUserResult, RequestPermissionHandlerResult } from '@factory/droid-sdk';
 
 import type { FactoryDefaultSettings, SessionSummary } from './protocol.js';
 import {
@@ -12,6 +13,7 @@ import {
 import type { LiveChildSession } from './SessionLifecycle.js';
 import { createCompactionTestLiveSession } from './testing/compactionTestSupport.js';
 import {
+  FakeFactoryRuntime,
   FakeFactorySession,
   type RecordedCall,
   type StreamGate,
@@ -27,6 +29,7 @@ interface Harness {
 function createHarness(): Harness {
   const calls: RecordedCall[] = [];
   const patches: Harness['patches'] = [];
+  const runtime = new FakeFactoryRuntime(calls);
   let readDefaults = (): Promise<FactoryDefaultSettings> =>
     Promise.resolve({
       modelId: 'default-model',
@@ -34,6 +37,9 @@ function createHarness(): Harness {
       compactionTokenLimitPerModel: { 'default-model': 700 },
     });
   const registry: SessionCompactionDependencies['registry'] = {
+    getLive: () => undefined,
+    resolveSummary: () => undefined,
+    replaceProvider: () => undefined,
     updateSummary: (appSessionId, patch) => {
       patches.push({ appSessionId, patch });
       return undefined;
@@ -44,10 +50,16 @@ function createHarness(): Harness {
     context: {
       recordCompaction: () => undefined,
       refresh: () => Promise.resolve(),
+      preserveUsage: () => undefined,
     },
     timeline: {
       appendStatus: () => undefined,
     },
+    runtime,
+    makePermissionHandler: () => () => new Promise<RequestPermissionHandlerResult>(() => undefined),
+    makeAskUserHandler: () => () => new Promise<AskUserResult>(() => undefined),
+    emitError: () => undefined,
+    isShutdownStarted: () => false,
     getFactoryDefaults: () => readDefaults(),
     maxContextTokensForModel: (modelId) => (modelId === 'unbounded' ? undefined : 1_000),
     resolveAutomaticTarget: () => undefined,

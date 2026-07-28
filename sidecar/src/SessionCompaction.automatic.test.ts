@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import type { AskUserResult, RequestPermissionHandlerResult } from '@factory/droid-sdk';
 
 import {
   SessionCompaction,
@@ -10,7 +11,11 @@ import {
 } from './SessionCompaction.js';
 import type { LiveChildSession, LiveSession } from './SessionLifecycle.js';
 import { createCompactionTestLiveSession } from './testing/compactionTestSupport.js';
-import { FakeFactorySession, type RecordedCall } from './testing/fakeFactoryRuntime.js';
+import {
+  FakeFactoryRuntime,
+  FakeFactorySession,
+  type RecordedCall,
+} from './testing/fakeFactoryRuntime.js';
 
 interface ObservedTimer {
   callback: () => void;
@@ -32,8 +37,14 @@ function createHarness(): Harness {
   const generations = new Map<string, number>();
   const targets = new Map<string, AutomaticCompactionTarget>();
   const trace: string[] = [];
+  const runtime = new FakeFactoryRuntime(calls);
   const compaction = new SessionCompaction({
-    registry: { updateSummary: () => undefined },
+    registry: {
+      getLive: () => undefined,
+      resolveSummary: () => undefined,
+      replaceProvider: () => undefined,
+      updateSummary: () => undefined,
+    },
     context: {
       recordCompaction: (target) => {
         const id = targetId(target);
@@ -44,12 +55,18 @@ function createHarness(): Harness {
         trace.push(`refresh:${targetId(target)}`);
         return Promise.resolve();
       },
+      preserveUsage: () => undefined,
     },
     timeline: {
       appendStatus: (_appSessionId, text, _compactType, sourceSessionId) => {
         trace.push(`status:${sourceSessionId}:${text}`);
       },
     },
+    runtime,
+    makePermissionHandler: () => () => new Promise<RequestPermissionHandlerResult>(() => undefined),
+    makeAskUserHandler: () => () => new Promise<AskUserResult>(() => undefined),
+    emitError: () => undefined,
+    isShutdownStarted: () => false,
     getFactoryDefaults: () => Promise.resolve({}),
     maxContextTokensForModel: () => undefined,
     resolveAutomaticTarget: (key) => targets.get(resourceId(key)),

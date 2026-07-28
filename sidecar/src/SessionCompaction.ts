@@ -22,9 +22,14 @@ import type {
   SessionContext,
 } from './SessionContext.js';
 import type { LiveChildSession, LiveSession } from './SessionLifecycle.js';
-import type { SessionRegistry } from './SessionRegistry.js';
-import { errMsg, modelDefaultForMode } from './sessionHelpers.js';
-import type { SessionTimeline } from './SessionTimeline.js';
+import { defaultsModeForSummary, errMsg, modelDefaultForMode } from './sessionHelpers.js';
+import {
+  SessionCompactionExecution,
+  type CompactionExecutionResult,
+  type SessionCompactionExecutionDependencies,
+} from './sessionCompactionExecution.js';
+
+export type { CompactionExecutionResult } from './sessionCompactionExecution.js';
 
 export interface CompactionLimitRequest {
   modelId?: string;
@@ -70,10 +75,13 @@ export type AutoCompactionSettlement =
       child: LiveChildSession;
     };
 
-export interface SessionCompactionDependencies {
-  registry: Pick<SessionRegistry<LiveSession>, 'updateSummary'>;
-  context: Pick<SessionContext, 'recordCompaction' | 'refresh'>;
-  timeline: Pick<SessionTimeline, 'appendStatus'>;
+export interface SessionCompactionDependencies extends Omit<
+  SessionCompactionExecutionDependencies,
+  'context'
+> {
+  context: SessionCompactionExecutionDependencies['context'] &
+    Pick<SessionContext, 'recordCompaction'>;
+  isShutdownStarted(): boolean;
   getFactoryDefaults(): Promise<FactoryDefaultSettings>;
   maxContextTokensForModel(modelId?: string): number | undefined;
   resolveAutomaticTarget(key: CompactionResourceKey): AutomaticCompactionTarget | undefined;
@@ -96,10 +104,18 @@ export class SessionCompaction {
   private retuneRevision = 0;
   private epoch = 0;
   private readonly watchdogs: AutoCompactionWatchdogs<CompactionResourceKey>;
+  private readonly execution: SessionCompactionExecution;
 
   constructor(private readonly dependencies: SessionCompactionDependencies) {
     this.watchdogs = new AutoCompactionWatchdogs(compactionResourceId, (key) => {
       this.onWatchdogExpired(key);
+    });
+    this.execution = new SessionCompactionExecution(dependencies, {
+      subscribePrimary: (liveSession) => {
+        this.subscribePrimary(this.primaryAutomaticTarget(liveSession));
+      },
+      rearmPrimary: (liveSession) => this.rearmPrimary(this.primaryRetuneTarget(liveSession)),
+      primaryTarget: (liveSession) => this.primaryAutomaticTarget(liveSession),
     });
   }
 
@@ -183,6 +199,13 @@ export class SessionCompaction {
     if (target.kind === 'primary') target.liveSession.autoCompacting = false;
     else target.child.autoCompacting = false;
     this.watchdogs.clear(compactionResourceKey(target));
+  }
+
+  async compact(
+    appSessionId: string,
+    customInstructions?: string,
+  ): Promise<CompactionExecutionResult> {
+    return this.execution.compact(appSessionId, customInstructions);
   }
 
   clearAll(): void {
@@ -282,6 +305,39 @@ export class SessionCompaction {
       `[compaction] watchdog settled a stale auto-compaction on ${compactionResourceId(key)}`,
     );
     this.setAutoCompacting(target, false);
+  }
+
+  private primaryAutomaticTarget(liveSession: LiveSession): PrimaryAutomaticCompactionTarget {
+    const session = liveSession.session;
+    const appSessionId = liveSession.summary.appSessionId;
+    return {
+      kind: 'primary',
+      appSessionId,
+      providerSessionId: session.sessionId,
+      sourceSessionId: appSessionId,
+      session,
+      liveSession,
+      isCurrent: () =>
+        !this.dependencies.isShutdownStarted() &&
+        this.dependencies.registry.getLive(appSessionId) === liveSession &&
+        !liveSession.closeMode &&
+        liveSession.session === session,
+    };
+  }
+
+  private primaryRetuneTarget(liveSession: LiveSession): PrimaryCompactionTarget {
+    const target = this.primaryAutomaticTarget(liveSession);
+    const configuredModelId = liveSession.summary.modelId;
+    const defaultsMode = defaultsModeForSummary(liveSession.summary);
+    return {
+      ...target,
+      configuredModelId,
+      defaultsMode,
+      isCurrent: () =>
+        target.isCurrent() &&
+        liveSession.summary.modelId === configuredModelId &&
+        defaultsModeForSummary(liveSession.summary) === defaultsMode,
+    };
   }
 
   private isRetuneCurrent(

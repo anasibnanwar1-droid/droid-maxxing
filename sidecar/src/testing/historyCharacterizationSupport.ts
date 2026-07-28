@@ -38,12 +38,16 @@ type PersistedSummaryPatch = Pick<
 
 export class FakeHistoryIndex implements SessionHistoryDependencies {
   nextCloseError?: Error;
+  nextSyncError?: Error;
   private readonly summariesByAppId = new Map<string, PersistedSummaryPatch>();
   private readonly links = new Map<string, Protocol.ChildSessionHistoryLink[]>();
 
   constructor(private readonly calls: RecordedCall[]) {}
 
   syncSummaries(summaries: Protocol.SessionSummary[]): void {
+    const error = this.nextSyncError;
+    delete this.nextSyncError;
+    if (error) throw error;
     this.seedSummaries(summaries);
     this.calls.push({ target: 'history', method: 'syncSummaries', args: [summaries] });
   }

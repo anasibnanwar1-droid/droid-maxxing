@@ -17,6 +17,7 @@ import type {
   SessionInteractionMode,
 } from './protocol.js';
 import {
+  defaultsModeForSummary,
   errMsg,
   isUserCancellation,
   modelDefaultForMode,
@@ -54,7 +55,6 @@ import {
   SessionContext,
   type ChildOperationTarget,
   type LiveOperationTarget,
-  type UsageOffset,
 } from './SessionContext.js';
 import {
   childCompactionModelId,
@@ -77,7 +77,7 @@ import {
   type StartedLocalMcpResources,
 } from './SessionLifecycle.js';
 import type { SessionListFilterOptions } from './sessionListFilter.js';
-import { normalizeCompactionTokenLimit, runCompaction, type CompactType } from './compaction.js';
+import { normalizeCompactionTokenLimit } from './compaction.js';
 
 type Emit = (event: ServerEvent) => void;
 
@@ -246,17 +246,6 @@ export class SessionManager {
       },
       now: Date.now,
     });
-    this.compaction = new SessionCompaction({
-      registry: this.registry,
-      context: this.context,
-      timeline: this.timeline,
-      getFactoryDefaults: () => this.getFactoryDefaults(),
-      maxContextTokensForModel: (modelId) => this.maxContextTokensForModel(modelId),
-      resolveAutomaticTarget: (key) => this.resolveAutomaticCompactionTarget(key),
-      settleAutomatic: (settlement) => {
-        this.settleAutomaticCompaction(settlement);
-      },
-    });
     this.interactions = new SessionInteractions({
       getLiveSession: (id) => this.registry.getLive(id),
       updateSummary: (id, patch) => {
@@ -267,6 +256,24 @@ export class SessionManager {
       },
       emitError: (error) => {
         this.emitError(error);
+      },
+    });
+    this.compaction = new SessionCompaction({
+      registry: this.registry,
+      context: this.context,
+      timeline: this.timeline,
+      runtime: this.runtime,
+      makePermissionHandler: (ref) => this.interactions.makePermissionHandler(ref),
+      makeAskUserHandler: (ref) => this.interactions.makeAskUserHandler(ref),
+      emitError: (error) => {
+        this.emitError(error);
+      },
+      isShutdownStarted: () => this.shutdownPromise !== undefined,
+      getFactoryDefaults: () => this.getFactoryDefaults(),
+      maxContextTokensForModel: (modelId) => this.maxContextTokensForModel(modelId),
+      resolveAutomaticTarget: (key) => this.resolveAutomaticCompactionTarget(key),
+      settleAutomatic: (settlement) => {
+        this.settleAutomaticCompaction(settlement);
       },
     });
     this.eventFlow = new SessionEventFlow({
@@ -418,21 +425,7 @@ export class SessionManager {
         }
         return;
       case 'session.compact': {
-        const appSessionId = cmd.appSessionId;
-        const previousLiveSession = this.registry.getLive(appSessionId);
-        if (
-          previousLiveSession?.streaming ||
-          previousLiveSession?.compacting ||
-          previousLiveSession?.autoCompacting
-        ) {
-          this.timeline.appendStatus(
-            appSessionId,
-            'Cannot compact while a turn is active. Try again when the model is idle.',
-          );
-          return;
-        }
-        await this.compactSession(appSessionId, cmd.customInstructions, 'manual');
-        await this.lifecycle.settleAfterCompaction(appSessionId, previousLiveSession);
+        await this.compactSession(cmd.appSessionId, cmd.customInstructions);
         return;
       }
       case 'session.fork':
@@ -1413,185 +1406,63 @@ export class SessionManager {
   }
 
   private async compactSession(
-    appSessionId: string,
+    requestedAppSessionId: string,
     customInstructions?: string,
-    compactType: CompactType = 'manual',
   ): Promise<void> {
-    const liveSession = this.registry.getLive(appSessionId);
-    if (liveSession) {
-      await this.compactLiveSession(liveSession, customInstructions, compactType);
+    const previousLiveSession = this.registry.getLive(requestedAppSessionId);
+    const appSessionId =
+      previousLiveSession?.summary.appSessionId ??
+      this.registry.resolveSummary(requestedAppSessionId)?.appSessionId ??
+      requestedAppSessionId;
+    if (
+      previousLiveSession?.streaming ||
+      previousLiveSession?.compacting ||
+      previousLiveSession?.autoCompacting
+    ) {
+      this.timeline.appendStatus(
+        appSessionId,
+        'Cannot compact while a turn is active. Try again when the model is idle.',
+      );
       return;
     }
-    await this.compactHistoricalSession(appSessionId, customInstructions);
-  }
-
-  // Primary live-session compaction. Runs the shared in-place path; if the
-  // daemon returns a new backing id the `reload` hook swaps the session while
-  // keeping the stable app id (summary.appSessionId) so the visible chat is unchanged.
-  private async compactLiveSession(
-    liveSession: LiveSession,
-    customInstructions: string | undefined,
-    compactType: CompactType,
-  ): Promise<void> {
-    const appSessionId = liveSession.summary.appSessionId;
-    const preCompactSessionId = liveSession.summary.providerSessionId;
-    const carryover: UsageOffset = {
-      tokensIn: liveSession.summary.tokensIn,
-      tokensOut: liveSession.summary.tokensOut,
-    };
-    liveSession.compacting = true;
-    // Remembers the daemon's new backing id so a reload failure can be recovered
-    // after runCompaction returns 'stale' (the hook sets it before adopting).
-    let swapTarget: string | undefined;
+    let readyToSettle = false;
     try {
-      const outcome = await runCompaction(
-        liveSession.session,
-        {
-          status: (text, ct) => {
-            this.timeline.appendStatus(appSessionId, text, ct);
-          },
-          error: (message) => {
-            this.emitError({
-              providerSessionId: liveSession.summary.providerSessionId,
-              appSessionId,
-              message: `Could not compact session: ${message}`,
-              recoverable: true,
-            });
-          },
-          refresh: () => {
-            // The pre-compaction exact reading would otherwise override the
-            // refreshed estimate; and when the daemon compacted in place (no
-            // swap, so no compactedFromProviderSessionIds bump) the meter's ratchet
-            // needs the generation counter to move to accept the lower value.
-            const live = this.registry.getLive(appSessionId);
-            if (live) {
-              this.registry.updateSummary(appSessionId, {
-                contextTokens: 0,
-                contextAccuracy: undefined,
-                ...(live.summary.providerSessionId === preCompactSessionId
-                  ? { autoCompactions: (live.summary.autoCompactions ?? 0) + 1 }
-                  : {}),
-              });
-            }
-            return this.context.refresh(this.primaryContextTarget(liveSession));
-          },
-          reload: async (newSessionId) => {
-            swapTarget = newSessionId;
-            await this.swapSessionProvider(liveSession, newSessionId, carryover);
-          },
-        },
-        { customInstructions, compactType },
-      );
-      // The daemon swapped to a new backing id but adopting it threw, so
-      // liveSession.session still points at the swapped-away (now-dead) old id.
-      // Recover before later sends stream into that stale session.
-      if (outcome === 'stale' && swapTarget) {
-        await this.recoverStaleSessionSwap(liveSession, swapTarget, carryover);
+      const result = await this.compaction.compact(appSessionId, customInstructions);
+      if (result.kind === 'close-and-resume') {
+        const closeFailure = await this.closeForPermanentCompactionRecovery(result.appSessionId);
+        this.context.preserveUsage(result.appSessionId, result.carryover);
+        readyToSettle = true;
+        if (closeFailure) {
+          this.emitError({
+            appSessionId: result.appSessionId,
+            providerSessionId: previousLiveSession?.session.sessionId,
+            message: `Could not fully close the compacted session: ${errMsg(closeFailure.error)}`,
+            recoverable: true,
+          });
+        }
+        this.emitError({
+          appSessionId: result.appSessionId,
+          providerSessionId: result.providerSessionId,
+          message:
+            'Compaction moved this conversation to a new session but reloading it failed; it will reload on your next message.',
+          recoverable: true,
+        });
       }
+      readyToSettle = true;
     } finally {
-      liveSession.compacting = false;
-    }
-  }
-
-  // Adopt the daemon's compacted backing session behind the stable app id:
-  // load the new id, swap it in, retire the old session, and persist the new id
-  // with carried-over usage. Throws if the new session cannot be loaded.
-  private async swapSessionProvider(
-    liveSession: LiveSession,
-    newSessionId: string,
-    carryover: UsageOffset,
-  ): Promise<void> {
-    const appSessionId = liveSession.summary.appSessionId;
-    const ref = { id: appSessionId };
-    const oldSession = liveSession.session;
-    liveSession.session = await this.runtime.loadSession(newSessionId, {
-      permissionHandler: this.interactions.makePermissionHandler(ref),
-      askUserHandler: this.interactions.makeAskUserHandler(ref),
-      // Re-attach the same local MCP servers (still running) so the swapped
-      // session keeps browser tools on subsequent turns.
-      mcpServers: liveSession.mcpConfigs,
-    });
-    this.compaction.subscribePrimary(this.primaryAutomaticCompactionTarget(liveSession));
-    // Settings live on the daemon session, not the persisted file, so the
-    // replacement session starts without the auto-compaction threshold check.
-    // Re-push it; a failure must not turn a successful swap into a stale one.
-    await this.compaction
-      .rearmPrimary(this.primaryCompactionTarget(liveSession))
-      .catch(ignoreError);
-    // The replacement session starts with default tool settings, so the cached
-    // design-tool policy no longer reflects reality. Clear it so the next turn
-    // re-synchronizes disabledToolIds.
-    liveSession.todoDisabledForDesign = undefined;
-    await oldSession.close().catch(ignoreError);
-    this.context.preserveUsage(appSessionId, carryover);
-    this.registry.replaceProvider(appSessionId, newSessionId, {
-      tokensIn: carryover.tokensIn,
-      tokensOut: carryover.tokensOut,
-      contextTokens: 0,
-    });
-  }
-
-  // Recovery for a primary-session compaction that swapped provider sessions but
-  // failed to adopt the new one (liveSession.session is now a dead id). Retry the
-  // adoption once for a transient failure; if it still fails, persist the new
-  // id and drop the live session so the next send re-resumes against the live
-  // (compacted) session instead of streaming into the dead one.
-  private async recoverStaleSessionSwap(
-    liveSession: LiveSession,
-    newSessionId: string,
-    carryover: UsageOffset,
-  ): Promise<void> {
-    const appSessionId = liveSession.summary.appSessionId;
-    try {
-      await this.swapSessionProvider(liveSession, newSessionId, carryover);
-      return;
-    } catch {
-      /* adoption still failing; persist the new id and drop the live session below */
-    }
-    this.registry.replaceProvider(appSessionId, newSessionId, {
-      tokensIn: carryover.tokensIn,
-      tokensOut: carryover.tokensOut,
-      contextTokens: 0,
-    });
-    await this.lifecycle.close(appSessionId, 'preserve-pending');
-    // SessionLifecycle.close() clears the usage offset for this app id, so seed it AFTER the
-    // teardown: when the next message re-resumes against the compacted backing
-    // session (whose token counts restart low), the carried-over totals are
-    // added back instead of the displayed usage collapsing to the new segment.
-    this.context.preserveUsage(appSessionId, carryover);
-    this.emitError({
-      appSessionId,
-      providerSessionId: newSessionId,
-      message:
-        'Compaction moved this conversation to a new session but reloading it failed; it will reload on your next message.',
-      recoverable: true,
-    });
-  }
-
-  // Compacting a session that is not currently loaded (e.g. from the sidebar
-  // history). There is no live session to refresh; the swapped backing id is
-  // persisted to history so the next resume continues from the compacted state.
-  private async compactHistoricalSession(
-    appSessionId: string,
-    customInstructions?: string,
-  ): Promise<void> {
-    const historical = this.registry.resolveSummary(appSessionId);
-    const oldProviderSessionId = historical?.providerSessionId ?? appSessionId;
-    try {
-      const result = await this.withSession(appSessionId, (session) =>
-        session.compactSession(customInstructions ? { customInstructions } : {}),
-      );
-      if (!result) return;
-      const newSessionId = result.newSessionId || oldProviderSessionId;
-      if (newSessionId !== oldProviderSessionId && historical) {
-        this.registry.replaceProvider(historical.appSessionId, newSessionId);
+      if (readyToSettle) {
+        await this.lifecycle.settleAfterCompaction(appSessionId, previousLiveSession);
       }
-    } catch (err) {
-      this.emitError({
-        providerSessionId: oldProviderSessionId,
-        appSessionId: historical?.appSessionId ?? appSessionId,
-        message: `Could not compact session: ${errMsg(err)}`,
-      });
+    }
+  }
+
+  private async closeForPermanentCompactionRecovery(
+    appSessionId: string,
+  ): Promise<{ error: unknown } | undefined> {
+    try {
+      await this.lifecycle.close(appSessionId, 'preserve-pending');
+    } catch (error) {
+      return { error };
     }
   }
 
@@ -2604,10 +2475,4 @@ function defaultModelForAgent(
   if (agent === 'worker') return defaults.workerModelId;
   if (agent === 'validator') return defaults.validatorModelId;
   return modelDefaultForMode(mode, defaults);
-}
-
-function defaultsModeForSummary(summary: SessionSummary): SessionInteractionMode {
-  if (summary.sessionPurpose === 'mission-control') return 'agi';
-  if (summary.interactionMode === 'spec') return 'spec';
-  return 'auto';
 }

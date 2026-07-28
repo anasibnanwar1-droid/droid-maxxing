@@ -369,7 +369,7 @@ test('[C3] Failed swap recovery', { concurrency: false }, async () => {
   }
 });
 
-test('[C7] Permanent swap failure re-delivers once through lazy resume', async () => {
+test('[C7] Permanent swap failure settles after old-provider close rejects', async () => {
   const h = createSessionManagerTestContext();
 
   try {
@@ -387,6 +387,7 @@ test('[C7] Permanent swap failure re-delivers once through lazy resume', async (
       newSessionId: 'provider-7',
       removedCount: 1,
     };
+    h.provider.session('provider-1').nextCloseError = new Error('old provider close failed');
     const resumed = new FakeFactorySession('provider-7', {}, h.calls);
     writeProviderSessionStart(h.home, 'provider-7', 'C7 compacted');
     h.runtime.loadQueue.set('provider-7', [
@@ -412,6 +413,17 @@ test('[C7] Permanent swap failure re-delivers once through lazy resume', async (
           event.type === 'error' &&
           event.recoverable === true &&
           /reloading it failed/i.test(event.message),
+      ),
+      true,
+    );
+    assert.equal(
+      h.events.some(
+        (event) =>
+          event.type === 'error' &&
+          event.providerSessionId === 'provider-1' &&
+          event.recoverable === true &&
+          event.message ===
+            'Could not fully close the compacted session: old provider close failed',
       ),
       true,
     );
