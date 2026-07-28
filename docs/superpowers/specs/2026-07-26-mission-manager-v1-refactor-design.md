@@ -53,7 +53,7 @@ Tests must not assert private maps, flags, helper selection, method decompositio
 
 All sidecar suites in Sections A through E consume this harness. No individual test may cast `SessionManager`, read private properties, invoke private methods, or construct fabricated private session state. No second dependency-replacement harness is permitted.
 
-The harness is temporary because `SessionManager` has no dependency-injection seam. Its deletion criterion is Refactor PR 3, when `FactoryCoreAdapter`, `SessionService`, `SessionRegistry`, and related session modules expose proper test interfaces.
+The harness is temporary because `SessionManager` has no dependency-injection seam. Its deletion criterion is Refactor PR 3, when `FactoryRuntime`, `DroidRuntime`, `SessionRegistry`, and `SessionLifecycle` expose proper test interfaces.
 
 | ID | Characterization | Observable evidence |
 | --- | --- | --- |

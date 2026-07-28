@@ -248,7 +248,8 @@ The complete dependency surface is:
 - `compactionLimit()`, `enableDaemonAutoCompaction()`, and
   `subscribeSessionCompaction()`;
 - `childSessionLinks()` for cold-resume seeding;
-- `applyPendingSettingsToSummary()` before a cold-resume summary is registered;
+- `applyPendingSettingsToSummary()` for ephemeral cold-resume compaction
+  selection and publication; the canonical summary is registered unchanged;
 - `applyPendingSessionSettings()` before send queue decisions;
 - `runPrimaryTurn()` for one provider stream, design-tool policy, event
   normalization, and context start/stop/refresh;
