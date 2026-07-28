@@ -1787,7 +1787,7 @@ export class SessionManager {
       tokensOut: carryover.tokensOut,
       contextTokens: 0,
     });
-    await this.lifecycle.close(appSessionId);
+    await this.lifecycle.close(appSessionId, 'preserve-pending');
     // SessionLifecycle.close() clears the usage offset for this app id, so seed it AFTER the
     // teardown: when the next message re-resumes against the compacted backing
     // session (whose token counts restart low), the carried-over totals are

@@ -58,6 +58,7 @@ interface LiveTurnState {
   interruptingForSteer?: boolean;
   interrupting?: boolean; // Marks user Stop so the resulting stream abort settles quietly.
 }
+type SessionCloseMode = 'discard-pending' | 'preserve-pending';
 export interface LiveChildSession extends LiveTurnState {
   session: FactorySession;
   providerSessionId: string; // Parent map/watchdog key; it may differ from session.sessionId.
@@ -70,7 +71,7 @@ export interface LiveChildSession extends LiveTurnState {
 export interface LiveSession extends LiveTurnState {
   summary: SessionSummary;
   session: FactorySession;
-  closing: boolean;
+  closeMode?: SessionCloseMode;
   pendingPermissions: Map<string, PendingPermission>;
   pendingQuestions: Map<string, (result: AskUserResult) => void>;
   childSessions: Map<string, LiveChildSession>;
@@ -366,13 +367,13 @@ export class SessionLifecycle {
   ): Promise<void> {
     const liveSession = this.dependencies.registry.getLive(appSessionId);
     if (!liveSession) {
-      if (previousLiveSession && !previousLiveSession.closing) {
+      if (previousLiveSession && previousLiveSession.closeMode !== 'discard-pending') {
         const queued = previousLiveSession.pendingSends.splice(0);
         await this.redeliverQueuedSends(appSessionId, queued);
       }
       return;
     }
-    if (liveSession.closing) return;
+    if (liveSession.closeMode) return;
     if (liveSession.streaming || liveSession.compacting || liveSession.autoCompacting) return;
     const next = liveSession.pendingSends.shift();
     if (next === undefined && previousLiveSession) return;
@@ -380,12 +381,12 @@ export class SessionLifecycle {
     if (next !== undefined) await this.drive(liveSession.summary.appSessionId, next);
   }
 
-  async close(appSessionId: string): Promise<void> {
+  async close(appSessionId: string, mode: SessionCloseMode = 'discard-pending'): Promise<void> {
     const d = this.dependencies;
     const liveSession = d.registry.getLive(appSessionId);
-    if (!liveSession || liveSession.closing) return;
-    liveSession.closing = true;
-    liveSession.pendingSends = [];
+    if (!liveSession || liveSession.closeMode) return;
+    liveSession.closeMode = mode;
+    if (mode === 'discard-pending') liveSession.pendingSends = [];
     d.stopContextPolling(liveSession.summary.appSessionId);
     if (liveSession.summary.providerSessionId) {
       d.stopContextPolling(liveSession.summary.providerSessionId);
@@ -420,7 +421,7 @@ export class SessionLifecycle {
       await this.resume(appSessionId);
       liveSession = this.dependencies.registry.getLive(appSessionId);
     }
-    if (liveSession?.closing) return undefined;
+    if (liveSession?.closeMode) return undefined;
     if (!liveSession) {
       const message = `Session ${appSessionId} is not resumable`;
       this.dependencies.emitError({ appSessionId, message });
@@ -429,13 +430,13 @@ export class SessionLifecycle {
     const settingsApplied = await this.dependencies.applyPendingSessionSettings(
       liveSession.summary.appSessionId,
     );
-    return settingsApplied && !liveSession.closing ? liveSession : undefined;
+    return settingsApplied && !liveSession.closeMode ? liveSession : undefined;
   }
 
   private async drive(appSessionId: string, prompt: string): Promise<void> {
     const d = this.dependencies;
     const liveSession = d.registry.getLive(appSessionId);
-    if (!liveSession || liveSession.closing) return;
+    if (!liveSession || liveSession.closeMode) return;
     const stableAppSessionId = liveSession.summary.appSessionId;
     liveSession.streaming = true;
     liveSession.terminalSources.delete(stableAppSessionId);
@@ -450,7 +451,7 @@ export class SessionLifecycle {
       liveSession.interruptingForSteer = false;
       liveSession.interrupting = false;
       liveSession.streaming = false;
-      if (this.isClosing(liveSession)) {
+      if (this.shouldDiscardPendingSends(liveSession)) {
         liveSession.pendingSends = [];
       } else if (!d.registry.getLive(stableAppSessionId)) {
         const queued = liveSession.pendingSends.splice(0);
@@ -473,8 +474,8 @@ export class SessionLifecycle {
     });
   }
 
-  private isClosing(liveSession: LiveSession): boolean {
-    return liveSession.closing;
+  private shouldDiscardPendingSends(liveSession: LiveSession): boolean {
+    return liveSession.closeMode === 'discard-pending';
   }
 
   private async redeliverQueuedSends(appSessionId: string, queued: string[]): Promise<void> {
@@ -498,7 +499,6 @@ function createLiveSession(
   return {
     summary,
     session,
-    closing: false,
     streaming: false,
     pendingSends: [],
     pendingPermissions: new Map(),
