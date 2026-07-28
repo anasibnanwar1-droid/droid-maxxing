@@ -198,9 +198,6 @@ export class SessionLifecycle {
       d.registry.register(liveSession);
       d.emit({ type: 'session.created', clientRef: command.clientRef, session: summary });
       this.driveInBackground(appSessionId, command.goal);
-      pendingMcpServers = [];
-      pendingSession = undefined;
-      pendingLiveSession = undefined;
     } catch (error) {
       await this.cleanupFailedOpen(pendingMcpServers, pendingSession, pendingLiveSession);
       d.emitError({ message: errMsg(error) });
@@ -290,9 +287,6 @@ export class SessionLifecycle {
         });
       }
       void d.refreshContext(appSessionId, session);
-      pendingMcpServers = [];
-      pendingSession = undefined;
-      pendingLiveSession = undefined;
       return true;
     } catch (error) {
       await this.cleanupFailedOpen(pendingMcpServers, pendingSession, pendingLiveSession);

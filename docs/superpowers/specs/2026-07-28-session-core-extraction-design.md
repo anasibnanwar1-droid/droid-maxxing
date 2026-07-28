@@ -478,7 +478,7 @@ search, not just deletion of the temporary harness, is the acceptance proof.
   `sessionHelpers.ts`, the same diff must contain an explicit justification and
   pass an additional adversarial review; compressed code or shallow helper
   fragments are not acceptable.
-  - Implementation exception: the final module is 563 lines after review fixes.
+  - Implementation exception: the final module is 557 lines after review fixes.
     The 63-line overage keeps post-open resource ownership, overlapping-close
     coordination, and queued-send disposition in the lifecycle that owns those
     transitions. Moving them would split one state machine or create shallow
