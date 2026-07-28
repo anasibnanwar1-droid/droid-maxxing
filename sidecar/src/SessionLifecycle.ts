@@ -30,7 +30,7 @@ import {
 } from './sessionHelpers.js';
 
 export type SessionCreateCommand = Extract<ClientCommand, { type: 'session.create' }>;
-export interface PendingPermission {
+interface PendingPermission {
   resolve: (result: RequestPermissionHandlerResult) => void;
   kind: PermissionKind;
   signature?: string;
@@ -44,14 +44,14 @@ export interface ChildSessionSettings {
   modelId?: string;
   reasoningEffort?: ReasoningEffort;
 }
-export interface LocalMcpResource {
+interface LocalMcpResource {
   close(): Promise<void>;
 }
 export interface StartedLocalMcpResources {
   servers: LocalMcpResource[];
   configs: McpServerConfig[];
 }
-export interface LiveTurnState {
+interface LiveTurnState {
   streaming: boolean;
   autoCompacting: boolean;
   pendingSends: string[];
@@ -90,8 +90,8 @@ export interface LiveSession extends LiveTurnState {
   compacting?: boolean; // Manual-compaction overlap guard; auto-compaction is separate.
   unsubscribe?: () => void; // Primary provider notification subscription, replaced on swap.
 }
-export type LifecycleError = Omit<Extract<ServerEvent, { type: 'error' }>, 'type'>;
-export type CompactionLimitRequest =
+type LifecycleError = Omit<Extract<ServerEvent, { type: 'error' }>, 'type'>;
+type CompactionLimitRequest =
   | { kind: 'create'; command: CompactionTokenLimitPatch; defaults: FactoryDefaultSettings }
   | { kind: 'resume'; exposed: CompactionTokenLimitPatch };
 

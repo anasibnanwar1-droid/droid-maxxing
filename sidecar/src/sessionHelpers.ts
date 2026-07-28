@@ -86,7 +86,7 @@ export function reasoningValue(value?: string): ReasoningEffort | undefined {
   return undefined;
 }
 
-export function classifySession(
+function classifySession(
   init: SessionInitResult,
   historical?: SessionSummary,
 ): Pick<
@@ -176,7 +176,7 @@ export function phaseFromState(state?: string): SessionPhase | undefined {
   return state ? STATE_TO_PHASE[state] : undefined;
 }
 
-export function phaseFromInit(init: SessionInitResult): SessionPhase {
+function phaseFromInit(init: SessionInitResult): SessionPhase {
   return phaseFromState(init.mission?.state) ?? 'paused';
 }
 

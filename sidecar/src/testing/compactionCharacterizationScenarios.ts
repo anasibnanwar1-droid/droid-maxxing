@@ -4,9 +4,7 @@ import {
   type SessionManagerTestContext,
 } from './sessionManagerTestContext.js';
 
-export function daemonCompactionNotification(
-  kind: 'started' | 'completed',
-): Record<string, unknown> {
+function daemonCompactionNotification(kind: 'started' | 'completed'): Record<string, unknown> {
   return {
     jsonrpc: '2.0',
     method: 'droid.session_notification',
@@ -24,7 +22,7 @@ export function daemonCompactionNotification(
   };
 }
 
-export function notifyCompaction(
+function notifyCompaction(
   h: SessionManagerTestContext,
   sessionId: string,
   kind: 'started' | 'completed',
@@ -36,13 +34,13 @@ export function seedInitModel(session: FakeFactorySession, modelId: string): voi
   session.setInitModel(modelId);
 }
 
-export interface ObservedWatchdog {
+interface ObservedWatchdog {
   timer: ReturnType<typeof setTimeout>;
   callback: (...args: unknown[]) => void;
   clears: number;
 }
 
-export function observeCompactionTimers() {
+function observeCompactionTimers() {
   type TimerCallback = (...args: unknown[]) => void;
   const intervals = new Map<ReturnType<typeof setInterval>, number>();
   const watchdogs: ObservedWatchdog[] = [];
@@ -218,7 +216,7 @@ export async function runAutoCompactionScenario(h: SessionManagerTestContext) {
   };
 }
 
-export function liveCleanupCounts(
+function liveCleanupCounts(
   h: SessionManagerTestContext,
   parentProviderSessionId: string,
   childSessionId: string,
