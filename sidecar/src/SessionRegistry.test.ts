@@ -45,6 +45,8 @@ class FakeHistory {
 interface HarnessOptions {
   ordinary?: SessionSummary[];
   missionControl?: SessionSummary[];
+  loadOrdinarySessions?: SessionRegistryDependencies['loadOrdinarySessions'];
+  loadMissionControlSessions?: SessionRegistryDependencies['loadMissionControlSessions'];
   projectSummary?: SessionRegistryDependencies['projectSummary'];
   now?: () => number;
 }
@@ -54,8 +56,10 @@ function createHarness(options: HarnessOptions = {}) {
   const published: SessionSummary[] = [];
   const dependencies: SessionRegistryDependencies = {
     history,
-    loadOrdinarySessions: () => historicalRows(options.ordinary ?? []),
-    loadMissionControlSessions: () => historicalRows(options.missionControl ?? []),
+    loadOrdinarySessions:
+      options.loadOrdinarySessions ?? (() => historicalRows(options.ordinary ?? [])),
+    loadMissionControlSessions:
+      options.loadMissionControlSessions ?? (() => historicalRows(options.missionControl ?? [])),
     projectSummary: options.projectSummary ?? ((summary) => copySummary(summary)),
     onSummaryUpdated: (summary) => {
       history.trace.push('publish');
@@ -392,6 +396,37 @@ test('projected and caller-owned feature state cannot mutate canonical summaries
 
   assert.deepEqual(liveSession.summary.features, [sourceFeature]);
   assert.deepEqual(registry.getCanonicalSummary('isolated')?.features, [sourceFeature]);
+});
+
+test('workspace limits apply after canonical source precedence', () => {
+  const ordinary = historicalRows([summary('shared', { title: 'ordinary', updatedAt: 100 })]);
+  const missionControl = historicalRows([
+    summary('mission-worker', {
+      role: 'worker',
+      sessionPurpose: 'mission-control',
+      updatedAt: 200,
+    }),
+    summary('shared', {
+      title: 'mission control',
+      sessionPurpose: 'mission-control',
+      updatedAt: 50,
+    }),
+  ]);
+  const loadWithSourceLimit =
+    (rows: HistoricalSession[]): SessionRegistryDependencies['loadOrdinarySessions'] =>
+    (options) =>
+      options?.limitPerWorkspace === undefined ? rows : rows.slice(0, options.limitPerWorkspace);
+  const { registry } = createHarness({
+    loadOrdinarySessions: loadWithSourceLimit(ordinary),
+    loadMissionControlSessions: loadWithSourceLimit(missionControl),
+  });
+
+  assert.deepEqual(
+    registry
+      .listSummaries({ workspaceCwds: ['/workspace'], limitPerWorkspace: 1 })
+      .map((item) => [item.appSessionId, item.title]),
+    [['shared', 'mission control']],
+  );
 });
 
 test('snapshot permits sequential unregister without skipping sessions', () => {

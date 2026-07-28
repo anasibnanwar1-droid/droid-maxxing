@@ -141,16 +141,18 @@ export class SessionRegistry<TLive extends RegisteredSession> {
     const summaries = new Map<string, SessionSummary>();
     const patches = this.dependencies.history.summaryPatches();
     const hiddenProviderSessionIds = this.dependencies.history.hiddenProviderSessionIds();
+    const loaderOptions = options ? { ...options } : undefined;
+    if (loaderOptions) delete loaderOptions.limitPerWorkspace;
 
     this.mergeHistoricalSummaries(
       summaries,
-      this.dependencies.loadOrdinarySessions(options),
+      this.dependencies.loadOrdinarySessions(loaderOptions),
       patches,
       hiddenProviderSessionIds,
     );
     this.mergeHistoricalSummaries(
       summaries,
-      this.dependencies.loadMissionControlSessions(options),
+      this.dependencies.loadMissionControlSessions(loaderOptions),
       patches,
       hiddenProviderSessionIds,
     );
