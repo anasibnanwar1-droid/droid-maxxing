@@ -173,11 +173,10 @@ export class SessionRegistry<TLive extends RegisteredSession> {
     hiddenProviderSessionIds: Set<string>,
   ): void {
     for (const historical of sessions) {
-      const rawProviderSessionId =
-        historical.summary.providerSessionId ?? historical.summary.appSessionId;
-      if (hiddenProviderSessionIds.has(rawProviderSessionId)) continue;
-
       const summary = applyCachedSummary(historical.summary, patches);
+      const providerSessionId = summary.providerSessionId ?? summary.appSessionId;
+      if (hiddenProviderSessionIds.has(providerSessionId)) continue;
+
       target.set(summary.appSessionId, summary);
     }
   }

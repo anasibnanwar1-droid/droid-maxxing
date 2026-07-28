@@ -329,6 +329,23 @@ test('failed provider replacement preserves the live summary and aliases', () =>
   assert.deepEqual(published, []);
 });
 
+test('historical provider replacement is applied before hidden-provider filtering', () => {
+  const mission = summary('historical-mission', {
+    providerSessionId: 'mission-provider-old',
+    sessionPurpose: 'mission-control',
+    interactionMode: 'agi',
+  });
+  const { history, registry } = createHarness({ missionControl: [mission] });
+
+  registry.replaceProvider('mission-provider-old', 'mission-provider-current');
+  history.hiddenProviderIds.add('mission-provider-old');
+
+  const listed = registry.listSummaries();
+  assert.equal(listed.length, 1);
+  assert.equal(listed[0]?.appSessionId, 'historical-mission');
+  assert.equal(listed[0]?.providerSessionId, 'mission-provider-current');
+});
+
 test('resolve and list project copies after ordinary, Mission Control, and live merging', () => {
   const ordinary = [
     summary('ordinary-only', { title: 'ordinary', updatedAt: 10 }),
