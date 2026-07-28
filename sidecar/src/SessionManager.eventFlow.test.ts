@@ -6,6 +6,7 @@ import {
   assistantTextDelta,
   FakeFactorySession,
   successfulResultEvent,
+  type RecordedCall,
 } from './testing/fakeFactoryRuntime.js';
 import { createSessionManagerTestContext } from './testing/sessionManagerTestContext.js';
 
@@ -30,6 +31,35 @@ function latestSessionUpdate(events: ServerEvent[]) {
         event.type === 'session.updated',
     )
     .at(-1);
+}
+
+function isRecordedTranscript(call: RecordedCall, text: string): boolean {
+  const event = call.args[0];
+  return (
+    call.target === 'history' &&
+    call.method === 'recordEvent' &&
+    typeof event === 'object' &&
+    event !== null &&
+    'text' in event &&
+    event.text === text
+  );
+}
+
+function isAppendedTranscript(call: RecordedCall, text: string): boolean {
+  const event = call.args[0];
+  if (
+    call.target !== 'protocol' ||
+    call.method !== 'event' ||
+    typeof event !== 'object' ||
+    event === null ||
+    !('type' in event) ||
+    event.type !== 'event.appended' ||
+    !('event' in event) ||
+    typeof event.event !== 'object' ||
+    event.event === null
+  )
+    return false;
+  return 'text' in event.event && event.event.text === text;
 }
 
 test('design turns synchronize TodoWrite and unexpected AbortErrors fail the turn', async () => {
@@ -150,6 +180,12 @@ test('terminal results quarantine only later generation from the same turn', asy
       text: 'terminal turn',
     });
 
+    const recordIndex = context.calls.findIndex((call) =>
+      isRecordedTranscript(call, 'final answer'),
+    );
+    const emitIndex = context.calls.findIndex((call) => isAppendedTranscript(call, 'final answer'));
+    assert.ok(recordIndex >= 0);
+    assert.ok(emitIndex > recordIndex);
     assert.deepEqual(appendedTexts(context.events), ['final answer', 'boom']);
     assert.equal(
       context.events.some(

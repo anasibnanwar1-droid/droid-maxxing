@@ -65,6 +65,7 @@ export class FakeFactorySession implements FactorySession {
   private readonly promptWaiters: { count: number; resolve(): void }[] = [];
   private nextCompactGate?: DeferredStream;
   private nextContextStatsGate?: DeferredStream;
+  private nextCloseGate?: DeferredStream;
 
   constructor(
     readonly sessionId: string,
@@ -122,6 +123,12 @@ export class FakeFactorySession implements FactorySession {
   deferNextContextStats(): StreamGate {
     const gate = this.defer();
     this.nextContextStatsGate = gate;
+    return gate;
+  }
+
+  deferNextClose(): StreamGate {
+    const gate = this.defer();
+    this.nextCloseGate = gate;
     return gate;
   }
 
@@ -211,7 +218,9 @@ export class FakeFactorySession implements FactorySession {
 
   close(): Promise<void> {
     this.calls.push({ target: 'cleanup', method: 'session.close', args: [this.sessionId] });
-    return Promise.resolve();
+    const gate = this.nextCloseGate;
+    delete this.nextCloseGate;
+    return gate?.promise ?? Promise.resolve();
   }
 
   readonly forkSession: FactorySession['forkSession'] = () =>

@@ -10,6 +10,7 @@ import {
 
 import type { SessionSummary, ServerEvent } from './protocol.js';
 import { writeProviderSessionStart } from './testing/historyCharacterizationSupport.js';
+import type { RecordedCall } from './testing/fakeFactoryRuntime.js';
 import { createSessionManagerTestContext } from './testing/sessionManagerTestContext.js';
 
 type PermissionRequestedEvent = Extract<ServerEvent, { type: 'approval.requested' }>;
@@ -127,6 +128,28 @@ function latestQuestion(events: ServerEvent[]): SessionQuestionEvent {
   const event = events.filter(isSessionQuestion).at(-1);
   assert.ok(event);
   return event;
+}
+
+function isSpecTransitionPublication(call: RecordedCall): boolean {
+  const event = call.args[0];
+  if (
+    call.target !== 'protocol' ||
+    call.method !== 'event' ||
+    typeof event !== 'object' ||
+    event === null ||
+    !('type' in event) ||
+    event.type !== 'session.updated' ||
+    !('session' in event) ||
+    typeof event.session !== 'object' ||
+    event.session === null
+  )
+    return false;
+  return (
+    'interactionMode' in event.session &&
+    event.session.interactionMode === 'auto' &&
+    'phase' in event.session &&
+    event.session.phase === 'running'
+  );
 }
 
 test(
@@ -305,6 +328,13 @@ test(
         outcome: 'proceed_once',
       });
 
+      const responseCalls = h.calls.slice(responseCallOffset);
+      const publicationIndex = responseCalls.findIndex(isSpecTransitionPublication);
+      const providerIndex = responseCalls.findIndex(
+        (call) => call.target === 'provider' && call.method === 'updateSettings',
+      );
+      assert.ok(publicationIndex >= 0);
+      assert.ok(providerIndex > publicationIndex);
       assert.equal(await completed, ToolConfirmationOutcome.ProceedOnce);
       assert.equal(callbackObservedProviderUpdate, true);
       assert.deepEqual(
@@ -418,6 +448,87 @@ test(
     }
   },
 );
+
+test('close preserves current interaction lifetime and forgets unresolved state at unregister', async () => {
+  const h = createSessionManagerTestContext();
+  let releaseClose = (): void => undefined;
+
+  try {
+    await h.create({
+      sessionPurpose: 'chat',
+      clientRef: 'interaction-close',
+      title: 'Interaction close',
+      goal: 'go',
+      interactionMode: 'auto',
+      autonomy: 'low',
+    });
+    const provider = h.provider.session('provider-1');
+    await provider.waitForPrompts(1);
+    await h.waitForIdle();
+    const closeGate = provider.deferNextClose();
+    releaseClose = () => closeGate.resolve();
+    const closing = h.handle({ type: 'session.close', appSessionId: 'provider-1' });
+    await h.waitForIdle();
+    assert.equal(
+      h.calls.some(
+        (call) =>
+          call.target === 'cleanup' &&
+          call.method === 'session.close' &&
+          call.args[0] === 'provider-1',
+      ),
+      true,
+    );
+
+    const permissionHandler = provider.handlers.permissionHandler;
+    assert.ok(permissionHandler);
+    let permissionSettlements = 0;
+    const permission = Promise.resolve(permissionHandler(permissionInput('during-close'))).then(
+      (outcome) => {
+        permissionSettlements += 1;
+        return outcome;
+      },
+    );
+    const approval = approvalRequested(h.events).request;
+    assert.equal(permissionSettlements, 0);
+    await h.handle({
+      type: 'approval.respond',
+      appSessionId: approval.appSessionId,
+      requestId: approval.requestId,
+      outcome: 'proceed_once',
+    });
+    assert.equal(await permission, ToolConfirmationOutcome.ProceedOnce);
+    assert.equal(permissionSettlements, 1);
+
+    const askUserHandler = provider.handlers.askUserHandler;
+    assert.ok(askUserHandler);
+    let questionSettlements = 0;
+    void Promise.resolve(askUserHandler(questionInput('unresolved-at-close'))).then(() => {
+      questionSettlements += 1;
+    });
+    const question = latestQuestion(h.events).question;
+
+    closeGate.resolve();
+    await closing;
+    await h.waitForIdle();
+    assert.equal(questionSettlements, 0);
+    await h.handle({ type: 'session.resume', appSessionId: question.appSessionId });
+    await h.waitForIdle();
+    const eventCountAfterResume = h.events.length;
+
+    await h.handle({
+      type: 'question.respond',
+      appSessionId: question.appSessionId,
+      requestId: question.requestId,
+      cancelled: true,
+      answers: [],
+    });
+    assert.equal(questionSettlements, 0);
+    assert.equal(h.events.length, eventCountAfterResume);
+  } finally {
+    releaseClose();
+    await h.dispose();
+  }
+});
 
 test('ask-user requests tolerate omitted questions and options', async () => {
   const h = createSessionManagerTestContext();
