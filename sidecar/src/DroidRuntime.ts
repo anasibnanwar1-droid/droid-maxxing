@@ -44,7 +44,6 @@ export interface CreateRuntimeSessionOptions extends RuntimeHandlers {
   workerReasoningEffort?: ReasoningEffort;
   validatorModelId?: string;
   validatorReasoningEffort?: ReasoningEffort;
-  mcpServers?: McpServerConfig[];
 }
 
 export interface RuntimeStatus {

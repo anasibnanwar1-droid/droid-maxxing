@@ -1,8 +1,8 @@
 // Lifecycle of the daemon's in-place auto-compaction as observed by the app:
 // raise the compacting flag on the start notification, settle it on
 // completion (or an idle working state, or a watchdog expiry), and drain
-// whatever sends queued behind it. SessionManager stays the owner of all
-// state; this module only encodes the transitions against a narrow host view.
+// whatever sends queued behind it. This module only encodes transitions
+// against narrow views of the current lifecycle and child-session owners.
 
 import { extractCompactionNotification, extractDroidWorkingState } from './normalize.js';
 import {

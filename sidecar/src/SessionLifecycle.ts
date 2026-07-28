@@ -56,11 +56,11 @@ export interface LiveTurnState {
   autoCompacting: boolean;
   pendingSends: string[];
   interruptingForSteer?: boolean;
-  interrupting?: boolean;
+  interrupting?: boolean; // Marks user Stop so the resulting stream abort settles quietly.
 }
 export interface LiveChildSession extends LiveTurnState {
   session: FactorySession;
-  providerSessionId: string;
+  providerSessionId: string; // Parent map/watchdog key; it may differ from session.sessionId.
   appSessionId: string;
   role: SessionRole;
   lastUsedAt: number;
@@ -75,17 +75,20 @@ export interface LiveSession extends LiveTurnState {
   childSessions: Map<string, LiveChildSession>;
   knownChildSessions: Set<string>;
   completedChildSessions: Set<string>;
+  // Provider IDs whose current turn already produced its terminal result.
   terminalSources: Set<string>;
+  // Persisted spawn links seeded on resume, separate from children seen live.
   linkedChildSessions: Set<string>;
   childSessionToolUseIds: Map<string, string>;
   childSessionSettings: Map<string, ChildSessionSettings>;
   pendingChildSessions: PendingChildSession[];
   mcpServers: LocalMcpResource[];
+  // Running MCP handles reused when compaction swaps the provider session.
   mcpConfigs: McpServerConfig[];
   permissionGrants: Set<string>;
   todoDisabledForDesign?: boolean;
-  compacting?: boolean;
-  unsubscribe?: () => void;
+  compacting?: boolean; // Manual-compaction overlap guard; auto-compaction is separate.
+  unsubscribe?: () => void; // Primary provider notification subscription, replaced on swap.
 }
 export type LifecycleError = Omit<Extract<ServerEvent, { type: 'error' }>, 'type'>;
 export type CompactionLimitRequest =
