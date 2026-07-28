@@ -24,8 +24,12 @@ class TestHistory {
   readonly persisted: SessionSummary[] = [];
   readonly patches = new Map<string, Partial<SessionSummary>>();
   readonly hidden = new Set<string>();
+  nextSyncError?: Error;
   constructor(private readonly calls: RecordedCall[]) {}
   syncSummaries(summaries: SessionSummary[]): void {
+    const error = this.nextSyncError;
+    delete this.nextSyncError;
+    if (error) throw error;
     this.persisted.push(...summaries.map((summary) => ({ ...summary })));
     this.calls.push({ target: 'history', method: 'syncSummaries', args: summaries });
   }
@@ -345,6 +349,29 @@ test('post-open create and resume failures close provider and MCP resources', as
     ],
   );
   assert.equal(resumed.registry.getLive('failed-resume-app'), undefined);
+});
+
+test('registration failure closes resources without indexing the failed session', async () => {
+  const harness = createHarness();
+  queueCreate(harness, 'failed-registration');
+  harness.history.nextSyncError = new Error('persist failed');
+
+  await harness.lifecycle.create(createCommand());
+
+  assert.deepEqual(
+    harness.calls
+      .filter((call) => call.method === 'mcp.close' || call.method === 'session.close')
+      .map((call) => [call.method, call.args[0]]),
+    [
+      ['mcp.close', 'mcp-1'],
+      ['session.close', 'failed-registration'],
+    ],
+  );
+  assert.equal(harness.registry.getLive('failed-registration'), undefined);
+  assert.equal(
+    harness.events.some((event) => event.type === 'error' && event.message === 'persist failed'),
+    true,
+  );
 });
 
 test('send lazily resumes once and sends the prompt exactly once', async () => {

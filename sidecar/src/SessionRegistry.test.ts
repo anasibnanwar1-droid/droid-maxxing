@@ -17,9 +17,13 @@ class FakeHistory {
   readonly persisted: SessionSummary[] = [];
   readonly hiddenProviderIds = new Set<string>();
   readonly trace: string[] = [];
+  nextSyncError?: Error;
   private readonly patches = new Map<string, Partial<SessionSummary>>();
 
   syncSummaries(summaries: SessionSummary[]): void {
+    const error = this.nextSyncError;
+    delete this.nextSyncError;
+    if (error) throw error;
     this.trace.push('persist');
     for (const summary of summaries) {
       const copy = copySummary(summary);
@@ -164,6 +168,28 @@ test('register persists once and resolves stable, current, and superseded identi
     ['app-a', 'provider-a'],
   );
   assert.equal(published.length, 0);
+});
+
+test('failed registration leaves the previous live identity intact', () => {
+  const { history, registry } = createHarness();
+  const previous = live(
+    summary('stable', {
+      providerSessionId: 'provider-previous',
+      compactedFromProviderSessionIds: ['provider-old'],
+    }),
+  );
+  registry.register(previous);
+
+  history.nextSyncError = new Error('persist failed');
+  assert.throws(
+    () => registry.register(live(summary('stable', { providerSessionId: 'provider-replacement' }))),
+    /persist failed/,
+  );
+
+  assert.equal(registry.getLive('stable'), previous);
+  assert.equal(registry.getLive('provider-previous'), previous);
+  assert.equal(registry.getLive('provider-old'), previous);
+  assert.equal(registry.getLive('provider-replacement'), undefined);
 });
 
 test('updateSummary persists canonical state before one publication and protects identity', () => {

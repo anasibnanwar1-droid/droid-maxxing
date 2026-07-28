@@ -39,12 +39,13 @@ export class SessionRegistry<TLive extends RegisteredSession> {
   constructor(private readonly dependencies: SessionRegistryDependencies) {}
 
   register(liveSession: TLive): void {
+    this.persist(liveSession.summary);
+
     const previous = this.sessions.get(liveSession.summary.appSessionId);
     if (previous) this.removeAliases(previous.summary);
 
     this.sessions.set(liveSession.summary.appSessionId, liveSession);
     this.indexAliases(liveSession.summary);
-    this.persist(liveSession.summary);
   }
 
   getLive(id: string): TLive | undefined {
