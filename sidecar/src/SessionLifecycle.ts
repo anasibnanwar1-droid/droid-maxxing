@@ -9,7 +9,6 @@ import type {
   FactoryDefaultSettings,
   ReasoningEffort,
   ServerEvent,
-  SessionRole,
   SessionSummary,
 } from './protocol.js';
 import type { SessionRegistry } from './SessionRegistry.js';
@@ -53,9 +52,9 @@ interface LiveTurnState {
 type SessionCloseMode = 'discard-pending' | 'preserve-pending';
 export interface LiveChildSession extends LiveTurnState {
   session: FactorySession;
-  providerSessionId: string; // Parent map/watchdog key; it may differ from session.sessionId.
+  childSessionId: string; // Stable parent-map identity; it may differ from session.sessionId.
   appSessionId: string;
-  role: SessionRole;
+  role: 'worker' | 'validator';
   lastUsedAt: number;
   closeWhenIdle?: boolean;
   unsubscribe?: () => void;

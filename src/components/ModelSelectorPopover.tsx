@@ -5,7 +5,10 @@ import { useStore } from '../hooks/useStore';
 import type { AgentKind } from '../hooks/useStore';
 import type { ReasoningEffort, ModelInfo } from '../types/bridge';
 import { ModelIcon, providerOf } from './ModelIcon';
-import { updateAgentSettings, listModels } from '../lib/commands';
+import { updateAgentSettings, updateChildSettings, listModels } from '../lib/commands';
+import { planChildModelUpdate, type ExactChildSettingsTarget } from '../lib/exactChildSettings';
+
+export type { ExactChildSettingsTarget } from '../lib/exactChildSettings';
 
 const ACCENT = 'var(--droid-accent)';
 const accentMix = (pct: number) => `color-mix(in srgb, var(--droid-accent) ${pct}%, transparent)`;
@@ -47,9 +50,11 @@ const BASE_REASONING: ReasoningEffort[] = [
 export default function ModelSelectorPopover({
   onClose,
   singleAgent = false,
+  childTarget,
 }: {
   onClose: () => void;
   singleAgent?: boolean;
+  childTarget?: ExactChildSettingsTarget;
 }) {
   const { state, dispatch } = useStore();
   const [agent, setAgent] = useState<AgentKind>('primary');
@@ -59,16 +64,18 @@ export default function ModelSelectorPopover({
   const ref = useRef<HTMLDivElement>(null);
   const filterRef = useRef<HTMLDivElement>(null);
 
-  const active = AGENTS.find((a) => a.kind === agent)!;
-  const cfg = state.agentConfig[agent];
+  const selectedAgent = childTarget?.role ?? agent;
+  const active = AGENTS.find((a) => a.kind === selectedAgent)!;
+  const cfg = state.agentConfig[selectedAgent];
 
   // For a single chat, the model/reasoning belong to that session, not the global default.
   const activeSession = state.activeAppSessionId ? state.sessions[state.activeAppSessionId] : null;
   const sessionScoped = singleAgent && !!activeSession;
-  const effModelId = sessionScoped ? activeSession!.modelId : cfg.modelId;
-  const effReasoning = sessionScoped
-    ? (activeSession!.reasoningEffort ?? cfg.reasoning)
-    : cfg.reasoning;
+  const effModelId = childTarget?.modelId ?? (sessionScoped ? activeSession!.modelId : cfg.modelId);
+  const effReasoning =
+    childTarget?.reasoningEffort ??
+    (sessionScoped ? (activeSession!.reasoningEffort ?? cfg.reasoning) : cfg.reasoning);
+  const childReady = childTarget?.readiness === 'ready';
 
   const hasRealModels = state.models.length > 0;
   const source = state.models;
@@ -138,6 +145,7 @@ export default function ModelSelectorPopover({
     : BASE_REASONING;
 
   const updateReasoning = (reasoning: ReasoningEffort) => {
+    if (childTarget) return;
     if (sessionScoped)
       dispatch({
         type: 'SESSION_SET_REASONING',
@@ -153,6 +161,11 @@ export default function ModelSelectorPopover({
   };
 
   const updateModel = (modelId?: string) => {
+    if (childTarget) {
+      const update = planChildModelUpdate(childTarget, modelId, effReasoning, source);
+      if (update) updateChildSettings(update);
+      return;
+    }
     if (sessionScoped)
       dispatch({
         type: 'SESSION_SET_MODEL',
@@ -183,6 +196,7 @@ export default function ModelSelectorPopover({
   // Keep the displayed reasoning valid if the model's supported set changes
   // (e.g. real catalog arrives after a mock placeholder was selected).
   useEffect(() => {
+    if (childTarget) return;
     const supported = selectedSupportedReasoning;
     if (supported?.length && !supported.includes(effReasoning)) {
       updateReasoning(
@@ -196,7 +210,7 @@ export default function ModelSelectorPopover({
       updateReasoning(selectedConfigModel.defaultReasoningEffort);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedConfigModel?.id, selectedSupportedReasoning]);
+  }, [childTarget, selectedConfigModel?.id, selectedSupportedReasoning]);
 
   return (
     <motion.div
@@ -211,15 +225,23 @@ export default function ModelSelectorPopover({
         {/* Header */}
         <div className="flex items-center justify-between px-4 pt-3 pb-2">
           <span className="text-[11px] font-medium text-droid-text-secondary tracking-wide">
-            {singleAgent ? 'Model' : 'Models'}
+            {childTarget ? childTarget.label : singleAgent ? 'Model' : 'Models'}
           </span>
           <span className="text-[10px] text-droid-text-muted">
-            {singleAgent ? 'Used for this chat' : active.hint}
+            {childTarget
+              ? childTarget.readiness === 'ready'
+                ? `${active.label} model`
+                : childTarget.readiness === 'opening'
+                  ? 'Opening child…'
+                  : 'Child unavailable'
+              : singleAgent
+                ? 'Used for this chat'
+                : active.hint}
           </span>
         </div>
 
         {/* Agent tabs */}
-        {!singleAgent && (
+        {!singleAgent && !childTarget && (
           <div className="px-3">
             <div className="flex gap-1 p-0.5 rounded-xl bg-droid-bg/60 border border-droid-border">
               {AGENTS.map((a) => {
@@ -260,8 +282,14 @@ export default function ModelSelectorPopover({
                 <button
                   key={r}
                   onClick={() => updateReasoning(r)}
+                  disabled={Boolean(childTarget)}
+                  title={childTarget ? 'Change the child model to adjust reasoning.' : undefined}
                   className={`relative flex-1 py-1.5 rounded-md text-[10px] capitalize transition-colors ${
-                    on ? 'text-droid-text' : 'text-droid-text-muted hover:text-droid-text-secondary'
+                    on
+                      ? 'text-droid-text'
+                      : childTarget
+                        ? 'text-droid-text-muted/50 cursor-not-allowed'
+                        : 'text-droid-text-muted hover:text-droid-text-secondary'
                   }`}
                 >
                   {on && (
@@ -377,6 +405,7 @@ export default function ModelSelectorPopover({
               sub="Use Factory CLI default"
               selected={!effModelId}
               onClick={() => updateModel(undefined)}
+              disabled={Boolean(childTarget && !childReady)}
             />
             {hasRealModels ? (
               <>
@@ -388,6 +417,7 @@ export default function ModelSelectorPopover({
                     model={m}
                     selected={effModelId === m.id}
                     onClick={() => updateModel(m.id)}
+                    disabled={Boolean(childTarget && !childReady)}
                   />
                 ))}
                 {models.length === 0 && (
@@ -417,18 +447,25 @@ function ModelRow({
   selected,
   onClick,
   model,
+  disabled = false,
 }: {
   label: string;
   sub?: string;
   selected: boolean;
   onClick: () => void;
   model?: ModelInfo;
+  disabled?: boolean;
 }) {
   return (
     <button
       onClick={onClick}
+      disabled={disabled}
       className={`w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg text-left transition-colors ${
-        selected ? 'bg-droid-surface' : 'hover:bg-droid-surface/60'
+        disabled
+          ? 'cursor-not-allowed opacity-50'
+          : selected
+            ? 'bg-droid-surface'
+            : 'hover:bg-droid-surface/60'
       }`}
     >
       <span className="w-4 h-4 shrink-0 flex items-center justify-center">

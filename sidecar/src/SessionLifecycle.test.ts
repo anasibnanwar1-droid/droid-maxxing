@@ -680,7 +680,7 @@ test('close follows ownership order and closeAll closes its initial snapshot', a
   const child = new FakeFactorySession('child', {}, harness.calls);
   const childLive: LiveChildSession = {
     session: child,
-    providerSessionId: 'child',
+    childSessionId: 'child',
     appSessionId: 'owner',
     role: 'worker',
     lastUsedAt: 1,

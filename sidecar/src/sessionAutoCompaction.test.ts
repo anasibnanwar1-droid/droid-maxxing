@@ -83,7 +83,7 @@ function createHarness(
   const childSession: TestSession = { id: childTransportId };
   const child: TestChild = {
     appSessionId: 'app-1',
-    providerSessionId: childProviderSessionId,
+    childSessionId: childProviderSessionId,
     role: 'worker',
     streaming: false,
     autoCompacting: false,

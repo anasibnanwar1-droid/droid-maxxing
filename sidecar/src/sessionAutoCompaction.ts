@@ -14,7 +14,7 @@ import type { SessionRole } from './protocol.js';
 const ignoreError = (): void => undefined;
 
 export interface CompactingChildState {
-  providerSessionId: string;
+  childSessionId: string;
   appSessionId: string;
   role: SessionRole;
   streaming: boolean;
@@ -196,7 +196,7 @@ function setChildAutoCompacting<
   else host.watchdogs.clear(providerSessionId);
   if (active || !wasActive || childSession.streaming) return;
   if (childSession.pendingSends.length === 0 && childSession.closeWhenIdle) {
-    void host.closeChildSession(childSession.appSessionId, childSession.providerSessionId);
+    void host.closeChildSession(childSession.appSessionId, childSession.childSessionId);
     return;
   }
   const next = childSession.pendingSends.shift();

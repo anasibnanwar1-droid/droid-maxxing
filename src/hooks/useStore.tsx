@@ -53,6 +53,7 @@ import {
 } from '../lib/utilityPanel';
 
 export type AgentKind = 'primary' | 'worker' | 'validator';
+export type ChildSettingsReadiness = 'opening' | 'ready' | 'failed';
 export type LiveEnterBehavior = 'queue' | 'interrupt';
 export type DiffViewMode = 'unified' | 'split';
 
@@ -140,6 +141,9 @@ export interface AppState {
   // so the view shows a loading state until the first event (or the opened ack)
   // arrives instead of a misleading "no activity" empty state.
   childHistoryLoading: Record<string, boolean>;
+  // Exact child settings are enabled only after a success-only open
+  // acknowledgement. Child identities are parent-scoped.
+  childSettingsReadiness: Partial<Record<string, Partial<Record<string, ChildSettingsReadiness>>>>;
   pendingPermission: PermissionRequest | null;
   pendingQuestion: SessionQuestion | null;
   contextStats: Record<string, ContextStatsSnapshot>;
@@ -247,21 +251,29 @@ type Action =
   | { type: 'SESSION_PROGRESS'; appSessionId: string; entries: ProgressEntry[] }
   | {
       type: 'SESSION_CHILD';
-      appSessionId: string;
+      parentAppSessionId: string;
       event: 'started' | 'updated' | 'completed';
-      providerSessionId: string;
+      childSessionId: string;
       label?: string;
       prompt?: string;
       modelId?: string;
       reasoningEffort?: ReasoningEffort;
       toolUseId?: string;
+      canonicalIdentity?: true;
     }
   | {
       type: 'CHILD_UPDATED';
-      appSessionId: string;
-      providerSessionId: string;
+      parentAppSessionId: string;
+      childSessionId: string;
       role: AgentKind;
       status: 'opened' | 'running' | 'paused' | 'completed';
+      settingsReady?: true;
+    }
+  | {
+      type: 'CHILD_SETTINGS_READINESS';
+      parentAppSessionId: string;
+      childSessionId: string;
+      status: ChildSettingsReadiness;
     }
   | {
       type: 'SESSION_TOKENS';
@@ -769,6 +781,7 @@ export const initialState: AppState = {
   historyLoadingOlder: {},
   sessionRestore: {},
   childHistoryLoading: {},
+  childSettingsReadiness: {},
   pendingPermission: null,
   pendingQuestion: null,
   contextStats: {},
@@ -876,6 +889,32 @@ function closeActiveUtilityPanel(state: AppState): AppState {
   return panel === current
     ? state
     : { ...state, utilityPanels: { ...state.utilityPanels, [appSessionId]: panel } };
+}
+
+function withChildSettingsReadiness(
+  state: AppState,
+  parentAppSessionId: string,
+  childSessionId: string,
+  status: ChildSettingsReadiness,
+): AppState {
+  const parent = state.childSettingsReadiness[parentAppSessionId] ?? {};
+  const settleHistory = status === 'failed' && state.childHistoryLoading[childSessionId];
+  if (parent[childSessionId] === status && !settleHistory) return state;
+  return {
+    ...state,
+    childSettingsReadiness: {
+      ...state.childSettingsReadiness,
+      [parentAppSessionId]: { ...parent, [childSessionId]: status },
+    },
+    ...(settleHistory
+      ? {
+          childHistoryLoading: {
+            ...state.childHistoryLoading,
+            [childSessionId]: false,
+          },
+        }
+      : {}),
+  };
 }
 
 export function reducer(state: AppState, action: Action): AppState {
@@ -1019,9 +1058,9 @@ function baseReducer(state: AppState, action: Action): AppState {
     }
 
     case 'SESSION_CHILD': {
-      const mid = action.appSessionId;
+      const mid = action.parentAppSessionId;
       const prev = state.childSessions[mid] ?? [];
-      const idx = prev.findIndex((w) => w.providerSessionId === action.providerSessionId);
+      const idx = prev.findIndex((w) => w.providerSessionId === action.childSessionId);
       let next: ChildSessionInfo[];
       if (idx >= 0) {
         next = [...prev];
@@ -1040,11 +1079,11 @@ function baseReducer(state: AppState, action: Action): AppState {
           toolUseId: action.toolUseId ?? next[idx].toolUseId,
         };
       } else {
-        if (action.event === 'updated') return state;
+        if (action.event === 'updated' && !action.canonicalIdentity) return state;
         next = [
           ...prev,
           {
-            providerSessionId: action.providerSessionId,
+            providerSessionId: action.childSessionId,
             status: action.event === 'completed' ? 'completed' : 'running',
             startedAt: Date.now(),
             label: action.label,
@@ -1057,6 +1096,14 @@ function baseReducer(state: AppState, action: Action): AppState {
       }
       return { ...state, childSessions: { ...state.childSessions, [mid]: next } };
     }
+
+    case 'CHILD_SETTINGS_READINESS':
+      return withChildSettingsReadiness(
+        state,
+        action.parentAppSessionId,
+        action.childSessionId,
+        action.status,
+      );
 
     case 'CHILD_HISTORY_LOADING': {
       if ((state.childHistoryLoading[action.providerSessionId] ?? false) === action.loading)
@@ -1073,26 +1120,53 @@ function baseReducer(state: AppState, action: Action): AppState {
     case 'CHILD_UPDATED': {
       // The 'opened' ack fires after a worker's history replay completes (even
       // when nothing was captured), so it reliably ends the loading state.
-      const base =
-        action.status === 'opened' && state.childHistoryLoading[action.providerSessionId]
+      let base =
+        action.status === 'opened' && state.childHistoryLoading[action.childSessionId]
           ? {
               ...state,
               childHistoryLoading: {
                 ...state.childHistoryLoading,
-                [action.providerSessionId]: false,
+                [action.childSessionId]: false,
               },
             }
           : state;
+      if (action.status === 'opened') {
+        const current =
+          base.childSettingsReadiness[action.parentAppSessionId]?.[action.childSessionId];
+        if (action.settingsReady)
+          base = withChildSettingsReadiness(
+            base,
+            action.parentAppSessionId,
+            action.childSessionId,
+            'ready',
+          );
+        else if (current === 'opening')
+          base = withChildSettingsReadiness(
+            base,
+            action.parentAppSessionId,
+            action.childSessionId,
+            'failed',
+          );
+      } else if (
+        action.status === 'completed' &&
+        base.childSettingsReadiness[action.parentAppSessionId]?.[action.childSessionId]
+      ) {
+        base = withChildSettingsReadiness(
+          base,
+          action.parentAppSessionId,
+          action.childSessionId,
+          'failed',
+        );
+      }
       if (action.role !== 'worker' || action.status === 'opened') return base;
-      // Past this point status is running/paused/completed, so base === state.
-      const prev = state.childSessions[action.appSessionId] ?? [];
-      const idx = prev.findIndex((w) => w.providerSessionId === action.providerSessionId);
-      if (idx < 0) return state;
+      const prev = base.childSessions[action.parentAppSessionId] ?? [];
+      const idx = prev.findIndex((w) => w.providerSessionId === action.childSessionId);
+      if (idx < 0) return base;
       const next = [...prev];
       next[idx] = { ...next[idx], status: action.status };
       return {
-        ...state,
-        childSessions: { ...state.childSessions, [action.appSessionId]: next },
+        ...base,
+        childSessions: { ...base.childSessions, [action.parentAppSessionId]: next },
       };
     }
 
@@ -2233,24 +2307,28 @@ export function adaptEvent(ev: ServerEvent): Action | null {
     case 'mission.progress':
       return { type: 'SESSION_PROGRESS', appSessionId: ev.appSessionId, entries: ev.entries };
     case 'session.child':
+      // PR 6 deletes this translation when general child events adopt canonical identity.
       return {
         type: 'SESSION_CHILD',
-        appSessionId: ev.appSessionId,
+        parentAppSessionId: 'parentAppSessionId' in ev ? ev.parentAppSessionId : ev.appSessionId,
         event: ev.event,
-        providerSessionId: ev.providerSessionId,
-        label: ev.label,
-        prompt: ev.prompt,
+        childSessionId: 'childSessionId' in ev ? ev.childSessionId : ev.providerSessionId,
+        label: 'label' in ev ? ev.label : undefined,
+        prompt: 'prompt' in ev ? ev.prompt : undefined,
         modelId: ev.modelId,
         reasoningEffort: ev.reasoningEffort,
-        toolUseId: ev.toolUseId,
+        toolUseId: 'toolUseId' in ev ? ev.toolUseId : undefined,
+        ...('childSessionId' in ev ? { canonicalIdentity: true as const } : {}),
       };
     case 'child.updated':
+      // PR 6 deletes this translation when general child events adopt canonical identity.
       return {
         type: 'CHILD_UPDATED',
-        appSessionId: ev.appSessionId,
-        providerSessionId: ev.providerSessionId,
+        parentAppSessionId: 'parentAppSessionId' in ev ? ev.parentAppSessionId : ev.appSessionId,
+        childSessionId: 'childSessionId' in ev ? ev.childSessionId : ev.providerSessionId,
         role: ev.role,
         status: ev.status,
+        ...('settingsReady' in ev ? { settingsReady: ev.settingsReady } : {}),
       };
     case 'event.appended':
       return { type: 'SESSION_TRANSCRIPT', event: ev.event };
@@ -2259,6 +2337,19 @@ export function adaptEvent(ev: ServerEvent): Action | null {
     case 'question.requested':
       return { type: 'SESSION_QUESTION', question: ev.question };
     case 'error':
+      if (
+        ev.parentAppSessionId &&
+        ev.childSessionId &&
+        (ev.code === 'child.open_failed' || ev.code === 'child.settings_target_invalid')
+      ) {
+        return {
+          type: 'CHILD_SETTINGS_READINESS',
+          parentAppSessionId: ev.parentAppSessionId,
+          childSessionId: ev.childSessionId,
+          status: 'failed',
+        };
+      }
+      if (ev.code === 'child.settings_update_failed') return null;
       if (ev.providerSessionId && ev.code?.startsWith('child.')) {
         return {
           type: 'CHILD_HISTORY_LOADING',

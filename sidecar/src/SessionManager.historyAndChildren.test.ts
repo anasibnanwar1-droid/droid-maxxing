@@ -252,7 +252,7 @@ test('[A1] Child-session link persistence', { concurrency: false }, async () => 
       type: 'child.open',
       appSessionId: 'provider-1',
       providerSessionId: 'provider-1',
-      role: 'primary',
+      role: 'worker',
     });
     h.provider.emitNotification('provider-1', {
       type: 'tool_progress_update',
@@ -274,6 +274,7 @@ test('[A1] Child-session link persistence', { concurrency: false }, async () => 
       h.events.some(
         (event) =>
           event.type === 'session.child' &&
+          'appSessionId' in event &&
           event.appSessionId === 'provider-1' &&
           event.providerSessionId === 'worker-a1' &&
           event.event === 'started',
@@ -364,8 +365,10 @@ test('[A2] Open and replay a linked child session', { concurrency: false }, asyn
       h.events.some(
         (event) =>
           event.type === 'child.updated' &&
-          event.providerSessionId === 'worker-a2' &&
-          event.status === 'opened',
+          'parentAppSessionId' in event &&
+          event.childSessionId === 'worker-a2' &&
+          event.status === 'opened' &&
+          event.settingsReady,
       ),
       true,
     );
@@ -466,7 +469,9 @@ test('[A3] Child send, steer, and interrupt', { concurrency: false }, async () =
         (event) =>
           event.type === 'error' &&
           event.code === 'child.open_failed' &&
-          event.providerSessionId === 'worker-failed-a3',
+          event.parentAppSessionId === 'app-a3' &&
+          event.childSessionId === 'worker-failed-a3' &&
+          !event.providerSessionId,
       ),
       true,
     );
@@ -491,6 +496,7 @@ test('[A3] Child send, steer, and interrupt', { concurrency: false }, async () =
       h.events.some(
         (event) =>
           event.type === 'child.updated' &&
+          'providerSessionId' in event &&
           event.providerSessionId === 'worker-unknown-a3' &&
           event.status === 'opened',
       ),
@@ -526,6 +532,7 @@ test('[A4] Opening a child for a non-live historical session settles honestly', 
       h.events.some(
         (event) =>
           event.type === 'child.updated' &&
+          'appSessionId' in event &&
           event.appSessionId === 'app-a4' &&
           event.providerSessionId === 'worker-a4' &&
           event.status === 'opened',

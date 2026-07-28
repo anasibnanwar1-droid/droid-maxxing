@@ -34,7 +34,12 @@ import {
   type SessionInitResult,
 } from './sessionHelpers.js';
 import { boundedInt, numberValue, stringValue } from './values.js';
-import { DroidRuntime, type FactoryRuntime, type FactorySession } from './DroidRuntime.js';
+import {
+  DroidRuntime,
+  factoryReasoningEffort,
+  type FactoryRuntime,
+  type FactorySession,
+} from './DroidRuntime.js';
 import { detectEnvironment } from './Environment.js';
 import { buildInstallCommand, buildUpdateCommand, runStreaming } from './CliInstaller.js';
 import {
@@ -433,6 +438,9 @@ export class SessionManager {
       case 'child.interrupt':
         await this.interruptChildSession(cmd.appSessionId, cmd.providerSessionId);
         return;
+      case 'child.updateSettings':
+        await this.updateChildSettings(cmd);
+        return;
       case 'session.updateSettings':
         await this.updateSessionSettings(cmd.appSessionId, cmd);
         if (cmd.autonomy !== undefined) {
@@ -731,7 +739,7 @@ export class SessionManager {
         });
         return;
       }
-      if (cmd.appSessionId) this.rememberPendingAgentSettings(cmd);
+      if (cmd.appSessionId && !session) this.rememberPendingAgentSettings(cmd);
       const appSessionId = session?.summary.appSessionId ?? cmd.appSessionId;
       if (session) {
         const settings = await this.runtimeAgentSettings(session, cmd.agent, {
@@ -739,6 +747,7 @@ export class SessionManager {
           reasoningEffort: cmd.reasoningEffort,
         });
         await this.applyAgentSessionSettings(session, cmd.agent, settings);
+        if (cmd.appSessionId) this.rememberPendingAgentSettings(cmd);
       }
       if (cmd.appSessionId) {
         const patch = this.summaryPatchForAgent(cmd.agent, cmd);
@@ -765,6 +774,130 @@ export class SessionManager {
         message: `Could not update agent settings: ${errMsg(err)}`,
       });
     }
+  }
+
+  private async updateChildSettings(
+    cmd: Extract<ClientCommand, { type: 'child.updateSettings' }>,
+  ): Promise<void> {
+    const parent = this.registry.getLive(cmd.parentAppSessionId);
+    if (
+      !parent ||
+      parent.summary.appSessionId !== cmd.parentAppSessionId ||
+      parent.summary.sessionPurpose !== 'mission-control'
+    ) {
+      this.emitChildSettingsTargetInvalid(cmd);
+      return;
+    }
+    const child = parent.childSessions.get(cmd.childSessionId);
+    if (
+      !child ||
+      !Object.hasOwn(cmd, 'modelId') ||
+      !this.isCurrentChildSettingsTarget(parent, cmd.childSessionId, child)
+    ) {
+      this.emitChildSettingsTargetInvalid(cmd);
+      return;
+    }
+
+    let effectiveModelId: string | undefined = cmd.modelId ?? undefined;
+    try {
+      if (cmd.modelId === null) {
+        const roleModelId =
+          child.role === 'worker' ? parent.summary.workerModelId : parent.summary.validatorModelId;
+        effectiveModelId =
+          roleModelId ??
+          defaultModelForAgent(
+            child.role,
+            defaultsModeForSummary(parent.summary),
+            await this.getFactoryDefaults(),
+          );
+      }
+      if (!effectiveModelId) throw new Error(`No Factory default is available for ${child.role}.`);
+      if (!this.isCurrentChildSettingsTarget(parent, cmd.childSessionId, child)) return;
+      await child.session.updateSettings({
+        modelId: effectiveModelId,
+        ...(cmd.reasoningEffort === undefined
+          ? {}
+          : { reasoningEffort: factoryReasoningEffort(cmd.reasoningEffort) }),
+      });
+    } catch (error) {
+      if (!this.isCurrentChildSettingsTarget(parent, cmd.childSessionId, child)) return;
+      this.emit({
+        type: 'error',
+        code: 'child.settings_update_failed',
+        parentAppSessionId: parent.summary.appSessionId,
+        childSessionId: cmd.childSessionId,
+        message: `Could not update child settings: ${errMsg(error)}`,
+      });
+      return;
+    }
+
+    if (!effectiveModelId || !this.isCurrentChildSettingsTarget(parent, cmd.childSessionId, child))
+      return;
+    const currentSettings = parent.childSessionSettings.get(cmd.childSessionId) ?? {};
+    const nextSettings: ChildSessionSettings & { modelId: string } = {
+      ...currentSettings,
+      modelId: effectiveModelId,
+      ...(cmd.reasoningEffort === undefined ? {} : { reasoningEffort: cmd.reasoningEffort }),
+    };
+    parent.childSessionSettings.set(cmd.childSessionId, nextSettings);
+    this.emitCanonicalChildSettings(parent.summary.appSessionId, cmd.childSessionId, nextSettings);
+
+    try {
+      const limit = await this.compactionLimit(effectiveModelId);
+      if (
+        !this.isCurrentChildSettingsTarget(parent, cmd.childSessionId, child) ||
+        this.childSessionModelId(parent, cmd.childSessionId, child.role) !== effectiveModelId
+      )
+        return;
+      await this.enableDaemonAutoCompaction(child.session, limit);
+    } catch (error) {
+      console.error(
+        `[compaction] could not resolve exact-child limit for ${child.session.sessionId}: ${errMsg(error)}`,
+      );
+    }
+  }
+
+  private isCurrentChildSettingsTarget(
+    parent: LiveSession,
+    childSessionId: string,
+    child: LiveChildSession,
+  ): boolean {
+    return (
+      this.registry.getLive(parent.summary.appSessionId) === parent &&
+      !hasSessionCloseStarted(parent) &&
+      parent.childSessions.get(childSessionId) === child &&
+      !parent.completedChildSessions.has(childSessionId) &&
+      !child.closeWhenIdle
+    );
+  }
+
+  private emitChildSettingsTargetInvalid(
+    cmd: Extract<ClientCommand, { type: 'child.updateSettings' }>,
+  ): void {
+    this.emit({
+      type: 'error',
+      code: 'child.settings_target_invalid',
+      parentAppSessionId: cmd.parentAppSessionId,
+      childSessionId: cmd.childSessionId,
+      message: `Child session ${cmd.childSessionId || '(missing)'} is not an active settings target for ${cmd.parentAppSessionId || '(missing)'}.`,
+    });
+  }
+
+  private emitCanonicalChildSettings(
+    parentAppSessionId: string,
+    childSessionId: string,
+    settings: ChildSessionSettings & { modelId: string },
+  ): void {
+    this.emit({
+      type: 'session.child',
+      parentAppSessionId,
+      event: 'updated',
+      childSessionId,
+      modelId: settings.modelId,
+      ...(settings.reasoningEffort === undefined
+        ? {}
+        : { reasoningEffort: settings.reasoningEffort }),
+    });
   }
 
   private rememberPendingAgentSettings(
@@ -904,7 +1037,14 @@ export class SessionManager {
         );
         retunes.push(
           this.compactionLimit(modelId).then((limit) => {
-            if (!stillCurrent()) return;
+            if (
+              !stillCurrent() ||
+              this.registry.getLive(liveSession.summary.appSessionId) !== liveSession ||
+              liveSession.childSessions.get(childProviderSessionId) !== childSession ||
+              this.childSessionModelId(liveSession, childProviderSessionId, childSession.role) !==
+                modelId
+            )
+              return;
             return this.enableDaemonAutoCompaction(childSession.session, limit);
           }),
         );
@@ -1654,40 +1794,42 @@ export class SessionManager {
     childProviderSessionId: string,
     role: SessionRole,
   ): Promise<void> {
+    if (role === 'primary') {
+      this.emit({
+        type: 'error',
+        code: 'child.open_failed',
+        appSessionId,
+        parentAppSessionId: appSessionId,
+        childSessionId: childProviderSessionId,
+        message: 'Primary sessions cannot be opened as parent-owned child sessions.',
+      });
+      return;
+    }
     const liveSession = this.registry.getLive(appSessionId);
     if (!liveSession) {
       // No live session to open against (e.g. a not-yet-resumed/historical
       // session). Settle the worker's loading state with an honest empty open
       // instead of leaving its card spinning forever.
-      this.emit({
-        type: 'child.updated',
-        appSessionId: appSessionId,
-        providerSessionId: childProviderSessionId,
-        role,
-        status: 'opened',
-      });
+      this.emitChildOpened(appSessionId, childProviderSessionId, role, false);
       return;
     }
     if (!this.childBelongsToSession(liveSession, childProviderSessionId)) {
-      this.emit({
-        type: 'child.updated',
-        appSessionId,
-        providerSessionId: childProviderSessionId,
-        role,
-        status: 'opened',
-      });
+      this.emitChildOpened(appSessionId, childProviderSessionId, role, false);
       return;
     }
     if (liveSession.childSessions.has(childProviderSessionId)) {
       const childSession = liveSession.childSessions.get(childProviderSessionId);
       if (childSession) childSession.lastUsedAt = Date.now();
-      this.emit({
-        type: 'child.updated',
+      this.emitChildOpened(
         appSessionId,
-        providerSessionId: childProviderSessionId,
-        role,
-        status: 'opened',
-      });
+        childProviderSessionId,
+        childSession?.role ?? role,
+        childSession !== undefined &&
+          this.registry.getLive(appSessionId) === liveSession &&
+          !hasSessionCloseStarted(liveSession) &&
+          !liveSession.completedChildSessions.has(childProviderSessionId) &&
+          !childSession.closeWhenIdle,
+      );
       return;
     }
     try {
@@ -1697,6 +1839,13 @@ export class SessionManager {
         permissionHandler: this.interactions.makePermissionHandler(ref),
         askUserHandler: this.interactions.makeAskUserHandler(ref),
       });
+      if (
+        this.registry.getLive(appSessionId) !== liveSession ||
+        hasSessionCloseStarted(liveSession)
+      ) {
+        await session.close().catch(ignoreError);
+        return;
+      }
       const actualSettings = childSessionSettingsFromInit(session.initResult);
       // A chat/spec child inherits the parent session model when the
       // droid inherits it. Mission Control workers/validators keep their own
@@ -1710,13 +1859,19 @@ export class SessionManager {
         : actualSettings;
       if (resolvedSettings.modelId || resolvedSettings.reasoningEffort) {
         liveSession.childSessionSettings.set(childProviderSessionId, resolvedSettings);
-        this.emit({
-          type: 'session.child',
-          appSessionId,
-          event: 'updated',
-          providerSessionId: childProviderSessionId,
-          ...resolvedSettings,
-        });
+        if (liveSession.summary.sessionPurpose === 'mission-control' && resolvedSettings.modelId)
+          this.emitCanonicalChildSettings(appSessionId, childProviderSessionId, {
+            ...resolvedSettings,
+            modelId: resolvedSettings.modelId,
+          });
+        else
+          this.emit({
+            type: 'session.child',
+            appSessionId,
+            event: 'updated',
+            providerSessionId: childProviderSessionId,
+            ...resolvedSettings,
+          });
       }
       // When the loaded child session doesn't report its own model, use
       // the role's configured model (not the primary's), so per-model limits
@@ -1728,9 +1883,16 @@ export class SessionManager {
       // using the worker model's effective limit (so differing worker/validator
       // models keep their own thresholds).
       await this.enableDaemonAutoCompaction(session, await this.compactionLimit(workerModelId));
+      if (
+        this.registry.getLive(appSessionId) !== liveSession ||
+        hasSessionCloseStarted(liveSession)
+      ) {
+        await session.close().catch(ignoreError);
+        return;
+      }
       const childSession: LiveChildSession = {
         session,
-        providerSessionId: childProviderSessionId,
+        childSessionId: childProviderSessionId,
         appSessionId,
         role,
         streaming: false,
@@ -1756,22 +1918,43 @@ export class SessionManager {
       });
       liveSession.childSessions.set(childProviderSessionId, childSession);
       this.timeline.replayChild(appSessionId, childProviderSessionId);
-      this.emit({
-        type: 'child.updated',
-        appSessionId,
-        providerSessionId: childProviderSessionId,
-        role,
-        status: 'opened',
-      });
+      this.emitChildOpened(appSessionId, childProviderSessionId, role, true);
     } catch (err) {
       this.emit({
         type: 'error',
         code: 'child.open_failed',
         appSessionId,
-        providerSessionId: childProviderSessionId,
+        parentAppSessionId: appSessionId,
+        childSessionId: childProviderSessionId,
         message: errMsg(err),
       });
     }
+  }
+
+  private emitChildOpened(
+    parentAppSessionId: string,
+    childSessionId: string,
+    role: SessionRole,
+    settingsReady: boolean,
+  ): void {
+    if (settingsReady && (role === 'worker' || role === 'validator')) {
+      this.emit({
+        type: 'child.updated',
+        parentAppSessionId,
+        childSessionId,
+        role,
+        status: 'opened',
+        settingsReady: true,
+      });
+      return;
+    }
+    this.emit({
+      type: 'child.updated',
+      appSessionId: parentAppSessionId,
+      providerSessionId: childSessionId,
+      role,
+      status: 'opened',
+    });
   }
 
   private async sendChildSession(
@@ -1849,7 +2032,7 @@ export class SessionManager {
         childSession.streaming = false;
         // closeChildSession resolves the worker by the child-map id, which is not
         // guaranteed to match the live session id.
-        await this.closeChildSession(childSession.appSessionId, childSession.providerSessionId);
+        await this.closeChildSession(childSession.appSessionId, childSession.childSessionId);
       } else {
         // Refresh while streaming stays true so concurrent sends queue instead
         // of racing a second driveChildSession(). The daemon auto-compacts the worker
@@ -1861,7 +2044,7 @@ export class SessionManager {
           // interrupt, close, expiry lookup) uses it, so the tightened timer
           // actually replaces the 5-minute one.
           this.autoCompactionWatchdogs.arm(
-            childSession.providerSessionId,
+            childSession.childSessionId,
             POST_TURN_AUTO_COMPACTION_WATCHDOG_MS,
           );
         } else {
@@ -1985,10 +2168,12 @@ export class SessionManager {
       return true;
     }
     this.emitError({
+      code: 'child.open_failed',
       appSessionId: liveSession.summary.appSessionId,
       // Scope to the requested child session so its loading state settles, not just the
       // session-level toast.
-      providerSessionId: requestedProviderSessionId,
+      parentAppSessionId: liveSession.summary.appSessionId,
+      childSessionId: requestedProviderSessionId,
       message: `Open child-session limit reached (${String(MAX_OPEN_CHILD_SESSIONS)}). Wait for one running child view to finish before opening another.`,
     });
     return false;
@@ -2276,6 +2461,8 @@ export class SessionManager {
     code?: string;
     providerSessionId?: string;
     appSessionId?: string;
+    parentAppSessionId?: string;
+    childSessionId?: string;
     message: string;
     recoverable?: boolean;
   }): void {

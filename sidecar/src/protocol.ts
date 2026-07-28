@@ -562,6 +562,13 @@ export type ClientCommand =
   | { type: 'child.sendNow'; appSessionId: string; providerSessionId: string; text: string }
   | { type: 'child.interrupt'; appSessionId: string; providerSessionId: string }
   | {
+      type: 'child.updateSettings';
+      parentAppSessionId: string;
+      childSessionId: string;
+      modelId: string | null;
+      reasoningEffort?: ReasoningEffort;
+    }
+  | {
       type: 'approval.respond';
       appSessionId: string;
       requestId: string;
@@ -642,6 +649,45 @@ export type ClientCommand =
   | { type: 'browser.native.result'; result: BrowserNativeResult }
   | { type: 'spec.read'; appSessionId: string; path: string };
 
+export type ChildUpdatedEvent =
+  | {
+      type: 'child.updated';
+      appSessionId: string;
+      providerSessionId: string;
+      role: SessionRole;
+      status: 'opened' | 'running' | 'paused' | 'completed';
+    }
+  | {
+      type: 'child.updated';
+      parentAppSessionId: string;
+      childSessionId: string;
+      role: 'worker' | 'validator';
+      status: 'opened';
+      settingsReady: true;
+    };
+
+export type SessionChildEvent =
+  | {
+      type: 'session.child';
+      appSessionId: string;
+      event: 'started' | 'updated' | 'completed';
+      providerSessionId: string;
+      exitCode?: number;
+      label?: string;
+      prompt?: string;
+      modelId?: string;
+      reasoningEffort?: ReasoningEffort;
+      toolUseId?: string;
+    }
+  | {
+      type: 'session.child';
+      parentAppSessionId: string;
+      event: 'updated';
+      childSessionId: string;
+      modelId: string;
+      reasoningEffort?: ReasoningEffort;
+    };
+
 // ── Sidecar -> Frontend ──────────────────────────────────────────────
 export type ServerEvent =
   | { type: 'connection'; status: 'connected' | 'error'; message?: string }
@@ -659,13 +705,7 @@ export type ServerEvent =
   | { type: 'cli.install.done'; phase: 'install' | 'update'; ok: boolean; exitCode: number }
   | { type: 'session.created'; clientRef: string; session: SessionSummary }
   | { type: 'session.updated'; session: SessionSummary }
-  | {
-      type: 'child.updated';
-      appSessionId: string;
-      providerSessionId: string;
-      role: SessionRole;
-      status: 'opened' | 'running' | 'paused' | 'completed';
-    }
+  | ChildUpdatedEvent
   | { type: 'event.appended'; event: TranscriptEvent }
   | { type: 'approval.requested'; request: PermissionRequest }
   | { type: 'question.requested'; question: SessionQuestion }
@@ -695,6 +735,8 @@ export type ServerEvent =
       code?: string;
       appSessionId?: string;
       providerSessionId?: string;
+      parentAppSessionId?: string;
+      childSessionId?: string;
       message: string;
       recoverable?: boolean;
     }
@@ -711,18 +753,7 @@ export type ServerEvent =
       features: BridgeFeature[];
     }
   | { type: 'mission.progress'; appSessionId: string; missionId?: string; entries: ProgressEntry[] }
-  | {
-      type: 'session.child';
-      appSessionId: string;
-      event: 'started' | 'updated' | 'completed';
-      providerSessionId: string;
-      exitCode?: number;
-      label?: string;
-      prompt?: string;
-      modelId?: string;
-      reasoningEffort?: ReasoningEffort;
-      toolUseId?: string;
-    }
+  | SessionChildEvent
   | { type: 'spec.content'; appSessionId: string; path: string; content: string }
   | { type: 'sessions.list'; sessions: SessionSummary[] }
   | {

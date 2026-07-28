@@ -202,7 +202,8 @@ export function createInitializeSessionParams(
   };
 
   if (options.modelId) params.modelId = options.modelId;
-  if (options.reasoningEffort) params.reasoningEffort = mapReasoning(options.reasoningEffort);
+  if (options.reasoningEffort)
+    params.reasoningEffort = factoryReasoningEffort(options.reasoningEffort);
   if (options.compactionModel) params.compactionModel = options.compactionModel;
   if (options.compactionTokenLimit !== undefined)
     params.compactionTokenLimit = options.compactionTokenLimit;
@@ -210,7 +211,7 @@ export function createInitializeSessionParams(
     params.compactionThresholdCheckEnabled = options.compactionThresholdCheckEnabled;
   if (options.specModeModelId) params.specModeModelId = options.specModeModelId;
   if (options.specModeReasoningEffort)
-    params.specModeReasoningEffort = mapReasoning(options.specModeReasoningEffort);
+    params.specModeReasoningEffort = factoryReasoningEffort(options.specModeReasoningEffort);
   if (options.autonomyLevel) params.autonomyLevel = mapAutonomy(options.autonomyLevel);
   if (options.decompSessionType) params.decompSessionType = options.decompSessionType;
   if (options.missionId) params.decompMissionId = options.missionId;
@@ -234,7 +235,7 @@ function mapAutonomy(autonomy: Autonomy): AutonomyLevel {
   return AutonomyLevel.Low;
 }
 
-function mapReasoning(reasoning: ReasoningEffort): SdkReasoningEffort {
+export function factoryReasoningEffort(reasoning: ReasoningEffort): SdkReasoningEffort {
   switch (reasoning) {
     case 'none':
       return SdkReasoningEffort.None;
@@ -284,11 +285,13 @@ function missionSettingsFor(
   return {
     ...(options.workerModelId ? { workerModel: options.workerModelId } : {}),
     ...(options.workerReasoningEffort
-      ? { workerReasoningEffort: mapReasoning(options.workerReasoningEffort) }
+      ? { workerReasoningEffort: factoryReasoningEffort(options.workerReasoningEffort) }
       : {}),
     ...(options.validatorModelId ? { validationWorkerModel: options.validatorModelId } : {}),
     ...(options.validatorReasoningEffort
-      ? { validationWorkerReasoningEffort: mapReasoning(options.validatorReasoningEffort) }
+      ? {
+          validationWorkerReasoningEffort: factoryReasoningEffort(options.validatorReasoningEffort),
+        }
       : {}),
   };
 }

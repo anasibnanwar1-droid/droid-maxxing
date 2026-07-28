@@ -463,6 +463,7 @@ test(
         h.events.some(
           (event) =>
             event.type === 'session.child' &&
+            'appSessionId' in event &&
             event.appSessionId === 'provider-1' &&
             event.event === 'completed' &&
             event.providerSessionId === 'worker-c4',
@@ -473,6 +474,7 @@ test(
         h.events.some(
           (event) =>
             event.type === 'child.updated' &&
+            'appSessionId' in event &&
             event.appSessionId === 'provider-1' &&
             event.providerSessionId === 'worker-c4' &&
             event.role === 'worker' &&
@@ -549,14 +551,16 @@ test('[C5] Compaction retuning uses each live session model', { concurrency: fal
       ['validator-c5', 'validator'],
     ];
     assert.deepEqual(
-      opened.map(([providerSessionId, role]) =>
+      opened.map(([childSessionId, role]) =>
         h.events.some(
           (event) =>
             event.type === 'child.updated' &&
-            event.appSessionId === 'provider-1' &&
-            event.providerSessionId === providerSessionId &&
+            'parentAppSessionId' in event &&
+            event.parentAppSessionId === 'provider-1' &&
+            event.childSessionId === childSessionId &&
             event.role === role &&
-            event.status === 'opened',
+            event.status === 'opened' &&
+            event.settingsReady,
         ),
       ),
       [true, true],
@@ -590,9 +594,6 @@ test('[C5] Compaction retuning uses each live session model', { concurrency: fal
   }
 });
 
-test.todo(
-  "active worker/validator model changes must re-arm that exact child session with the new model's effective threshold without altering parent/other children",
-);
 test.todo(
   "closing or shutting down with an active worker stream must prevent its later unwind from re-arming that worker's watchdog or context poller",
 );

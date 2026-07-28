@@ -65,6 +65,7 @@ export class FakeFactorySession implements FactorySession {
   private readonly promptWaiters: { count: number; resolve(): void }[] = [];
   private nextCompactGate?: DeferredStream;
   private nextContextStatsGate?: DeferredStream;
+  private nextUpdateSettingsGate?: DeferredStream;
   private nextCloseGate?: DeferredStream;
 
   constructor(
@@ -126,6 +127,12 @@ export class FakeFactorySession implements FactorySession {
     return gate;
   }
 
+  deferNextUpdateSettings(): StreamGate {
+    const gate = this.defer();
+    this.nextUpdateSettingsGate = gate;
+    return gate;
+  }
+
   deferNextClose(): StreamGate {
     const gate = this.defer();
     this.nextCloseGate = gate;
@@ -172,7 +179,7 @@ export class FakeFactorySession implements FactorySession {
     return error ? Promise.reject(error) : Promise.resolve({});
   }
 
-  updateSettings(
+  async updateSettings(
     settings: Partial<UpdateSessionSettingsRequestParams>,
   ): Promise<Awaited<ReturnType<FactorySession['updateSettings']>>> {
     this.settings.push({ ...settings });
@@ -183,7 +190,11 @@ export class FakeFactorySession implements FactorySession {
     });
     const error = this.nextUpdateSettingsError;
     delete this.nextUpdateSettingsError;
-    return error ? Promise.reject(error) : Promise.resolve({});
+    const gate = this.nextUpdateSettingsGate;
+    delete this.nextUpdateSettingsGate;
+    await gate?.promise;
+    if (error) throw error;
+    return {};
   }
 
   onNotification(listener: NotificationCallback, filter?: NotificationFilter): () => void {
