@@ -231,6 +231,23 @@ test('updateSummary persists canonical state before one publication and protects
   assert.equal(registry.getLive('provider-old'), session);
 });
 
+test('failed summary persistence leaves live state unchanged and unpublished', () => {
+  const { history, published, registry } = createHarness({ now: () => 42 });
+  const session = live(summary('stable-app', { title: 'Original title' }));
+  registry.register(session);
+  history.nextSyncError = new Error('persist failed');
+
+  assert.throws(
+    () => registry.updateSummary('stable-app', { title: 'Uncommitted title' }),
+    /persist failed/,
+  );
+
+  assert.equal(session.summary.title, 'Original title');
+  assert.equal(session.summary.updatedAt, 1);
+  assert.equal(registry.getCanonicalSummary('stable-app')?.title, 'Original title');
+  assert.deepEqual(published, []);
+});
+
 test('replaceProvider retains the alias chain and supports live and historical sessions', () => {
   let timestamp = 10;
   const historical = summary('historical-app', {
@@ -286,6 +303,30 @@ test('replaceProvider retains the alias chain and supports live and historical s
   assert.equal(registry.resolveSummary('historical-provider-next')?.appSessionId, 'historical-app');
   assert.deepEqual(history.trace, ['persist', 'publish', 'persist', 'publish']);
   assert.equal(published.length, 2);
+});
+
+test('failed provider replacement preserves the live summary and aliases', () => {
+  const { history, published, registry } = createHarness({ now: () => 42 });
+  const session = live(
+    summary('stable-app', {
+      providerSessionId: 'provider-current',
+      compactedFromProviderSessionIds: ['provider-old'],
+    }),
+  );
+  registry.register(session);
+  history.nextSyncError = new Error('persist failed');
+
+  assert.throws(
+    () => registry.replaceProvider('provider-old', 'provider-next', { title: 'Uncommitted' }),
+    /persist failed/,
+  );
+
+  assert.equal(session.summary.providerSessionId, 'provider-current');
+  assert.equal(session.summary.title, 'stable-app');
+  assert.equal(registry.getLive('provider-current'), session);
+  assert.equal(registry.getLive('provider-old'), session);
+  assert.equal(registry.getLive('provider-next'), undefined);
+  assert.deepEqual(published, []);
 });
 
 test('resolve and list project copies after ordinary, Mission Control, and live merging', () => {

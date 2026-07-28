@@ -79,8 +79,9 @@ export class SessionRegistry<TLive extends RegisteredSession> {
     if (!liveSession) return undefined;
 
     const updated = this.withPatch(liveSession.summary, patch);
+    this.persist(updated);
     liveSession.summary = updated;
-    this.persistAndPublish(updated);
+    this.publish(updated);
     return updated;
   }
 
@@ -103,13 +104,14 @@ export class SessionRegistry<TLive extends RegisteredSession> {
       ]),
     };
 
+    this.persist(updated);
     if (liveSession) {
       this.removeAliases(current);
       liveSession.summary = updated;
       this.indexAliases(updated);
     }
 
-    this.persistAndPublish(updated);
+    this.publish(updated);
     return updated;
   }
 
@@ -198,8 +200,7 @@ export class SessionRegistry<TLive extends RegisteredSession> {
     this.dependencies.history.syncSummaries([summary]);
   }
 
-  private persistAndPublish(summary: SessionSummary): void {
-    this.persist(summary);
+  private publish(summary: SessionSummary): void {
     this.dependencies.onSummaryUpdated(this.project(summary));
   }
 
