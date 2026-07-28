@@ -147,14 +147,18 @@ function createHarness(ordinarySummaries: SessionSummary[] = []) {
     },
     makePermissionHandler: () => () => new Promise<RequestPermissionHandlerResult>(() => undefined),
     makeAskUserHandler: () => () => new Promise<AskUserResult>(() => undefined),
-    compactionLimit: () => compactionLimit(),
-    enableDaemonAutoCompaction: (session, limit) => {
-      calls.push({
-        target: 'provider',
-        method: 'autoCompaction.arm',
-        args: [session.sessionId, limit],
-      });
-      return enableAutoCompaction();
+    compaction: {
+      resolveLimit: () => compactionLimit(),
+      arm: async (target, limit) => {
+        if (!target.isCurrent()) return false;
+        calls.push({
+          target: 'provider',
+          method: 'autoCompaction.arm',
+          args: [target.session.sessionId, limit],
+        });
+        const armed = await enableAutoCompaction();
+        return target.isCurrent() && armed;
+      },
     },
     isShutdownStarted: () => shutdownStarted,
     subscribeSessionCompaction: (live) => {

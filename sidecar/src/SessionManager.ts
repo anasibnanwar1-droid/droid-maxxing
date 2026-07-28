@@ -57,6 +57,13 @@ import {
   type UsageOffset,
 } from './SessionContext.js';
 import {
+  childCompactionModelId,
+  SessionCompaction,
+  type ChildCompactionTarget,
+  type CompactionRetuneTarget,
+  type PrimaryCompactionTarget,
+} from './SessionCompaction.js';
+import {
   SessionLifecycle,
   type ChildSessionSettings,
   type LiveChildSession,
@@ -65,14 +72,7 @@ import {
   type StartedLocalMcpResources,
 } from './SessionLifecycle.js';
 import type { SessionListFilterOptions } from './sessionListFilter.js';
-import {
-  daemonCompactionSettings,
-  effectiveCompactionTriggerLimit,
-  normalizeCompactionTokenLimit,
-  runCompaction,
-  type CompactionTokenLimitPatch,
-  type CompactType,
-} from './compaction.js';
+import { normalizeCompactionTokenLimit, runCompaction, type CompactType } from './compaction.js';
 import {
   AutoCompactionWatchdogs,
   POST_TURN_AUTO_COMPACTION_WATCHDOG_MS,
@@ -124,6 +124,7 @@ export interface SessionManagerDependencies {
   history: SessionHistory;
   browsers: SessionBrowsers;
   createLocalMcpResource: (appSessionId: () => string) => StartableLocalMcpResource;
+  getFactoryDefaults?: () => Promise<FactoryDefaultSettings>;
 }
 
 export interface SessionManagerOptions {
@@ -172,18 +173,12 @@ export class SessionManager {
   private readonly interactions: SessionInteractions;
   private readonly eventFlow: SessionEventFlow;
   private readonly context: SessionContext;
+  private readonly compaction: SessionCompaction;
   private readonly lifecycle: SessionLifecycle;
   private readonly pendingAgentSettings = new Map<
     string,
     Partial<Record<ConfigurableSessionRole, AgentSettingPatch>>
   >();
-  // Latest compaction limit snapshot pushed by the app UI. It outranks CLI
-  // defaults so resume, model changes, and worker opens all follow the limits
-  // the Settings panel shows.
-  private uiCompactionSettings: CompactionTokenLimitPatch = {};
-  // Monotonic revision of uiCompactionSettings; in-flight retunes from an
-  // older revision stop instead of re-arming stale limits out of order.
-  private compactionRetuneRev = 0;
   // Bounds how long an autoCompacting flag may stay raised without a
   // completion, so a lost session_compacted can never wedge a session forever.
   private readonly autoCompactionWatchdogs = new AutoCompactionWatchdogs((sessionKey) => {
@@ -194,6 +189,7 @@ export class SessionManager {
   private readonly pendingNativeBrowserRequests = new Map<string, PendingNativeBrowserRequest>();
   private readonly browsers: SessionBrowsers;
   private readonly createLocalMcpResource: SessionManagerDependencies['createLocalMcpResource'];
+  private readonly factoryDefaultsOverride: SessionManagerDependencies['getFactoryDefaults'];
 
   constructor(
     private readonly emit: Emit,
@@ -204,6 +200,7 @@ export class SessionManager {
       this.history = options.dependencies.history;
       this.browsers = options.dependencies.browsers;
       this.createLocalMcpResource = options.dependencies.createLocalMcpResource;
+      this.factoryDefaultsOverride = options.dependencies.getFactoryDefaults;
     } else {
       this.runtime = new DroidRuntime();
       this.history = new HistoryIndex();
@@ -224,6 +221,7 @@ export class SessionManager {
       this.browsers = browsers;
       this.createLocalMcpResource = (appSessionId) =>
         createBrowserMcpServer(browsers, appSessionId);
+      this.factoryDefaultsOverride = undefined;
     }
     this.cachedModels = options.initialModels ? [...options.initialModels] : null;
     this.registry = new SessionRegistry({
@@ -243,6 +241,11 @@ export class SessionManager {
         this.emit(event);
       },
       maxContextTokensForSummary: (summary) => this.maxContextTokensForSummary(summary),
+    });
+    this.compaction = new SessionCompaction({
+      registry: this.registry,
+      getFactoryDefaults: () => this.getFactoryDefaults(),
+      maxContextTokensForModel: (modelId) => this.maxContextTokensForModel(modelId),
     });
     this.timeline = new SessionTimeline({
       registry: this.registry,
@@ -291,27 +294,7 @@ export class SessionManager {
       startLocalMcpServers: (ref) => this.startLocalMcpServers(ref),
       makePermissionHandler: (ref) => this.interactions.makePermissionHandler(ref),
       makeAskUserHandler: (ref) => this.interactions.makeAskUserHandler(ref),
-      compactionLimit: (modelId, request) => {
-        if (request.kind === 'resume') return this.compactionLimit(modelId, request.exposed);
-        return Promise.resolve(
-          effectiveCompactionTriggerLimit({
-            modelId,
-            ui: {
-              compactionTokenLimit:
-                request.command.compactionTokenLimit !== undefined
-                  ? request.command.compactionTokenLimit
-                  : this.uiCompactionSettings.compactionTokenLimit,
-              compactionTokenLimitPerModel:
-                request.command.compactionTokenLimitPerModel ??
-                this.uiCompactionSettings.compactionTokenLimitPerModel,
-            },
-            defaults: request.defaults,
-            maxContextTokens: this.maxContextTokensForModel(modelId),
-          }),
-        );
-      },
-      enableDaemonAutoCompaction: (session, limit) =>
-        this.enableDaemonAutoCompaction(session, limit),
+      compaction: this.compaction,
       isShutdownStarted: () => this.shutdownPromise !== undefined,
       subscribeSessionCompaction: (liveSession) => {
         this.subscribeSessionCompaction(liveSession);
@@ -508,7 +491,7 @@ export class SessionManager {
         await this.updateAgentSettings(cmd);
         return;
       case 'settings.compaction.update':
-        await this.updateCompactionSettings(cmd);
+        await this.compaction.updateLimits(cmd, this.compactionRetuneTargets());
         return;
       case 'browser.open':
         await this.handleBrowser(cmd.appSessionId, () =>
@@ -687,6 +670,7 @@ export class SessionManager {
   }
 
   private async getFactoryDefaults(): Promise<FactoryDefaultSettings> {
+    if (this.factoryDefaultsOverride) return this.factoryDefaultsOverride();
     const defaults = readFactoryDefaults();
     const models = await this.getModels();
     return validateFactoryDefaults(defaults, models);
@@ -779,7 +763,7 @@ export class SessionManager {
             this.registry.getLive(appSessionId) === session &&
             !hasSessionCloseStarted(session);
           if (cmd.modelId !== undefined)
-            await this.recomputeSessionCompactionLimit(session, stillCurrent);
+            await this.compaction.rearmPrimary(this.primaryCompactionTarget(session));
           if (stillCurrent()) await this.context.refresh(this.primaryContextTarget(session));
         }
       }
@@ -861,13 +845,10 @@ export class SessionManager {
     this.emitCanonicalChildSettings(parent.summary.appSessionId, cmd.childSessionId, nextSettings);
 
     try {
-      const limit = await this.compactionLimit(effectiveModelId);
-      if (
-        !this.isCurrentChildSettingsTarget(parent, cmd.childSessionId, child) ||
-        this.childSessionModelId(parent, cmd.childSessionId, child.role) !== effectiveModelId
-      )
-        return;
-      await this.enableDaemonAutoCompaction(child.session, limit);
+      await this.compaction.rearmModelChangedChild(
+        this.childCompactionTarget(parent, cmd.childSessionId, child, effectiveModelId),
+        effectiveModelId,
+      );
     } catch (error) {
       console.error(
         `[compaction] could not resolve exact-child limit for ${child.session.sessionId}: ${errMsg(error)}`,
@@ -985,128 +966,22 @@ export class SessionManager {
     if (Object.keys(next).length > 0) await liveSession.session.updateSettings(next);
   }
 
-  // Refresh the daemon's auto-compaction threshold from the session's effective
-  // primary model. When the model was reset to Default, summary.modelId is
-  // undefined, so resolve the actual default model (its per-model limit and
-  // context-window clamp would otherwise be ignored).
-  private async recomputeSessionCompactionLimit(
-    liveSession: LiveSession,
-    stillCurrent: () => boolean = () => true,
-  ): Promise<void> {
-    const defaults = await this.getFactoryDefaults();
-    const modelId =
-      liveSession.summary.modelId ??
-      defaultModelForAgent('primary', defaultsModeForSummary(liveSession.summary), defaults);
-    const limit = await this.compactionLimit(modelId);
-    if (!stillCurrent()) return;
-    const armed = await this.enableDaemonAutoCompaction(liveSession.session, limit);
-    if (!stillCurrent()) return;
-    // The summary records the trigger the daemon actually accepted; an arm
-    // failure clears it instead of advertising a limit that is not in force.
-    this.registry.updateSummary(liveSession.summary.appSessionId, {
-      compactionTokenLimit: armed ? limit : undefined,
-    });
-  }
-
-  // Thin binding of the shared derivation to this manager's state (UI settings
-  // snapshot, CLI defaults, model catalog).
-  private async compactionLimit(
-    modelId: string | undefined,
-    exposed: CompactionTokenLimitPatch = {},
-  ): Promise<number> {
-    const defaults = await this.getFactoryDefaults();
-    return effectiveCompactionTriggerLimit({
-      modelId,
-      ui: this.uiCompactionSettings,
-      exposed,
-      defaults,
-      maxContextTokens: this.maxContextTokensForModel(modelId),
-    });
-  }
-
-  private childSessionModelId(
-    liveSession: LiveSession,
-    childProviderSessionId: string,
-    role: SessionRole,
-  ): string | undefined {
-    let roleModelId: string | undefined;
-    if (role === 'worker') roleModelId = liveSession.summary.workerModelId;
-    else if (role === 'validator') roleModelId = liveSession.summary.validatorModelId;
-    return (
-      liveSession.childSessionSettings.get(childProviderSessionId)?.modelId ??
-      roleModelId ??
-      liveSession.summary.modelId
-    );
-  }
-
-  private async updateCompactionSettings(
-    cmd: Extract<ClientCommand, { type: 'settings.compaction.update' }>,
-  ): Promise<void> {
-    const next: CompactionTokenLimitPatch = {};
-    if (cmd.compactionTokenLimit !== undefined)
-      next.compactionTokenLimit = cmd.compactionTokenLimit;
-    if (cmd.compactionTokenLimitPerModel !== undefined)
-      next.compactionTokenLimitPerModel = cmd.compactionTokenLimitPerModel;
-    this.uiCompactionSettings = next;
-    // Retune every live provider session (primary and opened children) so concurrent
-    // chats on different models each follow their own effective limit. Sessions
-    // retune in parallel so one hung updateSettings cannot stall the rest; the
-    // revision guard keeps a slow batch from re-arming stale limits after a
-    // newer settings change already retuned.
-    const rev = ++this.compactionRetuneRev;
-    const stillCurrent = () => !this.shutdownPromise && rev === this.compactionRetuneRev;
-    const retunes: Promise<unknown>[] = [];
+  private compactionRetuneTargets(): CompactionRetuneTarget[] {
+    const targets: CompactionRetuneTarget[] = [];
     for (const liveSession of this.registry.liveSessionsSnapshot()) {
-      const primaryStillCurrent = () =>
-        stillCurrent() &&
-        this.registry.getLive(liveSession.summary.appSessionId) === liveSession &&
-        !hasSessionCloseStarted(liveSession);
-      retunes.push(this.recomputeSessionCompactionLimit(liveSession, primaryStillCurrent));
+      targets.push(this.primaryCompactionTarget(liveSession));
       for (const [childProviderSessionId, childSession] of liveSession.childSessions) {
-        const modelId = this.childSessionModelId(
-          liveSession,
-          childProviderSessionId,
+        const modelId = childCompactionModelId(
+          liveSession.summary,
+          liveSession.childSessionSettings.get(childProviderSessionId),
           childSession.role,
         );
-        retunes.push(
-          this.compactionLimit(modelId).then((limit) => {
-            if (
-              !stillCurrent() ||
-              this.registry.getLive(liveSession.summary.appSessionId) !== liveSession ||
-              hasSessionCloseStarted(liveSession) ||
-              liveSession.childSessions.get(childProviderSessionId) !== childSession ||
-              this.childSessionModelId(liveSession, childProviderSessionId, childSession.role) !==
-                modelId
-            )
-              return;
-            return this.enableDaemonAutoCompaction(childSession.session, limit);
-          }),
+        targets.push(
+          this.childCompactionTarget(liveSession, childProviderSessionId, childSession, modelId),
         );
       }
     }
-    await Promise.allSettled(retunes);
-  }
-
-  // Best effort: turn on the daemon's own threshold check so it compacts the
-  // session in place (same session id) once usage crosses the limit. A failure
-  // leaves the daemon's default behavior in place and never blocks the caller;
-  // the boolean lets callers avoid recording a trigger that is not in force.
-  private async enableDaemonAutoCompaction(
-    session: FactorySession,
-    limit: number | undefined,
-  ): Promise<boolean> {
-    if (this.shutdownPromise) return false;
-    try {
-      await session.updateSettings(daemonCompactionSettings(limit) as never);
-      return true;
-    } catch (err) {
-      // The session stays usable, but auto-compaction is NOT armed: surface it
-      // in the logs instead of failing silently ("compaction never happens").
-      console.error(
-        `[compaction] could not arm auto-compaction on ${session.sessionId}: ${errMsg(err)}`,
-      );
-      return false;
-    }
+    return targets;
   }
 
   private async runtimeAgentSettings(
@@ -1147,7 +1022,7 @@ export class SessionManager {
       if (pending.primary?.modelId !== undefined) {
         // A pending primary model applied before send changes the
         // auto-compaction threshold; recompute it to match the new model.
-        await this.recomputeSessionCompactionLimit(liveSession, stillCurrent);
+        await this.compaction.rearmPrimary(this.primaryCompactionTarget(liveSession));
       }
       return stillCurrent();
     } catch (err) {
@@ -1245,6 +1120,22 @@ export class SessionManager {
     };
   }
 
+  private primaryCompactionTarget(liveSession: LiveSession): PrimaryCompactionTarget {
+    const target = this.primaryContextTarget(liveSession);
+    const configuredModelId = liveSession.summary.modelId;
+    const defaultsMode = defaultsModeForSummary(liveSession.summary);
+    return {
+      ...target,
+      kind: 'primary',
+      configuredModelId,
+      defaultsMode,
+      isCurrent: () =>
+        target.isCurrent() &&
+        liveSession.summary.modelId === configuredModelId &&
+        defaultsModeForSummary(liveSession.summary) === defaultsMode,
+    };
+  }
+
   private childContextTarget(
     parent: LiveSession,
     childSessionId: string,
@@ -1262,6 +1153,28 @@ export class SessionManager {
       child,
       isCurrent: () =>
         this.isCurrentChildSession(parent, childSessionId, child) && child.session === session,
+    };
+  }
+
+  private childCompactionTarget(
+    parent: LiveSession,
+    childSessionId: string,
+    child: LiveChildSession,
+    effectiveModelId: string | undefined,
+  ): ChildCompactionTarget {
+    const target = this.childContextTarget(parent, childSessionId, child);
+    return {
+      ...target,
+      kind: 'child',
+      effectiveModelId,
+      isCurrent: () =>
+        this.isCurrentChildSettingsTarget(parent, childSessionId, child) &&
+        child.session === target.session &&
+        childCompactionModelId(
+          parent.summary,
+          parent.childSessionSettings.get(childSessionId),
+          child.role,
+        ) === effectiveModelId,
     };
   }
 
@@ -1691,7 +1604,9 @@ export class SessionManager {
     // Settings live on the daemon session, not the persisted file, so the
     // replacement session starts without the auto-compaction threshold check.
     // Re-push it; a failure must not turn a successful swap into a stale one.
-    await this.recomputeSessionCompactionLimit(liveSession).catch(ignoreError);
+    await this.compaction
+      .rearmPrimary(this.primaryCompactionTarget(liveSession))
+      .catch(ignoreError);
     // The replacement session starts with default tool settings, so the cached
     // design-tool policy no longer reflects reality. Clear it so the next turn
     // re-synchronizes disabledToolIds.
@@ -1892,7 +1807,7 @@ export class SessionManager {
     if (liveSession && settings.modelId !== undefined) {
       // The model drives the auto-compaction threshold; recompute it so the
       // daemon doesn't keep compacting against the old model's limit.
-      await this.recomputeSessionCompactionLimit(liveSession, stillCurrent);
+      await this.compaction.rearmPrimary(this.primaryCompactionTarget(liveSession));
     }
     if (liveSession && session && stillCurrent())
       await this.context.refresh(this.primaryContextTarget(liveSession));
@@ -1972,13 +1887,25 @@ export class SessionManager {
       // and context-window clamps stay correct for differing worker/validator models.
       const workerModelId =
         resolvedSettings.modelId ??
-        this.childSessionModelId(liveSession, childProviderSessionId, role);
-      const limit = await this.compactionLimit(workerModelId);
+        childCompactionModelId(
+          liveSession.summary,
+          liveSession.childSessionSettings.get(childProviderSessionId),
+          role,
+        );
+      const limit = await this.compaction.resolveLimit({ modelId: workerModelId });
       if (!this.isCurrentChildOpenAttempt(liveSession, childProviderSessionId, attempt)) return;
       // Workers auto-compact in place via the daemon's own threshold check,
       // using the worker model's effective limit (so differing worker/validator
       // models keep their own thresholds).
-      await this.enableDaemonAutoCompaction(session, limit);
+      await this.compaction.arm(
+        {
+          session,
+          isCurrent: () =>
+            loadedSession === session &&
+            this.isCurrentChildOpenAttempt(liveSession, childProviderSessionId, attempt),
+        },
+        limit,
+      );
       if (!this.isCurrentChildOpenAttempt(liveSession, childProviderSessionId, attempt)) return;
       const childSession: LiveChildSession = {
         session,
@@ -2587,7 +2514,7 @@ export class SessionManager {
       this.context.clearAll();
     });
     await run(() => {
-      this.compactionRetuneRev += 1;
+      this.compaction.clearAll();
       this.autoCompactionWatchdogs.clearAll();
     });
     await run(() => this.browsers.closeAll());

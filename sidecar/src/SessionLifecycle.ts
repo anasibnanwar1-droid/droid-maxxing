@@ -12,7 +12,7 @@ import type {
   SessionSummary,
 } from './protocol.js';
 import type { SessionRegistry } from './SessionRegistry.js';
-import type { CompactionTokenLimitPatch } from './compaction.js';
+import type { SessionCompaction } from './SessionCompaction.js';
 import type { LiveOperationTarget, SessionContext } from './SessionContext.js';
 import {
   buildCreatedSessionSummary,
@@ -91,9 +91,6 @@ export interface LiveSession extends LiveTurnState {
   unsubscribe?: () => void; // Primary provider notification subscription, replaced on swap.
 }
 type LifecycleError = Omit<Extract<ServerEvent, { type: 'error' }>, 'type'>;
-type CompactionLimitRequest =
-  | { kind: 'create'; command: CompactionTokenLimitPatch; defaults: FactoryDefaultSettings }
-  | { kind: 'resume'; exposed: CompactionTokenLimitPatch };
 
 export interface SessionLifecycleDependencies {
   runtime: FactoryRuntime;
@@ -104,8 +101,7 @@ export interface SessionLifecycleDependencies {
   startLocalMcpServers: (ref: { id: string }) => Promise<StartedLocalMcpResources>;
   makePermissionHandler: (ref: { id: string }) => PermissionHandler;
   makeAskUserHandler: (ref: { id: string }) => AskUserHandler;
-  compactionLimit(modelId: string | undefined, request: CompactionLimitRequest): Promise<number>;
-  enableDaemonAutoCompaction(session: FactorySession, limit: number | undefined): Promise<boolean>;
+  compaction: Pick<SessionCompaction, 'resolveLimit' | 'arm'>;
   isShutdownStarted: () => boolean;
   subscribeSessionCompaction: (liveSession: LiveSession) => void;
   childSessionLinks: (appSessionId: string) => { providerSessionId: string; toolUseId?: string }[];
@@ -145,9 +141,9 @@ export class SessionLifecycle {
       const agents = createMissionAgentDefaultsForMode(defaultsMode, command, defaults);
       const compactionModel =
         command.compactionModel ?? defaults.compactionModel ?? 'current-model';
-      const compactionTokenLimit = await d.compactionLimit(primary.modelId, {
-        kind: 'create',
-        command: {
+      const compactionTokenLimit = await d.compaction.resolveLimit({
+        modelId: primary.modelId,
+        uiOverride: {
           ...(command.compactionTokenLimit !== undefined
             ? { compactionTokenLimit: command.compactionTokenLimit }
             : {}),
@@ -177,7 +173,13 @@ export class SessionLifecycle {
       const session = await d.runtime.createSession(runtimeOptions);
       pendingSession = session;
       this.requireOpenAdmission();
-      const autoCompactionArmed = await d.enableDaemonAutoCompaction(session, compactionTokenLimit);
+      const autoCompactionArmed = await d.compaction.arm(
+        {
+          session,
+          isCurrent: () => !d.isShutdownStarted() && pendingSession === session,
+        },
+        compactionTokenLimit,
+      );
       this.requireOpenAdmission();
 
       const appSessionId = session.sessionId;
@@ -252,12 +254,20 @@ export class SessionLifecycle {
       });
       const summary = resumed.summary;
       const projectedModel = d.applyPendingSettingsToSummary({ ...summary }).modelId;
-      const limit = await d.compactionLimit(projectedModel, {
-        kind: 'resume',
+      const limit = await d.compaction.resolveLimit({
+        modelId: projectedModel,
         exposed: resumed.exposedCompaction,
       });
       this.requireOpenAdmission();
-      if (await d.enableDaemonAutoCompaction(session, limit)) {
+      if (
+        await d.compaction.arm(
+          {
+            session,
+            isCurrent: () => !d.isShutdownStarted() && pendingSession === session,
+          },
+          limit,
+        )
+      ) {
         summary.compactionTokenLimit = limit;
       }
       this.requireOpenAdmission();

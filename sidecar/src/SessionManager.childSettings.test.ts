@@ -1,78 +1,15 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { ClientCommand, ServerEvent, SessionRole, SessionSummary } from './protocol.js';
+import type { ClientCommand } from './protocol.js';
 import { FakeFactorySession } from './testing/fakeFactoryRuntime.js';
 import {
-  createSessionManagerTestContext,
-  type SessionManagerTestContext,
-} from './testing/sessionManagerTestContext.js';
-
-function latestSessionList(events: ServerEvent[]): SessionSummary[] {
-  return events.filter((event) => event.type === 'sessions.list').at(-1)?.sessions ?? [];
-}
-
-async function createMission(
-  h: SessionManagerTestContext,
-  options: {
-    workerModel?: string;
-    validatorModel?: string;
-  } = {},
-): Promise<void> {
-  await h.create({
-    sessionPurpose: 'mission-control',
-    clientRef: 'child-settings',
-    title: 'Child settings',
-    goal: 'go',
-    interactionMode: 'agi',
-    autonomy: 'low',
-    ...options,
-  });
-  await h.waitForIdle();
-}
-
-async function openChild(
-  h: SessionManagerTestContext,
-  childSessionId: string,
-  providerSessionId: string,
-  role: Exclude<SessionRole, 'primary'>,
-  modelId: string,
-): Promise<FakeFactorySession> {
-  const child = new FakeFactorySession(providerSessionId, {}, h.calls);
-  child.setInitModel(modelId);
-  h.runtime.loadQueue.set(childSessionId, [child]);
-  await h.handle({
-    type: 'child.open',
-    appSessionId: 'provider-1',
-    providerSessionId: childSessionId,
-    role,
-  });
-  assert.equal(
-    h.events.some(
-      (event) =>
-        event.type === 'child.updated' &&
-        'parentAppSessionId' in event &&
-        event.parentAppSessionId === 'provider-1' &&
-        event.childSessionId === childSessionId &&
-        event.role === role &&
-        event.settingsReady,
-    ),
-    true,
-  );
-  return child;
-}
-
-function exactSettingsEvents(
-  events: ServerEvent[],
-  childSessionId: string,
-): Extract<ServerEvent, { type: 'session.child' }>[] {
-  return events.filter(
-    (event): event is Extract<ServerEvent, { type: 'session.child' }> =>
-      event.type === 'session.child' &&
-      'childSessionId' in event &&
-      event.childSessionId === childSessionId,
-  );
-}
+  createMission,
+  exactSettingsEvents,
+  latestSessionList,
+  openChild,
+} from './testing/childSettingsTestSupport.js';
+import { createSessionManagerTestContext } from './testing/sessionManagerTestContext.js';
 
 test(
   'exact child settings target only the resolved worker or validator backend',
@@ -113,7 +50,13 @@ test(
           'validator-new': 311,
         },
       });
-      const before = [workerA.settings.length, workerB.settings.length, validator.settings.length];
+      const parentProvider = h.provider.session('provider-1');
+      const before = [
+        workerA.settings.length,
+        workerB.settings.length,
+        validator.settings.length,
+        parentProvider.settings.length,
+      ];
 
       await h.handle({
         type: 'child.updateSettings',
@@ -126,22 +69,35 @@ test(
       assert.deepEqual(
         workerA.settings.slice(before[0]).map((settings) => ({
           modelId: settings['modelId'],
+          reasoningEffort: settings['reasoningEffort'],
           limit: settings['compactionTokenLimit'],
         })),
         [
-          { modelId: 'worker-new', limit: undefined },
-          { modelId: undefined, limit: 211 },
+          { modelId: 'worker-new', reasoningEffort: 'high', limit: undefined },
+          { modelId: undefined, reasoningEffort: undefined, limit: 211 },
         ],
       );
       assert.equal(workerB.settings.length, before[1]);
       assert.equal(validator.settings.length, before[2]);
+      assert.equal(parentProvider.settings.length, before[3]);
       const workerEvent = exactSettingsEvents(h.events, 'worker-logical-a').at(-1);
       assert.ok(workerEvent && 'childSessionId' in workerEvent);
       assert.equal(workerEvent.parentAppSessionId, 'provider-1');
       assert.equal(workerEvent.modelId, 'worker-new');
       assert.equal('providerSessionId' in workerEvent, false);
 
+      await h.handle({
+        type: 'settings.compaction.update',
+        compactionTokenLimit: 700,
+        compactionTokenLimitPerModel: {
+          'worker-new': 411,
+          'validator-new': 311,
+        },
+      });
+      assert.equal(workerA.settings.at(-1)?.['compactionTokenLimit'], 411);
+
       const validatorBefore = validator.settings.length;
+      const parentBeforeValidator = parentProvider.settings.length;
       await h.handle({
         type: 'child.updateSettings',
         parentAppSessionId: 'provider-1',
@@ -158,6 +114,7 @@ test(
           { modelId: undefined, limit: 311 },
         ],
       );
+      assert.equal(parentProvider.settings.length, parentBeforeValidator);
 
       await h.handle({ type: 'sessions.list' });
       const parent = latestSessionList(h.events).find(
@@ -186,12 +143,21 @@ test(
         'worker-old',
       );
       await explicit.handle({
+        type: 'settings.compaction.update',
+        compactionTokenLimit: 700,
+        compactionTokenLimitPerModel: {
+          'worker-role-default': 271,
+          'worker-old': 171,
+        },
+      });
+      await explicit.handle({
         type: 'child.updateSettings',
         parentAppSessionId: 'provider-1',
         childSessionId: 'worker-logical',
         modelId: null,
       });
       assert.equal(child.settings.at(-2)?.['modelId'], 'worker-role-default');
+      assert.equal(child.settings.at(-1)?.['compactionTokenLimit'], 271);
     } finally {
       await explicit.dispose();
     }
@@ -207,12 +173,21 @@ test(
         'validator-old',
       );
       await fallback.handle({
+        type: 'settings.compaction.update',
+        compactionTokenLimit: 700,
+        compactionTokenLimitPerModel: {
+          'model-default': 381,
+          'validator-old': 181,
+        },
+      });
+      await fallback.handle({
         type: 'child.updateSettings',
         parentAppSessionId: 'provider-1',
         childSessionId: 'validator-logical',
         modelId: null,
       });
       assert.equal(child.settings.at(-2)?.['modelId'], 'model-default');
+      assert.equal(child.settings.at(-1)?.['compactionTokenLimit'], 381);
     } finally {
       await fallback.dispose();
     }
@@ -304,85 +279,36 @@ test(
 );
 
 test(
-  'provider rejection commits no child success or compaction re-arm and role-default rejection stays truthful',
-  { concurrency: false },
-  async () => {
-    const h = createSessionManagerTestContext();
-    try {
-      await createMission(h, { workerModel: 'worker-accepted' });
-      const child = await openChild(h, 'worker-logical', 'worker-backend', 'worker', 'worker-old');
-      const successes = exactSettingsEvents(h.events, 'worker-logical').length;
-      const writes = child.settings.length;
-      child.nextUpdateSettingsError = new Error('child provider rejected');
-
-      await h.handle({
-        type: 'child.updateSettings',
-        parentAppSessionId: 'provider-1',
-        childSessionId: 'worker-logical',
-        modelId: 'worker-rejected',
-      });
-
-      assert.equal(child.settings.length, writes + 1);
-      assert.equal(child.settings.at(-1)?.['modelId'], 'worker-rejected');
-      assert.equal(exactSettingsEvents(h.events, 'worker-logical').length, successes);
-      assert.equal(
-        h.events.some(
-          (event) =>
-            event.type === 'error' &&
-            event.code === 'child.settings_update_failed' &&
-            event.parentAppSessionId === 'provider-1' &&
-            event.childSessionId === 'worker-logical' &&
-            !event.providerSessionId,
-        ),
-        true,
-      );
-
-      const parent = h.provider.session('provider-1');
-      parent.nextUpdateSettingsError = new Error('role default rejected');
-      await h.handle({
-        type: 'settings.agent.update',
-        appSessionId: 'provider-1',
-        agent: 'worker',
-        modelId: 'worker-false-projection',
-      });
-      await h.handle({ type: 'sessions.list' });
-      assert.equal(
-        latestSessionList(h.events).find((session) => session.appSessionId === 'provider-1')
-          ?.workerModelId,
-        'worker-accepted',
-      );
-    } finally {
-      await h.dispose();
-    }
-  },
-);
-
-test(
-  'a child settings completion after parent close cannot publish or re-arm',
+  'a valid exact child rejects a model-less command without writes or success',
   { concurrency: false },
   async () => {
     const h = createSessionManagerTestContext();
     try {
       await createMission(h);
       const child = await openChild(h, 'worker-logical', 'worker-backend', 'worker', 'worker-old');
-      const gate = h.provider.deferNextUpdateSettings('worker-backend');
+      const writes = child.settings.length;
       const successes = exactSettingsEvents(h.events, 'worker-logical').length;
-      const update = h.handle({
+      const malformed = {
         type: 'child.updateSettings',
         parentAppSessionId: 'provider-1',
         childSessionId: 'worker-logical',
-        modelId: 'worker-late',
-      });
-      await h.waitForIdle();
-      assert.equal(child.settings.at(-1)?.['modelId'], 'worker-late');
-      const writesAfterProvider = child.settings.length;
+        reasoningEffort: 'high',
+      } as unknown as ClientCommand;
 
-      await h.handle({ type: 'session.close', appSessionId: 'provider-1' });
-      gate.resolve();
-      await update;
+      await h.handle(malformed);
 
+      assert.equal(child.settings.length, writes);
       assert.equal(exactSettingsEvents(h.events, 'worker-logical').length, successes);
-      assert.equal(child.settings.length, writesAfterProvider);
+      assert.equal(
+        h.events.some(
+          (event) =>
+            event.type === 'error' &&
+            event.code === 'child.settings_target_invalid' &&
+            event.parentAppSessionId === 'provider-1' &&
+            event.childSessionId === 'worker-logical',
+        ),
+        true,
+      );
     } finally {
       await h.dispose();
     }
@@ -423,54 +349,6 @@ test(
             event.childSessionId === 'missing',
         ),
         true,
-      );
-    } finally {
-      await h.dispose();
-    }
-  },
-);
-
-test(
-  'child open emits no settings readiness after the parent closes',
-  { concurrency: false },
-  async () => {
-    const h = createSessionManagerTestContext();
-    try {
-      await createMission(h);
-      const child = new FakeFactorySession('worker-backend', {}, h.calls);
-      child.setInitModel('worker-old');
-      const gate = child.deferNextUpdateSettings();
-      h.runtime.loadQueue.set('worker-logical', [child]);
-
-      const opening = h.handle({
-        type: 'child.open',
-        appSessionId: 'provider-1',
-        providerSessionId: 'worker-logical',
-        role: 'worker',
-      });
-      await h.waitForIdle();
-      await h.handle({ type: 'session.close', appSessionId: 'provider-1' });
-      gate.resolve();
-      await opening;
-
-      assert.equal(
-        h.events.some(
-          (event) =>
-            event.type === 'child.updated' &&
-            'parentAppSessionId' in event &&
-            event.childSessionId === 'worker-logical' &&
-            event.settingsReady,
-        ),
-        false,
-      );
-      assert.equal(
-        h.calls.filter(
-          (call) =>
-            call.target === 'cleanup' &&
-            call.method === 'session.close' &&
-            call.args[0] === 'worker-backend',
-        ).length,
-        1,
       );
     } finally {
       await h.dispose();

@@ -73,7 +73,10 @@ export interface NativeBrowserTestContext {
 }
 
 export function createSessionManagerTestContext(
-  options: { defaults?: Protocol.FactoryDefaultSettings } = {},
+  options: {
+    defaults?: Protocol.FactoryDefaultSettings;
+    getFactoryDefaults?: () => Promise<Protocol.FactoryDefaultSettings>;
+  } = {},
 ): SessionManagerTestContext {
   const calls: RecordedCall[] = [];
   const events: Protocol.ServerEvent[] = [];
@@ -90,6 +93,7 @@ export function createSessionManagerTestContext(
     history,
     browsers,
     createLocalMcpResource: () => new FakeLocalMcpResource(calls),
+    ...(options.getFactoryDefaults ? { getFactoryDefaults: options.getFactoryDefaults } : {}),
   };
 
   let manager: SessionManager;
