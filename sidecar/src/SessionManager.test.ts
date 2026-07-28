@@ -1,14 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  createAutonomyForCommand,
-  createMissionAgentDefaultsForMode,
-  createModelDefaultsForMode,
   createSessionSettingsForAgent,
   SessionManager,
   startupFactoryDefaults,
   validateFactoryDefaults,
 } from './SessionManager.js';
+import {
+  createAutonomyForCommand,
+  createMissionAgentDefaultsForMode,
+  createModelDefaultsForMode,
+} from './sessionHelpers.js';
 import {
   clampCompactionTokenLimit,
   compactionTriggerCeiling,
@@ -36,6 +38,7 @@ class FakeSession {
 
   async *stream(prompt: string): AsyncGenerator<never, void, undefined> {
     this.prompts.push(prompt);
+    yield* [];
     if (prompt !== 'first') return;
     await new Promise<void>((resolve) => {
       this.releaseFirstTurn = resolve;
@@ -500,6 +503,7 @@ test('a stream AbortError without a user Stop surfaces as a failure, not a silen
   class AbortingSession extends FakeSession {
     async *stream(prompt: string): AsyncGenerator<never, void, undefined> {
       this.prompts.push(prompt);
+      yield* [];
       const err = new Error('The operation was aborted');
       err.name = 'AbortError';
       throw err;
@@ -923,6 +927,7 @@ class FakeCompactionSession {
 
   async *stream(prompt: string): AsyncGenerator<never, void, undefined> {
     this.prompts.push(prompt);
+    yield* [];
   }
 
   async updateSettings(params: Record<string, unknown>): Promise<void> {
@@ -933,8 +938,8 @@ class FakeCompactionSession {
     this.interrupts += 1;
   }
 
-  onNotification(_cb: (note: Record<string, unknown>) => void): () => void {
-    return () => {};
+  onNotification(): () => void {
+    return () => undefined;
   }
 
   async getContextStats(): Promise<{

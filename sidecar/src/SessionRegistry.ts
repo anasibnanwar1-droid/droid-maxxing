@@ -55,6 +55,11 @@ export class SessionRegistry<TLive extends RegisteredSession> {
     return appSessionId ? this.sessions.get(appSessionId) : undefined;
   }
 
+  getCanonicalSummary(id: string): SessionSummary | undefined {
+    const summary = this.resolveCanonicalSummary(id);
+    return summary ? copySummary(summary) : undefined;
+  }
+
   resolveSummary(id: string): SessionSummary | undefined {
     const summary = this.resolveCanonicalSummary(id);
     return summary ? this.project(summary) : undefined;

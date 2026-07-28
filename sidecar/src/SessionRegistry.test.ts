@@ -304,6 +304,12 @@ test('resolve and list project copies after ordinary, Mission Control, and live 
   assert.equal(liveSession.summary.title, 'live');
   assert.equal(liveSession.summary.modelId, undefined);
 
+  const canonical = registry.getCanonicalSummary('live-provider-old');
+  assert.equal(canonical?.title, 'live');
+  assert.equal(canonical?.modelId, undefined);
+  canonical?.compactedFromProviderSessionIds?.push('canonical-caller-mutation');
+  assert.deepEqual(liveSession.summary.compactedFromProviderSessionIds, ['live-provider-old']);
+
   firstListed.compactedFromProviderSessionIds?.push('caller-mutation');
   assert.deepEqual(liveSession.summary.compactedFromProviderSessionIds, ['live-provider-old']);
 

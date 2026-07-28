@@ -11,6 +11,8 @@ import {
 } from './autoCompactionWatchdog.js';
 import type { SessionRole } from './protocol.js';
 
+const ignoreError = (): void => undefined;
+
 export interface CompactingChildState {
   providerSessionId: string;
   appSessionId: string;
@@ -55,10 +57,17 @@ export interface AutoCompactionHost<
     },
   ): void;
   refreshContext(providerSessionId: string, session: S): Promise<void>;
-  drive(appSessionId: string, text: string): Promise<void>;
+  settlePrimary(appSessionId: string): void;
   driveChildSession(childSession: C, text: string): Promise<void>;
   closeChildSession(appSessionId: string, providerSessionId: string): Promise<void>;
   emitChildSessionPaused(childSession: C): void;
+}
+
+interface CompactionNotificationTarget<S> {
+  appSessionId: string;
+  providerSessionId: string;
+  role: SessionRole;
+  session: S;
 }
 
 // Returns true when the notification belonged to the compaction lifecycle and
@@ -69,12 +78,10 @@ export function handleCompactionNotification<
   S,
 >(
   host: AutoCompactionHost<C, L, S>,
-  appSessionId: string,
-  providerSessionId: string,
-  role: SessionRole,
-  session: S,
+  target: CompactionNotificationTarget<S>,
   note: Record<string, unknown>,
 ): boolean {
+  const { appSessionId, providerSessionId, role, session } = target;
   const compaction = extractCompactionNotification(note);
   if (!compaction) {
     // Only an idle state settles a missing session_compacted notification.
@@ -111,7 +118,7 @@ export function handleCompactionNotification<
       (host.childSessionCompactions.get(providerSessionId) ?? 0) + 1,
     );
   }
-  void host.refreshContext(providerSessionId, session).catch(() => {});
+  void host.refreshContext(providerSessionId, session).catch(ignoreError);
   return true;
 }
 
@@ -152,19 +159,35 @@ function setAutoCompacting<C extends CompactingChildState, L extends CompactingS
   const liveSession = host.findSession(appSessionId);
   if (!liveSession) return;
   if (role === 'primary') {
-    const wasActive = liveSession.autoCompacting;
-    liveSession.autoCompacting = active;
-    if (active) host.watchdogs.arm(liveSession.summary.appSessionId, AUTO_COMPACTION_WATCHDOG_MS);
-    else host.watchdogs.clear(liveSession.summary.appSessionId);
-    if (active || !wasActive || liveSession.streaming || liveSession.compacting) return;
-    const next = liveSession.pendingSends.shift();
-    host.patchSummary(liveSession.summary.appSessionId, {
-      queuedSends: liveSession.pendingSends.length,
-    });
-    if (next !== undefined) void host.drive(liveSession.summary.appSessionId, next);
+    setPrimaryAutoCompacting(host, liveSession, active);
     return;
   }
+  setChildAutoCompacting(host, liveSession, providerSessionId, active);
+}
 
+function setPrimaryAutoCompacting<
+  C extends CompactingChildState,
+  L extends CompactingSessionState<C>,
+  S,
+>(host: AutoCompactionHost<C, L, S>, liveSession: L, active: boolean): void {
+  const wasActive = liveSession.autoCompacting;
+  liveSession.autoCompacting = active;
+  if (active) host.watchdogs.arm(liveSession.summary.appSessionId, AUTO_COMPACTION_WATCHDOG_MS);
+  else host.watchdogs.clear(liveSession.summary.appSessionId);
+  if (active || !wasActive || liveSession.streaming || liveSession.compacting) return;
+  host.settlePrimary(liveSession.summary.appSessionId);
+}
+
+function setChildAutoCompacting<
+  C extends CompactingChildState,
+  L extends CompactingSessionState<C>,
+  S,
+>(
+  host: AutoCompactionHost<C, L, S>,
+  liveSession: L,
+  providerSessionId: string,
+  active: boolean,
+): void {
   const childSession = liveSession.childSessions.get(providerSessionId);
   if (!childSession) return;
   const wasActive = childSession.autoCompacting;
