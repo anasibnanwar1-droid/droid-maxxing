@@ -2,10 +2,9 @@ import {
   ContextStatsAccuracy,
   InitializeSessionResultSchema,
   MissionSnapshotSchema,
-  ReasoningEffort,
+  ReasoningEffort as SdkReasoningEffort,
   type DroidResultMessage,
   type DroidStreamEvent,
-  type DroidStreamMessage,
   type MessageOptions,
   type MissionFeature,
   type NotificationCallback,
@@ -13,6 +12,7 @@ import {
   type UpdateSessionSettingsRequestParams,
 } from '@factory/droid-sdk';
 
+import type { ReasoningEffort } from '../protocol.js';
 import type {
   CreateRuntimeSessionOptions,
   FactoryRuntime,
@@ -72,21 +72,16 @@ export class FakeFactorySession implements FactorySession {
     this.initResult = buildInitResult(sessionId, init);
   }
 
-  stream(
-    prompt: string,
-    options?: MessageOptions & { includePartialMessages?: false },
-  ): AsyncGenerator<DroidStreamMessage, void, undefined>;
-  stream(
-    prompt: string,
-    options: MessageOptions & { includePartialMessages: true },
-  ): AsyncGenerator<DroidStreamEvent, void, undefined>;
   async *stream(
     prompt: string,
-    options: MessageOptions = {},
+    options: MessageOptions & { includePartialMessages: true },
   ): AsyncGenerator<DroidStreamEvent, void, undefined> {
-    void options;
     this.prompts.push(prompt);
-    this.calls.push({ target: 'provider', method: 'stream', args: [this.sessionId, prompt] });
+    this.calls.push({
+      target: 'provider',
+      method: 'stream',
+      args: [this.sessionId, prompt, options],
+    });
     this.resolvePromptWaiters();
     await this.streamGates.shift()?.promise;
     const streamError = this.nextStreamError;
@@ -275,7 +270,15 @@ export class FakeFactoryRuntime implements FactoryRuntime {
     this.calls.push({ target: 'runtime', method: 'createSession', args: [options] });
     const next =
       this.createQueue.shift() ??
-      new FakeFactorySession(`provider-${String(this.createCalls.length)}`, options, this.calls);
+      new FakeFactorySession(`provider-${String(this.createCalls.length)}`, options, this.calls, {
+        settings: {
+          ...(options.modelId === undefined ? {} : { modelId: options.modelId }),
+          ...(options.reasoningEffort === undefined
+            ? {}
+            : { reasoningEffort: options.reasoningEffort }),
+          interactionMode: options.interactionMode,
+        },
+      });
     if (next instanceof Error) return Promise.reject(next);
     this.sessions.set(next.sessionId, next);
     return Promise.resolve(next);
@@ -309,7 +312,7 @@ function buildInitResult(
     session: {},
     settings: {
       modelId: settings.modelId ?? 'model-default',
-      reasoningEffort: settings.reasoningEffort ?? ReasoningEffort.Medium,
+      reasoningEffort: settings.reasoningEffort ?? SdkReasoningEffort.Medium,
       ...(settings.interactionMode === undefined
         ? {}
         : { interactionMode: settings.interactionMode }),

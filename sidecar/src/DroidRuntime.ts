@@ -7,9 +7,11 @@ import {
   type AskUserHandler,
   type DecompSessionType,
   type DroidClientTransport,
+  type DroidStreamEvent,
   type InitializeSessionRequestParams,
   type LoadSessionRequestParams,
   type McpServerConfig,
+  type MessageOptions,
   type PermissionHandler,
 } from '@factory/droid-sdk';
 import { spawn } from 'node:child_process';
@@ -52,11 +54,10 @@ export interface RuntimeStatus {
   apiKeyConfigured: boolean;
 }
 
-export type FactorySession = Pick<
+type FactorySessionMethods = Pick<
   DroidSession,
   | 'sessionId'
   | 'initResult'
-  | 'stream'
   | 'interrupt'
   | 'updateSettings'
   | 'enterSpecMode'
@@ -73,6 +74,13 @@ export type FactorySession = Pick<
   | 'listMcpServers'
   | 'listMcpTools'
 >;
+
+export type FactorySession = FactorySessionMethods & {
+  stream(
+    prompt: string,
+    options: MessageOptions & { includePartialMessages: true },
+  ): AsyncGenerator<DroidStreamEvent, void, undefined>;
+};
 
 export interface FactoryRuntime {
   connect(apiKey?: string): void;
