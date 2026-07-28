@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { FactoryDefaultSettings } from './protocol.js';
+import type { FactoryDefaultSettings, SessionSummary } from './protocol.js';
 import {
+  buildResumedSession,
   createAutonomyForCommand,
   createMissionAgentDefaultsForMode,
   createModelDefaultsForMode,
@@ -60,4 +61,40 @@ test('worker and validator defaults apply only to Mission Control sessions', () 
   );
   assert.deepEqual(createMissionAgentDefaultsForMode('auto', {}, defaults), {});
   assert.deepEqual(createMissionAgentDefaultsForMode('spec', {}, defaults), {});
+});
+
+test('cold resume preserves a persisted Mission Control proposal', () => {
+  const historical: SessionSummary = {
+    appSessionId: 'mission-app',
+    providerSessionId: 'mission-provider',
+    missionId: 'mission-id',
+    sessionPurpose: 'mission-control',
+    interactionMode: 'agi',
+    role: 'primary',
+    title: 'Mission',
+    goal: 'Complete the mission',
+    cwd: '/workspace',
+    workspaceKind: 'folder',
+    autonomy: 'low',
+    phase: 'paused',
+    proposal: '# Persisted plan',
+    features: [],
+    tokensIn: 0,
+    tokensOut: 0,
+    contextTokens: 0,
+    createdAt: 1,
+    updatedAt: 1,
+  };
+
+  const resumed = buildResumedSession({
+    init: { settings: { interactionMode: 'agi' } },
+    historical,
+    appSessionId: historical.appSessionId,
+    providerSessionId: historical.providerSessionId ?? historical.appSessionId,
+    defaults: {},
+    maxContextTokensForModel: () => undefined,
+    now: 2,
+  });
+
+  assert.equal(resumed.summary.proposal, '# Persisted plan');
 });

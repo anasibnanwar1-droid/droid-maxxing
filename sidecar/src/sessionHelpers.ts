@@ -382,6 +382,7 @@ export function buildResumedSession(input: BuildResumedSessionInput): {
           : (input.historical?.phase ?? 'paused'),
       streaming: false,
       queuedSends: 0,
+      ...(input.historical?.proposal !== undefined ? { proposal: input.historical.proposal } : {}),
       features: resumedFeatures(input.init, classification.sessionPurpose),
       ...resumedUsage(input.historical),
       createdAt: input.historical?.createdAt ?? input.now,
