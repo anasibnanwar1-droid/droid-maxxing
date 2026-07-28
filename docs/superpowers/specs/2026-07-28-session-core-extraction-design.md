@@ -2,8 +2,7 @@
 
 ## Status
 
-Proposed for approval. This specification is intentionally uncommitted until it
-is approved. Production code must not change before approval.
+Approved and implemented by PR 3.
 
 ## Verified baseline
 
@@ -144,6 +143,7 @@ Its domain interface is:
 class SessionRegistry<TLive extends RegisteredSession> {
   register(liveSession: TLive): void;
   getLive(id: string): TLive | undefined;
+  getCanonicalSummary(id: string): SessionSummary | undefined;
   resolveSummary(id: string): SessionSummary | undefined;
   listSummaries(options?: SessionListFilterOptions): SessionSummary[];
   updateSummary(id: string, patch: SessionSummaryPatch): SessionSummary | undefined;
