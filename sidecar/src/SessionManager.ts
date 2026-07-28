@@ -1,15 +1,9 @@
 import {
   ContextBreakdownResultSchema,
   DroidInteractionMode,
-  type AskUserHandler,
   type ContextBreakdownResult,
-  type AskUserRequestParams,
-  type AskUserResult,
   type GetContextStatsResult,
   type McpServerConfig,
-  type PermissionHandler,
-  type RequestPermissionHandlerResult,
-  type RequestPermissionRequestParams,
 } from '@factory/droid-sdk';
 import { tmpdir } from 'node:os';
 import type {
@@ -43,13 +37,7 @@ import { boundedInt, numberValue, stringValue } from './values.js';
 import { DroidRuntime, type FactoryRuntime, type FactorySession } from './DroidRuntime.js';
 import { detectEnvironment } from './Environment.js';
 import { buildInstallCommand, buildUpdateCommand, runStreaming } from './CliInstaller.js';
-import {
-  classifyPermission,
-  confirmationType,
-  normalizeNotification,
-  normalizeStreamEvent,
-  permissionSignature,
-} from './normalize.js';
+import { normalizeNotification, normalizeStreamEvent } from './normalize.js';
 import {
   HistoryIndex,
   loadHistoricalSessions,
@@ -63,6 +51,7 @@ import { createBrowserMcpServer } from './browser/browserMcpServer.js';
 import { isDesignPrompt } from './browser/designPromptPacks.js';
 import { NativeBrowserRuntime } from './browser/NativeBrowserRuntime.js';
 import { SessionRegistry } from './SessionRegistry.js';
+import { SessionInteractions } from './SessionInteractions.js';
 import { SessionTimeline } from './SessionTimeline.js';
 import {
   SessionLifecycle,
@@ -72,11 +61,6 @@ import {
   type PendingChildSession,
   type StartedLocalMcpResources,
 } from './SessionLifecycle.js';
-import {
-  isAlwaysOutcome,
-  isApprovalOutcome,
-  normalizePermissionOutcome,
-} from './permissionOutcomes.js';
 import type { SessionListFilterOptions } from './sessionListFilter.js';
 import {
   daemonCompactionSettings,
@@ -169,8 +153,6 @@ const BROWSER_NATIVE_TIMEOUT_MS = boundedInt(
 );
 const ignoreError = (): undefined => undefined;
 
-let permSeq = 0;
-const nextRequestId = () => `req-${Date.now().toString(36)}-${(permSeq++).toString(36)}`;
 let nativeBrowserSeq = 0;
 const nextNativeBrowserRequestId = () =>
   `browser-native-${Date.now().toString(36)}-${(nativeBrowserSeq++).toString(36)}`;
@@ -189,6 +171,7 @@ export class SessionManager {
   private readonly history: SessionHistory;
   private readonly registry: SessionRegistry<LiveSession>;
   private readonly timeline: SessionTimeline;
+  private readonly interactions: SessionInteractions;
   private readonly lifecycle: SessionLifecycle;
   private readonly pendingAgentSettings = new Map<
     string,
@@ -271,6 +254,18 @@ export class SessionManager {
       },
       now: Date.now,
     });
+    this.interactions = new SessionInteractions({
+      getLiveSession: (id) => this.registry.getLive(id),
+      updateSummary: (id, patch) => {
+        this.registry.updateSummary(id, patch);
+      },
+      emit: (event) => {
+        this.emit(event);
+      },
+      emitError: (error) => {
+        this.emitError(error);
+      },
+    });
     this.lifecycle = new SessionLifecycle({
       runtime: this.runtime,
       registry: this.registry,
@@ -280,8 +275,8 @@ export class SessionManager {
       getFactoryDefaults: () => this.getFactoryDefaults(),
       maxContextTokensForModel: (modelId) => this.maxContextTokensForModel(modelId),
       startLocalMcpServers: (ref) => this.startLocalMcpServers(ref),
-      makePermissionHandler: (ref) => this.makePermissionHandler(ref),
-      makeAskUserHandler: (ref) => this.makeAskUserHandler(ref),
+      makePermissionHandler: (ref) => this.interactions.makePermissionHandler(ref),
+      makeAskUserHandler: (ref) => this.interactions.makeAskUserHandler(ref),
       compactionLimit: (modelId, request) => {
         if (request.kind === 'resume') return this.compactionLimit(modelId, request.exposed);
         return Promise.resolve(
@@ -322,6 +317,9 @@ export class SessionManager {
       },
       clearSessionRuntimeCaches: (liveSession) => {
         this.clearSessionRuntimeCaches(liveSession);
+      },
+      forgetInteractions: (appSessionId) => {
+        this.interactions.forgetSession(appSessionId);
       },
       closeBrowserSession: (appSessionId) => this.browsers.close(appSessionId),
       emit: (event) => {
@@ -398,10 +396,15 @@ export class SessionManager {
         await this.lifecycle.sendNow(cmd.appSessionId, cmd.text);
         return;
       case 'approval.respond':
-        await this.resolvePermission(cmd.appSessionId, cmd.requestId, cmd.outcome);
+        await this.interactions.respondToApproval(cmd.appSessionId, cmd.requestId, cmd.outcome);
         return;
       case 'question.respond':
-        this.resolveQuestion(cmd.appSessionId, cmd.requestId, cmd.cancelled, cmd.answers);
+        this.interactions.respondToQuestion(
+          cmd.appSessionId,
+          cmd.requestId,
+          cmd.cancelled,
+          cmd.answers,
+        );
         return;
       case 'session.interrupt':
         await this.lifecycle.interrupt(cmd.appSessionId);
@@ -995,113 +998,6 @@ export class SessionManager {
     );
   }
 
-  private makePermissionHandler(ref: { id: string }): PermissionHandler {
-    return (params: RequestPermissionRequestParams) =>
-      new Promise<RequestPermissionHandlerResult>((resolve) => {
-        const liveSession = this.registry.getLive(ref.id);
-        const requestId = nextRequestId();
-        const type = confirmationType(params);
-        const request = classifyPermission(ref.id, requestId, params);
-        const signature = permissionSignature(params);
-        if (liveSession && signature && liveSession.permissionGrants.has(signature)) {
-          resolve(normalizePermissionOutcome('proceed_always'));
-          return;
-        }
-        if (liveSession) {
-          liveSession.pendingPermissions.set(requestId, {
-            resolve,
-            kind: request.kind,
-            signature: signature || undefined,
-          });
-          if (type === 'propose_mission') {
-            this.registry.updateSummary(ref.id, {
-              phase: 'awaiting_plan_approval',
-              proposal: request.detail,
-            });
-          } else if (type === 'start_mission_run') {
-            this.registry.updateSummary(ref.id, { phase: 'awaiting_run_start' });
-          }
-        }
-        this.emit({ type: 'approval.requested', request });
-      });
-  }
-
-  private makeAskUserHandler(ref: { id: string }): AskUserHandler {
-    return (params: AskUserRequestParams) =>
-      new Promise<AskUserResult>((resolve) => {
-        const liveSession = this.registry.getLive(ref.id);
-        const requestId = nextRequestId();
-        const runtimeParams: {
-          questions?: { index: number; question: string; options?: string[] }[];
-        } = params;
-        const questions = (runtimeParams.questions ?? []).map((q) => ({
-          index: q.index,
-          question: q.question,
-          options: q.options ?? [],
-        }));
-        if (liveSession) liveSession.pendingQuestions.set(requestId, resolve);
-        const question = { appSessionId: ref.id, requestId, questions };
-        this.emit({ type: 'question.requested', question });
-      });
-  }
-
-  private async resolvePermission(
-    appSessionId: string,
-    requestId: string,
-    outcome: string,
-  ): Promise<void> {
-    const liveSession = this.registry.getLive(appSessionId);
-    const pending = liveSession?.pendingPermissions.get(requestId);
-    if (!liveSession || !pending) return;
-    liveSession.pendingPermissions.delete(requestId);
-    let normalized: RequestPermissionHandlerResult;
-    try {
-      normalized = normalizePermissionOutcome(outcome);
-    } catch (err) {
-      this.emitError({
-        code: 'permission.invalid_outcome',
-        appSessionId: appSessionId,
-        message: errMsg(err),
-      });
-      normalized = normalizePermissionOutcome('cancel');
-    }
-    if (pending.signature && isAlwaysOutcome(outcome)) {
-      liveSession.permissionGrants.add(pending.signature);
-    }
-    if (pending.kind === 'spec' && isApprovalOutcome(normalized))
-      await this.prepareSpecExitForRun(liveSession);
-    pending.resolve(normalized);
-  }
-
-  private async prepareSpecExitForRun(liveSession: LiveSession): Promise<void> {
-    const appSessionId = liveSession.summary.appSessionId;
-    this.registry.updateSummary(appSessionId, { interactionMode: 'auto', phase: 'running' });
-    try {
-      await liveSession.session.updateSettings({
-        interactionMode: DroidInteractionMode.Auto,
-      });
-    } catch (err) {
-      this.emitError({
-        code: 'spec.exit_failed',
-        appSessionId,
-        message: `Could not switch spec session to Auto before run: ${errMsg(err)}`,
-      });
-    }
-  }
-
-  private resolveQuestion(
-    appSessionId: string,
-    requestId: string,
-    cancelled: boolean,
-    answers: { index: number; question: string; answer: string }[],
-  ): void {
-    const liveSession = this.registry.getLive(appSessionId);
-    const resolver = liveSession?.pendingQuestions.get(requestId);
-    if (!liveSession || !resolver) return;
-    liveSession.pendingQuestions.delete(requestId);
-    resolver({ cancelled, answers });
-  }
-
   private async runPrimaryTurn(liveSession: LiveSession, prompt: string): Promise<void> {
     const appSessionId = liveSession.summary.appSessionId;
     this.startContextPolling(appSessionId, liveSession.session);
@@ -1576,8 +1472,8 @@ export class SessionManager {
     const ref = { id: appSessionId };
     const oldSession = liveSession.session;
     liveSession.session = await this.runtime.loadSession(newSessionId, {
-      permissionHandler: this.makePermissionHandler(ref),
-      askUserHandler: this.makeAskUserHandler(ref),
+      permissionHandler: this.interactions.makePermissionHandler(ref),
+      askUserHandler: this.interactions.makeAskUserHandler(ref),
       // Re-attach the same local MCP servers (still running) so the swapped
       // session keeps browser tools on subsequent turns.
       mcpServers: liveSession.mcpConfigs,
@@ -1831,8 +1727,8 @@ export class SessionManager {
       if (!(await this.ensureChildSessionCapacity(liveSession, childProviderSessionId))) return;
       const ref = { id: appSessionId };
       const session = await this.runtime.loadSession(childProviderSessionId, {
-        permissionHandler: this.makePermissionHandler(ref),
-        askUserHandler: this.makeAskUserHandler(ref),
+        permissionHandler: this.interactions.makePermissionHandler(ref),
+        askUserHandler: this.interactions.makeAskUserHandler(ref),
       });
       const actualSettings = childSessionSettingsFromInit(session.initResult);
       // A chat/spec child inherits the parent session model when the
