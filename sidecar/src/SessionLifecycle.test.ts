@@ -416,6 +416,7 @@ test('interrupt handles idle, streaming, manual compaction, and auto-compaction 
   const rejectedLive = requireLive(rejected, 'rejected-stop');
   rejectedLive.autoCompacting = true;
   await assert.rejects(rejected.lifecycle.interrupt('rejected-stop'), /interrupt rejected/);
+  assert.equal(rejectedLive.interrupting, false);
   assert.equal(rejectedLive.autoCompacting, true);
   assert.equal(
     rejected.calls.some(

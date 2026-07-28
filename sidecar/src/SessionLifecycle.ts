@@ -331,7 +331,12 @@ export class SessionLifecycle {
     }
     const wasAutoCompacting = liveSession.autoCompacting;
     liveSession.interrupting = true;
-    await liveSession.session.interrupt();
+    try {
+      await liveSession.session.interrupt();
+    } catch (error) {
+      liveSession.interrupting = false;
+      throw error;
+    }
     if (wasAutoCompacting) {
       liveSession.autoCompacting = false;
       this.dependencies.clearAutoCompactionWatchdog(appSessionId);
