@@ -590,6 +590,25 @@ test('close follows ownership order and closeAll closes its initial snapshot', a
   assert.equal(all.registry.liveSessionsSnapshot().length, 0);
 });
 
+test('closing an active session discards queued sends without reopening it', async () => {
+  const harness = createHarness();
+  const provider = queueCreate(harness, 'closing');
+  const gate = provider.deferNextStream();
+  await harness.lifecycle.create(createCommand('active'));
+  await provider.waitForPrompts(1);
+  await harness.lifecycle.send('closing', 'queued');
+  const live = requireLive(harness, 'closing');
+
+  await harness.lifecycle.close('closing');
+  gate.resolve();
+  await new Promise<void>((resolve) => setImmediate(resolve));
+
+  assert.deepEqual(provider.prompts, ['active']);
+  assert.deepEqual(live.pendingSends, []);
+  assert.equal(harness.runtime.loadCalls.length, 0);
+  assert.equal(harness.registry.getLive('closing'), undefined);
+});
+
 test('pending settings stay projected until successful first-send application', async () => {
   const saved = summary('app-pending', 'provider-pending', {
     modelId: 'model-saved',

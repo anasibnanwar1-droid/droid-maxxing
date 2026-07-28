@@ -70,6 +70,7 @@ export interface LiveChildSession extends LiveTurnState {
 export interface LiveSession extends LiveTurnState {
   summary: SessionSummary;
   session: FactorySession;
+  closing: boolean;
   pendingPermissions: Map<string, PendingPermission>;
   pendingQuestions: Map<string, (result: AskUserResult) => void>;
   childSessions: Map<string, LiveChildSession>;
@@ -365,12 +366,13 @@ export class SessionLifecycle {
   ): Promise<void> {
     const liveSession = this.dependencies.registry.getLive(appSessionId);
     if (!liveSession) {
-      if (previousLiveSession) {
+      if (previousLiveSession && !previousLiveSession.closing) {
         const queued = previousLiveSession.pendingSends.splice(0);
         await this.redeliverQueuedSends(appSessionId, queued);
       }
       return;
     }
+    if (liveSession.closing) return;
     if (liveSession.streaming || liveSession.compacting || liveSession.autoCompacting) return;
     const next = liveSession.pendingSends.shift();
     if (next === undefined && previousLiveSession) return;
@@ -381,7 +383,9 @@ export class SessionLifecycle {
   async close(appSessionId: string): Promise<void> {
     const d = this.dependencies;
     const liveSession = d.registry.getLive(appSessionId);
-    if (!liveSession) return;
+    if (!liveSession || liveSession.closing) return;
+    liveSession.closing = true;
+    liveSession.pendingSends = [];
     d.stopContextPolling(liveSession.summary.appSessionId);
     if (liveSession.summary.providerSessionId) {
       d.stopContextPolling(liveSession.summary.providerSessionId);
@@ -416,6 +420,7 @@ export class SessionLifecycle {
       await this.resume(appSessionId);
       liveSession = this.dependencies.registry.getLive(appSessionId);
     }
+    if (liveSession?.closing) return undefined;
     if (!liveSession) {
       const message = `Session ${appSessionId} is not resumable`;
       this.dependencies.emitError({ appSessionId, message });
@@ -424,13 +429,13 @@ export class SessionLifecycle {
     const settingsApplied = await this.dependencies.applyPendingSessionSettings(
       liveSession.summary.appSessionId,
     );
-    return settingsApplied ? liveSession : undefined;
+    return settingsApplied && !liveSession.closing ? liveSession : undefined;
   }
 
   private async drive(appSessionId: string, prompt: string): Promise<void> {
     const d = this.dependencies;
     const liveSession = d.registry.getLive(appSessionId);
-    if (!liveSession) return;
+    if (!liveSession || liveSession.closing) return;
     const stableAppSessionId = liveSession.summary.appSessionId;
     liveSession.streaming = true;
     liveSession.terminalSources.delete(stableAppSessionId);
@@ -445,7 +450,9 @@ export class SessionLifecycle {
       liveSession.interruptingForSteer = false;
       liveSession.interrupting = false;
       liveSession.streaming = false;
-      if (!d.registry.getLive(stableAppSessionId)) {
+      if (this.isClosing(liveSession)) {
+        liveSession.pendingSends = [];
+      } else if (!d.registry.getLive(stableAppSessionId)) {
         const queued = liveSession.pendingSends.splice(0);
         if (queued.length > 0) void this.redeliverQueuedSends(stableAppSessionId, queued);
       } else if (liveSession.autoCompacting) {
@@ -464,6 +471,10 @@ export class SessionLifecycle {
       streaming: liveSession.streaming,
       queuedSends: liveSession.pendingSends.length,
     });
+  }
+
+  private isClosing(liveSession: LiveSession): boolean {
+    return liveSession.closing;
   }
 
   private async redeliverQueuedSends(appSessionId: string, queued: string[]): Promise<void> {
@@ -487,6 +498,7 @@ function createLiveSession(
   return {
     summary,
     session,
+    closing: false,
     streaming: false,
     pendingSends: [],
     pendingPermissions: new Map(),
