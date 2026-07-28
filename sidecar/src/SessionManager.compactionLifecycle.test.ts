@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { FakeFactorySession, type RecordedCall } from './testing/fakeFactoryRuntime.js';
+import { writeProviderSessionStart } from './testing/historyCharacterizationSupport.js';
 import { createSessionManagerTestContext } from './testing/sessionManagerTestContext.js';
 import type { ServerEvent } from './protocol.js';
 import {
@@ -52,6 +53,37 @@ function callCount(
     (call) => call.target === target && call.method === method && call.args[0] === id,
   ).length;
 }
+
+test('[C0] Create arms daemon compaction without client-side turn compaction', async () => {
+  const h = createSessionManagerTestContext();
+
+  try {
+    await h.create({
+      sessionPurpose: 'chat',
+      clientRef: 'c0',
+      title: 'C0',
+      goal: 'ordinary turn',
+      interactionMode: 'auto',
+      autonomy: 'low',
+      compactionTokenLimit: 600,
+    });
+    await h.waitForIdle();
+
+    assert.equal(
+      h.provider
+        .session('provider-1')
+        .settings.some(
+          (settings) =>
+            settings['compactionThresholdCheckEnabled'] === true &&
+            settings['compactionTokenLimit'] === 600,
+        ),
+      true,
+    );
+    assert.equal(callCount(h.calls, 'provider', 'compactSession', 'provider-1'), 0);
+  } finally {
+    await h.dispose();
+  }
+});
 
 test('[C1] Manual in-place compaction', { concurrency: false }, async () => {
   const h = createSessionManagerTestContext();
@@ -141,6 +173,99 @@ test('[C1] Manual in-place compaction', { concurrency: false }, async () => {
     ]);
     assert.equal(callCount(h.calls, 'provider', 'stream', 'provider-1'), 2);
     assert.equal(sessionUpdates(h.events).at(-1)?.session.providerSessionId, 'provider-1');
+  } finally {
+    await h.dispose();
+  }
+});
+
+test(
+  'manual compaction failure stays recoverable and settles with a unique status',
+  { concurrency: false },
+  async () => {
+    const h = createSessionManagerTestContext();
+    const realNow = Date.now;
+
+    try {
+      await h.create({
+        sessionPurpose: 'chat',
+        clientRef: 'compaction-failure',
+        title: 'Compaction failure',
+        goal: 'initial',
+        interactionMode: 'auto',
+        autonomy: 'low',
+      });
+      await h.waitForIdle();
+      h.events.length = 0;
+      h.provider.session('provider-1').nextCompactError = new Error('transient failure');
+      Date.now = () => 123_456;
+
+      await h.handle({ type: 'session.compact', appSessionId: 'provider-1' });
+
+      const statuses = h.events.filter(
+        (event): event is TranscriptEventAppended =>
+          event.type === 'event.appended' && event.event.kind === 'status',
+      );
+      assert.equal(statuses.length, 2);
+      assert.equal(new Set(statuses.map((event) => event.event.id)).size, statuses.length);
+      assert.equal(
+        statuses.some((event) => /could not finish/i.test(event.event.text ?? '')),
+        true,
+      );
+      assert.equal(
+        h.events.some(
+          (event) =>
+            event.type === 'error' &&
+            event.recoverable === true &&
+            event.message === 'Could not compact session: transient failure',
+        ),
+        true,
+      );
+      assert.equal(
+        sessionUpdates(h.events).some((event) => event.session.phase === 'failed'),
+        false,
+      );
+    } finally {
+      Date.now = realNow;
+      await h.dispose();
+    }
+  },
+);
+
+test('manual compaction is rejected while an ordinary turn is streaming', async () => {
+  const h = createSessionManagerTestContext();
+
+  try {
+    await h.create({
+      sessionPurpose: 'chat',
+      clientRef: 'compaction-streaming',
+      title: 'Compaction streaming',
+      goal: 'initial',
+      interactionMode: 'auto',
+      autonomy: 'low',
+    });
+    await h.waitForIdle();
+    const streamGate = h.provider.deferNextStream('provider-1');
+    const sending = h.handle({
+      type: 'session.send',
+      appSessionId: 'provider-1',
+      text: 'active turn',
+    });
+    await h.provider.waitForPrompts('provider-1', 2);
+
+    await h.handle({ type: 'session.compact', appSessionId: 'provider-1' });
+
+    assert.equal(callCount(h.calls, 'provider', 'compactSession', 'provider-1'), 0);
+    assert.equal(
+      h.events.some(
+        (event) =>
+          event.type === 'event.appended' &&
+          /cannot compact while a turn is active/i.test(event.event.text ?? ''),
+      ),
+      true,
+    );
+
+    streamGate.resolve();
+    await sending;
   } finally {
     await h.dispose();
   }
@@ -241,6 +366,63 @@ test('[C3] Failed swap recovery', { concurrency: false }, async () => {
     assert.equal(callCount(h.calls, 'provider', 'stream', 'provider-1'), 1);
     assert.equal(callCount(h.calls, 'cleanup', 'session.close', 'provider-1'), 1);
     assert.equal(syncsSummary(h.calls, 'provider-1', 'provider-3'), true);
+  } finally {
+    await h.dispose();
+  }
+});
+
+test('[C7] Permanent swap failure re-delivers once through lazy resume', async () => {
+  const h = createSessionManagerTestContext();
+
+  try {
+    await h.create({
+      sessionPurpose: 'chat',
+      clientRef: 'c7',
+      title: 'C7',
+      goal: 'go',
+      interactionMode: 'auto',
+      autonomy: 'low',
+    });
+    await h.waitForIdle();
+    const compactGate = h.provider.deferNextCompaction('provider-1');
+    h.provider.session('provider-1').nextCompactResult = {
+      newSessionId: 'provider-7',
+      removedCount: 1,
+    };
+    const resumed = new FakeFactorySession('provider-7', {}, h.calls);
+    writeProviderSessionStart(h.home, 'provider-7', 'C7 compacted');
+    h.runtime.loadQueue.set('provider-7', [
+      new Error('first adoption failed'),
+      new Error('second adoption failed'),
+      resumed,
+    ]);
+
+    const compacting = h.handle({ type: 'session.compact', appSessionId: 'provider-1' });
+    await h.waitForIdle();
+    await h.handle({
+      type: 'session.send',
+      appSessionId: 'provider-1',
+      text: 'redeliver after resume',
+    });
+    compactGate.resolve();
+    await compacting;
+
+    assert.equal(h.runtime.loadCalls.filter((call) => call.sessionId === 'provider-7').length, 3);
+    assert.equal(
+      h.events.some(
+        (event) =>
+          event.type === 'error' &&
+          event.recoverable === true &&
+          /reloading it failed/i.test(event.message),
+      ),
+      true,
+    );
+    assert.equal(syncsSummary(h.calls, 'provider-1', 'provider-7'), true);
+    assert.equal(callCount(h.calls, 'cleanup', 'session.close', 'provider-1'), 1);
+    assert.deepEqual(h.provider.session('provider-1').prompts, ['go']);
+    assert.deepEqual(resumed.prompts, ['redeliver after resume']);
+    assert.equal(callCount(h.calls, 'provider', 'stream', 'provider-7'), 1);
+    assert.equal(sessionUpdates(h.events).at(-1)?.session.providerSessionId, 'provider-7');
   } finally {
     await h.dispose();
   }

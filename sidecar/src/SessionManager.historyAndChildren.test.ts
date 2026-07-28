@@ -290,11 +290,28 @@ test('[A2] Open and replay a linked child session', { concurrency: false }, asyn
 
   try {
     h.fixture.seedHistorySummaries([summary('app-a2', 'provider-a2')]);
-    h.fixture.seedChildSessionLinks('app-a2', [linkedWorker('worker-a2', 'tool-a2')]);
+    h.fixture.seedChildSessionLinks('app-a2', [
+      linkedWorker('worker-a2', 'tool-a2'),
+      linkedWorker('worker-unknown-a2', 'tool-unknown-a2'),
+    ]);
+    writeHistorySession(h.home, 'provider-a2', []);
     writeHistorySession(h.home, 'worker-a2', [assistantMessage('child-a2', 'child replay', 0)], {
       callingSessionId: 'provider-a2',
       callingToolUseId: 'tool-a2',
     });
+
+    await h.handle({ type: 'session.loadHistory', appSessionId: 'app-a2' });
+    const historical = h.events.filter(isSessionHistory).at(-1);
+    assert.ok(historical);
+    assert.equal(
+      historical.childSessions?.find((link) => link.providerSessionId === 'worker-a2')?.status,
+      undefined,
+    );
+    assert.equal(
+      historical.childSessions?.find((link) => link.providerSessionId === 'worker-unknown-a2')
+        ?.status,
+      undefined,
+    );
 
     await h.handle({ type: 'session.resume', appSessionId: 'app-a2' });
     await h.handle({
@@ -303,6 +320,33 @@ test('[A2] Open and replay a linked child session', { concurrency: false }, asyn
       providerSessionId: 'worker-a2',
       role: 'worker',
     });
+    const primary = h.provider.session('provider-a2');
+    primary.queueStreamEvents([
+      {
+        type: 'tool_progress',
+        toolName: 'Task',
+        toolUseId: 'tool-completed-a2',
+        content: '',
+        update: {
+          type: 'tool_call',
+          subagentSessionId: 'worker-completed-a2',
+          parameters: { subagent_type: 'worker' },
+        },
+      },
+      {
+        type: 'tool_result',
+        toolName: 'Task',
+        toolUseId: 'tool-completed-a2',
+        content: 'done',
+        isError: false,
+      },
+    ]);
+    await h.handle({
+      type: 'session.send',
+      appSessionId: 'app-a2',
+      text: 'run child',
+    });
+    await h.handle({ type: 'session.loadHistory', appSessionId: 'app-a2' });
 
     assert.equal(h.runtime.loadCalls.at(-1)?.sessionId, 'worker-a2');
     assert.equal(
@@ -322,6 +366,20 @@ test('[A2] Open and replay a linked child session', { concurrency: false }, asyn
           event.event.text === 'child replay',
       ),
       true,
+    );
+    const live = h.events.filter(isSessionHistory).at(-1);
+    assert.ok(live);
+    assert.equal(
+      live.childSessions?.find((link) => link.providerSessionId === 'worker-a2')?.status,
+      'running',
+    );
+    assert.equal(
+      live.childSessions?.find((link) => link.providerSessionId === 'worker-completed-a2')?.status,
+      'completed',
+    );
+    assert.equal(
+      live.childSessions?.find((link) => link.providerSessionId === 'worker-unknown-a2')?.status,
+      undefined,
     );
   } finally {
     await h.dispose();
@@ -397,11 +455,76 @@ test('[A3] Child send, steer, and interrupt', { concurrency: false }, async () =
       ),
       true,
     );
+    const loadCallCount = h.runtime.loadCalls.length;
+    await h.handle({
+      type: 'child.open',
+      appSessionId: 'app-a3',
+      providerSessionId: 'worker-unknown-a3',
+      role: 'worker',
+    });
+    assert.equal(h.runtime.loadCalls.length, loadCallCount);
+    assert.equal(
+      h.events.some(
+        (event) =>
+          event.type === 'error' &&
+          event.code === 'child.not_in_session' &&
+          event.providerSessionId === 'worker-unknown-a3',
+      ),
+      true,
+    );
+    assert.equal(
+      h.events.some(
+        (event) =>
+          event.type === 'child.updated' &&
+          event.providerSessionId === 'worker-unknown-a3' &&
+          event.status === 'opened',
+      ),
+      true,
+    );
     assert.deepEqual(
       h.events.filter(
         (event) => isSessionUpdated(event) && event.session.appSessionId === 'app-a3',
       ),
       parentUpdates,
+    );
+  } finally {
+    await h.dispose();
+  }
+});
+
+test('[A4] Opening a child for a non-live historical session settles honestly', async () => {
+  const h = createSessionManagerTestContext();
+
+  try {
+    h.fixture.seedHistorySummaries([summary('app-a4', 'provider-a4')]);
+    h.fixture.seedChildSessionLinks('app-a4', [linkedWorker('worker-a4', 'tool-a4')]);
+
+    await h.handle({
+      type: 'child.open',
+      appSessionId: 'app-a4',
+      providerSessionId: 'worker-a4',
+      role: 'worker',
+    });
+
+    assert.equal(h.runtime.loadCalls.length, 0);
+    assert.equal(
+      h.events.some(
+        (event) =>
+          event.type === 'child.updated' &&
+          event.appSessionId === 'app-a4' &&
+          event.providerSessionId === 'worker-a4' &&
+          event.status === 'opened',
+      ),
+      true,
+    );
+    assert.equal(
+      h.events.some(
+        (event) =>
+          event.type === 'error' &&
+          event.appSessionId === 'app-a4' &&
+          event.providerSessionId === 'worker-a4',
+      ),
+      false,
     );
   } finally {
     await h.dispose();

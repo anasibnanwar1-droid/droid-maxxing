@@ -51,6 +51,8 @@ export class FakeFactorySession implements FactorySession {
   readonly prompts: string[] = [];
   readonly settings: Record<string, unknown>[] = [];
   nextCompactResult?: Awaited<ReturnType<FactorySession['compactSession']>>;
+  nextCompactError?: Error;
+  nextStreamError?: Error;
   nextEnterSpecModeError?: Error;
   nextUpdateSettingsError?: Error;
   readonly notifications = new Set<NotificationCallback>();
@@ -87,8 +89,11 @@ export class FakeFactorySession implements FactorySession {
     this.calls.push({ target: 'provider', method: 'stream', args: [this.sessionId, prompt] });
     this.resolvePromptWaiters();
     await this.streamGates.shift()?.promise;
+    const streamError = this.nextStreamError;
+    delete this.nextStreamError;
+    if (streamError) throw streamError;
     for (const event of this.streamEventQueue.shift() ?? []) yield event;
-    yield successfulResult(this.sessionId);
+    yield successfulResultEvent(this.sessionId);
   }
 
   queueStreamEvents(events: DroidStreamEvent[]): void {
@@ -129,6 +134,9 @@ export class FakeFactorySession implements FactorySession {
     const gate = this.nextCompactGate;
     delete this.nextCompactGate;
     await gate?.promise;
+    const error = this.nextCompactError;
+    delete this.nextCompactError;
+    if (error) throw error;
     return this.nextCompactResult ?? { newSessionId: this.sessionId, removedCount: 0 };
   }
 
@@ -316,7 +324,7 @@ function buildInitResult(
   });
 }
 
-function successfulResult(sessionId: string): DroidResultMessage {
+export function successfulResultEvent(sessionId: string): DroidResultMessage {
   return {
     type: 'result',
     sessionId,
@@ -331,6 +339,15 @@ function successfulResult(sessionId: string): DroidResultMessage {
     subtype: 'success',
     isError: false,
     error: null,
+  };
+}
+
+export function assistantTextDelta(text: string, messageId = 'message-1'): DroidStreamEvent {
+  return {
+    type: 'assistant_text_delta',
+    messageId,
+    blockIndex: 0,
+    text,
   };
 }
 

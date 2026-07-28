@@ -86,13 +86,17 @@ function createHarness(ordinarySummaries: SessionSummary[] = []) {
     getFactoryDefaults: () => Promise.resolve(defaults),
     maxContextTokensForModel: () => 1_000,
     startLocalMcpServers: () => {
-      mcpId += 1;
-      calls.push({ target: 'runtime', method: 'mcp.start', args: [mcpId] });
+      const resourceId = ++mcpId;
+      calls.push({ target: 'runtime', method: 'mcp.start', args: [resourceId] });
       return Promise.resolve({
         servers: [
           {
             close: () => {
-              calls.push({ target: 'cleanup', method: 'mcp.close', args: [`mcp-${mcpId}`] });
+              calls.push({
+                target: 'cleanup',
+                method: 'mcp.close',
+                args: [`mcp-${resourceId}`],
+              });
               return Promise.resolve();
             },
           },
