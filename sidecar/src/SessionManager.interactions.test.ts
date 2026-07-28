@@ -10,7 +10,7 @@ import {
 
 import type { SessionSummary, ServerEvent } from './protocol.js';
 import { writeProviderSessionStart } from './testing/historyCharacterizationSupport.js';
-import { createSessionCharacterizationHarness } from './testing/sessionCharacterizationHarness.js';
+import { createSessionManagerTestContext } from './testing/sessionManagerTestContext.js';
 
 type PermissionRequestedEvent = Extract<ServerEvent, { type: 'approval.requested' }>;
 type ApprovalRequestedEvent = Extract<ServerEvent, { type: 'approval.requested' }>;
@@ -133,7 +133,7 @@ test(
   '[P1] Permission response keeps the stable app identity and emits both request events',
   { concurrency: false },
   async () => {
-    const h = createSessionCharacterizationHarness();
+    const h = createSessionManagerTestContext();
 
     try {
       h.fixture.seedHistorySummaries([historicalSummary('app-p1', 'provider-p1')]);
@@ -170,7 +170,7 @@ test(
   '[P2] Always-grant responses bypass an identical later permission request',
   { concurrency: false },
   async () => {
-    const h = createSessionCharacterizationHarness();
+    const h = createSessionManagerTestContext();
 
     try {
       await h.create({
@@ -208,7 +208,7 @@ test(
   '[P3] Permission responses ignore invalid ids and duplicate or late replies',
   { concurrency: false },
   async () => {
-    const h = createSessionCharacterizationHarness();
+    const h = createSessionManagerTestContext();
 
     try {
       await h.create({
@@ -271,7 +271,7 @@ test(
   '[P4] Spec approval updates the provider before completing the permission callback',
   { concurrency: false },
   async () => {
-    const h = createSessionCharacterizationHarness();
+    const h = createSessionManagerTestContext();
 
     try {
       await h.create({
@@ -336,7 +336,7 @@ test(
   '[Q1] Question answers and cancellation each resolve the provider callback once',
   { concurrency: false },
   async () => {
-    const h = createSessionCharacterizationHarness();
+    const h = createSessionManagerTestContext();
 
     try {
       await h.create({
@@ -418,3 +418,59 @@ test(
     }
   },
 );
+
+test('ask-user requests tolerate omitted questions and options', async () => {
+  const h = createSessionManagerTestContext();
+
+  try {
+    await h.create({
+      sessionPurpose: 'chat',
+      clientRef: 'question-defaults',
+      title: 'Question defaults',
+      goal: 'go',
+      interactionMode: 'auto',
+      autonomy: 'low',
+    });
+
+    const handler = h.provider.session('provider-1').handlers.askUserHandler;
+    assert.ok(handler);
+
+    const emptyRequestResult = Promise.resolve(
+      handler({ toolCallId: 'q-empty' } as AskUserRequestParams),
+    );
+    const emptyRequest = latestQuestion(h.events);
+    assert.deepEqual(emptyRequest.question.questions, []);
+    await h.handle({
+      type: 'question.respond',
+      appSessionId: emptyRequest.question.appSessionId,
+      requestId: emptyRequest.question.requestId,
+      cancelled: true,
+      answers: [],
+    });
+    assert.deepEqual(await emptyRequestResult, { cancelled: true, answers: [] });
+
+    const freeFormResult = Promise.resolve(
+      handler({
+        toolCallId: 'q-free-form',
+        questions: [{ index: 0, topic: 'input', question: 'What should change?' }],
+      } as AskUserRequestParams),
+    );
+    const freeFormRequest = latestQuestion(h.events);
+    assert.deepEqual(freeFormRequest.question.questions, [
+      { index: 0, question: 'What should change?', options: [] },
+    ]);
+    await h.handle({
+      type: 'question.respond',
+      appSessionId: freeFormRequest.question.appSessionId,
+      requestId: freeFormRequest.question.requestId,
+      cancelled: false,
+      answers: [{ index: 0, question: 'What should change?', answer: 'The title' }],
+    });
+    assert.deepEqual(await freeFormResult, {
+      cancelled: false,
+      answers: [{ index: 0, question: 'What should change?', answer: 'The title' }],
+    });
+  } finally {
+    await h.dispose();
+  }
+});

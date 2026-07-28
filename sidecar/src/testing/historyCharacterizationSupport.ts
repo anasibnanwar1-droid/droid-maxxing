@@ -2,7 +2,10 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 import type * as Protocol from '../protocol.js';
-import type { RecordedCall } from './sessionCharacterizationHarness.js';
+import type { SessionManagerDependencies } from '../SessionManager.js';
+import type { RecordedCall } from './fakeFactoryRuntime.js';
+
+type SessionHistoryDependencies = SessionManagerDependencies['history'];
 
 type PersistedSummaryPatch = Pick<
   Protocol.SessionSummary,
@@ -33,7 +36,7 @@ type PersistedSummaryPatch = Pick<
   | 'updatedAt'
 >;
 
-export class FakeHistoryIndex {
+export class FakeHistoryIndex implements SessionHistoryDependencies {
   private readonly summariesByAppId = new Map<string, PersistedSummaryPatch>();
   private readonly links = new Map<string, Protocol.ChildSessionHistoryLink[]>();
 

@@ -32,6 +32,13 @@ flowchart LR
 - The sidecar owns Droid SDK calls and child process environment shaping. It removes `FACTORY_API_KEY` unless a key is explicitly configured.
 - Packaged builds require a bridge token. Development builds may allow local no-token access with `BRIDGE_ALLOW_LOCAL_NO_TOKEN=1`.
 
+### Sidecar session core
+
+- `SessionManager` is the composition root and public command coordinator. Deferred history, event, compaction, browser, and child-session policy remains there.
+- `FactoryRuntime` is the narrow SDK seam; `DroidRuntime` is its production adapter.
+- `SessionRegistry` owns the single live-session map, stable application identity, provider aliases, canonical summary persistence, and projected summary reads. Summary precedence is live, then Mission Control history, then ordinary history.
+- `SessionLifecycle` owns create, resume, lazy resume, send queueing, steering, interruption, and ordered session cleanup.
+
 ## Build path
 
 `npm run build` runs frontend typecheck and Vite build, builds the sidecar bundle, and syntax-checks Electron CommonJS entrypoints. The sidecar build emits `sidecar/dist/sidecar.mjs`, which Electron uses unless `SIDECAR_ENTRY` is set.

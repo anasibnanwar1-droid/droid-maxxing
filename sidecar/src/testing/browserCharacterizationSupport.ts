@@ -1,4 +1,5 @@
 import type { BrowserSnapshot, BrowserState } from '../browser/types.js';
+import type { SessionManagerDependencies } from '../SessionManager.js';
 import type {
   BrowserNativeRequest,
   BrowserNativeResult,
@@ -15,12 +16,7 @@ export interface BrowserRecordedCall {
 
 type BrowserEventEmitter = (event: Extract<ServerEvent, { type: 'browser.updated' }>) => void;
 
-interface BrowserOpenInput {
-  appSessionId: string;
-  url: string;
-  viewport?: BrowserViewport;
-  viewportMode?: BrowserViewportMode;
-}
+type SessionBrowserDependencies = SessionManagerDependencies['browsers'];
 
 const DEFAULT_BROWSER_VIEWPORT: BrowserViewport = {
   width: 1200,
@@ -28,7 +24,7 @@ const DEFAULT_BROWSER_VIEWPORT: BrowserViewport = {
   deviceScaleFactor: 2,
 };
 
-export class FakeBrowserSessionManager {
+export class FakeBrowserSessionManager implements SessionBrowserDependencies {
   readonly calls: BrowserRecordedCall[] = [];
   private readonly states = new Map<string, BrowserState>();
 
@@ -37,7 +33,7 @@ export class FakeBrowserSessionManager {
     private readonly emit?: BrowserEventEmitter,
   ) {}
 
-  open(input: BrowserOpenInput): Promise<void> {
+  open(input: Parameters<SessionBrowserDependencies['open']>[0]): Promise<BrowserState> {
     const existing = this.states.get(input.appSessionId);
     const state = browserState(
       input.appSessionId,
@@ -48,15 +44,43 @@ export class FakeBrowserSessionManager {
     this.states.set(input.appSessionId, state);
     this.recordCall('browser', 'open', [input]);
     this.emit?.({ type: 'browser.updated', state });
-    return Promise.resolve();
+    return Promise.resolve(state);
   }
 
-  reload(appSessionId: string): Promise<void> {
+  reload(appSessionId: string): Promise<BrowserState> {
     const state = this.requireOpenSession(appSessionId);
     this.recordCall('browser', 'reload', [appSessionId]);
     this.emit?.({ type: 'browser.updated', state });
-    return Promise.resolve();
+    return Promise.resolve(state);
   }
+
+  readonly refresh: SessionBrowserDependencies['refresh'] = () =>
+    unsupportedBrowserMethod('refresh');
+
+  readonly resizeViewport: SessionBrowserDependencies['resizeViewport'] = () =>
+    unsupportedBrowserMethod('resizeViewport');
+
+  readonly click: SessionBrowserDependencies['click'] = () => unsupportedBrowserMethod('click');
+
+  readonly type: SessionBrowserDependencies['type'] = () => unsupportedBrowserMethod('type');
+
+  readonly keypress: SessionBrowserDependencies['keypress'] = () =>
+    unsupportedBrowserMethod('keypress');
+
+  readonly scroll: SessionBrowserDependencies['scroll'] = () => unsupportedBrowserMethod('scroll');
+
+  readonly screenshot: SessionBrowserDependencies['screenshot'] = () =>
+    unsupportedBrowserMethod('screenshot');
+
+  readonly inspectPoint: SessionBrowserDependencies['inspectPoint'] = () => {
+    throw new Error('FakeBrowserSessionManager does not implement inspectPoint.');
+  };
+
+  readonly addReference: SessionBrowserDependencies['addReference'] = () =>
+    unsupportedBrowserMethod('addReference');
+
+  readonly designPrompt: SessionBrowserDependencies['designPrompt'] = () =>
+    unsupportedBrowserMethod('designPrompt');
 
   close(appSessionId: string): Promise<void> {
     this.states.delete(appSessionId);
@@ -81,6 +105,10 @@ export class FakeBrowserSessionManager {
     this.calls.push(call);
     this.record(call);
   }
+}
+
+function unsupportedBrowserMethod(method: string): Promise<never> {
+  return Promise.reject(new Error(`FakeBrowserSessionManager does not implement ${method}.`));
 }
 
 function browserState(

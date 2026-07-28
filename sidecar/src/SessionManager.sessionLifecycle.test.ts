@@ -7,13 +7,29 @@ import { DecompSessionType } from '@factory/droid-sdk';
 
 import type { SessionSummary } from './protocol.js';
 import { writeProviderSessionStart } from './testing/historyCharacterizationSupport.js';
-import {
-  FakeDroidSession,
-  createSessionCharacterizationHarness,
-} from './testing/sessionCharacterizationHarness.js';
+import { assistantTextDelta, FakeFactorySession } from './testing/fakeFactoryRuntime.js';
+import { createSessionManagerTestContext } from './testing/sessionManagerTestContext.js';
+
+class DeferredDesignPolicySession extends FakeFactorySession {
+  private rejectDesignPolicyUpdate?: (error: Error) => void;
+
+  override updateSettings(
+    settings: Parameters<FakeFactorySession['updateSettings']>[0],
+  ): ReturnType<FakeFactorySession['updateSettings']> {
+    if (!('disabledToolIds' in settings)) return super.updateSettings(settings);
+    return new Promise((_, reject) => {
+      this.rejectDesignPolicyUpdate = reject;
+    });
+  }
+
+  rejectDesignPolicy(error: Error): void {
+    assert.ok(this.rejectDesignPolicyUpdate);
+    this.rejectDesignPolicyUpdate(error);
+  }
+}
 
 test('[L1] Ordinary create', { concurrency: false }, async () => {
-  const h = createSessionCharacterizationHarness();
+  const h = createSessionManagerTestContext();
 
   try {
     await h.create({
@@ -40,7 +56,7 @@ test('[L1] Ordinary create', { concurrency: false }, async () => {
 });
 
 test('[L2] Spec create', { concurrency: false }, async () => {
-  const h = createSessionCharacterizationHarness();
+  const h = createSessionManagerTestContext();
 
   try {
     await h.create({
@@ -72,7 +88,7 @@ test(
   'design purpose is independent from auto interaction mode',
   { concurrency: false },
   async () => {
-    const h = createSessionCharacterizationHarness();
+    const h = createSessionManagerTestContext();
 
     try {
       await h.create({
@@ -99,7 +115,7 @@ test(
   'AGI interaction mode does not imply Mission Control purpose',
   { concurrency: false },
   async () => {
-    const h = createSessionCharacterizationHarness();
+    const h = createSessionManagerTestContext();
 
     try {
       await h.create({
@@ -123,7 +139,7 @@ test(
 );
 
 test('[L3] AGI create', { concurrency: false }, async () => {
-  const h = createSessionCharacterizationHarness();
+  const h = createSessionManagerTestContext();
 
   try {
     await h.create({
@@ -152,7 +168,7 @@ test('[L3] AGI create', { concurrency: false }, async () => {
 });
 
 test('[L4] Create failure cleanup', { concurrency: false }, async () => {
-  const h = createSessionCharacterizationHarness();
+  const h = createSessionManagerTestContext();
   h.runtime.createQueue.push(new Error('create failed'));
 
   try {
@@ -187,7 +203,7 @@ test(
   '[L5] Resume preserves the app identity while loading the provider session',
   { concurrency: false },
   async () => {
-    const h = createSessionCharacterizationHarness();
+    const h = createSessionManagerTestContext();
 
     try {
       h.fixture.seedHistorySummaries([summary('app-5', 'provider-5')]);
@@ -200,7 +216,7 @@ test(
         false,
       );
       writeProviderSessionStart(h.home, 'provider-5', 'Historical app-5');
-      h.runtime.loadQueue.set('provider-5', [new FakeDroidSession('provider-5', {}, h.calls)]);
+      h.runtime.loadQueue.set('provider-5', [new FakeFactorySession('provider-5', {}, h.calls)]);
       await h.handle({ type: 'session.resume', appSessionId: 'app-5' });
 
       assert.equal(h.runtime.loadCalls.length, 1);
@@ -221,7 +237,7 @@ test(
   'resuming an AGI chat preserves its explicit non-Mission-Control purpose',
   { concurrency: false },
   async () => {
-    const h = createSessionCharacterizationHarness();
+    const h = createSessionManagerTestContext();
 
     try {
       h.fixture.seedHistorySummaries([
@@ -229,7 +245,7 @@ test(
       ]);
       writeProviderSessionStart(h.home, 'provider-agi-chat', 'AGI chat');
       h.runtime.loadQueue.set('provider-agi-chat', [
-        new FakeDroidSession('provider-agi-chat', {}, h.calls, {
+        new FakeFactorySession('provider-agi-chat', {}, h.calls, {
           settings: { interactionMode: 'agi' },
           mission: { state: 'running', features: [] },
         }),
@@ -254,7 +270,7 @@ test(
 );
 
 test('[L6] Send lazily resumes a historical session', { concurrency: false }, async () => {
-  const h = createSessionCharacterizationHarness();
+  const h = createSessionManagerTestContext();
 
   try {
     h.fixture.seedHistorySummaries([summary('app-6', 'provider-6')]);
@@ -264,7 +280,7 @@ test('[L6] Send lazily resumes a historical session', { concurrency: false }, as
       false,
     );
     writeProviderSessionStart(h.home, 'provider-6', 'Historical app-6');
-    h.runtime.loadQueue.set('provider-6', [new FakeDroidSession('provider-6', {}, h.calls)]);
+    h.runtime.loadQueue.set('provider-6', [new FakeFactorySession('provider-6', {}, h.calls)]);
     await h.handle({ type: 'session.send', appSessionId: 'app-6', text: 'once' });
 
     assert.equal(h.runtime.loadCalls.length, 1);
@@ -274,8 +290,96 @@ test('[L6] Send lazily resumes a historical session', { concurrency: false }, as
   }
 });
 
+test(
+  'mixed stable and provider identities preserve output across turns',
+  { concurrency: false },
+  async () => {
+    const h = createSessionManagerTestContext();
+
+    try {
+      h.fixture.seedHistorySummaries([summary('app-alias', 'provider-alias')]);
+      writeProviderSessionStart(h.home, 'provider-alias', 'Alias');
+      const provider = new FakeFactorySession('provider-alias', {}, h.calls);
+      provider.queueStreamEvents([assistantTextDelta('first answer', 'first-message')]);
+      provider.queueStreamEvents([assistantTextDelta('second answer', 'second-message')]);
+      h.runtime.loadQueue.set('provider-alias', [provider]);
+
+      await h.handle({ type: 'session.send', appSessionId: 'app-alias', text: 'first' });
+      await h.handle({ type: 'session.send', appSessionId: 'provider-alias', text: 'second' });
+
+      const textEvents = h.events.flatMap((event) =>
+        event.type === 'event.appended' && event.event.kind === 'text' ? [event.event] : [],
+      );
+      assert.deepEqual(provider.prompts, ['first', 'second']);
+      assert.deepEqual(
+        textEvents.map((event) => event.text),
+        ['first answer', 'second answer'],
+      );
+      assert.deepEqual(
+        textEvents.map((event) => event.appSessionId),
+        ['app-alias', 'app-alias'],
+      );
+    } finally {
+      await h.dispose();
+    }
+  },
+);
+
+test(
+  'provider aliases apply pending settings before the first send',
+  { concurrency: false },
+  async () => {
+    const h = createSessionManagerTestContext();
+    const providerSessionId = 'provider-pending-alias';
+
+    try {
+      h.fixture.seedHistorySummaries([
+        {
+          ...summary('app-pending-alias', providerSessionId),
+          modelId: 'model-old',
+        },
+      ]);
+      writeProviderSessionStart(h.home, providerSessionId, 'Pending alias');
+      await h.handle({
+        type: 'settings.agent.update',
+        appSessionId: providerSessionId,
+        agent: 'primary',
+        modelId: 'model-default',
+      });
+      const provider = new FakeFactorySession(providerSessionId, {}, h.calls, {
+        settings: { modelId: 'model-old' },
+      });
+      h.runtime.loadQueue.set(providerSessionId, [provider]);
+
+      await h.handle({
+        type: 'session.send',
+        appSessionId: providerSessionId,
+        text: 'apply pending model',
+      });
+
+      const modelUpdateIndex = h.calls.findIndex((call) => {
+        const settings = call.args[1];
+        return (
+          call.method === 'updateSettings' &&
+          typeof settings === 'object' &&
+          settings !== null &&
+          'modelId' in settings &&
+          settings.modelId === 'model-default'
+        );
+      });
+      const streamIndex = h.calls.findIndex(
+        (call) => call.method === 'stream' && call.args[1] === 'apply pending model',
+      );
+      assert.ok(modelUpdateIndex >= 0 && modelUpdateIndex < streamIndex);
+      assert.deepEqual(provider.prompts, ['apply pending model']);
+    } finally {
+      await h.dispose();
+    }
+  },
+);
+
 test('[L7] Send-now steers ahead of queued sends', { concurrency: false }, async () => {
-  const h = createSessionCharacterizationHarness();
+  const h = createSessionManagerTestContext();
   const gate = h.runtime.deferNextCreateStream('provider-1');
 
   try {
@@ -300,8 +404,67 @@ test('[L7] Send-now steers ahead of queued sends', { concurrency: false }, async
   }
 });
 
+test('closing an active turn suppresses later provider errors and context refresh', async () => {
+  const h = createSessionManagerTestContext();
+  const gate = h.runtime.deferNextCreateStream('provider-close');
+
+  try {
+    await h.create({
+      sessionPurpose: 'chat',
+      clientRef: 'close-active',
+      title: 'Close active',
+      goal: 'wait',
+      interactionMode: 'auto',
+      autonomy: 'low',
+    });
+    await h.provider.waitForPrompts('provider-close', 1);
+    h.provider.session('provider-close').nextStreamError = new Error('transport closed');
+
+    await h.handle({ type: 'session.close', appSessionId: 'provider-close' });
+    const eventsAfterClose = h.events.length;
+    gate.resolve();
+    await h.waitForIdle();
+    await h.waitForIdle();
+
+    assert.deepEqual(h.events.slice(eventsAfterClose), []);
+  } finally {
+    await h.dispose();
+  }
+});
+
+test('closing suppresses in-flight policy and context updates', async () => {
+  const h = createSessionManagerTestContext();
+  const provider = new DeferredDesignPolicySession('provider-late-effects', {}, h.calls);
+  const streamGate = provider.deferNextStream();
+  const contextGate = provider.deferNextContextStats();
+  h.runtime.createQueue.push(provider);
+
+  try {
+    await h.create({
+      sessionPurpose: 'chat',
+      clientRef: 'close-late-effects',
+      title: 'Close late effects',
+      goal: 'wait',
+      interactionMode: 'auto',
+      autonomy: 'low',
+    });
+
+    await h.handle({ type: 'session.close', appSessionId: 'provider-late-effects' });
+    const eventsAfterClose = h.events.length;
+    provider.rejectDesignPolicy(new Error('policy transport closed'));
+    contextGate.resolve();
+    streamGate.resolve();
+    await h.waitForIdle();
+    await h.waitForIdle();
+
+    assert.deepEqual(h.events.slice(eventsAfterClose), []);
+  } finally {
+    await h.dispose();
+  }
+});
+
 test('[L8] Stop state matrix', { concurrency: false }, async () => {
-  const h = createSessionCharacterizationHarness();
+  const h = createSessionManagerTestContext();
 
   try {
     await h.create({
@@ -351,7 +514,7 @@ test(
   '[L9] Interaction-mode mutation reports provider rejection',
   { concurrency: false },
   async () => {
-    const h = createSessionCharacterizationHarness();
+    const h = createSessionManagerTestContext();
 
     try {
       await h.create({
@@ -409,7 +572,7 @@ test(
 );
 
 test('[L10] Autonomy mutation reports provider rejection', { concurrency: false }, async () => {
-  const h = createSessionCharacterizationHarness();
+  const h = createSessionManagerTestContext();
 
   try {
     await h.create({
@@ -460,7 +623,7 @@ test('[L10] Autonomy mutation reports provider rejection', { concurrency: false 
 });
 
 test('Summary patches preserve existing provider transcripts', { concurrency: false }, async () => {
-  const h = createSessionCharacterizationHarness();
+  const h = createSessionManagerTestContext();
 
   try {
     await h.create({
@@ -516,7 +679,7 @@ test(
   'History fixture materializes only persisted summary metadata',
   { concurrency: false },
   async () => {
-    const h = createSessionCharacterizationHarness();
+    const h = createSessionManagerTestContext();
     const seeded: SessionSummary = {
       ...summary('app-history', 'provider-old'),
       compactedFromProviderSessionIds: [
@@ -606,20 +769,20 @@ test(
   },
 );
 
-function summary(appSessionId: string, providerSessionId: string) {
+function summary(appSessionId: string, providerSessionId: string): SessionSummary {
   const now = Date.now();
   return {
     appSessionId,
     providerSessionId,
-    sessionPurpose: 'chat' as const,
-    interactionMode: 'auto' as const,
-    role: 'primary' as const,
+    sessionPurpose: 'chat',
+    interactionMode: 'auto',
+    role: 'primary',
     title: `Historical ${appSessionId}`,
     goal: '',
     cwd: '',
-    workspaceKind: 'none' as const,
-    autonomy: 'low' as const,
-    phase: 'paused' as const,
+    workspaceKind: 'none',
+    autonomy: 'low',
+    phase: 'paused',
     streaming: false,
     queuedSends: 0,
     features: [],
