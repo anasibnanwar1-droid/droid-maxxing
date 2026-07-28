@@ -478,14 +478,15 @@ search, not just deletion of the temporary harness, is the acceptance proof.
   `sessionHelpers.ts`, the same diff must contain an explicit justification and
   pass an additional adversarial review; compressed code or shallow helper
   fragments are not acceptable.
-  - Implementation exception: the final module is 543 lines after review fixes.
-    The 43-line overage keeps post-open resource ownership, overlapping-close
+  - Implementation exception: the final module is 563 lines after review fixes.
+    The 63-line overage keeps post-open resource ownership, overlapping-close
     coordination, and queued-send disposition in the lifecycle that owns those
     transitions. Moving them would split one state machine or create shallow
     cleanup fragments. Additional adversarial reviews found and drove fixes for
     compaction-recovery redelivery, failed-registration ownership, overlapping
-    closes, post-close turn effects, and failed turn-setup recovery; each
-    corrected path has regression coverage.
+    closes, post-close turn effects, failed turn-setup recovery,
+    post-registration publication cleanup, and lazy-resume error reporting;
+    each corrected path has regression coverage.
 - `SessionManager.ts`: below the repository's default 3,500-line limit.
 - No other new production file above 500 lines.
 - Prefer existing helpers over new one-function modules.

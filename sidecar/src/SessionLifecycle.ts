@@ -134,6 +134,7 @@ export class SessionLifecycle {
     const ref = { id: '' };
     let pendingMcpServers: LocalMcpResource[] = [];
     let pendingSession: FactorySession | undefined;
+    let pendingLiveSession: LiveSession | undefined;
 
     try {
       const defaults = await d.getFactoryDefaults();
@@ -192,22 +193,21 @@ export class SessionLifecycle {
       });
       ref.id = appSessionId;
       const liveSession = createLiveSession(summary, session, mcp);
+      pendingLiveSession = liveSession;
       d.subscribeSessionCompaction(liveSession);
       d.registry.register(liveSession);
-      pendingSession = undefined;
       d.emit({ type: 'session.created', clientRef: command.clientRef, session: summary });
       this.driveInBackground(appSessionId, command.goal);
+      pendingMcpServers = [];
+      pendingSession = undefined;
+      pendingLiveSession = undefined;
     } catch (error) {
-      await Promise.all(
-        pendingMcpServers.map((server) => runBestEffortAsync(() => server.close())),
-      );
-      const session = pendingSession;
-      if (session) await runBestEffortAsync(() => session.close());
+      await this.cleanupFailedOpen(pendingMcpServers, pendingSession, pendingLiveSession);
       d.emitError({ message: errMsg(error) });
     }
   }
 
-  async resume(requestedAppSessionId: string): Promise<void> {
+  async resume(requestedAppSessionId: string): Promise<boolean> {
     const d = this.dependencies;
     d.ensureConnected();
     const historical = d.registry.getCanonicalSummary(requestedAppSessionId);
@@ -224,12 +224,13 @@ export class SessionLifecycle {
         session: projectedSummary,
       });
       void d.refreshContext(existing.summary.appSessionId, existing.session);
-      return;
+      return true;
     }
 
     const ref = { id: appSessionId };
     let pendingMcpServers: LocalMcpResource[] = [];
     let pendingSession: FactorySession | undefined;
+    let pendingLiveSession: LiveSession | undefined;
     try {
       const mcp = await d.startLocalMcpServers(ref);
       pendingMcpServers = mcp.servers;
@@ -260,6 +261,7 @@ export class SessionLifecycle {
       }
       const projectedSummary = d.applyPendingSettingsToSummary({ ...summary });
       const liveSession = createLiveSession(summary, session, mcp);
+      pendingLiveSession = liveSession;
       d.subscribeSessionCompaction(liveSession);
       for (const link of d.childSessionLinks(appSessionId)) {
         liveSession.linkedChildSessions.add(link.providerSessionId);
@@ -268,7 +270,6 @@ export class SessionLifecycle {
         }
       }
       d.registry.register(liveSession);
-      pendingSession = undefined;
       d.emit({
         type: 'session.created',
         clientRef: `resume:${appSessionId}`,
@@ -289,13 +290,14 @@ export class SessionLifecycle {
         });
       }
       void d.refreshContext(appSessionId, session);
+      pendingMcpServers = [];
+      pendingSession = undefined;
+      pendingLiveSession = undefined;
+      return true;
     } catch (error) {
-      await Promise.all(
-        pendingMcpServers.map((server) => runBestEffortAsync(() => server.close())),
-      );
-      const session = pendingSession;
-      if (session) await runBestEffortAsync(() => session.close());
+      await this.cleanupFailedOpen(pendingMcpServers, pendingSession, pendingLiveSession);
       d.emitError({ appSessionId, providerSessionId, message: errMsg(error) });
+      return false;
     }
   }
 
@@ -428,7 +430,8 @@ export class SessionLifecycle {
   private async prepareToSend(appSessionId: string): Promise<LiveSession | undefined> {
     let liveSession = this.dependencies.registry.getLive(appSessionId);
     if (!liveSession) {
-      await this.resume(appSessionId);
+      const resumed = await this.resume(appSessionId);
+      if (!resumed) return undefined;
       liveSession = this.dependencies.registry.getLive(appSessionId);
     }
     if (liveSession?.closeMode) return undefined;
@@ -441,6 +444,23 @@ export class SessionLifecycle {
       liveSession.summary.appSessionId,
     );
     return settingsApplied && !liveSession.closeMode ? liveSession : undefined;
+  }
+
+  private async cleanupFailedOpen(
+    mcpServers: LocalMcpResource[],
+    session: FactorySession | undefined,
+    liveSession: LiveSession | undefined,
+  ): Promise<void> {
+    liveSession?.unsubscribe?.();
+    await Promise.all(mcpServers.map((server) => runBestEffortAsync(() => server.close())));
+    if (session) await runBestEffortAsync(() => session.close());
+    if (
+      liveSession &&
+      this.dependencies.registry.getLive(liveSession.summary.appSessionId) === liveSession
+    ) {
+      this.dependencies.clearSessionRuntimeCaches(liveSession);
+      this.dependencies.registry.unregister(liveSession.summary.appSessionId);
+    }
   }
 
   private async drive(appSessionId: string, prompt: string): Promise<void> {

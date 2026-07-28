@@ -73,11 +73,17 @@ function createHarness(ordinarySummaries: SessionSummary[] = []) {
   let projection: Partial<SessionSummary> = {};
   let applyPending: (appSessionId: string) => Promise<boolean> = () => Promise.resolve(true);
   let enableAutoCompaction = (): Promise<boolean> => Promise.resolve(true);
+  let nextEmitFailure: { type: ServerEvent['type']; error: Error } | undefined;
   let now = 10_000;
   let mcpId = 0;
   const historical = (): HistoricalSession[] =>
     ordinarySummaries.map((item) => ({ summary: { ...item }, progress: [] }));
   const recordEvent = (event: ServerEvent): void => {
+    if (nextEmitFailure?.type === event.type) {
+      const error = nextEmitFailure.error;
+      nextEmitFailure = undefined;
+      throw error;
+    }
     events.push(event);
     calls.push({ target: 'protocol', method: event.type, args: [event] });
     if (event.type === 'session.created' || event.type === 'session.updated') {
@@ -199,6 +205,9 @@ function createHarness(ordinarySummaries: SessionSummary[] = []) {
     },
     setEnableAutoCompaction: (action: () => Promise<boolean>) => {
       enableAutoCompaction = action;
+    },
+    failNextEmit: (type: ServerEvent['type'], error: Error) => {
+      nextEmitFailure = { type, error };
     },
   };
 }
@@ -402,12 +411,78 @@ test('registration failure closes resources without indexing the failed session'
   );
 });
 
+test('post-registration publication failures unregister and close opened resources', async () => {
+  const created = createHarness();
+  queueCreate(created, 'failed-create-publication');
+  created.failNextEmit('session.created', new Error('create publication failed'));
+
+  await created.lifecycle.create(createCommand());
+
+  assert.equal(created.registry.getLive('failed-create-publication'), undefined);
+  assert.deepEqual(
+    created.calls
+      .filter((call) => ['unsubscribe', 'mcp.close', 'session.close'].includes(call.method))
+      .map((call) => [call.method, call.args[0]]),
+    [
+      ['unsubscribe', 'failed-create-publication'],
+      ['mcp.close', 'mcp-1'],
+      ['session.close', 'failed-create-publication'],
+    ],
+  );
+  assert.equal(
+    created.events.some(
+      (event) => event.type === 'error' && event.message === 'create publication failed',
+    ),
+    true,
+  );
+
+  const resumed = createHarness([
+    summary('failed-resume-publication-app', 'failed-resume-publication-provider'),
+  ]);
+  queueLoad(resumed, 'failed-resume-publication-provider');
+  resumed.failNextEmit('session.created', new Error('resume publication failed'));
+
+  await resumed.lifecycle.resume('failed-resume-publication-app');
+
+  assert.equal(resumed.registry.getLive('failed-resume-publication-app'), undefined);
+  assert.deepEqual(
+    resumed.calls
+      .filter((call) => ['unsubscribe', 'mcp.close', 'session.close'].includes(call.method))
+      .map((call) => [call.method, call.args[0]]),
+    [
+      ['unsubscribe', 'failed-resume-publication-provider'],
+      ['mcp.close', 'mcp-1'],
+      ['session.close', 'failed-resume-publication-provider'],
+    ],
+  );
+  assert.equal(
+    resumed.events.some(
+      (event) => event.type === 'error' && event.message === 'resume publication failed',
+    ),
+    true,
+  );
+});
+
 test('send lazily resumes once and sends the prompt exactly once', async () => {
   const harness = createHarness([summary('app-3', 'provider-3')]);
   const provider = queueLoad(harness, 'provider-3');
   await harness.lifecycle.send('app-3', 'only once');
   assert.equal(harness.runtime.loadCalls.length, 1);
   assert.deepEqual(provider.prompts, ['only once']);
+});
+
+test('failed lazy resume emits only the original load error', async () => {
+  const harness = createHarness([summary('lazy-failure-app', 'lazy-failure-provider')]);
+  harness.runtime.loadQueue.set('lazy-failure-provider', [new Error('provider load failed')]);
+
+  await harness.lifecycle.send('lazy-failure-app', 'not delivered');
+
+  assert.deepEqual(
+    harness.events
+      .filter((event): event is Extract<ServerEvent, { type: 'error' }> => event.type === 'error')
+      .map((event) => event.message),
+    ['provider load failed'],
+  );
 });
 
 test('failed turn setup clears streaming so the next send can run', async () => {
