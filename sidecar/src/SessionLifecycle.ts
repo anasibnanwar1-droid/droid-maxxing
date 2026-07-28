@@ -1,15 +1,12 @@
 import {
   type AskUserHandler,
-  type AskUserResult,
   type McpServerConfig,
   type PermissionHandler,
-  type RequestPermissionHandlerResult,
 } from '@factory/droid-sdk';
 import type { FactoryRuntime, FactorySession } from './DroidRuntime.js';
 import type {
   ClientCommand,
   FactoryDefaultSettings,
-  PermissionKind,
   ReasoningEffort,
   ServerEvent,
   SessionRole,
@@ -30,11 +27,6 @@ import {
 } from './sessionHelpers.js';
 
 export type SessionCreateCommand = Extract<ClientCommand, { type: 'session.create' }>;
-interface PendingPermission {
-  resolve: (result: RequestPermissionHandlerResult) => void;
-  kind: PermissionKind;
-  signature?: string;
-}
 export interface PendingChildSession {
   toolUseId?: string;
   label?: string;
@@ -73,13 +65,9 @@ export interface LiveSession extends LiveTurnState {
   session: FactorySession;
   closeMode?: SessionCloseMode;
   closePromise?: Promise<void>;
-  pendingPermissions: Map<string, PendingPermission>;
-  pendingQuestions: Map<string, (result: AskUserResult) => void>;
   childSessions: Map<string, LiveChildSession>;
   knownChildSessions: Set<string>;
   completedChildSessions: Set<string>;
-  // Provider IDs whose current turn already produced its terminal result.
-  terminalSources: Set<string>;
   // Persisted spawn links seeded on resume, separate from children seen live.
   linkedChildSessions: Set<string>;
   childSessionToolUseIds: Map<string, string>;
@@ -88,7 +76,6 @@ export interface LiveSession extends LiveTurnState {
   mcpServers: LocalMcpResource[];
   // Running MCP handles reused when compaction swaps the provider session.
   mcpConfigs: McpServerConfig[];
-  permissionGrants: Set<string>;
   todoDisabledForDesign?: boolean;
   compacting?: boolean; // Manual-compaction overlap guard; auto-compaction is separate.
   unsubscribe?: () => void; // Primary provider notification subscription, replaced on swap.
@@ -119,6 +106,8 @@ export interface SessionLifecycleDependencies {
   stopContextPolling: (sourceSessionId: string) => void;
   clearAutoCompactionWatchdog: (sessionId: string) => void;
   clearSessionRuntimeCaches: (liveSession: LiveSession) => void;
+  forgetInteractions: (appSessionId: string) => void;
+  forgetEventFlow: (appSessionId: string) => void;
   closeBrowserSession: (appSessionId: string) => Promise<void>;
   emit: (event: ServerEvent) => void;
   emitError: (error: LifecycleError) => void;
@@ -411,7 +400,10 @@ export class SessionLifecycle {
     await runBestEffortAsync(() => liveSession.session.close());
     await runBestEffortAsync(() => d.closeBrowserSession(liveSession.summary.appSessionId));
     d.clearSessionRuntimeCaches(liveSession);
-    d.registry.unregister(liveSession.summary.appSessionId);
+    if (d.registry.unregister(liveSession.summary.appSessionId)) {
+      d.forgetInteractions(liveSession.summary.appSessionId);
+      d.forgetEventFlow(liveSession.summary.appSessionId);
+    }
     d.emitSessionList();
   }
 
@@ -453,7 +445,10 @@ export class SessionLifecycle {
       this.dependencies.registry.getLive(liveSession.summary.appSessionId) === liveSession
     ) {
       this.dependencies.clearSessionRuntimeCaches(liveSession);
-      this.dependencies.registry.unregister(liveSession.summary.appSessionId);
+      if (this.dependencies.registry.unregister(liveSession.summary.appSessionId)) {
+        this.dependencies.forgetInteractions(liveSession.summary.appSessionId);
+        this.dependencies.forgetEventFlow(liveSession.summary.appSessionId);
+      }
     }
   }
 
@@ -464,7 +459,6 @@ export class SessionLifecycle {
     const stableAppSessionId = liveSession.summary.appSessionId;
     try {
       liveSession.streaming = true;
-      liveSession.terminalSources.delete(stableAppSessionId);
       d.registry.updateSummary(stableAppSessionId, {
         phase: liveSession.summary.sessionPurpose === 'mission-control' ? 'planning' : 'running',
         streaming: true,
@@ -531,19 +525,15 @@ function createLiveSession(
     session,
     streaming: false,
     pendingSends: [],
-    pendingPermissions: new Map(),
-    pendingQuestions: new Map(),
     childSessions: new Map(),
     knownChildSessions: new Set(),
     completedChildSessions: new Set(),
-    terminalSources: new Set(),
     linkedChildSessions: new Set(),
     childSessionToolUseIds: new Map(),
     childSessionSettings: new Map(),
     pendingChildSessions: [],
     mcpServers: mcp.servers,
     mcpConfigs: mcp.configs,
-    permissionGrants: new Set(),
     autoCompacting: false,
   };
 }

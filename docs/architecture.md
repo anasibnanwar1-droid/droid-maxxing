@@ -34,10 +34,13 @@ flowchart LR
 
 ### Sidecar session core
 
-- `SessionManager` is the composition root and public command coordinator. Deferred history, event, compaction, browser, and child-session policy remains there.
+- `SessionManager` is the composition root and public command coordinator. It retains compaction and browser policy plus Mission Control, child-session, token, and context non-transcript side effects and child run-state projection.
 - `FactoryRuntime` is the narrow SDK seam; `DroidRuntime` is its production adapter.
 - `SessionRegistry` owns the single live-session map, stable application identity, provider aliases, canonical summary persistence, and projected summary reads. Summary precedence is live, then Mission Control history, then ordinary history.
-- `SessionLifecycle` owns create, resume, lazy resume, send queueing, steering, interruption, and ordered session cleanup.
+- `SessionTimeline` owns history listing and restore, legacy provider pages, child replay, status entries, and the canonical record-before-emit path for live transcript events.
+- `SessionInteractions` owns permission and question correlation, equivalent-signature grants, and the Spec-to-Auto transition. After successful Registry unregister, Lifecycle calls `forgetSession()`, which discards module-owned state without resolving callbacks or emitting events. PR 4 introduces no deterministic shutdown settlement; that behavior remains deferred.
+- `SessionEventFlow` owns stream and notification normalization, per-app/per-source terminal gating, and transcript-before-side-effect ordering. It has one callback into Manager for the coupled policy that remains there.
+- `SessionLifecycle` owns create, resume, lazy resume, send queueing, steering, interruption, and ordered session cleanup. After successful Registry unregister, it tells the interaction and event-flow modules to forget that session's state.
 
 ## Build path
 

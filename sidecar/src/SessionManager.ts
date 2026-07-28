@@ -1,15 +1,9 @@
 import {
   ContextBreakdownResultSchema,
   DroidInteractionMode,
-  type AskUserHandler,
   type ContextBreakdownResult,
-  type AskUserRequestParams,
-  type AskUserResult,
   type GetContextStatsResult,
   type McpServerConfig,
-  type PermissionHandler,
-  type RequestPermissionHandlerResult,
-  type RequestPermissionRequestParams,
 } from '@factory/droid-sdk';
 import { tmpdir } from 'node:os';
 import type {
@@ -24,14 +18,11 @@ import type {
   ChildSessionHistoryLink,
   FactoryDefaultSettings,
   InstallChannel,
-  SessionHistoryEntry,
   SessionSummary,
   ModelInfo,
-  ProgressEntry,
   ReasoningEffort,
   ServerEvent,
   SessionInteractionMode,
-  TranscriptEvent,
 } from './protocol.js';
 import {
   errMsg,
@@ -47,22 +38,10 @@ import { DroidRuntime, type FactoryRuntime, type FactorySession } from './DroidR
 import { detectEnvironment } from './Environment.js';
 import { buildInstallCommand, buildUpdateCommand, runStreaming } from './CliInstaller.js';
 import {
-  classifyPermission,
-  confirmationType,
-  normalizeNotification,
-  normalizeStreamEvent,
-  permissionSignature,
-} from './normalize.js';
-import {
   HistoryIndex,
-  hydrateHistoricalSession,
   loadHistoricalSessions,
   loadMissionControlSessions,
-  loadSessionTranscriptWindow,
-  loadSessionHistory,
-  loadSessionPage,
   readFactoryDefaults,
-  resolveSessionChain,
 } from './history.js';
 import { mergeModelCatalog } from './modelCatalog.js';
 import { readDroidCliModelCatalog, readDroidCliModelCatalogCache } from './DroidCliCatalog.js';
@@ -71,6 +50,9 @@ import { createBrowserMcpServer } from './browser/browserMcpServer.js';
 import { isDesignPrompt } from './browser/designPromptPacks.js';
 import { NativeBrowserRuntime } from './browser/NativeBrowserRuntime.js';
 import { SessionRegistry } from './SessionRegistry.js';
+import { SessionEventFlow, type NormalizedSideEffects } from './SessionEventFlow.js';
+import { SessionInteractions } from './SessionInteractions.js';
+import { SessionTimeline } from './SessionTimeline.js';
 import {
   SessionLifecycle,
   type ChildSessionSettings,
@@ -79,11 +61,6 @@ import {
   type PendingChildSession,
   type StartedLocalMcpResources,
 } from './SessionLifecycle.js';
-import {
-  isAlwaysOutcome,
-  isApprovalOutcome,
-  normalizePermissionOutcome,
-} from './permissionOutcomes.js';
 import type { SessionListFilterOptions } from './sessionListFilter.js';
 import {
   daemonCompactionSettings,
@@ -176,8 +153,6 @@ const BROWSER_NATIVE_TIMEOUT_MS = boundedInt(
 );
 const ignoreError = (): undefined => undefined;
 
-let permSeq = 0;
-const nextRequestId = () => `req-${Date.now().toString(36)}-${(permSeq++).toString(36)}`;
 let nativeBrowserSeq = 0;
 const nextNativeBrowserRequestId = () =>
   `browser-native-${Date.now().toString(36)}-${(nativeBrowserSeq++).toString(36)}`;
@@ -190,15 +165,14 @@ interface PendingNativeBrowserRequest {
 
 export class SessionManager {
   private ready = false;
-  // Monotonic suffix so two status lines emitted in the same millisecond get
-  // distinct transcript IDs (the UI drops duplicate IDs, which could otherwise
-  // strand the in-progress compaction shimmer).
-  private statusSeq = 0;
   private cachedModels: ModelInfo[] | null = null;
   private modelRefresh: Promise<ModelInfo[] | null> | null = null;
   private readonly runtime: FactoryRuntime;
   private readonly history: SessionHistory;
   private readonly registry: SessionRegistry<LiveSession>;
+  private readonly timeline: SessionTimeline;
+  private readonly interactions: SessionInteractions;
+  private readonly eventFlow: SessionEventFlow;
   private readonly lifecycle: SessionLifecycle;
   private readonly pendingAgentSettings = new Map<
     string,
@@ -268,6 +242,39 @@ export class SessionManager {
       },
       now: Date.now,
     });
+    this.timeline = new SessionTimeline({
+      registry: this.registry,
+      history: this.history,
+      getChildSessionLinks: (appSessionId) =>
+        this.withLiveChildSessionStatus(appSessionId, this.history.childSessionLinks(appSessionId)),
+      emit: (event) => {
+        this.emit(event);
+      },
+      emitError: (error) => {
+        this.emitError(error);
+      },
+      now: Date.now,
+    });
+    this.interactions = new SessionInteractions({
+      getLiveSession: (id) => this.registry.getLive(id),
+      updateSummary: (id, patch) => {
+        this.registry.updateSummary(id, patch);
+      },
+      emit: (event) => {
+        this.emit(event);
+      },
+      emitError: (error) => {
+        this.emitError(error);
+      },
+    });
+    this.eventFlow = new SessionEventFlow({
+      appendTranscript: (event) => {
+        this.timeline.append(event);
+      },
+      applySideEffects: (appSessionId, sourceProviderSessionId, sideEffects) => {
+        this.applyEventSideEffects(appSessionId, sourceProviderSessionId, sideEffects);
+      },
+    });
     this.lifecycle = new SessionLifecycle({
       runtime: this.runtime,
       registry: this.registry,
@@ -277,8 +284,8 @@ export class SessionManager {
       getFactoryDefaults: () => this.getFactoryDefaults(),
       maxContextTokensForModel: (modelId) => this.maxContextTokensForModel(modelId),
       startLocalMcpServers: (ref) => this.startLocalMcpServers(ref),
-      makePermissionHandler: (ref) => this.makePermissionHandler(ref),
-      makeAskUserHandler: (ref) => this.makeAskUserHandler(ref),
+      makePermissionHandler: (ref) => this.interactions.makePermissionHandler(ref),
+      makeAskUserHandler: (ref) => this.interactions.makeAskUserHandler(ref),
       compactionLimit: (modelId, request) => {
         if (request.kind === 'resume') return this.compactionLimit(modelId, request.exposed);
         return Promise.resolve(
@@ -320,6 +327,12 @@ export class SessionManager {
       clearSessionRuntimeCaches: (liveSession) => {
         this.clearSessionRuntimeCaches(liveSession);
       },
+      forgetInteractions: (appSessionId) => {
+        this.interactions.forgetSession(appSessionId);
+      },
+      forgetEventFlow: (appSessionId) => {
+        this.eventFlow.forgetSession(appSessionId);
+      },
       closeBrowserSession: (appSessionId) => this.browsers.close(appSessionId),
       emit: (event) => {
         this.emit(event);
@@ -328,7 +341,7 @@ export class SessionManager {
         this.emitError(error);
       },
       emitStatus: (appSessionId, text) => {
-        this.emitStatus(appSessionId, text);
+        this.timeline.appendStatus(appSessionId, text);
       },
       emitSessionList: () => {
         this.emitSessionList();
@@ -395,10 +408,15 @@ export class SessionManager {
         await this.lifecycle.sendNow(cmd.appSessionId, cmd.text);
         return;
       case 'approval.respond':
-        await this.resolvePermission(cmd.appSessionId, cmd.requestId, cmd.outcome);
+        await this.interactions.respondToApproval(cmd.appSessionId, cmd.requestId, cmd.outcome);
         return;
       case 'question.respond':
-        this.resolveQuestion(cmd.appSessionId, cmd.requestId, cmd.cancelled, cmd.answers);
+        this.interactions.respondToQuestion(
+          cmd.appSessionId,
+          cmd.requestId,
+          cmd.cancelled,
+          cmd.answers,
+        );
         return;
       case 'session.interrupt':
         await this.lifecycle.interrupt(cmd.appSessionId);
@@ -432,7 +450,7 @@ export class SessionManager {
           previousLiveSession?.compacting ||
           previousLiveSession?.autoCompacting
         ) {
-          this.emitStatus(
+          this.timeline.appendStatus(
             appSessionId,
             'Cannot compact while a turn is active. Try again when the model is idle.',
           );
@@ -466,13 +484,13 @@ export class SessionManager {
         this.emitSessionList(cmd);
         return;
       case 'history.list':
-        this.listHistory();
+        this.timeline.list();
         return;
       case 'history.page':
-        this.loadHistoryPage(cmd.providerSessionId, cmd.cursor, cmd.limit);
+        this.timeline.loadProviderPage(cmd.providerSessionId, cmd.cursor, cmd.limit);
         return;
       case 'session.loadHistory':
-        this.loadSessionHistory(cmd.appSessionId, cmd.cursor);
+        this.timeline.load(cmd.appSessionId, cmd.cursor);
         return;
       case 'settings.agent.update':
         await this.updateAgentSettings(cmd);
@@ -962,15 +980,6 @@ export class SessionManager {
     }
   }
 
-  private listHistory(): void {
-    try {
-      const sessions: SessionHistoryEntry[] = loadSessionHistory();
-      this.emit({ type: 'history.list', sessions });
-    } catch (err) {
-      this.emitError({ message: errMsg(err) });
-    }
-  }
-
   private emitSessionList(options?: SessionListFilterOptions): void {
     this.emit({ type: 'sessions.list', sessions: this.registry.listSummaries(options) });
   }
@@ -1001,262 +1010,9 @@ export class SessionManager {
     );
   }
 
-  // Single emit point for session.history so every page carries restore
-  // telemetry (count + whether older history remains) the client uses to show
-  // an explicit restoring/partial/complete state.
-  private emitSessionHistory(args: {
-    appSessionId: string;
-    progress: ProgressEntry[];
-    transcripts: TranscriptEvent[];
-    childSessions?: ChildSessionHistoryLink[];
-    mode: 'replace' | 'prepend';
-    olderCursor?: string;
-  }): void {
-    this.emit({
-      type: 'session.history',
-      appSessionId: args.appSessionId,
-      progress: args.progress,
-      transcripts: args.transcripts,
-      childSessions: args.childSessions,
-      mode: args.mode,
-      olderCursor: args.olderCursor,
-      loadedCount: args.transcripts.length,
-      hasMore: Boolean(args.olderCursor),
-    });
-  }
-
-  private loadSessionHistory(appSessionIdOrProviderSessionId: string, cursor?: string): void {
-    const summary = this.registry.resolveSummary(appSessionIdOrProviderSessionId);
-    const appSessionId = summary?.appSessionId ?? appSessionIdOrProviderSessionId;
-    const providerSessionId = summary?.providerSessionId ?? appSessionIdOrProviderSessionId;
-    try {
-      const history =
-        summary?.sessionPurpose === 'mission-control'
-          ? hydrateHistoricalSession(appSessionId, { cursor })
-          : this.loadStandardSessionHistory(appSessionId, providerSessionId, cursor);
-      const transcripts = history.transcripts.map((event) => ({
-        ...event,
-        appSessionId,
-      }));
-      transcripts.forEach((event) => {
-        this.history.recordEvent(event);
-      });
-      // An older page only extends primary scrollback upward; prepend it without
-      // touching the already-delivered child sessions or progress.
-      if (cursor) {
-        this.emitSessionHistory({
-          appSessionId,
-          progress: [],
-          transcripts,
-          mode: 'prepend',
-          olderCursor: history.olderCursor,
-        });
-        return;
-      }
-      const childSessions = this.withLiveChildSessionStatus(
-        appSessionId,
-        this.history.childSessionLinks(appSessionId),
-      );
-      this.emitSessionHistory({
-        appSessionId,
-        progress: history.progress,
-        transcripts,
-        childSessions,
-        mode: 'replace',
-        olderCursor: history.olderCursor,
-      });
-    } catch (err) {
-      // Always answer an older-page request, even on failure, so the client's
-      // historyLoadingOlder flag clears instead of sticking and blocking all
-      // further pagination.
-      if (cursor) {
-        this.emitSessionHistory({
-          appSessionId,
-          progress: [],
-          transcripts: [],
-          mode: 'prepend',
-          olderCursor: undefined,
-        });
-        return;
-      }
-      if (this.registry.getLive(appSessionId)) {
-        // A live session with no persisted history yet is an empty restore.
-        // Live events seed it; this authoritative snapshot settles the client.
-        this.emitSessionHistory({
-          appSessionId,
-          progress: [],
-          transcripts: [],
-          childSessions: this.withLiveChildSessionStatus(
-            appSessionId,
-            this.history.childSessionLinks(appSessionId),
-          ),
-          mode: 'replace',
-          olderCursor: undefined,
-        });
-      } else {
-        this.emit({
-          type: 'session.history.error',
-          appSessionId,
-          message: errMsg(err),
-        });
-        this.emitError({
-          appSessionId,
-          providerSessionId,
-          message: errMsg(err),
-          recoverable: true,
-        });
-      }
-    }
-  }
-
-  private loadStandardSessionHistory(
-    appSessionId: string,
-    providerSessionId: string,
-    cursor?: string,
-  ): ReturnType<typeof hydrateHistoricalSession> {
-    const chain = resolveSessionChain(appSessionId, providerSessionId);
-    if (chain.length === 0) throw new Error(`Session history not found for ${providerSessionId}`);
-    const window = loadSessionTranscriptWindow(appSessionId, chain, { cursor });
-    return {
-      progress: [],
-      transcripts: window.events,
-      olderCursor: window.olderCursor,
-    };
-  }
-
-  private loadHistoryPage(providerSessionId: string, cursor?: string, limit?: number): void {
-    const summary = this.registry.resolveSummary(providerSessionId);
-    const appSessionId = summary?.appSessionId ?? providerSessionId;
-    const resolvedProviderSessionId = summary?.providerSessionId ?? providerSessionId;
-    try {
-      const page = loadSessionPage(resolvedProviderSessionId, appSessionId, cursor, limit);
-      page.events.forEach((event) => {
-        this.history.recordEvent(event);
-      });
-      this.emit({
-        type: 'session.history',
-        appSessionId,
-        progress: [],
-        transcripts: page.events,
-      });
-    } catch (err) {
-      this.emitError({
-        appSessionId,
-        providerSessionId: resolvedProviderSessionId,
-        message: errMsg(err),
-      });
-    }
-  }
-
-  private makePermissionHandler(ref: { id: string }): PermissionHandler {
-    return (params: RequestPermissionRequestParams) =>
-      new Promise<RequestPermissionHandlerResult>((resolve) => {
-        const liveSession = this.registry.getLive(ref.id);
-        const requestId = nextRequestId();
-        const type = confirmationType(params);
-        const request = classifyPermission(ref.id, requestId, params);
-        const signature = permissionSignature(params);
-        if (liveSession && signature && liveSession.permissionGrants.has(signature)) {
-          resolve(normalizePermissionOutcome('proceed_always'));
-          return;
-        }
-        if (liveSession) {
-          liveSession.pendingPermissions.set(requestId, {
-            resolve,
-            kind: request.kind,
-            signature: signature || undefined,
-          });
-          if (type === 'propose_mission') {
-            this.registry.updateSummary(ref.id, {
-              phase: 'awaiting_plan_approval',
-              proposal: request.detail,
-            });
-          } else if (type === 'start_mission_run') {
-            this.registry.updateSummary(ref.id, { phase: 'awaiting_run_start' });
-          }
-        }
-        this.emit({ type: 'approval.requested', request });
-      });
-  }
-
-  private makeAskUserHandler(ref: { id: string }): AskUserHandler {
-    return (params: AskUserRequestParams) =>
-      new Promise<AskUserResult>((resolve) => {
-        const liveSession = this.registry.getLive(ref.id);
-        const requestId = nextRequestId();
-        const runtimeParams: {
-          questions?: { index: number; question: string; options?: string[] }[];
-        } = params;
-        const questions = (runtimeParams.questions ?? []).map((q) => ({
-          index: q.index,
-          question: q.question,
-          options: q.options ?? [],
-        }));
-        if (liveSession) liveSession.pendingQuestions.set(requestId, resolve);
-        const question = { appSessionId: ref.id, requestId, questions };
-        this.emit({ type: 'question.requested', question });
-      });
-  }
-
-  private async resolvePermission(
-    appSessionId: string,
-    requestId: string,
-    outcome: string,
-  ): Promise<void> {
-    const liveSession = this.registry.getLive(appSessionId);
-    const pending = liveSession?.pendingPermissions.get(requestId);
-    if (!liveSession || !pending) return;
-    liveSession.pendingPermissions.delete(requestId);
-    let normalized: RequestPermissionHandlerResult;
-    try {
-      normalized = normalizePermissionOutcome(outcome);
-    } catch (err) {
-      this.emitError({
-        code: 'permission.invalid_outcome',
-        appSessionId: appSessionId,
-        message: errMsg(err),
-      });
-      normalized = normalizePermissionOutcome('cancel');
-    }
-    if (pending.signature && isAlwaysOutcome(outcome)) {
-      liveSession.permissionGrants.add(pending.signature);
-    }
-    if (pending.kind === 'spec' && isApprovalOutcome(normalized))
-      await this.prepareSpecExitForRun(liveSession);
-    pending.resolve(normalized);
-  }
-
-  private async prepareSpecExitForRun(liveSession: LiveSession): Promise<void> {
-    const appSessionId = liveSession.summary.appSessionId;
-    this.registry.updateSummary(appSessionId, { interactionMode: 'auto', phase: 'running' });
-    try {
-      await liveSession.session.updateSettings({
-        interactionMode: DroidInteractionMode.Auto,
-      });
-    } catch (err) {
-      this.emitError({
-        code: 'spec.exit_failed',
-        appSessionId,
-        message: `Could not switch spec session to Auto before run: ${errMsg(err)}`,
-      });
-    }
-  }
-
-  private resolveQuestion(
-    appSessionId: string,
-    requestId: string,
-    cancelled: boolean,
-    answers: { index: number; question: string; answer: string }[],
-  ): void {
-    const liveSession = this.registry.getLive(appSessionId);
-    const resolver = liveSession?.pendingQuestions.get(requestId);
-    if (!liveSession || !resolver) return;
-    liveSession.pendingQuestions.delete(requestId);
-    resolver({ cancelled, answers });
-  }
-
   private async runPrimaryTurn(liveSession: LiveSession, prompt: string): Promise<void> {
     const appSessionId = liveSession.summary.appSessionId;
+    this.eventFlow.beginTurn(appSessionId, appSessionId);
     this.startContextPolling(appSessionId, liveSession.session);
     try {
       await this.applyDesignToolPolicy(liveSession, isDesignPrompt(prompt));
@@ -1264,13 +1020,13 @@ export class SessionManager {
       const stream = liveSession.session.stream(prompt, { includePartialMessages: true });
       for await (const ev of stream) {
         if (hasSessionCloseStarted(liveSession)) break;
-        this.applyEvent(appSessionId, appSessionId, 'primary', ev);
+        this.eventFlow.applyStreamEvent(appSessionId, appSessionId, 'primary', ev);
       }
     } catch (err) {
       if (hasSessionCloseStarted(liveSession)) {
         return;
       } else if (liveSession.interruptingForSteer) {
-        this.emitStatus(appSessionId, 'Current turn interrupted for steering.');
+        this.timeline.appendStatus(appSessionId, 'Current turn interrupted for steering.');
       } else if (liveSession.interrupting && isUserCancellation(err)) {
         // The user pressed Stop; interrupt() already set the paused phase, so
         // settle quietly without surfacing an error.
@@ -1312,50 +1068,6 @@ export class SessionManager {
         message: `Could not update design tool policy: ${errMsg(err)}`,
       });
     }
-  }
-
-  private applyEvent(
-    appSessionId: string,
-    sourceProviderSessionId: string,
-    role: SessionRole,
-    ev: Parameters<typeof normalizeStreamEvent>[3],
-  ): void {
-    const n = normalizeStreamEvent(appSessionId, sourceProviderSessionId, role, ev);
-    if (!n) return;
-    this.applyNormalizedForSource(appSessionId, sourceProviderSessionId, n);
-  }
-
-  // Single live entry point that enforces per-turn terminal gating before
-  // applying a normalized event. Both primary/child stream loops and
-  // the worker notification subscriptions route through here so post-terminal
-  // generation is dropped no matter which channel delivers it. History replay
-  // does not pass through this path (it uses emitTranscript directly).
-  private applyNormalizedForSource(
-    appSessionId: string,
-    sourceProviderSessionId: string,
-    n: NonNullable<ReturnType<typeof normalizeStreamEvent>>,
-  ): void {
-    const liveSession = this.registry.getLive(appSessionId);
-    if (liveSession) {
-      // The first `result` of a streaming turn is its terminal final. Mark the
-      // producing session terminal so any further model generation in the same
-      // turn is dropped, keeping one final response per turn.
-      if (n.done) {
-        liveSession.terminalSources.add(sourceProviderSessionId);
-        return;
-      }
-      // After terminal, quarantine only this session's model-generated chat/tool
-      // transcript. Child spawn/completion, token, Mission Control state, and
-      // error side effects still flow.
-      if (liveSession.terminalSources.has(sourceProviderSessionId) && isPostTerminalGeneration(n)) {
-        const sideEffects = { ...n };
-        delete sideEffects.transcript;
-        if (hasNormalizedSideEffects(sideEffects))
-          this.applyNormalized(appSessionId, sideEffects, sourceProviderSessionId);
-        return;
-      }
-    }
-    this.applyNormalized(appSessionId, n, sourceProviderSessionId);
   }
 
   // eslint-disable-next-line complexity -- Child-session event policy remains with its PR 6 owner.
@@ -1409,7 +1121,7 @@ export class SessionManager {
       toolUseId,
     });
     if (prompt) {
-      this.emitTranscript({
+      this.timeline.append({
         id: `child-session-task-${providerSessionId}`,
         appSessionId,
         sourceSessionId: providerSessionId,
@@ -1480,13 +1192,12 @@ export class SessionManager {
     void this.closeChildSessionWhenIdle(appSessionId, providerSessionId);
   }
 
-  // eslint-disable-next-line complexity -- Event normalization behavior remains with its PR 4 owner.
-  private applyNormalized(
+  // eslint-disable-next-line complexity -- Child/Mission/token policy remains with its later-PR owners.
+  private applyEventSideEffects(
     appSessionId: string,
-    n: NonNullable<ReturnType<typeof normalizeStreamEvent>>,
-    childProviderSessionId?: string,
+    sourceProviderSessionId: string,
+    n: NormalizedSideEffects,
   ): void {
-    if (n.transcript) this.emitTranscript(n.transcript);
     if (n.features) {
       this.registry.updateSummary(appSessionId, { features: n.features });
       const missionControlId = this.registry.getLive(appSessionId)?.summary.missionId;
@@ -1542,8 +1253,7 @@ export class SessionManager {
         // primary context meter with the worker's window, and a leftover 'exact'
         // marker would make refreshContext pin the meter there. Workers get
         // their own context.updated snapshots keyed by their session id.
-        const fromOrchestrator =
-          childProviderSessionId === undefined || childProviderSessionId === appSessionId;
+        const fromOrchestrator = sourceProviderSessionId === appSessionId;
         if (fromOrchestrator) {
           m.summary.contextTokens = n.tokens.contextTokens;
           // Provider-reported usage of the last call is exactly what the
@@ -1565,30 +1275,6 @@ export class SessionManager {
         });
       }
     }
-  }
-
-  private emitTranscript(event: TranscriptEvent): void {
-    this.history.recordEvent(event);
-    this.emit({ type: 'event.appended', event });
-  }
-
-  private emitStatus(
-    appSessionId: string,
-    text: string,
-    compactType?: CompactType,
-    childProviderSessionId?: string,
-    role: SessionRole = 'primary',
-  ): void {
-    this.emitTranscript({
-      id: `status-${Date.now().toString(36)}-${(this.statusSeq++).toString(36)}`,
-      appSessionId: appSessionId,
-      sourceSessionId: childProviderSessionId ?? appSessionId,
-      role,
-      ts: Date.now(),
-      kind: 'status',
-      text,
-      compactType,
-    });
   }
 
   // Subscribe the primary session to raw daemon notifications so the
@@ -1637,7 +1323,7 @@ export class SessionManager {
       findSession: (appSessionId) => this.registry.getLive(appSessionId),
       childSessionCompactions: this.childSessionCompactions,
       emitCompactionStatus: (appSessionId, text, providerSessionId, role) => {
-        this.emitStatus(appSessionId, text, 'auto', providerSessionId, role);
+        this.timeline.appendStatus(appSessionId, text, 'auto', providerSessionId, role);
       },
       patchSummary: (appSessionId, patch) => this.registry.updateSummary(appSessionId, patch),
       refreshContext: (providerSessionId, session) =>
@@ -1696,7 +1382,7 @@ export class SessionManager {
         liveSession.session,
         {
           status: (text, ct) => {
-            this.emitStatus(appSessionId, text, ct);
+            this.timeline.appendStatus(appSessionId, text, ct);
           },
           error: (message) => {
             this.emitError({
@@ -1753,8 +1439,8 @@ export class SessionManager {
     const ref = { id: appSessionId };
     const oldSession = liveSession.session;
     liveSession.session = await this.runtime.loadSession(newSessionId, {
-      permissionHandler: this.makePermissionHandler(ref),
-      askUserHandler: this.makeAskUserHandler(ref),
+      permissionHandler: this.interactions.makePermissionHandler(ref),
+      askUserHandler: this.interactions.makeAskUserHandler(ref),
       // Re-attach the same local MCP servers (still running) so the swapped
       // session keeps browser tools on subsequent turns.
       mcpServers: liveSession.mcpConfigs,
@@ -2008,8 +1694,8 @@ export class SessionManager {
       if (!(await this.ensureChildSessionCapacity(liveSession, childProviderSessionId))) return;
       const ref = { id: appSessionId };
       const session = await this.runtime.loadSession(childProviderSessionId, {
-        permissionHandler: this.makePermissionHandler(ref),
-        askUserHandler: this.makeAskUserHandler(ref),
+        permissionHandler: this.interactions.makePermissionHandler(ref),
+        askUserHandler: this.interactions.makeAskUserHandler(ref),
       });
       const actualSettings = childSessionSettingsFromInit(session.initResult);
       // A chat/spec child inherits the parent session model when the
@@ -2066,11 +1752,10 @@ export class SessionManager {
           )
         )
           return;
-        for (const n of normalizeNotification(appSessionId, childProviderSessionId, role, note))
-          this.applyNormalizedForSource(appSessionId, childProviderSessionId, n);
+        this.eventFlow.applyNotification(appSessionId, childProviderSessionId, role, note);
       });
       liveSession.childSessions.set(childProviderSessionId, childSession);
-      this.emitChildSessionHistory(appSessionId, childProviderSessionId);
+      this.timeline.replayChild(appSessionId, childProviderSessionId);
       this.emit({
         type: 'child.updated',
         appSessionId,
@@ -2086,15 +1771,6 @@ export class SessionManager {
         providerSessionId: childProviderSessionId,
         message: errMsg(err),
       });
-    }
-  }
-
-  private emitChildSessionHistory(appSessionId: string, childProviderSessionId: string): void {
-    try {
-      const page = loadSessionPage(childProviderSessionId, appSessionId, undefined, 200);
-      for (const event of page.events) this.emitTranscript(event);
-    } catch {
-      /* Some live child sessions have not flushed history yet. Notifications still stream after open. */
     }
   }
 
@@ -2121,9 +1797,7 @@ export class SessionManager {
   private async driveChildSession(childSession: LiveChildSession, text: string): Promise<void> {
     childSession.streaming = true;
     childSession.lastUsedAt = Date.now();
-    this.registry
-      .getLive(childSession.appSessionId)
-      ?.terminalSources.delete(childSession.session.sessionId);
+    this.eventFlow.beginTurn(childSession.appSessionId, childSession.session.sessionId);
     this.emit({
       type: 'child.updated',
       appSessionId: childSession.appSessionId,
@@ -2135,7 +1809,7 @@ export class SessionManager {
     try {
       const stream = childSession.session.stream(text, { includePartialMessages: true });
       for await (const ev of stream)
-        this.applyEvent(
+        this.eventFlow.applyStreamEvent(
           childSession.appSessionId,
           childSession.session.sessionId,
           childSession.role,
@@ -2143,7 +1817,10 @@ export class SessionManager {
         );
     } catch (err) {
       if (childSession.interruptingForSteer)
-        this.emitStatus(childSession.appSessionId, 'Child-session turn interrupted for steering.');
+        this.timeline.appendStatus(
+          childSession.appSessionId,
+          'Child-session turn interrupted for steering.',
+        );
       else if (!(childSession.interrupting && isUserCancellation(err))) {
         const message = errMsg(err);
         this.emit({
@@ -2223,7 +1900,7 @@ export class SessionManager {
     childSession.pendingSends.unshift(text);
     if (childSession.autoCompacting) return;
     childSession.interruptingForSteer = true;
-    this.emitStatus(appSessionId, 'Steering child session now...');
+    this.timeline.appendStatus(appSessionId, 'Steering child session now...');
     try {
       await childSession.session.interrupt();
     } catch (err) {
@@ -2897,27 +2574,4 @@ function defaultsModeForSummary(summary: SessionSummary): SessionInteractionMode
   if (summary.sessionPurpose === 'mission-control') return 'agi';
   if (summary.interactionMode === 'spec') return 'spec';
   return 'auto';
-}
-
-// Model-generated transcript kinds that, once a turn is terminal, would form a
-// second/buried final response if appended. A failed result (isError) and
-// non-transcript signals (tokens, state, worker, child session) are never quarantined.
-const POST_TERMINAL_GENERATION_KINDS = new Set(['text', 'thinking', 'tool_call', 'tool_result']);
-
-function isPostTerminalGeneration(
-  n: NonNullable<ReturnType<typeof normalizeStreamEvent>>,
-): boolean {
-  return (
-    !!n.transcript && !n.transcript.isError && POST_TERMINAL_GENERATION_KINDS.has(n.transcript.kind)
-  );
-}
-
-// Whether a normalized event still carries non-transcript work that must be
-// applied even when its quarantined model transcript is dropped post-terminal.
-function hasNormalizedSideEffects(
-  n: NonNullable<ReturnType<typeof normalizeStreamEvent>>,
-): boolean {
-  return Boolean(
-    n.features ?? n.progress ?? n.missionState ?? n.missionChild ?? n.childSession ?? n.tokens,
-  );
 }
