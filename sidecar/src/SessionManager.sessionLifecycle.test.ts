@@ -10,6 +10,24 @@ import { writeProviderSessionStart } from './testing/historyCharacterizationSupp
 import { assistantTextDelta, FakeFactorySession } from './testing/fakeFactoryRuntime.js';
 import { createSessionManagerTestContext } from './testing/sessionManagerTestContext.js';
 
+class DeferredDesignPolicySession extends FakeFactorySession {
+  private rejectDesignPolicyUpdate?: (error: Error) => void;
+
+  override updateSettings(
+    settings: Parameters<FakeFactorySession['updateSettings']>[0],
+  ): ReturnType<FakeFactorySession['updateSettings']> {
+    if (!('disabledToolIds' in settings)) return super.updateSettings(settings);
+    return new Promise((_, reject) => {
+      this.rejectDesignPolicyUpdate = reject;
+    });
+  }
+
+  rejectDesignPolicy(error: Error): void {
+    assert.ok(this.rejectDesignPolicyUpdate);
+    this.rejectDesignPolicyUpdate(error);
+  }
+}
+
 test('[L1] Ordinary create', { concurrency: false }, async () => {
   const h = createSessionManagerTestContext();
 
@@ -405,6 +423,37 @@ test('closing an active turn suppresses later provider errors and context refres
     await h.handle({ type: 'session.close', appSessionId: 'provider-close' });
     const eventsAfterClose = h.events.length;
     gate.resolve();
+    await h.waitForIdle();
+    await h.waitForIdle();
+
+    assert.deepEqual(h.events.slice(eventsAfterClose), []);
+  } finally {
+    await h.dispose();
+  }
+});
+
+test('closing suppresses in-flight policy and context updates', async () => {
+  const h = createSessionManagerTestContext();
+  const provider = new DeferredDesignPolicySession('provider-late-effects', {}, h.calls);
+  const streamGate = provider.deferNextStream();
+  const contextGate = provider.deferNextContextStats();
+  h.runtime.createQueue.push(provider);
+
+  try {
+    await h.create({
+      sessionPurpose: 'chat',
+      clientRef: 'close-late-effects',
+      title: 'Close late effects',
+      goal: 'wait',
+      interactionMode: 'auto',
+      autonomy: 'low',
+    });
+
+    await h.handle({ type: 'session.close', appSessionId: 'provider-late-effects' });
+    const eventsAfterClose = h.events.length;
+    provider.rejectDesignPolicy(new Error('policy transport closed'));
+    contextGate.resolve();
+    streamGate.resolve();
     await h.waitForIdle();
     await h.waitForIdle();
 

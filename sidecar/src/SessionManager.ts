@@ -1303,6 +1303,7 @@ export class SessionManager {
       await liveSession.session.updateSettings({ disabledToolIds: design ? ['TodoWrite'] : [] });
       liveSession.todoDisabledForDesign = design;
     } catch (err) {
+      if (hasSessionCloseStarted(liveSession)) return;
       this.emitError({
         appSessionId: liveSession.summary.appSessionId,
         message: `Could not update design tool policy: ${errMsg(err)}`,
@@ -2488,17 +2489,17 @@ export class SessionManager {
         this.registry
           .liveSessionsSnapshot()
           .find((candidate) => candidate.childSessions.has(sourceSessionId));
-      const appSessionId = liveSession?.summary.appSessionId ?? sourceSessionId;
+      if (!liveSession || hasSessionCloseStarted(liveSession)) return;
+      const appSessionId = liveSession.summary.appSessionId;
       const isPrimarySession =
-        liveSession !== undefined &&
-        (sourceSessionId === liveSession.summary.appSessionId ||
-          sourceSessionId === liveSession.summary.providerSessionId);
+        sourceSessionId === liveSession.summary.appSessionId ||
+        sourceSessionId === liveSession.summary.providerSessionId;
       // The daemon's get_context_stats is a chars/4 estimate that over-counts;
       // when a provider-reported reading exists it matches the compaction
       // threshold count exactly, so it wins over the estimate. The stats call
       // still supplies the limit and breakdown.
       const exact =
-        liveSession?.summary.contextAccuracy === 'exact' && liveSession.summary.contextTokens > 0
+        liveSession.summary.contextAccuracy === 'exact' && liveSession.summary.contextTokens > 0
           ? liveSession.summary.contextTokens
           : undefined;
       if (exact !== undefined && snapshot.limit > 0) {
@@ -2531,7 +2532,7 @@ export class SessionManager {
         sourceSessionId,
         stats: snapshot,
       });
-      if (liveSession && isPrimarySession) {
+      if (isPrimarySession) {
         const contextPatch = {
           contextTokens: snapshot.used,
           contextRemainingTokens: snapshot.remaining,

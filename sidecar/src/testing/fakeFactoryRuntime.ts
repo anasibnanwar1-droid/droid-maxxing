@@ -62,6 +62,7 @@ export class FakeFactorySession implements FactorySession {
   private readonly streamEventQueue: DroidStreamEvent[][] = [];
   private readonly promptWaiters: { count: number; resolve(): void }[] = [];
   private nextCompactGate?: DeferredStream;
+  private nextContextStatsGate?: DeferredStream;
 
   constructor(
     readonly sessionId: string,
@@ -113,6 +114,12 @@ export class FakeFactorySession implements FactorySession {
   deferNextCompaction(): StreamGate {
     const gate = this.defer();
     this.nextCompactGate = gate;
+    return gate;
+  }
+
+  deferNextContextStats(): StreamGate {
+    const gate = this.defer();
+    this.nextContextStatsGate = gate;
     return gate;
   }
 
@@ -184,7 +191,10 @@ export class FakeFactorySession implements FactorySession {
     for (const listener of this.notifications) listener(note);
   }
 
-  getContextStats(): ReturnType<FactorySession['getContextStats']> {
+  async getContextStats(): ReturnType<FactorySession['getContextStats']> {
+    const gate = this.nextContextStatsGate;
+    delete this.nextContextStatsGate;
+    await gate?.promise;
     return Promise.resolve({
       used: 0,
       remaining: 1_000,

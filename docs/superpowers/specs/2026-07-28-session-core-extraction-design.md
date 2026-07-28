@@ -356,8 +356,10 @@ Close preserves:
 `closeAll()` snapshots live sessions and closes them sequentially. Manager
 shutdown then calls browser `closeAll`, followed by history `close`.
 
-Do not add a closing/closed guard. The known late child-turn unwind race remains
-an explicit PR 5 TODO.
+Primary close coordination now joins overlapping closes, lets an explicit close
+discard a recovery-preserved queue, and suppresses late primary-turn effects.
+The separate late child-turn watchdog/poller unwind remains an explicit PR 5
+TODO.
 
 ## Decision 5: compaction and child integration
 
