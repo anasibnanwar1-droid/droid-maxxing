@@ -37,7 +37,6 @@ import { boundedInt, numberValue, stringValue } from './values.js';
 import { DroidRuntime, type FactoryRuntime, type FactorySession } from './DroidRuntime.js';
 import { detectEnvironment } from './Environment.js';
 import { buildInstallCommand, buildUpdateCommand, runStreaming } from './CliInstaller.js';
-import { normalizeNotification, normalizeStreamEvent } from './normalize.js';
 import {
   HistoryIndex,
   loadHistoricalSessions,
@@ -51,6 +50,7 @@ import { createBrowserMcpServer } from './browser/browserMcpServer.js';
 import { isDesignPrompt } from './browser/designPromptPacks.js';
 import { NativeBrowserRuntime } from './browser/NativeBrowserRuntime.js';
 import { SessionRegistry } from './SessionRegistry.js';
+import { SessionEventFlow, type NormalizedSideEffects } from './SessionEventFlow.js';
 import { SessionInteractions } from './SessionInteractions.js';
 import { SessionTimeline } from './SessionTimeline.js';
 import {
@@ -172,6 +172,7 @@ export class SessionManager {
   private readonly registry: SessionRegistry<LiveSession>;
   private readonly timeline: SessionTimeline;
   private readonly interactions: SessionInteractions;
+  private readonly eventFlow: SessionEventFlow;
   private readonly lifecycle: SessionLifecycle;
   private readonly pendingAgentSettings = new Map<
     string,
@@ -266,6 +267,14 @@ export class SessionManager {
         this.emitError(error);
       },
     });
+    this.eventFlow = new SessionEventFlow({
+      appendTranscript: (event) => {
+        this.timeline.append(event);
+      },
+      applySideEffects: (appSessionId, sourceProviderSessionId, sideEffects) => {
+        this.applyEventSideEffects(appSessionId, sourceProviderSessionId, sideEffects);
+      },
+    });
     this.lifecycle = new SessionLifecycle({
       runtime: this.runtime,
       registry: this.registry,
@@ -320,6 +329,9 @@ export class SessionManager {
       },
       forgetInteractions: (appSessionId) => {
         this.interactions.forgetSession(appSessionId);
+      },
+      forgetEventFlow: (appSessionId) => {
+        this.eventFlow.forgetSession(appSessionId);
       },
       closeBrowserSession: (appSessionId) => this.browsers.close(appSessionId),
       emit: (event) => {
@@ -1000,6 +1012,7 @@ export class SessionManager {
 
   private async runPrimaryTurn(liveSession: LiveSession, prompt: string): Promise<void> {
     const appSessionId = liveSession.summary.appSessionId;
+    this.eventFlow.beginTurn(appSessionId, appSessionId);
     this.startContextPolling(appSessionId, liveSession.session);
     try {
       await this.applyDesignToolPolicy(liveSession, isDesignPrompt(prompt));
@@ -1007,7 +1020,7 @@ export class SessionManager {
       const stream = liveSession.session.stream(prompt, { includePartialMessages: true });
       for await (const ev of stream) {
         if (hasSessionCloseStarted(liveSession)) break;
-        this.applyEvent(appSessionId, appSessionId, 'primary', ev);
+        this.eventFlow.applyStreamEvent(appSessionId, appSessionId, 'primary', ev);
       }
     } catch (err) {
       if (hasSessionCloseStarted(liveSession)) {
@@ -1055,50 +1068,6 @@ export class SessionManager {
         message: `Could not update design tool policy: ${errMsg(err)}`,
       });
     }
-  }
-
-  private applyEvent(
-    appSessionId: string,
-    sourceProviderSessionId: string,
-    role: SessionRole,
-    ev: Parameters<typeof normalizeStreamEvent>[3],
-  ): void {
-    const n = normalizeStreamEvent(appSessionId, sourceProviderSessionId, role, ev);
-    if (!n) return;
-    this.applyNormalizedForSource(appSessionId, sourceProviderSessionId, n);
-  }
-
-  // Single live entry point that enforces per-turn terminal gating before
-  // applying a normalized event. Both primary/child stream loops and
-  // the worker notification subscriptions route through here so post-terminal
-  // generation is dropped no matter which channel delivers it. History replay
-  // does not pass through this path; SessionTimeline owns both replay paths.
-  private applyNormalizedForSource(
-    appSessionId: string,
-    sourceProviderSessionId: string,
-    n: NonNullable<ReturnType<typeof normalizeStreamEvent>>,
-  ): void {
-    const liveSession = this.registry.getLive(appSessionId);
-    if (liveSession) {
-      // The first `result` of a streaming turn is its terminal final. Mark the
-      // producing session terminal so any further model generation in the same
-      // turn is dropped, keeping one final response per turn.
-      if (n.done) {
-        liveSession.terminalSources.add(sourceProviderSessionId);
-        return;
-      }
-      // After terminal, quarantine only this session's model-generated chat/tool
-      // transcript. Child spawn/completion, token, Mission Control state, and
-      // error side effects still flow.
-      if (liveSession.terminalSources.has(sourceProviderSessionId) && isPostTerminalGeneration(n)) {
-        const sideEffects = { ...n };
-        delete sideEffects.transcript;
-        if (hasNormalizedSideEffects(sideEffects))
-          this.applyNormalized(appSessionId, sideEffects, sourceProviderSessionId);
-        return;
-      }
-    }
-    this.applyNormalized(appSessionId, n, sourceProviderSessionId);
   }
 
   // eslint-disable-next-line complexity -- Child-session event policy remains with its PR 6 owner.
@@ -1223,13 +1192,12 @@ export class SessionManager {
     void this.closeChildSessionWhenIdle(appSessionId, providerSessionId);
   }
 
-  // eslint-disable-next-line complexity -- Event normalization behavior remains with its PR 4 owner.
-  private applyNormalized(
+  // eslint-disable-next-line complexity -- Child/Mission/token policy remains with its later-PR owners.
+  private applyEventSideEffects(
     appSessionId: string,
-    n: NonNullable<ReturnType<typeof normalizeStreamEvent>>,
-    childProviderSessionId?: string,
+    sourceProviderSessionId: string,
+    n: NormalizedSideEffects,
   ): void {
-    if (n.transcript) this.timeline.append(n.transcript);
     if (n.features) {
       this.registry.updateSummary(appSessionId, { features: n.features });
       const missionControlId = this.registry.getLive(appSessionId)?.summary.missionId;
@@ -1285,8 +1253,7 @@ export class SessionManager {
         // primary context meter with the worker's window, and a leftover 'exact'
         // marker would make refreshContext pin the meter there. Workers get
         // their own context.updated snapshots keyed by their session id.
-        const fromOrchestrator =
-          childProviderSessionId === undefined || childProviderSessionId === appSessionId;
+        const fromOrchestrator = sourceProviderSessionId === appSessionId;
         if (fromOrchestrator) {
           m.summary.contextTokens = n.tokens.contextTokens;
           // Provider-reported usage of the last call is exactly what the
@@ -1785,8 +1752,7 @@ export class SessionManager {
           )
         )
           return;
-        for (const n of normalizeNotification(appSessionId, childProviderSessionId, role, note))
-          this.applyNormalizedForSource(appSessionId, childProviderSessionId, n);
+        this.eventFlow.applyNotification(appSessionId, childProviderSessionId, role, note);
       });
       liveSession.childSessions.set(childProviderSessionId, childSession);
       this.timeline.replayChild(appSessionId, childProviderSessionId);
@@ -1831,9 +1797,7 @@ export class SessionManager {
   private async driveChildSession(childSession: LiveChildSession, text: string): Promise<void> {
     childSession.streaming = true;
     childSession.lastUsedAt = Date.now();
-    this.registry
-      .getLive(childSession.appSessionId)
-      ?.terminalSources.delete(childSession.session.sessionId);
+    this.eventFlow.beginTurn(childSession.appSessionId, childSession.session.sessionId);
     this.emit({
       type: 'child.updated',
       appSessionId: childSession.appSessionId,
@@ -1845,7 +1809,7 @@ export class SessionManager {
     try {
       const stream = childSession.session.stream(text, { includePartialMessages: true });
       for await (const ev of stream)
-        this.applyEvent(
+        this.eventFlow.applyStreamEvent(
           childSession.appSessionId,
           childSession.session.sessionId,
           childSession.role,
@@ -2610,27 +2574,4 @@ function defaultsModeForSummary(summary: SessionSummary): SessionInteractionMode
   if (summary.sessionPurpose === 'mission-control') return 'agi';
   if (summary.interactionMode === 'spec') return 'spec';
   return 'auto';
-}
-
-// Model-generated transcript kinds that, once a turn is terminal, would form a
-// second/buried final response if appended. A failed result (isError) and
-// non-transcript signals (tokens, state, worker, child session) are never quarantined.
-const POST_TERMINAL_GENERATION_KINDS = new Set(['text', 'thinking', 'tool_call', 'tool_result']);
-
-function isPostTerminalGeneration(
-  n: NonNullable<ReturnType<typeof normalizeStreamEvent>>,
-): boolean {
-  return (
-    !!n.transcript && !n.transcript.isError && POST_TERMINAL_GENERATION_KINDS.has(n.transcript.kind)
-  );
-}
-
-// Whether a normalized event still carries non-transcript work that must be
-// applied even when its quarantined model transcript is dropped post-terminal.
-function hasNormalizedSideEffects(
-  n: NonNullable<ReturnType<typeof normalizeStreamEvent>>,
-): boolean {
-  return Boolean(
-    n.features ?? n.progress ?? n.missionState ?? n.missionChild ?? n.childSession ?? n.tokens,
-  );
 }

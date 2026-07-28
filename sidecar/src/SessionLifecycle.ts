@@ -68,8 +68,6 @@ export interface LiveSession extends LiveTurnState {
   childSessions: Map<string, LiveChildSession>;
   knownChildSessions: Set<string>;
   completedChildSessions: Set<string>;
-  // Provider IDs whose current turn already produced its terminal result.
-  terminalSources: Set<string>;
   // Persisted spawn links seeded on resume, separate from children seen live.
   linkedChildSessions: Set<string>;
   childSessionToolUseIds: Map<string, string>;
@@ -109,6 +107,7 @@ export interface SessionLifecycleDependencies {
   clearAutoCompactionWatchdog: (sessionId: string) => void;
   clearSessionRuntimeCaches: (liveSession: LiveSession) => void;
   forgetInteractions: (appSessionId: string) => void;
+  forgetEventFlow: (appSessionId: string) => void;
   closeBrowserSession: (appSessionId: string) => Promise<void>;
   emit: (event: ServerEvent) => void;
   emitError: (error: LifecycleError) => void;
@@ -403,6 +402,7 @@ export class SessionLifecycle {
     d.clearSessionRuntimeCaches(liveSession);
     if (d.registry.unregister(liveSession.summary.appSessionId)) {
       d.forgetInteractions(liveSession.summary.appSessionId);
+      d.forgetEventFlow(liveSession.summary.appSessionId);
     }
     d.emitSessionList();
   }
@@ -447,6 +447,7 @@ export class SessionLifecycle {
       this.dependencies.clearSessionRuntimeCaches(liveSession);
       if (this.dependencies.registry.unregister(liveSession.summary.appSessionId)) {
         this.dependencies.forgetInteractions(liveSession.summary.appSessionId);
+        this.dependencies.forgetEventFlow(liveSession.summary.appSessionId);
       }
     }
   }
@@ -458,7 +459,6 @@ export class SessionLifecycle {
     const stableAppSessionId = liveSession.summary.appSessionId;
     try {
       liveSession.streaming = true;
-      liveSession.terminalSources.delete(stableAppSessionId);
       d.registry.updateSummary(stableAppSessionId, {
         phase: liveSession.summary.sessionPurpose === 'mission-control' ? 'planning' : 'running',
         streaming: true,
@@ -528,7 +528,6 @@ function createLiveSession(
     childSessions: new Map(),
     knownChildSessions: new Set(),
     completedChildSessions: new Set(),
-    terminalSources: new Set(),
     linkedChildSessions: new Set(),
     childSessionToolUseIds: new Map(),
     childSessionSettings: new Map(),

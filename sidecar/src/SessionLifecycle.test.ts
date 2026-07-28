@@ -69,6 +69,7 @@ function createHarness(ordinarySummaries: SessionSummary[] = []) {
   const events: ServerEvent[] = [];
   const publicationRegistration: boolean[] = [];
   const forgettingAfterUnregister: boolean[] = [];
+  const eventFlowForgettingAfterUnregister: boolean[] = [];
   const history = new TestHistory(calls);
   const runtime = new FakeFactoryRuntime(calls);
   let projection: Partial<SessionSummary> = {};
@@ -181,6 +182,10 @@ function createHarness(ordinarySummaries: SessionSummary[] = []) {
       forgettingAfterUnregister.push(registry.getLive(appSessionId) === undefined);
       calls.push({ target: 'cleanup', method: 'interactions.forget', args: [appSessionId] });
     },
+    forgetEventFlow: (appSessionId) => {
+      eventFlowForgettingAfterUnregister.push(registry.getLive(appSessionId) === undefined);
+      calls.push({ target: 'cleanup', method: 'eventFlow.forget', args: [appSessionId] });
+    },
     closeBrowserSession: (appSessionId) => {
       calls.push({ target: 'browser', method: 'browser.close', args: [appSessionId] });
       return Promise.resolve();
@@ -203,6 +208,7 @@ function createHarness(ordinarySummaries: SessionSummary[] = []) {
     lifecycle,
     publicationRegistration,
     forgettingAfterUnregister,
+    eventFlowForgettingAfterUnregister,
     setProjection: (patch: Partial<SessionSummary>) => {
       projection = { ...patch };
     },
@@ -707,6 +713,7 @@ test('close follows ownership order and closeAll closes its initial snapshot', a
     'runtimeCaches.clear:owner',
   ]);
   assert.deepEqual(harness.forgettingAfterUnregister, [true]);
+  assert.deepEqual(harness.eventFlowForgettingAfterUnregister, [true]);
   assert.equal(harness.registry.getLive('owner'), undefined);
   const ownerList = harness.events.findLast((event) => event.type === 'sessions.list');
   assert.equal(
