@@ -3,7 +3,11 @@ import test from 'node:test';
 
 import { MissionState, type DroidStreamEvent } from '@factory/droid-sdk';
 
-import { SessionEventFlow, type NormalizedSideEffects } from './SessionEventFlow.js';
+import {
+  SessionEventFlow,
+  type NormalizedSideEffects,
+  type NormalizedTokenUsage,
+} from './SessionEventFlow.js';
 import type { TranscriptEvent } from './protocol.js';
 import { assistantTextDelta, successfulResultEvent } from './testing/fakeFactoryRuntime.js';
 
@@ -11,8 +15,12 @@ function createHarness() {
   const transcripts: TranscriptEvent[] = [];
   const sideEffects: Array<{
     appSessionId: string;
-    sourceProviderSessionId: string;
     value: NormalizedSideEffects;
+  }> = [];
+  const usage: Array<{
+    appSessionId: string;
+    sourceProviderSessionId: string;
+    value: NormalizedTokenUsage;
   }> = [];
   const trace: string[] = [];
   const eventFlow = new SessionEventFlow({
@@ -20,17 +28,20 @@ function createHarness() {
       trace.push(`append:${event.kind}`);
       transcripts.push(event);
     },
-    applySideEffects: (appSessionId, sourceProviderSessionId, value) => {
+    applySideEffects: (appSessionId, value) => {
       trace.push(`side:${sideEffectKind(value)}`);
-      sideEffects.push({ appSessionId, sourceProviderSessionId, value });
+      sideEffects.push({ appSessionId, value });
+    },
+    recordUsage: (appSessionId, sourceProviderSessionId, value) => {
+      trace.push('usage:tokens');
+      usage.push({ appSessionId, sourceProviderSessionId, value });
     },
   });
-  return { eventFlow, sideEffects, trace, transcripts };
+  return { eventFlow, sideEffects, trace, transcripts, usage };
 }
 
 function sideEffectKind(sideEffects: NormalizedSideEffects): string {
   if (sideEffects.childSession) return 'child';
-  if (sideEffects.tokens) return 'tokens';
   if (sideEffects.features) return 'features';
   if (sideEffects.progress) return 'progress';
   if (sideEffects.missionState) return 'missionState';
@@ -91,7 +102,6 @@ test('stream ingress appends an accepted transcript before one side-effect callb
   assert.equal(harness.transcripts[0]?.sourceSessionId, 'provider-1');
   assert.equal(harness.sideEffects.length, 1);
   assert.equal(harness.sideEffects[0]?.appSessionId, 'app-1');
-  assert.equal(harness.sideEffects[0]?.sourceProviderSessionId, 'provider-1');
 });
 
 test('notification ingress converges on the same transcript gating and side-effect path', () => {
@@ -180,13 +190,13 @@ test('post-terminal errors plus child, Mission, and token side effects still flo
     'append:tool_result',
     'side:child',
     'side:missionState',
-    'side:tokens',
+    'usage:tokens',
   ]);
   assert.equal(harness.transcripts[0]?.isError, true);
   assert.equal(harness.transcripts[0]?.text, 'worker failed');
   assert.equal(harness.sideEffects[0]?.value.childSession?.done, true);
   assert.equal(harness.sideEffects[1]?.value.missionState, MissionState.Running);
-  assert.deepEqual(harness.sideEffects[2]?.value.tokens, {
+  assert.deepEqual(harness.usage[0]?.value, {
     tokensIn: 9,
     tokensOut: 2,
     contextTokens: 10,

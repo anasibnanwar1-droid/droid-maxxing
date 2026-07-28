@@ -13,6 +13,7 @@ import type {
 } from './protocol.js';
 import type { SessionRegistry } from './SessionRegistry.js';
 import type { CompactionTokenLimitPatch } from './compaction.js';
+import type { LiveOperationTarget, SessionContext } from './SessionContext.js';
 import {
   buildCreatedSessionSummary,
   buildCreateRuntimeOptions,
@@ -111,11 +112,9 @@ export interface SessionLifecycleDependencies {
   applyPendingSettingsToSummary: (summary: SessionSummary) => SessionSummary;
   applyPendingSessionSettings: (appSessionId: string) => Promise<boolean>;
   runPrimaryTurn: (liveSession: LiveSession, prompt: string) => Promise<void>;
-  refreshContext: (sourceSessionId: string, session: FactorySession) => Promise<void>;
+  context: Pick<SessionContext, 'refresh' | 'stopPolling' | 'stopSession' | 'forgetSession'>;
   onTurnSettledWhileAutoCompacting: (appSessionId: string) => void;
-  stopContextPolling: (sourceSessionId: string) => void;
   clearAutoCompactionWatchdog: (sessionId: string) => void;
-  clearSessionRuntimeCaches: (liveSession: LiveSession) => void;
   forgetInteractions: (appSessionId: string) => void;
   forgetEventFlow: (appSessionId: string) => void;
   closeBrowserSession: (appSessionId: string) => Promise<void>;
@@ -224,7 +223,7 @@ export class SessionLifecycle {
         clientRef: `resume:${appSessionId}`,
         session: projectedSummary,
       });
-      void d.refreshContext(existing.summary.appSessionId, existing.session);
+      void d.context.refresh(this.primaryContextTarget(existing));
       return true;
     }
 
@@ -292,7 +291,7 @@ export class SessionLifecycle {
           features: projectedSummary.features,
         });
       }
-      void d.refreshContext(appSessionId, session);
+      void d.context.refresh(this.primaryContextTarget(liveSession));
       return true;
     } catch (error) {
       await this.cleanupFailedOpen(pendingMcpServers, pendingSession, pendingLiveSession);
@@ -444,14 +443,8 @@ export class SessionLifecycle {
     };
 
     await run(() => {
-      d.stopContextPolling(liveSession.summary.appSessionId);
+      d.context.stopSession(liveSession);
     });
-    const providerSessionId = liveSession.summary.providerSessionId;
-    if (providerSessionId) {
-      await run(() => {
-        d.stopContextPolling(providerSessionId);
-      });
-    }
     await run(() => {
       d.clearAutoCompactionWatchdog(liveSession.summary.appSessionId);
     });
@@ -460,7 +453,7 @@ export class SessionLifecycle {
     });
     for (const [providerSessionId, childSession] of liveSession.childSessions) {
       await run(() => {
-        d.stopContextPolling(childSession.session.sessionId);
+        d.context.stopPolling(childSession.session.sessionId);
       });
       await run(() => {
         d.clearAutoCompactionWatchdog(providerSessionId);
@@ -476,7 +469,7 @@ export class SessionLifecycle {
     await run(() => liveSession.session.close());
     await run(() => d.closeBrowserSession(liveSession.summary.appSessionId));
     await run(() => {
-      d.clearSessionRuntimeCaches(liveSession);
+      d.context.forgetSession(liveSession);
     });
     let unregistered: LiveSession | undefined;
     try {
@@ -519,6 +512,23 @@ export class SessionLifecycle {
     if (this.dependencies.isShutdownStarted()) throw new OpenAdmissionClosedError();
   }
 
+  private primaryContextTarget(liveSession: LiveSession): LiveOperationTarget {
+    const d = this.dependencies;
+    const appSessionId = liveSession.summary.appSessionId;
+    const session = liveSession.session;
+    return {
+      appSessionId,
+      providerSessionId: session.sessionId,
+      sourceSessionId: appSessionId,
+      session,
+      isCurrent: () =>
+        !d.isShutdownStarted() &&
+        d.registry.getLive(appSessionId) === liveSession &&
+        !liveSession.closeMode &&
+        liveSession.session === session,
+    };
+  }
+
   private async prepareToSend(appSessionId: string): Promise<LiveSession | undefined> {
     let liveSession = this.dependencies.registry.getLive(appSessionId);
     if (!liveSession) {
@@ -550,7 +560,7 @@ export class SessionLifecycle {
       liveSession &&
       this.dependencies.registry.getLive(liveSession.summary.appSessionId) === liveSession
     ) {
-      this.dependencies.clearSessionRuntimeCaches(liveSession);
+      this.dependencies.context.forgetSession(liveSession);
       if (this.dependencies.registry.unregister(liveSession.summary.appSessionId)) {
         this.dependencies.forgetInteractions(liveSession.summary.appSessionId);
         this.dependencies.forgetEventFlow(liveSession.summary.appSessionId);

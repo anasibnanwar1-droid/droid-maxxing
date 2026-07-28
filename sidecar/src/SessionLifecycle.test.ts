@@ -168,25 +168,44 @@ function createHarness(ordinarySummaries: SessionSummary[] = []) {
         void event;
       }
     },
-    refreshContext: (sourceSessionId) => {
-      calls.push({ target: 'provider', method: 'context.refresh', args: [sourceSessionId] });
-      return Promise.resolve();
+    context: {
+      refresh: (target) => {
+        calls.push({
+          target: 'provider',
+          method: 'context.refresh',
+          args: [target.sourceSessionId],
+        });
+        return Promise.resolve();
+      },
+      stopPolling: (sourceSessionId) => {
+        calls.push({ target: 'cleanup', method: 'poll.stop', args: [sourceSessionId] });
+      },
+      stopSession: (live) => {
+        calls.push({
+          target: 'cleanup',
+          method: 'poll.stop',
+          args: [live.summary.appSessionId],
+        });
+        if (live.summary.providerSessionId)
+          calls.push({
+            target: 'cleanup',
+            method: 'poll.stop',
+            args: [live.summary.providerSessionId],
+          });
+      },
+      forgetSession: (live) => {
+        calls.push({
+          target: 'cleanup',
+          method: 'runtimeCaches.clear',
+          args: [live.summary.appSessionId],
+        });
+      },
     },
     onTurnSettledWhileAutoCompacting: (appSessionId) => {
       calls.push({ target: 'cleanup', method: 'autoCompaction.settled', args: [appSessionId] });
     },
-    stopContextPolling: (sourceSessionId) => {
-      calls.push({ target: 'cleanup', method: 'poll.stop', args: [sourceSessionId] });
-    },
     clearAutoCompactionWatchdog: (sessionId) => {
       calls.push({ target: 'cleanup', method: 'watchdog.clear', args: [sessionId] });
-    },
-    clearSessionRuntimeCaches: (live) => {
-      calls.push({
-        target: 'cleanup',
-        method: 'runtimeCaches.clear',
-        args: [live.summary.appSessionId],
-      });
     },
     forgetInteractions: (appSessionId) => {
       forgettingAfterUnregister.push(registry.getLive(appSessionId) === undefined);
@@ -684,7 +703,7 @@ test('resuming an already-live session does not reload or persist it', async () 
 
 test('create and resume abandon in-flight opens when shutdown admission closes', async () => {
   const creating = createHarness();
-  let releaseCreateLimit = (_limit: number): void => undefined;
+  let releaseCreateLimit: (limit: number) => void = () => undefined;
   creating.setCompactionLimit(
     () =>
       new Promise<number>((resolve) => {
@@ -707,7 +726,7 @@ test('create and resume abandon in-flight opens when shutdown admission closes',
   const historical = summary('resume-stable', 'resume-provider');
   const resuming = createHarness([historical]);
   const provider = queueLoad(resuming, 'resume-provider');
-  let releaseResumeLimit = (_limit: number): void => undefined;
+  let releaseResumeLimit: (limit: number) => void = () => undefined;
   resuming.setCompactionLimit(
     () =>
       new Promise<number>((resolve) => {

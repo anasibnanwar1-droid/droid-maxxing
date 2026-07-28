@@ -1,5 +1,6 @@
 import {
   AutonomyLevel,
+  ContextBreakdownResultSchema,
   DroidClient,
   DroidInteractionMode,
   DroidSession,
@@ -88,6 +89,7 @@ export interface FactoryRuntime {
   startCliLogin(): Promise<void>;
   createSession(options: CreateRuntimeSessionOptions): Promise<FactorySession>;
   loadSession(providerSessionId: string, handlers?: RuntimeHandlers): Promise<FactorySession>;
+  readContextBreakdown(session: FactorySession): Promise<unknown>;
 }
 
 export class DroidRuntime implements FactoryRuntime {
@@ -103,6 +105,29 @@ export class DroidRuntime implements FactoryRuntime {
       droidPath: this.resolveDroidPath(),
       apiKeyConfigured: this.explicitApiKey.length > 0,
     };
+  }
+
+  async readContextBreakdown(session: FactorySession): Promise<unknown> {
+    try {
+      const exposed = session as unknown as { getContextBreakdown?: () => Promise<unknown> };
+      if (typeof exposed.getContextBreakdown === 'function')
+        return await exposed.getContextBreakdown();
+
+      const client = (
+        session as unknown as {
+          _client?: {
+            _sessionRpcWithoutParams?: (method: string, schema: unknown) => Promise<unknown>;
+          };
+        }
+      )._client;
+      if (!client?._sessionRpcWithoutParams) return undefined;
+      return await client._sessionRpcWithoutParams(
+        'droid.get_context_breakdown',
+        ContextBreakdownResultSchema,
+      );
+    } catch {
+      return undefined;
+    }
   }
 
   async createSession(options: CreateRuntimeSessionOptions): Promise<DroidSession> {

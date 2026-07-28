@@ -1,10 +1,4 @@
-import {
-  ContextBreakdownResultSchema,
-  DroidInteractionMode,
-  type ContextBreakdownResult,
-  type GetContextStatsResult,
-  type McpServerConfig,
-} from '@factory/droid-sdk';
+import { DroidInteractionMode, type McpServerConfig } from '@factory/droid-sdk';
 import { tmpdir } from 'node:os';
 import type {
   SessionRole,
@@ -13,8 +7,6 @@ import type {
   BrowserNativeResult,
   ClientCommand,
   ConfigurableSessionRole,
-  ContextBreakdownSnapshot,
-  ContextStatsSnapshot,
   ChildSessionHistoryLink,
   FactoryDefaultSettings,
   InstallChannel,
@@ -33,7 +25,7 @@ import {
   reasoningValue,
   type SessionInitResult,
 } from './sessionHelpers.js';
-import { boundedInt, numberValue, stringValue } from './values.js';
+import { boundedInt } from './values.js';
 import {
   DroidRuntime,
   factoryReasoningEffort,
@@ -58,6 +50,12 @@ import { SessionRegistry } from './SessionRegistry.js';
 import { SessionEventFlow, type NormalizedSideEffects } from './SessionEventFlow.js';
 import { SessionInteractions } from './SessionInteractions.js';
 import { SessionTimeline } from './SessionTimeline.js';
+import {
+  SessionContext,
+  type ChildOperationTarget,
+  type LiveOperationTarget,
+  type UsageOffset,
+} from './SessionContext.js';
 import {
   SessionLifecycle,
   type ChildSessionSettings,
@@ -139,20 +137,6 @@ export interface AgentSettingPatch {
   reasoningEffort?: ReasoningEffort;
 }
 
-interface UsageOffset {
-  tokensIn: number;
-  tokensOut: number;
-}
-
-type ContextRefreshTarget =
-  | { kind: 'primary'; parent: LiveSession; session: FactorySession }
-  | {
-      kind: 'child';
-      parent: LiveSession;
-      childSessionId: string;
-      child: LiveChildSession;
-    };
-
 const MAX_OPEN_CHILD_SESSIONS = boundedInt(
   process.env.DROID_CONTROL_MAX_OPEN_CHILD_SESSIONS,
   4,
@@ -187,6 +171,7 @@ export class SessionManager {
   private readonly timeline: SessionTimeline;
   private readonly interactions: SessionInteractions;
   private readonly eventFlow: SessionEventFlow;
+  private readonly context: SessionContext;
   private readonly lifecycle: SessionLifecycle;
   private readonly pendingAgentSettings = new Map<
     string,
@@ -204,14 +189,6 @@ export class SessionManager {
   private readonly autoCompactionWatchdogs = new AutoCompactionWatchdogs((sessionKey) => {
     this.onAutoCompactionWatchdogExpired(sessionKey);
   });
-  private readonly usageOffsets = new Map<string, UsageOffset>();
-  private readonly contextSnapshots = new Map<string, ContextStatsSnapshot>();
-  // In-place compactions completed per worker session; carried on that
-  // session's context snapshots so the meter's ratchet resets (child sessions have no
-  // summary-level generation counter of their own).
-  private readonly childSessionCompactions = new Map<string, number>();
-  private readonly contextPollers = new Map<string, ReturnType<typeof setInterval>>();
-  private contextEpoch = 0;
   private shutdownPromise?: Promise<void>;
   private readonly childOpenAttempts = new WeakMap<LiveSession, Map<string, symbol>>();
   private readonly pendingNativeBrowserRequests = new Map<string, PendingNativeBrowserRequest>();
@@ -259,6 +236,14 @@ export class SessionManager {
       },
       now: Date.now,
     });
+    this.context = new SessionContext({
+      registry: this.registry,
+      runtime: this.runtime,
+      emit: (event) => {
+        this.emit(event);
+      },
+      maxContextTokensForSummary: (summary) => this.maxContextTokensForSummary(summary),
+    });
     this.timeline = new SessionTimeline({
       registry: this.registry,
       history: this.history,
@@ -288,8 +273,11 @@ export class SessionManager {
       appendTranscript: (event) => {
         this.timeline.append(event);
       },
-      applySideEffects: (appSessionId, sourceProviderSessionId, sideEffects) => {
-        this.applyEventSideEffects(appSessionId, sourceProviderSessionId, sideEffects);
+      applySideEffects: (appSessionId, sideEffects) => {
+        this.applyEventSideEffects(appSessionId, sideEffects);
+      },
+      recordUsage: (appSessionId, sourceProviderSessionId, usage) => {
+        this.context.recordUsage(appSessionId, sourceProviderSessionId, usage);
       },
     });
     this.lifecycle = new SessionLifecycle({
@@ -332,7 +320,7 @@ export class SessionManager {
       applyPendingSettingsToSummary: (summary) => this.applyPendingSettingsToSummary(summary),
       applyPendingSessionSettings: (appSessionId) => this.applyPendingSessionSettings(appSessionId),
       runPrimaryTurn: (liveSession, prompt) => this.runPrimaryTurn(liveSession, prompt),
-      refreshContext: (sourceSessionId, session) => this.refreshContext(sourceSessionId, session),
+      context: this.context,
       onTurnSettledWhileAutoCompacting: (appSessionId) => {
         const liveSession = this.registry.getLive(appSessionId);
         if (
@@ -344,14 +332,8 @@ export class SessionManager {
           return;
         this.autoCompactionWatchdogs.arm(appSessionId, POST_TURN_AUTO_COMPACTION_WATCHDOG_MS);
       },
-      stopContextPolling: (sourceSessionId) => {
-        this.stopContextPolling(sourceSessionId);
-      },
       clearAutoCompactionWatchdog: (sessionId) => {
         this.autoCompactionWatchdogs.clear(sessionId);
-      },
-      clearSessionRuntimeCaches: (liveSession) => {
-        this.clearSessionRuntimeCaches(liveSession);
       },
       forgetInteractions: (appSessionId) => {
         this.interactions.forgetSession(appSessionId);
@@ -798,7 +780,7 @@ export class SessionManager {
             !hasSessionCloseStarted(session);
           if (cmd.modelId !== undefined)
             await this.recomputeSessionCompactionLimit(session, stillCurrent);
-          if (stillCurrent()) await this.refreshContext(appSessionId, session.session);
+          if (stillCurrent()) await this.context.refresh(this.primaryContextTarget(session));
         }
       }
     } catch (err) {
@@ -1212,7 +1194,7 @@ export class SessionManager {
     const appSessionId = liveSession.summary.appSessionId;
     if (!this.isCurrentPrimarySession(liveSession)) return;
     this.eventFlow.beginTurn(appSessionId, appSessionId);
-    this.startContextPolling(appSessionId, liveSession.session);
+    this.context.startPolling(this.primaryContextTarget(liveSession));
     try {
       await this.applyDesignToolPolicy(liveSession, isDesignPrompt(prompt));
       if (!this.isCurrentPrimarySession(liveSession)) return;
@@ -1235,11 +1217,11 @@ export class SessionManager {
         this.registry.updateSummary(appSessionId, { phase: 'failed' });
       }
     } finally {
-      this.stopContextPolling(appSessionId);
-      // Keep streaming=true while refreshContext is in flight so concurrent
+      this.context.stopPolling(appSessionId);
+      // Keep streaming=true while the context refresh is in flight so concurrent
       // sends queue instead of racing a second lifecycle turn.
       if (this.isCurrentPrimarySession(liveSession)) {
-        await this.refreshContext(appSessionId, liveSession.session);
+        await this.context.refresh(this.primaryContextTarget(liveSession));
       }
     }
   }
@@ -1250,6 +1232,37 @@ export class SessionManager {
       this.registry.getLive(liveSession.summary.appSessionId) === liveSession &&
       !hasSessionCloseStarted(liveSession)
     );
+  }
+
+  private primaryContextTarget(liveSession: LiveSession): LiveOperationTarget {
+    const session = liveSession.session;
+    return {
+      appSessionId: liveSession.summary.appSessionId,
+      providerSessionId: session.sessionId,
+      sourceSessionId: liveSession.summary.appSessionId,
+      session,
+      isCurrent: () => this.isCurrentPrimarySession(liveSession) && liveSession.session === session,
+    };
+  }
+
+  private childContextTarget(
+    parent: LiveSession,
+    childSessionId: string,
+    child: LiveChildSession,
+  ): ChildOperationTarget {
+    const session = child.session;
+    return {
+      appSessionId: parent.summary.appSessionId,
+      parentAppSessionId: parent.summary.appSessionId,
+      childSessionId,
+      providerSessionId: session.sessionId,
+      sourceSessionId: session.sessionId,
+      session,
+      role: child.role,
+      child,
+      isCurrent: () =>
+        this.isCurrentChildSession(parent, childSessionId, child) && child.session === session,
+    };
   }
 
   // Design turns are a single focused task (extra prompts queue), so the model
@@ -1401,12 +1414,7 @@ export class SessionManager {
     void this.closeChildSessionWhenIdle(appSessionId, providerSessionId);
   }
 
-  // eslint-disable-next-line complexity -- Child/Mission/token policy remains with its later-PR owners.
-  private applyEventSideEffects(
-    appSessionId: string,
-    sourceProviderSessionId: string,
-    n: NormalizedSideEffects,
-  ): void {
+  private applyEventSideEffects(appSessionId: string, n: NormalizedSideEffects): void {
     if (n.features) {
       this.registry.updateSummary(appSessionId, { features: n.features });
       const missionControlId = this.registry.getLive(appSessionId)?.summary.missionId;
@@ -1449,41 +1457,6 @@ export class SessionManager {
         void this.closeChildSessionWhenIdle(appSessionId, n.missionChild.providerSessionId);
     }
     if (n.childSession) this.applyChildSession(appSessionId, n.childSession);
-    if (n.tokens) {
-      const m = this.registry.getLive(appSessionId);
-      if (m) {
-        const appSessionId = m.summary.appSessionId;
-        const offset = this.usageOffsets.get(appSessionId);
-        m.summary.tokensIn = n.tokens.tokensIn + (offset?.tokensIn ?? 0);
-        m.summary.tokensOut = n.tokens.tokensOut + (offset?.tokensOut ?? 0);
-        // The summary's context reading belongs to the primary session
-        // only. Worker turns still update the running totals above, but their
-        // context usage must never land on the summary: it would repaint the
-        // primary context meter with the worker's window, and a leftover 'exact'
-        // marker would make refreshContext pin the meter there. Workers get
-        // their own context.updated snapshots keyed by their session id.
-        const fromOrchestrator = sourceProviderSessionId === appSessionId;
-        if (fromOrchestrator) {
-          m.summary.contextTokens = n.tokens.contextTokens;
-          // Provider-reported usage of the last call is exactly what the
-          // daemon's compaction threshold checks: the authoritative reading.
-          if (n.tokens.contextTokens > 0) {
-            m.summary.contextAccuracy = 'exact';
-            m.summary.contextUpdatedAt = new Date().toISOString();
-          }
-          // Keep the last known window when the catalog cannot resolve the
-          // model (e.g. Default): deleting it here made the meter flip between
-          // "no max" and the stats limit on every token event.
-          const maxContextTokens = this.maxContextTokensForSummary(m.summary);
-          if (maxContextTokens !== undefined) m.summary.maxContextTokens = maxContextTokens;
-          this.emitContextEstimate(appSessionId, m.summary);
-        }
-        this.emit({
-          type: 'session.updated',
-          session: { ...m.summary, updatedAt: Date.now() },
-        });
-      }
-    }
   }
 
   // Subscribe the primary session to raw daemon notifications so the
@@ -1521,8 +1494,14 @@ export class SessionManager {
     session: FactorySession,
     note: Record<string, unknown>,
   ): boolean {
+    const contextTarget = this.resolveCompactionContextTarget(
+      appSessionId,
+      childProviderSessionId,
+      role,
+      session,
+    );
     return runCompactionNotification(
-      this.compactionHost(),
+      this.compactionHost(contextTarget),
       { appSessionId, providerSessionId: childProviderSessionId, role, session },
       note,
     );
@@ -1532,7 +1511,9 @@ export class SessionManager {
     settleExpiredAutoCompaction(this.compactionHost(), sessionKey);
   }
 
-  private compactionHost(): AutoCompactionHost<LiveChildSession, LiveSession, FactorySession> {
+  private compactionHost(
+    capturedContextTarget?: LiveOperationTarget | ChildOperationTarget,
+  ): AutoCompactionHost<LiveChildSession, LiveSession, FactorySession> {
     return {
       watchdogs: this.autoCompactionWatchdogs,
       sessions: () =>
@@ -1546,13 +1527,21 @@ export class SessionManager {
         const session = this.registry.getLive(appSessionId);
         return session && !hasSessionCloseStarted(session) ? session : undefined;
       },
-      childSessionCompactions: this.childSessionCompactions,
       emitCompactionStatus: (appSessionId, text, providerSessionId, role) => {
         this.timeline.appendStatus(appSessionId, text, 'auto', providerSessionId, role);
       },
-      patchSummary: (appSessionId, patch) => this.registry.updateSummary(appSessionId, patch),
-      refreshContext: (providerSessionId, session) =>
-        this.refreshContext(providerSessionId, session),
+      recordCompaction: (appSessionId, providerSessionId, role, session) => {
+        const target =
+          capturedContextTarget ??
+          this.resolveCompactionContextTarget(appSessionId, providerSessionId, role, session);
+        if (target) this.context.recordCompaction(target);
+      },
+      refreshContext: (appSessionId, providerSessionId, role, session) => {
+        const target =
+          capturedContextTarget ??
+          this.resolveCompactionContextTarget(appSessionId, providerSessionId, role, session);
+        return target ? this.context.refresh(target) : Promise.resolve();
+      },
       settlePrimary: (appSessionId) => {
         void this.lifecycle.settleAfterCompaction(appSessionId);
       },
@@ -1581,6 +1570,22 @@ export class SessionManager {
         });
       },
     };
+  }
+
+  private resolveCompactionContextTarget(
+    appSessionId: string,
+    childSessionId: string,
+    role: SessionRole,
+    session: FactorySession,
+  ): LiveOperationTarget | ChildOperationTarget | undefined {
+    const parent = this.registry.getLive(appSessionId);
+    if (!parent) return undefined;
+    if (role === 'primary')
+      return parent.session === session ? this.primaryContextTarget(parent) : undefined;
+    const child = parent.childSessions.get(childSessionId);
+    return child?.session === session
+      ? this.childContextTarget(parent, childSessionId, child)
+      : undefined;
   }
 
   private async compactSession(
@@ -1644,7 +1649,7 @@ export class SessionManager {
                   : {}),
               });
             }
-            return this.refreshContext(appSessionId, liveSession.session);
+            return this.context.refresh(this.primaryContextTarget(liveSession));
           },
           reload: async (newSessionId) => {
             swapTarget = newSessionId;
@@ -1692,7 +1697,7 @@ export class SessionManager {
     // re-synchronizes disabledToolIds.
     liveSession.todoDisabledForDesign = undefined;
     await oldSession.close().catch(ignoreError);
-    this.usageOffsets.set(appSessionId, carryover);
+    this.context.preserveUsage(appSessionId, carryover);
     this.registry.replaceProvider(appSessionId, newSessionId, {
       tokensIn: carryover.tokensIn,
       tokensOut: carryover.tokensOut,
@@ -1727,7 +1732,7 @@ export class SessionManager {
     // teardown: when the next message re-resumes against the compacted backing
     // session (whose token counts restart low), the carried-over totals are
     // added back instead of the displayed usage collapsing to the new segment.
-    this.usageOffsets.set(appSessionId, carryover);
+    this.context.preserveUsage(appSessionId, carryover);
     this.emitError({
       appSessionId,
       providerSessionId: newSessionId,
@@ -1889,7 +1894,8 @@ export class SessionManager {
       // daemon doesn't keep compacting against the old model's limit.
       await this.recomputeSessionCompactionLimit(liveSession, stillCurrent);
     }
-    if (liveSession && session && stillCurrent()) await this.refreshContext(appSessionId, session);
+    if (liveSession && session && stillCurrent())
+      await this.context.refresh(this.primaryContextTarget(liveSession));
   }
 
   private async openChildSession(
@@ -2146,7 +2152,9 @@ export class SessionManager {
       role: childSession.role,
       status: 'running',
     });
-    this.startContextPolling(childSession.session.sessionId, childSession.session);
+    this.context.startPolling(
+      this.childContextTarget(parent, childSession.childSessionId, childSession),
+    );
     try {
       const stream = childSession.session.stream(text, { includePartialMessages: true });
       for await (const ev of stream) {
@@ -2192,7 +2200,7 @@ export class SessionManager {
     parent: LiveSession,
     childSession: LiveChildSession,
   ): Promise<void> {
-    this.stopContextPolling(childSession.session.sessionId);
+    this.context.stopPolling(childSession.session.sessionId);
     childSession.interruptingForSteer = false;
     childSession.interrupting = false;
     if (!this.isCurrentChildSession(parent, childSession.childSessionId, childSession)) {
@@ -2214,7 +2222,9 @@ export class SessionManager {
     // Refresh while streaming stays true so concurrent sends queue instead
     // of racing a second driveChildSession(). The daemon auto-compacts the worker
     // in place (same session id), so no swap handling is needed here.
-    await this.refreshContext(childSession.session.sessionId, childSession.session);
+    await this.context.refresh(
+      this.childContextTarget(parent, childSession.childSessionId, childSession),
+    );
     if (!this.isCurrentChildSession(parent, childSession.childSessionId, childSession)) {
       childSession.streaming = false;
       return;
@@ -2392,10 +2402,12 @@ export class SessionManager {
     const childSession = liveSession?.childSessions.get(childProviderSessionId);
     if (!liveSession || !childSession) return;
     liveSession.childSessions.delete(childProviderSessionId);
-    this.childSessionCompactions.delete(childProviderSessionId);
-    this.contextSnapshots.delete(childProviderSessionId);
+    this.context.forgetChild({
+      parentAppSessionId: liveSession.summary.appSessionId,
+      childSessionId: childProviderSessionId,
+    });
     this.autoCompactionWatchdogs.clear(childProviderSessionId);
-    this.stopContextPolling(childSession.session.sessionId);
+    this.context.stopPolling(childSession.session.sessionId);
     childSession.unsubscribe?.();
     try {
       await childSession.session.close();
@@ -2497,209 +2509,6 @@ export class SessionManager {
     }
   }
 
-  private startContextPolling(sourceSessionId: string, session: FactorySession): void {
-    const target = this.resolveContextRefreshTarget(sourceSessionId, session);
-    if (
-      this.shutdownPromise ||
-      this.contextPollers.has(sourceSessionId) ||
-      !target ||
-      !this.isCurrentContextRefreshTarget(target)
-    )
-      return;
-    const epoch = this.contextEpoch;
-    const poll = () => {
-      if (epoch !== this.contextEpoch || !this.isCurrentContextRefreshTarget(target)) return;
-      void this.refreshContext(sourceSessionId, session, { persist: false });
-    };
-    const timer = setInterval(poll, 2_500);
-    this.contextPollers.set(sourceSessionId, timer);
-    poll();
-  }
-
-  private stopContextPolling(sourceSessionId: string): void {
-    const timer = this.contextPollers.get(sourceSessionId);
-    if (!timer) return;
-    clearInterval(timer);
-    this.contextPollers.delete(sourceSessionId);
-  }
-
-  private emitContextEstimate(sourceSessionId: string, summary: SessionSummary): void {
-    if (summary.contextTokens <= 0) return;
-    const previous = this.contextSnapshots.get(sourceSessionId);
-    const limit =
-      this.maxContextTokensForSummary(summary) ?? summary.maxContextTokens ?? previous?.limit;
-    if (!limit || limit <= 0) return;
-    const used = Math.min(summary.contextTokens, limit);
-    const breakdown = previous?.breakdown
-      ? {
-          ...previous.breakdown,
-          contextBudget: limit,
-          usedTokens: used,
-          freeTokens: Math.max(0, limit - used),
-        }
-      : undefined;
-    const snapshot: ContextStatsSnapshot = {
-      used,
-      remaining: Math.max(0, limit - used),
-      limit,
-      accuracy: summary.contextAccuracy ?? previous?.accuracy ?? 'estimated',
-      updatedAt: new Date().toISOString(),
-      breakdown,
-    };
-    this.contextSnapshots.set(sourceSessionId, snapshot);
-    this.emit({
-      type: 'context.updated',
-      appSessionId: summary.appSessionId,
-      sourceSessionId,
-      stats: snapshot,
-    });
-  }
-
-  // eslint-disable-next-line complexity -- Context accounting remains with its PR 5 owner.
-  private async refreshContext(
-    sourceSessionId: string,
-    session: FactorySession,
-    options: { persist?: boolean } = {},
-  ): Promise<void> {
-    const epoch = this.contextEpoch;
-    const target = this.resolveContextRefreshTarget(sourceSessionId, session);
-    if (!target || !this.isCurrentContextRefreshTarget(target)) return;
-    try {
-      const stats = await session.getContextStats();
-      if (epoch !== this.contextEpoch || !this.isCurrentContextRefreshTarget(target)) return;
-      const breakdown = await this.readContextBreakdown(session);
-      if (epoch !== this.contextEpoch || !this.isCurrentContextRefreshTarget(target)) return;
-      let snapshot = contextStatsSnapshot(stats, breakdown);
-      const liveSession = target.parent;
-      const childProviderSessionId = target.kind === 'child' ? target.childSessionId : undefined;
-      const appSessionId = liveSession.summary.appSessionId;
-      const isPrimarySession = childProviderSessionId === undefined;
-      // The daemon's get_context_stats is a chars/4 estimate that over-counts;
-      // when a provider-reported reading exists it matches the compaction
-      // threshold count exactly, so it wins over the estimate. The stats call
-      // still supplies the limit and breakdown.
-      const exact =
-        liveSession.summary.contextAccuracy === 'exact' && liveSession.summary.contextTokens > 0
-          ? liveSession.summary.contextTokens
-          : undefined;
-      if (exact !== undefined && snapshot.limit > 0) {
-        const used = Math.min(exact, snapshot.limit);
-        snapshot = {
-          ...snapshot,
-          used,
-          remaining: Math.max(0, snapshot.limit - used),
-          accuracy: 'exact',
-          breakdown: snapshot.breakdown
-            ? {
-                ...snapshot.breakdown,
-                usedTokens: used,
-                freeTokens: Math.max(0, snapshot.limit - used),
-              }
-            : undefined,
-        };
-      }
-      // Child sessions have no top-level session summary to carry a compaction
-      // generation, so the snapshot carries it for the meter's ratchet reset.
-      if (childProviderSessionId !== undefined)
-        snapshot = {
-          ...snapshot,
-          compactions: this.childSessionCompactions.get(childProviderSessionId) ?? 0,
-        };
-      if (epoch !== this.contextEpoch || !this.isCurrentContextRefreshTarget(target)) return;
-      this.contextSnapshots.set(sourceSessionId, snapshot);
-      this.emit({
-        type: 'context.updated',
-        appSessionId,
-        sourceSessionId,
-        stats: snapshot,
-      });
-      if (isPrimarySession) {
-        const contextPatch = {
-          contextTokens: snapshot.used,
-          contextRemainingTokens: snapshot.remaining,
-          // summary.maxContextTokens means "model window". The catalog wins;
-          // the daemon's stats limit only fills in for unknown models, so the
-          // meter's window row stops flip-flopping between the two sources.
-          maxContextTokens: this.maxContextTokensForSummary(liveSession.summary) ?? snapshot.limit,
-          contextAccuracy: snapshot.accuracy,
-          contextUpdatedAt: snapshot.updatedAt,
-        };
-        if (options.persist === false)
-          liveSession.summary = { ...liveSession.summary, ...contextPatch };
-        else this.registry.updateSummary(appSessionId, contextPatch);
-      }
-    } catch {
-      /* context stats are informational; keep the active turn path clean */
-    }
-  }
-
-  private resolveContextRefreshTarget(
-    sourceSessionId: string,
-    session: FactorySession,
-  ): ContextRefreshTarget | undefined {
-    const primary = this.registry.getLive(sourceSessionId);
-    if (primary?.session === session) return { kind: 'primary', parent: primary, session };
-    for (const parent of this.registry.liveSessionsSnapshot()) {
-      for (const [childSessionId, child] of parent.childSessions) {
-        if (
-          child.session === session &&
-          (childSessionId === sourceSessionId || child.session.sessionId === sourceSessionId)
-        )
-          return { kind: 'child', parent, childSessionId, child };
-      }
-    }
-    return undefined;
-  }
-
-  private isCurrentContextRefreshTarget(target: ContextRefreshTarget): boolean {
-    if (this.shutdownPromise) return false;
-    if (this.registry.getLive(target.parent.summary.appSessionId) !== target.parent) return false;
-    if (hasSessionCloseStarted(target.parent)) return false;
-    if (target.kind === 'primary') return target.parent.session === target.session;
-    return target.parent.childSessions.get(target.childSessionId) === target.child;
-  }
-
-  private async readContextBreakdown(
-    session: FactorySession,
-  ): Promise<ContextBreakdownSnapshot | undefined> {
-    try {
-      const exposed = session as unknown as { getContextBreakdown?: () => Promise<unknown> };
-      if (typeof exposed.getContextBreakdown === 'function') {
-        return contextBreakdownSnapshot(await exposed.getContextBreakdown());
-      }
-
-      const client = (
-        session as unknown as {
-          _client?: {
-            _sessionRpcWithoutParams?: (method: string, schema: unknown) => Promise<unknown>;
-          };
-        }
-      )._client;
-      if (!client?._sessionRpcWithoutParams) return undefined;
-      return contextBreakdownSnapshot(
-        await client._sessionRpcWithoutParams(
-          'droid.get_context_breakdown',
-          ContextBreakdownResultSchema,
-        ),
-      );
-    } catch {
-      return undefined;
-    }
-  }
-
-  private clearSessionRuntimeCaches(liveSession: LiveSession): void {
-    const appSessionId = liveSession.summary.appSessionId;
-    for (const [childProviderSessionId, childSession] of liveSession.childSessions) {
-      this.contextSnapshots.delete(childSession.session.sessionId);
-      this.contextSnapshots.delete(childProviderSessionId);
-      this.childSessionCompactions.delete(childProviderSessionId);
-    }
-    this.usageOffsets.delete(appSessionId);
-    this.contextSnapshots.delete(appSessionId);
-    if (liveSession.summary.providerSessionId)
-      this.contextSnapshots.delete(liveSession.summary.providerSessionId);
-  }
-
   private emitError(error: {
     code?: string;
     providerSessionId?: string;
@@ -2775,7 +2584,7 @@ export class SessionManager {
 
     await run(() => this.lifecycle.closeAll());
     await run(() => {
-      this.clearAllContextResources();
+      this.context.clearAll();
     });
     await run(() => {
       this.compactionRetuneRev += 1;
@@ -2787,15 +2596,6 @@ export class SessionManager {
     });
     if (firstError !== undefined)
       throw firstError instanceof Error ? firstError : new Error(errMsg(firstError));
-  }
-
-  private clearAllContextResources(): void {
-    this.contextEpoch += 1;
-    for (const timer of this.contextPollers.values()) clearInterval(timer);
-    this.contextPollers.clear();
-    this.contextSnapshots.clear();
-    this.childSessionCompactions.clear();
-    this.usageOffsets.clear();
   }
 }
 
@@ -2815,47 +2615,6 @@ function arrayItems(result: unknown, key: string): unknown[] {
   const value = record[key];
   if (Array.isArray(value)) return value;
   return [result];
-}
-
-function contextStatsSnapshot(
-  stats: GetContextStatsResult,
-  breakdown: ContextBreakdownSnapshot | undefined,
-): ContextStatsSnapshot {
-  return {
-    used: stats.used,
-    remaining: stats.remaining,
-    limit: stats.limit,
-    accuracy: stats.accuracy,
-    updatedAt: stats.updatedAt,
-    breakdown,
-  };
-}
-
-function contextBreakdownSnapshot(raw: unknown): ContextBreakdownSnapshot | undefined {
-  const value = raw as Partial<ContextBreakdownResult> | undefined;
-  if (!value) return undefined;
-  const categories = Array.isArray(value.categories)
-    ? value.categories
-        .map((item) => ({
-          name: stringValue(item.name) ?? 'Context',
-          tokens: numberValue(item.tokens) ?? 0,
-          colorKey: stringValue(item.colorKey),
-        }))
-        .filter((item) => item.tokens > 0)
-    : [];
-  const usedTokens =
-    numberValue(value.usedTokens) ?? categories.reduce((sum, item) => sum + item.tokens, 0);
-  const contextBudget =
-    numberValue(value.contextBudget) ?? usedTokens + (numberValue(value.freeTokens) ?? 0);
-  if (contextBudget <= 0 && usedTokens <= 0 && categories.length === 0) return undefined;
-  return {
-    modelId: stringValue(value.modelId),
-    modelDisplayName: stringValue(value.modelDisplayName),
-    contextBudget,
-    usedTokens,
-    freeTokens: numberValue(value.freeTokens) ?? Math.max(0, contextBudget - usedTokens),
-    categories,
-  };
 }
 
 export function createSessionSettingsForAgent(

@@ -60,11 +60,14 @@ export interface FakeFactorySessionInit {
 export class FakeFactorySession implements FactorySession {
   readonly prompts: string[] = [];
   readonly settings: Record<string, unknown>[] = [];
+  contextStatsCalls = 0;
   nextCompactResult?: Awaited<ReturnType<FactorySession['compactSession']>>;
   nextCompactError?: Error;
   nextStreamError?: Error;
   nextEnterSpecModeError?: Error;
   nextUpdateSettingsError?: Error;
+  nextContextStats?: Awaited<ReturnType<FactorySession['getContextStats']>>;
+  nextContextStatsError?: Error;
   readonly notifications = new Set<NotificationListener>();
   initResult: FactorySession['initResult'];
 
@@ -232,16 +235,22 @@ export class FakeFactorySession implements FactorySession {
   }
 
   async getContextStats(): ReturnType<FactorySession['getContextStats']> {
+    this.contextStatsCalls += 1;
     const gate = this.nextContextStatsGate;
     delete this.nextContextStatsGate;
     await gate?.promise;
-    return Promise.resolve({
-      used: 0,
-      remaining: 1_000,
-      limit: 1_000,
-      accuracy: ContextStatsAccuracy.Estimated,
-      updatedAt: new Date(0).toISOString(),
-    });
+    const error = this.nextContextStatsError;
+    delete this.nextContextStatsError;
+    if (error) throw error;
+    return Promise.resolve(
+      this.nextContextStats ?? {
+        used: 0,
+        remaining: 1_000,
+        limit: 1_000,
+        accuracy: ContextStatsAccuracy.Estimated,
+        updatedAt: new Date(0).toISOString(),
+      },
+    );
   }
 
   close(): Promise<void> {
@@ -311,6 +320,8 @@ export class FakeFactoryRuntime implements FactoryRuntime {
   readonly loadCalls: { sessionId: string; handlers: RuntimeHandlers }[] = [];
   readonly loadQueue = new Map<string, (FakeFactorySession | Error)[]>();
   readonly sessions = new Map<string, FakeFactorySession>();
+  readonly contextBreakdowns = new Map<string, unknown>();
+  readonly contextBreakdownErrors = new Map<string, Error>();
   private apiKey = '';
 
   constructor(private readonly calls: RecordedCall[]) {}
@@ -327,6 +338,12 @@ export class FakeFactoryRuntime implements FactoryRuntime {
   startCliLogin(): Promise<void> {
     this.calls.push({ target: 'runtime', method: 'startCliLogin', args: [] });
     return Promise.resolve();
+  }
+
+  readContextBreakdown(session: FactorySession): Promise<unknown> {
+    const error = this.contextBreakdownErrors.get(session.sessionId);
+    if (error) return Promise.reject(error);
+    return Promise.resolve(this.contextBreakdowns.get(session.sessionId));
   }
 
   createSession(options: CreateRuntimeSessionOptions): Promise<FakeFactorySession> {

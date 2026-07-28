@@ -40,23 +40,24 @@ export interface AutoCompactionHost<
   watchdogs: AutoCompactionWatchdogs;
   sessions(): Iterable<L>;
   findSession(appSessionId: string): L | undefined;
-  childSessionCompactions: Map<string, number>;
   emitCompactionStatus(
     appSessionId: string,
     text: string,
     providerSessionId: string,
     role: SessionRole,
   ): void;
-  patchSummary(
+  recordCompaction(
     appSessionId: string,
-    patch: {
-      contextTokens?: number;
-      contextAccuracy?: undefined;
-      autoCompactions?: number;
-      queuedSends?: number;
-    },
+    providerSessionId: string,
+    role: SessionRole,
+    session: S,
   ): void;
-  refreshContext(providerSessionId: string, session: S): Promise<void>;
+  refreshContext(
+    appSessionId: string,
+    providerSessionId: string,
+    role: SessionRole,
+    session: S,
+  ): Promise<void>;
   settlePrimary(appSessionId: string): void;
   driveChildSession(childSession: C, text: string): Promise<void>;
   closeChildSession(appSessionId: string, providerSessionId: string): Promise<void>;
@@ -104,21 +105,8 @@ export function handleCompactionNotification<
   setAutoCompacting(host, appSessionId, providerSessionId, role, false);
   host.emitCompactionStatus(appSessionId, 'Compaction complete.', providerSessionId, role);
 
-  if (providerSessionId === appSessionId) {
-    if (liveSession) {
-      host.patchSummary(appSessionId, {
-        contextTokens: 0,
-        contextAccuracy: undefined,
-        autoCompactions: (liveSession.summary.autoCompactions ?? 0) + 1,
-      });
-    }
-  } else {
-    host.childSessionCompactions.set(
-      providerSessionId,
-      (host.childSessionCompactions.get(providerSessionId) ?? 0) + 1,
-    );
-  }
-  void host.refreshContext(providerSessionId, session).catch(ignoreError);
+  host.recordCompaction(appSessionId, providerSessionId, role, session);
+  void host.refreshContext(appSessionId, providerSessionId, role, session).catch(ignoreError);
   return true;
 }
 

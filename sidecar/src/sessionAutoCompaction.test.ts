@@ -65,6 +65,7 @@ interface Harness {
   primaryTarget: NotificationTarget;
   childTarget: NotificationTarget;
   watchdogs: AutoCompactionWatchdogs;
+  childCompactions: Map<string, number>;
   statuses: StatusCall[];
   patches: SummaryPatch[];
   refreshed: { providerSessionId: string; session: TestSession }[];
@@ -109,7 +110,7 @@ function createHarness(
   const closed: ChildCall[] = [];
   const paused: TestChild[] = [];
   const watchdogs = new AutoCompactionWatchdogs(() => undefined);
-  const childSessionCompactions = new Map<string, number>();
+  const childCompactions = new Map<string, number>();
   const primaryTarget: NotificationTarget = {
     appSessionId: 'app-1',
     providerSessionId: 'app-1',
@@ -126,17 +127,25 @@ function createHarness(
     watchdogs,
     sessions: () => [live],
     findSession: (appSessionId) => (appSessionId === live.summary.appSessionId ? live : undefined),
-    childSessionCompactions,
     emitCompactionStatus: (appSessionId, text, providerSessionId, role) => {
       statuses.push({ appSessionId, text, providerSessionId, role });
     },
-    patchSummary: (_appSessionId, patch) => {
-      patches.push(patch);
-      if (patch.contextTokens !== undefined) live.summary.contextTokens = patch.contextTokens;
-      if ('contextAccuracy' in patch) live.summary.contextAccuracy = patch.contextAccuracy;
-      if (patch.autoCompactions !== undefined) live.summary.autoCompactions = patch.autoCompactions;
+    recordCompaction: (_appSessionId, providerSessionId, role) => {
+      if (role === 'primary') {
+        const patch = {
+          contextTokens: 0,
+          contextAccuracy: undefined,
+          autoCompactions: (live.summary.autoCompactions ?? 0) + 1,
+        };
+        patches.push(patch);
+        live.summary.contextTokens = patch.contextTokens;
+        live.summary.contextAccuracy = patch.contextAccuracy;
+        live.summary.autoCompactions = patch.autoCompactions;
+      } else {
+        childCompactions.set(providerSessionId, (childCompactions.get(providerSessionId) ?? 0) + 1);
+      }
     },
-    refreshContext: (providerSessionId, session) => {
+    refreshContext: (_appSessionId, providerSessionId, _role, session) => {
       refreshed.push({ providerSessionId, session });
       return Promise.resolve();
     },
@@ -164,6 +173,7 @@ function createHarness(
     primaryTarget,
     childTarget,
     watchdogs,
+    childCompactions,
     statuses,
     patches,
     refreshed,
@@ -248,7 +258,7 @@ test('worker completion drains one queued send and increments only the worker ge
   const harness = createHarness();
   t.after(() => harness.watchdogs.clearAll());
   harness.live.summary.autoCompactions = 4;
-  harness.host.childSessionCompactions.set('worker-1', 6);
+  harness.childCompactions.set('worker-1', 6);
   harness.child.pendingSends.push('next worker prompt');
 
   assert.equal(
@@ -279,7 +289,7 @@ test('worker completion drains one queued send and increments only the worker ge
       role: 'worker',
     },
   ]);
-  assert.equal(harness.host.childSessionCompactions.get('worker-1'), 7);
+  assert.equal(harness.childCompactions.get('worker-1'), 7);
   assert.equal(harness.live.summary.autoCompactions, 4);
   assert.deepEqual(harness.patches, []);
   assert.deepEqual(harness.driven, [{ child: harness.child, text: 'next worker prompt' }]);
@@ -311,7 +321,7 @@ test('idle working state settles active primary and worker compaction without ac
   assert.deepEqual(harness.settledPrimary, ['app-1']);
   assert.deepEqual(harness.driven, [{ child: harness.child, text: 'queued worker prompt' }]);
   assert.deepEqual(harness.patches, []);
-  assert.equal(harness.host.childSessionCompactions.size, 0);
+  assert.equal(harness.childCompactions.size, 0);
   assert.deepEqual(harness.refreshed, []);
 });
 
@@ -364,7 +374,7 @@ test('late primary and worker completion notifications are inert once settled', 
   assert.deepEqual(harness.settledPrimary, settlementsBeforeLateCompletion);
   assert.deepEqual(harness.paused, pausedBeforeLateCompletion);
   assert.deepEqual(harness.patches, []);
-  assert.equal(harness.host.childSessionCompactions.size, 0);
+  assert.equal(harness.childCompactions.size, 0);
   assert.deepEqual(harness.refreshed, []);
   assert.equal(harness.live.summary.autoCompactions, 0);
 });
@@ -387,7 +397,7 @@ test('deferred worker close resolves the child-map key when the transport id dif
   ]);
   assert.deepEqual(harness.driven, []);
   assert.deepEqual(harness.paused, []);
-  assert.equal(harness.host.childSessionCompactions.get('worker-close-key'), 1);
+  assert.equal(harness.childCompactions.get('worker-close-key'), 1);
   assert.deepEqual(harness.refreshed, [
     { providerSessionId: 'worker-close-key', session: harness.childSession },
   ]);
