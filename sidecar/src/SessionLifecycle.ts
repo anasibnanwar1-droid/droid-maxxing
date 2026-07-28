@@ -174,7 +174,7 @@ export class SessionLifecycle {
       });
       const session = await d.runtime.createSession(runtimeOptions);
       pendingSession = session;
-      await d.enableDaemonAutoCompaction(session, compactionTokenLimit);
+      const autoCompactionArmed = await d.enableDaemonAutoCompaction(session, compactionTokenLimit);
 
       const appSessionId = session.sessionId;
       const maxContextTokens = d.maxContextTokensForModel(primary.modelId);
@@ -187,7 +187,7 @@ export class SessionLifecycle {
         agents,
         autonomy,
         ...(maxContextTokens !== undefined ? { maxContextTokens } : {}),
-        compactionTokenLimit,
+        ...(autoCompactionArmed ? { compactionTokenLimit } : {}),
         now: Date.now(),
       });
       ref.id = appSessionId;
@@ -196,7 +196,7 @@ export class SessionLifecycle {
       d.registry.register(liveSession);
       pendingSession = undefined;
       d.emit({ type: 'session.created', clientRef: command.clientRef, session: summary });
-      void this.drive(appSessionId, command.goal);
+      this.driveInBackground(appSessionId, command.goal);
     } catch (error) {
       await Promise.all(
         pendingMcpServers.map((server) => runBestEffortAsync(() => server.close())),
@@ -448,14 +448,14 @@ export class SessionLifecycle {
     const liveSession = d.registry.getLive(appSessionId);
     if (!liveSession || liveSession.closeMode) return;
     const stableAppSessionId = liveSession.summary.appSessionId;
-    liveSession.streaming = true;
-    liveSession.terminalSources.delete(stableAppSessionId);
-    d.registry.updateSummary(stableAppSessionId, {
-      phase: liveSession.summary.sessionPurpose === 'mission-control' ? 'planning' : 'running',
-      streaming: true,
-      queuedSends: liveSession.pendingSends.length,
-    });
     try {
+      liveSession.streaming = true;
+      liveSession.terminalSources.delete(stableAppSessionId);
+      d.registry.updateSummary(stableAppSessionId, {
+        phase: liveSession.summary.sessionPurpose === 'mission-control' ? 'planning' : 'running',
+        streaming: true,
+        queuedSends: liveSession.pendingSends.length,
+      });
       await d.runPrimaryTurn(liveSession, prompt);
     } finally {
       liveSession.interruptingForSteer = false;
@@ -472,9 +472,15 @@ export class SessionLifecycle {
       } else {
         const next = liveSession.pendingSends.shift();
         this.updateQueuedSends(liveSession);
-        if (next !== undefined) void this.drive(stableAppSessionId, next);
+        if (next !== undefined) this.driveInBackground(stableAppSessionId, next);
       }
     }
+  }
+
+  private driveInBackground(appSessionId: string, prompt: string): void {
+    void this.drive(appSessionId, prompt).catch((error: unknown) => {
+      this.dependencies.emitError({ appSessionId, message: errMsg(error) });
+    });
   }
 
   private updateQueuedSends(liveSession: LiveSession): void {

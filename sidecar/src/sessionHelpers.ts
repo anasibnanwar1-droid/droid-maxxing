@@ -316,7 +316,7 @@ export function buildCreatedSessionSummary(input: {
   >;
   autonomy: Autonomy;
   maxContextTokens?: number;
-  compactionTokenLimit: number;
+  compactionTokenLimit?: number;
   now: number;
 }): SessionSummary {
   const { command, appSessionId, primary, agents } = input;
@@ -345,7 +345,9 @@ export function buildCreatedSessionSummary(input: {
     tokensOut: 0,
     contextTokens: 0,
     ...(input.maxContextTokens !== undefined ? { maxContextTokens: input.maxContextTokens } : {}),
-    compactionTokenLimit: input.compactionTokenLimit,
+    ...(input.compactionTokenLimit !== undefined
+      ? { compactionTokenLimit: input.compactionTokenLimit }
+      : {}),
     createdAt: input.now,
     updatedAt: input.now,
   };

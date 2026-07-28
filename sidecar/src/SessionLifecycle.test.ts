@@ -303,6 +303,34 @@ test('create and cold resume publish only after registration', async () => {
   assert.equal(resumed.publicationRegistration.every(Boolean), true);
 });
 
+test('create omits an unarmed daemon compaction limit from its summary', async () => {
+  const harness = createHarness();
+  const provider = queueCreate(harness, 'unarmed-create');
+  harness.setEnableAutoCompaction(() => Promise.resolve(false));
+
+  await harness.lifecycle.create(createCommand());
+  await provider.waitForPrompts(1);
+
+  const created = harness.events.find(
+    (event) => event.type === 'session.created' && event.session.appSessionId === 'unarmed-create',
+  );
+  assert.equal(created?.type, 'session.created');
+  assert.equal(created.session.compactionTokenLimit, undefined);
+  assert.equal(
+    harness.registry.getCanonicalSummary('unarmed-create')?.compactionTokenLimit,
+    undefined,
+  );
+  assert.equal(
+    harness.calls.some(
+      (call) =>
+        call.method === 'autoCompaction.arm' &&
+        call.args[0] === 'unarmed-create' &&
+        call.args[1] === 800,
+    ),
+    true,
+  );
+});
+
 test('create failure closes started MCP resources without publishing', async () => {
   const harness = createHarness();
   harness.runtime.createQueue.push(new Error('create failed'));
@@ -380,6 +408,21 @@ test('send lazily resumes once and sends the prompt exactly once', async () => {
   await harness.lifecycle.send('app-3', 'only once');
   assert.equal(harness.runtime.loadCalls.length, 1);
   assert.deepEqual(provider.prompts, ['only once']);
+});
+
+test('failed turn setup clears streaming so the next send can run', async () => {
+  const harness = createHarness();
+  const provider = queueCreate(harness, 'setup-recovery');
+  await harness.lifecycle.create(createCommand());
+  await provider.waitForPrompts(1);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  harness.history.nextSyncError = new Error('persist failed');
+
+  await assert.rejects(harness.lifecycle.send('setup-recovery', 'failed setup'), /persist failed/);
+
+  assert.equal(requireLive(harness, 'setup-recovery').streaming, false);
+  await harness.lifecycle.send('setup-recovery', 'recovered');
+  assert.deepEqual(provider.prompts, ['first', 'recovered']);
 });
 
 test('queued sends stay FIFO while send-now prompts are newest first', async () => {
