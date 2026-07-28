@@ -10,6 +10,7 @@ import {
   type SessionCompactionDependencies,
 } from './SessionCompaction.js';
 import type { LiveChildSession } from './SessionLifecycle.js';
+import { createCompactionTestLiveSession } from './testing/compactionTestSupport.js';
 import {
   FakeFactorySession,
   type RecordedCall,
@@ -40,8 +41,17 @@ function createHarness(): Harness {
   };
   const compaction = new SessionCompaction({
     registry,
+    context: {
+      recordCompaction: () => undefined,
+      refresh: () => Promise.resolve(),
+    },
+    timeline: {
+      appendStatus: () => undefined,
+    },
     getFactoryDefaults: () => readDefaults(),
     maxContextTokensForModel: (modelId) => (modelId === 'unbounded' ? undefined : 1_000),
+    resolveAutomaticTarget: () => undefined,
+    settleAutomatic: () => undefined,
   });
   return {
     calls,
@@ -63,6 +73,7 @@ function primaryTarget(
   setCurrent(value: boolean): void;
 } {
   const session = new FakeFactorySession(`${id}-backend`, {}, h.calls);
+  const liveSession = createCompactionTestLiveSession(id, session);
   let current = true;
   const target: PrimaryCompactionTarget = {
     kind: 'primary',
@@ -70,6 +81,7 @@ function primaryTarget(
     providerSessionId: session.sessionId,
     sourceSessionId: id,
     session,
+    liveSession,
     configuredModelId,
     defaultsMode: 'auto',
     isCurrent: () => current,

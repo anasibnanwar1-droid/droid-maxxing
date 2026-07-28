@@ -3,6 +3,12 @@ import {
   effectiveCompactionTriggerLimit,
   type CompactionTokenLimitPatch,
 } from './compaction.js';
+import {
+  AUTO_COMPACTION_WATCHDOG_MS,
+  AutoCompactionWatchdogs,
+  POST_TURN_AUTO_COMPACTION_WATCHDOG_MS,
+} from './autoCompactionWatchdog.js';
+import { extractCompactionNotification, extractDroidWorkingState } from './normalize.js';
 import type {
   FactoryDefaultSettings,
   SessionInteractionMode,
@@ -13,10 +19,12 @@ import type {
   ChildOperationTarget,
   LiveOperationTarget,
   ProviderOperationTarget,
+  SessionContext,
 } from './SessionContext.js';
-import type { LiveSession } from './SessionLifecycle.js';
+import type { LiveChildSession, LiveSession } from './SessionLifecycle.js';
 import type { SessionRegistry } from './SessionRegistry.js';
 import { errMsg, modelDefaultForMode } from './sessionHelpers.js';
+import type { SessionTimeline } from './SessionTimeline.js';
 
 export interface CompactionLimitRequest {
   modelId?: string;
@@ -25,23 +33,51 @@ export interface CompactionLimitRequest {
   defaults?: FactoryDefaultSettings;
 }
 
-export interface PrimaryCompactionTarget extends LiveOperationTarget {
+export interface PrimaryAutomaticCompactionTarget extends LiveOperationTarget {
   kind: 'primary';
+  liveSession: LiveSession;
+}
+
+export interface ChildAutomaticCompactionTarget extends ChildOperationTarget {
+  kind: 'child';
+}
+
+export type AutomaticCompactionTarget =
+  | PrimaryAutomaticCompactionTarget
+  | ChildAutomaticCompactionTarget;
+
+export interface PrimaryCompactionTarget extends PrimaryAutomaticCompactionTarget {
   configuredModelId?: string;
   defaultsMode: SessionInteractionMode;
 }
 
-export interface ChildCompactionTarget extends ChildOperationTarget {
-  kind: 'child';
+export interface ChildCompactionTarget extends ChildAutomaticCompactionTarget {
   effectiveModelId?: string;
 }
 
 export type CompactionRetuneTarget = PrimaryCompactionTarget | ChildCompactionTarget;
 
+export type CompactionResourceKey =
+  | { kind: 'primary'; appSessionId: string }
+  | { kind: 'child'; parentAppSessionId: string; childSessionId: string };
+
+export type AutoCompactionSettlement =
+  | { kind: 'primary'; appSessionId: string }
+  | {
+      kind: 'child';
+      parentAppSessionId: string;
+      childSessionId: string;
+      child: LiveChildSession;
+    };
+
 export interface SessionCompactionDependencies {
   registry: Pick<SessionRegistry<LiveSession>, 'updateSummary'>;
+  context: Pick<SessionContext, 'recordCompaction' | 'refresh'>;
+  timeline: Pick<SessionTimeline, 'appendStatus'>;
   getFactoryDefaults(): Promise<FactoryDefaultSettings>;
   maxContextTokensForModel(modelId?: string): number | undefined;
+  resolveAutomaticTarget(key: CompactionResourceKey): AutomaticCompactionTarget | undefined;
+  settleAutomatic(settlement: AutoCompactionSettlement): void;
 }
 
 export function childCompactionModelId(
@@ -59,8 +95,13 @@ export class SessionCompaction {
   private uiSettings: CompactionTokenLimitPatch = {};
   private retuneRevision = 0;
   private epoch = 0;
+  private readonly watchdogs: AutoCompactionWatchdogs<CompactionResourceKey>;
 
-  constructor(private readonly dependencies: SessionCompactionDependencies) {}
+  constructor(private readonly dependencies: SessionCompactionDependencies) {
+    this.watchdogs = new AutoCompactionWatchdogs(compactionResourceId, (key) => {
+      this.onWatchdogExpired(key);
+    });
+  }
 
   async resolveLimit(request: CompactionLimitRequest): Promise<number> {
     const defaults = request.defaults ?? (await this.dependencies.getFactoryDefaults());
@@ -115,9 +156,39 @@ export class SessionCompaction {
     await this.retuneChild(target);
   }
 
+  subscribePrimary(target: PrimaryAutomaticCompactionTarget): void {
+    const { liveSession, session } = target;
+    const epoch = this.epoch;
+    liveSession.unsubscribe?.();
+    liveSession.unsubscribe = session.onNotification((note: Record<string, unknown>) => {
+      if (!this.isCurrent(target, epoch) || liveSession.compacting) return;
+      this.handleAutomaticNotification(target, note);
+    });
+  }
+
+  handleChildNotification(
+    target: ChildAutomaticCompactionTarget,
+    note: Record<string, unknown>,
+  ): boolean {
+    if (!target.isCurrent()) return false;
+    return this.handleAutomaticNotification(target, note);
+  }
+
+  afterTurn(target: AutomaticCompactionTarget): void {
+    if (!target.isCurrent() || !automaticCompactionActive(target)) return;
+    this.watchdogs.arm(compactionResourceKey(target), POST_TURN_AUTO_COMPACTION_WATCHDOG_MS);
+  }
+
+  cancel(target: AutomaticCompactionTarget): void {
+    if (target.kind === 'primary') target.liveSession.autoCompacting = false;
+    else target.child.autoCompacting = false;
+    this.watchdogs.clear(compactionResourceKey(target));
+  }
+
   clearAll(): void {
     this.epoch += 1;
     this.retuneRevision += 1;
+    this.watchdogs.clearAll();
   }
 
   private async retunePrimary(target: PrimaryCompactionTarget, revision?: number): Promise<void> {
@@ -141,6 +212,76 @@ export class SessionCompaction {
     const limit = await this.resolveLimit({ modelId: target.effectiveModelId });
     if (!this.isRetuneCurrent(target, epoch, revision)) return;
     await this.arm(target, limit);
+  }
+
+  private handleAutomaticNotification(
+    target: AutomaticCompactionTarget,
+    note: Record<string, unknown>,
+  ): boolean {
+    const compaction = extractCompactionNotification(note);
+    if (!compaction) {
+      if (extractDroidWorkingState(note) === 'idle') this.setAutoCompacting(target, false);
+      return false;
+    }
+    if (compaction.kind === 'started') {
+      this.setAutoCompacting(target, true);
+      this.appendAutomaticStatus(target, 'Compacting conversation...');
+      return true;
+    }
+    if (!automaticCompactionActive(target)) return true;
+
+    this.setAutoCompacting(target, false);
+    this.appendAutomaticStatus(target, 'Compaction complete.');
+    this.dependencies.context.recordCompaction(target);
+    void this.dependencies.context.refresh(target).catch(ignoreError);
+    return true;
+  }
+
+  private setAutoCompacting(target: AutomaticCompactionTarget, active: boolean): void {
+    if (!target.isCurrent()) return;
+    const wasActive = automaticCompactionActive(target);
+    if (target.kind === 'primary') target.liveSession.autoCompacting = active;
+    else target.child.autoCompacting = active;
+
+    const key = compactionResourceKey(target);
+    if (active) this.watchdogs.arm(key, AUTO_COMPACTION_WATCHDOG_MS);
+    else this.watchdogs.clear(key);
+    if (active || !wasActive) return;
+
+    if (target.kind === 'primary') {
+      if (target.liveSession.streaming || target.liveSession.compacting) return;
+      this.dependencies.settleAutomatic({
+        kind: 'primary',
+        appSessionId: target.appSessionId,
+      });
+      return;
+    }
+    if (target.child.streaming) return;
+    this.dependencies.settleAutomatic({
+      kind: 'child',
+      parentAppSessionId: target.parentAppSessionId,
+      childSessionId: target.childSessionId,
+      child: target.child,
+    });
+  }
+
+  private appendAutomaticStatus(target: AutomaticCompactionTarget, text: string): void {
+    this.dependencies.timeline.appendStatus(
+      target.appSessionId,
+      text,
+      'auto',
+      target.kind === 'primary' ? target.appSessionId : target.childSessionId,
+      target.kind === 'primary' ? 'primary' : target.role,
+    );
+  }
+
+  private onWatchdogExpired(key: CompactionResourceKey): void {
+    const target = this.dependencies.resolveAutomaticTarget(key);
+    if (!target?.isCurrent() || !automaticCompactionActive(target)) return;
+    console.warn(
+      `[compaction] watchdog settled a stale auto-compaction on ${compactionResourceId(key)}`,
+    );
+    this.setAutoCompacting(target, false);
   }
 
   private isRetuneCurrent(
@@ -181,3 +322,27 @@ function mergeLimitPatch(
     merged.compactionTokenLimitPerModel = override.compactionTokenLimitPerModel;
   return merged;
 }
+
+function automaticCompactionActive(target: AutomaticCompactionTarget): boolean {
+  return target.kind === 'primary'
+    ? target.liveSession.autoCompacting
+    : target.child.autoCompacting;
+}
+
+function compactionResourceKey(target: AutomaticCompactionTarget): CompactionResourceKey {
+  return target.kind === 'primary'
+    ? { kind: 'primary', appSessionId: target.appSessionId }
+    : {
+        kind: 'child',
+        parentAppSessionId: target.parentAppSessionId,
+        childSessionId: target.childSessionId,
+      };
+}
+
+function compactionResourceId(key: CompactionResourceKey): string {
+  return key.kind === 'primary'
+    ? JSON.stringify(['primary', key.appSessionId])
+    : JSON.stringify(['child', key.parentAppSessionId, key.childSessionId]);
+}
+
+const ignoreError = (): void => undefined;

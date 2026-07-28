@@ -159,11 +159,27 @@ function createHarness(ordinarySummaries: SessionSummary[] = []) {
         const armed = await enableAutoCompaction();
         return target.isCurrent() && armed;
       },
+      subscribePrimary: (target) => {
+        target.liveSession.unsubscribe = target.session.onNotification(() => undefined);
+      },
+      afterTurn: (target) => {
+        calls.push({
+          target: 'cleanup',
+          method: 'autoCompaction.settled',
+          args: [target.appSessionId],
+        });
+      },
+      cancel: (target) => {
+        if (target.kind === 'primary') target.liveSession.autoCompacting = false;
+        else target.child.autoCompacting = false;
+        calls.push({
+          target: 'cleanup',
+          method: 'watchdog.clear',
+          args: [target.kind === 'primary' ? target.appSessionId : target.childSessionId],
+        });
+      },
     },
     isShutdownStarted: () => shutdownStarted,
-    subscribeSessionCompaction: (live) => {
-      live.unsubscribe = live.session.onNotification(() => undefined);
-    },
     childSessionLinks: () => [],
     applyPendingSettingsToSummary: (item) => ({ ...item, ...projection }),
     applyPendingSessionSettings: (appSessionId) => applyPending(appSessionId),
@@ -204,12 +220,6 @@ function createHarness(ordinarySummaries: SessionSummary[] = []) {
           args: [live.summary.appSessionId],
         });
       },
-    },
-    onTurnSettledWhileAutoCompacting: (appSessionId) => {
-      calls.push({ target: 'cleanup', method: 'autoCompaction.settled', args: [appSessionId] });
-    },
-    clearAutoCompactionWatchdog: (sessionId) => {
-      calls.push({ target: 'cleanup', method: 'watchdog.clear', args: [sessionId] });
     },
     forgetInteractions: (appSessionId) => {
       forgettingAfterUnregister.push(registry.getLive(appSessionId) === undefined);

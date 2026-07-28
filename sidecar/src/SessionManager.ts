@@ -59,8 +59,13 @@ import {
 import {
   childCompactionModelId,
   SessionCompaction,
+  type AutoCompactionSettlement,
+  type AutomaticCompactionTarget,
+  type ChildAutomaticCompactionTarget,
   type ChildCompactionTarget,
+  type CompactionResourceKey,
   type CompactionRetuneTarget,
+  type PrimaryAutomaticCompactionTarget,
   type PrimaryCompactionTarget,
 } from './SessionCompaction.js';
 import {
@@ -73,15 +78,6 @@ import {
 } from './SessionLifecycle.js';
 import type { SessionListFilterOptions } from './sessionListFilter.js';
 import { normalizeCompactionTokenLimit, runCompaction, type CompactType } from './compaction.js';
-import {
-  AutoCompactionWatchdogs,
-  POST_TURN_AUTO_COMPACTION_WATCHDOG_MS,
-} from './autoCompactionWatchdog.js';
-import {
-  handleCompactionNotification as runCompactionNotification,
-  onAutoCompactionWatchdogExpired as settleExpiredAutoCompaction,
-  type AutoCompactionHost,
-} from './sessionAutoCompaction.js';
 
 type Emit = (event: ServerEvent) => void;
 
@@ -179,11 +175,6 @@ export class SessionManager {
     string,
     Partial<Record<ConfigurableSessionRole, AgentSettingPatch>>
   >();
-  // Bounds how long an autoCompacting flag may stay raised without a
-  // completion, so a lost session_compacted can never wedge a session forever.
-  private readonly autoCompactionWatchdogs = new AutoCompactionWatchdogs((sessionKey) => {
-    this.onAutoCompactionWatchdogExpired(sessionKey);
-  });
   private shutdownPromise?: Promise<void>;
   private readonly childOpenAttempts = new WeakMap<LiveSession, Map<string, symbol>>();
   private readonly pendingNativeBrowserRequests = new Map<string, PendingNativeBrowserRequest>();
@@ -242,11 +233,6 @@ export class SessionManager {
       },
       maxContextTokensForSummary: (summary) => this.maxContextTokensForSummary(summary),
     });
-    this.compaction = new SessionCompaction({
-      registry: this.registry,
-      getFactoryDefaults: () => this.getFactoryDefaults(),
-      maxContextTokensForModel: (modelId) => this.maxContextTokensForModel(modelId),
-    });
     this.timeline = new SessionTimeline({
       registry: this.registry,
       history: this.history,
@@ -259,6 +245,17 @@ export class SessionManager {
         this.emitError(error);
       },
       now: Date.now,
+    });
+    this.compaction = new SessionCompaction({
+      registry: this.registry,
+      context: this.context,
+      timeline: this.timeline,
+      getFactoryDefaults: () => this.getFactoryDefaults(),
+      maxContextTokensForModel: (modelId) => this.maxContextTokensForModel(modelId),
+      resolveAutomaticTarget: (key) => this.resolveAutomaticCompactionTarget(key),
+      settleAutomatic: (settlement) => {
+        this.settleAutomaticCompaction(settlement);
+      },
     });
     this.interactions = new SessionInteractions({
       getLiveSession: (id) => this.registry.getLive(id),
@@ -296,28 +293,11 @@ export class SessionManager {
       makeAskUserHandler: (ref) => this.interactions.makeAskUserHandler(ref),
       compaction: this.compaction,
       isShutdownStarted: () => this.shutdownPromise !== undefined,
-      subscribeSessionCompaction: (liveSession) => {
-        this.subscribeSessionCompaction(liveSession);
-      },
       childSessionLinks: (appSessionId) => this.history.childSessionLinks(appSessionId),
       applyPendingSettingsToSummary: (summary) => this.applyPendingSettingsToSummary(summary),
       applyPendingSessionSettings: (appSessionId) => this.applyPendingSessionSettings(appSessionId),
       runPrimaryTurn: (liveSession, prompt) => this.runPrimaryTurn(liveSession, prompt),
       context: this.context,
-      onTurnSettledWhileAutoCompacting: (appSessionId) => {
-        const liveSession = this.registry.getLive(appSessionId);
-        if (
-          this.shutdownPromise ||
-          !liveSession ||
-          hasSessionCloseStarted(liveSession) ||
-          liveSession.summary.appSessionId !== appSessionId
-        )
-          return;
-        this.autoCompactionWatchdogs.arm(appSessionId, POST_TURN_AUTO_COMPACTION_WATCHDOG_MS);
-      },
-      clearAutoCompactionWatchdog: (sessionId) => {
-        this.autoCompactionWatchdogs.clear(sessionId);
-      },
       forgetInteractions: (appSessionId) => {
         this.interactions.forgetSession(appSessionId);
       },
@@ -1120,13 +1100,22 @@ export class SessionManager {
     };
   }
 
+  private primaryAutomaticCompactionTarget(
+    liveSession: LiveSession,
+  ): PrimaryAutomaticCompactionTarget {
+    return {
+      ...this.primaryContextTarget(liveSession),
+      kind: 'primary',
+      liveSession,
+    };
+  }
+
   private primaryCompactionTarget(liveSession: LiveSession): PrimaryCompactionTarget {
-    const target = this.primaryContextTarget(liveSession);
+    const target = this.primaryAutomaticCompactionTarget(liveSession);
     const configuredModelId = liveSession.summary.modelId;
     const defaultsMode = defaultsModeForSummary(liveSession.summary);
     return {
       ...target,
-      kind: 'primary',
       configuredModelId,
       defaultsMode,
       isCurrent: () =>
@@ -1162,10 +1151,9 @@ export class SessionManager {
     child: LiveChildSession,
     effectiveModelId: string | undefined,
   ): ChildCompactionTarget {
-    const target = this.childContextTarget(parent, childSessionId, child);
+    const target = this.childAutomaticCompactionTarget(parent, childSessionId, child);
     return {
       ...target,
-      kind: 'child',
       effectiveModelId,
       isCurrent: () =>
         this.isCurrentChildSettingsTarget(parent, childSessionId, child) &&
@@ -1175,6 +1163,17 @@ export class SessionManager {
           parent.childSessionSettings.get(childSessionId),
           child.role,
         ) === effectiveModelId,
+    };
+  }
+
+  private childAutomaticCompactionTarget(
+    parent: LiveSession,
+    childSessionId: string,
+    child: LiveChildSession,
+  ): ChildAutomaticCompactionTarget {
+    return {
+      ...this.childContextTarget(parent, childSessionId, child),
+      kind: 'child',
     };
   }
 
@@ -1372,133 +1371,45 @@ export class SessionManager {
     if (n.childSession) this.applyChildSession(appSessionId, n.childSession);
   }
 
-  // Subscribe the primary session to raw daemon notifications so the
-  // daemon's in-place auto-compaction surfaces in the transcript. Everything
-  // else the primary session needs already arrives through the streaming turn, so
-  // only compaction notifications are handled here.
-  private subscribeSessionCompaction(liveSession: LiveSession): void {
-    const session = liveSession.session;
-    liveSession.unsubscribe?.();
-    liveSession.unsubscribe = session.onNotification((note: Record<string, unknown>) => {
-      if (
-        this.shutdownPromise ||
-        this.registry.getLive(liveSession.summary.appSessionId) !== liveSession ||
-        hasSessionCloseStarted(liveSession) ||
-        liveSession.session !== session
-      )
-        return;
-      // The daemon emits the same compacting/compacted notifications during a
-      // manual compactSession RPC; runCompaction owns that path's statuses and
-      // refresh, so reacting here too would duplicate them.
-      if (liveSession.compacting) return;
-      const appSessionId = liveSession.summary.appSessionId;
-      this.handleCompactionNotification(appSessionId, appSessionId, 'primary', session, note);
-    });
-  }
-
-  // Surface a daemon auto-compaction (in place, same session id): a start
-  // status drives the compacting shimmer and the completion status clears it,
-  // then the context meter is refreshed against the compacted window. Returns
-  // whether the notification was a compaction event.
-  private handleCompactionNotification(
-    appSessionId: string,
-    childProviderSessionId: string,
-    role: SessionRole,
-    session: FactorySession,
-    note: Record<string, unknown>,
-  ): boolean {
-    const contextTarget = this.resolveCompactionContextTarget(
-      appSessionId,
-      childProviderSessionId,
-      role,
-      session,
+  private resolveAutomaticCompactionTarget(
+    key: CompactionResourceKey,
+  ): AutomaticCompactionTarget | undefined {
+    const parent = this.registry.getLive(
+      key.kind === 'primary' ? key.appSessionId : key.parentAppSessionId,
     );
-    return runCompactionNotification(
-      this.compactionHost(contextTarget),
-      { appSessionId, providerSessionId: childProviderSessionId, role, session },
-      note,
-    );
-  }
-
-  private onAutoCompactionWatchdogExpired(sessionKey: string): void {
-    settleExpiredAutoCompaction(this.compactionHost(), sessionKey);
-  }
-
-  private compactionHost(
-    capturedContextTarget?: LiveOperationTarget | ChildOperationTarget,
-  ): AutoCompactionHost<LiveChildSession, LiveSession, FactorySession> {
-    return {
-      watchdogs: this.autoCompactionWatchdogs,
-      sessions: () =>
-        this.shutdownPromise
-          ? []
-          : this.registry
-              .liveSessionsSnapshot()
-              .filter((session) => !hasSessionCloseStarted(session)),
-      findSession: (appSessionId) => {
-        if (this.shutdownPromise) return undefined;
-        const session = this.registry.getLive(appSessionId);
-        return session && !hasSessionCloseStarted(session) ? session : undefined;
-      },
-      emitCompactionStatus: (appSessionId, text, providerSessionId, role) => {
-        this.timeline.appendStatus(appSessionId, text, 'auto', providerSessionId, role);
-      },
-      recordCompaction: (appSessionId, providerSessionId, role, session) => {
-        const target =
-          capturedContextTarget ??
-          this.resolveCompactionContextTarget(appSessionId, providerSessionId, role, session);
-        if (target) this.context.recordCompaction(target);
-      },
-      refreshContext: (appSessionId, providerSessionId, role, session) => {
-        const target =
-          capturedContextTarget ??
-          this.resolveCompactionContextTarget(appSessionId, providerSessionId, role, session);
-        return target ? this.context.refresh(target) : Promise.resolve();
-      },
-      settlePrimary: (appSessionId) => {
-        void this.lifecycle.settleAfterCompaction(appSessionId);
-      },
-      driveChildSession: (childSession, text) => {
-        const parent = this.registry.getLive(childSession.appSessionId);
-        return parent &&
-          this.isCurrentChildSession(parent, childSession.childSessionId, childSession)
-          ? this.driveChildSession(parent, childSession, text)
-          : Promise.resolve();
-      },
-      closeChildSession: (appSessionId, providerSessionId) =>
-        this.closeChildSession(appSessionId, providerSessionId),
-      emitChildSessionPaused: (childSession) => {
-        const parent = this.registry.getLive(childSession.appSessionId);
-        if (
-          !parent ||
-          !this.isCurrentChildSession(parent, childSession.childSessionId, childSession)
-        )
-          return;
-        this.emit({
-          type: 'child.updated',
-          appSessionId: childSession.appSessionId,
-          providerSessionId: childSession.session.sessionId,
-          role: childSession.role,
-          status: 'paused',
-        });
-      },
-    };
-  }
-
-  private resolveCompactionContextTarget(
-    appSessionId: string,
-    childSessionId: string,
-    role: SessionRole,
-    session: FactorySession,
-  ): LiveOperationTarget | ChildOperationTarget | undefined {
-    const parent = this.registry.getLive(appSessionId);
-    if (!parent) return undefined;
-    if (role === 'primary')
-      return parent.session === session ? this.primaryContextTarget(parent) : undefined;
-    const child = parent.childSessions.get(childSessionId);
-    return child?.session === session
-      ? this.childContextTarget(parent, childSessionId, child)
+    if (!parent || hasSessionCloseStarted(parent)) return undefined;
+    if (key.kind === 'primary') return this.primaryAutomaticCompactionTarget(parent);
+    const child = parent.childSessions.get(key.childSessionId);
+    return child
+      ? this.childAutomaticCompactionTarget(parent, key.childSessionId, child)
       : undefined;
+  }
+
+  private settleAutomaticCompaction(settlement: AutoCompactionSettlement): void {
+    if (settlement.kind === 'primary') {
+      void this.lifecycle.settleAfterCompaction(settlement.appSessionId);
+      return;
+    }
+    const parent = this.registry.getLive(settlement.parentAppSessionId);
+    if (!parent || !this.isCurrentChildSession(parent, settlement.childSessionId, settlement.child))
+      return;
+    const child = settlement.child;
+    if (child.pendingSends.length === 0 && child.closeWhenIdle) {
+      void this.closeChildSession(settlement.parentAppSessionId, settlement.childSessionId);
+      return;
+    }
+    const next = child.pendingSends.shift();
+    if (next !== undefined) {
+      void this.driveChildSession(parent, child, next);
+      return;
+    }
+    this.emit({
+      type: 'child.updated',
+      appSessionId: settlement.parentAppSessionId,
+      providerSessionId: child.session.sessionId,
+      role: child.role,
+      status: 'paused',
+    });
   }
 
   private async compactSession(
@@ -1600,7 +1511,7 @@ export class SessionManager {
       // session keeps browser tools on subsequent turns.
       mcpServers: liveSession.mcpConfigs,
     });
-    this.subscribeSessionCompaction(liveSession);
+    this.compaction.subscribePrimary(this.primaryAutomaticCompactionTarget(liveSession));
     // Settings live on the daemon session, not the persisted file, so the
     // replacement session starts without the auto-compaction threshold check.
     // Re-push it; a failure must not turn a successful swap into a stale one.
@@ -1917,21 +1828,14 @@ export class SessionManager {
         pendingSends: [],
         lastUsedAt: Date.now(),
       };
+      const automaticCompactionTarget = this.childAutomaticCompactionTarget(
+        liveSession,
+        childProviderSessionId,
+        childSession,
+      );
       childSession.unsubscribe = session.onNotification((note: Record<string, unknown>) => {
         if (!this.isCurrentChildSession(liveSession, childProviderSessionId, childSession)) return;
-        // The daemon's auto-compaction notifications are handled by
-        // handleCompactionNotification, which owns the child session's status and
-        // refresh; any other notification is normalized and applied here.
-        if (
-          this.handleCompactionNotification(
-            appSessionId,
-            childProviderSessionId,
-            role,
-            session,
-            note,
-          )
-        )
-          return;
+        if (this.compaction.handleChildNotification(automaticCompactionTarget, note)) return;
         if (!this.isCurrentChildSession(liveSession, childProviderSessionId, childSession)) return;
         this.eventFlow.applyNotification(appSessionId, childProviderSessionId, role, note);
       });
@@ -2158,12 +2062,8 @@ export class SessionManager {
     }
     childSession.streaming = false;
     if (childSession.autoCompacting) {
-      // Key by the child-map id: every other watchdog op (initial arm,
-      // interrupt, close, expiry lookup) uses it, so the tightened timer
-      // actually replaces the 5-minute one.
-      this.autoCompactionWatchdogs.arm(
-        childSession.childSessionId,
-        POST_TURN_AUTO_COMPACTION_WATCHDOG_MS,
+      this.compaction.afterTurn(
+        this.childAutomaticCompactionTarget(parent, childSession.childSessionId, childSession),
       );
       return;
     }
@@ -2259,8 +2159,9 @@ export class SessionManager {
       return;
     }
     if (wasAutoCompacting) {
-      childSession.autoCompacting = false;
-      this.autoCompactionWatchdogs.clear(childProviderSessionId);
+      this.compaction.cancel(
+        this.childAutomaticCompactionTarget(liveSession, childProviderSessionId, childSession),
+      );
     }
     // If no driveChildSession() is active to clear the flag in its finally, clear it
     // here so it can't leak into a later turn and misclassify its cancellation.
@@ -2328,12 +2229,14 @@ export class SessionManager {
     const liveSession = this.registry.getLive(appSessionId);
     const childSession = liveSession?.childSessions.get(childProviderSessionId);
     if (!liveSession || !childSession) return;
+    this.compaction.cancel(
+      this.childAutomaticCompactionTarget(liveSession, childProviderSessionId, childSession),
+    );
     liveSession.childSessions.delete(childProviderSessionId);
     this.context.forgetChild({
       parentAppSessionId: liveSession.summary.appSessionId,
       childSessionId: childProviderSessionId,
     });
-    this.autoCompactionWatchdogs.clear(childProviderSessionId);
     this.context.stopPolling(childSession.session.sessionId);
     childSession.unsubscribe?.();
     try {
@@ -2515,7 +2418,6 @@ export class SessionManager {
     });
     await run(() => {
       this.compaction.clearAll();
-      this.autoCompactionWatchdogs.clearAll();
     });
     await run(() => this.browsers.closeAll());
     await run(() => {

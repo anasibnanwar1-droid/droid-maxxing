@@ -12,7 +12,11 @@ import type {
   SessionSummary,
 } from './protocol.js';
 import type { SessionRegistry } from './SessionRegistry.js';
-import type { SessionCompaction } from './SessionCompaction.js';
+import type {
+  ChildAutomaticCompactionTarget,
+  PrimaryAutomaticCompactionTarget,
+  SessionCompaction,
+} from './SessionCompaction.js';
 import type { LiveOperationTarget, SessionContext } from './SessionContext.js';
 import {
   buildCreatedSessionSummary,
@@ -101,16 +105,16 @@ export interface SessionLifecycleDependencies {
   startLocalMcpServers: (ref: { id: string }) => Promise<StartedLocalMcpResources>;
   makePermissionHandler: (ref: { id: string }) => PermissionHandler;
   makeAskUserHandler: (ref: { id: string }) => AskUserHandler;
-  compaction: Pick<SessionCompaction, 'resolveLimit' | 'arm'>;
+  compaction: Pick<
+    SessionCompaction,
+    'resolveLimit' | 'arm' | 'subscribePrimary' | 'afterTurn' | 'cancel'
+  >;
   isShutdownStarted: () => boolean;
-  subscribeSessionCompaction: (liveSession: LiveSession) => void;
   childSessionLinks: (appSessionId: string) => { providerSessionId: string; toolUseId?: string }[];
   applyPendingSettingsToSummary: (summary: SessionSummary) => SessionSummary;
   applyPendingSessionSettings: (appSessionId: string) => Promise<boolean>;
   runPrimaryTurn: (liveSession: LiveSession, prompt: string) => Promise<void>;
   context: Pick<SessionContext, 'refresh' | 'stopPolling' | 'stopSession' | 'forgetSession'>;
-  onTurnSettledWhileAutoCompacting: (appSessionId: string) => void;
-  clearAutoCompactionWatchdog: (sessionId: string) => void;
   forgetInteractions: (appSessionId: string) => void;
   forgetEventFlow: (appSessionId: string) => void;
   closeBrowserSession: (appSessionId: string) => Promise<void>;
@@ -199,7 +203,7 @@ export class SessionLifecycle {
       ref.id = appSessionId;
       const liveSession = createLiveSession(summary, session, mcp);
       pendingLiveSession = liveSession;
-      d.subscribeSessionCompaction(liveSession);
+      d.compaction.subscribePrimary(this.primaryAutomaticCompactionTarget(liveSession));
       d.registry.register(liveSession);
       d.emit({ type: 'session.created', clientRef: command.clientRef, session: summary });
       this.driveInBackground(appSessionId, command.goal);
@@ -274,7 +278,7 @@ export class SessionLifecycle {
       const projectedSummary = d.applyPendingSettingsToSummary({ ...summary });
       const liveSession = createLiveSession(summary, session, mcp);
       pendingLiveSession = liveSession;
-      d.subscribeSessionCompaction(liveSession);
+      d.compaction.subscribePrimary(this.primaryAutomaticCompactionTarget(liveSession));
       for (const link of d.childSessionLinks(appSessionId)) {
         liveSession.linkedChildSessions.add(link.providerSessionId);
         if (link.toolUseId) {
@@ -355,6 +359,7 @@ export class SessionLifecycle {
       return;
     }
     const wasAutoCompacting = liveSession.autoCompacting;
+    const compactionTarget = this.primaryAutomaticCompactionTarget(liveSession);
     liveSession.interrupting = true;
     try {
       await liveSession.session.interrupt();
@@ -362,9 +367,12 @@ export class SessionLifecycle {
       liveSession.interrupting = false;
       throw error;
     }
+    if (!compactionTarget.isCurrent()) {
+      liveSession.interrupting = false;
+      return;
+    }
     if (wasAutoCompacting) {
-      liveSession.autoCompacting = false;
-      this.dependencies.clearAutoCompactionWatchdog(appSessionId);
+      this.dependencies.compaction.cancel(compactionTarget);
     }
     if (!liveSession.streaming) liveSession.interrupting = false;
     this.dependencies.registry.updateSummary(appSessionId, {
@@ -456,17 +464,19 @@ export class SessionLifecycle {
       d.context.stopSession(liveSession);
     });
     await run(() => {
-      d.clearAutoCompactionWatchdog(liveSession.summary.appSessionId);
+      d.compaction.cancel(this.primaryAutomaticCompactionTarget(liveSession));
     });
     await run(() => {
       liveSession.unsubscribe?.();
     });
-    for (const [providerSessionId, childSession] of liveSession.childSessions) {
+    for (const [childSessionId, childSession] of liveSession.childSessions) {
       await run(() => {
         d.context.stopPolling(childSession.session.sessionId);
       });
       await run(() => {
-        d.clearAutoCompactionWatchdog(providerSessionId);
+        d.compaction.cancel(
+          this.childAutomaticCompactionTarget(liveSession, childSessionId, childSession),
+        );
       });
       await run(() => {
         childSession.unsubscribe?.();
@@ -539,6 +549,42 @@ export class SessionLifecycle {
     };
   }
 
+  private primaryAutomaticCompactionTarget(
+    liveSession: LiveSession,
+  ): PrimaryAutomaticCompactionTarget {
+    return {
+      ...this.primaryContextTarget(liveSession),
+      kind: 'primary',
+      liveSession,
+    };
+  }
+
+  private childAutomaticCompactionTarget(
+    parent: LiveSession,
+    childSessionId: string,
+    child: LiveChildSession,
+  ): ChildAutomaticCompactionTarget {
+    const d = this.dependencies;
+    const session = child.session;
+    return {
+      kind: 'child',
+      appSessionId: parent.summary.appSessionId,
+      parentAppSessionId: parent.summary.appSessionId,
+      childSessionId,
+      providerSessionId: session.sessionId,
+      sourceSessionId: session.sessionId,
+      session,
+      role: child.role,
+      child,
+      isCurrent: () =>
+        !d.isShutdownStarted() &&
+        d.registry.getLive(parent.summary.appSessionId) === parent &&
+        !parent.closeMode &&
+        parent.childSessions.get(childSessionId) === child &&
+        child.session === session,
+    };
+  }
+
   private async prepareToSend(appSessionId: string): Promise<LiveSession | undefined> {
     let liveSession = this.dependencies.registry.getLive(appSessionId);
     if (!liveSession) {
@@ -601,7 +647,7 @@ export class SessionLifecycle {
         const queued = liveSession.pendingSends.splice(0);
         if (queued.length > 0) void this.redeliverQueuedSends(stableAppSessionId, queued);
       } else if (liveSession.autoCompacting) {
-        d.onTurnSettledWhileAutoCompacting(stableAppSessionId);
+        d.compaction.afterTurn(this.primaryAutomaticCompactionTarget(liveSession));
         this.updateQueuedSends(liveSession);
       } else {
         const next = liveSession.pendingSends.shift();
