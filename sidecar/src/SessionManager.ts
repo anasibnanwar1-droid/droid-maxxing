@@ -2484,16 +2484,15 @@ export class SessionManager {
       const stats = await session.getContextStats();
       const breakdown = await this.readContextBreakdown(session);
       let snapshot = contextStatsSnapshot(stats, breakdown);
-      const liveSession =
-        this.registry.getLive(sourceSessionId) ??
-        this.registry
-          .liveSessionsSnapshot()
-          .find((candidate) => candidate.childSessions.has(sourceSessionId));
+      const primarySession = this.registry.getLive(sourceSessionId);
+      const childOwner = primarySession
+        ? undefined
+        : findChildSessionOwner(this.registry.liveSessionsSnapshot(), sourceSessionId);
+      const liveSession = primarySession ?? childOwner?.liveSession;
+      const childProviderSessionId = childOwner?.providerSessionId;
       if (!liveSession || hasSessionCloseStarted(liveSession)) return;
       const appSessionId = liveSession.summary.appSessionId;
-      const isPrimarySession =
-        sourceSessionId === liveSession.summary.appSessionId ||
-        sourceSessionId === liveSession.summary.providerSessionId;
+      const isPrimarySession = childProviderSessionId === undefined;
       // The daemon's get_context_stats is a chars/4 estimate that over-counts;
       // when a provider-reported reading exists it matches the compaction
       // threshold count exactly, so it wins over the estimate. The stats call
@@ -2520,10 +2519,10 @@ export class SessionManager {
       }
       // Child sessions have no top-level session summary to carry a compaction
       // generation, so the snapshot carries it for the meter's ratchet reset.
-      if (!isPrimarySession)
+      if (childProviderSessionId !== undefined)
         snapshot = {
           ...snapshot,
-          compactions: this.childSessionCompactions.get(sourceSessionId) ?? 0,
+          compactions: this.childSessionCompactions.get(childProviderSessionId) ?? 0,
         };
       this.contextSnapshots.set(sourceSessionId, snapshot);
       this.emit({
@@ -2658,6 +2657,22 @@ export class SessionManager {
 
 function hasSessionCloseStarted(liveSession: LiveSession): boolean {
   return liveSession.closeMode !== undefined;
+}
+
+function findChildSessionOwner(
+  liveSessions: Iterable<LiveSession>,
+  sourceSessionId: string,
+): { liveSession: LiveSession; providerSessionId: string } | undefined {
+  for (const liveSession of liveSessions) {
+    for (const [providerSessionId, childSession] of liveSession.childSessions) {
+      if (
+        providerSessionId === sourceSessionId ||
+        childSession.session.sessionId === sourceSessionId
+      )
+        return { liveSession, providerSessionId };
+    }
+  }
+  return undefined;
 }
 
 function childSessionSettingsFromInit(init: SessionInitResult): ChildSessionSettings {

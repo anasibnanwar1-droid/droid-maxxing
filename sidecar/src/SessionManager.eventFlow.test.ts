@@ -4,8 +4,8 @@ import test from 'node:test';
 import type { ServerEvent } from './protocol.js';
 import {
   assistantTextDelta,
+  FakeFactorySession,
   successfulResultEvent,
-  type FakeFactorySession,
 } from './testing/fakeFactoryRuntime.js';
 import { createSessionManagerTestContext } from './testing/sessionManagerTestContext.js';
 
@@ -305,6 +305,83 @@ test('worker token usage updates totals without replacing the primary context re
     assert.equal(summary?.tokensOut, 20);
     assert.equal(summary?.contextTokens, 9);
     assert.equal(summary?.contextAccuracy, 'exact');
+  } finally {
+    await context.dispose();
+  }
+});
+
+test('loaded child context follows its runtime session id', async () => {
+  const context = createSessionManagerTestContext();
+  try {
+    await context.create({
+      sessionPurpose: 'mission-control',
+      clientRef: 'event-child-context',
+      title: 'Child context',
+      goal: 'initial',
+      interactionMode: 'agi',
+      autonomy: 'low',
+    });
+    await context.provider.waitForPrompts('provider-1', 1);
+    await context.waitForIdle();
+
+    context.provider.emitNotification('provider-1', {
+      type: 'tool_progress_update',
+      toolName: 'Task',
+      toolUseId: 'task-context',
+      update: {
+        type: 'tool_call',
+        subagentSessionId: 'worker-history-id',
+        parameters: { subagent_type: 'worker' },
+      },
+    });
+    context.runtime.loadQueue.set('worker-history-id', [
+      new FakeFactorySession('worker-runtime-id', {}, context.calls),
+    ]);
+    await context.handle({
+      type: 'child.open',
+      appSessionId: 'provider-1',
+      providerSessionId: 'worker-history-id',
+      role: 'worker',
+    });
+    const compactionNotification = (notification: Record<string, unknown>) => ({
+      jsonrpc: '2.0',
+      method: 'droid.session_notification',
+      params: { notification },
+    });
+    context.provider.emitNotification(
+      'worker-runtime-id',
+      compactionNotification({
+        type: 'droid_working_state_changed',
+        newState: 'compacting_conversation',
+      }),
+    );
+    context.provider.emitNotification(
+      'worker-runtime-id',
+      compactionNotification({
+        type: 'session_compacted',
+        summaryId: 'summary-context',
+        removedCount: 1,
+        visibleBoundaryMessageId: null,
+      }),
+    );
+    await context.waitForIdle();
+    context.events.length = 0;
+
+    await context.handle({
+      type: 'child.send',
+      appSessionId: 'provider-1',
+      providerSessionId: 'worker-history-id',
+      text: 'measure context',
+    });
+
+    const runtimeContext = context.events.find(
+      (event) =>
+        event.type === 'context.updated' &&
+        event.appSessionId === 'provider-1' &&
+        event.sourceSessionId === 'worker-runtime-id',
+    );
+    assert.equal(runtimeContext?.type, 'context.updated');
+    assert.equal(runtimeContext.stats.compactions, 1);
   } finally {
     await context.dispose();
   }
