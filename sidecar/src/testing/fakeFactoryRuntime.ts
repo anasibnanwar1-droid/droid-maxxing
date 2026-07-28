@@ -92,8 +92,11 @@ export class FakeFactorySession implements FactorySession {
     const streamError = this.nextStreamError;
     delete this.nextStreamError;
     if (streamError) throw streamError;
-    for (const event of this.streamEventQueue.shift() ?? []) yield event;
-    yield successfulResultEvent(this.sessionId);
+    const events = this.streamEventQueue.shift() ?? [];
+    for (const event of events) yield event;
+    if (!events.some((event) => event.type === 'result')) {
+      yield successfulResultEvent(this.sessionId);
+    }
   }
 
   queueStreamEvents(events: DroidStreamEvent[]): void {

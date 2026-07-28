@@ -129,6 +129,15 @@ test('the UI snapshot outranks exposed and CLI compaction limits', () => {
     resolvedCompactionTokenLimit('model-a', {}, { compactionTokenLimit: 400_000 }, {}),
     400_000,
   );
+  assert.equal(
+    resolvedCompactionTokenLimit(
+      'model-a',
+      {},
+      {},
+      { compactionTokenLimitPerModel: { 'model-a': 175_000 } },
+    ),
+    175_000,
+  );
 });
 
 test('cleared UI limits still arm daemon auto-compaction', () => {

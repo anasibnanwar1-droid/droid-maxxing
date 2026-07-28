@@ -181,9 +181,8 @@ test('[C1] Manual in-place compaction', { concurrency: false }, async () => {
 test(
   'manual compaction failure stays recoverable and settles with a unique status',
   { concurrency: false },
-  async () => {
+  async (t) => {
     const h = createSessionManagerTestContext();
-    const realNow = Date.now;
 
     try {
       await h.create({
@@ -197,7 +196,7 @@ test(
       await h.waitForIdle();
       h.events.length = 0;
       h.provider.session('provider-1').nextCompactError = new Error('transient failure');
-      Date.now = () => 123_456;
+      t.mock.method(Date, 'now', () => 123_456);
 
       await h.handle({ type: 'session.compact', appSessionId: 'provider-1' });
 
@@ -225,7 +224,6 @@ test(
         false,
       );
     } finally {
-      Date.now = realNow;
       await h.dispose();
     }
   },

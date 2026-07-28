@@ -45,9 +45,25 @@ class RejectingInterruptSession extends FakeFactorySession {
   }
 }
 
+class CallbackCloseSession extends FakeFactorySession {
+  constructor(
+    sessionId: string,
+    calls: RecordedCall[],
+    private readonly afterClose: () => Promise<void>,
+  ) {
+    super(sessionId, {}, calls);
+  }
+
+  override async close(): Promise<void> {
+    await super.close();
+    await this.afterClose();
+  }
+}
+
 function createHarness(ordinarySummaries: SessionSummary[] = []) {
   const calls: RecordedCall[] = [];
   const events: ServerEvent[] = [];
+  const publicationRegistration: boolean[] = [];
   const history = new TestHistory(calls);
   const runtime = new FakeFactoryRuntime(calls);
   let projection: Partial<SessionSummary> = {};
@@ -59,6 +75,9 @@ function createHarness(ordinarySummaries: SessionSummary[] = []) {
   const recordEvent = (event: ServerEvent): void => {
     events.push(event);
     calls.push({ target: 'protocol', method: event.type, args: [event] });
+    if (event.type === 'session.created' || event.type === 'session.updated') {
+      publicationRegistration.push(registry.getLive(event.session.appSessionId) !== undefined);
+    }
   };
   const registry = new SessionRegistry<LiveSession>({
     history,
@@ -166,6 +185,7 @@ function createHarness(ordinarySummaries: SessionSummary[] = []) {
     runtime,
     registry,
     lifecycle,
+    publicationRegistration,
     setProjection: (patch: Partial<SessionSummary>) => {
       projection = { ...patch };
     },
@@ -256,6 +276,7 @@ test('create and cold resume publish only after registration', async () => {
   assert.ok(createPersist >= 0 && createPersist < createPublished);
   assert.ok(createPublished < createTrace.indexOf('stream'));
   assert.equal(created.registry.getCanonicalSummary('created-1')?.appSessionId, 'created-1');
+  assert.equal(created.publicationRegistration.every(Boolean), true);
   const resumed = createHarness([summary('app-2', 'provider-2')]);
   queueLoad(resumed, 'provider-2');
   await resumed.lifecycle.resume('app-2');
@@ -271,6 +292,7 @@ test('create and cold resume publish only after registration', async () => {
     resumed.events.slice(-2).map((event) => event.type),
     ['session.created', 'session.updated'],
   );
+  assert.equal(resumed.publicationRegistration.every(Boolean), true);
 });
 
 test('create failure closes started MCP resources without publishing', async () => {
@@ -384,6 +406,23 @@ test('interrupt handles idle, streaming, manual compaction, and auto-compaction 
     harness.calls.some((call) => call.method === 'watchdog.clear' && call.args[0] === 'stop'),
     true,
   );
+
+  const rejected = createHarness();
+  const rejectingProvider = new RejectingInterruptSession('rejected-stop', {}, rejected.calls);
+  rejected.runtime.createQueue.push(rejectingProvider);
+  await rejected.lifecycle.create(createCommand());
+  await rejectingProvider.waitForPrompts(1);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  const rejectedLive = requireLive(rejected, 'rejected-stop');
+  rejectedLive.autoCompacting = true;
+  await assert.rejects(rejected.lifecycle.interrupt('rejected-stop'), /interrupt rejected/);
+  assert.equal(rejectedLive.autoCompacting, true);
+  assert.equal(
+    rejected.calls.some(
+      (call) => call.method === 'watchdog.clear' && call.args[0] === 'rejected-stop',
+    ),
+    false,
+  );
 });
 
 test('resuming an already-live session does not reload or persist it', async () => {
@@ -403,11 +442,29 @@ test('resuming an already-live session does not reload or persist it', async () 
     ['session.created'],
   );
   assert.equal(harness.calls.filter((call) => call.method === 'context.refresh').length, 1);
+  assert.deepEqual(
+    harness.calls
+      .filter((call) =>
+        [
+          'mcp.start',
+          'loadSession',
+          'autoCompaction.arm',
+          'onNotification',
+          'syncSummaries',
+        ].includes(call.method),
+      )
+      .map((call) => call.method),
+    [],
+  );
 });
 
 test('close follows ownership order and closeAll closes its initial snapshot', async () => {
   const harness = createHarness();
-  const provider = queueCreate(harness, 'owner');
+  const provider = new CallbackCloseSession('owner', harness.calls, () => {
+    assert.ok(harness.registry.getLive('owner'));
+    return Promise.resolve();
+  });
+  harness.runtime.createQueue.push(provider);
   await harness.lifecycle.create(createCommand());
   await provider.waitForPrompts(1);
   await new Promise<void>((resolve) => setImmediate(resolve));
@@ -448,19 +505,37 @@ test('close follows ownership order and closeAll closes its initial snapshot', a
     'runtimeCaches.clear:owner',
   ]);
   assert.equal(harness.registry.getLive('owner'), undefined);
+  const ownerList = harness.events.findLast((event) => event.type === 'sessions.list');
+  assert.equal(
+    ownerList?.sessions.some((session) => session.appSessionId === 'owner'),
+    false,
+  );
+
   const all = createHarness();
-  const first = queueCreate(all, 'first');
+  let registerLate = (): Promise<void> => Promise.resolve();
+  const first = new CallbackCloseSession('first', all.calls, () => registerLate());
+  all.runtime.createQueue.push(first);
   const second = queueCreate(all, 'second');
   await all.lifecycle.create(createCommand());
   await first.waitForPrompts(1);
   await all.lifecycle.create(createCommand());
   await second.waitForPrompts(1);
   await new Promise<void>((resolve) => setImmediate(resolve));
+  registerLate = async () => {
+    const late = queueCreate(all, 'late');
+    await all.lifecycle.create(createCommand());
+    await late.waitForPrompts(1);
+  };
   await all.lifecycle.closeAll();
   assert.deepEqual(
     all.calls.filter((call) => call.method === 'session.close').map((call) => call.args[0]),
     ['first', 'second'],
   );
+  assert.deepEqual(
+    all.registry.liveSessionsSnapshot().map((session) => session.summary.appSessionId),
+    ['late'],
+  );
+  await all.lifecycle.closeAll();
   assert.equal(all.registry.liveSessionsSnapshot().length, 0);
 });
 
@@ -499,6 +574,24 @@ test('pending settings stay projected until successful first-send application', 
   await harness.lifecycle.send('app-pending', 'apply now');
   assert.deepEqual(provider.settings, [pending]);
   assert.deepEqual(provider.prompts, ['apply now']);
+  const settingsCall = harness.calls.findIndex((call) => call.method === 'updateSettings');
+  const streamCall = harness.calls.findIndex(
+    (call) => call.method === 'stream' && call.args[1] === 'apply now',
+  );
+  assert.ok(settingsCall >= 0 && settingsCall < streamCall);
   assert.equal(harness.registry.getCanonicalSummary('app-pending')?.modelId, 'model-pending');
   assert.equal(harness.history.persisted.at(-1)?.reasoningEffort, ReasoningEffort.High);
+
+  const failed = createHarness([saved]);
+  const failedProvider = new FakeFactorySession('provider-pending', {}, failed.calls, {
+    settings: { modelId: 'model-saved', reasoningEffort: ReasoningEffort.Low },
+  });
+  queueLoad(failed, 'provider-pending', failedProvider);
+  failed.setProjection(pending);
+  await failed.lifecycle.resume('app-pending');
+  failed.setPendingApply(() => Promise.resolve(false));
+  await failed.lifecycle.send('app-pending', 'must not stream');
+  assert.deepEqual(failedProvider.prompts, []);
+  assert.equal(failed.registry.getCanonicalSummary('app-pending')?.modelId, 'model-saved');
+  assert.equal(failed.registry.resolveSummary('app-pending')?.modelId, 'model-pending');
 });

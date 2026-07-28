@@ -340,6 +340,17 @@ test('[A2] Open and replay a linked child session', { concurrency: false }, asyn
         content: 'done',
         isError: false,
       },
+      {
+        type: 'tool_progress',
+        toolName: 'Task',
+        toolUseId: 'tool-running-a2',
+        content: '',
+        update: {
+          type: 'tool_call',
+          subagentSessionId: 'worker-running-a2',
+          parameters: { subagent_type: 'worker' },
+        },
+      },
     ]);
     await h.handle({
       type: 'session.send',
@@ -376,6 +387,10 @@ test('[A2] Open and replay a linked child session', { concurrency: false }, asyn
     assert.equal(
       live.childSessions?.find((link) => link.providerSessionId === 'worker-completed-a2')?.status,
       'completed',
+    );
+    assert.equal(
+      live.childSessions?.find((link) => link.providerSessionId === 'worker-running-a2')?.status,
+      'running',
     );
     assert.equal(
       live.childSessions?.find((link) => link.providerSessionId === 'worker-unknown-a2')?.status,

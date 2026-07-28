@@ -315,6 +315,29 @@ test('idle working state settles active primary and worker compaction without ac
   assert.deepEqual(harness.refreshed, []);
 });
 
+test('unrelated working states leave compaction ownership untouched', (t) => {
+  const harness = createHarness();
+  t.after(() => harness.watchdogs.clearAll());
+  harness.live.pendingSends.push('keep queued');
+
+  assert.equal(
+    handleCompactionNotification(harness.host, harness.primaryTarget, {
+      params: {
+        notification: { type: 'droid_working_state_changed', newState: 'thinking' },
+      },
+    }),
+    false,
+  );
+
+  assert.equal(harness.live.autoCompacting, false);
+  assert.equal(harness.watchdogs.isArmed('app-1'), false);
+  assert.deepEqual(harness.live.pendingSends, ['keep queued']);
+  assert.deepEqual(harness.statuses, []);
+  assert.deepEqual(harness.patches, []);
+  assert.deepEqual(harness.refreshed, []);
+  assert.deepEqual(harness.settledPrimary, []);
+});
+
 test('late primary and worker completion notifications are inert once settled', (t) => {
   const harness = createHarness();
   t.after(() => harness.watchdogs.clearAll());
