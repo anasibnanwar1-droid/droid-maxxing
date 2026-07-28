@@ -1,11 +1,11 @@
 import {
   AutonomyLevel,
-  DecompSessionType,
   DroidClient,
   DroidInteractionMode,
   DroidSession,
   ReasoningEffort as SdkReasoningEffort,
   type AskUserHandler,
+  type DecompSessionType,
   type DroidClientTransport,
   type InitializeSessionRequestParams,
   type LoadSessionRequestParams,
@@ -19,6 +19,7 @@ import type { Autonomy, ReasoningEffort, SessionInteractionMode } from './protoc
 
 const EXEC_ARGS = ['exec', '--input-format', 'stream-jsonrpc', '--output-format', 'stream-jsonrpc'];
 const SESSION_INIT_TIMEOUT_MS = 20_000;
+const ignoreError = (): void => undefined;
 
 export interface RuntimeHandlers {
   permissionHandler?: PermissionHandler;
@@ -52,7 +53,37 @@ export interface RuntimeStatus {
   apiKeyConfigured: boolean;
 }
 
-export class DroidRuntime {
+export type FactorySession = Pick<
+  DroidSession,
+  | 'sessionId'
+  | 'initResult'
+  | 'stream'
+  | 'interrupt'
+  | 'updateSettings'
+  | 'enterSpecMode'
+  | 'compactSession'
+  | 'close'
+  | 'onNotification'
+  | 'getContextStats'
+  | 'forkSession'
+  | 'renameSession'
+  | 'getRewindInfo'
+  | 'executeRewind'
+  | 'listTools'
+  | 'listSkills'
+  | 'listMcpServers'
+  | 'listMcpTools'
+>;
+
+export interface FactoryRuntime {
+  connect(apiKey?: string): void;
+  status(): RuntimeStatus;
+  startCliLogin(): Promise<void>;
+  createSession(options: CreateRuntimeSessionOptions): Promise<FactorySession>;
+  loadSession(providerSessionId: string, handlers?: RuntimeHandlers): Promise<FactorySession>;
+}
+
+export class DroidRuntime implements FactoryRuntime {
   private explicitApiKey = '';
 
   connect(apiKey?: string): void {
@@ -79,7 +110,7 @@ export class DroidRuntime {
       );
       return new DroidSession(client, init.sessionId, init);
     } catch (err) {
-      await transport.close().catch(() => {});
+      await transport.close().catch(ignoreError);
       throw err;
     }
   }
@@ -96,12 +127,12 @@ export class DroidRuntime {
       );
       return new DroidSession(client, sessionId, init);
     } catch (err) {
-      await transport.close().catch(() => {});
+      await transport.close().catch(ignoreError);
       throw err;
     }
   }
 
-  async startCliLogin(): Promise<void> {
+  startCliLogin(): Promise<void> {
     // On Windows the npm-installed `droid` is a `.cmd` shim that direct spawn
     // can't launch, so run it through a shell there.
     const child = spawn(this.resolveDroidPath(), ['login'], {
@@ -112,8 +143,9 @@ export class DroidRuntime {
     });
     // A missing/non-executable CLI makes spawn emit 'error'; without a listener
     // that would crash the sidecar, so swallow it here.
-    child.on('error', () => {});
+    child.on('error', ignoreError);
     child.unref();
+    return Promise.resolve();
   }
 
   private async createClient(
@@ -196,17 +228,33 @@ function mapAutonomy(autonomy: Autonomy): AutonomyLevel {
 }
 
 function mapReasoning(reasoning: ReasoningEffort): SdkReasoningEffort {
-  const values = Object.values(SdkReasoningEffort) as string[];
-  return (values.includes(reasoning) ? reasoning : SdkReasoningEffort.Medium) as SdkReasoningEffort;
+  switch (reasoning) {
+    case 'none':
+      return SdkReasoningEffort.None;
+    case 'dynamic':
+      return SdkReasoningEffort.Dynamic;
+    case 'off':
+      return SdkReasoningEffort.Off;
+    case 'minimal':
+      return SdkReasoningEffort.Minimal;
+    case 'low':
+      return SdkReasoningEffort.Low;
+    case 'high':
+      return SdkReasoningEffort.High;
+    case 'xhigh':
+      return SdkReasoningEffort.ExtraHigh;
+    case 'max':
+      return SdkReasoningEffort.Max;
+    case 'medium':
+    default:
+      return SdkReasoningEffort.Medium;
+  }
 }
 
 function tagsFor(options: CreateRuntimeSessionOptions): InitializeSessionRequestParams['tags'] {
-  const kind =
-    options.interactionMode === 'agi'
-      ? 'mission_orchestrator'
-      : options.interactionMode === 'spec'
-        ? 'spec'
-        : 'chat';
+  let kind = 'chat';
+  if (options.interactionMode === 'agi') kind = 'mission_orchestrator';
+  else if (options.interactionMode === 'spec') kind = 'spec';
   return [
     { name: 'droid-control', metadata: { source: 'droid-control' } },
     { name: 'kind', metadata: { kind } },
@@ -244,10 +292,9 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: str
     return await Promise.race([
       promise,
       new Promise<T>((_, reject) => {
-        timer = setTimeout(
-          () => reject(new Error(`Droid ${label} timed out after ${timeoutMs}ms`)),
-          timeoutMs,
-        );
+        timer = setTimeout(() => {
+          reject(new Error(`Droid ${label} timed out after ${String(timeoutMs)}ms`));
+        }, timeoutMs);
       }),
     ]);
   } finally {
