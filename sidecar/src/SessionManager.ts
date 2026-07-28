@@ -24,14 +24,11 @@ import type {
   ChildSessionHistoryLink,
   FactoryDefaultSettings,
   InstallChannel,
-  SessionHistoryEntry,
   SessionSummary,
   ModelInfo,
-  ProgressEntry,
   ReasoningEffort,
   ServerEvent,
   SessionInteractionMode,
-  TranscriptEvent,
 } from './protocol.js';
 import {
   errMsg,
@@ -55,14 +52,9 @@ import {
 } from './normalize.js';
 import {
   HistoryIndex,
-  hydrateHistoricalSession,
   loadHistoricalSessions,
   loadMissionControlSessions,
-  loadSessionTranscriptWindow,
-  loadSessionHistory,
-  loadSessionPage,
   readFactoryDefaults,
-  resolveSessionChain,
 } from './history.js';
 import { mergeModelCatalog } from './modelCatalog.js';
 import { readDroidCliModelCatalog, readDroidCliModelCatalogCache } from './DroidCliCatalog.js';
@@ -71,6 +63,7 @@ import { createBrowserMcpServer } from './browser/browserMcpServer.js';
 import { isDesignPrompt } from './browser/designPromptPacks.js';
 import { NativeBrowserRuntime } from './browser/NativeBrowserRuntime.js';
 import { SessionRegistry } from './SessionRegistry.js';
+import { SessionTimeline } from './SessionTimeline.js';
 import {
   SessionLifecycle,
   type ChildSessionSettings,
@@ -190,15 +183,12 @@ interface PendingNativeBrowserRequest {
 
 export class SessionManager {
   private ready = false;
-  // Monotonic suffix so two status lines emitted in the same millisecond get
-  // distinct transcript IDs (the UI drops duplicate IDs, which could otherwise
-  // strand the in-progress compaction shimmer).
-  private statusSeq = 0;
   private cachedModels: ModelInfo[] | null = null;
   private modelRefresh: Promise<ModelInfo[] | null> | null = null;
   private readonly runtime: FactoryRuntime;
   private readonly history: SessionHistory;
   private readonly registry: SessionRegistry<LiveSession>;
+  private readonly timeline: SessionTimeline;
   private readonly lifecycle: SessionLifecycle;
   private readonly pendingAgentSettings = new Map<
     string,
@@ -268,6 +258,19 @@ export class SessionManager {
       },
       now: Date.now,
     });
+    this.timeline = new SessionTimeline({
+      registry: this.registry,
+      history: this.history,
+      getChildSessionLinks: (appSessionId) =>
+        this.withLiveChildSessionStatus(appSessionId, this.history.childSessionLinks(appSessionId)),
+      emit: (event) => {
+        this.emit(event);
+      },
+      emitError: (error) => {
+        this.emitError(error);
+      },
+      now: Date.now,
+    });
     this.lifecycle = new SessionLifecycle({
       runtime: this.runtime,
       registry: this.registry,
@@ -328,7 +331,7 @@ export class SessionManager {
         this.emitError(error);
       },
       emitStatus: (appSessionId, text) => {
-        this.emitStatus(appSessionId, text);
+        this.timeline.appendStatus(appSessionId, text);
       },
       emitSessionList: () => {
         this.emitSessionList();
@@ -432,7 +435,7 @@ export class SessionManager {
           previousLiveSession?.compacting ||
           previousLiveSession?.autoCompacting
         ) {
-          this.emitStatus(
+          this.timeline.appendStatus(
             appSessionId,
             'Cannot compact while a turn is active. Try again when the model is idle.',
           );
@@ -466,13 +469,13 @@ export class SessionManager {
         this.emitSessionList(cmd);
         return;
       case 'history.list':
-        this.listHistory();
+        this.timeline.list();
         return;
       case 'history.page':
-        this.loadHistoryPage(cmd.providerSessionId, cmd.cursor, cmd.limit);
+        this.timeline.loadProviderPage(cmd.providerSessionId, cmd.cursor, cmd.limit);
         return;
       case 'session.loadHistory':
-        this.loadSessionHistory(cmd.appSessionId, cmd.cursor);
+        this.timeline.load(cmd.appSessionId, cmd.cursor);
         return;
       case 'settings.agent.update':
         await this.updateAgentSettings(cmd);
@@ -962,15 +965,6 @@ export class SessionManager {
     }
   }
 
-  private listHistory(): void {
-    try {
-      const sessions: SessionHistoryEntry[] = loadSessionHistory();
-      this.emit({ type: 'history.list', sessions });
-    } catch (err) {
-      this.emitError({ message: errMsg(err) });
-    }
-  }
-
   private emitSessionList(options?: SessionListFilterOptions): void {
     this.emit({ type: 'sessions.list', sessions: this.registry.listSummaries(options) });
   }
@@ -999,153 +993,6 @@ export class SessionManager {
           }
         : link,
     );
-  }
-
-  // Single emit point for session.history so every page carries restore
-  // telemetry (count + whether older history remains) the client uses to show
-  // an explicit restoring/partial/complete state.
-  private emitSessionHistory(args: {
-    appSessionId: string;
-    progress: ProgressEntry[];
-    transcripts: TranscriptEvent[];
-    childSessions?: ChildSessionHistoryLink[];
-    mode: 'replace' | 'prepend';
-    olderCursor?: string;
-  }): void {
-    this.emit({
-      type: 'session.history',
-      appSessionId: args.appSessionId,
-      progress: args.progress,
-      transcripts: args.transcripts,
-      childSessions: args.childSessions,
-      mode: args.mode,
-      olderCursor: args.olderCursor,
-      loadedCount: args.transcripts.length,
-      hasMore: Boolean(args.olderCursor),
-    });
-  }
-
-  private loadSessionHistory(appSessionIdOrProviderSessionId: string, cursor?: string): void {
-    const summary = this.registry.resolveSummary(appSessionIdOrProviderSessionId);
-    const appSessionId = summary?.appSessionId ?? appSessionIdOrProviderSessionId;
-    const providerSessionId = summary?.providerSessionId ?? appSessionIdOrProviderSessionId;
-    try {
-      const history =
-        summary?.sessionPurpose === 'mission-control'
-          ? hydrateHistoricalSession(appSessionId, { cursor })
-          : this.loadStandardSessionHistory(appSessionId, providerSessionId, cursor);
-      const transcripts = history.transcripts.map((event) => ({
-        ...event,
-        appSessionId,
-      }));
-      transcripts.forEach((event) => {
-        this.history.recordEvent(event);
-      });
-      // An older page only extends primary scrollback upward; prepend it without
-      // touching the already-delivered child sessions or progress.
-      if (cursor) {
-        this.emitSessionHistory({
-          appSessionId,
-          progress: [],
-          transcripts,
-          mode: 'prepend',
-          olderCursor: history.olderCursor,
-        });
-        return;
-      }
-      const childSessions = this.withLiveChildSessionStatus(
-        appSessionId,
-        this.history.childSessionLinks(appSessionId),
-      );
-      this.emitSessionHistory({
-        appSessionId,
-        progress: history.progress,
-        transcripts,
-        childSessions,
-        mode: 'replace',
-        olderCursor: history.olderCursor,
-      });
-    } catch (err) {
-      // Always answer an older-page request, even on failure, so the client's
-      // historyLoadingOlder flag clears instead of sticking and blocking all
-      // further pagination.
-      if (cursor) {
-        this.emitSessionHistory({
-          appSessionId,
-          progress: [],
-          transcripts: [],
-          mode: 'prepend',
-          olderCursor: undefined,
-        });
-        return;
-      }
-      if (this.registry.getLive(appSessionId)) {
-        // A live session with no persisted history yet is an empty restore.
-        // Live events seed it; this authoritative snapshot settles the client.
-        this.emitSessionHistory({
-          appSessionId,
-          progress: [],
-          transcripts: [],
-          childSessions: this.withLiveChildSessionStatus(
-            appSessionId,
-            this.history.childSessionLinks(appSessionId),
-          ),
-          mode: 'replace',
-          olderCursor: undefined,
-        });
-      } else {
-        this.emit({
-          type: 'session.history.error',
-          appSessionId,
-          message: errMsg(err),
-        });
-        this.emitError({
-          appSessionId,
-          providerSessionId,
-          message: errMsg(err),
-          recoverable: true,
-        });
-      }
-    }
-  }
-
-  private loadStandardSessionHistory(
-    appSessionId: string,
-    providerSessionId: string,
-    cursor?: string,
-  ): ReturnType<typeof hydrateHistoricalSession> {
-    const chain = resolveSessionChain(appSessionId, providerSessionId);
-    if (chain.length === 0) throw new Error(`Session history not found for ${providerSessionId}`);
-    const window = loadSessionTranscriptWindow(appSessionId, chain, { cursor });
-    return {
-      progress: [],
-      transcripts: window.events,
-      olderCursor: window.olderCursor,
-    };
-  }
-
-  private loadHistoryPage(providerSessionId: string, cursor?: string, limit?: number): void {
-    const summary = this.registry.resolveSummary(providerSessionId);
-    const appSessionId = summary?.appSessionId ?? providerSessionId;
-    const resolvedProviderSessionId = summary?.providerSessionId ?? providerSessionId;
-    try {
-      const page = loadSessionPage(resolvedProviderSessionId, appSessionId, cursor, limit);
-      page.events.forEach((event) => {
-        this.history.recordEvent(event);
-      });
-      this.emit({
-        type: 'session.history',
-        appSessionId,
-        progress: [],
-        transcripts: page.events,
-      });
-    } catch (err) {
-      this.emitError({
-        appSessionId,
-        providerSessionId: resolvedProviderSessionId,
-        message: errMsg(err),
-      });
-    }
   }
 
   private makePermissionHandler(ref: { id: string }): PermissionHandler {
@@ -1270,7 +1117,7 @@ export class SessionManager {
       if (hasSessionCloseStarted(liveSession)) {
         return;
       } else if (liveSession.interruptingForSteer) {
-        this.emitStatus(appSessionId, 'Current turn interrupted for steering.');
+        this.timeline.appendStatus(appSessionId, 'Current turn interrupted for steering.');
       } else if (liveSession.interrupting && isUserCancellation(err)) {
         // The user pressed Stop; interrupt() already set the paused phase, so
         // settle quietly without surfacing an error.
@@ -1329,7 +1176,7 @@ export class SessionManager {
   // applying a normalized event. Both primary/child stream loops and
   // the worker notification subscriptions route through here so post-terminal
   // generation is dropped no matter which channel delivers it. History replay
-  // does not pass through this path (it uses emitTranscript directly).
+  // does not pass through this path; SessionTimeline owns both replay paths.
   private applyNormalizedForSource(
     appSessionId: string,
     sourceProviderSessionId: string,
@@ -1409,7 +1256,7 @@ export class SessionManager {
       toolUseId,
     });
     if (prompt) {
-      this.emitTranscript({
+      this.timeline.append({
         id: `child-session-task-${providerSessionId}`,
         appSessionId,
         sourceSessionId: providerSessionId,
@@ -1486,7 +1333,7 @@ export class SessionManager {
     n: NonNullable<ReturnType<typeof normalizeStreamEvent>>,
     childProviderSessionId?: string,
   ): void {
-    if (n.transcript) this.emitTranscript(n.transcript);
+    if (n.transcript) this.timeline.append(n.transcript);
     if (n.features) {
       this.registry.updateSummary(appSessionId, { features: n.features });
       const missionControlId = this.registry.getLive(appSessionId)?.summary.missionId;
@@ -1567,30 +1414,6 @@ export class SessionManager {
     }
   }
 
-  private emitTranscript(event: TranscriptEvent): void {
-    this.history.recordEvent(event);
-    this.emit({ type: 'event.appended', event });
-  }
-
-  private emitStatus(
-    appSessionId: string,
-    text: string,
-    compactType?: CompactType,
-    childProviderSessionId?: string,
-    role: SessionRole = 'primary',
-  ): void {
-    this.emitTranscript({
-      id: `status-${Date.now().toString(36)}-${(this.statusSeq++).toString(36)}`,
-      appSessionId: appSessionId,
-      sourceSessionId: childProviderSessionId ?? appSessionId,
-      role,
-      ts: Date.now(),
-      kind: 'status',
-      text,
-      compactType,
-    });
-  }
-
   // Subscribe the primary session to raw daemon notifications so the
   // daemon's in-place auto-compaction surfaces in the transcript. Everything
   // else the primary session needs already arrives through the streaming turn, so
@@ -1637,7 +1460,7 @@ export class SessionManager {
       findSession: (appSessionId) => this.registry.getLive(appSessionId),
       childSessionCompactions: this.childSessionCompactions,
       emitCompactionStatus: (appSessionId, text, providerSessionId, role) => {
-        this.emitStatus(appSessionId, text, 'auto', providerSessionId, role);
+        this.timeline.appendStatus(appSessionId, text, 'auto', providerSessionId, role);
       },
       patchSummary: (appSessionId, patch) => this.registry.updateSummary(appSessionId, patch),
       refreshContext: (providerSessionId, session) =>
@@ -1696,7 +1519,7 @@ export class SessionManager {
         liveSession.session,
         {
           status: (text, ct) => {
-            this.emitStatus(appSessionId, text, ct);
+            this.timeline.appendStatus(appSessionId, text, ct);
           },
           error: (message) => {
             this.emitError({
@@ -2070,7 +1893,7 @@ export class SessionManager {
           this.applyNormalizedForSource(appSessionId, childProviderSessionId, n);
       });
       liveSession.childSessions.set(childProviderSessionId, childSession);
-      this.emitChildSessionHistory(appSessionId, childProviderSessionId);
+      this.timeline.replayChild(appSessionId, childProviderSessionId);
       this.emit({
         type: 'child.updated',
         appSessionId,
@@ -2086,15 +1909,6 @@ export class SessionManager {
         providerSessionId: childProviderSessionId,
         message: errMsg(err),
       });
-    }
-  }
-
-  private emitChildSessionHistory(appSessionId: string, childProviderSessionId: string): void {
-    try {
-      const page = loadSessionPage(childProviderSessionId, appSessionId, undefined, 200);
-      for (const event of page.events) this.emitTranscript(event);
-    } catch {
-      /* Some live child sessions have not flushed history yet. Notifications still stream after open. */
     }
   }
 
@@ -2143,7 +1957,10 @@ export class SessionManager {
         );
     } catch (err) {
       if (childSession.interruptingForSteer)
-        this.emitStatus(childSession.appSessionId, 'Child-session turn interrupted for steering.');
+        this.timeline.appendStatus(
+          childSession.appSessionId,
+          'Child-session turn interrupted for steering.',
+        );
       else if (!(childSession.interrupting && isUserCancellation(err))) {
         const message = errMsg(err);
         this.emit({
@@ -2223,7 +2040,7 @@ export class SessionManager {
     childSession.pendingSends.unshift(text);
     if (childSession.autoCompacting) return;
     childSession.interruptingForSteer = true;
-    this.emitStatus(appSessionId, 'Steering child session now...');
+    this.timeline.appendStatus(appSessionId, 'Steering child session now...');
     try {
       await childSession.session.interrupt();
     } catch (err) {
