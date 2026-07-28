@@ -418,3 +418,59 @@ test(
     }
   },
 );
+
+test('ask-user requests tolerate omitted questions and options', async () => {
+  const h = createSessionManagerTestContext();
+
+  try {
+    await h.create({
+      sessionPurpose: 'chat',
+      clientRef: 'question-defaults',
+      title: 'Question defaults',
+      goal: 'go',
+      interactionMode: 'auto',
+      autonomy: 'low',
+    });
+
+    const handler = h.provider.session('provider-1').handlers.askUserHandler;
+    assert.ok(handler);
+
+    const emptyRequestResult = Promise.resolve(
+      handler({ toolCallId: 'q-empty' } as AskUserRequestParams),
+    );
+    const emptyRequest = latestQuestion(h.events);
+    assert.deepEqual(emptyRequest.question.questions, []);
+    await h.handle({
+      type: 'question.respond',
+      appSessionId: emptyRequest.question.appSessionId,
+      requestId: emptyRequest.question.requestId,
+      cancelled: true,
+      answers: [],
+    });
+    assert.deepEqual(await emptyRequestResult, { cancelled: true, answers: [] });
+
+    const freeFormResult = Promise.resolve(
+      handler({
+        toolCallId: 'q-free-form',
+        questions: [{ index: 0, topic: 'input', question: 'What should change?' }],
+      } as AskUserRequestParams),
+    );
+    const freeFormRequest = latestQuestion(h.events);
+    assert.deepEqual(freeFormRequest.question.questions, [
+      { index: 0, question: 'What should change?', options: [] },
+    ]);
+    await h.handle({
+      type: 'question.respond',
+      appSessionId: freeFormRequest.question.appSessionId,
+      requestId: freeFormRequest.question.requestId,
+      cancelled: false,
+      answers: [{ index: 0, question: 'What should change?', answer: 'The title' }],
+    });
+    assert.deepEqual(await freeFormResult, {
+      cancelled: false,
+      answers: [{ index: 0, question: 'What should change?', answer: 'The title' }],
+    });
+  } finally {
+    await h.dispose();
+  }
+});

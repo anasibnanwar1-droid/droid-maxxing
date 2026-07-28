@@ -1184,10 +1184,13 @@ export class SessionManager {
       new Promise<AskUserResult>((resolve) => {
         const liveSession = this.registry.getLive(ref.id);
         const requestId = nextRequestId();
-        const questions = params.questions.map((q) => ({
+        const runtimeParams: {
+          questions?: { index: number; question: string; options?: string[] }[];
+        } = params;
+        const questions = (runtimeParams.questions ?? []).map((q) => ({
           index: q.index,
           question: q.question,
-          options: q.options,
+          options: q.options ?? [],
         }));
         if (liveSession) liveSession.pendingQuestions.set(requestId, resolve);
         const question = { appSessionId: ref.id, requestId, questions };
