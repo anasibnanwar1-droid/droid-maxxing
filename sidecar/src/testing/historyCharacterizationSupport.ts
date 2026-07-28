@@ -37,6 +37,7 @@ type PersistedSummaryPatch = Pick<
 >;
 
 export class FakeHistoryIndex implements SessionHistoryDependencies {
+  nextCloseError?: Error;
   private readonly summariesByAppId = new Map<string, PersistedSummaryPatch>();
   private readonly links = new Map<string, Protocol.ChildSessionHistoryLink[]>();
 
@@ -105,6 +106,9 @@ export class FakeHistoryIndex implements SessionHistoryDependencies {
 
   close(): void {
     this.calls.push({ target: 'cleanup', method: 'history.close', args: [] });
+    const error = this.nextCloseError;
+    delete this.nextCloseError;
+    if (error) throw error;
   }
 }
 

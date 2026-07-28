@@ -34,3 +34,35 @@ test('clear and clearAll cancel pending watchdogs', async () => {
   await tick(30);
   assert.deepEqual(fired, []);
 });
+
+test('a queued stale callback cannot expire or delete a replacement watchdog', () => {
+  const originalSetTimeout = globalThis.setTimeout;
+  const originalClearTimeout = globalThis.clearTimeout;
+  const timers = [
+    originalSetTimeout(() => undefined, 60_000),
+    originalSetTimeout(() => undefined, 60_000),
+  ];
+  for (const timer of timers) originalClearTimeout(timer);
+  const queuedCallbacks: (() => void)[] = [];
+  Reflect.set(globalThis, 'setTimeout', (callback: () => void) => {
+    queuedCallbacks.push(callback);
+    return timers[queuedCallbacks.length - 1];
+  });
+  Reflect.set(globalThis, 'clearTimeout', () => undefined);
+  try {
+    const fired: string[] = [];
+    const dogs = new AutoCompactionWatchdogs((key) => fired.push(key));
+    dogs.arm('queued', 10);
+    dogs.clearAll();
+    dogs.arm('queued', 10);
+    queuedCallbacks[0]?.();
+    assert.deepEqual(fired, []);
+    assert.equal(dogs.isArmed('queued'), true);
+    queuedCallbacks[1]?.();
+    assert.deepEqual(fired, ['queued']);
+    assert.equal(dogs.isArmed('queued'), false);
+  } finally {
+    Reflect.set(globalThis, 'setTimeout', originalSetTimeout);
+    Reflect.set(globalThis, 'clearTimeout', originalClearTimeout);
+  }
+});

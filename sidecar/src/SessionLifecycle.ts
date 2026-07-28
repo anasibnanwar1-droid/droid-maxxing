@@ -38,6 +38,16 @@ export interface ChildSessionSettings {
 interface LocalMcpResource {
   close(): Promise<void>;
 }
+interface DeferredClose {
+  promise: Promise<void>;
+  resolve: () => void;
+  reject: (error: unknown) => void;
+  started: boolean;
+}
+interface CloseOperation {
+  deferred: DeferredClose;
+  created: boolean;
+}
 export interface StartedLocalMcpResources {
   servers: LocalMcpResource[];
   configs: McpServerConfig[];
@@ -95,6 +105,7 @@ export interface SessionLifecycleDependencies {
   makeAskUserHandler: (ref: { id: string }) => AskUserHandler;
   compactionLimit(modelId: string | undefined, request: CompactionLimitRequest): Promise<number>;
   enableDaemonAutoCompaction(session: FactorySession, limit: number | undefined): Promise<boolean>;
+  isShutdownStarted: () => boolean;
   subscribeSessionCompaction: (liveSession: LiveSession) => void;
   childSessionLinks: (appSessionId: string) => { providerSessionId: string; toolUseId?: string }[];
   applyPendingSettingsToSummary: (summary: SessionSummary) => SessionSummary;
@@ -114,6 +125,8 @@ export interface SessionLifecycleDependencies {
   emitSessionList: () => void;
 }
 export class SessionLifecycle {
+  private readonly deferredCloses = new WeakMap<LiveSession, DeferredClose>();
+
   constructor(private readonly dependencies: SessionLifecycleDependencies) {}
   async create(command: SessionCreateCommand): Promise<void> {
     const d = this.dependencies;
@@ -145,6 +158,7 @@ export class SessionLifecycle {
         },
         defaults,
       });
+      this.requireOpenAdmission();
       const mcp = await d.startLocalMcpServers(ref);
       pendingMcpServers = mcp.servers;
       const runtimeOptions = buildCreateRuntimeOptions({
@@ -163,7 +177,9 @@ export class SessionLifecycle {
       });
       const session = await d.runtime.createSession(runtimeOptions);
       pendingSession = session;
+      this.requireOpenAdmission();
       const autoCompactionArmed = await d.enableDaemonAutoCompaction(session, compactionTokenLimit);
+      this.requireOpenAdmission();
 
       const appSessionId = session.sessionId;
       const maxContextTokens = d.maxContextTokensForModel(primary.modelId);
@@ -188,7 +204,7 @@ export class SessionLifecycle {
       this.driveInBackground(appSessionId, command.goal);
     } catch (error) {
       await this.cleanupFailedOpen(pendingMcpServers, pendingSession, pendingLiveSession);
-      d.emitError({ message: errMsg(error) });
+      if (!isOpenAdmissionClosed(error)) d.emitError({ message: errMsg(error) });
     }
   }
 
@@ -241,9 +257,11 @@ export class SessionLifecycle {
         kind: 'resume',
         exposed: resumed.exposedCompaction,
       });
+      this.requireOpenAdmission();
       if (await d.enableDaemonAutoCompaction(session, limit)) {
         summary.compactionTokenLimit = limit;
       }
+      this.requireOpenAdmission();
       const projectedSummary = d.applyPendingSettingsToSummary({ ...summary });
       const liveSession = createLiveSession(summary, session, mcp);
       pendingLiveSession = liveSession;
@@ -278,7 +296,8 @@ export class SessionLifecycle {
       return true;
     } catch (error) {
       await this.cleanupFailedOpen(pendingMcpServers, pendingSession, pendingLiveSession);
-      d.emitError({ appSessionId, providerSessionId, message: errMsg(error) });
+      if (!isOpenAdmissionClosed(error))
+        d.emitError({ appSessionId, providerSessionId, message: errMsg(error) });
       return false;
     }
   }
@@ -350,6 +369,7 @@ export class SessionLifecycle {
     appSessionId: string,
     previousLiveSession?: LiveSession,
   ): Promise<void> {
+    if (this.dependencies.isShutdownStarted()) return;
     const liveSession = this.dependencies.registry.getLive(appSessionId);
     if (!liveSession) {
       if (previousLiveSession && previousLiveSession.closeMode !== 'discard-pending') {
@@ -369,47 +389,134 @@ export class SessionLifecycle {
   async close(appSessionId: string, mode: SessionCloseMode = 'discard-pending'): Promise<void> {
     const liveSession = this.dependencies.registry.getLive(appSessionId);
     if (!liveSession) return;
+    const operation = this.beginClose(liveSession, mode);
+    if (operation.created) await this.finishClose(liveSession);
+    await operation.deferred.promise;
+  }
+
+  private beginClose(liveSession: LiveSession, mode: SessionCloseMode): CloseOperation {
     if (mode === 'discard-pending') {
       liveSession.closeMode = mode;
       liveSession.pendingSends = [];
     } else {
       liveSession.closeMode ??= mode;
     }
-    liveSession.closePromise ??= this.closeSessionResources(liveSession);
-    await liveSession.closePromise;
+    const existing = this.deferredCloses.get(liveSession);
+    if (existing) return { deferred: existing, created: false };
+
+    let resolve = (): void => undefined;
+    let reject = (error: unknown): void => {
+      void error;
+    };
+    const promise = new Promise<void>((resolvePromise, rejectPromise) => {
+      resolve = resolvePromise;
+      reject = rejectPromise;
+    });
+    const deferred = { promise, resolve, reject, started: false };
+    this.deferredCloses.set(liveSession, deferred);
+    liveSession.closePromise = promise;
+    return { deferred, created: true };
+  }
+
+  private async finishClose(liveSession: LiveSession): Promise<void> {
+    const deferred = this.deferredCloses.get(liveSession);
+    if (!deferred || deferred.started) return;
+    deferred.started = true;
+    try {
+      await this.closeSessionResources(liveSession);
+      deferred.resolve();
+    } catch (error) {
+      deferred.reject(error);
+    } finally {
+      this.deferredCloses.delete(liveSession);
+    }
   }
 
   private async closeSessionResources(liveSession: LiveSession): Promise<void> {
     const d = this.dependencies;
-    d.stopContextPolling(liveSession.summary.appSessionId);
-    if (liveSession.summary.providerSessionId) {
-      d.stopContextPolling(liveSession.summary.providerSessionId);
+    let firstError: unknown;
+    const run = async (action: () => void | Promise<void>): Promise<void> => {
+      try {
+        await action();
+      } catch (error) {
+        firstError ??= error;
+      }
+    };
+
+    await run(() => {
+      d.stopContextPolling(liveSession.summary.appSessionId);
+    });
+    const providerSessionId = liveSession.summary.providerSessionId;
+    if (providerSessionId) {
+      await run(() => {
+        d.stopContextPolling(providerSessionId);
+      });
     }
-    d.clearAutoCompactionWatchdog(liveSession.summary.appSessionId);
-    liveSession.unsubscribe?.();
+    await run(() => {
+      d.clearAutoCompactionWatchdog(liveSession.summary.appSessionId);
+    });
+    await run(() => {
+      liveSession.unsubscribe?.();
+    });
     for (const [providerSessionId, childSession] of liveSession.childSessions) {
-      d.stopContextPolling(childSession.session.sessionId);
-      d.clearAutoCompactionWatchdog(providerSessionId);
-      childSession.unsubscribe?.();
-      await runBestEffortAsync(() => childSession.session.close());
+      await run(() => {
+        d.stopContextPolling(childSession.session.sessionId);
+      });
+      await run(() => {
+        d.clearAutoCompactionWatchdog(providerSessionId);
+      });
+      await run(() => {
+        childSession.unsubscribe?.();
+      });
+      await run(() => childSession.session.close());
     }
     for (const server of liveSession.mcpServers) {
-      await runBestEffortAsync(() => server.close());
+      await run(() => server.close());
     }
-    await runBestEffortAsync(() => liveSession.session.close());
-    await runBestEffortAsync(() => d.closeBrowserSession(liveSession.summary.appSessionId));
-    d.clearSessionRuntimeCaches(liveSession);
-    if (d.registry.unregister(liveSession.summary.appSessionId)) {
-      d.forgetInteractions(liveSession.summary.appSessionId);
-      d.forgetEventFlow(liveSession.summary.appSessionId);
+    await run(() => liveSession.session.close());
+    await run(() => d.closeBrowserSession(liveSession.summary.appSessionId));
+    await run(() => {
+      d.clearSessionRuntimeCaches(liveSession);
+    });
+    let unregistered: LiveSession | undefined;
+    try {
+      unregistered = d.registry.unregister(liveSession.summary.appSessionId);
+    } catch (error) {
+      firstError ??= error;
     }
-    d.emitSessionList();
+    if (unregistered) {
+      await run(() => {
+        d.forgetInteractions(liveSession.summary.appSessionId);
+      });
+      await run(() => {
+        d.forgetEventFlow(liveSession.summary.appSessionId);
+      });
+    }
+    await run(() => {
+      d.emitSessionList();
+    });
+    if (firstError !== undefined) throw errorFromUnknown(firstError);
   }
 
   async closeAll(): Promise<void> {
-    for (const liveSession of this.dependencies.registry.liveSessionsSnapshot()) {
-      await this.close(liveSession.summary.appSessionId);
+    const scheduled = this.dependencies.registry.liveSessionsSnapshot().map((liveSession) => ({
+      liveSession,
+      close: this.beginClose(liveSession, 'discard-pending'),
+    }));
+    let firstError: unknown;
+    for (const { liveSession, close } of scheduled) {
+      if (close.created) await this.finishClose(liveSession);
+      try {
+        await close.deferred.promise;
+      } catch (error) {
+        firstError ??= error;
+      }
     }
+    if (firstError !== undefined) throw errorFromUnknown(firstError);
+  }
+
+  private requireOpenAdmission(): void {
+    if (this.dependencies.isShutdownStarted()) throw new OpenAdmissionClosedError();
   }
 
   private async prepareToSend(appSessionId: string): Promise<LiveSession | undefined> {
@@ -454,7 +561,7 @@ export class SessionLifecycle {
   private async drive(appSessionId: string, prompt: string): Promise<void> {
     const d = this.dependencies;
     const liveSession = d.registry.getLive(appSessionId);
-    if (!liveSession || liveSession.closeMode) return;
+    if (!liveSession || liveSession.closeMode || d.isShutdownStarted()) return;
     const stableAppSessionId = liveSession.summary.appSessionId;
     try {
       liveSession.streaming = true;
@@ -468,7 +575,7 @@ export class SessionLifecycle {
       liveSession.interruptingForSteer = false;
       liveSession.interrupting = false;
       liveSession.streaming = false;
-      if (this.shouldDiscardPendingSends(liveSession)) {
+      if (d.isShutdownStarted() || this.shouldDiscardPendingSends(liveSession)) {
         liveSession.pendingSends = [];
       } else if (!d.registry.getLive(stableAppSessionId)) {
         const queued = liveSession.pendingSends.splice(0);
@@ -486,7 +593,8 @@ export class SessionLifecycle {
 
   private driveInBackground(appSessionId: string, prompt: string): void {
     void this.drive(appSessionId, prompt).catch((error: unknown) => {
-      this.dependencies.emitError({ appSessionId, message: errMsg(error) });
+      if (!this.dependencies.isShutdownStarted())
+        this.dependencies.emitError({ appSessionId, message: errMsg(error) });
     });
   }
 
@@ -503,6 +611,7 @@ export class SessionLifecycle {
 
   private async redeliverQueuedSends(appSessionId: string, queued: string[]): Promise<void> {
     for (const text of queued) {
+      if (this.dependencies.isShutdownStarted()) return;
       try {
         await this.send(appSessionId, text);
       } catch (error) {
@@ -543,4 +652,14 @@ async function runBestEffortAsync(action: () => Promise<void>): Promise<void> {
   } catch {
     // Cleanup continues through the remaining resources.
   }
+}
+
+class OpenAdmissionClosedError extends Error {}
+
+function isOpenAdmissionClosed(error: unknown): boolean {
+  return error instanceof OpenAdmissionClosedError;
+}
+
+function errorFromUnknown(error: unknown): Error {
+  return error instanceof Error ? error : new Error(String(error));
 }

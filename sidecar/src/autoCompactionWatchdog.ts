@@ -14,6 +14,7 @@ export const POST_TURN_AUTO_COMPACTION_WATCHDOG_MS = 60_000;
 
 export class AutoCompactionWatchdogs {
   private readonly timers = new Map<string, ReturnType<typeof setTimeout>>();
+  private epoch = 0;
 
   constructor(private readonly onExpire: (sessionKey: string) => void) {}
 
@@ -21,12 +22,14 @@ export class AutoCompactionWatchdogs {
   // how the post-turn check tightens the bound set at compaction start.
   arm(sessionKey: string, ms: number): void {
     this.clear(sessionKey);
+    const epoch = this.epoch;
     const timer = setTimeout(() => {
+      if (epoch !== this.epoch || this.timers.get(sessionKey) !== timer) return;
       this.timers.delete(sessionKey);
       this.onExpire(sessionKey);
     }, ms);
     // Never keep the process alive just for a watchdog.
-    timer.unref?.();
+    timer.unref();
     this.timers.set(sessionKey, timer);
   }
 
@@ -43,6 +46,7 @@ export class AutoCompactionWatchdogs {
   }
 
   clearAll(): void {
+    this.epoch += 1;
     for (const timer of this.timers.values()) clearTimeout(timer);
     this.timers.clear();
   }

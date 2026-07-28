@@ -33,7 +33,15 @@ export interface StreamGate {
   resolve(): void;
 }
 
+export interface RejectableGate extends StreamGate {
+  reject(error: unknown): void;
+}
+
 interface DeferredStream extends StreamGate {
+  readonly promise: Promise<void>;
+}
+
+interface DeferredRejectable extends RejectableGate {
   readonly promise: Promise<void>;
 }
 
@@ -67,6 +75,7 @@ export class FakeFactorySession implements FactorySession {
   private nextContextStatsGate?: DeferredStream;
   private nextUpdateSettingsGate?: DeferredStream;
   private nextCloseGate?: DeferredStream;
+  private nextInterruptGate?: DeferredRejectable;
 
   constructor(
     readonly sessionId: string,
@@ -139,6 +148,12 @@ export class FakeFactorySession implements FactorySession {
     return gate;
   }
 
+  deferNextInterrupt(): RejectableGate {
+    const gate = this.deferRejectable();
+    this.nextInterruptGate = gate;
+    return gate;
+  }
+
   waitForPrompts(count: number): Promise<void> {
     if (this.prompts.length >= count) return Promise.resolve();
     return new Promise((resolve) => this.promptWaiters.push({ count, resolve }));
@@ -161,9 +176,11 @@ export class FakeFactorySession implements FactorySession {
     return this.nextCompactResult ?? { newSessionId: this.sessionId, removedCount: 0 };
   }
 
-  interrupt(): Promise<void> {
+  async interrupt(): Promise<void> {
     this.calls.push({ target: 'provider', method: 'interrupt', args: [this.sessionId] });
-    return Promise.resolve();
+    const gate = this.nextInterruptGate;
+    delete this.nextInterruptGate;
+    await gate?.promise;
   }
 
   enterSpecMode(
@@ -264,6 +281,18 @@ export class FakeFactorySession implements FactorySession {
     const gate = { promise, resolve: release };
     gates?.push(gate);
     return gate;
+  }
+
+  private deferRejectable(): DeferredRejectable {
+    let release = (): void => undefined;
+    let fail = (error: unknown): void => {
+      void error;
+    };
+    const promise = new Promise<void>((resolve, reject) => {
+      release = resolve;
+      fail = reject;
+    });
+    return { promise, resolve: release, reject: fail };
   }
 
   private resolvePromptWaiters(): void {

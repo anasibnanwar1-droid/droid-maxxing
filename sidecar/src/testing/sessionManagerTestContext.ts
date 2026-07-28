@@ -61,6 +61,7 @@ export interface SessionManagerTestContext {
   create(
     command: Omit<Extract<Protocol.ClientCommand, { type: 'session.create' }>, 'type'>,
   ): Promise<void>;
+  shutdown(): Promise<void>;
   waitForIdle(): Promise<void>;
   dispose(): Promise<void>;
 }
@@ -146,6 +147,7 @@ export function createSessionManagerTestContext(
     },
     handle,
     create: (command) => handle({ type: 'session.create', ...command }),
+    shutdown: () => withHome(home, () => manager.shutdown()),
     waitForIdle: () => new Promise((resolve) => setImmediate(resolve)),
     dispose: async () => {
       if (disposed) return;

@@ -64,6 +64,13 @@ class CallbackCloseSession extends FakeFactorySession {
   }
 }
 
+class RejectingCloseSession extends FakeFactorySession {
+  override async close(): Promise<void> {
+    await super.close();
+    throw new Error(`close failed: ${this.sessionId}`);
+  }
+}
+
 function createHarness(ordinarySummaries: SessionSummary[] = []) {
   const calls: RecordedCall[] = [];
   const events: ServerEvent[] = [];
@@ -75,6 +82,8 @@ function createHarness(ordinarySummaries: SessionSummary[] = []) {
   let projection: Partial<SessionSummary> = {};
   let applyPending: (appSessionId: string) => Promise<boolean> = () => Promise.resolve(true);
   let enableAutoCompaction = (): Promise<boolean> => Promise.resolve(true);
+  let compactionLimit = (): Promise<number> => Promise.resolve(800);
+  let shutdownStarted = false;
   let nextEmitFailure: { type: ServerEvent['type']; error: Error } | undefined;
   let now = 10_000;
   let mcpId = 0;
@@ -138,7 +147,7 @@ function createHarness(ordinarySummaries: SessionSummary[] = []) {
     },
     makePermissionHandler: () => () => new Promise<RequestPermissionHandlerResult>(() => undefined),
     makeAskUserHandler: () => () => new Promise<AskUserResult>(() => undefined),
-    compactionLimit: () => Promise.resolve(800),
+    compactionLimit: () => compactionLimit(),
     enableDaemonAutoCompaction: (session, limit) => {
       calls.push({
         target: 'provider',
@@ -147,6 +156,7 @@ function createHarness(ordinarySummaries: SessionSummary[] = []) {
       });
       return enableAutoCompaction();
     },
+    isShutdownStarted: () => shutdownStarted,
     subscribeSessionCompaction: (live) => {
       live.unsubscribe = live.session.onNotification(() => undefined);
     },
@@ -217,6 +227,12 @@ function createHarness(ordinarySummaries: SessionSummary[] = []) {
     },
     setEnableAutoCompaction: (action: () => Promise<boolean>) => {
       enableAutoCompaction = action;
+    },
+    setCompactionLimit: (action: () => Promise<number>) => {
+      compactionLimit = action;
+    },
+    setShutdownStarted: (started: boolean) => {
+      shutdownStarted = started;
     },
     failNextEmit: (type: ServerEvent['type'], error: Error) => {
       nextEmitFailure = { type, error };
@@ -666,6 +682,58 @@ test('resuming an already-live session does not reload or persist it', async () 
   );
 });
 
+test('create and resume abandon in-flight opens when shutdown admission closes', async () => {
+  const creating = createHarness();
+  let releaseCreateLimit = (_limit: number): void => undefined;
+  creating.setCompactionLimit(
+    () =>
+      new Promise<number>((resolve) => {
+        releaseCreateLimit = resolve;
+      }),
+  );
+  const create = creating.lifecycle.create(createCommand());
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  creating.setShutdownStarted(true);
+  releaseCreateLimit(800);
+  await create;
+  assert.equal(creating.runtime.createCalls.length, 0);
+  assert.equal(creating.registry.liveSessionsSnapshot().length, 0);
+  assert.equal(creating.calls.filter((call) => call.method === 'autoCompaction.arm').length, 0);
+  assert.equal(
+    creating.events.some((event) => event.type === 'error'),
+    false,
+  );
+
+  const historical = summary('resume-stable', 'resume-provider');
+  const resuming = createHarness([historical]);
+  const provider = queueLoad(resuming, 'resume-provider');
+  let releaseResumeLimit = (_limit: number): void => undefined;
+  resuming.setCompactionLimit(
+    () =>
+      new Promise<number>((resolve) => {
+        releaseResumeLimit = resolve;
+      }),
+  );
+  const resume = resuming.lifecycle.resume('resume-stable');
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(resuming.runtime.loadCalls.length, 1);
+  resuming.setShutdownStarted(true);
+  releaseResumeLimit(800);
+  assert.equal(await resume, false);
+  assert.equal(resuming.registry.liveSessionsSnapshot().length, 0);
+  assert.equal(resuming.calls.filter((call) => call.method === 'autoCompaction.arm').length, 0);
+  assert.equal(
+    resuming.calls.filter(
+      (call) => call.method === 'session.close' && call.args[0] === provider.sessionId,
+    ).length,
+    1,
+  );
+  assert.equal(
+    resuming.events.some((event) => event.type === 'error'),
+    false,
+  );
+});
+
 test('close follows ownership order and closeAll closes its initial snapshot', async () => {
   const harness = createHarness();
   const provider = new CallbackCloseSession('owner', harness.calls, () => {
@@ -747,6 +815,73 @@ test('close follows ownership order and closeAll closes its initial snapshot', a
   );
   await all.lifecycle.closeAll();
   assert.equal(all.registry.liveSessionsSnapshot().length, 0);
+});
+
+test('closeAll marks its full snapshot before sequential cleanup', async () => {
+  const harness = createHarness();
+  let releaseFirst = (): void => undefined;
+  const first = new CallbackCloseSession(
+    'first-marked',
+    harness.calls,
+    () =>
+      new Promise<void>((resolve) => {
+        releaseFirst = resolve;
+      }),
+  );
+  const second = new FakeFactorySession('second-marked', {}, harness.calls);
+  harness.runtime.createQueue.push(first, second);
+  await harness.lifecycle.create(createCommand());
+  await first.waitForPrompts(1);
+  await harness.lifecycle.create(createCommand());
+  await second.waitForPrompts(1);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+
+  const closingAll = harness.lifecycle.closeAll();
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  const firstLive = harness.registry.getLive('first-marked');
+  const secondLive = harness.registry.getLive('second-marked');
+  assert.equal(firstLive?.closeMode, 'discard-pending');
+  assert.equal(secondLive?.closeMode, 'discard-pending');
+  assert.ok(secondLive?.closePromise);
+
+  let directSecondSettled = false;
+  const directSecond = harness.lifecycle.close('second-marked').then(() => {
+    directSecondSettled = true;
+  });
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(directSecondSettled, false);
+  assert.equal(
+    harness.calls.some(
+      (call) => call.method === 'session.close' && call.args[0] === 'second-marked',
+    ),
+    false,
+  );
+
+  releaseFirst();
+  await Promise.all([closingAll, directSecond]);
+  assert.deepEqual(
+    harness.calls.filter((call) => call.method === 'session.close').map((call) => call.args[0]),
+    ['first-marked', 'second-marked'],
+  );
+});
+
+test('closeAll records a cleanup failure and still closes later sessions', async () => {
+  const harness = createHarness();
+  const first = new RejectingCloseSession('first-rejecting', {}, harness.calls);
+  const second = new FakeFactorySession('second-after-rejection', {}, harness.calls);
+  harness.runtime.createQueue.push(first, second);
+  await harness.lifecycle.create(createCommand());
+  await first.waitForPrompts(1);
+  await harness.lifecycle.create(createCommand());
+  await second.waitForPrompts(1);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+
+  await assert.rejects(harness.lifecycle.closeAll(), /close failed: first-rejecting/);
+  assert.deepEqual(
+    harness.calls.filter((call) => call.method === 'session.close').map((call) => call.args[0]),
+    ['first-rejecting', 'second-after-rejection'],
+  );
+  assert.equal(harness.registry.liveSessionsSnapshot().length, 0);
 });
 
 test('closing an active session discards queued sends without reopening it', async () => {

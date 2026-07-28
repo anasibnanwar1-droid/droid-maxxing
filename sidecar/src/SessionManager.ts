@@ -144,6 +144,15 @@ interface UsageOffset {
   tokensOut: number;
 }
 
+type ContextRefreshTarget =
+  | { kind: 'primary'; parent: LiveSession; session: FactorySession }
+  | {
+      kind: 'child';
+      parent: LiveSession;
+      childSessionId: string;
+      child: LiveChildSession;
+    };
+
 const MAX_OPEN_CHILD_SESSIONS = boundedInt(
   process.env.DROID_CONTROL_MAX_OPEN_CHILD_SESSIONS,
   4,
@@ -202,6 +211,9 @@ export class SessionManager {
   // summary-level generation counter of their own).
   private readonly childSessionCompactions = new Map<string, number>();
   private readonly contextPollers = new Map<string, ReturnType<typeof setInterval>>();
+  private contextEpoch = 0;
+  private shutdownPromise?: Promise<void>;
+  private readonly childOpenAttempts = new WeakMap<LiveSession, Map<string, symbol>>();
   private readonly pendingNativeBrowserRequests = new Map<string, PendingNativeBrowserRequest>();
   private readonly browsers: SessionBrowsers;
   private readonly createLocalMcpResource: SessionManagerDependencies['createLocalMcpResource'];
@@ -312,6 +324,7 @@ export class SessionManager {
       },
       enableDaemonAutoCompaction: (session, limit) =>
         this.enableDaemonAutoCompaction(session, limit),
+      isShutdownStarted: () => this.shutdownPromise !== undefined,
       subscribeSessionCompaction: (liveSession) => {
         this.subscribeSessionCompaction(liveSession);
       },
@@ -321,6 +334,14 @@ export class SessionManager {
       runPrimaryTurn: (liveSession, prompt) => this.runPrimaryTurn(liveSession, prompt),
       refreshContext: (sourceSessionId, session) => this.refreshContext(sourceSessionId, session),
       onTurnSettledWhileAutoCompacting: (appSessionId) => {
+        const liveSession = this.registry.getLive(appSessionId);
+        if (
+          this.shutdownPromise ||
+          !liveSession ||
+          hasSessionCloseStarted(liveSession) ||
+          liveSession.summary.appSessionId !== appSessionId
+        )
+          return;
         this.autoCompactionWatchdogs.arm(appSessionId, POST_TURN_AUTO_COMPACTION_WATCHDOG_MS);
       },
       stopContextPolling: (sourceSessionId) => {
@@ -363,6 +384,7 @@ export class SessionManager {
 
   // eslint-disable-next-line complexity -- Public command dispatch is intentionally unchanged in PR 3.
   async handle(cmd: ClientCommand): Promise<void> {
+    if (this.shutdownPromise) throw new Error('Session manager is shutting down.');
     switch (cmd.type) {
       case 'connect':
         this.connect(cmd.apiKey);
@@ -747,6 +769,12 @@ export class SessionManager {
           reasoningEffort: cmd.reasoningEffort,
         });
         await this.applyAgentSessionSettings(session, cmd.agent, settings);
+        if (
+          this.shutdownPromise ||
+          this.registry.getLive(session.summary.appSessionId) !== session ||
+          hasSessionCloseStarted(session)
+        )
+          return;
         if (cmd.appSessionId) this.rememberPendingAgentSettings(cmd);
       }
       if (cmd.appSessionId) {
@@ -764,8 +792,13 @@ export class SessionManager {
           // The auto-compaction threshold is derived from the primary model,
           // so recompute it when the model changes; otherwise auto-compaction
           // keeps using the limit captured at create/resume time.
-          if (cmd.modelId !== undefined) await this.recomputeSessionCompactionLimit(session);
-          await this.refreshContext(appSessionId, session.session);
+          const stillCurrent = () =>
+            !this.shutdownPromise &&
+            this.registry.getLive(appSessionId) === session &&
+            !hasSessionCloseStarted(session);
+          if (cmd.modelId !== undefined)
+            await this.recomputeSessionCompactionLimit(session, stillCurrent);
+          if (stillCurrent()) await this.refreshContext(appSessionId, session.session);
         }
       }
     } catch (err) {
@@ -780,8 +813,11 @@ export class SessionManager {
     cmd: Extract<ClientCommand, { type: 'child.updateSettings' }>,
   ): Promise<void> {
     const parent = this.registry.getLive(cmd.parentAppSessionId);
+    if (!parent) {
+      this.emitChildSettingsTargetInvalid(cmd);
+      return;
+    }
     if (
-      !parent ||
       parent.summary.appSessionId !== cmd.parentAppSessionId ||
       parent.summary.sessionPurpose !== 'mission-control'
     ) {
@@ -863,11 +899,22 @@ export class SessionManager {
     child: LiveChildSession,
   ): boolean {
     return (
-      this.registry.getLive(parent.summary.appSessionId) === parent &&
-      !hasSessionCloseStarted(parent) &&
-      parent.childSessions.get(childSessionId) === child &&
+      this.isCurrentChildSession(parent, childSessionId, child) &&
       !parent.completedChildSessions.has(childSessionId) &&
       !child.closeWhenIdle
+    );
+  }
+
+  private isCurrentChildSession(
+    parent: LiveSession,
+    childSessionId: string,
+    child: LiveChildSession,
+  ): boolean {
+    return (
+      !this.shutdownPromise &&
+      this.registry.getLive(parent.summary.appSessionId) === parent &&
+      !hasSessionCloseStarted(parent) &&
+      parent.childSessions.get(childSessionId) === child
     );
   }
 
@@ -1025,10 +1072,14 @@ export class SessionManager {
     // revision guard keeps a slow batch from re-arming stale limits after a
     // newer settings change already retuned.
     const rev = ++this.compactionRetuneRev;
-    const stillCurrent = () => rev === this.compactionRetuneRev;
+    const stillCurrent = () => !this.shutdownPromise && rev === this.compactionRetuneRev;
     const retunes: Promise<unknown>[] = [];
     for (const liveSession of this.registry.liveSessionsSnapshot()) {
-      retunes.push(this.recomputeSessionCompactionLimit(liveSession, stillCurrent));
+      const primaryStillCurrent = () =>
+        stillCurrent() &&
+        this.registry.getLive(liveSession.summary.appSessionId) === liveSession &&
+        !hasSessionCloseStarted(liveSession);
+      retunes.push(this.recomputeSessionCompactionLimit(liveSession, primaryStillCurrent));
       for (const [childProviderSessionId, childSession] of liveSession.childSessions) {
         const modelId = this.childSessionModelId(
           liveSession,
@@ -1040,6 +1091,7 @@ export class SessionManager {
             if (
               !stillCurrent() ||
               this.registry.getLive(liveSession.summary.appSessionId) !== liveSession ||
+              hasSessionCloseStarted(liveSession) ||
               liveSession.childSessions.get(childProviderSessionId) !== childSession ||
               this.childSessionModelId(liveSession, childProviderSessionId, childSession.role) !==
                 modelId
@@ -1061,6 +1113,7 @@ export class SessionManager {
     session: FactorySession,
     limit: number | undefined,
   ): Promise<boolean> {
+    if (this.shutdownPromise) return false;
     try {
       await session.updateSettings(daemonCompactionSettings(limit) as never);
       return true;
@@ -1091,27 +1144,32 @@ export class SessionManager {
     const liveSession = this.registry.getLive(appSessionId);
     const pending = this.pendingAgentSettings.get(appSessionId);
     if (!liveSession || !pending) return true;
+    const stillCurrent = () =>
+      !this.shutdownPromise &&
+      this.registry.getLive(appSessionId) === liveSession &&
+      !hasSessionCloseStarted(liveSession);
     try {
       let patch: Partial<SessionSummary> = {};
       for (const [agent, settings] of Object.entries(pending) as [
         ConfigurableSessionRole,
         AgentSettingPatch,
       ][]) {
-        await this.applyAgentSessionSettings(
-          liveSession,
-          agent,
-          await this.runtimeAgentSettings(liveSession, agent, settings),
-        );
+        const runtimeSettings = await this.runtimeAgentSettings(liveSession, agent, settings);
+        if (!stillCurrent()) return false;
+        await this.applyAgentSessionSettings(liveSession, agent, runtimeSettings);
+        if (!stillCurrent()) return false;
         patch = { ...patch, ...this.summaryPatchForAgent(agent, settings) };
       }
+      if (!stillCurrent()) return false;
       this.registry.updateSummary(appSessionId, patch);
       if (pending.primary?.modelId !== undefined) {
         // A pending primary model applied before send changes the
         // auto-compaction threshold; recompute it to match the new model.
-        await this.recomputeSessionCompactionLimit(liveSession);
+        await this.recomputeSessionCompactionLimit(liveSession, stillCurrent);
       }
-      return true;
+      return stillCurrent();
     } catch (err) {
+      if (!stillCurrent()) return false;
       this.emitError({
         appSessionId,
         message: `Could not apply selected model before send: ${errMsg(err)}`,
@@ -1152,18 +1210,19 @@ export class SessionManager {
 
   private async runPrimaryTurn(liveSession: LiveSession, prompt: string): Promise<void> {
     const appSessionId = liveSession.summary.appSessionId;
+    if (!this.isCurrentPrimarySession(liveSession)) return;
     this.eventFlow.beginTurn(appSessionId, appSessionId);
     this.startContextPolling(appSessionId, liveSession.session);
     try {
       await this.applyDesignToolPolicy(liveSession, isDesignPrompt(prompt));
-      if (hasSessionCloseStarted(liveSession)) return;
+      if (!this.isCurrentPrimarySession(liveSession)) return;
       const stream = liveSession.session.stream(prompt, { includePartialMessages: true });
       for await (const ev of stream) {
-        if (hasSessionCloseStarted(liveSession)) break;
+        if (!this.isCurrentPrimarySession(liveSession)) break;
         this.eventFlow.applyStreamEvent(appSessionId, appSessionId, 'primary', ev);
       }
     } catch (err) {
-      if (hasSessionCloseStarted(liveSession)) {
+      if (!this.isCurrentPrimarySession(liveSession)) {
         return;
       } else if (liveSession.interruptingForSteer) {
         this.timeline.appendStatus(appSessionId, 'Current turn interrupted for steering.');
@@ -1179,10 +1238,18 @@ export class SessionManager {
       this.stopContextPolling(appSessionId);
       // Keep streaming=true while refreshContext is in flight so concurrent
       // sends queue instead of racing a second lifecycle turn.
-      if (!hasSessionCloseStarted(liveSession)) {
+      if (this.isCurrentPrimarySession(liveSession)) {
         await this.refreshContext(appSessionId, liveSession.session);
       }
     }
+  }
+
+  private isCurrentPrimarySession(liveSession: LiveSession): boolean {
+    return (
+      !this.shutdownPromise &&
+      this.registry.getLive(liveSession.summary.appSessionId) === liveSession &&
+      !hasSessionCloseStarted(liveSession)
+    );
   }
 
   // Design turns are a single focused task (extra prompts queue), so the model
@@ -1198,11 +1265,13 @@ export class SessionManager {
       liveSession.todoDisabledForDesign === design
     )
       return;
+    if (!this.isCurrentPrimarySession(liveSession)) return;
     try {
       await liveSession.session.updateSettings({ disabledToolIds: design ? ['TodoWrite'] : [] });
+      if (!this.isCurrentPrimarySession(liveSession)) return;
       liveSession.todoDisabledForDesign = design;
     } catch (err) {
-      if (hasSessionCloseStarted(liveSession)) return;
+      if (!this.isCurrentPrimarySession(liveSession)) return;
       this.emitError({
         appSessionId: liveSession.summary.appSessionId,
         message: `Could not update design tool policy: ${errMsg(err)}`,
@@ -1425,6 +1494,13 @@ export class SessionManager {
     const session = liveSession.session;
     liveSession.unsubscribe?.();
     liveSession.unsubscribe = session.onNotification((note: Record<string, unknown>) => {
+      if (
+        this.shutdownPromise ||
+        this.registry.getLive(liveSession.summary.appSessionId) !== liveSession ||
+        hasSessionCloseStarted(liveSession) ||
+        liveSession.session !== session
+      )
+        return;
       // The daemon emits the same compacting/compacted notifications during a
       // manual compactSession RPC; runCompaction owns that path's statuses and
       // refresh, so reacting here too would duplicate them.
@@ -1459,8 +1535,17 @@ export class SessionManager {
   private compactionHost(): AutoCompactionHost<LiveChildSession, LiveSession, FactorySession> {
     return {
       watchdogs: this.autoCompactionWatchdogs,
-      sessions: () => this.registry.liveSessionsSnapshot(),
-      findSession: (appSessionId) => this.registry.getLive(appSessionId),
+      sessions: () =>
+        this.shutdownPromise
+          ? []
+          : this.registry
+              .liveSessionsSnapshot()
+              .filter((session) => !hasSessionCloseStarted(session)),
+      findSession: (appSessionId) => {
+        if (this.shutdownPromise) return undefined;
+        const session = this.registry.getLive(appSessionId);
+        return session && !hasSessionCloseStarted(session) ? session : undefined;
+      },
       childSessionCompactions: this.childSessionCompactions,
       emitCompactionStatus: (appSessionId, text, providerSessionId, role) => {
         this.timeline.appendStatus(appSessionId, text, 'auto', providerSessionId, role);
@@ -1471,10 +1556,22 @@ export class SessionManager {
       settlePrimary: (appSessionId) => {
         void this.lifecycle.settleAfterCompaction(appSessionId);
       },
-      driveChildSession: (childSession, text) => this.driveChildSession(childSession, text),
+      driveChildSession: (childSession, text) => {
+        const parent = this.registry.getLive(childSession.appSessionId);
+        return parent &&
+          this.isCurrentChildSession(parent, childSession.childSessionId, childSession)
+          ? this.driveChildSession(parent, childSession, text)
+          : Promise.resolve();
+      },
       closeChildSession: (appSessionId, providerSessionId) =>
         this.closeChildSession(appSessionId, providerSessionId),
       emitChildSessionPaused: (childSession) => {
+        const parent = this.registry.getLive(childSession.appSessionId);
+        if (
+          !parent ||
+          !this.isCurrentChildSession(parent, childSession.childSessionId, childSession)
+        )
+          return;
         this.emit({
           type: 'child.updated',
           appSessionId: childSession.appSessionId,
@@ -1780,13 +1877,19 @@ export class SessionManager {
       await activeSession.updateSettings(next);
       return activeSession;
     });
+    const stillCurrent = () =>
+      liveSession !== undefined &&
+      !this.shutdownPromise &&
+      this.registry.getLive(appSessionId) === liveSession &&
+      !hasSessionCloseStarted(liveSession);
+    if (liveSession && !stillCurrent()) return;
     if (liveSession) this.registry.updateSummary(appSessionId, patch);
     if (liveSession && settings.modelId !== undefined) {
       // The model drives the auto-compaction threshold; recompute it so the
       // daemon doesn't keep compacting against the old model's limit.
-      await this.recomputeSessionCompactionLimit(liveSession);
+      await this.recomputeSessionCompactionLimit(liveSession, stillCurrent);
     }
-    if (liveSession && session) await this.refreshContext(appSessionId, session);
+    if (liveSession && session && stillCurrent()) await this.refreshContext(appSessionId, session);
   }
 
   private async openChildSession(
@@ -1805,6 +1908,7 @@ export class SessionManager {
       });
       return;
     }
+    if (this.shutdownPromise) return;
     const liveSession = this.registry.getLive(appSessionId);
     if (!liveSession) {
       // No live session to open against (e.g. a not-yet-resumed/historical
@@ -1832,20 +1936,20 @@ export class SessionManager {
       );
       return;
     }
+    const attempt = this.beginChildOpenAttempt(liveSession, childProviderSessionId);
+    if (!attempt) return;
+    let loadedSession: FactorySession | undefined;
+    let inserted = false;
     try {
       if (!(await this.ensureChildSessionCapacity(liveSession, childProviderSessionId))) return;
+      if (!this.isCurrentChildOpenAttempt(liveSession, childProviderSessionId, attempt)) return;
       const ref = { id: appSessionId };
       const session = await this.runtime.loadSession(childProviderSessionId, {
         permissionHandler: this.interactions.makePermissionHandler(ref),
         askUserHandler: this.interactions.makeAskUserHandler(ref),
       });
-      if (
-        this.registry.getLive(appSessionId) !== liveSession ||
-        hasSessionCloseStarted(liveSession)
-      ) {
-        await session.close().catch(ignoreError);
-        return;
-      }
+      loadedSession = session;
+      if (!this.isCurrentChildOpenAttempt(liveSession, childProviderSessionId, attempt)) return;
       const actualSettings = childSessionSettingsFromInit(session.initResult);
       // A chat/spec child inherits the parent session model when the
       // droid inherits it. Mission Control workers/validators keep their own
@@ -1857,6 +1961,49 @@ export class SessionManager {
             reasoningEffort: actualSettings.reasoningEffort ?? liveSession.summary.reasoningEffort,
           }
         : actualSettings;
+      // When the loaded child session doesn't report its own model, use
+      // the role's configured model (not the primary's), so per-model limits
+      // and context-window clamps stay correct for differing worker/validator models.
+      const workerModelId =
+        resolvedSettings.modelId ??
+        this.childSessionModelId(liveSession, childProviderSessionId, role);
+      const limit = await this.compactionLimit(workerModelId);
+      if (!this.isCurrentChildOpenAttempt(liveSession, childProviderSessionId, attempt)) return;
+      // Workers auto-compact in place via the daemon's own threshold check,
+      // using the worker model's effective limit (so differing worker/validator
+      // models keep their own thresholds).
+      await this.enableDaemonAutoCompaction(session, limit);
+      if (!this.isCurrentChildOpenAttempt(liveSession, childProviderSessionId, attempt)) return;
+      const childSession: LiveChildSession = {
+        session,
+        childSessionId: childProviderSessionId,
+        appSessionId,
+        role,
+        streaming: false,
+        autoCompacting: false,
+        pendingSends: [],
+        lastUsedAt: Date.now(),
+      };
+      childSession.unsubscribe = session.onNotification((note: Record<string, unknown>) => {
+        if (!this.isCurrentChildSession(liveSession, childProviderSessionId, childSession)) return;
+        // The daemon's auto-compaction notifications are handled by
+        // handleCompactionNotification, which owns the child session's status and
+        // refresh; any other notification is normalized and applied here.
+        if (
+          this.handleCompactionNotification(
+            appSessionId,
+            childProviderSessionId,
+            role,
+            session,
+            note,
+          )
+        )
+          return;
+        if (!this.isCurrentChildSession(liveSession, childProviderSessionId, childSession)) return;
+        this.eventFlow.applyNotification(appSessionId, childProviderSessionId, role, note);
+      });
+      liveSession.childSessions.set(childProviderSessionId, childSession);
+      inserted = true;
       if (resolvedSettings.modelId || resolvedSettings.reasoningEffort) {
         liveSession.childSessionSettings.set(childProviderSessionId, resolvedSettings);
         if (liveSession.summary.sessionPurpose === 'mission-control' && resolvedSettings.modelId)
@@ -1873,62 +2020,59 @@ export class SessionManager {
             ...resolvedSettings,
           });
       }
-      // When the loaded child session doesn't report its own model, use
-      // the role's configured model (not the primary's), so per-model limits
-      // and context-window clamps stay correct for differing worker/validator models.
-      const workerModelId =
-        resolvedSettings.modelId ??
-        this.childSessionModelId(liveSession, childProviderSessionId, role);
-      // Workers auto-compact in place via the daemon's own threshold check,
-      // using the worker model's effective limit (so differing worker/validator
-      // models keep their own thresholds).
-      await this.enableDaemonAutoCompaction(session, await this.compactionLimit(workerModelId));
-      if (
-        this.registry.getLive(appSessionId) !== liveSession ||
-        hasSessionCloseStarted(liveSession)
-      ) {
-        await session.close().catch(ignoreError);
-        return;
-      }
-      const childSession: LiveChildSession = {
-        session,
-        childSessionId: childProviderSessionId,
-        appSessionId,
-        role,
-        streaming: false,
-        autoCompacting: false,
-        pendingSends: [],
-        lastUsedAt: Date.now(),
-      };
-      childSession.unsubscribe = session.onNotification((note: Record<string, unknown>) => {
-        // The daemon's auto-compaction notifications are handled by
-        // handleCompactionNotification, which owns the child session's status and
-        // refresh; any other notification is normalized and applied here.
-        if (
-          this.handleCompactionNotification(
-            appSessionId,
-            childProviderSessionId,
-            role,
-            session,
-            note,
-          )
-        )
-          return;
-        this.eventFlow.applyNotification(appSessionId, childProviderSessionId, role, note);
-      });
-      liveSession.childSessions.set(childProviderSessionId, childSession);
       this.timeline.replayChild(appSessionId, childProviderSessionId);
       this.emitChildOpened(appSessionId, childProviderSessionId, role, true);
     } catch (err) {
-      this.emit({
-        type: 'error',
-        code: 'child.open_failed',
-        appSessionId,
-        parentAppSessionId: appSessionId,
-        childSessionId: childProviderSessionId,
-        message: errMsg(err),
-      });
+      if (this.isCurrentChildOpenAttempt(liveSession, childProviderSessionId, attempt))
+        this.emit({
+          type: 'error',
+          code: 'child.open_failed',
+          appSessionId,
+          parentAppSessionId: appSessionId,
+          childSessionId: childProviderSessionId,
+          message: errMsg(err),
+        });
+    } finally {
+      this.finishChildOpenAttempt(liveSession, childProviderSessionId, attempt);
+      if (loadedSession && !inserted) await loadedSession.close().catch(ignoreError);
     }
+  }
+
+  private beginChildOpenAttempt(parent: LiveSession, childSessionId: string): symbol | undefined {
+    let attempts = this.childOpenAttempts.get(parent);
+    if (!attempts) {
+      attempts = new Map();
+      this.childOpenAttempts.set(parent, attempts);
+    }
+    if (attempts.has(childSessionId)) return undefined;
+    const attempt = Symbol(childSessionId);
+    attempts.set(childSessionId, attempt);
+    return attempt;
+  }
+
+  private isCurrentChildOpenAttempt(
+    parent: LiveSession,
+    childSessionId: string,
+    attempt: symbol,
+  ): boolean {
+    return (
+      !this.shutdownPromise &&
+      this.registry.getLive(parent.summary.appSessionId) === parent &&
+      !hasSessionCloseStarted(parent) &&
+      !parent.childSessions.has(childSessionId) &&
+      this.childOpenAttempts.get(parent)?.get(childSessionId) === attempt
+    );
+  }
+
+  private finishChildOpenAttempt(
+    parent: LiveSession,
+    childSessionId: string,
+    attempt: symbol,
+  ): void {
+    const attempts = this.childOpenAttempts.get(parent);
+    if (attempts?.get(childSessionId) !== attempt) return;
+    attempts.delete(childSessionId);
+    if (attempts.size === 0) this.childOpenAttempts.delete(parent);
   }
 
   private emitChildOpened(
@@ -1967,17 +2111,31 @@ export class SessionManager {
     if (!this.childBelongsToSession(liveSession, childProviderSessionId)) return;
     if (!liveSession.childSessions.has(childProviderSessionId))
       await this.openChildSession(appSessionId, childProviderSessionId, 'worker');
+    if (
+      this.registry.getLive(liveSession.summary.appSessionId) !== liveSession ||
+      hasSessionCloseStarted(liveSession)
+    )
+      return;
     const childSession = liveSession.childSessions.get(childProviderSessionId);
-    if (!childSession) return;
+    if (
+      !childSession ||
+      !this.isCurrentChildSession(liveSession, childProviderSessionId, childSession)
+    )
+      return;
     childSession.lastUsedAt = Date.now();
     if (childSession.streaming || childSession.autoCompacting) {
       childSession.pendingSends.push(text);
       return;
     }
-    await this.driveChildSession(childSession, text);
+    await this.driveChildSession(liveSession, childSession, text);
   }
 
-  private async driveChildSession(childSession: LiveChildSession, text: string): Promise<void> {
+  private async driveChildSession(
+    parent: LiveSession,
+    childSession: LiveChildSession,
+    text: string,
+  ): Promise<void> {
+    if (!this.isCurrentChildSession(parent, childSession.childSessionId, childSession)) return;
     childSession.streaming = true;
     childSession.lastUsedAt = Date.now();
     this.eventFlow.beginTurn(childSession.appSessionId, childSession.session.sessionId);
@@ -1991,15 +2149,20 @@ export class SessionManager {
     this.startContextPolling(childSession.session.sessionId, childSession.session);
     try {
       const stream = childSession.session.stream(text, { includePartialMessages: true });
-      for await (const ev of stream)
+      for await (const ev of stream) {
+        if (!this.isCurrentChildSession(parent, childSession.childSessionId, childSession)) break;
         this.eventFlow.applyStreamEvent(
           childSession.appSessionId,
           childSession.session.sessionId,
           childSession.role,
           ev,
         );
+      }
     } catch (err) {
-      if (childSession.interruptingForSteer)
+      if (!this.isCurrentChildSession(parent, childSession.childSessionId, childSession)) {
+        // Closing a provider commonly rejects its active stream. The detached
+        // child must settle quietly without publishing post-close errors.
+      } else if (childSession.interruptingForSteer)
         this.timeline.appendStatus(
           childSession.appSessionId,
           'Child-session turn interrupted for steering.',
@@ -2021,46 +2184,64 @@ export class SessionManager {
         });
       }
     } finally {
-      this.stopContextPolling(childSession.session.sessionId);
-      childSession.interruptingForSteer = false;
-      childSession.interrupting = false;
-      if (
-        childSession.pendingSends.length === 0 &&
-        childSession.closeWhenIdle &&
-        !childSession.autoCompacting
-      ) {
-        childSession.streaming = false;
-        // closeChildSession resolves the worker by the child-map id, which is not
-        // guaranteed to match the live session id.
-        await this.closeChildSession(childSession.appSessionId, childSession.childSessionId);
-      } else {
-        // Refresh while streaming stays true so concurrent sends queue instead
-        // of racing a second driveChildSession(). The daemon auto-compacts the worker
-        // in place (same session id), so no swap handling is needed here.
-        await this.refreshContext(childSession.session.sessionId, childSession.session);
-        childSession.streaming = false;
-        if (childSession.autoCompacting) {
-          // Key by the child-map id: every other watchdog op (initial arm,
-          // interrupt, close, expiry lookup) uses it, so the tightened timer
-          // actually replaces the 5-minute one.
-          this.autoCompactionWatchdogs.arm(
-            childSession.childSessionId,
-            POST_TURN_AUTO_COMPACTION_WATCHDOG_MS,
-          );
-        } else {
-          const next = childSession.pendingSends.shift();
-          if (next !== undefined) void this.driveChildSession(childSession, next);
-          else
-            this.emit({
-              type: 'child.updated',
-              appSessionId: childSession.appSessionId,
-              providerSessionId: childSession.session.sessionId,
-              role: childSession.role,
-              status: 'paused',
-            });
-        }
-      }
+      await this.settleChildTurn(parent, childSession);
     }
+  }
+
+  private async settleChildTurn(
+    parent: LiveSession,
+    childSession: LiveChildSession,
+  ): Promise<void> {
+    this.stopContextPolling(childSession.session.sessionId);
+    childSession.interruptingForSteer = false;
+    childSession.interrupting = false;
+    if (!this.isCurrentChildSession(parent, childSession.childSessionId, childSession)) {
+      childSession.streaming = false;
+      return;
+    }
+    if (
+      childSession.pendingSends.length === 0 &&
+      childSession.closeWhenIdle &&
+      !childSession.autoCompacting
+    ) {
+      childSession.streaming = false;
+      // closeChildSession resolves the worker by the child-map id, which is not
+      // guaranteed to match the live session id.
+      await this.closeChildSession(childSession.appSessionId, childSession.childSessionId);
+      return;
+    }
+
+    // Refresh while streaming stays true so concurrent sends queue instead
+    // of racing a second driveChildSession(). The daemon auto-compacts the worker
+    // in place (same session id), so no swap handling is needed here.
+    await this.refreshContext(childSession.session.sessionId, childSession.session);
+    if (!this.isCurrentChildSession(parent, childSession.childSessionId, childSession)) {
+      childSession.streaming = false;
+      return;
+    }
+    childSession.streaming = false;
+    if (childSession.autoCompacting) {
+      // Key by the child-map id: every other watchdog op (initial arm,
+      // interrupt, close, expiry lookup) uses it, so the tightened timer
+      // actually replaces the 5-minute one.
+      this.autoCompactionWatchdogs.arm(
+        childSession.childSessionId,
+        POST_TURN_AUTO_COMPACTION_WATCHDOG_MS,
+      );
+      return;
+    }
+    const next = childSession.pendingSends.shift();
+    if (next !== undefined) {
+      void this.driveChildSession(parent, childSession, next);
+      return;
+    }
+    this.emit({
+      type: 'child.updated',
+      appSessionId: childSession.appSessionId,
+      providerSessionId: childSession.session.sessionId,
+      role: childSession.role,
+      status: 'paused',
+    });
   }
 
   private async sendChildSessionNow(
@@ -2073,11 +2254,20 @@ export class SessionManager {
     if (!this.childBelongsToSession(liveSession, childProviderSessionId)) return;
     if (!liveSession.childSessions.has(childProviderSessionId))
       await this.openChildSession(appSessionId, childProviderSessionId, 'worker');
+    if (
+      this.registry.getLive(liveSession.summary.appSessionId) !== liveSession ||
+      hasSessionCloseStarted(liveSession)
+    )
+      return;
     const childSession = liveSession.childSessions.get(childProviderSessionId);
-    if (!childSession) return;
+    if (
+      !childSession ||
+      !this.isCurrentChildSession(liveSession, childProviderSessionId, childSession)
+    )
+      return;
     childSession.lastUsedAt = Date.now();
     if (!childSession.streaming && !childSession.autoCompacting) {
-      await this.driveChildSession(childSession, text);
+      await this.driveChildSession(liveSession, childSession, text);
       return;
     }
     childSession.pendingSends.unshift(text);
@@ -2088,6 +2278,7 @@ export class SessionManager {
       await childSession.session.interrupt();
     } catch (err) {
       childSession.interruptingForSteer = false;
+      if (!this.isCurrentChildSession(liveSession, childProviderSessionId, childSession)) return;
       this.emit({
         type: 'error',
         code: 'child.send_now_failed',
@@ -2107,8 +2298,17 @@ export class SessionManager {
     if (!this.childBelongsToSession(liveSession, childProviderSessionId)) return;
     if (!liveSession.childSessions.has(childProviderSessionId))
       await this.openChildSession(appSessionId, childProviderSessionId, 'worker');
+    if (
+      this.registry.getLive(liveSession.summary.appSessionId) !== liveSession ||
+      hasSessionCloseStarted(liveSession)
+    )
+      return;
     const childSession = liveSession.childSessions.get(childProviderSessionId);
-    if (!childSession) return;
+    if (
+      !childSession ||
+      !this.isCurrentChildSession(liveSession, childProviderSessionId, childSession)
+    )
+      return;
     childSession.pendingSends = [];
     childSession.lastUsedAt = Date.now();
     // Same escape hatch as the primary session: interrupt first, and settle the
@@ -2116,6 +2316,11 @@ export class SessionManager {
     const wasAutoCompacting = childSession.autoCompacting;
     childSession.interrupting = true;
     await childSession.session.interrupt();
+    if (!this.isCurrentChildSession(liveSession, childProviderSessionId, childSession)) {
+      childSession.interrupting = false;
+      childSession.streaming = false;
+      return;
+    }
     if (wasAutoCompacting) {
       childSession.autoCompacting = false;
       this.autoCompactionWatchdogs.clear(childProviderSessionId);
@@ -2293,8 +2498,19 @@ export class SessionManager {
   }
 
   private startContextPolling(sourceSessionId: string, session: FactorySession): void {
-    if (this.contextPollers.has(sourceSessionId)) return;
-    const poll = () => void this.refreshContext(sourceSessionId, session, { persist: false });
+    const target = this.resolveContextRefreshTarget(sourceSessionId, session);
+    if (
+      this.shutdownPromise ||
+      this.contextPollers.has(sourceSessionId) ||
+      !target ||
+      !this.isCurrentContextRefreshTarget(target)
+    )
+      return;
+    const epoch = this.contextEpoch;
+    const poll = () => {
+      if (epoch !== this.contextEpoch || !this.isCurrentContextRefreshTarget(target)) return;
+      void this.refreshContext(sourceSessionId, session, { persist: false });
+    };
     const timer = setInterval(poll, 2_500);
     this.contextPollers.set(sourceSessionId, timer);
     poll();
@@ -2345,17 +2561,17 @@ export class SessionManager {
     session: FactorySession,
     options: { persist?: boolean } = {},
   ): Promise<void> {
+    const epoch = this.contextEpoch;
+    const target = this.resolveContextRefreshTarget(sourceSessionId, session);
+    if (!target || !this.isCurrentContextRefreshTarget(target)) return;
     try {
       const stats = await session.getContextStats();
+      if (epoch !== this.contextEpoch || !this.isCurrentContextRefreshTarget(target)) return;
       const breakdown = await this.readContextBreakdown(session);
+      if (epoch !== this.contextEpoch || !this.isCurrentContextRefreshTarget(target)) return;
       let snapshot = contextStatsSnapshot(stats, breakdown);
-      const primarySession = this.registry.getLive(sourceSessionId);
-      const childOwner = primarySession
-        ? undefined
-        : findChildSessionOwner(this.registry.liveSessionsSnapshot(), sourceSessionId);
-      const liveSession = primarySession ?? childOwner?.liveSession;
-      const childProviderSessionId = childOwner?.providerSessionId;
-      if (!liveSession || hasSessionCloseStarted(liveSession)) return;
+      const liveSession = target.parent;
+      const childProviderSessionId = target.kind === 'child' ? target.childSessionId : undefined;
       const appSessionId = liveSession.summary.appSessionId;
       const isPrimarySession = childProviderSessionId === undefined;
       // The daemon's get_context_stats is a chars/4 estimate that over-counts;
@@ -2389,6 +2605,7 @@ export class SessionManager {
           ...snapshot,
           compactions: this.childSessionCompactions.get(childProviderSessionId) ?? 0,
         };
+      if (epoch !== this.contextEpoch || !this.isCurrentContextRefreshTarget(target)) return;
       this.contextSnapshots.set(sourceSessionId, snapshot);
       this.emit({
         type: 'context.updated',
@@ -2414,6 +2631,32 @@ export class SessionManager {
     } catch {
       /* context stats are informational; keep the active turn path clean */
     }
+  }
+
+  private resolveContextRefreshTarget(
+    sourceSessionId: string,
+    session: FactorySession,
+  ): ContextRefreshTarget | undefined {
+    const primary = this.registry.getLive(sourceSessionId);
+    if (primary?.session === session) return { kind: 'primary', parent: primary, session };
+    for (const parent of this.registry.liveSessionsSnapshot()) {
+      for (const [childSessionId, child] of parent.childSessions) {
+        if (
+          child.session === session &&
+          (childSessionId === sourceSessionId || child.session.sessionId === sourceSessionId)
+        )
+          return { kind: 'child', parent, childSessionId, child };
+      }
+    }
+    return undefined;
+  }
+
+  private isCurrentContextRefreshTarget(target: ContextRefreshTarget): boolean {
+    if (this.shutdownPromise) return false;
+    if (this.registry.getLive(target.parent.summary.appSessionId) !== target.parent) return false;
+    if (hasSessionCloseStarted(target.parent)) return false;
+    if (target.kind === 'primary') return target.parent.session === target.session;
+    return target.parent.childSessions.get(target.childSessionId) === target.child;
   }
 
   private async readContextBreakdown(
@@ -2515,31 +2758,49 @@ export class SessionManager {
     return appSessionId;
   }
 
-  async shutdown(): Promise<void> {
-    await this.lifecycle.closeAll();
-    await this.browsers.closeAll();
-    this.history.close();
+  shutdown(): Promise<void> {
+    this.shutdownPromise ??= Promise.resolve().then(() => this.performShutdown());
+    return this.shutdownPromise;
+  }
+
+  private async performShutdown(): Promise<void> {
+    let firstError: unknown;
+    const run = async (action: () => void | Promise<void>): Promise<void> => {
+      try {
+        await action();
+      } catch (error) {
+        firstError ??= error;
+      }
+    };
+
+    await run(() => this.lifecycle.closeAll());
+    await run(() => {
+      this.clearAllContextResources();
+    });
+    await run(() => {
+      this.compactionRetuneRev += 1;
+      this.autoCompactionWatchdogs.clearAll();
+    });
+    await run(() => this.browsers.closeAll());
+    await run(() => {
+      this.history.close();
+    });
+    if (firstError !== undefined)
+      throw firstError instanceof Error ? firstError : new Error(errMsg(firstError));
+  }
+
+  private clearAllContextResources(): void {
+    this.contextEpoch += 1;
+    for (const timer of this.contextPollers.values()) clearInterval(timer);
+    this.contextPollers.clear();
+    this.contextSnapshots.clear();
+    this.childSessionCompactions.clear();
+    this.usageOffsets.clear();
   }
 }
 
 function hasSessionCloseStarted(liveSession: LiveSession): boolean {
   return liveSession.closeMode !== undefined;
-}
-
-function findChildSessionOwner(
-  liveSessions: Iterable<LiveSession>,
-  sourceSessionId: string,
-): { liveSession: LiveSession; providerSessionId: string } | undefined {
-  for (const liveSession of liveSessions) {
-    for (const [providerSessionId, childSession] of liveSession.childSessions) {
-      if (
-        providerSessionId === sourceSessionId ||
-        childSession.session.sessionId === sourceSessionId
-      )
-        return { liveSession, providerSessionId };
-    }
-  }
-  return undefined;
 }
 
 function childSessionSettingsFromInit(init: SessionInitResult): ChildSessionSettings {

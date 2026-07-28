@@ -594,10 +594,6 @@ test('[C5] Compaction retuning uses each live session model', { concurrency: fal
   }
 });
 
-test.todo(
-  "closing or shutting down with an active worker stream must prevent its later unwind from re-arming that worker's watchdog or context poller",
-);
-
 test('[C6] Close and shutdown clean keyed resources', { concurrency: false }, async () => {
   const close = await runCloseCleanupScenario();
   assert.equal(close.initialPollersDistinct, true);

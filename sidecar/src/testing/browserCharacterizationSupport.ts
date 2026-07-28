@@ -26,6 +26,7 @@ const DEFAULT_BROWSER_VIEWPORT: BrowserViewport = {
 
 export class FakeBrowserSessionManager implements SessionBrowserDependencies {
   readonly calls: BrowserRecordedCall[] = [];
+  nextCloseAllError?: Error;
   private readonly states = new Map<string, BrowserState>();
 
   constructor(
@@ -91,6 +92,9 @@ export class FakeBrowserSessionManager implements SessionBrowserDependencies {
   closeAll(): Promise<void> {
     this.states.clear();
     this.recordCall('cleanup', 'browser.closeAll', []);
+    const error = this.nextCloseAllError;
+    delete this.nextCloseAllError;
+    if (error) return Promise.reject(error);
     return Promise.resolve();
   }
 
