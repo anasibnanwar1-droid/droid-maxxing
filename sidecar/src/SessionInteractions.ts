@@ -168,11 +168,11 @@ export class SessionInteractions {
 
   private async prepareSpecExitForRun(liveSession: InteractionLiveSession): Promise<void> {
     const appSessionId = liveSession.summary.appSessionId;
-    this.dependencies.updateSummary(appSessionId, {
-      interactionMode: 'auto',
-      phase: 'running',
-    });
     try {
+      this.dependencies.updateSummary(appSessionId, {
+        interactionMode: 'auto',
+        phase: 'running',
+      });
       await liveSession.session.updateSettings({
         interactionMode: DroidInteractionMode.Auto,
       });

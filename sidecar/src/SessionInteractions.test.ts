@@ -14,6 +14,7 @@ import { SessionInteractions, type InteractionLiveSession } from './SessionInter
 
 interface HarnessOptions {
   rejectProviderUpdate?: boolean;
+  throwSummaryUpdate?: boolean;
 }
 
 function createHarness(options: HarnessOptions = {}) {
@@ -47,6 +48,7 @@ function createHarness(options: HarnessOptions = {}) {
       const liveSession = liveSessions.get(id);
       if (!liveSession) return;
       trace.push(`publish:${String(patch.interactionMode ?? patch.phase ?? '')}`);
+      if (options.throwSummaryUpdate) throw new Error('summary persistence failed');
       Object.assign(liveSession.summary, patch);
     },
     emit: (event) => {
@@ -272,6 +274,30 @@ test('Spec approval publishes, attempts provider update, then settles the callba
     'error:spec.exit_failed',
     'callback',
   ]);
+});
+
+test('Spec approval reports summary failure and still settles the callback once', async () => {
+  const harness = createHarness({ throwSummaryUpdate: true });
+  harness.addLiveSession('app-spec');
+  const handler = harness.interactions.makePermissionHandler({ id: 'app-spec' });
+  let settlements = 0;
+  const pending = Promise.resolve(handler(specApprovalInput('tool-spec'))).then((outcome) => {
+    settlements += 1;
+    harness.trace.push('callback');
+    return outcome;
+  });
+  const requestId = latestApprovalRequest(harness.emitted).requestId;
+
+  await harness.interactions.respondToApproval('app-spec', requestId, 'proceed_once');
+
+  assert.equal(await pending, ToolConfirmationOutcome.ProceedOnce);
+  assert.equal(settlements, 1);
+  assert.deepEqual(harness.trace, ['publish:auto', 'error:spec.exit_failed', 'callback']);
+  assert.equal(harness.errors[0]?.code, 'spec.exit_failed');
+  assert.match(harness.errors[0]?.message ?? '', /summary persistence failed/);
+
+  await harness.interactions.respondToApproval('app-spec', requestId, 'proceed_once');
+  assert.equal(settlements, 1);
 });
 
 test('ask-user normalizes omitted values and preserves identities and answers', async () => {
