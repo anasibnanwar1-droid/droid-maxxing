@@ -5,6 +5,7 @@ import {
   isWebFetchTool,
   parseWebSearch,
   parseWebFetch,
+  looksLikeHtml,
   formatCharCount,
   webSourceName,
   faviconUrl,
@@ -33,6 +34,19 @@ test('isWebSearchTool matches WebSearch tool names only', () => {
   assert.equal(isWebSearchTool(undefined), false);
 });
 
+test('isWebSearchTool covers engine names, MCP prefixes, and web queries', () => {
+  assert.equal(isWebSearchTool('brave_web_search'), true);
+  assert.equal(isWebSearchTool('brave-web-search'), true);
+  assert.equal(isWebSearchTool('mcp__tavily__tavily-search'), true);
+  assert.equal(isWebSearchTool('google'), true);
+  assert.equal(isWebSearchTool('web_query'), true);
+  assert.equal(isWebSearchTool('websearch'), true);
+  // A plain local search stays false — no web/engine signal.
+  assert.equal(isWebSearchTool('Search'), false);
+  assert.equal(isWebSearchTool('Grep'), false);
+  assert.equal(isWebSearchTool('search_files'), false);
+});
+
 test('isWebFetchTool matches fetch tools and excludes web search', () => {
   assert.equal(isWebFetchTool('FetchUrl'), true);
   assert.equal(isWebFetchTool('WebFetch'), true);
@@ -41,6 +55,43 @@ test('isWebFetchTool matches fetch tools and excludes web search', () => {
   assert.equal(isWebFetchTool('web_search'), false);
   assert.equal(isWebFetchTool('Grep'), false);
   assert.equal(isWebFetchTool(undefined), false);
+});
+
+test('isWebFetchTool covers separators, MCP prefixes, and url verbs', () => {
+  assert.equal(isWebFetchTool('fetch_url'), true);
+  assert.equal(isWebFetchTool('open_url'), true);
+  assert.equal(isWebFetchTool('getURL'), true);
+  assert.equal(isWebFetchTool('visit_site'), true);
+  assert.equal(isWebFetchTool('loadWebPage'), true);
+  assert.equal(isWebFetchTool('web_page'), true);
+  assert.equal(isWebFetchTool('http_request'), true);
+  assert.equal(isWebFetchTool('mcp__fetch__fetch'), true);
+  assert.equal(isWebFetchTool('server___FetchUrl'), true);
+  // No fetch/url signal → stays a generic tool line.
+  assert.equal(isWebFetchTool('Read'), false);
+  assert.equal(isWebFetchTool('TodoWrite'), false);
+  assert.equal(isWebFetchTool('mcp__figma__get_design'), false);
+});
+
+test('isWebFetchTool never matches browser-automation tools', () => {
+  assert.equal(isWebFetchTool('droidmaxx-browser___browser_open'), false);
+  assert.equal(isWebFetchTool('browser_navigate'), false);
+  assert.equal(isWebFetchTool('browser_click'), false);
+});
+
+test('looksLikeHtml detects raw HTML but not markdown prose', () => {
+  assert.equal(looksLikeHtml('<!DOCTYPE html>\n<html><body>hi</body></html>'), true);
+  assert.equal(
+    looksLikeHtml(
+      '<div class="a"><p>one</p><p>two</p><span>three</span><br/><hr/><b>x</b><i>y</i><u>z</u></div>',
+    ),
+    true,
+  );
+  assert.equal(
+    looksLikeHtml('# Title\n\nSome **markdown** body with [a link](https://x.com).'),
+    false,
+  );
+  assert.equal(looksLikeHtml('Plain text, no tags at all.'), false);
 });
 
 test('parseWebSearch extracts query, count and result blocks', () => {

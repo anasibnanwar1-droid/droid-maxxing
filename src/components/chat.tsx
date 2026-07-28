@@ -35,6 +35,7 @@ import {
   isWebFetchTool,
   parseWebSearch,
   parseWebFetch,
+  looksLikeHtml,
   formatCharCount,
   webSourceName,
   faviconUrl,
@@ -613,17 +614,6 @@ function CountBadge({ label }: { label: string }) {
   );
 }
 
-function useAutoOpen(shouldOpen: boolean): [boolean, (next: boolean | ((o: boolean) => boolean)) => void] {
-  const [open, setOpen] = useState(shouldOpen);
-  const autoOpened = useRef(false);
-  useEffect(() => {
-    if (autoOpened.current || !shouldOpen) return;
-    autoOpened.current = true;
-    setOpen(true);
-  }, [shouldOpen]);
-  return [open, setOpen];
-}
-
 function fetchSnippet(body: string): string {
   return body
     .split('\n')
@@ -639,30 +629,77 @@ function fetchSizeBadge(chars: number, truncatedChars: number | null): string | 
   return null;
 }
 
+/* ── In-flight web tool row: shimmer label while the call has no result yet ── */
+function WebToolRunningRow({
+  icon,
+  label,
+  detail,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  detail?: string;
+}) {
+  return (
+    <div className="flex min-w-0 items-center gap-1.5">
+      {icon}
+      <span className="shimmer-text shrink-0 text-[12.5px] font-medium">{label}</span>
+      {detail ? (
+        <span className="min-w-0 truncate font-mono text-[11.5px] text-droid-text-muted">
+          {detail}
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
+function WebSearchRunningRow({ isX, query }: { isX: boolean; query: string }) {
+  return (
+    <WebToolRunningRow
+      icon={
+        isX ? (
+          <span className="flex h-3.5 w-3.5 shrink-0 items-center justify-center text-[12px] font-bold leading-none text-droid-text-muted">
+            𝕏
+          </span>
+        ) : (
+          <Globe className="h-3.5 w-3.5 shrink-0 text-droid-text-muted" />
+        )
+      }
+      label={isX ? 'Searching X…' : 'Searching web…'}
+      detail={query.length > 0 ? query : undefined}
+    />
+  );
+}
+
+function searchTrailing(error: boolean, total: number): React.ReactNode {
+  if (error) return <ErrorTag />;
+  if (total > 0) return <CountBadge label={String(total)} />;
+  return null;
+}
+
 /* ── Web search: a collapsible search row that expands into readable result
-   cards (title, snippet, source) instead of a raw text dump. Defaults open
-   once results are present so expanding a tool group shows the cards. ── */
+   cards (title, snippet, source) instead of a raw text dump. Stays collapsed
+   by default — the header (query + result count) is enough until expanded. ── */
 function WebSearchCard({
   event,
   output,
   error = false,
+  running = false,
 }: {
   event: TranscriptEvent;
   output?: string;
   error?: boolean;
+  running?: boolean;
 }) {
   const query = argStr(event.toolArgs, 'query') ?? '';
   const { results, count } = parseWebSearch(output ?? '');
   const total = count ?? results.length;
   const raw = output ? stripAnsi(output).trim() : '';
-  const hasContent = results.length > 0 || raw.length > 0;
-  const [open, setOpen] = useAutoOpen(hasContent && !error);
+  const [open, setOpen] = useState(false);
   const isX = toolArgStringArray(event.toolArgs, 'includeDomains').some((d) =>
     /(^|\.)(x|twitter)\.com$/i.test(d),
   );
-  let trailing: React.ReactNode = null;
-  if (error) trailing = <ErrorTag />;
-  else if (total > 0) trailing = <CountBadge label={String(total)} />;
+  if (running) return <WebSearchRunningRow isX={isX} query={query} />;
+  const trailing = searchTrailing(error, total);
 
   let body: React.ReactNode = null;
   if (results.length > 0) {
@@ -752,13 +789,48 @@ function WebFetchBody({
         url={url}
         emphasize
       />
-      {hasBody && body.length > 280 ? (
-        <pre className="max-h-44 overflow-auto rounded-lg bg-droid-elevated/30 px-3 py-2 text-[12px] leading-relaxed text-droid-text-muted whitespace-pre-wrap break-words">
-          {linkify(body)}
-        </pre>
-      ) : null}
+      {hasBody && body.length > 280 ? <FetchBodyContent body={body} /> : null}
     </div>
   );
+}
+
+/* ── Long fetch body: rendered markdown, with a mono fallback for raw HTML ── */
+function FetchBodyContent({ body }: { body: string }) {
+  // Raw HTML dumps stay mono — they render poorly as markdown.
+  if (looksLikeHtml(body)) {
+    return (
+      <pre className="max-h-44 overflow-auto rounded-lg bg-droid-elevated/30 px-3 py-2 text-[12px] leading-relaxed text-droid-text-muted whitespace-pre-wrap break-words">
+        {linkify(body)}
+      </pre>
+    );
+  }
+  return (
+    <div className="max-h-96 overflow-auto rounded-lg bg-droid-elevated/30 px-3.5 py-2.5">
+      <Markdown>{body}</Markdown>
+    </div>
+  );
+}
+
+function WebFetchRunningRow({ url }: { url: string }) {
+  return (
+    <WebToolRunningRow
+      icon={
+        url.length > 0 ? (
+          <Favicon url={url} />
+        ) : (
+          <Globe className="h-3.5 w-3.5 shrink-0 text-droid-text-muted" />
+        )
+      }
+      label="Fetching…"
+      detail={url.length > 0 ? url : undefined}
+    />
+  );
+}
+
+function fetchTrailing(error: boolean, badge: string | null): React.ReactNode {
+  if (error) return <ErrorTag />;
+  if (badge) return <CountBadge label={badge} />;
+  return null;
 }
 
 /* ── Page fetch: same card language as web search (favicon, source, title,
@@ -768,10 +840,12 @@ function WebFetchCard({
   event,
   output,
   error = false,
+  running = false,
 }: {
   event: TranscriptEvent;
   output?: string;
   error?: boolean;
+  running?: boolean;
 }) {
   const urlArg =
     argStr(event.toolArgs, 'url') ??
@@ -785,9 +859,9 @@ function WebFetchCard({
   const displayTitle = page.title ?? (url.length > 0 ? webSourceName(url) : 'Page');
   const snippet = hasBody ? fetchSnippet(page.body) : '';
   const badge = fetchSizeBadge(page.chars, page.truncatedChars);
-  let trailing: React.ReactNode = null;
-  if (error) trailing = <ErrorTag />;
-  else if (badge) trailing = <CountBadge label={badge} />;
+  const trailing = fetchTrailing(error, badge);
+
+  if (running) return <WebFetchRunningRow url={url} />;
 
   return (
     <div>
@@ -901,7 +975,7 @@ export function correlateResults(events: TranscriptEvent[]): {
   return { resultByCall, consumed };
 }
 
-function renderToolEvents(events: TranscriptEvent[]): React.ReactNode[] {
+function renderToolEvents(events: TranscriptEvent[], live = false): React.ReactNode[] {
   const nodes: React.ReactNode[] = [];
   const { resultByCall, consumed } = correlateResults(events);
   for (let i = 0; i < events.length; i++) {
@@ -913,14 +987,33 @@ function renderToolEvents(events: TranscriptEvent[]): React.ReactNode[] {
       }
       const result = resultByCall.get(e);
       const isError = !!result?.isError;
+      // A call without its result while the group is live is still in flight —
+      // web/fetch cards show a shimmer until the result lands.
+      const running = live && !result;
       const { cat, detail } = toolMeta(e.toolName, e.toolArgs);
       // WebSearch's name matches the generic /search/ category, so route it by
       // name (not cat) to the readable result-card renderer.
       if (isWebSearchTool(e.toolName)) {
-        nodes.push(<WebSearchCard key={e.id} event={e} output={result?.text} error={isError} />);
+        nodes.push(
+          <WebSearchCard
+            key={e.id}
+            event={e}
+            output={result?.text}
+            error={isError}
+            running={running}
+          />,
+        );
       } else if (isWebFetchTool(e.toolName) || cat === 'web') {
         // FetchUrl / page fetches get the same source-card treatment as search.
-        nodes.push(<WebFetchCard key={e.id} event={e} output={result?.text} error={isError} />);
+        nodes.push(
+          <WebFetchCard
+            key={e.id}
+            event={e}
+            output={result?.text}
+            error={isError}
+            running={running}
+          />,
+        );
       } else if (cat === 'exec') {
         const command =
           argStr(e.toolArgs, 'command') ??
@@ -993,7 +1086,7 @@ function ToolGroupItem({
         )}
       </button>
       <Expand open={open}>
-        <div className="mt-2 pl-[18px] space-y-2.5">{renderToolEvents(events)}</div>
+        <div className="mt-2 pl-[18px] space-y-2.5">{renderToolEvents(events, active)}</div>
       </Expand>
     </div>
   );

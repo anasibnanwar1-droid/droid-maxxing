@@ -157,17 +157,96 @@ export function parseTruncatedTail(text: string): { body: string; truncatedChars
   return { body: text.slice(0, m.index).trimEnd(), truncatedChars: Number(m[1]) };
 }
 
-// A WebSearch tool call (as opposed to a plain URL fetch), identified by name.
-export function isWebSearchTool(name?: string): boolean {
-  return /web.?search/i.test(name ?? '');
+// MCP-style tool names carry a server prefix (`server___tool`, `mcp__server__tool`).
+// Match on the bare tool name so a namespaced fetch/search still routes correctly.
+function bareToolName(name: string): string {
+  const tri = name.lastIndexOf('___');
+  if (tri >= 0 && tri + 3 < name.length) return name.slice(tri + 3);
+  const mcp = /^mcp__[^_]+__(.+)$/i.exec(name);
+  if (mcp) return mcp[1];
+  return name;
 }
 
-// A page-fetch tool (FetchUrl, WebFetch, …) — not a multi-result web search.
-// Prefer this over cat === 'web' when the tool name is known; cat still works
-// as a fallback for unnamed MCP/url tools that only carry a `url` arg.
+// Lowercase word tokens of a tool name: `_`/`-`/`.`/space separators and
+// camelCase boundaries all split ("FetchUrl" → ["fetch", "url"]). Word tokens
+// keep "browser" distinct from "browse", so browser-automation tools never
+// match the fetch patterns.
+function toolNameTokens(name?: string): string[] {
+  const bare = bareToolName((name ?? '').trim());
+  return bare
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean);
+}
+
+const WEB_WORDS = new Set(['web', 'internet', 'online']);
+const SEARCH_ENGINES = new Set([
+  'google',
+  'bing',
+  'brave',
+  'tavily',
+  'exa',
+  'perplexity',
+  'duckduckgo',
+  'kagi',
+  'serp',
+  'serpapi',
+]);
+
+// A WebSearch tool call (as opposed to a plain URL fetch), identified by name.
+// Matches web-flavoured search names across conventions (WebSearch, web_search,
+// brave-web-search, mcp__tavily__tavily-search, …). A plain local "Search" or
+// "Grep" tool stays false — a web/engine signal is required.
+export function isWebSearchTool(name?: string): boolean {
+  const tokens = toolNameTokens(name);
+  if (tokens.length === 0) return false;
+  if (tokens.some((t) => t === 'websearch' || t === 'searchweb')) return true;
+  if (tokens.some((t) => SEARCH_ENGINES.has(t))) return true;
+  const hasSearch = tokens.some((t) => t === 'search' || t === 'query');
+  return hasSearch && tokens.some((t) => WEB_WORDS.has(t));
+}
+
+const FETCH_WORDS = ['fetch', 'scrape', 'crawl', 'browse'];
+const FETCH_VERBS = new Set([
+  'open',
+  'get',
+  'load',
+  'read',
+  'visit',
+  'download',
+  'request',
+  'goto',
+]);
+const URL_WORDS = new Set([
+  'url',
+  'uri',
+  'link',
+  'page',
+  'site',
+  'web',
+  'webpage',
+  'http',
+  'https',
+  'html',
+]);
+
+// A page-fetch tool (FetchUrl, WebFetch, open_url, mcp__fetch__fetch, …) — not
+// a multi-result web search. Prefer this over cat === 'web' when the tool name
+// is known; cat still works as a fallback for unnamed MCP/url tools that only
+// carry a `url` arg. Browser-automation tools (browser_open, browser_navigate)
+// are excluded: they drive a live page rather than fetch readable content.
 export function isWebFetchTool(name?: string): boolean {
   if (isWebSearchTool(name)) return false;
-  return /fetch|browse|open.?url|get.?url|web.?page|read.?url|scrape|http/i.test(name ?? '');
+  const tokens = toolNameTokens(name);
+  if (tokens.length === 0 || tokens.includes('browser')) return false;
+  const joined = tokens.join(' ');
+  if (FETCH_WORDS.some((w) => joined.includes(w))) return true;
+  if (tokens.some((t) => t === 'http' || t === 'https' || t === 'webpage')) return true;
+  if (tokens.includes('web') && tokens.includes('page')) return true;
+  const hasVerb = tokens.some((t) => FETCH_VERBS.has(t));
+  const hasUrl = tokens.some((t) => URL_WORDS.has(t));
+  return hasVerb && hasUrl;
 }
 
 export type WebSearchResult = { title: string; url: string; snippet: string };
@@ -237,7 +316,10 @@ function inferFetchTitle(clean: string, h1?: string, titleMeta?: string): string
   return stripped.length > 0 ? stripped : undefined;
 }
 
-function stripFetchMeta(clean: string, opts: { h1?: string; titleMeta?: string; urlLine?: string }): string {
+function stripFetchMeta(
+  clean: string,
+  opts: { h1?: string; titleMeta?: string; urlLine?: string },
+): string {
   let preview = clean;
   if (opts.titleMeta) preview = preview.replace(/^Title:\s*.+$/im, '');
   if (opts.urlLine) preview = preview.replace(/^URL:\s*\S+$/im, '');
@@ -265,6 +347,16 @@ export function parseWebFetch(text: string, urlFromArgs?: string): WebFetchPage 
   const body = stripFetchMeta(clean, { h1: title ? h1 : undefined, titleMeta, urlLine });
 
   return { url, title, body, chars: body.length, truncatedChars };
+}
+
+// A fetch body that is raw HTML (doctype / dense tag soup) reads worse as
+// rendered markdown than as a mono block, so the card keeps it in a <pre>.
+export function looksLikeHtml(text: string): boolean {
+  const t = text.trimStart();
+  if (/^<!doctype\s+html/i.test(t) || /^<html[\s>]/i.test(t)) return true;
+  const sample = t.slice(0, 2000);
+  const tags = sample.match(/<\/?[a-z][a-z0-9]*(\s[^>\n]*)?>/gi)?.length ?? 0;
+  return tags >= 8;
 }
 
 // Compact badge label for a character count (e.g. 1240 → "1.2k").
