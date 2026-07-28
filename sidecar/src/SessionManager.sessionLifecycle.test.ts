@@ -7,7 +7,7 @@ import { DecompSessionType } from '@factory/droid-sdk';
 
 import type { SessionSummary } from './protocol.js';
 import { writeProviderSessionStart } from './testing/historyCharacterizationSupport.js';
-import { FakeFactorySession } from './testing/fakeFactoryRuntime.js';
+import { assistantTextDelta, FakeFactorySession } from './testing/fakeFactoryRuntime.js';
 import { createSessionManagerTestContext } from './testing/sessionManagerTestContext.js';
 
 test('[L1] Ordinary create', { concurrency: false }, async () => {
@@ -271,6 +271,41 @@ test('[L6] Send lazily resumes a historical session', { concurrency: false }, as
     await h.dispose();
   }
 });
+
+test(
+  'mixed stable and provider identities preserve output across turns',
+  { concurrency: false },
+  async () => {
+    const h = createSessionManagerTestContext();
+
+    try {
+      h.fixture.seedHistorySummaries([summary('app-alias', 'provider-alias')]);
+      writeProviderSessionStart(h.home, 'provider-alias', 'Alias');
+      const provider = new FakeFactorySession('provider-alias', {}, h.calls);
+      provider.queueStreamEvents([assistantTextDelta('first answer', 'first-message')]);
+      provider.queueStreamEvents([assistantTextDelta('second answer', 'second-message')]);
+      h.runtime.loadQueue.set('provider-alias', [provider]);
+
+      await h.handle({ type: 'session.send', appSessionId: 'app-alias', text: 'first' });
+      await h.handle({ type: 'session.send', appSessionId: 'provider-alias', text: 'second' });
+
+      const textEvents = h.events.flatMap((event) =>
+        event.type === 'event.appended' && event.event.kind === 'text' ? [event.event] : [],
+      );
+      assert.deepEqual(provider.prompts, ['first', 'second']);
+      assert.deepEqual(
+        textEvents.map((event) => event.text),
+        ['first answer', 'second answer'],
+      );
+      assert.deepEqual(
+        textEvents.map((event) => event.appSessionId),
+        ['app-alias', 'app-alias'],
+      );
+    } finally {
+      await h.dispose();
+    }
+  },
+);
 
 test('[L7] Send-now steers ahead of queued sends', { concurrency: false }, async () => {
   const h = createSessionManagerTestContext();

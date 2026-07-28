@@ -416,9 +416,10 @@ export class SessionLifecycle {
     const d = this.dependencies;
     const liveSession = d.registry.getLive(appSessionId);
     if (!liveSession) return;
+    const stableAppSessionId = liveSession.summary.appSessionId;
     liveSession.streaming = true;
-    liveSession.terminalSources.delete(appSessionId);
-    d.registry.updateSummary(appSessionId, {
+    liveSession.terminalSources.delete(stableAppSessionId);
+    d.registry.updateSummary(stableAppSessionId, {
       phase: liveSession.summary.sessionPurpose === 'mission-control' ? 'planning' : 'running',
       streaming: true,
       queuedSends: liveSession.pendingSends.length,
@@ -429,16 +430,16 @@ export class SessionLifecycle {
       liveSession.interruptingForSteer = false;
       liveSession.interrupting = false;
       liveSession.streaming = false;
-      if (!d.registry.getLive(appSessionId)) {
+      if (!d.registry.getLive(stableAppSessionId)) {
         const queued = liveSession.pendingSends.splice(0);
-        if (queued.length > 0) void this.redeliverQueuedSends(appSessionId, queued);
+        if (queued.length > 0) void this.redeliverQueuedSends(stableAppSessionId, queued);
       } else if (liveSession.autoCompacting) {
-        d.onTurnSettledWhileAutoCompacting(appSessionId);
+        d.onTurnSettledWhileAutoCompacting(stableAppSessionId);
         this.updateQueuedSends(liveSession);
       } else {
         const next = liveSession.pendingSends.shift();
         this.updateQueuedSends(liveSession);
-        if (next !== undefined) void this.drive(appSessionId, next);
+        if (next !== undefined) void this.drive(stableAppSessionId, next);
       }
     }
   }
