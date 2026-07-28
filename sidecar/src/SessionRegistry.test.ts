@@ -129,6 +129,20 @@ function copyFeature(feature: BridgeFeature): BridgeFeature {
   };
 }
 
+function feature(id: string): BridgeFeature {
+  return {
+    id,
+    description: 'Keep nested summary state isolated',
+    status: 'pending',
+    skillName: 'registry',
+    preconditions: ['source-precondition'],
+    expectedBehavior: ['source-behavior'],
+    verificationSteps: ['source-verification'],
+    fulfills: ['source-requirement'],
+    workerProviderSessionIds: ['source-worker'],
+  };
+}
+
 test('register persists once and resolves stable, current, and superseded identities', () => {
   const { history, published, registry } = createHarness();
   const first = live(
@@ -350,17 +364,7 @@ test('resolve and list project copies after ordinary, Mission Control, and live 
 });
 
 test('projected and caller-owned feature state cannot mutate canonical summaries', () => {
-  const sourceFeature: BridgeFeature = {
-    id: 'feature-a',
-    description: 'Keep nested summary state isolated',
-    status: 'pending',
-    skillName: 'registry',
-    preconditions: ['source-precondition'],
-    expectedBehavior: ['source-behavior'],
-    verificationSteps: ['source-verification'],
-    fulfills: ['source-requirement'],
-    workerProviderSessionIds: ['source-worker'],
-  };
+  const sourceFeature = feature('feature-a');
   const { registry } = createHarness({
     projectSummary: (canonical) => {
       const projectedFeature = canonical.features[0];
@@ -396,6 +400,25 @@ test('projected and caller-owned feature state cannot mutate canonical summaries
 
   assert.deepEqual(liveSession.summary.features, [sourceFeature]);
   assert.deepEqual(registry.getCanonicalSummary('isolated')?.features, [sourceFeature]);
+});
+
+test('summary patches copy caller-owned feature state', () => {
+  const { registry } = createHarness();
+  registry.register(live(summary('patched')));
+
+  const updatedFeature = feature('updated');
+  registry.updateSummary('patched', { features: [updatedFeature] });
+  updatedFeature.preconditions.push('caller-update');
+  assert.deepEqual(registry.getCanonicalSummary('patched')?.features[0]?.preconditions, [
+    'source-precondition',
+  ]);
+
+  const replacedFeature = feature('replaced');
+  registry.replaceProvider('patched', 'provider-replaced', { features: [replacedFeature] });
+  replacedFeature.expectedBehavior.push('caller-replacement');
+  assert.deepEqual(registry.getCanonicalSummary('patched')?.features[0]?.expectedBehavior, [
+    'source-behavior',
+  ]);
 });
 
 test('workspace limits apply after canonical source precedence', () => {

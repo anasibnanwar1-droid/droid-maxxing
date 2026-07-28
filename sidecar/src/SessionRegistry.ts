@@ -180,11 +180,11 @@ export class SessionRegistry<TLive extends RegisteredSession> {
   }
 
   private withPatch(summary: SessionSummary, patch: SessionSummaryPatch): SessionSummary {
-    return {
+    return copySummary({
       ...summary,
       ...withoutIdentityFields(patch),
       updatedAt: this.dependencies.now(),
-    };
+    });
   }
 
   private project(summary: SessionSummary): SessionSummary {
