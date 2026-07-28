@@ -1,5 +1,6 @@
 import {
   ContextStatsAccuracy,
+  dispatchNotification,
   InitializeSessionResultSchema,
   MissionSnapshotSchema,
   ReasoningEffort as SdkReasoningEffort,
@@ -9,6 +10,7 @@ import {
   type MissionFeature,
   type NotificationCallback,
   type NotificationFilter,
+  type NotificationListener,
   type UpdateSessionSettingsRequestParams,
 } from '@factory/droid-sdk';
 
@@ -55,7 +57,7 @@ export class FakeFactorySession implements FactorySession {
   nextStreamError?: Error;
   nextEnterSpecModeError?: Error;
   nextUpdateSettingsError?: Error;
-  readonly notifications = new Set<NotificationCallback>();
+  readonly notifications = new Set<NotificationListener>();
   initResult: FactorySession['initResult'];
 
   private readonly streamGates: DeferredStream[] = [];
@@ -178,17 +180,20 @@ export class FakeFactorySession implements FactorySession {
   }
 
   onNotification(listener: NotificationCallback, filter?: NotificationFilter): () => void {
-    void filter;
-    this.notifications.add(listener);
+    const subscription: NotificationListener = {
+      callback: listener,
+      ...(filter === undefined ? {} : { filter }),
+    };
+    this.notifications.add(subscription);
     this.calls.push({ target: 'provider', method: 'onNotification', args: [this.sessionId] });
     return () => {
-      this.notifications.delete(listener);
+      this.notifications.delete(subscription);
       this.calls.push({ target: 'cleanup', method: 'unsubscribe', args: [this.sessionId] });
     };
   }
 
   emitNotification(note: Record<string, unknown>): void {
-    for (const listener of this.notifications) listener(note);
+    dispatchNotification(note, this.notifications);
   }
 
   async getContextStats(): ReturnType<FactorySession['getContextStats']> {
