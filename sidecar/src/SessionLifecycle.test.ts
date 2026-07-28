@@ -423,6 +423,20 @@ test('interrupt handles idle, streaming, manual compaction, and auto-compaction 
     ),
     false,
   );
+
+  const aliased = createHarness([summary('stable-stop', 'provider-stop')]);
+  queueLoad(aliased, 'provider-stop');
+  await aliased.lifecycle.resume('stable-stop');
+  const aliasedLive = requireLive(aliased, 'provider-stop');
+  aliasedLive.autoCompacting = true;
+  aliased.calls.length = 0;
+  await aliased.lifecycle.interrupt('provider-stop');
+  assert.equal(
+    aliased.calls.some(
+      (call) => call.method === 'watchdog.clear' && call.args[0] === 'stable-stop',
+    ),
+    true,
+  );
 });
 
 test('resuming an already-live session does not reload or persist it', async () => {

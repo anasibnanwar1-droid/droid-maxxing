@@ -307,6 +307,59 @@ test(
   },
 );
 
+test(
+  'provider aliases apply pending settings before the first send',
+  { concurrency: false },
+  async () => {
+    const h = createSessionManagerTestContext();
+    const providerSessionId = 'provider-pending-alias';
+
+    try {
+      h.fixture.seedHistorySummaries([
+        {
+          ...summary('app-pending-alias', providerSessionId),
+          modelId: 'model-old',
+        },
+      ]);
+      writeProviderSessionStart(h.home, providerSessionId, 'Pending alias');
+      await h.handle({
+        type: 'settings.agent.update',
+        appSessionId: providerSessionId,
+        agent: 'primary',
+        modelId: 'model-default',
+      });
+      const provider = new FakeFactorySession(providerSessionId, {}, h.calls, {
+        settings: { modelId: 'model-old' },
+      });
+      h.runtime.loadQueue.set(providerSessionId, [provider]);
+
+      await h.handle({
+        type: 'session.send',
+        appSessionId: providerSessionId,
+        text: 'apply pending model',
+      });
+
+      const modelUpdateIndex = h.calls.findIndex((call) => {
+        const settings = call.args[1];
+        return (
+          call.method === 'updateSettings' &&
+          typeof settings === 'object' &&
+          settings !== null &&
+          'modelId' in settings &&
+          settings.modelId === 'model-default'
+        );
+      });
+      const streamIndex = h.calls.findIndex(
+        (call) => call.method === 'stream' && call.args[1] === 'apply pending model',
+      );
+      assert.ok(modelUpdateIndex >= 0 && modelUpdateIndex < streamIndex);
+      assert.deepEqual(provider.prompts, ['apply pending model']);
+    } finally {
+      await h.dispose();
+    }
+  },
+);
+
 test('[L7] Send-now steers ahead of queued sends', { concurrency: false }, async () => {
   const h = createSessionManagerTestContext();
   const gate = h.runtime.deferNextCreateStream('provider-1');

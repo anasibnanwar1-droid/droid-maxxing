@@ -286,46 +286,44 @@ export class SessionLifecycle {
     }
   }
 
-  async send(appSessionId: string, text: string): Promise<void> {
-    const liveSession = await this.resumeIfNeeded(appSessionId);
-    if (!liveSession || !(await this.dependencies.applyPendingSessionSettings(appSessionId)))
-      return;
+  async send(requestedAppSessionId: string, text: string): Promise<void> {
+    const liveSession = await this.prepareToSend(requestedAppSessionId);
+    if (!liveSession) return;
     if (liveSession.streaming || liveSession.compacting || liveSession.autoCompacting) {
       liveSession.pendingSends.push(text);
       this.updateQueuedSends(liveSession);
       return;
     }
-    await this.drive(appSessionId, text);
+    await this.drive(liveSession.summary.appSessionId, text);
   }
-
-  async sendNow(appSessionId: string, text: string): Promise<void> {
-    const liveSession = await this.resumeIfNeeded(appSessionId);
-    if (!liveSession || !(await this.dependencies.applyPendingSessionSettings(appSessionId)))
-      return;
+  async sendNow(requestedAppSessionId: string, text: string): Promise<void> {
+    const liveSession = await this.prepareToSend(requestedAppSessionId);
+    if (!liveSession) return;
     if (!liveSession.streaming && !liveSession.compacting && !liveSession.autoCompacting) {
-      await this.drive(appSessionId, text);
+      await this.drive(liveSession.summary.appSessionId, text);
       return;
     }
     liveSession.pendingSends.unshift(text);
     this.updateQueuedSends(liveSession);
     if (liveSession.compacting || liveSession.autoCompacting) return;
     liveSession.interruptingForSteer = true;
-    this.dependencies.emitStatus(appSessionId, 'Steering now...');
+    this.dependencies.emitStatus(liveSession.summary.appSessionId, 'Steering now...');
     try {
       await liveSession.session.interrupt();
     } catch (error) {
       liveSession.interruptingForSteer = false;
       this.dependencies.emitError({
         code: 'session.send_now_failed',
-        appSessionId,
+        appSessionId: liveSession.summary.appSessionId,
         message: `Could not interrupt session for steering: ${errMsg(error)}`,
       });
     }
   }
 
-  async interrupt(appSessionId: string): Promise<void> {
-    const liveSession = this.dependencies.registry.getLive(appSessionId);
+  async interrupt(requestedAppSessionId: string): Promise<void> {
+    const liveSession = this.dependencies.registry.getLive(requestedAppSessionId);
     if (!liveSession) return;
+    const appSessionId = liveSession.summary.appSessionId;
     liveSession.pendingSends = [];
     if (liveSession.compacting) {
       this.dependencies.registry.updateSummary(appSessionId, { queuedSends: 0 });
@@ -397,19 +395,21 @@ export class SessionLifecycle {
     }
   }
 
-  private async resumeIfNeeded(appSessionId: string): Promise<LiveSession | undefined> {
+  private async prepareToSend(appSessionId: string): Promise<LiveSession | undefined> {
     let liveSession = this.dependencies.registry.getLive(appSessionId);
     if (!liveSession) {
       await this.resume(appSessionId);
       liveSession = this.dependencies.registry.getLive(appSessionId);
     }
     if (!liveSession) {
-      this.dependencies.emitError({
-        appSessionId,
-        message: `Session ${appSessionId} is not resumable`,
-      });
+      const message = `Session ${appSessionId} is not resumable`;
+      this.dependencies.emitError({ appSessionId, message });
+      return undefined;
     }
-    return liveSession;
+    const settingsApplied = await this.dependencies.applyPendingSessionSettings(
+      liveSession.summary.appSessionId,
+    );
+    return settingsApplied ? liveSession : undefined;
   }
 
   private async drive(appSessionId: string, prompt: string): Promise<void> {
