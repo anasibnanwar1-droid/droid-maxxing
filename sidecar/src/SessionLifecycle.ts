@@ -72,6 +72,7 @@ export interface LiveSession extends LiveTurnState {
   summary: SessionSummary;
   session: FactorySession;
   closeMode?: SessionCloseMode;
+  closePromise?: Promise<void>;
   pendingPermissions: Map<string, PendingPermission>;
   pendingQuestions: Map<string, (result: AskUserResult) => void>;
   childSessions: Map<string, LiveChildSession>;
@@ -382,11 +383,20 @@ export class SessionLifecycle {
   }
 
   async close(appSessionId: string, mode: SessionCloseMode = 'discard-pending'): Promise<void> {
+    const liveSession = this.dependencies.registry.getLive(appSessionId);
+    if (!liveSession) return;
+    if (mode === 'discard-pending') {
+      liveSession.closeMode = mode;
+      liveSession.pendingSends = [];
+    } else {
+      liveSession.closeMode ??= mode;
+    }
+    liveSession.closePromise ??= this.closeSessionResources(liveSession);
+    await liveSession.closePromise;
+  }
+
+  private async closeSessionResources(liveSession: LiveSession): Promise<void> {
     const d = this.dependencies;
-    const liveSession = d.registry.getLive(appSessionId);
-    if (!liveSession || liveSession.closeMode) return;
-    liveSession.closeMode = mode;
-    if (mode === 'discard-pending') liveSession.pendingSends = [];
     d.stopContextPolling(liveSession.summary.appSessionId);
     if (liveSession.summary.providerSessionId) {
       d.stopContextPolling(liveSession.summary.providerSessionId);

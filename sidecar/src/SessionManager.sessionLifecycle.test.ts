@@ -386,6 +386,34 @@ test('[L7] Send-now steers ahead of queued sends', { concurrency: false }, async
   }
 });
 
+test('closing an active turn suppresses later provider errors and context refresh', async () => {
+  const h = createSessionManagerTestContext();
+  const gate = h.runtime.deferNextCreateStream('provider-close');
+
+  try {
+    await h.create({
+      sessionPurpose: 'chat',
+      clientRef: 'close-active',
+      title: 'Close active',
+      goal: 'wait',
+      interactionMode: 'auto',
+      autonomy: 'low',
+    });
+    await h.provider.waitForPrompts('provider-close', 1);
+    h.provider.session('provider-close').nextStreamError = new Error('transport closed');
+
+    await h.handle({ type: 'session.close', appSessionId: 'provider-close' });
+    const eventsAfterClose = h.events.length;
+    gate.resolve();
+    await h.waitForIdle();
+    await h.waitForIdle();
+
+    assert.deepEqual(h.events.slice(eventsAfterClose), []);
+  } finally {
+    await h.dispose();
+  }
+});
+
 test('[L8] Stop state matrix', { concurrency: false }, async () => {
   const h = createSessionManagerTestContext();
 

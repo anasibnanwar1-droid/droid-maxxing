@@ -1255,18 +1255,24 @@ export class SessionManager {
   private async runPrimaryTurn(liveSession: LiveSession, prompt: string): Promise<void> {
     const appSessionId = liveSession.summary.appSessionId;
     this.startContextPolling(appSessionId, liveSession.session);
-    await this.applyDesignToolPolicy(liveSession, isDesignPrompt(prompt));
     try {
+      await this.applyDesignToolPolicy(liveSession, isDesignPrompt(prompt));
+      if (hasSessionCloseStarted(liveSession)) return;
       const stream = liveSession.session.stream(prompt, { includePartialMessages: true });
-      for await (const ev of stream) this.applyEvent(appSessionId, appSessionId, 'primary', ev);
+      for await (const ev of stream) {
+        if (hasSessionCloseStarted(liveSession)) break;
+        this.applyEvent(appSessionId, appSessionId, 'primary', ev);
+      }
     } catch (err) {
-      if (liveSession.interruptingForSteer)
+      if (hasSessionCloseStarted(liveSession)) {
+        return;
+      } else if (liveSession.interruptingForSteer) {
         this.emitStatus(appSessionId, 'Current turn interrupted for steering.');
-      else if (liveSession.interrupting && isUserCancellation(err))
+      } else if (liveSession.interrupting && isUserCancellation(err)) {
         // The user pressed Stop; interrupt() already set the paused phase, so
         // settle quietly without surfacing an error.
         this.registry.updateSummary(appSessionId, { phase: 'paused' });
-      else {
+      } else {
         this.emitError({ appSessionId, message: errMsg(err) });
         this.registry.updateSummary(appSessionId, { phase: 'failed' });
       }
@@ -1274,7 +1280,9 @@ export class SessionManager {
       this.stopContextPolling(appSessionId);
       // Keep streaming=true while refreshContext is in flight so concurrent
       // sends queue instead of racing a second lifecycle turn.
-      await this.refreshContext(appSessionId, liveSession.session);
+      if (!hasSessionCloseStarted(liveSession)) {
+        await this.refreshContext(appSessionId, liveSession.session);
+      }
     }
   }
 
@@ -2645,6 +2653,10 @@ export class SessionManager {
     await this.browsers.closeAll();
     this.history.close();
   }
+}
+
+function hasSessionCloseStarted(liveSession: LiveSession): boolean {
+  return liveSession.closeMode !== undefined;
 }
 
 function childSessionSettingsFromInit(init: SessionInitResult): ChildSessionSettings {

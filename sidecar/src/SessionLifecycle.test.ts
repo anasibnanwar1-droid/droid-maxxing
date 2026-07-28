@@ -636,6 +636,40 @@ test('closing an active session discards queued sends without reopening it', asy
   assert.equal(harness.registry.getLive('closing'), undefined);
 });
 
+test('concurrent close waits for cleanup and discard overrides queue preservation', async () => {
+  const harness = createHarness();
+  let finishProviderClose: () => void = () => undefined;
+  const provider = new CallbackCloseSession(
+    'concurrent-close',
+    harness.calls,
+    () =>
+      new Promise<void>((resolve) => {
+        finishProviderClose = resolve;
+      }),
+  );
+  harness.runtime.createQueue.push(provider);
+  await harness.lifecycle.create(createCommand());
+  await provider.waitForPrompts(1);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  const live = requireLive(harness, 'concurrent-close');
+  live.pendingSends = ['preserve unless user closes'];
+
+  const preserving = harness.lifecycle.close('concurrent-close', 'preserve-pending');
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  let discardSettled = false;
+  const discarding = harness.lifecycle.close('concurrent-close').then(() => {
+    discardSettled = true;
+  });
+  await new Promise<void>((resolve) => setImmediate(resolve));
+
+  assert.equal(discardSettled, false);
+  assert.equal(live.closeMode, 'discard-pending');
+  assert.deepEqual(live.pendingSends, []);
+  finishProviderClose();
+  await Promise.all([preserving, discarding]);
+  assert.equal(harness.registry.getLive('concurrent-close'), undefined);
+});
+
 test('pending settings stay projected until successful first-send application', async () => {
   const saved = summary('app-pending', 'provider-pending', {
     modelId: 'model-saved',
