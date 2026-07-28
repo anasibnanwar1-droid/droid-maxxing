@@ -68,6 +68,7 @@ function createHarness(ordinarySummaries: SessionSummary[] = []) {
   const runtime = new FakeFactoryRuntime(calls);
   let projection: Partial<SessionSummary> = {};
   let applyPending: (appSessionId: string) => Promise<boolean> = () => Promise.resolve(true);
+  let enableAutoCompaction = (): Promise<boolean> => Promise.resolve(true);
   let now = 10_000;
   let mcpId = 0;
   const historical = (): HistoricalSession[] =>
@@ -132,7 +133,7 @@ function createHarness(ordinarySummaries: SessionSummary[] = []) {
         method: 'autoCompaction.arm',
         args: [session.sessionId, limit],
       });
-      return Promise.resolve(true);
+      return enableAutoCompaction();
     },
     subscribeSessionCompaction: (live) => {
       live.unsubscribe = live.session.onNotification(() => undefined);
@@ -191,6 +192,9 @@ function createHarness(ordinarySummaries: SessionSummary[] = []) {
     },
     setPendingApply: (action: (appSessionId: string) => Promise<boolean>) => {
       applyPending = action;
+    },
+    setEnableAutoCompaction: (action: () => Promise<boolean>) => {
+      enableAutoCompaction = action;
     },
   };
 }
@@ -309,6 +313,38 @@ test('create failure closes started MCP resources without publishing', async () 
     harness.events.some((event) => event.type === 'error' && event.message === 'create failed'),
     true,
   );
+});
+
+test('post-open create and resume failures close provider and MCP resources', async () => {
+  const created = createHarness();
+  queueCreate(created, 'failed-create');
+  created.setEnableAutoCompaction(() => Promise.reject(new Error('create setup failed')));
+  await created.lifecycle.create(createCommand());
+  assert.deepEqual(
+    created.calls
+      .filter((call) => call.method === 'mcp.close' || call.method === 'session.close')
+      .map((call) => [call.method, call.args[0]]),
+    [
+      ['mcp.close', 'mcp-1'],
+      ['session.close', 'failed-create'],
+    ],
+  );
+  assert.equal(created.registry.getLive('failed-create'), undefined);
+
+  const resumed = createHarness([summary('failed-resume-app', 'failed-resume-provider')]);
+  queueLoad(resumed, 'failed-resume-provider');
+  resumed.setEnableAutoCompaction(() => Promise.reject(new Error('resume setup failed')));
+  await resumed.lifecycle.resume('failed-resume-app');
+  assert.deepEqual(
+    resumed.calls
+      .filter((call) => call.method === 'mcp.close' || call.method === 'session.close')
+      .map((call) => [call.method, call.args[0]]),
+    [
+      ['mcp.close', 'mcp-1'],
+      ['session.close', 'failed-resume-provider'],
+    ],
+  );
+  assert.equal(resumed.registry.getLive('failed-resume-app'), undefined);
 });
 
 test('send lazily resumes once and sends the prompt exactly once', async () => {

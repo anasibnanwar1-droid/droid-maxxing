@@ -130,6 +130,7 @@ export class SessionLifecycle {
     const appCwd = command.cwd ?? '';
     const ref = { id: '' };
     let pendingMcpServers: LocalMcpResource[] = [];
+    let pendingSession: FactorySession | undefined;
 
     try {
       const defaults = await d.getFactoryDefaults();
@@ -169,6 +170,7 @@ export class SessionLifecycle {
         askUserHandler: d.makeAskUserHandler(ref),
       });
       const session = await d.runtime.createSession(runtimeOptions);
+      pendingSession = session;
       await d.enableDaemonAutoCompaction(session, compactionTokenLimit);
 
       const appSessionId = session.sessionId;
@@ -189,12 +191,15 @@ export class SessionLifecycle {
       const liveSession = createLiveSession(summary, session, mcp);
       d.subscribeSessionCompaction(liveSession);
       d.registry.register(liveSession);
+      pendingSession = undefined;
       d.emit({ type: 'session.created', clientRef: command.clientRef, session: summary });
       void this.drive(appSessionId, command.goal);
     } catch (error) {
       await Promise.all(
         pendingMcpServers.map((server) => runBestEffortAsync(() => server.close())),
       );
+      const session = pendingSession;
+      if (session) await runBestEffortAsync(() => session.close());
       d.emitError({ message: errMsg(error) });
     }
   }
@@ -221,6 +226,7 @@ export class SessionLifecycle {
 
     const ref = { id: appSessionId };
     let pendingMcpServers: LocalMcpResource[] = [];
+    let pendingSession: FactorySession | undefined;
     try {
       const mcp = await d.startLocalMcpServers(ref);
       pendingMcpServers = mcp.servers;
@@ -229,6 +235,7 @@ export class SessionLifecycle {
         askUserHandler: d.makeAskUserHandler(ref),
         mcpServers: mcp.configs,
       });
+      pendingSession = session;
       const defaults = await d.getFactoryDefaults();
       const resumed = buildResumedSession({
         init: session.initResult,
@@ -258,6 +265,7 @@ export class SessionLifecycle {
         }
       }
       d.registry.register(liveSession);
+      pendingSession = undefined;
       d.emit({
         type: 'session.created',
         clientRef: `resume:${appSessionId}`,
@@ -282,6 +290,8 @@ export class SessionLifecycle {
       await Promise.all(
         pendingMcpServers.map((server) => runBestEffortAsync(() => server.close())),
       );
+      const session = pendingSession;
+      if (session) await runBestEffortAsync(() => session.close());
       d.emitError({ appSessionId, providerSessionId, message: errMsg(error) });
     }
   }
