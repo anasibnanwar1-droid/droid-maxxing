@@ -1443,8 +1443,7 @@ export class SessionManager {
         this.emitError({
           appSessionId: result.appSessionId,
           providerSessionId: result.providerSessionId,
-          message:
-            'Compaction moved this conversation to a new session but reloading it failed; it will reload on your next message.',
+          message: `Compaction moved this conversation to a new session but reloading it failed: ${result.reloadError}. It will reload on your next message.`,
           recoverable: true,
         });
       }
@@ -2104,10 +2103,13 @@ export class SessionManager {
       this.childAutomaticCompactionTarget(liveSession, childProviderSessionId, childSession),
     );
     liveSession.childSessions.delete(childProviderSessionId);
-    this.context.forgetChild({
-      parentAppSessionId: liveSession.summary.appSessionId,
-      childSessionId: childProviderSessionId,
-    });
+    this.context.forgetChild(
+      {
+        parentAppSessionId: liveSession.summary.appSessionId,
+        childSessionId: childProviderSessionId,
+      },
+      childSession.session.sessionId,
+    );
     this.context.stopPolling(childSession.session.sessionId);
     childSession.unsubscribe?.();
     try {

@@ -222,6 +222,27 @@ test('child identities scope backend snapshots and compaction generations by par
   assert.equal(parentB.summary.autoCompactions, undefined);
 });
 
+test('forgetChild clears the resolved backend snapshot and logical generation', async () => {
+  const h = createHarness();
+  const parent = registerLive(h, 'parent').live;
+  const child = addChild(h, parent, 'logical-child', 'backend-child');
+
+  h.context.recordCompaction(child.target);
+  await h.context.refresh(child.target);
+  const snapshots: unknown = Reflect.get(h.context, 'snapshots');
+  assert.ok(snapshots instanceof Map);
+  assert.equal(snapshots.has('backend-child'), true);
+
+  h.context.forgetChild(
+    { parentAppSessionId: 'parent', childSessionId: 'logical-child' },
+    'backend-child',
+  );
+  assert.equal(snapshots.has('backend-child'), false);
+
+  await h.context.refresh(child.target);
+  assert.equal(contextEvents(h).at(-1)?.stats.compactions, 0);
+});
+
 test('usage carryover survives replacement and can be reseeded after cleanup', () => {
   const h = createHarness();
   const { live } = registerLive(h, 'app-1');

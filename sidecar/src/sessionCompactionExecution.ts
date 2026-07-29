@@ -16,6 +16,7 @@ export type CompactionExecutionResult =
       appSessionId: string;
       providerSessionId: string;
       carryover: UsageOffset;
+      reloadError: string;
     };
 
 export interface SessionCompactionExecutionDependencies {
@@ -101,7 +102,7 @@ export class SessionCompactionExecution {
         { customInstructions, compactType: 'manual' },
       );
       if (outcome === 'stale' && swapTarget)
-        return this.recoverStaleProvider(liveSession, swapTarget, carryover);
+        return await this.recoverStaleProvider(liveSession, swapTarget, carryover);
       return { kind: 'ready-to-settle' };
     } finally {
       liveSession.compacting = false;
@@ -146,11 +147,13 @@ export class SessionCompactionExecution {
     providerSessionId: string,
     carryover: UsageOffset,
   ): Promise<CompactionExecutionResult> {
+    let reloadError: string;
     try {
       await this.adoptProvider(liveSession, providerSessionId, carryover);
       return { kind: 'ready-to-settle' };
-    } catch {
+    } catch (error) {
       // Persist the daemon-authoritative id; Manager performs close-and-resume.
+      reloadError = errMsg(error);
     }
     const appSessionId = liveSession.summary.appSessionId;
     try {
@@ -169,6 +172,7 @@ export class SessionCompactionExecution {
       appSessionId,
       providerSessionId,
       carryover,
+      reloadError,
     };
   }
 
@@ -182,8 +186,17 @@ export class SessionCompactionExecution {
     let session: FactorySession | undefined;
     try {
       session = await this.dependencies.runtime.loadSession(oldProviderSessionId);
-      const result = await session.compactSession(customInstructions ? { customInstructions } : {});
-      const providerSessionId = result?.newSessionId || oldProviderSessionId;
+      const result: unknown = await session.compactSession(
+        customInstructions ? { customInstructions } : {},
+      );
+      const providerSessionId =
+        result !== null &&
+        typeof result === 'object' &&
+        'newSessionId' in result &&
+        typeof result.newSessionId === 'string' &&
+        result.newSessionId
+          ? result.newSessionId
+          : oldProviderSessionId;
       if (providerSessionId !== oldProviderSessionId && historical)
         this.dependencies.registry.replaceProvider(appSessionId, providerSessionId);
     } catch (error) {
@@ -191,6 +204,7 @@ export class SessionCompactionExecution {
         providerSessionId: oldProviderSessionId,
         appSessionId,
         message: `Could not compact session: ${errMsg(error)}`,
+        recoverable: true,
       });
     } finally {
       if (session) await session.close().catch(ignoreError);

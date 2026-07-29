@@ -162,8 +162,8 @@ export class SessionContext {
     this.usageOffsets.set(appSessionId, offset);
   }
 
-  forgetChild(identity: ChildIdentity): void {
-    this.snapshots.delete(identity.childSessionId);
+  forgetChild(identity: ChildIdentity, sourceSessionId: string): void {
+    this.snapshots.delete(sourceSessionId);
     this.childCompactions.delete(childIdentityKey(identity));
   }
 

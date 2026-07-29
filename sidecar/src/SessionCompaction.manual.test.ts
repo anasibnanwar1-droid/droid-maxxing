@@ -298,6 +298,7 @@ test('permanent adoption failure persists the daemon identity before recovery', 
     appSessionId: 'app-1',
     providerSessionId: 'provider-7',
     carryover: { tokensIn: 12, tokensOut: 4 },
+    reloadError: 'second adoption failed',
   });
   assert.equal(live.summary.providerSessionId, 'provider-7');
   assert.equal(live.compacting, false);
@@ -344,4 +345,45 @@ test('historical compaction uses a temporary provider without live side effects'
   assert.equal(closeCount(h.calls, 'provider-history'), 1);
   assert.deepEqual([h.statuses, h.refreshed, h.preserved], [[], [], []]);
   assert.deepEqual(temporary.settings, []);
+});
+
+test('historical noop compaction closes quietly without replacing its provider', async () => {
+  const h = createHarness();
+  const historical = createCompactionTestLiveSession(
+    'app-history',
+    new FakeFactorySession('provider-history', {}, h.calls),
+  ).summary;
+  h.registry.historical.set(historical.appSessionId, historical);
+  const temporary = new NoopCompactionSession('provider-history', {}, h.calls);
+  h.runtime.loadQueue.set('provider-history', [temporary]);
+
+  assert.deepEqual(await h.compaction.compact('app-history'), { kind: 'ready-to-settle' });
+  assert.equal(h.registry.resolveSummary('app-history')?.providerSessionId, 'provider-history');
+  assert.deepEqual(h.errors, []);
+  assert.equal(closeCount(h.calls, 'provider-history'), 1);
+});
+
+test('historical compaction failure is recoverable and closes the temporary provider', async () => {
+  const h = createHarness();
+  const historical = createCompactionTestLiveSession(
+    'app-history',
+    new FakeFactorySession('provider-history', {}, h.calls),
+  ).summary;
+  h.registry.historical.set(historical.appSessionId, historical);
+  const temporary = new FakeFactorySession('provider-history', {}, h.calls);
+  temporary.nextCompactError = new Error('temporary provider rejected');
+  h.runtime.loadQueue.set('provider-history', [temporary]);
+
+  assert.deepEqual(await h.compaction.compact('app-history'), { kind: 'ready-to-settle' });
+  assert.equal(
+    h.errors.some(
+      (error) =>
+        error.appSessionId === 'app-history' &&
+        error.providerSessionId === 'provider-history' &&
+        error.recoverable === true &&
+        error.message === 'Could not compact session: temporary provider rejected',
+    ),
+    true,
+  );
+  assert.equal(closeCount(h.calls, 'provider-history'), 1);
 });

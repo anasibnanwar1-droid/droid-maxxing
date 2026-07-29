@@ -412,7 +412,8 @@ test('[C7] Permanent swap failure settles after old-provider close rejects', asy
         (event) =>
           event.type === 'error' &&
           event.recoverable === true &&
-          /reloading it failed/i.test(event.message),
+          event.message ===
+            'Compaction moved this conversation to a new session but reloading it failed: second adoption failed. It will reload on your next message.',
       ),
       true,
     );
