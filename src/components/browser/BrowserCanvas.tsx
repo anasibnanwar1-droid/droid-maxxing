@@ -12,6 +12,7 @@ import type {
 import { DesignModeOverlay } from './DesignModeOverlay';
 import { DesignModeComposer } from './DesignModeComposer';
 import { pickDesignModeTarget } from './designModeTargeting';
+import { BrandMark } from '../BrandMark';
 
 interface BrowserCanvasProps {
   browser?: BrowserState;
@@ -156,12 +157,7 @@ export function BrowserCanvas({
             />
           ) : (
             <div className="flex h-full w-full items-center justify-center bg-[#0b0b0b]">
-              <div
-                className="font-pixel select-none text-[30px] text-droid-text-muted/30"
-                style={{ letterSpacing: '-0.04em' }}
-              >
-                DROIDEX
-              </div>
+              <BrandMark size={30} className="text-droid-text-muted/30" />
             </div>
           )}
           <DesignModeOverlay

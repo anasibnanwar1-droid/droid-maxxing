@@ -5,7 +5,6 @@ export interface ToastItem {
   message: string;
   variant: ToastVariant;
   ttl: number;
-  createdAt: number;
 }
 
 type Listener = (toasts: ToastItem[]) => void;
@@ -80,7 +79,7 @@ export function pushToast(
   ttl = DEFAULT_TTL_MS,
 ): number {
   const id = nextId++;
-  toasts = [...toasts, { id, message, variant, ttl, createdAt: Date.now() }];
+  toasts = [...toasts, { id, message, variant, ttl }];
   emit();
   if (ttl > 0) scheduleDismiss(id, ttl);
   return id;

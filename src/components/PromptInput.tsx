@@ -432,8 +432,9 @@ export default function PromptInput({
       return;
     }
     const paths = await pickFiles();
-    if (paths.length > 0)
+    if (paths.length > 0) {
       setAttachedFiles((prev) => [...prev, ...paths.filter((p) => !prev.includes(p))]);
+    }
   };
 
   const selectSkill = (skill: SkillInfo) => {
