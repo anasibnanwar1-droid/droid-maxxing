@@ -1,4 +1,4 @@
-import type { TranscriptEvent } from '../types/bridge';
+import type { ProgressEntry, TranscriptEvent } from '../types/bridge';
 import type { ChildAccess, ChildSessionInfo } from '../hooks/useStore';
 import { childSessionInfo, toolMeta, CAT_LABEL } from './tools';
 
@@ -47,6 +47,19 @@ export type ChildSessionActivity = {
   latest?: ChildSessionLatest;
 };
 
+export type VisibleSessionTarget =
+  | { kind: 'primary' }
+  | {
+      kind: 'child';
+      parentAppSessionId: string;
+      childSessionId: string;
+      child: ChildSessionInfo;
+      access: ChildAccess | undefined;
+      canSend: boolean;
+      canInterrupt: boolean;
+      settingsReadiness: 'opening' | 'ready' | 'failed';
+    };
+
 export function selectedChildForParent(
   activeAppSessionId: string | undefined,
   selection: { parentAppSessionId: string; childSessionId: string } | null,
@@ -56,15 +69,98 @@ export function selectedChildForParent(
   return childrenByParent[activeAppSessionId]?.[selection.childSessionId];
 }
 
-export function visibleSessionIsLive(
+export function visibleSessionTarget(
+  activeAppSessionId: string | undefined,
+  selection: { parentAppSessionId: string; childSessionId: string } | null,
+  childrenByParent: Record<string, Record<string, ChildSessionInfo>>,
+  accessByParent: Record<string, Record<string, ChildAccess>>,
+): VisibleSessionTarget {
+  const child = selectedChildForParent(activeAppSessionId, selection, childrenByParent);
+  if (!activeAppSessionId || !selection || !child) return { kind: 'primary' };
+  const access = accessByParent[activeAppSessionId]?.[selection.childSessionId];
+  const ready = access?.state === 'ready' && child.status !== 'completed';
+  return {
+    kind: 'child',
+    parentAppSessionId: activeAppSessionId,
+    childSessionId: selection.childSessionId,
+    child,
+    access,
+    canSend: ready,
+    canInterrupt: ready && child.status === 'running',
+    settingsReadiness:
+      child.status === 'completed'
+        ? 'failed'
+        : ready
+          ? 'ready'
+          : access === undefined || access.state === 'opening'
+            ? 'opening'
+            : 'failed',
+  };
+}
+
+export function visibleSessionIsPending(
+  target: VisibleSessionTarget,
   primaryIsLive: boolean,
-  selectedChild: ChildSessionInfo | undefined,
+  activeAgentId: string | null,
 ): boolean {
-  return selectedChild ? selectedChild.status === 'running' : primaryIsLive;
+  return target.kind === 'child'
+    ? target.canInterrupt
+    : primaryIsLive && activeAgentId === 'primary';
+}
+
+export function visibleSessionCanCompact(target: VisibleSessionTarget): boolean {
+  return target.kind === 'primary';
+}
+
+export function transcriptForVisibleSession(
+  transcript: TranscriptEvent[],
+  childSessionId: string | null,
+): TranscriptEvent[] {
+  if (childSessionId) {
+    return transcript.filter((event) => event.sourceSessionId === childSessionId);
+  }
+  return transcript.filter(
+    (event) =>
+      event.role === 'primary' || (event.author === 'user' && event.sourceSessionId === 'user'),
+  );
 }
 
 export function shouldOpenSelectedChild(access: ChildAccess | undefined): boolean {
   return access === undefined;
+}
+
+export function childSessionIdForFeature(
+  progress: ProgressEntry[],
+  featureId: string,
+): string | undefined {
+  for (let i = progress.length - 1; i >= 0; i--) {
+    const entry = progress[i];
+    if (entry.featureId === featureId && entry.workerChildSessionId) {
+      return entry.workerChildSessionId;
+    }
+  }
+  return undefined;
+}
+
+export function childSessionLabel(childSession: ChildSessionInfo, index: number): string {
+  if (childSession.label) return childSession.label;
+  const role = childSession.role === 'validator' ? 'Validator' : 'Worker';
+  return `${role} ${index + 1}`;
+}
+
+export function childSessionMeta(
+  childSession: ChildSessionInfo,
+  displayedModel = childSession.modelId,
+): string {
+  return [
+    childSession.role,
+    childSession.status,
+    displayedModel,
+    childSession.reasoningEffort,
+    childSession.transcriptAvailable ? 'transcript' : 'no transcript',
+  ]
+    .filter(Boolean)
+    .join(' · ');
 }
 
 export function findChildSessionForTarget(

@@ -2,11 +2,18 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import type { TranscriptEvent } from '../types/bridge';
 import {
-  mergeChildSessionSpawn,
+  childSessionIdForFeature,
+  childSessionLabel,
   childSessionLatest,
+  childSessionMeta,
+  findChildSessionForTarget,
+  mergeChildSessionSpawn,
   selectedChildForParent,
   shouldOpenSelectedChild,
-  visibleSessionIsLive,
+  transcriptForVisibleSession,
+  visibleSessionCanCompact,
+  visibleSessionIsPending,
+  visibleSessionTarget,
 } from './childSessions';
 import { childSessionInfo } from './tools';
 
@@ -100,8 +107,8 @@ test('selected child targeting is parent-scoped and independent of session mode'
   );
 });
 
-test('visible liveness follows the selected child instead of the parent', () => {
-  const child = {
+test('visible child actionability is exact and readiness-gated', () => {
+  const running = {
     parentAppSessionId: 'parent-a',
     childSessionId: 'child-a',
     role: 'worker' as const,
@@ -109,10 +116,147 @@ test('visible liveness follows the selected child instead of the parent', () => 
     modelId: 'model-default',
     transcriptAvailable: true,
   };
+  const children = {
+    'parent-a': { 'child-a': running },
+    'parent-b': { 'child-a': { ...running, parentAppSessionId: 'parent-b' } },
+  };
+  const ready = visibleSessionTarget(
+    'parent-a',
+    { parentAppSessionId: 'parent-a', childSessionId: 'child-a' },
+    children,
+    {
+      'parent-a': {
+        'child-a': { state: 'ready', requestId: 'request-a', runtimeGeneration: 4 },
+      },
+    },
+  );
+  assert.equal(ready.kind, 'child');
+  if (ready.kind !== 'child') assert.fail('expected exact child target');
+  assert.equal(ready.child.parentAppSessionId, 'parent-a');
+  assert.equal(ready.canSend, true);
+  assert.equal(ready.canInterrupt, true);
+  assert.equal(ready.settingsReadiness, 'ready');
 
-  assert.equal(visibleSessionIsLive(false, child), true);
-  assert.equal(visibleSessionIsLive(true, { ...child, status: 'paused' }), false);
-  assert.equal(visibleSessionIsLive(true, undefined), true);
+  const wrongParent = visibleSessionTarget(
+    'parent-b',
+    { parentAppSessionId: 'parent-a', childSessionId: 'child-a' },
+    children,
+    {},
+  );
+  assert.deepEqual(wrongParent, { kind: 'primary' });
+});
+
+test('completed and historical children stay selected while actions are disabled', () => {
+  const completed = {
+    parentAppSessionId: 'parent-a',
+    childSessionId: 'child-a',
+    role: 'worker' as const,
+    status: 'completed' as const,
+    modelId: 'model-default',
+    transcriptAvailable: true,
+  };
+  const selection = { parentAppSessionId: 'parent-a', childSessionId: 'child-a' };
+  const children = { 'parent-a': { 'child-a': completed } };
+
+  for (const access of [
+    { state: 'ready' as const, requestId: 'ready', runtimeGeneration: 2 },
+    { state: 'history' as const, requestId: 'history' },
+  ]) {
+    const target = visibleSessionTarget('parent-a', selection, children, {
+      'parent-a': { 'child-a': access },
+    });
+    assert.equal(target.kind, 'child');
+    if (target.kind !== 'child') assert.fail('expected selected child target');
+    assert.equal(target.childSessionId, 'child-a');
+    assert.equal(target.canSend, false);
+    assert.equal(target.canInterrupt, false);
+    assert.equal(target.settingsReadiness, 'failed');
+  }
+
+  const beforeHistorySettlement = visibleSessionTarget('parent-a', selection, children, {});
+  assert.equal(beforeHistorySettlement.kind, 'child');
+  if (beforeHistorySettlement.kind !== 'child') assert.fail('expected selected child target');
+  assert.equal(beforeHistorySettlement.settingsReadiness, 'failed');
+});
+
+test('visible pending state never inherits liveness across the parent-child boundary', () => {
+  const running = {
+    parentAppSessionId: 'parent-a',
+    childSessionId: 'child-a',
+    role: 'worker' as const,
+    status: 'running' as const,
+    modelId: 'model-default',
+    transcriptAvailable: true,
+  };
+  const selection = { parentAppSessionId: 'parent-a', childSessionId: 'child-a' };
+  const children = { 'parent-a': { 'child-a': running } };
+  const readyChild = visibleSessionTarget('parent-a', selection, children, {
+    'parent-a': {
+      'child-a': { state: 'ready', requestId: 'ready', runtimeGeneration: 2 },
+    },
+  });
+  const historicalChild = visibleSessionTarget('parent-a', selection, children, {
+    'parent-a': { 'child-a': { state: 'history', requestId: 'history' } },
+  });
+
+  assert.equal(visibleSessionIsPending(readyChild, false, null), true);
+  assert.equal(visibleSessionIsPending(historicalChild, true, 'primary'), false);
+  assert.equal(visibleSessionIsPending({ kind: 'primary' }, true, 'primary'), true);
+  assert.equal(visibleSessionIsPending({ kind: 'primary' }, true, 'child-a'), false);
+  assert.equal(visibleSessionCanCompact(readyChild), false);
+  assert.equal(visibleSessionCanCompact(historicalChild), false);
+  assert.equal(visibleSessionCanCompact({ kind: 'primary' }), true);
+});
+
+test('primary and exact child transcripts remain isolated while switching', () => {
+  const transcript = [
+    ev({
+      id: 'user',
+      sourceSessionId: 'user',
+      role: 'primary',
+      author: 'user',
+      ts: 1,
+      kind: 'text',
+      text: 'primary prompt',
+    }),
+    ev({
+      id: 'primary',
+      sourceSessionId: 'parent-a',
+      role: 'primary',
+      ts: 2,
+      kind: 'text',
+      text: 'primary answer',
+    }),
+    ev({
+      id: 'child-a',
+      sourceSessionId: 'child-a',
+      role: 'worker',
+      ts: 3,
+      kind: 'text',
+      text: 'child A output',
+    }),
+    ev({
+      id: 'child-b',
+      sourceSessionId: 'child-b',
+      role: 'worker',
+      ts: 4,
+      kind: 'text',
+      text: 'child B output',
+    }),
+  ];
+
+  assert.deepEqual(
+    transcriptForVisibleSession(transcript, null).map((event) => event.id),
+    ['user', 'primary'],
+  );
+  assert.deepEqual(
+    transcriptForVisibleSession(transcript, 'child-a').map((event) => event.id),
+    ['child-a'],
+  );
+  assert.deepEqual(
+    transcriptForVisibleSession(transcript, 'child-b').map((event) => event.id),
+    ['child-b'],
+  );
 });
 
 test('child open retries require explicit reselection after terminal access', () => {
@@ -129,4 +273,148 @@ test('child open retries require explicit reselection after terminal access', ()
   assert.equal(shouldOpenSelectedChild({ state: 'history', requestId: 'request-a' }), false);
   assert.equal(shouldOpenSelectedChild({ state: 'failed', requestId: 'request-a' }), false);
   assert.equal(shouldOpenSelectedChild({ state: 'closed', requestId: null }), false);
+});
+
+test('feature navigation uses only the latest exact progress child link', () => {
+  assert.equal(
+    childSessionIdForFeature(
+      [
+        {
+          type: 'worker_started',
+          timestamp: '2026-07-29T10:00:00.000Z',
+          featureId: 'feature-a',
+          workerChildSessionId: 'worker-a',
+        },
+        {
+          type: 'worker_started',
+          timestamp: '2026-07-29T10:01:00.000Z',
+          featureId: 'feature-b',
+          workerChildSessionId: 'worker-b',
+        },
+        {
+          type: 'worker_restarted',
+          timestamp: '2026-07-29T10:02:00.000Z',
+          featureId: 'feature-a',
+          workerChildSessionId: 'worker-a-2',
+        },
+      ],
+      'feature-a',
+    ),
+    'worker-a-2',
+  );
+  assert.equal(
+    childSessionIdForFeature(
+      [
+        {
+          type: 'feature_started',
+          timestamp: '2026-07-29T10:00:00.000Z',
+          featureId: 'feature-a',
+        },
+      ],
+      'feature-a',
+    ),
+    undefined,
+  );
+
+  const childSessionId = childSessionIdForFeature(
+    [
+      {
+        type: 'worker_started',
+        timestamp: '2026-07-29T10:00:00.000Z',
+        featureId: 'feature-a',
+        workerChildSessionId: 'worker-a',
+      },
+    ],
+    'feature-a',
+  );
+  const siblingEvents = [
+    ev({
+      id: 'worker-a-tool',
+      sourceSessionId: 'worker-a',
+      role: 'worker',
+      ts: 1,
+      kind: 'tool_call',
+      toolName: 'Bash',
+    }),
+    ev({
+      id: 'worker-b-tool',
+      sourceSessionId: 'worker-b',
+      role: 'worker',
+      ts: 2,
+      kind: 'tool_call',
+      toolName: 'Bash',
+    }),
+  ];
+  assert.deepEqual(
+    transcriptForVisibleSession(siblingEvents, childSessionId ?? null).map((event) => event.id),
+    ['worker-a-tool'],
+  );
+});
+
+test('child display preserves same-role sibling identity and required metadata', () => {
+  const first = {
+    parentAppSessionId: 'parent-a',
+    childSessionId: 'worker-a',
+    role: 'worker' as const,
+    status: 'running' as const,
+    modelId: 'model-a',
+    reasoningEffort: 'high' as const,
+    transcriptAvailable: true,
+  };
+  const second = {
+    ...first,
+    childSessionId: 'worker-b',
+    status: 'completed' as const,
+    transcriptAvailable: false,
+  };
+
+  assert.equal(childSessionLabel(first, 0), 'Worker 1');
+  assert.equal(childSessionLabel(second, 1), 'Worker 2');
+  assert.equal(
+    childSessionMeta(first, 'Model A'),
+    'worker · running · Model A · high · transcript',
+  );
+  assert.equal(
+    childSessionMeta(second, 'Model A'),
+    'worker · completed · Model A · high · no transcript',
+  );
+});
+
+test('spawn navigation resolves only an exact tool-use link', () => {
+  const childSessions = [
+    {
+      parentAppSessionId: 'parent-a',
+      childSessionId: 'worker-a',
+      role: 'worker' as const,
+      status: 'completed' as const,
+      label: 'same label',
+      modelId: 'model-a',
+      spawnLink: { kind: 'tool-use' as const, id: 'tool-a' },
+      transcriptAvailable: true,
+    },
+    {
+      parentAppSessionId: 'parent-a',
+      childSessionId: 'worker-b',
+      role: 'worker' as const,
+      status: 'completed' as const,
+      label: 'same label',
+      modelId: 'model-a',
+      spawnLink: { kind: 'tool-use' as const, id: 'tool-b' },
+      transcriptAvailable: true,
+    },
+  ];
+
+  assert.equal(
+    findChildSessionForTarget(childSessions, {
+      toolUseId: 'tool-b',
+      label: 'same label',
+    })?.childSessionId,
+    'worker-b',
+  );
+  assert.equal(
+    findChildSessionForTarget(childSessions, {
+      label: 'same label',
+    }),
+    undefined,
+  );
 });

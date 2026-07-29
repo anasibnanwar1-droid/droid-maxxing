@@ -1,4 +1,5 @@
 import type { ChildSessionSummary, ModelInfo, ReasoningEffort } from '../types/bridge';
+import type { VisibleSessionTarget } from './childSessions';
 
 export type ExactChildRole = 'worker' | 'validator';
 export type ExactChildSettingsReadiness = 'opening' | 'ready' | 'failed';
@@ -42,6 +43,20 @@ export function buildSelectedChildSettingsTarget(input: {
     reasoningEffort: input.child?.reasoningEffort,
     readiness: input.child ? input.readiness : 'failed',
   };
+}
+
+export function buildVisibleChildSettingsTarget(
+  target: VisibleSessionTarget,
+  label: string,
+): ExactChildSettingsTarget | undefined {
+  if (target.kind !== 'child') return undefined;
+  return buildSelectedChildSettingsTarget({
+    parentAppSessionId: target.parentAppSessionId,
+    childSessionId: target.childSessionId,
+    child: target.child,
+    label,
+    readiness: target.settingsReadiness,
+  });
 }
 
 export function planChildModelUpdate(

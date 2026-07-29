@@ -22,8 +22,9 @@ import { EnvironmentSection } from './environment/EnvironmentSection';
 import { PullRequestPanel } from './environment/PullRequestPanel';
 import type { DiffStatMode } from '../types/vcs';
 import { diffModeToReviewScope } from '../lib/reviewScopes';
+import { childSessionLabel, childSessionMeta, visibleSessionTarget } from '../lib/childSessions';
 
-// Mirrors the sub-agent row design used in the left sidebar.
+// Parent-owned children are shown only in the right context panel.
 function ChildSessionRow({
   label,
   meta,
@@ -118,11 +119,13 @@ export default function RightPanel() {
   // Mission control owns its own feature-based progress; for chat/spec sessions
   // we always prefer the model's own TodoWrite list as the source of truth.
   const transcript = activeSession ? (state.transcripts[activeSession.appSessionId] ?? []) : [];
-  const selectedChild = state.selectedChild;
-  const selectedAgent =
-    selectedChild && selectedChild.parentAppSessionId === activeSession?.appSessionId
-      ? selectedChild.childSessionId
-      : null;
+  const visibleTarget = visibleSessionTarget(
+    activeSession?.appSessionId,
+    state.selectedChild,
+    state.childSessions,
+    state.childAccess,
+  );
+  const selectedAgent = visibleTarget.kind === 'child' ? visibleTarget.childSessionId : null;
   const todoResult = useMemo(() => {
     if (!activeSession || activeSession.sessionPurpose === 'mission-control')
       return { todos: [] as TodoItem[], foundPayload: false };
@@ -259,49 +262,38 @@ export default function RightPanel() {
                           {childSessions.map((childSession, index) => (
                             <ChildSessionRow
                               key={childSession.childSessionId}
-                              label={childSession.label ?? `Child ${index + 1}`}
-                              meta={
-                                [
-                                  childSession.modelId
-                                    ? (state.models.find(
-                                        (model) => model.id === childSession.modelId,
-                                      )?.displayName ?? childSession.modelId)
-                                    : undefined,
-                                  childSession.reasoningEffort,
-                                ]
-                                  .filter(Boolean)
-                                  .join(' · ') || undefined
-                              }
+                              label={childSessionLabel(childSession, index)}
+                              meta={childSessionMeta(
+                                childSession,
+                                state.models.find((model) => model.id === childSession.modelId)
+                                  ?.displayName ?? childSession.modelId,
+                              )}
                               prompt={childSession.prompt}
                               running={childSession.status === 'running'}
                               depth={0}
-                              selected={
-                                state.selectedChild?.parentAppSessionId ===
-                                  activeSession?.appSessionId &&
-                                state.selectedChild.childSessionId === childSession.childSessionId
-                              }
+                              selected={selectedAgent === childSession.childSessionId}
                               onClick={() => {
-                                const selected =
-                                  state.selectedChild?.parentAppSessionId ===
-                                    activeSession?.appSessionId &&
-                                  state.selectedChild.childSessionId ===
-                                    childSession.childSessionId;
                                 dispatch({
                                   type: 'SELECT_CHILD',
-                                  selection: selected
-                                    ? null
-                                    : {
-                                        parentAppSessionId: childSession.parentAppSessionId,
-                                        childSessionId: childSession.childSessionId,
-                                      },
+                                  selection:
+                                    selectedAgent === childSession.childSessionId
+                                      ? null
+                                      : {
+                                          parentAppSessionId: childSession.parentAppSessionId,
+                                          childSessionId: childSession.childSessionId,
+                                        },
                                 });
                               }}
-                              onStop={() =>
-                                activeSession &&
-                                interruptChild(
-                                  activeSession.appSessionId,
-                                  childSession.childSessionId,
-                                )
+                              onStop={
+                                visibleTarget.kind === 'child' &&
+                                visibleTarget.childSessionId === childSession.childSessionId &&
+                                visibleTarget.canInterrupt
+                                  ? () =>
+                                      interruptChild(
+                                        childSession.parentAppSessionId,
+                                        childSession.childSessionId,
+                                      )
+                                  : undefined
                               }
                             />
                           ))}

@@ -14,7 +14,14 @@ import {
 } from './chat';
 import { readFile } from '../lib/desktop';
 import { interruptChild, loadSessionHistory } from '../lib/commands';
-import { findChildSessionForTarget, childSessionActivityForTarget } from '../lib/childSessions';
+import {
+  childSessionActivityForTarget,
+  childSessionLabel,
+  childSessionMeta,
+  findChildSessionForTarget,
+  transcriptForVisibleSession,
+  visibleSessionTarget,
+} from '../lib/childSessions';
 import type { FileChange } from '../lib/diff';
 import { ConversationTimeline } from './ConversationTimeline';
 
@@ -182,11 +189,14 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
   const activeSession = state.activeAppSessionId ? state.sessions[state.activeAppSessionId] : null;
   const allTranscript = activeSession ? (state.transcripts[activeSession.appSessionId] ?? []) : [];
 
-  const selectedChild =
-    state.selectedChild?.parentAppSessionId === activeSession?.appSessionId
-      ? state.selectedChild
-      : null;
-  const selectedChildSessionId = selectedChild?.childSessionId;
+  const visibleTarget = visibleSessionTarget(
+    activeSession?.appSessionId,
+    state.selectedChild,
+    state.childSessions,
+    state.childAccess,
+  );
+  const selectedChildSessionId =
+    visibleTarget.kind === 'child' ? visibleTarget.childSessionId : undefined;
   const viewingChildSession = Boolean(selectedChildSessionId);
 
   const childSessions = activeSession
@@ -195,29 +205,28 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
   const childSessionIndex = childSessions.findIndex(
     (childSession) => childSession.childSessionId === selectedChildSessionId,
   );
-  const selectedChildSession =
-    childSessionIndex >= 0 ? childSessions[childSessionIndex] : undefined;
-  const childSessionLabel = selectedChildSession
-    ? (selectedChildSession.label ?? `Child session ${childSessionIndex + 1}`)
+  const selectedChildSession = visibleTarget.kind === 'child' ? visibleTarget.child : undefined;
+  const selectedChildLabel = selectedChildSession
+    ? childSessionLabel(selectedChildSession, childSessionIndex)
     : 'Child session';
-  const childSessionModel = selectedChildSession?.modelId
+  const selectedChildModel = selectedChildSession?.modelId
     ? (state.models.find((model) => model.id === selectedChildSession.modelId)?.displayName ??
       selectedChildSession.modelId)
     : undefined;
-  const childSessionMeta = [childSessionModel, selectedChildSession?.reasoningEffort]
-    .filter(Boolean)
-    .join(' · ');
+  const selectedChildMeta = selectedChildSession
+    ? childSessionMeta(selectedChildSession, selectedChildModel)
+    : undefined;
 
-  // Click a spawn name → switch the main chat view to that child session's session.
+  // Click a spawn name to switch the main chat view to that exact child transcript.
   const openChildSession = useCallback(
     (target: { toolUseId?: string; label?: string }) => {
-      const worker = findChildSessionForTarget(childSessions, target);
-      if (worker)
+      const childSession = findChildSessionForTarget(childSessions, target);
+      if (childSession)
         dispatch({
           type: 'SELECT_CHILD',
           selection: {
-            parentAppSessionId: worker.parentAppSessionId,
-            childSessionId: worker.childSessionId,
+            parentAppSessionId: childSession.parentAppSessionId,
+            childSessionId: childSession.childSessionId,
           },
         });
     },
@@ -235,7 +244,7 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
     [openReviewFile],
   );
 
-  // Latest activity for a spawn line's inline disclosure: the worker's status,
+  // Latest activity for a spawn line's inline disclosure: the child's status,
   // start time (for the timer), and its newest meaningful transcript event.
   const childSessionActivity = useCallback(
     (target: { toolUseId?: string; label?: string }) => {
@@ -245,11 +254,7 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
   );
 
   const transcript = useMemo(() => {
-    if (viewingChildSession)
-      return allTranscript.filter((event) => event.sourceSessionId === selectedChildSessionId);
-    return allTranscript.filter(
-      (t) => t.role === 'primary' || (t.author === 'user' && t.sourceSessionId === 'user'),
-    );
+    return transcriptForVisibleSession(allTranscript, selectedChildSessionId ?? null);
   }, [allTranscript, viewingChildSession, selectedChildSessionId]);
 
   // Lazily page older primary-session history (across the compaction chain) in as
@@ -310,7 +315,8 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
     }
   }, [transcript.length, tailLen]);
 
-  const live = useSessionLive(activeSession?.appSessionId ?? null);
+  const primaryLive = useSessionLive(activeSession?.appSessionId ?? null);
+  const live = visibleTarget.kind === 'child' ? visibleTarget.canInterrupt : primaryLive;
   const draftFolder = state.draftChat?.cwd.split('/').filter(Boolean).pop();
 
   // Between pressing send on a fresh chat and SESSION_CREATED arriving (the
@@ -432,15 +438,17 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
           sub={
             viewingChildSession
               ? {
-                  label: childSessionLabel,
-                  meta: childSessionMeta || undefined,
-                  running: selectedChildSession?.status === 'running',
+                  label: selectedChildLabel,
+                  meta: selectedChildMeta,
+                  running: live,
                   onBack: () => dispatch({ type: 'SELECT_CHILD', selection: null }),
                   onStop:
-                    activeSession &&
-                    selectedChildSessionId &&
-                    selectedChildSession?.status === 'running'
-                      ? () => interruptChild(activeSession.appSessionId, selectedChildSessionId)
+                    visibleTarget.kind === 'child' && visibleTarget.canInterrupt
+                      ? () =>
+                          interruptChild(
+                            visibleTarget.parentAppSessionId,
+                            visibleTarget.childSessionId,
+                          )
                       : undefined,
                 }
               : undefined
@@ -509,18 +517,18 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
                   </div>
                 </div>
               )}
-              {selectedChildSession?.status === 'running' ? (
+              {visibleTarget.kind === 'child' && visibleTarget.canInterrupt ? (
                 <WorkingIndicator
-                  label={`${childSessionLabel} is working`}
-                  startTs={selectedChildSession.startedAt}
+                  label={`${selectedChildLabel} is working`}
+                  startTs={visibleTarget.child.startedAt}
                 />
               ) : selectedChildSessionId &&
                 state.childAccess[activeSession.appSessionId]?.[selectedChildSessionId]?.state ===
                   'opening' ? (
-                <WorkingIndicator label={`Loading ${childSessionLabel} activity`} />
+                <WorkingIndicator label={`Loading ${selectedChildLabel} activity`} />
               ) : (
                 <span className="text-[13px] text-droid-text-muted">
-                  No activity captured for {childSessionLabel}.
+                  No activity captured for {selectedChildLabel}.
                 </span>
               )}
             </div>

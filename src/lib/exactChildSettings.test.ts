@@ -4,10 +4,12 @@ import test from 'node:test';
 import type { ModelInfo } from '../types/bridge.js';
 import {
   buildSelectedChildSettingsTarget,
+  buildVisibleChildSettingsTarget,
   childSettingsReadinessLabel,
   planChildModelUpdate,
   type ExactChildSettingsTarget,
 } from './exactChildSettings.js';
+import { visibleSessionTarget } from './childSessions.js';
 
 test('child settings readiness uses reader-facing labels', () => {
   assert.equal(childSettingsReadinessLabel('opening'), 'Opening child…');
@@ -123,4 +125,41 @@ test('child model planning is readiness-gated and emits only the exact command i
     childSessionId: 'validator-logical',
     modelId: null,
   });
+});
+
+test('auto and spec selections plan settings for the exact visible child', () => {
+  for (const interactionMode of ['auto', 'spec'] as const) {
+    const parentAppSessionId = `parent-${interactionMode}`;
+    const childSessionId = `child-${interactionMode}`;
+    const child = {
+      parentAppSessionId,
+      childSessionId,
+      role: 'worker' as const,
+      status: 'paused' as const,
+      modelId: 'old-model',
+      reasoningEffort: 'high' as const,
+      transcriptAvailable: true,
+    };
+    const visible = visibleSessionTarget(
+      parentAppSessionId,
+      { parentAppSessionId, childSessionId },
+      { [parentAppSessionId]: { [childSessionId]: child } },
+      {
+        [parentAppSessionId]: {
+          [childSessionId]: {
+            state: 'ready',
+            requestId: `request-${interactionMode}`,
+            runtimeGeneration: 3,
+          },
+        },
+      },
+    );
+    const target = buildVisibleChildSettingsTarget(visible, `${interactionMode} child`);
+    assert.ok(target);
+    assert.deepEqual(planChildModelUpdate(target, 'new-model', 'high', []), {
+      parentAppSessionId,
+      childSessionId,
+      modelId: 'new-model',
+    });
+  }
 });

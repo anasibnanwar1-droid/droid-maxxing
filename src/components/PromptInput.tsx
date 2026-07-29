@@ -21,7 +21,12 @@ import { pickDirectory, listFiles } from '../lib/desktop';
 import { markGitTurnStart } from '../lib/git';
 import { createLocalDesignTranscriptEvent, newQueueId } from '../lib/promptQueue';
 import { composePrompt } from '../lib/composePrompt';
-import { selectedChildForParent, visibleSessionIsLive } from '../lib/childSessions';
+import {
+  childSessionLabel,
+  visibleSessionCanCompact,
+  visibleSessionTarget,
+  type VisibleSessionTarget,
+} from '../lib/childSessions';
 import {
   ArrowUp,
   ChevronDown,
@@ -39,8 +44,8 @@ import {
 } from 'lucide-react';
 import ModelSelectorPopover from './ModelSelectorPopover';
 import {
+  buildVisibleChildSettingsTarget,
   childSettingsReadinessLabel,
-  type ExactChildSettingsTarget,
 } from '../lib/exactChildSettings';
 import ContextStatusCluster from './ContextStatusCluster';
 import PermissionInline from './PermissionInline';
@@ -89,12 +94,10 @@ export default function PromptInput({
   rightInset = false,
   compact = false,
   onOverlayChange,
-  childSettingsTarget,
 }: {
   rightInset?: boolean;
   compact?: boolean;
   onOverlayChange?: (open: boolean) => void;
-  childSettingsTarget?: ExactChildSettingsTarget;
 }) {
   const { state, dispatch } = useStore();
   const [input, setInput] = useState('');
@@ -144,13 +147,27 @@ export default function PromptInput({
       ? activeSession?.interactionMode === 'spec' || (!activeSession && state.specMode)
       : false;
   const selectedChild = state.selectedChild;
-  const targetChild = selectedChildForParent(
+  const visibleTarget: VisibleSessionTarget = visibleSessionTarget(
     activeSession?.appSessionId,
     selectedChild,
     state.childSessions,
+    state.childAccess,
   );
+  const targetChild = visibleTarget.kind === 'child' ? visibleTarget.child : undefined;
   const targetChildSessionId = targetChild?.childSessionId ?? null;
-  const isLive = visibleSessionIsLive(primaryIsLive, targetChild);
+  const targetChildIndex =
+    visibleTarget.kind === 'child' && activeSession
+      ? Object.values(state.childSessions[activeSession.appSessionId] ?? {}).findIndex(
+          (childSession) => childSession.childSessionId === visibleTarget.childSessionId,
+        )
+      : -1;
+  const childSettingsTarget = buildVisibleChildSettingsTarget(
+    visibleTarget,
+    targetChild ? childSessionLabel(targetChild, Math.max(0, targetChildIndex)) : 'Child session',
+  );
+  const childActionsEnabled = visibleTarget.kind !== 'child' || visibleTarget.canSend;
+  const primaryActionsEnabled = visibleSessionCanCompact(visibleTarget);
+  const isLive = visibleTarget.kind === 'child' ? visibleTarget.canInterrupt : primaryIsLive;
 
   const cwd = activeSession?.cwd ?? state.draftChat?.cwd ?? null;
   const skillsProviderSessionId = activeSession?.providerSessionId ?? null;
@@ -191,17 +208,20 @@ export default function PromptInput({
     {
       cmd: '/compact',
       desc: 'Compact current session',
-      run: () => activeSession && compactSession(activeSession.appSessionId),
+      run: () =>
+        primaryActionsEnabled && activeSession && compactSession(activeSession.appSessionId),
     },
     {
       cmd: '/compaction',
       desc: 'Compact current session',
-      run: () => activeSession && compactSession(activeSession.appSessionId),
+      run: () =>
+        primaryActionsEnabled && activeSession && compactSession(activeSession.appSessionId),
     },
     {
       cmd: '/compression',
       desc: 'Compact current session',
-      run: () => activeSession && compactSession(activeSession.appSessionId),
+      run: () =>
+        primaryActionsEnabled && activeSession && compactSession(activeSession.appSessionId),
     },
     { cmd: '/spec', desc: 'Toggle spec mode', run: () => toggleSpec() },
     { cmd: '/settings', desc: 'Open settings', run: () => dispatch({ type: 'TOGGLE_SETTINGS' }) },
@@ -430,10 +450,13 @@ export default function PromptInput({
     }
 
     if (COMPACT_COMMANDS.has(text) && activeSkills.length === 0 && attachedFiles.length === 0) {
+      if (!primaryActionsEnabled) return;
       if (activeSession) compactSession(activeSession.appSessionId);
       setInput('');
       return;
     }
+
+    if (!childActionsEnabled) return;
 
     const composed = composeText(text);
 
@@ -757,7 +780,9 @@ export default function PromptInput({
   // new chat; it renders as the top section of the composer card.
   const showStartIn = !activeSession && !missionPreview && !!cwd;
   const enterSteers = state.liveEnterBehavior === 'interrupt';
-  const idleSendTooltip = 'Enter: send\nShift+Enter: newline';
+  const idleSendTooltip = childActionsEnabled
+    ? 'Enter: send\nShift+Enter: newline'
+    : 'This child transcript is read-only';
   const hasContent = input.trim().length > 0 || activeSkills.length > 0 || attachedFiles.length > 0;
 
   return (
@@ -1187,7 +1212,7 @@ export default function PromptInput({
             ) : (
               <button
                 onClick={() => void handleSubmit()}
-                disabled={!hasContent}
+                disabled={!hasContent || !childActionsEnabled}
                 title={idleSendTooltip}
                 className="p-2 rounded-xl bg-droid-text text-droid-bg disabled:opacity-20 disabled:cursor-not-allowed hover:bg-droid-text-secondary transition-colors shrink-0"
               >
