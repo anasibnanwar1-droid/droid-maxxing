@@ -180,7 +180,7 @@ function createHarness(ordinarySummaries: SessionSummary[] = []) {
       },
     },
     isShutdownStarted: () => shutdownStarted,
-    childSessionLinks: () => [],
+    childSessionRecords: () => [],
     applyPendingSettingsToSummary: (item) => ({ ...item, ...projection }),
     applyPendingSessionSettings: (appSessionId) => applyPending(appSessionId),
     runPrimaryTurn: async (live, prompt) => {

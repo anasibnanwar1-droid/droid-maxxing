@@ -3,6 +3,7 @@ import path from 'node:path';
 
 import type * as Protocol from '../protocol.js';
 import type { SessionManagerDependencies } from '../SessionManager.js';
+import type { PersistedChildSession } from '../history.js';
 import type { RecordedCall } from './fakeFactoryRuntime.js';
 
 type SessionHistoryDependencies = SessionManagerDependencies['history'];
@@ -40,7 +41,7 @@ export class FakeHistoryIndex implements SessionHistoryDependencies {
   nextCloseError?: Error;
   nextSyncError?: Error;
   private readonly summariesByAppId = new Map<string, PersistedSummaryPatch>();
-  private readonly links = new Map<string, Protocol.ChildSessionHistoryLink[]>();
+  private readonly childrenByParent = new Map<string, Map<string, PersistedChildSession>>();
 
   constructor(private readonly calls: RecordedCall[]) {}
 
@@ -60,7 +61,28 @@ export class FakeHistoryIndex implements SessionHistoryDependencies {
   }
 
   seedChildSessionLinks(appSessionId: string, links: Protocol.ChildSessionHistoryLink[]): void {
-    this.links.set(appSessionId, links);
+    const children = new Map<string, PersistedChildSession>();
+    for (const link of links) {
+      children.set(link.providerSessionId, {
+        parentAppSessionId: appSessionId,
+        childSessionId: link.providerSessionId,
+        providerSessionId: link.providerSessionId,
+        role: 'worker',
+        ...(link.label === undefined ? {} : { label: link.label }),
+        status: link.status ?? 'completed',
+        modelId: 'model-default',
+        ...(link.toolUseId === undefined
+          ? {}
+          : { spawnLink: { kind: 'tool-use', id: link.toolUseId } }),
+        transcriptAvailable: true,
+        updatedAt: Date.now(),
+      });
+    }
+    this.childrenByParent.set(appSessionId, children);
+  }
+
+  seedChildSessions(children: PersistedChildSession[]): void {
+    for (const child of children) this.upsertChildSession(child);
   }
 
   summaryPatches(): Map<string, Partial<Protocol.SessionSummary>> {
@@ -83,25 +105,31 @@ export class FakeHistoryIndex implements SessionHistoryDependencies {
     return hidden;
   }
 
-  recordChildSessionLink(
-    ...[appSessionId, toolUseId, providerSessionId, label]: [string, string, string, string?]
-  ): void {
-    const links = this.links.get(appSessionId) ?? [];
-    const index = links.findIndex((existing) => existing.toolUseId === toolUseId);
-    links[index < 0 ? links.length : index] =
-      label === undefined
-        ? { providerSessionId, toolUseId }
-        : { providerSessionId, toolUseId, label };
-    this.links.set(appSessionId, links);
+  upsertChildSession(child: PersistedChildSession): void {
+    const children =
+      this.childrenByParent.get(child.parentAppSessionId) ??
+      new Map<string, PersistedChildSession>();
+    children.set(child.childSessionId, structuredClone(child));
+    this.childrenByParent.set(child.parentAppSessionId, children);
     this.calls.push({
       target: 'history',
-      method: 'recordChildSessionLink',
-      args: [appSessionId, toolUseId, providerSessionId, label],
+      method: 'upsertChildSession',
+      args: [child],
     });
   }
 
-  childSessionLinks(appSessionId: string): Protocol.ChildSessionHistoryLink[] {
-    return (this.links.get(appSessionId) ?? []).map((link) => ({ ...link }));
+  childSessions(parentAppSessionId: string): PersistedChildSession[] {
+    return [...(this.childrenByParent.get(parentAppSessionId)?.values() ?? [])].map((child) =>
+      structuredClone(child),
+    );
+  }
+
+  childSession(
+    parentAppSessionId: string,
+    childSessionId: string,
+  ): PersistedChildSession | undefined {
+    const child = this.childrenByParent.get(parentAppSessionId)?.get(childSessionId);
+    return child ? structuredClone(child) : undefined;
   }
 
   recordEvent(event: unknown): void {

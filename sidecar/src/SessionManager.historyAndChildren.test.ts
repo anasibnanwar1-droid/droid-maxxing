@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
-import { DatabaseSync } from 'node:sqlite';
 import path from 'node:path';
 import test from 'node:test';
 
+import { HistoryIndex } from './history.js';
 import { createSessionManagerTestContext } from './testing/sessionManagerTestContext.js';
 import type { SessionSummary, ServerEvent, ChildSessionHistoryLink } from './protocol.js';
 
@@ -48,37 +48,20 @@ function writeHistoryChain(
   sessionId: string,
   compactedFromProviderSessionIds: string[],
 ): void {
-  const dir = path.join(home, '.factory', 'droid-control');
-  mkdirSync(dir, { recursive: true });
-  const db = new DatabaseSync(path.join(dir, 'index.sqlite'));
+  const previousHome = process.env.HOME;
+  process.env.HOME = home;
   try {
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS app_sessions (
-        app_session_id TEXT PRIMARY KEY,
-        provider_session_id TEXT NOT NULL,
-        compacted_from_provider_session_ids TEXT NOT NULL,
-        session_purpose TEXT NOT NULL,
-        interaction_mode TEXT NOT NULL,
-        title TEXT NOT NULL,
-        updated_at INTEGER NOT NULL
-      )
-    `);
-    db.prepare(
-      `INSERT INTO app_sessions (
-        app_session_id, provider_session_id, compacted_from_provider_session_ids,
-        session_purpose, interaction_mode, title, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    ).run(
-      appSessionId,
-      sessionId,
-      JSON.stringify(compactedFromProviderSessionIds),
-      'chat',
-      'auto',
-      'History',
-      0,
-    );
+    const index = new HistoryIndex();
+    index.syncSummaries([
+      {
+        ...summary(appSessionId, sessionId),
+        compactedFromProviderSessionIds,
+      },
+    ]);
+    index.close();
   } finally {
-    db.close();
+    if (previousHome === undefined) delete process.env.HOME;
+    else process.env.HOME = previousHome;
   }
 }
 
@@ -265,10 +248,33 @@ test('[A1] Child-session link persistence', { concurrency: false }, async () => 
       },
     });
 
+    const persistence = h.calls.find(
+      (call) => call.target === 'history' && call.method === 'upsertChildSession',
+    )?.args[0];
+    assert.ok(persistence && typeof persistence === 'object');
     assert.deepEqual(
-      h.calls.find((call) => call.target === 'history' && call.method === 'recordChildSessionLink')
-        ?.args,
-      ['provider-1', 'tool-a1', 'worker-a1', 'worker'],
+      {
+        parentAppSessionId: Reflect.get(persistence, 'parentAppSessionId'),
+        childSessionId: Reflect.get(persistence, 'childSessionId'),
+        providerSessionId: Reflect.get(persistence, 'providerSessionId'),
+        role: Reflect.get(persistence, 'role'),
+        label: Reflect.get(persistence, 'label'),
+        status: Reflect.get(persistence, 'status'),
+        modelId: Reflect.get(persistence, 'modelId'),
+        spawnLink: Reflect.get(persistence, 'spawnLink'),
+        transcriptAvailable: Reflect.get(persistence, 'transcriptAvailable'),
+      },
+      {
+        parentAppSessionId: 'provider-1',
+        childSessionId: 'worker-a1',
+        providerSessionId: 'worker-a1',
+        role: 'worker',
+        label: 'worker',
+        status: 'running',
+        modelId: 'model-default',
+        spawnLink: { kind: 'tool-use', id: 'tool-a1' },
+        transcriptAvailable: true,
+      },
     );
     assert.equal(
       h.events.some(
@@ -280,6 +286,55 @@ test('[A1] Child-session link persistence', { concurrency: false }, async () => 
           event.event === 'started',
       ),
       true,
+    );
+  } finally {
+    await h.dispose();
+  }
+});
+
+test('[A1b] child persistence resolves the accepted catalog default when settings are empty', async () => {
+  const h = createSessionManagerTestContext({
+    getFactoryDefaults: () => Promise.resolve({}),
+  });
+
+  try {
+    await h.create({
+      sessionPurpose: 'mission-control',
+      clientRef: 'a1b',
+      title: 'A1b',
+      goal: 'go',
+      interactionMode: 'agi',
+      autonomy: 'low',
+    });
+    await h.handle({
+      type: 'child.open',
+      appSessionId: 'provider-1',
+      providerSessionId: 'provider-1',
+      role: 'worker',
+    });
+    h.provider.emitNotification('provider-1', {
+      type: 'tool_progress_update',
+      toolName: 'Task',
+      toolUseId: 'tool-a1b',
+      update: {
+        type: 'tool_call',
+        subagentSessionId: 'worker-a1b',
+        parameters: { subagent_type: 'worker' },
+      },
+    });
+
+    const persistence = h.calls.find(
+      (call) => call.target === 'history' && call.method === 'upsertChildSession',
+    )?.args[0];
+    assert.ok(persistence && typeof persistence === 'object');
+    assert.equal(Reflect.get(persistence, 'childSessionId'), 'worker-a1b');
+    assert.equal(Reflect.get(persistence, 'modelId'), 'model-default');
+    assert.equal(
+      h.events.some(
+        (event) =>
+          event.type === 'error' && event.message.includes('accepted model is unavailable'),
+      ),
+      false,
     );
   } finally {
     await h.dispose();
@@ -306,12 +361,12 @@ test('[A2] Open and replay a linked child session', { concurrency: false }, asyn
     assert.ok(historical);
     assert.equal(
       historical.childSessions?.find((link) => link.providerSessionId === 'worker-a2')?.status,
-      undefined,
+      'completed',
     );
     assert.equal(
       historical.childSessions?.find((link) => link.providerSessionId === 'worker-unknown-a2')
         ?.status,
-      undefined,
+      'completed',
     );
 
     await h.handle({ type: 'session.resume', appSessionId: 'app-a2' });
@@ -397,7 +452,7 @@ test('[A2] Open and replay a linked child session', { concurrency: false }, asyn
     );
     assert.equal(
       live.childSessions?.find((link) => link.providerSessionId === 'worker-unknown-a2')?.status,
-      undefined,
+      'completed',
     );
   } finally {
     await h.dispose();

@@ -18,6 +18,7 @@ import type {
   SessionCompaction,
 } from './SessionCompaction.js';
 import type { LiveOperationTarget, SessionContext } from './SessionContext.js';
+import type { PersistedChildSession } from './history.js';
 import {
   buildCreatedSessionSummary,
   buildCreateRuntimeOptions,
@@ -111,7 +112,7 @@ export interface SessionLifecycleDependencies {
     'resolveLimit' | 'arm' | 'subscribePrimary' | 'afterTurn' | 'cancel'
   >;
   isShutdownStarted: () => boolean;
-  childSessionLinks: (appSessionId: string) => { providerSessionId: string; toolUseId?: string }[];
+  childSessionRecords: (appSessionId: string) => PersistedChildSession[];
   applyPendingSettingsToSummary: (summary: SessionSummary) => SessionSummary;
   applyPendingSessionSettings: (appSessionId: string) => Promise<boolean>;
   runPrimaryTurn: (liveSession: LiveSession, prompt: string) => Promise<void>;
@@ -280,10 +281,11 @@ export class SessionLifecycle {
       const liveSession = createLiveSession(summary, session, mcp);
       pendingLiveSession = liveSession;
       d.compaction.subscribePrimary(this.primaryAutomaticCompactionTarget(liveSession));
-      for (const link of d.childSessionLinks(appSessionId)) {
-        liveSession.linkedChildSessions.add(link.providerSessionId);
-        if (link.toolUseId) {
-          liveSession.childSessionToolUseIds.set(link.toolUseId, link.providerSessionId);
+      for (const child of d.childSessionRecords(appSessionId)) {
+        if (!child.providerSessionId) continue;
+        liveSession.linkedChildSessions.add(child.providerSessionId);
+        if (child.spawnLink?.kind === 'tool-use') {
+          liveSession.childSessionToolUseIds.set(child.spawnLink.id, child.providerSessionId);
         }
       }
       d.registry.register(liveSession);

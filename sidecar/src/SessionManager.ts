@@ -40,6 +40,7 @@ import {
   loadHistoricalSessions,
   loadMissionControlSessions,
   readFactoryDefaults,
+  type PersistedChildSession,
 } from './history.js';
 import { mergeModelCatalog } from './modelCatalog.js';
 import { readDroidCliModelCatalog, readDroidCliModelCatalogCache } from './DroidCliCatalog.js';
@@ -86,8 +87,9 @@ type SessionHistory = Pick<
   | 'syncSummaries'
   | 'summaryPatches'
   | 'hiddenProviderSessionIds'
-  | 'childSessionLinks'
-  | 'recordChildSessionLink'
+  | 'childSessions'
+  | 'childSession'
+  | 'upsertChildSession'
   | 'recordEvent'
   | 'close'
 >;
@@ -161,6 +163,19 @@ interface PendingNativeBrowserRequest {
 interface ChildOpenAttempt {
   settled: Promise<void>;
   settle(): void;
+}
+
+interface ChildPersistencePatch {
+  status: PersistedChildSession['status'];
+  providerSessionId?: string;
+  role?: PersistedChildSession['role'];
+  label?: string;
+  prompt?: string;
+  modelId?: string;
+  reasoningEffort?: ReasoningEffort;
+  spawnLink?: PersistedChildSession['spawnLink'];
+  transcriptAvailable?: boolean;
+  startedAt?: number;
 }
 
 export class SessionManager {
@@ -242,7 +257,7 @@ export class SessionManager {
       registry: this.registry,
       history: this.history,
       getChildSessionLinks: (appSessionId) =>
-        this.withLiveChildSessionStatus(appSessionId, this.history.childSessionLinks(appSessionId)),
+        this.withLiveChildSessionStatus(appSessionId, this.childHistoryLinks(appSessionId)),
       emit: (event) => {
         this.emit(event);
       },
@@ -305,7 +320,7 @@ export class SessionManager {
       makeAskUserHandler: (ref) => this.interactions.makeAskUserHandler(ref),
       compaction: this.compaction,
       isShutdownStarted: () => this.shutdownPromise !== undefined,
-      childSessionLinks: (appSessionId) => this.history.childSessionLinks(appSessionId),
+      childSessionRecords: (appSessionId) => this.history.childSessions(appSessionId),
       applyPendingSettingsToSummary: (summary) => this.applyPendingSettingsToSummary(summary),
       applyPendingSessionSettings: (appSessionId) => this.applyPendingSessionSettings(appSessionId),
       runPrimaryTurn: (liveSession, prompt) => this.runPrimaryTurn(liveSession, prompt),
@@ -834,6 +849,20 @@ export class SessionManager {
       modelId: effectiveModelId,
       ...(cmd.reasoningEffort === undefined ? {} : { reasoningEffort: cmd.reasoningEffort }),
     };
+    this.persistChildSession(parent, cmd.childSessionId, {
+      providerSessionId: child.session.sessionId,
+      role: child.role,
+      status: parent.completedChildSessions.has(cmd.childSessionId)
+        ? 'completed'
+        : child.streaming
+          ? 'running'
+          : 'paused',
+      modelId: effectiveModelId,
+      transcriptAvailable: true,
+      ...(nextSettings.reasoningEffort === undefined
+        ? {}
+        : { reasoningEffort: nextSettings.reasoningEffort }),
+    });
     parent.childSessionSettings.set(cmd.childSessionId, nextSettings);
     this.emitCanonicalChildSettings(parent.summary.appSessionId, cmd.childSessionId, nextSettings);
 
@@ -1032,6 +1061,21 @@ export class SessionManager {
     this.emit({ type: 'sessions.list', sessions: this.registry.listSummaries(options) });
   }
 
+  private childHistoryLinks(appSessionId: string): ChildSessionHistoryLink[] {
+    return this.history.childSessions(appSessionId).flatMap((child) =>
+      child.providerSessionId
+        ? [
+            {
+              providerSessionId: child.providerSessionId,
+              ...(child.spawnLink?.kind === 'tool-use' ? { toolUseId: child.spawnLink.id } : {}),
+              ...(child.label === undefined ? {} : { label: child.label }),
+              status: child.status === 'pending' ? 'paused' : child.status,
+            },
+          ]
+        : [],
+    );
+  }
+
   // Annotate persisted child links with the live run state from the active
   // session so a renderer reconnect/reload doesn't render a still-running
   // child session as finished. Historical loads leave status undefined,
@@ -1217,6 +1261,79 @@ export class SessionManager {
     }
   }
 
+  private persistChildSession(
+    parent: LiveSession,
+    childSessionId: string,
+    patch: ChildPersistencePatch,
+  ): void {
+    const parentAppSessionId = parent.summary.appSessionId;
+    const existing = this.history.childSession(parentAppSessionId, childSessionId);
+    const cachedSettings = parent.childSessionSettings.get(childSessionId);
+    const role = patch.role ?? existing?.role ?? 'worker';
+    const startedAt = existing?.startedAt ?? patch.startedAt;
+    const defaults = this.resolveChildDefaultSettings(parent, role);
+    const modelId =
+      patch.modelId ?? cachedSettings?.modelId ?? existing?.modelId ?? defaults.modelId;
+    if (!modelId)
+      throw new Error(`Cannot persist child ${childSessionId}: accepted model is unavailable.`);
+    this.history.upsertChildSession({
+      ...(existing ?? {
+        parentAppSessionId,
+        childSessionId,
+        role,
+        status: patch.status,
+        modelId,
+        transcriptAvailable: false,
+        updatedAt: Date.now(),
+      }),
+      parentAppSessionId,
+      childSessionId,
+      role,
+      status: patch.status,
+      modelId,
+      transcriptAvailable: patch.transcriptAvailable ?? existing?.transcriptAvailable ?? false,
+      updatedAt: Date.now(),
+      ...(patch.providerSessionId === undefined
+        ? {}
+        : { providerSessionId: patch.providerSessionId }),
+      ...(patch.label === undefined ? {} : { label: patch.label }),
+      ...(patch.prompt === undefined ? {} : { prompt: patch.prompt }),
+      ...(patch.reasoningEffort === undefined ? {} : { reasoningEffort: patch.reasoningEffort }),
+      ...(patch.spawnLink === undefined ? {} : { spawnLink: patch.spawnLink }),
+      ...(startedAt === undefined ? {} : { startedAt }),
+    });
+  }
+
+  private resolveChildDefaultSettings(
+    parent: LiveSession,
+    role: PersistedChildSession['role'],
+  ): ChildSessionSettings {
+    const parentSettings = childSessionSettingsFromInit(parent.session.initResult);
+    const roleModelId =
+      role === 'validator' ? parent.summary.validatorModelId : parent.summary.workerModelId;
+    const roleReasoningEffort =
+      role === 'validator'
+        ? parent.summary.validatorReasoningEffort
+        : parent.summary.workerReasoningEffort;
+    const catalogDefault =
+      this.cachedModels?.find((model) => model.isDefault && !model.isCustom) ??
+      this.cachedModels?.find((model) => !model.isCustom) ??
+      this.cachedModels?.at(0);
+    const missionControl = parent.summary.sessionPurpose === 'mission-control';
+    return {
+      modelId:
+        (missionControl ? roleModelId : parent.summary.modelId) ??
+        parentSettings.modelId ??
+        roleModelId ??
+        catalogDefault?.id,
+      reasoningEffort:
+        (missionControl ? roleReasoningEffort : parent.summary.reasoningEffort) ??
+        parentSettings.reasoningEffort ??
+        roleReasoningEffort ??
+        catalogDefault?.defaultReasoningEffort,
+    };
+  }
+
   // eslint-disable-next-line complexity -- Child-session event policy remains with its PR 6 owner.
   private applyChildSession(
     appSessionId: string,
@@ -1256,8 +1373,24 @@ export class SessionManager {
     liveSession.completedChildSessions.delete(providerSessionId);
     if (toolUseId) {
       liveSession.childSessionToolUseIds.set(toolUseId, providerSessionId);
-      this.history.recordChildSessionLink(appSessionId, toolUseId, providerSessionId, label);
     }
+    const settings = liveSession.childSessionSettings.get(providerSessionId);
+    this.persistChildSession(liveSession, providerSessionId, {
+      providerSessionId,
+      role: 'worker',
+      status: 'running',
+      transcriptAvailable: true,
+      startedAt: Date.now(),
+      ...(label === undefined ? {} : { label }),
+      ...(prompt === undefined ? {} : { prompt }),
+      ...(toolUseId === undefined ? {} : { spawnLink: { kind: 'tool-use', id: toolUseId } }),
+      ...(settings?.modelId === undefined ? {} : { modelId: settings.modelId }),
+      ...(settings?.reasoningEffort === undefined
+        ? liveSession.summary.workerReasoningEffort === undefined
+          ? {}
+          : { reasoningEffort: liveSession.summary.workerReasoningEffort }
+        : { reasoningEffort: settings.reasoningEffort }),
+    });
     this.emit({
       type: 'session.child',
       appSessionId,
@@ -1322,6 +1455,15 @@ export class SessionManager {
     const appSessionId = liveSession.summary.appSessionId;
     liveSession.completedChildSessions.add(providerSessionId);
     const settings = liveSession.childSessionSettings.get(providerSessionId) ?? {};
+    this.persistChildSession(liveSession, providerSessionId, {
+      providerSessionId,
+      status: 'completed',
+      transcriptAvailable: true,
+      ...(settings.modelId === undefined ? {} : { modelId: settings.modelId }),
+      ...(settings.reasoningEffort === undefined
+        ? {}
+        : { reasoningEffort: settings.reasoningEffort }),
+    });
     this.emit({
       type: 'session.child',
       appSessionId,
