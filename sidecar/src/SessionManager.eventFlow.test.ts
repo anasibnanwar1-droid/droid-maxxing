@@ -237,18 +237,20 @@ test('terminal enforcement is scoped to each provider and includes notification 
       toolUseId: 'task-1',
       update: {
         type: 'tool_call',
-        subagentSessionId: 'worker-1',
+        subagentSessionId: 'worker-logical',
         parameters: { subagent_type: 'worker' },
       },
     });
+    const worker = new FakeFactorySession('worker-backend', {}, context.calls);
+    context.runtime.loadQueue.set('worker-logical', [worker]);
     await context.handle({
       type: 'child.open',
       appSessionId: 'provider-1',
-      providerSessionId: 'worker-1',
+      providerSessionId: 'worker-logical',
       role: 'worker',
     });
 
-    context.provider.emitNotification('worker-1', {
+    context.provider.emitNotification('worker-backend', {
       type: 'assistant_text_delta',
       messageId: 'worker-message-1',
       blockIndex: 0,
@@ -259,17 +261,16 @@ test('terminal enforcement is scoped to each provider and includes notification 
       true,
     );
 
-    const worker = context.provider.session('worker-1');
     worker.queueStreamEvents([assistantTextDelta('worker still talking')]);
     await context.handle({
       type: 'child.send',
       appSessionId: 'provider-1',
-      providerSessionId: 'worker-1',
+      providerSessionId: 'worker-logical',
       text: 'worker turn',
     });
     assert.equal(appendedTexts(context.events).includes('worker still talking'), true);
 
-    context.provider.emitNotification('worker-1', {
+    context.provider.emitNotification('worker-backend', {
       type: 'assistant_text_delta',
       messageId: 'worker-message-2',
       blockIndex: 0,
@@ -391,6 +392,27 @@ test('loaded child context follows its runtime session id', async () => {
         newState: 'compacting_conversation',
       }),
     );
+    context.provider.session('provider-1').queueStreamEvents([
+      {
+        type: 'mission_worker_completed',
+        workerSessionId: 'worker-history-id',
+        exitCode: 0,
+      },
+    ]);
+    await context.handle({
+      type: 'session.send',
+      appSessionId: 'provider-1',
+      text: 'settle worker',
+    });
+    assert.equal(
+      context.events.some(
+        (event) =>
+          event.type === 'session.child' &&
+          event.event === 'completed' &&
+          event.providerSessionId === 'worker-history-id',
+      ),
+      true,
+    );
     context.provider.emitNotification(
       'worker-runtime-id',
       compactionNotification({
@@ -401,6 +423,25 @@ test('loaded child context follows its runtime session id', async () => {
       }),
     );
     await context.waitForIdle();
+    assert.equal(
+      context.calls.some(
+        (call) =>
+          call.target === 'cleanup' &&
+          call.method === 'session.close' &&
+          call.args[0] === 'worker-runtime-id',
+      ),
+      true,
+    );
+
+    context.runtime.loadQueue.set('worker-history-id', [
+      new FakeFactorySession('worker-runtime-id-2', {}, context.calls),
+    ]);
+    await context.handle({
+      type: 'child.open',
+      appSessionId: 'provider-1',
+      providerSessionId: 'worker-history-id',
+      role: 'worker',
+    });
     context.events.length = 0;
 
     await context.handle({
@@ -414,7 +455,7 @@ test('loaded child context follows its runtime session id', async () => {
       (event) =>
         event.type === 'context.updated' &&
         event.appSessionId === 'provider-1' &&
-        event.sourceSessionId === 'worker-runtime-id',
+        event.sourceSessionId === 'worker-runtime-id-2',
     );
     assert.equal(runtimeContext?.type, 'context.updated');
     assert.equal(runtimeContext.stats.compactions, 1);

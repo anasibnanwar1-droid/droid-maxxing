@@ -3,14 +3,16 @@ import type { DroidStreamEvent } from '@factory/droid-sdk';
 import { normalizeNotification, normalizeStreamEvent, type NormalizedEvent } from './normalize.js';
 import type { SessionRole, TranscriptEvent } from './protocol.js';
 
-export type NormalizedSideEffects = Omit<NormalizedEvent, 'transcript' | 'done'>;
+export type NormalizedSideEffects = Omit<NormalizedEvent, 'transcript' | 'done' | 'tokens'>;
+export type NormalizedTokenUsage = NonNullable<NormalizedEvent['tokens']>;
 
 export interface SessionEventFlowDependencies {
   appendTranscript: (event: TranscriptEvent) => void;
-  applySideEffects: (
+  applySideEffects: (appSessionId: string, sideEffects: NormalizedSideEffects) => void;
+  recordUsage: (
     appSessionId: string,
     sourceProviderSessionId: string,
-    sideEffects: NormalizedSideEffects,
+    usage: NormalizedTokenUsage,
   ) => void;
 }
 
@@ -73,10 +75,12 @@ export class SessionEventFlow {
         ? undefined
         : normalized.transcript;
     if (transcript) this.dependencies.appendTranscript(transcript);
+    if (normalized.tokens)
+      this.dependencies.recordUsage(appSessionId, sourceProviderSessionId, normalized.tokens);
 
     const sideEffects = normalizedSideEffects(normalized);
     if (hasSideEffects(sideEffects)) {
-      this.dependencies.applySideEffects(appSessionId, sourceProviderSessionId, sideEffects);
+      this.dependencies.applySideEffects(appSessionId, sideEffects);
     }
   }
 
@@ -101,8 +105,7 @@ function hasSideEffects(sideEffects: NormalizedSideEffects): boolean {
     sideEffects.progress ??
     sideEffects.missionState ??
     sideEffects.missionChild ??
-    sideEffects.childSession ??
-    sideEffects.tokens,
+    sideEffects.childSession,
   );
 }
 
@@ -113,6 +116,5 @@ function normalizedSideEffects(normalized: NormalizedEvent): NormalizedSideEffec
     ...(normalized.missionState ? { missionState: normalized.missionState } : {}),
     ...(normalized.missionChild ? { missionChild: normalized.missionChild } : {}),
     ...(normalized.childSession ? { childSession: normalized.childSession } : {}),
-    ...(normalized.tokens ? { tokens: normalized.tokens } : {}),
   };
 }

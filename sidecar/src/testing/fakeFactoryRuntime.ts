@@ -33,7 +33,15 @@ export interface StreamGate {
   resolve(): void;
 }
 
+export interface RejectableGate extends StreamGate {
+  reject(error: unknown): void;
+}
+
 interface DeferredStream extends StreamGate {
+  readonly promise: Promise<void>;
+}
+
+interface DeferredRejectable extends RejectableGate {
   readonly promise: Promise<void>;
 }
 
@@ -52,11 +60,15 @@ export interface FakeFactorySessionInit {
 export class FakeFactorySession implements FactorySession {
   readonly prompts: string[] = [];
   readonly settings: Record<string, unknown>[] = [];
+  contextStatsCalls = 0;
   nextCompactResult?: Awaited<ReturnType<FactorySession['compactSession']>>;
   nextCompactError?: Error;
   nextStreamError?: Error;
   nextEnterSpecModeError?: Error;
   nextUpdateSettingsError?: Error;
+  nextCloseError?: Error;
+  nextContextStats?: Awaited<ReturnType<FactorySession['getContextStats']>>;
+  nextContextStatsError?: Error;
   readonly notifications = new Set<NotificationListener>();
   initResult: FactorySession['initResult'];
 
@@ -65,7 +77,9 @@ export class FakeFactorySession implements FactorySession {
   private readonly promptWaiters: { count: number; resolve(): void }[] = [];
   private nextCompactGate?: DeferredStream;
   private nextContextStatsGate?: DeferredStream;
+  private nextUpdateSettingsGate?: DeferredStream;
   private nextCloseGate?: DeferredStream;
+  private nextInterruptGate?: DeferredRejectable;
 
   constructor(
     readonly sessionId: string,
@@ -126,9 +140,21 @@ export class FakeFactorySession implements FactorySession {
     return gate;
   }
 
+  deferNextUpdateSettings(): StreamGate {
+    const gate = this.defer();
+    this.nextUpdateSettingsGate = gate;
+    return gate;
+  }
+
   deferNextClose(): StreamGate {
     const gate = this.defer();
     this.nextCloseGate = gate;
+    return gate;
+  }
+
+  deferNextInterrupt(): RejectableGate {
+    const gate = this.deferRejectable();
+    this.nextInterruptGate = gate;
     return gate;
   }
 
@@ -154,9 +180,11 @@ export class FakeFactorySession implements FactorySession {
     return this.nextCompactResult ?? { newSessionId: this.sessionId, removedCount: 0 };
   }
 
-  interrupt(): Promise<void> {
+  async interrupt(): Promise<void> {
     this.calls.push({ target: 'provider', method: 'interrupt', args: [this.sessionId] });
-    return Promise.resolve();
+    const gate = this.nextInterruptGate;
+    delete this.nextInterruptGate;
+    await gate?.promise;
   }
 
   enterSpecMode(
@@ -172,7 +200,7 @@ export class FakeFactorySession implements FactorySession {
     return error ? Promise.reject(error) : Promise.resolve({});
   }
 
-  updateSettings(
+  async updateSettings(
     settings: Partial<UpdateSessionSettingsRequestParams>,
   ): Promise<Awaited<ReturnType<FactorySession['updateSettings']>>> {
     this.settings.push({ ...settings });
@@ -183,7 +211,11 @@ export class FakeFactorySession implements FactorySession {
     });
     const error = this.nextUpdateSettingsError;
     delete this.nextUpdateSettingsError;
-    return error ? Promise.reject(error) : Promise.resolve({});
+    const gate = this.nextUpdateSettingsGate;
+    delete this.nextUpdateSettingsGate;
+    await gate?.promise;
+    if (error) throw error;
+    return {};
   }
 
   onNotification(listener: NotificationCallback, filter?: NotificationFilter): () => void {
@@ -204,23 +236,32 @@ export class FakeFactorySession implements FactorySession {
   }
 
   async getContextStats(): ReturnType<FactorySession['getContextStats']> {
+    this.contextStatsCalls += 1;
     const gate = this.nextContextStatsGate;
     delete this.nextContextStatsGate;
     await gate?.promise;
-    return Promise.resolve({
-      used: 0,
-      remaining: 1_000,
-      limit: 1_000,
-      accuracy: ContextStatsAccuracy.Estimated,
-      updatedAt: new Date(0).toISOString(),
-    });
+    const error = this.nextContextStatsError;
+    delete this.nextContextStatsError;
+    if (error) throw error;
+    return Promise.resolve(
+      this.nextContextStats ?? {
+        used: 0,
+        remaining: 1_000,
+        limit: 1_000,
+        accuracy: ContextStatsAccuracy.Estimated,
+        updatedAt: new Date(0).toISOString(),
+      },
+    );
   }
 
-  close(): Promise<void> {
+  async close(): Promise<void> {
     this.calls.push({ target: 'cleanup', method: 'session.close', args: [this.sessionId] });
     const gate = this.nextCloseGate;
     delete this.nextCloseGate;
-    return gate?.promise ?? Promise.resolve();
+    const error = this.nextCloseError;
+    delete this.nextCloseError;
+    await gate?.promise;
+    if (error) throw error;
   }
 
   readonly forkSession: FactorySession['forkSession'] = () =>
@@ -255,6 +296,18 @@ export class FakeFactorySession implements FactorySession {
     return gate;
   }
 
+  private deferRejectable(): DeferredRejectable {
+    let release = (): void => undefined;
+    let fail = (error: unknown): void => {
+      void error;
+    };
+    const promise = new Promise<void>((resolve, reject) => {
+      release = resolve;
+      fail = reject;
+    });
+    return { promise, resolve: release, reject: fail };
+  }
+
   private resolvePromptWaiters(): void {
     for (let index = this.promptWaiters.length - 1; index >= 0; index -= 1) {
       const waiter = this.promptWaiters.at(index);
@@ -271,6 +324,8 @@ export class FakeFactoryRuntime implements FactoryRuntime {
   readonly loadCalls: { sessionId: string; handlers: RuntimeHandlers }[] = [];
   readonly loadQueue = new Map<string, (FakeFactorySession | Error)[]>();
   readonly sessions = new Map<string, FakeFactorySession>();
+  readonly contextBreakdowns = new Map<string, unknown>();
+  readonly contextBreakdownErrors = new Map<string, Error>();
   private apiKey = '';
 
   constructor(private readonly calls: RecordedCall[]) {}
@@ -287,6 +342,12 @@ export class FakeFactoryRuntime implements FactoryRuntime {
   startCliLogin(): Promise<void> {
     this.calls.push({ target: 'runtime', method: 'startCliLogin', args: [] });
     return Promise.resolve();
+  }
+
+  readContextBreakdown(session: FactorySession): Promise<unknown> {
+    const error = this.contextBreakdownErrors.get(session.sessionId);
+    if (error) return Promise.reject(error);
+    return Promise.resolve(this.contextBreakdowns.get(session.sessionId));
   }
 
   createSession(options: CreateRuntimeSessionOptions): Promise<FakeFactorySession> {

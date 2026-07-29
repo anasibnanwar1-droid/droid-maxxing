@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { adaptEvent, initialState, reducer } from './useStore';
+import { adaptEvent, initialState, reducer, toastMessageForEvent } from './useStore';
 import type { SessionSummary } from '../types/bridge';
 
 const session: SessionSummary = {
@@ -23,6 +23,26 @@ const session: SessionSummary = {
   createdAt: 1,
   updatedAt: 1,
 };
+
+test('child settings update failure is routed to user-visible toast feedback', () => {
+  const failure = {
+    type: 'error' as const,
+    code: 'child.settings_update_failed',
+    parentAppSessionId: 'app-1',
+    childSessionId: 'child-1',
+    message: 'Could not update child settings: provider rejected',
+  };
+
+  assert.equal(toastMessageForEvent(failure), failure.message);
+  assert.equal(adaptEvent(failure), null);
+  assert.equal(
+    toastMessageForEvent({
+      ...failure,
+      code: 'child.settings_target_invalid',
+    }),
+    undefined,
+  );
+});
 
 test('a primary error with a provider identity fails the session and settles child loading', () => {
   const action = adaptEvent({
@@ -49,7 +69,8 @@ test('a direct child error settles loading without failing the parent session', 
     type: 'error',
     code: 'child.open_failed',
     appSessionId: 'app-1',
-    providerSessionId: 'child-1',
+    parentAppSessionId: 'app-1',
+    childSessionId: 'child-1',
     message: 'child failed to open',
   });
   assert.ok(action);
@@ -58,11 +79,13 @@ test('a direct child error settles loading without failing the parent session', 
     ...initialState,
     sessions: { 'app-1': session },
     childHistoryLoading: { 'child-1': true },
+    childSettingsReadiness: { 'app-1': { 'child-1': 'opening' as const } },
   };
   const next = reducer(state, action);
 
   assert.equal(next.sessions['app-1']?.phase, 'running');
   assert.equal(next.childHistoryLoading['child-1'], false);
+  assert.equal(next.childSettingsReadiness['app-1']?.['child-1'], 'failed');
 });
 
 test('a recoverable parent error settles loading without failing the session', () => {

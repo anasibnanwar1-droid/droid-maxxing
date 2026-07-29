@@ -69,6 +69,12 @@ export function errMsg(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
+export function defaultsModeForSummary(summary: SessionSummary): SessionInteractionMode {
+  if (summary.sessionPurpose === 'mission-control') return 'agi';
+  if (summary.interactionMode === 'spec') return 'spec';
+  return 'auto';
+}
+
 export function reasoningValue(value?: string): ReasoningEffort | undefined {
   if (
     value === 'off' ||

@@ -45,6 +45,7 @@ export interface SessionManagerTestContext {
     deferNextStream(id: string): StreamGate;
     deferNextCompaction(id: string): StreamGate;
     deferNextContextStats(id: string): StreamGate;
+    deferNextUpdateSettings(id: string): StreamGate;
     waitForPrompts(id: string, count: number): Promise<void>;
     emitNotification(id: string, note: Record<string, unknown>): void;
   };
@@ -60,6 +61,7 @@ export interface SessionManagerTestContext {
   create(
     command: Omit<Extract<Protocol.ClientCommand, { type: 'session.create' }>, 'type'>,
   ): Promise<void>;
+  shutdown(): Promise<void>;
   waitForIdle(): Promise<void>;
   dispose(): Promise<void>;
 }
@@ -71,7 +73,10 @@ export interface NativeBrowserTestContext {
 }
 
 export function createSessionManagerTestContext(
-  options: { defaults?: Protocol.FactoryDefaultSettings } = {},
+  options: {
+    defaults?: Protocol.FactoryDefaultSettings;
+    getFactoryDefaults?: () => Promise<Protocol.FactoryDefaultSettings>;
+  } = {},
 ): SessionManagerTestContext {
   const calls: RecordedCall[] = [];
   const events: Protocol.ServerEvent[] = [];
@@ -88,6 +93,7 @@ export function createSessionManagerTestContext(
     history,
     browsers,
     createLocalMcpResource: () => new FakeLocalMcpResource(calls),
+    ...(options.getFactoryDefaults ? { getFactoryDefaults: options.getFactoryDefaults } : {}),
   };
 
   let manager: SessionManager;
@@ -122,6 +128,7 @@ export function createSessionManagerTestContext(
       deferNextStream: (id) => providerSession(id).deferNextStream(),
       deferNextCompaction: (id) => providerSession(id).deferNextCompaction(),
       deferNextContextStats: (id) => providerSession(id).deferNextContextStats(),
+      deferNextUpdateSettings: (id) => providerSession(id).deferNextUpdateSettings(),
       waitForPrompts: (id, count) => providerSession(id).waitForPrompts(count),
       emitNotification: (id, note) => {
         providerSession(id).emitNotification(note);
@@ -144,6 +151,7 @@ export function createSessionManagerTestContext(
     },
     handle,
     create: (command) => handle({ type: 'session.create', ...command }),
+    shutdown: () => withHome(home, () => manager.shutdown()),
     waitForIdle: () => new Promise((resolve) => setImmediate(resolve)),
     dispose: async () => {
       if (disposed) return;

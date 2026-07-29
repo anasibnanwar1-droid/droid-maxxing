@@ -369,7 +369,7 @@ test('[C3] Failed swap recovery', { concurrency: false }, async () => {
   }
 });
 
-test('[C7] Permanent swap failure re-delivers once through lazy resume', async () => {
+test('[C7] Permanent swap failure settles after old-provider close rejects', async () => {
   const h = createSessionManagerTestContext();
 
   try {
@@ -387,6 +387,7 @@ test('[C7] Permanent swap failure re-delivers once through lazy resume', async (
       newSessionId: 'provider-7',
       removedCount: 1,
     };
+    h.provider.session('provider-1').nextCloseError = new Error('old provider close failed');
     const resumed = new FakeFactorySession('provider-7', {}, h.calls);
     writeProviderSessionStart(h.home, 'provider-7', 'C7 compacted');
     h.runtime.loadQueue.set('provider-7', [
@@ -411,7 +412,19 @@ test('[C7] Permanent swap failure re-delivers once through lazy resume', async (
         (event) =>
           event.type === 'error' &&
           event.recoverable === true &&
-          /reloading it failed/i.test(event.message),
+          event.message ===
+            'Compaction moved this conversation to a new session but reloading it failed: second adoption failed. It will reload on your next message.',
+      ),
+      true,
+    );
+    assert.equal(
+      h.events.some(
+        (event) =>
+          event.type === 'error' &&
+          event.providerSessionId === 'provider-1' &&
+          event.recoverable === true &&
+          event.message ===
+            'Could not fully close the compacted session: old provider close failed',
       ),
       true,
     );
@@ -463,6 +476,7 @@ test(
         h.events.some(
           (event) =>
             event.type === 'session.child' &&
+            'appSessionId' in event &&
             event.appSessionId === 'provider-1' &&
             event.event === 'completed' &&
             event.providerSessionId === 'worker-c4',
@@ -473,6 +487,7 @@ test(
         h.events.some(
           (event) =>
             event.type === 'child.updated' &&
+            'appSessionId' in event &&
             event.appSessionId === 'provider-1' &&
             event.providerSessionId === 'worker-c4' &&
             event.role === 'worker' &&
@@ -549,14 +564,16 @@ test('[C5] Compaction retuning uses each live session model', { concurrency: fal
       ['validator-c5', 'validator'],
     ];
     assert.deepEqual(
-      opened.map(([providerSessionId, role]) =>
+      opened.map(([childSessionId, role]) =>
         h.events.some(
           (event) =>
             event.type === 'child.updated' &&
-            event.appSessionId === 'provider-1' &&
-            event.providerSessionId === providerSessionId &&
+            'parentAppSessionId' in event &&
+            event.parentAppSessionId === 'provider-1' &&
+            event.childSessionId === childSessionId &&
             event.role === role &&
-            event.status === 'opened',
+            event.status === 'opened' &&
+            event.settingsReady,
         ),
       ),
       [true, true],
@@ -589,13 +606,6 @@ test('[C5] Compaction retuning uses each live session model', { concurrency: fal
     await h.dispose();
   }
 });
-
-test.todo(
-  "active worker/validator model changes must re-arm that exact child session with the new model's effective threshold without altering parent/other children",
-);
-test.todo(
-  "closing or shutting down with an active worker stream must prevent its later unwind from re-arming that worker's watchdog or context poller",
-);
 
 test('[C6] Close and shutdown clean keyed resources', { concurrency: false }, async () => {
   const close = await runCloseCleanupScenario();

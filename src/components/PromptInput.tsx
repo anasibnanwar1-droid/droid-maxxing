@@ -38,6 +38,10 @@ import {
   MousePointerSquareDashed,
 } from 'lucide-react';
 import ModelSelectorPopover from './ModelSelectorPopover';
+import {
+  childSettingsReadinessLabel,
+  type ExactChildSettingsTarget,
+} from '../lib/exactChildSettings';
 import ContextStatusCluster from './ContextStatusCluster';
 import PermissionInline from './PermissionInline';
 import PlanApprovalInline from './PlanApprovalInline';
@@ -85,10 +89,12 @@ export default function PromptInput({
   rightInset = false,
   compact = false,
   onOverlayChange,
+  childSettingsTarget,
 }: {
   rightInset?: boolean;
   compact?: boolean;
   onOverlayChange?: (open: boolean) => void;
+  childSettingsTarget?: ExactChildSettingsTarget;
 }) {
   const { state, dispatch } = useStore();
   const [input, setInput] = useState('');
@@ -1038,12 +1044,25 @@ export default function PromptInput({
                     : 'text-droid-text-secondary hover:text-droid-text hover:bg-droid-bg/40'
                 }`}
                 title={
-                  missionPreview
-                    ? 'Configure orchestrator / worker / validator models'
-                    : 'Select chat model'
+                  childSettingsTarget
+                    ? `${childSettingsTarget.label} · ${childSettingsReadinessLabel(childSettingsTarget.readiness)}`
+                    : missionPreview
+                      ? 'Configure orchestrator / worker / validator models'
+                      : 'Select chat model'
                 }
               >
-                {missionPreview ? (
+                {childSettingsTarget ? (
+                  <>
+                    <ModelIcon
+                      provider={providerOf(
+                        state.models.find((model) => model.id === childSettingsTarget.modelId),
+                        childSettingsTarget.modelId,
+                      )}
+                      size={14}
+                    />
+                    <span className="truncate">{childSettingsTarget.label}</span>
+                  </>
+                ) : missionPreview ? (
                   <>
                     <SlidersHorizontal className="w-3.5 h-3.5 shrink-0" />
                     <span>Models</span>
@@ -1077,6 +1096,7 @@ export default function PromptInput({
                   <ModelSelectorPopover
                     onClose={() => setModelsOpen(false)}
                     singleAgent={!missionPreview}
+                    childTarget={childSettingsTarget}
                   />
                 )}
               </AnimatePresence>

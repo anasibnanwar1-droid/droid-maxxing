@@ -50,6 +50,11 @@ import { DiffFull } from './DiffView';
 import { ModelIcon, providerOf } from './ModelIcon';
 import { CAT_ICON, CAT_LABEL, toolMeta } from '../lib/tools';
 import { findChildSessionForTarget, childSessionActivityForTarget } from '../lib/childSessions';
+import {
+  buildSelectedChildSettingsTarget,
+  featureChildRole,
+  liveFeatureChildRole,
+} from '../lib/exactChildSettings';
 import { MessageFeed } from './chat';
 import EditorOpenMenu, { openCodebase, openCurrentDiff } from './EditorOpenMenu';
 import PromptInput from './PromptInput';
@@ -58,13 +63,6 @@ const ACCENT = 'var(--droid-accent)';
 const accentMix = (pct: number) => `color-mix(in srgb, var(--droid-accent) ${pct}%, transparent)`;
 
 /* ════════════════════════ chat ════════════════════════ */
-
-function featureAgentRole(feature: BridgeFeature): AgentEntry['role'] {
-  const text = `${feature.id} ${feature.skillName} ${feature.description}`.toLowerCase();
-  return text.includes('validator') || text.includes('validation') || text.includes('scrutiny')
-    ? 'validator'
-    : 'worker';
-}
 
 function ChatArea({
   events,
@@ -892,7 +890,7 @@ function FeatureFocus({
 /* ════════════════════════ main ════════════════════════ */
 
 export default function MissionControl() {
-  const { state } = useStore();
+  const { state, dispatch } = useStore();
   const mission = state.activeAppSessionId ? state.sessions[state.activeAppSessionId] : null;
   const utilityOpen = utilityPanelForSession(state.utilityPanels, state.activeAppSessionId).open;
   const [viewedAgent, setViewedAgent] = useState<string>('primary');
@@ -907,17 +905,34 @@ export default function MissionControl() {
   const progress = mission ? (state.progress[mission.appSessionId] ?? []) : [];
   const childSessions = mission ? (state.childSessions[mission.appSessionId] ?? []) : [];
 
+  const selectAgent = useCallback(
+    (id: string) => {
+      setViewedAgent(id);
+      if (!mission || id === 'primary') return;
+      const role = liveFeatureChildRole(features, id);
+      if (role) {
+        dispatch({
+          type: 'CHILD_SETTINGS_READINESS',
+          parentAppSessionId: mission.appSessionId,
+          childSessionId: id,
+          status: 'opening',
+        });
+      }
+      openChild(mission.appSessionId, id, role);
+    },
+    [dispatch, features, mission],
+  );
+
   // Click a spawn name in the orchestrator transcript → focus that worker.
   // Mission orchestrators are skipped by App's subscribe effect, so open the
   // worker session here to load its history/live events before switching.
   const openChildSession = useCallback(
     (target: { toolUseId?: string; label?: string }) => {
       const worker = findChildSessionForTarget(childSessions, target);
-      if (!worker || !mission) return;
-      openChild(mission.appSessionId, worker.providerSessionId);
-      setViewedAgent(worker.providerSessionId);
+      if (!worker) return;
+      selectAgent(worker.providerSessionId);
     },
-    [childSessions, mission],
+    [childSessions, selectAgent],
   );
 
   const childSessionActivity = useCallback(
@@ -969,7 +984,7 @@ export default function MissionControl() {
   const workerRoles = useMemo(() => {
     const map = new Map<string, AgentEntry['role']>();
     features.forEach((f) => {
-      const role = featureAgentRole(f);
+      const role = featureChildRole(f);
       f.workerProviderSessionIds?.forEach((id) => map.set(id, role));
       if (f.currentWorkerProviderSessionId) map.set(f.currentWorkerProviderSessionId, role);
       if (f.completedWorkerProviderSessionId) map.set(f.completedWorkerProviderSessionId, role);
@@ -1023,7 +1038,7 @@ export default function MissionControl() {
       const ids: string[] = [];
       features.forEach((f) => {
         const id = f.currentWorkerProviderSessionId;
-        if (f.status === 'in_progress' && id && featureAgentRole(f) === role && !ids.includes(id))
+        if (f.status === 'in_progress' && id && featureChildRole(f) === role && !ids.includes(id))
           ids.push(id);
       });
       return ids;
@@ -1046,7 +1061,7 @@ export default function MissionControl() {
       const subAgents = live.map((id) => ({
         id,
         role,
-        label: `Sub-agent ${workerNumber.get(id) ?? '?'}`,
+        label: `Sub-agent ${String(workerNumber.get(id) ?? '?')}`,
       }));
       return { role, providerSessionId, working, subAgents };
     };
@@ -1056,7 +1071,7 @@ export default function MissionControl() {
   const activeAgentLabel =
     !activeAgentId || activeAgentId === 'primary'
       ? 'Orchestrator'
-      : `Sub-agent ${workerNumber.get(activeAgentId) ?? '?'}`;
+      : `Sub-agent ${String(workerNumber.get(activeAgentId) ?? '?')}`;
 
   if (!mission) return null;
 
@@ -1079,12 +1094,23 @@ export default function MissionControl() {
   const selectFeature = (f: BridgeFeature) => {
     setSelectedFeatureId(f.id);
     const session = f.currentWorkerProviderSessionId ?? f.completedWorkerProviderSessionId ?? null;
-    setViewedAgent(session ?? 'primary');
+    selectAgent(session ?? 'primary');
     setFocusOpen(true);
   };
 
   const selectedFeature = features.find((f) => f.id === selectedFeatureId) ?? null;
   const done = features.filter((f) => f.status === 'completed').length;
+  const childSettingsTarget =
+    viewedAgent === 'primary'
+      ? undefined
+      : buildSelectedChildSettingsTarget({
+          parentAppSessionId: mission.appSessionId,
+          childSessionId: viewedAgent,
+          features,
+          child: childSessions.find((child) => child.providerSessionId === viewedAgent),
+          label: `Sub-agent ${String(workerNumber.get(viewedAgent) ?? '?')}`,
+          readiness: state.childSettingsReadiness[mission.appSessionId]?.[viewedAgent] ?? 'opening',
+        });
 
   return (
     <div className="flex flex-col flex-1 min-h-0 min-w-0 overflow-hidden">
@@ -1162,7 +1188,7 @@ export default function MissionControl() {
               childSessionActivity={onOrchestrator ? childSessionActivity : undefined}
             />
           )}
-          <PromptInput />
+          <PromptInput childSettingsTarget={childSettingsTarget} />
         </section>
 
         {/* ─── Context panel (collapsible via the top-bar context button) ─── */}
@@ -1184,7 +1210,7 @@ export default function MissionControl() {
                   progress={progress}
                   viewedAgent={viewedAgent}
                   activeAgentId={activeAgentId}
-                  onSelectAgent={setViewedAgent}
+                  onSelectAgent={selectAgent}
                 />
               </div>
             </motion.aside>
@@ -1217,7 +1243,7 @@ export default function MissionControl() {
               viewedAgent={viewedAgent}
               activeAgentId={activeAgentId}
               onSelectAgent={(id) => {
-                setViewedAgent(id);
+                selectAgent(id);
                 setExpanded(null);
               }}
               big

@@ -1,5 +1,6 @@
 import {
   AutonomyLevel,
+  ContextBreakdownResultSchema,
   DroidClient,
   DroidInteractionMode,
   DroidSession,
@@ -88,6 +89,7 @@ export interface FactoryRuntime {
   startCliLogin(): Promise<void>;
   createSession(options: CreateRuntimeSessionOptions): Promise<FactorySession>;
   loadSession(providerSessionId: string, handlers?: RuntimeHandlers): Promise<FactorySession>;
+  readContextBreakdown(session: FactorySession): Promise<unknown>;
 }
 
 export class DroidRuntime implements FactoryRuntime {
@@ -103,6 +105,29 @@ export class DroidRuntime implements FactoryRuntime {
       droidPath: this.resolveDroidPath(),
       apiKeyConfigured: this.explicitApiKey.length > 0,
     };
+  }
+
+  async readContextBreakdown(session: FactorySession): Promise<unknown> {
+    try {
+      const exposed = session as unknown as { getContextBreakdown?: () => Promise<unknown> };
+      if (typeof exposed.getContextBreakdown === 'function')
+        return await exposed.getContextBreakdown();
+
+      const client = (
+        session as unknown as {
+          _client?: {
+            _sessionRpcWithoutParams?: (method: string, schema: unknown) => Promise<unknown>;
+          };
+        }
+      )._client;
+      if (!client?._sessionRpcWithoutParams) return undefined;
+      return await client._sessionRpcWithoutParams(
+        'droid.get_context_breakdown',
+        ContextBreakdownResultSchema,
+      );
+    } catch {
+      return undefined;
+    }
   }
 
   async createSession(options: CreateRuntimeSessionOptions): Promise<DroidSession> {
@@ -202,7 +227,8 @@ export function createInitializeSessionParams(
   };
 
   if (options.modelId) params.modelId = options.modelId;
-  if (options.reasoningEffort) params.reasoningEffort = mapReasoning(options.reasoningEffort);
+  if (options.reasoningEffort)
+    params.reasoningEffort = factoryReasoningEffort(options.reasoningEffort);
   if (options.compactionModel) params.compactionModel = options.compactionModel;
   if (options.compactionTokenLimit !== undefined)
     params.compactionTokenLimit = options.compactionTokenLimit;
@@ -210,7 +236,7 @@ export function createInitializeSessionParams(
     params.compactionThresholdCheckEnabled = options.compactionThresholdCheckEnabled;
   if (options.specModeModelId) params.specModeModelId = options.specModeModelId;
   if (options.specModeReasoningEffort)
-    params.specModeReasoningEffort = mapReasoning(options.specModeReasoningEffort);
+    params.specModeReasoningEffort = factoryReasoningEffort(options.specModeReasoningEffort);
   if (options.autonomyLevel) params.autonomyLevel = mapAutonomy(options.autonomyLevel);
   if (options.decompSessionType) params.decompSessionType = options.decompSessionType;
   if (options.missionId) params.decompMissionId = options.missionId;
@@ -234,7 +260,7 @@ function mapAutonomy(autonomy: Autonomy): AutonomyLevel {
   return AutonomyLevel.Low;
 }
 
-function mapReasoning(reasoning: ReasoningEffort): SdkReasoningEffort {
+export function factoryReasoningEffort(reasoning: ReasoningEffort): SdkReasoningEffort {
   switch (reasoning) {
     case 'none':
       return SdkReasoningEffort.None;
@@ -284,11 +310,13 @@ function missionSettingsFor(
   return {
     ...(options.workerModelId ? { workerModel: options.workerModelId } : {}),
     ...(options.workerReasoningEffort
-      ? { workerReasoningEffort: mapReasoning(options.workerReasoningEffort) }
+      ? { workerReasoningEffort: factoryReasoningEffort(options.workerReasoningEffort) }
       : {}),
     ...(options.validatorModelId ? { validationWorkerModel: options.validatorModelId } : {}),
     ...(options.validatorReasoningEffort
-      ? { validationWorkerReasoningEffort: mapReasoning(options.validatorReasoningEffort) }
+      ? {
+          validationWorkerReasoningEffort: factoryReasoningEffort(options.validatorReasoningEffort),
+        }
       : {}),
   };
 }

@@ -12,6 +12,7 @@ import type {
   ReasoningEffort,
   SessionInteractionMode,
   SessionPurpose,
+  SessionRole,
 } from '../types/bridge';
 
 let refCounter = 0;
@@ -93,8 +94,11 @@ export const compactSession = (appSessionId: string, customInstructions?: string
 export const interruptChild = (appSessionId: string, providerSessionId: string) =>
   bridge.send({ type: 'child.interrupt', appSessionId, providerSessionId });
 
-export const openChild = (appSessionId: string, providerSessionId: string) =>
-  bridge.send({ type: 'child.open', appSessionId, providerSessionId });
+export const openChild = (
+  appSessionId: string,
+  providerSessionId: string,
+  role?: Exclude<SessionRole, 'primary'>,
+) => bridge.send({ type: 'child.open', appSessionId, providerSessionId, role });
 
 export const closeSession = (appSessionId: string) =>
   bridge.send({ type: 'session.close', appSessionId });
@@ -117,6 +121,15 @@ export const updateAgentSettings = (input: {
   modelId?: string | null;
   reasoningEffort?: ReasoningEffort;
 }) => bridge.send({ type: 'settings.agent.update', ...input });
+
+export const updateChildSettings = (input: {
+  parentAppSessionId: string;
+  childSessionId: string;
+  modelId: string | null;
+  reasoningEffort?: ReasoningEffort;
+}) => {
+  bridge.send({ type: 'child.updateSettings', ...input });
+};
 
 export const updateCompactionSettings = (input: {
   compactionTokenLimit?: number | null;
