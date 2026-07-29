@@ -158,7 +158,10 @@ interface PendingNativeBrowserRequest {
   timeout: ReturnType<typeof setTimeout>;
 }
 
-interface ChildOpenAttempt { settled: Promise<void>; settle(): void }
+interface ChildOpenAttempt {
+  settled: Promise<void>;
+  settle(): void;
+}
 
 export class SessionManager {
   private ready = false;
@@ -1630,7 +1633,6 @@ export class SessionManager {
     if (this.shutdownPromise) return;
     const liveSession = this.registry.getLive(appSessionId);
     if (!liveSession) {
-      // Settle child loading honestly when its parent is not live.
       this.emitChildOpened(appSessionId, childProviderSessionId, role, false);
       return;
     }
@@ -1687,7 +1689,6 @@ export class SessionManager {
         );
       const limit = await this.compaction.resolveLimit({ modelId: workerModelId });
       if (!this.isCurrentChildOpenAttempt(liveSession, childProviderSessionId, attempt)) return;
-      // Arm daemon compaction with this child's effective model limit.
       await this.compaction.arm(
         {
           session,
