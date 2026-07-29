@@ -773,6 +773,24 @@ export class SessionManager {
       return;
     }
 
+    const previous = child.settingsUpdateTail ?? Promise.resolve();
+    const update = previous
+      .catch(() => undefined)
+      .then(() => this.performChildSettingsUpdate(cmd, parent, child));
+    child.settingsUpdateTail = update;
+    try {
+      await update;
+    } finally {
+      if (child.settingsUpdateTail === update) delete child.settingsUpdateTail;
+    }
+  }
+
+  private async performChildSettingsUpdate(
+    cmd: Extract<ClientCommand, { type: 'child.updateSettings' }>,
+    parent: LiveSession,
+    child: LiveChildSession,
+  ): Promise<void> {
+    if (!this.isCurrentChildSettingsTarget(parent, cmd.childSessionId, child)) return;
     let effectiveModelId: string | undefined = cmd.modelId ?? undefined;
     try {
       if (cmd.modelId === null) {
@@ -806,8 +824,7 @@ export class SessionManager {
       return;
     }
 
-    if (!effectiveModelId || !this.isCurrentChildSettingsTarget(parent, cmd.childSessionId, child))
-      return;
+    if (!this.isCurrentChildSettingsTarget(parent, cmd.childSessionId, child)) return;
     const currentSettings = parent.childSessionSettings.get(cmd.childSessionId) ?? {};
     const nextSettings: ChildSessionSettings & { modelId: string } = {
       ...currentSettings,

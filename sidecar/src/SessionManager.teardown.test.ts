@@ -98,7 +98,6 @@ async function createMissionWithChild(h: SessionManagerTestContext): Promise<Fak
 async function exerciseLateChildUnwind(mode: 'close' | 'shutdown'): Promise<void> {
   const h = createSessionManagerTestContext();
   const timers = observeTimers();
-  let disposed = false;
   try {
     const child = await createMissionWithChild(h);
     const streamGate = child.deferNextStream();
@@ -153,10 +152,7 @@ async function exerciseLateChildUnwind(mode: 'close' | 'shutdown'): Promise<void
     }
   } finally {
     timers.restore();
-    if (!disposed) {
-      disposed = true;
-      await h.dispose().catch(() => undefined);
-    }
+    await h.dispose().catch(() => undefined);
   }
 }
 

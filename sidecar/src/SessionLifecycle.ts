@@ -73,6 +73,7 @@ export interface LiveChildSession extends LiveTurnState {
   lastUsedAt: number;
   closeWhenIdle?: boolean;
   unsubscribe?: () => void;
+  settingsUpdateTail?: Promise<void>;
 }
 export interface LiveSession extends LiveTurnState {
   summary: SessionSummary;

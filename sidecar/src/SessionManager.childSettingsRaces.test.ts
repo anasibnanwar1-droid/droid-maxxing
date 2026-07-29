@@ -11,6 +11,53 @@ import {
 import { FakeFactorySession } from './testing/fakeFactoryRuntime.js';
 import { createSessionManagerTestContext } from './testing/sessionManagerTestContext.js';
 
+test('concurrent child settings updates serialize so the latest selection wins', async () => {
+  const h = createSessionManagerTestContext();
+  try {
+    await createMission(h);
+    const child = await openChild(h, 'worker-logical', 'worker-backend', 'worker', 'worker-old');
+    const firstGate = h.provider.deferNextUpdateSettings('worker-backend');
+    const writesBefore = child.settings.length;
+
+    const first = h.handle({
+      type: 'child.updateSettings',
+      parentAppSessionId: 'provider-1',
+      childSessionId: 'worker-logical',
+      modelId: 'worker-first',
+    });
+    await h.waitForIdle();
+    const second = h.handle({
+      type: 'child.updateSettings',
+      parentAppSessionId: 'provider-1',
+      childSessionId: 'worker-logical',
+      modelId: 'worker-latest',
+    });
+    await h.waitForIdle();
+
+    assert.deepEqual(
+      child.settings
+        .slice(writesBefore)
+        .filter((settings) => settings['modelId'])
+        .map((settings) => settings['modelId']),
+      ['worker-first'],
+    );
+
+    firstGate.resolve();
+    await Promise.all([first, second]);
+
+    assert.deepEqual(
+      child.settings
+        .slice(writesBefore)
+        .filter((settings) => settings['modelId'])
+        .map((settings) => settings['modelId']),
+      ['worker-first', 'worker-latest'],
+    );
+    assert.equal(exactSettingsEvents(h.events, 'worker-logical').at(-1)?.modelId, 'worker-latest');
+  } finally {
+    await h.dispose();
+  }
+});
+
 test(
   'provider rejection commits no child success or compaction re-arm and role-default rejection stays truthful',
   { concurrency: false },
