@@ -198,7 +198,7 @@ export class SessionCompactionExecution {
           ? result.newSessionId
           : oldProviderSessionId;
       if (providerSessionId !== oldProviderSessionId && historical)
-        this.dependencies.registry.replaceProvider(appSessionId, providerSessionId);
+        this.persistHistoricalProvider(appSessionId, providerSessionId);
     } catch (error) {
       this.dependencies.emitError({
         providerSessionId: oldProviderSessionId,
@@ -208,6 +208,18 @@ export class SessionCompactionExecution {
       });
     } finally {
       if (session) await session.close().catch(ignoreError);
+    }
+  }
+
+  private persistHistoricalProvider(appSessionId: string, providerSessionId: string): void {
+    try {
+      this.dependencies.registry.replaceProvider(appSessionId, providerSessionId);
+    } catch (error) {
+      this.dependencies.emitError({
+        providerSessionId,
+        appSessionId,
+        message: `Could not persist compacted session identity: ${errMsg(error)}`,
+      });
     }
   }
 

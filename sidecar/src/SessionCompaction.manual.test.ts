@@ -363,6 +363,33 @@ test('historical noop compaction closes quietly without replacing its provider',
   assert.equal(closeCount(h.calls, 'provider-history'), 1);
 });
 
+test('historical provider persistence failure is fatal and identifies the new provider', async () => {
+  const h = createHarness();
+  const historical = createCompactionTestLiveSession(
+    'app-history',
+    new FakeFactorySession('provider-history', {}, h.calls),
+  ).summary;
+  h.registry.historical.set(historical.appSessionId, historical);
+  h.registry.nextReplaceError = new Error('history unavailable');
+  const temporary = new FakeFactorySession('provider-history', {}, h.calls);
+  temporary.nextCompactResult = { newSessionId: 'provider-history-2', removedCount: 1 };
+  h.runtime.loadQueue.set('provider-history', [temporary]);
+
+  assert.deepEqual(await h.compaction.compact('app-history'), { kind: 'ready-to-settle' });
+  assert.equal(
+    h.errors.some(
+      (error) =>
+        error.appSessionId === 'app-history' &&
+        error.providerSessionId === 'provider-history-2' &&
+        error.recoverable === undefined &&
+        error.message === 'Could not persist compacted session identity: history unavailable',
+    ),
+    true,
+  );
+  assert.equal(h.registry.resolveSummary('app-history')?.providerSessionId, 'provider-history');
+  assert.equal(closeCount(h.calls, 'provider-history'), 1);
+});
+
 test('historical compaction failure is recoverable and closes the temporary provider', async () => {
   const h = createHarness();
   const historical = createCompactionTestLiveSession(
