@@ -170,7 +170,7 @@ test('pending settings completion after close cannot publish or re-arm', async (
   }
 });
 
-test('concurrent child opens share one exact parent-owned attempt', async () => {
+test('a child send waits for the shared parent-owned open attempt', async () => {
   const h = createSessionManagerTestContext();
   try {
     await h.create({
@@ -182,10 +182,9 @@ test('concurrent child opens share one exact parent-owned attempt', async () => 
       autonomy: 'low',
     });
     await h.waitForIdle();
-    h.runtime.loadQueue.set('same-logical', [
-      new FakeFactorySession('same-backend', {}, h.calls),
-      new FakeFactorySession('duplicate-backend', {}, h.calls),
-    ]);
+    const child = new FakeFactorySession('same-backend', {}, h.calls);
+    const armGate = child.deferNextUpdateSettings();
+    h.runtime.loadQueue.set('same-logical', [child]);
     const command = {
       type: 'child.open' as const,
       appSessionId: 'provider-1',
@@ -193,9 +192,21 @@ test('concurrent child opens share one exact parent-owned attempt', async () => 
       role: 'worker' as const,
     };
 
-    await Promise.all([h.handle(command), h.handle(command)]);
+    const opening = h.handle(command);
+    await h.waitForIdle();
+    const sending = h.handle({
+      type: 'child.send',
+      appSessionId: 'provider-1',
+      providerSessionId: 'same-logical',
+      text: 'queued during open',
+    });
+    await h.waitForIdle();
+    assert.deepEqual(child.prompts, []);
+    armGate.resolve();
+    await Promise.all([opening, sending]);
 
     assert.equal(h.runtime.loadCalls.filter((call) => call.sessionId === 'same-logical').length, 1);
+    assert.deepEqual(child.prompts, ['queued during open']);
     assert.equal(
       h.events.filter(
         (event) =>

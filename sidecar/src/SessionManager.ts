@@ -158,6 +158,8 @@ interface PendingNativeBrowserRequest {
   timeout: ReturnType<typeof setTimeout>;
 }
 
+interface ChildOpenAttempt { settled: Promise<void>; settle(): void }
+
 export class SessionManager {
   private ready = false;
   private cachedModels: ModelInfo[] | null = null;
@@ -176,7 +178,7 @@ export class SessionManager {
     Partial<Record<ConfigurableSessionRole, AgentSettingPatch>>
   >();
   private shutdownPromise?: Promise<void>;
-  private readonly childOpenAttempts = new WeakMap<LiveSession, Map<string, symbol>>();
+  private readonly childOpenAttempts = new WeakMap<LiveSession, Map<string, ChildOpenAttempt>>();
   private readonly pendingNativeBrowserRequests = new Map<string, PendingNativeBrowserRequest>();
   private readonly browsers: SessionBrowsers;
   private readonly createLocalMcpResource: SessionManagerDependencies['createLocalMcpResource'];
@@ -1628,9 +1630,7 @@ export class SessionManager {
     if (this.shutdownPromise) return;
     const liveSession = this.registry.getLive(appSessionId);
     if (!liveSession) {
-      // No live session to open against (e.g. a not-yet-resumed/historical
-      // session). Settle the worker's loading state with an honest empty open
-      // instead of leaving its card spinning forever.
+      // Settle child loading honestly when its parent is not live.
       this.emitChildOpened(appSessionId, childProviderSessionId, role, false);
       return;
     }
@@ -1653,8 +1653,9 @@ export class SessionManager {
       );
       return;
     }
+    const existingAttempt = this.childOpenAttempts.get(liveSession)?.get(childProviderSessionId);
+    if (existingAttempt) return existingAttempt.settled;
     const attempt = this.beginChildOpenAttempt(liveSession, childProviderSessionId);
-    if (!attempt) return;
     let loadedSession: FactorySession | undefined;
     let inserted = false;
     try {
@@ -1668,9 +1669,7 @@ export class SessionManager {
       loadedSession = session;
       if (!this.isCurrentChildOpenAttempt(liveSession, childProviderSessionId, attempt)) return;
       const actualSettings = childSessionSettingsFromInit(session.initResult);
-      // A chat/spec child inherits the parent session model when the
-      // droid inherits it. Mission Control workers/validators keep their own
-      // configured model selection untouched.
+      // Chat/spec children inherit the parent model; Mission Control roles keep their own.
       const inheritsSessionModel = liveSession.summary.sessionPurpose !== 'mission-control';
       const resolvedSettings: ChildSessionSettings = inheritsSessionModel
         ? {
@@ -1678,9 +1677,7 @@ export class SessionManager {
             reasoningEffort: actualSettings.reasoningEffort ?? liveSession.summary.reasoningEffort,
           }
         : actualSettings;
-      // When the loaded child session doesn't report its own model, use
-      // the role's configured model (not the primary's), so per-model limits
-      // and context-window clamps stay correct for differing worker/validator models.
+      // Missing child models use role configuration so limits remain role-specific.
       const workerModelId =
         resolvedSettings.modelId ??
         childCompactionModelId(
@@ -1690,9 +1687,7 @@ export class SessionManager {
         );
       const limit = await this.compaction.resolveLimit({ modelId: workerModelId });
       if (!this.isCurrentChildOpenAttempt(liveSession, childProviderSessionId, attempt)) return;
-      // Workers auto-compact in place via the daemon's own threshold check,
-      // using the worker model's effective limit (so differing worker/validator
-      // models keep their own thresholds).
+      // Arm daemon compaction with this child's effective model limit.
       await this.compaction.arm(
         {
           session,
@@ -1765,14 +1760,17 @@ export class SessionManager {
     }
   }
 
-  private beginChildOpenAttempt(parent: LiveSession, childSessionId: string): symbol | undefined {
+  private beginChildOpenAttempt(parent: LiveSession, childSessionId: string): ChildOpenAttempt {
     let attempts = this.childOpenAttempts.get(parent);
     if (!attempts) {
       attempts = new Map();
       this.childOpenAttempts.set(parent, attempts);
     }
-    if (attempts.has(childSessionId)) return undefined;
-    const attempt = Symbol(childSessionId);
+    let settle: () => void = ignoreError;
+    const settled = new Promise<void>((resolve) => {
+      settle = resolve;
+    });
+    const attempt = { settled, settle };
     attempts.set(childSessionId, attempt);
     return attempt;
   }
@@ -1780,7 +1778,7 @@ export class SessionManager {
   private isCurrentChildOpenAttempt(
     parent: LiveSession,
     childSessionId: string,
-    attempt: symbol,
+    attempt: ChildOpenAttempt,
   ): boolean {
     return (
       !this.shutdownPromise &&
@@ -1794,12 +1792,13 @@ export class SessionManager {
   private finishChildOpenAttempt(
     parent: LiveSession,
     childSessionId: string,
-    attempt: symbol,
+    attempt: ChildOpenAttempt,
   ): void {
     const attempts = this.childOpenAttempts.get(parent);
     if (attempts?.get(childSessionId) !== attempt) return;
     attempts.delete(childSessionId);
     if (attempts.size === 0) this.childOpenAttempts.delete(parent);
+    attempt.settle();
   }
 
   private emitChildOpened(
