@@ -27,17 +27,27 @@ test('CHILD_HISTORY_LOADING is a no-op when the flag is unchanged', () => {
   assert.equal(same, state);
 });
 
-test("CHILD_UPDATED status 'opened' clears a pending loading flag", () => {
+test("CHILD_UPDATED status 'opened' clears only its logical child loading flag", () => {
   let state = initialState as AppState;
-  state = reducer(state, { type: 'CHILD_HISTORY_LOADING', providerSessionId: 'w1', loading: true });
+  state = reducer(state, {
+    type: 'CHILD_HISTORY_LOADING',
+    providerSessionId: 'logical-child',
+    loading: true,
+  });
+  state = reducer(state, {
+    type: 'CHILD_HISTORY_LOADING',
+    providerSessionId: 'backend-provider',
+    loading: true,
+  });
   state = reducer(state, {
     type: 'CHILD_UPDATED',
     parentAppSessionId: 'm1',
-    childSessionId: 'w1',
+    childSessionId: 'logical-child',
     role: 'worker',
     status: 'opened',
   });
-  assert.equal(state.childHistoryLoading.w1, false);
+  assert.equal(state.childHistoryLoading['logical-child'], false);
+  assert.equal(state.childHistoryLoading['backend-provider'], true);
 });
 
 test("CHILD_UPDATED non-'opened' status leaves the loading flag untouched", () => {

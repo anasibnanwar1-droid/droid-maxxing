@@ -7,6 +7,7 @@ import {
   createAutonomyForCommand,
   createMissionAgentDefaultsForMode,
   createModelDefaultsForMode,
+  defaultsModeForSummary,
 } from './sessionHelpers.js';
 
 test('create defaults preserve explicit autonomy and mode-specific primary settings', () => {
@@ -61,6 +62,39 @@ test('worker and validator defaults apply only to Mission Control sessions', () 
   );
   assert.deepEqual(createMissionAgentDefaultsForMode('auto', {}, defaults), {});
   assert.deepEqual(createMissionAgentDefaultsForMode('spec', {}, defaults), {});
+});
+
+test('summary defaults depend on purpose and spec mode, not AGI interaction alone', () => {
+  const ordinary: SessionSummary = {
+    appSessionId: 'chat-app',
+    providerSessionId: 'chat-provider',
+    sessionPurpose: 'chat',
+    interactionMode: 'auto',
+    role: 'primary',
+    title: 'Chat',
+    goal: 'Test defaults',
+    cwd: '/workspace',
+    workspaceKind: 'folder',
+    autonomy: 'low',
+    phase: 'paused',
+    features: [],
+    tokensIn: 0,
+    tokensOut: 0,
+    contextTokens: 0,
+    createdAt: 1,
+    updatedAt: 1,
+  };
+
+  assert.equal(defaultsModeForSummary({ ...ordinary, interactionMode: 'agi' }), 'auto');
+  assert.equal(defaultsModeForSummary({ ...ordinary, interactionMode: 'spec' }), 'spec');
+  assert.equal(
+    defaultsModeForSummary({
+      ...ordinary,
+      sessionPurpose: 'mission-control',
+      interactionMode: 'agi',
+    }),
+    'agi',
+  );
 });
 
 test('cold resume preserves a persisted Mission Control proposal', () => {

@@ -81,7 +81,7 @@ test(
       assert.equal(validator.settings.length, before[2]);
       assert.equal(parentProvider.settings.length, before[3]);
       const workerEvent = exactSettingsEvents(h.events, 'worker-logical-a').at(-1);
-      assert.ok(workerEvent && 'childSessionId' in workerEvent);
+      assert.ok(workerEvent);
       assert.equal(workerEvent.parentAppSessionId, 'provider-1');
       assert.equal(workerEvent.modelId, 'worker-new');
       assert.equal('providerSessionId' in workerEvent, false);

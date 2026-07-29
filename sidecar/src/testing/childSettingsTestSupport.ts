@@ -78,9 +78,9 @@ export async function openChildForParent(
 export function exactSettingsEvents(
   events: ServerEvent[],
   childSessionId: string,
-): Extract<ServerEvent, { type: 'session.child' }>[] {
+): Extract<ServerEvent, { type: 'session.child'; childSessionId: string }>[] {
   return events.filter(
-    (event): event is Extract<ServerEvent, { type: 'session.child' }> =>
+    (event): event is Extract<ServerEvent, { type: 'session.child'; childSessionId: string }> =>
       event.type === 'session.child' &&
       'childSessionId' in event &&
       event.childSessionId === childSessionId,
