@@ -7,18 +7,13 @@ import type { FactoryRuntime, FactorySession } from './DroidRuntime.js';
 import type {
   ClientCommand,
   FactoryDefaultSettings,
-  ReasoningEffort,
   ServerEvent,
   SessionSummary,
 } from './protocol.js';
 import type { SessionRegistry } from './SessionRegistry.js';
-import type {
-  ChildAutomaticCompactionTarget,
-  PrimaryAutomaticCompactionTarget,
-  SessionCompaction,
-} from './SessionCompaction.js';
+import type { PrimaryAutomaticCompactionTarget, SessionCompaction } from './SessionCompaction.js';
 import type { LiveOperationTarget, SessionContext } from './SessionContext.js';
-import type { PersistedChildSession } from './history.js';
+import type { ChildSessions } from './ChildSessions.js';
 import {
   buildCreatedSessionSummary,
   buildCreateRuntimeOptions,
@@ -32,15 +27,6 @@ import {
 } from './sessionHelpers.js';
 
 export type SessionCreateCommand = Extract<ClientCommand, { type: 'session.create' }>;
-export interface PendingChildSession {
-  toolUseId?: string;
-  label?: string;
-  prompt?: string;
-}
-export interface ChildSessionSettings {
-  modelId?: string;
-  reasoningEffort?: ReasoningEffort;
-}
 interface LocalMcpResource {
   close(): Promise<void>;
 }
@@ -66,32 +52,11 @@ interface LiveTurnState {
   interrupting?: boolean; // Marks user Stop so the resulting stream abort settles quietly.
 }
 type SessionCloseMode = 'discard-pending' | 'preserve-pending';
-export interface LiveChildSession extends LiveTurnState {
-  session: FactorySession;
-  childSessionId: string; // Stable parent-map identity; it may differ from session.sessionId.
-  appSessionId: string;
-  role: 'worker' | 'validator';
-  runtimeGeneration: number;
-  lastUsedAt: number;
-  closeWhenIdle?: boolean;
-  unsubscribe?: () => void;
-  settingsUpdateTail?: Promise<void>;
-}
 export interface LiveSession extends LiveTurnState {
   summary: SessionSummary;
   session: FactorySession;
   closeMode?: SessionCloseMode;
   closePromise?: Promise<void>;
-  childSessions: Map<string, LiveChildSession>;
-  childRuntimeGenerations: Map<string, number>;
-  knownChildSessions: Set<string>;
-  completedChildSessions: Set<string>;
-  // Persisted spawn links seeded on resume, separate from children seen live.
-  linkedChildSessions: Set<string>;
-  childSessionToolUseIds: Map<string, string>;
-  retiredChildProviderSessionIds: Map<string, Set<string>>;
-  childSessionSettings: Map<string, ChildSessionSettings>;
-  pendingChildSessions: PendingChildSession[];
   mcpServers: LocalMcpResource[];
   // Running MCP handles reused when compaction swaps the provider session.
   mcpConfigs: McpServerConfig[];
@@ -115,8 +80,7 @@ export interface SessionLifecycleDependencies {
     'resolveLimit' | 'arm' | 'subscribePrimary' | 'afterTurn' | 'cancel'
   >;
   isShutdownStarted: () => boolean;
-  cancelChildOpens: (appSessionId: string) => Promise<void>;
-  childSessionRecords: (appSessionId: string) => PersistedChildSession[];
+  childSessions: Pick<ChildSessions, 'attachParent' | 'closeParent'>;
   applyPendingSettingsToSummary: (summary: SessionSummary) => SessionSummary;
   applyPendingSessionSettings: (appSessionId: string) => Promise<boolean>;
   runPrimaryTurn: (liveSession: LiveSession, prompt: string) => Promise<void>;
@@ -211,6 +175,7 @@ export class SessionLifecycle {
       pendingLiveSession = liveSession;
       d.compaction.subscribePrimary(this.primaryAutomaticCompactionTarget(liveSession));
       d.registry.register(liveSession);
+      d.childSessions.attachParent(appSessionId);
       d.emit({ type: 'session.created', clientRef: command.clientRef, session: summary });
       this.driveInBackground(appSessionId, command.goal);
     } catch (error) {
@@ -285,21 +250,8 @@ export class SessionLifecycle {
       const liveSession = createLiveSession(summary, session, mcp);
       pendingLiveSession = liveSession;
       d.compaction.subscribePrimary(this.primaryAutomaticCompactionTarget(liveSession));
-      for (const child of d.childSessionRecords(appSessionId)) {
-        liveSession.linkedChildSessions.add(child.childSessionId);
-        liveSession.childSessionSettings.set(child.childSessionId, {
-          modelId: child.modelId,
-          ...(child.reasoningEffort === undefined
-            ? {}
-            : { reasoningEffort: child.reasoningEffort }),
-        });
-        if (child.status === 'completed')
-          liveSession.completedChildSessions.add(child.childSessionId);
-        if (child.spawnLink?.kind === 'tool-use') {
-          liveSession.childSessionToolUseIds.set(child.spawnLink.id, child.childSessionId);
-        }
-      }
       d.registry.register(liveSession);
+      d.childSessions.attachParent(appSessionId);
       d.emit({
         type: 'session.created',
         clientRef: `resume:${appSessionId}`,
@@ -474,7 +426,7 @@ export class SessionLifecycle {
       }
     };
 
-    await run(() => d.cancelChildOpens(liveSession.summary.appSessionId));
+    await run(() => d.childSessions.closeParent(liveSession.summary.appSessionId));
     await run(() => {
       d.context.stopSession(liveSession);
     });
@@ -484,20 +436,6 @@ export class SessionLifecycle {
     await run(() => {
       liveSession.unsubscribe?.();
     });
-    for (const [childSessionId, childSession] of liveSession.childSessions) {
-      await run(() => {
-        d.context.stopPolling(childSession.session.sessionId);
-      });
-      await run(() => {
-        d.compaction.cancel(
-          this.childAutomaticCompactionTarget(liveSession, childSessionId, childSession),
-        );
-      });
-      await run(() => {
-        childSession.unsubscribe?.();
-      });
-      await run(() => childSession.session.close());
-    }
     for (const server of liveSession.mcpServers) {
       await run(() => server.close());
     }
@@ -575,32 +513,6 @@ export class SessionLifecycle {
     };
   }
 
-  private childAutomaticCompactionTarget(
-    parent: LiveSession,
-    childSessionId: string,
-    child: LiveChildSession,
-  ): ChildAutomaticCompactionTarget {
-    const d = this.dependencies;
-    const session = child.session;
-    return {
-      kind: 'child',
-      appSessionId: parent.summary.appSessionId,
-      parentAppSessionId: parent.summary.appSessionId,
-      childSessionId,
-      providerSessionId: session.sessionId,
-      sourceSessionId: session.sessionId,
-      session,
-      role: child.role,
-      child,
-      isCurrent: () =>
-        !d.isShutdownStarted() &&
-        d.registry.getLive(parent.summary.appSessionId) === parent &&
-        !parent.closeMode &&
-        parent.childSessions.get(childSessionId) === child &&
-        child.session === session,
-    };
-  }
-
   private async prepareToSend(appSessionId: string): Promise<LiveSession | undefined> {
     let liveSession = this.dependencies.registry.getLive(appSessionId);
     if (!liveSession) {
@@ -626,6 +538,10 @@ export class SessionLifecycle {
     liveSession: LiveSession | undefined,
   ): Promise<void> {
     liveSession?.unsubscribe?.();
+    if (liveSession)
+      await runBestEffortAsync(() =>
+        this.dependencies.childSessions.closeParent(liveSession.summary.appSessionId),
+      );
     await Promise.all(mcpServers.map((server) => runBestEffortAsync(() => server.close())));
     if (session) await runBestEffortAsync(() => session.close());
     if (
@@ -715,15 +631,6 @@ function createLiveSession(
     session,
     streaming: false,
     pendingSends: [],
-    childSessions: new Map(),
-    childRuntimeGenerations: new Map(),
-    knownChildSessions: new Set(),
-    completedChildSessions: new Set(),
-    linkedChildSessions: new Set(),
-    childSessionToolUseIds: new Map(),
-    retiredChildProviderSessionIds: new Map(),
-    childSessionSettings: new Map(),
-    pendingChildSessions: [],
     mcpServers: mcp.servers,
     mcpConfigs: mcp.configs,
     autoCompacting: false,

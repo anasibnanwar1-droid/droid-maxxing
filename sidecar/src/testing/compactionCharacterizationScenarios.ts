@@ -203,7 +203,7 @@ export async function runAutoCompactionScenario(h: SessionManagerTestContext) {
     childSessionId: 'child-c4',
     text: 'worker steer',
   });
-  const contextsBefore = [contextUpdateCount(h, 'provider-1'), contextUpdateCount(h, 'worker-c4')];
+  const contextsBefore = [contextUpdateCount(h, 'provider-1'), contextUpdateCount(h, 'child-c4')];
   notifyCompaction(h, 'provider-1', 'completed');
   notifyCompaction(h, 'worker-c4', 'completed');
   const countClose = () =>

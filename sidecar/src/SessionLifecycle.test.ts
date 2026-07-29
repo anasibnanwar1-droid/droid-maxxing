@@ -9,7 +9,6 @@ import type { HistoricalSession } from './history.js';
 import type { FactoryDefaultSettings, ServerEvent, SessionSummary } from './protocol.js';
 import {
   SessionLifecycle,
-  type LiveChildSession,
   type LiveSession,
   type SessionCreateCommand,
 } from './SessionLifecycle.js';
@@ -84,6 +83,7 @@ function createHarness(ordinarySummaries: SessionSummary[] = []) {
   let enableAutoCompaction = (): Promise<boolean> => Promise.resolve(true);
   let compactionLimit = (): Promise<number> => Promise.resolve(800);
   let shutdownStarted = false;
+  let closeChildren: (appSessionId: string) => Promise<void> = () => Promise.resolve();
   let nextEmitFailure: { type: ServerEvent['type']; error: Error } | undefined;
   let now = 10_000;
   let mcpId = 0;
@@ -126,7 +126,12 @@ function createHarness(ordinarySummaries: SessionSummary[] = []) {
     },
     getFactoryDefaults: () => Promise.resolve(defaults),
     maxContextTokensForModel: () => 1_000,
-    cancelChildOpens: () => Promise.resolve(),
+    childSessions: {
+      attachParent: (appSessionId) => {
+        calls.push({ target: 'cleanup', method: 'children.attach', args: [appSessionId] });
+      },
+      closeParent: (appSessionId) => closeChildren(appSessionId),
+    },
     startLocalMcpServers: () => {
       const resourceId = ++mcpId;
       calls.push({ target: 'runtime', method: 'mcp.start', args: [resourceId] });
@@ -172,7 +177,7 @@ function createHarness(ordinarySummaries: SessionSummary[] = []) {
       },
       cancel: (target) => {
         if (target.kind === 'primary') target.liveSession.autoCompacting = false;
-        else target.child.autoCompacting = false;
+        else target.setAutoCompacting(false);
         calls.push({
           target: 'cleanup',
           method: 'watchdog.clear',
@@ -181,7 +186,6 @@ function createHarness(ordinarySummaries: SessionSummary[] = []) {
       },
     },
     isShutdownStarted: () => shutdownStarted,
-    childSessionRecords: () => [],
     applyPendingSettingsToSummary: (item) => ({ ...item, ...projection }),
     applyPendingSessionSettings: (appSessionId) => applyPending(appSessionId),
     runPrimaryTurn: async (live, prompt) => {
@@ -267,6 +271,9 @@ function createHarness(ordinarySummaries: SessionSummary[] = []) {
     },
     setShutdownStarted: (started: boolean) => {
       shutdownStarted = started;
+    },
+    setChildCloser: (action: (appSessionId: string) => Promise<void>) => {
+      closeChildren = action;
     },
     failNextEmit: (type: ServerEvent['type'], error: Error) => {
       nextEmitFailure = { type, error };
@@ -778,21 +785,13 @@ test('close follows ownership order and closeAll closes its initial snapshot', a
   await harness.lifecycle.create(createCommand());
   await provider.waitForPrompts(1);
   await new Promise<void>((resolve) => setImmediate(resolve));
-  const live = requireLive(harness, 'owner');
+  requireLive(harness, 'owner');
   const child = new FakeFactorySession('child', {}, harness.calls);
-  const childLive: LiveChildSession = {
-    session: child,
-    childSessionId: 'child',
-    runtimeGeneration: 1,
-    appSessionId: 'owner',
-    role: 'worker',
-    lastUsedAt: 1,
-    streaming: false,
-    autoCompacting: false,
-    pendingSends: [],
-    unsubscribe: child.onNotification(() => undefined),
-  };
-  live.childSessions.set('child', childLive);
+  const unsubscribeChild = child.onNotification(() => undefined);
+  harness.setChildCloser(async () => {
+    unsubscribeChild();
+    await child.close();
+  });
   harness.calls.length = 0;
   await harness.lifecycle.close('owner');
   const closeTrace = harness.calls
@@ -807,9 +806,9 @@ test('close follows ownership order and closeAll closes its initial snapshot', a
     )
     .map((call) => `${call.method}:${String(call.args[0] ?? '')}`);
   assert.deepEqual(closeTrace, [
-    'unsubscribe:owner',
     'unsubscribe:child',
     'session.close:child',
+    'unsubscribe:owner',
     'mcp.close:mcp-1',
     'session.close:owner',
     'browser.close:owner',

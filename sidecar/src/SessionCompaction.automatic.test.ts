@@ -9,7 +9,7 @@ import {
   type CompactionResourceKey,
   type PrimaryAutomaticCompactionTarget,
 } from './SessionCompaction.js';
-import type { LiveChildSession, LiveSession } from './SessionLifecycle.js';
+import type { LiveSession } from './SessionLifecycle.js';
 import { createCompactionTestLiveSession } from './testing/compactionTestSupport.js';
 import {
   FakeFactoryRuntime,
@@ -29,13 +29,25 @@ interface Harness {
   compaction: SessionCompaction;
   generations: Map<string, number>;
   targets: Map<string, AutomaticCompactionTarget>;
+  children: Map<string, ChildTestState>;
   trace: string[];
+}
+
+interface ChildTestState {
+  session: FakeFactorySession;
+  autoCompacting: boolean;
+  pendingSends: string[];
+  parentGeneration: number;
+  runtimeGeneration: number;
+  turnGeneration: number;
+  configurationGeneration: number;
 }
 
 function createHarness(): Harness {
   const calls: RecordedCall[] = [];
   const generations = new Map<string, number>();
   const targets = new Map<string, AutomaticCompactionTarget>();
+  const children = new Map<string, ChildTestState>();
   const trace: string[] = [];
   const runtime = new FakeFactoryRuntime(calls);
   const compaction = new SessionCompaction({
@@ -81,15 +93,17 @@ function createHarness(): Harness {
           ? resolved?.kind === 'primary'
             ? resolved.liveSession.autoCompacting
             : undefined
-          : settlement.child.autoCompacting;
+          : resolved?.kind === 'child'
+            ? resolved.isAutoCompacting()
+            : undefined;
       trace.push(`settle:${id}:active=${String(active)}`);
       if (settlement.kind === 'child') {
-        const next = settlement.child.pendingSends.shift();
+        const next = children.get(id)?.pendingSends.shift();
         if (next !== undefined) trace.push(`drive:${id}:${next}`);
       }
     },
   });
-  return { calls, compaction, generations, targets, trace };
+  return { calls, compaction, generations, targets, children, trace };
 }
 
 function addPrimary(
@@ -122,7 +136,7 @@ function addChild(
   parentAppSessionId: string,
   childSessionId: string,
 ): {
-  child: LiveChildSession;
+  child: ChildTestState;
   parent: LiveSession;
   target: ChildAutomaticCompactionTarget;
   setCurrent(value: boolean): void;
@@ -130,19 +144,23 @@ function addChild(
   const parentSession = new FakeFactorySession(`${parentAppSessionId}-backend`, {}, h.calls);
   const parent = createCompactionTestLiveSession(parentAppSessionId, parentSession);
   const session = new FakeFactorySession(`${parentAppSessionId}-child-backend`, {}, h.calls);
-  const child: LiveChildSession = {
+  const child: ChildTestState = {
     session,
-    childSessionId,
-    runtimeGeneration: 1,
-    appSessionId: parentAppSessionId,
-    role: 'worker',
-    lastUsedAt: 1,
-    streaming: false,
     autoCompacting: false,
     pendingSends: [],
+    parentGeneration: 1,
+    runtimeGeneration: 1,
+    turnGeneration: 1,
+    configurationGeneration: 1,
   };
-  parent.childSessions.set(childSessionId, child);
+  h.children.set(`c:${parentAppSessionId}/${childSessionId}`, child);
   let current = true;
+  const snapshot = {
+    parentGeneration: child.parentGeneration,
+    runtimeGeneration: child.runtimeGeneration,
+    turnGeneration: child.turnGeneration,
+    configurationGeneration: child.configurationGeneration,
+  };
   const target: ChildAutomaticCompactionTarget = {
     kind: 'child',
     appSessionId: parentAppSessionId,
@@ -151,15 +169,23 @@ function addChild(
     providerSessionId: session.sessionId,
     sourceSessionId: session.sessionId,
     session,
-    role: child.role,
-    child,
+    role: 'worker',
+    ...snapshot,
+    isAutoCompacting: () => child.autoCompacting,
+    setAutoCompacting: (active) => {
+      child.autoCompacting = active;
+    },
+    isStreaming: () => false,
     isCurrent: () =>
       current &&
       !parent.closeMode &&
-      parent.childSessions.get(childSessionId) === child &&
-      child.session === session,
+      child.session === session &&
+      child.parentGeneration === snapshot.parentGeneration &&
+      child.runtimeGeneration === snapshot.runtimeGeneration &&
+      child.turnGeneration === snapshot.turnGeneration &&
+      child.configurationGeneration === snapshot.configurationGeneration,
   };
-  h.targets.set(resourceId({ kind: 'child', parentAppSessionId, childSessionId }), target);
+  h.targets.set(resourceId(target), target);
   return { child, parent, target, setCurrent: (value) => (current = value) };
 }
 
@@ -326,6 +352,41 @@ test(
     timers.fire(stale);
     assert.equal(primary.live.autoCompacting, true);
     assert.deepEqual(h.trace, ['watchdog:clear:300000']);
+  },
+);
+
+test(
+  'stale child automatic settlement cannot cross authoritative generation changes',
+  { concurrency: false },
+  (t) => {
+    const h = createHarness();
+    const timers = observeTimers(h.trace);
+    t.after(() => {
+      h.compaction.clearAll();
+      timers.restore();
+    });
+    const cases = [
+      ['parent reattachment', (child: ChildTestState) => (child.parentGeneration += 1)],
+      ['runtime replacement', (child: ChildTestState) => (child.runtimeGeneration += 1)],
+      ['turn advancement', (child: ChildTestState) => (child.turnGeneration += 1)],
+      ['settings change', (child: ChildTestState) => (child.configurationGeneration += 1)],
+    ] as const;
+
+    for (const [name, advance] of cases) {
+      const child = addChild(h, `parent-${name}`, `child-${name}`);
+      child.child.pendingSends.push('must remain queued');
+      h.compaction.handleChildNotification(child.target, startedNotification());
+      advance(child.child);
+      h.trace.length = 0;
+
+      assert.equal(
+        h.compaction.handleChildNotification(child.target, completedNotification()),
+        false,
+      );
+      assert.equal(child.child.autoCompacting, true);
+      assert.deepEqual(child.child.pendingSends, ['must remain queued']);
+      assert.deepEqual(h.trace, []);
+    }
   },
 );
 

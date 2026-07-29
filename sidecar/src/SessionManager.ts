@@ -2,13 +2,11 @@ import { DroidInteractionMode, type McpServerConfig } from '@factory/droid-sdk';
 import { randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import type {
-  SessionRole,
   Autonomy,
   BrowserNativeRequest,
   BrowserNativeResult,
   ClientCommand,
   ConfigurableSessionRole,
-  ChildSessionSummary,
   FactoryDefaultSettings,
   InstallChannel,
   SessionSummary,
@@ -28,12 +26,7 @@ import {
   type SessionInitResult,
 } from './sessionHelpers.js';
 import { boundedInt } from './values.js';
-import {
-  DroidRuntime,
-  factoryReasoningEffort,
-  type FactoryRuntime,
-  type FactorySession,
-} from './DroidRuntime.js';
+import { DroidRuntime, type FactoryRuntime, type FactorySession } from './DroidRuntime.js';
 import { detectEnvironment } from './Environment.js';
 import { buildInstallCommand, buildUpdateCommand, runStreaming } from './CliInstaller.js';
 import {
@@ -41,7 +34,6 @@ import {
   loadHistoricalSessions,
   loadMissionControlSessions,
   readFactoryDefaults,
-  type PersistedChildSession,
 } from './history.js';
 import { mergeModelCatalog } from './modelCatalog.js';
 import { readDroidCliModelCatalog, readDroidCliModelCatalogCache } from './DroidCliCatalog.js';
@@ -53,18 +45,11 @@ import { SessionRegistry } from './SessionRegistry.js';
 import { SessionEventFlow, type NormalizedSideEffects } from './SessionEventFlow.js';
 import { SessionInteractions } from './SessionInteractions.js';
 import { SessionTimeline } from './SessionTimeline.js';
+import { SessionContext, type LiveOperationTarget } from './SessionContext.js';
 import {
-  SessionContext,
-  type ChildOperationTarget,
-  type LiveOperationTarget,
-} from './SessionContext.js';
-import {
-  childCompactionModelId,
   SessionCompaction,
   type AutoCompactionSettlement,
   type AutomaticCompactionTarget,
-  type ChildAutomaticCompactionTarget,
-  type ChildCompactionTarget,
   type CompactionResourceKey,
   type CompactionRetuneTarget,
   type PrimaryAutomaticCompactionTarget,
@@ -72,12 +57,11 @@ import {
 } from './SessionCompaction.js';
 import {
   SessionLifecycle,
-  type ChildSessionSettings,
-  type LiveChildSession,
   type LiveSession,
-  type PendingChildSession,
   type StartedLocalMcpResources,
 } from './SessionLifecycle.js';
+import { ChildSessions } from './ChildSessions.js';
+import type { ChildSettings } from './ChildSessionState.js';
 import type { SessionListFilterOptions } from './sessionListFilter.js';
 import { normalizeCompactionTokenLimit } from './compaction.js';
 
@@ -163,31 +147,6 @@ interface PendingNativeBrowserRequest {
   timeout: ReturnType<typeof setTimeout>;
 }
 
-interface ChildOpenAttempt {
-  settled: Promise<void>;
-  settle(): void;
-  cancelled: Promise<void>;
-  cancel(): void;
-  isCancelled: boolean;
-  provisionalSession?: FactorySession;
-  provisionalClose?: Promise<void>;
-}
-
-const CHILD_OPEN_CANCELLED = Symbol('child-open-cancelled');
-
-interface ChildPersistencePatch {
-  status: PersistedChildSession['status'];
-  providerSessionId?: string;
-  role?: PersistedChildSession['role'];
-  label?: string;
-  prompt?: string;
-  modelId?: string;
-  reasoningEffort?: ReasoningEffort;
-  spawnLink?: PersistedChildSession['spawnLink'];
-  transcriptAvailable?: boolean;
-  startedAt?: number;
-}
-
 export class SessionManager {
   private ready = false;
   private cachedModels: ModelInfo[] | null = null;
@@ -200,13 +159,13 @@ export class SessionManager {
   private readonly eventFlow: SessionEventFlow;
   private readonly context: SessionContext;
   private readonly compaction: SessionCompaction;
+  private readonly childSessions: ChildSessions;
   private readonly lifecycle: SessionLifecycle;
   private readonly pendingAgentSettings = new Map<
     string,
     Partial<Record<ConfigurableSessionRole, AgentSettingPatch>>
   >();
   private shutdownPromise?: Promise<void>;
-  private readonly childOpenAttempts = new WeakMap<LiveSession, Map<string, ChildOpenAttempt>>();
   private readonly pendingNativeBrowserRequests = new Map<string, PendingNativeBrowserRequest>();
   private readonly browsers: SessionBrowsers;
   private readonly createLocalMcpResource: SessionManagerDependencies['createLocalMcpResource'];
@@ -269,7 +228,7 @@ export class SessionManager {
     this.timeline = new SessionTimeline({
       registry: this.registry,
       history: this.history,
-      getChildSessions: (appSessionId) => this.childSummaries(appSessionId),
+      getChildSessions: (appSessionId) => this.childSessions.list(appSessionId),
       emit: (event) => {
         this.emit(event);
       },
@@ -319,6 +278,25 @@ export class SessionManager {
         this.context.recordUsage(appSessionId, sourceProviderSessionId, usage);
       },
     });
+    this.childSessions = new ChildSessions({
+      runtime: this.runtime,
+      registry: this.registry,
+      history: this.history,
+      timeline: this.timeline,
+      eventFlow: this.eventFlow,
+      interactions: this.interactions,
+      context: this.context,
+      compaction: this.compaction,
+      resolveDefaultSettings: (summary, initResult, role) =>
+        this.resolveChildDefaultSettings(summary, initResult, role),
+      isShutdownStarted: () => this.shutdownPromise !== undefined,
+      emit: (event) => {
+        this.emit(event);
+      },
+      nextChildSessionId: this.nextChildSessionId,
+      maxOpenSessions: MAX_OPEN_CHILD_SESSIONS,
+      now: Date.now,
+    });
     this.lifecycle = new SessionLifecycle({
       runtime: this.runtime,
       registry: this.registry,
@@ -332,8 +310,7 @@ export class SessionManager {
       makeAskUserHandler: (ref) => this.interactions.makeAskUserHandler(ref),
       compaction: this.compaction,
       isShutdownStarted: () => this.shutdownPromise !== undefined,
-      cancelChildOpens: (appSessionId) => this.cancelChildOpenAttempts(appSessionId),
-      childSessionRecords: (appSessionId) => this.history.childSessions(appSessionId),
+      childSessions: this.childSessions,
       applyPendingSettingsToSummary: (summary) => this.applyPendingSettingsToSummary(summary),
       applyPendingSessionSettings: (appSessionId) => this.applyPendingSessionSettings(appSessionId),
       runPrimaryTurn: (liveSession, prompt) => this.runPrimaryTurn(liveSession, prompt),
@@ -434,19 +411,19 @@ export class SessionManager {
         await this.lifecycle.interrupt(cmd.appSessionId);
         return;
       case 'child.open':
-        await this.openChildSession(cmd.parentAppSessionId, cmd.childSessionId, cmd.requestId);
+        await this.childSessions.open(cmd);
         return;
       case 'child.send':
-        await this.sendChildSession(cmd.parentAppSessionId, cmd.childSessionId, cmd.text);
+        await this.childSessions.send(cmd, cmd.text);
         return;
       case 'child.sendNow':
-        await this.sendChildSessionNow(cmd.parentAppSessionId, cmd.childSessionId, cmd.text);
+        await this.childSessions.sendNow(cmd, cmd.text);
         return;
       case 'child.interrupt':
-        await this.interruptChildSession(cmd.parentAppSessionId, cmd.childSessionId);
+        await this.childSessions.interrupt(cmd);
         return;
       case 'child.updateSettings':
-        await this.updateChildSettings(cmd);
+        await this.childSessions.updateSettings(cmd);
         return;
       case 'session.updateSettings':
         await this.updateSessionSettings(cmd.appSessionId, cmd);
@@ -781,168 +758,6 @@ export class SessionManager {
     }
   }
 
-  private async updateChildSettings(
-    cmd: Extract<ClientCommand, { type: 'child.updateSettings' }>,
-  ): Promise<void> {
-    const parent = this.registry.getLive(cmd.parentAppSessionId);
-    if (!parent) {
-      this.emitChildSettingsTargetInvalid(cmd);
-      return;
-    }
-    if (
-      parent.summary.appSessionId !== cmd.parentAppSessionId ||
-      parent.summary.sessionPurpose !== 'mission-control'
-    ) {
-      this.emitChildSettingsTargetInvalid(cmd);
-      return;
-    }
-    const child = parent.childSessions.get(cmd.childSessionId);
-    if (
-      !child ||
-      !Object.hasOwn(cmd, 'modelId') ||
-      !this.isCurrentChildSettingsTarget(parent, cmd.childSessionId, child)
-    ) {
-      this.emitChildSettingsTargetInvalid(cmd);
-      return;
-    }
-    const update = (child.settingsUpdateTail ?? Promise.resolve())
-      .catch(() => undefined)
-      .then(() => this.performChildSettingsUpdate(cmd, parent, child));
-    child.settingsUpdateTail = update;
-    try {
-      await update;
-    } finally {
-      if (child.settingsUpdateTail === update) delete child.settingsUpdateTail;
-    }
-  }
-
-  private async performChildSettingsUpdate(
-    cmd: Extract<ClientCommand, { type: 'child.updateSettings' }>,
-    parent: LiveSession,
-    child: LiveChildSession,
-  ): Promise<void> {
-    if (!this.isCurrentChildSettingsTarget(parent, cmd.childSessionId, child)) return;
-    let effectiveModelId = cmd.modelId ?? undefined;
-    try {
-      if (cmd.modelId === null) {
-        const roleModelId =
-          child.role === 'worker' ? parent.summary.workerModelId : parent.summary.validatorModelId;
-        effectiveModelId =
-          roleModelId ??
-          defaultModelForAgent(
-            child.role,
-            defaultsModeForSummary(parent.summary),
-            await this.getFactoryDefaults(),
-          );
-      }
-      if (!effectiveModelId) throw new Error(`No Factory default is available for ${child.role}.`);
-      if (!this.isCurrentChildSettingsTarget(parent, cmd.childSessionId, child)) return;
-      await child.session.updateSettings({
-        modelId: effectiveModelId,
-        ...(cmd.reasoningEffort === undefined
-          ? {}
-          : { reasoningEffort: factoryReasoningEffort(cmd.reasoningEffort) }),
-      });
-    } catch (error) {
-      if (!this.isCurrentChildSettingsTarget(parent, cmd.childSessionId, child)) return;
-      this.emit({
-        type: 'child.error',
-        code: 'child.settings_update_failed',
-        parentAppSessionId: parent.summary.appSessionId,
-        childSessionId: cmd.childSessionId,
-        operation: 'settings',
-        requestId: null,
-        message: `Could not update child settings: ${errMsg(error)}`,
-        recoverable: true,
-      });
-      return;
-    }
-
-    if (!this.isCurrentChildSettingsTarget(parent, cmd.childSessionId, child)) return;
-    const currentSettings = parent.childSessionSettings.get(cmd.childSessionId) ?? {};
-    const nextSettings: ChildSessionSettings & { modelId: string } = {
-      ...currentSettings,
-      modelId: effectiveModelId,
-      ...(cmd.reasoningEffort === undefined ? {} : { reasoningEffort: cmd.reasoningEffort }),
-    };
-    this.persistChildSession(parent, cmd.childSessionId, {
-      providerSessionId: child.session.sessionId,
-      role: child.role,
-      status: parent.completedChildSessions.has(cmd.childSessionId)
-        ? 'completed'
-        : child.streaming
-          ? 'running'
-          : 'paused',
-      modelId: effectiveModelId,
-      transcriptAvailable: true,
-      ...(nextSettings.reasoningEffort === undefined
-        ? {}
-        : { reasoningEffort: nextSettings.reasoningEffort }),
-    });
-    parent.childSessionSettings.set(cmd.childSessionId, nextSettings);
-    this.emitCanonicalChildSettings(parent.summary.appSessionId, cmd.childSessionId, nextSettings);
-
-    try {
-      await this.compaction.rearmModelChangedChild(
-        this.childCompactionTarget(parent, cmd.childSessionId, child, effectiveModelId),
-        effectiveModelId,
-      );
-    } catch (error) {
-      console.error(
-        `[compaction] could not resolve exact-child limit for ${child.session.sessionId}: ${errMsg(error)}`,
-      );
-    }
-  }
-
-  private isCurrentChildSettingsTarget(
-    parent: LiveSession,
-    childSessionId: string,
-    child: LiveChildSession,
-  ): boolean {
-    return (
-      this.isCurrentChildSession(parent, childSessionId, child) &&
-      !parent.completedChildSessions.has(childSessionId) &&
-      !child.closeWhenIdle
-    );
-  }
-
-  private isCurrentChildSession(
-    parent: LiveSession,
-    childSessionId: string,
-    child: LiveChildSession,
-  ): boolean {
-    return (
-      !this.shutdownPromise &&
-      this.registry.getLive(parent.summary.appSessionId) === parent &&
-      !hasSessionCloseStarted(parent) &&
-      parent.childSessions.get(childSessionId) === child
-    );
-  }
-
-  private emitChildSettingsTargetInvalid(
-    cmd: Extract<ClientCommand, { type: 'child.updateSettings' }>,
-  ): void {
-    this.emit({
-      type: 'child.error',
-      code: 'child.settings_target_invalid',
-      parentAppSessionId: cmd.parentAppSessionId,
-      childSessionId: cmd.childSessionId,
-      operation: 'settings',
-      requestId: null,
-      message: `Child session ${cmd.childSessionId || '(missing)'} is not an active settings target for ${cmd.parentAppSessionId || '(missing)'}.`,
-      recoverable: true,
-    });
-  }
-
-  private emitCanonicalChildSettings(
-    parentAppSessionId: string,
-    childSessionId: string,
-    settings: ChildSessionSettings & { modelId: string },
-  ): void {
-    void settings;
-    this.emitChildSummary(parentAppSessionId, childSessionId);
-  }
-
   private rememberPendingAgentSettings(
     cmd: Extract<ClientCommand, { type: 'settings.agent.update' }>,
   ): void {
@@ -1000,19 +815,9 @@ export class SessionManager {
   }
 
   private compactionRetuneTargets(): CompactionRetuneTarget[] {
-    const targets: CompactionRetuneTarget[] = [];
+    const targets: CompactionRetuneTarget[] = [...this.childSessions.compactionRetuneTargets()];
     for (const liveSession of this.registry.liveSessionsSnapshot()) {
       targets.push(this.primaryCompactionTarget(liveSession));
-      for (const [childProviderSessionId, childSession] of liveSession.childSessions) {
-        const modelId = childCompactionModelId(
-          liveSession.summary,
-          liveSession.childSessionSettings.get(childProviderSessionId),
-          childSession.role,
-        );
-        targets.push(
-          this.childCompactionTarget(liveSession, childProviderSessionId, childSession, modelId),
-        );
-      }
     }
     return targets;
   }
@@ -1072,44 +877,12 @@ export class SessionManager {
     this.emit({ type: 'sessions.list', sessions: this.registry.listSummaries(options) });
   }
 
-  private childSummaries(appSessionId: string): ChildSessionSummary[] {
-    const session = this.registry.getLive(appSessionId);
-    return this.history.childSessions(appSessionId).map((child) => {
-      const liveChild = session?.childSessions.get(child.childSessionId);
-      const status =
-        child.status === 'completed'
-          ? 'completed'
-          : liveChild?.streaming
-            ? 'running'
-            : liveChild
-              ? 'paused'
-              : child.status;
-      return childSummary({ ...child, status });
-    });
-  }
-
-  private emitChildSummary(parentAppSessionId: string, childSessionId: string): void {
-    const record = this.history.childSession(parentAppSessionId, childSessionId);
-    if (!record) return;
-    const parent = this.registry.getLive(parentAppSessionId);
-    const runtime = parent?.childSessions.get(childSessionId);
-    const runtimeGeneration =
-      runtime?.runtimeGeneration ?? parent?.childRuntimeGenerations.get(childSessionId);
-    if (runtimeGeneration === undefined) return;
-    this.emit({
-      type: 'session.child',
-      event: 'upserted',
-      child: childSummary(record),
-      runtimeAvailable: runtime !== undefined,
-      runtimeGeneration,
-    });
-  }
-
   private async runPrimaryTurn(liveSession: LiveSession, prompt: string): Promise<void> {
     const appSessionId = liveSession.summary.appSessionId;
+    const contextTarget = this.primaryContextTarget(liveSession);
     if (!this.isCurrentPrimarySession(liveSession)) return;
     this.eventFlow.beginTurn(appSessionId, appSessionId);
-    this.context.startPolling(this.primaryContextTarget(liveSession));
+    this.context.startPolling(contextTarget);
     try {
       await this.applyDesignToolPolicy(liveSession, isDesignPrompt(prompt));
       if (!this.isCurrentPrimarySession(liveSession)) return;
@@ -1132,11 +905,11 @@ export class SessionManager {
         this.registry.updateSummary(appSessionId, { phase: 'failed' });
       }
     } finally {
-      this.context.stopPolling(appSessionId);
+      this.context.stopPolling(contextTarget);
       // Keep streaming=true while the context refresh is in flight so concurrent
       // sends queue instead of racing a second lifecycle turn.
       if (this.isCurrentPrimarySession(liveSession)) {
-        await this.context.refresh(this.primaryContextTarget(liveSession));
+        await this.context.refresh(contextTarget);
       }
     }
   }
@@ -1185,58 +958,6 @@ export class SessionManager {
     };
   }
 
-  private childContextTarget(
-    parent: LiveSession,
-    childSessionId: string,
-    child: LiveChildSession,
-  ): ChildOperationTarget {
-    const session = child.session;
-    return {
-      appSessionId: parent.summary.appSessionId,
-      parentAppSessionId: parent.summary.appSessionId,
-      childSessionId,
-      providerSessionId: session.sessionId,
-      sourceSessionId: session.sessionId,
-      session,
-      role: child.role,
-      child,
-      isCurrent: () =>
-        this.isCurrentChildSession(parent, childSessionId, child) && child.session === session,
-    };
-  }
-
-  private childCompactionTarget(
-    parent: LiveSession,
-    childSessionId: string,
-    child: LiveChildSession,
-    effectiveModelId: string | undefined,
-  ): ChildCompactionTarget {
-    const target = this.childAutomaticCompactionTarget(parent, childSessionId, child);
-    return {
-      ...target,
-      effectiveModelId,
-      isCurrent: () =>
-        this.isCurrentChildSettingsTarget(parent, childSessionId, child) &&
-        child.session === target.session &&
-        childCompactionModelId(
-          parent.summary,
-          parent.childSessionSettings.get(childSessionId),
-          child.role,
-        ) === effectiveModelId,
-    };
-  }
-
-  private childAutomaticCompactionTarget(
-    parent: LiveSession,
-    childSessionId: string,
-    child: LiveChildSession,
-  ): ChildAutomaticCompactionTarget {
-    return {
-      ...this.childContextTarget(parent, childSessionId, child),
-      kind: 'child',
-    };
-  }
-
   // Design turns are a single focused task (extra prompts queue), so the model
   // does not need TodoWrite — it otherwise loops updating the list after it has
   // already answered. Disable TodoWrite for design turns and restore it for
@@ -1264,237 +985,32 @@ export class SessionManager {
     }
   }
 
-  private persistChildSession(
-    parent: LiveSession,
-    childSessionId: string,
-    patch: ChildPersistencePatch,
-  ): void {
-    const parentAppSessionId = parent.summary.appSessionId;
-    const existing = this.history.childSession(parentAppSessionId, childSessionId);
-    const cachedSettings = parent.childSessionSettings.get(childSessionId);
-    const role = patch.role ?? existing?.role ?? 'worker';
-    const startedAt = existing?.startedAt ?? patch.startedAt;
-    const defaults = this.resolveChildDefaultSettings(parent, role);
-    const modelId =
-      patch.modelId ?? cachedSettings?.modelId ?? existing?.modelId ?? defaults.modelId;
-    if (!modelId)
-      throw new Error(`Cannot persist child ${childSessionId}: accepted model is unavailable.`);
-    this.history.upsertChildSession({
-      ...(existing ?? {
-        parentAppSessionId,
-        childSessionId,
-        role,
-        status: patch.status,
-        modelId,
-        transcriptAvailable: false,
-        updatedAt: Date.now(),
-      }),
-      parentAppSessionId,
-      childSessionId,
-      role,
-      status: patch.status,
-      modelId,
-      transcriptAvailable: patch.transcriptAvailable ?? existing?.transcriptAvailable ?? false,
-      updatedAt: Date.now(),
-      ...(patch.providerSessionId === undefined
-        ? {}
-        : { providerSessionId: patch.providerSessionId }),
-      ...(patch.label === undefined ? {} : { label: patch.label }),
-      ...(patch.prompt === undefined ? {} : { prompt: patch.prompt }),
-      ...(patch.reasoningEffort === undefined ? {} : { reasoningEffort: patch.reasoningEffort }),
-      ...(patch.spawnLink === undefined ? {} : { spawnLink: patch.spawnLink }),
-      ...(startedAt === undefined ? {} : { startedAt }),
-    });
-  }
-
   private resolveChildDefaultSettings(
-    parent: LiveSession,
-    role: PersistedChildSession['role'],
-  ): ChildSessionSettings {
-    const parentSettings = childSessionSettingsFromInit(parent.session.initResult);
-    const roleModelId =
-      role === 'validator' ? parent.summary.validatorModelId : parent.summary.workerModelId;
+    summary: SessionSummary,
+    initResult: SessionInitResult,
+    role: 'worker' | 'validator',
+  ): ChildSettings {
+    const parentSettings = childSessionSettingsFromInit(initResult);
+    const roleModelId = role === 'validator' ? summary.validatorModelId : summary.workerModelId;
     const roleReasoningEffort =
-      role === 'validator'
-        ? parent.summary.validatorReasoningEffort
-        : parent.summary.workerReasoningEffort;
+      role === 'validator' ? summary.validatorReasoningEffort : summary.workerReasoningEffort;
     const catalogDefault =
       this.cachedModels?.find((model) => model.isDefault && !model.isCustom) ??
       this.cachedModels?.find((model) => !model.isCustom) ??
       this.cachedModels?.at(0);
-    const missionControl = parent.summary.sessionPurpose === 'mission-control';
+    const missionControl = summary.sessionPurpose === 'mission-control';
     return {
       modelId:
-        (missionControl ? roleModelId : parent.summary.modelId) ??
+        (missionControl ? roleModelId : summary.modelId) ??
         parentSettings.modelId ??
         roleModelId ??
         catalogDefault?.id,
       reasoningEffort:
-        (missionControl ? roleReasoningEffort : parent.summary.reasoningEffort) ??
+        (missionControl ? roleReasoningEffort : summary.reasoningEffort) ??
         parentSettings.reasoningEffort ??
         roleReasoningEffort ??
         catalogDefault?.defaultReasoningEffort,
     };
-  }
-
-  // eslint-disable-next-line complexity -- Child-session event policy remains with its PR 6 owner.
-  private applyChildSession(
-    appSessionId: string,
-    child: {
-      providerSessionId?: string;
-      toolUseId?: string;
-      label?: string;
-      prompt?: string;
-      done?: boolean;
-    },
-  ): void {
-    const liveSession = this.registry.getLive(appSessionId);
-    if (!liveSession) return;
-    const providerSessionId = child.providerSessionId;
-    if (!providerSessionId) {
-      if (child.done) {
-        if (child.toolUseId) this.completeChildSessionForToolUse(liveSession, child.toolUseId);
-      } else if (child.toolUseId || child.label || child.prompt) {
-        liveSession.pendingChildSessions.push({
-          toolUseId: child.toolUseId,
-          label: child.label,
-          prompt: child.prompt,
-        });
-      }
-      return;
-    }
-    if (child.done) {
-      const childSessionId = this.childSessionIdForProvider(liveSession, providerSessionId);
-      if (childSessionId) this.completeChildSession(liveSession, childSessionId);
-      return;
-    }
-    const pending = this.takePendingChildSession(liveSession, child);
-    const toolUseId = child.toolUseId ?? pending?.toolUseId;
-    const label = child.label ?? pending?.label;
-    const prompt = child.prompt ?? pending?.prompt;
-    const childSessionId =
-      this.childSessionIdForProvider(liveSession, providerSessionId) ??
-      (toolUseId ? liveSession.childSessionToolUseIds.get(toolUseId) : undefined) ??
-      (toolUseId
-        ? this.history
-            .childSessions(appSessionId)
-            .find(
-              (record) =>
-                record.spawnLink?.kind === 'tool-use' && record.spawnLink.id === toolUseId,
-            )?.childSessionId
-        : undefined) ??
-      this.nextChildSessionId();
-    const currentRuntime = liveSession.childSessions.get(childSessionId);
-    const retiredProviderSessionIds =
-      liveSession.retiredChildProviderSessionIds.get(childSessionId) ?? new Set<string>();
-    if (retiredProviderSessionIds.has(providerSessionId)) return;
-    const previousProviderSessionId =
-      currentRuntime?.session.sessionId ??
-      this.history.childSession(appSessionId, childSessionId)?.providerSessionId;
-    const providerReplaced =
-      previousProviderSessionId !== undefined && previousProviderSessionId !== providerSessionId;
-    if (providerReplaced) {
-      retiredProviderSessionIds.add(previousProviderSessionId);
-      liveSession.retiredChildProviderSessionIds.set(childSessionId, retiredProviderSessionIds);
-    }
-    if (providerReplaced) void this.closeChildSession(appSessionId, childSessionId);
-    liveSession.knownChildSessions.add(childSessionId);
-    if (!liveSession.childRuntimeGenerations.has(childSessionId))
-      liveSession.childRuntimeGenerations.set(childSessionId, 1);
-    liveSession.completedChildSessions.delete(childSessionId);
-    if (toolUseId) {
-      liveSession.childSessionToolUseIds.set(toolUseId, childSessionId);
-    }
-    const settings = liveSession.childSessionSettings.get(childSessionId);
-    this.persistChildSession(liveSession, childSessionId, {
-      providerSessionId,
-      role: 'worker',
-      status: 'running',
-      transcriptAvailable: true,
-      startedAt: Date.now(),
-      ...(label === undefined ? {} : { label }),
-      ...(prompt === undefined ? {} : { prompt }),
-      ...(toolUseId === undefined ? {} : { spawnLink: { kind: 'tool-use', id: toolUseId } }),
-      ...(settings?.modelId === undefined ? {} : { modelId: settings.modelId }),
-      ...(settings?.reasoningEffort === undefined
-        ? liveSession.summary.workerReasoningEffort === undefined
-          ? {}
-          : { reasoningEffort: liveSession.summary.workerReasoningEffort }
-        : { reasoningEffort: settings.reasoningEffort }),
-    });
-    this.emitChildSummary(appSessionId, childSessionId);
-    if (prompt) {
-      this.timeline.append({
-        id: `child-session-task-${providerSessionId}`,
-        appSessionId,
-        sourceSessionId: childSessionId,
-        role: 'worker',
-        ts: Date.now(),
-        kind: 'status',
-        text: `Task prompt\n\n${prompt}`,
-      });
-    }
-  }
-
-  private takePendingChildSession(
-    liveSession: LiveSession,
-    child: PendingChildSession,
-  ): PendingChildSession | undefined {
-    if (liveSession.pendingChildSessions.length === 0) return undefined;
-    if (child.toolUseId) {
-      const index = liveSession.pendingChildSessions.findIndex(
-        (pending) => pending.toolUseId === child.toolUseId,
-      );
-      if (index >= 0) return liveSession.pendingChildSessions.splice(index, 1)[0];
-    }
-    const label = child.label?.toLowerCase();
-    if (label) {
-      const index = liveSession.pendingChildSessions.findIndex(
-        (pending) => pending.label?.toLowerCase() === label,
-      );
-      if (index >= 0) return liveSession.pendingChildSessions.splice(index, 1)[0];
-    }
-    return liveSession.pendingChildSessions.shift();
-  }
-
-  private completeChildSessionForToolUse(liveSession: LiveSession, toolUseId: string): void {
-    const childSessionId = liveSession.childSessionToolUseIds.get(toolUseId);
-    if (childSessionId) this.completeChildSession(liveSession, childSessionId);
-  }
-
-  private childSessionIdForProvider(
-    liveSession: LiveSession,
-    providerSessionId: string,
-  ): string | undefined {
-    for (const [childSessionId, child] of liveSession.childSessions) {
-      if (child.session.sessionId === providerSessionId) return childSessionId;
-    }
-    return this.history
-      .childSessions(liveSession.summary.appSessionId)
-      .find((child) => child.providerSessionId === providerSessionId)?.childSessionId;
-  }
-
-  private completeChildSession(liveSession: LiveSession, childSessionId: string): void {
-    if (
-      !liveSession.knownChildSessions.has(childSessionId) ||
-      liveSession.completedChildSessions.has(childSessionId)
-    )
-      return;
-    const appSessionId = liveSession.summary.appSessionId;
-    liveSession.completedChildSessions.add(childSessionId);
-    const settings = liveSession.childSessionSettings.get(childSessionId) ?? {};
-    const runtime = liveSession.childSessions.get(childSessionId);
-    this.persistChildSession(liveSession, childSessionId, {
-      ...(runtime ? { providerSessionId: runtime.session.sessionId } : {}),
-      status: 'completed',
-      transcriptAvailable: true,
-      ...(settings.modelId === undefined ? {} : { modelId: settings.modelId }),
-      ...(settings.reasoningEffort === undefined
-        ? {}
-        : { reasoningEffort: settings.reasoningEffort }),
-    });
-    this.emitChildSummary(appSessionId, childSessionId);
-    void this.closeChildSessionWhenIdle(appSessionId, childSessionId);
   }
 
   private applyEventSideEffects(appSessionId: string, n: NormalizedSideEffects): void {
@@ -1522,26 +1038,28 @@ export class SessionManager {
       if (phase) this.registry.updateSummary(appSessionId, { phase });
     }
     if (n.missionChild) {
-      this.applyChildSession(appSessionId, {
+      this.childSessions.admitChildObservation({
+        parentAppSessionId: appSessionId,
+        role: 'worker',
         providerSessionId: n.missionChild.providerSessionId,
         done: n.missionChild.event === 'completed',
       });
     }
-    if (n.childSession) this.applyChildSession(appSessionId, n.childSession);
+    if (n.childSession)
+      this.childSessions.admitChildObservation({
+        parentAppSessionId: appSessionId,
+        role: 'worker',
+        ...n.childSession,
+      });
   }
 
   private resolveAutomaticCompactionTarget(
     key: CompactionResourceKey,
   ): AutomaticCompactionTarget | undefined {
-    const parent = this.registry.getLive(
-      key.kind === 'primary' ? key.appSessionId : key.parentAppSessionId,
-    );
+    if (key.kind === 'child') return this.childSessions.resolveAutomaticTarget(key);
+    const parent = this.registry.getLive(key.appSessionId);
     if (!parent || hasSessionCloseStarted(parent)) return undefined;
-    if (key.kind === 'primary') return this.primaryAutomaticCompactionTarget(parent);
-    const child = parent.childSessions.get(key.childSessionId);
-    return child
-      ? this.childAutomaticCompactionTarget(parent, key.childSessionId, child)
-      : undefined;
+    return this.primaryAutomaticCompactionTarget(parent);
   }
 
   private settleAutomaticCompaction(settlement: AutoCompactionSettlement): void {
@@ -1549,26 +1067,7 @@ export class SessionManager {
       void this.lifecycle.settleAfterCompaction(settlement.appSessionId);
       return;
     }
-    const parent = this.registry.getLive(settlement.parentAppSessionId);
-    if (!parent || !this.isCurrentChildSession(parent, settlement.childSessionId, settlement.child))
-      return;
-    const child = settlement.child;
-    if (child.pendingSends.length === 0 && child.closeWhenIdle) {
-      void this.closeChildSession(settlement.parentAppSessionId, settlement.childSessionId);
-      return;
-    }
-    const next = child.pendingSends.shift();
-    if (next !== undefined) {
-      void this.driveChildSession(parent, child, next);
-      return;
-    }
-    this.persistChildSession(parent, settlement.childSessionId, {
-      providerSessionId: child.session.sessionId,
-      status: 'paused',
-      modelId: parent.childSessionSettings.get(settlement.childSessionId)?.modelId,
-      transcriptAvailable: true,
-    });
-    this.emitChildSummary(settlement.parentAppSessionId, settlement.childSessionId);
+    this.childSessions.settleAutomatic(settlement);
   }
 
   private async compactSession(
@@ -1760,647 +1259,6 @@ export class SessionManager {
       await this.context.refresh(this.primaryContextTarget(liveSession));
   }
 
-  private async openChildSession(
-    parentAppSessionId: string,
-    childSessionId: string,
-    requestId: string | null,
-    operation: 'open' | 'send' | 'sendNow' | 'interrupt' = 'open',
-  ): Promise<void> {
-    if (this.shutdownPromise) return;
-    const record = this.history.childSession(parentAppSessionId, childSessionId);
-    if (!record) {
-      this.emitChildError(
-        parentAppSessionId,
-        childSessionId,
-        operation,
-        requestId,
-        'child.not_in_session',
-        `Child session ${childSessionId} is not tied to session ${parentAppSessionId}.`,
-      );
-      return;
-    }
-    const liveSession = this.registry.getLive(parentAppSessionId);
-    if (!liveSession || record.status === 'completed') {
-      if (record.providerSessionId && record.transcriptAvailable)
-        this.timeline.replayChild(parentAppSessionId, childSessionId, record.providerSessionId);
-      if (requestId)
-        this.emit({
-          type: 'child.updated',
-          parentAppSessionId,
-          childSessionId,
-          requestId,
-          access: 'history',
-        });
-      return;
-    }
-    liveSession.knownChildSessions.add(childSessionId);
-    if (!liveSession.childRuntimeGenerations.has(childSessionId))
-      liveSession.childRuntimeGenerations.set(childSessionId, 1);
-    const existingRuntime = liveSession.childSessions.get(childSessionId);
-    if (existingRuntime) {
-      if (!this.isCurrentChildSession(liveSession, childSessionId, existingRuntime)) return;
-      existingRuntime.lastUsedAt = Date.now();
-      if (requestId)
-        this.emitChildReady(parentAppSessionId, childSessionId, requestId, existingRuntime);
-      return;
-    }
-    const existingAttempt = this.childOpenAttempts.get(liveSession)?.get(childSessionId);
-    if (existingAttempt) {
-      await existingAttempt.settled;
-      if (
-        this.shutdownPromise ||
-        this.registry.getLive(parentAppSessionId) !== liveSession ||
-        hasSessionCloseStarted(liveSession)
-      )
-        return;
-      const runtime = liveSession.childSessions.get(childSessionId);
-      if (runtime && this.isCurrentChildSession(liveSession, childSessionId, runtime) && requestId)
-        this.emitChildReady(parentAppSessionId, childSessionId, requestId, runtime);
-      else if (!runtime)
-        this.emitChildError(
-          parentAppSessionId,
-          childSessionId,
-          operation,
-          requestId,
-          'child.open_failed',
-          'The child runtime did not become available.',
-        );
-      return;
-    }
-    if (!record.providerSessionId) {
-      this.emitChildError(
-        parentAppSessionId,
-        childSessionId,
-        operation,
-        requestId,
-        'child.runtime_unavailable',
-        'The child session has no current provider runtime.',
-      );
-      return;
-    }
-    const providerSessionId = record.providerSessionId;
-    const attempt = this.beginChildOpenAttempt(liveSession, childSessionId);
-    let loadedSession: FactorySession | undefined;
-    let inserted = false;
-    try {
-      const admitted = await this.awaitChildOpenStep(
-        attempt,
-        this.ensureChildSessionCapacity(liveSession, childSessionId, operation, requestId),
-      );
-      if (admitted === CHILD_OPEN_CANCELLED || !admitted) return;
-      if (!this.isCurrentChildOpenAttempt(liveSession, childSessionId, attempt)) return;
-      const ref = { id: parentAppSessionId };
-      const load = this.runtime.loadSession(providerSessionId, {
-        permissionHandler: this.interactions.makePermissionHandler(ref),
-        askUserHandler: this.interactions.makeAskUserHandler(ref),
-      });
-      const loaded = await this.awaitChildOpenStep(attempt, load, (lateSession) =>
-        lateSession.close().catch(ignoreError),
-      );
-      if (loaded === CHILD_OPEN_CANCELLED) return;
-      const session = loaded;
-      loadedSession = session;
-      attempt.provisionalSession = session;
-      if (!this.isCurrentChildOpenAttempt(liveSession, childSessionId, attempt)) return;
-      const actualSettings = childSessionSettingsFromInit(session.initResult);
-      const inheritsSessionModel = liveSession.summary.sessionPurpose !== 'mission-control';
-      const resolvedSettings: ChildSessionSettings = inheritsSessionModel
-        ? {
-            modelId: actualSettings.modelId ?? record.modelId,
-            reasoningEffort: actualSettings.reasoningEffort ?? liveSession.summary.reasoningEffort,
-          }
-        : {
-            modelId: actualSettings.modelId ?? record.modelId,
-            reasoningEffort: actualSettings.reasoningEffort ?? record.reasoningEffort,
-          };
-      const workerModelId =
-        resolvedSettings.modelId ??
-        childCompactionModelId(
-          liveSession.summary,
-          liveSession.childSessionSettings.get(childSessionId),
-          record.role,
-        );
-      const limit = await this.awaitChildOpenStep(
-        attempt,
-        this.compaction.resolveLimit({ modelId: workerModelId }),
-      );
-      if (limit === CHILD_OPEN_CANCELLED) return;
-      if (!this.isCurrentChildOpenAttempt(liveSession, childSessionId, attempt)) return;
-      const armed = await this.awaitChildOpenStep(
-        attempt,
-        this.compaction.arm(
-          {
-            session,
-            isCurrent: () =>
-              loadedSession === session &&
-              this.isCurrentChildOpenAttempt(liveSession, childSessionId, attempt),
-          },
-          limit,
-        ),
-      );
-      if (armed === CHILD_OPEN_CANCELLED) return;
-      if (!this.isCurrentChildOpenAttempt(liveSession, childSessionId, attempt)) return;
-      const runtimeGeneration = (liveSession.childRuntimeGenerations.get(childSessionId) ?? 1) + 1;
-      liveSession.childRuntimeGenerations.set(childSessionId, runtimeGeneration);
-      const childRuntime: LiveChildSession = {
-        session,
-        childSessionId,
-        appSessionId: parentAppSessionId,
-        role: record.role,
-        runtimeGeneration,
-        streaming: false,
-        autoCompacting: false,
-        pendingSends: [],
-        lastUsedAt: Date.now(),
-      };
-      const automaticCompactionTarget = this.childAutomaticCompactionTarget(
-        liveSession,
-        childSessionId,
-        childRuntime,
-      );
-      childRuntime.unsubscribe = session.onNotification((note: Record<string, unknown>) => {
-        if (!automaticCompactionTarget.isCurrent()) return;
-        if (this.compaction.handleChildNotification(automaticCompactionTarget, note)) return;
-        if (!automaticCompactionTarget.isCurrent()) return;
-        this.eventFlow.applyNotification(
-          parentAppSessionId,
-          automaticCompactionTarget.sourceSessionId,
-          record.role,
-          note,
-          childSessionId,
-        );
-      });
-      liveSession.childSessions.set(childSessionId, childRuntime);
-      inserted = true;
-      attempt.provisionalSession = undefined;
-      liveSession.childSessionSettings.set(childSessionId, resolvedSettings);
-      this.persistChildSession(liveSession, childSessionId, {
-        providerSessionId: session.sessionId,
-        role: record.role,
-        status: 'paused',
-        modelId: resolvedSettings.modelId,
-        reasoningEffort: resolvedSettings.reasoningEffort,
-        transcriptAvailable: true,
-      });
-      this.timeline.replayChild(parentAppSessionId, childSessionId, session.sessionId);
-      this.emitChildSummary(parentAppSessionId, childSessionId);
-      if (requestId)
-        this.emitChildReady(parentAppSessionId, childSessionId, requestId, childRuntime);
-    } catch (err) {
-      if (this.isCurrentChildOpenAttempt(liveSession, childSessionId, attempt))
-        this.emitChildError(
-          parentAppSessionId,
-          childSessionId,
-          operation,
-          requestId,
-          'child.open_failed',
-          errMsg(err),
-        );
-    } finally {
-      this.finishChildOpenAttempt(liveSession, childSessionId, attempt);
-      if (loadedSession && !inserted) await this.closeChildOpenProvisional(attempt);
-    }
-  }
-
-  private beginChildOpenAttempt(parent: LiveSession, childSessionId: string): ChildOpenAttempt {
-    let attempts = this.childOpenAttempts.get(parent);
-    if (!attempts) {
-      attempts = new Map();
-      this.childOpenAttempts.set(parent, attempts);
-    }
-    let settle: () => void = ignoreError;
-    let cancel: () => void = ignoreError;
-    const settled = new Promise<void>((resolve) => {
-      settle = resolve;
-    });
-    const cancelled = new Promise<void>((resolve) => {
-      cancel = resolve;
-    });
-    const attempt = { settled, settle, cancelled, cancel, isCancelled: false };
-    attempts.set(childSessionId, attempt);
-    return attempt;
-  }
-
-  private isCurrentChildOpenAttempt(
-    parent: LiveSession,
-    childSessionId: string,
-    attempt: ChildOpenAttempt,
-  ): boolean {
-    return (
-      !this.shutdownPromise &&
-      this.registry.getLive(parent.summary.appSessionId) === parent &&
-      !hasSessionCloseStarted(parent) &&
-      !attempt.isCancelled &&
-      !parent.childSessions.has(childSessionId) &&
-      this.childOpenAttempts.get(parent)?.get(childSessionId) === attempt
-    );
-  }
-
-  private finishChildOpenAttempt(
-    parent: LiveSession,
-    childSessionId: string,
-    attempt: ChildOpenAttempt,
-  ): void {
-    const attempts = this.childOpenAttempts.get(parent);
-    if (attempts?.get(childSessionId) !== attempt) return;
-    attempts.delete(childSessionId);
-    if (attempts.size === 0) this.childOpenAttempts.delete(parent);
-    attempt.settle();
-  }
-
-  private async cancelChildOpenAttempts(appSessionId: string): Promise<void> {
-    const parent = this.registry.getLive(appSessionId);
-    if (!parent) return;
-    const attempts = this.childOpenAttempts.get(parent);
-    if (!attempts) return;
-    this.childOpenAttempts.delete(parent);
-    const closes: Promise<void>[] = [];
-    for (const attempt of attempts.values()) {
-      attempt.isCancelled = true;
-      attempt.cancel();
-      attempt.settle();
-      if (attempt.provisionalSession) closes.push(this.closeChildOpenProvisional(attempt));
-    }
-    await Promise.all(closes);
-  }
-
-  private closeChildOpenProvisional(attempt: ChildOpenAttempt): Promise<void> {
-    if (!attempt.provisionalSession) return Promise.resolve();
-    attempt.provisionalClose ??= attempt.provisionalSession.close().catch(ignoreError);
-    return attempt.provisionalClose;
-  }
-
-  private async awaitChildOpenStep<T>(
-    attempt: ChildOpenAttempt,
-    operation: Promise<T>,
-    cleanupLate?: (value: T) => void | Promise<void>,
-  ): Promise<T | typeof CHILD_OPEN_CANCELLED> {
-    const result = await Promise.race<T | typeof CHILD_OPEN_CANCELLED>([
-      operation,
-      attempt.cancelled.then((): typeof CHILD_OPEN_CANCELLED => CHILD_OPEN_CANCELLED),
-    ]);
-    if (result === CHILD_OPEN_CANCELLED && cleanupLate) {
-      void operation.then(cleanupLate, ignoreError);
-    }
-    return result;
-  }
-
-  private emitChildReady(
-    parentAppSessionId: string,
-    childSessionId: string,
-    requestId: string,
-    runtime: LiveChildSession,
-  ): void {
-    this.emit({
-      type: 'child.updated',
-      parentAppSessionId,
-      childSessionId,
-      requestId,
-      access: 'ready',
-      runtimeGeneration: runtime.runtimeGeneration,
-    });
-  }
-
-  private async sendChildSession(
-    parentAppSessionId: string,
-    childSessionId: string,
-    text: string,
-  ): Promise<void> {
-    const liveSession = this.registry.getLive(parentAppSessionId);
-    if (!liveSession) return;
-    if (!this.childBelongsToSession(liveSession, childSessionId, 'send')) return;
-    if (!liveSession.childSessions.has(childSessionId))
-      await this.openChildSession(parentAppSessionId, childSessionId, null, 'send');
-    if (
-      this.registry.getLive(liveSession.summary.appSessionId) !== liveSession ||
-      hasSessionCloseStarted(liveSession)
-    )
-      return;
-    const childSession = liveSession.childSessions.get(childSessionId);
-    if (!childSession || !this.isCurrentChildSession(liveSession, childSessionId, childSession))
-      return;
-    childSession.lastUsedAt = Date.now();
-    if (childSession.streaming || childSession.autoCompacting) {
-      childSession.pendingSends.push(text);
-      return;
-    }
-    await this.driveChildSession(liveSession, childSession, text);
-  }
-
-  private async driveChildSession(
-    parent: LiveSession,
-    childSession: LiveChildSession,
-    text: string,
-  ): Promise<void> {
-    if (!this.isCurrentChildSession(parent, childSession.childSessionId, childSession)) return;
-    childSession.streaming = true;
-    childSession.lastUsedAt = Date.now();
-    this.eventFlow.beginTurn(childSession.appSessionId, childSession.session.sessionId);
-    this.persistChildSession(parent, childSession.childSessionId, {
-      providerSessionId: childSession.session.sessionId,
-      role: childSession.role,
-      status: 'running',
-      transcriptAvailable: true,
-    });
-    this.emitChildSummary(childSession.appSessionId, childSession.childSessionId);
-    this.context.startPolling(
-      this.childContextTarget(parent, childSession.childSessionId, childSession),
-    );
-    try {
-      const stream = childSession.session.stream(text, { includePartialMessages: true });
-      for await (const ev of stream) {
-        if (!this.isCurrentChildSession(parent, childSession.childSessionId, childSession)) break;
-        this.eventFlow.applyStreamEvent(
-          childSession.appSessionId,
-          childSession.session.sessionId,
-          childSession.role,
-          ev,
-          childSession.childSessionId,
-        );
-      }
-    } catch (err) {
-      if (!this.isCurrentChildSession(parent, childSession.childSessionId, childSession)) {
-        // Closing a provider commonly rejects its active stream. The detached
-        // child must settle quietly without publishing post-close errors.
-      } else if (childSession.interruptingForSteer)
-        this.timeline.appendStatus(
-          childSession.appSessionId,
-          'Child-session turn interrupted for steering.',
-          undefined,
-          childSession.childSessionId,
-          childSession.role,
-        );
-      else if (!(childSession.interrupting && isUserCancellation(err))) {
-        const message = errMsg(err);
-        this.emitChildError(
-          childSession.appSessionId,
-          childSession.childSessionId,
-          'send',
-          null,
-          'child.send_failed',
-          message,
-        );
-      }
-    } finally {
-      await this.settleChildTurn(parent, childSession);
-    }
-  }
-
-  private async settleChildTurn(
-    parent: LiveSession,
-    childSession: LiveChildSession,
-  ): Promise<void> {
-    this.context.stopPolling(childSession.session.sessionId);
-    childSession.interruptingForSteer = false;
-    childSession.interrupting = false;
-    if (!this.isCurrentChildSession(parent, childSession.childSessionId, childSession)) {
-      childSession.streaming = false;
-      return;
-    }
-    if (
-      childSession.pendingSends.length === 0 &&
-      childSession.closeWhenIdle &&
-      !childSession.autoCompacting
-    ) {
-      childSession.streaming = false;
-      // closeChildSession resolves the worker by the child-map id, which is not
-      // guaranteed to match the live session id.
-      await this.closeChildSession(childSession.appSessionId, childSession.childSessionId);
-      return;
-    }
-
-    // Refresh while streaming stays true so concurrent sends queue instead
-    // of racing a second driveChildSession(). The daemon auto-compacts the worker
-    // in place (same session id), so no swap handling is needed here.
-    await this.context.refresh(
-      this.childContextTarget(parent, childSession.childSessionId, childSession),
-    );
-    if (!this.isCurrentChildSession(parent, childSession.childSessionId, childSession)) {
-      childSession.streaming = false;
-      return;
-    }
-    childSession.streaming = false;
-    if (childSession.autoCompacting) {
-      this.compaction.afterTurn(
-        this.childAutomaticCompactionTarget(parent, childSession.childSessionId, childSession),
-      );
-      return;
-    }
-    const next = childSession.pendingSends.shift();
-    if (next !== undefined) {
-      void this.driveChildSession(parent, childSession, next);
-      return;
-    }
-    this.persistChildSession(parent, childSession.childSessionId, {
-      providerSessionId: childSession.session.sessionId,
-      role: childSession.role,
-      status: 'paused',
-      transcriptAvailable: true,
-    });
-    this.emitChildSummary(childSession.appSessionId, childSession.childSessionId);
-  }
-
-  private async sendChildSessionNow(
-    parentAppSessionId: string,
-    childSessionId: string,
-    text: string,
-  ): Promise<void> {
-    const liveSession = this.registry.getLive(parentAppSessionId);
-    if (!liveSession) return;
-    if (!this.childBelongsToSession(liveSession, childSessionId, 'sendNow')) return;
-    if (!liveSession.childSessions.has(childSessionId))
-      await this.openChildSession(parentAppSessionId, childSessionId, null, 'sendNow');
-    if (
-      this.registry.getLive(liveSession.summary.appSessionId) !== liveSession ||
-      hasSessionCloseStarted(liveSession)
-    )
-      return;
-    const childSession = liveSession.childSessions.get(childSessionId);
-    if (!childSession || !this.isCurrentChildSession(liveSession, childSessionId, childSession))
-      return;
-    childSession.lastUsedAt = Date.now();
-    if (!childSession.streaming && !childSession.autoCompacting) {
-      await this.driveChildSession(liveSession, childSession, text);
-      return;
-    }
-    childSession.pendingSends.unshift(text);
-    if (childSession.autoCompacting) return;
-    childSession.interruptingForSteer = true;
-    this.timeline.appendStatus(
-      parentAppSessionId,
-      'Steering child session now...',
-      undefined,
-      childSessionId,
-      childSession.role,
-    );
-    try {
-      await childSession.session.interrupt();
-    } catch (err) {
-      childSession.interruptingForSteer = false;
-      if (!this.isCurrentChildSession(liveSession, childSessionId, childSession)) return;
-      this.emitChildError(
-        parentAppSessionId,
-        childSessionId,
-        'sendNow',
-        null,
-        'child.send_now_failed',
-        `Could not interrupt child session for steering: ${errMsg(err)}`,
-      );
-    }
-  }
-
-  private async interruptChildSession(
-    parentAppSessionId: string,
-    childSessionId: string,
-  ): Promise<void> {
-    const liveSession = this.registry.getLive(parentAppSessionId);
-    if (!liveSession) return;
-    if (!this.childBelongsToSession(liveSession, childSessionId, 'interrupt')) return;
-    if (!liveSession.childSessions.has(childSessionId))
-      await this.openChildSession(parentAppSessionId, childSessionId, null, 'interrupt');
-    if (
-      this.registry.getLive(liveSession.summary.appSessionId) !== liveSession ||
-      hasSessionCloseStarted(liveSession)
-    )
-      return;
-    const childSession = liveSession.childSessions.get(childSessionId);
-    if (!childSession || !this.isCurrentChildSession(liveSession, childSessionId, childSession))
-      return;
-    childSession.pendingSends = [];
-    childSession.lastUsedAt = Date.now();
-    // Same escape hatch as the primary session: interrupt first, and settle the
-    // wedged auto-compaction flag only once the interrupt landed.
-    const wasAutoCompacting = childSession.autoCompacting;
-    childSession.interrupting = true;
-    await childSession.session.interrupt();
-    if (!this.isCurrentChildSession(liveSession, childSessionId, childSession)) {
-      childSession.interrupting = false;
-      childSession.streaming = false;
-      return;
-    }
-    if (wasAutoCompacting) {
-      this.compaction.cancel(
-        this.childAutomaticCompactionTarget(liveSession, childSessionId, childSession),
-      );
-    }
-    // If no driveChildSession() is active to clear the flag in its finally, clear it
-    // here so it can't leak into a later turn and misclassify its cancellation.
-    if (!childSession.streaming) childSession.interrupting = false;
-    childSession.streaming = false;
-    this.persistChildSession(liveSession, childSessionId, {
-      providerSessionId: childSession.session.sessionId,
-      role: childSession.role,
-      status: 'paused',
-      transcriptAvailable: true,
-    });
-    this.emitChildSummary(parentAppSessionId, childSessionId);
-  }
-
-  private childBelongsToSession(
-    liveSession: LiveSession,
-    childSessionId: string,
-    operation: 'send' | 'sendNow' | 'interrupt',
-  ): boolean {
-    if (this.history.childSession(liveSession.summary.appSessionId, childSessionId)) return true;
-    if (liveSession.knownChildSessions.has(childSessionId)) return true;
-    if (liveSession.linkedChildSessions.has(childSessionId)) return true;
-    const appSessionId = liveSession.summary.appSessionId;
-    this.emitChildError(
-      appSessionId,
-      childSessionId,
-      operation,
-      null,
-      'child.not_in_session',
-      `Child session ${childSessionId} is not tied to session ${appSessionId}.`,
-    );
-    return false;
-  }
-
-  private async ensureChildSessionCapacity(
-    liveSession: LiveSession,
-    requestedChildSessionId: string,
-    operation: 'open' | 'send' | 'sendNow' | 'interrupt',
-    requestId: string | null,
-  ): Promise<boolean> {
-    if (liveSession.childSessions.size < MAX_OPEN_CHILD_SESSIONS) return true;
-    const idle = [...liveSession.childSessions.entries()]
-      .filter(
-        ([childSessionId, childSession]) =>
-          childSessionId !== requestedChildSessionId &&
-          !childSession.streaming &&
-          !childSession.autoCompacting &&
-          childSession.pendingSends.length === 0,
-      )
-      .sort((a, b) => a[1].lastUsedAt - b[1].lastUsedAt)
-      .at(0);
-    if (idle) {
-      await this.closeChildSession(liveSession.summary.appSessionId, idle[0]);
-      return true;
-    }
-    this.emitChildError(
-      liveSession.summary.appSessionId,
-      requestedChildSessionId,
-      operation,
-      requestId,
-      'child.open_failed',
-      `Open child-session limit reached (${String(MAX_OPEN_CHILD_SESSIONS)}). Wait for one running child view to finish before opening another.`,
-    );
-    return false;
-  }
-
-  private async closeChildSession(appSessionId: string, childSessionId: string): Promise<void> {
-    const liveSession = this.registry.getLive(appSessionId);
-    const childSession = liveSession?.childSessions.get(childSessionId);
-    if (!liveSession || !childSession) return;
-    this.compaction.cancel(
-      this.childAutomaticCompactionTarget(liveSession, childSessionId, childSession),
-    );
-    liveSession.childRuntimeGenerations.set(
-      childSessionId,
-      Math.max(
-        liveSession.childRuntimeGenerations.get(childSessionId) ?? 1,
-        childSession.runtimeGeneration,
-      ) + 1,
-    );
-    liveSession.childSessions.delete(childSessionId);
-    this.context.forgetChild(
-      {
-        parentAppSessionId: liveSession.summary.appSessionId,
-        childSessionId,
-      },
-      childSession.session.sessionId,
-    );
-    this.context.stopPolling(childSession.session.sessionId);
-    childSession.unsubscribe?.();
-    try {
-      await childSession.session.close();
-    } catch {
-      /* ignore */
-    }
-    if (
-      this.registry.getLive(appSessionId) === liveSession &&
-      !hasSessionCloseStarted(liveSession) &&
-      !liveSession.childSessions.has(childSessionId)
-    )
-      this.emitChildSummary(appSessionId, childSessionId);
-  }
-
-  private async closeChildSessionWhenIdle(
-    appSessionId: string,
-    childSessionId: string,
-  ): Promise<void> {
-    const liveSession = this.registry.getLive(appSessionId);
-    const childSession = liveSession?.childSessions.get(childSessionId);
-    if (!liveSession || !childSession) return;
-    childSession.closeWhenIdle = true;
-    if (
-      !childSession.streaming &&
-      !childSession.autoCompacting &&
-      childSession.pendingSends.length === 0
-    )
-      await this.closeChildSession(appSessionId, childSessionId);
-  }
-
   private async renameSession(requestedAppSessionId: string, title: string): Promise<void> {
     await this.withSession(requestedAppSessionId, (session) => session.renameSession({ title }));
     const appSessionId =
@@ -2478,26 +1336,6 @@ export class SessionManager {
     }
   }
 
-  private emitChildError(
-    parentAppSessionId: string,
-    childSessionId: string,
-    operation: 'open' | 'send' | 'sendNow' | 'interrupt' | 'settings',
-    requestId: string | null,
-    code: string,
-    message: string,
-  ): void {
-    this.emit({
-      type: 'child.error',
-      parentAppSessionId,
-      childSessionId,
-      operation,
-      requestId,
-      code,
-      message,
-      recoverable: true,
-    });
-  }
-
   private emitError(error: {
     code?: string;
     providerSessionId?: string;
@@ -2570,6 +1408,7 @@ export class SessionManager {
     };
 
     await run(() => this.lifecycle.closeAll());
+    await run(() => this.childSessions.shutdown());
     await run(() => {
       this.context.clearAll();
     });
@@ -2589,26 +1428,10 @@ function hasSessionCloseStarted(liveSession: LiveSession): boolean {
   return liveSession.closeMode !== undefined;
 }
 
-function childSessionSettingsFromInit(init: SessionInitResult): ChildSessionSettings {
+function childSessionSettingsFromInit(init: SessionInitResult): ChildSettings {
   return {
     modelId: init.settings?.modelId,
     reasoningEffort: reasoningValue(init.settings?.reasoningEffort),
-  };
-}
-
-function childSummary(child: PersistedChildSession): ChildSessionSummary {
-  return {
-    parentAppSessionId: child.parentAppSessionId,
-    childSessionId: child.childSessionId,
-    role: child.role,
-    status: child.status,
-    ...(child.label === undefined ? {} : { label: child.label }),
-    ...(child.prompt === undefined ? {} : { prompt: child.prompt }),
-    modelId: child.modelId,
-    ...(child.reasoningEffort === undefined ? {} : { reasoningEffort: child.reasoningEffort }),
-    ...(child.spawnLink === undefined ? {} : { spawnLink: child.spawnLink }),
-    transcriptAvailable: child.transcriptAvailable,
-    ...(child.startedAt === undefined ? {} : { startedAt: child.startedAt }),
   };
 }
 

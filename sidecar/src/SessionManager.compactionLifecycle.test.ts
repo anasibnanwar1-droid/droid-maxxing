@@ -465,7 +465,7 @@ test(
       assert.deepEqual(
         [
           contextUpdateCount(h, 'provider-1') > parentContextsBefore,
-          contextUpdateCount(h, 'worker-c4') > workerContextsBefore,
+          contextUpdateCount(h, 'child-c4') > workerContextsBefore,
         ],
         [true, true],
       );

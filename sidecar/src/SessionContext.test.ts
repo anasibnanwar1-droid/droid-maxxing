@@ -9,7 +9,7 @@ import {
   type ChildOperationTarget,
   type LiveOperationTarget,
 } from './SessionContext.js';
-import type { LiveChildSession, LiveSession } from './SessionLifecycle.js';
+import type { LiveSession } from './SessionLifecycle.js';
 import { SessionRegistry } from './SessionRegistry.js';
 import {
   FakeFactoryRuntime,
@@ -63,15 +63,6 @@ function registerLive(
     streaming: false,
     autoCompacting: false,
     pendingSends: [],
-    childSessions: new Map(),
-    childRuntimeGenerations: new Map(),
-    knownChildSessions: new Set(),
-    completedChildSessions: new Set(),
-    linkedChildSessions: new Set(),
-    childSessionToolUseIds: new Map(),
-    retiredChildProviderSessionIds: new Map(),
-    childSessionSettings: new Map(),
-    pendingChildSessions: [],
     mcpServers: [],
     mcpConfigs: [],
   };
@@ -85,40 +76,36 @@ function addChild(
   childSessionId: string,
   providerSessionId: string,
 ): {
-  child: LiveChildSession;
+  child: { session: FakeFactorySession };
   session: FakeFactorySession;
   target: ChildOperationTarget;
 } {
   const session = new FakeFactorySession(providerSessionId, {}, h.calls);
-  const child: LiveChildSession = {
-    session,
-    childSessionId,
-    runtimeGeneration: 1,
-    appSessionId: parent.summary.appSessionId,
-    role: 'worker',
-    lastUsedAt: 1,
-    streaming: false,
-    autoCompacting: false,
-    pendingSends: [],
-  };
-  parent.childSessions.set(childSessionId, child);
+  const child = { session };
+  let children = childRuntimes.get(parent);
+  if (!children) {
+    children = new Map();
+    childRuntimes.set(parent, children);
+  }
+  children.set(childSessionId, child);
   const target: ChildOperationTarget = {
     appSessionId: parent.summary.appSessionId,
     parentAppSessionId: parent.summary.appSessionId,
     childSessionId,
     providerSessionId,
-    sourceSessionId: providerSessionId,
+    sourceSessionId: childSessionId,
     session,
     role: 'worker',
-    child,
     isCurrent: () =>
       !parent.closeMode &&
       h.registry.getLive(parent.summary.appSessionId) === parent &&
-      parent.childSessions.get(childSessionId) === child &&
+      childRuntimes.get(parent)?.get(childSessionId) === child &&
       child.session === session,
   };
   return { child, session, target };
 }
+
+const childRuntimes = new WeakMap<LiveSession, Map<string, { session: FakeFactorySession }>>();
 
 function primaryTarget(h: Harness, live: LiveSession): LiveOperationTarget {
   const session = live.session;
@@ -245,20 +232,30 @@ test('child refresh never inherits the parent exact context reading', async () =
   assert.equal(event?.stats.accuracy, 'estimated');
 });
 
-test('child identities scope backend snapshots and compaction generations by parent', async () => {
+test('child identities scope snapshots, pollers, and compaction generations by parent', async (t) => {
   const h = createHarness();
   const parentA = registerLive(h, 'parent-a').live;
   const parentB = registerLive(h, 'parent-b').live;
   const childA = addChild(h, parentA, 'same-child', 'backend-a');
   const childB = addChild(h, parentB, 'same-child', 'backend-b');
+  t.after(() => h.context.clearAll());
 
   h.context.recordCompaction(childA.target);
-  await h.context.refresh(childA.target);
-  await h.context.refresh(childB.target);
+  h.context.startPolling(childA.target);
+  h.context.startPolling(childB.target);
+  await new Promise<void>((resolve) => setImmediate(resolve));
 
-  const bySource = new Map(contextEvents(h).map((event) => [event.sourceSessionId, event.stats]));
-  assert.equal(bySource.get('backend-a')?.compactions, 1);
-  assert.equal(bySource.get('backend-b')?.compactions, 0);
+  const childEvents = contextEvents(h).filter((event) => event.sourceSessionId === 'same-child');
+  assert.equal(
+    childEvents.find((event) => event.parentAppSessionId === 'parent-a')?.stats.compactions,
+    1,
+  );
+  assert.equal(
+    childEvents.find((event) => event.parentAppSessionId === 'parent-b')?.stats.compactions,
+    0,
+  );
+  assert.equal(childA.session.contextStatsCalls, 1);
+  assert.equal(childB.session.contextStatsCalls, 1);
   assert.equal(childA.target.childSessionId, 'same-child');
   assert.equal(childA.target.providerSessionId, 'backend-a');
 
@@ -274,15 +271,8 @@ test('forgetChild clears the resolved backend snapshot and logical generation', 
 
   h.context.recordCompaction(child.target);
   await h.context.refresh(child.target);
-  const snapshots: unknown = Reflect.get(h.context, 'snapshots');
-  assert.ok(snapshots instanceof Map);
-  assert.equal(snapshots.has('backend-child'), true);
 
-  h.context.forgetChild(
-    { parentAppSessionId: 'parent', childSessionId: 'logical-child' },
-    'backend-child',
-  );
-  assert.equal(snapshots.has('backend-child'), false);
+  h.context.forgetChild({ parentAppSessionId: 'parent', childSessionId: 'logical-child' });
 
   await h.context.refresh(child.target);
   assert.equal(contextEvents(h).at(-1)?.stats.compactions, 0);
@@ -320,19 +310,42 @@ test('polling and cleanup are idempotent and reset child generation state', asyn
   h.context.startPolling(target);
   await Promise.resolve();
   assert.equal(session.contextStatsCalls, 1);
-  h.context.stopPolling('app-1');
-  h.context.stopPolling('app-1');
+  h.context.stopPolling(target);
+  h.context.stopPolling(target);
   h.context.startPolling(target);
   await Promise.resolve();
   assert.equal(session.contextStatsCalls, 2);
 
   h.context.recordCompaction(childTarget);
   h.context.stopSession(live);
-  h.context.stopPolling('backend-child');
+  h.context.stopPolling(childTarget);
+  h.context.forgetChild({
+    parentAppSessionId: 'app-1',
+    childSessionId: 'logical-child',
+  });
   h.context.forgetSession(live);
   h.events.length = 0;
   await h.context.refresh(childTarget);
   assert.equal(contextEvents(h).at(-1)?.stats.compactions, 0);
+});
+
+test('a stale child runtime cannot stop its replacement poller', async (t) => {
+  const h = createHarness();
+  const parent = registerLive(h, 'parent').live;
+  const stale = addChild(h, parent, 'child', 'provider-old');
+  t.after(() => h.context.clearAll());
+
+  h.context.startPolling(stale.target);
+  h.context.stopPolling(stale.target);
+  const replacement = addChild(h, parent, 'child', 'provider-new');
+  h.context.startPolling(replacement.target);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(replacement.session.contextStatsCalls, 1);
+
+  h.context.stopPolling(stale.target);
+  h.context.startPolling(replacement.target);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(replacement.session.contextStatsCalls, 1);
 });
 
 test('late refreshes after close or clearAll are inert', async () => {

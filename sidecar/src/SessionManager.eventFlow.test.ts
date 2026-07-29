@@ -387,7 +387,7 @@ test('worker token usage updates totals without replacing the primary context re
   }
 });
 
-test('loaded child context follows its runtime session id', async () => {
+test('loaded child context follows its parent-scoped logical identity', async () => {
   const context = createSessionManagerTestContext();
   try {
     await context.create({
@@ -464,7 +464,9 @@ test('loaded child context follows its runtime session id', async () => {
       (event) =>
         event.type === 'context.updated' &&
         event.appSessionId === 'provider-1' &&
-        event.sourceSessionId === 'worker-runtime-id',
+        event.sourceSessionId === 'child-1' &&
+        event.parentAppSessionId === 'provider-1' &&
+        event.childSessionId === 'child-1',
     );
     assert.equal(runtimeContext?.type, 'context.updated');
     assert.equal(runtimeContext.stats.compactions, 1);
