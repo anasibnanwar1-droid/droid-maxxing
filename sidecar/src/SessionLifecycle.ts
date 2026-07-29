@@ -71,6 +71,7 @@ export interface LiveChildSession extends LiveTurnState {
   childSessionId: string; // Stable parent-map identity; it may differ from session.sessionId.
   appSessionId: string;
   role: 'worker' | 'validator';
+  runtimeGeneration: number;
   lastUsedAt: number;
   closeWhenIdle?: boolean;
   unsubscribe?: () => void;
@@ -82,11 +83,13 @@ export interface LiveSession extends LiveTurnState {
   closeMode?: SessionCloseMode;
   closePromise?: Promise<void>;
   childSessions: Map<string, LiveChildSession>;
+  childRuntimeGenerations: Map<string, number>;
   knownChildSessions: Set<string>;
   completedChildSessions: Set<string>;
   // Persisted spawn links seeded on resume, separate from children seen live.
   linkedChildSessions: Set<string>;
   childSessionToolUseIds: Map<string, string>;
+  retiredChildProviderSessionIds: Map<string, Set<string>>;
   childSessionSettings: Map<string, ChildSessionSettings>;
   pendingChildSessions: PendingChildSession[];
   mcpServers: LocalMcpResource[];
@@ -112,6 +115,7 @@ export interface SessionLifecycleDependencies {
     'resolveLimit' | 'arm' | 'subscribePrimary' | 'afterTurn' | 'cancel'
   >;
   isShutdownStarted: () => boolean;
+  cancelChildOpens: (appSessionId: string) => Promise<void>;
   childSessionRecords: (appSessionId: string) => PersistedChildSession[];
   applyPendingSettingsToSummary: (summary: SessionSummary) => SessionSummary;
   applyPendingSessionSettings: (appSessionId: string) => Promise<boolean>;
@@ -282,10 +286,17 @@ export class SessionLifecycle {
       pendingLiveSession = liveSession;
       d.compaction.subscribePrimary(this.primaryAutomaticCompactionTarget(liveSession));
       for (const child of d.childSessionRecords(appSessionId)) {
-        if (!child.providerSessionId) continue;
-        liveSession.linkedChildSessions.add(child.providerSessionId);
+        liveSession.linkedChildSessions.add(child.childSessionId);
+        liveSession.childSessionSettings.set(child.childSessionId, {
+          modelId: child.modelId,
+          ...(child.reasoningEffort === undefined
+            ? {}
+            : { reasoningEffort: child.reasoningEffort }),
+        });
+        if (child.status === 'completed')
+          liveSession.completedChildSessions.add(child.childSessionId);
         if (child.spawnLink?.kind === 'tool-use') {
-          liveSession.childSessionToolUseIds.set(child.spawnLink.id, child.providerSessionId);
+          liveSession.childSessionToolUseIds.set(child.spawnLink.id, child.childSessionId);
         }
       }
       d.registry.register(liveSession);
@@ -463,6 +474,7 @@ export class SessionLifecycle {
       }
     };
 
+    await run(() => d.cancelChildOpens(liveSession.summary.appSessionId));
     await run(() => {
       d.context.stopSession(liveSession);
     });
@@ -501,6 +513,7 @@ export class SessionLifecycle {
       firstError ??= error;
     }
     if (unregistered) {
+      d.emit({ type: 'session.closed', appSessionId: liveSession.summary.appSessionId });
       await run(() => {
         d.forgetInteractions(liveSession.summary.appSessionId);
       });
@@ -703,10 +716,12 @@ function createLiveSession(
     streaming: false,
     pendingSends: [],
     childSessions: new Map(),
+    childRuntimeGenerations: new Map(),
     knownChildSessions: new Set(),
     completedChildSessions: new Set(),
     linkedChildSessions: new Set(),
     childSessionToolUseIds: new Map(),
+    retiredChildProviderSessionIds: new Map(),
     childSessionSettings: new Map(),
     pendingChildSessions: [],
     mcpServers: mcp.servers,

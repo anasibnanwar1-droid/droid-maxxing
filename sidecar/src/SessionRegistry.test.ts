@@ -127,9 +127,6 @@ function copyFeature(feature: BridgeFeature): BridgeFeature {
     expectedBehavior: [...feature.expectedBehavior],
     verificationSteps: [...feature.verificationSteps],
     ...(feature.fulfills ? { fulfills: [...feature.fulfills] } : {}),
-    ...(feature.workerProviderSessionIds
-      ? { workerProviderSessionIds: [...feature.workerProviderSessionIds] }
-      : {}),
   };
 }
 
@@ -143,7 +140,6 @@ function feature(id: string): BridgeFeature {
     expectedBehavior: ['source-behavior'],
     verificationSteps: ['source-verification'],
     fulfills: ['source-requirement'],
-    workerProviderSessionIds: ['source-worker'],
   };
 }
 
@@ -168,6 +164,16 @@ test('register persists once and resolves stable, current, and superseded identi
     ['app-a', 'provider-a'],
   );
   assert.equal(published.length, 0);
+});
+
+test('register rejects a runtime child shape at the top-level boundary', () => {
+  const { history, registry } = createHarness();
+  const child = live(summary('child-shape'));
+  Reflect.set(child.summary, 'role', 'worker');
+
+  assert.throws(() => registry.register(child), /top-level sessions only/);
+  assert.deepEqual(history.persisted, []);
+  assert.equal(registry.getLive('child-shape'), undefined);
 });
 
 test('failed registration leaves the previous live identity intact', () => {
@@ -199,7 +205,6 @@ test('updateSummary persists canonical state before one publication and protects
       providerSessionId: 'provider-current',
       compactedFromProviderSessionIds: ['provider-old'],
       missionId: 'mission-stable',
-      parentProviderSessionId: 'parent-stable',
     }),
   );
   registry.register(session);
@@ -211,7 +216,6 @@ test('updateSummary persists canonical state before one publication and protects
     providerSessionId: 'changed-provider',
     compactedFromProviderSessionIds: ['changed-alias'],
     missionId: 'changed-mission',
-    parentProviderSessionId: 'changed-parent',
     title: 'Updated title',
     updatedAt: 999,
   };
@@ -221,7 +225,6 @@ test('updateSummary persists canonical state before one publication and protects
   assert.equal(updated?.providerSessionId, 'provider-current');
   assert.deepEqual(updated?.compactedFromProviderSessionIds, ['provider-old']);
   assert.equal(updated?.missionId, 'mission-stable');
-  assert.equal(updated?.parentProviderSessionId, 'parent-stable');
   assert.equal(updated?.title, 'Updated title');
   assert.equal(updated?.updatedAt, 42);
   assert.deepEqual(history.trace, ['persist', 'publish']);
@@ -382,7 +385,6 @@ test('resolve and list project copies after ordinary, Mission Control, and live 
       providerSessionId: 'projected-provider-id',
       compactedFromProviderSessionIds: ['projected-alias'],
       missionId: 'projected-mission',
-      parentProviderSessionId: 'projected-parent',
       title: `projected: ${canonical.title}`,
       modelId: 'projected-model',
     }),
@@ -414,7 +416,6 @@ test('resolve and list project copies after ordinary, Mission Control, and live 
   assert.equal(firstListed.providerSessionId, 'live-provider');
   assert.deepEqual(firstListed.compactedFromProviderSessionIds, ['live-provider-old']);
   assert.equal(firstListed.missionId, undefined);
-  assert.equal(firstListed.parentProviderSessionId, undefined);
   assert.equal(firstListed.modelId, 'projected-model');
   assert.equal(liveSession.summary.title, 'live');
   assert.equal(liveSession.summary.modelId, undefined);
@@ -455,7 +456,6 @@ test('projected and caller-owned feature state cannot mutate canonical summaries
       assert.ok(projectedFeature);
       projectedFeature.preconditions.push('projected-precondition');
       projectedFeature.fulfills?.push('projected-requirement');
-      projectedFeature.workerProviderSessionIds?.push('projected-worker');
       return copySummary(canonical);
     },
   });
@@ -480,7 +480,7 @@ test('projected and caller-owned feature state cannot mutate canonical summaries
   const canonical = registry.getCanonicalSummary('isolated');
   const canonicalFeature = canonical?.features[0];
   assert.ok(canonicalFeature);
-  canonicalFeature.workerProviderSessionIds?.push('canonical-caller-mutation');
+  canonicalFeature.preconditions.push('canonical-caller-mutation');
 
   assert.deepEqual(liveSession.summary.features, [sourceFeature]);
   assert.deepEqual(registry.getCanonicalSummary('isolated')?.features, [sourceFeature]);
@@ -508,11 +508,6 @@ test('summary patches copy caller-owned feature state', () => {
 test('workspace limits apply after canonical source precedence', () => {
   const ordinary = historicalRows([summary('shared', { title: 'ordinary', updatedAt: 100 })]);
   const missionControl = historicalRows([
-    summary('mission-worker', {
-      role: 'worker',
-      sessionPurpose: 'mission-control',
-      updatedAt: 200,
-    }),
     summary('shared', {
       title: 'mission control',
       sessionPurpose: 'mission-control',

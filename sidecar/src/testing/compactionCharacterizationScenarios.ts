@@ -34,6 +34,26 @@ export function seedInitModel(session: FakeFactorySession, modelId: string): voi
   session.setInitModel(modelId);
 }
 
+function seedChild(
+  h: SessionManagerTestContext,
+  parentAppSessionId: string,
+  childSessionId: string,
+  providerSessionId: string,
+): void {
+  h.history.seedChildSessions([
+    {
+      parentAppSessionId,
+      childSessionId,
+      providerSessionId,
+      role: 'worker',
+      status: 'paused',
+      modelId: 'model-default',
+      transcriptAvailable: true,
+      updatedAt: Date.now(),
+    },
+  ]);
+}
+
 interface ObservedWatchdog {
   timer: ReturnType<typeof setTimeout>;
   callback: (...args: unknown[]) => void;
@@ -119,19 +139,20 @@ export async function runAutoCompactionScenario(h: SessionManagerTestContext) {
     autonomy: 'low',
   });
   await h.waitForIdle();
+  seedChild(h, 'provider-1', 'child-c4', 'worker-c4');
   await h.handle({
     type: 'child.open',
-    appSessionId: 'provider-1',
-    providerSessionId: 'worker-c4',
-    role: 'worker',
+    parentAppSessionId: 'provider-1',
+    childSessionId: 'child-c4',
+    requestId: 'open-child-c4',
   });
   notifyCompaction(h, 'provider-1', 'started');
   notifyCompaction(h, 'worker-c4', 'started');
   await h.handle({ type: 'session.interrupt', appSessionId: 'provider-1' });
   await h.handle({
     type: 'child.interrupt',
-    appSessionId: 'provider-1',
-    providerSessionId: 'worker-c4',
+    parentAppSessionId: 'provider-1',
+    childSessionId: 'child-c4',
   });
   const interruptCounts = () => [
     h.calls.filter(
@@ -156,8 +177,8 @@ export async function runAutoCompactionScenario(h: SessionManagerTestContext) {
   const workerGate = h.provider.deferNextStream('worker-c4');
   const workerRun = h.handle({
     type: 'child.send',
-    appSessionId: 'provider-1',
-    providerSessionId: 'worker-c4',
+    parentAppSessionId: 'provider-1',
+    childSessionId: 'child-c4',
     text: 'worker running',
   });
   await h.provider.waitForPrompts('worker-c4', 1);
@@ -171,15 +192,15 @@ export async function runAutoCompactionScenario(h: SessionManagerTestContext) {
   await h.handle({ type: 'session.send', appSessionId: 'provider-1', text: 'parent queued' });
   await h.handle({
     type: 'child.send',
-    appSessionId: 'provider-1',
-    providerSessionId: 'worker-c4',
+    parentAppSessionId: 'provider-1',
+    childSessionId: 'child-c4',
     text: 'worker queued',
   });
   await h.handle({ type: 'session.sendNow', appSessionId: 'provider-1', text: 'parent steer' });
   await h.handle({
     type: 'child.sendNow',
-    appSessionId: 'provider-1',
-    providerSessionId: 'worker-c4',
+    parentAppSessionId: 'provider-1',
+    childSessionId: 'child-c4',
     text: 'worker steer',
   });
   const contextsBefore = [contextUpdateCount(h, 'provider-1'), contextUpdateCount(h, 'worker-c4')];
@@ -243,6 +264,7 @@ export async function runCloseCleanupScenario() {
   let disposed = false;
   const parentKey = 'provider-1';
   const workerKey = 'worker-c6-key';
+  const workerLogical = 'child-c6';
   const workerLive = 'worker-c6-live';
   const parentGate = h.runtime.deferNextCreateStream(parentKey);
   h.runtime.loadQueue.set(workerKey, [new FakeFactorySession(workerLive, {}, h.calls)]);
@@ -257,17 +279,18 @@ export async function runCloseCleanupScenario() {
     });
     await h.provider.waitForPrompts(parentKey, 1);
     const initialParentPoller = required(timers.latestInterval(), 'initial parent poller');
+    seedChild(h, parentKey, workerLogical, workerKey);
     await h.handle({
       type: 'child.open',
-      appSessionId: parentKey,
-      providerSessionId: workerKey,
-      role: 'worker',
+      parentAppSessionId: parentKey,
+      childSessionId: workerLogical,
+      requestId: 'open-child-c6',
     });
     const workerGate = h.provider.deferNextStream(workerLive);
     void h.handle({
       type: 'child.send',
-      appSessionId: parentKey,
-      providerSessionId: workerKey,
+      parentAppSessionId: parentKey,
+      childSessionId: workerLogical,
       text: 'worker running',
     });
     await h.provider.waitForPrompts(workerLive, 1);
@@ -281,8 +304,8 @@ export async function runCloseCleanupScenario() {
     await h.handle({ type: 'session.send', appSessionId: parentKey, text: 'parent buffered' });
     await h.handle({
       type: 'child.send',
-      appSessionId: parentKey,
-      providerSessionId: workerKey,
+      parentAppSessionId: parentKey,
+      childSessionId: workerLogical,
       text: 'worker buffered',
     });
 
@@ -350,6 +373,7 @@ export async function runShutdownOnlyCleanupScenario() {
   let disposed = false;
   const parentKey = 'provider-1';
   const workerKey = 'worker-shutdown-key';
+  const workerLogical = 'child-shutdown';
   const workerLive = 'worker-shutdown-live';
   h.runtime.deferNextCreateStream(parentKey);
   h.runtime.loadQueue.set(workerKey, [new FakeFactorySession(workerLive, {}, h.calls)]);
@@ -364,17 +388,18 @@ export async function runShutdownOnlyCleanupScenario() {
     });
     await h.provider.waitForPrompts(parentKey, 1);
     const parentPoller = required(timers.latestInterval(), 'shutdown parent poller');
+    seedChild(h, parentKey, workerLogical, workerKey);
     await h.handle({
       type: 'child.open',
-      appSessionId: parentKey,
-      providerSessionId: workerKey,
-      role: 'worker',
+      parentAppSessionId: parentKey,
+      childSessionId: workerLogical,
+      requestId: 'open-child-shutdown',
     });
     h.provider.deferNextStream(workerLive);
     void h.handle({
       type: 'child.send',
-      appSessionId: parentKey,
-      providerSessionId: workerKey,
+      parentAppSessionId: parentKey,
+      childSessionId: workerLogical,
       text: 'worker running',
     });
     await h.provider.waitForPrompts(workerLive, 1);

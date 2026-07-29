@@ -446,13 +446,14 @@ test(
     const h = createSessionManagerTestContext();
     try {
       const trace = await runAutoCompactionScenario(h);
-      const scopedStatus = (id: string, role: 'primary' | 'worker') =>
+      const scopedStatus = (id: string, role: 'primary' | 'worker', childSessionId?: string) =>
         h.events.some(
           (event) =>
             event.type === 'event.appended' &&
             event.event.appSessionId === 'provider-1' &&
             event.event.sourceSessionId === id &&
             event.event.role === role &&
+            (childSessionId === undefined || event.event.sourceSessionId === childSessionId) &&
             event.event.compactType === 'auto',
         );
       assert.deepEqual(trace.interruptsAfterExplicitCommands, [1, 1]);
@@ -469,29 +470,27 @@ test(
         [true, true],
       );
       assert.equal(
-        scopedStatus('provider-1', 'primary') && scopedStatus('worker-c4', 'worker'),
+        scopedStatus('provider-1', 'primary') && scopedStatus('child-c4', 'worker', 'child-c4'),
         true,
       );
       assert.equal(
         h.events.some(
           (event) =>
             event.type === 'session.child' &&
-            'appSessionId' in event &&
-            event.appSessionId === 'provider-1' &&
-            event.event === 'completed' &&
-            event.providerSessionId === 'worker-c4',
+            event.child.parentAppSessionId === 'provider-1' &&
+            event.child.childSessionId === 'child-c4' &&
+            event.child.status === 'completed',
         ),
         true,
       );
       assert.equal(
         h.events.some(
           (event) =>
-            event.type === 'child.updated' &&
-            'appSessionId' in event &&
-            event.appSessionId === 'provider-1' &&
-            event.providerSessionId === 'worker-c4' &&
-            event.role === 'worker' &&
-            event.status === 'completed',
+            event.type === 'session.child' &&
+            event.child.parentAppSessionId === 'provider-1' &&
+            event.child.childSessionId === 'child-c4' &&
+            event.child.role === 'worker' &&
+            event.child.status === 'completed',
         ),
         true,
       );
@@ -543,25 +542,47 @@ test('[C5] Compaction retuning uses each live session model', { concurrency: fal
       validatorModel: 'model-validator-fallback',
     });
     await h.waitForIdle();
+    h.history.seedChildSessions([
+      {
+        parentAppSessionId: 'provider-1',
+        childSessionId: 'worker-logical-c5',
+        providerSessionId: 'worker-c5',
+        role: 'worker',
+        status: 'paused',
+        modelId: 'model-worker-loaded',
+        transcriptAvailable: true,
+        updatedAt: Date.now(),
+      },
+      {
+        parentAppSessionId: 'provider-1',
+        childSessionId: 'validator-logical-c5',
+        providerSessionId: 'validator-c5',
+        role: 'validator',
+        status: 'paused',
+        modelId: 'model-validator-loaded',
+        transcriptAvailable: true,
+        updatedAt: Date.now(),
+      },
+    ]);
     await h.handle({
       type: 'child.open',
-      appSessionId: 'provider-1',
-      providerSessionId: 'worker-c5',
-      role: 'worker',
+      parentAppSessionId: 'provider-1',
+      childSessionId: 'worker-logical-c5',
+      requestId: 'open-worker-c5',
     });
     await h.handle({
       type: 'child.open',
-      appSessionId: 'provider-1',
-      providerSessionId: 'validator-c5',
-      role: 'validator',
+      parentAppSessionId: 'provider-1',
+      childSessionId: 'validator-logical-c5',
+      requestId: 'open-validator-c5',
     });
     assert.deepEqual(
       h.runtime.loadCalls.map((call) => call.sessionId),
       ['worker-c5', 'validator-c5'],
     );
     const opened: ReadonlyArray<readonly [string, 'worker' | 'validator']> = [
-      ['worker-c5', 'worker'],
-      ['validator-c5', 'validator'],
+      ['worker-logical-c5', 'worker'],
+      ['validator-logical-c5', 'validator'],
     ];
     assert.deepEqual(
       opened.map(([childSessionId, role]) =>
@@ -571,9 +592,13 @@ test('[C5] Compaction retuning uses each live session model', { concurrency: fal
             'parentAppSessionId' in event &&
             event.parentAppSessionId === 'provider-1' &&
             event.childSessionId === childSessionId &&
-            event.role === role &&
-            event.status === 'opened' &&
-            event.settingsReady,
+            event.access === 'ready' &&
+            h.events.some(
+              (summaryEvent) =>
+                summaryEvent.type === 'session.child' &&
+                summaryEvent.child.childSessionId === childSessionId &&
+                summaryEvent.child.role === role,
+            ),
         ),
       ),
       [true, true],

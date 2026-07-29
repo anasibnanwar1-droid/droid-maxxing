@@ -145,7 +145,6 @@ const STATE_TO_PHASE: Record<string, SessionPhase> = {
 const MAX_TEXT_CHARS = 12_000;
 // Safety cap for worker transcript events on the initial page (the orchestrator
 // scrollback is paged via the cursor, so only workers need bounding here).
-const MAX_WORKER_EVENTS = 3_000;
 // How many orchestrator scrollback events to load per page (initial open and
 // each lazy older-page fetch). Bounds work for very long, multi-compaction chats.
 const DEFAULT_HISTORY_WINDOW = 400;
@@ -207,7 +206,6 @@ export function loadHistoricalSessions(options: HistoricalSummaryFilter = {}): H
         appSessionId: providerSessionId,
         providerSessionId,
         missionId: classification.missionId,
-        parentProviderSessionId: classification.parentProviderSessionId,
         sessionPurpose: classification.sessionPurpose,
         interactionMode: classification.interactionMode,
         role: classification.role,
@@ -920,7 +918,6 @@ export function applyCachedSummary(
     appSessionId: defined.appSessionId ?? summary.appSessionId,
     providerSessionId: defined.providerSessionId ?? summary.providerSessionId,
     missionId: defined.missionId ?? summary.missionId,
-    parentProviderSessionId: defined.parentProviderSessionId ?? summary.parentProviderSessionId,
     sessionPurpose: defined.sessionPurpose ?? summary.sessionPurpose,
     interactionMode: defined.interactionMode ?? summary.interactionMode,
     role: defined.role ?? summary.role,
@@ -950,7 +947,7 @@ export function hydrateHistoricalSession(
   const dir = resolveMissionDir(missionId);
   if (!dir) throw new Error(`Mission history not found for ${missionId}`);
 
-  const { summary, progress, state, features } = loadMissionControlSession(dir);
+  const { summary, progress } = loadMissionControlSession(dir);
   const sessionIndex = buildSessionIndex();
 
   // The orchestrator backing session is rekeyed on every compaction, so the
@@ -966,26 +963,7 @@ export function hydrateHistoricalSession(
     return { progress: [], transcripts: window.events, olderCursor: window.olderCursor };
   }
 
-  const agentRoles = buildAgentRoles(state, features, progress);
-  const chainSet = new Set(chain);
-  const workerEvents: TranscriptEvent[] = [];
-  for (const [providerSessionId, role] of agentRoles) {
-    if (chainSet.has(providerSessionId)) continue;
-    const path = sessionIndex.get(providerSessionId);
-    if (!path) continue;
-    workerEvents.push(
-      ...parseSessionTranscript(summary.appSessionId, providerSessionId, path, role),
-    );
-  }
-  // The orchestrator scrollback is paged via the cursor; only the (bounded)
-  // worker events need a safety cap so a worker-heavy mission stays responsive.
-  const cappedWorkers =
-    workerEvents.length > MAX_WORKER_EVENTS
-      ? workerEvents.slice(workerEvents.length - MAX_WORKER_EVENTS)
-      : workerEvents;
-
-  const transcripts = [...window.events, ...cappedWorkers].sort(byChronology);
-  return { progress, transcripts, olderCursor: window.olderCursor };
+  return { progress, transcripts: window.events, olderCursor: window.olderCursor };
 }
 
 // Resolve the orchestrator's compaction chain (oldest -> newest backing session
@@ -1290,7 +1268,6 @@ function readProgress(path: string): ProgressEntry[] {
         stringValue(validation?.summary) ||
         stringValue(entry.reason),
       featureId: stringValue(entry.featureId),
-      workerProviderSessionId: stringValue(entry.workerSessionId),
     };
   });
 }
@@ -1316,9 +1293,6 @@ function mapStoredFeature(feature: unknown): BridgeFeature {
       verificationSteps: stringArray(f.verificationSteps),
       fulfills: stringArray(f.fulfills),
       milestone: stringValue(f.milestone),
-      workerProviderSessionIds: stringArray(f.workerSessionIds),
-      currentWorkerProviderSessionId: stringValue(f.currentWorkerSessionId) ?? null,
-      completedWorkerProviderSessionId: stringValue(f.completedWorkerSessionId) ?? null,
     };
   }
 }
@@ -1469,42 +1443,6 @@ function event(
   };
 }
 
-function buildAgentRoles(
-  state: StoredMissionState,
-  features: BridgeFeature[],
-  progress: ProgressEntry[],
-): Map<string, SessionRole> {
-  const roles = new Map<string, SessionRole>();
-  const stateWorkers = state.workerSessionIds ?? [];
-  stateWorkers.forEach((id) => roles.set(id, 'worker'));
-
-  features.forEach((feature) => {
-    const role = isValidatorFeature(feature) ? 'validator' : 'worker';
-    for (const id of featureWorkerIds(feature)) roles.set(id, role);
-  });
-
-  progress.forEach((entry) => {
-    if (entry.workerProviderSessionId && !roles.has(entry.workerProviderSessionId)) {
-      roles.set(entry.workerProviderSessionId, 'worker');
-    }
-  });
-
-  return roles;
-}
-
-function featureWorkerIds(feature: BridgeFeature): string[] {
-  return [
-    ...(feature.workerProviderSessionIds ?? []),
-    feature.currentWorkerProviderSessionId,
-    feature.completedWorkerProviderSessionId,
-  ].filter(Boolean) as string[];
-}
-
-function isValidatorFeature(feature: BridgeFeature): boolean {
-  const text = `${feature.id} ${feature.skillName} ${feature.description}`.toLowerCase();
-  return text.includes('validator') || text.includes('validation') || text.includes('scrutiny');
-}
-
 function missionDirs(): string[] {
   const root = join(homedir(), '.factory', 'missions');
   if (!existsSync(root)) return [];
@@ -1647,10 +1585,7 @@ function readSessionStart(path: string): StoredSessionStart {
 
 function classifyStoredSession(
   start: StoredSessionStart,
-): Pick<
-  SessionSummary,
-  'sessionPurpose' | 'interactionMode' | 'role' | 'missionId' | 'parentProviderSessionId'
-> | null {
+): Pick<SessionSummary, 'sessionPurpose' | 'interactionMode' | 'role' | 'missionId'> | null {
   if (start.decompSessionType === 'worker') return null;
   if (start.decompSessionType === 'validator') return null;
   // Factory Task-tool children are never standalone conversations.
@@ -1663,7 +1598,6 @@ function classifyStoredSession(
       interactionMode: 'agi',
       role: 'primary',
       missionId: missionControlId,
-      parentProviderSessionId: undefined,
     };
   }
   if (mode === 'spec') {
@@ -1672,7 +1606,6 @@ function classifyStoredSession(
       interactionMode: 'spec',
       role: 'primary',
       missionId: undefined,
-      parentProviderSessionId: undefined,
     };
   }
   return {
@@ -1680,7 +1613,6 @@ function classifyStoredSession(
     interactionMode: mode === 'agi' ? 'agi' : 'auto',
     role: 'primary',
     missionId: undefined,
-    parentProviderSessionId: undefined,
   };
 }
 

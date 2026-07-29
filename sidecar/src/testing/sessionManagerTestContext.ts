@@ -52,7 +52,7 @@ export interface SessionManagerTestContext {
   readonly history: FakeHistoryIndex;
   readonly fixture: {
     seedHistorySummaries(summaries: Protocol.SessionSummary[]): void;
-    seedChildSessionLinks(appSessionId: string, links: Protocol.ChildSessionHistoryLink[]): void;
+    seedChildSessions(children: Protocol.ChildSessionSummary[]): void;
   };
   readonly browsers: FakeBrowserSessionManager;
   readonly home: string;
@@ -88,11 +88,13 @@ export function createSessionManagerTestContext(
   const runtime = new FakeFactoryRuntime(calls);
   const history = new FakeHistoryIndex(calls);
   const browsers = new FakeBrowserSessionManager((call) => calls.push(call), recordEvent);
+  let childSequence = 0;
   const dependencies: SessionManagerDependencies = {
     runtime,
     history,
     browsers,
     createLocalMcpResource: () => new FakeLocalMcpResource(calls),
+    nextChildSessionId: () => `child-${++childSequence}`,
     ...(options.getFactoryDefaults ? { getFactoryDefaults: options.getFactoryDefaults } : {}),
   };
 
@@ -139,8 +141,14 @@ export function createSessionManagerTestContext(
       seedHistorySummaries: (summaries) => {
         history.seedSummaries(summaries);
       },
-      seedChildSessionLinks: (appSessionId, links) => {
-        history.seedChildSessionLinks(appSessionId, links);
+      seedChildSessions: (children) => {
+        history.seedChildSessions(
+          children.map((child) => ({
+            ...child,
+            providerSessionId: child.childSessionId,
+            updatedAt: Date.now(),
+          })),
+        );
       },
     },
     browsers,

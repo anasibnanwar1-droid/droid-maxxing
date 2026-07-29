@@ -114,6 +114,7 @@ function childTarget(
   const child: LiveChildSession = {
     session,
     childSessionId: 'child-logical',
+    runtimeGeneration: 1,
     appSessionId: 'app-1',
     role: 'worker',
     lastUsedAt: 1,

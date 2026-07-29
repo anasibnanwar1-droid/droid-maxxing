@@ -26,15 +26,24 @@ const session: SessionSummary = {
 
 test('child settings update failure is routed to user-visible toast feedback', () => {
   const failure = {
-    type: 'error' as const,
+    type: 'child.error' as const,
     code: 'child.settings_update_failed',
     parentAppSessionId: 'app-1',
     childSessionId: 'child-1',
+    requestId: null,
+    operation: 'settings' as const,
     message: 'Could not update child settings: provider rejected',
   };
 
   assert.equal(toastMessageForEvent(failure), failure.message);
-  assert.equal(adaptEvent(failure), null);
+  assert.deepEqual(adaptEvent(failure), {
+    type: 'CHILD_ERROR',
+    parentAppSessionId: 'app-1',
+    childSessionId: 'child-1',
+    requestId: null,
+    operation: 'settings',
+    message: failure.message,
+  });
   assert.equal(
     toastMessageForEvent({
       ...failure,
@@ -44,7 +53,7 @@ test('child settings update failure is routed to user-visible toast feedback', (
   );
 });
 
-test('a primary error with a provider identity fails the session and settles child loading', () => {
+test('a primary error fails only the primary session', () => {
   const action = adaptEvent({
     type: 'error',
     appSessionId: 'app-1',
@@ -56,21 +65,20 @@ test('a primary error with a provider identity fails the session and settles chi
   const state = {
     ...initialState,
     sessions: { 'app-1': session },
-    childHistoryLoading: { 'provider-1': true },
   };
   const next = reducer(state, action);
 
   assert.equal(next.sessions['app-1']?.phase, 'failed');
-  assert.equal(next.childHistoryLoading['provider-1'], false);
 });
 
-test('a direct child error settles loading without failing the parent session', () => {
+test('a matching child-open error settles access without failing the parent session', () => {
   const action = adaptEvent({
-    type: 'error',
+    type: 'child.error',
     code: 'child.open_failed',
-    appSessionId: 'app-1',
     parentAppSessionId: 'app-1',
     childSessionId: 'child-1',
+    requestId: 'request-1',
+    operation: 'open',
     message: 'child failed to open',
   });
   assert.ok(action);
@@ -78,17 +86,20 @@ test('a direct child error settles loading without failing the parent session', 
   const state = {
     ...initialState,
     sessions: { 'app-1': session },
-    childHistoryLoading: { 'child-1': true },
-    childSettingsReadiness: { 'app-1': { 'child-1': 'opening' as const } },
+    activeAppSessionId: 'app-1',
+    selectedChild: { parentAppSessionId: 'app-1', childSessionId: 'child-1' },
+    childAccess: { 'app-1': { 'child-1': { state: 'opening', requestId: 'request-1' } } },
   };
   const next = reducer(state, action);
 
   assert.equal(next.sessions['app-1']?.phase, 'running');
-  assert.equal(next.childHistoryLoading['child-1'], false);
-  assert.equal(next.childSettingsReadiness['app-1']?.['child-1'], 'failed');
+  assert.deepEqual(next.childAccess['app-1']?.['child-1'], {
+    state: 'failed',
+    requestId: 'request-1',
+  });
 });
 
-test('a recoverable parent error settles loading without failing the session', () => {
+test('a recoverable parent error stays out of reducer state', () => {
   const action = adaptEvent({
     type: 'error',
     appSessionId: 'app-1',
@@ -96,15 +107,5 @@ test('a recoverable parent error settles loading without failing the session', (
     message: 'history restore failed',
     recoverable: true,
   });
-  assert.ok(action);
-
-  const state = {
-    ...initialState,
-    sessions: { 'app-1': session },
-    childHistoryLoading: { 'provider-1': true },
-  };
-  const next = reducer(state, action);
-
-  assert.equal(next.sessions['app-1']?.phase, 'running');
-  assert.equal(next.childHistoryLoading['provider-1'], false);
+  assert.equal(action, null);
 });

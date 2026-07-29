@@ -29,9 +29,6 @@ export function mapFeature(f: MissionFeature): BridgeFeature {
     verificationSteps: (f as { verificationSteps?: string[] }).verificationSteps ?? [],
     fulfills: f.fulfills,
     milestone: f.milestone,
-    workerProviderSessionIds: f.workerSessionIds,
-    currentWorkerProviderSessionId: f.currentWorkerSessionId ?? null,
-    completedWorkerProviderSessionId: f.completedWorkerSessionId ?? null,
   };
 }
 
@@ -49,8 +46,6 @@ export function mapProgress(entries: ProgressLogEntry[]): ProgressEntry[] {
             ? (any.summary as string)
             : undefined,
       featureId: typeof any.featureId === 'string' ? (any.featureId as string) : undefined,
-      workerProviderSessionId:
-        typeof any.workerSessionId === 'string' ? (any.workerSessionId as string) : undefined,
     };
   });
 }

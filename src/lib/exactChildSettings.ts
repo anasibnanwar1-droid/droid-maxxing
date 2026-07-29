@@ -1,9 +1,4 @@
-import type {
-  BridgeFeature,
-  ChildSessionSummary,
-  ModelInfo,
-  ReasoningEffort,
-} from '../types/bridge';
+import type { ChildSessionSummary, ModelInfo, ReasoningEffort } from '../types/bridge';
 
 export type ExactChildRole = 'worker' | 'validator';
 export type ExactChildSettingsReadiness = 'opening' | 'ready' | 'failed';
@@ -31,69 +26,21 @@ export function childSettingsReadinessLabel(readiness: ExactChildSettingsReadine
   return 'Child unavailable';
 }
 
-export function featureChildRole(feature: BridgeFeature): ExactChildRole {
-  const text = `${feature.id} ${feature.skillName} ${feature.description}`.toLowerCase();
-  return text.includes('validator') || text.includes('validation') || text.includes('scrutiny')
-    ? 'validator'
-    : 'worker';
-}
-
-export function liveFeatureChildRole(
-  features: readonly BridgeFeature[],
-  childSessionId: string,
-): ExactChildRole | undefined {
-  const feature = features.find(
-    (item) =>
-      item.status === 'in_progress' && item.currentWorkerProviderSessionId === childSessionId,
-  );
-  return feature ? featureChildRole(feature) : undefined;
-}
-
-export function buildExactChildSettingsTarget(input: {
-  parentAppSessionId: string;
-  childSessionId: string;
-  features: readonly BridgeFeature[];
-  child?: Pick<ChildSessionSummary, 'modelId' | 'reasoningEffort'>;
-  label: string;
-  readiness: ExactChildSettingsReadiness;
-}): ExactChildSettingsTarget | undefined {
-  const role = liveFeatureChildRole(input.features, input.childSessionId);
-  if (!role) return undefined;
-  return {
-    parentAppSessionId: input.parentAppSessionId,
-    childSessionId: input.childSessionId,
-    role,
-    label: input.label,
-    modelId: input.child?.modelId,
-    reasoningEffort: input.child?.reasoningEffort,
-    readiness: input.readiness,
-  };
-}
-
 export function buildSelectedChildSettingsTarget(input: {
   parentAppSessionId: string;
   childSessionId: string;
-  features: readonly BridgeFeature[];
-  child?: Pick<ChildSessionSummary, 'modelId' | 'reasoningEffort'>;
+  child?: Pick<ChildSessionSummary, 'role' | 'modelId' | 'reasoningEffort'>;
   label: string;
   readiness: ExactChildSettingsReadiness;
 }): ExactChildSettingsTarget {
-  const exact = buildExactChildSettingsTarget(input);
-  if (exact) return exact;
-  const feature = input.features.find(
-    (item) =>
-      item.currentWorkerProviderSessionId === input.childSessionId ||
-      item.completedWorkerProviderSessionId === input.childSessionId ||
-      item.workerProviderSessionIds?.includes(input.childSessionId),
-  );
   return {
     parentAppSessionId: input.parentAppSessionId,
     childSessionId: input.childSessionId,
-    role: feature ? featureChildRole(feature) : 'worker',
+    role: input.child?.role ?? 'worker',
     label: input.label,
     modelId: input.child?.modelId,
     reasoningEffort: input.child?.reasoningEffort,
-    readiness: 'failed',
+    readiness: input.child ? input.readiness : 'failed',
   };
 }
 

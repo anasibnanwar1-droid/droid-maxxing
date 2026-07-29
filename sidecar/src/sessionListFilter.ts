@@ -6,20 +6,11 @@ export interface SessionListFilterOptions {
   limitPerWorkspace?: number;
 }
 
-// Task workers plus Mission Control workers and validators are child sessions.
-// They never appear as standalone sidebar sessions.
-export function isChildSessionSummary(summary: SessionSummary): boolean {
-  return (
-    summary.role === 'worker' || summary.role === 'validator' || !!summary.parentProviderSessionId
-  );
-}
-
 export function filterSessionListSummaries(
   summaries: SessionSummary[],
   options: SessionListFilterOptions = {},
 ): SessionSummary[] {
-  const visible = summaries.filter((summary) => !isChildSessionSummary(summary));
-  if (!options.workspaceCwds && !options.includePlainChats) return visible;
+  if (!options.workspaceCwds && !options.includePlainChats) return summaries;
 
   const workspaceCwds = [...new Set((options.workspaceCwds ?? []).filter(Boolean))];
   if (workspaceCwds.length === 0 && !options.includePlainChats) return [];
@@ -35,7 +26,7 @@ export function filterSessionListSummaries(
   const grouped = new Map<string, SessionSummary[]>();
   const plain: SessionSummary[] = [];
 
-  for (const summary of visible) {
+  for (const summary of summaries) {
     if (!summary.cwd) {
       if (options.includePlainChats) plain.push(summary);
       continue;

@@ -85,12 +85,24 @@ async function createMissionWithChild(h: SessionManagerTestContext): Promise<Fak
   });
   await h.waitForIdle();
   const child = new FakeFactorySession('child-backend', {}, h.calls);
-  h.runtime.loadQueue.set('child-logical', [child]);
+  h.history.seedChildSessions([
+    {
+      parentAppSessionId: 'provider-1',
+      childSessionId: 'child-logical',
+      providerSessionId: 'child-backend',
+      role: 'worker',
+      status: 'paused',
+      modelId: 'model-default',
+      transcriptAvailable: true,
+      updatedAt: Date.now(),
+    },
+  ]);
+  h.runtime.loadQueue.set('child-backend', [child]);
   await h.handle({
     type: 'child.open',
-    appSessionId: 'provider-1',
-    providerSessionId: 'child-logical',
-    role: 'worker',
+    parentAppSessionId: 'provider-1',
+    childSessionId: 'child-logical',
+    requestId: 'open-child-logical',
   });
   return child;
 }
@@ -104,16 +116,16 @@ async function exerciseLateChildUnwind(mode: 'close' | 'shutdown'): Promise<void
     const contextGate = child.deferNextContextStats();
     const running = h.handle({
       type: 'child.send',
-      appSessionId: 'provider-1',
-      providerSessionId: 'child-logical',
+      parentAppSessionId: 'provider-1',
+      childSessionId: 'child-logical',
       text: 'running',
     });
     await child.waitForPrompts(1);
     notifyCompactionStarted(h, 'child-backend');
     await h.handle({
       type: 'child.send',
-      appSessionId: 'provider-1',
-      providerSessionId: 'child-logical',
+      parentAppSessionId: 'provider-1',
+      childSessionId: 'child-logical',
       text: 'must not drain',
     });
 
@@ -164,16 +176,16 @@ async function exerciseRejectedSteerAfterTeardown(mode: 'close' | 'shutdown'): P
     const interruptGate = child.deferNextInterrupt();
     const running = h.handle({
       type: 'child.send',
-      appSessionId: 'provider-1',
-      providerSessionId: 'child-logical',
+      parentAppSessionId: 'provider-1',
+      childSessionId: 'child-logical',
       text: 'running',
     });
     await child.waitForPrompts(1);
 
     const steering = h.handle({
       type: 'child.sendNow',
-      appSessionId: 'provider-1',
-      providerSessionId: 'child-logical',
+      parentAppSessionId: 'provider-1',
+      childSessionId: 'child-logical',
       text: 'must not drain',
     });
     await h.waitForIdle();
@@ -200,7 +212,9 @@ async function exerciseRejectedSteerAfterTeardown(mode: 'close' | 'shutdown'): P
     assert.deepEqual(child.prompts, ['running']);
     assert.equal(h.events.length, eventsAfterTeardown);
     assert.equal(
-      h.events.some((event) => event.type === 'error' && event.code === 'child.send_now_failed'),
+      h.events.some(
+        (event) => event.type === 'child.error' && event.code === 'child.send_now_failed',
+      ),
       false,
     );
     assert.equal(
@@ -259,19 +273,31 @@ test('shutdown marks later parents before blocked earlier cleanup', async () => 
     await h.waitForIdle();
 
     const child = new FakeFactorySession('child-b-backend', {}, h.calls);
-    h.runtime.loadQueue.set('child-b-logical', [child]);
+    h.history.seedChildSessions([
+      {
+        parentAppSessionId: 'parent-b',
+        childSessionId: 'child-b-logical',
+        providerSessionId: 'child-b-backend',
+        role: 'worker',
+        status: 'paused',
+        modelId: 'model-default',
+        transcriptAvailable: true,
+        updatedAt: Date.now(),
+      },
+    ]);
+    h.runtime.loadQueue.set('child-b-backend', [child]);
     await h.handle({
       type: 'child.open',
-      appSessionId: 'parent-b',
-      providerSessionId: 'child-b-logical',
-      role: 'worker',
+      parentAppSessionId: 'parent-b',
+      childSessionId: 'child-b-logical',
+      requestId: 'open-child-b-logical',
     });
     const streamGate = child.deferNextStream();
     const contextGate = child.deferNextContextStats();
     const running = h.handle({
       type: 'child.send',
-      appSessionId: 'parent-b',
-      providerSessionId: 'child-b-logical',
+      parentAppSessionId: 'parent-b',
+      childSessionId: 'child-b-logical',
       text: 'running on B',
     });
     await child.waitForPrompts(1);

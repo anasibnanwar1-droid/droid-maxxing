@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 
-import type { ServerEvent, SessionRole, SessionSummary } from '../protocol.js';
+import type { ChildSessionSummary, ServerEvent, SessionRole, SessionSummary } from '../protocol.js';
 import { FakeFactorySession } from './fakeFactoryRuntime.js';
 import type { SessionManagerTestContext } from './sessionManagerTestContext.js';
 
@@ -54,21 +54,32 @@ export async function openChildForParent(
 ): Promise<FakeFactorySession> {
   const child = new FakeFactorySession(input.providerSessionId, {}, h.calls);
   child.setInitModel(input.modelId);
-  h.runtime.loadQueue.set(input.childSessionId, [child]);
+  h.history.seedChildSessions([
+    {
+      parentAppSessionId,
+      childSessionId: input.childSessionId,
+      providerSessionId: input.providerSessionId,
+      role: input.role,
+      status: 'paused',
+      modelId: input.modelId,
+      transcriptAvailable: true,
+      updatedAt: Date.now(),
+    },
+  ]);
+  h.runtime.loadQueue.set(input.providerSessionId, [child]);
   await h.handle({
     type: 'child.open',
-    appSessionId: parentAppSessionId,
-    providerSessionId: input.childSessionId,
-    role: input.role,
+    parentAppSessionId,
+    childSessionId: input.childSessionId,
+    requestId: `open-${input.childSessionId}`,
   });
   assert.equal(
     h.events.some(
       (event) =>
         event.type === 'child.updated' &&
-        'parentAppSessionId' in event &&
         event.parentAppSessionId === parentAppSessionId &&
         event.childSessionId === input.childSessionId &&
-        event.role === input.role,
+        event.access === 'ready',
     ),
     true,
   );
@@ -78,11 +89,10 @@ export async function openChildForParent(
 export function exactSettingsEvents(
   events: ServerEvent[],
   childSessionId: string,
-): Extract<ServerEvent, { type: 'session.child'; childSessionId: string }>[] {
-  return events.filter(
-    (event): event is Extract<ServerEvent, { type: 'session.child'; childSessionId: string }> =>
-      event.type === 'session.child' &&
-      'childSessionId' in event &&
-      event.childSessionId === childSessionId,
+): ChildSessionSummary[] {
+  return events.flatMap((event) =>
+    event.type === 'session.child' && event.child.childSessionId === childSessionId
+      ? [event.child]
+      : [],
   );
 }

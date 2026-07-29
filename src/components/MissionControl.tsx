@@ -1,7 +1,7 @@
 import { useRef, useEffect, useMemo, useState, useCallback } from 'react';
 import { useStore } from '../hooks/useStore';
 import { useRepoStatus } from '../hooks/useRepoStatus';
-import { interruptSession, updateSessionSettings, openChild } from '../lib/commands';
+import { interruptVisibleSession, updateSessionSettings } from '../lib/commands';
 import { utilityPanelForSession } from '../lib/utilityPanel';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
@@ -31,7 +31,7 @@ interface AgentEntry {
 
 interface RoleAgent {
   role: SessionRole;
-  providerSessionId: string | null;
+  childSessionId: string | null;
   working: boolean;
   subAgents: AgentEntry[];
 }
@@ -50,11 +50,7 @@ import { DiffFull } from './DiffView';
 import { ModelIcon, providerOf } from './ModelIcon';
 import { CAT_ICON, CAT_LABEL, toolMeta } from '../lib/tools';
 import { findChildSessionForTarget, childSessionActivityForTarget } from '../lib/childSessions';
-import {
-  buildSelectedChildSettingsTarget,
-  featureChildRole,
-  liveFeatureChildRole,
-} from '../lib/exactChildSettings';
+import { buildSelectedChildSettingsTarget } from '../lib/exactChildSettings';
 import { MessageFeed } from './chat';
 import EditorOpenMenu, { openCodebase, openCurrentDiff } from './EditorOpenMenu';
 import PromptInput from './PromptInput';
@@ -455,10 +451,10 @@ function RoleBlock({
         id={id}
         reasoning={reasoning}
         models={models}
-        selected={role.providerSessionId !== null && viewedAgent === role.providerSessionId}
+        selected={role.childSessionId !== null && viewedAgent === role.childSessionId}
         working={role.working}
-        disabled={role.providerSessionId === null}
-        onClick={() => role.providerSessionId && onSelectAgent(role.providerSessionId)}
+        disabled={role.childSessionId === null}
+        onClick={() => role.childSessionId && onSelectAgent(role.childSessionId)}
       />
 
       {role.subAgents.length > 0 && (
@@ -788,15 +784,9 @@ function FeatureFocus({
   onOpenDiff?: (c: FileChange) => void;
 }) {
   const [showAll, setShowAll] = useState(false);
-  const sessionIds = new Set(
-    [
-      feature.currentWorkerProviderSessionId,
-      feature.completedWorkerProviderSessionId,
-      ...(feature.workerProviderSessionIds ?? []),
-    ].filter(Boolean) as string[],
-  );
   const toolCalls = events.filter(
-    (e) => e.kind === 'tool_call' && sessionIds.has(e.sourceSessionId),
+    (event) =>
+      event.kind === 'tool_call' && (event.role === 'worker' || event.role === 'validator'),
   );
   const curated = toolCalls.filter((e) => toolMeta(e.toolName, e.toolArgs).cat !== 'other');
   const shown = showAll ? toolCalls : curated;
@@ -893,7 +883,6 @@ export default function MissionControl() {
   const { state, dispatch } = useStore();
   const mission = state.activeAppSessionId ? state.sessions[state.activeAppSessionId] : null;
   const utilityOpen = utilityPanelForSession(state.utilityPanels, state.activeAppSessionId).open;
-  const [viewedAgent, setViewedAgent] = useState<string>('primary');
   const [selectedFeatureId, setSelectedFeatureId] = useState<string | null>(null);
   const [focusOpen, setFocusOpen] = useState(false);
   const [railCollapsed, setRailCollapsed] = useState(false);
@@ -903,24 +892,26 @@ export default function MissionControl() {
   const features = mission?.features ?? [];
   const allTx = mission ? (state.transcripts[mission.appSessionId] ?? []) : [];
   const progress = mission ? (state.progress[mission.appSessionId] ?? []) : [];
-  const childSessions = mission ? (state.childSessions[mission.appSessionId] ?? []) : [];
+  const childSessions = mission
+    ? Object.values(state.childSessions[mission.appSessionId] ?? {})
+    : [];
+  const viewedAgent =
+    mission && state.selectedChild?.parentAppSessionId === mission.appSessionId
+      ? state.selectedChild.childSessionId
+      : 'primary';
 
   const selectAgent = useCallback(
     (id: string) => {
-      setViewedAgent(id);
-      if (!mission || id === 'primary') return;
-      const role = liveFeatureChildRole(features, id);
-      if (role) {
-        dispatch({
-          type: 'CHILD_SETTINGS_READINESS',
-          parentAppSessionId: mission.appSessionId,
-          childSessionId: id,
-          status: 'opening',
-        });
-      }
-      openChild(mission.appSessionId, id, role);
+      if (!mission) return;
+      dispatch({
+        type: 'SELECT_CHILD',
+        selection:
+          id === 'primary'
+            ? null
+            : { parentAppSessionId: mission.appSessionId, childSessionId: id },
+      });
     },
-    [dispatch, features, mission],
+    [dispatch, mission],
   );
 
   // Click a spawn name in the orchestrator transcript → focus that worker.
@@ -930,7 +921,7 @@ export default function MissionControl() {
     (target: { toolUseId?: string; label?: string }) => {
       const worker = findChildSessionForTarget(childSessions, target);
       if (!worker) return;
-      selectAgent(worker.providerSessionId);
+      selectAgent(worker.childSessionId);
     },
     [childSessions, selectAgent],
   );
@@ -981,21 +972,13 @@ export default function MissionControl() {
               : 'Idle'
     : 'Idle';
 
-  const workerRoles = useMemo(() => {
-    const map = new Map<string, AgentEntry['role']>();
-    features.forEach((f) => {
-      const role = featureChildRole(f);
-      f.workerProviderSessionIds?.forEach((id) => map.set(id, role));
-      if (f.currentWorkerProviderSessionId) map.set(f.currentWorkerProviderSessionId, role);
-      if (f.completedWorkerProviderSessionId) map.set(f.completedWorkerProviderSessionId, role);
-    });
-    progress.forEach((entry) => {
-      if (entry.workerProviderSessionId && !map.has(entry.workerProviderSessionId)) {
-        map.set(entry.workerProviderSessionId, 'worker');
-      }
-    });
-    return map;
-  }, [features, progress]);
+  const workerRoles = useMemo(
+    () =>
+      new Map<string, AgentEntry['role']>(
+        childSessions.map((child) => [child.childSessionId, child.role]),
+      ),
+    [childSessions],
+  );
 
   // Stable 1-based numbering for every worker session id ever seen (so labels don't reshuffle).
   const workerNumber = useMemo(() => {
@@ -1003,19 +986,13 @@ export default function MissionControl() {
     const add = (id?: string | null) => {
       if (id && id !== 'primary' && id !== 'user' && !order.includes(id)) order.push(id);
     };
-    features.forEach((f) => {
-      (f.workerProviderSessionIds ?? []).forEach(add);
-      add(f.currentWorkerProviderSessionId);
-      add(f.completedWorkerProviderSessionId);
-    });
-    progress.forEach((p) => add(p.workerProviderSessionId));
-    allTx.forEach((t) => {
-      if (t.role !== 'primary') add(t.sourceSessionId);
-    });
+    [...childSessions]
+      .sort((a, b) => (a.startedAt ?? 0) - (b.startedAt ?? 0))
+      .forEach((child) => add(child.childSessionId));
     const map = new Map<string, number>();
     order.forEach((id, i) => map.set(id, i + 1));
     return map;
-  }, [features, progress, allTx]);
+  }, [childSessions]);
 
   // Only one agent is active at a time → the most recent meaningful transcript emitter while live.
   const activeAgentId = useMemo<string | null>(() => {
@@ -1034,48 +1011,45 @@ export default function MissionControl() {
     const roleOf = (id: string): SessionRole =>
       id === 'primary' ? 'primary' : (workerRoles.get(id) ?? 'worker');
     const activeRole = activeAgentId ? roleOf(activeAgentId) : null;
-    const liveSessions = (role: SessionRole) => {
-      const ids: string[] = [];
-      features.forEach((f) => {
-        const id = f.currentWorkerProviderSessionId;
-        if (f.status === 'in_progress' && id && featureChildRole(f) === role && !ids.includes(id))
-          ids.push(id);
-      });
-      return ids;
-    };
+    const liveSessions = (role: SessionRole) =>
+      childSessions
+        .filter((child) => child.role === role && child.status === 'running')
+        .map((child) => child.childSessionId);
     const allSessions = (role: SessionRole) =>
       Array.from(workerNumber.keys()).filter((id) => (workerRoles.get(id) ?? 'worker') === role);
     const build = (role: SessionRole): RoleAgent => {
       if (role === 'primary')
         return {
           role,
-          providerSessionId: 'primary',
+          childSessionId: 'primary',
           working: activeAgentId === 'primary',
           subAgents: [],
         };
       const live = liveSessions(role);
       const all = allSessions(role);
       const working = activeRole === role;
-      const providerSessionId =
+      const childSessionId =
         working && activeAgentId ? activeAgentId : (live[0] ?? all[all.length - 1] ?? null);
       const subAgents = live.map((id) => ({
         id,
         role,
         label: `Sub-agent ${String(workerNumber.get(id) ?? '?')}`,
       }));
-      return { role, providerSessionId, working, subAgents };
+      return { role, childSessionId, working, subAgents };
     };
     return [build('primary'), build('worker'), build('validator')];
-  }, [features, activeAgentId, workerRoles, workerNumber]);
-
-  const activeAgentLabel =
-    !activeAgentId || activeAgentId === 'primary'
-      ? 'Orchestrator'
-      : `Sub-agent ${String(workerNumber.get(activeAgentId) ?? '?')}`;
+  }, [activeAgentId, childSessions, workerRoles, workerNumber]);
 
   if (!mission) return null;
 
   const onOrchestrator = viewedAgent === 'primary';
+  const viewedChild = onOrchestrator
+    ? undefined
+    : childSessions.find((child) => child.childSessionId === viewedAgent);
+  const visibleIsLive = onOrchestrator ? isLive : viewedChild?.status === 'running';
+  const visibleAgentLabel = onOrchestrator
+    ? 'Orchestrator'
+    : `Sub-agent ${String(workerNumber.get(viewedAgent) ?? '?')}`;
   const visible = (t: TranscriptEvent) =>
     t.author === 'user' ||
     t.kind === 'text' ||
@@ -1093,8 +1067,10 @@ export default function MissionControl() {
 
   const selectFeature = (f: BridgeFeature) => {
     setSelectedFeatureId(f.id);
-    const session = f.currentWorkerProviderSessionId ?? f.completedWorkerProviderSessionId ?? null;
-    selectAgent(session ?? 'primary');
+    const child = childSessions.find(
+      (candidate) => candidate.spawnLink?.kind === 'spawn' && candidate.spawnLink.id === f.id,
+    );
+    selectAgent(child?.childSessionId ?? 'primary');
     setFocusOpen(true);
   };
 
@@ -1106,10 +1082,14 @@ export default function MissionControl() {
       : buildSelectedChildSettingsTarget({
           parentAppSessionId: mission.appSessionId,
           childSessionId: viewedAgent,
-          features,
-          child: childSessions.find((child) => child.providerSessionId === viewedAgent),
+          child: childSessions.find((child) => child.childSessionId === viewedAgent),
           label: `Sub-agent ${String(workerNumber.get(viewedAgent) ?? '?')}`,
-          readiness: state.childSettingsReadiness[mission.appSessionId]?.[viewedAgent] ?? 'opening',
+          readiness:
+            state.childAccess[mission.appSessionId]?.[viewedAgent]?.state === 'ready'
+              ? 'ready'
+              : state.childAccess[mission.appSessionId]?.[viewedAgent]?.state === 'failed'
+                ? 'failed'
+                : 'opening',
         });
 
   return (
@@ -1154,13 +1134,18 @@ export default function MissionControl() {
           >
             <h1 className="text-[14px] font-medium text-droid-text truncate">{mission.title}</h1>
             <div className="flex items-center gap-2 shrink-0">
-              {isLive ? (
+              {visibleIsLive ? (
                 <>
                   <span className="shimmer-text text-[11.5px] font-medium leading-none">
-                    {activeAgentLabel} working
+                    {visibleAgentLabel} working
                   </span>
                   <button
-                    onClick={() => interruptSession(mission.appSessionId)}
+                    onClick={() =>
+                      interruptVisibleSession(
+                        mission.appSessionId,
+                        onOrchestrator ? null : viewedAgent,
+                      )
+                    }
                     className="px-2 py-1 rounded-md text-[11px] text-droid-text-muted hover:text-droid-text border border-droid-border hover:border-droid-border-hover transition-colors"
                   >
                     Stop

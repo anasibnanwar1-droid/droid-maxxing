@@ -10,6 +10,7 @@ import {
   loadSessionHistory,
   sendNativeBrowserResult,
   openChild,
+  newChildOpenRequestId,
 } from './lib/commands';
 import { isEmbedded } from './lib/embed';
 import { getApiKey } from './lib/desktop';
@@ -18,6 +19,7 @@ import {
   activeSessionAfterNativeBrowserRequest,
   browserKeyForSession,
 } from './lib/browserSessionIdentity';
+import { shouldOpenSelectedChild } from './lib/childSessions';
 import Sidebar from './components/Sidebar';
 import ChatView from './components/ChatView';
 import MissionControl from './components/MissionControl';
@@ -288,15 +290,14 @@ export default function App() {
 
   useEffect(() => {
     if (embedded || !activeSession) return;
-    if (activeSession.sessionPurpose === 'mission-control') return;
-    const sourceSessionId = state.selectedProviderSessionId;
-    if (!sourceSessionId || sourceSessionId === 'primary') return;
-    // A worker's inner events only stream once we subscribe, so mark its
-    // transcript as loading until the backend replays history and acks with
-    // 'opened'. This keeps the card honest instead of flashing "no activity".
-    dispatch({ type: 'CHILD_HISTORY_LOADING', providerSessionId: sourceSessionId, loading: true });
-    openChild(activeSession.appSessionId, sourceSessionId);
-  }, [activeSession?.appSessionId, embedded, state.selectedProviderSessionId, dispatch]);
+    const selection = state.selectedChild;
+    if (!selection || selection.parentAppSessionId !== activeSession.appSessionId) return;
+    const access = state.childAccess[selection.parentAppSessionId]?.[selection.childSessionId];
+    if (!shouldOpenSelectedChild(access)) return;
+    const requestId = newChildOpenRequestId();
+    dispatch({ type: 'SELECT_CHILD', selection, requestId });
+    openChild(selection.parentAppSessionId, selection.childSessionId, requestId);
+  }, [activeSession?.appSessionId, embedded, state.selectedChild, state.childAccess, dispatch]);
 
   // Keyboard shortcuts
   useEffect(() => {

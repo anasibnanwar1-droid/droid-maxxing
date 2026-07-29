@@ -83,11 +83,10 @@ test(
       assert.equal(
         h.events.some(
           (event) =>
-            event.type === 'error' &&
+            event.type === 'child.error' &&
             event.code === 'child.settings_update_failed' &&
             event.parentAppSessionId === 'provider-1' &&
-            event.childSessionId === 'worker-logical' &&
-            !event.providerSessionId,
+            event.childSessionId === 'worker-logical',
         ),
         true,
       );
@@ -193,7 +192,7 @@ test(
       parent.queueStreamEvents([
         {
           type: 'mission_worker_completed',
-          workerSessionId: 'worker-logical',
+          workerSessionId: 'worker-backend',
           exitCode: 0,
         },
       ]);
@@ -206,8 +205,8 @@ test(
         h.events.some(
           (event) =>
             event.type === 'session.child' &&
-            event.event === 'completed' &&
-            event.providerSessionId === 'worker-logical',
+            event.child.childSessionId === 'worker-logical' &&
+            event.child.status === 'completed',
         ),
         true,
       );
@@ -233,13 +232,25 @@ test(
       const child = new FakeFactorySession('worker-backend', {}, h.calls);
       child.setInitModel('worker-old');
       const gate = child.deferNextUpdateSettings();
-      h.runtime.loadQueue.set('worker-logical', [child]);
+      h.history.seedChildSessions([
+        {
+          parentAppSessionId: 'provider-1',
+          childSessionId: 'worker-logical',
+          providerSessionId: 'worker-backend',
+          role: 'worker',
+          status: 'paused',
+          modelId: 'worker-old',
+          transcriptAvailable: true,
+          updatedAt: Date.now(),
+        },
+      ]);
+      h.runtime.loadQueue.set('worker-backend', [child]);
 
       const opening = h.handle({
         type: 'child.open',
-        appSessionId: 'provider-1',
-        providerSessionId: 'worker-logical',
-        role: 'worker',
+        parentAppSessionId: 'provider-1',
+        childSessionId: 'worker-logical',
+        requestId: 'open-worker-logical',
       });
       await h.waitForIdle();
       await h.handle({ type: 'session.close', appSessionId: 'provider-1' });
@@ -250,9 +261,8 @@ test(
         h.events.some(
           (event) =>
             event.type === 'child.updated' &&
-            'parentAppSessionId' in event &&
             event.childSessionId === 'worker-logical' &&
-            event.settingsReady,
+            event.access === 'ready',
         ),
         false,
       );

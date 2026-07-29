@@ -23,7 +23,7 @@ export function activeSessionCwds(opts: {
   sessions: SessionSummary[];
   activeAppSessionId: string | null;
   draftCwd?: string | null;
-  childSessions?: Record<string, Pick<ChildSessionSummary, 'status'>[]>;
+  childSessions?: Record<string, Record<string, Pick<ChildSessionSummary, 'status'>>>;
   pinnedCwds?: Iterable<string>;
 }): string[] {
   const cwds: string[] = [];
@@ -33,7 +33,7 @@ export function activeSessionCwds(opts: {
   }
   for (const m of opts.sessions) {
     if (!m.cwd) continue;
-    const hasRunningChildSession = (opts.childSessions?.[m.appSessionId] ?? []).some(
+    const hasRunningChildSession = Object.values(opts.childSessions?.[m.appSessionId] ?? {}).some(
       (childSession) => childSession.status === 'running',
     );
     if (m.appSessionId === opts.activeAppSessionId || sessionIsLive(m) || hasRunningChildSession) {

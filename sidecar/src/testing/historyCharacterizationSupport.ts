@@ -60,27 +60,6 @@ export class FakeHistoryIndex implements SessionHistoryDependencies {
     }
   }
 
-  seedChildSessionLinks(appSessionId: string, links: Protocol.ChildSessionHistoryLink[]): void {
-    const children = new Map<string, PersistedChildSession>();
-    for (const link of links) {
-      children.set(link.providerSessionId, {
-        parentAppSessionId: appSessionId,
-        childSessionId: link.providerSessionId,
-        providerSessionId: link.providerSessionId,
-        role: 'worker',
-        ...(link.label === undefined ? {} : { label: link.label }),
-        status: link.status ?? 'completed',
-        modelId: 'model-default',
-        ...(link.toolUseId === undefined
-          ? {}
-          : { spawnLink: { kind: 'tool-use', id: link.toolUseId } }),
-        transcriptAvailable: true,
-        updatedAt: Date.now(),
-      });
-    }
-    this.childrenByParent.set(appSessionId, children);
-  }
-
   seedChildSessions(children: PersistedChildSession[]): void {
     for (const child of children) this.upsertChildSession(child);
   }

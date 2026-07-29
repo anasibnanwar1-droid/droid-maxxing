@@ -9,13 +9,15 @@ import ContextMeter from './ContextMeter';
 export default function ContextStatusCluster() {
   const { state } = useStore();
   const session = state.activeAppSessionId ? state.sessions[state.activeAppSessionId] : null;
-  const contextSessionId =
-    state.selectedProviderSessionId && state.selectedProviderSessionId !== 'primary'
-      ? state.selectedProviderSessionId
-      : session?.providerSessionId;
-  const contextStats = contextSessionId ? state.contextStats[contextSessionId] : undefined;
+  const selectedChild =
+    state.selectedChild?.parentAppSessionId === session?.appSessionId ? state.selectedChild : null;
+  const contextStats = selectedChild
+    ? state.contextStats.child[selectedChild.parentAppSessionId]?.[selectedChild.childSessionId]
+    : session
+      ? state.contextStats.primary[session.appSessionId]
+      : undefined;
   const contextSessionSummary =
-    session && contextSessionId !== session.providerSessionId && !contextStats
+    session && selectedChild && !contextStats
       ? {
           ...session,
           contextTokens: 0,
@@ -37,7 +39,11 @@ export default function ContextStatusCluster() {
       <ContextMeter
         session={contextSessionSummary}
         stats={contextStats}
-        sessionKey={contextSessionId}
+        sessionKey={
+          selectedChild
+            ? `${selectedChild.parentAppSessionId}:${selectedChild.childSessionId}`
+            : contextSessionSummary.appSessionId
+        }
       />
     </div>
   );

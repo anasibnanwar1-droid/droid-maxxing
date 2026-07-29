@@ -133,6 +133,7 @@ function addChild(
   const child: LiveChildSession = {
     session,
     childSessionId,
+    runtimeGeneration: 1,
     appSessionId: parentAppSessionId,
     role: 'worker',
     lastUsedAt: 1,

@@ -243,6 +243,12 @@ export class SessionContext {
       type: 'context.updated',
       appSessionId: target.appSessionId,
       sourceSessionId: target.sourceSessionId,
+      ...(isChildTarget(target)
+        ? {
+            parentAppSessionId: target.parentAppSessionId,
+            childSessionId: target.childSessionId,
+          }
+        : {}),
       stats: snapshot,
     });
 

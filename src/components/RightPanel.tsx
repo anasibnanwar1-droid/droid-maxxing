@@ -8,7 +8,6 @@ import { interruptChild } from '../lib/commands';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Hash,
-  Activity,
   Loader2,
   ChevronRight,
   CornerDownRight,
@@ -119,7 +118,11 @@ export default function RightPanel() {
   // Mission control owns its own feature-based progress; for chat/spec sessions
   // we always prefer the model's own TodoWrite list as the source of truth.
   const transcript = activeSession ? (state.transcripts[activeSession.appSessionId] ?? []) : [];
-  const selectedAgent = state.selectedProviderSessionId;
+  const selectedChild = state.selectedChild;
+  const selectedAgent =
+    selectedChild && selectedChild.parentAppSessionId === activeSession?.appSessionId
+      ? selectedChild.childSessionId
+      : null;
   const todoResult = useMemo(() => {
     if (!activeSession || activeSession.sessionPurpose === 'mission-control')
       return { todos: [] as TodoItem[], foundPayload: false };
@@ -156,7 +159,7 @@ export default function RightPanel() {
 
   // Child sessions spawned here (the same source the sidebar uses).
   const childSessions = activeSession
-    ? (state.childSessions[activeSession.appSessionId] ?? [])
+    ? Object.values(state.childSessions[activeSession.appSessionId] ?? {})
     : [];
   const childSessionsRunning = childSessions.some(
     (childSession) => childSession.status === 'running',
@@ -255,7 +258,7 @@ export default function RightPanel() {
                         >
                           {childSessions.map((childSession, index) => (
                             <ChildSessionRow
-                              key={childSession.providerSessionId}
+                              key={childSession.childSessionId}
                               label={childSession.label ?? `Child ${index + 1}`}
                               meta={
                                 [
@@ -273,20 +276,31 @@ export default function RightPanel() {
                               running={childSession.status === 'running'}
                               depth={0}
                               selected={
-                                state.selectedProviderSessionId === childSession.providerSessionId
+                                state.selectedChild?.parentAppSessionId ===
+                                  activeSession?.appSessionId &&
+                                state.selectedChild.childSessionId === childSession.childSessionId
                               }
                               onClick={() => {
-                                const next =
-                                  state.selectedProviderSessionId === childSession.providerSessionId
+                                const selected =
+                                  state.selectedChild?.parentAppSessionId ===
+                                    activeSession?.appSessionId &&
+                                  state.selectedChild.childSessionId ===
+                                    childSession.childSessionId;
+                                dispatch({
+                                  type: 'SELECT_CHILD',
+                                  selection: selected
                                     ? null
-                                    : childSession.providerSessionId;
-                                dispatch({ type: 'SELECT_PROVIDER_SESSION', id: next });
+                                    : {
+                                        parentAppSessionId: childSession.parentAppSessionId,
+                                        childSessionId: childSession.childSessionId,
+                                      },
+                                });
                               }}
                               onStop={() =>
                                 activeSession &&
                                 interruptChild(
                                   activeSession.appSessionId,
-                                  childSession.providerSessionId,
+                                  childSession.childSessionId,
                                 )
                               }
                             />
@@ -426,14 +440,6 @@ export default function RightPanel() {
                             <Hash className="w-3.5 h-3.5 text-droid-text-muted" />
                             <span className="font-mono text-[11px] text-droid-text-secondary">
                               {f.skillName}
-                            </span>
-                          </div>
-                        )}
-                        {f.currentWorkerProviderSessionId && (
-                          <div className="flex items-center gap-2">
-                            <Activity className="w-3.5 h-3.5 text-droid-accent" />
-                            <span className="font-mono text-[11px] text-droid-accent">
-                              {f.currentWorkerProviderSessionId.slice(0, 12)}
                             </span>
                           </div>
                         )}

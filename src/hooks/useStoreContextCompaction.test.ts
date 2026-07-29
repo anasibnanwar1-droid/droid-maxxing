@@ -44,13 +44,16 @@ test('SESSION_UPDATED invalidates stale context stats when compaction generation
         providerSessionId: 'provider-2',
       },
     },
-    contextStats: { 'provider-1': snapshot(100_000), 'provider-2': snapshot(20_000) },
+    contextStats: {
+      primary: { m1: snapshot(100_000), m2: snapshot(20_000) },
+      child: {},
+    },
   };
 
   const next = reducer(start, { type: 'SESSION_UPDATED', session: session(1) });
 
-  assert.equal(next.contextStats['provider-1'], undefined);
-  assert.equal(next.contextStats['provider-2']?.used, 20_000);
+  assert.equal(next.contextStats.primary.m1, undefined);
+  assert.equal(next.contextStats.primary.m2?.used, 20_000);
   assert.equal(next.sessions.m1.contextTokens, 0);
   assert.equal(next.sessions.m1.autoCompactions, 1);
 });
@@ -59,7 +62,7 @@ test('post-compaction context update installs the fresh lower reading', () => {
   const start: AppState = {
     ...initialState,
     sessions: { m1: session() },
-    contextStats: { 'provider-1': snapshot(100_000) },
+    contextStats: { primary: { m1: snapshot(100_000) }, child: {} },
   };
   const compacted = reducer(start, { type: 'SESSION_UPDATED', session: session(1) });
 
@@ -70,7 +73,7 @@ test('post-compaction context update installs the fresh lower reading', () => {
     stats: snapshot(35_066),
   });
 
-  assert.equal(refreshed.contextStats['provider-2']?.used, 35_066);
+  assert.equal(refreshed.contextStats.primary.m1?.used, 35_066);
   assert.equal(refreshed.sessions.m1.contextTokens, 35_066);
 });
 
@@ -79,7 +82,7 @@ test('ordinary session updates retain the current context snapshot', () => {
   const start: AppState = {
     ...initialState,
     sessions: { m1: current },
-    contextStats: { 'provider-1': snapshot(80_000) },
+    contextStats: { primary: { m1: snapshot(80_000) }, child: {} },
   };
 
   const next = reducer(start, {
@@ -87,5 +90,5 @@ test('ordinary session updates retain the current context snapshot', () => {
     session: { ...current, title: 'Renamed', updatedAt: 2 },
   });
 
-  assert.equal(next.contextStats['provider-1']?.used, 80_000);
+  assert.equal(next.contextStats.primary.m1?.used, 80_000);
 });

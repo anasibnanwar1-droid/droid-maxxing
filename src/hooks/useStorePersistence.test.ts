@@ -28,6 +28,10 @@ test('loadPersistedUiState sanitizes persisted shell fields', () => {
       sidebarCollapsed: true,
       specMode: true,
       missionControlMode: false,
+      selectedChild: {
+        parentAppSessionId: 'm1',
+        childSessionId: 'stale-child',
+      },
       utilityPanels: {
         m1: {
           open: true,
@@ -60,7 +64,6 @@ test('loadPersistedUiState sanitizes persisted shell fields', () => {
         bad: { url: 'https://example.com' },
       },
       selectedFeatureId: 'f1',
-      selectedProviderSessionId: 'primary',
       settingsOpen: true,
     }),
     () => {
@@ -91,7 +94,6 @@ test('loadPersistedUiState sanitizes persisted shell fields', () => {
           },
         },
         selectedFeatureId: 'f1',
-        selectedProviderSessionId: 'primary',
       });
     },
   );
@@ -220,7 +222,7 @@ test('a seeded CLI default never turns into an explicit UI override', () => {
 });
 
 function withLocalStorage(value: string | null, fn: () => void): void {
-  withLocalStorageMap(value === null ? {} : { 'droid-ui-state-v1': value }, fn);
+  withLocalStorageMap(value === null ? {} : { 'droid-ui-state-v2': value }, fn);
 }
 
 function withLocalStorageMap(

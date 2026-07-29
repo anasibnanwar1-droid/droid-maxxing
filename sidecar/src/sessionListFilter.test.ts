@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { SessionSummary } from './protocol.js';
-import { filterSessionListSummaries, isChildSessionSummary } from './sessionListFilter.js';
+import { filterSessionListSummaries } from './sessionListFilter.js';
 
 const summary = (
   appSessionId: string,
@@ -45,31 +45,6 @@ test('filterSessionListSummaries returns only five latest summaries per requeste
   assert.deepEqual(
     filtered.map((m) => m.appSessionId),
     ['api-2', 'api-1', 'api-0', 'app-6', 'app-5', 'app-4', 'app-3', 'app-2'],
-  );
-});
-
-test('isChildSessionSummary flags workers, validators and parented sessions', () => {
-  assert.equal(isChildSessionSummary(summary('a', '/repo/app', 1)), false);
-  assert.equal(isChildSessionSummary(summary('w', '/repo/app', 1, { role: 'worker' })), true);
-  assert.equal(isChildSessionSummary(summary('v', '/repo/app', 1, { role: 'validator' })), true);
-  assert.equal(
-    isChildSessionSummary(summary('p', '/repo/app', 1, { parentProviderSessionId: 'parent' })),
-    true,
-  );
-});
-
-test('filterSessionListSummaries excludes child sessions', () => {
-  const summaries = [
-    summary('chat', '/repo/app', 3),
-    summary('worker', '/repo/app', 2, { role: 'worker' }),
-    summary('child', '/repo/app', 1, { parentProviderSessionId: 'chat' }),
-  ];
-
-  const filtered = filterSessionListSummaries(summaries, { workspaceCwds: ['/repo/app'] });
-
-  assert.deepEqual(
-    filtered.map((m) => m.appSessionId),
-    ['chat'],
   );
 });
 

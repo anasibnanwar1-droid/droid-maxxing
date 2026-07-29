@@ -12,7 +12,6 @@ import type {
   ReasoningEffort,
   SessionInteractionMode,
   SessionPurpose,
-  SessionRole,
 } from '../types/bridge';
 
 let refCounter = 0;
@@ -66,11 +65,21 @@ export const sendToSession = (appSessionId: string, text: string) =>
 export const sendToSessionNow = (appSessionId: string, text: string) =>
   bridge.send({ type: 'session.sendNow', appSessionId, text });
 
-export const sendToChild = (appSessionId: string, providerSessionId: string, text: string) =>
-  bridge.send({ type: 'child.send', appSessionId, providerSessionId, text });
+export const sendToChild = (parentAppSessionId: string, childSessionId: string, text: string) =>
+  bridge.send({
+    type: 'child.send',
+    parentAppSessionId,
+    childSessionId,
+    text,
+  });
 
-export const sendToChildNow = (appSessionId: string, providerSessionId: string, text: string) =>
-  bridge.send({ type: 'child.sendNow', appSessionId, providerSessionId, text });
+export const sendToChildNow = (parentAppSessionId: string, childSessionId: string, text: string) =>
+  bridge.send({
+    type: 'child.sendNow',
+    parentAppSessionId,
+    childSessionId,
+    text,
+  });
 
 export const respondPermission = (
   appSessionId: string,
@@ -91,14 +100,27 @@ export const interruptSession = (appSessionId: string) =>
 export const compactSession = (appSessionId: string, customInstructions?: string) =>
   bridge.send({ type: 'session.compact', appSessionId, customInstructions });
 
-export const interruptChild = (appSessionId: string, providerSessionId: string) =>
-  bridge.send({ type: 'child.interrupt', appSessionId, providerSessionId });
+export const interruptChild = (parentAppSessionId: string, childSessionId: string) =>
+  bridge.send({
+    type: 'child.interrupt',
+    parentAppSessionId,
+    childSessionId,
+  });
 
-export const openChild = (
-  appSessionId: string,
-  providerSessionId: string,
-  role?: Exclude<SessionRole, 'primary'>,
-) => bridge.send({ type: 'child.open', appSessionId, providerSessionId, role });
+export const interruptVisibleSession = (
+  parentAppSessionId: string,
+  childSessionId?: string | null,
+) =>
+  childSessionId
+    ? interruptChild(parentAppSessionId, childSessionId)
+    : interruptSession(parentAppSessionId);
+
+let childOpenRequestCounter = 0;
+export const newChildOpenRequestId = () =>
+  `child-open-${Date.now().toString(36)}-${(childOpenRequestCounter++).toString(36)}`;
+
+export const openChild = (parentAppSessionId: string, childSessionId: string, requestId: string) =>
+  bridge.send({ type: 'child.open', parentAppSessionId, childSessionId, requestId });
 
 export const closeSession = (appSessionId: string) =>
   bridge.send({ type: 'session.close', appSessionId });

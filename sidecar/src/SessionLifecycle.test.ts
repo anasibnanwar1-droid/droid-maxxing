@@ -126,6 +126,7 @@ function createHarness(ordinarySummaries: SessionSummary[] = []) {
     },
     getFactoryDefaults: () => Promise.resolve(defaults),
     maxContextTokensForModel: () => 1_000,
+    cancelChildOpens: () => Promise.resolve(),
     startLocalMcpServers: () => {
       const resourceId = ++mcpId;
       calls.push({ target: 'runtime', method: 'mcp.start', args: [resourceId] });
@@ -782,6 +783,7 @@ test('close follows ownership order and closeAll closes its initial snapshot', a
   const childLive: LiveChildSession = {
     session: child,
     childSessionId: 'child',
+    runtimeGeneration: 1,
     appSessionId: 'owner',
     role: 'worker',
     lastUsedAt: 1,

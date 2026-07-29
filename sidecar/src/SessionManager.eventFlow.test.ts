@@ -191,8 +191,8 @@ test('terminal results quarantine only later generation from the same turn', asy
       context.events.some(
         (event) =>
           event.type === 'session.child' &&
-          event.event === 'started' &&
-          event.providerSessionId === 'worker-1',
+          event.child.status === 'running' &&
+          event.child.childSessionId === 'child-1',
       ),
       true,
     );
@@ -231,23 +231,32 @@ test('terminal enforcement is scoped to each provider and includes notification 
     });
     await context.provider.waitForPrompts('provider-1', 1);
     await context.waitForIdle();
-    context.provider.emitNotification('provider-1', {
-      type: 'tool_progress_update',
-      toolName: 'Task',
-      toolUseId: 'task-1',
-      update: {
-        type: 'tool_call',
-        subagentSessionId: 'worker-logical',
-        parameters: { subagent_type: 'worker' },
+    const primary = context.provider.session('provider-1');
+    primary.queueStreamEvents([
+      {
+        type: 'tool_progress',
+        toolName: 'Task',
+        toolUseId: 'task-1',
+        content: '',
+        update: {
+          type: 'tool_call',
+          subagentSessionId: 'worker-logical',
+          parameters: { subagent_type: 'worker' },
+        },
       },
+    ]);
+    await context.handle({
+      type: 'session.send',
+      appSessionId: 'provider-1',
+      text: 'spawn worker',
     });
     const worker = new FakeFactorySession('worker-backend', {}, context.calls);
     context.runtime.loadQueue.set('worker-logical', [worker]);
     await context.handle({
       type: 'child.open',
-      appSessionId: 'provider-1',
-      providerSessionId: 'worker-logical',
-      role: 'worker',
+      parentAppSessionId: 'provider-1',
+      childSessionId: 'child-1',
+      requestId: 'open-child-1',
     });
 
     context.provider.emitNotification('worker-backend', {
@@ -260,15 +269,34 @@ test('terminal enforcement is scoped to each provider and includes notification 
       appendedTexts(context.events).includes('worker notification before terminal'),
       true,
     );
+    assert.equal(
+      context.events.some(
+        (event) =>
+          event.type === 'event.appended' &&
+          event.event.text === 'worker notification before terminal' &&
+          event.event.appSessionId === 'provider-1' &&
+          event.event.sourceSessionId === 'child-1',
+      ),
+      true,
+    );
 
     worker.queueStreamEvents([assistantTextDelta('worker still talking')]);
     await context.handle({
       type: 'child.send',
-      appSessionId: 'provider-1',
-      providerSessionId: 'worker-logical',
+      parentAppSessionId: 'provider-1',
+      childSessionId: 'child-1',
       text: 'worker turn',
     });
     assert.equal(appendedTexts(context.events).includes('worker still talking'), true);
+    assert.equal(
+      context.events.some(
+        (event) =>
+          event.type === 'event.appended' &&
+          event.event.text === 'worker still talking' &&
+          event.event.sourceSessionId === 'child-1',
+      ),
+      true,
+    );
 
     context.provider.emitNotification('worker-backend', {
       type: 'assistant_text_delta',
@@ -314,11 +342,23 @@ test('worker token usage updates totals without replacing the primary context re
     assert.equal(latestSessionUpdate(context.events)?.session.contextTokens, 9);
     assert.equal(latestSessionUpdate(context.events)?.session.contextAccuracy, 'exact');
 
+    context.history.seedChildSessions([
+      {
+        parentAppSessionId: 'provider-1',
+        childSessionId: 'child-tokens',
+        providerSessionId: 'worker-tokens',
+        role: 'worker',
+        status: 'paused',
+        modelId: 'model-default',
+        transcriptAvailable: true,
+        updatedAt: Date.now(),
+      },
+    ]);
     await context.handle({
       type: 'child.open',
-      appSessionId: 'provider-1',
-      providerSessionId: 'worker-tokens',
-      role: 'worker',
+      parentAppSessionId: 'provider-1',
+      childSessionId: 'child-tokens',
+      requestId: 'open-child-tokens',
     });
     context.provider.session('worker-tokens').queueStreamEvents([
       {
@@ -332,8 +372,8 @@ test('worker token usage updates totals without replacing the primary context re
     ]);
     await context.handle({
       type: 'child.send',
-      appSessionId: 'provider-1',
-      providerSessionId: 'worker-tokens',
+      parentAppSessionId: 'provider-1',
+      childSessionId: 'child-tokens',
       text: 'worker usage',
     });
 
@@ -361,24 +401,33 @@ test('loaded child context follows its runtime session id', async () => {
     await context.provider.waitForPrompts('provider-1', 1);
     await context.waitForIdle();
 
-    context.provider.emitNotification('provider-1', {
-      type: 'tool_progress_update',
-      toolName: 'Task',
-      toolUseId: 'task-context',
-      update: {
-        type: 'tool_call',
-        subagentSessionId: 'worker-history-id',
-        parameters: { subagent_type: 'worker' },
+    const primary = context.provider.session('provider-1');
+    primary.queueStreamEvents([
+      {
+        type: 'tool_progress',
+        toolName: 'Task',
+        toolUseId: 'task-context',
+        content: '',
+        update: {
+          type: 'tool_call',
+          subagentSessionId: 'worker-history-id',
+          parameters: { subagent_type: 'worker' },
+        },
       },
+    ]);
+    await context.handle({
+      type: 'session.send',
+      appSessionId: 'provider-1',
+      text: 'spawn worker',
     });
     context.runtime.loadQueue.set('worker-history-id', [
       new FakeFactorySession('worker-runtime-id', {}, context.calls),
     ]);
     await context.handle({
       type: 'child.open',
-      appSessionId: 'provider-1',
-      providerSessionId: 'worker-history-id',
-      role: 'worker',
+      parentAppSessionId: 'provider-1',
+      childSessionId: 'child-1',
+      requestId: 'open-child-history',
     });
     const compactionNotification = (notification: Record<string, unknown>) => ({
       jsonrpc: '2.0',
@@ -392,27 +441,6 @@ test('loaded child context follows its runtime session id', async () => {
         newState: 'compacting_conversation',
       }),
     );
-    context.provider.session('provider-1').queueStreamEvents([
-      {
-        type: 'mission_worker_completed',
-        workerSessionId: 'worker-history-id',
-        exitCode: 0,
-      },
-    ]);
-    await context.handle({
-      type: 'session.send',
-      appSessionId: 'provider-1',
-      text: 'settle worker',
-    });
-    assert.equal(
-      context.events.some(
-        (event) =>
-          event.type === 'session.child' &&
-          event.event === 'completed' &&
-          event.providerSessionId === 'worker-history-id',
-      ),
-      true,
-    );
     context.provider.emitNotification(
       'worker-runtime-id',
       compactionNotification({
@@ -423,31 +451,12 @@ test('loaded child context follows its runtime session id', async () => {
       }),
     );
     await context.waitForIdle();
-    assert.equal(
-      context.calls.some(
-        (call) =>
-          call.target === 'cleanup' &&
-          call.method === 'session.close' &&
-          call.args[0] === 'worker-runtime-id',
-      ),
-      true,
-    );
-
-    context.runtime.loadQueue.set('worker-history-id', [
-      new FakeFactorySession('worker-runtime-id-2', {}, context.calls),
-    ]);
-    await context.handle({
-      type: 'child.open',
-      appSessionId: 'provider-1',
-      providerSessionId: 'worker-history-id',
-      role: 'worker',
-    });
     context.events.length = 0;
 
     await context.handle({
       type: 'child.send',
-      appSessionId: 'provider-1',
-      providerSessionId: 'worker-history-id',
+      parentAppSessionId: 'provider-1',
+      childSessionId: 'child-1',
       text: 'measure context',
     });
 
@@ -455,7 +464,7 @@ test('loaded child context follows its runtime session id', async () => {
       (event) =>
         event.type === 'context.updated' &&
         event.appSessionId === 'provider-1' &&
-        event.sourceSessionId === 'worker-runtime-id-2',
+        event.sourceSessionId === 'worker-runtime-id',
     );
     assert.equal(runtimeContext?.type, 'context.updated');
     assert.equal(runtimeContext.stats.compactions, 1);

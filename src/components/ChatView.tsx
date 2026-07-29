@@ -182,15 +182,18 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
   const activeSession = state.activeAppSessionId ? state.sessions[state.activeAppSessionId] : null;
   const allTranscript = activeSession ? (state.transcripts[activeSession.appSessionId] ?? []) : [];
 
-  const selectedProviderSessionId = state.selectedProviderSessionId;
-  const viewingChildSession =
-    !!selectedProviderSessionId && selectedProviderSessionId !== 'primary';
+  const selectedChild =
+    state.selectedChild?.parentAppSessionId === activeSession?.appSessionId
+      ? state.selectedChild
+      : null;
+  const selectedChildSessionId = selectedChild?.childSessionId;
+  const viewingChildSession = Boolean(selectedChildSessionId);
 
   const childSessions = activeSession
-    ? (state.childSessions[activeSession.appSessionId] ?? [])
+    ? Object.values(state.childSessions[activeSession.appSessionId] ?? {})
     : [];
   const childSessionIndex = childSessions.findIndex(
-    (childSession) => childSession.providerSessionId === selectedProviderSessionId,
+    (childSession) => childSession.childSessionId === selectedChildSessionId,
   );
   const selectedChildSession =
     childSessionIndex >= 0 ? childSessions[childSessionIndex] : undefined;
@@ -209,7 +212,14 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
   const openChildSession = useCallback(
     (target: { toolUseId?: string; label?: string }) => {
       const worker = findChildSessionForTarget(childSessions, target);
-      if (worker) dispatch({ type: 'SELECT_PROVIDER_SESSION', id: worker.providerSessionId });
+      if (worker)
+        dispatch({
+          type: 'SELECT_CHILD',
+          selection: {
+            parentAppSessionId: worker.parentAppSessionId,
+            childSessionId: worker.childSessionId,
+          },
+        });
     },
     [childSessions, dispatch],
   );
@@ -236,11 +246,11 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
 
   const transcript = useMemo(() => {
     if (viewingChildSession)
-      return allTranscript.filter((event) => event.sourceSessionId === selectedProviderSessionId);
+      return allTranscript.filter((event) => event.sourceSessionId === selectedChildSessionId);
     return allTranscript.filter(
       (t) => t.role === 'primary' || (t.author === 'user' && t.sourceSessionId === 'user'),
     );
-  }, [allTranscript, viewingChildSession, selectedProviderSessionId]);
+  }, [allTranscript, viewingChildSession, selectedChildSessionId]);
 
   // Lazily page older primary-session history (across the compaction chain) in as
   // the user scrolls toward the top, prefetching well before the edge so the
@@ -425,12 +435,12 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
                   label: childSessionLabel,
                   meta: childSessionMeta || undefined,
                   running: selectedChildSession?.status === 'running',
-                  onBack: () => dispatch({ type: 'SELECT_PROVIDER_SESSION', id: null }),
+                  onBack: () => dispatch({ type: 'SELECT_CHILD', selection: null }),
                   onStop:
                     activeSession &&
-                    selectedProviderSessionId &&
+                    selectedChildSessionId &&
                     selectedChildSession?.status === 'running'
-                      ? () => interruptChild(activeSession.appSessionId, selectedProviderSessionId)
+                      ? () => interruptChild(activeSession.appSessionId, selectedChildSessionId)
                       : undefined,
                 }
               : undefined
@@ -452,7 +462,7 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
         >
           {activeSession && transcript.length > 0 ? (
             <motion.div
-              key={`${appSessionId ?? 'none'}:${viewingChildSession ? selectedProviderSessionId : 'primary'}`}
+              key={`${appSessionId ?? 'none'}:${viewingChildSession ? selectedChildSessionId : 'primary'}`}
               initial={{ opacity: 0, y: 6 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
@@ -504,8 +514,9 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
                   label={`${childSessionLabel} is working`}
                   startTs={selectedChildSession.startedAt}
                 />
-              ) : selectedProviderSessionId &&
-                state.childHistoryLoading[selectedProviderSessionId] ? (
+              ) : selectedChildSessionId &&
+                state.childAccess[activeSession.appSessionId]?.[selectedChildSessionId]?.state ===
+                  'opening' ? (
                 <WorkingIndicator label={`Loading ${childSessionLabel} activity`} />
               ) : (
                 <span className="text-[13px] text-droid-text-muted">

@@ -10,8 +10,7 @@ import {
   sendToChildNow,
   sendDesignPrompt,
   createSession,
-  interruptSession,
-  interruptChild,
+  interruptVisibleSession,
   compactSession,
   updateSessionSettings,
   newClientRef,
@@ -22,6 +21,7 @@ import { pickDirectory, listFiles } from '../lib/desktop';
 import { markGitTurnStart } from '../lib/git';
 import { createLocalDesignTranscriptEvent, newQueueId } from '../lib/promptQueue';
 import { composePrompt } from '../lib/composePrompt';
+import { selectedChildForParent, visibleSessionIsLive } from '../lib/childSessions';
 import {
   ArrowUp,
   ChevronDown,
@@ -121,7 +121,7 @@ export default function PromptInput({
   });
 
   const activeSession = state.activeAppSessionId ? state.sessions[state.activeAppSessionId] : null;
-  const isLive = useSessionLive(state.activeAppSessionId);
+  const primaryIsLive = useSessionLive(state.activeAppSessionId);
 
   // The user's own prompts in this conversation, oldest to newest, for ArrowUp
   // recall (reuse a previous prompt). Consecutive duplicates are collapsed.
@@ -143,12 +143,14 @@ export default function PromptInput({
     activeSession?.sessionPurpose !== 'mission-control'
       ? activeSession?.interactionMode === 'spec' || (!activeSession && state.specMode)
       : false;
-  const targetProviderSessionId =
-    activeSession?.sessionPurpose !== 'mission-control' &&
-    state.selectedProviderSessionId &&
-    state.selectedProviderSessionId !== 'primary'
-      ? state.selectedProviderSessionId
-      : null;
+  const selectedChild = state.selectedChild;
+  const targetChild = selectedChildForParent(
+    activeSession?.appSessionId,
+    selectedChild,
+    state.childSessions,
+  );
+  const targetChildSessionId = targetChild?.childSessionId ?? null;
+  const isLive = visibleSessionIsLive(primaryIsLive, targetChild);
 
   const cwd = activeSession?.cwd ?? state.draftChat?.cwd ?? null;
   const skillsProviderSessionId = activeSession?.providerSessionId ?? null;
@@ -513,7 +515,7 @@ export default function PromptInput({
 
     // Model is working and the user chose to queue: stage the prompt locally.
     // It is held client-side and delivered automatically when the turn finishes.
-    if (isLive && mode === 'queue' && !targetProviderSessionId) {
+    if (isLive && mode === 'queue' && !targetChildSessionId) {
       dispatch({
         type: 'QUEUE_PROMPT',
         appSessionId: activeSession.appSessionId,
@@ -529,8 +531,8 @@ export default function PromptInput({
       event: {
         id: `local-${Date.now()}`,
         appSessionId: activeSession.appSessionId,
-        sourceSessionId: targetProviderSessionId ?? 'user',
-        role: targetProviderSessionId ? 'worker' : 'primary',
+        sourceSessionId: targetChildSessionId ?? 'user',
+        role: targetChild?.role ?? 'primary',
         ts: Date.now(),
         kind: 'text',
         text,
@@ -551,10 +553,10 @@ export default function PromptInput({
     if (activeSession.cwd) await markGitTurnStart(activeSession.cwd, activeSession.appSessionId);
 
     try {
-      if (targetProviderSessionId) {
+      if (targetChildSessionId) {
         if (mode === 'now')
-          sendToChildNow(activeSession.appSessionId, targetProviderSessionId, composed);
-        else sendToChild(activeSession.appSessionId, targetProviderSessionId, composed);
+          sendToChildNow(activeSession.appSessionId, targetChildSessionId, composed);
+        else sendToChild(activeSession.appSessionId, targetChildSessionId, composed);
       } else if (mode === 'now') sendToSessionNow(activeSession.appSessionId, composed);
       else sendToSession(activeSession.appSessionId, composed);
     } catch (err) {
@@ -638,13 +640,21 @@ export default function PromptInput({
     const prev = prevLive.current;
     // Only deliver when the same session transitioned live -> idle. Switching
     // sessions mid-turn must not drain a different session's queue.
-    if (prev.live && !isLive && activeSession && prev.appSessionId === activeSession.appSessionId) {
+    if (
+      prev.live &&
+      !primaryIsLive &&
+      activeSession &&
+      prev.appSessionId === activeSession.appSessionId
+    ) {
       const next = (state.promptQueue[activeSession.appSessionId] ?? [])[0];
       if (next) void deliverPrompt();
     }
-    prevLive.current = { appSessionId: activeSession?.appSessionId ?? null, live: isLive };
+    prevLive.current = {
+      appSessionId: activeSession?.appSessionId ?? null,
+      live: primaryIsLive,
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isLive, activeSession?.appSessionId]);
+  }, [primaryIsLive, activeSession?.appSessionId]);
 
   const editQueuedInComposer = (p: QueuedPrompt) => {
     if (!activeSession) return;
@@ -1021,7 +1031,7 @@ export default function PromptInput({
             placeholder={
               missionPreview
                 ? activeSession
-                  ? targetProviderSessionId
+                  ? targetChildSessionId
                     ? 'Steer the selected child session…'
                     : 'Direct the orchestrator…'
                   : 'Describe the mission objective…'
@@ -1123,9 +1133,7 @@ export default function PromptInput({
               <button
                 onClick={() =>
                   activeSession &&
-                  (targetProviderSessionId
-                    ? interruptChild(activeSession.appSessionId, targetProviderSessionId)
-                    : interruptSession(activeSession.appSessionId))
+                  interruptVisibleSession(activeSession.appSessionId, targetChildSessionId)
                 }
                 title="Working — click to stop"
                 className="p-2 rounded-xl text-droid-bg shrink-0 transition-colors"

@@ -12,11 +12,7 @@ import {
   Loader2,
   SquarePen,
 } from 'lucide-react';
-import {
-  buildWorkspaceSections,
-  isChildSession,
-  SIDEBAR_VISIBLE_SESSION_LIMIT,
-} from '../lib/workspaces';
+import { buildWorkspaceSections, SIDEBAR_VISIBLE_SESSION_LIMIT } from '../lib/workspaces';
 import { useSessionLive } from '../hooks/useSessionLive';
 import { useAppUpdate } from '../lib/appUpdate';
 import { formatRelativeTime } from '../lib/time';
@@ -193,17 +189,17 @@ export default function Sidebar() {
     startChat(cwd);
   };
 
-  // Plain, folder-less chats (child session sessions never appear as standalone rows).
+  // The sidecar publishes top-level sessions only; children live in the right panel.
   const chatSessions = useMemo<SessionSummary[]>(() => {
     return (state.sessionOrder.map((id) => state.sessions[id]).filter(Boolean) as SessionSummary[])
-      .filter((m) => !m.cwd && !isChildSession(m))
+      .filter((m) => !m.cwd)
       .sort((a, b) => b.updatedAt - a.updatedAt);
   }, [state.sessionOrder, state.sessions]);
 
   const workspaces = useMemo(() => {
-    const sessions = (
-      state.sessionOrder.map((id) => state.sessions[id]).filter(Boolean) as SessionSummary[]
-    ).filter((m) => !isChildSession(m));
+    const sessions = state.sessionOrder
+      .map((id) => state.sessions[id])
+      .filter(Boolean) as SessionSummary[];
     return buildWorkspaceSections(state.workspaceCwds, sessions);
   }, [state.sessionOrder, state.sessions, state.workspaceCwds]);
 
@@ -216,7 +212,7 @@ export default function Sidebar() {
       now={now}
       onClick={() => {
         dispatch({ type: 'SET_ACTIVE_SESSION', id: m.appSessionId });
-        dispatch({ type: 'SELECT_PROVIDER_SESSION', id: null });
+        dispatch({ type: 'SELECT_CHILD', selection: null });
       }}
     />
   );

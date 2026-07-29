@@ -1,5 +1,5 @@
 import type { TranscriptEvent } from '../types/bridge';
-import type { ChildSessionInfo } from '../hooks/useStore';
+import type { ChildAccess, ChildSessionInfo } from '../hooks/useStore';
 import { childSessionInfo, toolMeta, CAT_LABEL } from './tools';
 
 // A single Task spawn streams many tool_call/tool_call_delta events sharing one
@@ -42,26 +42,39 @@ export type ChildSessionLatest = {
 export type ChildSessionTarget = { toolUseId?: string; label?: string };
 
 export type ChildSessionActivity = {
-  status?: ChildSessionInfo['status'];
+  status?: 'running' | 'paused' | 'completed';
   startedAt?: number;
   latest?: ChildSessionLatest;
 };
+
+export function selectedChildForParent(
+  activeAppSessionId: string | undefined,
+  selection: { parentAppSessionId: string; childSessionId: string } | null,
+  childrenByParent: Record<string, Record<string, ChildSessionInfo>>,
+): ChildSessionInfo | undefined {
+  if (!activeAppSessionId || selection?.parentAppSessionId !== activeAppSessionId) return undefined;
+  return childrenByParent[activeAppSessionId]?.[selection.childSessionId];
+}
+
+export function visibleSessionIsLive(
+  primaryIsLive: boolean,
+  selectedChild: ChildSessionInfo | undefined,
+): boolean {
+  return selectedChild ? selectedChild.status === 'running' : primaryIsLive;
+}
+
+export function shouldOpenSelectedChild(access: ChildAccess | undefined): boolean {
+  return access === undefined;
+}
 
 export function findChildSessionForTarget(
   childSessions: ChildSessionInfo[],
   target: ChildSessionTarget,
 ): ChildSessionInfo | undefined {
-  if (target.toolUseId) {
-    const byId = childSessions.find((childSession) => childSession.toolUseId === target.toolUseId);
-    if (byId) return byId;
-  }
-  const label = target.label?.toLowerCase();
-  if (!label) return undefined;
-  const matches = childSessions.filter(
-    (childSession) => (childSession.label ?? '').toLowerCase() === label,
-  );
-  return (
-    matches.find((childSession) => childSession.status === 'running') ?? matches[matches.length - 1]
+  if (!target.toolUseId) return undefined;
+  return childSessions.find(
+    (childSession) =>
+      childSession.spawnLink?.kind === 'tool-use' && childSession.spawnLink.id === target.toolUseId,
   );
 }
 
@@ -76,7 +89,8 @@ export function childSessionActivityForTarget(
   for (let i = allTx.length - 1; i >= 0; i--) {
     const t = allTx[i];
     if (
-      t.sourceSessionId !== childSession.providerSessionId ||
+      t.appSessionId !== childSession.parentAppSessionId ||
+      t.sourceSessionId !== childSession.childSessionId ||
       (t.kind === 'tool_result' && !t.isError) ||
       t.author === 'user'
     )
@@ -90,7 +104,11 @@ export function childSessionActivityForTarget(
     };
     break;
   }
-  return { status: childSession.status, startedAt: childSession.startedAt, latest };
+  return {
+    status: childSession.status === 'pending' ? 'paused' : childSession.status,
+    startedAt: childSession.startedAt,
+    latest,
+  };
 }
 
 // Last non-empty line, capped, so a long thinking block stays a one-line cue.

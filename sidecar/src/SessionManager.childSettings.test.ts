@@ -215,11 +215,10 @@ test(
       assert.equal(
         h.events.some(
           (event) =>
-            event.type === 'error' &&
+            event.type === 'child.error' &&
             event.code === 'child.settings_target_invalid' &&
             event.parentAppSessionId === 'provider-1' &&
-            event.childSessionId === 'worker-backend' &&
-            !event.providerSessionId,
+            event.childSessionId === 'worker-backend',
         ),
         true,
       );
@@ -244,12 +243,24 @@ test(
       await h.handle({ type: 'session.compact', appSessionId: 'provider-1' });
       const child = new FakeFactorySession('child-backend', {}, h.calls);
       child.setInitModel('worker-old');
-      h.runtime.loadQueue.set('child-logical', [child]);
+      h.history.seedChildSessions([
+        {
+          parentAppSessionId: 'provider-1',
+          childSessionId: 'child-logical',
+          providerSessionId: 'child-backend',
+          role: 'worker',
+          status: 'paused',
+          modelId: 'worker-old',
+          transcriptAvailable: true,
+          updatedAt: Date.now(),
+        },
+      ]);
+      h.runtime.loadQueue.set('child-backend', [child]);
       await h.handle({
         type: 'child.open',
-        appSessionId: 'provider-1',
-        providerSessionId: 'child-logical',
-        role: 'worker',
+        parentAppSessionId: 'provider-1',
+        childSessionId: 'child-logical',
+        requestId: 'open-child-logical',
       });
       const writes = child.settings.length;
 
@@ -270,7 +281,7 @@ test(
       assert.equal(
         child.settings.slice(writes)[0]?.['modelId'],
         'worker-new',
-        JSON.stringify(h.events.filter((event) => event.type === 'error')),
+        JSON.stringify(h.events.filter((event) => event.type === 'child.error')),
       );
     } finally {
       await h.dispose();
@@ -302,7 +313,7 @@ test(
       assert.equal(
         h.events.some(
           (event) =>
-            event.type === 'error' &&
+            event.type === 'child.error' &&
             event.code === 'child.settings_target_invalid' &&
             event.parentAppSessionId === 'provider-1' &&
             event.childSessionId === 'worker-logical',
@@ -343,7 +354,7 @@ test(
       assert.equal(
         h.events.some(
           (event) =>
-            event.type === 'error' &&
+            event.type === 'child.error' &&
             event.code === 'child.settings_target_invalid' &&
             event.parentAppSessionId === 'provider-1' &&
             event.childSessionId === 'missing',

@@ -11,14 +11,6 @@ export interface WorkspaceSection {
   sessions: SessionSummary[];
 }
 
-// Child sessions (workers, validators, and Task-tool children) are
-// never standalone conversations, so they must not appear in the sidebar.
-export function isChildSession(summary: SessionSummary): boolean {
-  return (
-    summary.role === 'worker' || summary.role === 'validator' || !!summary.parentProviderSessionId
-  );
-}
-
 export function workspaceName(cwd: string): string {
   const base = cwd.split('/').filter(Boolean).pop();
   return base || 'Home';

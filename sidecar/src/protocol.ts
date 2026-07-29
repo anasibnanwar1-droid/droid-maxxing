@@ -40,9 +40,6 @@ export interface BridgeFeature {
   verificationSteps: string[];
   fulfills?: string[];
   milestone?: string;
-  workerProviderSessionIds?: string[];
-  currentWorkerProviderSessionId?: string | null;
-  completedWorkerProviderSessionId?: string | null;
 }
 
 export interface ProgressEntry {
@@ -51,31 +48,28 @@ export interface ProgressEntry {
   title?: string;
   message?: string;
   featureId?: string;
-  workerProviderSessionId?: string;
+}
+
+export type ChildRole = 'worker' | 'validator';
+export type ChildStatus = 'pending' | 'running' | 'paused' | 'completed';
+
+export interface ChildSpawnLink {
+  kind: 'tool-use' | 'spawn';
+  id: string;
 }
 
 export interface ChildSessionSummary {
-  providerSessionId: string;
-  status: 'running' | 'paused' | 'completed';
+  parentAppSessionId: string;
+  childSessionId: string;
+  role: ChildRole;
+  status: ChildStatus;
   label?: string;
   prompt?: string;
-  modelId?: string;
+  modelId: string;
   reasoningEffort?: ReasoningEffort;
-  // The primary Task tool_call id that spawned this child session; links an in-chat
-  // spawn line to its child session.
-  toolUseId?: string;
-}
-
-// The exact toolUseId -> providerSessionId mapping persisted for an application
-// session, so historical loads can rebuild precise child links.
-export interface ChildSessionHistoryLink {
-  providerSessionId: string;
-  toolUseId?: string;
-  label?: string;
-  // Live run state for the linked worker, set only while the parent session is
-  // active so a reconnect/reload doesn't render a running child as finished.
-  // Omitted (treated as completed) for historical loads.
-  status?: 'running' | 'paused' | 'completed';
+  spawnLink?: ChildSpawnLink;
+  transcriptAvailable: boolean;
+  startedAt?: number;
 }
 
 export interface SessionSummary {
@@ -83,10 +77,9 @@ export interface SessionSummary {
   providerSessionId?: string;
   compactedFromProviderSessionIds?: string[];
   missionId?: string;
-  parentProviderSessionId?: string;
   sessionPurpose: SessionPurpose;
   interactionMode: SessionInteractionMode;
-  role: SessionRole | 'user';
+  role: 'primary' | 'user';
   title: string;
   goal: string;
   cwd: string;
@@ -557,10 +550,25 @@ export type ClientCommand =
       limitPerWorkspace?: number;
     }
   | { type: 'session.loadHistory'; appSessionId: string; cursor?: string }
-  | { type: 'child.open'; appSessionId: string; providerSessionId: string; role?: SessionRole }
-  | { type: 'child.send'; appSessionId: string; providerSessionId: string; text: string }
-  | { type: 'child.sendNow'; appSessionId: string; providerSessionId: string; text: string }
-  | { type: 'child.interrupt'; appSessionId: string; providerSessionId: string }
+  | {
+      type: 'child.open';
+      parentAppSessionId: string;
+      childSessionId: string;
+      requestId: string;
+    }
+  | {
+      type: 'child.send';
+      parentAppSessionId: string;
+      childSessionId: string;
+      text: string;
+    }
+  | {
+      type: 'child.sendNow';
+      parentAppSessionId: string;
+      childSessionId: string;
+      text: string;
+    }
+  | { type: 'child.interrupt'; parentAppSessionId: string; childSessionId: string }
   | {
       type: 'child.updateSettings';
       parentAppSessionId: string;
@@ -652,41 +660,38 @@ export type ClientCommand =
 export type ChildUpdatedEvent =
   | {
       type: 'child.updated';
-      appSessionId: string;
-      providerSessionId: string;
-      role: SessionRole;
-      status: 'opened' | 'running' | 'paused' | 'completed';
+      parentAppSessionId: string;
+      childSessionId: string;
+      requestId: string;
+      access: 'ready';
+      runtimeGeneration: number;
     }
   | {
       type: 'child.updated';
       parentAppSessionId: string;
       childSessionId: string;
-      role: 'worker' | 'validator';
-      status: 'opened';
-      settingsReady: true;
+      requestId: string;
+      access: 'history';
     };
 
-export type SessionChildEvent =
-  | {
-      type: 'session.child';
-      appSessionId: string;
-      event: 'started' | 'updated' | 'completed';
-      providerSessionId: string;
-      exitCode?: number;
-      label?: string;
-      prompt?: string;
-      modelId?: string;
-      reasoningEffort?: ReasoningEffort;
-      toolUseId?: string;
-    }
-  | {
-      type: 'session.child';
-      parentAppSessionId: string;
-      event: 'updated';
-      childSessionId: string;
-      modelId: string;
-      reasoningEffort?: ReasoningEffort;
-    };
+export interface SessionChildEvent {
+  type: 'session.child';
+  event: 'upserted';
+  child: ChildSessionSummary;
+  runtimeAvailable: boolean;
+  runtimeGeneration: number;
+}
+
+export interface ChildErrorEvent {
+  type: 'child.error';
+  parentAppSessionId: string;
+  childSessionId: string;
+  operation: 'open' | 'send' | 'sendNow' | 'interrupt' | 'settings';
+  requestId: string | null;
+  code: string;
+  message: string;
+  recoverable: boolean;
+}
 
 // ── Sidecar -> Frontend ──────────────────────────────────────────────
 export type ServerEvent =
@@ -705,7 +710,9 @@ export type ServerEvent =
   | { type: 'cli.install.done'; phase: 'install' | 'update'; ok: boolean; exitCode: number }
   | { type: 'session.created'; clientRef: string; session: SessionSummary }
   | { type: 'session.updated'; session: SessionSummary }
+  | { type: 'session.closed'; appSessionId: string }
   | ChildUpdatedEvent
+  | ChildErrorEvent
   | { type: 'event.appended'; event: TranscriptEvent }
   | { type: 'approval.requested'; request: PermissionRequest }
   | { type: 'question.requested'; question: SessionQuestion }
@@ -713,6 +720,8 @@ export type ServerEvent =
       type: 'context.updated';
       appSessionId: string;
       sourceSessionId: string;
+      parentAppSessionId?: string;
+      childSessionId?: string;
       stats: ContextStatsSnapshot;
       breakdown?: unknown;
     }
@@ -735,16 +744,8 @@ export type ServerEvent =
       code?: string;
       appSessionId?: string;
       providerSessionId?: string;
-      parentAppSessionId?: string;
-      childSessionId?: string;
       message: string;
       recoverable?: boolean;
-    }
-  | {
-      type: 'child.not_steerable';
-      appSessionId: string;
-      providerSessionId: string;
-      message: string;
     }
   | {
       type: 'mission.features';
@@ -761,7 +762,7 @@ export type ServerEvent =
       appSessionId: string;
       progress: ProgressEntry[];
       transcripts: TranscriptEvent[];
-      childSessions?: ChildSessionHistoryLink[];
+      childSessions?: ChildSessionSummary[];
       mode?: 'replace' | 'prepend';
       olderCursor?: string;
       // Restore telemetry: how many transcript events this page delivered and

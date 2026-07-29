@@ -132,3 +132,18 @@ test('cold resume preserves a persisted Mission Control proposal', () => {
 
   assert.equal(resumed.summary.proposal, '# Persisted plan');
 });
+
+test('a child provider cannot be resumed as a top-level session', () => {
+  assert.throws(
+    () =>
+      buildResumedSession({
+        init: { session: { decompSessionType: 'worker' } },
+        appSessionId: 'child-provider',
+        providerSessionId: 'child-provider',
+        defaults: {},
+        maxContextTokensForModel: () => undefined,
+        now: 1,
+      }),
+    /cannot be resumed as top-level/i,
+  );
+});
