@@ -1704,10 +1704,15 @@ export class SessionManager {
         childSession,
       );
       childSession.unsubscribe = session.onNotification((note: Record<string, unknown>) => {
-        if (!this.isCurrentChildSession(liveSession, childProviderSessionId, childSession)) return;
+        if (!automaticCompactionTarget.isCurrent()) return;
         if (this.compaction.handleChildNotification(automaticCompactionTarget, note)) return;
-        if (!this.isCurrentChildSession(liveSession, childProviderSessionId, childSession)) return;
-        this.eventFlow.applyNotification(appSessionId, childProviderSessionId, role, note);
+        if (!automaticCompactionTarget.isCurrent()) return;
+        this.eventFlow.applyNotification(
+          appSessionId,
+          automaticCompactionTarget.sourceSessionId,
+          role,
+          note,
+        );
       });
       liveSession.childSessions.set(childProviderSessionId, childSession);
       inserted = true;

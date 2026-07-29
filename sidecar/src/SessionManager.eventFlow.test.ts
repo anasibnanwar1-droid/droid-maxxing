@@ -237,18 +237,20 @@ test('terminal enforcement is scoped to each provider and includes notification 
       toolUseId: 'task-1',
       update: {
         type: 'tool_call',
-        subagentSessionId: 'worker-1',
+        subagentSessionId: 'worker-logical',
         parameters: { subagent_type: 'worker' },
       },
     });
+    const worker = new FakeFactorySession('worker-backend', {}, context.calls);
+    context.runtime.loadQueue.set('worker-logical', [worker]);
     await context.handle({
       type: 'child.open',
       appSessionId: 'provider-1',
-      providerSessionId: 'worker-1',
+      providerSessionId: 'worker-logical',
       role: 'worker',
     });
 
-    context.provider.emitNotification('worker-1', {
+    context.provider.emitNotification('worker-backend', {
       type: 'assistant_text_delta',
       messageId: 'worker-message-1',
       blockIndex: 0,
@@ -259,17 +261,16 @@ test('terminal enforcement is scoped to each provider and includes notification 
       true,
     );
 
-    const worker = context.provider.session('worker-1');
     worker.queueStreamEvents([assistantTextDelta('worker still talking')]);
     await context.handle({
       type: 'child.send',
       appSessionId: 'provider-1',
-      providerSessionId: 'worker-1',
+      providerSessionId: 'worker-logical',
       text: 'worker turn',
     });
     assert.equal(appendedTexts(context.events).includes('worker still talking'), true);
 
-    context.provider.emitNotification('worker-1', {
+    context.provider.emitNotification('worker-backend', {
       type: 'assistant_text_delta',
       messageId: 'worker-message-2',
       blockIndex: 0,
