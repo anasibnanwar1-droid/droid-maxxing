@@ -772,9 +772,7 @@ export class SessionManager {
       this.emitChildSettingsTargetInvalid(cmd);
       return;
     }
-
-    const previous = child.settingsUpdateTail ?? Promise.resolve();
-    const update = previous
+    const update = (child.settingsUpdateTail ?? Promise.resolve())
       .catch(() => undefined)
       .then(() => this.performChildSettingsUpdate(cmd, parent, child));
     child.settingsUpdateTail = update;
@@ -791,7 +789,7 @@ export class SessionManager {
     child: LiveChildSession,
   ): Promise<void> {
     if (!this.isCurrentChildSettingsTarget(parent, cmd.childSessionId, child)) return;
-    let effectiveModelId: string | undefined = cmd.modelId ?? undefined;
+    let effectiveModelId = cmd.modelId ?? undefined;
     try {
       if (cmd.modelId === null) {
         const roleModelId =
