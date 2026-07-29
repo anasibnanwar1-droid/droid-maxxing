@@ -87,6 +87,11 @@ export interface HistoricalSession {
   progress: ProgressEntry[];
 }
 
+interface StoredProgressEntry extends ProgressEntry {
+  workerProviderSessionId?: string;
+  spawnId?: string;
+}
+
 export interface HistoricalSummaryFilter {
   workspaceCwds?: string[];
   includePlainChats?: boolean;
@@ -862,6 +867,23 @@ function readStoredSummaryPatches(): Map<string, Partial<SessionSummary>> {
   }
 }
 
+function readStoredChildSessions(parentAppSessionId: string): PersistedChildSession[] {
+  const path = join(homedir(), '.factory', 'droid-control', 'index.sqlite');
+  if (!existsSync(path)) return [];
+  const db = new DatabaseSync(path);
+  try {
+    assertCanonicalHistorySchema(db);
+    const rows = db
+      .prepare(
+        'SELECT * FROM child_sessions WHERE parent_app_session_id = ? ORDER BY updated_at ASC, child_session_id ASC',
+      )
+      .all(parentAppSessionId) as Record<string, unknown>[];
+    return rows.map(persistedChildSessionFromRow);
+  } finally {
+    db.close();
+  }
+}
+
 function summaryPatchesFromRows(
   rows: Record<string, unknown>[],
 ): Map<string, Partial<SessionSummary>> {
@@ -947,7 +969,8 @@ export function hydrateHistoricalSession(
   const dir = resolveMissionDir(missionId);
   if (!dir) throw new Error(`Mission history not found for ${missionId}`);
 
-  const { summary, progress } = loadMissionControlSession(dir);
+  const { summary, storedProgress } = loadMissionControlSession(dir);
+  const progress = projectMissionProgress(storedProgress, readStoredChildSessions(missionId));
   const sessionIndex = buildSessionIndex();
 
   // The orchestrator backing session is rekeyed on every compaction, so the
@@ -1186,9 +1209,11 @@ function tokenLimitRecordValue(value: unknown): Record<string, number> | undefin
 function loadMissionControlSession(dir: string): HistoricalSession & {
   state: StoredMissionState;
   features: BridgeFeature[];
+  storedProgress: StoredProgressEntry[];
 } {
   const state = readJson<StoredMissionState>(join(dir, 'state.json'));
-  const progress = readProgress(join(dir, 'progress_log.jsonl'));
+  const storedProgress = readProgress(join(dir, 'progress_log.jsonl'));
+  const progress = storedProgress.map(publicProgressEntry);
   const features = readFeatures(join(dir, 'features.json'));
   const dirId = basename(dir);
   const providerSessionId = state.baseSessionId || dirId;
@@ -1230,6 +1255,7 @@ function loadMissionControlSession(dir: string): HistoricalSession & {
       updatedAt,
     },
     progress,
+    storedProgress,
     state,
     features,
   };
@@ -1253,7 +1279,7 @@ function readMissionModelSettings(dir: string): FactoryDefaults {
   };
 }
 
-function readProgress(path: string): ProgressEntry[] {
+function readProgress(path: string): StoredProgressEntry[] {
   if (!existsSync(path)) return [];
   return readJsonLines<Record<string, unknown>>(path).map((entry) => {
     const handoff = objectValue(entry.handoff);
@@ -1268,8 +1294,77 @@ function readProgress(path: string): ProgressEntry[] {
         stringValue(validation?.summary) ||
         stringValue(entry.reason),
       featureId: stringValue(entry.featureId),
+      ...whenString(entry.workerSessionId, (workerProviderSessionId) => ({
+        workerProviderSessionId,
+      })),
+      ...whenString(entry.spawnId, (spawnId) => ({ spawnId })),
     };
   });
+}
+
+export function projectMissionProgress(
+  entries: StoredProgressEntry[],
+  children: PersistedChildSession[],
+): ProgressEntry[] {
+  const childrenBySpawn = new Map(
+    children.flatMap((child) =>
+      child.spawnLink?.kind === 'spawn'
+        ? [[child.spawnLink.id, child.childSessionId] as const]
+        : [],
+    ),
+  );
+  const childrenByProvider = new Map<string, string>();
+  const correlatedSpawns = new Map<string, string>();
+  const providerBySpawn = new Map<string, string>();
+  const spawnByProvider = new Map<string, string>();
+  const retiredProviders = new Set<string>();
+  return entries.map((entry) => {
+    if (
+      entry.type === 'worker_started' &&
+      entry.workerProviderSessionId &&
+      entry.spawnId &&
+      !retiredProviders.has(entry.workerProviderSessionId) &&
+      (!spawnByProvider.has(entry.workerProviderSessionId) ||
+        spawnByProvider.get(entry.workerProviderSessionId) === entry.spawnId)
+    ) {
+      const childSessionId = childrenBySpawn.get(entry.spawnId);
+      if (childSessionId) {
+        const previousProviderSessionId = providerBySpawn.get(entry.spawnId);
+        if (
+          previousProviderSessionId &&
+          previousProviderSessionId !== entry.workerProviderSessionId
+        ) {
+          childrenByProvider.delete(previousProviderSessionId);
+          retiredProviders.add(previousProviderSessionId);
+        }
+        childrenByProvider.set(entry.workerProviderSessionId, childSessionId);
+        correlatedSpawns.set(entry.spawnId, childSessionId);
+        providerBySpawn.set(entry.spawnId, entry.workerProviderSessionId);
+        spawnByProvider.set(entry.workerProviderSessionId, entry.spawnId);
+      }
+    }
+    const byProvider =
+      entry.workerProviderSessionId && !retiredProviders.has(entry.workerProviderSessionId)
+        ? childrenByProvider.get(entry.workerProviderSessionId)
+        : undefined;
+    const bySpawn = entry.spawnId ? correlatedSpawns.get(entry.spawnId) : undefined;
+    const childSessionId =
+      entry.workerProviderSessionId && entry.spawnId
+        ? providerBySpawn.get(entry.spawnId) === entry.workerProviderSessionId &&
+          byProvider === bySpawn
+          ? byProvider
+          : undefined
+        : (byProvider ?? bySpawn);
+    const publicEntry = publicProgressEntry(entry);
+    return childSessionId ? { ...publicEntry, workerChildSessionId: childSessionId } : publicEntry;
+  });
+}
+
+function publicProgressEntry(entry: StoredProgressEntry): ProgressEntry {
+  const publicEntry = { ...entry };
+  delete publicEntry.workerProviderSessionId;
+  delete publicEntry.spawnId;
+  return publicEntry;
 }
 
 function readFeatures(path: string): BridgeFeature[] {

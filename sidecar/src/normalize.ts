@@ -32,9 +32,17 @@ export function mapFeature(f: MissionFeature): BridgeFeature {
   };
 }
 
-export function mapProgress(entries: ProgressLogEntry[]): ProgressEntry[] {
+export interface NormalizedProgressEntry extends ProgressEntry {
+  workerProviderSessionId?: string;
+  spawnId?: string;
+}
+
+export function mapProgress(entries: ProgressLogEntry[]): NormalizedProgressEntry[] {
   return entries.map((e) => {
     const any = e as Record<string, unknown>;
+    const workerProviderSessionId =
+      typeof any.workerSessionId === 'string' ? any.workerSessionId : undefined;
+    const spawnId = typeof any.spawnId === 'string' ? any.spawnId : undefined;
     return {
       type: String(any.type ?? 'entry'),
       timestamp: String(any.timestamp ?? new Date().toISOString()),
@@ -46,6 +54,8 @@ export function mapProgress(entries: ProgressLogEntry[]): ProgressEntry[] {
             ? (any.summary as string)
             : undefined,
       featureId: typeof any.featureId === 'string' ? (any.featureId as string) : undefined,
+      ...(workerProviderSessionId ? { workerProviderSessionId } : {}),
+      ...(spawnId ? { spawnId } : {}),
     };
   });
 }
@@ -63,7 +73,7 @@ function transcript(
 export interface NormalizedEvent {
   transcript?: TranscriptEvent;
   features?: BridgeFeature[];
-  progress?: ProgressEntry[];
+  progress?: NormalizedProgressEntry[];
   missionState?: string;
   missionChild?: {
     event: 'started' | 'completed';

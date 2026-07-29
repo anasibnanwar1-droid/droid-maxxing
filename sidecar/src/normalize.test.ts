@@ -5,9 +5,35 @@ import {
   confirmationType,
   extractCompactionNotification,
   extractDroidWorkingState,
+  mapProgress,
   permissionSignature,
   normalizeStreamEvent,
 } from './normalize.js';
+
+test('mapProgress keeps Mission provider and spawn correlation internal for policy projection', () => {
+  assert.deepEqual(
+    mapProgress([
+      {
+        type: 'worker_started',
+        timestamp: '2026-07-29T00:00:00.000Z',
+        workerSessionId: 'provider-worker',
+        spawnId: 'spawn-1',
+        featureId: 'feature-1',
+      },
+    ] as never),
+    [
+      {
+        type: 'worker_started',
+        timestamp: '2026-07-29T00:00:00.000Z',
+        title: undefined,
+        message: undefined,
+        featureId: 'feature-1',
+        workerProviderSessionId: 'provider-worker',
+        spawnId: 'spawn-1',
+      },
+    ],
+  );
+});
 
 test('extractCompactionNotification detects the daemon compaction start', () => {
   assert.deepEqual(

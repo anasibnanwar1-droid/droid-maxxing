@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { ProgressLogEntryType } from '@factory/droid-sdk';
 
 import type { FactoryDefaultSettings } from './protocol.js';
 import {
@@ -190,6 +191,17 @@ test(
       assert.equal(child.settings.at(-1)?.['modelId'], 'worker-new');
 
       parent.queueStreamEvents([
+        {
+          type: 'mission_progress_entry',
+          progressLog: [
+            {
+              type: ProgressLogEntryType.WorkerStarted,
+              timestamp: '2026-07-29T00:00:00.000Z',
+              workerSessionId: 'worker-backend',
+              spawnId: 'spawn-worker-logical',
+            },
+          ],
+        },
         {
           type: 'mission_worker_completed',
           workerSessionId: 'worker-backend',

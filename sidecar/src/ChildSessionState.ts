@@ -1,5 +1,5 @@
 import type { FactorySession } from './DroidRuntime.js';
-import type { PersistedChildSession } from './history.js';
+import type { PersistedChildSession, PersistedChildSpawnLink } from './history.js';
 import type { ReasoningEffort, SessionSummary } from './protocol.js';
 import { reasoningValue, type SessionInitResult } from './sessionHelpers.js';
 /* eslint-disable @typescript-eslint/no-unused-vars -- persisted-only fields are intentionally omitted. */
@@ -15,7 +15,7 @@ export interface ChildSpawnObservation {
   parentAppSessionId: string;
   providerSessionId?: string;
   role: PersistedChildSession['role'];
-  toolUseId?: string;
+  spawnLink?: PersistedChildSession['spawnLink'];
   label?: string;
   prompt?: string;
   done?: boolean;
@@ -148,9 +148,9 @@ export function findChildByProvider(
   );
 }
 
-export function findChildBySpawn(parent: ParentChildSessions, toolUseId: string) {
+export function findChildBySpawn(parent: ParentChildSessions, spawnLink: PersistedChildSpawnLink) {
   return [...parent.children.values()].find(
-    (child) => child.spawnLink?.kind === 'tool-use' && child.spawnLink.id === toolUseId,
+    (child) => child.spawnLink?.kind === spawnLink.kind && child.spawnLink.id === spawnLink.id,
   );
 }
 

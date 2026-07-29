@@ -87,6 +87,7 @@ export interface SessionLifecycleDependencies {
   context: Pick<SessionContext, 'refresh' | 'stopPolling' | 'stopSession' | 'forgetSession'>;
   forgetInteractions: (appSessionId: string) => void;
   forgetEventFlow: (appSessionId: string) => void;
+  forgetMissionControl: (appSessionId: string) => void;
   closeBrowserSession: (appSessionId: string) => Promise<void>;
   emit: (event: ServerEvent) => void;
   emitError: (error: LifecycleError) => void;
@@ -451,6 +452,9 @@ export class SessionLifecycle {
       firstError ??= error;
     }
     if (unregistered) {
+      await run(() => {
+        d.forgetMissionControl(liveSession.summary.appSessionId);
+      });
       d.emit({ type: 'session.closed', appSessionId: liveSession.summary.appSessionId });
       await run(() => {
         d.forgetInteractions(liveSession.summary.appSessionId);
@@ -552,6 +556,7 @@ export class SessionLifecycle {
       if (this.dependencies.registry.unregister(liveSession.summary.appSessionId)) {
         this.dependencies.forgetInteractions(liveSession.summary.appSessionId);
         this.dependencies.forgetEventFlow(liveSession.summary.appSessionId);
+        this.dependencies.forgetMissionControl(liveSession.summary.appSessionId);
       }
     }
   }

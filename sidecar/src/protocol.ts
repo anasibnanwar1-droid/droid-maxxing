@@ -48,6 +48,7 @@ export interface ProgressEntry {
   title?: string;
   message?: string;
   featureId?: string;
+  workerChildSessionId?: string;
 }
 
 export type ChildRole = 'worker' | 'validator';

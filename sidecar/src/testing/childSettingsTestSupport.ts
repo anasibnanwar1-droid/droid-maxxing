@@ -62,6 +62,7 @@ export async function openChildForParent(
       role: input.role,
       status: 'paused',
       modelId: input.modelId,
+      spawnLink: { kind: 'spawn', id: `spawn-${input.childSessionId}` },
       transcriptAvailable: true,
       updatedAt: Date.now(),
     },

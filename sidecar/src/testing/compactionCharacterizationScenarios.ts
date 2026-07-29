@@ -1,3 +1,5 @@
+import { ProgressLogEntryType } from '@factory/droid-sdk';
+
 import { FakeFactorySession } from './fakeFactoryRuntime.js';
 import {
   createSessionManagerTestContext,
@@ -48,6 +50,7 @@ function seedChild(
       role: 'worker',
       status: 'paused',
       modelId: 'model-default',
+      spawnLink: { kind: 'spawn', id: `spawn-${childSessionId}` },
       transcriptAvailable: true,
       updatedAt: Date.now(),
     },
@@ -183,6 +186,17 @@ export async function runAutoCompactionScenario(h: SessionManagerTestContext) {
   });
   await h.provider.waitForPrompts('worker-c4', 1);
   parent.queueStreamEvents([
+    {
+      type: 'mission_progress_entry',
+      progressLog: [
+        {
+          type: ProgressLogEntryType.WorkerStarted,
+          timestamp: '2026-07-29T00:00:00.000Z',
+          workerSessionId: 'worker-c4',
+          spawnId: 'spawn-child-c4',
+        },
+      ],
+    },
     { type: 'mission_worker_completed', workerSessionId: 'worker-c4', exitCode: 0 },
   ]);
   const workerSteerGate = h.provider.deferNextStream('worker-c4');

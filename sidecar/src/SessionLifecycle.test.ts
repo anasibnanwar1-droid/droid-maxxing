@@ -76,6 +76,7 @@ function createHarness(ordinarySummaries: SessionSummary[] = []) {
   const publicationRegistration: boolean[] = [];
   const forgettingAfterUnregister: boolean[] = [];
   const eventFlowForgettingAfterUnregister: boolean[] = [];
+  const missionForgettingAfterUnregister: boolean[] = [];
   const history = new TestHistory(calls);
   const runtime = new FakeFactoryRuntime(calls);
   let projection: Partial<SessionSummary> = {};
@@ -234,6 +235,10 @@ function createHarness(ordinarySummaries: SessionSummary[] = []) {
       eventFlowForgettingAfterUnregister.push(registry.getLive(appSessionId) === undefined);
       calls.push({ target: 'cleanup', method: 'eventFlow.forget', args: [appSessionId] });
     },
+    forgetMissionControl: (appSessionId) => {
+      missionForgettingAfterUnregister.push(registry.getLive(appSessionId) === undefined);
+      calls.push({ target: 'cleanup', method: 'missionControl.forget', args: [appSessionId] });
+    },
     closeBrowserSession: (appSessionId) => {
       calls.push({ target: 'browser', method: 'browser.close', args: [appSessionId] });
       return Promise.resolve();
@@ -257,6 +262,7 @@ function createHarness(ordinarySummaries: SessionSummary[] = []) {
     publicationRegistration,
     forgettingAfterUnregister,
     eventFlowForgettingAfterUnregister,
+    missionForgettingAfterUnregister,
     setProjection: (patch: Partial<SessionSummary>) => {
       projection = { ...patch };
     },
@@ -816,7 +822,12 @@ test('close follows ownership order and closeAll closes its initial snapshot', a
   ]);
   assert.deepEqual(harness.forgettingAfterUnregister, [true]);
   assert.deepEqual(harness.eventFlowForgettingAfterUnregister, [true]);
+  assert.deepEqual(harness.missionForgettingAfterUnregister, [true]);
   assert.equal(harness.registry.getLive('owner'), undefined);
+  assert.ok(
+    harness.calls.findIndex((call) => call.method === 'missionControl.forget') <
+      harness.calls.findIndex((call) => call.method === 'session.closed'),
+  );
   const ownerList = harness.events.findLast((event) => event.type === 'sessions.list');
   assert.equal(
     ownerList?.sessions.some((session) => session.appSessionId === 'owner'),

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { ProgressLogEntryType } from '@factory/droid-sdk';
 
 import {
   createMission,
@@ -29,6 +30,17 @@ test('a completed child is not an exact settings target', async () => {
     const parent = h.provider.session('provider-1');
     const child = await openChild(h, 'worker-logical', 'worker-backend', 'worker', 'worker-old');
     parent.queueStreamEvents([
+      {
+        type: 'mission_progress_entry',
+        progressLog: [
+          {
+            type: ProgressLogEntryType.WorkerStarted,
+            timestamp: '2026-07-29T00:00:00.000Z',
+            workerSessionId: 'worker-backend',
+            spawnId: 'spawn-worker-logical',
+          },
+        ],
+      },
       {
         type: 'mission_worker_completed',
         workerSessionId: 'worker-backend',

@@ -252,7 +252,7 @@ test('stale automatic settlement cannot cross owner generation changes', async (
         parentAppSessionId: h.parentId,
         providerSessionId: 'provider-new',
         role: 'worker',
-        toolUseId: `tool-${record.childSessionId}`,
+        spawnLink: { kind: 'tool-use', id: `tool-${record.childSessionId}` },
       });
       const replacement = { ...record, providerSessionId: 'provider-new' };
       currentRuntime = await h.open(
@@ -302,15 +302,42 @@ test('provider conflict preserves both exact child memberships', () => {
     parentAppSessionId: h.parentId,
     providerSessionId: 'provider-second',
     role: 'validator',
-    toolUseId: 'tool-first',
+    spawnLink: { kind: 'tool-use', id: 'tool-first' },
   });
 
-  assert.deepEqual(identity, {
-    parentAppSessionId: h.parentId,
-    childSessionId: 'first',
-  });
+  assert.equal(identity, undefined);
   assert.deepEqual(h.owner.list(h.parentId), before);
   assert.equal(mutationCount(h), 0);
+});
+
+test('completion requires provider and spawn to resolve the same exact child', () => {
+  const first = childRecord('first', 'provider-first', 'tool-first');
+  const second = childRecord('second', 'provider-second', 'tool-second');
+  const h = createHarness([first, second]);
+
+  h.owner.admitChildObservation({
+    parentAppSessionId: h.parentId,
+    providerSessionId: 'provider-first',
+    role: 'worker',
+    spawnLink: second.spawnLink,
+    done: true,
+  });
+  assert.deepEqual(
+    h.owner.list(h.parentId).map((child) => child.status),
+    ['paused', 'paused'],
+  );
+
+  h.owner.admitChildObservation({
+    parentAppSessionId: h.parentId,
+    providerSessionId: 'provider-first',
+    role: 'worker',
+    spawnLink: first.spawnLink,
+    done: true,
+  });
+  assert.deepEqual(
+    h.owner.list(h.parentId).map((child) => child.status),
+    ['completed', 'paused'],
+  );
 });
 
 test('completed child under a live parent opens only as history', async () => {
@@ -384,7 +411,7 @@ test('completion invalidates a role observation queued behind settings', async (
     parentAppSessionId: h.parentId,
     providerSessionId: record.providerSessionId,
     role: 'validator',
-    toolUseId: record.spawnLink?.id,
+    ...(record.spawnLink ? { spawnLink: record.spawnLink } : {}),
   });
 
   h.owner.completeByProviderObservation(h.parentId, 'provider');
@@ -411,7 +438,7 @@ test('completion rejects an immediate stale provider observation', async () => {
     parentAppSessionId: h.parentId,
     providerSessionId: record.providerSessionId,
     role: 'validator',
-    toolUseId: record.spawnLink?.id,
+    ...(record.spawnLink ? { spawnLink: record.spawnLink } : {}),
   });
   await new Promise<void>((resolve) => setImmediate(resolve));
 
@@ -436,7 +463,7 @@ test('repeated same-provider observation preserves automatic compaction settleme
     parentAppSessionId: h.parentId,
     providerSessionId: record.providerSessionId,
     role: record.role,
-    toolUseId: record.spawnLink?.id,
+    ...(record.spawnLink ? { spawnLink: record.spawnLink } : {}),
   });
   h.owner.settleAutomatic(captured);
   await new Promise<void>((resolve) => setImmediate(resolve));
@@ -461,7 +488,7 @@ test('repeated same-provider observation preserves in-flight settings settlement
     parentAppSessionId: h.parentId,
     providerSessionId: record.providerSessionId,
     role: record.role,
-    toolUseId: record.spawnLink?.id,
+    ...(record.spawnLink ? { spawnLink: record.spawnLink } : {}),
   });
   gate.resolve();
   await update;
@@ -487,7 +514,7 @@ test('changed role is serialized after accepted in-flight settings', async () =>
     parentAppSessionId: h.parentId,
     providerSessionId: record.providerSessionId,
     role: 'validator',
-    toolUseId: record.spawnLink?.id,
+    ...(record.spawnLink ? { spawnLink: record.spawnLink } : {}),
   });
   assert.equal(h.owner.list(h.parentId)[0]?.role, 'worker');
   assert.equal(
@@ -525,7 +552,7 @@ test('changed role cancels and invalidates its captured automatic target', async
     parentAppSessionId: h.parentId,
     providerSessionId: record.providerSessionId,
     role: 'validator',
-    toolUseId: record.spawnLink?.id,
+    ...(record.spawnLink ? { spawnLink: record.spawnLink } : {}),
   });
   await new Promise<void>((resolve) => setImmediate(resolve));
   h.owner.settleAutomatic(captured);
@@ -592,7 +619,7 @@ test('queued settings admitted to an old runtime cannot cross provider replaceme
     parentAppSessionId: h.parentId,
     providerSessionId: 'provider-new',
     role: 'worker',
-    toolUseId: `tool-${record.childSessionId}`,
+    spawnLink: { kind: 'tool-use', id: `tool-${record.childSessionId}` },
   });
   const replacementRecord = { ...record, providerSessionId: 'provider-new' };
   const replacement = await h.open(
@@ -681,7 +708,7 @@ test('stale interrupt and turn settlement cannot make a replacement turn idle', 
       parentAppSessionId: h.parentId,
       providerSessionId: 'provider-new',
       role: 'worker',
-      toolUseId: `tool-${record.childSessionId}`,
+      spawnLink: { kind: 'tool-use', id: `tool-${record.childSessionId}` },
     });
     const replacementRecord = { ...record, providerSessionId: 'provider-new' };
     const replacement = await h.open(
@@ -717,7 +744,7 @@ test('stale send-now rejection cannot clear replacement steering state', async (
     parentAppSessionId: h.parentId,
     providerSessionId: 'provider-new',
     role: 'worker',
-    toolUseId: `tool-${record.childSessionId}`,
+    spawnLink: { kind: 'tool-use', id: `tool-${record.childSessionId}` },
   });
   const replacementRecord = { ...record, providerSessionId: 'provider-new' };
   const replacement = await h.open(

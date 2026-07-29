@@ -21,7 +21,6 @@ import {
   isUserCancellation,
   modelDefaultForMode,
   normalizeAutonomy,
-  phaseFromState,
   reasoningValue,
   type SessionInitResult,
 } from './sessionHelpers.js';
@@ -62,6 +61,7 @@ import {
 } from './SessionLifecycle.js';
 import { ChildSessions } from './ChildSessions.js';
 import type { ChildSettings } from './ChildSessionState.js';
+import { MissionControlPolicy } from './MissionControlPolicy.js';
 import type { SessionListFilterOptions } from './sessionListFilter.js';
 import { normalizeCompactionTokenLimit } from './compaction.js';
 
@@ -160,6 +160,7 @@ export class SessionManager {
   private readonly context: SessionContext;
   private readonly compaction: SessionCompaction;
   private readonly childSessions: ChildSessions;
+  private readonly missionControlPolicy: MissionControlPolicy;
   private readonly lifecycle: SessionLifecycle;
   private readonly pendingAgentSettings = new Map<
     string,
@@ -297,6 +298,14 @@ export class SessionManager {
       maxOpenSessions: MAX_OPEN_CHILD_SESSIONS,
       now: Date.now,
     });
+    this.missionControlPolicy = new MissionControlPolicy({
+      registry: this.registry,
+      childSessions: this.childSessions,
+      resolveCatalogDefaultSettings: () => this.resolveCatalogDefaultSettings(),
+      emit: (event) => {
+        this.emit(event);
+      },
+    });
     this.lifecycle = new SessionLifecycle({
       runtime: this.runtime,
       registry: this.registry,
@@ -320,6 +329,9 @@ export class SessionManager {
       },
       forgetEventFlow: (appSessionId) => {
         this.eventFlow.forgetSession(appSessionId);
+      },
+      forgetMissionControl: (appSessionId) => {
+        this.missionControlPolicy.forget(appSessionId);
       },
       closeBrowserSession: (appSessionId) => this.browsers.close(appSessionId),
       emit: (event) => {
@@ -990,67 +1002,45 @@ export class SessionManager {
     initResult: SessionInitResult,
     role: 'worker' | 'validator',
   ): ChildSettings {
+    if (summary.sessionPurpose === 'mission-control')
+      return this.missionControlPolicy.resolveDefaultSettings(summary.appSessionId, role);
     const parentSettings = childSessionSettingsFromInit(initResult);
     const roleModelId = role === 'validator' ? summary.validatorModelId : summary.workerModelId;
     const roleReasoningEffort =
       role === 'validator' ? summary.validatorReasoningEffort : summary.workerReasoningEffort;
-    const catalogDefault =
-      this.cachedModels?.find((model) => model.isDefault && !model.isCustom) ??
-      this.cachedModels?.find((model) => !model.isCustom) ??
-      this.cachedModels?.at(0);
-    const missionControl = summary.sessionPurpose === 'mission-control';
+    const catalogDefault = this.resolveCatalogDefaultSettings();
     return {
-      modelId:
-        (missionControl ? roleModelId : summary.modelId) ??
-        parentSettings.modelId ??
-        roleModelId ??
-        catalogDefault?.id,
+      modelId: summary.modelId ?? parentSettings.modelId ?? roleModelId ?? catalogDefault.modelId,
       reasoningEffort:
-        (missionControl ? roleReasoningEffort : summary.reasoningEffort) ??
+        summary.reasoningEffort ??
         parentSettings.reasoningEffort ??
         roleReasoningEffort ??
-        catalogDefault?.defaultReasoningEffort,
+        catalogDefault.reasoningEffort,
+    };
+  }
+
+  private resolveCatalogDefaultSettings(): ChildSettings {
+    const model =
+      this.cachedModels?.find((candidate) => candidate.isDefault && !candidate.isCustom) ??
+      this.cachedModels?.find((candidate) => !candidate.isCustom) ??
+      this.cachedModels?.at(0);
+    return {
+      modelId: model?.id,
+      reasoningEffort: model?.defaultReasoningEffort,
     };
   }
 
   private applyEventSideEffects(appSessionId: string, n: NormalizedSideEffects): void {
-    if (n.features) {
-      this.registry.updateSummary(appSessionId, { features: n.features });
-      const missionControlId = this.registry.getLive(appSessionId)?.summary.missionId;
-      this.emit({
-        type: 'mission.features',
-        appSessionId: appSessionId,
-        missionId: missionControlId,
-        features: n.features,
-      });
-    }
-    if (n.progress) {
-      const missionControlId = this.registry.getLive(appSessionId)?.summary.missionId;
-      this.emit({
-        type: 'mission.progress',
-        appSessionId: appSessionId,
-        missionId: missionControlId,
-        entries: n.progress,
-      });
-    }
-    if (n.missionState) {
-      const phase = phaseFromState(n.missionState);
-      if (phase) this.registry.updateSummary(appSessionId, { phase });
-    }
-    if (n.missionChild) {
+    this.missionControlPolicy.apply(appSessionId, n);
+    if (n.childSession) {
+      const { toolUseId, ...childSession } = n.childSession;
       this.childSessions.admitChildObservation({
         parentAppSessionId: appSessionId,
         role: 'worker',
-        providerSessionId: n.missionChild.providerSessionId,
-        done: n.missionChild.event === 'completed',
+        ...childSession,
+        ...(toolUseId ? { spawnLink: { kind: 'tool-use', id: toolUseId } } : {}),
       });
     }
-    if (n.childSession)
-      this.childSessions.admitChildObservation({
-        parentAppSessionId: appSessionId,
-        role: 'worker',
-        ...n.childSession,
-      });
   }
 
   private resolveAutomaticCompactionTarget(
@@ -1409,6 +1399,9 @@ export class SessionManager {
 
     await run(() => this.lifecycle.closeAll());
     await run(() => this.childSessions.shutdown());
+    await run(() => {
+      this.missionControlPolicy.clear();
+    });
     await run(() => {
       this.context.clearAll();
     });

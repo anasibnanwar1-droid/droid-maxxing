@@ -1,5 +1,5 @@
 import { factoryReasoningEffort, type FactorySession } from './DroidRuntime.js';
-import type { PersistedChildSession } from './history.js';
+import type { PersistedChildSession, PersistedChildSpawnLink } from './history.js';
 import type { ChildSessionSummary, ClientCommand } from './protocol.js';
 import type { ChildOperationTarget } from './SessionContext.js';
 import {
@@ -77,28 +77,33 @@ export class ChildSessions {
   admitChildObservation(observation: ChildSpawnObservation): ChildIdentity | undefined {
     const parent = this.parents.get(observation.parentAppSessionId);
     if (!parent || !this.isCurrentParent(parent)) return undefined;
+    const spawnKey = observation.spawnLink
+      ? `${observation.spawnLink.kind}:${observation.spawnLink.id}`
+      : undefined;
     if (!observation.providerSessionId) {
-      if (observation.done && observation.toolUseId)
-        this.completeBySpawnLink(parent, observation.toolUseId);
-      else if (observation.toolUseId) parent.pendingSpawns.set(observation.toolUseId, observation);
+      if (observation.done && observation.spawnLink)
+        this.complete(parent, findChildBySpawn(parent, observation.spawnLink));
+      else if (spawnKey) parent.pendingSpawns.set(spawnKey, observation);
       return undefined;
     }
     const providerSessionId = observation.providerSessionId;
     if (observation.done) {
-      this.completeByProviderObservation(observation.parentAppSessionId, providerSessionId);
+      const providerChild = findChildByProvider(parent, providerSessionId);
+      const spawnChild = observation.spawnLink
+        ? findChildBySpawn(parent, observation.spawnLink)
+        : providerChild;
+      if (providerChild === spawnChild) this.complete(parent, providerChild);
       return undefined;
     }
 
-    const pending = observation.toolUseId
-      ? parent.pendingSpawns.get(observation.toolUseId)
-      : undefined;
-    const toolUseId = observation.toolUseId ?? pending?.toolUseId;
-    const spawnChild = toolUseId ? findChildBySpawn(parent, toolUseId) : undefined;
+    const pending = spawnKey ? parent.pendingSpawns.get(spawnKey) : undefined;
+    const spawnLink = observation.spawnLink ?? pending?.spawnLink;
+    const spawnChild = spawnLink ? findChildBySpawn(parent, spawnLink) : undefined;
     const providerChild = findChildByProvider(parent, providerSessionId);
-    if (spawnChild && providerChild && spawnChild !== providerChild) return spawnChild.identity;
-    if (observation.toolUseId) parent.pendingSpawns.delete(observation.toolUseId);
+    if (spawnChild && providerChild && spawnChild !== providerChild) return undefined;
+    if (spawnKey) parent.pendingSpawns.delete(spawnKey);
     const child =
-      spawnChild ?? providerChild ?? this.createChild(parent, observation.role, toolUseId);
+      spawnChild ?? providerChild ?? this.createChild(parent, observation.role, spawnLink);
     if (child.retiredProviderSessionIds.has(providerSessionId)) return child.identity;
     const previousProviderSessionId = child.runtime?.session.sessionId ?? child.providerSessionId;
     if (previousProviderSessionId && previousProviderSessionId !== providerSessionId) {
@@ -117,7 +122,7 @@ export class ChildSessions {
       child.status = 'running';
       child.label = observation.label ?? pending?.label ?? child.label;
       child.prompt = observation.prompt ?? pending?.prompt ?? child.prompt;
-      child.spawnLink = toolUseId ? { kind: 'tool-use', id: toolUseId } : child.spawnLink;
+      child.spawnLink = spawnLink ?? child.spawnLink;
       child.transcriptAvailable = true;
       child.startedAt ??= this.d.now();
       this.commit(child);
@@ -677,10 +682,6 @@ export class ChildSessions {
     }
   }
 
-  private completeBySpawnLink(parent: ParentChildSessions, toolUseId: string): void {
-    this.complete(parent, findChildBySpawn(parent, toolUseId));
-  }
-
   private complete(parent: ParentChildSessions, child?: ChildSessionState): void {
     if (!child || child.status === 'completed') return;
     child.status = 'completed';
@@ -691,7 +692,7 @@ export class ChildSessions {
   private createChild(
     parent: ParentChildSessions,
     role: PersistedChildSession['role'],
-    toolUseId?: string,
+    spawnLink?: PersistedChildSpawnLink,
   ): ChildSessionState {
     const defaults = this.d.resolveDefaultSettings(
       parent.lease.summary,
@@ -706,7 +707,7 @@ export class ChildSessions {
       status: 'pending',
       modelId: defaults.modelId,
       reasoningEffort: defaults.reasoningEffort,
-      spawnLink: toolUseId ? { kind: 'tool-use', id: toolUseId } : undefined,
+      ...(spawnLink ? { spawnLink } : {}),
       transcriptAvailable: false,
       updatedAt: this.d.now(),
     });
