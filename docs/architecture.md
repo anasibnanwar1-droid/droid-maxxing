@@ -35,15 +35,24 @@ flowchart LR
 ### Sidecar session core
 
 - `appSessionId` is the stable top-level application identity. `childSessionId` is the stable logical child identity within its `parentAppSessionId`; `providerSessionId` is reserved for the backing Factory session.
-- `SessionManager` is the composition root and public command coordinator. It resolves current parent-owned child targets and coordinates cross-module settlement while retaining browser policy plus coupled Mission Control and child-session side effects.
+- `SessionManager` is the composition root and public command coordinator. It retains public dispatch, cross-module routing, and shutdown ordering.
 - `FactoryRuntime` is the narrow SDK seam; `DroidRuntime` is its production adapter.
-- `SessionRegistry` owns the single live-session map, stable application identity, provider aliases, canonical summary persistence, and projected summary reads. Summary precedence is live, then Mission Control history, then ordinary history.
-- `SessionTimeline` owns history listing and restore, legacy provider pages, child replay, status entries, and the canonical record-before-emit path for live transcript events.
-- `SessionContext` owns context snapshots, polling, compaction generations, and usage carryover. Primary usage and child generations use stable application and parent-plus-logical-child identities; runtime snapshots and pollers remain keyed by their source session, which is the backing provider for a child.
-- `SessionCompaction` owns compaction-limit policy, provider arming, automatic notification transitions and watchdogs, and live or historical manual compaction. It adopts replacement providers behind stable application identity and returns explicit recovery outcomes; `SessionManager` retains Lifecycle close and queue-settlement ordering.
+- `SessionRegistry` owns top-level sessions only: the live parent map, stable application identity, provider aliases, canonical parent summary persistence, and projected summary reads. Children never enter `SessionRegistry` or `sessions.list`.
+- `ChildSessions` is the one stateful generic owner of parent-child membership, canonical child identity, provider replacement, admission, capacity, queues, turns, settings, cleanup, exact context/compaction targets, and child persistence/hydration.
+- `MissionControlPolicy` owns only AGI Mission Control policy and projection: features, progress, worker/validator decisions, spawn correlation, Mission phase, and Mission completion. It may call `ChildSessions`; `ChildSessions` does not import Mission Control.
+- `SessionTimeline` owns history listing and restore, child replay, status entries, and the canonical record-before-emit path for live transcript events.
+- `SessionContext` owns context snapshots, polling, compaction generations, and usage carryover. Parent and child targets remain isolated by `appSessionId` or the exact `parentAppSessionId + childSessionId` pair.
+- `SessionCompaction` owns compaction-limit policy, provider arming, automatic notification transitions and watchdogs, and live or historical manual compaction. Child automatic settlements validate the captured parent, runtime, turn, and configuration generations before publishing or mutating state.
 - `SessionInteractions` owns permission and question correlation, equivalent-signature grants, and the Spec-to-Auto transition. After successful Registry unregister, Lifecycle calls `forgetSession()`, which discards module-owned state without resolving callbacks or emitting events. PR 4 introduces no deterministic shutdown settlement; that behavior remains deferred.
 - `SessionEventFlow` owns stream and notification normalization, per-app/per-source terminal gating, and transcript-before-side-effect ordering. It has one callback into Manager for the coupled policy that remains there.
-- `SessionLifecycle` owns create, resume, lazy resume, send queueing, steering, interruption, and ordered session cleanup. After successful Registry unregister, it tells the interaction and event-flow modules to forget that session's state.
+- `SessionLifecycle` owns primary-session create, resume, lazy resume, send queueing, steering, interruption, and ordered cleanup. Parent close calls one semantic `ChildSessions.closeParent()` operation rather than maintaining another child map.
+
+### Renderer child navigation
+
+- The left navigation and `sessions.list` contain parent sessions only.
+- The active parent's canonical child summaries appear in the right context panel, including historical and same-role siblings.
+- Selection, readiness, transcript filtering, settings, send, steer, Stop, and interrupt all resolve through one visible target keyed by `parentAppSessionId + childSessionId`.
+- A provider runtime identity is never stored as a renderer child key. Historical or unavailable children remain selectable for transcript review while mutating actions stay disabled.
 
 ## Build path
 

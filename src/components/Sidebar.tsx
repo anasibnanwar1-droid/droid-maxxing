@@ -88,6 +88,8 @@ function SessionRow({
   return (
     <div>
       <button
+        data-testid="top-level-session-row"
+        data-app-session-id={session.appSessionId}
         onClick={onClick}
         className={`group w-full flex items-center gap-2.5 pl-3 pr-2 py-1.5 rounded-xl text-left transition-colors ${
           active ? 'bg-droid-active' : 'hover:bg-droid-elevated/40'
@@ -264,6 +266,7 @@ export default function Sidebar() {
 
   return (
     <aside
+      data-testid="left-navigation"
       className="w-[280px] h-full flex flex-col border-r border-droid-border shrink-0"
       style={{
         background: 'var(--sidebar-bg)',

@@ -26,6 +26,8 @@ import { childSessionLabel, childSessionMeta, visibleSessionTarget } from '../li
 
 // Parent-owned children are shown only in the right context panel.
 function ChildSessionRow({
+  parentAppSessionId,
+  childSessionId,
   label,
   meta,
   prompt,
@@ -35,6 +37,8 @@ function ChildSessionRow({
   onClick,
   onStop,
 }: {
+  parentAppSessionId: string;
+  childSessionId: string;
   label: string;
   meta?: string;
   prompt?: string;
@@ -46,6 +50,9 @@ function ChildSessionRow({
 }) {
   return (
     <div
+      data-testid="child-session-row"
+      data-parent-app-session-id={parentAppSessionId}
+      data-child-session-id={childSessionId}
       className={`group w-full flex items-center gap-1.5 pr-2 py-1.5 rounded-lg transition-colors ${
         selected ? 'bg-droid-elevated/70' : 'hover:bg-droid-elevated/40'
       }`}
@@ -177,7 +184,10 @@ export default function RightPanel() {
     : 'default';
 
   return (
-    <div className="shrink-0 w-[300px] pt-11 pb-3 pr-3 h-full flex items-start">
+    <div
+      data-testid="right-context-panel"
+      className="shrink-0 w-[300px] pt-11 pb-3 pr-3 h-full flex items-start"
+    >
       <div className="droid-card w-full max-h-full">
         {/* Header (no close button — the top toolbar button toggles this panel) */}
         <div className="flex items-center justify-between pl-3 pr-3 h-11 shrink-0">
@@ -262,6 +272,8 @@ export default function RightPanel() {
                           {childSessions.map((childSession, index) => (
                             <ChildSessionRow
                               key={childSession.childSessionId}
+                              parentAppSessionId={childSession.parentAppSessionId}
+                              childSessionId={childSession.childSessionId}
                               label={childSessionLabel(childSession, index)}
                               meta={childSessionMeta(
                                 childSession,

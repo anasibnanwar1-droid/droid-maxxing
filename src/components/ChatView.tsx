@@ -430,7 +430,7 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
   ]);
 
   return (
-    <div className="flex-1 min-h-0 min-w-0 flex flex-col overflow-hidden">
+    <div data-testid="chat-view" className="flex-1 min-h-0 min-w-0 flex flex-col overflow-hidden">
       {activeSession && (
         <ChatHeader
           title={activeSession.title}
