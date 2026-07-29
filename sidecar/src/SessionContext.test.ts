@@ -22,6 +22,7 @@ interface Harness {
   calls: RecordedCall[];
   events: ServerEvent[];
   runtime: FakeFactoryRuntime;
+  history: FakeHistoryIndex;
   registry: SessionRegistry<LiveSession>;
   context: SessionContext;
 }
@@ -47,7 +48,7 @@ function createHarness(): Harness {
     emit: (event) => events.push(event),
     maxContextTokensForSummary: (value) => value.maxContextTokens,
   });
-  return { calls, events, runtime, registry, context };
+  return { calls, events, runtime, history, registry, context };
 }
 
 function registerLive(
@@ -184,6 +185,8 @@ test('exact primary usage wins while child usage changes totals only', async () 
   assert.equal(live.summary.tokensIn, 20);
   assert.equal(live.summary.tokensOut, 5);
   assert.equal(live.summary.contextTokens, 1_200);
+  assert.equal(h.history.summaryPatches().get('app-1')?.tokensIn, 20);
+  assert.equal(h.history.summaryPatches().get('app-1')?.contextTokens, 1_200);
 
   session.nextContextStats = {
     used: 100,
@@ -198,6 +201,45 @@ test('exact primary usage wins while child usage changes totals only', async () 
   assert.equal(event?.stats.used, 1_000);
   assert.equal(event?.stats.remaining, 0);
   assert.equal(event?.stats.accuracy, 'exact');
+});
+
+test('usage persistence failure keeps live telemetry and does not fail the turn', () => {
+  const h = createHarness();
+  const { live } = registerLive(h, 'app-1');
+  h.history.nextSyncError = new Error('disk unavailable');
+
+  assert.doesNotThrow(() =>
+    h.context.recordUsage('app-1', 'app-1', {
+      tokensIn: 12,
+      tokensOut: 4,
+      contextTokens: 80,
+    }),
+  );
+  assert.equal(live.summary.tokensIn, 12);
+  assert.equal(live.summary.contextTokens, 80);
+  assert.equal(h.events.at(-1)?.type, 'session.updated');
+});
+
+test('child refresh never inherits the parent exact context reading', async () => {
+  const h = createHarness();
+  const parent = registerLive(h, 'parent').live;
+  parent.summary.contextAccuracy = 'exact';
+  parent.summary.contextTokens = 700;
+  const child = addChild(h, parent, 'logical-child', 'backend-child');
+  child.session.nextContextStats = {
+    used: 100,
+    remaining: 900,
+    limit: 1_000,
+    accuracy: ContextStatsAccuracy.Estimated,
+    updatedAt: '2026-01-01T00:00:00.000Z',
+  };
+
+  await h.context.refresh(child.target);
+
+  const event = contextEvents(h).at(-1);
+  assert.equal(event?.stats.used, 100);
+  assert.equal(event?.stats.remaining, 900);
+  assert.equal(event?.stats.accuracy, 'estimated');
 });
 
 test('child identities scope backend snapshots and compaction generations by parent', async () => {

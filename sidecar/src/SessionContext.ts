@@ -70,26 +70,46 @@ export class SessionContext {
 
     const stableAppSessionId = liveSession.summary.appSessionId;
     const offset = this.usageOffsets.get(stableAppSessionId);
-    liveSession.summary.tokensIn = usage.tokensIn + (offset?.tokensIn ?? 0);
-    liveSession.summary.tokensOut = usage.tokensOut + (offset?.tokensOut ?? 0);
+    const nextSummary = {
+      ...liveSession.summary,
+      tokensIn: usage.tokensIn + (offset?.tokensIn ?? 0),
+      tokensOut: usage.tokensOut + (offset?.tokensOut ?? 0),
+    };
 
     // Child turns contribute to cumulative usage, but the primary summary owns
     // the context meter. Child meters are published from their own refreshes.
     if (sourceSessionId === stableAppSessionId) {
-      liveSession.summary.contextTokens = usage.contextTokens;
+      nextSummary.contextTokens = usage.contextTokens;
       if (usage.contextTokens > 0) {
-        liveSession.summary.contextAccuracy = 'exact';
-        liveSession.summary.contextUpdatedAt = new Date().toISOString();
+        nextSummary.contextAccuracy = 'exact';
+        nextSummary.contextUpdatedAt = new Date().toISOString();
       }
-      const maxContextTokens = this.dependencies.maxContextTokensForSummary(liveSession.summary);
-      if (maxContextTokens !== undefined) liveSession.summary.maxContextTokens = maxContextTokens;
-      this.emitEstimate(stableAppSessionId, liveSession.summary);
+      const maxContextTokens = this.dependencies.maxContextTokensForSummary(nextSummary);
+      if (maxContextTokens !== undefined) nextSummary.maxContextTokens = maxContextTokens;
+      this.emitEstimate(stableAppSessionId, nextSummary);
     }
 
-    this.dependencies.emit({
-      type: 'session.updated',
-      session: { ...liveSession.summary, updatedAt: Date.now() },
-    });
+    try {
+      this.dependencies.registry.updateSummary(stableAppSessionId, {
+        tokensIn: nextSummary.tokensIn,
+        tokensOut: nextSummary.tokensOut,
+        ...(sourceSessionId === stableAppSessionId
+          ? {
+              contextTokens: nextSummary.contextTokens,
+              contextAccuracy: nextSummary.contextAccuracy,
+              contextUpdatedAt: nextSummary.contextUpdatedAt,
+              maxContextTokens: nextSummary.maxContextTokens,
+            }
+          : {}),
+      });
+    } catch {
+      // Usage telemetry must not fail the active provider turn.
+      liveSession.summary = nextSummary;
+      this.dependencies.emit({
+        type: 'session.updated',
+        session: { ...nextSummary, updatedAt: Date.now() },
+      });
+    }
   }
 
   startPolling(target: ContextOperationTarget): void {
@@ -210,12 +230,12 @@ export class SessionContext {
     const liveSession = this.dependencies.registry.getLive(target.appSessionId);
     if (!liveSession) return;
 
-    let snapshot = applyExactUsage(providerSnapshot, liveSession.summary);
-    if (isChildTarget(target))
-      snapshot = {
-        ...snapshot,
-        compactions: this.childCompactions.get(childIdentityKey(target)) ?? 0,
-      };
+    const snapshot = isChildTarget(target)
+      ? {
+          ...providerSnapshot,
+          compactions: this.childCompactions.get(childIdentityKey(target)) ?? 0,
+        }
+      : applyExactUsage(providerSnapshot, liveSession.summary);
 
     if (!target.isCurrent()) return;
     this.snapshots.set(target.sourceSessionId, snapshot);
