@@ -17,7 +17,7 @@ import {
   listSkills,
 } from '../lib/commands';
 import { browserTranscriptReferencesFromDesignReferences } from './browser/browserTranscriptReferences';
-import { pickDirectory, listFiles } from '../lib/desktop';
+import { pickDirectory, pickFiles, listFiles, isDesktop } from '../lib/desktop';
 import { markGitTurnStart } from '../lib/git';
 import { createLocalDesignTranscriptEvent, newQueueId } from '../lib/promptQueue';
 import { composePrompt } from '../lib/composePrompt';
@@ -33,6 +33,7 @@ import {
 import {
   ArrowUp,
   ChevronDown,
+  Plus,
   SlidersHorizontal,
   Square,
   FileText,
@@ -358,6 +359,17 @@ export default function PromptInput({
     setAttachedFiles([]);
   }, [activeSession?.appSessionId]);
 
+  // Welcome-screen suggestion cards seed the composer through the store so the
+  // empty state and this input stay decoupled. The pendingCaret effect below
+  // focuses the field and moves the caret to the end of the seeded text.
+  const composerSeed = state.composerSeed;
+  useEffect(() => {
+    if (!composerSeed) return;
+    setHistoryIndex(null);
+    setInput(composerSeed.text);
+    pendingCaret.current = composerSeed.text.length;
+  }, [composerSeed]);
+
   useEffect(() => {
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto';
@@ -408,6 +420,20 @@ export default function PromptInput({
   const addFile = (path: string) => {
     setAttachedFiles((prev) => (prev.includes(path) ? prev : [...prev, path]));
     replaceTrigger('');
+  };
+
+  // Plus button: native multi-file picker in the desktop app; in a plain
+  // browser there is no dialog, so drop an @ trigger to open the file menu.
+  const handleAttachFiles = async () => {
+    if (!isDesktop()) {
+      const next = input.length === 0 || input.endsWith(' ') ? `${input}@` : `${input} @`;
+      setInput(next);
+      pendingCaret.current = next.length;
+      return;
+    }
+    const paths = await pickFiles();
+    if (paths.length > 0)
+      setAttachedFiles((prev) => [...prev, ...paths.filter((p) => !prev.includes(p))]);
   };
 
   const selectSkill = (skill: SkillInfo) => {
@@ -1108,8 +1134,16 @@ export default function PromptInput({
             className="w-full bg-transparent px-4 pt-3 pb-2 text-sm text-droid-text placeholder-droid-text-muted/50 resize-none focus:outline-none min-h-[44px] max-h-[200px]"
           />
 
-          {/* Toolbar */}
-          <div className="flex items-center gap-2 px-3 py-2.5 border-t border-droid-border">
+          {/* Toolbar — one seamless surface with the textarea, no divider line */}
+          <div className="flex items-center gap-1.5 px-2.5 pb-2.5 pt-1">
+            <button
+              onClick={() => void handleAttachFiles()}
+              className="p-1.5 rounded-lg text-droid-text-muted hover:text-droid-text hover:bg-droid-bg/50 transition-colors shrink-0"
+              title="Add files"
+            >
+              <Plus className="w-4 h-4" />
+            </button>
+
             <div className="relative shrink-0">
               <button
                 onClick={() => setModelsOpen((v) => !v)}
@@ -1177,8 +1211,6 @@ export default function PromptInput({
               </AnimatePresence>
             </div>
 
-            <div className="h-4 w-px bg-droid-border/50 shrink-0" />
-
             <button
               onClick={toggleSpec}
               className={`flex items-center gap-1.5 px-2 py-1 rounded-lg text-[11px] transition-colors shrink-0 ${
@@ -1201,7 +1233,7 @@ export default function PromptInput({
                   interruptVisibleSession(activeSession.appSessionId, targetChildSessionId)
                 }
                 title="Working — click to stop"
-                className="p-2 rounded-xl text-droid-bg shrink-0 transition-colors"
+                className="p-2 rounded-full text-droid-bg shrink-0 transition-opacity hover:opacity-90"
                 style={{ background: ACCENT }}
               >
                 <Square className="w-3.5 h-3.5" fill="currentColor" strokeWidth={0} />
@@ -1244,7 +1276,8 @@ export default function PromptInput({
                 </AnimatePresence>
                 <button
                   onClick={() => void handleSubmit(enterSteers ? 'now' : 'queue')}
-                  className="p-2 rounded-xl bg-droid-text text-droid-bg hover:bg-droid-text-secondary transition-colors"
+                  className="p-2 rounded-full text-droid-bg transition-opacity hover:opacity-90"
+                  style={{ background: ACCENT }}
                 >
                   <ArrowUp className="w-3.5 h-3.5" />
                 </button>
@@ -1254,7 +1287,8 @@ export default function PromptInput({
                 onClick={() => void handleSubmit()}
                 disabled={!hasContent || !childActionsEnabled}
                 title={idleSendTooltip}
-                className="p-2 rounded-xl bg-droid-text text-droid-bg disabled:opacity-20 disabled:cursor-not-allowed hover:bg-droid-text-secondary transition-colors shrink-0"
+                className="p-2 rounded-full text-droid-bg transition-all enabled:hover:opacity-90 disabled:opacity-25 disabled:cursor-not-allowed shrink-0"
+                style={{ background: ACCENT }}
               >
                 <ArrowUp className="w-3.5 h-3.5" />
               </button>

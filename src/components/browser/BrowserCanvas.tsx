@@ -156,8 +156,11 @@ export function BrowserCanvas({
             />
           ) : (
             <div className="flex h-full w-full items-center justify-center bg-[#0b0b0b]">
-              <div className="font-mono text-[42px] tracking-[0.18em] text-droid-text-muted/35">
-                DROID
+              <div
+                className="font-pixel select-none text-[30px] text-droid-text-muted/30"
+                style={{ letterSpacing: '-0.04em' }}
+              >
+                DROIDEX
               </div>
             </div>
           )}

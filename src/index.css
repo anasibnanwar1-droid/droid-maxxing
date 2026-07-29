@@ -156,6 +156,56 @@
     animation: shimmer 1.8s linear infinite;
   }
 
+  /* DROIDEX brand pixel font (Silkscreen, loaded from Google Fonts in
+     index.html). Falls back to the mono stack when offline. */
+  .font-pixel {
+    font-family: 'Silkscreen', 'JetBrains Mono', monospace;
+  }
+
+  /* Gentle rise-in used to stagger the welcome screen elements. */
+  @keyframes droid-rise {
+    from {
+      opacity: 0;
+      transform: translateY(8px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  .droid-rise {
+    animation: droid-rise 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+
+  /* Toast TTL hairline: drains across the toast's lifetime (duration is set
+     inline per toast). Hovering the toast pauses the drain. */
+  @keyframes droid-toast-ttl {
+    from {
+      transform: scaleX(1);
+    }
+    to {
+      transform: scaleX(0);
+    }
+  }
+
+  .droid-toast-ttl {
+    animation-name: droid-toast-ttl;
+    animation-timing-function: linear;
+    animation-fill-mode: forwards;
+    opacity: 0.45;
+  }
+
+  .group:hover .droid-toast-ttl {
+    animation-play-state: paused;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .droid-rise {
+      animation: none !important;
+    }
+  }
+
   /* Skeleton placeholder: a neutral block with a lighter highlight sweeping
      across, built only from the grayscale token scale so it matches every theme
      (subtle gray on dark, subtle dark on light). */

@@ -192,6 +192,9 @@ export interface AppState {
   theme: ThemeConfig;
   missionControlMode: boolean;
   draftChat: { cwd: string; branch?: string } | null;
+  // One-shot text seeded into the composer (welcome-screen suggestion cards).
+  // A fresh id per seed lets clicking the same card twice re-arm the effect.
+  composerSeed: { text: string; id: number } | null;
   workspaceCwds: string[];
   // Derived (synced by the reducer): whether the browser pane is open for the
   // *currently active* session. Source of truth is `browserOpenKeys`.
@@ -381,6 +384,7 @@ type Action =
   | { type: 'TOGGLE_SETTINGS' }
   | { type: 'TOGGLE_MISSION_CONTROL' }
   | { type: 'START_CHAT'; cwd: string; branch?: string }
+  | { type: 'SEED_COMPOSER'; text: string }
   | { type: 'ADD_WORKSPACE'; cwd: string }
   | { type: 'TOGGLE_BROWSER' }
   | { type: 'SET_BROWSER_OPEN'; open: boolean }
@@ -812,6 +816,7 @@ export const initialState: AppState = {
   theme: loadTheme(),
   missionControlMode: persistedUiState.missionControlMode ?? false,
   draftChat: null,
+  composerSeed: null,
   workspaceCwds: loadWorkspaceCwds(),
   browserOpen: false,
   browserOpenKeys: persistedUiState.browserOpenKeys ?? {},
@@ -1990,6 +1995,9 @@ function baseReducer(state: AppState, action: Action): AppState {
         sessionLastSeen,
       };
     }
+
+    case 'SEED_COMPOSER':
+      return { ...state, composerSeed: { text: action.text, id: Date.now() } };
 
     case 'ADD_WORKSPACE':
       return {

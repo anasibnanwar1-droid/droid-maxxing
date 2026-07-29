@@ -107,6 +107,7 @@ export interface FilePreviewPayload {
 interface DroidControlApi {
   bridgeInfo: () => Promise<BridgeInfo>;
   pickDirectory: () => Promise<string | null>;
+  pickFiles: () => Promise<string[]>;
   notify: (title: string, body: string) => Promise<void>;
   getApiKey: () => Promise<string | null>;
   setApiKey: (key: string) => Promise<void>;
@@ -230,6 +231,16 @@ export async function getBridgeInfo(): Promise<BridgeInfo> {
 export async function pickDirectory(): Promise<string | null> {
   if (!isDesktop()) return null;
   return window.droidControl!.pickDirectory();
+}
+
+export async function pickFiles(): Promise<string[]> {
+  const api = isDesktop() ? window.droidControl : undefined;
+  if (!api) return [];
+  try {
+    return await api.pickFiles();
+  } catch {
+    return [];
+  }
 }
 
 export async function notify(title: string, body: string): Promise<void> {

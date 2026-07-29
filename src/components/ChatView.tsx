@@ -25,39 +25,83 @@ import {
 } from '../lib/childSessions';
 import type { FileChange } from '../lib/diff';
 import { ConversationTimeline } from './ConversationTimeline';
+import { BrandMark } from './BrandMark';
 
-function DroidWordmark() {
-  return (
-    <div
-      className="font-mono font-black tracking-[0.2em] select-none"
-      style={{
-        fontSize: 'clamp(48px, 10vw, 120px)',
-        lineHeight: 1.1,
-        background: 'radial-gradient(circle, #3a3a3a 1.5px, transparent 1.5px)',
-        backgroundSize: '8px 8px',
-        WebkitBackgroundClip: 'text',
-        backgroundClip: 'text',
-        color: 'transparent',
-      }}
-    >
-      DROID
-    </div>
-  );
+// Quick-start menu for a fresh chat: an entry only seeds the composer with the
+// beginning of a prompt (it never sends), so the user just continues typing
+// the specifics.
+const WELCOME_MENU = [
+  {
+    label: 'Explore',
+    hint: 'understand this codebase',
+    prompt: 'Explore and understand this codebase: ',
+  },
+  { label: 'Build', hint: 'a new feature, app, or tool', prompt: 'Build a new feature: ' },
+  {
+    label: 'Review',
+    hint: 'code and suggest changes',
+    prompt: 'Review this code and suggest changes: ',
+  },
+  { label: 'Fix', hint: 'issues and failing tests', prompt: 'Fix issues and failures: ' },
+] as const;
+
+function daypart(): string {
+  const hour = new Date().getHours();
+  if (hour < 12) return 'morning';
+  if (hour < 18) return 'afternoon';
+  return 'evening';
 }
 
-function EmptyState({ folder }: { folder?: string }) {
+// A fresh chat picks one of these at random so the welcome screen doesn't feel
+// static. Only the brand mark uses the pixel font; the greeting stays in the
+// normal UI font, large and readable.
+const WELCOME_LINES: ((folder?: string) => string)[] = [
+  (folder) => `Good ${daypart()}. What should we build${folder ? ` in ${folder}` : ''}?`,
+  () => 'What do you want to build today?',
+  () => 'Ready when you are. Pick a starting point, or just type.',
+];
+
+function EmptyState({
+  folder,
+  onSeedPrompt,
+}: {
+  folder?: string;
+  onSeedPrompt: (text: string) => void;
+}) {
+  const [line] = useState(() => WELCOME_LINES[Math.floor(Math.random() * WELCOME_LINES.length)]);
   return (
-    <div className="flex flex-col items-center justify-center h-full text-center px-8">
-      <DroidWordmark />
-      <div className="mt-6 flex items-center gap-4 text-xs text-droid-text-muted">
-        <div className="flex items-center gap-1.5">
-          <span className="w-1.5 h-1.5 rounded-full bg-droid-green" />
-          <span>Local</span>
-        </div>
-        <div className="flex items-center gap-1.5">
-          <FolderIcon />
-          <span>{folder || 'anas'}</span>
-        </div>
+    <div className="flex flex-col items-center justify-center h-full px-8">
+      <div className="droid-rise">
+        <BrandMark size={34} />
+      </div>
+      <div
+        className="droid-rise mt-6 max-w-lg text-center text-[22px] font-semibold leading-snug tracking-tight text-droid-text"
+        style={{ animationDelay: '90ms' }}
+      >
+        {line(folder)}
+      </div>
+      <div className="mt-10 w-full max-w-md">
+        {WELCOME_MENU.map((entry, i) => (
+          <button
+            key={entry.label}
+            type="button"
+            onClick={() => {
+              onSeedPrompt(entry.prompt);
+            }}
+            style={{ animationDelay: `${String(160 + i * 70)}ms` }}
+            className="droid-rise group flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left transition-colors hover:bg-droid-elevated/60"
+          >
+            <span className="w-3 shrink-0 text-[13px] text-droid-accent opacity-0 transition-opacity group-hover:opacity-100">
+              &gt;
+            </span>
+            <span className="w-[64px] shrink-0 text-[12.5px] font-medium text-droid-text-secondary transition-colors group-hover:text-droid-accent">
+              {entry.label}
+            </span>
+            <span className="min-w-0 flex-1 truncate text-[12.5px] text-droid-text-muted transition-colors group-hover:text-droid-text-secondary">
+              {entry.hint}
+            </span>
+          </button>
+        ))}
       </div>
     </div>
   );
@@ -104,23 +148,6 @@ function RestoreFailedBanner({ message, onRetry }: { message?: string; onRetry: 
         Retry
       </button>
     </div>
-  );
-}
-
-function FolderIcon() {
-  return (
-    <svg
-      width="12"
-      height="12"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
-    </svg>
   );
 }
 
@@ -548,7 +575,12 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
               </div>
             </div>
           ) : (
-            <EmptyState folder={draftFolder} />
+            <EmptyState
+              folder={draftFolder}
+              onSeedPrompt={(text) => {
+                dispatch({ type: 'SEED_COMPOSER', text });
+              }}
+            />
           )}
         </div>
       </div>

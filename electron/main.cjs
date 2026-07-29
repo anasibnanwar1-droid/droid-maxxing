@@ -127,6 +127,10 @@ function registerIpc() {
     if (selected) await filesRootAccess.authorize(selected);
     return selected;
   });
+  ipcMain.handle('pick-files', async () => {
+    const result = await dialog.showOpenDialog({ properties: ['openFile', 'multiSelections'] });
+    return result.canceled ? [] : result.filePaths;
+  });
   ipcMain.handle('notify', (_event, { title, body }) => {
     new Notification({ title, body }).show();
   });
