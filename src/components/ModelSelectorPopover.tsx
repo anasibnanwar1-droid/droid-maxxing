@@ -67,6 +67,7 @@ export default function ModelSelectorPopover({
   const [filterOpen, setFilterOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const filterRef = useRef<HTMLDivElement>(null);
+  const childMode = childTarget !== undefined;
 
   const selectedAgent = childTarget?.role ?? agent;
   const active = AGENTS.find((a) => a.kind === selectedAgent)!;
@@ -200,7 +201,7 @@ export default function ModelSelectorPopover({
   // Keep the displayed reasoning valid if the model's supported set changes
   // (e.g. real catalog arrives after a mock placeholder was selected).
   useEffect(() => {
-    if (childTarget) return;
+    if (childMode) return;
     const supported = selectedSupportedReasoning;
     if (supported?.length && !supported.includes(effReasoning)) {
       updateReasoning(
@@ -214,7 +215,7 @@ export default function ModelSelectorPopover({
       updateReasoning(selectedConfigModel.defaultReasoningEffort);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [childTarget, selectedConfigModel?.id, selectedSupportedReasoning]);
+  }, [childMode, selectedConfigModel?.id, selectedSupportedReasoning]);
 
   return (
     <motion.div
