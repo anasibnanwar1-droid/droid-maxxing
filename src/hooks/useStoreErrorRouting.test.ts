@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { adaptEvent, initialState, reducer } from './useStore';
+import { adaptEvent, initialState, reducer, toastMessageForEvent } from './useStore';
 import type { SessionSummary } from '../types/bridge';
 
 const session: SessionSummary = {
@@ -23,6 +23,26 @@ const session: SessionSummary = {
   createdAt: 1,
   updatedAt: 1,
 };
+
+test('child settings update failure is routed to user-visible toast feedback', () => {
+  const failure = {
+    type: 'error' as const,
+    code: 'child.settings_update_failed',
+    parentAppSessionId: 'app-1',
+    childSessionId: 'child-1',
+    message: 'Could not update child settings: provider rejected',
+  };
+
+  assert.equal(toastMessageForEvent(failure), failure.message);
+  assert.equal(adaptEvent(failure), null);
+  assert.equal(
+    toastMessageForEvent({
+      ...failure,
+      code: 'child.settings_target_invalid',
+    }),
+    undefined,
+  );
+});
 
 test('a primary error with a provider identity fails the session and settles child loading', () => {
   const action = adaptEvent({

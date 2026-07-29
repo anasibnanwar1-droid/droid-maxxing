@@ -37,6 +37,7 @@ import {
 } from '../lib/compactionSettings';
 import { sanitizeForLog } from '../lib/sensitiveLogRedaction';
 import { composePrompt } from '../lib/composePrompt';
+import { toast } from '../lib/toast';
 import { DIFF_SCOPES, type DiffScope } from '../types/vcs';
 import {
   activateUtilityTab,
@@ -2290,6 +2291,10 @@ function finiteNumber(value: unknown): number | undefined {
 }
 
 /* ── Bridge event adapter ── */
+export function toastMessageForEvent(ev: ServerEvent): string | undefined {
+  return ev.type === 'error' && ev.code === 'child.settings_update_failed' ? ev.message : undefined;
+}
+
 export function adaptEvent(ev: ServerEvent): Action | null {
   switch (ev.type) {
     case 'connection':
@@ -2475,6 +2480,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       // deep-clones + redacts the whole event, so keep it to dev builds only;
       // production strips this branch entirely.
       if (import.meta.env.DEV) console.log('[bridge]', ev.type, sanitizeForLog(ev));
+      const toastMessage = toastMessageForEvent(ev);
+      if (toastMessage !== undefined) toast.error(toastMessage);
       const action = adaptEvent(ev);
       if (action) dispatch(action);
     });
