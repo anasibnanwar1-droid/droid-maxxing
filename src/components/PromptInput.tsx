@@ -37,7 +37,11 @@ import {
   Pencil,
   MousePointerSquareDashed,
 } from 'lucide-react';
-import ModelSelectorPopover, { type ExactChildSettingsTarget } from './ModelSelectorPopover';
+import ModelSelectorPopover from './ModelSelectorPopover';
+import {
+  childSettingsReadinessLabel,
+  type ExactChildSettingsTarget,
+} from '../lib/exactChildSettings';
 import ContextStatusCluster from './ContextStatusCluster';
 import PermissionInline from './PermissionInline';
 import PlanApprovalInline from './PlanApprovalInline';
@@ -1041,7 +1045,7 @@ export default function PromptInput({
                 }`}
                 title={
                   childSettingsTarget
-                    ? `${childSettingsTarget.label} · ${childSettingsTarget.readiness}`
+                    ? `${childSettingsTarget.label} · ${childSettingsReadinessLabel(childSettingsTarget.readiness)}`
                     : missionPreview
                       ? 'Configure orchestrator / worker / validator models'
                       : 'Select chat model'

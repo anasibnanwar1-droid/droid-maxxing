@@ -5,9 +5,16 @@ import type { BridgeFeature, ModelInfo } from '../types/bridge.js';
 import {
   buildExactChildSettingsTarget,
   buildSelectedChildSettingsTarget,
+  childSettingsReadinessLabel,
   planChildModelUpdate,
   type ExactChildSettingsTarget,
 } from './exactChildSettings.js';
+
+test('child settings readiness uses reader-facing labels', () => {
+  assert.equal(childSettingsReadinessLabel('opening'), 'Opening child…');
+  assert.equal(childSettingsReadinessLabel('ready'), 'Ready');
+  assert.equal(childSettingsReadinessLabel('failed'), 'Child unavailable');
+});
 
 function feature(input: Partial<BridgeFeature> = {}): BridgeFeature {
   return {

@@ -6,7 +6,11 @@ import type { AgentKind } from '../hooks/useStore';
 import type { ReasoningEffort, ModelInfo } from '../types/bridge';
 import { ModelIcon, providerOf } from './ModelIcon';
 import { updateAgentSettings, updateChildSettings, listModels } from '../lib/commands';
-import { planChildModelUpdate, type ExactChildSettingsTarget } from '../lib/exactChildSettings';
+import {
+  childSettingsReadinessLabel,
+  planChildModelUpdate,
+  type ExactChildSettingsTarget,
+} from '../lib/exactChildSettings';
 
 export type { ExactChildSettingsTarget } from '../lib/exactChildSettings';
 
@@ -231,9 +235,7 @@ export default function ModelSelectorPopover({
             {childTarget
               ? childTarget.readiness === 'ready'
                 ? `${active.label} model`
-                : childTarget.readiness === 'opening'
-                  ? 'Opening child…'
-                  : 'Child unavailable'
+                : childSettingsReadinessLabel(childTarget.readiness)
               : singleAgent
                 ? 'Used for this chat'
                 : active.hint}

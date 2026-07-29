@@ -25,6 +25,12 @@ export interface ChildSettingsUpdate {
   reasoningEffort?: ReasoningEffort;
 }
 
+export function childSettingsReadinessLabel(readiness: ExactChildSettingsReadiness): string {
+  if (readiness === 'ready') return 'Ready';
+  if (readiness === 'opening') return 'Opening child…';
+  return 'Child unavailable';
+}
+
 export function featureChildRole(feature: BridgeFeature): ExactChildRole {
   const text = `${feature.id} ${feature.skillName} ${feature.description}`.toLowerCase();
   return text.includes('validator') || text.includes('validation') || text.includes('scrutiny')
