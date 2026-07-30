@@ -922,10 +922,12 @@ test('fetch size badge counts the truncated-away characters', () => {
   assert.equal(fetchSizeBadge(0, null), null);
 });
 
-test('a short fetched page body renders its URLs as links in the source row', () => {
-  // Bodies within the snippet threshold render only as the source-row snippet
-  // (no separate body block), so the snippet must linkify — otherwise URLs in
-  // a short fetched page are plain text and not clickable.
+test('a short fetched page body renders its URLs as links outside the source row', () => {
+  // Bodies within the snippet threshold render only as the snippet (no
+  // separate body block), so the snippet must linkify — otherwise URLs in a
+  // short fetched page are plain text and not clickable. But the source row
+  // is itself an anchor, so the linkified snippet must render outside it:
+  // nested anchors are invalid HTML and a click would open both links.
   const body = 'See https://example.com/docs for the full guide.';
   const html = renderToStaticMarkup(
     createElement(WebFetchBody, {
@@ -937,7 +939,10 @@ test('a short fetched page body renders its URLs as links in the source row', ()
       snippet: body,
     }),
   );
-  assert.ok(html.includes('href="https://example.com/docs"'));
+  const rowClose = html.indexOf('</a>');
+  const snippetLink = html.indexOf('href="https://example.com/docs"');
+  assert.ok(rowClose !== -1);
+  assert.ok(snippetLink > rowClose);
 });
 
 test('a fetched page body never renders an svg fence as inline markup', () => {

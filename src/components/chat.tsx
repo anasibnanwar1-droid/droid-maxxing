@@ -784,17 +784,22 @@ export function WebFetchBody({
   }
   if (!hasBody && url.length === 0) return null;
   const showBody = hasBody && body.length > 280;
-  // A short body renders only as the source-row snippet (no FetchBodyContent
-  // below), so linkify it — URLs in a short fetched page stay clickable. A long
-  // body keeps the plain-text preview since the full body renders below.
-  let snippetNode: React.ReactNode;
-  if (snippet.length === 0) snippetNode = undefined;
-  else if (showBody) snippetNode = snippet;
-  else snippetNode = linkify(snippet);
+  // A short body renders only as the snippet (no FetchBodyContent below), so
+  // linkify it to keep its URLs clickable. It must sit next to the source row,
+  // never inside it: the row is itself an anchor, and nested anchors are
+  // invalid HTML whose clicks would open both links. A long body keeps the
+  // plain-text preview in the row since the full body renders below.
+  const rowSnippet = showBody && snippet.length > 0 ? snippet : undefined;
+  const snippetNode =
+    !showBody && snippet.length > 0 ? (
+      <div className="line-clamp-2 px-3 text-[12px] leading-relaxed text-droid-text-muted">
+        {linkify(snippet)}
+      </div>
+    ) : null;
   return (
     <div className="mt-2 space-y-1">
-      <WebSourceRow title={title} snippet={snippetNode} url={url} emphasize />
-      {showBody ? <FetchBodyContent body={body} /> : null}
+      <WebSourceRow title={title} snippet={rowSnippet} url={url} emphasize />
+      {showBody ? <FetchBodyContent body={body} /> : snippetNode}
     </div>
   );
 }
