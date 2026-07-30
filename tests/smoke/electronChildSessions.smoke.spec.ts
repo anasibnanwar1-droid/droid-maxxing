@@ -15,6 +15,12 @@ type RecordedCommand = {
   droidPathConfigured?: boolean;
 };
 
+interface SmokeResources {
+  smokeHome: string;
+  fixtureProcess?: ChildProcessWithoutNullStreams;
+  app?: ElectronApplication;
+}
+
 async function startFixture(
   logPath: string,
   environment: NodeJS.ProcessEnv,
@@ -66,6 +72,20 @@ function waitForExit(child: ChildProcessWithoutNullStreams): Promise<void> {
   });
 }
 
+async function cleanupSmokeResources(resources: SmokeResources): Promise<void> {
+  try {
+    await resources.app?.close();
+  } finally {
+    try {
+      const fixture = resources.fixtureProcess;
+      if (fixture && fixture.exitCode === null && fixture.signalCode === null) fixture.stdin.end();
+      if (fixture) await waitForExit(fixture);
+    } finally {
+      rmSync(resources.smokeHome, { recursive: true, force: true });
+    }
+  }
+}
+
 function recordedCommands(logPath: string): RecordedCommand[] {
   if (!existsSync(logPath)) return [];
   return readFileSync(logPath, 'utf8')
@@ -113,10 +133,11 @@ test('[E2] parent-scoped child navigation and visible commands', async () => {
     ...unauthenticatedEnvironment
   } = process.env;
 
-  let fixture: Awaited<ReturnType<typeof startFixture>> | undefined;
-  let app: ElectronApplication | undefined;
+  const resources: SmokeResources = { smokeHome };
   try {
-    fixture = await startFixture(commandLog, unauthenticatedEnvironment);
+    const fixture = await startFixture(commandLog, unauthenticatedEnvironment, {}, (child) => {
+      resources.fixtureProcess = child;
+    });
     const launchEnvironment = {
       ...unauthenticatedEnvironment,
       HOME: smokeHome,
@@ -130,11 +151,12 @@ test('[E2] parent-scoped child navigation and visible commands', async () => {
       BRIDGE_PORT: String(fixture.port),
       NODE_BIN: process.execPath,
     };
-    app = await electron.launch({
+    const app = await electron.launch({
       args: [path.resolve('electron/main.cjs'), `--user-data-dir=${profile.userData}`],
       cwd: process.cwd(),
       env: launchEnvironment,
     });
+    resources.app = app;
     const page = await app.firstWindow();
     await page.evaluate(async () => {
       await window.droidControl!.setOnboarding({
@@ -222,16 +244,7 @@ test('[E2] parent-scoped child navigation and visible commands', async () => {
     await expect(chat.getByText('ALPHA SHARED CHILD OUTPUT', { exact: true })).toHaveCount(0);
     await expect(leftNavigation.getByText('Beta Worker Shared', { exact: true })).toHaveCount(0);
   } finally {
-    try {
-      await app?.close();
-    } finally {
-      try {
-        fixture?.process.stdin.end();
-        if (fixture) await waitForExit(fixture.process);
-      } finally {
-        rmSync(smokeHome, { recursive: true, force: true });
-      }
-    }
+    await cleanupSmokeResources(resources);
   }
 });
 
@@ -243,22 +256,22 @@ test('[E2] pre-ready fixture failure cleans the temporary profile and process', 
     DROID_PATH: _droidPath,
     ...unauthenticatedEnvironment
   } = process.env;
-  let fixtureProcess: ChildProcessWithoutNullStreams | undefined;
+  const resources: SmokeResources = { smokeHome };
 
   try {
     await assert.rejects(
       startFixture(commandLog, unauthenticatedEnvironment, { BRIDGE_PORT: '65536' }, (child) => {
-        fixtureProcess = child;
+        resources.fixtureProcess = child;
       }),
       /Smoke fixture exited before ready/,
     );
   } finally {
-    fixtureProcess?.kill();
-    if (fixtureProcess) await waitForExit(fixtureProcess);
-    rmSync(smokeHome, { recursive: true, force: true });
+    await cleanupSmokeResources(resources);
   }
 
   assert.equal(existsSync(smokeHome), false);
-  assert.ok(fixtureProcess);
-  assert.ok(fixtureProcess.exitCode !== null || fixtureProcess.signalCode !== null);
+  assert.ok(resources.fixtureProcess);
+  assert.ok(
+    resources.fixtureProcess.exitCode !== null || resources.fixtureProcess.signalCode !== null,
+  );
 });
