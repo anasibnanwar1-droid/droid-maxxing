@@ -83,6 +83,29 @@ test('closing a parent preserves historical parent and child discovery but clear
         parent: { child: { state: 'ready', requestId: 'open', runtimeGeneration: 1 } },
       },
       childRuntime: { parent: { child: { available: true, runtimeGeneration: 1 } } },
+      contextStats: {
+        primary: {},
+        child: {
+          parent: {
+            child: {
+              used: 20,
+              remaining: 80,
+              limit: 100,
+              accuracy: 'exact',
+              updatedAt: '2026-07-30T00:00:00.000Z',
+            },
+          },
+          other: {
+            child: {
+              used: 30,
+              remaining: 70,
+              limit: 100,
+              accuracy: 'exact',
+              updatedAt: '2026-07-30T00:00:00.000Z',
+            },
+          },
+        },
+      },
       selectedChild: { parentAppSessionId: 'parent', childSessionId: 'child' },
       historyLoaded: true,
     },
@@ -95,6 +118,8 @@ test('closing a parent preserves historical parent and child discovery but clear
   assert.equal(state.childSessions.parent?.child, historicalChild);
   assert.equal(state.childAccess.parent, undefined);
   assert.equal(state.childRuntime.parent, undefined);
+  assert.equal(state.contextStats.child.parent, undefined);
+  assert.equal(state.contextStats.child.other?.child?.used, 30);
   assert.equal(state.selectedChild, null);
   assert.equal(
     childSessionIsLive(

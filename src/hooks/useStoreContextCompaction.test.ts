@@ -154,6 +154,11 @@ test('child runtime unavailability clears a same-generation context snapshot', (
         child: { available: true, runtimeGeneration: 5 },
       },
     },
+    childAccess: {
+      parent: {
+        child: { state: 'ready', requestId: 'open-child', runtimeGeneration: 5 },
+      },
+    },
     contextStats: {
       primary: {},
       child: { parent: { child: snapshot(70_000) } },
@@ -168,4 +173,12 @@ test('child runtime unavailability clears a same-generation context snapshot', (
   });
 
   assert.equal(next.contextStats.child.parent?.child, undefined);
+  assert.deepEqual(next.childRuntime.parent?.child, {
+    available: false,
+    runtimeGeneration: 5,
+  });
+  assert.deepEqual(next.childAccess.parent?.child, {
+    state: 'closed',
+    requestId: null,
+  });
 });

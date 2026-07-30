@@ -993,6 +993,7 @@ function baseReducer(state: AppState, action: Action): AppState {
         selectedChild: null,
         childAccess: {},
         childRuntime: {},
+        contextStats: { ...next.contextStats, child: {} },
       };
     }
 
@@ -1099,12 +1100,15 @@ function baseReducer(state: AppState, action: Action): AppState {
     case 'SESSION_CLOSED': {
       const childAccess = { ...state.childAccess };
       const childRuntime = { ...state.childRuntime };
+      const childContext = { ...state.contextStats.child };
       delete childAccess[action.appSessionId];
       delete childRuntime[action.appSessionId];
+      delete childContext[action.appSessionId];
       return {
         ...state,
         childAccess,
         childRuntime,
+        contextStats: { ...state.contextStats, child: childContext },
         selectedChild:
           state.selectedChild?.parentAppSessionId === action.appSessionId
             ? null
@@ -1174,7 +1178,11 @@ function baseReducer(state: AppState, action: Action): AppState {
             }
           : state.contextStats,
       };
-      if (previousRuntime && action.runtimeGeneration === previousRuntime.runtimeGeneration)
+      if (
+        previousRuntime &&
+        action.runtimeGeneration === previousRuntime.runtimeGeneration &&
+        action.runtimeAvailable === previousRuntime.available
+      )
         return next;
       next = {
         ...next,

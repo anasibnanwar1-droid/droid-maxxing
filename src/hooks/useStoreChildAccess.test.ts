@@ -301,6 +301,31 @@ test('selecting the already-active parent invalidates an opening child request',
 
 test('disconnect clears child selection, access, and runtime watermarks', () => {
   let state = select(initialState, 'parent-a', 'child-a', 'request-a');
+  state = {
+    ...state,
+    contextStats: {
+      primary: {
+        'parent-a': {
+          used: 10,
+          remaining: 90,
+          limit: 100,
+          accuracy: 'exact',
+          updatedAt: '2026-07-30T00:00:00.000Z',
+        },
+      },
+      child: {
+        'parent-a': {
+          'child-a': {
+            used: 20,
+            remaining: 80,
+            limit: 100,
+            accuracy: 'exact',
+            updatedAt: '2026-07-30T00:00:00.000Z',
+          },
+        },
+      },
+    },
+  };
   state = reducer(state, {
     type: 'CHILD_UPDATED',
     parentAppSessionId: 'parent-a',
@@ -314,6 +339,8 @@ test('disconnect clears child selection, access, and runtime watermarks', () => 
   assert.equal(state.selectedChild, null);
   assert.deepEqual(state.childAccess, {});
   assert.deepEqual(state.childRuntime, {});
+  assert.deepEqual(state.contextStats.primary['parent-a']?.used, 10);
+  assert.deepEqual(state.contextStats.child, {});
 });
 
 test('starting a draft invalidates the selected child open request', () => {
