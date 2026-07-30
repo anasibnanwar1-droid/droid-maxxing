@@ -192,6 +192,18 @@ test('parseWebFetch strips a fallback title while keeping a preamble URL line', 
   assert.equal(page.body, 'Body text.');
 });
 
+test('parseWebFetch leaves an empty body when the whole page is the fallback title', () => {
+  // A one-line fetch means the line is the title; restoring it as the body
+  // would render the same text twice in the card.
+  const page = parseWebFetch('Just A Title');
+  assert.equal(page.title, 'Just A Title');
+  assert.equal(page.body, '');
+  const withUrl = parseWebFetch('Just A Title\nURL: https://example.com');
+  assert.equal(withUrl.title, 'Just A Title');
+  assert.equal(withUrl.url, 'https://example.com');
+  assert.equal(withUrl.body, '');
+});
+
 test('formatCharCount uses compact k labels', () => {
   assert.equal(formatCharCount(42), '42');
   assert.equal(formatCharCount(1240), '1.2k');

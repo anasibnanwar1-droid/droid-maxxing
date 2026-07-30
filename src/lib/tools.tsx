@@ -368,7 +368,12 @@ function stripFetchMeta(
   // body's opening line; drop it so the card's title and preview stay distinct.
   // Safe after the removals above: in the fallback case the first line is never
   // a Title:/URL:/# line, so those removals cannot change which line leads.
-  if (opts.firstLineTitle) preview = preview.replace(/^[^\n]*(?:\n|$)/, '');
+  if (opts.firstLineTitle) {
+    preview = preview.replace(/^[^\n]*(?:\n|$)/, '');
+    // A one-line body IS the title, so an empty result here is legitimate —
+    // restoring `clean` would duplicate the title as the body.
+    return preview.replace(/^\n+/, '').trim();
+  }
   preview = preview.replace(/^\n+/, '').trim();
   return preview.length > 0 ? preview : clean;
 }
