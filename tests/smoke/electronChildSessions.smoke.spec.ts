@@ -18,6 +18,8 @@ type RecordedCommand = {
 async function startFixture(
   logPath: string,
   environment: NodeJS.ProcessEnv,
+  overrides: NodeJS.ProcessEnv = {},
+  onSpawn: (child: ChildProcessWithoutNullStreams) => void = () => undefined,
 ): Promise<{ process: ChildProcessWithoutNullStreams; port: number }> {
   const child = spawn(
     process.execPath,
@@ -31,10 +33,12 @@ async function startFixture(
         BRIDGE_EXIT_ON_STDIN_CLOSE: '1',
         CHILD_SESSIONS_SMOKE_ALLOW_ANY_TOKEN: '1',
         CHILD_SESSIONS_SMOKE_LOG: logPath,
+        ...overrides,
       },
       stdio: ['pipe', 'pipe', 'pipe'],
     },
   );
+  onSpawn(child);
   return new Promise((resolve, reject) => {
     let output = '';
     const fail = (error: unknown) => {
@@ -108,23 +112,24 @@ test('[E2] parent-scoped child navigation and visible commands', async () => {
     DROID_PATH: _droidPath,
     ...unauthenticatedEnvironment
   } = process.env;
-  const fixture = await startFixture(commandLog, unauthenticatedEnvironment);
-  const launchEnvironment = {
-    ...unauthenticatedEnvironment,
-    HOME: smokeHome,
-    USERPROFILE: smokeHome,
-    XDG_CONFIG_HOME: profile.config,
-    XDG_DATA_HOME: profile.data,
-    APPDATA: profile.roamingAppData,
-    LOCALAPPDATA: profile.localAppData,
-    ELECTRON_START_URL: bootstrapUrl,
-    SIDECAR_ENTRY: path.resolve('sidecar/test-fixtures/noopSidecar.mjs'),
-    BRIDGE_PORT: String(fixture.port),
-    NODE_BIN: process.execPath,
-  };
 
+  let fixture: Awaited<ReturnType<typeof startFixture>> | undefined;
   let app: ElectronApplication | undefined;
   try {
+    fixture = await startFixture(commandLog, unauthenticatedEnvironment);
+    const launchEnvironment = {
+      ...unauthenticatedEnvironment,
+      HOME: smokeHome,
+      USERPROFILE: smokeHome,
+      XDG_CONFIG_HOME: profile.config,
+      XDG_DATA_HOME: profile.data,
+      APPDATA: profile.roamingAppData,
+      LOCALAPPDATA: profile.localAppData,
+      ELECTRON_START_URL: bootstrapUrl,
+      SIDECAR_ENTRY: path.resolve('sidecar/test-fixtures/noopSidecar.mjs'),
+      BRIDGE_PORT: String(fixture.port),
+      NODE_BIN: process.execPath,
+    };
     app = await electron.launch({
       args: [path.resolve('electron/main.cjs'), `--user-data-dir=${profile.userData}`],
       cwd: process.cwd(),
@@ -221,11 +226,39 @@ test('[E2] parent-scoped child navigation and visible commands', async () => {
       await app?.close();
     } finally {
       try {
-        fixture.process.stdin.end();
-        await waitForExit(fixture.process);
+        fixture?.process.stdin.end();
+        if (fixture) await waitForExit(fixture.process);
       } finally {
         rmSync(smokeHome, { recursive: true, force: true });
       }
     }
   }
+});
+
+test('[E2] pre-ready fixture failure cleans the temporary profile and process', async () => {
+  const smokeHome = mkdtempSync(path.join(tmpdir(), 'droid-control-child-startup-failure-'));
+  const commandLog = path.join(smokeHome, 'commands.jsonl');
+  const {
+    FACTORY_API_KEY: _factoryApiKey,
+    DROID_PATH: _droidPath,
+    ...unauthenticatedEnvironment
+  } = process.env;
+  let fixtureProcess: ChildProcessWithoutNullStreams | undefined;
+
+  try {
+    await assert.rejects(
+      startFixture(commandLog, unauthenticatedEnvironment, { BRIDGE_PORT: '65536' }, (child) => {
+        fixtureProcess = child;
+      }),
+      /Smoke fixture exited before ready/,
+    );
+  } finally {
+    fixtureProcess?.kill();
+    if (fixtureProcess) await waitForExit(fixtureProcess);
+    rmSync(smokeHome, { recursive: true, force: true });
+  }
+
+  assert.equal(existsSync(smokeHome), false);
+  assert.ok(fixtureProcess);
+  assert.ok(fixtureProcess.exitCode !== null || fixtureProcess.signalCode !== null);
 });

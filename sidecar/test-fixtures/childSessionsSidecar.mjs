@@ -6,7 +6,13 @@ const token = process.env.BRIDGE_TOKEN ?? '';
 const logPath = process.env.CHILD_SESSIONS_SMOKE_LOG;
 const allowAnyToken = process.env.CHILD_SESSIONS_SMOKE_ALLOW_ANY_TOKEN === '1';
 
-if (!Number.isSafeInteger(port) || port < 0 || (!token && !allowAnyToken) || !logPath) {
+if (
+  !Number.isSafeInteger(port) ||
+  port < 0 ||
+  port > 65_535 ||
+  (!token && !allowAnyToken) ||
+  !logPath
+) {
   throw new Error(
     'Child-session smoke fixture requires BRIDGE_PORT, bridge authentication, and log path.',
   );
