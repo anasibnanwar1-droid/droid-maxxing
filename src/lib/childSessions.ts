@@ -60,6 +60,38 @@ export type VisibleSessionTarget =
       settingsReadiness: 'opening' | 'ready' | 'failed';
     };
 
+export type ChildRuntimeSubmitTarget = {
+  parentAppSessionId: string;
+  childSessionId: string;
+  runtimeGeneration: number;
+};
+
+export function childRuntimeSubmitTarget(
+  target: VisibleSessionTarget,
+): ChildRuntimeSubmitTarget | undefined {
+  if (target.kind !== 'child' || !target.canSend || target.access?.state !== 'ready')
+    return undefined;
+  return {
+    parentAppSessionId: target.parentAppSessionId,
+    childSessionId: target.childSessionId,
+    runtimeGeneration: target.access.runtimeGeneration,
+  };
+}
+
+export async function revalidateChildRuntimeAfter(
+  captured: ChildRuntimeSubmitTarget,
+  waitForBaseline: () => Promise<void>,
+  currentTarget: () => VisibleSessionTarget,
+): Promise<boolean> {
+  await waitForBaseline();
+  const current = childRuntimeSubmitTarget(currentTarget());
+  return (
+    current?.parentAppSessionId === captured.parentAppSessionId &&
+    current.childSessionId === captured.childSessionId &&
+    current.runtimeGeneration === captured.runtimeGeneration
+  );
+}
+
 export function selectedChildForParent(
   activeAppSessionId: string | undefined,
   selection: { parentAppSessionId: string; childSessionId: string } | null,

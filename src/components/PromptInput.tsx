@@ -22,8 +22,10 @@ import { markGitTurnStart } from '../lib/git';
 import { createLocalDesignTranscriptEvent, newQueueId } from '../lib/promptQueue';
 import { composePrompt } from '../lib/composePrompt';
 import {
+  childRuntimeSubmitTarget,
   childSessionLabel,
   orderedChildSessions,
+  revalidateChildRuntimeAfter,
   visibleSessionCanCompact,
   visibleSessionTarget,
   type VisibleSessionTarget,
@@ -154,6 +156,8 @@ export default function PromptInput({
     state.childSessions,
     state.childAccess,
   );
+  const visibleTargetRef = useRef(visibleTarget);
+  visibleTargetRef.current = visibleTarget;
   const targetChild = visibleTarget.kind === 'child' ? visibleTarget.child : undefined;
   const targetChildSessionId = targetChild?.childSessionId ?? null;
   const targetChildIndex =
@@ -550,6 +554,18 @@ export default function PromptInput({
       return;
     }
 
+    const childRuntimeTarget = childRuntimeSubmitTarget(visibleTarget);
+    if (
+      childRuntimeTarget &&
+      activeSession.cwd &&
+      !(await revalidateChildRuntimeAfter(
+        childRuntimeTarget,
+        () => markGitTurnStart(activeSession.cwd, activeSession.appSessionId),
+        () => visibleTargetRef.current,
+      ))
+    )
+      return;
+
     dispatch({
       type: 'SESSION_TRANSCRIPT',
       event: {
@@ -567,14 +583,16 @@ export default function PromptInput({
       },
     });
 
-    // Clear the composer now (before any await) so a prompt the user starts
-    // typing during the git-baseline delay below is never wiped out.
-    setInput('');
+    // Child sends wait for an exact-runtime revalidation above. Preserve text
+    // typed during that wait while clearing only the payload that was admitted.
+    if (childRuntimeTarget) setInput((current) => (current === input ? '' : current));
+    else setInput('');
     resetAttachments();
 
     // Capture the last-turn baseline before the agent can touch the tree;
     // a fire-and-forget call here races the first edit and corrupts the diff.
-    if (activeSession.cwd) await markGitTurnStart(activeSession.cwd, activeSession.appSessionId);
+    if (!childRuntimeTarget && activeSession.cwd)
+      await markGitTurnStart(activeSession.cwd, activeSession.appSessionId);
 
     try {
       if (targetChildSessionId) {

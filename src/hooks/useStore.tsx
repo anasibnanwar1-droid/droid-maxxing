@@ -1146,6 +1146,11 @@ function baseReducer(state: AppState, action: Action): AppState {
       const previousRuntime = runtimeParent[child.childSessionId];
       if (previousRuntime && action.runtimeGeneration < previousRuntime.runtimeGeneration)
         return state;
+      const clearContext =
+        !action.runtimeAvailable ||
+        (previousRuntime !== undefined &&
+          action.runtimeGeneration > previousRuntime.runtimeGeneration);
+      const contextParent = state.contextStats.child[child.parentAppSessionId] ?? {};
       let next = {
         ...state,
         childSessions: {
@@ -1155,6 +1160,19 @@ function baseReducer(state: AppState, action: Action): AppState {
             [child.childSessionId]: child,
           },
         },
+        contextStats: clearContext
+          ? {
+              ...state.contextStats,
+              child: {
+                ...state.contextStats.child,
+                [child.parentAppSessionId]: Object.fromEntries(
+                  Object.entries(contextParent).filter(
+                    ([childSessionId]) => childSessionId !== child.childSessionId,
+                  ),
+                ),
+              },
+            }
+          : state.contextStats,
       };
       if (previousRuntime && action.runtimeGeneration === previousRuntime.runtimeGeneration)
         return next;
