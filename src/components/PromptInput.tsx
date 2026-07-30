@@ -22,6 +22,7 @@ import { useImageAttachments } from '../hooks/useImageAttachments';
 import { useImageFileDrop } from '../hooks/useImageFileDrop';
 import { ImageChip } from './composer/ImageChip';
 import { ImageViewerModal } from './composer/ImageViewerModal';
+import PlanSteps from './composer/PlanSteps';
 import { QueuedPrompts } from './composer/QueuedPrompts';
 import { markGitTurnStart } from '../lib/git';
 import { createLocalDesignTranscriptEvent, newQueueId } from '../lib/promptQueue';
@@ -1042,6 +1043,8 @@ export default function PromptInput({
             <StartInBar />
           </div>
         )}
+
+        <PlanSteps />
 
         <div
           className={`relative z-10 bg-droid-elevated border rounded-2xl transition-colors ${missionPreview ? '' : boxBorder}`}
