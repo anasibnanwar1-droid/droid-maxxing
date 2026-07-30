@@ -96,6 +96,7 @@ export interface SessionLifecycleDependencies {
 }
 export class SessionLifecycle {
   private readonly deferredCloses = new WeakMap<LiveSession, DeferredClose>();
+  private readonly inFlightResumes = new Map<string, Promise<boolean>>();
 
   constructor(private readonly dependencies: SessionLifecycleDependencies) {}
   async create(command: SessionCreateCommand): Promise<void> {
@@ -191,6 +192,10 @@ export class SessionLifecycle {
     const historical = d.registry.getCanonicalSummary(requestedAppSessionId);
     const appSessionId = historical?.appSessionId ?? requestedAppSessionId;
     const providerSessionId = historical?.providerSessionId ?? requestedAppSessionId;
+
+    const inFlight = this.inFlightResumes.get(appSessionId);
+    if (inFlight) return inFlight;
+
     const existing = d.registry.getLive(appSessionId);
     if (existing) {
       const projectedSummary =
@@ -205,6 +210,23 @@ export class SessionLifecycle {
       return true;
     }
 
+    const resume = this.resumeHistorical(historical, appSessionId, providerSessionId);
+    this.inFlightResumes.set(appSessionId, resume);
+    try {
+      return await resume;
+    } finally {
+      if (this.inFlightResumes.get(appSessionId) === resume) {
+        this.inFlightResumes.delete(appSessionId);
+      }
+    }
+  }
+
+  private async resumeHistorical(
+    historical: SessionSummary | undefined,
+    appSessionId: string,
+    providerSessionId: string,
+  ): Promise<boolean> {
+    const d = this.dependencies;
     const ref = { id: appSessionId };
     let pendingMcpServers: LocalMcpResource[] = [];
     let pendingSession: FactorySession | undefined;

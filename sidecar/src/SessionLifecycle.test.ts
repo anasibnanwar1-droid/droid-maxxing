@@ -357,6 +357,10 @@ function interruptCount(harness: Harness): number {
     .length;
 }
 
+function methodCount(harness: Harness, method: string): number {
+  return harness.calls.filter((call) => call.method === method).length;
+}
+
 test('create and cold resume publish only after registration', async () => {
   const created = createHarness();
   const createdProvider = queueCreate(created, 'created-1');
@@ -544,6 +548,101 @@ test('send lazily resumes once and sends the prompt exactly once', async () => {
   await harness.lifecycle.send('app-3', 'only once');
   assert.equal(harness.runtime.loadCalls.length, 1);
   assert.deepEqual(provider.prompts, ['only once']);
+});
+
+test('concurrent resumes share one provider and MCP admission', async () => {
+  const harness = createHarness([summary('shared-app', 'shared-provider')]);
+  queueLoad(harness, 'shared-provider');
+  let releaseLimit = (value: number): void => {
+    void value;
+  };
+  harness.setCompactionLimit(
+    () =>
+      new Promise<number>((resolve) => {
+        releaseLimit = resolve;
+      }),
+  );
+
+  const first = harness.lifecycle.resume('shared-app');
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  const second = harness.lifecycle.resume('shared-provider');
+  await new Promise<void>((resolve) => setImmediate(resolve));
+
+  assert.equal(harness.runtime.loadCalls.length, 1);
+  assert.equal(methodCount(harness, 'mcp.start'), 1);
+  releaseLimit(800);
+  assert.deepEqual(await Promise.all([first, second]), [true, true]);
+  assert.equal(methodCount(harness, 'children.attach'), 1);
+  assert.equal(harness.events.filter((event) => event.type === 'session.created').length, 1);
+});
+
+test('a concurrent resume and lazy send share one open and deliver once', async () => {
+  const harness = createHarness([summary('send-app', 'send-provider')]);
+  const provider = queueLoad(harness, 'send-provider');
+  let releaseLimit = (value: number): void => {
+    void value;
+  };
+  harness.setCompactionLimit(
+    () =>
+      new Promise<number>((resolve) => {
+        releaseLimit = resolve;
+      }),
+  );
+
+  const resuming = harness.lifecycle.resume('send-app');
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  const sending = harness.lifecycle.send('send-provider', 'deliver once');
+  await new Promise<void>((resolve) => setImmediate(resolve));
+
+  assert.equal(harness.runtime.loadCalls.length, 1);
+  assert.equal(methodCount(harness, 'mcp.start'), 1);
+  releaseLimit(800);
+  assert.equal(await resuming, true);
+  await sending;
+  assert.deepEqual(provider.prompts, ['deliver once']);
+  assert.equal(methodCount(harness, 'children.attach'), 1);
+});
+
+test('a shared failed resume cleans once and permits a clean retry', async () => {
+  const harness = createHarness([summary('retry-app', 'retry-provider')]);
+  const failedProvider = new FakeFactorySession('retry-provider', {}, harness.calls);
+  const retryProvider = new FakeFactorySession('retry-provider', {}, harness.calls);
+  harness.runtime.loadQueue.set('retry-provider', [failedProvider, retryProvider]);
+  let rejectLimit = (error: Error): void => {
+    void error;
+  };
+  let limitAttempts = 0;
+  harness.setCompactionLimit(() => {
+    limitAttempts += 1;
+    if (limitAttempts > 1) return Promise.resolve(800);
+    return new Promise<number>((_, reject) => {
+      rejectLimit = reject;
+    });
+  });
+
+  const first = harness.lifecycle.resume('retry-app');
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  const second = harness.lifecycle.resume('retry-provider');
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  rejectLimit(new Error('limit unavailable'));
+
+  assert.deepEqual(await Promise.all([first, second]), [false, false]);
+  assert.equal(harness.runtime.loadCalls.length, 1);
+  assert.equal(methodCount(harness, 'mcp.start'), 1);
+  assert.equal(methodCount(harness, 'mcp.close'), 1);
+  assert.equal(methodCount(harness, 'session.close'), 1);
+  assert.equal(harness.registry.getLive('retry-app'), undefined);
+  assert.equal(
+    harness.events.filter(
+      (event) => event.type === 'error' && event.message === 'limit unavailable',
+    ).length,
+    1,
+  );
+
+  assert.equal(await harness.lifecycle.resume('retry-app'), true);
+  assert.equal(harness.runtime.loadCalls.length, 2);
+  assert.equal(methodCount(harness, 'mcp.start'), 2);
+  assert.equal(harness.registry.getLive('retry-app')?.session, retryProvider);
 });
 
 test('failed lazy resume emits only the original load error', async () => {
