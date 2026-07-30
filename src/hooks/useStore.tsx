@@ -1,6 +1,7 @@
 import { createContext, useContext, useMemo, useReducer, ReactNode, useEffect } from 'react';
 import { bridge } from '../lib/bridge';
 import { updateCompactionSettings } from '../lib/commands';
+import { migrateLegacyLightPreset } from '../lib/theme';
 import {
   clearDesignMode,
   setDesignMode,
@@ -470,6 +471,7 @@ function getLocalStorage(): Storage | undefined {
 // it to a theme-matched neutral and let the monochrome scale show through.
 const LEGACY_DEFAULT_ACCENTS = new Set(['#ee6018', '#ff5d2e']);
 const THEME_ACCENT_MIGRATED_KEY = 'droid-theme-accent-migrated';
+const THEME_LIGHT_PRESET_MIGRATED_KEY = 'droid-theme-light-preset-migrated';
 
 function neutralAccentFor(bg: string): string {
   const r = parseInt(bg.slice(1, 3), 16);
@@ -503,6 +505,23 @@ function loadTheme(): ThemeConfig {
           storage.setItem('droid-theme', JSON.stringify(theme));
         }
         storage.setItem(THEME_ACCENT_MIGRATED_KEY, '1');
+      } catch {
+        /* migration write failed; retry on a later load */
+      }
+    }
+    // One-time migration: a saved theme still matching the old white-on-white
+    // light preset exactly was never customized, so swap it to the readable
+    // warm-grey palette. Same persisted-flag pattern as the accent migration.
+    if (storage && storage.getItem(THEME_LIGHT_PRESET_MIGRATED_KEY) !== '1') {
+      try {
+        if (saved) {
+          const migrated = migrateLegacyLightPreset(theme);
+          if (migrated !== theme) {
+            Object.assign(theme, migrated);
+            storage.setItem('droid-theme', JSON.stringify(theme));
+          }
+        }
+        storage.setItem(THEME_LIGHT_PRESET_MIGRATED_KEY, '1');
       } catch {
         /* migration write failed; retry on a later load */
       }

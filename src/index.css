@@ -112,13 +112,15 @@
     background: transparent;
   }
 
+  /* Thumbs derive from the theme text color so they stay subtle in both dark
+     (dim white) and light (soft grey) instead of a fixed dark-mode grey. */
   ::-webkit-scrollbar-thumb {
-    background: #2a2a2c;
+    background: color-mix(in srgb, var(--droid-text) 16%, transparent);
     border-radius: 3px;
   }
 
   ::-webkit-scrollbar-thumb:hover {
-    background: #3a3a3c;
+    background: color-mix(in srgb, var(--droid-text) 26%, transparent);
   }
 
   .no-scrollbar {
@@ -447,7 +449,8 @@
      card rather than an edge-to-edge rectangle. */
   .droid-card {
     @apply flex flex-col rounded-2xl border border-droid-border bg-droid-surface overflow-hidden;
-    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.35);
+    /* Theme-derived (see applyTheme): strong on dark, soft and diffuse on light. */
+    box-shadow: var(--droid-shadow, 0 10px 40px rgba(0, 0, 0, 0.35));
   }
 
   /* Row inside a card: icon + label with a soft hover highlight. */
@@ -458,7 +461,7 @@
 
   .droid-button {
     @apply px-3 py-1.5 text-sm font-medium rounded-md transition-all duration-150;
-    @apply bg-droid-elevated text-droid-text-secondary hover:text-droid-text hover:bg-[#262626];
+    @apply bg-droid-elevated text-droid-text-secondary hover:text-droid-text hover:bg-droid-active;
     @apply border border-droid-border;
   }
 
