@@ -87,6 +87,8 @@ export class ChildSessions {
       return undefined;
     }
     const providerSessionId = observation.providerSessionId;
+    for (const child of parent.children.values())
+      if (child.retiredProviderSessionIds.has(providerSessionId)) return undefined;
     if (observation.done) {
       const providerChild = findChildByProvider(parent, providerSessionId);
       const spawnChild = observation.spawnLink
@@ -104,7 +106,6 @@ export class ChildSessions {
     if (spawnKey) parent.pendingSpawns.delete(spawnKey);
     const child =
       spawnChild ?? providerChild ?? this.createChild(parent, observation.role, spawnLink);
-    if (child.retiredProviderSessionIds.has(providerSessionId)) return child.identity;
     const previousProviderSessionId = child.runtime?.session.sessionId ?? child.providerSessionId;
     if (previousProviderSessionId && previousProviderSessionId !== providerSessionId) {
       child.retiredProviderSessionIds.add(previousProviderSessionId);
@@ -145,11 +146,6 @@ export class ChildSessions {
         .catch(ignoreError);
     } else apply();
     return child.identity;
-  }
-
-  completeByProviderObservation(parentAppSessionId: string, providerSessionId: string): void {
-    const parent = this.parents.get(parentAppSessionId);
-    if (parent) this.complete(parent, findChildByProvider(parent, providerSessionId));
   }
 
   async open(command: Extract<ClientCommand, { type: 'child.open' }>): Promise<void> {
@@ -222,8 +218,8 @@ export class ChildSessions {
     }
     if (!this.isCurrentTurnGeneration(parent, child, runtime, turnGeneration)) return;
     if (wasAutoCompacting) this.d.compaction.cancel(this.automaticTarget(parent, child));
-    if (child.turn.phase === 'idle') child.turn.interrupting = false;
-    child.turn.phase = 'idle';
+    if (child.turn.phase === 'streaming') return;
+    child.turn.interrupting = false;
     child.status = 'paused';
     this.commit(child);
   }

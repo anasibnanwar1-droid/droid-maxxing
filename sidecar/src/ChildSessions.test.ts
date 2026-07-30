@@ -381,7 +381,12 @@ test('completion during a live stream rejects queued resurrection', async () => 
   const active = h.owner.send(record, 'active turn');
   await runtime.waitForPrompts(1);
 
-  h.owner.completeByProviderObservation(h.parentId, 'provider');
+  h.owner.admitChildObservation({
+    parentAppSessionId: h.parentId,
+    providerSessionId: 'provider',
+    role: 'worker',
+    done: true,
+  });
   await h.owner.send(record, 'must not queue');
   gate.resolve();
   await active;
@@ -419,7 +424,12 @@ test('completion invalidates a role observation queued behind settings', async (
     ...(record.spawnLink ? { spawnLink: record.spawnLink } : {}),
   });
 
-  h.owner.completeByProviderObservation(h.parentId, 'provider');
+  h.owner.admitChildObservation({
+    parentAppSessionId: h.parentId,
+    providerSessionId: 'provider',
+    role: 'worker',
+    done: true,
+  });
   gate.resolve();
   await update;
   await new Promise<void>((resolve) => setImmediate(resolve));
@@ -438,7 +448,12 @@ test('completion rejects an immediate stale provider observation', async () => {
   await h.open(record);
   h.events.length = 0;
 
-  h.owner.completeByProviderObservation(h.parentId, 'provider');
+  h.owner.admitChildObservation({
+    parentAppSessionId: h.parentId,
+    providerSessionId: 'provider',
+    role: 'worker',
+    done: true,
+  });
   h.owner.admitChildObservation({
     parentAppSessionId: h.parentId,
     providerSessionId: record.providerSessionId,
@@ -643,6 +658,41 @@ test('queued settings admitted to an old runtime cannot cross provider replaceme
   assert.equal(h.owner.list(h.parentId)[0]?.modelId, 'model-default');
 });
 
+test('retired provider-only observations cannot create or complete a ghost child', async () => {
+  const record = childRecord('child', 'provider-old');
+  const h = createHarness([record]);
+  await h.open(record);
+  h.owner.admitChildObservation({
+    parentAppSessionId: h.parentId,
+    providerSessionId: 'provider-new',
+    role: 'worker',
+    ...(record.spawnLink ? { spawnLink: record.spawnLink } : {}),
+  });
+  const replacement = { ...record, providerSessionId: 'provider-new' };
+  await h.open(replacement, new FakeFactorySession('provider-new', {}, h.calls));
+  h.events.length = 0;
+  h.calls.length = 0;
+  const before = h.owner.list(h.parentId);
+
+  const observed = h.owner.admitChildObservation({
+    parentAppSessionId: h.parentId,
+    providerSessionId: 'provider-old',
+    role: 'worker',
+  });
+  const completed = h.owner.admitChildObservation({
+    parentAppSessionId: h.parentId,
+    providerSessionId: 'provider-old',
+    role: 'worker',
+    done: true,
+  });
+  await new Promise<void>((resolve) => setImmediate(resolve));
+
+  assert.equal(observed, undefined);
+  assert.equal(completed, undefined);
+  assert.deepEqual(h.owner.list(h.parentId), before);
+  assert.equal(mutationCount(h), 0);
+});
+
 test('capacity eviction blocks victim reopen until old provider close settles', async () => {
   const first = childRecord('first', 'provider-first');
   const second = childRecord('second', 'provider-second');
@@ -718,6 +768,24 @@ test('late notification after child close cannot publish, mutate, or rearm compa
 
   closeGate.resolve();
   await closing;
+});
+
+test('interrupt waits for the active iterator before starting the next child turn', async () => {
+  const record = childRecord('child', 'provider');
+  const h = createHarness([record]);
+  const runtime = await h.open(record);
+  const firstGate = runtime.deferNextStream();
+  const first = h.owner.send(record, 'first');
+  await runtime.waitForPrompts(1);
+
+  await h.owner.interrupt(record);
+  await h.owner.send(record, 'second');
+  assert.deepEqual(runtime.prompts, ['first']);
+
+  firstGate.resolve();
+  await first;
+  await runtime.waitForPrompts(2);
+  assert.deepEqual(runtime.prompts, ['first', 'second']);
 });
 
 test('stale interrupt and turn settlement cannot make a replacement turn idle', async () => {
