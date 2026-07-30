@@ -22,6 +22,7 @@ export function createCompactionTestLiveSession(
       reasoningEffort: ReasoningEffort.Low,
       autonomy: 'low',
       phase: 'paused',
+      compacting: false,
       features: [],
       tokensIn: 0,
       tokensOut: 0,

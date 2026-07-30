@@ -107,6 +107,7 @@ function summary(appSessionId: string, overrides: Partial<SessionSummary> = {}):
     createdAt: 1,
     updatedAt: 1,
     ...overrides,
+    compacting: overrides.compacting ?? false,
   };
 }
 

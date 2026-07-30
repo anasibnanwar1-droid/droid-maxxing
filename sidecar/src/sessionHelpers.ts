@@ -334,6 +334,7 @@ export function buildCreatedSessionSummary(input: {
     autonomy: input.autonomy,
     phase: 'intake',
     streaming: false,
+    compacting: false,
     queuedSends: 0,
     features: [],
     tokensIn: 0,
@@ -376,6 +377,7 @@ export function buildResumedSession(input: BuildResumedSessionInput): {
           ? phaseFromInit(input.init)
           : (input.historical?.phase ?? 'paused'),
       streaming: false,
+      compacting: false,
       queuedSends: 0,
       ...(input.historical?.proposal !== undefined ? { proposal: input.historical.proposal } : {}),
       features: resumedFeatures(input.init, classification.sessionPurpose),

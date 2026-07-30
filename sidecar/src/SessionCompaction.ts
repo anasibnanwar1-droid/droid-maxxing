@@ -231,8 +231,13 @@ export class SessionCompaction {
   }
 
   cancel(target: AutomaticCompactionTarget): void {
-    if (target.kind === 'primary') target.liveSession.autoCompacting = false;
-    else target.setAutoCompacting(false);
+    if (target.kind === 'primary') {
+      const wasCompacting =
+        target.liveSession.autoCompacting || target.liveSession.summary.compacting;
+      target.liveSession.autoCompacting = false;
+      if (wasCompacting)
+        this.dependencies.registry.updateSummary(target.appSessionId, { compacting: false });
+    } else target.setAutoCompacting(false);
     this.watchdogs.clear(compactionResourceKey(target));
   }
 
@@ -298,8 +303,10 @@ export class SessionCompaction {
   private setAutoCompacting(target: AutomaticCompactionTarget, active: boolean): void {
     if (!target.isCurrent()) return;
     const wasActive = automaticCompactionActive(target);
-    if (target.kind === 'primary') target.liveSession.autoCompacting = active;
-    else target.setAutoCompacting(active);
+    if (target.kind === 'primary') {
+      target.liveSession.autoCompacting = active;
+      this.dependencies.registry.updateSummary(target.appSessionId, { compacting: active });
+    } else target.setAutoCompacting(active);
 
     const key = compactionResourceKey(target);
     if (active) this.watchdogs.arm(key, AUTO_COMPACTION_WATCHDOG_MS);

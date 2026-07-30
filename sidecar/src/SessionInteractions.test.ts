@@ -75,6 +75,7 @@ function summary(appSessionId: string, providerSessionId: string): SessionSummar
     workspaceKind: 'folder',
     autonomy: 'low',
     phase: 'paused',
+    compacting: false,
     features: [],
     tokensIn: 0,
     tokensOut: 0,

@@ -325,6 +325,7 @@ function summary(
     createdAt: 1,
     updatedAt: 1,
     ...patch,
+    compacting: patch.compacting ?? false,
   };
 }
 

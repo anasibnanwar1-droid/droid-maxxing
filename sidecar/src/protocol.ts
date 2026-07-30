@@ -123,6 +123,7 @@ export interface SessionSummary {
   autonomy: Autonomy;
   phase: SessionPhase;
   streaming?: boolean; // true while a turn is actively generating
+  compacting: boolean; // true for the full primary manual or automatic compaction interval
   queuedSends?: number;
   proposal?: string; // markdown plan from propose_mission
   features: BridgeFeature[];

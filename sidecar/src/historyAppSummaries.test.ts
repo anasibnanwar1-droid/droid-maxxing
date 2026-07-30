@@ -47,6 +47,7 @@ function summary(appSessionId: string, cwd: string): SessionSummary {
     autonomy: 'low',
     phase: 'paused',
     streaming: false,
+    compacting: false,
     queuedSends: 0,
     features: [],
     tokensIn: 0,

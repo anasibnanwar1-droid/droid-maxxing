@@ -594,6 +594,7 @@ function summary(appSessionId: string, providerSessionId: string): SessionSummar
     reasoningEffort: ReasoningEffort.Low,
     autonomy: 'low',
     phase: 'paused',
+    compacting: false,
     features: [],
     tokensIn: 0,
     tokensOut: 0,

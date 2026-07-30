@@ -102,6 +102,7 @@ function historicalSummary(appSessionId: string, providerSessionId: string): Ses
     autonomy: 'low',
     phase: 'paused',
     streaming: false,
+    compacting: false,
     queuedSends: 0,
     features: [],
     tokensIn: 0,

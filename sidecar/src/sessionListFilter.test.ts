@@ -27,6 +27,7 @@ const summary = (
   createdAt: updatedAt,
   updatedAt,
   ...extra,
+  compacting: extra.compacting ?? false,
 });
 
 test('filterSessionListSummaries returns only five latest summaries per requested workspace', () => {

@@ -98,6 +98,7 @@ function missionSummary(): SessionSummary {
     workspaceKind: 'none',
     autonomy: 'medium',
     phase: 'completed',
+    compacting: false,
     features: [],
     tokensIn: 0,
     tokensOut: 0,

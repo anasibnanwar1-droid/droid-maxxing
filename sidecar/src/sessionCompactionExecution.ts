@@ -66,6 +66,7 @@ export class SessionCompactionExecution {
     };
     let swapTarget: string | undefined;
     liveSession.compacting = true;
+    this.dependencies.registry.updateSummary(appSessionId, { compacting: true });
     try {
       const outcome = await runCompaction(
         liveSession.session,
@@ -110,6 +111,7 @@ export class SessionCompactionExecution {
       return { kind: 'ready-to-settle' };
     } finally {
       liveSession.compacting = false;
+      this.dependencies.registry.updateSummary(appSessionId, { compacting: false });
     }
   }
 
