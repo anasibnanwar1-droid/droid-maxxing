@@ -18,6 +18,7 @@ import type {
   SessionPurpose,
   ValidatorConfig,
 } from '../types/bridge';
+import type { SessionPromptMode } from './promptQueue';
 
 let refCounter = 0;
 
@@ -69,8 +70,6 @@ export const sendToSession = (appSessionId: string, text: string) =>
 
 export const sendToSessionNow = (appSessionId: string, text: string) =>
   bridge.send({ type: 'session.sendNow', appSessionId, text });
-
-export type SessionPromptMode = 'queue' | 'now';
 
 export const sendSessionPrompt = (appSessionId: string, text: string, mode: SessionPromptMode) => {
   if (mode === 'now') sendToSessionNow(appSessionId, text);

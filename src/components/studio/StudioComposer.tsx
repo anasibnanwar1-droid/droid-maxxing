@@ -11,6 +11,7 @@ import type { ReasoningEffort } from '../../types/bridge';
 import { CANVAS_IMAGE_INPUT_ID } from './studioCanvasImages';
 import StudioPromptQueue from './StudioPromptQueue';
 import { studioComposerActions } from './studioSession';
+import { resolveSessionPromptMode, type SessionPromptMode } from '../../lib/promptQueue';
 
 export interface SendOptions {
   modelId?: string;
@@ -18,7 +19,7 @@ export interface SendOptions {
   count: number;
   canvasImages?: StudioCanvasImage[];
   displayText?: string;
-  mode?: 'queue' | 'now';
+  mode?: SessionPromptMode;
 }
 
 const COUNTS = [1, 2, 3, 4];
@@ -160,7 +161,7 @@ export default function StudioComposer({
     }
   };
 
-  const submit = (mode: 'queue' | 'now' = 'queue') => {
+  const submit = (mode: SessionPromptMode = 'queue') => {
     if (!canSend) return;
     const studioPrompt = buildStudioPrompt(text, studio);
     onSend(studioPrompt.prompt, {
@@ -254,9 +255,12 @@ export default function StudioComposer({
           onKeyDown={(e) => {
             if (e.key === 'Enter' && !e.shiftKey) {
               e.preventDefault();
-              const defaultMode = streaming && enterSteers ? 'now' : 'queue';
               submit(
-                streaming && (e.metaKey || e.ctrlKey) ? oppositeMode(defaultMode) : defaultMode,
+                resolveSessionPromptMode({
+                  isLive: streaming ?? false,
+                  liveEnterBehavior: state.liveEnterBehavior,
+                  alternate: e.metaKey || e.ctrlKey,
+                }),
               );
             }
           }}
@@ -368,7 +372,12 @@ export default function StudioComposer({
                     <button
                       type="button"
                       onClick={() => {
-                        submit(enterSteers ? 'now' : 'queue');
+                        submit(
+                          resolveSessionPromptMode({
+                            isLive: streaming ?? false,
+                            liveEnterBehavior: state.liveEnterBehavior,
+                          }),
+                        );
                       }}
                       aria-label={enterSteers ? 'Steer current design turn' : 'Queue design prompt'}
                       className="flex h-8 w-8 items-center justify-center rounded-lg bg-droid-text text-droid-bg transition-colors hover:bg-droid-text-secondary"
@@ -402,10 +411,6 @@ export default function StudioComposer({
       )}
     </div>
   );
-}
-
-function oppositeMode(mode: 'queue' | 'now'): 'queue' | 'now' {
-  return mode === 'queue' ? 'now' : 'queue';
 }
 
 function Chip({

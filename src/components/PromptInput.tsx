@@ -4,8 +4,7 @@ import { useStore } from '../hooks/useStore';
 import type { QueuedPrompt } from '../hooks/useStore';
 import { useSessionLive } from '../hooks/useSessionLive';
 import {
-  sendToSession,
-  sendToSessionNow,
+  sendSessionPrompt,
   sendToChild,
   sendToChildNow,
   createSession,
@@ -23,7 +22,13 @@ import { ImageViewerModal } from './composer/ImageViewerModal';
 import PlanSteps from './composer/PlanSteps';
 import { QueuedPrompts } from './composer/QueuedPrompts';
 import { markGitTurnStart } from '../lib/git';
-import { newQueueId } from '../lib/promptQueue';
+import {
+  createLocalUserTranscriptEvent,
+  newQueueId,
+  resolveSessionPromptMode,
+  shouldQueueSessionPrompt,
+  type SessionPromptMode,
+} from '../lib/promptQueue';
 import { composePrompt } from '../lib/composePrompt';
 import { resolveReasoningEffortDisplay } from '../lib/reasoningEffort';
 import { compactionSettingsSnapshot } from '../lib/compactionSettings';
@@ -54,8 +59,6 @@ import type { SkillInfo } from '../types/bridge';
 const ACCENT = 'var(--droid-accent)';
 const accentMix = (pct: number) =>
   `color-mix(in srgb, var(--droid-accent) ${String(pct)}%, transparent)`;
-type SubmitMode = 'queue' | 'now';
-const oppositeSubmitMode = (mode: SubmitMode): SubmitMode => (mode === 'queue' ? 'now' : 'queue');
 
 interface Trigger {
   kind: 'slash' | 'file';
@@ -487,7 +490,7 @@ export default function PromptInput({
   // Re-entry guard: a send awaits markGitTurnStart before the input is cleared,
   // so without this a second Enter/click during that window would resend the
   // same payload (and create a duplicate session turn).
-  const handleSubmit = async (mode: SubmitMode = 'queue') => {
+  const handleSubmit = async (mode: SessionPromptMode = 'queue') => {
     if (submittingRef.current) return;
     submittingRef.current = true;
     try {
@@ -497,7 +500,7 @@ export default function PromptInput({
     }
   };
 
-  const runSubmit = async (mode: SubmitMode = 'queue') => {
+  const runSubmit = async (mode: SessionPromptMode = 'queue') => {
     const text = input.trim();
     // Snapshot the composer revision before the settle wait: text, files, and
     // skills are render-closure snapshots, so anything typed or staged while
@@ -617,7 +620,13 @@ export default function PromptInput({
 
     // Model is working and the user chose to queue: stage the prompt locally.
     // It is held client-side and delivered automatically when the turn finishes.
-    if (isLive && mode === 'queue' && !targetChildSessionId) {
+    if (
+      shouldQueueSessionPrompt({
+        isLive,
+        mode,
+        isPrimaryTarget: !targetChildSessionId,
+      })
+    ) {
       dispatch({
         type: 'QUEUE_PROMPT',
         appSessionId: activeSession.appSessionId,
@@ -630,19 +639,15 @@ export default function PromptInput({
     const appendTranscript = () => {
       dispatch({
         type: 'SESSION_TRANSCRIPT',
-        event: {
-          id: `local-${String(Date.now())}`,
+        event: createLocalUserTranscriptEvent({
           appSessionId: activeSession.appSessionId,
           sourceSessionId: targetChildSessionId ?? 'user',
           role: targetChild?.role ?? 'primary',
-          ts: Date.now(),
-          kind: 'text',
           text,
-          author: 'user',
           skills: activeSkills.map((s) => s.name),
           files: allFiles,
           steered: isLive && mode === 'now',
-        },
+        }),
       });
     };
     const sendCommand = () => {
@@ -651,8 +656,7 @@ export default function PromptInput({
           if (mode === 'now')
             sendToChildNow(activeSession.appSessionId, targetChildSessionId, composed);
           else sendToChild(activeSession.appSessionId, targetChildSessionId, composed);
-        } else if (mode === 'now') sendToSessionNow(activeSession.appSessionId, composed);
-        else sendToSession(activeSession.appSessionId, composed);
+        } else sendSessionPrompt(activeSession.appSessionId, composed, mode);
       } catch (err) {
         console.error('[PromptInput] sendToSession failed:', err);
       }
@@ -779,10 +783,12 @@ export default function PromptInput({
     }
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      const enterMode: SubmitMode =
-        isLive && state.liveEnterBehavior === 'interrupt' ? 'now' : 'queue';
       void handleSubmit(
-        isLive && (e.metaKey || e.ctrlKey) ? oppositeSubmitMode(enterMode) : enterMode,
+        resolveSessionPromptMode({
+          isLive,
+          liveEnterBehavior: state.liveEnterBehavior,
+          alternate: e.metaKey || e.ctrlKey,
+        }),
       );
     }
   };

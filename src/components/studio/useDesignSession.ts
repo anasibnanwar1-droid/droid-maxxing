@@ -14,7 +14,12 @@ import type {
   SessionSummary,
   TranscriptEvent,
 } from '../../types/bridge';
-import { newQueueId } from '../../lib/promptQueue';
+import {
+  createLocalUserTranscriptEvent,
+  newQueueId,
+  shouldQueueSessionPrompt,
+  type SessionPromptMode,
+} from '../../lib/promptQueue';
 import { sessionIsLive } from '../../lib/sessions';
 import {
   createQueuedStudioPrompt,
@@ -28,7 +33,7 @@ interface DesignSessionSendOptions {
   reasoningEffort?: ReasoningEffort;
   displayText?: string;
   browserRefs?: BrowserTranscriptReference[];
-  mode?: 'queue' | 'now';
+  mode?: SessionPromptMode;
 }
 
 /**
@@ -129,18 +134,12 @@ export function useDesignSession(cwd: string, sessionKey?: string) {
     // stream (or not at all if history/seed races).
     dispatch({
       type: 'SESSION_TRANSCRIPT',
-      event: {
-        id: `local-${String(Date.now())}`,
+      event: createLocalUserTranscriptEvent({
         appSessionId,
-        sourceSessionId: 'user',
-        role: 'primary',
-        ts: Date.now(),
-        kind: 'text',
         text,
-        author: 'user',
         browserRefs,
         steered,
-      },
+      }),
     });
   };
 
@@ -162,7 +161,7 @@ export function useDesignSession(cwd: string, sessionKey?: string) {
           reasoningEffort,
         });
       }
-      if (isLive && mode === 'queue') {
+      if (shouldQueueSessionPrompt({ isLive, mode })) {
         dispatch({
           type: 'QUEUE_PROMPT',
           appSessionId: sessionId,

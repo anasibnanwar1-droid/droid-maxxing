@@ -36,7 +36,7 @@ import { browserAddressValue, isSelfBrowserUrl, safeBrowserUrl } from './browser
 import { shouldResetBrowserLoading } from './browserLoading';
 import { useElementSize } from './useElementSize';
 import { isEditTool } from '../../lib/diff';
-import { createLocalDesignTranscriptEvent, newQueueId } from '../../lib/promptQueue';
+import { createLocalUserTranscriptEvent, newQueueId } from '../../lib/promptQueue';
 
 export default function BrowserWorkspace({
   expanded = false,
@@ -321,7 +321,11 @@ export default function BrowserWorkspace({
       const browserRefs = browserTranscriptReferencesFromDesignReferences(refs);
       dispatch({
         type: 'SESSION_TRANSCRIPT',
-        event: createLocalDesignTranscriptEvent(requestedChatId, text, browserRefs),
+        event: createLocalUserTranscriptEvent({
+          appSessionId: requestedChatId,
+          text,
+          browserRefs,
+        }),
       });
     },
     [dispatch, requestedChatId],

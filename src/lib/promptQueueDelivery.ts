@@ -3,7 +3,7 @@ import type { TranscriptEvent } from '../types/bridge';
 import type { SessionSummary } from '../types/bridge';
 import { browserTranscriptReferencesFromDesignReferences } from '../components/browser/browserTranscriptReferences';
 import { composePrompt } from './composePrompt';
-import { createLocalDesignTranscriptEvent } from './promptQueue';
+import { createLocalUserTranscriptEvent } from './promptQueue';
 import { sessionIsLive } from './sessions';
 
 export interface QueueDeliverySnapshot {
@@ -64,32 +64,33 @@ export async function deliverQueuedPrompt(
   if (head.design) {
     port.sendDesign(head.design.browserKey, head.text, head.design.referenceIds);
     port.appendTranscript(
-      createLocalDesignTranscriptEvent(
+      createLocalUserTranscriptEvent({
         appSessionId,
-        head.text,
-        browserTranscriptReferencesFromDesignReferences(head.design.references),
-      ),
+        text: head.text,
+        browserRefs: browserTranscriptReferencesFromDesignReferences(head.design.references),
+      }),
     );
   } else if (head.studio) {
     port.sendSession(appSessionId, head.studio.prompt);
     port.appendTranscript(
-      createLocalDesignTranscriptEvent(appSessionId, head.text, head.studio.browserRefs ?? []),
+      createLocalUserTranscriptEvent({
+        appSessionId,
+        text: head.text,
+        browserRefs: head.studio.browserRefs,
+      }),
     );
   } else {
     const now = port.now?.() ?? Date.now();
     port.sendSession(appSessionId, composePrompt(head.text, head.skills, head.files));
-    port.appendTranscript({
-      id: `local-${String(now)}`,
-      appSessionId,
-      sourceSessionId: 'user',
-      role: 'primary',
-      ts: now,
-      kind: 'text',
-      text: head.text,
-      author: 'user',
-      skills: head.skills,
-      files: head.files,
-    });
+    port.appendTranscript(
+      createLocalUserTranscriptEvent({
+        appSessionId,
+        text: head.text,
+        skills: head.skills,
+        files: head.files,
+        now,
+      }),
+    );
   }
 
   port.removePrompt(appSessionId, head.id);
