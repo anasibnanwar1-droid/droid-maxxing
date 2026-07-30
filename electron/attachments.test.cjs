@@ -10,8 +10,10 @@ const {
   decodeImageDataUrl,
   writeExclusive,
   evictToBudget,
+  withSaveLock,
   MAX_ATTACHMENT_BYTES,
   MAX_DATA_URL_BASE64_CHARS,
+  EVICTION_GRACE_MS,
 } = require('./attachments.cjs');
 
 // 1x1 transparent PNG.
@@ -135,11 +137,13 @@ async function writeAged(dir, name, bytes, ageMs) {
 
 test('evictToBudget removes oldest files until the incoming file fits', async () => {
   const dir = await tempDir();
-  const oldest = await writeAged(dir, 'a.bin', 100, 3000);
-  const middle = await writeAged(dir, 'b.bin', 100, 2000);
-  const newest = await writeAged(dir, 'c.bin', 100, 1000);
+  // Ages beyond the eviction grace: only files too old to back an unsent
+  // prompt are eligible for eviction.
+  const oldest = await writeAged(dir, 'a.bin', 100, 3 * EVICTION_GRACE_MS);
+  const middle = await writeAged(dir, 'b.bin', 100, 2 * EVICTION_GRACE_MS);
+  const newest = await writeAged(dir, 'c.bin', 100, 1.5 * EVICTION_GRACE_MS);
   // 300 stored + 150 incoming vs a 300 budget: two oldest must go (300→100).
-  await evictToBudget(dir, 150, 300);
+  assert.equal(await evictToBudget(dir, 150, 300), true);
   await assert.rejects(() => fsp.stat(oldest), /ENOENT/);
   await assert.rejects(() => fsp.stat(middle), /ENOENT/);
   await assert.doesNotReject(() => fsp.stat(newest));
@@ -148,8 +152,67 @@ test('evictToBudget removes oldest files until the incoming file fits', async ()
 test('evictToBudget leaves the directory alone when the budget already fits', async () => {
   const dir = await tempDir();
   const target = await writeAged(dir, 'a.bin', 100, 1000);
-  await evictToBudget(dir, 150, 300);
+  assert.equal(await evictToBudget(dir, 150, 300), true);
   assert.equal((await fsp.stat(target)).size, 100);
+});
+
+test('evictToBudget preserves files young enough to back an unsent prompt', async () => {
+  const dir = await tempDir();
+  // A queued prompt references its images by path until the agent consumes
+  // the @-mention, so a file inside the grace window must survive eviction
+  // even when the directory is over budget.
+  const young = await writeAged(dir, 'young.bin', 100, 1000);
+  assert.equal(await evictToBudget(dir, 250, 300), false);
+  assert.equal((await fsp.stat(young)).size, 100);
+});
+
+test('save rejects instead of evicting attachments young enough to be in use', async () => {
+  const dir = await tempDir();
+  const young = await writeAged(dir, 'young.bin', 100, 1000);
+  // 100 stored + the incoming image vs a 100 budget: only a young file could
+  // make room, so the save must fail loudly rather than break a prompt.
+  await assert.rejects(() => save(dir, PNG_DATA_URL, { budgetBytes: 100 }), /full/);
+  assert.equal((await fsp.stat(young)).size, 100);
+});
+
+test('save evicts aged attachments to make room for the incoming image', async () => {
+  const dir = await tempDir();
+  const old = await writeAged(dir, 'old.bin', 100, 2 * EVICTION_GRACE_MS);
+  const target = await save(dir, PNG_DATA_URL, { budgetBytes: 100 });
+  await assert.rejects(() => fsp.stat(old), /ENOENT/);
+  assert.equal(path.dirname(target), path.resolve(dir));
+});
+
+test('withSaveLock serializes tasks per directory and survives failures', async () => {
+  const dir = await tempDir();
+  const order = [];
+  let release;
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
+  const first = withSaveLock(dir, async () => {
+    order.push('first:start');
+    await gate;
+    order.push('first:end');
+  });
+  const second = withSaveLock(dir, async () => {
+    order.push('second');
+  });
+  const third = withSaveLock(dir, async () => {
+    throw new Error('boom');
+  });
+  const fourth = withSaveLock(dir, async () => {
+    order.push('fourth');
+  });
+  // Without serialization the later tasks would have run before the gate
+  // released; yield so any such interleaving would be recorded.
+  await new Promise((resolve) => setImmediate(resolve));
+  release();
+  await first;
+  await second;
+  await assert.rejects(() => third, /boom/);
+  await fourth;
+  assert.deepEqual(order, ['first:start', 'first:end', 'second', 'fourth']);
 });
 
 test('writeExclusive retries with a fresh name and never clobbers an existing file', async () => {

@@ -38,6 +38,12 @@ const MAX_ATTACHMENT_AGE_MS = 24 * 60 * 60 * 1000;
 // comes near it — it exists so a runaway renderer cannot fill the disk.
 const MAX_DIR_BYTES = 512 * 1024 * 1024;
 
+// Eviction never touches files this young: an attachment can sit in a queued
+// prompt as an @-mention the agent has not consumed yet, and deleting it
+// would break the reference. A save that only fits by evicting young files is
+// rejected instead, so the budget still caps a runaway renderer.
+const EVICTION_GRACE_MS = 60 * 60 * 1000;
+
 // A generated paste name that already exists (pre-created file or symlink) is
 // never followed or clobbered: the exclusive create fails and we retry with a
 // fresh name this many times before giving up.
@@ -113,16 +119,19 @@ async function sweepStale(dir) {
 }
 
 // Evicts oldest-first until the directory plus the incoming file fits the
-// byte budget. Best-effort like sweepStale: a file that vanishes or cannot be
-// removed mid-eviction is skipped, and the save proceeds regardless. The
-// budget is injectable so tests can drive it with small files.
-async function evictToBudget(dir, incomingBytes, budgetBytes) {
+// byte budget, and reports whether it fit. Files younger than graceMs are
+// never evicted: they may back an @-mention in a queued or in-flight prompt.
+// Best-effort like sweepStale: a file that vanishes or cannot be removed
+// mid-eviction is skipped. The budget and grace are injectable so tests can
+// drive them with small files.
+async function evictToBudget(dir, incomingBytes, budgetBytes, graceMs = EVICTION_GRACE_MS) {
   let entries;
   try {
     entries = await fsp.readdir(dir);
   } catch {
-    return; // nothing to evict from a missing or unreadable directory
+    return true; // nothing to evict from a missing or unreadable directory
   }
+  const now = Date.now();
   const files = [];
   for (const entry of entries) {
     try {
@@ -137,6 +146,7 @@ async function evictToBudget(dir, incomingBytes, budgetBytes) {
   files.sort((a, b) => a.mtimeMs - b.mtimeMs);
   for (const file of files) {
     if (total + incomingBytes <= budgetBytes) break;
+    if (now - file.mtimeMs < graceMs) continue; // possibly referenced by a prompt
     try {
       await fsp.rm(file.target, { force: true });
       total -= file.size;
@@ -144,6 +154,7 @@ async function evictToBudget(dir, incomingBytes, budgetBytes) {
       // Already gone or unremovable; leave the count as-is.
     }
   }
+  return total + incomingBytes <= budgetBytes;
 }
 
 // Writes buffer under an exclusive create ('wx'), so a pre-existing file or
@@ -161,16 +172,49 @@ async function writeExclusive(dir, makeName, buffer) {
   }
 }
 
-async function save(dir, dataUrl) {
+// Saves against the same directory run sweep → evict → write strictly in
+// turn. Two concurrent saves would otherwise each evict against pre-write
+// state and then both write, overshooting the budget by every interleaved
+// file. A failed save must not jam the queue behind it.
+const saveTails = new Map();
+
+function withSaveLock(dir, task) {
+  const previous = saveTails.get(dir) ?? Promise.resolve();
+  const next = (async () => {
+    try {
+      await previous;
+    } catch {
+      // The previous save failed; this one still runs.
+    }
+    return task();
+  })();
+  saveTails.set(dir, next);
+  const cleanup = () => {
+    if (saveTails.get(dir) === next) saveTails.delete(dir);
+  };
+  next.then(cleanup, cleanup);
+  return next;
+}
+
+async function save(dir, dataUrl, opts = {}) {
+  const budgetBytes = opts.budgetBytes ?? MAX_DIR_BYTES;
+  const graceMs = opts.graceMs ?? EVICTION_GRACE_MS;
   const { ext, buffer } = decodeImageDataUrl(dataUrl);
   await ensurePrivateDir(dir);
-  await sweepStale(dir);
-  await evictToBudget(dir, buffer.length, MAX_DIR_BYTES);
-  return writeExclusive(
-    dir,
-    () => `paste-${Date.now()}-${crypto.randomBytes(4).toString('hex')}.${ext}`,
-    buffer,
-  );
+  return withSaveLock(dir, async () => {
+    await sweepStale(dir);
+    const fits = await evictToBudget(dir, buffer.length, budgetBytes, graceMs);
+    if (!fits) {
+      throw new Error(
+        'Attachments directory is full: recent attachments are preserved for unsent prompts',
+      );
+    }
+    return writeExclusive(
+      dir,
+      () => `paste-${Date.now()}-${crypto.randomBytes(4).toString('hex')}.${ext}`,
+      buffer,
+    );
+  });
 }
 
 // Unlinks a previously saved attachment. Paths escaping the attachments
@@ -192,7 +236,9 @@ module.exports = {
   decodeImageDataUrl,
   writeExclusive,
   evictToBudget,
+  withSaveLock,
   MAX_ATTACHMENT_BYTES,
   MAX_DATA_URL_BASE64_CHARS,
   MAX_DIR_BYTES,
+  EVICTION_GRACE_MS,
 };
