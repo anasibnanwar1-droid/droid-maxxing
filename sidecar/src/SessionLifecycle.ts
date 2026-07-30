@@ -14,6 +14,9 @@ import type { SessionRegistry } from './SessionRegistry.js';
 import type { PrimaryAutomaticCompactionTarget, SessionCompaction } from './SessionCompaction.js';
 import type { LiveOperationTarget, SessionContext } from './SessionContext.js';
 import type { ChildSessions } from './ChildSessions.js';
+import { PrimaryPromptQueue, type PrimaryQueuedPrompt } from './PrimaryPromptQueue.js';
+import { PrimaryPromptDelivery, type PrimaryTurnSettlement } from './PrimaryPromptDelivery.js';
+import { AUTO_COMPACTION_UNAVAILABLE_MESSAGE } from './PrimaryTurnPreflight.js';
 import {
   buildCreatedSessionSummary,
   buildCreateRuntimeOptions,
@@ -40,10 +43,6 @@ interface CloseOperation {
   deferred: DeferredClose;
   created: boolean;
 }
-interface TurnSettlement {
-  promise: Promise<void>;
-  resolve: () => void;
-}
 export interface StartedLocalMcpResources {
   servers: LocalMcpResource[];
   configs: McpServerConfig[];
@@ -51,9 +50,9 @@ export interface StartedLocalMcpResources {
 interface LiveTurnState {
   streaming: boolean;
   autoCompacting: boolean;
-  pendingSends: string[];
+  promptQueue: PrimaryPromptQueue;
   turnAbortController?: AbortController;
-  turnSettlement?: TurnSettlement;
+  turnSettlement?: PrimaryTurnSettlement;
   interrupting?: boolean; // Marks user Stop so the resulting stream abort settles quietly.
 }
 type SessionCloseMode = 'discard-pending' | 'preserve-pending';
@@ -84,6 +83,7 @@ export interface SessionLifecycleDependencies {
     SessionCompaction,
     'resolveLimit' | 'arm' | 'subscribePrimary' | 'afterTurn' | 'cancel'
   >;
+  compactBeforeSend: (appSessionId: string) => Promise<void>;
   isShutdownStarted: () => boolean;
   childSessions: Pick<ChildSessions, 'attachParent' | 'closeParent'>;
   applyPendingSettingsToSummary: (summary: SessionSummary) => SessionSummary;
@@ -106,8 +106,23 @@ export interface SessionLifecycleDependencies {
 export class SessionLifecycle {
   private readonly deferredCloses = new WeakMap<LiveSession, DeferredClose>();
   private readonly inFlightResumes = new Map<string, Promise<boolean>>();
+  private readonly promptDelivery: PrimaryPromptDelivery;
 
-  constructor(private readonly dependencies: SessionLifecycleDependencies) {}
+  constructor(private readonly dependencies: SessionLifecycleDependencies) {
+    this.promptDelivery = new PrimaryPromptDelivery({
+      registry: dependencies.registry,
+      runPrimaryTurn: dependencies.runPrimaryTurn,
+      compactBeforeSend: dependencies.compactBeforeSend,
+      afterAutomaticCompactionTurn: (liveSession) => {
+        dependencies.compaction.afterTurn(this.primaryAutomaticCompactionTarget(liveSession));
+      },
+      redeliverQueuedPrompts: (appSessionId, prompts) =>
+        this.redeliverQueuedSends(appSessionId, prompts),
+      isShutdownStarted: dependencies.isShutdownStarted,
+      emitStatus: dependencies.emitStatus,
+      emitError: dependencies.emitError,
+    });
+  }
   async create(command: SessionCreateCommand): Promise<void> {
     const d = this.dependencies;
     const appCwd = command.cwd ?? '';
@@ -188,7 +203,10 @@ export class SessionLifecycle {
       d.registry.register(liveSession);
       d.childSessions.attachParent(appSessionId);
       d.emit({ type: 'session.created', clientRef: command.clientRef, session: summary });
-      this.driveInBackground(appSessionId, command.goal);
+      if (!autoCompactionArmed) {
+        d.emitStatus(appSessionId, AUTO_COMPACTION_UNAVAILABLE_MESSAGE);
+      }
+      this.promptDelivery.startInBackground(liveSession, command.goal);
     } catch (error) {
       await this.cleanupFailedOpen(pendingMcpServers, pendingSession, pendingLiveSession);
       if (!isOpenAdmissionClosed(error)) {
@@ -272,16 +290,15 @@ export class SessionLifecycle {
         exposed: resumed.exposedCompaction,
       });
       this.requireOpenAdmission();
-      if (
-        await d.compaction.arm(
-          {
-            appSessionId,
-            session,
-            isCurrent: () => !d.isShutdownStarted() && pendingSession === session,
-          },
-          limit,
-        )
-      ) {
+      const autoCompactionArmed = await d.compaction.arm(
+        {
+          appSessionId,
+          session,
+          isCurrent: () => !d.isShutdownStarted() && pendingSession === session,
+        },
+        limit,
+      );
+      if (autoCompactionArmed) {
         summary.compactionTokenLimit = limit;
       }
       this.requireOpenAdmission();
@@ -297,6 +314,9 @@ export class SessionLifecycle {
         session: projectedSummary,
       });
       d.emit({ type: 'session.updated', session: projectedSummary });
+      if (!autoCompactionArmed) {
+        d.emitStatus(appSessionId, AUTO_COMPACTION_UNAVAILABLE_MESSAGE);
+      }
       if (
         projectedSummary.sessionPurpose === 'mission-control' &&
         projectedSummary.features.length > 0
@@ -323,59 +343,20 @@ export class SessionLifecycle {
   async send(requestedAppSessionId: string, text: string): Promise<void> {
     const liveSession = await this.prepareToSend(requestedAppSessionId);
     if (!liveSession) return;
-    if (
-      liveSession.streaming ||
-      liveSession.compacting ||
-      liveSession.autoCompacting ||
-      liveSession.interrupting
-    ) {
-      liveSession.pendingSends.push(text);
-      this.updateQueuedSends(liveSession);
-      return;
-    }
-    await this.drive(liveSession.summary.appSessionId, text);
+    await this.promptDelivery.send(liveSession, text);
   }
+
   async sendNow(requestedAppSessionId: string, text: string): Promise<void> {
     const liveSession = await this.prepareToSend(requestedAppSessionId);
     if (!liveSession) return;
-    if (
-      !liveSession.streaming &&
-      !liveSession.compacting &&
-      !liveSession.autoCompacting &&
-      !liveSession.interrupting
-    ) {
-      await this.drive(liveSession.summary.appSessionId, text);
-      return;
-    }
-    if (liveSession.compacting || liveSession.autoCompacting || liveSession.interrupting) {
-      liveSession.pendingSends.unshift(text);
-      this.updateQueuedSends(liveSession);
-      return;
-    }
-    const appSessionId = liveSession.summary.appSessionId;
-    const providerSession = liveSession.session;
-    this.dependencies.emitStatus(appSessionId, 'Steering at the next safe boundary...');
-    try {
-      await providerSession.send(text);
-    } catch (error) {
-      if (
-        this.dependencies.registry.getLive(appSessionId) !== liveSession ||
-        this.dependencies.isShutdownStarted()
-      )
-        return;
-      this.dependencies.emitError({
-        code: 'session.send_now_failed',
-        appSessionId,
-        message: `Could not steer the active session: ${errMsg(error)}`,
-      });
-    }
+    await this.promptDelivery.sendNow(liveSession, text);
   }
 
   async interrupt(requestedAppSessionId: string): Promise<void> {
     const liveSession = this.dependencies.registry.getLive(requestedAppSessionId);
     if (!liveSession) return;
     const appSessionId = liveSession.summary.appSessionId;
-    liveSession.pendingSends = [];
+    this.promptDelivery.discard(liveSession);
     if (liveSession.compacting) {
       this.dependencies.registry.updateSummary(appSessionId, { queuedSends: 0 });
       return;
@@ -419,17 +400,13 @@ export class SessionLifecycle {
     const liveSession = this.dependencies.registry.getLive(appSessionId);
     if (!liveSession) {
       if (previousLiveSession && previousLiveSession.closeMode !== 'discard-pending') {
-        const queued = previousLiveSession.pendingSends.splice(0);
+        const queued = this.promptDelivery.drain(previousLiveSession);
         await this.redeliverQueuedSends(appSessionId, queued);
       }
       return;
     }
-    if (liveSession.closeMode) return;
-    if (liveSession.streaming || liveSession.compacting || liveSession.autoCompacting) return;
-    const next = liveSession.pendingSends.shift();
-    if (next === undefined && previousLiveSession) return;
-    this.updateQueuedSends(liveSession);
-    if (next !== undefined) await this.drive(liveSession.summary.appSessionId, next);
+    if (previousLiveSession && liveSession.promptQueue.size === 0) return;
+    await this.promptDelivery.settle(liveSession);
   }
 
   async close(appSessionId: string, mode: SessionCloseMode = 'discard-pending'): Promise<void> {
@@ -443,7 +420,7 @@ export class SessionLifecycle {
   private beginClose(liveSession: LiveSession, mode: SessionCloseMode): CloseOperation {
     if (mode === 'discard-pending') {
       liveSession.closeMode = mode;
-      liveSession.pendingSends = [];
+      this.promptDelivery.discard(liveSession);
     } else {
       liveSession.closeMode ??= mode;
     }
@@ -624,58 +601,6 @@ export class SessionLifecycle {
     }
   }
 
-  private async drive(appSessionId: string, prompt: string): Promise<void> {
-    const d = this.dependencies;
-    const liveSession = d.registry.getLive(appSessionId);
-    if (!liveSession || liveSession.closeMode || d.isShutdownStarted()) return;
-    const stableAppSessionId = liveSession.summary.appSessionId;
-    const turnAbortController = new AbortController();
-    const turnSettlement = createTurnSettlement();
-    liveSession.turnAbortController = turnAbortController;
-    liveSession.turnSettlement = turnSettlement;
-    try {
-      liveSession.streaming = true;
-      d.registry.updateSummary(stableAppSessionId, {
-        phase: liveSession.summary.sessionPurpose === 'mission-control' ? 'planning' : 'running',
-        streaming: true,
-        queuedSends: liveSession.pendingSends.length,
-      });
-      await d.runPrimaryTurn(liveSession, prompt, turnAbortController.signal);
-    } finally {
-      try {
-        if (liveSession.turnAbortController === turnAbortController) {
-          delete liveSession.turnAbortController;
-          delete liveSession.turnSettlement;
-        }
-        liveSession.streaming = false;
-        if (d.isShutdownStarted() || this.shouldDiscardPendingSends(liveSession)) {
-          liveSession.pendingSends = [];
-        } else if (!d.registry.getLive(stableAppSessionId)) {
-          const queued = liveSession.pendingSends.splice(0);
-          if (queued.length > 0) void this.redeliverQueuedSends(stableAppSessionId, queued);
-        } else if (liveSession.autoCompacting) {
-          d.compaction.afterTurn(this.primaryAutomaticCompactionTarget(liveSession));
-          this.updateQueuedSends(liveSession);
-        } else if (liveSession.interrupting) {
-          this.updateQueuedSends(liveSession);
-        } else {
-          const next = liveSession.pendingSends.shift();
-          this.updateQueuedSends(liveSession);
-          if (next !== undefined) this.driveInBackground(stableAppSessionId, next);
-        }
-      } finally {
-        turnSettlement.resolve();
-      }
-    }
-  }
-
-  private driveInBackground(appSessionId: string, prompt: string): void {
-    void this.drive(appSessionId, prompt).catch((error: unknown) => {
-      if (!this.dependencies.isShutdownStarted())
-        this.dependencies.emitError({ appSessionId, message: errMsg(error) });
-    });
-  }
-
   private settleAfterCompactionInBackground(appSessionId: string): void {
     void this.settleAfterCompaction(appSessionId).catch((error: unknown) => {
       if (!this.dependencies.isShutdownStarted())
@@ -683,22 +608,15 @@ export class SessionLifecycle {
     });
   }
 
-  private updateQueuedSends(liveSession: LiveSession): void {
-    this.dependencies.registry.updateSummary(liveSession.summary.appSessionId, {
-      streaming: liveSession.streaming,
-      queuedSends: liveSession.pendingSends.length,
-    });
-  }
-
-  private shouldDiscardPendingSends(liveSession: LiveSession): boolean {
-    return liveSession.closeMode === 'discard-pending';
-  }
-
-  private async redeliverQueuedSends(appSessionId: string, queued: string[]): Promise<void> {
-    for (const text of queued) {
+  private async redeliverQueuedSends(
+    appSessionId: string,
+    queued: PrimaryQueuedPrompt[],
+  ): Promise<void> {
+    for (const prompt of queued) {
       if (this.dependencies.isShutdownStarted()) return;
       try {
-        await this.send(appSessionId, text);
+        if (prompt.priority === 'steer') await this.sendNow(appSessionId, prompt.text);
+        else await this.send(appSessionId, prompt.text);
       } catch (error) {
         this.dependencies.emitError({
           appSessionId,
@@ -709,13 +627,6 @@ export class SessionLifecycle {
   }
 }
 
-function createTurnSettlement(): TurnSettlement {
-  let settle = (): void => undefined;
-  const promise = new Promise<void>((resolve) => {
-    settle = resolve;
-  });
-  return { promise, resolve: settle };
-}
 function createLiveSession(
   summary: SessionSummary,
   session: FactorySession,
@@ -725,7 +636,7 @@ function createLiveSession(
     summary,
     session,
     streaming: false,
-    pendingSends: [],
+    promptQueue: new PrimaryPromptQueue(),
     mcpServers: mcp.servers,
     mcpConfigs: mcp.configs,
     autoCompacting: false,

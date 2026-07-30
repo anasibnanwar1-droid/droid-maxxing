@@ -1,6 +1,7 @@
 import { ReasoningEffort } from '@factory/droid-sdk';
 
 import type { FactorySession } from '../DroidRuntime.js';
+import { PrimaryPromptQueue } from '../PrimaryPromptQueue.js';
 import type { LiveSession } from '../SessionLifecycle.js';
 
 export function createCompactionTestLiveSession(
@@ -34,7 +35,7 @@ export function createCompactionTestLiveSession(
     session,
     streaming: false,
     autoCompacting: false,
-    pendingSends: [],
+    promptQueue: new PrimaryPromptQueue(),
     mcpServers: [],
     mcpConfigs: [],
   };

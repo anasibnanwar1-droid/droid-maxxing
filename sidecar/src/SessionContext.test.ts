@@ -10,6 +10,7 @@ import {
   type LiveOperationTarget,
 } from './SessionContext.js';
 import type { LiveSession } from './SessionLifecycle.js';
+import { PrimaryPromptQueue } from './PrimaryPromptQueue.js';
 import { SessionRegistry } from './SessionRegistry.js';
 import {
   FakeFactoryRuntime,
@@ -68,7 +69,7 @@ function registerLive(
     session,
     streaming: false,
     autoCompacting: false,
-    pendingSends: [],
+    promptQueue: new PrimaryPromptQueue(),
     mcpServers: [],
     mcpConfigs: [],
   };

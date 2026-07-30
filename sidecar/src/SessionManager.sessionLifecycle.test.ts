@@ -546,6 +546,99 @@ test('[L8] Stop state matrix', { concurrency: false }, async () => {
 });
 
 test(
+  'failed inactivity interruption holds queued prompts until Stop clears them',
+  { concurrency: false },
+  async () => {
+    let expireInactivity = (): void => {
+      throw new Error('The inactivity deadline was not scheduled.');
+    };
+    const h = createSessionManagerTestContext({
+      providerStreamInactivity: {
+        timeoutMs: 120_000,
+        scheduleTimer: (callback) => {
+          expireInactivity = callback;
+          return () => undefined;
+        },
+      },
+    });
+
+    try {
+      await h.create({
+        sessionPurpose: 'chat',
+        clientRef: 'inactive-interrupt-failure',
+        title: 'Inactive interrupt failure',
+        goal: 'initial',
+        interactionMode: 'auto',
+        autonomy: 'low',
+      });
+      await h.waitForIdle();
+
+      const stalledTurn = h.provider.deferNextStream('provider-1');
+      const failingInterrupt = h.provider.deferNextInterrupt('provider-1');
+      const sending = h.handle({
+        type: 'session.send',
+        appSessionId: 'provider-1',
+        text: 'stalled',
+      });
+      await h.provider.waitForPrompts('provider-1', 2);
+      await h.handle({
+        type: 'session.send',
+        appSessionId: 'provider-1',
+        text: 'keep queued',
+      });
+
+      expireInactivity();
+      failingInterrupt.reject(new Error('provider interrupt failed'));
+      await sending;
+      await h.waitForIdle();
+
+      assert.deepEqual(h.provider.session('provider-1').prompts, ['initial', 'stalled']);
+      assert.equal(
+        h.events
+          .filter((event) => event.type === 'session.updated')
+          .findLast((event) => event.session.appSessionId === 'provider-1')?.session.queuedSends,
+        1,
+      );
+      assert.equal(
+        h.events.some(
+          (event) => event.type === 'error' && event.message.includes('provider interrupt failed'),
+        ),
+        true,
+      );
+
+      await h.handle({ type: 'session.interrupt', appSessionId: 'provider-1' });
+      assert.equal(
+        h.events
+          .filter((event) => event.type === 'session.updated')
+          .findLast((event) => event.session.appSessionId === 'provider-1')?.session.queuedSends,
+        0,
+      );
+      assert.equal(
+        h.events
+          .filter((event) => event.type === 'session.updated')
+          .findLast((event) => event.session.appSessionId === 'provider-1')?.session.phase,
+        'paused',
+      );
+      assert.deepEqual(h.provider.session('provider-1').prompts, ['initial', 'stalled']);
+
+      await h.handle({
+        type: 'session.send',
+        appSessionId: 'provider-1',
+        text: 'fresh after recovery',
+      });
+      assert.deepEqual(h.provider.session('provider-1').prompts, [
+        'initial',
+        'stalled',
+        'fresh after recovery',
+      ]);
+      stalledTurn.resolve();
+    } finally {
+      await h.dispose();
+    }
+  },
+);
+
+test(
   '[L9] Interaction-mode mutation reports provider rejection',
   { concurrency: false },
   async () => {
@@ -560,6 +653,7 @@ test(
         interactionMode: 'auto',
         autonomy: 'low',
       });
+      await h.waitForIdle();
       await h.handle({
         type: 'session.updateSettings',
         appSessionId: 'provider-1',
@@ -618,6 +712,7 @@ test('[L10] Autonomy mutation reports provider rejection', { concurrency: false 
       interactionMode: 'auto',
       autonomy: 'off',
     });
+    await h.waitForIdle();
     await h.handle({ type: 'session.updateSettings', appSessionId: 'provider-1', autonomy: 'low' });
     assert.equal(
       h.provider

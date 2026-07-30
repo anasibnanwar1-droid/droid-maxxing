@@ -427,11 +427,20 @@ export class DesignManager {
         }
         const viewport = presetFor(mode);
         if (opened && viewport) {
-          await browsers.resizeViewport({ missionId, viewport, viewportMode: mode });
+          await browsers.resizeViewport({
+            appSessionId: missionId,
+            viewport,
+            viewportMode: mode,
+          });
         }
       },
       async open(url: string): Promise<void> {
-        await browsers.open({ missionId, url, viewport: presetFor(mode), viewportMode: mode });
+        await browsers.open({
+          appSessionId: missionId,
+          url,
+          viewport: presetFor(mode),
+          viewportMode: mode,
+        });
         opened = true;
       },
       audit: () => browsers.audit(missionId),

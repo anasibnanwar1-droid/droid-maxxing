@@ -60,6 +60,11 @@ import {
   type LiveSession,
   type StartedLocalMcpResources,
 } from './SessionLifecycle.js';
+import {
+  guardProviderStream,
+  ProviderStreamInactivityError,
+  type ProviderStreamInactivityConfig,
+} from './providerStreamInactivity.js';
 import { ChildSessions } from './ChildSessions.js';
 import type { ChildSettings } from './ChildSessionState.js';
 import { MissionControlPolicy } from './MissionControlPolicy.js';
@@ -116,6 +121,7 @@ export interface SessionManagerOptions {
   assetUrlFor?: (path: string) => string;
   dependencies?: SessionManagerDependencies;
   initialModels?: ModelInfo[];
+  providerStreamInactivity?: ProviderStreamInactivityConfig;
 }
 
 export interface AgentSettingPatch {
@@ -175,11 +181,13 @@ export class SessionManager {
   private readonly createLocalMcpResource: SessionManagerDependencies['createLocalMcpResource'];
   private readonly factoryDefaultsOverride: SessionManagerDependencies['getFactoryDefaults'];
   private readonly nextChildSessionId: () => string;
+  private readonly providerStreamInactivity?: ProviderStreamInactivityConfig;
 
   constructor(
     private readonly emit: Emit,
     options: SessionManagerOptions = {},
   ) {
+    this.providerStreamInactivity = options.providerStreamInactivity;
     if (options.dependencies) {
       this.runtime = options.dependencies.runtime;
       this.history = options.dependencies.history;
@@ -324,6 +332,7 @@ export class SessionManager {
       makePermissionHandler: (ref) => this.interactions.makePermissionHandler(ref),
       makeAskUserHandler: (ref) => this.interactions.makeAskUserHandler(ref),
       compaction: this.compaction,
+      compactBeforeSend: (appSessionId) => this.compactSession(appSessionId),
       isShutdownStarted: () => this.shutdownPromise !== undefined,
       childSessions: this.childSessions,
       applyPendingSettingsToSummary: (summary) => this.applyPendingSettingsToSummary(summary),
@@ -928,10 +937,22 @@ export class SessionManager {
         isDesignStudioSession(liveSession.summary) || isDesignPrompt(prompt),
       );
       if (!this.isCurrentPrimarySession(liveSession)) return;
-      const stream = liveSession.session.stream(prompt, {
-        includePartialMessages: true,
+      const stream = guardProviderStream(
+        (streamAbortSignal) =>
+          liveSession.session.stream(prompt, {
+            includePartialMessages: true,
+            abortSignal: streamAbortSignal,
+          }),
         abortSignal,
-      });
+        {
+          ...this.providerStreamInactivity,
+          settleInactivity: async () => {
+            liveSession.interrupting = true;
+            await liveSession.session.interrupt();
+            liveSession.interrupting = false;
+          },
+        },
+      );
       for await (const ev of stream) {
         if (!this.isCurrentPrimarySession(liveSession)) break;
         this.eventFlow.applyStreamEvent(appSessionId, appSessionId, 'primary', ev);
@@ -944,7 +965,13 @@ export class SessionManager {
         // settle quietly without surfacing an error.
         this.registry.updateSummary(appSessionId, { phase: 'paused' });
       } else {
-        this.emitError({ appSessionId, message: errMsg(err) });
+        this.emitError({
+          appSessionId,
+          message: errMsg(err),
+          ...(err instanceof ProviderStreamInactivityError
+            ? { code: 'session.stream_inactive', recoverable: true }
+            : {}),
+        });
         this.registry.updateSummary(appSessionId, { phase: 'failed' });
       }
     } finally {
