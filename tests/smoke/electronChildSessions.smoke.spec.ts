@@ -325,15 +325,15 @@ test('[E2] cleanup force-stops a fixture that ignores stdin closure', async () =
     { stdio: ['pipe', 'pipe', 'pipe'] },
   );
   const resources: SmokeResources = { smokeHome, fixtureProcess };
-  await new Promise<void>((resolve, reject) => {
-    fixtureProcess.once('error', reject);
-    fixtureProcess.once('exit', (code) =>
-      reject(new Error(`Hanging fixture exited before ready (${String(code)}).`)),
-    );
-    fixtureProcess.stdout.once('data', () => resolve());
-  });
 
   try {
+    await new Promise<void>((resolve, reject) => {
+      fixtureProcess.once('error', reject);
+      fixtureProcess.once('exit', (code) =>
+        reject(new Error(`Hanging fixture exited before ready (${String(code)}).`)),
+      );
+      fixtureProcess.stdout.once('data', () => resolve());
+    });
     await cleanupSmokeResources(resources, 25);
   } finally {
     if (fixtureProcess.exitCode === null && fixtureProcess.signalCode === null)
