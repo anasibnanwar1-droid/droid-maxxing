@@ -1,17 +1,17 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
-import { Laptop, Monitor, Ruler, Smartphone, Tablet } from 'lucide-react';
 import type { BrowserViewportMode } from '../../types/bridge';
 import { normalizeUrl } from '../browser/browserViewport';
 import { isSelfBrowserUrl } from '../browser/browserUrlSafety';
+import { pushEscapeLayer } from '../environment/usePopover';
 import { useStudioCanvas } from './StudioCanvasContext';
 
-const VIEWPORTS: { mode: BrowserViewportMode; icon: typeof Monitor; label: string }[] = [
-  { mode: 'desktop', icon: Monitor, label: 'Desktop' },
-  { mode: 'laptop', icon: Laptop, label: 'Laptop' },
-  { mode: 'tablet', icon: Tablet, label: 'Tablet' },
-  { mode: 'mobile', icon: Smartphone, label: 'Mobile' },
-  { mode: 'custom', icon: Ruler, label: 'Custom' },
+const VIEWPORTS: { mode: BrowserViewportMode; label: string }[] = [
+  { mode: 'desktop', label: 'Desktop' },
+  { mode: 'laptop', label: 'Laptop' },
+  { mode: 'tablet', label: 'Tablet' },
+  { mode: 'mobile', label: 'Mobile' },
+  { mode: 'custom', label: 'Custom' },
 ];
 
 const QUICK_PORTS = ['localhost:5173', 'localhost:3000', 'localhost:8080'];
@@ -26,11 +26,17 @@ export default function AddFrameDialog({ onClose }: { onClose: () => void }) {
   const [h, setH] = useState(720);
   const [error, setError] = useState<string | null>(null);
 
+  useEffect(() => {
+    return pushEscapeLayer(onClose);
+  }, [onClose]);
+
   const submit = () => {
     const normalized = normalizeUrl(url || QUICK_PORTS[0]);
     const appOrigin = typeof window === 'undefined' ? undefined : window.location.origin;
     if (isSelfBrowserUrl(normalized, appOrigin)) {
-      setError("That's DROIDEX's own address — embedding it would nest the app in itself and spike your CPU. Use your project's dev-server port.");
+      setError(
+        "That's DROIDEX's own address — embedding it would nest the app in itself and spike your CPU. Use your project's dev-server port.",
+      );
       return;
     }
     const custom = mode === 'custom';
@@ -54,14 +60,25 @@ export default function AddFrameDialog({ onClose }: { onClose: () => void }) {
       onClick={onClose}
     >
       <motion.div
+        data-studio-dismissable-layer
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="add-live-page-title"
         initial={{ opacity: 0, scale: 0.97, y: 8 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
         transition={{ duration: 0.16, ease: [0.16, 1, 0.3, 1] }}
-        onClick={(e) => { e.stopPropagation(); }}
-        className="w-[420px] overflow-hidden rounded-2xl border border-droid-border bg-droid-elevated shadow-2xl"
+        onClick={(e) => {
+          e.stopPropagation();
+        }}
+        className="studio-popover w-[440px] overflow-hidden"
       >
         <div className="px-5 pb-1 pt-5">
-          <h2 className="text-[15px] font-medium tracking-tight text-droid-text">Add a live frame</h2>
+          <h2
+            id="add-live-page-title"
+            className="text-[15px] font-medium tracking-tight text-droid-text"
+          >
+            Add a live page
+          </h2>
           <p className="mt-1 text-[12px] text-droid-text-muted">
             Point it at a route on your running dev server. It renders live and hot-reloads.
           </p>
@@ -77,19 +94,23 @@ export default function AddFrameDialog({ onClose }: { onClose: () => void }) {
                 setUrl(e.target.value);
                 if (error) setError(null);
               }}
-              onKeyDown={(e) => e.key === 'Enter' && submit()}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') submit();
+              }}
               placeholder="localhost:5173/dashboard"
-              className={`w-full rounded-lg border bg-droid-surface px-3 py-2 font-mono text-[12.5px] text-droid-text placeholder:text-droid-text-muted focus:outline-none ${
-                error ? 'border-[#c0563a]/60' : 'border-droid-border focus:border-[#ee6018]/50'
+              className={`w-full rounded-lg border bg-droid-surface px-3 py-2 text-[12.5px] text-droid-text placeholder:text-droid-text-muted focus:outline-none ${
+                error ? 'border-droid-red/60' : 'border-droid-border focus:border-droid-accent/50'
               }`}
             />
-            {error && <div className="mt-1.5 text-[11px] leading-snug text-[#e0806a]">{error}</div>}
+            {error && <div className="mt-1.5 text-[11px] leading-snug text-droid-red">{error}</div>}
             <div className="mt-2 flex gap-1.5">
               {QUICK_PORTS.map((p) => (
                 <button
                   key={p}
-                  onClick={() => { setUrl(p); }}
-                  className="rounded-md border border-droid-border px-2 py-1 font-mono text-[10.5px] text-droid-text-muted transition-colors hover:border-droid-border hover:text-droid-text-secondary"
+                  onClick={() => {
+                    setUrl(p);
+                  }}
+                  className="rounded-md border border-droid-border px-2 py-1 text-[10.5px] text-droid-text-muted transition-colors hover:border-droid-border-hover hover:bg-droid-elevated hover:text-droid-text"
                 >
                   {p}
                 </button>
@@ -101,27 +122,33 @@ export default function AddFrameDialog({ onClose }: { onClose: () => void }) {
             <Label>Name (optional)</Label>
             <input
               value={name}
-              onChange={(e) => { setName(e.target.value); }}
-              onKeyDown={(e) => e.key === 'Enter' && submit()}
+              onChange={(e) => {
+                setName(e.target.value);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') submit();
+              }}
               placeholder="Dashboard"
-              className="w-full rounded-lg border border-droid-border bg-droid-surface px-3 py-2 text-[12.5px] text-droid-text placeholder:text-droid-text-muted focus:border-[#ee6018]/50 focus:outline-none"
+              className="w-full rounded-lg border border-droid-border bg-droid-bg/60 px-3 py-2 text-[12.5px] text-droid-text placeholder:text-droid-text-muted focus:border-droid-accent/50 focus:outline-none"
             />
           </div>
 
           <div>
             <Label>Viewport</Label>
-            <div className="flex gap-1.5">
+            <div className="flex gap-1">
               {VIEWPORTS.map((v) => (
                 <button
                   key={v.mode}
-                  onClick={() => { setMode(v.mode); }}
-                  className={`flex flex-1 flex-col items-center gap-1 rounded-lg border py-2 text-[11px] transition-colors ${
+                  onClick={() => {
+                    setMode(v.mode);
+                  }}
+                  aria-pressed={mode === v.mode}
+                  className={`flex-1 rounded-lg border px-2 py-2 text-[11px] transition-colors ${
                     mode === v.mode
-                      ? 'border-[#ee6018]/50 bg-[#ee6018]/10 text-droid-text'
-                      : 'border-droid-border text-droid-text-muted hover:border-droid-border hover:text-droid-text-secondary'
+                      ? 'border-droid-accent/40 bg-droid-accent/10 text-droid-text'
+                      : 'border-droid-border text-droid-text-muted hover:border-droid-border-hover hover:text-droid-text'
                   }`}
                 >
-                  <v.icon className="h-4 w-4" />
                   {v.label}
                 </button>
               ))}
@@ -131,7 +158,7 @@ export default function AddFrameDialog({ onClose }: { onClose: () => void }) {
                 <SizeInput label="W" value={w} onChange={setW} />
                 <span className="text-droid-text-muted">×</span>
                 <SizeInput label="H" value={h} onChange={setH} />
-                <span className="font-mono text-[10.5px] text-droid-text-muted">px</span>
+                <span className="text-[10.5px] text-droid-text-muted">px</span>
               </div>
             )}
           </div>
@@ -146,9 +173,9 @@ export default function AddFrameDialog({ onClose }: { onClose: () => void }) {
           </button>
           <button
             onClick={submit}
-            className="rounded-lg bg-[#ee6018] px-3.5 py-1.5 text-[12.5px] font-medium text-black transition-colors hover:bg-[#ff6a1e]"
+            className="rounded-lg bg-droid-accent px-3.5 py-1.5 text-[12.5px] font-medium text-droid-bg transition-opacity hover:opacity-90 active:translate-y-px"
           >
-            Add frame
+            Add page
           </button>
         </div>
       </motion.div>
@@ -158,9 +185,7 @@ export default function AddFrameDialog({ onClose }: { onClose: () => void }) {
 
 function Label({ children }: { children: React.ReactNode }) {
   return (
-    <div className="pb-1.5 text-[10.5px] font-semibold uppercase tracking-[0.14em] text-droid-text-muted">
-      {children}
-    </div>
+    <div className="pb-1.5 text-[11.5px] font-medium text-droid-text-secondary">{children}</div>
   );
 }
 
@@ -174,13 +199,15 @@ function SizeInput({
   onChange: (n: number) => void;
 }) {
   return (
-    <div className="flex flex-1 items-center gap-1.5 rounded-lg border border-droid-border bg-droid-surface px-2.5 py-1.5 focus-within:border-[#ee6018]/50">
-      <span className="font-mono text-[10.5px] text-droid-text-muted">{label}</span>
+    <div className="flex flex-1 items-center gap-1.5 rounded-lg border border-droid-border bg-droid-bg/60 px-2.5 py-1.5 focus-within:border-droid-accent/50">
+      <span className="text-[10.5px] text-droid-text-muted">{label}</span>
       <input
         type="number"
         value={value}
-        onChange={(e) => onChange(Number(e.target.value))}
-        className="w-full bg-transparent font-mono text-[12.5px] text-droid-text focus:outline-none"
+        onChange={(e) => {
+          onChange(Number(e.target.value));
+        }}
+        className="w-full bg-transparent text-[12.5px] text-droid-text focus:outline-none"
       />
     </div>
   );

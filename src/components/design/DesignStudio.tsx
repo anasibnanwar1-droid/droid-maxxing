@@ -1,11 +1,12 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { useStore } from '../../hooks/useStore';
 import { useDesignStore } from '../../hooks/useDesignStore';
 import { prepareDesignWorkspace } from '../../lib/commands';
+import { pickDirectory } from '../../lib/desktop';
+import { pushEscapeLayer } from '../environment/usePopover';
 import { StudioCanvasProvider } from '../studio/StudioCanvasContext';
 import StudioShell from '../studio/StudioShell';
-import StudioMark from '../studio/StudioMark';
 
 /**
  * DROIDEX Studio — a full-screen, agent-native design surface: an infinite live
@@ -19,28 +20,40 @@ import StudioMark from '../studio/StudioMark';
 export default function DesignStudio() {
   const { state, dispatch } = useStore();
   const { design, designDispatch } = useDesignStore();
-  const activeMission = state.activeMissionId ? state.missions[state.activeMissionId] : null;
+  const activeSession = state.activeAppSessionId ? state.sessions[state.activeAppSessionId] : null;
   // Live project path (the user's open workspace / active chat).
-  const liveCwd = activeMission?.cwd ?? state.workspaceCwds[0] ?? '';
+  const firstWorkspaceCwd = state.workspaceCwds[0] ?? '';
+  const preferredLiveCwd = activeSession?.cwd ?? firstWorkspaceCwd;
+  const [selectedLiveCwd, setSelectedLiveCwd] = useState('');
+  const liveCwd = selectedLiveCwd || preferredLiveCwd;
+  const repositoryCwds = [preferredLiveCwd, ...state.workspaceCwds].filter(
+    (candidate, index, all) => candidate !== '' && all.indexOf(candidate) === index,
+  );
   // Prefer the isolated worktree once prepared; fall back to live until ready.
   const workspace = liveCwd ? design.workspaces[liveCwd] : undefined;
-  const cwd = workspace?.path || liveCwd;
+  const cwd = workspace?.path ?? liveCwd;
 
   useEffect(() => {
-    if (!design.studioOpen) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') designDispatch({ type: 'CLOSE_STUDIO' });
-    };
-    window.addEventListener('keydown', onKey);
-    return () => {
-      window.removeEventListener('keydown', onKey);
-    };
+    if (!design.studioOpen) {
+      setSelectedLiveCwd('');
+      return;
+    }
+    return pushEscapeLayer(() => {
+      designDispatch({ type: 'CLOSE_STUDIO' });
+    });
   }, [design.studioOpen, designDispatch]);
+
+  const addRepository = async () => {
+    const directory = await pickDirectory();
+    if (!directory) return;
+    dispatch({ type: 'ADD_WORKSPACE', cwd: directory });
+    setSelectedLiveCwd(directory);
+  };
 
   // Prepare the isolated design workspace when the studio opens for a project.
   useEffect(() => {
     if (!design.studioOpen || !liveCwd) return;
-    if (design.workspaces[liveCwd]) return;
+    if (liveCwd in design.workspaces) return;
     prepareDesignWorkspace(liveCwd);
   }, [design.studioOpen, liveCwd, design.workspaces]);
 
@@ -63,10 +76,13 @@ export default function DesignStudio() {
           className="fixed inset-0 z-[60] bg-droid-bg"
         >
           {cwd ? (
-            <StudioCanvasProvider>
+            <StudioCanvasProvider key={liveCwd}>
               <StudioShell
                 cwd={cwd}
                 sessionKey={liveCwd}
+                repositoryCwds={repositoryCwds}
+                onSelectRepository={setSelectedLiveCwd}
+                onAddRepository={addRepository}
                 onClose={() => {
                   designDispatch({ type: 'CLOSE_STUDIO' });
                 }}
@@ -90,9 +106,7 @@ function EmptyState({ onClose }: { onClose: () => void }) {
     <div className="flex h-full w-full flex-col items-center justify-center">
       <div data-electron-drag-region className="absolute inset-x-0 top-0 h-11" />
       <div className="max-w-sm text-center">
-        <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl border border-droid-border bg-gradient-to-b from-white/[0.06] to-transparent">
-          <StudioMark className="h-6 w-6 text-droid-text-secondary" />
-        </div>
+        <div className="mb-3 text-[11.5px] font-medium text-droid-text-muted">DROIDEX Studio</div>
         <div className="text-[15px] font-medium text-droid-text">No project open</div>
         <div className="mt-1.5 text-[12.5px] leading-relaxed text-droid-text-muted">
           Open a chat or mission in a workspace to start designing on its live canvas.

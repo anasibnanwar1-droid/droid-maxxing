@@ -9,9 +9,9 @@ const EASE = [0.16, 1, 0.3, 1] as const;
  * DNA palette so the motion contract is something you feel, not read.
  */
 export default function MotionPreview({ colors }: { colors?: Record<string, string> }) {
-  const accent = pick(colors, ['accent', 'brand', 'primary'], '#ee6018');
-  const surface = pick(colors, ['surface', 'elevated', 'card', 'panel'], '#161616');
-  const text = pick(colors, ['text', 'foreground', 'ink'], '#ededed');
+  const accent = pick(colors, ['accent', 'brand', 'primary'], 'var(--droid-accent)');
+  const surface = pick(colors, ['surface', 'elevated', 'card', 'panel'], 'var(--droid-surface)');
+  const text = pick(colors, ['text', 'foreground', 'ink'], 'var(--droid-text)');
   const [on, setOn] = useState(true);
   const [replay, setReplay] = useState(0);
 
@@ -42,7 +42,9 @@ export default function MotionPreview({ colors }: { colors?: Record<string, stri
 
       <Cell label="Toggle">
         <button
-          onClick={() => setOn((v) => !v)}
+          onClick={() => {
+            setOn((v) => !v);
+          }}
           className="flex h-6 w-11 items-center rounded-full p-0.5 transition-colors"
           style={{ backgroundColor: on ? accent : 'rgba(255,255,255,0.12)' }}
         >
@@ -68,7 +70,9 @@ export default function MotionPreview({ colors }: { colors?: Record<string, stri
             />
           ))}
           <button
-            onClick={() => setReplay((r) => r + 1)}
+            onClick={() => {
+              setReplay((r) => r + 1);
+            }}
             className="ml-1 text-[10px] text-droid-text-muted transition-colors hover:text-droid-text-secondary"
           >
             replay
@@ -81,15 +85,19 @@ export default function MotionPreview({ colors }: { colors?: Record<string, stri
 
 function Cell({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div className="flex h-[76px] flex-col items-center justify-center gap-2 rounded-xl border border-droid-border bg-white/[0.015]">
+    <div className="flex h-[76px] flex-col items-center justify-center gap-2 rounded-xl border border-droid-border bg-droid-elevated/20">
       {children}
-      <span className="font-mono text-[9px] uppercase tracking-wider text-droid-text-muted">{label}</span>
+      <span className="text-[9px] uppercase tracking-wider text-droid-text-muted">{label}</span>
     </div>
   );
 }
 
 /** First palette value whose role name matches one of `keys`. */
-function pick(colors: Record<string, string> | undefined, keys: string[], fallback: string): string {
+function pick(
+  colors: Record<string, string> | undefined,
+  keys: string[],
+  fallback: string,
+): string {
   if (!colors) return fallback;
   for (const [name, value] of Object.entries(colors)) {
     if (keys.some((k) => name.toLowerCase().includes(k))) return value;

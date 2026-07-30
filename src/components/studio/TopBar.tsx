@@ -1,26 +1,30 @@
-import { Laptop, Monitor, Smartphone, Tablet, X } from 'lucide-react';
+import { PanelLeft } from 'lucide-react';
 import type { BrowserViewportMode } from '../../types/bridge';
 import { useStudioCanvas } from './StudioCanvasContext';
+import RepositorySelector from './RepositorySelector';
 import StudioSettingsMenu from './StudioSettingsMenu';
-import ThreadHistoryMenu from './ThreadHistoryMenu';
 
-const VIEWPORTS: { mode: BrowserViewportMode; icon: typeof Monitor; label: string }[] = [
-  { mode: 'desktop', icon: Monitor, label: 'Desktop' },
-  { mode: 'laptop', icon: Laptop, label: 'Laptop' },
-  { mode: 'tablet', icon: Tablet, label: 'Tablet' },
-  { mode: 'mobile', icon: Smartphone, label: 'Mobile' },
+const VIEWPORTS: { mode: BrowserViewportMode; label: string }[] = [
+  { mode: 'desktop', label: 'Desktop' },
+  { mode: 'laptop', label: 'Laptop' },
+  { mode: 'tablet', label: 'Tablet' },
+  { mode: 'mobile', label: 'Mobile' },
 ];
 
 export default function TopBar({
-  projectName,
-  cwd,
-  sessionKey,
-  onClose,
+  repositoryCwds,
+  selectedRepositoryCwd,
+  onSelectRepository,
+  onAddRepository,
+  isAgentPanelOpen,
+  onToggleAgentPanel,
 }: {
-  projectName: string;
-  cwd: string;
-  sessionKey?: string;
-  onClose: () => void;
+  repositoryCwds: string[];
+  selectedRepositoryCwd: string;
+  onSelectRepository: (cwd: string) => void;
+  onAddRepository: () => Promise<void>;
+  isAgentPanelOpen: boolean;
+  onToggleAgentPanel: () => void;
 }) {
   const { studio, studioDispatch } = useStudioCanvas();
   const selectedIds = studio.selectedFrameIds;
@@ -39,55 +43,56 @@ export default function TopBar({
   return (
     <div
       data-electron-drag-region
-      className="flex h-11 shrink-0 items-center justify-between border-b border-droid-border px-3"
+      className="flex h-[52px] shrink-0 items-center justify-between border-b border-droid-border bg-droid-bg/95 px-3"
     >
-      <div className="flex items-center gap-2.5">
-        <div className="flex items-center gap-1.5 pl-1">
-          <span className="text-[13px] font-semibold tracking-[0.14em] text-droid-text">
-            DROIDEX
-          </span>
-          <span className="rounded bg-[#ee6018]/15 px-1 py-px font-mono text-[9px] font-semibold uppercase tracking-wider text-[#ee6018]">
-            studio
-          </span>
-        </div>
-        <div className="h-4 w-px bg-white/10" />
-        <div
-          className="max-w-[220px] truncate text-[12.5px] text-droid-text-secondary"
-          title={cwd}
+      <div className="flex min-w-0 items-center gap-2">
+        <button
+          onClick={onToggleAgentPanel}
+          title={`${isAgentPanelOpen ? 'Hide' : 'Show'} agent panel (Cmd+\\)`}
+          aria-pressed={isAgentPanelOpen}
+          className="no-drag flex h-8 w-8 items-center justify-center rounded-lg text-droid-text-muted transition-colors hover:bg-droid-elevated hover:text-droid-text"
         >
-          {projectName}
-        </div>
+          <PanelLeft className="h-4 w-4" strokeWidth={1.75} />
+        </button>
+        <div className="h-4 w-px bg-droid-border" />
+        <div className="shrink-0 text-[12.5px] font-medium text-droid-text">Canvas</div>
+        <RepositorySelector
+          repositoryCwds={repositoryCwds}
+          selectedCwd={selectedRepositoryCwd}
+          onSelect={onSelectRepository}
+          onAdd={onAddRepository}
+          onOpen={() => {
+            studioDispatch({ type: 'SET_INTERACTING', id: null });
+          }}
+        />
+        {selectedFrame && (
+          <div className="min-w-0 truncate text-[12px] text-droid-text-muted">
+            / {selectedFrame.name}
+          </div>
+        )}
       </div>
 
       <div className="flex items-center gap-2">
-        <div className="no-drag flex items-center gap-0.5 rounded-lg border border-droid-border bg-white/[0.03] p-0.5">
+        <div className="no-drag flex items-center gap-0.5 rounded-lg bg-droid-surface p-0.5">
           {VIEWPORTS.map((v) => (
             <button
               key={v.mode}
               title={selectedFrame ? `${v.label} · this frame` : `${v.label} · new frames`}
+              aria-pressed={activeMode === v.mode}
               onClick={() => {
                 setMode(v.mode);
               }}
-              className={`flex items-center gap-1.5 rounded-md px-2 py-1 text-[11.5px] transition-colors ${
+              className={`rounded-md px-2.5 py-1 text-[11px] transition-colors ${
                 activeMode === v.mode
-                  ? 'bg-white/[0.09] text-droid-text'
-                  : 'text-droid-text-muted hover:text-droid-text-secondary'
+                  ? 'bg-droid-active text-droid-text'
+                  : 'text-droid-text-muted hover:text-droid-text'
               }`}
             >
-              <v.icon className="h-3.5 w-3.5" />
-              <span className="hidden lg:inline">{v.label}</span>
+              {v.label}
             </button>
           ))}
         </div>
-        <ThreadHistoryMenu cwd={cwd} sessionKey={sessionKey ?? cwd} />
         <StudioSettingsMenu />
-        <button
-          onClick={onClose}
-          title="Close studio (Esc)"
-          className="no-drag flex h-7 w-7 items-center justify-center rounded-md text-droid-text-muted transition-colors hover:bg-white/10 hover:text-droid-text"
-        >
-          <X className="h-4 w-4" />
-        </button>
       </div>
     </div>
   );

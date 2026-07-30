@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { BookOpen, Check, MessagesSquare, RefreshCw, Save, ScanLine, Trash2 } from 'lucide-react';
+import { Check, RefreshCw, Trash2 } from 'lucide-react';
 import { useDesignStore } from '../../hooks/useDesignStore';
 import {
   applyDnaLibrary,
@@ -123,7 +123,7 @@ export default function DnaShelf({ cwd, sessionKey }: { cwd: string; sessionKey?
               <button
                 onClick={scan}
                 title="Re-scan the codebase"
-                className="flex h-6 w-6 items-center justify-center rounded-md text-droid-text-muted transition-colors hover:bg-white/[0.06] hover:text-droid-text-secondary"
+                className="flex h-6 w-6 items-center justify-center rounded-md text-droid-text-muted transition-colors hover:bg-droid-active/70 hover:text-droid-text-secondary"
               >
                 <RefreshCw className={`h-3 w-3 ${scanning ? 'animate-spin' : ''}`} />
               </button>
@@ -149,12 +149,12 @@ export default function DnaShelf({ cwd, sessionKey }: { cwd: string; sessionKey?
           />
         )}
         {hasCurrent ? (
-          <div className="rounded-xl border border-droid-border bg-white/[0.02] p-3">
+          <div className="rounded-xl border border-droid-border bg-droid-elevated/25 p-3">
             <div className="flex items-center justify-between">
               <span className="text-[12.5px] font-medium text-droid-text">Design DNA</span>
-              <div className="flex items-center gap-2 font-mono text-[10px]">
-                <span className="text-[#6a8a6a]">design</span>
-                <span className={motionExists ? 'text-[#6a8a6a]' : 'text-droid-text-muted'}>
+              <div className="flex items-center gap-2 text-[10px]">
+                <span className="text-droid-green">design</span>
+                <span className={motionExists ? 'text-droid-green' : 'text-droid-text-muted'}>
                   {motionExists ? 'motion' : 'no motion'}
                 </span>
               </div>
@@ -173,16 +173,14 @@ export default function DnaShelf({ cwd, sessionKey }: { cwd: string; sessionKey?
                   onClick={() => {
                     renderDesignPreview(cwd);
                   }}
-                  className="inline-flex items-center gap-1.5 rounded-lg bg-[#ee6018] px-3 py-1.5 text-[12px] font-medium text-black transition-colors hover:bg-[#ff6a1e]"
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-droid-accent px-3 py-1.5 text-[12px] font-medium text-droid-bg transition-opacity hover:opacity-90"
                 >
-                  <BookOpen className="h-3.5 w-3.5" />
                   Generate brand book
                 </button>
                 <button
                   onClick={openFinalize}
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-droid-border px-3 py-1.5 text-[12px] text-droid-text-secondary transition-colors hover:border-[#ee6018]/50 hover:text-droid-text"
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-droid-border px-3 py-1.5 text-[12px] text-droid-text-secondary transition-colors hover:border-droid-accent/50 hover:text-droid-text"
                 >
-                  <Save className="h-3.5 w-3.5" />
                   Keep this direction
                 </button>
               </div>
@@ -204,7 +202,7 @@ export default function DnaShelf({ cwd, sessionKey }: { cwd: string; sessionKey?
                 />
                 <button
                   onClick={commitFinalize}
-                  className="rounded-md bg-[#ee6018] px-2.5 py-1 text-[11.5px] font-medium text-black"
+                  className="rounded-md bg-droid-accent px-2.5 py-1 text-[11.5px] font-medium text-droid-bg"
                 >
                   Save
                 </button>
@@ -287,9 +285,8 @@ function IntakeCta({
   onInterview: () => void;
 }) {
   return (
-    <div className="rounded-xl border border-dashed border-droid-border bg-white/[0.01] p-4 text-center">
-      <MessagesSquare className="mx-auto h-5 w-5 text-droid-text-muted" />
-      <div className="mt-2 text-[12.5px] font-medium text-droid-text">Give this project a DNA</div>
+    <div className="rounded-xl bg-droid-elevated/25 p-4 text-center">
+      <div className="text-[12.5px] font-medium text-droid-text">Give this project a DNA</div>
       <div className="mt-1 text-[11.5px] leading-relaxed text-droid-text-muted">
         Answer a short design interview and the agent authors your tokens, motion, and a real brand
         guide — or scan the codebase, or start from a system below.
@@ -297,9 +294,8 @@ function IntakeCta({
       <div className="mt-3 flex items-center justify-center gap-2">
         <button
           onClick={onInterview}
-          className="inline-flex items-center gap-1.5 rounded-lg bg-[#ee6018] px-3.5 py-1.5 text-[12px] font-medium text-black transition-colors hover:bg-[#ff6a1e]"
+          className="inline-flex items-center gap-1.5 rounded-lg bg-droid-accent px-3.5 py-1.5 text-[12px] font-medium text-droid-bg transition-opacity hover:opacity-90"
         >
-          <MessagesSquare className="h-3.5 w-3.5" />
           Start the interview
         </button>
         <button
@@ -307,7 +303,6 @@ function IntakeCta({
           disabled={scanning}
           className="inline-flex items-center gap-1.5 rounded-lg border border-droid-border px-3 py-1.5 text-[12px] text-droid-text-secondary transition-colors hover:border-droid-border hover:text-droid-text disabled:opacity-60"
         >
-          <ScanLine className="h-3.5 w-3.5" />
           {scanning ? 'Scanning…' : 'Scan'}
         </button>
       </div>
@@ -317,7 +312,7 @@ function IntakeCta({
 
 function LibraryCard({ lib, onApply }: { lib: DnaLibrarySummary; onApply: () => void }) {
   return (
-    <div className="group rounded-xl border border-droid-border bg-white/[0.02] p-3 transition-colors hover:border-droid-border">
+    <div className="group rounded-xl border border-droid-border bg-droid-elevated/25 p-3 transition-colors hover:border-droid-border">
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <div className="text-[12.5px] font-medium text-droid-text">{lib.name}</div>
@@ -325,7 +320,7 @@ function LibraryCard({ lib, onApply }: { lib: DnaLibrarySummary; onApply: () => 
         </div>
         <button
           onClick={onApply}
-          className="flex shrink-0 items-center gap-1 rounded-md border border-droid-border px-2 py-1 text-[11px] text-droid-text-secondary opacity-0 transition-all group-hover:opacity-100 hover:border-[#ee6018]/50 hover:text-droid-text"
+          className="flex shrink-0 items-center gap-1 rounded-md border border-droid-border px-2 py-1 text-[11px] text-droid-text-secondary opacity-0 transition-all group-hover:opacity-100 hover:border-droid-accent/50 hover:text-droid-text"
         >
           <Check className="h-3 w-3" />
           Apply
@@ -365,8 +360,8 @@ function SavedDnaCard({
       }}
       className={`group rounded-xl border p-3 transition-colors ${
         selected
-          ? 'border-[#ee6018]/50 bg-[#ee6018]/[0.08]'
-          : 'cursor-pointer border-droid-border bg-white/[0.02] hover:border-[#ee6018]/30'
+          ? 'border-droid-accent/50 bg-droid-accent/[0.08]'
+          : 'cursor-pointer border-droid-border bg-droid-elevated/25 hover:border-droid-accent/30'
       }`}
     >
       <div className="flex items-start justify-between gap-2">
@@ -374,7 +369,7 @@ function SavedDnaCard({
           <div className="flex items-center gap-1.5">
             <span className="text-[12.5px] font-medium text-droid-text">{entry.name}</span>
             {selected && (
-              <span className="rounded-full bg-[#ee6018]/20 px-1.5 py-0.5 text-[9.5px] font-medium uppercase tracking-wide text-[#f0a060]">
+              <span className="rounded-full bg-droid-accent/20 px-1.5 py-0.5 text-[9.5px] font-medium uppercase tracking-wide text-droid-accent">
                 Active
               </span>
             )}
@@ -396,7 +391,7 @@ function SavedDnaCard({
               onDelete();
             }}
             title="Remove saved direction"
-            className="flex h-6 w-6 items-center justify-center rounded-md text-droid-text-muted opacity-0 transition-all group-hover:opacity-100 hover:bg-white/[0.06] hover:text-[#e0806a]"
+            className="flex h-6 w-6 items-center justify-center rounded-md text-droid-text-muted opacity-0 transition-all group-hover:opacity-100 hover:bg-droid-active/70 hover:text-droid-red"
           >
             <Trash2 className="h-3 w-3" />
           </button>

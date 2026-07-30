@@ -2,17 +2,18 @@ import { useEffect } from 'react';
 import { useStore } from '../../hooks/useStore';
 import { useDesignStore } from '../../hooks/useDesignStore';
 import {
-  createMission,
-  loadMissionHistory,
+  createSession,
+  loadSessionHistory,
   newClientRef,
-  sendToMission,
+  sendToSession,
   updateAgentSettings,
 } from '../../lib/commands';
-import type { MissionSummary, ReasoningEffort, TranscriptEvent } from '../../types/bridge';
+import type { ReasoningEffort, SessionSummary, TranscriptEvent } from '../../types/bridge';
+import { pendingStudioClientRef, studioSessionTitle } from './studioSession';
 
 /**
  * The project's design session — a normal chat (interactionMode 'auto', never
- * the mission orchestrator). Sessions are keyed by `sessionKey` (the live project
+ * Mission Control). Sessions are keyed by `sessionKey` (the live project
  * path) even when the agent process runs in an isolated worktree at `cwd`.
  *
  * Empty string in design.sessions[key] means the user explicitly started a new
@@ -28,17 +29,37 @@ export function useDesignSession(cwd: string, sessionKey?: string) {
   const sessionId = intentionalNew ? null : mapped || null;
   const hasMapping = key in design.sessions || cwd in design.sessions;
   const transcript = sessionId ? (state.transcripts[sessionId] ?? []) : [];
-  const mission = sessionId ? state.missions[sessionId] : null;
+  const session = sessionId ? state.sessions[sessionId] : null;
+  const pendingClientRef = sessionId
+    ? undefined
+    : pendingStudioClientRef(design.expected, state.pendingCompose, [key, cwd]);
+  const pendingCompose = pendingClientRef ? state.pendingCompose[pendingClientRef] : undefined;
+  const isCreating = pendingCompose !== undefined;
+  const visibleTranscript: TranscriptEvent[] =
+    pendingCompose && pendingClientRef
+      ? [
+          {
+            id: `pending-${pendingClientRef}`,
+            appSessionId: `pending-${pendingClientRef}`,
+            sourceSessionId: 'user',
+            role: 'primary',
+            ts: Date.now(),
+            kind: 'text',
+            text: pendingCompose.text,
+            author: 'user',
+          },
+        ]
+      : transcript;
 
   // Auto-adopt only when we have never set a session for this project (first open).
   // After New thread (sessions[key] === '') or an explicit switch, leave it alone.
   useEffect(() => {
-    if (!cwd || hasMapping) return;
-    const activeId = state.activeMissionId;
+    if (!cwd || hasMapping || isCreating) return;
+    const activeId = state.activeAppSessionId;
     if (!activeId) return;
-    const active = state.missions[activeId] as MissionSummary | undefined;
+    const active = state.sessions[activeId] as SessionSummary | undefined;
     if (!active) return;
-    if (active.kind === 'mission_orchestrator') return;
+    if (active.sessionPurpose === 'mission-control') return;
     const matches =
       active.cwd === cwd ||
       active.cwd === key ||
@@ -48,15 +69,16 @@ export function useDesignSession(cwd: string, sessionKey?: string) {
           (active.cwd === ws.liveCwd || active.cwd === ws.path),
       );
     if (!matches) return;
-    designDispatch({ type: 'ADOPT_SESSION', cwd: key, missionId: activeId });
+    designDispatch({ type: 'ADOPT_SESSION', cwd: key, appSessionId: activeId });
   }, [
     cwd,
     key,
     hasMapping,
-    state.activeMissionId,
-    state.missions,
+    state.activeAppSessionId,
+    state.sessions,
     design.workspaces,
     designDispatch,
+    isCreating,
   ]);
 
   useEffect(() => {
@@ -64,20 +86,20 @@ export function useDesignSession(cwd: string, sessionKey?: string) {
     if (state.historyLoaded[sessionId]) return;
     const existing = state.transcripts[sessionId] as TranscriptEvent[] | undefined;
     if ((existing?.length ?? 0) > 0) return;
-    loadMissionHistory(sessionId);
+    loadSessionHistory(sessionId);
   }, [sessionId, state.historyLoaded, state.transcripts]);
 
-  const echoUser = (missionId: string, text: string) => {
+  const echoUser = (appSessionId: string, text: string) => {
     // Optimistic local bubble so the prompt is visible immediately — same pattern
     // as PromptInput. Without this, design sends only appear after the sidecar
     // stream (or not at all if history/seed races).
     dispatch({
-      type: 'MISSION_TRANSCRIPT',
+      type: 'SESSION_TRANSCRIPT',
       event: {
         id: `local-${String(Date.now())}`,
-        missionId,
-        agentSessionId: 'user',
-        role: 'orchestrator',
+        appSessionId,
+        sourceSessionId: 'user',
+        role: 'primary',
         ts: Date.now(),
         kind: 'text',
         text,
@@ -86,42 +108,49 @@ export function useDesignSession(cwd: string, sessionKey?: string) {
     });
   };
 
-  const send = (text: string, modelId?: string, reasoningEffort?: ReasoningEffort) => {
+  const send = (
+    text: string,
+    modelId?: string,
+    reasoningEffort?: ReasoningEffort,
+    displayText = text,
+  ) => {
     if (!text.trim()) return;
+    if (isCreating) return;
     if (sessionId) {
       // Only push settings that actually changed — pickModel already applied
       // live picks, so re-sending stale composer values here would race it.
       const changed =
-        (modelId !== undefined && modelId !== mission?.modelId) ||
-        (reasoningEffort !== undefined && reasoningEffort !== mission?.reasoningEffort);
+        (modelId !== undefined && modelId !== session?.modelId) ||
+        (reasoningEffort !== undefined && reasoningEffort !== session?.reasoningEffort);
       if (changed) {
         updateAgentSettings({
-          missionId: sessionId,
-          agent: 'orchestrator',
+          appSessionId: sessionId,
+          agent: 'primary',
           modelId: modelId ?? null,
           reasoningEffort,
         });
       }
-      echoUser(sessionId, text);
-      sendToMission(sessionId, text);
+      echoUser(sessionId, displayText);
+      sendToSession(sessionId, text);
       return;
     }
     const clientRef = newClientRef();
-    // Seed the first user bubble via pendingCompose so MISSION_CREATED shows it
+    // Seed the first user bubble via pendingCompose so SESSION_CREATED shows it
     // even before the stream starts (mirrors normal chat create path).
     dispatch({
       type: 'SET_PENDING_COMPOSE',
       clientRef,
-      text,
+      text: displayText,
       skills: [],
       files: [],
     });
     designDispatch({ type: 'EXPECT_SESSION', clientRef, cwd: key });
-    createMission({
+    createSession({
       clientRef,
       cwd,
-      title: 'Design',
+      title: studioSessionTitle(displayText),
       goal: text,
+      sessionPurpose: 'design',
       interactionMode: 'auto',
       // High autonomy so design turns don't stop for tool/MCP permission prompts.
       autonomy: 'high',
@@ -133,15 +162,19 @@ export function useDesignSession(cwd: string, sessionKey?: string) {
   const setModel = (modelId?: string, reasoningEffort?: ReasoningEffort) => {
     if (!sessionId) return;
     // Optimistic dispatch first (same as the main-chat picker): the label
-    // updates instantly and missionSettingOverrides protects the pick from
-    // stale mission.updated/list rebroadcasts.
-    dispatch({ type: 'MISSION_SET_MODEL', missionId: sessionId, modelId });
+    // updates instantly and sessionSettingOverrides protects the pick from
+    // stale session.updated/list rebroadcasts.
+    dispatch({ type: 'SESSION_SET_MODEL', appSessionId: sessionId, modelId });
     if (reasoningEffort !== undefined) {
-      dispatch({ type: 'MISSION_SET_REASONING', missionId: sessionId, reasoning: reasoningEffort });
+      dispatch({
+        type: 'SESSION_SET_REASONING',
+        appSessionId: sessionId,
+        reasoning: reasoningEffort,
+      });
     }
     updateAgentSettings({
-      missionId: sessionId,
-      agent: 'orchestrator',
+      appSessionId: sessionId,
+      agent: 'primary',
       modelId: modelId ?? null,
       ...(reasoningEffort !== undefined ? { reasoningEffort } : {}),
     });
@@ -149,10 +182,11 @@ export function useDesignSession(cwd: string, sessionKey?: string) {
 
   return {
     sessionId,
-    transcript,
+    transcript: visibleTranscript,
+    isCreating,
     send,
     setModel,
-    modelId: mission?.modelId,
-    reasoningEffort: mission?.reasoningEffort,
+    modelId: session?.modelId,
+    reasoningEffort: session?.reasoningEffort,
   };
 }

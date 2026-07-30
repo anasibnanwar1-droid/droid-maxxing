@@ -3,7 +3,6 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { ArrowLeft, ArrowRight, X } from 'lucide-react';
 import { INTERVIEW_QUESTIONS } from './interviewQuestions';
 import InterviewQuestionCard from './InterviewQuestionCard';
-import StudioMark from './StudioMark';
 import { answered, emptyAnswer, type Answer, type DesignBrief } from './designBrief';
 
 /**
@@ -47,15 +46,14 @@ export default function DnaInterview({
         className="flex h-11 shrink-0 items-center justify-between px-4"
       >
         <div className="flex items-center gap-2">
-          <StudioMark className="h-3.5 w-3.5 text-droid-text-secondary" />
           <span className="text-[12.5px] font-medium text-droid-text">Design intake</span>
-          <span className="font-mono text-[11px] text-droid-text-muted">
+          <span className="text-[11px] tabular-nums text-droid-text-muted">
             {step + 1}/{total}
           </span>
         </div>
         <button
           onClick={onClose}
-          className="no-drag flex h-7 w-7 items-center justify-center rounded-md text-droid-text-muted transition-colors hover:bg-white/10 hover:text-droid-text"
+          className="no-drag flex h-7 w-7 items-center justify-center rounded-md text-droid-text-muted transition-colors hover:bg-droid-elevated hover:text-droid-text"
         >
           <X className="h-4 w-4" />
         </button>
@@ -66,15 +64,9 @@ export default function DnaInterview({
         {INTERVIEW_QUESTIONS.map((question, i) => (
           <div
             key={question.id}
-            className="h-0.5 flex-1 rounded-full transition-colors duration-300"
-            style={{
-              backgroundColor:
-                i < step
-                  ? '#ee6018'
-                  : i === step
-                    ? 'rgba(238,96,24,0.5)'
-                    : 'rgba(255,255,255,0.08)',
-            }}
+            className={`h-0.5 flex-1 rounded-full transition-colors duration-300 ${
+              i < step ? 'bg-droid-accent' : i === step ? 'bg-droid-accent/45' : 'bg-droid-border'
+            }`}
           />
         ))}
       </div>
@@ -117,10 +109,10 @@ export default function DnaInterview({
                   onClick={() => {
                     setDirections(n);
                   }}
-                  className={`h-7 w-7 rounded-md font-mono text-[11.5px] transition-colors ${
+                  className={`h-7 w-7 rounded-md text-[11.5px] transition-colors ${
                     directions === n
-                      ? 'bg-[#ee6018]/20 text-[#f0a060]'
-                      : 'text-droid-text-muted hover:bg-white/[0.06] hover:text-droid-text-secondary'
+                      ? 'bg-droid-accent/20 text-droid-accent'
+                      : 'text-droid-text-muted hover:bg-droid-active/70 hover:text-droid-text-secondary'
                   }`}
                 >
                   {n}
@@ -141,7 +133,7 @@ export default function DnaInterview({
           )}
           <button
             onClick={next}
-            className="flex items-center gap-1.5 rounded-lg bg-[#ee6018] px-4 py-1.5 text-[12.5px] font-medium text-black transition-colors hover:bg-[#ff6a1e]"
+            className="flex items-center gap-1.5 rounded-lg bg-droid-accent px-4 py-1.5 text-[12.5px] font-medium text-droid-bg transition-opacity hover:opacity-90"
           >
             {last ? `Create my system · ${String(answeredCount)} answered` : 'Next'}
             {!last && <ArrowRight className="h-3.5 w-3.5" />}

@@ -1,6 +1,17 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef } from 'react';
 import { motion } from 'framer-motion';
 import { Loader2, ShieldAlert, TriangleAlert } from 'lucide-react';
+import { isDesktop } from '../../lib/desktop';
+import {
+  attachNativeBrowser,
+  closeNativeBrowser,
+  detachNativeBrowser,
+  onNativeBrowserLoadFailed,
+  onNativeBrowserLoaded,
+  reloadNativeBrowser,
+  setNativeBrowserBounds,
+  type NativeBrowserBounds,
+} from '../../lib/nativeBrowser';
 import { isSelfBrowserUrl } from '../browser/browserUrlSafety';
 import { useStudioCanvas, sizeOf, type StudioFrame } from './StudioCanvasContext';
 
@@ -22,8 +33,13 @@ export default function StudioFrameBody({
   const size = sizeOf(frame);
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [reloadKey, setReloadKey] = useState(0);
+  const previousReloadRevision = useRef(frame.reloadRevision);
+  const nativeNavigationRef = useRef(false);
+  const frameUrlRef = useRef(frame.url);
+  frameUrlRef.current = frame.url;
   const hasUrl = !!frame.url && frame.url !== 'about:blank';
+  const native = isDesktop();
+  const nativeBrowserSessionId = `studio-frame:${frame.id}`;
   const appOrigin = typeof window === 'undefined' ? undefined : window.location.origin;
   // A frame pointed at the app's own origin would recursively embed the whole app
   // (studio included) — nested dev-server/HMR clients pile up until the machine
@@ -37,6 +53,10 @@ export default function StudioFrameBody({
   // to failed.
   useEffect(() => {
     if (!hasUrl || isSelf) return;
+    if (nativeNavigationRef.current) {
+      nativeNavigationRef.current = false;
+      return;
+    }
     studioDispatch({ type: 'UPDATE_FRAME', id: frame.id, patch: { status: 'loading' } });
     timerRef.current = setTimeout(() => {
       studioDispatch({
@@ -48,7 +68,112 @@ export default function StudioFrameBody({
     return () => {
       if (timerRef.current) clearTimeout(timerRef.current);
     };
-  }, [frame.id, frame.url, hasUrl, isSelf, reloadKey, studioDispatch]);
+  }, [frame.id, frame.url, frame.reloadRevision, hasUrl, isSelf, studioDispatch]);
+
+  useEffect(() => {
+    if (!native) return;
+    let disposed = false;
+    const unlisteners: (() => void)[] = [];
+    const track = (promise: Promise<() => void>) => {
+      void promise.then((unlisten) => {
+        if (disposed) unlisten();
+        else unlisteners.push(unlisten);
+      });
+    };
+    track(
+      onNativeBrowserLoaded((event) => {
+        if (event.browserSessionId !== nativeBrowserSessionId) return;
+        nativeNavigationRef.current = event.url !== frameUrlRef.current;
+        studioDispatch({
+          type: 'UPDATE_FRAME',
+          id: frame.id,
+          patch: { url: event.url, status: 'ready', error: undefined },
+        });
+      }),
+    );
+    track(
+      onNativeBrowserLoadFailed((event) => {
+        if (event.browserSessionId !== nativeBrowserSessionId) return;
+        studioDispatch({
+          type: 'UPDATE_FRAME',
+          id: frame.id,
+          patch: {
+            url: event.url,
+            status: 'failed',
+            error: event.error ?? 'The page could not be opened.',
+          },
+        });
+      }),
+    );
+    return () => {
+      disposed = true;
+      unlisteners.forEach((unlisten) => {
+        unlisten();
+      });
+    };
+  }, [frame.id, native, nativeBrowserSessionId, studioDispatch]);
+
+  useLayoutEffect(() => {
+    if (!native || !interacting || !hasUrl || isSelf) return;
+    const bounds = nativeBounds(iframeRef.current);
+    if (!bounds) return;
+    void attachNativeBrowser(nativeBrowserSessionId, bounds, frameUrlRef.current).catch(
+      (error: unknown) => {
+        studioDispatch({
+          type: 'UPDATE_FRAME',
+          id: frame.id,
+          patch: {
+            status: 'failed',
+            error: error instanceof Error ? error.message : String(error),
+          },
+        });
+      },
+    );
+    return () => {
+      void detachNativeBrowser(nativeBrowserSessionId);
+    };
+  }, [frame.id, hasUrl, interacting, isSelf, native, nativeBrowserSessionId, studioDispatch]);
+
+  useEffect(() => {
+    if (!native || !interacting) return;
+    let animationFrame = 0;
+    let previous: NativeBrowserBounds | null = null;
+    const syncBounds = () => {
+      const bounds = nativeBounds(iframeRef.current);
+      if (bounds && !sameBounds(bounds, previous)) {
+        previous = bounds;
+        void setNativeBrowserBounds(nativeBrowserSessionId, bounds);
+      }
+      animationFrame = requestAnimationFrame(syncBounds);
+    };
+    animationFrame = requestAnimationFrame(syncBounds);
+    return () => {
+      cancelAnimationFrame(animationFrame);
+    };
+  }, [interacting, native, nativeBrowserSessionId]);
+
+  useEffect(() => {
+    const changed = previousReloadRevision.current !== frame.reloadRevision;
+    previousReloadRevision.current = frame.reloadRevision;
+    if (!changed || !native || !interacting) return;
+    void reloadNativeBrowser(nativeBrowserSessionId).catch((error: unknown) => {
+      studioDispatch({
+        type: 'UPDATE_FRAME',
+        id: frame.id,
+        patch: {
+          status: 'failed',
+          error: error instanceof Error ? error.message : String(error),
+        },
+      });
+    });
+  }, [frame.id, frame.reloadRevision, interacting, native, nativeBrowserSessionId, studioDispatch]);
+
+  useEffect(
+    () => () => {
+      if (native) void closeNativeBrowser(nativeBrowserSessionId);
+    },
+    [native, nativeBrowserSessionId],
+  );
 
   const handleLoaded = () => {
     if (timerRef.current) {
@@ -77,14 +202,14 @@ export default function StudioFrameBody({
         top: frame.y,
         width: size.width,
         height: size.height,
-        pointerEvents: interacting ? 'auto' : 'none',
+        pointerEvents: interacting && !native ? 'auto' : 'none',
       }}
     >
       {isSelf ? (
         <SelfEmbedError url={frame.url} />
       ) : hasUrl ? (
         <iframe
-          key={reloadKey}
+          key={frame.reloadRevision}
           ref={iframeRef}
           title={frame.name}
           src={frame.url}
@@ -97,10 +222,10 @@ export default function StudioFrameBody({
       )}
 
       {!isSelf && frame.status === 'loading' && hasUrl && (
-        <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-[#0a0a0a]/70 backdrop-blur-sm">
+        <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-droid-bg/70 backdrop-blur-sm">
           <div className="flex items-center gap-2 text-[13px] text-droid-text-secondary">
             <Loader2 className="h-4 w-4 animate-spin" />
-            <span className="font-mono">connecting…</span>
+            <span>Connecting…</span>
           </div>
         </div>
       )}
@@ -110,8 +235,7 @@ export default function StudioFrameBody({
           url={frame.url}
           error={frame.error}
           onRetry={() => {
-            setReloadKey((k) => k + 1);
-            studioDispatch({ type: 'UPDATE_FRAME', id: frame.id, patch: { status: 'loading' } });
+            studioDispatch({ type: 'RELOAD_FRAME', id: frame.id });
           }}
         />
       )}
@@ -122,9 +246,9 @@ export default function StudioFrameBody({
 function SelfEmbedError({ url }: { url: string }) {
   return (
     <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-droid-surface px-8 text-center">
-      <ShieldAlert className="h-6 w-6 text-[#ee6018]" />
+      <ShieldAlert className="h-6 w-6 text-droid-accent" />
       <div className="text-[14px] font-medium text-droid-text">Can’t embed this app in itself</div>
-      <div className="max-w-[300px] font-mono text-[11px] leading-relaxed text-droid-text-muted">
+      <div className="max-w-[300px] text-[11px] leading-relaxed text-droid-text-muted">
         {url} is DROIDEX’s own address. Rendering it here would nest the app inside itself and spike
         your CPU. Point the frame at your project’s dev server on a different port.
       </div>
@@ -136,7 +260,7 @@ function EmptyFrame() {
   return (
     <div className="flex h-full w-full items-center justify-center bg-droid-surface">
       <div className="text-center">
-        <div className="font-mono text-[13px] uppercase tracking-[0.2em] text-droid-text-muted">
+        <div className="text-[13px] uppercase tracking-[0.2em] text-droid-text-muted">
           no source
         </div>
       </div>
@@ -155,18 +279,40 @@ function FailedFrame({
 }) {
   return (
     <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-droid-surface px-8 text-center">
-      <TriangleAlert className="h-6 w-6 text-[#ee6018]" />
+      <TriangleAlert className="h-6 w-6 text-droid-accent" />
       <div className="text-[14px] font-medium text-droid-text">This frame couldn’t load</div>
-      <div className="max-w-[280px] font-mono text-[11px] leading-relaxed text-droid-text-muted">
+      <div className="max-w-[280px] text-[11px] leading-relaxed text-droid-text-muted">
         {error ?? 'The dev server did not respond.'}
         <div className="mt-1 truncate text-droid-text-muted">{url}</div>
       </div>
       <button
         onClick={onRetry}
-        className="mt-1 rounded-md border border-droid-border px-3 py-1 text-[12px] text-droid-text-secondary transition-colors hover:border-[#ee6018]/60 hover:text-droid-text"
+        className="mt-1 rounded-md border border-droid-border px-3 py-1 text-[12px] text-droid-text-secondary transition-colors hover:border-droid-accent/60 hover:text-droid-text"
       >
         Retry
       </button>
     </div>
+  );
+}
+
+function nativeBounds(element: HTMLElement | null): NativeBrowserBounds | null {
+  if (!element) return null;
+  const rect = element.getBoundingClientRect();
+  if (rect.width < 2 || rect.height < 2) return null;
+  return {
+    x: rect.left,
+    y: rect.top,
+    width: rect.width,
+    height: rect.height,
+  };
+}
+
+function sameBounds(a: NativeBrowserBounds, b: NativeBrowserBounds | null): boolean {
+  return (
+    b !== null &&
+    Math.round(a.x) === Math.round(b.x) &&
+    Math.round(a.y) === Math.round(b.y) &&
+    Math.round(a.width) === Math.round(b.width) &&
+    Math.round(a.height) === Math.round(b.height)
   );
 }

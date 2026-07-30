@@ -19,17 +19,23 @@ const TOOL_KEYS: Record<string, StudioTool> = {
 export default function StudioShell({
   cwd,
   sessionKey,
+  repositoryCwds,
+  onSelectRepository,
+  onAddRepository,
   onClose,
 }: {
   /** Agent workspace (may be isolated worktree). */
   cwd: string;
   /** Stable live project path for session/thread keys. */
   sessionKey: string;
+  repositoryCwds: string[];
+  onSelectRepository: (cwd: string) => void;
+  onAddRepository: () => Promise<void>;
   onClose: () => void;
 }) {
   const { studioDispatch } = useStudioCanvas();
   const [addFrameOpen, setAddFrameOpen] = useState(false);
-  const projectName = (sessionKey || cwd).split('/').pop() || 'project';
+  const [isAgentPanelOpen, setIsAgentPanelOpen] = useState(true);
   usePreviewFrames(cwd);
 
   useEffect(() => {
@@ -41,9 +47,17 @@ export default function StudioShell({
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === '\\') {
+        e.preventDefault();
+        setIsAgentPanelOpen((open) => !open);
+        return;
+      }
       if (e.metaKey || e.ctrlKey || e.altKey) return;
-      const el = e.target as HTMLElement | null;
-      if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) {
+      const element = e.target as HTMLElement | null;
+      if (
+        element &&
+        (element.tagName === 'INPUT' || element.tagName === 'TEXTAREA' || element.isContentEditable)
+      ) {
         return;
       }
       const key = e.key.toLowerCase();
@@ -65,11 +79,28 @@ export default function StudioShell({
   }, [studioDispatch]);
 
   return (
-    <div className="flex h-full w-full bg-droid-bg">
-      <AgentPanel cwd={cwd} sessionKey={sessionKey} />
+    <div className="studio-shell flex h-full w-full bg-droid-bg">
+      <div
+        aria-hidden={!isAgentPanelOpen}
+        inert={!isAgentPanelOpen}
+        className={`h-full shrink-0 overflow-hidden transition-[width] duration-200 ease-out ${
+          isAgentPanelOpen ? 'w-[352px]' : 'pointer-events-none w-0'
+        }`}
+      >
+        <AgentPanel cwd={cwd} sessionKey={sessionKey} onBack={onClose} />
+      </div>
 
       <div className="relative flex min-w-0 flex-1 flex-col">
-        <TopBar projectName={projectName} cwd={cwd} sessionKey={sessionKey} onClose={onClose} />
+        <TopBar
+          repositoryCwds={repositoryCwds}
+          selectedRepositoryCwd={sessionKey}
+          onSelectRepository={onSelectRepository}
+          onAddRepository={onAddRepository}
+          isAgentPanelOpen={isAgentPanelOpen}
+          onToggleAgentPanel={() => {
+            setIsAgentPanelOpen((open) => !open);
+          }}
+        />
         <div className="relative min-h-0 flex-1">
           <StudioCanvas
             onRequestAddFrame={() => {

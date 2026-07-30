@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { AtSign, Blocks, Play, RefreshCw, Search } from 'lucide-react';
+import { RefreshCw, Search } from 'lucide-react';
 import { useDesignStore } from '../../hooks/useDesignStore';
 import { previewComponent, scanComponentRegistry } from '../../lib/commands';
 import type { ComponentRegistryEntry } from '../../types/bridge';
@@ -55,7 +55,7 @@ export default function ComponentShelf({ cwd }: { cwd: string }) {
       />
 
       {components.length > 0 && (
-        <div className="mb-2 flex items-center gap-2 rounded-lg border border-droid-border bg-white/[0.02] px-2.5 py-1.5 focus-within:border-droid-border-hover">
+        <div className="mb-2 flex items-center gap-2 rounded-lg border border-droid-border bg-droid-elevated/25 px-2.5 py-1.5 focus-within:border-droid-border-hover">
           <Search className="h-3.5 w-3.5 shrink-0 text-droid-text-muted" />
           <input
             value={query}
@@ -119,20 +119,16 @@ function ComponentRow({
           onOpen();
         }
       }}
-      className="group flex w-full cursor-pointer items-start gap-2.5 rounded-lg border border-droid-border bg-white/[0.02] px-2.5 py-2 text-left transition-colors hover:border-[#ee6018]/30 hover:bg-white/[0.04]"
+      className="group flex w-full cursor-pointer items-start gap-2.5 rounded-lg px-2.5 py-2.5 text-left transition-colors hover:bg-droid-elevated"
     >
-      <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-gradient-to-b from-white/[0.08] to-transparent text-droid-text-muted group-hover:text-[#ee6018]">
-        <Blocks className="h-3.5 w-3.5 group-hover:hidden" />
-        <Play className="hidden h-3.5 w-3.5 group-hover:block" />
-      </div>
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-1.5">
           <span className="truncate text-[12.5px] font-medium text-droid-text">{entry.name}</span>
-          <span className="shrink-0 rounded bg-white/[0.06] px-1 py-px font-mono text-[9px] uppercase tracking-wide text-droid-text-muted">
+          <span className="shrink-0 rounded bg-droid-active/60 px-1.5 py-px text-[9.5px] text-droid-text-muted">
             {entry.exportKind}
           </span>
         </div>
-        <div className="truncate font-mono text-[10.5px] text-droid-text-muted">
+        <div className="truncate text-[10.5px] text-droid-text-muted">
           {shortFile(entry.file)}:{entry.line}
         </div>
       </div>
@@ -142,9 +138,9 @@ function ComponentRow({
           onMention();
         }}
         title="Attach as reference in the composer"
-        className="mt-1 flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-droid-text-muted opacity-0 transition-all group-hover:opacity-100 hover:bg-white/[0.08] hover:text-droid-text"
+        className="mt-0.5 shrink-0 rounded-md px-2 py-1 text-[10.5px] text-droid-text-muted opacity-0 transition-all group-hover:opacity-100 hover:bg-droid-active/70 hover:text-droid-text"
       >
-        <AtSign className="h-3 w-3" />
+        Reference
       </button>
     </div>
   );
@@ -162,17 +158,13 @@ function SectionHeader({
   return (
     <div className="flex items-center justify-between pb-2 pt-1">
       <div className="flex items-baseline gap-2">
-        <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-droid-text-muted">
-          {title}
-        </span>
-        {count > 0 && (
-          <span className="font-mono text-[10.5px] text-droid-text-muted">{count}</span>
-        )}
+        <span className="text-[12px] font-medium text-droid-text-secondary">{title}</span>
+        {count > 0 && <span className="text-[10.5px] text-droid-text-muted">{count}</span>}
       </div>
       <button
         onClick={onRefresh}
         title="Rescan components"
-        className="flex h-6 w-6 items-center justify-center rounded-md text-droid-text-muted transition-colors hover:bg-white/[0.06] hover:text-droid-text-secondary"
+        className="flex h-6 w-6 items-center justify-center rounded-md text-droid-text-muted transition-colors hover:bg-droid-active/70 hover:text-droid-text-secondary"
       >
         <RefreshCw className="h-3 w-3" />
       </button>
@@ -182,15 +174,14 @@ function SectionHeader({
 
 function EmptyShelf({ onScan }: { onScan: () => void }) {
   return (
-    <div className="mt-6 flex flex-col items-center px-4 text-center">
-      <Blocks className="h-6 w-6 text-droid-text-muted" />
-      <div className="mt-2 text-[12.5px] text-droid-text-secondary">No components indexed yet</div>
+    <div className="mt-8 flex flex-col items-center px-4 text-center">
+      <div className="text-[12.5px] text-droid-text-secondary">No components indexed yet</div>
       <div className="mt-1 text-[11.5px] leading-relaxed text-droid-text-muted">
         Scan the repo to pull in exported components, then click one to see it live.
       </div>
       <button
         onClick={onScan}
-        className="mt-3 rounded-md border border-droid-border px-3 py-1.5 text-[12px] text-droid-text-secondary transition-colors hover:border-[#ee6018]/50 hover:text-droid-text"
+        className="mt-3 rounded-md border border-droid-border px-3 py-1.5 text-[12px] text-droid-text-secondary transition-colors hover:border-droid-accent/50 hover:text-droid-text"
       >
         Scan components
       </button>

@@ -1,9 +1,7 @@
 import { motion } from 'framer-motion';
-import StudioMark from './StudioMark';
-
 /**
- * Shown on a fresh canvas — an invitation to design, not a form. Points at both
- * ways in: describe a design to the agent (left composer) or drop in a live URL.
+ * Shown on a fresh canvas. The canvas stays visually quiet and points to the two
+ * real entry points: the agent composer and an existing live route.
  */
 export default function CanvasEmptyState({ onAddFrame }: { onAddFrame: () => void }) {
   return (
@@ -12,30 +10,22 @@ export default function CanvasEmptyState({ onAddFrame }: { onAddFrame: () => voi
         initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
-        className="pointer-events-auto flex max-w-sm flex-col items-center text-center"
+        className="pointer-events-auto flex max-w-md flex-col items-center px-6 text-center"
       >
-        <div className="relative mb-7">
-          <div className="absolute -inset-10 rounded-full bg-[#ee6018]/12 blur-3xl" />
-          <div className="relative flex h-16 w-16 items-center justify-center rounded-2xl border border-droid-border bg-gradient-to-b from-white/[0.08] to-transparent">
-            <StudioMark className="h-8 w-8 text-droid-text-secondary" />
-          </div>
-        </div>
-        <h2 className="text-[17px] font-medium tracking-tight text-droid-text">
-          A canvas for directions, not documents
+        <div className="mb-4 text-[11.5px] font-medium text-droid-text-muted">Ready to design</div>
+        <h2 className="text-balance text-[20px] font-medium tracking-[-0.025em] text-droid-text">
+          What would you like to design?
         </h2>
-        <p className="mt-2 text-[13px] leading-relaxed text-droid-text-muted">
-          Describe a screen in the composer and the agent designs it into a live frame — or drop
-          in a running route to start from what already ships.
+        <p className="mt-2 max-w-[390px] text-pretty text-[13px] leading-relaxed text-droid-text-muted">
+          Describe the change in the agent panel, or add a route from your running product to work
+          directly on what already ships.
         </p>
         <button
           onClick={onAddFrame}
-          className="mt-6 rounded-lg border border-droid-border bg-white/[0.04] px-4 py-2 text-[13px] text-droid-text transition-colors hover:border-[#ee6018]/50 hover:bg-[#ee6018]/[0.08] hover:text-droid-text"
+          className="mt-6 rounded-lg bg-droid-accent px-4 py-2 text-[12.5px] font-medium text-droid-bg transition-opacity hover:opacity-85 active:translate-y-px"
         >
-          Add a live frame
+          Add a live page
         </button>
-        <div className="mt-4 font-mono text-[11px] text-droid-text-muted">
-          ⌘⇧D to toggle · space-drag to pan · ⌘-scroll to zoom
-        </div>
       </motion.div>
     </div>
   );

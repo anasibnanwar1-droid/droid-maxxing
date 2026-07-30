@@ -11,10 +11,10 @@ import {
 import type { Rect } from './studioCanvasMath';
 
 const STATUS_COLOR: Record<StudioFrame['status'], string> = {
-  loading: '#8a8a8a',
-  building: '#ee6018',
-  ready: '#6a8a6a',
-  failed: '#c0563a',
+  loading: 'var(--droid-text-muted)',
+  building: 'var(--droid-orange)',
+  ready: 'var(--droid-green)',
+  failed: 'var(--droid-red)',
 };
 
 const VIEWPORT_CYCLE: BrowserViewportMode[] = ['desktop', 'laptop', 'tablet', 'mobile'];
@@ -60,7 +60,11 @@ export default function StudioFrameChrome({
   } | null>(null);
   const size = sizeOf(frame);
   const active = selected || hovered;
-  const ringColor = selected ? '#ee6018' : hovered ? 'rgba(255,255,255,0.22)' : 'transparent';
+  const ringColor = selected
+    ? 'var(--droid-accent)'
+    : hovered
+      ? 'color-mix(in srgb, var(--droid-text) 24%, transparent)'
+      : 'transparent';
 
   const beginDrag = (e: ReactPointerEvent) => {
     e.stopPropagation();
@@ -102,9 +106,9 @@ export default function StudioFrameChrome({
         className="pointer-events-none absolute -inset-[1.5px] rounded-[11px] transition-colors duration-150"
         style={{
           boxShadow: interacting
-            ? '0 0 0 2px #ee6018, 0 0 28px -2px rgba(238,96,24,0.6)'
+            ? '0 0 0 2px var(--droid-accent)'
             : frame.status === 'building'
-              ? '0 0 0 1.5px #ee6018, 0 0 22px -2px rgba(238,96,24,0.55)'
+              ? '0 0 0 1.5px var(--droid-orange)'
               : `0 0 0 1.5px ${ringColor}`,
         }}
       />
@@ -121,7 +125,7 @@ export default function StudioFrameChrome({
           className="h-[7px] w-[7px] shrink-0 rounded-full"
           style={{
             backgroundColor: STATUS_COLOR[frame.status],
-            boxShadow: frame.status === 'building' ? '0 0 8px #ee6018' : undefined,
+            boxShadow: frame.status === 'building' ? '0 0 8px var(--droid-orange)' : undefined,
           }}
         />
         {editing ? (
@@ -140,7 +144,7 @@ export default function StudioFrameChrome({
               if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
               if (e.key === 'Escape') setEditing(false);
             }}
-            className="w-44 rounded-lg border border-droid-border bg-droid-surface px-2 py-1 text-[12.5px] text-droid-text outline-none transition-colors focus:border-[#ee6018]/60 focus:bg-droid-surface"
+            className="w-44 rounded-lg border border-droid-border bg-droid-surface px-2 py-1 text-[12.5px] text-droid-text outline-none transition-colors focus:border-droid-accent/60"
           />
         ) : (
           <button
@@ -153,11 +157,11 @@ export default function StudioFrameChrome({
             {frame.name}
           </button>
         )}
-        <span className="shrink-0 font-mono text-[10.5px] tracking-tight text-droid-text-muted">
+        <span className="shrink-0 text-[10.5px] tabular-nums text-droid-text-muted">
           {size.width}×{size.height}
         </span>
         {frame.agentLabel && (
-          <span className="shrink-0 rounded-full bg-[#ee6018]/15 px-1.5 py-0.5 font-mono text-[10px] text-[#ee6018]">
+          <span className="shrink-0 rounded-md bg-droid-accent/10 px-1.5 py-0.5 text-[10px] text-droid-accent">
             {frame.agentLabel}
           </span>
         )}
@@ -171,7 +175,7 @@ export default function StudioFrameChrome({
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 6, scale: 0.96 }}
             transition={{ type: 'spring', damping: 22, stiffness: 320 }}
-            className="pointer-events-auto absolute right-0 flex items-center gap-0.5 rounded-lg border border-droid-border border-t-[#ee6018]/25 bg-droid-surface/85 px-1 py-1 shadow-xl backdrop-blur-lg"
+            className="studio-floating-surface pointer-events-auto absolute right-0 flex items-center gap-0.5 rounded-lg px-1 py-1"
             style={{ top: -headerScaledOffset - 6 }}
           >
             <ToolbarButton label="Viewport" onClick={cycleViewport}>
@@ -220,10 +224,10 @@ export default function StudioFrameChrome({
       {/* Interacting badge — exit back to canvas gestures */}
       {interacting && (
         <div
-          className="pointer-events-auto absolute left-1/2 flex -translate-x-1/2 items-center gap-1.5 rounded-full border border-[#ee6018]/40 bg-droid-surface/90 px-2.5 py-1 text-[11px] text-droid-text shadow-lg backdrop-blur"
+          className="studio-floating-surface pointer-events-auto absolute left-1/2 flex -translate-x-1/2 items-center gap-1.5 rounded-lg px-2.5 py-1 text-[11px] text-droid-text"
           style={{ top: rect.height + 8 }}
         >
-          <span className="h-1.5 w-1.5 rounded-full bg-[#ee6018]" />
+          <span className="h-1.5 w-1.5 rounded-full bg-droid-accent" />
           Interacting
           <button
             onClick={() => { studioDispatch({ type: 'SET_INTERACTING', id: null }); }}
@@ -252,13 +256,16 @@ function ToolbarButton({
     <button
       title={label}
       onClick={onClick}
-      className={`flex h-6 w-6 items-center justify-center rounded-md transition-colors ${
+      className={`group relative flex h-6 w-6 items-center justify-center rounded-md transition-colors ${
         danger
-          ? 'text-droid-text-muted hover:bg-[#c0563a]/15 hover:text-[#e0806a]'
-          : 'text-droid-text-secondary hover:bg-white/10 hover:text-droid-text'
+          ? 'text-droid-text-muted hover:bg-droid-red/10 hover:text-droid-red'
+          : 'text-droid-text-secondary hover:bg-droid-active/70 hover:text-droid-text'
       }`}
     >
       {children}
+      <span className="pointer-events-none absolute left-1/2 top-full z-50 mt-2 -translate-x-1/2 whitespace-nowrap rounded-lg border border-droid-border bg-droid-elevated px-2 py-1 text-[10.5px] font-normal text-droid-text opacity-0 shadow-lg transition-opacity delay-200 duration-150 group-hover:opacity-100">
+        {label}
+      </span>
     </button>
   );
 }

@@ -78,6 +78,7 @@ export function fitRects(
   rects: Rect[],
   viewport: { width: number; height: number },
   padding = 96,
+  maxZoom = 1,
 ): CanvasView {
   if (rects.length === 0 || viewport.width <= 0 || viewport.height <= 0) {
     return { ...DEFAULT_VIEW };
@@ -85,7 +86,7 @@ export function fitRects(
   const bounds = boundingRect(rects);
   const availW = Math.max(1, viewport.width - padding * 2);
   const availH = Math.max(1, viewport.height - padding * 2);
-  const zoom = clampZoom(Math.min(availW / bounds.width, availH / bounds.height, 1));
+  const zoom = clampZoom(Math.min(availW / bounds.width, availH / bounds.height, maxZoom));
   const worldCenter = { x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2 };
   return {
     zoom,

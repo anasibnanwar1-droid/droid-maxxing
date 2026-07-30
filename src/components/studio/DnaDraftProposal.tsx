@@ -23,14 +23,14 @@ export default function DnaDraftProposal({
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
-      className="rounded-xl border border-[#ee6018]/25 bg-[#ee6018]/[0.05] p-3"
+      className="rounded-xl border border-droid-accent/25 bg-droid-accent/[0.05] p-3"
     >
       <div className="flex items-start justify-between gap-2">
         <div className="flex items-center gap-2">
-          <ScanLine className="h-4 w-4 text-[#ee6018]" />
+          <ScanLine className="h-4 w-4 text-droid-accent" />
           <div>
             <div className="text-[12.5px] font-medium text-droid-text">Proposed from your code</div>
-            <div className="mt-0.5 font-mono text-[10px] text-droid-text-muted">
+            <div className="mt-0.5 text-[10px] text-droid-text-muted">
               {draft.sources.length} source{draft.sources.length === 1 ? '' : 's'} scanned
             </div>
           </div>
@@ -38,7 +38,7 @@ export default function DnaDraftProposal({
         <button
           onClick={onDismiss}
           title="Dismiss"
-          className="flex h-6 w-6 items-center justify-center rounded-md text-droid-text-muted transition-colors hover:bg-white/[0.06] hover:text-droid-text"
+          className="flex h-6 w-6 items-center justify-center rounded-md text-droid-text-muted transition-colors hover:bg-droid-active/70 hover:text-droid-text"
         >
           <X className="h-3.5 w-3.5" />
         </button>
@@ -51,7 +51,7 @@ export default function DnaDraftProposal({
       {draft.sources.length > 0 && (
         <div className="mt-2.5 space-y-0.5">
           {draft.sources.slice(0, 3).map((s) => (
-            <div key={s} className="truncate font-mono text-[10px] text-droid-text-muted">
+            <div key={s} className="truncate text-[10px] text-droid-text-muted">
               {s}
             </div>
           ))}
@@ -61,7 +61,7 @@ export default function DnaDraftProposal({
       <div className="mt-3 flex gap-2">
         <button
           onClick={onApply}
-          className="flex items-center gap-1.5 rounded-lg bg-[#ee6018] px-3 py-1.5 text-[12px] font-medium text-black transition-colors hover:bg-[#ff6a1e]"
+          className="flex items-center gap-1.5 rounded-lg bg-droid-accent px-3 py-1.5 text-[12px] font-medium text-droid-bg transition-opacity hover:opacity-90"
         >
           <Check className="h-3.5 w-3.5" />
           Apply to project

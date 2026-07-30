@@ -1,6 +1,7 @@
-import { useState } from 'react';
-import { AnimatePresence, motion } from 'framer-motion';
+import { useRef, useState } from 'react';
+import { motion } from 'framer-motion';
 import { Settings2 } from 'lucide-react';
+import { Popover } from '../environment/Popover';
 import { useStudioCanvas, type StudioSettings } from './StudioCanvasContext';
 
 /** Studio configuration — a gear in the top bar. Small, extensible list of
@@ -8,43 +9,54 @@ import { useStudioCanvas, type StudioSettings } from './StudioCanvasContext';
 export default function StudioSettingsMenu() {
   const { studio, studioDispatch } = useStudioCanvas();
   const [open, setOpen] = useState(false);
-  const set = (key: keyof StudioSettings, value: boolean) =>
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const set = (key: keyof StudioSettings, value: boolean) => {
     studioDispatch({ type: 'SET_SETTING', key, value });
+  };
 
   return (
-    <div className="relative">
+    <>
       <button
-        onClick={() => setOpen((v) => !v)}
+        ref={triggerRef}
+        onClick={() => {
+          setOpen((value) => {
+            const next = !value;
+            if (next) studioDispatch({ type: 'SET_INTERACTING', id: null });
+            return next;
+          });
+        }}
         title="Studio settings"
-        className="no-drag flex h-7 w-7 items-center justify-center rounded-md text-droid-text-muted transition-colors hover:bg-white/10 hover:text-droid-text"
+        aria-expanded={open}
+        className="no-drag flex h-8 w-8 items-center justify-center rounded-lg text-droid-text-muted transition-colors hover:bg-droid-elevated hover:text-droid-text"
       >
-        <Settings2 className="h-4 w-4" />
+        <Settings2 className="h-4 w-4" strokeWidth={1.75} />
       </button>
-      <AnimatePresence>
-        {open && (
-          <>
-            <div className="fixed inset-0 z-30" onClick={() => setOpen(false)} />
-            <motion.div
-              initial={{ opacity: 0, y: 6, scale: 0.98 }}
-              animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, y: 6, scale: 0.98 }}
-              transition={{ type: 'spring', damping: 24, stiffness: 340 }}
-              className="no-drag absolute right-0 top-full z-40 mt-1.5 w-64 rounded-xl border border-droid-border bg-droid-elevated p-1.5 shadow-2xl"
-            >
-              <div className="px-2 pb-1.5 pt-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-droid-text-muted">
-                Settings
-              </div>
-              <Toggle
-                label="Double-click to interact"
-                hint="Double-click a frame to scroll and click the live app inside it."
-                value={studio.settings.interactOnDoubleClick}
-                onChange={(v) => set('interactOnDoubleClick', v)}
-              />
-            </motion.div>
-          </>
-        )}
-      </AnimatePresence>
-    </div>
+      <Popover
+        open={open}
+        onClose={() => {
+          setOpen(false);
+        }}
+        anchorRef={triggerRef}
+        label="Studio settings"
+        align="right"
+        width={264}
+        className="studio-popover no-drag"
+      >
+        <div data-studio-dismissable-layer className="p-1.5">
+          <div className="px-2 pb-1.5 pt-1 text-[11.5px] font-medium text-droid-text-secondary">
+            Settings
+          </div>
+          <Toggle
+            label="Double-click to interact"
+            hint="Double-click a frame to scroll and click the live app inside it."
+            value={studio.settings.interactOnDoubleClick}
+            onChange={(v) => {
+              set('interactOnDoubleClick', v);
+            }}
+          />
+        </div>
+      </Popover>
+    </>
   );
 }
 
@@ -61,21 +73,24 @@ function Toggle({
 }) {
   return (
     <button
-      onClick={() => onChange(!value)}
-      className="flex w-full items-start gap-2 rounded-lg px-2 py-2 text-left transition-colors hover:bg-white/[0.04]"
+      onClick={() => {
+        onChange(!value);
+      }}
+      className="flex w-full items-start gap-2 rounded-lg px-2 py-2 text-left transition-colors hover:bg-droid-active/60"
     >
       <div className="min-w-0 flex-1">
         <div className="text-[12.5px] text-droid-text">{label}</div>
         <div className="mt-0.5 text-[11px] leading-snug text-droid-text-muted">{hint}</div>
       </div>
       <span
-        className="mt-0.5 flex h-5 w-9 shrink-0 items-center rounded-full p-0.5 transition-colors"
-        style={{ backgroundColor: value ? '#ee6018' : 'rgba(255,255,255,0.12)' }}
+        className={`mt-0.5 flex h-5 w-9 shrink-0 items-center rounded-full p-0.5 transition-colors ${
+          value ? 'bg-droid-accent' : 'bg-droid-active'
+        }`}
       >
         <motion.span
           layout
           transition={{ type: 'spring', stiffness: 500, damping: 32 }}
-          className="h-4 w-4 rounded-full bg-white shadow"
+          className="h-4 w-4 rounded-full bg-droid-bg shadow-sm"
           style={{ marginLeft: value ? 'auto' : 0 }}
         />
       </span>

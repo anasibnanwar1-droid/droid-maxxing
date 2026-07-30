@@ -1,11 +1,7 @@
 import { Maximize2, Minus, Plus } from 'lucide-react';
 import { useStudioCanvas, sizeOf } from './StudioCanvasContext';
-import {
-  fitRects,
-  setZoomAtPoint,
-  type Rect,
-  type CanvasView,
-} from './studioCanvasMath';
+import { fitRects, setZoomAtPoint, type Rect, type CanvasView } from './studioCanvasMath';
+import { MAX_ZOOM } from './studioCanvasMath';
 
 /**
  * Bottom-right canvas HUD: zoom readout + in/out + zoom-to-fit. Zoom actions are
@@ -21,7 +17,9 @@ export default function CanvasControls({
   const { studio, studioDispatch } = useStudioCanvas();
   const { view, frames } = studio;
 
-  const setView = (v: CanvasView) => { studioDispatch({ type: 'SET_VIEW', view: v }); };
+  const setView = (v: CanvasView) => {
+    studioDispatch({ type: 'SET_VIEW', view: v });
+  };
 
   const zoomStep = (factor: number) => {
     const size = getSize();
@@ -41,35 +39,48 @@ export default function CanvasControls({
       const s = sizeOf(f);
       return { x: f.x, y: f.y, width: s.width, height: s.height };
     });
-    setView(fitRects(rects, size, 120));
+    setView(fitRects(rects, size, 120, MAX_ZOOM));
   };
 
   return (
-    <div className="pointer-events-none absolute bottom-4 right-4 flex items-center gap-2">
+    <div className="studio-floating-surface pointer-events-auto absolute bottom-4 right-4 flex items-center rounded-xl p-1">
       <button
         onClick={onRequestAddFrame}
-        className="pointer-events-auto flex items-center gap-1.5 rounded-full border border-droid-border bg-droid-elevated/90 px-3 py-1.5 text-[12px] text-droid-text-secondary shadow-lg backdrop-blur transition-colors hover:border-[#ee6018]/50 hover:text-droid-text"
+        className="flex h-7 items-center gap-1.5 rounded-lg px-2 text-[11.5px] text-droid-text-secondary transition-colors hover:bg-droid-active/70 hover:text-droid-text"
       >
-        <Plus className="h-3.5 w-3.5" />
-        Add frame
+        <Plus className="h-3.5 w-3.5" strokeWidth={1.75} />
+        Add page
       </button>
-      <div className="pointer-events-auto flex items-center gap-0.5 rounded-full border border-droid-border bg-droid-elevated/90 p-0.5 shadow-lg backdrop-blur">
-        <HudButton label="Zoom out" onClick={() => { zoomStep(0.8); }}>
-          <Minus className="h-3.5 w-3.5" />
+      <div className="mx-1 h-4 w-px bg-droid-border" />
+      <div className="flex items-center gap-0.5">
+        <HudButton
+          label="Zoom out"
+          onClick={() => {
+            zoomStep(0.8);
+          }}
+        >
+          <Minus className="h-3.5 w-3.5" strokeWidth={1.75} />
         </HudButton>
         <button
-          onClick={() => { zoomStep(1 / view.zoom); }}
-          className="min-w-[48px] rounded-full px-2 py-1 text-center font-mono text-[11.5px] text-droid-text-secondary transition-colors hover:text-droid-text"
+          onClick={() => {
+            zoomStep(1 / view.zoom);
+          }}
+          className="min-w-[48px] rounded-lg px-2 py-1 text-center text-[11px] tabular-nums text-droid-text-secondary transition-colors hover:bg-droid-active/70 hover:text-droid-text"
           title="Reset to 100%"
         >
           {Math.round(view.zoom * 100)}%
         </button>
-        <HudButton label="Zoom in" onClick={() => { zoomStep(1.25); }}>
-          <Plus className="h-3.5 w-3.5" />
+        <HudButton
+          label="Zoom in"
+          onClick={() => {
+            zoomStep(1.25);
+          }}
+        >
+          <Plus className="h-3.5 w-3.5" strokeWidth={1.75} />
         </HudButton>
-        <div className="mx-0.5 h-4 w-px bg-white/10" />
-        <HudButton label="Zoom to fit" onClick={fit}>
-          <Maximize2 className="h-3.5 w-3.5" />
+        <div className="mx-0.5 h-4 w-px bg-droid-border" />
+        <HudButton label="Fit all pages" onClick={fit}>
+          <Maximize2 className="h-3.5 w-3.5" strokeWidth={1.75} />
         </HudButton>
       </div>
     </div>
@@ -89,9 +100,12 @@ function HudButton({
     <button
       title={label}
       onClick={onClick}
-      className="flex h-7 w-7 items-center justify-center rounded-full text-droid-text-secondary transition-colors hover:bg-white/10 hover:text-droid-text"
+      className="group relative flex h-7 w-7 items-center justify-center rounded-lg text-droid-text-secondary transition-colors hover:bg-droid-active/70 hover:text-droid-text"
     >
       {children}
+      <span className="pointer-events-none absolute bottom-full right-0 mb-2 whitespace-nowrap rounded-lg border border-droid-border bg-droid-elevated px-2 py-1 text-[10.5px] font-normal text-droid-text opacity-0 shadow-lg transition-opacity delay-200 duration-150 group-hover:opacity-100">
+        {label}
+      </span>
     </button>
   );
 }

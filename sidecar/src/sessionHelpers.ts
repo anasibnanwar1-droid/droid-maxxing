@@ -75,6 +75,11 @@ export function defaultsModeForSummary(summary: SessionSummary): SessionInteract
   return 'auto';
 }
 
+/** Design Studio authoring sessions use an explicit purpose, independent of their title. */
+export function isDesignStudioSession(summary: SessionSummary): boolean {
+  return summary.sessionPurpose === 'design';
+}
+
 export function reasoningValue(value?: string): ReasoningEffort | undefined {
   if (
     value === 'off' ||

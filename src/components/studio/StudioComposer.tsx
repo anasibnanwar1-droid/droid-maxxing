@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
-import { AnimatePresence, motion } from 'framer-motion';
-import { ArrowUp, AtSign, ChevronDown, Copy, Gauge, ImagePlus, Square, X } from 'lucide-react';
+import { ArrowUp, Copy, Gauge, ImagePlus, PenLine, Square, X } from 'lucide-react';
 import { useStore } from '../../hooks/useStore';
 import { useStudioCanvas } from './StudioCanvasContext';
 import StudioModelPicker from './StudioModelPicker';
 import { useImageAttachments } from './useImageAttachments';
+import { buildStudioPrompt } from './studioPromptContext';
+import { resolveStudioDefaultModel, resolveStudioModelId } from './studioModels';
+import StudioSelector from './StudioSelector';
 import type { ReasoningEffort } from '../../types/bridge';
 
 export interface SendOptions {
@@ -12,6 +14,7 @@ export interface SendOptions {
   reasoningEffort?: ReasoningEffort;
   count: number;
   images?: string[];
+  displayText?: string;
 }
 
 const COUNTS = [1, 2, 3, 4];
@@ -50,6 +53,7 @@ export default function StudioComposer({
   disabledReason,
   streaming,
   onStop,
+  hasSession,
   sessionModelId,
   sessionReasoning,
   onModelChange,
@@ -60,6 +64,7 @@ export default function StudioComposer({
   disabledReason?: string;
   streaming?: boolean;
   onStop?: () => void;
+  hasSession: boolean;
   /** Live session model (when a design chat already exists). */
   sessionModelId?: string;
   sessionReasoning?: ReasoningEffort;
@@ -88,18 +93,24 @@ export default function StudioComposer({
   // so it reflects a pick instantly and stays correct across thread switches
   // (a lingering local pick would leak into other threads). Local only covers
   // the pre-session compose.
-  const modelId = sessionModelId ?? localModelId;
+  const modelId = resolveStudioModelId(hasSession, sessionModelId, localModelId);
   const selectedFrame =
     studio.selectedFrameIds.length === 1
       ? studio.frames.find((f) => f.id === studio.selectedFrameIds[0])
       : undefined;
   const chips = studio.selection;
-  const canSend = text.trim().length > 0 || images.length > 0;
-  const selectedModel = modelId ? state.models.find((m) => m.id === modelId) : undefined;
+  const attachedAnnotations = studio.annotations.filter((annotation) =>
+    studio.attachedAnnotationIds.includes(annotation.id),
+  );
+  const hasContent = text.trim().length > 0 || images.length > 0 || attachedAnnotations.length > 0;
+  const canSend = hasContent && disabledReason === undefined;
+  const selectedModel = modelId
+    ? state.models.find((m) => m.id === modelId)
+    : resolveStudioDefaultModel(state.models, state.agentConfig.primary.modelId);
   const efforts = selectedModel?.supportedReasoningEfforts ?? [];
   // Session-first for the same reason as the model above; never show a level
   // the model doesn't support (e.g. leftover "max" from the previous model).
-  const rawReasoning = sessionReasoning ?? localReasoning;
+  const rawReasoning = hasSession ? sessionReasoning : localReasoning;
   const reasoningEffort = snapEffort(selectedModel, rawReasoning);
 
   const grow = () => {
@@ -115,44 +126,57 @@ export default function StudioComposer({
   // If the live session still carries an unsupported effort (after a model switch),
   // snap it so the badge and the next send agree with the catalog.
   useEffect(() => {
-    if (!sessionModelId || !sessionReasoning || efforts.length === 0) return;
+    if (!hasSession || !sessionReasoning || efforts.length === 0) return;
     if (efforts.includes(sessionReasoning)) return;
     const snapped = snapEffort(selectedModel, undefined);
-    setLocalReasoning(snapped);
     onModelChange?.(sessionModelId, snapped);
-  }, [sessionModelId, sessionReasoning, efforts, selectedModel, onModelChange]);
+  }, [hasSession, sessionModelId, sessionReasoning, efforts, selectedModel, onModelChange]);
 
   const pickModel = (next?: string) => {
-    const model = next ? state.models.find((m) => m.id === next) : undefined;
-    const snapped = snapEffort(model, localReasoning ?? sessionReasoning);
-    setLocalModelId(next);
-    setLocalReasoning(snapped);
-    onModelChange?.(next, snapped);
+    const model = next
+      ? state.models.find((candidate) => candidate.id === next)
+      : resolveStudioDefaultModel(state.models, state.agentConfig.primary.modelId);
+    const snapped = snapEffort(model, rawReasoning);
+    if (hasSession) {
+      onModelChange?.(next, snapped);
+    } else {
+      setLocalModelId(next);
+      setLocalReasoning(snapped);
+    }
   };
 
   const pickReasoning = (next: ReasoningEffort) => {
-    setLocalReasoning(next);
-    onModelChange?.(modelId, next);
+    if (hasSession) {
+      onModelChange?.(modelId, next);
+    } else {
+      setLocalReasoning(next);
+    }
   };
 
   const submit = () => {
     if (!canSend) return;
-    onSend(text.trim(), {
+    const studioPrompt = buildStudioPrompt(text, studio);
+    onSend(studioPrompt.prompt, {
       modelId,
       reasoningEffort,
       count,
       images: images.length > 0 ? images : undefined,
+      displayText: studioPrompt.displayText,
     });
     onTextChange('');
     clearImages();
+    studioDispatch({ type: 'CLEAR_ANNOTATION_CONTEXT' });
     if (taRef.current) taRef.current.style.height = 'auto';
   };
 
   return (
-    <div className="px-3 pb-3">
-      <div className="rounded-2xl border border-droid-border bg-droid-elevated shadow-[0_10px_40px_-12px_rgba(0,0,0,0.6)] transition-colors focus-within:border-droid-border">
+    <div className="border-t border-droid-border bg-droid-surface/35 px-3 pb-3 pt-3">
+      <div className="rounded-xl border border-droid-border bg-droid-bg/75 shadow-sm transition-colors focus-within:border-droid-border-hover">
         {/* Reference chips + attached images */}
-        {(chips.length > 0 || selectedFrame !== undefined || images.length > 0) && (
+        {(chips.length > 0 ||
+          selectedFrame !== undefined ||
+          images.length > 0 ||
+          attachedAnnotations.length > 0) && (
           <div className="flex flex-wrap items-center gap-1.5 px-3 pt-3">
             {selectedFrame && (
               <Chip
@@ -175,18 +199,30 @@ export default function StudioComposer({
                 }}
               />
             ))}
+            {attachedAnnotations.length > 0 && (
+              <Chip
+                label="Canvas notes"
+                sub={`${String(attachedAnnotations.length)} mark${
+                  attachedAnnotations.length === 1 ? '' : 's'
+                }`}
+                kind="drawing"
+                onRemove={() => {
+                  studioDispatch({ type: 'CLEAR_ANNOTATION_CONTEXT' });
+                }}
+              />
+            )}
             {images.map((src, i) => (
               <span key={i} className="group relative">
                 <img
                   src={src}
                   alt="attachment"
-                  className="h-10 w-10 rounded-md object-cover ring-1 ring-white/10"
+                  className="h-10 w-10 rounded-md object-cover ring-1 ring-droid-border"
                 />
                 <button
                   onClick={() => {
                     removeImage(i);
                   }}
-                  className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-black/85 text-droid-text-secondary opacity-0 transition-opacity group-hover:opacity-100"
+                  className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-droid-active text-droid-text-secondary opacity-0 transition-opacity group-hover:opacity-100"
                 >
                   <X className="h-2.5 w-2.5" />
                 </button>
@@ -210,7 +246,7 @@ export default function StudioComposer({
             }
           }}
           rows={1}
-          placeholder="Ask for a design, paste an image, @ or select on canvas to reference designs."
+          placeholder="Describe a design change…"
           className="max-h-[200px] w-full resize-none bg-transparent px-3.5 pt-3 pb-2 text-[13.5px] leading-relaxed text-droid-text placeholder:text-droid-text-muted focus:outline-none"
         />
 
@@ -222,7 +258,7 @@ export default function StudioComposer({
             <StudioModelPicker value={modelId} onChange={pickModel} />
             {/* Reasoning effort — shown when the picked model exposes a choice */}
             {efforts.length > 1 && (
-              <Selector
+              <StudioSelector
                 open={reasoningOpen}
                 setOpen={setReasoningOpen}
                 value={reasoningEffort ?? selectedModel?.defaultReasoningEffort ?? 'auto'}
@@ -230,14 +266,13 @@ export default function StudioComposer({
                   pickReasoning(v as ReasoningEffort);
                 }}
                 options={efforts}
-                width="w-32"
+                width={128}
                 icon={<Gauge className="h-3 w-3" />}
-                align="left"
                 hint="reasoning"
               />
             )}
             {/* Generation-count fan-out */}
-            <Selector
+            <StudioSelector
               open={countOpen}
               setOpen={setCountOpen}
               value={`${String(count)}×`}
@@ -245,9 +280,8 @@ export default function StudioComposer({
                 setCount(Number(v.replace('×', '')));
               }}
               options={COUNTS.map((c) => `${String(c)}×`)}
-              width="w-24"
+              width={96}
               icon={<Copy className="h-3 w-3" />}
-              align="left"
               hint="directions"
             />
           </div>
@@ -268,22 +302,14 @@ export default function StudioComposer({
               <IconChip title="Attach an image" onClick={() => fileRef.current?.click()}>
                 <ImagePlus className="h-4 w-4" />
               </IconChip>
-              <IconChip
-                title="Mention a component or frame"
-                onClick={() => {
-                  onTextChange(text.endsWith(' ') || text === '' ? `${text}@` : `${text} @`);
-                  taRef.current?.focus();
-                }}
-              >
-                <AtSign className="h-4 w-4" />
-              </IconChip>
+              <span className="px-1 text-[10.5px] text-droid-text-muted">@ mention</span>
             </div>
 
             {streaming ? (
               <button
                 onClick={() => onStop?.()}
                 title="Working — click to stop"
-                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-[#ee6018] text-black shadow-[0_0_18px_-4px_rgba(238,96,24,0.7)] transition-all duration-150 hover:bg-[#ff6a1e] active:scale-95"
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-droid-accent text-droid-bg transition-opacity duration-150 hover:opacity-90 active:translate-y-px"
               >
                 <Square className="h-3.5 w-3.5" fill="currentColor" strokeWidth={0} />
               </button>
@@ -292,10 +318,10 @@ export default function StudioComposer({
                 onClick={submit}
                 disabled={!canSend}
                 title={disabledReason ?? 'Send (Enter)'}
-                className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-xl transition-all duration-150 ${
+                className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg transition-all duration-150 ${
                   canSend
-                    ? 'bg-[#ee6018] text-black shadow-[0_0_18px_-4px_rgba(238,96,24,0.7)] hover:bg-[#ff6a1e] active:scale-95 active:bg-[#dd5812]'
-                    : 'cursor-not-allowed bg-white/[0.03] text-droid-text-muted'
+                    ? 'bg-droid-accent text-droid-bg hover:opacity-90 active:translate-y-px'
+                    : 'cursor-not-allowed bg-droid-elevated text-droid-text-muted'
                 }`}
               >
                 <ArrowUp className="h-4 w-4" strokeWidth={2.5} />
@@ -319,19 +345,24 @@ function Chip({
 }: {
   label: string;
   sub?: string;
-  kind: 'frame' | 'element';
+  kind: 'frame' | 'element' | 'drawing';
   onRemove?: () => void;
 }) {
   // Element references read as "hot" (ready to act on); frame chips stay muted
   // context so the two never blur together.
-  const style =
-    kind === 'frame'
-      ? 'rounded-md border border-droid-border bg-white/[0.04] px-1.5 py-0.5 text-[11px] text-droid-text-secondary'
-      : 'rounded-lg border-[1.5px] border-[#ee6018]/40 bg-[#ee6018]/[0.12] px-2 py-0.5 text-[11.5px] font-medium text-[#f0a060]';
+  const style = {
+    frame:
+      'rounded-md border border-droid-border bg-droid-elevated px-1.5 py-0.5 text-[11px] text-droid-text-secondary',
+    element:
+      'rounded-lg border border-droid-accent/30 bg-droid-accent/10 px-2 py-0.5 text-[11.5px] font-medium text-droid-accent',
+    drawing:
+      'rounded-lg border border-droid-accent/30 bg-droid-accent/10 px-2 py-1 text-[11.5px] font-medium text-droid-accent',
+  }[kind];
   return (
     <span className={`inline-flex items-center gap-1 ${style}`}>
+      {kind === 'drawing' && <PenLine className="h-3 w-3" strokeWidth={1.75} />}
       <span className="max-w-[140px] truncate">{label}</span>
-      {sub && <span className="font-mono text-[9.5px] opacity-60">{sub}</span>}
+      {sub && <span className="text-[9.5px] opacity-60">{sub}</span>}
       {onRemove && (
         <button onClick={onRemove} className="opacity-60 transition-opacity hover:opacity-100">
           <X className="h-2.5 w-2.5" />
@@ -354,89 +385,9 @@ function IconChip({
     <button
       title={title}
       onClick={onClick}
-      className="flex h-8 w-8 items-center justify-center rounded-lg text-droid-text-muted transition-colors hover:bg-white/[0.06] hover:text-droid-text"
+      className="flex h-8 w-8 items-center justify-center rounded-lg text-droid-text-muted transition-colors hover:bg-droid-elevated hover:text-droid-text"
     >
       {children}
     </button>
-  );
-}
-
-function Selector({
-  open,
-  setOpen,
-  value,
-  onPick,
-  options,
-  width,
-  icon,
-  align = 'left',
-  hint,
-}: {
-  open: boolean;
-  setOpen: (v: boolean) => void;
-  value: string;
-  onPick: (v: string) => void;
-  options: string[];
-  width: string;
-  icon?: React.ReactNode;
-  align?: 'left' | 'right';
-  hint?: string;
-}) {
-  return (
-    <div className="relative shrink-0">
-      <button
-        onClick={() => {
-          setOpen(!open);
-        }}
-        className="flex items-center gap-1.5 rounded-lg border border-droid-border bg-white/[0.03] px-2 py-1.5 text-[11.5px] text-droid-text-secondary transition-colors hover:border-droid-border hover:text-droid-text"
-      >
-        {icon}
-        {value}
-        <ChevronDown className="h-3 w-3 opacity-60" />
-      </button>
-      <AnimatePresence>
-        {open && (
-          <>
-            <div
-              className="fixed inset-0 z-10"
-              onClick={() => {
-                setOpen(false);
-              }}
-            />
-            <motion.div
-              initial={{ opacity: 0, y: 6, scale: 0.98 }}
-              animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, y: 6, scale: 0.98 }}
-              transition={{ type: 'spring', damping: 24, stiffness: 340 }}
-              className={`absolute bottom-full z-20 mb-1.5 ${width} overflow-hidden rounded-xl border border-droid-border bg-droid-elevated p-1 shadow-2xl ${
-                align === 'right' ? 'right-0' : 'left-0'
-              }`}
-            >
-              {hint && (
-                <div className="mb-1 border-b border-droid-border px-2 pb-1.5 pt-0.5 font-mono text-[9.5px] uppercase tracking-wider text-droid-text-muted">
-                  {hint}
-                </div>
-              )}
-              {options.map((o) => (
-                <button
-                  key={o}
-                  onClick={() => {
-                    onPick(o);
-                    setOpen(false);
-                  }}
-                  className={`flex w-full items-center justify-between rounded-lg px-2 py-1.5 text-left text-[12px] transition-colors ${
-                    o === value
-                      ? 'bg-[#ee6018]/12 text-[#f08a52]'
-                      : 'text-droid-text-secondary hover:bg-white/[0.06]'
-                  }`}
-                >
-                  {o}
-                </button>
-              ))}
-            </motion.div>
-          </>
-        )}
-      </AnimatePresence>
-    </div>
   );
 }

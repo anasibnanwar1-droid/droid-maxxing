@@ -1,4 +1,4 @@
-import { Frame, Hand, MousePointer2, Pencil, Type } from 'lucide-react';
+import { Frame, Hand, MousePointer2, Pencil } from 'lucide-react';
 import { useStudioCanvas, type StudioTool } from './StudioCanvasContext';
 
 interface ToolDef {
@@ -13,21 +13,18 @@ const PRIMARY: ToolDef[] = [
   { id: 'hand', icon: Hand, label: 'Hand', key: 'H' },
 ];
 
-const ANNOTATE: ToolDef[] = [
-  { id: 'text', icon: Type, label: 'Text', key: 'T' },
-  { id: 'draw', icon: Pencil, label: 'Draw', key: 'P' },
-];
+const ANNOTATE: ToolDef[] = [{ id: 'draw', icon: Pencil, label: 'Draw', key: 'P' }];
 
 /**
  * Left-edge tool rail. Select/Hand drive canvas interaction; Frame opens the add
- * dialog; Text/Draw arm annotation tools that become context for the agent.
+ * dialog; Draw opens the annotation tools that become context for the agent.
  */
 export default function ToolRail({ onRequestAddFrame }: { onRequestAddFrame: () => void }) {
   const { studio, studioDispatch } = useStudioCanvas();
   const setTool = (tool: StudioTool) => { studioDispatch({ type: 'SET_TOOL', tool }); };
 
   return (
-    <div className="flex flex-col items-center gap-1 rounded-2xl border border-droid-border bg-droid-surface/85 p-1.5 shadow-[0_16px_40px_-12px_rgba(0,0,0,0.7)] backdrop-blur">
+    <div className="studio-floating-surface flex flex-col items-center gap-1 rounded-xl p-1">
       {PRIMARY.map((t) => (
         <RailButton
           key={t.id}
@@ -36,14 +33,14 @@ export default function ToolRail({ onRequestAddFrame }: { onRequestAddFrame: () 
           shortcut={t.key}
           onClick={() => { setTool(t.id); }}
         >
-          <t.icon className="h-[18px] w-[18px]" />
+          <t.icon className="h-[18px] w-[18px]" strokeWidth={1.75} />
         </RailButton>
       ))}
 
       <Divider />
 
       <RailButton label="Add frame" shortcut="F" onClick={onRequestAddFrame}>
-        <Frame className="h-[18px] w-[18px]" />
+        <Frame className="h-[18px] w-[18px]" strokeWidth={1.75} />
       </RailButton>
 
       <Divider />
@@ -56,7 +53,7 @@ export default function ToolRail({ onRequestAddFrame }: { onRequestAddFrame: () 
           shortcut={t.key}
           onClick={() => { setTool(t.id); }}
         >
-          <t.icon className="h-[18px] w-[18px]" />
+          <t.icon className="h-[18px] w-[18px]" strokeWidth={1.75} />
         </RailButton>
       ))}
     </div>
@@ -64,7 +61,7 @@ export default function ToolRail({ onRequestAddFrame }: { onRequestAddFrame: () 
 }
 
 function Divider() {
-  return <div className="my-0.5 h-px w-5 bg-white/[0.08]" />;
+  return <div className="my-0.5 h-px w-5 bg-droid-border" />;
 }
 
 function RailButton({
@@ -83,17 +80,18 @@ function RailButton({
   return (
     <button
       onClick={onClick}
-      className={`group relative flex h-9 w-9 items-center justify-center rounded-xl transition-all duration-150 ${
+      aria-pressed={active}
+      className={`group relative flex h-9 w-9 items-center justify-center rounded-lg transition-colors duration-150 ${
         active
-          ? 'bg-[#ee6018]/15 text-[#ee6018] shadow-[inset_0_0_0_1px_rgba(238,96,24,0.4)]'
-          : 'text-droid-text-muted hover:bg-white/[0.06] hover:text-droid-text'
+          ? 'bg-droid-accent/10 text-droid-accent'
+          : 'text-droid-text-muted hover:bg-droid-active/70 hover:text-droid-text'
       }`}
     >
       {children}
-      <span className="pointer-events-none absolute left-full ml-3 flex items-center gap-1.5 whitespace-nowrap rounded-md border border-droid-border bg-droid-elevated px-2 py-1 text-[11px] text-droid-text opacity-0 shadow-xl transition-opacity delay-200 duration-150 group-hover:opacity-100">
+      <span className="pointer-events-none absolute left-full ml-2.5 flex items-center gap-1.5 whitespace-nowrap rounded-lg border border-droid-border bg-droid-elevated px-2 py-1 text-[11px] text-droid-text opacity-0 shadow-lg transition-opacity delay-200 duration-150 group-hover:opacity-100">
         {label}
         {shortcut && (
-          <kbd className="rounded bg-white/10 px-1 font-mono text-[10px] text-droid-text-secondary">
+          <kbd className="rounded bg-droid-active px-1 text-[10px] text-droid-text-secondary">
             {shortcut}
           </kbd>
         )}

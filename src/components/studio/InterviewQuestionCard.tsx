@@ -38,7 +38,9 @@ export default function InterviewQuestionCard({
     <div>
       <h2 className="text-[20px] font-medium tracking-tight text-droid-text">{question.title}</h2>
       {question.subtitle && (
-        <p className="mt-1.5 text-[13px] leading-relaxed text-droid-text-muted">{question.subtitle}</p>
+        <p className="mt-1.5 text-[13px] leading-relaxed text-droid-text-muted">
+          {question.subtitle}
+        </p>
       )}
 
       {question.options.length > 0 && (
@@ -48,10 +50,12 @@ export default function InterviewQuestionCard({
             return (
               <button
                 key={o.value}
-                onClick={() => toggle(o.value)}
+                onClick={() => {
+                  toggle(o.value);
+                }}
                 className={`rounded-full border px-3.5 py-1.5 text-[13px] transition-colors ${
                   on
-                    ? 'border-[#ee6018]/60 bg-[#ee6018]/15 text-droid-text'
+                    ? 'border-droid-accent/60 bg-droid-accent/15 text-droid-text'
                     : 'border-droid-border text-droid-text-secondary hover:border-droid-border hover:text-droid-text'
                 }`}
               >
@@ -65,7 +69,9 @@ export default function InterviewQuestionCard({
       {question.allowText && (
         <textarea
           value={answer.text}
-          onChange={(e) => onChange({ ...answer, text: e.target.value })}
+          onChange={(e) => {
+            onChange({ ...answer, text: e.target.value });
+          }}
           onPaste={(e) => {
             if (!question.allowImages) return;
             const imgs = Array.from(e.clipboardData.files).filter((f) =>
@@ -78,7 +84,7 @@ export default function InterviewQuestionCard({
           }}
           rows={question.allowImages ? 3 : 2}
           placeholder={question.placeholder}
-          className="mt-4 w-full resize-none rounded-xl border border-droid-border bg-white/[0.02] px-3.5 py-2.5 text-[13.5px] leading-relaxed text-droid-text placeholder:text-droid-text-muted focus:border-[#ee6018]/40 focus:outline-none"
+          className="mt-4 w-full resize-none rounded-xl border border-droid-border bg-droid-elevated/25 px-3.5 py-2.5 text-[13.5px] leading-relaxed text-droid-text placeholder:text-droid-text-muted focus:border-droid-accent/40 focus:outline-none"
         />
       )}
 
@@ -101,21 +107,23 @@ export default function InterviewQuestionCard({
                 <img
                   src={src}
                   alt="reference"
-                  className="h-16 w-16 rounded-lg object-cover ring-1 ring-white/10"
+                  className="h-16 w-16 rounded-lg object-cover ring-1 ring-droid-border"
                 />
                 <button
-                  onClick={() =>
-                    onChange({ ...answer, images: answer.images.filter((_, j) => j !== i) })
-                  }
-                  className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-black/85 text-droid-text-secondary opacity-0 transition-opacity group-hover:opacity-100"
+                  onClick={() => {
+                    onChange({ ...answer, images: answer.images.filter((_, j) => j !== i) });
+                  }}
+                  className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-droid-active text-droid-text-secondary opacity-0 transition-opacity group-hover:opacity-100"
                 >
                   <X className="h-3 w-3" />
                 </button>
               </span>
             ))}
             <button
-              onClick={() => fileRef.current?.click()}
-              className="flex h-16 w-16 flex-col items-center justify-center gap-1 rounded-lg border border-dashed border-droid-border text-droid-text-muted transition-colors hover:border-[#ee6018]/50 hover:text-droid-text-secondary"
+              onClick={() => {
+                fileRef.current?.click();
+              }}
+              className="flex h-16 w-16 flex-col items-center justify-center gap-1 rounded-lg border border-dashed border-droid-border text-droid-text-muted transition-colors hover:border-droid-accent/50 hover:text-droid-text-secondary"
             >
               <ImagePlus className="h-4 w-4" />
               <span className="text-[9px]">paste</span>
@@ -130,7 +138,9 @@ export default function InterviewQuestionCard({
 function readAsDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onload = () => resolve(reader.result as string);
+    reader.onload = () => {
+      resolve(reader.result as string);
+    };
     reader.onerror = reject;
     reader.readAsDataURL(file);
   });

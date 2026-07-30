@@ -11,9 +11,9 @@ const STATUS_LABEL: Record<StudioFrame['status'], string> = {
 };
 const STATUS_TONE: Record<StudioFrame['status'], string> = {
   loading: 'text-droid-text-muted',
-  building: 'text-[#ee6018]',
-  ready: 'text-[#7aa37a]',
-  failed: 'text-[#c0563a]',
+  building: 'text-droid-accent',
+  ready: 'text-droid-green',
+  failed: 'text-droid-red',
 };
 
 /**
@@ -39,12 +39,14 @@ export default function SelectionContextPanel() {
       animate={{ opacity: 1, x: 0 }}
       exit={{ opacity: 0, x: 16 }}
       transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
-      className="pointer-events-auto absolute right-4 top-4 z-20 w-[264px] overflow-hidden rounded-2xl border border-droid-border bg-droid-surface/95 shadow-[0_24px_60px_-20px_rgba(0,0,0,0.8)] backdrop-blur-xl"
+      className="studio-popover pointer-events-auto absolute right-4 top-4 z-20 w-[264px] overflow-hidden"
     >
       {frame ? (
         <>
           <button
-            onClick={() => setCollapsed((v) => !v)}
+            onClick={() => {
+              setCollapsed((v) => !v);
+            }}
             className="flex w-full items-center gap-2 px-4 py-3 text-left"
           >
             <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-droid-text">
@@ -80,7 +82,7 @@ export default function SelectionContextPanel() {
                   <DetailRow label="kind" value={frame.kind} />
                   <DetailRow
                     label="viewport"
-                    value={`${sizeOf(frame).width}×${sizeOf(frame).height}`}
+                    value={`${String(sizeOf(frame).width)}×${String(sizeOf(frame).height)}`}
                   />
                   <DetailRow label="source" value={frame.url || '—'} mono wrap />
                 </div>
@@ -91,19 +93,19 @@ export default function SelectionContextPanel() {
             <Action
               icon={<RotateCw className="h-3.5 w-3.5" />}
               label="Reload"
-              onClick={() =>
-                { studioDispatch({ type: 'UPDATE_FRAME', id: frame.id, patch: { status: 'loading' } }); }
-              }
+              onClick={() => {
+                studioDispatch({ type: 'RELOAD_FRAME', id: frame.id });
+              }}
             />
             <Action
               icon={<Copy className="h-3.5 w-3.5" />}
               label="Duplicate"
-              onClick={() =>
-                { studioDispatch({
+              onClick={() => {
+                studioDispatch({
                   type: 'ADD_FRAME',
                   frame: { name: `${frame.name} copy`, url: frame.url, mode: frame.mode },
-                }); }
-              }
+                });
+              }}
             />
             <Action
               icon={<ExternalLink className="h-3.5 w-3.5" />}
@@ -114,7 +116,9 @@ export default function SelectionContextPanel() {
               icon={<Trash2 className="h-3.5 w-3.5" />}
               label="Delete"
               danger
-              onClick={() => { studioDispatch({ type: 'REMOVE_FRAME', id: frame.id }); }}
+              onClick={() => {
+                studioDispatch({ type: 'REMOVE_FRAME', id: frame.id });
+              }}
             />
           </div>
         </>
@@ -132,7 +136,7 @@ export default function SelectionContextPanel() {
           {elements.map((el) => (
             <div key={el.id} className="flex items-center gap-1.5 py-0.5">
               <span className="truncate text-[12px] text-droid-text-secondary">{el.label}</span>
-              {el.tag && <span className="font-mono text-[10px] text-droid-text-muted">{el.tag}</span>}
+              {el.tag && <span className="text-[10px] text-droid-text-muted">{el.tag}</span>}
             </div>
           ))}
         </div>
@@ -158,7 +162,7 @@ function DetailRow({
         {label}
       </span>
       <span
-        className={`min-w-0 flex-1 text-[12px] text-droid-text-secondary ${mono ? 'font-mono text-[11px]' : ''} ${
+        className={`min-w-0 flex-1 text-[12px] text-droid-text-secondary ${mono ? 'text-[11px]' : ''} ${
           wrap ? 'break-all' : 'truncate'
         }`}
       >
@@ -185,8 +189,8 @@ function Action({
       title={label}
       className={`flex flex-1 flex-col items-center gap-1 rounded-lg py-1.5 text-[10px] transition-colors ${
         danger
-          ? 'text-droid-text-muted hover:bg-[#c0563a]/15 hover:text-[#e0806a]'
-          : 'text-droid-text-secondary hover:bg-white/[0.06] hover:text-droid-text'
+          ? 'text-droid-text-muted hover:bg-droid-red/15 hover:text-droid-red'
+          : 'text-droid-text-secondary hover:bg-droid-active/70 hover:text-droid-text'
       }`}
     >
       {icon}

@@ -1,9 +1,10 @@
-import { useMemo, useState } from 'react';
-import { AnimatePresence, motion } from 'framer-motion';
+import { useMemo, useRef, useState } from 'react';
 import { Check, History, Plus } from 'lucide-react';
 import { useStore } from '../../hooks/useStore';
 import { useDesignStore } from '../../hooks/useDesignStore';
-import { listMissions, loadMissionHistory } from '../../lib/commands';
+import { listSessions, loadSessionHistory } from '../../lib/commands';
+import type { TranscriptEvent } from '../../types/bridge';
+import { Popover } from '../environment/Popover';
 import { emptyStudioCanvasState, useStudioCanvas } from './StudioCanvasContext';
 import type { StudioCanvasState } from './StudioCanvasContext';
 
@@ -12,16 +13,16 @@ function relativeTime(ts?: number): string {
   const delta = Date.now() - ts;
   const mins = Math.floor(delta / 60_000);
   if (mins < 1) return 'just now';
-  if (mins < 60) return `${mins}m ago`;
+  if (mins < 60) return `${String(mins)}m ago`;
   const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours}h ago`;
+  if (hours < 24) return `${String(hours)}h ago`;
   const days = Math.floor(hours / 24);
-  return `${days}d ago`;
+  return `${String(days)}d ago`;
 }
 
-function threadKey(projectKey: string, missionId: string | null | undefined): string {
+function threadKey(projectKey: string, appSessionId: string | null | undefined): string {
   // Empty / null = intentional new thread. Never use || here — '' is falsy.
-  return missionId != null && missionId !== '' ? missionId : `__new__:${projectKey}`;
+  return appSessionId != null && appSessionId !== '' ? appSessionId : `__new__:${projectKey}`;
 }
 
 function snapshotCanvas(studio: StudioCanvasState): StudioCanvasState {
@@ -30,6 +31,12 @@ function snapshotCanvas(studio: StudioCanvasState): StudioCanvasState {
     frames: studio.frames.map((f) => ({ ...f })),
     selectedFrameIds: [...studio.selectedFrameIds],
     selection: studio.selection.map((s) => ({ ...s })),
+    annotations: studio.annotations.map((annotation) => ({
+      ...annotation,
+      points: annotation.points.map((point) => ({ ...point })),
+    })),
+    attachedAnnotationIds: [...studio.attachedAnnotationIds],
+    drawingStyle: { ...studio.drawingStyle },
     view: { ...studio.view },
     settings: { ...studio.settings },
     interactingFrameId: null,
@@ -53,7 +60,9 @@ export default function ThreadHistoryMenu({
   const { design, designDispatch } = useDesignStore();
   const { studio, studioDispatch } = useStudioCanvas();
   const [open, setOpen] = useState(false);
-  const key = sessionKey || cwd;
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  // sessionKey may be '' — the cwd fallback must still apply for it.
+  const key = sessionKey === undefined || sessionKey === '' ? cwd : sessionKey;
   // Distinguish intentional new thread ('') from "not set" (undefined).
   const rawSession = design.sessions[key] ?? design.sessions[cwd];
   const intentionalNew = rawSession === '';
@@ -71,40 +80,37 @@ export default function ThreadHistoryMenu({
   }, [cwd, key, design.workspaces]);
 
   const threads = useMemo(() => {
-    return Object.values(state.missions)
-      .filter(
-        (m) =>
-          projectCwds.has(m.cwd) &&
-          m.kind !== 'mission_orchestrator' &&
-          (m.title === 'Design' || m.kind === 'chat' || m.kind === 'spec'),
-      )
-      .sort((a, b) => (b.updatedAt ?? b.createdAt ?? 0) - (a.updatedAt ?? a.createdAt ?? 0))
+    return Object.values(state.sessions)
+      .filter((m) => projectCwds.has(m.cwd) && m.sessionPurpose === 'design')
+      .sort((a, b) => b.updatedAt - a.updatedAt)
       .slice(0, 24);
-  }, [state.missions, projectCwds]);
+  }, [state.sessions, projectCwds]);
 
   const openMenu = () => {
     setOpen(true);
     // Fire-and-forget list refresh; don't block the menu open.
     const cwds = [...projectCwds];
-    listMissions({
+    listSessions({
       workspaceCwds: cwds.length ? cwds : undefined,
       includePlainChats: true,
       limitPerWorkspace: 40,
     });
   };
 
-  const switchTo = (missionId: string) => {
-    if (missionId === activeId) {
+  const switchTo = (appSessionId: string) => {
+    if (appSessionId === activeId) {
       setOpen(false);
       return;
     }
     const prevKey = threadKey(key, activeId);
     designDispatch({ type: 'SAVE_CANVAS', threadKey: prevKey, state: snapshotCanvas(studio) });
-    designDispatch({ type: 'SET_SESSION', cwd: key, missionId });
-    const next = design.canvasByThread[missionId] ?? emptyStudioCanvasState();
+    designDispatch({ type: 'SET_SESSION', cwd: key, appSessionId });
+    const next = design.canvasByThread[appSessionId] ?? emptyStudioCanvasState();
     studioDispatch({ type: 'HYDRATE', state: next });
-    if (!state.historyLoaded[missionId] && (state.transcripts[missionId]?.length ?? 0) === 0) {
-      loadMissionHistory(missionId);
+    // Record index access can miss at runtime; widen so the empty-check stays safe.
+    const transcript = state.transcripts[appSessionId] as TranscriptEvent[] | undefined;
+    if (!state.historyLoaded[appSessionId] && (transcript?.length ?? 0) === 0) {
+      loadSessionHistory(appSessionId);
     }
     setOpen(false);
   };
@@ -116,7 +122,7 @@ export default function ThreadHistoryMenu({
     }
     const prevKey = threadKey(key, activeId);
     designDispatch({ type: 'SAVE_CANVAS', threadKey: prevKey, state: snapshotCanvas(studio) });
-    designDispatch({ type: 'SET_SESSION', cwd: key, missionId: null });
+    designDispatch({ type: 'SET_SESSION', cwd: key, appSessionId: null });
     const next = design.canvasByThread[threadKey(key, null)] ?? emptyStudioCanvasState();
     studioDispatch({ type: 'HYDRATE', state: next });
     setOpen(false);
@@ -124,88 +130,94 @@ export default function ThreadHistoryMenu({
 
   const trigger = (
     <button
-      onClick={() => (open ? setOpen(false) : openMenu())}
+      ref={triggerRef}
+      onClick={() => {
+        if (open) {
+          setOpen(false);
+        } else {
+          openMenu();
+        }
+      }}
       title="Earlier threads & canvases"
+      aria-label="Earlier design threads"
+      aria-expanded={open}
       className={
         variant === 'tab'
-          ? 'flex h-7 w-7 items-center justify-center rounded-lg text-droid-text-muted transition-colors hover:bg-white/[0.06] hover:text-droid-text-secondary'
-          : 'no-drag flex h-7 w-7 items-center justify-center rounded-md text-droid-text-muted transition-colors hover:bg-white/10 hover:text-droid-text'
+          ? 'flex h-8 w-8 items-center justify-center rounded-lg text-droid-text-muted transition-colors hover:bg-droid-elevated hover:text-droid-text'
+          : 'no-drag flex h-8 w-8 items-center justify-center rounded-lg text-droid-text-muted transition-colors hover:bg-droid-elevated hover:text-droid-text'
       }
     >
-      <History className="h-3.5 w-3.5" />
+      <History className="h-3.5 w-3.5" strokeWidth={1.75} />
     </button>
   );
 
   return (
-    <div className="relative">
+    <>
       {trigger}
-      <AnimatePresence>
-        {open && (
-          <>
-            <div className="fixed inset-0 z-30" onClick={() => setOpen(false)} />
-            <motion.div
-              initial={{ opacity: 0, y: 6, scale: 0.98 }}
-              animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, y: 6, scale: 0.98 }}
-              transition={{ type: 'spring', damping: 24, stiffness: 340 }}
-              className={`no-drag absolute top-full z-40 mt-1.5 w-72 overflow-hidden rounded-xl border border-droid-border bg-droid-elevated shadow-2xl ${
-                variant === 'tab' ? 'left-0' : 'right-0'
-              }`}
+      <Popover
+        open={open}
+        onClose={() => {
+          setOpen(false);
+        }}
+        anchorRef={triggerRef}
+        label="Design threads"
+        align="right"
+        width={288}
+        className="studio-popover no-drag"
+      >
+        <div data-studio-dismissable-layer className="min-h-0">
+          <div className="flex items-center justify-between border-b border-droid-border px-2.5 py-2">
+            <span className="text-[11.5px] font-medium text-droid-text-secondary">Threads</span>
+            <button
+              onClick={startNew}
+              className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11.5px] text-droid-text-secondary transition-colors hover:bg-droid-active/70 hover:text-droid-text"
             >
-              <div className="flex items-center justify-between border-b border-droid-border px-2.5 py-2">
-                <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-droid-text-muted">
-                  Threads
-                </span>
+              <Plus className="h-3 w-3" />
+              New
+            </button>
+          </div>
+          <div className="max-h-[280px] overflow-y-auto p-1">
+            {intentionalNew && (
+              <div className="flex items-center gap-2 rounded-lg bg-droid-accent/10 px-2.5 py-2 text-[12px] text-droid-accent">
+                <Check className="h-3.5 w-3.5 shrink-0" />
+                New thread (not started)
+              </div>
+            )}
+            {threads.length === 0 && !activeId && !intentionalNew && (
+              <div className="px-2.5 py-3 text-center text-[11.5px] text-droid-text-muted">
+                No earlier design threads yet.
+              </div>
+            )}
+            {threads.map((m) => {
+              const selected = m.appSessionId === activeId;
+              return (
                 <button
-                  onClick={startNew}
-                  className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11.5px] text-droid-text-secondary transition-colors hover:bg-white/[0.06] hover:text-droid-text"
+                  key={m.appSessionId}
+                  onClick={() => {
+                    switchTo(m.appSessionId);
+                  }}
+                  className={`flex w-full items-start gap-2 rounded-lg px-2.5 py-2 text-left transition-colors ${
+                    selected ? 'bg-droid-accent/10' : 'hover:bg-droid-active/70'
+                  }`}
                 >
-                  <Plus className="h-3 w-3" />
-                  New
-                </button>
-              </div>
-              <div className="max-h-[280px] overflow-y-auto p-1">
-                {intentionalNew && (
-                  <div className="flex items-center gap-2 rounded-lg bg-[#ee6018]/[0.1] px-2.5 py-2 text-[12px] text-[#f0a060]">
-                    <Check className="h-3.5 w-3.5 shrink-0" />
-                    New thread (not started)
-                  </div>
-                )}
-                {threads.length === 0 && !activeId && !intentionalNew && (
-                  <div className="px-2.5 py-3 text-center text-[11.5px] text-droid-text-muted">
-                    No earlier design threads yet.
-                  </div>
-                )}
-                {threads.map((m) => {
-                  const selected = m.id === activeId;
-                  return (
-                    <button
-                      key={m.id}
-                      onClick={() => switchTo(m.id)}
-                      className={`flex w-full items-start gap-2 rounded-lg px-2.5 py-2 text-left transition-colors ${
-                        selected ? 'bg-[#ee6018]/[0.12]' : 'hover:bg-white/[0.05]'
-                      }`}
+                  <span className="min-w-0 flex-1">
+                    <span
+                      className={`block truncate text-[12.5px] ${selected ? 'text-droid-accent' : 'text-droid-text'}`}
                     >
-                      <span className="min-w-0 flex-1">
-                        <span
-                          className={`block truncate text-[12.5px] ${selected ? 'text-[#f0a060]' : 'text-droid-text'}`}
-                        >
-                          {m.title || 'Design'}
-                        </span>
-                        <span className="mt-0.5 block truncate text-[10.5px] text-droid-text-muted">
-                          {relativeTime(m.updatedAt ?? m.createdAt)}
-                          {m.modelId ? ` · ${m.modelId}` : ''}
-                        </span>
-                      </span>
-                      {selected && <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[#ee6018]" />}
-                    </button>
-                  );
-                })}
-              </div>
-            </motion.div>
-          </>
-        )}
-      </AnimatePresence>
-    </div>
+                      {m.title || 'Untitled design'}
+                    </span>
+                    <span className="mt-0.5 block truncate text-[10.5px] text-droid-text-muted">
+                      {relativeTime(m.updatedAt)}
+                      {m.modelId ? ` · ${m.modelId}` : ''}
+                    </span>
+                  </span>
+                  {selected && <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-droid-accent" />}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      </Popover>
+    </>
   );
 }

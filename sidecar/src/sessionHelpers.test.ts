@@ -8,6 +8,7 @@ import {
   createMissionAgentDefaultsForMode,
   createModelDefaultsForMode,
   defaultsModeForSummary,
+  isDesignStudioSession,
 } from './sessionHelpers.js';
 
 test('create defaults preserve explicit autonomy and mode-specific primary settings', () => {
@@ -95,6 +96,8 @@ test('summary defaults depend on purpose and spec mode, not AGI interaction alon
     }),
     'agi',
   );
+  assert.equal(isDesignStudioSession({ ...ordinary, sessionPurpose: 'design' }), true);
+  assert.equal(isDesignStudioSession({ ...ordinary, title: 'Design' }), false);
 });
 
 test('cold resume preserves a persisted Mission Control proposal', () => {

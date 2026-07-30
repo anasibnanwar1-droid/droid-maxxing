@@ -24,7 +24,7 @@ import type { StudioCanvasState } from '../components/studio/StudioCanvasContext
 
 export interface ValidatorRunStatus {
   status: 'running' | 'done' | 'failed';
-  missionId?: string;
+  appSessionId?: string;
   pageId?: string;
   viewport?: string;
   completed?: number;
@@ -49,13 +49,13 @@ export type StudioTab = 'dna' | 'validator' | 'library' | 'prototypes' | 'compon
 export interface DesignState {
   studioOpen: boolean;
   studioTab: StudioTab;
-  // The project design session (a normal chat, never a mission orchestrator),
-  // keyed by cwd; `expected` correlates our createMission clientRef to a cwd.
+  // The project design session (explicit design purpose, never Mission Control),
+  // keyed by cwd; `expected` correlates our createSession clientRef to a cwd.
   sessions: Record<string, string>;
   expected: Record<string, string>;
   // Latest brand-book / design preview per cwd (served by the preview harness).
   previews: Record<string, { id: string; name: string; url: string; kind?: 'page' | 'component' }>;
-  // All design data is project-scoped, keyed by the mission cwd.
+  // All design data is project-scoped, keyed by the session cwd.
   dna: Record<string, DnaState>;
   drafts: Record<string, DnaDraft>;
   libraries: DnaLibrarySummary[];
@@ -82,7 +82,7 @@ export interface DesignState {
   registry: Record<string, ComponentRegistryEntry[]>;
   gitResults: Record<string, GitCommitResult>;
   lastError: { cwd?: string; message: string } | null;
-  // Per-thread canvas snapshots (mission id or `__new__:<projectKey>`). Survives
+  // Per-thread canvas snapshots (appSessionId or `__new__:<projectKey>`). Survives
   // StudioShell remounts when the worktree path resolves, so switch restores frames.
   canvasByThread: Record<string, StudioCanvasState>;
 }
@@ -96,9 +96,9 @@ export type DesignAction =
   | { type: 'EXPECT_SESSION'; clientRef: string; cwd: string }
   // Adopt an existing normal chat as the design session for this cwd (e.g. when
   // the user opens the studio with a chat already selected).
-  | { type: 'ADOPT_SESSION'; cwd: string; missionId: string }
+  | { type: 'ADOPT_SESSION'; cwd: string; appSessionId: string }
   // Switch the active design thread for a cwd (or clear it to start a new one).
-  | { type: 'SET_SESSION'; cwd: string; missionId: string | null }
+  | { type: 'SET_SESSION'; cwd: string; appSessionId: string | null }
   | { type: 'SAVE_CANVAS'; threadKey: string; state: StudioCanvasState }
   | { type: 'BRIDGE_EVENT'; event: ServerEvent };
 
@@ -166,7 +166,7 @@ function applyEvent(state: DesignState, ev: ServerEvent): DesignState {
           ...state.validatorRuns,
           [ev.cwd]: {
             status: ev.status,
-            missionId: ev.missionId,
+            appSessionId: ev.appSessionId,
             pageId: ev.pageId,
             viewport: ev.viewport,
             completed: ev.completed,
@@ -209,11 +209,18 @@ function applyEvent(state: DesignState, ev: ServerEvent): DesignState {
       };
     case 'design.error':
       return { ...state, lastError: { cwd: ev.cwd, message: ev.message } };
-    case 'mission.created': {
+    case 'session.created': {
       // A design session we started (correlated by clientRef) has an id now.
       const cwd = state.expected[ev.clientRef];
       if (!cwd) return state;
-      return { ...state, sessions: { ...state.sessions, [cwd]: ev.mission.id } };
+      const expected = Object.fromEntries(
+        Object.entries(state.expected).filter(([clientRef]) => clientRef !== ev.clientRef),
+      );
+      return {
+        ...state,
+        sessions: { ...state.sessions, [cwd]: ev.session.appSessionId },
+        expected,
+      };
     }
     default:
       return state;
@@ -245,12 +252,12 @@ function reducer(state: DesignState, action: DesignAction): DesignState {
     case 'ADOPT_SESSION':
       return {
         ...state,
-        sessions: { ...state.sessions, [action.cwd]: action.missionId },
+        sessions: { ...state.sessions, [action.cwd]: action.appSessionId },
       };
     case 'SET_SESSION': {
       // null → empty string marks an intentional "new thread" so auto-adopt
       // does not immediately reattach the main-window active chat.
-      const nextId = action.missionId ?? '';
+      const nextId = action.appSessionId ?? '';
       if (state.sessions[action.cwd] === nextId) return state;
       return {
         ...state,
@@ -277,7 +284,7 @@ export function DesignStoreProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const unsub = bridge.subscribe((ev) => {
-      if (ev.type.startsWith('design.') || ev.type === 'mission.created')
+      if (ev.type.startsWith('design.') || ev.type === 'session.created')
         designDispatch({ type: 'BRIDGE_EVENT', event: ev });
     });
     return () => {

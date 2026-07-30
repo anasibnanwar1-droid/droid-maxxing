@@ -5,9 +5,7 @@
 export function Header({ title, action }: { title: string; action?: React.ReactNode }) {
   return (
     <div className="flex items-center justify-between pb-2 pt-1">
-      <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-droid-text-muted">
-        {title}
-      </span>
+      <span className="text-[12px] font-medium text-droid-text-secondary">{title}</span>
       {action}
     </div>
   );
@@ -19,8 +17,8 @@ export function Swatches({ colors }: { colors: string[] }) {
     <div className="mt-2.5 flex gap-1">
       {colors.slice(0, 12).map((c, i) => (
         <div
-          key={`${c}-${i}`}
-          className="h-6 flex-1 rounded-md ring-1 ring-inset ring-white/10"
+          key={`${c}-${String(i)}`}
+          className="h-6 flex-1 rounded-md ring-1 ring-inset ring-droid-border"
           style={{ backgroundColor: c }}
           title={c}
         />
@@ -37,7 +35,7 @@ export function FontLine({ fonts }: { fonts: { sans?: string; display?: string; 
       {names.map((n) => (
         <span
           key={n}
-          className="rounded bg-white/[0.05] px-1.5 py-0.5 font-mono text-[10px] text-droid-text-muted"
+          className="rounded bg-droid-elevated/55 px-1.5 py-0.5 text-[10px] text-droid-text-muted"
         >
           {family(n)}
         </span>
@@ -52,10 +50,10 @@ export function TypeScale({ scale }: { scale: number[] }) {
     <div className="mt-2.5 flex items-baseline gap-2 overflow-hidden">
       {scale.slice(0, 7).map((s, i) => (
         <span
-          key={`${s}-${i}`}
+          key={`${String(s)}-${String(i)}`}
           className="shrink-0 leading-none text-droid-text-secondary"
           style={{ fontSize: Math.max(9, Math.min(22, s)) }}
-          title={`${s}px`}
+          title={`${String(s)}px`}
         >
           Aa
         </span>
@@ -66,6 +64,9 @@ export function TypeScale({ scale }: { scale: number[] }) {
 
 /** First family name out of a CSS font stack, for compact display. */
 function family(stack: string): string {
-  const first = stack.split(',')[0]?.trim().replace(/^["']|["']$/g, '');
+  const first = stack
+    .split(',')[0]
+    ?.trim()
+    .replace(/^["']|["']$/g, '');
   return first || stack;
 }

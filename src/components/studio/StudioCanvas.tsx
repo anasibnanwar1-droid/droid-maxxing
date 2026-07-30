@@ -3,8 +3,10 @@ import {
   useEffect,
   useRef,
   useState,
+  type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
 } from 'react';
+import { pushEscapeLayer } from '../environment/usePopover';
 import { useStudioCanvas, sizeOf, type StudioFrame } from './StudioCanvasContext';
 import {
   fitRects,
@@ -22,6 +24,10 @@ import StudioFrameBody from './StudioFrameBody';
 import StudioFrameChrome from './StudioFrameChrome';
 import CanvasControls from './CanvasControls';
 import CanvasEmptyState from './CanvasEmptyState';
+import CanvasAnnotationLayer from './CanvasAnnotationLayer';
+import AnnotationToolbar from './AnnotationToolbar';
+import { useCanvasDrawing } from './useCanvasDrawing';
+import { hitTestAnnotation, topFrameAtPoint } from './studioAnnotations';
 
 type DragMode = 'pan' | 'marquee';
 
@@ -29,6 +35,7 @@ export default function StudioCanvas({ onRequestAddFrame }: { onRequestAddFrame:
   const { studio, studioDispatch } = useStudioCanvas();
   const { view, tool, frames, selectedFrameIds } = studio;
   const rootRef = useRef<HTMLDivElement>(null);
+  const drawing = useCanvasDrawing(rootRef);
   // Latest view for the native wheel listener (bound once, reads via ref).
   const viewRef = useRef(view);
   viewRef.current = view;
@@ -104,20 +111,53 @@ export default function StudioCanvas({ onRequestAddFrame }: { onRequestAddFrame:
 
   useEffect(() => stopAnimation, [stopAnimation]);
 
-  // Esc leaves interact mode. Capture phase + stopPropagation so it doesn't also
-  // close the whole studio (whose Esc listener sits on window in the bubble phase).
+  // Interactive iframe mode is an Escape layer above the Studio itself.
+  useEffect(() => {
+    if (!studio.interactingFrameId) return;
+    return pushEscapeLayer(() => {
+      studioDispatch({ type: 'SET_INTERACTING', id: null });
+    });
+  }, [studio.interactingFrameId, studioDispatch]);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && studio.interactingFrameId) {
-        e.stopPropagation();
-        studioDispatch({ type: 'SET_INTERACTING', id: null });
+      if (!e.repeat && !e.metaKey && !e.ctrlKey && !e.altKey && !isTypingTarget(e.target)) {
+        const shortcut = e.key.toLowerCase();
+        const shortcutTool =
+          shortcut === 'v'
+            ? 'select'
+            : shortcut === 'h'
+              ? 'hand'
+              : shortcut === 'p'
+                ? 'draw'
+                : null;
+        if (shortcutTool) {
+          e.preventDefault();
+          studioDispatch({ type: 'SET_TOOL', tool: shortcutTool });
+        } else if (shortcut === 'f') {
+          e.preventDefault();
+          studioDispatch({ type: 'SET_INTERACTING', id: null });
+          onRequestAddFrame();
+        }
+      }
+      if (studio.tool === 'draw' && (e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') {
+        e.preventDefault();
+        studioDispatch({ type: 'UNDO_ANNOTATION' });
+      }
+      if (
+        studio.selectedAnnotationId &&
+        (e.key === 'Delete' || e.key === 'Backspace') &&
+        !isTypingTarget(e.target)
+      ) {
+        e.preventDefault();
+        studioDispatch({ type: 'REMOVE_ANNOTATION', id: studio.selectedAnnotationId });
       }
     };
-    window.addEventListener('keydown', onKey, true);
+    window.addEventListener('keydown', onKey);
     return () => {
-      window.removeEventListener('keydown', onKey, true);
+      window.removeEventListener('keydown', onKey);
     };
-  }, [studio.interactingFrameId, studioDispatch]);
+  }, [onRequestAddFrame, studio.selectedAnnotationId, studio.tool, studioDispatch]);
 
   const localPoint = useCallback((clientX: number, clientY: number): Point => {
     const rect = rootRef.current?.getBoundingClientRect();
@@ -171,6 +211,14 @@ export default function StudioCanvas({ onRequestAddFrame }: { onRequestAddFrame:
   }, [studioDispatch]);
 
   const onPointerDown = (e: ReactPointerEvent) => {
+    // Canvas gestures must never capture the pointer from controls layered over
+    // the canvas. Doing so retargets pointerup to the canvas and cancels the
+    // control's click.
+    if (isInteractiveCanvasTarget(e.target)) return;
+    if (drawing.beginDrawing(e) || drawing.beginEdit(e)) {
+      stopAnimation();
+      return;
+    }
     stopAnimation();
     // A click on empty canvas exits interact mode (clicks on the frame itself go
     // to the live app, not here).
@@ -199,8 +247,12 @@ export default function StudioCanvas({ onRequestAddFrame }: { onRequestAddFrame:
   };
 
   const onPointerMove = (e: ReactPointerEvent) => {
+    if (drawing.move(e)) return;
     const d = drag.current;
-    if (!d) return;
+    if (!d) {
+      drawing.updateHover(e);
+      return;
+    }
     const dx = e.clientX - d.startClient.x;
     const dy = e.clientY - d.startClient.y;
     if (Math.abs(dx) > 2 || Math.abs(dy) > 2) d.moved = true;
@@ -217,9 +269,12 @@ export default function StudioCanvas({ onRequestAddFrame }: { onRequestAddFrame:
   };
 
   const onPointerUp = (e: ReactPointerEvent) => {
+    if (drawing.finish(e)) return;
     const d = drag.current;
     drag.current = null;
-    rootRef.current?.releasePointerCapture(e.pointerId);
+    if (rootRef.current?.hasPointerCapture(e.pointerId)) {
+      rootRef.current.releasePointerCapture(e.pointerId);
+    }
     if (!d) return;
     if (d.mode === 'marquee') {
       if (d.moved && marquee) {
@@ -237,6 +292,7 @@ export default function StudioCanvas({ onRequestAddFrame }: { onRequestAddFrame:
         // Bare click on empty canvas clears both frame and element selection.
         studioDispatch({ type: 'SELECT_FRAMES', ids: [] });
         studioDispatch({ type: 'CLEAR_SELECTION' });
+        studioDispatch({ type: 'SELECT_ANNOTATION', id: null });
       }
     }
     setMarquee(null);
@@ -249,24 +305,47 @@ export default function StudioCanvas({ onRequestAddFrame }: { onRequestAddFrame:
     });
   };
 
+  const onDoubleClick = (event: ReactMouseEvent) => {
+    if (isInteractiveCanvasTarget(event.target)) return;
+    const screen = localPoint(event.clientX, event.clientY);
+    const world = screenToWorld(screen, view);
+    const overFrame = topFrameAtPoint(frames, world) !== undefined;
+    const overAnnotation = studio.annotations.some((annotation) =>
+      hitTestAnnotation(annotation, screen, frames, view),
+    );
+    if (overFrame || overAnnotation) return;
+    drawing.cancel();
+    studioDispatch({ type: 'SET_TOOL', tool: 'select' });
+    studioDispatch({ type: 'SET_INTERACTING', id: null });
+  };
+
   const cursor = wantsPan
     ? drag.current?.mode === 'pan'
       ? 'grabbing'
       : 'grab'
-    : tool === 'frame'
-      ? 'crosshair'
-      : 'default';
+    : (drawing.cursor ??
+      (tool === 'frame' ? 'crosshair' : tool === 'draw' ? 'crosshair' : 'default'));
 
   const gridSize = 26 * view.zoom;
+  const requestAddFrame = () => {
+    studioDispatch({ type: 'SET_INTERACTING', id: null });
+    onRequestAddFrame();
+  };
 
   return (
     <div
       ref={rootRef}
-      className="relative h-full w-full overflow-hidden bg-droid-bg select-none"
+      className="studio-canvas relative h-full w-full overflow-hidden select-none"
       style={{ cursor }}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
+      onPointerCancel={() => {
+        drawing.cancel();
+        drag.current = null;
+        setMarquee(null);
+      }}
+      onDoubleClick={onDoubleClick}
     >
       {/* Dot grid, anchored to the world so it tracks pan/zoom */}
       <div
@@ -279,16 +358,6 @@ export default function StudioCanvas({ onRequestAddFrame }: { onRequestAddFrame:
           opacity: Math.min(1, 0.35 + view.zoom * 0.4),
         }}
       />
-      {/* Depth vignette — eases off when zoomed out so the canvas feels open. */}
-      <div
-        className="pointer-events-none absolute inset-0 transition-opacity duration-300"
-        style={{
-          background:
-            'radial-gradient(120% 120% at 50% 40%, transparent 40%, rgba(0,0,0,0.6) 100%)',
-          opacity: Math.min(0.7, 0.28 + view.zoom * 0.22),
-        }}
-      />
-
       {/* World layer — scaled; frame bodies are visual only (pointer-events none)
           so pan/marquee always work over them. */}
       <div
@@ -327,22 +396,28 @@ export default function StudioCanvas({ onRequestAddFrame }: { onRequestAddFrame:
         })}
       </div>
 
+      <CanvasAnnotationLayer draft={drawing.draft} />
+
       {/* Marquee */}
       {marquee && (
         <div
-          className="pointer-events-none absolute rounded-[3px] border border-[#ee6018]/70 bg-[#ee6018]/10"
+          className="pointer-events-none absolute rounded-[3px] border border-droid-accent/70 bg-droid-accent/10"
           style={{ left: marquee.x, top: marquee.y, width: marquee.width, height: marquee.height }}
         />
       )}
 
-      {frames.length === 0 && <CanvasEmptyState onAddFrame={onRequestAddFrame} />}
+      {frames.length === 0 && studio.annotations.length === 0 && (
+        <CanvasEmptyState onAddFrame={requestAddFrame} />
+      )}
+
+      <AnnotationToolbar />
 
       <CanvasControls
         getSize={() => {
           const r = rootRef.current?.getBoundingClientRect();
           return r ? { width: r.width, height: r.height } : null;
         }}
-        onRequestAddFrame={onRequestAddFrame}
+        onRequestAddFrame={requestAddFrame}
       />
     </div>
   );
@@ -358,4 +433,11 @@ function isTypingTarget(target: EventTarget | null): boolean {
   if (!el) return false;
   const tag = el.tagName;
   return tag === 'INPUT' || tag === 'TEXTAREA' || el.isContentEditable;
+}
+
+function isInteractiveCanvasTarget(target: EventTarget | null): boolean {
+  return (
+    target instanceof Element &&
+    target.closest('button, a, input, textarea, select, [role="button"]') !== null
+  );
 }
