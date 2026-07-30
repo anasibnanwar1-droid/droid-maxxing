@@ -13,6 +13,7 @@ test('sessionIsLive treats terminal and awaiting phases as not live', () => {
   assert.equal(sessionIsLive({ phase: 'awaiting_plan_approval' }), false);
   // streaming wins over a non-terminal, not-clearly-active phase
   assert.equal(sessionIsLive({ phase: 'running', streaming: true }), true);
+  assert.equal(sessionIsLive({ phase: 'running', streaming: false }), false);
   // a completed session is never live even while a stale streaming flag lingers
   assert.equal(sessionIsLive({ phase: 'completed', streaming: true }), false);
   assert.equal(sessionIsLive({ phase: 'orchestrator_turn' }), true);

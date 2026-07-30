@@ -154,6 +154,15 @@ export function childSelectionForFeature(
     : null;
 }
 
+export function orderedChildSessions(
+  childSessions: readonly ChildSessionInfo[],
+): ChildSessionInfo[] {
+  return [...childSessions].sort(
+    (a, b) =>
+      (a.startedAt ?? 0) - (b.startedAt ?? 0) || a.childSessionId.localeCompare(b.childSessionId),
+  );
+}
+
 export function childSessionLabel(childSession: ChildSessionInfo, index: number): string {
   if (childSession.label) return childSession.label;
   const role = childSession.role === 'validator' ? 'Validator' : 'Worker';

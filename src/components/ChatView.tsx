@@ -19,6 +19,7 @@ import {
   childSessionLabel,
   childSessionMeta,
   findChildSessionForTarget,
+  orderedChildSessions,
   transcriptForVisibleSession,
   visibleSessionTarget,
 } from '../lib/childSessions';
@@ -200,7 +201,7 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
   const viewingChildSession = Boolean(selectedChildSessionId);
 
   const childSessions = activeSession
-    ? Object.values(state.childSessions[activeSession.appSessionId] ?? {})
+    ? orderedChildSessions(Object.values(state.childSessions[activeSession.appSessionId] ?? {}))
     : [];
   const childSessionIndex = childSessions.findIndex(
     (childSession) => childSession.childSessionId === selectedChildSessionId,

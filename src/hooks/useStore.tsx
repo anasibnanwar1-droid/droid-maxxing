@@ -839,7 +839,7 @@ export const initialState: AppState = {
 };
 
 function progressKey(entry: ProgressEntry): string {
-  return `${entry.timestamp}|${entry.type}|${entry.featureId ?? ''}|${entry.title ?? ''}`;
+  return `${entry.timestamp}|${entry.type}|${entry.featureId ?? ''}|${entry.workerChildSessionId ?? ''}|${entry.title ?? ''}`;
 }
 
 function activeBrowserKey(state: AppState): string | undefined {
@@ -1097,15 +1097,12 @@ function baseReducer(state: AppState, action: Action): AppState {
     }
 
     case 'SESSION_CLOSED': {
-      const childSessions = { ...state.childSessions };
       const childAccess = { ...state.childAccess };
       const childRuntime = { ...state.childRuntime };
-      delete childSessions[action.appSessionId];
       delete childAccess[action.appSessionId];
       delete childRuntime[action.appSessionId];
       return {
         ...state,
-        childSessions,
         childAccess,
         childRuntime,
         selectedChild:

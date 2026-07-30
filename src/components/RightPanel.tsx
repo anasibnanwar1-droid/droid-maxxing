@@ -22,7 +22,12 @@ import { EnvironmentSection } from './environment/EnvironmentSection';
 import { PullRequestPanel } from './environment/PullRequestPanel';
 import type { DiffStatMode } from '../types/vcs';
 import { diffModeToReviewScope } from '../lib/reviewScopes';
-import { childSessionLabel, childSessionMeta, visibleSessionTarget } from '../lib/childSessions';
+import {
+  childSessionLabel,
+  childSessionMeta,
+  orderedChildSessions,
+  visibleSessionTarget,
+} from '../lib/childSessions';
 
 // Parent-owned children are shown only in the right context panel.
 function ChildSessionRow({
@@ -169,7 +174,7 @@ export default function RightPanel() {
 
   // Child sessions spawned here (the same source the sidebar uses).
   const childSessions = activeSession
-    ? Object.values(state.childSessions[activeSession.appSessionId] ?? {})
+    ? orderedChildSessions(Object.values(state.childSessions[activeSession.appSessionId] ?? {}))
     : [];
   const childSessionsRunning = childSessions.some(
     (childSession) => childSession.status === 'running',

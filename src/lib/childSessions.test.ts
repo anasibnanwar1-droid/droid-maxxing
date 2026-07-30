@@ -9,6 +9,7 @@ import {
   childSessionMeta,
   findChildSessionForTarget,
   mergeChildSessionSpawn,
+  orderedChildSessions,
   selectedChildForParent,
   shouldOpenSelectedChild,
   transcriptForVisibleSession,
@@ -151,6 +152,35 @@ test('switching to a feature without an exact child clears the previous prompt t
       },
     ),
     { kind: 'primary' },
+  );
+});
+
+test('child ordering gives unlabeled siblings one stable label across surfaces', () => {
+  const later = {
+    parentAppSessionId: 'mission-parent',
+    childSessionId: 'worker-later',
+    role: 'worker' as const,
+    status: 'running' as const,
+    modelId: 'model-default',
+    transcriptAvailable: true,
+    startedAt: 20,
+  };
+  const earlier = {
+    ...later,
+    childSessionId: 'worker-earlier',
+    startedAt: 10,
+  };
+
+  const ordered = orderedChildSessions([later, earlier]);
+  assert.deepEqual(
+    ordered.map((childSession, index) => [
+      childSession.childSessionId,
+      childSessionLabel(childSession, index),
+    ]),
+    [
+      ['worker-earlier', 'Worker 1'],
+      ['worker-later', 'Worker 2'],
+    ],
   );
 });
 

@@ -43,10 +43,12 @@ import {
   childSessionMeta,
   childSelectionForFeature,
   findChildSessionForTarget,
+  orderedChildSessions,
   transcriptForVisibleSession,
   visibleSessionIsPending,
   visibleSessionTarget,
 } from '../lib/childSessions';
+import { sessionIsLive } from '../lib/sessions';
 import { MessageFeed } from './chat';
 import EditorOpenMenu, { openCodebase, openCurrentDiff } from './EditorOpenMenu';
 import PromptInput from './PromptInput';
@@ -250,7 +252,7 @@ function ContextColumn({
   childSessions,
   progress,
   selectedChildSessionId,
-  activeAgentId,
+  primaryIsLive,
   onSelectChild,
   big,
 }: {
@@ -258,7 +260,7 @@ function ContextColumn({
   childSessions: ChildSessionSummary[];
   progress: ProgressEntry[];
   selectedChildSessionId: string | null;
-  activeAgentId: string | null;
+  primaryIsLive: boolean;
   onSelectChild: (childSessionId: string | null) => void;
   big?: boolean;
 }) {
@@ -305,7 +307,7 @@ function ContextColumn({
         mission={mission}
         childSessions={childSessions}
         selectedChildSessionId={selectedChildSessionId}
-        activeAgentId={activeAgentId}
+        primaryIsLive={primaryIsLive}
         onSelectChild={onSelectChild}
       />
 
@@ -368,26 +370,16 @@ function AgentsSection({
   mission,
   childSessions,
   selectedChildSessionId,
-  activeAgentId,
+  primaryIsLive,
   onSelectChild,
 }: {
   mission: SessionSummary;
   childSessions: ChildSessionSummary[];
   selectedChildSessionId: string | null;
-  activeAgentId: string | null;
+  primaryIsLive: boolean;
   onSelectChild: (childSessionId: string | null) => void;
 }) {
   const { state, dispatch } = useStore();
-  const orderedChildren = useMemo(
-    () =>
-      [...childSessions].sort(
-        (a, b) =>
-          (a.startedAt ?? 0) - (b.startedAt ?? 0) ||
-          a.childSessionId.localeCompare(b.childSessionId),
-      ),
-    [childSessions],
-  );
-
   const cycleAutonomy = () => {
     const i = AUTONOMY_CYCLE.indexOf(mission.autonomy);
     const next = AUTONOMY_CYCLE[(i + 1) % AUTONOMY_CYCLE.length];
@@ -417,10 +409,10 @@ function AgentsSection({
             .join(' · ')}
           models={state.models}
           selected={selectedChildSessionId === null}
-          working={activeAgentId === 'primary'}
+          working={primaryIsLive}
           onClick={() => onSelectChild(null)}
         />
-        {orderedChildren.map((childSession, index) => {
+        {childSessions.map((childSession, index) => {
           const displayedModel = modelLabel(state.models, childSession.modelId);
           return (
             <AgentRow
@@ -430,9 +422,7 @@ function AgentsSection({
               meta={childSessionMeta(childSession, displayedModel)}
               models={state.models}
               selected={selectedChildSessionId === childSession.childSessionId}
-              working={
-                activeAgentId === childSession.childSessionId && childSession.status === 'running'
-              }
+              working={childSession.status === 'running'}
               onClick={() => onSelectChild(childSession.childSessionId)}
             />
           );
@@ -838,7 +828,7 @@ export default function MissionControl() {
   const allTx = mission ? (state.transcripts[mission.appSessionId] ?? []) : [];
   const progress = mission ? (state.progress[mission.appSessionId] ?? []) : [];
   const childSessions = mission
-    ? Object.values(state.childSessions[mission.appSessionId] ?? {})
+    ? orderedChildSessions(Object.values(state.childSessions[mission.appSessionId] ?? {}))
     : [];
   const visibleTarget = visibleSessionTarget(
     mission?.appSessionId,
@@ -877,32 +867,7 @@ export default function MissionControl() {
     },
     [childSessions, allTx],
   );
-  const phaseLive = mission
-    ? ['running', 'initializing', 'orchestrator_turn'].includes(mission.phase)
-    : false;
-
-  // Track real generation activity (streaming text grows in place, so watch text length too).
-  const lastEv = allTx[allTx.length - 1];
-  const activitySig = `${allTx.length}:${lastEv?.text?.length ?? 0}`;
-  const lastChangeRef = useRef(0);
-  const sigRef = useRef<string | null>(null);
-  const [, forceTick] = useState(0);
-  useEffect(() => {
-    if (sigRef.current !== null && sigRef.current !== activitySig)
-      lastChangeRef.current = Date.now();
-    sigRef.current = activitySig;
-  }, [activitySig]);
-  useEffect(() => {
-    const id = setInterval(() => forceTick((n) => n + 1), 500);
-    return () => clearInterval(id);
-  }, []);
-
-  const inactive = mission
-    ? ['paused', 'completed', 'failed', 'awaiting_plan_approval', 'awaiting_run_start'].includes(
-        mission.phase,
-      )
-    : true;
-  const isLive = !inactive && (phaseLive || Date.now() - lastChangeRef.current < 1500);
+  const isLive = mission ? sessionIsLive(mission) : false;
   const phaseLabel = mission
     ? mission.phase === 'completed'
       ? 'Completed'
@@ -916,17 +881,6 @@ export default function MissionControl() {
               ? 'Awaiting start'
               : 'Idle'
     : 'Idle';
-
-  // Only one agent is active at a time → the most recent meaningful transcript emitter while live.
-  const activeAgentId = useMemo<string | null>(() => {
-    if (!isLive) return null;
-    for (let i = allTx.length - 1; i >= 0; i--) {
-      const t = allTx[i];
-      if (t.author === 'user' || t.kind === 'status') continue;
-      return t.role === 'primary' ? 'primary' : t.sourceSessionId;
-    }
-    return 'primary';
-  }, [isLive, allTx]);
 
   if (!mission) return null;
 
@@ -1040,7 +994,7 @@ export default function MissionControl() {
             <ChatArea
               events={events}
               live={visibleIsLive}
-              pending={visibleSessionIsPending(visibleTarget, isLive, activeAgentId)}
+              pending={visibleSessionIsPending(visibleTarget, isLive, isLive ? 'primary' : null)}
               onOpenDiff={setOpenDiff}
               onOpenChildSession={onOrchestrator ? openChildSession : undefined}
               childSessionActivity={onOrchestrator ? childSessionActivity : undefined}
@@ -1067,7 +1021,7 @@ export default function MissionControl() {
                   childSessions={childSessions}
                   progress={progress}
                   selectedChildSessionId={visibleChildSessionId}
-                  activeAgentId={activeAgentId}
+                  primaryIsLive={isLive}
                   onSelectChild={selectChild}
                 />
               </div>
@@ -1099,7 +1053,7 @@ export default function MissionControl() {
               childSessions={childSessions}
               progress={progress}
               selectedChildSessionId={visibleChildSessionId}
-              activeAgentId={activeAgentId}
+              primaryIsLive={isLive}
               onSelectChild={(childSessionId) => {
                 selectChild(childSessionId);
                 setExpanded(null);

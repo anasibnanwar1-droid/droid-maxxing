@@ -23,6 +23,7 @@ import { createLocalDesignTranscriptEvent, newQueueId } from '../lib/promptQueue
 import { composePrompt } from '../lib/composePrompt';
 import {
   childSessionLabel,
+  orderedChildSessions,
   visibleSessionCanCompact,
   visibleSessionTarget,
   type VisibleSessionTarget,
@@ -157,9 +158,9 @@ export default function PromptInput({
   const targetChildSessionId = targetChild?.childSessionId ?? null;
   const targetChildIndex =
     visibleTarget.kind === 'child' && activeSession
-      ? Object.values(state.childSessions[activeSession.appSessionId] ?? {}).findIndex(
-          (childSession) => childSession.childSessionId === visibleTarget.childSessionId,
-        )
+      ? orderedChildSessions(
+          Object.values(state.childSessions[activeSession.appSessionId] ?? {}),
+        ).findIndex((childSession) => childSession.childSessionId === visibleTarget.childSessionId)
       : -1;
   const childSettingsTarget = buildVisibleChildSettingsTarget(
     visibleTarget,
