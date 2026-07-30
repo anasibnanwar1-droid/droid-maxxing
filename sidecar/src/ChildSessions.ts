@@ -118,6 +118,7 @@ export class ChildSessions {
     }
     const apply = () => {
       if (!this.isCurrentChild(parent, child) || !childAcceptsWork(child)) return;
+      if (child.retiredProviderSessionIds.has(providerSessionId)) return;
       if (child.providerSessionId && child.providerSessionId !== providerSessionId)
         child.retiredProviderSessionIds.add(child.providerSessionId);
       if (child.role !== observation.role) {
@@ -568,10 +569,10 @@ export class ChildSessions {
     child.turn.phase = 'streaming';
     runtime.lastUsedAt = this.d.now();
     child.status = 'running';
-    this.d.eventFlow.beginTurn(parent.parentAppSessionId, runtime.session.sessionId);
-    this.commit(child);
-    this.d.context.startPolling(this.contextTarget(parent, child, runtime));
     try {
+      this.d.eventFlow.beginTurn(parent.parentAppSessionId, runtime.session.sessionId);
+      this.commit(child);
+      this.d.context.startPolling(this.contextTarget(parent, child, runtime));
       for await (const event of runtime.session.stream(text, { includePartialMessages: true })) {
         if (!this.isCurrentTurn(parent, child, runtime, turnGeneration)) break;
         this.d.eventFlow.applyStreamEvent(

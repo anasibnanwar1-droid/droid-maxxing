@@ -37,13 +37,28 @@ interface Harness {
 
 function createHarness(
   records: PersistedChildSession[],
-  options: { maxOpenSessions?: number; failForgetChild?: string } = {},
+  options: {
+    maxOpenSessions?: number;
+    failForgetChild?: string;
+    failDriveSetup?: 'beginTurn' | 'commit' | 'startPolling';
+  } = {},
 ): Harness {
   const calls: RecordedCall[] = [];
   const events: ServerEvent[] = [];
   const history = new FakeHistoryIndex(calls);
   const runtime = new FakeFactoryRuntime(calls);
   const parentId = 'parent';
+  let failDriveSetup = options.failDriveSetup;
+  const throwDriveSetup = (stage: NonNullable<typeof options.failDriveSetup>) => {
+    if (failDriveSetup !== stage) return;
+    failDriveSetup = undefined;
+    throw new Error(`${stage} failed`);
+  };
+  const upsertChildSession = history.upsertChildSession.bind(history);
+  history.upsertChildSession = (child) => {
+    if (child.status === 'running') throwDriveSetup('commit');
+    upsertChildSession(child);
+  };
   history.seedChildSessions(records);
   let parent = parentLease(parentId, calls);
   const dependencies: ChildSessionsDependencies = {
@@ -63,6 +78,7 @@ function createHarness(
     },
     eventFlow: {
       beginTurn: (...args) => {
+        throwDriveSetup('beginTurn');
         calls.push({ target: 'protocol', method: 'turn.begin', args });
       },
       applyNotification: (...args) => {
@@ -85,7 +101,7 @@ function createHarness(
         });
       },
       refresh: () => Promise.resolve(),
-      startPolling: () => undefined,
+      startPolling: () => throwDriveSetup('startPolling'),
       stopPolling: (target) => {
         calls.push({
           target: 'cleanup',
@@ -468,6 +484,38 @@ test('completion during automatic compaction discards queued resurrection', asyn
   );
 });
 
+test('turn setup failures settle cleanly and permit the next send', async () => {
+  for (const failDriveSetup of ['beginTurn', 'commit', 'startPolling'] as const) {
+    const record = childRecord('child', 'provider');
+    const h = createHarness([record], { failDriveSetup });
+    const runtime = await h.open(record);
+
+    await h.owner.send(record, `fail during ${failDriveSetup}`);
+
+    assert.deepEqual(runtime.prompts, [], failDriveSetup);
+    assert.equal(h.owner.list(h.parentId)[0]?.status, 'paused', failDriveSetup);
+    assert.equal(
+      h.calls.some((call) => call.target === 'cleanup' && call.method === 'context.stopPolling'),
+      true,
+      failDriveSetup,
+    );
+    assert.equal(
+      h.events.some(
+        (event) =>
+          event.type === 'child.error' &&
+          event.operation === 'send' &&
+          event.message === `${failDriveSetup} failed`,
+      ),
+      true,
+      failDriveSetup,
+    );
+
+    await h.owner.send(record, `recover after ${failDriveSetup}`);
+    assert.deepEqual(runtime.prompts, [`recover after ${failDriveSetup}`], failDriveSetup);
+    assert.equal(h.owner.list(h.parentId)[0]?.status, 'paused', failDriveSetup);
+  }
+});
+
 test('completion invalidates a role observation queued behind settings', async () => {
   const record = childRecord('child', 'provider');
   const h = createHarness([record]);
@@ -756,10 +804,21 @@ test('rapid provider replacements retire every intermediate identity', async () 
       role: 'worker',
       ...(record.spawnLink ? { spawnLink: record.spawnLink } : {}),
     });
+  h.owner.admitChildObservation({
+    parentAppSessionId: h.parentId,
+    providerSessionId: 'provider-b',
+    role: 'validator',
+    ...(record.spawnLink ? { spawnLink: record.spawnLink } : {}),
+  });
   settingsGate.resolve();
   await update;
   await new Promise<void>((resolve) => setImmediate(resolve));
 
+  assert.equal(
+    h.history.childSession(h.parentId, record.childSessionId)?.providerSessionId,
+    'provider-c',
+  );
+  assert.equal(h.owner.list(h.parentId)[0]?.role, 'worker');
   const replacement = { ...record, providerSessionId: 'provider-c' };
   await h.open(replacement, new FakeFactorySession('provider-c', {}, h.calls));
   const before = mutationCount(h);
@@ -773,7 +832,6 @@ test('rapid provider replacements retire every intermediate identity', async () 
   assert.equal(observed, undefined);
   assert.equal(mutationCount(h), before);
   assert.equal(h.target(record.childSessionId).providerSessionId, 'provider-c');
-  assert.equal(h.owner.list(h.parentId)[0]?.role, 'worker');
 });
 
 test('runtime close invalidates immediately and waits for in-flight settings teardown', async () => {
