@@ -101,7 +101,7 @@ async function stopFixture(
   } catch (gracefulError) {
     if (fixture.exitCode === null && fixture.signalCode === null) fixture.kill('SIGKILL');
     try {
-      await waitForExit(fixture, timeoutMs);
+      await waitForExit(fixture);
     } catch {
       throw gracefulError;
     }
