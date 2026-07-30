@@ -973,7 +973,10 @@ export function hydrateHistoricalSession(
   if (!dir) throw new Error(`Mission history not found for ${missionId}`);
 
   const { summary, storedProgress } = loadMissionControlSession(dir);
-  const progress = projectMissionProgress(storedProgress, readStoredChildSessions(missionId));
+  const progress = projectMissionProgress(
+    storedProgress,
+    readStoredChildSessions(summary.appSessionId),
+  );
   const sessionIndex = buildSessionIndex();
 
   // The orchestrator backing session is rekeyed on every compaction, so the

@@ -75,7 +75,7 @@ test('Mission hydration restores logical child progress beneath the exact parent
   });
   history.close();
 
-  const hydrated = hydrateHistoricalSession('parent-app');
+  const hydrated = hydrateHistoricalSession('mission-1');
   assert.deepEqual(
     hydrated.progress.map((entry) => entry.workerChildSessionId),
     ['child-stable', 'child-stable'],
