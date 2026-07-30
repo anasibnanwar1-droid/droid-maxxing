@@ -51,11 +51,13 @@ import {
   type UtilityPanelState,
   type UtilityTool,
 } from '../lib/utilityPanel';
+import type { ImagePasteQuality } from '../lib/images';
 
 export type AgentKind = 'primary' | 'worker' | 'validator';
 export type ChildSettingsReadiness = 'opening' | 'ready' | 'failed';
 export type LiveEnterBehavior = 'queue' | 'interrupt';
 export type DiffViewMode = 'unified' | 'split';
+export type { ImagePasteQuality } from '../lib/images';
 
 export type ChildSessionInfo = ChildSessionSummary;
 
@@ -230,6 +232,8 @@ export interface AppState {
   // the push effect always re-fires and the sidecar snapshot never goes stale.
   compactionSettingsRev: number;
   liveEnterBehavior: LiveEnterBehavior;
+  // Fidelity tier for images pasted or dropped into the composer.
+  imagePasteQuality: ImagePasteQuality;
 
   // Per-session model/reasoning the user picked in the selector. These are
   // authoritative: a stale server summary (e.g. an in-flight resume) must not
@@ -416,7 +420,8 @@ type Action =
   | { type: 'SET_COMPACTION_MODEL_GLOBAL'; compactionModel: string }
   | { type: 'SET_COMPACTION_TOKEN_LIMIT_GLOBAL'; limit?: number }
   | { type: 'SET_COMPACTION_TOKEN_LIMIT_FOR_MODEL'; modelId: string; limit?: number }
-  | { type: 'SET_LIVE_ENTER_BEHAVIOR'; behavior: LiveEnterBehavior };
+  | { type: 'SET_LIVE_ENTER_BEHAVIOR'; behavior: LiveEnterBehavior }
+  | { type: 'SET_IMAGE_PASTE_QUALITY'; quality: ImagePasteQuality };
 
 const defaultTheme: ThemeConfig = {
   mode: 'dark',
@@ -550,6 +555,7 @@ function saveAgentConfig(config: AgentConfig): AgentConfig {
 // for compaction across every session.
 const COMPACTION_MODEL_STORAGE_KEY = 'droid-compaction-model';
 const LIVE_ENTER_BEHAVIOR_STORAGE_KEY = 'droid-live-enter-behavior';
+const IMAGE_PASTE_QUALITY_STORAGE_KEY = 'droid-image-paste-quality';
 const DIFF_VIEW_STORAGE_KEY = 'droid-diff-view';
 const REVIEW_SCOPE_STORAGE_KEY = 'droid-review-scope';
 const WORKSPACES_STORAGE_KEY = 'droid-workspaces';
@@ -616,6 +622,28 @@ function saveLiveEnterBehavior(value: LiveEnterBehavior): LiveEnterBehavior {
     /* ignore */
   }
   return behavior;
+}
+
+function normalizeImagePasteQuality(value: unknown): ImagePasteQuality {
+  return value === 'high' || value === 'compact' ? value : 'original';
+}
+
+function loadImagePasteQuality(): ImagePasteQuality {
+  try {
+    return normalizeImagePasteQuality(getLocalStorage()?.getItem(IMAGE_PASTE_QUALITY_STORAGE_KEY));
+  } catch {
+    return 'original';
+  }
+}
+
+function saveImagePasteQuality(value: ImagePasteQuality): ImagePasteQuality {
+  const quality = normalizeImagePasteQuality(value);
+  try {
+    getLocalStorage()?.setItem(IMAGE_PASTE_QUALITY_STORAGE_KEY, quality);
+  } catch {
+    /* ignore */
+  }
+  return quality;
 }
 
 function loadDiffView(): DiffViewMode {
@@ -832,6 +860,7 @@ export const initialState: AppState = {
   compactionTokenLimitPerModel: loadCompactionTokenLimitPerModel(),
   compactionSettingsRev: 0,
   liveEnterBehavior: loadLiveEnterBehavior(),
+  imagePasteQuality: loadImagePasteQuality(),
   reviewOpenAppSessionId: null,
   reviewScope: loadReviewScope(),
   reviewFocusPath: null,
@@ -2298,6 +2327,11 @@ function baseReducer(state: AppState, action: Action): AppState {
     case 'SET_LIVE_ENTER_BEHAVIOR': {
       const behavior = saveLiveEnterBehavior(action.behavior);
       return { ...state, liveEnterBehavior: behavior };
+    }
+
+    case 'SET_IMAGE_PASTE_QUALITY': {
+      const quality = saveImagePasteQuality(action.quality);
+      return { ...state, imagePasteQuality: quality };
     }
 
     default:

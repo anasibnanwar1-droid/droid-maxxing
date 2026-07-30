@@ -10,6 +10,8 @@ contextBridge.exposeInMainWorld('droidControl', {
   bridgeInfo: () => ipcRenderer.invoke('bridge-info'),
   pickDirectory: () => ipcRenderer.invoke('pick-directory'),
   pickFiles: () => ipcRenderer.invoke('pick-files'),
+  saveImage: (dataUrl) => ipcRenderer.invoke('save-image', { dataUrl }),
+  discardImage: (path) => ipcRenderer.invoke('discard-image', { path }),
   notify: (title, body) => ipcRenderer.invoke('notify', { title, body }),
   getApiKey: () => ipcRenderer.invoke('get-api-key'),
   setApiKey: (key) => ipcRenderer.invoke('set-api-key', { key }),

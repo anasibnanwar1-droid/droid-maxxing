@@ -18,6 +18,9 @@ import {
 } from '../lib/commands';
 import { browserTranscriptReferencesFromDesignReferences } from './browser/browserTranscriptReferences';
 import { pickDirectory, pickFiles, listFiles, isDesktop } from '../lib/desktop';
+import { useImageAttachments } from '../hooks/useImageAttachments';
+import { ImageChip } from './composer/ImageChip';
+import { ImageViewerModal } from './composer/ImageViewerModal';
 import { markGitTurnStart } from '../lib/git';
 import { createLocalDesignTranscriptEvent, newQueueId } from '../lib/promptQueue';
 import { composePrompt } from '../lib/composePrompt';
@@ -124,6 +127,8 @@ export default function PromptInput({
     composerRevisionRef.current += 1;
     setAttachedFilesState(value);
   };
+  const imageAttachments = useImageAttachments(state.imagePasteQuality);
+  const [viewerImageId, setViewerImageId] = useState<string | null>(null);
   const [activeSkills, setActiveSkillsState] = useState<SkillInfo[]>([]);
   const setActiveSkills = (value: SetStateAction<SkillInfo[]>) => {
     composerRevisionRef.current += 1;
@@ -457,16 +462,19 @@ export default function PromptInput({
 
   const composeFrom = composePrompt;
 
+  const imagePaths = () => imageAttachments.images.map((i) => i.path);
+
   const composeText = (text: string): string =>
     composeFrom(
       text,
       activeSkills.map((s) => s.name),
-      attachedFiles,
+      [...attachedFiles, ...imagePaths()],
     );
 
   const resetAttachments = () => {
     setActiveSkills([]);
     setAttachedFiles([]);
+    imageAttachments.clear();
   };
 
   // Re-entry guard: a send awaits markGitTurnStart before the input is cleared,
@@ -484,17 +492,18 @@ export default function PromptInput({
 
   const runSubmit = async (mode: SubmitMode = 'queue') => {
     const text = input.trim();
-    const hasPayload = text || activeSkills.length > 0 || attachedFiles.length > 0;
+    const allFiles = [...attachedFiles, ...imagePaths()];
+    const hasPayload = text || activeSkills.length > 0 || allFiles.length > 0;
     if (!hasPayload) return;
     setHistoryIndex(null);
 
-    if (text === '/mission' && activeSkills.length === 0 && attachedFiles.length === 0) {
+    if (text === '/mission' && activeSkills.length === 0 && allFiles.length === 0) {
       dispatch({ type: 'TOGGLE_MISSION_CONTROL' });
       setInput('');
       return;
     }
 
-    if (COMPACT_COMMANDS.has(text) && activeSkills.length === 0 && attachedFiles.length === 0) {
+    if (COMPACT_COMMANDS.has(text) && activeSkills.length === 0 && allFiles.length === 0) {
       if (!primaryActionsEnabled) return;
       if (activeSession) compactSession(activeSession.appSessionId);
       setInput('');
@@ -512,7 +521,7 @@ export default function PromptInput({
         clientRef: ref,
         text,
         skills: skillNames,
-        files: [...attachedFiles],
+        files: allFiles,
       });
 
     // Mission Control preview with no active session: prompt is the objective.
@@ -587,7 +596,7 @@ export default function PromptInput({
       dispatch({
         type: 'QUEUE_PROMPT',
         appSessionId: activeSession.appSessionId,
-        prompt: { id: newQueueId(), text, skills: skillNames, files: [...attachedFiles] },
+        prompt: { id: newQueueId(), text, skills: skillNames, files: allFiles },
       });
       setInput('');
       resetAttachments();
@@ -607,7 +616,7 @@ export default function PromptInput({
           text,
           author: 'user',
           skills: activeSkills.map((s) => s.name),
-          files: [...attachedFiles],
+          files: allFiles,
           steered: isLive && mode === 'now',
         },
       });
@@ -793,9 +802,14 @@ export default function PromptInput({
         return;
       }
     }
-    if (e.key === 'Backspace' && input === '' && attachedFiles.length > 0) {
+    if (
+      e.key === 'Backspace' &&
+      input === '' &&
+      (attachedFiles.length > 0 || imageAttachments.images.length > 0)
+    ) {
       e.preventDefault();
-      setAttachedFiles((prev) => prev.slice(0, -1));
+      if (attachedFiles.length > 0) setAttachedFiles((prev) => prev.slice(0, -1));
+      else imageAttachments.remove(imageAttachments.images[imageAttachments.images.length - 1].id);
       return;
     }
     // Shell-style history recall. ArrowUp starts only from the top of the field
@@ -842,7 +856,9 @@ export default function PromptInput({
     ? 'border-droid-orange/40 focus-within:border-droid-orange/60'
     : 'border-droid-border focus-within:border-droid-border-hover';
 
-  const hasChips = activeSkills.length > 0 || attachedFiles.length > 0;
+  const hasChips =
+    activeSkills.length > 0 || attachedFiles.length > 0 || imageAttachments.images.length > 0;
+  const viewerImage = imageAttachments.images.find((i) => i.id === viewerImageId) ?? null;
   // The "Start in" repo/worktree/branch row only applies while drafting a brand
   // new chat; it renders as the top section of the composer card.
   const showStartIn = !activeSession && !missionPreview && !!cwd;
@@ -850,7 +866,11 @@ export default function PromptInput({
   const idleSendTooltip = childActionsEnabled
     ? 'Enter: send\nShift+Enter: newline'
     : 'This child transcript is read-only';
-  const hasContent = input.trim().length > 0 || activeSkills.length > 0 || attachedFiles.length > 0;
+  const hasContent =
+    input.trim().length > 0 ||
+    activeSkills.length > 0 ||
+    attachedFiles.length > 0 ||
+    imageAttachments.images.length > 0;
 
   return (
     <div
@@ -1054,6 +1074,18 @@ export default function PromptInput({
 
         <div
           className={`relative z-10 bg-droid-elevated border rounded-2xl transition-colors ${missionPreview ? '' : boxBorder}`}
+          onDragOver={(e) => {
+            if (e.dataTransfer.types.includes('Files')) e.preventDefault();
+          }}
+          onDrop={(e) => {
+            // Always swallow the drop: Chromium's default for files is to
+            // navigate the window to them, which would destroy the app state.
+            e.preventDefault();
+            const dropped = Array.from(e.dataTransfer.files).filter((f) =>
+              f.type.startsWith('image/'),
+            );
+            for (const file of dropped) void imageAttachments.addBlob(file);
+          }}
           style={
             missionPreview
               ? {
@@ -1065,6 +1097,18 @@ export default function PromptInput({
         >
           {hasChips && (
             <div className="flex flex-wrap gap-1.5 px-3 pt-3">
+              {imageAttachments.images.map((img) => (
+                <ImageChip
+                  key={img.id}
+                  image={img}
+                  onOpen={() => {
+                    setViewerImageId(img.id);
+                  }}
+                  onRemove={() => {
+                    imageAttachments.remove(img.id);
+                  }}
+                />
+              ))}
               {activeSkills.map((skill) => (
                 <span
                   key={skill.filePath}
@@ -1120,6 +1164,17 @@ export default function PromptInput({
             onClick={(e) => syncCaret(e.currentTarget)}
             onSelect={(e) => syncCaret(e.currentTarget)}
             onKeyDown={handleKeyDown}
+            onPaste={(e) => {
+              const items = Array.from(e.clipboardData.items).filter(
+                (it) => it.kind === 'file' && it.type.startsWith('image/'),
+              );
+              if (items.length === 0) return;
+              e.preventDefault();
+              for (const item of items) {
+                const blob = item.getAsFile();
+                if (blob) void imageAttachments.addBlob(blob);
+              }
+            }}
             placeholder={
               missionPreview
                 ? activeSession
@@ -1297,6 +1352,16 @@ export default function PromptInput({
           </div>
         </div>
       </div>
+
+      {viewerImage && (
+        <ImageViewerModal
+          image={viewerImage}
+          onClose={() => {
+            setViewerImageId(null);
+          }}
+          onCrop={imageAttachments.applyCrop}
+        />
+      )}
     </div>
   );
 }

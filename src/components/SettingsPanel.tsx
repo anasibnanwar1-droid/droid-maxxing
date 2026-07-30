@@ -2,6 +2,7 @@ import {
   useStore,
   type DiffStyle,
   type DiffViewMode,
+  type ImagePasteQuality,
   type LiveEnterBehavior,
 } from '../hooks/useStore';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -872,6 +873,26 @@ function GeneralSection() {
             onChange={(behavior) =>
               dispatch({ type: 'SET_LIVE_ENTER_BEHAVIOR', behavior: behavior as LiveEnterBehavior })
             }
+          />
+        </SettingRow>
+        <SettingRow
+          label="Image paste quality"
+          description="How pasted or dropped images are encoded for the model. Original keeps the exact pixels; smaller tiers save context tokens."
+        >
+          <Dropdown
+            value={state.imagePasteQuality}
+            width="w-52"
+            options={[
+              { value: 'original', label: 'Original · exact bytes' },
+              { value: 'high', label: 'High · 2048px PNG' },
+              { value: 'compact', label: 'Compact · 1568px JPEG' },
+            ]}
+            onChange={(quality) => {
+              dispatch({
+                type: 'SET_IMAGE_PASTE_QUALITY',
+                quality: quality as ImagePasteQuality,
+              });
+            }}
           />
         </SettingRow>
       </div>

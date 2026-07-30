@@ -108,6 +108,8 @@ interface DroidControlApi {
   bridgeInfo: () => Promise<BridgeInfo>;
   pickDirectory: () => Promise<string | null>;
   pickFiles: () => Promise<string[]>;
+  saveImage: (dataUrl: string) => Promise<string>;
+  discardImage: (path: string) => Promise<void>;
   notify: (title: string, body: string) => Promise<void>;
   getApiKey: () => Promise<string | null>;
   setApiKey: (key: string) => Promise<void>;
@@ -240,6 +242,24 @@ export async function pickFiles(): Promise<string[]> {
     return await api.pickFiles();
   } catch {
     return [];
+  }
+}
+
+// Persists an image data URL into the temp attachments dir; the returned path
+// is what the prompt @-mentions. Only the desktop app can write to disk.
+export async function saveImage(dataUrl: string): Promise<string> {
+  const api = window.droidControl;
+  if (!api) throw new Error('Image attachments need the desktop app.');
+  return api.saveImage(dataUrl);
+}
+
+export async function discardImage(path: string): Promise<void> {
+  const api = window.droidControl;
+  if (!api) return;
+  try {
+    await api.discardImage(path);
+  } catch {
+    /* already gone */
   }
 }
 
