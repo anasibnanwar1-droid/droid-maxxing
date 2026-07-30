@@ -217,15 +217,28 @@ export class DroidRuntime implements FactoryRuntime {
   }
 }
 
-function createFactorySession(session: DroidSession, client: DroidClient): FactorySession {
+/**
+ * The legacy DroidSession in @factory/droid-sdk 0.6 has no public send method.
+ * Add the daemon's safe-boundary primitive while preserving the session's
+ * closed-state invariant at this single provider seam.
+ */
+export function createFactorySession(session: DroidSession, client: DroidClient): FactorySession {
+  let isClosed = false;
+  const close = session.close.bind(session);
   return Object.assign(session, {
     send: async (prompt: string, options?: SendOptions): Promise<void> => {
+      if (isClosed) throw new Error('Session has been closed. Create a new session to continue.');
       await client.addUserMessage({
         text: prompt,
         ...(options?.images ? { images: options.images } : {}),
         ...(options?.files ? { files: options.files } : {}),
         ...(options?.outputFormat ? { outputFormat: options.outputFormat } : {}),
       });
+    },
+    close: async (): Promise<void> => {
+      if (isClosed) return;
+      isClosed = true;
+      await close();
     },
   });
 }
