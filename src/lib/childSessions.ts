@@ -78,18 +78,37 @@ export function childRuntimeSubmitTarget(
   };
 }
 
-export async function revalidateChildRuntimeAfter(
-  captured: ChildRuntimeSubmitTarget,
-  waitForBaseline: () => Promise<void>,
-  currentTarget: () => VisibleSessionTarget,
-): Promise<boolean> {
+export async function commitChildPromptAfterBaseline({
+  capturedTarget,
+  capturedComposerRevision,
+  waitForBaseline,
+  currentTarget,
+  currentComposerRevision,
+  appendTranscript,
+  resetComposer,
+  sendCommand,
+}: {
+  capturedTarget: ChildRuntimeSubmitTarget;
+  capturedComposerRevision: number;
+  waitForBaseline: () => Promise<void>;
+  currentTarget: () => VisibleSessionTarget;
+  currentComposerRevision: () => number;
+  appendTranscript: () => void;
+  resetComposer: () => void;
+  sendCommand: () => void;
+}): Promise<boolean> {
   await waitForBaseline();
   const current = childRuntimeSubmitTarget(currentTarget());
-  return (
-    current?.parentAppSessionId === captured.parentAppSessionId &&
-    current.childSessionId === captured.childSessionId &&
-    current.runtimeGeneration === captured.runtimeGeneration
-  );
+  if (
+    current?.parentAppSessionId !== capturedTarget.parentAppSessionId ||
+    current.childSessionId !== capturedTarget.childSessionId ||
+    current.runtimeGeneration !== capturedTarget.runtimeGeneration
+  )
+    return false;
+  appendTranscript();
+  if (currentComposerRevision() === capturedComposerRevision) resetComposer();
+  sendCommand();
+  return true;
 }
 
 export function selectedChildForParent(

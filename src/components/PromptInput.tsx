@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useMemo } from 'react';
+import { useState, useRef, useEffect, useMemo, type SetStateAction } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { useStore } from '../hooks/useStore';
 import type { QueuedPrompt } from '../hooks/useStore';
@@ -24,8 +24,8 @@ import { composePrompt } from '../lib/composePrompt';
 import {
   childRuntimeSubmitTarget,
   childSessionLabel,
+  commitChildPromptAfterBaseline,
   orderedChildSessions,
-  revalidateChildRuntimeAfter,
   visibleSessionCanCompact,
   visibleSessionTarget,
   type VisibleSessionTarget,
@@ -103,7 +103,12 @@ export default function PromptInput({
   onOverlayChange?: (open: boolean) => void;
 }) {
   const { state, dispatch } = useStore();
-  const [input, setInput] = useState('');
+  const composerRevisionRef = useRef(0);
+  const [input, setInputState] = useState('');
+  const setInput = (value: SetStateAction<string>) => {
+    composerRevisionRef.current += 1;
+    setInputState(value);
+  };
   const [caret, setCaret] = useState(0);
   // Shell-style prompt history: null while composing, otherwise an index into
   // promptHistory. The draft is stashed so ArrowDown past the newest restores it.
@@ -113,8 +118,16 @@ export default function PromptInput({
   const [menuIndex, setMenuIndex] = useState(0);
   const [files, setFiles] = useState<string[]>([]);
   const [filesCwd, setFilesCwd] = useState<string | null>(null);
-  const [attachedFiles, setAttachedFiles] = useState<string[]>([]);
-  const [activeSkills, setActiveSkills] = useState<SkillInfo[]>([]);
+  const [attachedFiles, setAttachedFilesState] = useState<string[]>([]);
+  const setAttachedFiles = (value: SetStateAction<string[]>) => {
+    composerRevisionRef.current += 1;
+    setAttachedFilesState(value);
+  };
+  const [activeSkills, setActiveSkillsState] = useState<SkillInfo[]>([]);
+  const setActiveSkills = (value: SetStateAction<SkillInfo[]>) => {
+    composerRevisionRef.current += 1;
+    setActiveSkillsState(value);
+  };
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
   const [sendHover, setSendHover] = useState(false);
@@ -554,56 +567,64 @@ export default function PromptInput({
       return;
     }
 
+    const appendTranscript = () => {
+      dispatch({
+        type: 'SESSION_TRANSCRIPT',
+        event: {
+          id: `local-${Date.now()}`,
+          appSessionId: activeSession.appSessionId,
+          sourceSessionId: targetChildSessionId ?? 'user',
+          role: targetChild?.role ?? 'primary',
+          ts: Date.now(),
+          kind: 'text',
+          text,
+          author: 'user',
+          skills: activeSkills.map((s) => s.name),
+          files: [...attachedFiles],
+          steered: isLive && mode === 'now',
+        },
+      });
+    };
+    const resetComposer = () => {
+      setInput('');
+      resetAttachments();
+    };
+    const sendCommand = () => {
+      try {
+        if (targetChildSessionId) {
+          if (mode === 'now')
+            sendToChildNow(activeSession.appSessionId, targetChildSessionId, composed);
+          else sendToChild(activeSession.appSessionId, targetChildSessionId, composed);
+        } else if (mode === 'now') sendToSessionNow(activeSession.appSessionId, composed);
+        else sendToSession(activeSession.appSessionId, composed);
+      } catch (err) {
+        console.error('[PromptInput] sendToSession failed:', err);
+      }
+    };
+
     const childRuntimeTarget = childRuntimeSubmitTarget(visibleTarget);
-    if (
-      childRuntimeTarget &&
-      activeSession.cwd &&
-      !(await revalidateChildRuntimeAfter(
-        childRuntimeTarget,
-        () => markGitTurnStart(activeSession.cwd, activeSession.appSessionId),
-        () => visibleTargetRef.current,
-      ))
-    )
+    if (childRuntimeTarget && activeSession.cwd) {
+      await commitChildPromptAfterBaseline({
+        capturedTarget: childRuntimeTarget,
+        capturedComposerRevision: composerRevisionRef.current,
+        waitForBaseline: () => markGitTurnStart(activeSession.cwd, activeSession.appSessionId),
+        currentTarget: () => visibleTargetRef.current,
+        currentComposerRevision: () => composerRevisionRef.current,
+        appendTranscript,
+        resetComposer,
+        sendCommand,
+      });
       return;
+    }
 
-    dispatch({
-      type: 'SESSION_TRANSCRIPT',
-      event: {
-        id: `local-${Date.now()}`,
-        appSessionId: activeSession.appSessionId,
-        sourceSessionId: targetChildSessionId ?? 'user',
-        role: targetChild?.role ?? 'primary',
-        ts: Date.now(),
-        kind: 'text',
-        text,
-        author: 'user',
-        skills: activeSkills.map((s) => s.name),
-        files: [...attachedFiles],
-        steered: isLive && mode === 'now',
-      },
-    });
-
-    // Child sends wait for an exact-runtime revalidation above. Preserve text
-    // typed during that wait while clearing only the payload that was admitted.
-    if (childRuntimeTarget) setInput((current) => (current === input ? '' : current));
-    else setInput('');
-    resetAttachments();
+    appendTranscript();
+    resetComposer();
 
     // Capture the last-turn baseline before the agent can touch the tree;
     // a fire-and-forget call here races the first edit and corrupts the diff.
     if (!childRuntimeTarget && activeSession.cwd)
       await markGitTurnStart(activeSession.cwd, activeSession.appSessionId);
-
-    try {
-      if (targetChildSessionId) {
-        if (mode === 'now')
-          sendToChildNow(activeSession.appSessionId, targetChildSessionId, composed);
-        else sendToChild(activeSession.appSessionId, targetChildSessionId, composed);
-      } else if (mode === 'now') sendToSessionNow(activeSession.appSessionId, composed);
-      else sendToSession(activeSession.appSessionId, composed);
-    } catch (err) {
-      console.error('[PromptInput] sendToSession failed:', err);
-    }
+    sendCommand();
   };
 
   const queue: QueuedPrompt[] = activeSession

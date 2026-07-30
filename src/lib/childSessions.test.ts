@@ -9,10 +9,10 @@ import {
   childSessionLatest,
   childSessionMeta,
   childRuntimeSubmitTarget,
+  commitChildPromptAfterBaseline,
   findChildSessionForTarget,
   mergeChildSessionSpawn,
   orderedChildSessions,
-  revalidateChildRuntimeAfter,
   selectedChildForParent,
   shouldOpenSelectedChild,
   transcriptForVisibleSession,
@@ -314,7 +314,7 @@ test('visible pending state never inherits liveness across the parent-child boun
   assert.equal(visibleSessionCanCompact({ kind: 'primary' }), true);
 });
 
-test('git-baseline revalidation suppresses every stale child-submit effect', async () => {
+test('child prompt commit suppresses every effect when the runtime closes during git baseline', async () => {
   const child = {
     parentAppSessionId: 'parent-a',
     childSessionId: 'child-a',
@@ -336,35 +336,41 @@ test('git-baseline revalidation suppresses every stale child-submit effect', asy
   const baseline = new Promise<void>((resolve) => {
     releaseBaseline = resolve;
   });
-  let composer = 'payload must survive';
-  const transcript: string[] = [];
-  const commands: string[] = [];
-
-  const submission = (async () => {
-    const accepted = await revalidateChildRuntimeAfter(
-      captured,
-      () => baseline,
-      () => current,
-    );
-    if (!accepted) return;
-    transcript.push(composer);
-    commands.push(composer);
-    composer = '';
-  })();
+  const composerRevision = 1;
+  let transcriptEffects = 0;
+  let resetEffects = 0;
+  let commandEffects = 0;
+  const submission = commitChildPromptAfterBaseline({
+    capturedTarget: captured,
+    capturedComposerRevision: composerRevision,
+    waitForBaseline: () => baseline,
+    currentTarget: () => current,
+    currentComposerRevision: () => composerRevision,
+    appendTranscript: () => {
+      transcriptEffects += 1;
+    },
+    resetComposer: () => {
+      resetEffects += 1;
+    },
+    sendCommand: () => {
+      commandEffects += 1;
+    },
+  });
   current = visibleSessionTarget('parent-a', selection, children, {
     'parent-a': {
       'child-a': { state: 'closed', requestId: null },
     },
   });
   releaseBaseline();
-  await submission;
 
-  assert.equal(composer, 'payload must survive');
-  assert.deepEqual(transcript, []);
-  assert.deepEqual(commands, []);
+  assert.equal(await submission, false);
+  assert.equal(composerRevision, 1);
+  assert.equal(transcriptEffects, 0);
+  assert.equal(resetEffects, 0);
+  assert.equal(commandEffects, 0);
 });
 
-test('git-baseline revalidation rejects a replacement runtime with the same logical child', async () => {
+test('child prompt commit rejects a replacement runtime with the same logical child', async () => {
   const child = {
     parentAppSessionId: 'parent-a',
     childSessionId: 'child-a',
@@ -389,15 +395,84 @@ test('git-baseline revalidation rejects a replacement runtime with the same logi
     releaseBaseline = resolve;
   });
 
-  const admitted = revalidateChildRuntimeAfter(
-    captured,
-    () => baseline,
-    () => current,
-  );
+  let effects = 0;
+  const admitted = commitChildPromptAfterBaseline({
+    capturedTarget: captured,
+    capturedComposerRevision: 1,
+    waitForBaseline: () => baseline,
+    currentTarget: () => current,
+    currentComposerRevision: () => 1,
+    appendTranscript: () => {
+      effects += 1;
+    },
+    resetComposer: () => {
+      effects += 1;
+    },
+    sendCommand: () => {
+      effects += 1;
+    },
+  });
   current = ready(12);
   releaseBaseline();
 
   assert.equal(await admitted, false);
+  assert.equal(effects, 0);
+});
+
+test('child prompt commit preserves a composer revised during git baseline', async () => {
+  const child = {
+    parentAppSessionId: 'parent-a',
+    childSessionId: 'child-a',
+    role: 'worker' as const,
+    status: 'running' as const,
+    modelId: 'model-default',
+    transcriptAvailable: true,
+  };
+  const selection = { parentAppSessionId: 'parent-a', childSessionId: 'child-a' };
+  const target = visibleSessionTarget(
+    'parent-a',
+    selection,
+    { 'parent-a': { 'child-a': child } },
+    {
+      'parent-a': {
+        'child-a': { state: 'ready', requestId: 'ready', runtimeGeneration: 4 },
+      },
+    },
+  );
+  const captured = childRuntimeSubmitTarget(target);
+  assert.ok(captured);
+  let composerRevision = 8;
+  let transcriptEffects = 0;
+  let resetEffects = 0;
+  let commandEffects = 0;
+  let releaseBaseline = (): void => undefined;
+  const baseline = new Promise<void>((resolve) => {
+    releaseBaseline = resolve;
+  });
+  const submission = commitChildPromptAfterBaseline({
+    capturedTarget: captured,
+    capturedComposerRevision: composerRevision,
+    waitForBaseline: () => baseline,
+    currentTarget: () => target,
+    currentComposerRevision: () => composerRevision,
+    appendTranscript: () => {
+      transcriptEffects += 1;
+    },
+    resetComposer: () => {
+      resetEffects += 1;
+    },
+    sendCommand: () => {
+      commandEffects += 1;
+    },
+  });
+
+  composerRevision += 2;
+  releaseBaseline();
+
+  assert.equal(await submission, true);
+  assert.equal(transcriptEffects, 1);
+  assert.equal(resetEffects, 0);
+  assert.equal(commandEffects, 1);
 });
 
 test('primary and exact child transcripts remain isolated while switching', () => {
