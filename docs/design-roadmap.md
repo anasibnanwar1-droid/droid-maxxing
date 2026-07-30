@@ -1,12 +1,12 @@
 # DROIDEX design platform roadmap
 
-Status: direction document, July 2026. Phases 1 and 2 are the near-term build targets. Later phases are sequenced direction, not commitments.
+Status: execution roadmap, July 2026. This is the plan the team and agents follow. The product definition (what DROIDEX is and why each piece exists) lives in `docs/droidex-product-vision.md`; where the two disagree, the vision wins on direction and this document wins on sequencing and mechanics. The original Phase 1-5 plan is built or absorbed; see "Current build state" below.
 
 ## Positioning
 
-DROIDEX turns Droid Control into a design platform for developers who ship real products: local-first, repo-anchored, and enforced by measurement rather than taste.
+DROIDEX is a design practice, not a design generator (see the vision doc's thesis). It turns Droid Control into a design platform for people who ship real products: local-first, repo-anchored, context-aware over time, and enforced by quiet measurement rather than taste claims.
 
-The core thesis: design decisions must live in repo artifacts (`DESIGN.md`, `MOTION.md`, a component registry), get injected into every design prompt, and be enforced by a validator agent that measures rendered output against those artifacts. Everything runs on the user's actual codebase, their running dev server, and a real browser. No cloud sandbox, no credit meter, no export step that loses the mapping back to source.
+The core thesis: understanding and design decisions must live in repo artifacts (`UNDERSTANDING.md`, `DESIGN.md`, `MOTION.md`, a component registry), be readable by any model the user chooses to work with, and be enforced by measurement of rendered output running backstage. Everything runs on the user's actual codebase, their running dev server, and a real browser. No cloud sandbox, no credit meter, no export step that loses the mapping back to source, and no model lock-in: the workspace supplies the memory, the user supplies the model.
 
 ```mermaid
 flowchart TB
@@ -93,188 +93,261 @@ Nobody combines all four properties: local execution on the real app, determinis
 - Consistency is the named pain: "Without a design system and design tokens, every AI output pulls your product in a different direction" (Boldare, April 2026). A consulting cleanup economy has formed around fixing AI-generated apps (r/ExperiencedDevs thread, 404 upvotes, April 2026).
 - Credit metering frustration is documented for both Figma Make and Claude Design. Local tools bounded by the user's own agent subscription avoid the whole category of complaint.
 
-## Phase 1: Design DNA
+## Current build state (July 2026)
 
-The artifact layer. Everything later depends on it, so it ships first.
+The earlier Phase 1-5 plan in this document is built or absorbed. What exists today, with the seams the next phases plug into:
 
-### 1. DESIGN.md engine
+- **DNA artifact layer.** `DESIGN.md` + `MOTION.md` read/write/scan (`sidecar/src/design/dnaFiles.ts`, `dnaScan.ts`), fenced `design-tokens` JSON parsing (`tokens.ts`: `TOKEN_BLOCK`, `normalizeTokens`, `nearestPaletteColor`, `nearestScaleValue`), curated libraries (`dnaLibraries.ts`), saved directions (`savedDna.ts`), brand book rendering (`brandBook.ts`).
+- **MCP surface.** `designMcpServer.ts` (server `droidex-design`): `design_dna`, `design_guidelines`, `design_system`, `design_component_registry`, `design_prototypes`, `design_preview`, `design_reference_library`. One-line DNA pointer injected per session via `withDesignDnaPointer` in `DesignManager.ts`.
+- **Studio.** Top-level Studio page (`src/components/studio/`: StudioShell, StudioCanvas, StudioFrameBody, composer with model/reasoning pickers, thread history, DnaShelf) plus the design tabs (`src/components/design/`). Intake interview and N-direction authoring flow (`designBrief.ts`, `interviewQuestions.ts`, `authoringInstruction`).
+- **Isolation.** Every studio session works in a git worktree on branch `droidex/design` (`isolatedWorkspace.ts`); the live tree is never touched; merge is the user's act.
+- **Preview plumbing.** Loopback-only, path-confined static preview server (`previewServer.ts`, MAX_FRAMES=24, in-place frame reload); single-component esbuild stage (`componentPreview.ts`); component registry scan (`registryScan.ts`).
+- **Validator core.** Rules for off-palette color, off-scale font/radius/spacing, unknown font family (`validator/audit.ts`), runner over pages x viewports (`validator/runner.ts`), collection via `auditEntryFor()` in `electron/nativeBrowserPreload.cjs`, config + Studio tab.
+- **References.** Browser-captured reference library with computed styles and screenshots (`referenceLibrary.ts`, `referenceExtract.ts`).
 
-**What.** Generate and edit a project-root `DESIGN.md` in the portable Google format: color tokens, type scale, spacing scale, radii, shadows, density rules, component conventions, and an allowlist section for validator suppressions.
+Known gaps this roadmap exists to close:
 
-**Why.** A design system that lives next to the code is versioned, reviewable, and readable by any agent, not just ours. Portability is deliberate: a `DESIGN.md` that works in other tools is easier to adopt than a proprietary token store.
+- Component previews render bare (`createElement(Component)`, no props/providers) and skip Tailwind CSS, so most real components render broken or naked.
+- `MOTION.md` is freeform prose: never parsed, never measured. The audit collector captures 6 static style keys and zero transition/animation properties.
+- The validator is a user-operated tab, not a loop.
+- No discovery beyond the one-time intake; no durable understanding artifact; taste signals (picks, rejections, reasons) are not recorded anywhere.
+- Canvas restore is in-memory only.
+- **Tokens are single-theme.** `DesignTokens.colors` is one flat map; light/dark exists only as prose policy. There is no live theme toggle for previews or the brand book, curated libraries ship one theme each, and the validator would flag a correct dark theme as off-palette against light tokens.
+- The validator's `runAfterDesignPrompt` config toggle is dead code: persisted and shown in the tab UI, but nothing consumes it (superseded by the Phase D post-turn gate; remove it there).
+- Validator coverage is narrow: six computed properties, `paddingTop`-only spacing, first-corner radius, no border/shadow/gradient/line-height checks; reports are in-memory only and require the native browser runtime.
+- The intake directions pick is purely conversational; the UI never records which direction the user chose.
 
-**Architecture.** Three generation sources:
+## Engineering ground rules (apply to every phase)
 
-- Repo scan: parse Tailwind config and CSS custom properties, and sample computed styles from the running app via the `DOM_SNAPSHOT_SCRIPT` style keys in `sidecar/src/browser/domSnapshot.ts` (already captures color, backgroundColor, fontFamily, fontSize, fontWeight, border, borderRadius, and more per element).
-- Curated library pick (feature 3).
-- Extraction from references (Phase 3, feature 9).
+1. **Artifacts before features.** Anything the agent must respect ships first as a parseable repo artifact (fenced block + parser + type), then as an MCP tool, then as UI. Prose is for humans; fenced blocks are the contract.
+2. **Deterministic where possible, agentic where necessary.** Measurement, parsing, capture, and diffing are plain code with unit tests. The agent is used for judgment: synthesis, critique, refactors. Never ask a model to do something `tokens.ts` can compute.
+3. **Protocol changes are dual edits.** Every new command/event lands in both `sidecar/src/protocol.ts` and `src/types/bridge.ts`, with a typed wrapper in `src/lib/commands.ts` and dispatch in `DesignManager.ts`'s command switch. No untyped payloads.
+4. **The worktree is the blast radius.** All agent writes happen in the `droidex/design` worktree. New features never write to the live tree.
+5. **Model-agnostic by construction.** No feature may depend on a specific model. Context flows through artifacts (`UNDERSTANDING.md`, DNA files, MCP tools) that any session on any model reads. The user picks and changes models; the workspace supplies the memory.
+6. **Every phase ships with tests** following the existing `node:test` pattern (`*.test.ts` next to the module, see `savedDna.test.ts`, `audit.test.ts`) and passes the full local gate in AGENTS.md.
+7. **MCP tools are contextual and lean.** Every tool answers "what does the agent need *right now*" and returns a compact digest by default: hard character caps, summaries over dumps, detail only via explicit parameters (`detail: 'full'`, an id, a range). Never return whole files, full logs, or unbounded lists; paginate or top-N everything. A tool that bloats the context is a bug even when its answer is correct. New tools ship with a stated size budget in their description and a test asserting the cap.
+8. **Show, then say.** Agent-facing guidelines require visual-first behavior: when a proposal or question can be rendered, it is rendered, with text as caption. Every visual probe has a typed-answer equivalent; no flow may be pick-only. Artifacts the agent produces default to a visual form on the canvas (rendered specimen, live frame, before/after spread); raw code or markdown is the storage format, never the presentation.
+9. **Small files, no god components, session-attached.** Our own code follows what we preach to agents: single-responsibility modules aiming under ~500 lines, UI split into small composable components (no god components like a monolithic canvas), shared logic extracted rather than duplicated. Every preview server, frame, and artifact is owned by and attached to a session lifecycle: created with it, restored with it, cleaned up with it. Reuse existing machinery before adding new.
+10. **The canvas is a product surface with a performance budget.** Canvas interactions (pan, zoom, frame drag, selection) must stay at 60fps with 24 live frames: virtualize offscreen frames (pause/unmount iframes outside the viewport), throttle reloads, and never do layout work in React render paths that per-frame CSS transforms can do. Navigation must be learnable in one session: consistent zoom-to-fit, frame focus, and keyboard panning. Any canvas PR that regresses interaction smoothness does not merge.
+11. **MCP guides, never railroads.** Tools inform the agent (tokens, understanding, registry, canvas state) and record what happened; they must not force a house style or a fixed procedure. Taste comes from the user's own understanding file and signals, so output reflects *this* user, not our defaults. The test for any new tool or guideline: a strong agent with a strong opinion and a user's context should never feel fenced in by it, and slop should be caught by measurement (audits, critique passes), not prevented by rigid templates.
 
-Generation runs as a scoped agent prompt; the file is plain markdown, so users edit it directly or through the Studio editor. No design-token layer exists in the repo today, so this is net-new code with existing capture primitives.
+## Execution phases
 
-**Dependencies.** None. First deliverable.
+Ordering follows the vision's priorities. A and B are independent and can run in parallel. C depends on B (the workbench is the motion instrument). D depends on C's tokens. E depends on A. F and G are progressive and can start as spikes early.
 
-### 2. MOTION.md
+### Phase A: UNDERSTANDING.md and the Discovery Engine
 
-**What.** A sibling artifact for motion: easing curves, duration scale, hover and press behavior, transition conventions, reduced-motion policy. Ships with curated presets.
+**What.** The durable client-understanding artifact and the adaptive, ongoing discovery practice that fills it (vision Pillars 1-2).
 
-**Why.** Motion is where AI-generated UI most visibly turns to slop, and no competitor encodes it at all. The existing `DESIGN_MODE_GUIDANCE` block in `designPromptPacks.ts` already carries anti-slop defaults; `MOTION.md` makes them project-specific and versioned.
+**Approach.** The understanding is a repo artifact with a machine-readable core, exactly like DESIGN.md. Discovery is not a wizard: it is a posture, implemented as (a) a question-bank module, (b) an MCP tool the agent uses to read gaps and record signals, and (c) rendered probes reusing the existing directions flow.
 
-**Architecture.** Same engine as `DESIGN.md`. Computed-style capture already includes `transform` and `opacity`; transition and animation properties get added to the snapshot style keys.
+**How.**
 
-**Dependencies.** DESIGN.md engine (shared generation and editing path).
+1. `sidecar/src/design/understanding.ts`: extend the `dnaFiles.ts` kind union to `'design' | 'motion' | 'understanding'` (`UNDERSTANDING_FILE = 'UNDERSTANDING.md'`) so read/write/size-cap/worktree-seeding come free (`isolatedWorkspace.ts` seed list gains the file). Structure: prose sections (Audience, Goals, Emotional targets, Never-do, Decisions) plus two fenced blocks parsed by a new `parseUnderstanding()`:
+   - ```` ```understanding ```` JSON: `{ audience, goals, emotionalTargets: {evoke: [], avoid: []}, neverDo: [], openQuestions: [] }`.
+   - ```` ```taste-signals ```` JSON lines, append-only log: `{ at, kind: 'pick'|'reject'|'probe'|'answer', subject, scope, strength: 'principle'|'decision'|'leaning', reason, evidence }`. Appends are programmatic (a `appendTasteSignal()` helper), never agent free-writes, so the log stays parseable. Taste is recorded as timestamped, scoped observations, never facts: the digest computes the *current stance* per subject deterministically (principles never decay and contradiction triggers a question; decisions carry scope so "rejected orange on the hero" and "wants orange as accent" coexist; leanings are recency-weighted). Nothing becomes a hard rule unless promoted to the never-do list.
+2. **Question bank.** Evolve `src/components/studio/interviewQuestions.ts` into `sidecar/src/design/discoveryBank.ts`: a typed bank of ~60 questions across the seven discovery domains (brand strategy, audience reality, business goals, competitive positioning, content truth, constraints, emotional targets), each tagged with `domain`, `dependsOn` (branching), and `fillsGap` (which understanding field it populates). Gap detection is deterministic: `openGaps(understanding)` returns unfilled fields; the agent chooses *which* gap to raise and *how* to phrase it, the bank guarantees coverage.
+3. **MCP tool.** Add `design_understanding` to `designMcpServer.ts`: returns parsed understanding + `openGaps` + the last N taste signals; a `record_signal` action wraps `appendTasteSignal`. Extend `withDesignDnaPointer` to mention `UNDERSTANDING.md` first.
+4. **Rendered probes.** Reuse the existing N-direction authoring flow (`authoringInstruction`): a probe is a 2-frame direction spread where the composer renders a "which feels more like you, and why?" affordance; the pick + the typed why are recorded as a `probe` signal. No new canvas machinery.
+5. **Ongoing discovery.** Guidelines (`guidelines.ts`) gain one rule: at the start of any new design task, consult `design_understanding`; if the task touches an open gap, ask before generating. Contradiction surfacing is deterministic: when a new signal conflicts with an `understanding` field, the agent is instructed to raise it, not overwrite.
+6. **Question craft in guidelines.** One question at a time, earned by an open gap; show-then-say (render two interpretations rather than asking the user to imagine); every probe has a typed-answer path, and typed taste gets a rendered "this is what I heard" confirmation that is optional, never a forced pick; always capture the why and quote it.
+7. **Shipped direction gallery.** Expand the four `dnaLibraries.ts` entries with 12-16 bundled static direction specimens (brutalist, enterprise-dense, warm consumer, luxury, playful, data-heavy, ...), same asset pattern as the libraries: a new user with an empty repo sees a rich starting fan in under a second, zero model invocations. Greenfield flow: discovery first, fan pick, then a scaffold born design-ready (tokens + theme seam + registry conventions from the first commit).
+8. **Workspace-wide pointer.** Extend the DNA pointer injection so *every* session in the workspace (not only Studio sessions) receives the `UNDERSTANDING.md` reference; backend agents read the same product understanding. Enforcement/canvas layers stay design-scoped.
+9. **The Understanding Wall + taste timeline (UI).** A canvas board rendered from the parsed understanding: emotional targets as rendered specimen pairs, kept directions as thumbnails, never-do list as crossed-out examples; the signal log as a scrubable thumbnail strip showing how the direction evolved. Both are read-only views over the artifacts (the markdown is the database, the canvas is the interface), so they are pure composer/canvas work with no new protocol beyond a `design.understanding.read` command.
 
-### 3. Curated DNA libraries
+**Acceptance.** Start a fresh session on a different model: the agent references prior decisions and taste signals without re-asking answered questions, and raises exactly the unfilled gaps. A recorded contradiction ("rejected orange on hero" then "wants orange accent") yields a scoped digest, not an overwrite. `understanding.test.ts` covers parse/append/scope/gap logic.
 
-**What.** A shipped gallery of `DESIGN.md` and `MOTION.md` starting points: minimal, editorial, enterprise-dense, brutalist, and so on. One click writes the pair to the project root, then the user diverges.
+### Phase B: Component Workbench (make previews genuinely useful)
 
-**Why.** Cold start kills adoption. A new project should get a coherent, opinionated system in seconds without prompting for one.
+**What.** Every registry component renders styled, interactive, and grounded in real usage: a Storybook that writes itself (vision Pillar 4).
 
-**Architecture.** Static assets bundled with the app, rendered as preview cards in the Studio. Writing them is a plain file write through the existing Electron file channels.
+**Approach.** Fix the CSS pipeline deterministically first (biggest win, no agent involved), then let the agent synthesize stage harnesses only where bare rendering fails, cached in the repo so synthesis happens once per component.
 
-**Dependencies.** DESIGN.md engine.
+**How.**
 
-### 4. Prompt injection and the design-system MCP tool
+1. **Tailwind/real CSS pipeline** in `componentPreview.ts`: stop filtering `@tailwind` files. Detect the project's Tailwind major from its `package.json`. v4: compile via the project's own `@tailwindcss/postcss` / `@tailwindcss/node` (resolved with the existing `createRequire(cwd)` pattern used by `loadEsbuild`). v3: run the project's PostCSS with its `tailwind.config.*`, overriding `content` to the component's import graph, which esbuild's `metafile` already yields from the same build. Emit `bundle.css` into the stage dir (the stage HTML already links it).
+2. **Stage harness convention.** `.droidex/stages/<Component>.stage.tsx` in the worktree, exporting `{ component, providers?, presets: Record<string, object> }`. `buildComponentPreview` prefers the stage file when present; the bare path stays as the fallback.
+3. **Harness synthesis (agent).** Extend `registryScan.ts` to also record call sites: for each exported component, the files/lines where it is rendered plus literal props at each site (a TS AST pass, same scanner infrastructure). Expose as `usages` on `design_component_registry`. When a bare preview errors (the stage already reports `stage-error`), the sidecar queues a synthesis task: the agent reads the component + `usages` and writes the stage harness with realistic props per call site (each becomes a named preset: "as used in Sidebar"), required providers, mock handlers. One synthesis per component, committed to the worktree.
+4. **Stage page upgrades** in the `stageHtml` template: preset picker (tabs from `presets` keys), knobs auto-generated from registry prop types (enum -> dropdown, boolean -> toggle, string -> input), and a **state matrix** mode rendering default/hover/focus/disabled/loading simultaneously (pseudo-states forced via injected classes, prop states via preset overrides).
+5. **New command** `design.component.stage` (protocol dual-edit per ground rule 3) to trigger synthesis explicitly from the Components tab.
 
-**What.** Two delivery paths for DNA. First, `formatDesignPrompt` in `sidecar/src/browser/designPromptPacks.ts` gets extended to inject the project's DNA (or a compact digest of it) into every design prompt. Second, a new `design-system` MCP tool lets any agent query tokens and rules on demand mid-task.
+**Acceptance.** On this repo and one external Tailwind repo: >80% of registry components render styled; components with call sites show usage presets; state matrix renders for interactive components. `componentPreview.test.ts` extended for the CSS pipeline and stage-file preference.
 
-**Why.** This is the direct answer to Cursor's token-drift complaint. Injection covers the start of a task; the MCP tool covers the middle of one, when an agent is deciding whether `#6b7280` should be `--color-muted`.
+### Phase C: Motion reality
 
-**Architecture.** Injection is a change inside `formatDesignPrompt`, which already composes header, references, and guidance blocks; DNA becomes another block, with `sanitizeInline`-style limits so a huge DESIGN.md cannot blow up the prompt. The MCP tool is a new `createDesignSystemMcpServer` module built with `createSdkMcpServer` (same factory as `browserMcpServer.ts`), added to the server array in `MissionManager.startLocalMcpServers`. That seam requires no manifest or config registration.
+**What.** `MOTION.md` becomes parseable, measured against what the codebase actually does, retrofittable via the motion pass, and tweakable via the scrubber (vision Pillar 4).
 
-**Dependencies.** DESIGN.md and MOTION.md exist and parse.
+**Approach.** Same pattern as color tokens: fence -> parser -> capture -> deterministic audit -> agent only for the fixes. The workbench (Phase B) is the measurement instrument because motion only exists during interaction, and the stage owns the component and can drive it.
 
-## Phase 2: Design Studio and the validator agent
+**How.**
 
-### 5. Studio page
+1. **`motion-tokens` fence.** `tokens.ts` gains `MOTION_BLOCK` regex + `parseMotionTokens()`; `types.ts` gains `MotionTokens { durations: Record<string,[min,max]|number>, easings: Record<string,string>, pressScale?, reducedMotion: 'disable'|'reduce' }`. `dnaScan.defaultMotionMarkdown()` and `dnaLibraries.renderMotion()` emit the fence alongside their prose. `design_dna` returns parsed `motionTokens`; `design_system` gains motion lookup (nearest duration token, easing by name), mirroring the existing palette lookup.
+2. **Capture.** Two collectors:
+   - Static: `auditEntryFor()` in `electron/nativeBrowserPreload.cjs` adds `transitionDuration`, `transitionTimingFunction`, `animationDuration`, `animationName` to its style keys (and the shared key list flagged in the old open question 4 gets extracted now: one `AUDIT_STYLE_KEYS` module consumed by preload, `iframeDesignMode.ts`, and `domSnapshot.ts`).
+   - Dynamic: the workbench stage gains a driver script that programmatically fires hover/focus/press/mount on the mounted component, then reports `document.getAnimations()` (exact duration, easing, keyframes per animation, no shorthand parsing) back via `postMessage`; `previewServer.ts` gains a loopback collection endpoint the stage posts to.
+3. **Motion inventory.** New `sidecar/src/design/motionInventory.ts`: sweeps the registry through the workbench driver (components) and configured pages through the browser path, producing per-component/per-page `MotionRecord[]`. Deterministic classifications: `off-token-duration`, `unknown-easing`, `dead-interaction` (element the registry marks interactive, or with an interactive ARIA role, that produces zero animations across all triggers), `reduced-motion-violation` (same sweep re-run with the reduced-motion media emulated; anything still animating is flagged). New command `design.motion.inventory`.
+4. **Audit rules.** `validator/audit.ts` gains `checkMotion()`; `FindingRule` union extends with the four rules above. Unit tests alongside `audit.test.ts`.
+5. **The motion pass (agent).** An agent task template consuming the inventory: fix off-token timings, add DNA motion to dead interactions, honor reduced motion. Every change previewed as before/after state-matrix frames in the workbench; approval is visual, per component.
+6. **Motion scrubber (UI).** In a canvas frame, selecting an element surfaces its animations via the Web Animations API (`element.getAnimations()`, scrub with `currentTime`/`playbackRate`, live-edit easing via `KeyframeEffect.updateTiming`). "Apply" dispatches a scoped design prompt carrying the exact token-mapped values; the agent writes the code change in the worktree.
+7. **Reconciliation.** `MOTION.md` authorship flows from reality: the inventory renders a divergence report ("DNA says micro 120-160ms; 14 components run 300ms; 9 dead interactions") in the DnaShelf, and "adopt observed" / "enforce DNA" are the two resolutions.
+8. **Playable brand book.** With motion tokens parseable, the brand book frame demonstrates instead of describing: each motion rule plays live on hover at its real duration/easing (a Web Animations demo element per token), the spacing rhythm renders as a toggleable ruler overlay, and color pairs render inside real registry components (via Phase B stages), never as naked swatches.
 
-**What.** A full top-level view alongside chat and Mission Control, dedicated to designing with agents. Hosts the DNA editor, validator configuration and findings, the reference library, the canvas, and the component shelf.
+**Acceptance.** Inventory runs across this repo's registry; parseable motion tokens round-trip; scrubber edits land as token-correct code; all four motion rules covered by tests.
 
-**Why.** Design work has different furniture than chat: persistent artifacts, side-by-side frames, findings lists. Cramming it into the chat surface would bury it.
+### Phase D: Quiet enforcement (retire the validator tab)
 
-**Architecture.** `App.tsx` has no router; the main section renders `<MissionControl />` when the active mission is a `mission_orchestrator`, otherwise `<ChatView />`. The Studio becomes a third branch driven by store state, with a navigation entry in `src/components/Sidebar.tsx`. The right-side `BrowserPane` and its mutual exclusion with `RightPanel` stay as is; the Studio composes the same `BrowserWorkspace` internals.
+**What.** Enforcement becomes a backstage loop: post-turn self-repair, write-time token mapping, canvas pins, DNA scores. The user never operates a validator (vision Pillar 4, "quiet measurement").
 
-**Dependencies.** Phase 1 artifacts to display. Canvas and shelf sections fill in as Phases 3 to 5 land.
+**Approach.** Hook the existing turn lifecycle and the existing audit; the only new intelligence is the automatic repair turn, which is just a scoped follow-up prompt with structured findings.
 
-### 6. Standalone consistency validator
+**How.**
 
-**What.** A validator session spawned over the bridge JSON protocol through new `design.validator.*` commands (`design.validator.configure`, `design.validator.run`, `design.validator.findings`, following the `session.create` shape in `sidecar/src/protocol.ts`). Completely independent of mission orchestration: today's validators are subagents the orchestrator spawns via its Task tool, while this one is user-owned and runs against any project with a `DESIGN.md`. Configurable in the Studio: editable system prompt (we ship a hardened default), model picker, page scope, and run triggers (manual, or after each design prompt).
+1. **Post-turn gate.** In `DesignManager`, hook studio-session turn completion. Detect UI-file edits via the per-turn git baseline that `electron/git.cjs` already keeps (`markTurnStart` + diff). If UI files changed: re-render affected previews/pages, run `auditElements` (colors, type, spacing, radii, plus Phase C motion), and if findings exist, dispatch an automatic repair turn carrying the structured findings (capped at 2 rounds, then surface remainder). Emit a new `ServerEvent` (`design.enforcement.result`) so the composer shows the badge: "DNA: 4 auto-fixed, 0 remaining."
+2. **Write-time layer.** A worktree file watcher in the sidecar (scoped to the isolated worktree only): on save of changed source files, a static pass maps raw hex/px/ms literals to nearest tokens via the existing `nearestPaletteColor`/`nearestScaleValue` and the Phase C motion lookup. Findings feed the same event stream; no blocking, just early signal.
+3. **Pins.** `ValidatorFinding` already carries element box coordinates; `StudioFrameBody` renders findings as overlay pins on the frame with a per-pin "fix" that dispatches a scoped prompt anchored to the finding's `file:line`.
+4. **Scores.** DNA score per component (1 minus violation density from the last sweep) shown in the Components tab and the shelf; per-page score on canvas frames.
+5. **Theme-aware audit.** With Track T's two-theme tokens landed, sweeps run per theme: the page/preview is audited once per theme (toggled via the Track T mechanism) and compared against that theme's palette, so a correct dark theme never flags against light tokens.
+6. **Retire the tab, delete the dead toggle.** `ValidatorTab` demotes to an advanced-config surface (page scope, allowlist, triggers); the never-consumed `runAfterDesignPrompt` config flag is removed, since the post-turn gate replaces it. No user-facing "run validator" as a primary action. Broaden coverage while here: all four padding/margin sides, all radius corners, border colors, and shadows against the token lists.
 
-**Why.** Every competitor generates and hopes. Enforcement is the differentiator, and it has to be a first-class object the user can inspect and tune, not a hidden step.
+**Acceptance.** An intentionally off-DNA agent edit gets auto-repaired before the user sees it, with the badge reflecting the rounds; pins render at correct coordinates; scores update after sweeps.
 
-**Architecture.** New command variants land in both `sidecar/src/protocol.ts` and its mirror `src/types/bridge.ts` (the header says keep in sync; every protocol change is a dual edit), with typed wrappers in `src/lib/commands.ts` and dispatch in the sidecar's `ClientCommand` switch. The validator session reuses the SDK session plumbing that `session.create` uses and attaches the browser MCP server plus the design-system tool.
+### Phase E: The Taste Engine
 
-**Dependencies.** Phase 1 (it needs something to validate against), Studio page for configuration UI.
+**What.** Cheap models produce tasteful output through constrained choice, best-of-N with visual self-critique, and a personal taste profile (vision Pillar 5). References become dated, decaying hypotheses (Pillar 3).
 
-### 7. A validator that measures
+**Approach.** Never "prompt harder." Shrink the decision space with a structured moves corpus, let selection do what generation cannot, and condition everything on `UNDERSTANDING.md`.
 
-**What.** Not a vibe check. The validator walks configured pages via the browser MCP tools per viewport preset (`fit`, `desktop`, `laptop`, `tablet`, `mobile` already exist in `BrowserSessionManager.ts`), pulls DOM snapshots, and numerically diffs computed styles (colors, type scale, spacing, radii, shadows) against `DESIGN.md` tokens. Each violation resolves to a source anchor (`file:line` via `ElementSource`) and emits a structured finding: screen, element, expected token versus actual value, cropped screenshot, suggested fix. Each finding carries a one-click fix that dispatches a scoped design prompt. The allowlist section in `DESIGN.md` suppresses known-good exceptions so the findings list stays trustworthy.
+**How.**
 
-**Why.** Numeric diffing against declared tokens is the part of design review a machine does strictly better than a human, and it is exactly the part every competitor skips.
+1. **Moves corpus.** `referenceExtract.ts` output distills into `.droidex/moves/*.json`: typed recipes (`kind: 'type-pairing'|'spacing-rhythm'|'hero-composition'|'nav-pattern'|...`, concrete values, provenance reference id, `capturedAt`, resonance tags from taste signals). Distillation is an agent task over the captured styles; the schema and storage are deterministic. New MCP tool `design_moves` deals a filtered hand (matching the understanding's emotional targets, biased by the taste profile) instead of the full corpus.
+2. **Best-of-N with critique.** The directions flow already renders N variants. Add the selection pass: screenshot each frame (preview server + existing capture), one vision-critique call against a fixed short rubric (hierarchy, rhythm, contrast, restraint, DNA adherence, the deterministic audit score folded in), rank, and fan the survivors. The rubric lives in `guidelines.ts` territory: versioned text, not per-session improvisation.
+3. **Taste profile.** Every pick/reject/probe signal (Phase A's log) updates per-move resonance counters; a compact profile digest (top resonant moves, consistent rejections with reasons) is computed deterministically and served through `design_understanding`, so any model on any session generates through the user's accumulated taste.
+4. **Reference decay.** `referenceLibrary.ts` entries carry `capturedAt` and resonance annotations ("landed in March for its type rhythm, not its color"); the digest downweights stale, uncorroborated references. `UNDERSTANDING.md` always outranks the library; contradictions annotate the reference rather than being hidden.
 
-**Architecture.** The measurement path is `browser_open`, `browser_resize`, `browser_snapshot`, and `browser_screenshot` from `browserMcpServer.ts`. The snapshot's style keys cover the diffable properties; shadow capture (`boxShadow`) gets added to `STYLE_KEYS`. Source anchors come from the existing `resolveSource` chain in `nativeBrowserPreload.cjs` (React fiber `_debugSource` first, data attributes as the framework-agnostic fallback, Vue and Svelte metadata after). Findings stream back as new `ServerEvent` variants and render in the Studio. Note the current source resolution depends on development builds (fiber debug metadata); production-build resolution is a Later-roadmap item.
+**Acceptance.** A/B on a cheap model: directions generated with moves + critique + profile visibly beat unconstrained generation on the same brief (panel-judged on 10 briefs). Profile digest changes measurably after 20 recorded signals.
 
-**Dependencies.** Feature 6.
+### Phase F: The universal canvas (web -> Electron -> iOS)
 
-## Phase 3: Live Reference Library
+**What.** The canvas hosts the actual running product, not specimens (vision Pillar 4).
 
-### 8. Persistent, clickable references
+**How.**
 
-**What.** Design-mode selections persist into a project-scoped library instead of dying with the prompt that used them. `DesignReference` already carries what this needs: `DesignAnchorDetail` holds the verified selector, attributes, computed styles, ancestor chain, and captured `html` (outerHTML), and the reference carries viewport, scroll, and screenshot. Component references render live in sandboxed iframes (srcdoc built from captured markup plus styles) so hover and click states actually work; users test the thing, they do not stare at a screenshot. Full-page references reopen live in the native browser via `browser.open`.
+1. **Web (now).** Canvas frames pointing at the worktree dev server with per-frame viewport presets; `attachIframeDesignMode` per frame for selection; source anchors via the existing `resolveSource` chain. Multi-viewport spreads of the same live page. Persist canvas layout per thread to disk (closes the in-memory restore gap) alongside the existing thread history storage.
+2. **Electron (next).** Reuse the droid-control Electron-driving machinery: the embedded frame is a screenshot stream + forwarded input for the target app's window, rendered as a canvas frame. Design-mode selection maps through the same preload anchors when the target is a dev build; production builds degrade to region selection + screenshots until production source mapping lands.
+3. **iOS (spike first, stand on existing MCPs).** Do not build simulator plumbing from scratch: mature MCP servers already drive the iOS Simulator (`ios-simulator-mcp`, `mobile-mcp`, XcodeBuild MCP: boot, install, screenshot, tap/swipe, describe UI via accessibility). The spike wires one of them into the studio session as an external MCP server, and the canvas frame renders its screenshot stream (`simctl io` polling for v0, the recording pipe for v1) with touch injection mapped through the same tools. The agent edits SwiftUI in the worktree with hot reload (SwiftUI previews / Inject). Timebox a one-week spike to validate frame rate and input latency before committing; the exit artifact is a demo of the agent changing a SwiftUI view and the canvas frame updating.
 
-**Why.** Reference-driven design is how people actually work ("make it feel like this"). Live references beat static crops because interaction states are half of what makes a component feel right.
+**Acceptance (web slice).** Two viewports of the real app live on the canvas, element selection resolves to `file:line`, layout survives app restart.
 
-**Architecture.** Persistence extends the existing pack storage under the browser design-reference directory (`browserDesignReferenceDir`, used by `writeDesignPromptPack`) from per-mission to project-scoped. Live rendering is a renderer-side component: sandboxed iframe, `srcdoc` from `DesignAnchorDetail.html` plus a scoped style block synthesized from captured computed styles. Sandboxing stays strict: no scripts from captured markup, no network beyond same-document assets.
+### Phase G: The design-readiness pass (production-repo onboarding)
 
-**Dependencies.** Studio page for the library UI. Independent of the validator.
+**What.** Any production repo (including old Electron apps) becomes designable: tokens extracted, theme seam installed, duplicated UI componentized (vision Pillar 4).
 
-### 9. Style extraction and mixing
+**How.**
 
-**What.** Extract palette, type, and spacing from a reference into `DESIGN.md`. Compose screens from multiple references (header from A, cards from B) under your own DNA so the output feels original rather than cloned.
+1. **Deterministic audit first.** A readiness scan combining `dnaScan` (existing token sources), `registryScan`, and a static sweep for raw hex/px/ms literals and duplicated JSX structures. Output: `.droidex/readiness.md` report with a score and a ranked refactor plan.
+2. **Agent execution in stages.** Each plan item (extract values to tokens -> install theme seam -> componentize duplicates) is a bounded agent task in the worktree, previewed before/after in the workbench, committed separately for one-click revert (the `git.cjs` per-turn baseline pattern).
+3. **Funnel placement.** The pass is offered when a project first opens the Studio and its readiness score is low; it is the onboarding, not a settings feature.
 
-**Why.** This closes the loop between Phase 3 and Phase 1: references are not just prompt attachments, they are DNA sources. Mixing under a declared DNA is the "better mix, not a clone" position in one feature.
+**Acceptance.** Run against one legacy repo: readiness score improves measurably, app still builds and passes its own tests after each stage.
 
-**Architecture.** Extraction is an agent prompt over the reference's captured styles feeding the DESIGN.md engine. Mixing extends `formatDesignPrompt` reference blocks with per-reference role annotations (which part of which reference applies to what).
+### Phase H: The inhabited canvas (the agent uses what it builds)
 
-**Dependencies.** Features 1 and 8.
+**What.** The agent becomes a presence on the canvas: one selection language across DOM and canvas, lean canvas-control tools, its own cursor, self-review by recording, walkthrough videos as deliverables, video references as input, and errors delivered as context (vision Pillar 6).
 
-## Phase 4: Canvas, variations, and the console loop
+**Approach.** Everything here composes existing machinery: the design-mode injection, the browser-session recording pipeline, the preview server, and the worktree. The new intelligence is behavioral (guidelines + two agent task templates); the new engineering is a shared selection module, a small canvas-control protocol surface, and frame instrumentation. Every tool obeys ground rule 7: digests, not dumps.
 
-### 10. Multi-frame canvas
+**How.**
 
-**What.** Live screens side by side: N variations of a screen as sibling frames, and the same screen across phone, tablet, and desktop simultaneously.
+1. **Unified selection.** Extract the element-picking and annotation logic shared by `iframeDesignMode.ts` and the native-browser preload into one `sidecar/src/design/selection/` module with a single resolved-selection shape: `{ element, role, computedStyleDigest, fileLine, frameId, annotation? }`. Canvas frames, the workbench stage, the brand book, and the browser pane all attach the same picker. A user annotation ("tighter") *is* a prompt: the composer dispatches it with the resolved selection attached, and the same shape is what agent tools receive, so user gestures and agent perception speak one language.
+2. **Canvas state and control tools.** Two MCP tools on `designMcpServer.ts`:
+   - `canvas_state`: compact inventory only: `{ frameId, title, kind: 'page'|'component'|'brandbook'|'browser', url, viewport, position, dnaScore?, errorCount? }` per frame, hard-capped, never DOM contents (selection and snapshot tools exist for depth).
+   - `canvas_control`: `open | close | move | resize | focus | arrange` with typed payloads (dual protocol edits per ground rule 3, dispatched through `DesignManager`). The agent composes its own workspace: a before/after pair for review, a fan for a probe, a motion strip for a sweep. Layout mutations render animated so the user sees the agent arranging, not teleporting frames.
+3. **The agent cursor.** A visually distinct second cursor rendered by the composer (canvas overlay, never the OS cursor: the user keeps control of their machine). Agent pointer tools (`cursor_move`, `cursor_click`, `cursor_hover`, `cursor_scroll`, `cursor_type`) resolve targets through the unified selection shape (element or coordinates within a frame) and drive the frame via the same synthetic-event injection the Phase C motion driver uses; the cursor overlay animates to the target before the event fires so the user can watch. Rate-limited and scoped to canvas frames only.
+4. **Self-review by recording.** An agent task template: after building, walk the changed surfaces with the cursor (the Phase C driver's trigger list plus the task's own acceptance points) while the session records via the existing browser-session recording pipeline (`BrowserSessionManager` capture lifecycle). The review pass then consumes sampled keyframes from the recording plus the `document.getAnimations()` inventory: the agent *sees* the hover that never fired, the transition that stutters, the layout jump. Findings feed the same repair loop as Phase D, before handover.
+5. **The walkthrough deliverable.** The same recording, kept: turns that build UI end with a short walkthrough video (agent cursor navigating the result) attached to the turn output next to the diff. This is the local version of the cloud-agent "sends you a video" workflow: assign work, come back, watch the agent use what it built on your own machine.
+6. **Video as input.** Accept video files (and screen recordings) as references: `referenceExtract.ts` gains a video path that samples frames at scene changes (ffmpeg, already feasible locally) for the visual read, and estimates motion character (durations and easing feel from frame deltas) for the motion read. Extracted moves land in the reference library dated and tagged like any capture; the agent asks the one why-question ("what resonated in this clip?") and logs the answer as a signal. Size/length caps enforced before processing.
+7. **Error context loop.** Instrument every canvas frame and the native browser pane: injected `console`/`fetch`/`error` hooks (same injection seam as design mode) and Electron `console-message` events, normalized into structured `{ level, message, stack, fileLine (source-mapped), frameId, at }` records. Errors attach to the frame (badge + `errorCount` in `canvas_state`) and are automatically included when the agent works on that frame, so broken builds are debugged from evidence, not from the user pasting stack traces. Digest rule: last N unique errors, deduplicated, capped.
 
-**Why.** Variation comparison is the strongest pattern the canvas tools (MagicPath, Figma Make) got right. It belongs on top of a real dev server instead of a sandbox.
+**Acceptance.** The agent, unprompted by the user: arranges a before/after spread, walks the new flow with its visible cursor, produces a walkthrough video attached to the turn, and self-catches a dead hover from its own recording. A dropped video reference yields dated moves in the library. A thrown render error reaches the agent's next turn as a source-mapped record. All new tools pass size-budget tests.
 
-**Architecture.** Extends the `BrowserCanvas` and `iframeDesignMode` path. `BrowserCanvas.tsx` currently renders one screenshot surface inside `SmoothCanvas`; the multi-frame layout generalizes that to a grid of live iframes against the dev server, each with its own viewport preset. Viewport presets already exist; per-frame variation state is new.
+## Sequencing summary
 
-**Dependencies.** Studio page. Benefits from Phase 1 DNA injection for variation generation.
+| Order | Phase | Depends on | Parallelizable with |
+|---|---|---|---|
+| 1 | A: Understanding + Discovery | - | B |
+| 2 | B: Component Workbench | - | A |
+| 3 | C: Motion reality | B | E spike |
+| 4 | D: Quiet enforcement | C (motion tokens) | E |
+| 5 | E: Taste Engine | A (signals) | C, D |
+| 6 | F: Universal canvas | web slice: none; Electron/iOS: spikes anytime | all |
+| 7 | G: Design-readiness pass | B (workbench previews) | F |
+| 8 | H: Inhabited canvas | C (driver), D (repair loop), F web slice (frames); selection unification + error loop can start with B | E, G |
 
-### 11. Console context loop
+The demo arc this sequencing serves: discovery that feels like an agency engagement (A) -> a component library that renders itself (B) -> motion you can see, measure, and bend (C) -> an agent that cannot hand over off-DNA work (D) -> cheap models with taste (E) -> your real product, on the canvas (F/G) -> an agent you can watch use what it built, and that sends you the video (H).
 
-**What.** Every prototype and variation frame pipes console errors, warnings, and failed requests back to the design agent, so a broken prototype self-diagnoses and gets fixed on user prompt instead of silently shipping a dead frame.
+## Small-PR execution plan
 
-**Why.** The single most common failure mode of AI-built prototypes is the frame that renders nothing because of a runtime error nobody surfaced.
+All work ships as small, independently green PRs off `feat/droidex-design-platform`. Rules for every PR:
 
-**Architecture.** Greenfield: no console or network capture exists in the repo today. For iframe frames, an injected hook over `console` and `fetch` in the frame document (same injection point as `attachIframeDesignMode`). For the native browser, the `webContents` `console-message` event in the Electron main process, forwarded over the existing preload channels. Captured entries attach to the frame's context and flow into the next design prompt as a structured block.
+- **One seam per PR.** A PR is either sidecar logic, or a protocol dual-edit plus dispatch, or UI, never all three unless trivially small. Order within a feature: artifact/parser first, then MCP/protocol, then UI.
+- **Reviewable size.** Target under ~400 changed lines excluding tests and generated files. If a step outgrows that, split it.
+- **Green gate per PR.** Each PR passes the full local gate in AGENTS.md, ships its tests in the same PR, and runs `docs:generate` when scripts/env change.
+- **Deterministic and agentic changes never mix.** A parser/measurement PR does not also change guidelines or task templates.
+- **Local-only hacks stay local.** The `history.ts` sqlite rename (`index-droidex.sqlite`) is dev isolation for this worktree and is never committed.
 
-**Dependencies.** Feature 10 for per-frame attribution; the native-browser path can ship earlier on its own.
+### Wave 0: land the direction (now)
 
-### 12. Design selector inside frames
+| PR | Contents | Notes |
+|---|---|---|
+| 0 | `docs/droidex-product-vision.md` + rewritten `docs/design-roadmap.md` + regenerated reference | Docs only; unblocks everyone |
+| 0.1 | The component-first rule already sitting in `guidelines.ts` | One string, zero risk |
 
-**What.** The existing element, region, and pencil selector works inside every prototype frame, so iterating on a variation feels identical to iterating on the main page. Zero new concepts.
+### Wave 1: Phase A artifact core and Phase B pipeline (parallel tracks)
 
-**Why.** The moment variations are second-class (no selection, screenshot-only) users fall back to the main page and the canvas dies.
+Track A (understanding):
 
-**Architecture.** `attachIframeDesignMode(iframe, { designMode, pencilMode, onSelection })` already returns a cleanup function and emits `NativeBrowserSelection` shapes; the multi-frame canvas attaches it per frame and tags selections with the frame id. The iframe path's computed-style capture is currently a smaller key set than the sidecar snapshot (no border, radius, position, opacity, transform); those keys get aligned so references from frames are as rich as references from the native browser.
+| PR | Contents | Depends on |
+|---|---|---|
+| A1 | `understanding.ts`: kind-union extension in `dnaFiles.ts`, `UNDERSTANDING.md` read/write/seed, `parseUnderstanding()`, `appendTasteSignal()` with the scoped signal schema, `understanding.test.ts` | - |
+| A2 | `discoveryBank.ts`: typed question bank, `openGaps()`, tests | A1 |
+| A3 | `design_understanding` MCP tool (read + `record_signal`), pointer mention, question-craft + show-then-say rules in `guidelines.ts` | A1, A2 |
+| A4 | Probe wiring: pick + typed-why from the directions flow recorded as signals (protocol dual edit + composer affordance) | A3 |
+| A5 | Workspace-wide pointer: `UNDERSTANDING.md` reference injected into all sessions | A1 |
+| A6 | Understanding Wall + taste timeline: read-only canvas board, `design.understanding.read` command | A3 |
+| A7 | Shipped direction gallery: 12-16 bundled specimens in the `dnaLibraries.ts` asset pattern | - (anytime) |
 
-**Dependencies.** Feature 10.
+Track B (workbench):
 
-## Phase 5: Component shelf and three-dots swap
+| PR | Contents | Depends on |
+|---|---|---|
+| B1 | Real CSS pipeline in `componentPreview.ts` (Tailwind v3/v4 via the project's own toolchain), tests | - |
+| B2 | Stage-file convention: `.droidex/stages/<C>.stage.tsx` preference with bare fallback, tests | B1 |
+| B3 | `registryScan.ts` call-site usages (files/lines/literal props), exposed on `design_component_registry` | - |
+| B4 | Harness-synthesis agent task + `design.component.stage` command (protocol dual edit) | B2, B3 |
+| B5 | Stage page upgrades: preset tabs, prop knobs, state matrix | B2 |
 
-### 13. Component shelf
+Track T (themes, unblocks honest light/dark everywhere):
 
-**What.** The project's real components rendered live and clickable in the Studio, sourced from the repo (component registry) and the reference library.
+| PR | Contents | Depends on |
+|---|---|---|
+| T1 | Two-theme token schema: `colors` becomes per-theme (`{ light: {...}, dark: {...} }`, single-map input still parses as `light` for backward compatibility) in `tokens.ts`/`types.ts`; libraries, `dnaScan`, and the brief emit both themes; tests | - |
+| T2 | Live theme toggle: previews, stages, and the brand book render both themes via a query param / injected `color-scheme` + token CSS variables; a per-frame theme switch on canvas frames | T1, B1 |
 
-**Why.** The shelf is the design-system made tangible. It is also the supply side of swaps: you cannot swap to a component you cannot see.
+### Wave 2 and beyond
 
-**Architecture.** Repo-sourced entries come from a component registry built during the Phase 1 repo scan (exported components plus the `file:line` they live at); rendering reuses the live-iframe machinery from feature 8. Reference-sourced entries are library items directly.
+Later phases follow the same pattern; their PR splits are defined when the phase starts (planning a phase's PRs is the first task of the phase), roughly: C in 5 PRs (fence/parser -> static collector + shared `AUDIT_STYLE_KEYS` -> stage driver + inventory -> audit rules -> scrubber UI, then the motion-pass task template), D in 4 (post-turn gate -> repair turn + badge -> pins -> scores + tab demotion), E in 4, F web slice in 2, G in 3, H in 6 (selection module -> canvas tools -> cursor -> recording self-review -> walkthrough deliverable -> video references + error loop).
 
-**Dependencies.** Features 1 and 8.
+### Starting point from this worktree
 
-### 14. Three-dots swap workflow
-
-**What.** Navigate the real site, hover or select a component, and a three-dots affordance opens a menu: Swap component (pick from shelf or references), View code (jump to the resolved `file:line`), Edit (scoped design prompt).
-
-**Why.** This is the shortest path from "I dislike this card" to a reviewed diff, and it only works because selection already resolves to source. Competitors with weak source mapping structurally cannot ship this.
-
-**Architecture.** The affordance extends the design-mode hover overlay in `nativeBrowserPreload.cjs` and `iframeDesignMode.ts`. View code uses `ElementSource.file/line/column` directly. Edit dispatches through the existing `browser.design.sendPrompt` path. Swap is feature 15.
-
-**Dependencies.** Feature 13, plus Phase 2 source-anchor hardening.
-
-### 15. Integration-safe swaps
-
-**What.** The swap prompt carries a context contract: source anchor, ancestor chain, props and call sites, plus explicit scope rules (preserve the component API, or migrate all usages), so swaps on a real app do not break integrations. Live preview rides the existing dev-server auto-reload. Each swap is a discrete commit for one-click revert.
-
-**Why.** Swapping components on a production codebase is where every generation tool breaks things. The contract turns a risky freeform edit into a bounded refactor.
-
-**Architecture.** The anchor and ancestor chain already exist (`DesignAnchorDetail.ancestors`, `ElementSource.componentChain`); props and call sites come from a repo-side scan seeded by the resolved file. Commit-per-swap is grounded in `electron/git.cjs` (`markTurnStart` for per-turn baselines, `stageAll`, `commit`); revert is a plain `git revert` of that commit. Caveat: `git.cjs` and `github.cjs` exist but are not yet wired through `electron/main.cjs` IPC and the preload; that wiring is a prerequisite and is already planned for the environment panel work.
-
-**Dependencies.** Features 13 and 14, git IPC wiring.
-
-## Later roadmap
-
-Direction, deliberately not scheduled.
-
-- **Mission Control design-to-MVP.** A finalized DNA plus a populated shelf feed a mission where inexpensive worker agents mass-produce screens and the Phase 2 validator gates feature completion. The mission plumbing exists (`MissionManager`, orchestrator-spawned workers and validators, per-mission model config); deferred by decision until the Studio loop is proven on single screens.
-- **Production Electron app attachment.** Integrate the in-progress capability to select, inspect, and design against compiled Electron binaries, letting users work on production apps rather than dev builds. This also forces the production-build source-mapping work flagged in feature 7. Nobody else in the space has this.
-- **Figma round-trip import.** Import direction only becomes worth building once the DNA and shelf give imported frames somewhere coherent to land.
-- **Voice-directed design input.** Cursor shipped voice in June 2026; the selector-plus-instruction model here extends to voice naturally, but it is an input method, not a platform layer.
+1. Commit and PR Wave 0 today (docs, then the guidelines rule).
+2. Start A1 and B1 in parallel: they are the two highest-leverage, dependency-free slices, and everything else in their tracks stacks on them.
+3. Keep the `history.ts` local diff out of every commit (`git add -p` or a local stash).
 
 ## Open questions
 
-1. **DESIGN.md schema strictness.** Fully freeform markdown maximizes portability; a structured token block (fenced YAML or JSON) makes the validator's diffing deterministic. Current lean: structured token block, freeform prose around it.
-2. **Validator cost control.** Full walks across five viewports and many pages could be slow and token-heavy. Options: incremental validation scoped to the last diff, screenshot-free style-only passes, or a local non-LLM diff pass with the agent only interpreting violations. Needs measurement on a real project.
-3. **Reference library scope.** Project-scoped is the default; a personal cross-project library is attractive (bring your taste with you) but raises questions about leaking one client's UI into another's project. Likely: project-scoped with explicit export/import.
-4. **Snapshot style-key growth.** Features 2, 7, and 12 each widen the captured style set. The three capture implementations (`nativeBrowserPreload.cjs`, `iframeDesignMode.ts`, `domSnapshot.ts`) must stay aligned; worth extracting a shared key list before Phase 2 rather than after.
-5. **Non-React source resolution quality.** The exact-confidence path leans on React fiber `_debugSource`. Vue and Svelte paths exist; plain-HTML and production builds fall back to attributes or nothing. How much Phase 5 swap UX degrades at `confidence: 'heuristic'` or `'none'` needs real-world testing.
-6. **Where validator findings live.** Ephemeral per-run, or persisted as a findings file in the repo (reviewable in PRs, diffable over time)? Persistence is attractive for enterprise audit trails but adds repo noise.
+1. **Taste-signal privacy.** Signals live in the repo (portable, versioned) but a personal cross-project taste profile is attractive. Current lean: repo-scoped signals, an explicit opt-in export for a personal profile, never automatic.
+2. **Synthesis cost control.** Stage-harness and moves-corpus synthesis are agent tasks; batch sweeps could get expensive. Lean: lazy synthesis (on first preview failure / first library open), cached in the repo, never re-run unless the component changes.
+3. **Production-build source resolution.** Electron/iOS attachment and the Phase F production path still depend on dev-build metadata (React fiber `_debugSource`). Production mapping (build-time annotation plugin or source-map resolution) is unscheduled but blocks the "attach to shipped app" story.
+4. **Best-of-N sample count.** N=3-4 assumed; needs measurement of critique-pass reliability vs cost on cheap models before hardcoding.
+5. **Validator findings persistence.** Ephemeral per-run today; persisting a findings file in the repo (PR-reviewable, diffable) is attractive for teams. Revisit after Phase D lands.
+6. **Video processing cost and dependencies.** Video references and walkthrough recordings need local frame extraction (ffmpeg availability, bundling vs system dependency) and vision-call budgets for sampled frames. Lean: hard caps on clip length and sampled-frame count, lazy processing, and a bundled ffmpeg only if the system probe fails.
