@@ -709,15 +709,18 @@ function hasCanonicalChildSchema(db: DatabaseSync): boolean {
       return false;
   }
   return (
-    hasPartialUniqueIndex(db, 'child_sessions_provider_identity', [
-      'parent_app_session_id',
-      'provider_session_id',
-    ]) &&
-    hasPartialUniqueIndex(db, 'child_sessions_spawn_identity', [
-      'parent_app_session_id',
-      'spawn_link_kind',
-      'spawn_link_id',
-    ]) &&
+    hasPartialUniqueIndex(
+      db,
+      'child_sessions_provider_identity',
+      ['parent_app_session_id', 'provider_session_id'],
+      'provider_session_id is not null',
+    ) &&
+    hasPartialUniqueIndex(
+      db,
+      'child_sessions_spawn_identity',
+      ['parent_app_session_id', 'spawn_link_kind', 'spawn_link_id'],
+      'spawn_link_id is not null',
+    ) &&
     childSchemaHasChecks(db)
   );
 }
@@ -753,6 +756,7 @@ function hasPartialUniqueIndex(
   db: DatabaseSync,
   indexName: string,
   expectedColumns: readonly string[],
+  expectedPredicate: string,
 ): boolean {
   const index = (
     db.prepare('PRAGMA index_list(child_sessions)').all() as Record<string, unknown>[]
@@ -761,9 +765,14 @@ function hasPartialUniqueIndex(
   const columns = (
     db.prepare(`PRAGMA index_info(${indexName})`).all() as Record<string, unknown>[]
   ).map((row) => stringValue(row.name));
+  const schema = db
+    .prepare("SELECT sql FROM sqlite_schema WHERE type = 'index' AND name = ?")
+    .get(indexName) as Record<string, unknown> | undefined;
+  const sql = stringValue(schema?.sql)?.toLowerCase().replace(/\s+/g, ' ').trim().replace(/;$/, '');
   return (
     columns.length === expectedColumns.length &&
-    expectedColumns.every((column, position) => columns[position] === column)
+    expectedColumns.every((column, position) => columns[position] === column) &&
+    sql?.endsWith(` where ${expectedPredicate}`) === true
   );
 }
 

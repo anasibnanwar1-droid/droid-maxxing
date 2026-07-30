@@ -255,6 +255,48 @@ test('version-one index missing a canonical identity constraint uses hard-cut re
   }
 });
 
+test('version-one indexes with incompatible partial predicates use hard-cut recovery', () => {
+  const cases = [
+    {
+      name: 'child_sessions_provider_identity',
+      columns: 'parent_app_session_id, provider_session_id',
+      predicate: 'provider_session_id IS NULL',
+    },
+    {
+      name: 'child_sessions_spawn_identity',
+      columns: 'parent_app_session_id, spawn_link_kind, spawn_link_id',
+      predicate: 'spawn_link_id IS NULL',
+    },
+  ];
+
+  for (const malformed of cases) {
+    const malformedHome = mkdtempSync(join(tmpdir(), 'droid-child-schema-v1-predicate-'));
+    process.env.HOME = malformedHome;
+    try {
+      const index = new HistoryIndex();
+      index.close();
+      const indexPath = join(malformedHome, '.factory', 'droid-control', SESSION_INDEX_FILENAME);
+      const db = new DatabaseSync(indexPath);
+      db.exec(`
+        DROP INDEX ${malformed.name};
+        CREATE UNIQUE INDEX ${malformed.name}
+          ON child_sessions (${malformed.columns})
+          WHERE ${malformed.predicate};
+      `);
+      db.close();
+
+      assert.throws(
+        () => new HistoryIndex(),
+        /remove ~\/\.factory\/droid-control\/session-index\.sqlite.*Raw Factory session history is not removed\./,
+        malformed.name,
+      );
+    } finally {
+      process.env.HOME = home;
+      rmSync(malformedHome, { recursive: true, force: true });
+    }
+  }
+});
+
 test('incompatible local index fails fast with explicit recovery and leaves raw history intact', () => {
   const incompatibleHome = mkdtempSync(join(tmpdir(), 'droid-child-schema-recovery-'));
   const indexDir = join(incompatibleHome, '.factory', 'droid-control');
