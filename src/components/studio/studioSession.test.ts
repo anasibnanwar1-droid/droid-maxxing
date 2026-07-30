@@ -3,7 +3,6 @@ import test from 'node:test';
 import {
   createQueuedStudioPrompt,
   pendingStudioClientRef,
-  shouldDeliverStudioQueue,
   studioSessionTitle,
 } from './studioSession';
 
@@ -21,30 +20,6 @@ test('pending Studio compose is scoped to its project', () => {
   const pending = { 'client-b': { text: 'B' } };
   assert.equal(pendingStudioClientRef(expected, pending, ['/repo/a']), undefined);
   assert.equal(pendingStudioClientRef(expected, pending, ['/repo/b']), 'client-b');
-});
-
-test('Studio queue delivery requires the same session to finish its live turn', () => {
-  assert.equal(
-    shouldDeliverStudioQueue(
-      { appSessionId: 'session-a', live: true },
-      { appSessionId: 'session-a', live: false },
-    ),
-    true,
-  );
-  assert.equal(
-    shouldDeliverStudioQueue(
-      { appSessionId: 'session-a', live: true },
-      { appSessionId: 'session-b', live: false },
-    ),
-    false,
-  );
-  assert.equal(
-    shouldDeliverStudioQueue(
-      { appSessionId: 'session-a', live: false },
-      { appSessionId: 'session-a', live: false },
-    ),
-    false,
-  );
 });
 
 test('Studio queue preserves provider context separately from visible text', () => {

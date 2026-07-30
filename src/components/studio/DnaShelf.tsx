@@ -14,7 +14,6 @@ import {
 } from '../../lib/commands';
 import type { DnaDraft, DnaLibrarySummary, DnaState, SavedDnaEntry } from '../../types/bridge';
 import { useStudioCanvas } from './StudioCanvasContext';
-import { useDesignSession } from './useDesignSession';
 import { FontLine, Header, Swatches } from './DnaPrimitives';
 import DnaDraftProposal from './DnaDraftProposal';
 import DnaInterview from './DnaInterview';
@@ -26,7 +25,15 @@ import MotionPreview from './MotionPreview';
  * a visual proposal, apply a curated system, or view the project's current DNA
  * as swatches. Everything is visual; the markdown lives in the repo.
  */
-export default function DnaShelf({ cwd, sessionKey }: { cwd: string; sessionKey?: string }) {
+export default function DnaShelf({
+  cwd,
+  sessionId,
+  send,
+}: {
+  cwd: string;
+  sessionId: string | null;
+  send: (instruction: string) => void;
+}) {
   const { design } = useDesignStore();
   // Record lookups can miss at runtime even though the index type says otherwise.
   const dna = design.dna[cwd] as DnaState | undefined;
@@ -40,9 +47,6 @@ export default function DnaShelf({ cwd, sessionKey }: { cwd: string; sessionKey?
   const currentColors = tokens ? Object.values(tokens.colors) : [];
 
   const { studioDispatch } = useStudioCanvas();
-  // Same key as AgentPanel so interview sends land in the panel's thread, not a
-  // second session keyed by the worktree path.
-  const { send, sessionId } = useDesignSession(cwd, sessionKey);
   const [dismissed, setDismissed] = useState<string | null>(null);
   const [scanning, setScanning] = useState(false);
   const [interview, setInterview] = useState(false);

@@ -1,11 +1,10 @@
-import { useEffect, useRef } from 'react';
+import { useEffect } from 'react';
 import { useStore } from '../../hooks/useStore';
 import { useDesignStore } from '../../hooks/useDesignStore';
 import {
   createSession,
   loadSessionHistory,
   newClientRef,
-  resumeSession,
   sendToSession,
   sendToSessionNow,
   updateAgentSettings,
@@ -16,12 +15,11 @@ import type {
   SessionSummary,
   TranscriptEvent,
 } from '../../types/bridge';
-import { markGitTurnStart } from '../../lib/git';
-import { createLocalDesignTranscriptEvent, newQueueId } from '../../lib/promptQueue';
+import { newQueueId } from '../../lib/promptQueue';
+import { sessionIsLive } from '../../lib/sessions';
 import {
   createQueuedStudioPrompt,
   pendingStudioClientRef,
-  shouldDeliverStudioQueue,
   studioSessionTitle,
 } from './studioSession';
 
@@ -52,13 +50,7 @@ export function useDesignSession(cwd: string, sessionKey?: string) {
   const hasMapping = key in design.sessions || cwd in design.sessions;
   const transcript = sessionId ? (state.transcripts[sessionId] ?? []) : [];
   const session = sessionId ? state.sessions[sessionId] : null;
-  const isLive = !!session?.streaming;
-  const promptQueueRef = useRef<Partial<typeof state.promptQueue>>(state.promptQueue);
-  promptQueueRef.current = state.promptQueue;
-  const previousLiveRef = useRef<{ appSessionId: string | null; live: boolean }>({
-    appSessionId: null,
-    live: false,
-  });
+  const isLive = session ? sessionIsLive(session) : false;
   const pendingClientRef = sessionId
     ? undefined
     : pendingStudioClientRef(design.expected, state.pendingCompose, [key, cwd]);
@@ -113,46 +105,11 @@ export function useDesignSession(cwd: string, sessionKey?: string) {
 
   useEffect(() => {
     if (!sessionId) return;
-    resumeSession(sessionId);
-  }, [sessionId]);
-
-  useEffect(() => {
-    if (!sessionId) return;
     if (state.historyLoaded[sessionId]) return;
     const existing = state.transcripts[sessionId] as TranscriptEvent[] | undefined;
     if ((existing?.length ?? 0) > 0) return;
     loadSessionHistory(sessionId);
   }, [sessionId, state.historyLoaded, state.transcripts]);
-
-  useEffect(() => {
-    const previous = previousLiveRef.current;
-    const current = { appSessionId: sessionId, live: isLive };
-    previousLiveRef.current = current;
-    if (!shouldDeliverStudioQueue(previous, current) || !sessionId) return;
-
-    const deliverQueuedPrompt = async () => {
-      if (cwd) await markGitTurnStart(cwd, sessionId);
-      const head = promptQueueRef.current[sessionId]?.at(0);
-      if (!head?.studio) return;
-      try {
-        sendToSession(sessionId, head.studio.prompt);
-      } catch (error) {
-        console.error('[useDesignSession] queued Studio send failed:', error);
-        return;
-      }
-      dispatch({
-        type: 'SESSION_TRANSCRIPT',
-        event: createLocalDesignTranscriptEvent(
-          sessionId,
-          head.text,
-          head.studio.browserRefs ?? [],
-        ),
-      });
-      dispatch({ type: 'REMOVE_QUEUED_PROMPT', appSessionId: sessionId, id: head.id });
-    };
-
-    void deliverQueuedPrompt();
-  }, [cwd, dispatch, isLive, sessionId]);
 
   const echoUser = (
     appSessionId: string,

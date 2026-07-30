@@ -3,11 +3,6 @@ import type { BrowserTranscriptReference } from '../../types/bridge';
 
 const MAX_TITLE_LENGTH = 48;
 
-export interface StudioLiveSnapshot {
-  appSessionId: string | null;
-  live: boolean;
-}
-
 export function studioSessionTitle(displayText: string): string {
   const clean = displayText.replace(/\s+/g, ' ').trim();
   if (!clean) return 'Untitled design';
@@ -25,18 +20,6 @@ export function pendingStudioClientRef(
   return Object.entries(expected).find(
     ([clientRef, projectKey]) => keys.has(projectKey) && clientRef in pendingCompose,
   )?.[0];
-}
-
-export function shouldDeliverStudioQueue(
-  previous: StudioLiveSnapshot,
-  current: StudioLiveSnapshot,
-): boolean {
-  return (
-    previous.live &&
-    !current.live &&
-    current.appSessionId !== null &&
-    previous.appSessionId === current.appSessionId
-  );
 }
 
 export function createQueuedStudioPrompt({

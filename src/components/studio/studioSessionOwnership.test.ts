@@ -1,0 +1,25 @@
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import test from 'node:test';
+
+const designSessionSource = readFileSync(new URL('./useDesignSession.ts', import.meta.url), 'utf8');
+const dnaShelfSource = readFileSync(new URL('./DnaShelf.tsx', import.meta.url), 'utf8');
+
+test('Studio leaves queued prompt delivery to the app-level queue owner', () => {
+  for (const duplicateOwnerMarker of [
+    'REMOVE_QUEUED_PROMPT',
+    'markGitTurnStart',
+    'previousLiveRef',
+    'resumeSession',
+  ]) {
+    assert.equal(
+      designSessionSource.includes(duplicateOwnerMarker),
+      false,
+      `useDesignSession must not own ${duplicateOwnerMarker}`,
+    );
+  }
+});
+
+test('the Libraries shelf reuses the Agent panel design session', () => {
+  assert.equal(dnaShelfSource.includes('useDesignSession'), false);
+});

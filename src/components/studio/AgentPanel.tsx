@@ -4,6 +4,7 @@ import { useStore } from '../../hooks/useStore';
 import type { SessionSummary } from '../../types/bridge';
 import { interruptSession } from '../../lib/commands';
 import { isDesktop } from '../../lib/desktop';
+import { sessionIsLive } from '../../lib/sessions';
 import AskUserModal from '../AskUserModal';
 import { useStudioCanvas, type StudioLeftTab } from './StudioCanvasContext';
 import { useDesignSession } from './useDesignSession';
@@ -39,7 +40,7 @@ export default function AgentPanel({
     useDesignSession(cwd, sessionKey);
   // Record index can miss at runtime even though the type says otherwise.
   const session = sessionId ? (state.sessions[sessionId] as SessionSummary | undefined) : undefined;
-  const streaming = !!session?.streaming;
+  const streaming = session ? sessionIsLive(session) : false;
   const hasMacTrafficLights =
     isDesktop() && typeof navigator !== 'undefined' && navigator.userAgent.includes('Macintosh');
 
@@ -159,7 +160,13 @@ export default function AgentPanel({
 
       {tab === 'libraries' && (
         <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-4">
-          <DnaShelf cwd={cwd} sessionKey={sessionKey} />
+          <DnaShelf
+            cwd={cwd}
+            sessionId={sessionId}
+            send={(instruction) => {
+              send(instruction);
+            }}
+          />
         </div>
       )}
     </aside>
