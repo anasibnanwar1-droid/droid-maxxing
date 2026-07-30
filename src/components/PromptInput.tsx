@@ -394,15 +394,16 @@ export default function PromptInput({
 
   // Leave history-recall mode and drop any composer draft attachments when
   // switching conversations, so skills/files/images staged for one chat don't
-  // linger on another chat's prompt bar. clearImageAttachments is
+  // linger on another chat's prompt bar. No prompt referenced the staged
+  // images, so their temp files are deleted too. clearAndDiscardImages is
   // useCallback-stable, so this still fires only on a session switch.
-  const clearImageAttachments = imageAttachments.clear;
+  const clearAndDiscardImages = imageAttachments.clearAndDiscard;
   useEffect(() => {
     setHistoryIndex(null);
     setActiveSkills([]);
     setAttachedFiles([]);
-    clearImageAttachments();
-  }, [activeSession?.appSessionId, clearImageAttachments]);
+    clearAndDiscardImages();
+  }, [activeSession?.appSessionId, clearAndDiscardImages]);
 
   // Welcome-screen suggestion cards seed the composer through the store so the
   // empty state and this input stay decoupled. The pendingCaret effect below
@@ -802,8 +803,9 @@ export default function PromptInput({
   const editQueuedInComposer = (p: QueuedPrompt) => {
     if (!activeSession) return;
     // The queued prompt carries its own files; drop any images pasted after it
-    // was queued so they don't ride along on the edited prompt.
-    imageAttachments.clear();
+    // was queued so they don't ride along on the edited prompt, and delete
+    // their temp files — no prompt ever referenced them.
+    imageAttachments.clearAndDiscard();
     setInput(p.text);
     setAttachedFiles(p.files);
     setActiveSkills(invocableSkills.filter((s) => p.skills.includes(s.name)));

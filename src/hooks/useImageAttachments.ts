@@ -188,6 +188,14 @@ export function useImageAttachments(quality: ImagePasteQuality) {
     commit([]);
   }, [additions, commit]);
 
+  // Non-submit clears (session switch, editing a queued prompt): no prompt
+  // references the committed files, so delete them instead of orphaning them
+  // until the daily sweep. In-flight adds still self-discard via the stamp.
+  const clearAndDiscard = useCallback(() => {
+    for (const image of imagesRef.current) void discardImage(image.path);
+    clear();
+  }, [clear]);
+
   /**
    * Submit-path support: resolves with the live list once every in-flight add
    * has landed or failed, so a prompt never snapshots attachments mid-encode.
@@ -197,5 +205,5 @@ export function useImageAttachments(quality: ImagePasteQuality) {
     return imagesRef.current;
   };
 
-  return { images, addBlob, remove, applyCrop, clear, whenSettled };
+  return { images, addBlob, remove, applyCrop, clear, clearAndDiscard, whenSettled };
 }
