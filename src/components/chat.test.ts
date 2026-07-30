@@ -4,6 +4,7 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import {
   buildFeed,
+  childSessionLineIsRunning,
   collectTurnFiles,
   conversationAnchors,
   correlateResults,
@@ -53,6 +54,12 @@ function workedChildren(items: FeedItem[]): FeedItem[] {
     .filter((it): it is Extract<FeedItem, { type: 'worked' }> => it.type === 'worked')
     .flatMap((it) => it.items);
 }
+
+test('parent liveness cannot make paused historical child activity look running', () => {
+  assert.equal(childSessionLineIsRunning({ status: 'paused' }), false);
+  assert.equal(childSessionLineIsRunning({ status: 'completed' }), false);
+  assert.equal(childSessionLineIsRunning({ status: 'running' }), true);
+});
 
 // ── #20: TodoWrite / tool orchestration must not leak as chat ──
 
