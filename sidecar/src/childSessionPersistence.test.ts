@@ -255,7 +255,7 @@ test('version-one index missing a canonical identity constraint uses hard-cut re
   }
 });
 
-test('version-one indexes with incompatible partial predicates use hard-cut recovery', () => {
+test('version-one indexes with incompatible partial definitions use hard-cut recovery', () => {
   const cases = [
     {
       name: 'child_sessions_provider_identity',
@@ -266,6 +266,11 @@ test('version-one indexes with incompatible partial predicates use hard-cut reco
       name: 'child_sessions_spawn_identity',
       columns: 'parent_app_session_id, spawn_link_kind, spawn_link_id',
       predicate: 'spawn_link_id IS NULL',
+    },
+    {
+      name: 'child_sessions_provider_identity',
+      columns: 'parent_app_session_id COLLATE NOCASE, provider_session_id DESC',
+      predicate: 'provider_session_id IS NOT NULL',
     },
   ];
 

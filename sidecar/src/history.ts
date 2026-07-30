@@ -769,10 +769,11 @@ function hasPartialUniqueIndex(
     .prepare("SELECT sql FROM sqlite_schema WHERE type = 'index' AND name = ?")
     .get(indexName) as Record<string, unknown> | undefined;
   const sql = stringValue(schema?.sql)?.toLowerCase().replace(/\s+/g, ' ').trim().replace(/;$/, '');
+  const expectedSql = `create unique index ${indexName} on child_sessions (${expectedColumns.join(', ')}) where ${expectedPredicate}`;
   return (
     columns.length === expectedColumns.length &&
     expectedColumns.every((column, position) => columns[position] === column) &&
-    sql?.endsWith(` where ${expectedPredicate}`) === true
+    sql === expectedSql
   );
 }
 
