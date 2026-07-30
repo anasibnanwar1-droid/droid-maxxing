@@ -788,6 +788,30 @@ test('interrupt waits for the active iterator before starting the next child tur
   assert.deepEqual(runtime.prompts, ['first', 'second']);
 });
 
+test('interrupt rejection publishes an exact child error without failing the parent command', async () => {
+  const record = childRecord('child', 'provider');
+  const h = createHarness([record]);
+  const runtime = await h.open(record);
+  h.events.length = 0;
+  const gate = runtime.deferNextInterrupt();
+  const interrupting = h.owner.interrupt(record);
+  gate.reject(new Error('provider interrupt rejected'));
+
+  await assert.doesNotReject(interrupting);
+  assert.equal(
+    h.events.some(
+      (event) =>
+        event.type === 'child.error' &&
+        event.parentAppSessionId === record.parentAppSessionId &&
+        event.childSessionId === record.childSessionId &&
+        event.operation === 'interrupt' &&
+        event.code === 'child.interrupt_failed' &&
+        event.message === 'provider interrupt rejected',
+    ),
+    true,
+  );
+});
+
 test('stale interrupt and turn settlement cannot make a replacement turn idle', async () => {
   for (const kind of ['interrupt', 'settlement'] as const) {
     const record = childRecord('child', 'provider-old');

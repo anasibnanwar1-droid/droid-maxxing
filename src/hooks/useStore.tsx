@@ -2361,9 +2361,7 @@ function finiteNumber(value: unknown): number | undefined {
 
 /* ── Bridge event adapter ── */
 export function toastMessageForEvent(ev: ServerEvent): string | undefined {
-  return ev.type === 'child.error' && ev.code === 'child.settings_update_failed'
-    ? ev.message
-    : undefined;
+  return ev.type === 'child.error' && ev.operation !== 'open' ? ev.message : undefined;
 }
 
 export function adaptEvent(ev: ServerEvent): Action | null {

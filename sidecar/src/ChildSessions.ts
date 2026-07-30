@@ -212,9 +212,10 @@ export class ChildSessions {
     try {
       await runtime.session.interrupt();
     } catch (error) {
-      if (this.isCurrentTurnGeneration(parent, child, runtime, turnGeneration))
-        child.turn.interrupting = false;
-      throw error;
+      if (!this.isCurrentTurnGeneration(parent, child, runtime, turnGeneration)) return;
+      child.turn.interrupting = false;
+      this.emitError(identity, 'interrupt', null, 'child.interrupt_failed', errMsg(error));
+      return;
     }
     if (!this.isCurrentTurnGeneration(parent, child, runtime, turnGeneration)) return;
     if (wasAutoCompacting) this.d.compaction.cancel(this.automaticTarget(parent, child));

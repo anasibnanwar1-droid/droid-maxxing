@@ -24,7 +24,7 @@ const session: SessionSummary = {
   updatedAt: 1,
 };
 
-test('child settings update failure is routed to user-visible toast feedback', () => {
+test('non-open child command failures are routed to user-visible toast feedback', () => {
   const failure = {
     type: 'child.error' as const,
     code: 'child.settings_update_failed',
@@ -48,6 +48,22 @@ test('child settings update failure is routed to user-visible toast feedback', (
     toastMessageForEvent({
       ...failure,
       code: 'child.settings_target_invalid',
+    }),
+    failure.message,
+  );
+  assert.equal(
+    toastMessageForEvent({
+      ...failure,
+      code: 'child.send_failed',
+      operation: 'send',
+    }),
+    failure.message,
+  );
+  assert.equal(
+    toastMessageForEvent({
+      ...failure,
+      code: 'child.open_failed',
+      operation: 'open',
     }),
     undefined,
   );
