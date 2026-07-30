@@ -408,7 +408,6 @@ export class ChildSessions {
 
     const attempt = this.beginOpenAttempt(parent, childSessionId);
     let loaded: FactorySession | undefined;
-    let installed = false;
     try {
       const admitted = await this.awaitOpenStep(
         attempt,
@@ -466,7 +465,6 @@ export class ChildSessions {
         lastUsedAt: this.d.now(),
       };
       child.runtime = runtime;
-      installed = true;
       attempt.provisionalSession = undefined;
       child.modelId = settings.modelId;
       child.reasoningEffort = settings.reasoningEffort;
@@ -495,12 +493,15 @@ export class ChildSessions {
       this.publish(child);
       if (requestId) this.emitReady(runtime, child, requestId);
     } catch (error) {
-      if (this.isCurrentOpenAttempt(parent, child, attempt))
+      const runtimeInstalled = loaded !== undefined && child.runtime?.session === loaded;
+      const reportFailure = runtimeInstalled || this.isCurrentOpenAttempt(parent, child, attempt);
+      if (runtimeInstalled) await this.closeRuntime(parent, child, false);
+      if (reportFailure && this.isCurrentParent(parent))
         this.emitError(identity, operation, requestId, 'child.open_failed', errMsg(error));
     } finally {
       this.finishOpenAttempt(parent, childSessionId, attempt);
       parent.reservedOpenSlots.delete(childSessionId);
-      if (loaded && !installed) await this.closeProvisional(attempt);
+      if (loaded) await this.closeProvisional(attempt);
     }
   }
 
