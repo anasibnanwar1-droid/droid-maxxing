@@ -370,12 +370,12 @@ function stripFetchMeta(
   // a Title:/URL:/# line, so those removals cannot change which line leads.
   if (opts.firstLineTitle) {
     preview = preview.replace(/^[^\n]*(?:\n|$)/, '');
-    // A one-line body IS the title, so an empty result here is legitimate —
-    // restoring `clean` would duplicate the title as the body.
-    return preview.replace(/^\n+/, '').trim();
   }
-  preview = preview.replace(/^\n+/, '').trim();
-  return preview.length > 0 ? preview : clean;
+  // Whatever was stripped renders in the card's title or source row, so when
+  // nothing else remains (a one-line page, an h1-only page, or bare Title:/URL:
+  // metadata) an empty body is legitimate — restoring `clean` would duplicate
+  // the title or leak metadata as the body.
+  return preview.replace(/^\n+/, '').trim();
 }
 
 // Pull a title + clean body out of a FetchUrl-style tool result so the UI can

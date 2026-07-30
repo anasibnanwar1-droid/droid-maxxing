@@ -204,6 +204,22 @@ test('parseWebFetch leaves an empty body when the whole page is the fallback tit
   assert.equal(withUrl.body, '');
 });
 
+test('parseWebFetch leaves an empty body when the whole page is an h1 title', () => {
+  // The h1 becomes the card title; restoring the stripped text as the body
+  // would render the same heading twice.
+  const page = parseWebFetch('# Just A Heading');
+  assert.equal(page.title, 'Just A Heading');
+  assert.equal(page.body, '');
+});
+
+test('parseWebFetch leaves an empty body when the page is only Title/URL metadata', () => {
+  // Both lines are card chrome (title + source row), never body content.
+  const page = parseWebFetch('Title: Some Page\nURL: https://example.com');
+  assert.equal(page.title, 'Some Page');
+  assert.equal(page.url, 'https://example.com');
+  assert.equal(page.body, '');
+});
+
 test('formatCharCount uses compact k labels', () => {
   assert.equal(formatCharCount(42), '42');
   assert.equal(formatCharCount(1240), '1.2k');
