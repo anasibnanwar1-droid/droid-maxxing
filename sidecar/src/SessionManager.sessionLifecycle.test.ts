@@ -394,7 +394,7 @@ test('[L7] Send-now steers ahead of queued sends', { concurrency: false }, async
     await h.handle({ type: 'session.send', appSessionId: 'provider-1', text: 'second' });
     await h.handle({ type: 'session.sendNow', appSessionId: 'provider-1', text: 'steer' });
 
-    assert.equal(h.calls.filter((call) => call.method === 'interrupt').length, 1);
+    assert.equal(h.calls.filter((call) => call.method === 'interrupt').length, 0);
     gate.resolve();
     await h.provider.waitForPrompts('provider-1', 3);
 

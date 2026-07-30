@@ -48,6 +48,13 @@ class RejectingInterruptSession extends FakeFactorySession {
   }
 }
 
+class RejectingSendSession extends FakeFactorySession {
+  override async send(...args: Parameters<FakeFactorySession['send']>): Promise<void> {
+    await super.send(...args);
+    throw new Error('steer rejected');
+  }
+}
+
 class CallbackCloseSession extends FakeFactorySession {
   constructor(
     sessionId: string,
@@ -677,7 +684,7 @@ test('failed turn setup clears streaming so the next send can run', async () => 
   assert.deepEqual(provider.prompts, ['first', 'recovered']);
 });
 
-test('queued sends stay FIFO while consecutive send-now prompts each replace the active turn', async () => {
+test('queued sends stay FIFO while consecutive native steers join the active turn', async () => {
   const fifo = createHarness();
   const fifoProvider = queueCreate(fifo, 'fifo');
   const fifoGate = fifoProvider.deferNextStream();
@@ -698,10 +705,10 @@ test('queued sends stay FIFO while consecutive send-now prompts each replace the
   steerGate.resolve();
   await steerProvider.waitForPrompts(3);
   assert.deepEqual(steerProvider.prompts, ['first', 'steer one', 'steer two']);
-  assert.equal(interruptCount(steered), 2);
+  assert.equal(interruptCount(steered), 0);
 });
 
-test('send-now queues without interrupting compaction and reports interrupt rejection', async () => {
+test('send-now queues during compaction and reports native steer rejection', async () => {
   const compacting = createHarness();
   const provider = queueCreate(compacting, 'compacting');
   await compacting.lifecycle.create(createCommand());
@@ -716,22 +723,22 @@ test('send-now queues without interrupting compaction and reports interrupt reje
   assert.deepEqual(live.pendingSends, ['automatic', 'manual']);
   assert.equal(interruptCount(compacting), 0);
   const rejected = createHarness();
-  const rejectingProvider = new RejectingInterruptSession('rejected', {}, rejected.calls);
+  const rejectingProvider = new RejectingSendSession('rejected', {}, rejected.calls);
   const gate = rejectingProvider.deferNextStream();
   rejected.runtime.createQueue.push(rejectingProvider);
   await rejected.lifecycle.create(createCommand());
   await rejectingProvider.waitForPrompts(1);
   await rejected.lifecycle.sendNow('rejected', 'keep queued');
-  assert.deepEqual(requireLive(rejected, 'rejected').pendingSends, ['keep queued']);
-  assert.equal(requireLive(rejected, 'rejected').interruptingForSteer, false);
+  assert.deepEqual(requireLive(rejected, 'rejected').pendingSends, []);
   assert.equal(
     rejected.events.some(
       (event) => event.type === 'error' && event.code === 'session.send_now_failed',
     ),
     true,
   );
+  assert.deepEqual(rejectingProvider.prompts, ['first', 'keep queued']);
+  assert.equal(requireLive(rejected, 'rejected').streaming, true);
   gate.resolve();
-  await rejectingProvider.waitForPrompts(2);
 });
 
 test('interrupt handles idle, streaming, manual compaction, and auto-compaction states', async () => {
@@ -747,7 +754,7 @@ test('interrupt handles idle, streaming, manual compaction, and auto-compaction 
   live.streaming = true;
   await harness.lifecycle.interrupt('stop');
   assert.equal(interruptCount(harness), 2);
-  assert.equal(live.interrupting, true);
+  assert.equal(live.interrupting, false);
   live.streaming = false;
   live.interrupting = false;
   live.compacting = true;
@@ -816,6 +823,41 @@ test('interrupt aborts a stalled local stream so the next turn can start', async
 
   await harness.lifecycle.send('abort-stalled', 'next turn');
   assert.deepEqual(provider.prompts, ['first', 'next turn']);
+});
+
+test('interrupt settles a stalled local stream before the provider interrupt returns', async () => {
+  const harness = createHarness();
+  const provider = queueCreate(harness, 'abort-before-provider');
+  provider.deferNextStream();
+  const interruptGate = provider.deferNextInterrupt();
+  await harness.lifecycle.create(createCommand());
+  await provider.waitForPrompts(1);
+
+  const interrupting = harness.lifecycle.interrupt('abort-before-provider');
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  const live = requireLive(harness, 'abort-before-provider');
+  assert.equal(live.streaming, false);
+  assert.equal(live.turnAbortController, undefined);
+
+  interruptGate.resolve();
+  await interrupting;
+});
+
+test('send-now uses native provider steering without stopping the active turn', async () => {
+  const harness = createHarness();
+  const provider = queueCreate(harness, 'steer-provider-gate');
+  const streamGate = provider.deferNextStream();
+  await harness.lifecycle.create(createCommand());
+  await provider.waitForPrompts(1);
+
+  await harness.lifecycle.sendNow('steer-provider-gate', 'replacement');
+  assert.deepEqual(provider.prompts, ['first', 'replacement']);
+  assert.equal(interruptCount(harness), 0);
+  assert.equal(requireLive(harness, 'steer-provider-gate').streaming, true);
+
+  streamGate.resolve();
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(requireLive(harness, 'steer-provider-gate').streaming, false);
 });
 
 test('resuming an already-live session does not reload or persist it', async () => {

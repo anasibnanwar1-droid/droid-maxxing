@@ -40,6 +40,10 @@ interface CloseOperation {
   deferred: DeferredClose;
   created: boolean;
 }
+interface TurnSettlement {
+  promise: Promise<void>;
+  resolve: () => void;
+}
 export interface StartedLocalMcpResources {
   servers: LocalMcpResource[];
   configs: McpServerConfig[];
@@ -49,7 +53,7 @@ interface LiveTurnState {
   autoCompacting: boolean;
   pendingSends: string[];
   turnAbortController?: AbortController;
-  interruptingForSteer?: boolean;
+  turnSettlement?: TurnSettlement;
   interrupting?: boolean; // Marks user Stop so the resulting stream abort settles quietly.
 }
 type SessionCloseMode = 'discard-pending' | 'preserve-pending';
@@ -313,7 +317,12 @@ export class SessionLifecycle {
   async send(requestedAppSessionId: string, text: string): Promise<void> {
     const liveSession = await this.prepareToSend(requestedAppSessionId);
     if (!liveSession) return;
-    if (liveSession.streaming || liveSession.compacting || liveSession.autoCompacting) {
+    if (
+      liveSession.streaming ||
+      liveSession.compacting ||
+      liveSession.autoCompacting ||
+      liveSession.interrupting
+    ) {
       liveSession.pendingSends.push(text);
       this.updateQueuedSends(liveSession);
       return;
@@ -323,24 +332,35 @@ export class SessionLifecycle {
   async sendNow(requestedAppSessionId: string, text: string): Promise<void> {
     const liveSession = await this.prepareToSend(requestedAppSessionId);
     if (!liveSession) return;
-    if (!liveSession.streaming && !liveSession.compacting && !liveSession.autoCompacting) {
+    if (
+      !liveSession.streaming &&
+      !liveSession.compacting &&
+      !liveSession.autoCompacting &&
+      !liveSession.interrupting
+    ) {
       await this.drive(liveSession.summary.appSessionId, text);
       return;
     }
-    liveSession.pendingSends.unshift(text);
-    this.updateQueuedSends(liveSession);
-    if (liveSession.compacting || liveSession.autoCompacting) return;
-    liveSession.interruptingForSteer = true;
-    this.dependencies.emitStatus(liveSession.summary.appSessionId, 'Steering now...');
+    if (liveSession.compacting || liveSession.autoCompacting || liveSession.interrupting) {
+      liveSession.pendingSends.unshift(text);
+      this.updateQueuedSends(liveSession);
+      return;
+    }
+    const appSessionId = liveSession.summary.appSessionId;
+    const providerSession = liveSession.session;
+    this.dependencies.emitStatus(appSessionId, 'Steering at the next safe boundary...');
     try {
-      await liveSession.session.interrupt();
-      liveSession.turnAbortController?.abort();
+      await providerSession.send(text);
     } catch (error) {
-      liveSession.interruptingForSteer = false;
+      if (
+        this.dependencies.registry.getLive(appSessionId) !== liveSession ||
+        this.dependencies.isShutdownStarted()
+      )
+        return;
       this.dependencies.emitError({
         code: 'session.send_now_failed',
-        appSessionId: liveSession.summary.appSessionId,
-        message: `Could not interrupt session for steering: ${errMsg(error)}`,
+        appSessionId,
+        message: `Could not steer the active session: ${errMsg(error)}`,
       });
     }
   }
@@ -356,11 +376,16 @@ export class SessionLifecycle {
     }
     const wasAutoCompacting = liveSession.autoCompacting;
     const compactionTarget = this.primaryAutomaticCompactionTarget(liveSession);
+    const turnAbortController = liveSession.turnAbortController;
+    const turnSettlement = liveSession.turnSettlement?.promise ?? Promise.resolve();
+    const providerSession = liveSession.session;
     liveSession.interrupting = true;
+    const interrupting = providerSession.interrupt();
+    turnAbortController?.abort();
     try {
-      await liveSession.session.interrupt();
-      liveSession.turnAbortController?.abort();
+      await Promise.all([interrupting, turnSettlement]);
     } catch (error) {
+      await turnSettlement;
       liveSession.interrupting = false;
       throw error;
     }
@@ -371,12 +396,13 @@ export class SessionLifecycle {
     if (wasAutoCompacting) {
       this.dependencies.compaction.cancel(compactionTarget);
     }
-    if (!liveSession.streaming) liveSession.interrupting = false;
+    liveSession.interrupting = false;
     this.dependencies.registry.updateSummary(appSessionId, {
       phase: 'paused',
       streaming: false,
       queuedSends: 0,
     });
+    this.settleAfterCompactionInBackground(appSessionId);
   }
 
   async settleAfterCompaction(
@@ -598,7 +624,9 @@ export class SessionLifecycle {
     if (!liveSession || liveSession.closeMode || d.isShutdownStarted()) return;
     const stableAppSessionId = liveSession.summary.appSessionId;
     const turnAbortController = new AbortController();
+    const turnSettlement = createTurnSettlement();
     liveSession.turnAbortController = turnAbortController;
+    liveSession.turnSettlement = turnSettlement;
     try {
       liveSession.streaming = true;
       d.registry.updateSummary(stableAppSessionId, {
@@ -608,30 +636,42 @@ export class SessionLifecycle {
       });
       await d.runPrimaryTurn(liveSession, prompt, turnAbortController.signal);
     } finally {
-      if (liveSession.turnAbortController === turnAbortController) {
-        delete liveSession.turnAbortController;
-      }
-      liveSession.interruptingForSteer = false;
-      liveSession.interrupting = false;
-      liveSession.streaming = false;
-      if (d.isShutdownStarted() || this.shouldDiscardPendingSends(liveSession)) {
-        liveSession.pendingSends = [];
-      } else if (!d.registry.getLive(stableAppSessionId)) {
-        const queued = liveSession.pendingSends.splice(0);
-        if (queued.length > 0) void this.redeliverQueuedSends(stableAppSessionId, queued);
-      } else if (liveSession.autoCompacting) {
-        d.compaction.afterTurn(this.primaryAutomaticCompactionTarget(liveSession));
-        this.updateQueuedSends(liveSession);
-      } else {
-        const next = liveSession.pendingSends.shift();
-        this.updateQueuedSends(liveSession);
-        if (next !== undefined) this.driveInBackground(stableAppSessionId, next);
+      try {
+        if (liveSession.turnAbortController === turnAbortController) {
+          delete liveSession.turnAbortController;
+          delete liveSession.turnSettlement;
+        }
+        liveSession.streaming = false;
+        if (d.isShutdownStarted() || this.shouldDiscardPendingSends(liveSession)) {
+          liveSession.pendingSends = [];
+        } else if (!d.registry.getLive(stableAppSessionId)) {
+          const queued = liveSession.pendingSends.splice(0);
+          if (queued.length > 0) void this.redeliverQueuedSends(stableAppSessionId, queued);
+        } else if (liveSession.autoCompacting) {
+          d.compaction.afterTurn(this.primaryAutomaticCompactionTarget(liveSession));
+          this.updateQueuedSends(liveSession);
+        } else if (liveSession.interrupting) {
+          this.updateQueuedSends(liveSession);
+        } else {
+          const next = liveSession.pendingSends.shift();
+          this.updateQueuedSends(liveSession);
+          if (next !== undefined) this.driveInBackground(stableAppSessionId, next);
+        }
+      } finally {
+        turnSettlement.resolve();
       }
     }
   }
 
   private driveInBackground(appSessionId: string, prompt: string): void {
     void this.drive(appSessionId, prompt).catch((error: unknown) => {
+      if (!this.dependencies.isShutdownStarted())
+        this.dependencies.emitError({ appSessionId, message: errMsg(error) });
+    });
+  }
+
+  private settleAfterCompactionInBackground(appSessionId: string): void {
+    void this.settleAfterCompaction(appSessionId).catch((error: unknown) => {
       if (!this.dependencies.isShutdownStarted())
         this.dependencies.emitError({ appSessionId, message: errMsg(error) });
     });
@@ -661,6 +701,14 @@ export class SessionLifecycle {
       }
     }
   }
+}
+
+function createTurnSettlement(): TurnSettlement {
+  let settle = (): void => undefined;
+  const promise = new Promise<void>((resolve) => {
+    settle = resolve;
+  });
+  return { promise, resolve: settle };
 }
 function createLiveSession(
   summary: SessionSummary,

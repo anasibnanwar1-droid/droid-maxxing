@@ -14,6 +14,7 @@ import {
   type McpServerConfig,
   type MessageOptions,
   type PermissionHandler,
+  type SendOptions,
 } from '@factory/droid-sdk';
 import { spawn } from 'node:child_process';
 import { createDroidTransport } from './DroidTransport.js';
@@ -77,6 +78,7 @@ type FactorySessionMethods = Pick<
 >;
 
 export type FactorySession = FactorySessionMethods & {
+  send(prompt: string, options?: SendOptions): Promise<void>;
   stream(
     prompt: string,
     options: MessageOptions & { includePartialMessages: true },
@@ -130,7 +132,7 @@ export class DroidRuntime implements FactoryRuntime {
     }
   }
 
-  async createSession(options: CreateRuntimeSessionOptions): Promise<DroidSession> {
+  async createSession(options: CreateRuntimeSessionOptions): Promise<FactorySession> {
     const { client, transport } = await this.createClient(options.cwd, options);
     const params = createInitializeSessionParams(options);
 
@@ -140,14 +142,14 @@ export class DroidRuntime implements FactoryRuntime {
         SESSION_INIT_TIMEOUT_MS,
         'initialize_session',
       );
-      return new DroidSession(client, init.sessionId, init);
+      return createFactorySession(new DroidSession(client, init.sessionId, init), client);
     } catch (err) {
       await transport.close().catch(ignoreError);
       throw err;
     }
   }
 
-  async loadSession(sessionId: string, handlers: RuntimeHandlers = {}): Promise<DroidSession> {
+  async loadSession(sessionId: string, handlers: RuntimeHandlers = {}): Promise<FactorySession> {
     const { client, transport } = await this.createClient(undefined, handlers);
     const params: LoadSessionRequestParams = { sessionId };
     if (handlers.mcpServers?.length) params.mcpServers = handlers.mcpServers;
@@ -157,7 +159,7 @@ export class DroidRuntime implements FactoryRuntime {
         SESSION_INIT_TIMEOUT_MS,
         'load_session',
       );
-      return new DroidSession(client, sessionId, init);
+      return createFactorySession(new DroidSession(client, sessionId, init), client);
     } catch (err) {
       await transport.close().catch(ignoreError);
       throw err;
@@ -213,6 +215,19 @@ export class DroidRuntime implements FactoryRuntime {
   private resolveDroidPath(): string {
     return resolveDroidPath();
   }
+}
+
+function createFactorySession(session: DroidSession, client: DroidClient): FactorySession {
+  return Object.assign(session, {
+    send: async (prompt: string, options?: SendOptions): Promise<void> => {
+      await client.addUserMessage({
+        text: prompt,
+        ...(options?.images ? { images: options.images } : {}),
+        ...(options?.files ? { files: options.files } : {}),
+        ...(options?.outputFormat ? { outputFormat: options.outputFormat } : {}),
+      });
+    },
+  });
 }
 
 export function createInitializeSessionParams(

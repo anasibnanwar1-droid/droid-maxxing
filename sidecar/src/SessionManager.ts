@@ -939,8 +939,6 @@ export class SessionManager {
     } catch (err) {
       if (!this.isCurrentPrimarySession(liveSession)) {
         return;
-      } else if (liveSession.interruptingForSteer) {
-        this.timeline.appendStatus(appSessionId, 'Current turn interrupted for steering.');
       } else if (liveSession.interrupting && isUserCancellation(err)) {
         // The user pressed Stop; interrupt() already set the paused phase, so
         // settle quietly without surfacing an error.

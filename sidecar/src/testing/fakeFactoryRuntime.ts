@@ -63,6 +63,7 @@ export class FakeFactorySession implements FactorySession {
   contextStatsCalls = 0;
   nextCompactResult?: Awaited<ReturnType<FactorySession['compactSession']>>;
   nextCompactError?: Error;
+  nextSendError?: Error;
   nextStreamError?: Error;
   nextEnterSpecModeError?: Error;
   nextUpdateSettingsError?: Error;
@@ -114,6 +115,20 @@ export class FakeFactorySession implements FactorySession {
     if (!events.some((event) => event.type === 'result')) {
       yield successfulResultEvent(this.sessionId);
     }
+  }
+
+  send(...args: Parameters<FactorySession['send']>): Promise<void> {
+    const [prompt, options] = args;
+    this.prompts.push(prompt);
+    this.calls.push({
+      target: 'provider',
+      method: 'send',
+      args: [this.sessionId, prompt, options],
+    });
+    this.resolvePromptWaiters();
+    const error = this.nextSendError;
+    delete this.nextSendError;
+    return error ? Promise.reject(error) : Promise.resolve();
   }
 
   queueStreamEvents(events: DroidStreamEvent[]): void {
@@ -357,7 +372,11 @@ function waitForGateOrAbort(gate: Promise<void>, abortSignal?: AbortSignal): Pro
   abortSignal.throwIfAborted();
   return new Promise<void>((resolve, reject) => {
     const onAbort = (): void => {
-      reject(abortSignal.reason);
+      reject(
+        abortSignal.reason instanceof Error
+          ? abortSignal.reason
+          : new Error('Fake provider stream aborted'),
+      );
     };
     abortSignal.addEventListener('abort', onAbort, { once: true });
     void gate.then(resolve, reject).finally(() => {
