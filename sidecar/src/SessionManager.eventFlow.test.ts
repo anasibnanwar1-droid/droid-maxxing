@@ -24,6 +24,69 @@ function designToolPolicies(session: FakeFactorySession): unknown[] {
     .map((settings) => settings['disabledToolIds']);
 }
 
+test('plain Studio prompts disable TodoWrite from the canonical session purpose', async () => {
+  const context = createSessionManagerTestContext();
+  try {
+    await context.create({
+      sessionPurpose: 'design',
+      clientRef: 'studio-plain',
+      title: 'Studio plain',
+      goal: 'Make the landing page calmer',
+      interactionMode: 'auto',
+      autonomy: 'low',
+    });
+    const provider = context.provider.session('provider-1');
+    await provider.waitForPrompts(1);
+    await context.waitForIdle();
+
+    assert.deepEqual(designToolPolicies(provider), [['TodoWrite']]);
+  } finally {
+    await context.dispose();
+  }
+});
+
+test('attached-reference Studio prompts keep TodoWrite disabled', async () => {
+  const context = createSessionManagerTestContext();
+  try {
+    await context.create({
+      sessionPurpose: 'design',
+      clientRef: 'studio-reference',
+      title: 'Studio reference',
+      goal: 'Use this visual direction\n\nDROIDEX DESIGN reference pack:\n{"kind":"canvas-image","id":"reference-1"}',
+      interactionMode: 'auto',
+      autonomy: 'low',
+    });
+    const provider = context.provider.session('provider-1');
+    await provider.waitForPrompts(1);
+    await context.waitForIdle();
+
+    assert.deepEqual(designToolPolicies(provider), [['TodoWrite']]);
+  } finally {
+    await context.dispose();
+  }
+});
+
+test('ordinary chat prompts keep TodoWrite enabled', async () => {
+  const context = createSessionManagerTestContext();
+  try {
+    await context.create({
+      sessionPurpose: 'chat',
+      clientRef: 'ordinary-chat-tools',
+      title: 'Ordinary chat',
+      goal: 'Explain this repository',
+      interactionMode: 'auto',
+      autonomy: 'low',
+    });
+    const provider = context.provider.session('provider-1');
+    await provider.waitForPrompts(1);
+    await context.waitForIdle();
+
+    assert.deepEqual(designToolPolicies(provider), [[]]);
+  } finally {
+    await context.dispose();
+  }
+});
+
 function latestSessionUpdate(events: ServerEvent[]) {
   return events
     .filter(

@@ -57,6 +57,12 @@ function callCount(
   ).length;
 }
 
+function designToolPolicies(session: FakeFactorySession): unknown[] {
+  return session.settings
+    .filter((settings) => settings['disabledToolIds'] !== undefined)
+    .map((settings) => settings['disabledToolIds']);
+}
+
 test('[C0] Create arms daemon compaction without client-side turn compaction', async () => {
   const h = createSessionManagerTestContext();
 
@@ -320,6 +326,42 @@ test('[C2] Provider-session swap', { concurrency: false }, async () => {
     await h.handle({ type: 'session.send', appSessionId: 'provider-1', text: 'after' });
     assert.deepEqual(h.provider.session('provider-2').prompts, ['after']);
     assert.equal(callCount(h.calls, 'provider', 'stream', 'provider-2'), 1);
+  } finally {
+    await h.dispose();
+  }
+});
+
+test('Studio tool policy survives provider replacement', { concurrency: false }, async () => {
+  const h = createSessionManagerTestContext();
+
+  try {
+    await h.create({
+      sessionPurpose: 'design',
+      clientRef: 'design-compaction',
+      title: 'Design compaction',
+      goal: 'Create a calm settings screen',
+      interactionMode: 'auto',
+      autonomy: 'low',
+    });
+    await h.waitForIdle();
+    assert.deepEqual(designToolPolicies(h.provider.session('provider-1')), [['TodoWrite']]);
+
+    h.provider.session('provider-1').nextCompactResult = {
+      newSessionId: 'provider-design-2',
+      removedCount: 1,
+    };
+    const replacement = new FakeFactorySession('provider-design-2', {}, h.calls);
+    h.runtime.loadQueue.set('provider-design-2', [replacement]);
+
+    await h.handle({ type: 'session.compact', appSessionId: 'provider-1' });
+    await h.handle({
+      type: 'session.send',
+      appSessionId: 'provider-1',
+      text: 'Continue with the account page',
+    });
+
+    assert.deepEqual(designToolPolicies(replacement), [['TodoWrite']]);
+    assert.equal(sessionUpdates(h.events).at(-1)?.session.sessionPurpose, 'design');
   } finally {
     await h.dispose();
   }

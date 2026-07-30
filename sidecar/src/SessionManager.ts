@@ -18,6 +18,7 @@ import type {
 import {
   defaultsModeForSummary,
   errMsg,
+  isDesignStudioSession,
   isUserCancellation,
   modelDefaultForMode,
   normalizeAutonomy,
@@ -917,7 +918,10 @@ export class SessionManager {
     this.context.beginTurn(appSessionId);
     this.context.startPolling(contextTarget);
     try {
-      await this.applyDesignToolPolicy(liveSession, isDesignPrompt(prompt));
+      await this.applyDesignToolPolicy(
+        liveSession,
+        isDesignStudioSession(liveSession.summary) || isDesignPrompt(prompt),
+      );
       if (!this.isCurrentPrimarySession(liveSession)) return;
       const stream = liveSession.session.stream(prompt, { includePartialMessages: true });
       for await (const ev of stream) {
@@ -991,10 +995,10 @@ export class SessionManager {
     };
   }
 
-  // Design turns are a single focused task (extra prompts queue), so the model
-  // does not need TodoWrite — it otherwise loops updating the list after it has
-  // already answered. Disable TodoWrite for design turns and restore it for
-  // normal turns, calling updateSettings only when the policy changes.
+  // Studio sessions and explicit browser Design Mode turns are focused design
+  // tasks, so the model does not need TodoWrite — it otherwise loops updating
+  // the list after it has already answered. Restore it for ordinary chat turns,
+  // calling updateSettings only when the policy changes.
   private async applyDesignToolPolicy(liveSession: LiveSession, design: boolean): Promise<void> {
     // When the in-memory flag is unset (cold start / page reload) we don't
     // know the session's current disabledToolIds, so always call updateSettings
