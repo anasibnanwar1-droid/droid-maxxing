@@ -27,6 +27,7 @@ import { QueuedPrompts } from './composer/QueuedPrompts';
 import { markGitTurnStart } from '../lib/git';
 import { createLocalDesignTranscriptEvent, newQueueId } from '../lib/promptQueue';
 import { composePrompt } from '../lib/composePrompt';
+import { resetComposerAfterSubmit } from '../lib/composerReset';
 import {
   childRuntimeSubmitTarget,
   childSessionLabel,
@@ -392,13 +393,16 @@ export default function PromptInput({
   }, [trigger?.kind, trigger?.query]);
 
   // Leave history-recall mode and drop any composer draft attachments when
-  // switching conversations, so skills/files staged for one chat don't linger
-  // on another chat's prompt bar.
+  // switching conversations, so skills/files/images staged for one chat don't
+  // linger on another chat's prompt bar. clearImageAttachments is
+  // useCallback-stable, so this still fires only on a session switch.
+  const clearImageAttachments = imageAttachments.clear;
   useEffect(() => {
     setHistoryIndex(null);
     setActiveSkills([]);
     setAttachedFiles([]);
-  }, [activeSession?.appSessionId]);
+    clearImageAttachments();
+  }, [activeSession?.appSessionId, clearImageAttachments]);
 
   // Welcome-screen suggestion cards seed the composer through the store so the
   // empty state and this input stay decoupled. The pendingCaret effect below
@@ -508,12 +512,6 @@ export default function PromptInput({
       [...attachedFiles, ...images.map((i) => i.path)],
     );
 
-  const resetAttachments = () => {
-    setActiveSkills([]);
-    setAttachedFiles([]);
-    imageAttachments.clear();
-  };
-
   // Re-entry guard: a send awaits markGitTurnStart before the input is cleared,
   // so without this a second Enter/click during that window would resend the
   // same payload (and create a duplicate session turn).
@@ -529,6 +527,11 @@ export default function PromptInput({
 
   const runSubmit = async (mode: SubmitMode = 'queue') => {
     const text = input.trim();
+    // Snapshot the composer revision before the settle wait: text, files, and
+    // skills are render-closure snapshots, so anything typed or staged while
+    // images finish encoding is not part of this prompt — and must survive
+    // the post-submit clear below.
+    const composerRevision = composerRevisionRef.current;
     // Pasted/dropped images encode asynchronously; wait out any in-flight adds
     // so they make this prompt instead of surfacing on the next one via clear().
     const readyImages = await imageAttachments.whenSettled();
@@ -537,16 +540,30 @@ export default function PromptInput({
     if (!hasPayload) return;
     setHistoryIndex(null);
 
+    const clearAfterSubmit = () => {
+      resetComposerAfterSubmit({
+        draftUntouched: composerRevisionRef.current === composerRevision,
+        clearImages: () => {
+          imageAttachments.clear();
+        },
+        resetDraft: () => {
+          setInput('');
+          setActiveSkills([]);
+          setAttachedFiles([]);
+        },
+      });
+    };
+
     if (text === '/mission' && activeSkills.length === 0 && allFiles.length === 0) {
       dispatch({ type: 'TOGGLE_MISSION_CONTROL' });
-      setInput('');
+      clearAfterSubmit();
       return;
     }
 
     if (COMPACT_COMMANDS.has(text) && activeSkills.length === 0 && allFiles.length === 0) {
       if (!primaryActionsEnabled) return;
       if (activeSession) compactSession(activeSession.appSessionId);
-      setInput('');
+      clearAfterSubmit();
       return;
     }
 
@@ -574,8 +591,7 @@ export default function PromptInput({
       registerPending(clientRef);
       // Clear the composer before the git-baseline await below so a prompt the
       // user starts typing during that delay is never wiped by a late clear.
-      setInput('');
-      resetAttachments();
+      clearAfterSubmit();
       // Snapshot the tree before the agent's first turn so the Review "Last
       // turn" scope only attributes changes this session actually makes.
       await markGitTurnStart(dir);
@@ -608,8 +624,7 @@ export default function PromptInput({
       const clientRef = newClientRef();
       registerPending(clientRef);
       // Clear before the baseline await (see above) so fast typing isn't lost.
-      setInput('');
-      resetAttachments();
+      clearAfterSubmit();
       if (dir) await markGitTurnStart(dir);
       createSession({
         clientRef,
@@ -637,8 +652,7 @@ export default function PromptInput({
         appSessionId: activeSession.appSessionId,
         prompt: { id: newQueueId(), text, skills: skillNames, files: allFiles },
       });
-      setInput('');
-      resetAttachments();
+      clearAfterSubmit();
       return;
     }
 
@@ -659,10 +673,6 @@ export default function PromptInput({
           steered: isLive && mode === 'now',
         },
       });
-    };
-    const resetComposer = () => {
-      setInput('');
-      resetAttachments();
     };
     const sendCommand = () => {
       try {
@@ -686,14 +696,14 @@ export default function PromptInput({
         currentTarget: () => visibleTargetRef.current,
         currentComposerRevision: () => composerRevisionRef.current,
         appendTranscript,
-        resetComposer,
+        resetComposer: clearAfterSubmit,
         sendCommand,
       });
       return;
     }
 
     appendTranscript();
-    resetComposer();
+    clearAfterSubmit();
 
     // Capture the last-turn baseline before the agent can touch the tree;
     // a fire-and-forget call here races the first edit and corrupts the diff.
@@ -791,6 +801,9 @@ export default function PromptInput({
 
   const editQueuedInComposer = (p: QueuedPrompt) => {
     if (!activeSession) return;
+    // The queued prompt carries its own files; drop any images pasted after it
+    // was queued so they don't ride along on the edited prompt.
+    imageAttachments.clear();
     setInput(p.text);
     setAttachedFiles(p.files);
     setActiveSkills(invocableSkills.filter((s) => p.skills.includes(s.name)));

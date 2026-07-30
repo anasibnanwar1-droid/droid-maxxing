@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { discardImage, isDesktop, saveImage } from '../lib/desktop';
 import { blobToDataUrl, cropImage, processImage } from '../lib/imageFiles';
 import type { CropRect, ImagePasteQuality } from '../lib/images';
@@ -44,6 +44,27 @@ export function createPendingAdditions() {
   };
 }
 
+export type PendingAdditions = ReturnType<typeof createPendingAdditions>;
+
+/**
+ * Writes a fresh image file, then applies the clear() race guard shared by
+ * adds and crops: if the composer was cleared while the file was being
+ * written, the file would surface out of nowhere on a later prompt, so it is
+ * deleted and the save is reported as void (null). The discard runs after the
+ * save resolves because the file does not exist to delete before then.
+ */
+export async function saveImageUnlessStale(
+  additions: PendingAdditions,
+  stamp: number,
+  save: () => Promise<string>,
+  discard: (path: string) => Promise<void>,
+): Promise<string | null> {
+  const path = await save();
+  if (!additions.isStale(stamp)) return path;
+  void discard(path);
+  return null;
+}
+
 /**
  * Appends an image in paste/drop order. Each add reserves a sequence number
  * before its variably slow encode, so completion order must not reorder chips
@@ -76,10 +97,12 @@ export function useImageAttachments(quality: ImagePasteQuality) {
   // Stable per-mount instance; not React state in the render sense.
   const [additions] = useState(() => createPendingAdditions());
 
-  const commit = (next: AttachedImage[]) => {
+  // useCallback: commit and clear are referenced from PromptInput effects, so
+  // they must keep a stable identity across renders.
+  const commit = useCallback((next: AttachedImage[]) => {
     imagesRef.current = next;
     setImages(next);
-  };
+  }, []);
 
   const addBlob = (blob: Blob) => {
     if (!isDesktop()) {
@@ -94,13 +117,15 @@ export function useImageAttachments(quality: ImagePasteQuality) {
       try {
         const raw = await blobToDataUrl(blob);
         const processed = await processImage(raw, quality);
-        const path = await saveImage(processed);
-        if (additions.isStale(stamp)) {
-          // clear() ran during the encode (submit). Delete the saved file
-          // rather than reviving a chip on the next prompt.
-          void discardImage(path);
-          return;
-        }
+        const path = await saveImageUnlessStale(
+          additions,
+          stamp,
+          () => saveImage(processed),
+          discardImage,
+        );
+        // clear() ran during the encode (submit): the fresh file was deleted
+        // rather than reviving a chip on the next prompt.
+        if (path === null) return;
         const image = { id: crypto.randomUUID(), path, preview: processed };
         sequencesRef.current.set(image.id, seq);
         commit(insertBySequence(imagesRef.current, image, sequencesRef.current));
@@ -129,13 +154,15 @@ export function useImageAttachments(quality: ImagePasteQuality) {
     const stamp = additions.stamp();
     const task = (async () => {
       const cropped = await cropImage(target.preview, rect, quality);
-      const path = await saveImage(cropped);
       // A clear() (submit) during the crop means the old path is now
-      // referenced by a prompt; discard the new file and leave state alone.
-      if (additions.isStale(stamp)) {
-        void discardImage(path);
-        return;
-      }
+      // referenced by a prompt; the new file is discarded, state left alone.
+      const path = await saveImageUnlessStale(
+        additions,
+        stamp,
+        () => saveImage(cropped),
+        discardImage,
+      );
+      if (path === null) return;
       // The chip may have been removed while the crop was saving; discard the
       // new file instead of orphaning it in the temp dir.
       const existing = imagesRef.current.find((i) => i.id === id);
@@ -153,11 +180,13 @@ export function useImageAttachments(quality: ImagePasteQuality) {
 
   // After a submit the saved files are referenced by the in-flight prompt, so
   // the chips clear but the temp files must stay until the OS reclaims them.
-  const clear = () => {
+  // Stable identity (see commit): PromptInput's session-switch effect lists it
+  // as a dependency.
+  const clear = useCallback(() => {
     additions.invalidate();
     sequencesRef.current.clear();
     commit([]);
-  };
+  }, [additions, commit]);
 
   /**
    * Submit-path support: resolves with the live list once every in-flight add
