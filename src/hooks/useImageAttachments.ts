@@ -124,18 +124,31 @@ export function useImageAttachments(quality: ImagePasteQuality) {
   const applyCrop = async (id: string, rect: CropRect) => {
     const target = imagesRef.current.find((i) => i.id === id);
     if (!target) return;
-    const cropped = await cropImage(target.preview, rect, quality);
-    const path = await saveImage(cropped);
-    // The chip may have been removed while the crop was saving; discard the
-    // new file instead of orphaning it in the temp dir.
-    const existing = imagesRef.current.find((i) => i.id === id);
-    if (!existing) {
-      void discardImage(path);
-      return;
-    }
-    commit(imagesRef.current.map((i) => (i.id === id ? { ...i, path, preview: cropped } : i)));
-    // After the commit: exactly one deletion of the superseded file.
-    void discardImage(existing.path);
+    // Tracked like an add: whenSettled() must wait for an in-flight crop, or a
+    // crop landing mid-submit could delete a path the prompt references.
+    const stamp = additions.stamp();
+    const task = (async () => {
+      const cropped = await cropImage(target.preview, rect, quality);
+      const path = await saveImage(cropped);
+      // A clear() (submit) during the crop means the old path is now
+      // referenced by a prompt; discard the new file and leave state alone.
+      if (additions.isStale(stamp)) {
+        void discardImage(path);
+        return;
+      }
+      // The chip may have been removed while the crop was saving; discard the
+      // new file instead of orphaning it in the temp dir.
+      const existing = imagesRef.current.find((i) => i.id === id);
+      if (!existing) {
+        void discardImage(path);
+        return;
+      }
+      commit(imagesRef.current.map((i) => (i.id === id ? { ...i, path, preview: cropped } : i)));
+      // After the commit: exactly one deletion of the superseded file.
+      void discardImage(existing.path);
+    })();
+    additions.track(task);
+    await task;
   };
 
   // After a submit the saved files are referenced by the in-flight prompt, so
