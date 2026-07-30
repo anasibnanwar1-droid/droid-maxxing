@@ -35,6 +35,7 @@ type ChildSettingsCommand = Extract<ClientCommand, { type: 'child.updateSettings
 
 const CHILD_OPEN_CANCELLED = Symbol('child-open-cancelled');
 const ignoreError = (): undefined => undefined;
+const runCleanup = (operation: () => void | Promise<void>) => Promise.resolve().then(operation);
 
 export class ChildSessions {
   private readonly parents = new Map<string, ParentChildSessions>();
@@ -142,11 +143,7 @@ export class ChildSessions {
     if (child.mutationTail || child.role !== observation.role) {
       const update = (child.mutationTail ?? Promise.resolve()).catch(ignoreError).then(apply);
       child.mutationTail = update;
-      void update
-        .finally(() => {
-          this.clearMutation(child, update);
-        })
-        .catch(ignoreError);
+      void update.finally(() => this.clearMutation(child, update)).catch(ignoreError);
     } else apply();
     return child.identity;
   }
@@ -776,16 +773,17 @@ export class ChildSessions {
     child.turn.pendingSends = [];
     child.turn.interruptingForSteer = false;
     child.turn.interrupting = false;
-    const cleanup = Promise.allSettled([
-      Promise.resolve().then(() => {
-        this.d.context.forgetChild(child.identity);
-      }),
-      Promise.resolve().then(() => {
-        this.d.context.stopPolling(this.contextTarget(parent, child, runtime));
-      }),
-      Promise.resolve().then(() => runtime.unsubscribe?.()),
-      Promise.resolve().then(() => runtime.session.close()),
-    ]).then(ignoreError);
+    const cleanupTarget = this.contextTarget(parent, child, runtime);
+    const cleanupTasks = [
+      this.d.context.forgetChild.bind(this.d.context, child.identity),
+      this.d.context.stopPolling.bind(this.d.context, cleanupTarget),
+      runtime.unsubscribe ?? ignoreError,
+      runtime.session.close.bind(runtime.session),
+    ];
+    const cleanup = (child.mutationTail ?? Promise.resolve())
+      .catch(ignoreError)
+      .then(() => Promise.allSettled(cleanupTasks.map(runCleanup)))
+      .then(ignoreError);
     child.mutationTail = cleanup;
     await cleanup;
     this.clearMutation(child, cleanup);

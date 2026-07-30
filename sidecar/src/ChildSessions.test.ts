@@ -663,7 +663,7 @@ test('queued settings admitted to an old runtime cannot cross provider replaceme
     childSessionId: record.childSessionId,
     modelId: 'stale-first',
   });
-  await new Promise<void>((resolve) => setImmediate(resolve));
+  await original.waitForSettings(1);
   const second = h.owner.updateSettings({
     type: 'child.updateSettings',
     parentAppSessionId: h.parentId,
@@ -678,19 +678,64 @@ test('queued settings admitted to an old runtime cannot cross provider replaceme
     spawnLink: { kind: 'tool-use', id: `tool-${record.childSessionId}` },
   });
   const replacementRecord = { ...record, providerSessionId: 'provider-new' };
-  const replacement = await h.open(
-    replacementRecord,
-    new FakeFactorySession('provider-new', {}, h.calls),
+  const replacementSession = new FakeFactorySession('provider-new', {}, h.calls);
+  const replacing = h.open(replacementRecord, replacementSession);
+  await Promise.resolve();
+
+  assert.equal(
+    h.calls.some(
+      (call) =>
+        call.target === 'cleanup' &&
+        call.method === 'session.close' &&
+        call.args[0] === 'provider-old',
+    ),
+    false,
   );
+  assert.equal(replacementSession.settings.length, 0);
 
   firstGate.resolve();
-  await Promise.all([first, second]);
+  await Promise.all([first, second, replacing]);
 
   assert.deepEqual(
     original.settings.map((settings) => settings.modelId),
     ['stale-first'],
   );
-  assert.deepEqual(replacement.settings, []);
+  assert.deepEqual(replacementSession.settings, []);
+  assert.ok(
+    h.calls.findIndex((call) => call.target === 'provider' && call.method === 'updateSettings') <
+      h.calls.findIndex((call) => call.target === 'cleanup' && call.method === 'session.close'),
+  );
+  assert.equal(h.owner.list(h.parentId)[0]?.modelId, 'model-default');
+});
+
+test('runtime close invalidates immediately and waits for in-flight settings teardown', async () => {
+  const record = childRecord('child', 'provider');
+  const h = createHarness([record]);
+  const runtime = await h.open(record);
+  const settingsGate = runtime.deferNextUpdateSettings();
+  const update = h.owner.updateSettings({
+    type: 'child.updateSettings',
+    parentAppSessionId: h.parentId,
+    childSessionId: record.childSessionId,
+    modelId: 'stale-model',
+  });
+  await runtime.waitForSettings(1);
+
+  const closing = h.owner.close(record);
+  assert.equal(h.owner.compactionRetuneTargets().length, 0);
+  assert.equal(
+    h.calls.some((call) => call.target === 'cleanup' && call.method === 'session.close'),
+    false,
+  );
+
+  settingsGate.resolve();
+  await Promise.all([update, closing]);
+  await h.owner.close(record);
+
+  assert.equal(
+    h.calls.filter((call) => call.target === 'cleanup' && call.method === 'session.close').length,
+    1,
+  );
   assert.equal(h.owner.list(h.parentId)[0]?.modelId, 'model-default');
 });
 

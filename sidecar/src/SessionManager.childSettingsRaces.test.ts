@@ -135,9 +135,19 @@ test(
       assert.equal(child.settings.at(-1)?.['modelId'], 'worker-late');
       const writesAfterProvider = child.settings.length;
 
-      await h.handle({ type: 'session.close', appSessionId: 'provider-1' });
+      const closing = h.handle({ type: 'session.close', appSessionId: 'provider-1' });
+      await h.waitForIdle();
+      assert.equal(
+        h.calls.some(
+          (call) =>
+            call.target === 'cleanup' &&
+            call.method === 'session.close' &&
+            call.args[0] === 'worker-backend',
+        ),
+        false,
+      );
       gate.resolve();
-      await update;
+      await Promise.all([update, closing]);
 
       assert.equal(exactSettingsEvents(h.events, 'provider-1', 'worker-logical').length, successes);
       assert.equal(child.settings.length, writesAfterProvider);
@@ -297,7 +307,7 @@ test(
 );
 
 test(
-  'an evicted and replaced child cannot receive a stale settings completion',
+  'an evicted and replaced child cannot overlap close with a stale settings completion',
   { concurrency: false },
   async () => {
     const h = createSessionManagerTestContext();
@@ -329,7 +339,20 @@ test(
       await h.waitForIdle();
       assert.equal(original.settings.at(-1)?.['modelId'], 'stale-new-model');
 
-      await openChild(h, 'filler-4', 'filler-backend-4', 'worker', 'worker-old');
+      const evicting = openChild(h, 'filler-4', 'filler-backend-4', 'worker', 'worker-old');
+      await h.waitForIdle();
+      assert.equal(
+        h.calls.some(
+          (call) =>
+            call.target === 'cleanup' &&
+            call.method === 'session.close' &&
+            call.args[0] === 'worker-backend-old',
+        ),
+        false,
+      );
+
+      providerGate.resolve();
+      await Promise.all([update, evicting]);
       const replacement = await openChild(
         h,
         'worker-logical',
@@ -337,12 +360,20 @@ test(
         'worker',
         'replacement-model',
       );
-      const originalWrites = original.settings.length;
 
-      providerGate.resolve();
-      await update;
-
-      assert.equal(original.settings.length, originalWrites);
+      assert.equal(
+        original.settings.filter((settings) => settings['modelId'] === 'stale-new-model').length,
+        1,
+      );
+      assert.equal(
+        h.calls.filter(
+          (call) =>
+            call.target === 'cleanup' &&
+            call.method === 'session.close' &&
+            call.args[0] === 'worker-backend-old',
+        ).length,
+        1,
+      );
       assert.equal(
         replacement.settings.some((settings) => settings['modelId'] === 'stale-new-model'),
         false,
