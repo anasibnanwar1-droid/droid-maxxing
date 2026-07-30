@@ -9,6 +9,7 @@ import {
   Boxes,
   Bot,
 } from 'lucide-react';
+import type { TranscriptEvent } from '../types/bridge';
 
 export type ToolCat =
   | 'read'
@@ -48,7 +49,7 @@ export const CAT_LABEL: Record<ToolCat, string> = {
 export function toolMeta(name?: string, args?: unknown): { cat: ToolCat; detail: string } {
   const n = (name ?? '').toLowerCase();
   const a = args && typeof args === 'object' ? (args as Record<string, unknown>) : {};
-  const s = (k: string) => (typeof a[k] === 'string' ? (a[k] as string) : undefined);
+  const s = (k: string) => (typeof a[k] === 'string' ? a[k] : undefined);
   const file = s('file_path') ?? s('path') ?? s('filename') ?? s('target_file');
   const cmd = s('command') ?? s('cmd') ?? s('script');
   const pattern = s('pattern') ?? s('query');
@@ -63,14 +64,17 @@ export function toolMeta(name?: string, args?: unknown): { cat: ToolCat; detail:
   else if (/grep|search|glob|find/.test(n)) cat = 'search';
   else if (/fetch|web|url|http/.test(n)) cat = 'web';
   else if (/task|subagent|delegate/.test(n) || childSessionDetail) cat = 'task';
-  else if (/skill/.test(n)) cat = 'skill';
+  else if (n.includes('skill')) cat = 'skill';
   else if (/read|cat|view|open|list|ls/.test(n)) cat = 'read';
 
   return { cat, detail: file ?? cmd ?? pattern ?? url ?? childSessionDetail ?? skill ?? '' };
 }
 
 export type TodoStatus = 'completed' | 'in_progress' | 'pending';
-export type TodoItem = { text: string; status: TodoStatus };
+export interface TodoItem {
+  text: string;
+  status: TodoStatus;
+}
 
 // Parse the model's TodoWrite payload. The `todos` field is a numbered,
 // multi-line string where each line carries a status marker, e.g.
@@ -81,7 +85,7 @@ export function parseTodos(args: unknown): TodoItem[] {
   if (!raw) return [];
   const items: TodoItem[] = [];
   for (const line of raw.split('\n')) {
-    const m = line.match(/\[(completed|in_progress|pending)\]\s*(.+?)\s*$/i);
+    const m = /\[(completed|in_progress|pending)\]\s*(.+?)\s*$/i.exec(line);
     if (!m) continue;
     items.push({ status: m[1].toLowerCase() as TodoStatus, text: m[2].trim() });
   }
@@ -90,6 +94,34 @@ export function parseTodos(args: unknown): TodoItem[] {
 
 export function isTodoTool(name?: string): boolean {
   return /todo/i.test(name ?? '');
+}
+
+export interface TodoSnapshot {
+  todos: TodoItem[];
+  foundPayload: boolean;
+}
+
+// The model's current plan: the latest real Todo update wins, even if it emptied
+// the list; partial/streaming calls without a `todos` payload are skipped so a
+// half-arrived update never replaces the plan on screen.
+export function latestTodoSnapshot(events: readonly TranscriptEvent[]): TodoSnapshot {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e = events[i];
+    if (e.kind === 'tool_call' && isTodoTool(e.toolName) && hasTodoPayload(e.toolArgs)) {
+      return { todos: parseTodos(e.toolArgs), foundPayload: true };
+    }
+  }
+  return { todos: [], foundPayload: false };
+}
+
+// The step a plan is currently on: the running one, else the next unstarted one,
+// else the final step once everything is done.
+export function activeTodoIndex(todos: readonly TodoItem[]): number {
+  const running = todos.findIndex((t) => t.status === 'in_progress');
+  if (running >= 0) return running;
+  const next = todos.findIndex((t) => t.status === 'pending');
+  if (next >= 0) return next;
+  return todos.length - 1;
 }
 
 // A real TodoWrite update carries the full list in its `todos` string (even when
@@ -112,8 +144,7 @@ export function isChildSessionTool(name?: string, args?: unknown): boolean {
 // The droid name and short description carried by a Task spawn's arguments.
 export function childSessionInfo(args: unknown): { label?: string; description?: string } {
   const a = args && typeof args === 'object' ? (args as Record<string, unknown>) : {};
-  const s = (k: string) =>
-    typeof a[k] === 'string' ? (a[k] as string).trim() || undefined : undefined;
+  const s = (k: string) => (typeof a[k] === 'string' ? a[k].trim() || undefined : undefined);
   return { label: s('subagent_type') ?? s('subagentType'), description: s('description') };
 }
 
@@ -133,17 +164,17 @@ export function safeJson(value: unknown): string {
   try {
     return JSON.stringify(value, null, 2);
   } catch {
-    return String(value);
+    return Object.prototype.toString.call(value);
   }
 }
 
 export function formatDuration(ms: number): string {
   if (ms < 1000) return '<1s';
   const s = Math.round(ms / 1000);
-  if (s < 60) return `${s}s`;
+  if (s < 60) return `${String(s)}s`;
   const m = Math.floor(s / 60);
   const rem = s % 60;
-  return rem ? `${m}m ${rem}s` : `${m}m`;
+  return rem ? `${String(m)}m ${String(rem)}s` : `${String(m)}m`;
 }
 
 // The history reader appends a "[truncated N chars]" sentinel when a single
@@ -249,7 +280,11 @@ export function isWebFetchTool(name?: string): boolean {
   return hasVerb && hasUrl;
 }
 
-export type WebSearchResult = { title: string; url: string; snippet: string };
+export interface WebSearchResult {
+  title: string;
+  url: string;
+  snippet: string;
+}
 
 // Parse the WebSearch tool result text. Each result is a block separated by a
 // "---" line:
@@ -267,9 +302,9 @@ export function parseWebSearch(text: string): {
   results: WebSearchResult[];
 } {
   const results: WebSearchResult[] = [];
-  const clean = (text ?? '').replace(/\r\n/g, '\n');
-  const query = clean.match(/Web Search Results for:\s*"([\s\S]*?)"\s*\n/)?.[1]?.trim();
-  const countMatch = clean.match(/Found\s+(\d+)\s+results?/i);
+  const clean = text.replace(/\r\n/g, '\n');
+  const query = /Web Search Results for:\s*"([\s\S]*?)"\s*\n/.exec(clean)?.[1]?.trim();
+  const countMatch = /Found\s+(\d+)\s+results?/i.exec(clean);
   const re =
     /\*\*(.+?)\*\*[ \t]*\n[ \t]*URL:[ \t]*(\S+)([\s\S]*?)(?=\n[ \t]*-{3,}[ \t]*\n|\nFound \d+ results?|$)/g;
   let m: RegExpExecArray | null;

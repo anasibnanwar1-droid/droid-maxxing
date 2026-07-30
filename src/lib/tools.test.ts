@@ -10,7 +10,24 @@ import {
   webSourceName,
   faviconUrl,
   toolArgStringArray,
+  latestTodoSnapshot,
+  activeTodoIndex,
+  type TodoItem,
 } from './tools';
+import type { TranscriptEvent } from '../types/bridge';
+
+function todoCall(id: string, toolArgs: unknown): TranscriptEvent {
+  return {
+    id,
+    appSessionId: 'm',
+    sourceSessionId: 'primary',
+    role: 'primary',
+    ts: 0,
+    kind: 'tool_call',
+    toolName: 'TodoWrite',
+    toolArgs,
+  } as TranscriptEvent;
+}
 
 const SAMPLE = `Web Search Results for: "electron auto update best practices 2026"
 
@@ -159,4 +176,44 @@ test('toolArgStringArray reads a string array arg, ignoring non-strings', () => 
     ['x.com', 'y.com'],
   );
   assert.deepEqual(toolArgStringArray({}, 'includeDomains'), []);
+});
+
+test('latestTodoSnapshot returns the newest real TodoWrite list', () => {
+  const snapshot = latestTodoSnapshot([
+    todoCall('a', { todos: '1. [pending] old' }),
+    todoCall('b', { todos: '1. [completed] done\n2. [in_progress] now' }),
+  ]);
+  assert.equal(snapshot.foundPayload, true);
+  assert.deepEqual(snapshot.todos, [
+    { status: 'completed', text: 'done' },
+    { status: 'in_progress', text: 'now' },
+  ]);
+});
+
+test('latestTodoSnapshot honors an emptied list and skips partial calls', () => {
+  const emptied = latestTodoSnapshot([
+    todoCall('a', { todos: '1. [pending] old' }),
+    todoCall('b', { todos: '' }),
+  ]);
+  assert.deepEqual(emptied, { todos: [], foundPayload: true });
+
+  const partial = latestTodoSnapshot([
+    todoCall('a', { todos: '1. [pending] old' }),
+    todoCall('b', {}),
+  ]);
+  assert.deepEqual(partial.todos, [{ status: 'pending', text: 'old' }]);
+
+  assert.deepEqual(latestTodoSnapshot([]), { todos: [], foundPayload: false });
+});
+
+test('activeTodoIndex prefers the running step, then the next pending one', () => {
+  const steps: TodoItem[] = [
+    { status: 'completed', text: 'a' },
+    { status: 'in_progress', text: 'b' },
+    { status: 'pending', text: 'c' },
+  ];
+  assert.equal(activeTodoIndex(steps), 1);
+  assert.equal(activeTodoIndex([steps[0], steps[2]]), 1);
+  assert.equal(activeTodoIndex([steps[0]]), 0);
+  assert.equal(activeTodoIndex([]), -1);
 });

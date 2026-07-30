@@ -65,3 +65,13 @@ export function isChatContent(type: ContentType): boolean {
 export function isDiagnosticContent(type: ContentType): boolean {
   return DIAGNOSTIC_CONTENT.has(type);
 }
+
+// Narrow a session transcript to the agent whose progress the UI is showing:
+// a selected child session, or the primary agent by default.
+export function scopeTranscriptToAgent(
+  events: readonly TranscriptEvent[],
+  childSessionId: string | null,
+): TranscriptEvent[] {
+  if (childSessionId) return events.filter((e) => e.sourceSessionId === childSessionId);
+  return events.filter((e) => e.role === 'primary');
+}

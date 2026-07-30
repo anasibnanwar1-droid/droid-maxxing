@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useStore } from '../hooks/useStore';
-import { parseTodos, isTodoTool, hasTodoPayload, type TodoItem } from '../lib/tools';
+import { latestTodoSnapshot, type TodoItem } from '../lib/tools';
+import { scopeTranscriptToAgent } from '../lib/transcript';
 import { useSessionLive } from '../hooks/useSessionLive';
 import { useGitEnvironment } from '../hooks/useGitEnvironment';
 import { usePullRequest } from '../hooks/usePullRequest';
@@ -142,23 +143,13 @@ export default function RightPanel() {
   const todoResult = useMemo(() => {
     if (!activeSession || activeSession.sessionPurpose === 'mission-control')
       return { todos: [] as TodoItem[], foundPayload: false };
-    const scoped =
-      selectedAgent && selectedAgent !== 'primary'
-        ? transcript.filter((t) => t.sourceSessionId === selectedAgent)
-        : transcript.filter((t) => t.role === 'primary');
-    // The latest real Todo update wins, even if it emptied the list; skip only
-    // partial/streaming calls that haven't received the `todos` payload yet.
-    for (let i = scoped.length - 1; i >= 0; i--) {
-      const e = scoped[i];
-      if (e.kind === 'tool_call' && isTodoTool(e.toolName) && hasTodoPayload(e.toolArgs)) {
-        return { todos: parseTodos(e.toolArgs), foundPayload: true };
-      }
-    }
-    return { todos: [] as TodoItem[], foundPayload: false };
+    return latestTodoSnapshot(scopeTranscriptToAgent(transcript, selectedAgent));
   }, [activeSession, transcript, selectedAgent]);
   const todos = todoResult.todos;
   const useTodos = todoResult.foundPayload;
 
+  const sessionSpecsById: Partial<typeof state.sessionSpecs> = state.sessionSpecs;
+  const activeSpec = activeSession ? sessionSpecsById[activeSession.appSessionId] : undefined;
   const completed = useTodos
     ? todos.filter((t) => t.status === 'completed').length
     : features.filter((f) => f.status === 'completed').length;
@@ -177,10 +168,13 @@ export default function RightPanel() {
   const childSessions = activeSession
     ? orderedChildSessions(Object.values(state.childSessions[activeSession.appSessionId] ?? {}))
     : [];
+  // Index access on these records is typed as always-present; Partial keeps the
+  // lookup honest without changing runtime behavior.
+  const childRuntimeByParent: Partial<typeof state.childRuntime> = state.childRuntime;
   const childSessionsRunning = childSessions.some((childSession) =>
     childSessionIsLive(
       childSession,
-      state.childRuntime[childSession.parentAppSessionId]?.[childSession.childSessionId],
+      childRuntimeByParent[childSession.parentAppSessionId]?.[childSession.childSessionId],
     ),
   );
   const [childSessionsOpen, setChildSessionsOpen] = useState(true);
@@ -214,7 +208,9 @@ export default function RightPanel() {
               loadingDetail={pr.loadingDetail || !pr.detailLoaded}
               checksError={pr.checksError}
               commentsError={pr.commentsError}
-              onBack={() => setView('context')}
+              onBack={() => {
+                setView('context');
+              }}
               onRefresh={pr.refresh}
             />
           </div>
@@ -235,7 +231,9 @@ export default function RightPanel() {
                   refresh={git.refresh}
                   live={working || childSessionsRunning}
                   pr={pr.pr}
-                  onOpenPr={() => setView('pr')}
+                  onOpenPr={() => {
+                    setView('pr');
+                  }}
                   onOpenReview={() => {
                     dispatch({ type: 'SET_REVIEW_SCOPE', scope: diffModeToReviewScope(diffMode) });
                     dispatch({ type: 'SET_REVIEW_OPEN', open: true });
@@ -254,7 +252,9 @@ export default function RightPanel() {
                 {childSessions.length > 0 && (
                   <div>
                     <button
-                      onClick={() => setChildSessionsOpen((open) => !open)}
+                      onClick={() => {
+                        setChildSessionsOpen((open) => !open);
+                      }}
                       className="w-full flex items-center gap-1.5 px-3 py-1.5 text-left"
                     >
                       <ChevronRight
@@ -292,7 +292,7 @@ export default function RightPanel() {
                               prompt={childSession.prompt}
                               running={childSessionIsLive(
                                 childSession,
-                                state.childRuntime[childSession.parentAppSessionId]?.[
+                                childRuntimeByParent[childSession.parentAppSessionId]?.[
                                   childSession.childSessionId
                                 ],
                               )}
@@ -314,11 +314,12 @@ export default function RightPanel() {
                                 visibleTarget.kind === 'child' &&
                                 visibleTarget.childSessionId === childSession.childSessionId &&
                                 visibleTarget.canInterrupt
-                                  ? () =>
+                                  ? () => {
                                       interruptChild(
                                         childSession.parentAppSessionId,
                                         childSession.childSessionId,
-                                      )
+                                      );
+                                    }
                                   : undefined
                               }
                             />
@@ -332,13 +333,13 @@ export default function RightPanel() {
             )}
 
             {/* Spec — opens the full wiki reader for sessions that produced one */}
-            {activeSession && state.sessionSpecs[activeSession.appSessionId] && (
+            {activeSession && activeSpec && (
               <div>
                 <Divider />
                 <button
-                  onClick={() =>
-                    dispatch({ type: 'SPEC_OPEN_WIKI', appSessionId: activeSession.appSessionId })
-                  }
+                  onClick={() => {
+                    dispatch({ type: 'SPEC_OPEN_WIKI', appSessionId: activeSession.appSessionId });
+                  }}
                   className="w-full flex items-center gap-1.5 px-3 pt-2 pb-1.5 text-[12.5px] font-medium text-droid-text-muted hover:text-droid-text transition-colors"
                 >
                   <FileText className="w-3.5 h-3.5" />
@@ -353,7 +354,9 @@ export default function RightPanel() {
               <div>
                 <Divider />
                 <button
-                  onClick={() => setProgressManual(!progressOpen)}
+                  onClick={() => {
+                    setProgressManual(!progressOpen);
+                  }}
                   className="w-full flex items-center justify-between px-3 pt-2 pb-1.5"
                 >
                   <span className="flex items-center gap-1.5 text-[12.5px] font-medium text-droid-text-muted">
@@ -386,7 +389,7 @@ export default function RightPanel() {
                             <motion.div
                               className="h-full rounded-full bg-droid-accent"
                               initial={false}
-                              animate={{ width: `${pct}%` }}
+                              animate={{ width: `${String(pct)}%` }}
                               transition={{ duration: 0.5, ease: 'easeOut' }}
                             />
                           </div>
@@ -414,12 +417,12 @@ export default function RightPanel() {
                               key={f.id}
                               icon={statusIcon(f.status)}
                               label={f.description}
-                              onClick={() =>
+                              onClick={() => {
                                 dispatch({
                                   type: 'SELECT_FEATURE',
                                   id: state.selectedFeatureId === f.id ? null : f.id,
-                                })
-                              }
+                                });
+                              }}
                               active={state.selectedFeatureId === f.id}
                             />
                           ))}
