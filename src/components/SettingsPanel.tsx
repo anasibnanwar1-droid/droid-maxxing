@@ -1215,6 +1215,7 @@ function WorktreesSection() {
     activeAppSessionId: state.activeAppSessionId,
     draftCwd: state.draftChat?.cwd,
     childSessions: state.childSessions,
+    childRuntime: state.childRuntime,
     pinnedCwds: utilityTerminalCwds(
       state.utilityPanels,
       Object.fromEntries(Object.entries(state.sessions).map(([id, session]) => [id, session.cwd])),

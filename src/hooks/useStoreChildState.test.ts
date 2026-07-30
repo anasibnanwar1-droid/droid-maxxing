@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import type { ChildSessionSummary, SessionSummary } from '../types/bridge';
+import { childSessionIsLive } from '../lib/childSessions';
 import { initialState, reducer } from './useStore';
 
 function session(appSessionId: string): SessionSummary {
@@ -70,6 +71,7 @@ test('same-event sibling progress remains distinct by exact child identity', () 
 test('closing a parent preserves historical parent and child discovery but clears live targeting', () => {
   const parent = session('parent');
   const historicalChild = child('parent', 'child');
+  historicalChild.status = 'running';
   const state = reducer(
     {
       ...initialState,
@@ -94,4 +96,11 @@ test('closing a parent preserves historical parent and child discovery but clear
   assert.equal(state.childAccess.parent, undefined);
   assert.equal(state.childRuntime.parent, undefined);
   assert.equal(state.selectedChild, null);
+  assert.equal(
+    childSessionIsLive(
+      state.childSessions.parent.child,
+      state.childRuntime.parent?.[historicalChild.childSessionId],
+    ),
+    false,
+  );
 });

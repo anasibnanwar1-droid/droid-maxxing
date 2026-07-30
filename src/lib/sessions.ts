@@ -1,4 +1,5 @@
 import type { ChildSessionSummary, SessionSummary } from '../types/bridge';
+import { childSessionIsLive } from './childSessions';
 
 // Phases where the session is waiting on the user (or finished) — never "working".
 const INACTIVE = ['paused', 'completed', 'failed', 'awaiting_plan_approval', 'awaiting_run_start'];
@@ -24,6 +25,7 @@ export function activeSessionCwds(opts: {
   activeAppSessionId: string | null;
   draftCwd?: string | null;
   childSessions?: Record<string, Record<string, Pick<ChildSessionSummary, 'status'>>>;
+  childRuntime?: Record<string, Record<string, { available: boolean }>>;
   pinnedCwds?: Iterable<string>;
 }): string[] {
   const cwds: string[] = [];
@@ -33,8 +35,9 @@ export function activeSessionCwds(opts: {
   }
   for (const m of opts.sessions) {
     if (!m.cwd) continue;
-    const hasRunningChildSession = Object.values(opts.childSessions?.[m.appSessionId] ?? {}).some(
-      (childSession) => childSession.status === 'running',
+    const hasRunningChildSession = Object.entries(opts.childSessions?.[m.appSessionId] ?? {}).some(
+      ([childSessionId, childSession]) =>
+        childSessionIsLive(childSession, opts.childRuntime?.[m.appSessionId]?.[childSessionId]),
     );
     if (m.appSessionId === opts.activeAppSessionId || sessionIsLive(m) || hasRunningChildSession) {
       cwds.push(m.cwd);

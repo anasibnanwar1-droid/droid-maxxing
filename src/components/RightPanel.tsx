@@ -23,6 +23,7 @@ import { PullRequestPanel } from './environment/PullRequestPanel';
 import type { DiffStatMode } from '../types/vcs';
 import { diffModeToReviewScope } from '../lib/reviewScopes';
 import {
+  childSessionIsLive,
   childSessionLabel,
   childSessionMeta,
   orderedChildSessions,
@@ -176,8 +177,11 @@ export default function RightPanel() {
   const childSessions = activeSession
     ? orderedChildSessions(Object.values(state.childSessions[activeSession.appSessionId] ?? {}))
     : [];
-  const childSessionsRunning = childSessions.some(
-    (childSession) => childSession.status === 'running',
+  const childSessionsRunning = childSessions.some((childSession) =>
+    childSessionIsLive(
+      childSession,
+      state.childRuntime[childSession.parentAppSessionId]?.[childSession.childSessionId],
+    ),
   );
   const [childSessionsOpen, setChildSessionsOpen] = useState(true);
 
@@ -286,7 +290,12 @@ export default function RightPanel() {
                                   ?.displayName ?? childSession.modelId,
                               )}
                               prompt={childSession.prompt}
-                              running={childSession.status === 'running'}
+                              running={childSessionIsLive(
+                                childSession,
+                                state.childRuntime[childSession.parentAppSessionId]?.[
+                                  childSession.childSessionId
+                                ],
+                              )}
                               depth={0}
                               selected={selectedAgent === childSession.childSessionId}
                               onClick={() => {

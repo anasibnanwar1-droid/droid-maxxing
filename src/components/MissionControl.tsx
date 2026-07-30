@@ -39,6 +39,7 @@ import { CAT_ICON, CAT_LABEL, toolMeta } from '../lib/tools';
 import {
   childSessionActivityForTarget,
   childSessionIdForFeature,
+  childSessionIsLive,
   childSessionLabel,
   childSessionMeta,
   childSelectionForFeature,
@@ -422,7 +423,10 @@ function AgentsSection({
               meta={childSessionMeta(childSession, displayedModel)}
               models={state.models}
               selected={selectedChildSessionId === childSession.childSessionId}
-              working={childSession.status === 'running'}
+              working={childSessionIsLive(
+                childSession,
+                state.childRuntime[childSession.parentAppSessionId]?.[childSession.childSessionId],
+              )}
               onClick={() => onSelectChild(childSession.childSessionId)}
             />
           );

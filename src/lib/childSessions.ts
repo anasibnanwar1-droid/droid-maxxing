@@ -163,6 +163,13 @@ export function orderedChildSessions(
   );
 }
 
+export function childSessionIsLive(
+  childSession: Pick<ChildSessionInfo, 'status'>,
+  runtime?: { available: boolean },
+): boolean {
+  return childSession.status === 'running' && runtime?.available === true;
+}
+
 export function childSessionLabel(childSession: ChildSessionInfo, index: number): string {
   if (childSession.label) return childSession.label;
   const role = childSession.role === 'validator' ? 'Validator' : 'Worker';
