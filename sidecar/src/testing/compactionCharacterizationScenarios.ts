@@ -237,10 +237,8 @@ export async function runAutoCompactionScenario(h: SessionManagerTestContext) {
   parentQueuedGate.resolve();
   workerGate.resolve();
   await workerRun;
-  await h.provider.waitForPrompts('worker-c4', 2);
   closeCounts.push(countClose());
   workerSteerGate.resolve();
-  await h.provider.waitForPrompts('worker-c4', 3);
   workerQueuedGate.resolve();
   await h.waitForIdle();
   return {

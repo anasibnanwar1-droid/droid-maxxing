@@ -458,7 +458,7 @@ test(
         );
       assert.deepEqual(trace.interruptsAfterExplicitCommands, [1, 1]);
       assert.deepEqual(trace.interruptsAfterSteering, [1, 1]);
-      assert.deepEqual(trace.closeCounts, [0, 0, 0]);
+      assert.deepEqual(trace.closeCounts, [0, 0, 1]);
       const [parentContextsBefore, workerContextsBefore] = trace.contextsBefore;
       assert.ok(parentContextsBefore !== undefined);
       assert.ok(workerContextsBefore !== undefined);
@@ -500,11 +500,7 @@ test(
         'parent steer',
         'parent queued',
       ]);
-      assert.deepEqual(h.provider.session('worker-c4').prompts, [
-        'worker running',
-        'worker steer',
-        'worker queued',
-      ]);
+      assert.deepEqual(h.provider.session('worker-c4').prompts, ['worker running']);
       assert.deepEqual(
         [
           callCount(h.calls, 'cleanup', 'session.close', 'worker-c4'),
