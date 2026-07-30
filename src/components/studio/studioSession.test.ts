@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   createQueuedStudioPrompt,
+  latestStudioSessionId,
   pendingStudioClientRef,
   studioComposerActions,
   studioSessionTitle,
@@ -32,6 +33,41 @@ test('pending Studio compose is scoped to its project', () => {
   const pending = { 'client-b': { text: 'B' } };
   assert.equal(pendingStudioClientRef(expected, pending, ['/repo/a']), undefined);
   assert.equal(pendingStudioClientRef(expected, pending, ['/repo/b']), 'client-b');
+});
+
+test('Studio recovers the latest design thread for a project after renderer reload', () => {
+  assert.equal(
+    latestStudioSessionId(
+      [
+        {
+          appSessionId: 'ordinary-newer',
+          cwd: '/repo/worktree',
+          updatedAt: 30,
+          sessionPurpose: 'ordinary',
+        },
+        {
+          appSessionId: 'design-older',
+          cwd: '/repo/live',
+          updatedAt: 10,
+          sessionPurpose: 'design',
+        },
+        {
+          appSessionId: 'design-latest',
+          cwd: '/repo/worktree',
+          updatedAt: 20,
+          sessionPurpose: 'design',
+        },
+        {
+          appSessionId: 'other-project',
+          cwd: '/other',
+          updatedAt: 40,
+          sessionPurpose: 'design',
+        },
+      ],
+      ['/repo/live', '/repo/worktree'],
+    ),
+    'design-latest',
+  );
 });
 
 test('Studio queue preserves provider context separately from visible text', () => {

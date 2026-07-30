@@ -1,5 +1,5 @@
 import type { QueuedPrompt } from '../../hooks/useStore';
-import type { BrowserTranscriptReference } from '../../types/bridge';
+import type { BrowserTranscriptReference, SessionSummary } from '../../types/bridge';
 
 const MAX_TITLE_LENGTH = 48;
 
@@ -30,6 +30,27 @@ export function pendingStudioClientRef(
   return Object.entries(expected).find(
     ([clientRef, projectKey]) => keys.has(projectKey) && clientRef in pendingCompose,
   )?.[0];
+}
+
+export function latestStudioSessionId(
+  sessions: Iterable<Pick<SessionSummary, 'appSessionId' | 'cwd' | 'updatedAt' | 'sessionPurpose'>>,
+  projectPaths: Iterable<string>,
+): string | undefined {
+  const paths = new Set([...projectPaths].filter(Boolean));
+  let latest:
+    | Pick<SessionSummary, 'appSessionId' | 'cwd' | 'updatedAt' | 'sessionPurpose'>
+    | undefined;
+  for (const session of sessions) {
+    if (
+      session.sessionPurpose !== 'design' ||
+      !paths.has(session.cwd) ||
+      (latest && latest.updatedAt >= session.updatedAt)
+    ) {
+      continue;
+    }
+    latest = session;
+  }
+  return latest?.appSessionId;
 }
 
 export function createQueuedStudioPrompt({

@@ -5,8 +5,7 @@ import {
   createSession,
   loadSessionHistory,
   newClientRef,
-  sendToSession,
-  sendToSessionNow,
+  sendSessionPrompt,
   updateAgentSettings,
 } from '../../lib/commands';
 import type {
@@ -19,6 +18,7 @@ import { newQueueId } from '../../lib/promptQueue';
 import { sessionIsLive } from '../../lib/sessions';
 import {
   createQueuedStudioPrompt,
+  latestStudioSessionId,
   pendingStudioClientRef,
   studioSessionTitle,
 } from './studioSession';
@@ -77,21 +77,28 @@ export function useDesignSession(cwd: string, sessionKey?: string) {
   // After New thread (sessions[key] === '') or an explicit switch, leave it alone.
   useEffect(() => {
     if (!cwd || hasMapping || isCreating) return;
+    const projectPaths = new Set([cwd, key]);
+    for (const workspace of Object.values(design.workspaces)) {
+      if (
+        projectPaths.has(workspace.liveCwd) ||
+        projectPaths.has(workspace.path) ||
+        workspace.liveCwd === cwd ||
+        workspace.path === cwd
+      ) {
+        projectPaths.add(workspace.liveCwd);
+        projectPaths.add(workspace.path);
+      }
+    }
     const activeId = state.activeAppSessionId;
-    if (!activeId) return;
-    const active = state.sessions[activeId] as SessionSummary | undefined;
-    if (!active) return;
-    if (active.sessionPurpose === 'mission-control') return;
-    const matches =
-      active.cwd === cwd ||
-      active.cwd === key ||
-      Object.values(design.workspaces).some(
-        (ws) =>
-          (ws.liveCwd === key || ws.liveCwd === cwd || ws.path === cwd) &&
-          (active.cwd === ws.liveCwd || active.cwd === ws.path),
-      );
-    if (!matches) return;
-    designDispatch({ type: 'ADOPT_SESSION', cwd: key, appSessionId: activeId });
+    const active = activeId ? (state.sessions[activeId] as SessionSummary | undefined) : undefined;
+    const activeMatch =
+      active && active.sessionPurpose !== 'mission-control' && projectPaths.has(active.cwd)
+        ? active.appSessionId
+        : undefined;
+    const recovered =
+      activeMatch ?? latestStudioSessionId(Object.values(state.sessions), projectPaths);
+    if (!recovered) return;
+    designDispatch({ type: 'ADOPT_SESSION', cwd: key, appSessionId: recovered });
   }, [
     cwd,
     key,
@@ -169,7 +176,7 @@ export function useDesignSession(cwd: string, sessionKey?: string) {
         return;
       }
       echoUser(sessionId, displayText, browserRefs, mode === 'now');
-      sendDesignCommand(sessionId, text, mode);
+      sendSessionPrompt(sessionId, text, mode);
       return;
     }
     const clientRef = newClientRef();
@@ -232,9 +239,4 @@ export function useDesignSession(cwd: string, sessionKey?: string) {
     modelId: session?.modelId,
     reasoningEffort: session?.reasoningEffort,
   };
-}
-
-function sendDesignCommand(appSessionId: string, text: string, mode: 'queue' | 'now'): void {
-  if (mode === 'now') sendToSessionNow(appSessionId, text);
-  else sendToSession(appSessionId, text);
 }
