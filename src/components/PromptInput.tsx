@@ -19,8 +19,10 @@ import {
 import { browserTranscriptReferencesFromDesignReferences } from './browser/browserTranscriptReferences';
 import { pickDirectory, pickFiles, listFiles, isDesktop } from '../lib/desktop';
 import { useImageAttachments } from '../hooks/useImageAttachments';
+import { useImageFileDrop } from '../hooks/useImageFileDrop';
 import { ImageChip } from './composer/ImageChip';
 import { ImageViewerModal } from './composer/ImageViewerModal';
+import { QueuedPrompts } from './composer/QueuedPrompts';
 import { markGitTurnStart } from '../lib/git';
 import { createLocalDesignTranscriptEvent, newQueueId } from '../lib/promptQueue';
 import { composePrompt } from '../lib/composePrompt';
@@ -44,10 +46,6 @@ import {
   Folder,
   User,
   Box,
-  ListPlus,
-  GripVertical,
-  Pencil,
-  MousePointerSquareDashed,
 } from 'lucide-react';
 import ModelSelectorPopover from './ModelSelectorPopover';
 import {
@@ -62,13 +60,23 @@ import { StartInBar } from './environment/StartInBar';
 import type { SkillInfo, SkillLocation } from '../types/bridge';
 
 const ACCENT = 'var(--droid-accent)';
-const accentMix = (pct: number) => `color-mix(in srgb, var(--droid-accent) ${pct}%, transparent)`;
+const accentMix = (pct: number) =>
+  `color-mix(in srgb, var(--droid-accent) ${String(pct)}%, transparent)`;
 type SubmitMode = 'queue' | 'now';
 const oppositeSubmitMode = (mode: SubmitMode): SubmitMode => (mode === 'queue' ? 'now' : 'queue');
 
-type SlashCommand = { cmd: string; desc: string; run: () => void };
+interface SlashCommand {
+  cmd: string;
+  desc: string;
+  run: () => void;
+}
 
-type Trigger = { kind: 'slash' | 'file'; query: string; start: number; end: number };
+interface Trigger {
+  kind: 'slash' | 'file';
+  query: string;
+  start: number;
+  end: number;
+}
 
 type MenuItem =
   | { type: 'command'; command: SlashCommand }
@@ -77,11 +85,16 @@ type MenuItem =
 
 function getTrigger(text: string, caret: number): Trigger | null {
   const upto = text.slice(0, caret);
-  const m = upto.match(/(^|\s)([/@][^\s]*)$/);
+  const m = /(^|\s)([/@][^\s]*)$/.exec(upto);
   if (!m) return null;
   const token = m[2];
   const start = caret - token.length;
-  return { kind: token[0] === '/' ? 'slash' : 'file', query: token.slice(1), start, end: caret };
+  return {
+    kind: token.startsWith('/') ? 'slash' : 'file',
+    query: token.slice(1),
+    start,
+    end: caret,
+  };
 }
 
 function basename(p: string): string {
@@ -128,14 +141,13 @@ export default function PromptInput({
     setAttachedFilesState(value);
   };
   const imageAttachments = useImageAttachments(state.imagePasteQuality);
+  const fileDrop = useImageFileDrop(imageAttachments.addBlob);
   const [viewerImageId, setViewerImageId] = useState<string | null>(null);
   const [activeSkills, setActiveSkillsState] = useState<SkillInfo[]>([]);
   const setActiveSkills = (value: SetStateAction<SkillInfo[]>) => {
     composerRevisionRef.current += 1;
     setActiveSkillsState(value);
   };
-  const [dragIndex, setDragIndex] = useState<number | null>(null);
-  const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
   const [sendHover, setSendHover] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const submittingRef = useRef(false);
@@ -226,33 +238,56 @@ export default function PromptInput({
     {
       cmd: '/mission',
       desc: 'Enter Mission Control',
-      run: () => dispatch({ type: 'TOGGLE_MISSION_CONTROL' }),
+      run: () => {
+        dispatch({ type: 'TOGGLE_MISSION_CONTROL' });
+      },
     },
-    { cmd: '/model', desc: 'Open model selector', run: () => setModelsOpen(true) },
+    {
+      cmd: '/model',
+      desc: 'Open model selector',
+      run: () => {
+        setModelsOpen(true);
+      },
+    },
     {
       cmd: '/compact',
       desc: 'Compact current session',
-      run: () =>
-        primaryActionsEnabled && activeSession && compactSession(activeSession.appSessionId),
+      run: () => {
+        if (primaryActionsEnabled && activeSession) compactSession(activeSession.appSessionId);
+      },
     },
     {
       cmd: '/compaction',
       desc: 'Compact current session',
-      run: () =>
-        primaryActionsEnabled && activeSession && compactSession(activeSession.appSessionId),
+      run: () => {
+        if (primaryActionsEnabled && activeSession) compactSession(activeSession.appSessionId);
+      },
     },
     {
       cmd: '/compression',
       desc: 'Compact current session',
-      run: () =>
-        primaryActionsEnabled && activeSession && compactSession(activeSession.appSessionId),
+      run: () => {
+        if (primaryActionsEnabled && activeSession) compactSession(activeSession.appSessionId);
+      },
     },
-    { cmd: '/spec', desc: 'Toggle spec mode', run: () => toggleSpec() },
-    { cmd: '/settings', desc: 'Open settings', run: () => dispatch({ type: 'TOGGLE_SETTINGS' }) },
+    {
+      cmd: '/spec',
+      desc: 'Toggle spec mode',
+      run: () => {
+        toggleSpec();
+      },
+    },
+    {
+      cmd: '/settings',
+      desc: 'Open settings',
+      run: () => {
+        dispatch({ type: 'TOGGLE_SETTINGS' });
+      },
+    },
   ];
 
   const trigger = useMemo(() => getTrigger(input, caret), [input, caret]);
-  const overlayOpen = Boolean(trigger || modelsOpen || (isLive && sendHover));
+  const overlayOpen = Boolean(trigger ?? (modelsOpen || (isLive && sendHover)));
 
   useEffect(() => {
     if (!isLive) setSendHover(false);
@@ -337,7 +372,7 @@ export default function PromptInput({
 
   // Lazy-load files when an @-trigger is active and cwd changed.
   useEffect(() => {
-    if (!trigger || trigger.kind !== 'file' || !cwd) return;
+    if (trigger?.kind !== 'file' || !cwd) return;
     if (filesCwd === cwd) return;
     let cancelled = false;
     void listFiles(cwd).then((list) => {
@@ -378,7 +413,7 @@ export default function PromptInput({
   useEffect(() => {
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto';
-      textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 200)}px`;
+      textareaRef.current.style.height = `${String(Math.min(textareaRef.current.scrollHeight, 200))}px`;
     }
   }, [input]);
 
@@ -400,9 +435,9 @@ export default function PromptInput({
   // A single chat carries its own model/reasoning; only fall back to the global
   // default while composing a brand-new chat that has no session yet.
   const chatScoped = !missionPreview && !!activeSession;
-  const primaryModelId = chatScoped ? activeSession!.modelId : state.agentConfig.primary.modelId;
+  const primaryModelId = chatScoped ? activeSession.modelId : state.agentConfig.primary.modelId;
   const primaryReasoning = chatScoped
-    ? (activeSession!.reasoningEffort ?? state.agentConfig.primary.reasoning)
+    ? (activeSession.reasoningEffort ?? state.agentConfig.primary.reasoning)
     : state.agentConfig.primary.reasoning;
   const selectedModel = primaryModelId
     ? state.models.find((m) => m.id === primaryModelId)
@@ -515,7 +550,7 @@ export default function PromptInput({
     const composed = composeText(text);
 
     const skillNames = activeSkills.map((s) => s.name);
-    const registerPending = (ref: string) =>
+    const registerPending = (ref: string) => {
       dispatch({
         type: 'SET_PENDING_COMPOSE',
         clientRef: ref,
@@ -523,6 +558,7 @@ export default function PromptInput({
         skills: skillNames,
         files: allFiles,
       });
+    };
 
     // Mission Control preview with no active session: prompt is the objective.
     if (missionPreview && !activeSession) {
@@ -588,8 +624,6 @@ export default function PromptInput({
       return;
     }
 
-    if (!activeSession) return;
-
     // Model is working and the user chose to queue: stage the prompt locally.
     // It is held client-side and delivered automatically when the turn finishes.
     if (isLive && mode === 'queue' && !targetChildSessionId) {
@@ -607,7 +641,7 @@ export default function PromptInput({
       dispatch({
         type: 'SESSION_TRANSCRIPT',
         event: {
-          id: `local-${Date.now()}`,
+          id: `local-${String(Date.now())}`,
           appSessionId: activeSession.appSessionId,
           sourceSessionId: targetChildSessionId ?? 'user',
           role: targetChild?.role ?? 'primary',
@@ -680,7 +714,7 @@ export default function PromptInput({
     // The queue stays editable while that runs, so deliver whatever is now at
     // the head: this honors deletes and edits (both remove the item) as well as
     // reorders, and never sends a stale prompt out of the visible order.
-    const head = (promptQueueRef.current[activeSession.appSessionId] ?? [])[0];
+    const head = (promptQueueRef.current[activeSession.appSessionId] ?? []).at(0);
     if (!head) return;
 
     if (head.design) {
@@ -714,7 +748,7 @@ export default function PromptInput({
     dispatch({
       type: 'SESSION_TRANSCRIPT',
       event: {
-        id: `local-${Date.now()}`,
+        id: `local-${String(Date.now())}`,
         appSessionId: activeSession.appSessionId,
         sourceSessionId: 'user',
         role: 'primary',
@@ -739,13 +773,8 @@ export default function PromptInput({
     const prev = prevLive.current;
     // Only deliver when the same session transitioned live -> idle. Switching
     // sessions mid-turn must not drain a different session's queue.
-    if (
-      prev.live &&
-      !primaryIsLive &&
-      activeSession &&
-      prev.appSessionId === activeSession.appSessionId
-    ) {
-      const next = (state.promptQueue[activeSession.appSessionId] ?? [])[0];
+    if (prev.live && !primaryIsLive && prev.appSessionId === activeSession?.appSessionId) {
+      const next = (state.promptQueue[activeSession.appSessionId] ?? []).at(0);
       if (next) void deliverPrompt();
     }
     prevLive.current = {
@@ -764,20 +793,19 @@ export default function PromptInput({
     requestAnimationFrame(() => textareaRef.current?.focus());
   };
 
-  const handleQueueDrop = (to: number) => {
-    if (activeSession && dragIndex !== null && dragIndex !== to) {
-      dispatch({
-        type: 'REORDER_QUEUE',
-        appSessionId: activeSession.appSessionId,
-        from: dragIndex,
-        to,
-      });
-    }
-    setDragIndex(null);
-    setDragOverIndex(null);
+  const reorderQueue = (from: number, to: number) => {
+    if (activeSession)
+      dispatch({ type: 'REORDER_QUEUE', appSessionId: activeSession.appSessionId, from, to });
   };
 
-  const syncCaret = (el: HTMLTextAreaElement) => setCaret(el.selectionStart ?? 0);
+  const removeQueued = (id: string) => {
+    if (activeSession)
+      dispatch({ type: 'REMOVE_QUEUED_PROMPT', appSessionId: activeSession.appSessionId, id });
+  };
+
+  const syncCaret = (el: HTMLTextAreaElement) => {
+    setCaret(el.selectionStart);
+  };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (menuOpen) {
@@ -877,7 +905,11 @@ export default function PromptInput({
       className={`w-full min-w-0 shrink-0 ${compact ? 'px-3 pb-3 pt-2' : 'px-6 pb-5 pt-2'}`}
       style={{ paddingRight: rightInset ? 312 : undefined, transition: 'padding-right 0.2s ease' }}
     >
-      <div className={`relative mx-auto min-w-0 ${compact ? 'max-w-4xl' : 'max-w-3xl'}`}>
+      <div
+        className={`relative mx-auto min-w-0 ${compact ? 'max-w-4xl' : 'max-w-3xl'}`}
+        onDragOver={fileDrop.onDragOver}
+        onDrop={fileDrop.onDrop}
+      >
         <AnimatePresence>
           {menuOpen && (
             <motion.div
@@ -887,7 +919,7 @@ export default function PromptInput({
               transition={{ duration: 0.14, ease: [0.16, 1, 0.3, 1] }}
               className="absolute bottom-full left-0 right-0 mb-2 z-50 rounded-xl border border-droid-border bg-droid-elevated shadow-2xl shadow-black/40 overflow-hidden py-1 max-h-72 overflow-y-auto"
             >
-              {trigger?.kind === 'file' && (
+              {trigger.kind === 'file' && (
                 <div className="px-3 py-1.5 text-[10px] uppercase tracking-wide text-droid-text-muted/60 flex items-center gap-1.5">
                   <FileText className="w-3 h-3" /> Files{filesCwd ? '' : ' — loading…'}
                 </div>
@@ -899,7 +931,9 @@ export default function PromptInput({
                   return (
                     <button
                       key={`cmd-${item.command.cmd}`}
-                      onMouseEnter={() => setMenuIndex(i)}
+                      onMouseEnter={() => {
+                        setMenuIndex(i);
+                      }}
                       onMouseDown={(e) => {
                         e.preventDefault();
                         runMenuItem(item);
@@ -916,12 +950,14 @@ export default function PromptInput({
                   );
                 }
                 if (item.type === 'skill') {
-                  const LocIcon = LOCATION_ICON[item.skill.location] ?? Box;
+                  const LocIcon = LOCATION_ICON[item.skill.location];
                   const added = activeSkills.some((s) => s.filePath === item.skill.filePath);
                   return (
                     <button
                       key={`skill-${item.skill.filePath}`}
-                      onMouseEnter={() => setMenuIndex(i)}
+                      onMouseEnter={() => {
+                        setMenuIndex(i);
+                      }}
                       onMouseDown={(e) => {
                         e.preventDefault();
                         runMenuItem(item);
@@ -949,7 +985,9 @@ export default function PromptInput({
                 return (
                   <button
                     key={`file-${item.path}`}
-                    onMouseEnter={() => setMenuIndex(i)}
+                    onMouseEnter={() => {
+                      setMenuIndex(i);
+                    }}
                     onMouseDown={(e) => {
                       e.preventDefault();
                       runMenuItem(item);
@@ -992,79 +1030,12 @@ export default function PromptInput({
           </div>
         ) : null}
 
-        {queue.length > 0 && (
-          <div className="mb-2 flex flex-col gap-1.5">
-            <div className="flex items-center gap-1.5 px-1 text-[10px] font-medium tracking-wide text-droid-text-muted">
-              <ListPlus className="w-3 h-3" />
-              Queued · sends after the current turn
-            </div>
-            {queue.map((p, i) => (
-              <div
-                key={p.id}
-                draggable
-                onDragStart={() => setDragIndex(i)}
-                onDragOver={(e) => {
-                  e.preventDefault();
-                  setDragOverIndex(i);
-                }}
-                onDrop={() => handleQueueDrop(i)}
-                onDragEnd={() => {
-                  setDragIndex(null);
-                  setDragOverIndex(null);
-                }}
-                className={`group flex items-start gap-2 rounded-xl border bg-droid-elevated px-2 py-1.5 transition-colors ${
-                  dragOverIndex === i && dragIndex !== null && dragIndex !== i
-                    ? 'border-droid-orange'
-                    : 'border-droid-border'
-                }`}
-              >
-                <span
-                  className="mt-0.5 cursor-grab text-droid-text-muted/60 active:cursor-grabbing"
-                  title="Drag to reorder"
-                >
-                  <GripVertical className="w-3.5 h-3.5" />
-                </span>
-                <span className="flex-1 min-w-0">
-                  <span className="block whitespace-pre-wrap break-words text-[12px] text-droid-text-secondary">
-                    {p.text || '(empty)'}
-                  </span>
-                  {p.design && p.design.references.length > 0 && (
-                    <span className="mt-1 inline-flex items-center gap-1 rounded-md bg-black/20 px-1.5 py-0.5 text-[10px] text-droid-text-muted">
-                      <MousePointerSquareDashed className="w-3 h-3" />
-                      {p.design.references.length} reference
-                      {p.design.references.length === 1 ? '' : 's'}
-                    </span>
-                  )}
-                </span>
-                <div className="flex shrink-0 items-center gap-0.5">
-                  {!p.design && (
-                    <button
-                      onClick={() => editQueuedInComposer(p)}
-                      className="rounded p-1 text-droid-text-muted hover:text-droid-text hover:bg-black/20"
-                      title="Edit in composer"
-                    >
-                      <Pencil className="w-3.5 h-3.5" />
-                    </button>
-                  )}
-                  <button
-                    onClick={() =>
-                      activeSession &&
-                      dispatch({
-                        type: 'REMOVE_QUEUED_PROMPT',
-                        appSessionId: activeSession.appSessionId,
-                        id: p.id,
-                      })
-                    }
-                    className="rounded p-1 text-droid-text-muted hover:text-droid-orange hover:bg-black/20"
-                    title="Delete"
-                  >
-                    <X className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
+        <QueuedPrompts
+          queue={queue}
+          onReorder={reorderQueue}
+          onEdit={editQueuedInComposer}
+          onRemove={removeQueued}
+        />
 
         {showStartIn && (
           <div className="relative z-0 mx-[6%] -mb-3 min-w-0 rounded-t-2xl border border-droid-border bg-droid-surface px-4 pb-4 pt-1.5">
@@ -1074,18 +1045,6 @@ export default function PromptInput({
 
         <div
           className={`relative z-10 bg-droid-elevated border rounded-2xl transition-colors ${missionPreview ? '' : boxBorder}`}
-          onDragOver={(e) => {
-            if (e.dataTransfer.types.includes('Files')) e.preventDefault();
-          }}
-          onDrop={(e) => {
-            // Always swallow the drop: Chromium's default for files is to
-            // navigate the window to them, which would destroy the app state.
-            e.preventDefault();
-            const dropped = Array.from(e.dataTransfer.files).filter((f) =>
-              f.type.startsWith('image/'),
-            );
-            for (const file of dropped) void imageAttachments.addBlob(file);
-          }}
           style={
             missionPreview
               ? {
@@ -1122,9 +1081,9 @@ export default function PromptInput({
                 >
                   {skill.name}
                   <button
-                    onClick={() =>
-                      setActiveSkills((prev) => prev.filter((s) => s.filePath !== skill.filePath))
-                    }
+                    onClick={() => {
+                      setActiveSkills((prev) => prev.filter((s) => s.filePath !== skill.filePath));
+                    }}
                     className="p-0.5 rounded hover:bg-black/20 transition-colors"
                     title="Remove skill"
                   >
@@ -1141,7 +1100,9 @@ export default function PromptInput({
                   <FileText className="w-3 h-3 text-droid-text-muted" />
                   {basename(f)}
                   <button
-                    onClick={() => setAttachedFiles((prev) => prev.filter((x) => x !== f))}
+                    onClick={() => {
+                      setAttachedFiles((prev) => prev.filter((x) => x !== f));
+                    }}
                     className="p-0.5 rounded hover:bg-black/20 transition-colors"
                     title="Remove file"
                   >
@@ -1160,9 +1121,15 @@ export default function PromptInput({
               syncCaret(e.target);
               setHistoryIndex(null);
             }}
-            onKeyUp={(e) => syncCaret(e.currentTarget)}
-            onClick={(e) => syncCaret(e.currentTarget)}
-            onSelect={(e) => syncCaret(e.currentTarget)}
+            onKeyUp={(e) => {
+              syncCaret(e.currentTarget);
+            }}
+            onClick={(e) => {
+              syncCaret(e.currentTarget);
+            }}
+            onSelect={(e) => {
+              syncCaret(e.currentTarget);
+            }}
             onKeyDown={handleKeyDown}
             onPaste={(e) => {
               const items = Array.from(e.clipboardData.items).filter(
@@ -1202,7 +1169,9 @@ export default function PromptInput({
 
             <div className="relative shrink-0">
               <button
-                onClick={() => setModelsOpen((v) => !v)}
+                onClick={() => {
+                  setModelsOpen((v) => !v);
+                }}
                 className={`flex items-center gap-1.5 px-2 py-1 rounded-lg text-[11px] transition-colors max-w-[200px] ${
                   modelsOpen
                     ? 'bg-droid-bg/60 text-droid-text'
@@ -1236,7 +1205,7 @@ export default function PromptInput({
                   <>
                     <ModelIcon provider={providerOf(selectedModel, primaryModelId)} size={14} />
                     <span className="truncate">{selectedModelLabel}</span>
-                    {showReasoningBadge && primaryReasoning && (
+                    {showReasoningBadge && (
                       <span
                         className="shrink-0 px-1.5 py-0.5 rounded-md text-[9px] font-medium capitalize leading-none"
                         style={{
@@ -1259,7 +1228,9 @@ export default function PromptInput({
               <AnimatePresence>
                 {modelsOpen && (
                   <ModelSelectorPopover
-                    onClose={() => setModelsOpen(false)}
+                    onClose={() => {
+                      setModelsOpen(false);
+                    }}
                     singleAgent={!missionPreview}
                     childTarget={childSettingsTarget}
                   />
@@ -1284,10 +1255,10 @@ export default function PromptInput({
 
             {isLive && !hasContent ? (
               <button
-                onClick={() =>
-                  activeSession &&
-                  interruptVisibleSession(activeSession.appSessionId, targetChildSessionId)
-                }
+                onClick={() => {
+                  if (activeSession)
+                    interruptVisibleSession(activeSession.appSessionId, targetChildSessionId);
+                }}
                 title="Working — click to stop"
                 className="p-2 rounded-full text-droid-bg shrink-0 transition-opacity hover:opacity-90"
                 style={{ background: ACCENT }}
@@ -1297,8 +1268,12 @@ export default function PromptInput({
             ) : isLive ? (
               <div
                 className="relative shrink-0"
-                onMouseEnter={() => setSendHover(true)}
-                onMouseLeave={() => setSendHover(false)}
+                onMouseEnter={() => {
+                  setSendHover(true);
+                }}
+                onMouseLeave={() => {
+                  setSendHover(false);
+                }}
               >
                 <AnimatePresence>
                   {sendHover && (
