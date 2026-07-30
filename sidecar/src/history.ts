@@ -679,6 +679,7 @@ const CANONICAL_TABLE_COLUMNS = {
 const CHILD_SCHEMA_CHECKS = [
   "check (role in ('worker', 'validator'))",
   "check (status in ('pending', 'running', 'paused', 'completed'))",
+  "check (spawn_link_kind in ('tool-use', 'spawn'))",
   'check (transcript_available in (0, 1))',
   '(spawn_link_kind is null and spawn_link_id is null)',
   '(spawn_link_kind is not null and spawn_link_id is not null)',

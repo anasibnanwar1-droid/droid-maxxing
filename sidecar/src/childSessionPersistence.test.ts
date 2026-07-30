@@ -255,6 +255,36 @@ test('version-one index missing a canonical identity constraint uses hard-cut re
   }
 });
 
+test('version-one index missing the canonical spawn-kind check uses hard-cut recovery', () => {
+  const malformedHome = mkdtempSync(join(tmpdir(), 'droid-child-schema-v1-check-'));
+  process.env.HOME = malformedHome;
+  try {
+    const index = new HistoryIndex();
+    index.close();
+    const indexPath = join(malformedHome, '.factory', 'droid-control', SESSION_INDEX_FILENAME);
+    const db = new DatabaseSync(indexPath);
+    const table = db
+      .prepare("SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = 'child_sessions'")
+      .get() as { sql: string };
+    const malformedSql = table.sql.replace(" CHECK (spawn_link_kind IN ('tool-use', 'spawn'))", '');
+    assert.notEqual(malformedSql, table.sql);
+    db.exec('PRAGMA writable_schema = ON;');
+    db.prepare(
+      "UPDATE sqlite_schema SET sql = ? WHERE type = 'table' AND name = 'child_sessions'",
+    ).run(malformedSql);
+    db.exec('PRAGMA writable_schema = OFF;');
+    db.close();
+
+    assert.throws(
+      () => new HistoryIndex(),
+      /remove ~\/\.factory\/droid-control\/session-index\.sqlite.*Raw Factory session history is not removed\./,
+    );
+  } finally {
+    process.env.HOME = home;
+    rmSync(malformedHome, { recursive: true, force: true });
+  }
+});
+
 test('version-one indexes with incompatible partial definitions use hard-cut recovery', () => {
   const cases = [
     {
