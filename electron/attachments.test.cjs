@@ -9,6 +9,7 @@ const {
   discard,
   decodeImageDataUrl,
   writeExclusive,
+  evictToBudget,
   MAX_ATTACHMENT_BYTES,
   MAX_DATA_URL_BASE64_CHARS,
 } = require('./attachments.cjs');
@@ -120,6 +121,35 @@ test('save sweeps stale attachments but keeps fresh ones', async () => {
   await save(dir, PNG_DATA_URL);
   await assert.rejects(() => fsp.stat(stale), /ENOENT/);
   assert.equal(await fsp.readFile(fresh, 'utf8'), 'fresh');
+});
+
+// mtimeMs controls eviction order, so stagger it explicitly rather than
+// relying on write timing resolution.
+async function writeAged(dir, name, bytes, ageMs) {
+  const target = path.join(dir, name);
+  await fsp.writeFile(target, Buffer.alloc(bytes));
+  const mtime = new Date(Date.now() - ageMs);
+  await fsp.utimes(target, mtime, mtime);
+  return target;
+}
+
+test('evictToBudget removes oldest files until the incoming file fits', async () => {
+  const dir = await tempDir();
+  const oldest = await writeAged(dir, 'a.bin', 100, 3000);
+  const middle = await writeAged(dir, 'b.bin', 100, 2000);
+  const newest = await writeAged(dir, 'c.bin', 100, 1000);
+  // 300 stored + 150 incoming vs a 300 budget: two oldest must go (300→100).
+  await evictToBudget(dir, 150, 300);
+  await assert.rejects(() => fsp.stat(oldest), /ENOENT/);
+  await assert.rejects(() => fsp.stat(middle), /ENOENT/);
+  await assert.doesNotReject(() => fsp.stat(newest));
+});
+
+test('evictToBudget leaves the directory alone when the budget already fits', async () => {
+  const dir = await tempDir();
+  const target = await writeAged(dir, 'a.bin', 100, 1000);
+  await evictToBudget(dir, 150, 300);
+  assert.equal((await fsp.stat(target)).size, 100);
 });
 
 test('writeExclusive retries with a fresh name and never clobbers an existing file', async () => {

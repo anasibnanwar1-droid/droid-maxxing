@@ -32,6 +32,12 @@ const MAX_DATA_URL_BASE64_CHARS = 4 * Math.ceil(MAX_ATTACHMENT_BYTES / 3);
 // on every save so the temp store stays bounded.
 const MAX_ATTACHMENT_AGE_MS = 24 * 60 * 60 * 1000;
 
+// The age sweep bounds how long files live but not how many accumulate within
+// a day, so the directory also gets a cumulative byte budget, enforced
+// oldest-first on every save. Deliberately generous: a normal composer never
+// comes near it — it exists so a runaway renderer cannot fill the disk.
+const MAX_DIR_BYTES = 512 * 1024 * 1024;
+
 // A generated paste name that already exists (pre-created file or symlink) is
 // never followed or clobbered: the exclusive create fails and we retry with a
 // fresh name this many times before giving up.
@@ -106,6 +112,40 @@ async function sweepStale(dir) {
   );
 }
 
+// Evicts oldest-first until the directory plus the incoming file fits the
+// byte budget. Best-effort like sweepStale: a file that vanishes or cannot be
+// removed mid-eviction is skipped, and the save proceeds regardless. The
+// budget is injectable so tests can drive it with small files.
+async function evictToBudget(dir, incomingBytes, budgetBytes) {
+  let entries;
+  try {
+    entries = await fsp.readdir(dir);
+  } catch {
+    return; // nothing to evict from a missing or unreadable directory
+  }
+  const files = [];
+  for (const entry of entries) {
+    try {
+      const target = path.join(dir, entry);
+      const stats = await fsp.stat(target);
+      if (stats.isFile()) files.push({ target, size: stats.size, mtimeMs: stats.mtimeMs });
+    } catch {
+      // Vanished between readdir and stat; skip.
+    }
+  }
+  let total = files.reduce((sum, file) => sum + file.size, 0);
+  files.sort((a, b) => a.mtimeMs - b.mtimeMs);
+  for (const file of files) {
+    if (total + incomingBytes <= budgetBytes) break;
+    try {
+      await fsp.rm(file.target, { force: true });
+      total -= file.size;
+    } catch {
+      // Already gone or unremovable; leave the count as-is.
+    }
+  }
+}
+
 // Writes buffer under an exclusive create ('wx'), so a pre-existing file or
 // symlink at the generated name is never followed or clobbered. makeName
 // supplies a fresh name per attempt; the final EEXIST propagates.
@@ -125,6 +165,7 @@ async function save(dir, dataUrl) {
   const { ext, buffer } = decodeImageDataUrl(dataUrl);
   await ensurePrivateDir(dir);
   await sweepStale(dir);
+  await evictToBudget(dir, buffer.length, MAX_DIR_BYTES);
   return writeExclusive(
     dir,
     () => `paste-${Date.now()}-${crypto.randomBytes(4).toString('hex')}.${ext}`,
@@ -150,6 +191,8 @@ module.exports = {
   discard,
   decodeImageDataUrl,
   writeExclusive,
+  evictToBudget,
   MAX_ATTACHMENT_BYTES,
   MAX_DATA_URL_BASE64_CHARS,
+  MAX_DIR_BYTES,
 };
