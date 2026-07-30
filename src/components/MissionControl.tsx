@@ -41,6 +41,7 @@ import {
   childSessionIdForFeature,
   childSessionLabel,
   childSessionMeta,
+  childSelectionForFeature,
   findChildSessionForTarget,
   transcriptForVisibleSession,
   visibleSessionIsPending,
@@ -954,13 +955,7 @@ export default function MissionControl() {
 
   const selectFeature = (f: BridgeFeature) => {
     setSelectedFeatureId(f.id);
-    const linkedChildSessionId = childSessionIdForFeature(progress, f.id);
-    if (
-      linkedChildSessionId &&
-      childSessions.some((child) => child.childSessionId === linkedChildSessionId)
-    ) {
-      selectChild(linkedChildSessionId);
-    }
+    selectChild(childSelectionForFeature(progress, childSessions, f.id));
     setFocusOpen(true);
   };
 

@@ -142,6 +142,18 @@ export function childSessionIdForFeature(
   return undefined;
 }
 
+export function childSelectionForFeature(
+  progress: ProgressEntry[],
+  childSessions: ChildSessionInfo[],
+  featureId: string,
+): string | null {
+  const childSessionId = childSessionIdForFeature(progress, featureId);
+  return childSessionId &&
+    childSessions.some((childSession) => childSession.childSessionId === childSessionId)
+    ? childSessionId
+    : null;
+}
+
 export function childSessionLabel(childSession: ChildSessionInfo, index: number): string {
   if (childSession.label) return childSession.label;
   const role = childSession.role === 'validator' ? 'Validator' : 'Worker';

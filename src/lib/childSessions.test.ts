@@ -4,6 +4,7 @@ import type { TranscriptEvent } from '../types/bridge';
 import {
   childSessionIdForFeature,
   childSessionLabel,
+  childSelectionForFeature,
   childSessionLatest,
   childSessionMeta,
   findChildSessionForTarget,
@@ -104,6 +105,52 @@ test('selected child targeting is parent-scoped and independent of session mode'
       children,
     ),
     undefined,
+  );
+});
+
+test('switching to a feature without an exact child clears the previous prompt target', () => {
+  const child = {
+    parentAppSessionId: 'mission-parent',
+    childSessionId: 'worker-a',
+    role: 'worker' as const,
+    status: 'running' as const,
+    modelId: 'model-default',
+    transcriptAvailable: true,
+  };
+  const progress = [
+    {
+      id: 'progress-a',
+      timestamp: '2026-07-30T00:00:00.000Z',
+      type: 'worker_started' as const,
+      title: 'Feature A worker',
+      featureId: 'feature-a',
+      workerChildSessionId: 'worker-a',
+    },
+    {
+      id: 'progress-b',
+      timestamp: '2026-07-30T00:00:01.000Z',
+      type: 'worker_started' as const,
+      title: 'Feature B worker',
+      featureId: 'feature-b',
+      workerChildSessionId: 'missing-worker-b',
+    },
+  ];
+
+  assert.equal(childSelectionForFeature(progress, [child], 'feature-a'), 'worker-a');
+  assert.equal(childSelectionForFeature(progress, [child], 'feature-b'), null);
+  assert.equal(childSelectionForFeature(progress, [child], 'feature-without-progress'), null);
+  assert.deepEqual(
+    visibleSessionTarget(
+      'mission-parent',
+      null,
+      { 'mission-parent': { 'worker-a': child } },
+      {
+        'mission-parent': {
+          'worker-a': { state: 'ready', requestId: 'ready-a', runtimeGeneration: 1 },
+        },
+      },
+    ),
+    { kind: 'primary' },
   );
 });
 
