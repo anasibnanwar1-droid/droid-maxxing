@@ -4,16 +4,12 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { PanelLeft, PanelRight } from 'lucide-react';
 import { bridge } from './lib/bridge';
 import {
-  connect,
-  listFactoryDefaults,
-  listSessions,
   loadSessionHistory,
   sendNativeBrowserResult,
   openChild,
   newChildOpenRequestId,
 } from './lib/commands';
 import { isEmbedded } from './lib/embed';
-import { getApiKey } from './lib/desktop';
 import { performNativeBrowserRequest } from './lib/nativeBrowserAgent';
 import {
   activeSessionAfterNativeBrowserRequest,
@@ -50,6 +46,7 @@ import { FilesWorkspace } from './components/files/FilesWorkspace';
 import { closeTerminalForTab } from './lib/terminal';
 import { utilityPanelForSession, type UtilityTool } from './lib/utilityPanel';
 import { isTerminalInputTarget, isTerminalTabShortcut } from './lib/keyboardShortcuts';
+import { useBridgeSessionBootstrap } from './hooks/useBridgeSessionBootstrap';
 
 function ContextListIcon({ className }: { className?: string }) {
   return (
@@ -79,6 +76,7 @@ export default function App() {
   const { state, dispatch } = useStore();
   const { design, designDispatch } = useDesignStore();
   const embedded = isEmbedded();
+  useBridgeSessionBootstrap(embedded, state.workspaceCwds);
   const onboard = useOnboarding();
   const [forceWizard, setForceWizard] = useState(false);
   const [bannerDismissed, setBannerDismissed] = useState(false);
@@ -177,23 +175,6 @@ export default function App() {
     mq.addEventListener('change', onChange);
     return () => mq.removeEventListener('change', onChange);
   }, [state.theme.mode, dispatch]);
-
-  useEffect(() => {
-    if (embedded) return;
-    void (async () => {
-      await bridge.start();
-      const key = await getApiKey();
-      connect(key ?? '');
-      listFactoryDefaults();
-    })();
-  }, [embedded]);
-
-  useEffect(() => {
-    if (embedded) return;
-    // Load every known session for the chosen workspaces; the sidebar shows the
-    // latest few and reveals the rest behind "Show more" rather than capping.
-    listSessions({ workspaceCwds: state.workspaceCwds, includePlainChats: true });
-  }, [embedded, state.workspaceCwds]);
 
   // Post-onboarding launch tasks: silent CLI update + non-blocking app update
   // check. Runs once, only after the first-run tour is complete.
