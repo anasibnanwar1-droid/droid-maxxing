@@ -17,10 +17,17 @@ import {
   listSkills,
 } from '../lib/commands';
 import { browserTranscriptReferencesFromDesignReferences } from './browser/browserTranscriptReferences';
-import { pickDirectory, listFiles } from '../lib/desktop';
+import { pickDirectory, pickFiles, listFiles, isDesktop } from '../lib/desktop';
+import { type AttachedImage, useImageAttachments } from '../hooks/useImageAttachments';
+import { useImageFileDrop } from '../hooks/useImageFileDrop';
+import { ImageChip } from './composer/ImageChip';
+import { ImageViewerModal } from './composer/ImageViewerModal';
+import PlanSteps from './composer/PlanSteps';
+import { QueuedPrompts } from './composer/QueuedPrompts';
 import { markGitTurnStart } from '../lib/git';
 import { createLocalDesignTranscriptEvent, newQueueId } from '../lib/promptQueue';
 import { composePrompt } from '../lib/composePrompt';
+import { resetComposerAfterSubmit } from '../lib/composerReset';
 import {
   childRuntimeSubmitTarget,
   childSessionLabel,
@@ -33,6 +40,7 @@ import {
 import {
   ArrowUp,
   ChevronDown,
+  Plus,
   SlidersHorizontal,
   Square,
   FileText,
@@ -40,10 +48,6 @@ import {
   Folder,
   User,
   Box,
-  ListPlus,
-  GripVertical,
-  Pencil,
-  MousePointerSquareDashed,
 } from 'lucide-react';
 import ModelSelectorPopover from './ModelSelectorPopover';
 import {
@@ -58,13 +62,23 @@ import { StartInBar } from './environment/StartInBar';
 import type { SkillInfo, SkillLocation } from '../types/bridge';
 
 const ACCENT = 'var(--droid-accent)';
-const accentMix = (pct: number) => `color-mix(in srgb, var(--droid-accent) ${pct}%, transparent)`;
+const accentMix = (pct: number) =>
+  `color-mix(in srgb, var(--droid-accent) ${String(pct)}%, transparent)`;
 type SubmitMode = 'queue' | 'now';
 const oppositeSubmitMode = (mode: SubmitMode): SubmitMode => (mode === 'queue' ? 'now' : 'queue');
 
-type SlashCommand = { cmd: string; desc: string; run: () => void };
+interface SlashCommand {
+  cmd: string;
+  desc: string;
+  run: () => void;
+}
 
-type Trigger = { kind: 'slash' | 'file'; query: string; start: number; end: number };
+interface Trigger {
+  kind: 'slash' | 'file';
+  query: string;
+  start: number;
+  end: number;
+}
 
 type MenuItem =
   | { type: 'command'; command: SlashCommand }
@@ -73,11 +87,16 @@ type MenuItem =
 
 function getTrigger(text: string, caret: number): Trigger | null {
   const upto = text.slice(0, caret);
-  const m = upto.match(/(^|\s)([/@][^\s]*)$/);
+  const m = /(^|\s)([/@][^\s]*)$/.exec(upto);
   if (!m) return null;
   const token = m[2];
   const start = caret - token.length;
-  return { kind: token[0] === '/' ? 'slash' : 'file', query: token.slice(1), start, end: caret };
+  return {
+    kind: token.startsWith('/') ? 'slash' : 'file',
+    query: token.slice(1),
+    start,
+    end: caret,
+  };
 }
 
 function basename(p: string): string {
@@ -123,13 +142,14 @@ export default function PromptInput({
     composerRevisionRef.current += 1;
     setAttachedFilesState(value);
   };
+  const imageAttachments = useImageAttachments(state.imagePasteQuality);
+  const fileDrop = useImageFileDrop(imageAttachments.addBlob);
+  const [viewerImageId, setViewerImageId] = useState<string | null>(null);
   const [activeSkills, setActiveSkillsState] = useState<SkillInfo[]>([]);
   const setActiveSkills = (value: SetStateAction<SkillInfo[]>) => {
     composerRevisionRef.current += 1;
     setActiveSkillsState(value);
   };
-  const [dragIndex, setDragIndex] = useState<number | null>(null);
-  const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
   const [sendHover, setSendHover] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const submittingRef = useRef(false);
@@ -220,33 +240,56 @@ export default function PromptInput({
     {
       cmd: '/mission',
       desc: 'Enter Mission Control',
-      run: () => dispatch({ type: 'TOGGLE_MISSION_CONTROL' }),
+      run: () => {
+        dispatch({ type: 'TOGGLE_MISSION_CONTROL' });
+      },
     },
-    { cmd: '/model', desc: 'Open model selector', run: () => setModelsOpen(true) },
+    {
+      cmd: '/model',
+      desc: 'Open model selector',
+      run: () => {
+        setModelsOpen(true);
+      },
+    },
     {
       cmd: '/compact',
       desc: 'Compact current session',
-      run: () =>
-        primaryActionsEnabled && activeSession && compactSession(activeSession.appSessionId),
+      run: () => {
+        if (primaryActionsEnabled && activeSession) compactSession(activeSession.appSessionId);
+      },
     },
     {
       cmd: '/compaction',
       desc: 'Compact current session',
-      run: () =>
-        primaryActionsEnabled && activeSession && compactSession(activeSession.appSessionId),
+      run: () => {
+        if (primaryActionsEnabled && activeSession) compactSession(activeSession.appSessionId);
+      },
     },
     {
       cmd: '/compression',
       desc: 'Compact current session',
-      run: () =>
-        primaryActionsEnabled && activeSession && compactSession(activeSession.appSessionId),
+      run: () => {
+        if (primaryActionsEnabled && activeSession) compactSession(activeSession.appSessionId);
+      },
     },
-    { cmd: '/spec', desc: 'Toggle spec mode', run: () => toggleSpec() },
-    { cmd: '/settings', desc: 'Open settings', run: () => dispatch({ type: 'TOGGLE_SETTINGS' }) },
+    {
+      cmd: '/spec',
+      desc: 'Toggle spec mode',
+      run: () => {
+        toggleSpec();
+      },
+    },
+    {
+      cmd: '/settings',
+      desc: 'Open settings',
+      run: () => {
+        dispatch({ type: 'TOGGLE_SETTINGS' });
+      },
+    },
   ];
 
   const trigger = useMemo(() => getTrigger(input, caret), [input, caret]);
-  const overlayOpen = Boolean(trigger || modelsOpen || (isLive && sendHover));
+  const overlayOpen = Boolean(trigger ?? (modelsOpen || (isLive && sendHover)));
 
   useEffect(() => {
     if (!isLive) setSendHover(false);
@@ -331,7 +374,7 @@ export default function PromptInput({
 
   // Lazy-load files when an @-trigger is active and cwd changed.
   useEffect(() => {
-    if (!trigger || trigger.kind !== 'file' || !cwd) return;
+    if (trigger?.kind !== 'file' || !cwd) return;
     if (filesCwd === cwd) return;
     let cancelled = false;
     void listFiles(cwd).then((list) => {
@@ -350,18 +393,36 @@ export default function PromptInput({
   }, [trigger?.kind, trigger?.query]);
 
   // Leave history-recall mode and drop any composer draft attachments when
-  // switching conversations, so skills/files staged for one chat don't linger
-  // on another chat's prompt bar.
+  // switching conversations, so skills/files/images staged for one chat don't
+  // linger on another chat's prompt bar. No prompt referenced the staged
+  // images, so their temp files are deleted too. clearAndDiscardImages is
+  // useCallback-stable, so this still fires only on a session switch.
+  const clearAndDiscardImages = imageAttachments.clearAndDiscard;
   useEffect(() => {
     setHistoryIndex(null);
     setActiveSkills([]);
     setAttachedFiles([]);
-  }, [activeSession?.appSessionId]);
+    clearAndDiscardImages();
+  }, [activeSession?.appSessionId, clearAndDiscardImages]);
+
+  // Welcome-screen suggestion cards seed the composer through the store so the
+  // empty state and this input stay decoupled. The pendingCaret effect below
+  // focuses the field and moves the caret to the end of the seeded text.
+  const composerSeed = state.composerSeed;
+  useEffect(() => {
+    if (!composerSeed) return;
+    setHistoryIndex(null);
+    setInput(composerSeed.text);
+    pendingCaret.current = composerSeed.text.length;
+    // Consume the seed so a later remount (e.g. toggling Mission Control, which
+    // unmounts this input) does not re-apply stale text over the user's edits.
+    dispatch({ type: 'CLEAR_COMPOSER_SEED' });
+  }, [composerSeed, dispatch]);
 
   useEffect(() => {
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto';
-      textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 200)}px`;
+      textareaRef.current.style.height = `${String(Math.min(textareaRef.current.scrollHeight, 200))}px`;
     }
   }, [input]);
 
@@ -383,9 +444,9 @@ export default function PromptInput({
   // A single chat carries its own model/reasoning; only fall back to the global
   // default while composing a brand-new chat that has no session yet.
   const chatScoped = !missionPreview && !!activeSession;
-  const primaryModelId = chatScoped ? activeSession!.modelId : state.agentConfig.primary.modelId;
+  const primaryModelId = chatScoped ? activeSession.modelId : state.agentConfig.primary.modelId;
   const primaryReasoning = chatScoped
-    ? (activeSession!.reasoningEffort ?? state.agentConfig.primary.reasoning)
+    ? (activeSession.reasoningEffort ?? state.agentConfig.primary.reasoning)
     : state.agentConfig.primary.reasoning;
   const selectedModel = primaryModelId
     ? state.models.find((m) => m.id === primaryModelId)
@@ -410,6 +471,21 @@ export default function PromptInput({
     replaceTrigger('');
   };
 
+  // Plus button: native multi-file picker in the desktop app; in a plain
+  // browser there is no dialog, so drop an @ trigger to open the file menu.
+  const handleAttachFiles = async () => {
+    if (!isDesktop()) {
+      const next = input.length === 0 || input.endsWith(' ') ? `${input}@` : `${input} @`;
+      setInput(next);
+      pendingCaret.current = next.length;
+      return;
+    }
+    const paths = await pickFiles();
+    if (paths.length > 0) {
+      setAttachedFiles((prev) => [...prev, ...paths.filter((p) => !prev.includes(p))]);
+    }
+  };
+
   const selectSkill = (skill: SkillInfo) => {
     setActiveSkills((prev) =>
       prev.some((s) => s.filePath === skill.filePath) ? prev : [...prev, skill],
@@ -430,17 +506,12 @@ export default function PromptInput({
 
   const composeFrom = composePrompt;
 
-  const composeText = (text: string): string =>
+  const composeText = (text: string, images: AttachedImage[]): string =>
     composeFrom(
       text,
       activeSkills.map((s) => s.name),
-      attachedFiles,
+      [...attachedFiles, ...images.map((i) => i.path)],
     );
-
-  const resetAttachments = () => {
-    setActiveSkills([]);
-    setAttachedFiles([]);
-  };
 
   // Re-entry guard: a send awaits markGitTurnStart before the input is cleared,
   // so without this a second Enter/click during that window would resend the
@@ -457,36 +528,60 @@ export default function PromptInput({
 
   const runSubmit = async (mode: SubmitMode = 'queue') => {
     const text = input.trim();
-    const hasPayload = text || activeSkills.length > 0 || attachedFiles.length > 0;
+    // Snapshot the composer revision before the settle wait: text, files, and
+    // skills are render-closure snapshots, so anything typed or staged while
+    // images finish encoding is not part of this prompt — and must survive
+    // the post-submit clear below.
+    const composerRevision = composerRevisionRef.current;
+    // Pasted/dropped images encode asynchronously; wait out any in-flight adds
+    // so they make this prompt instead of surfacing on the next one via clear().
+    const readyImages = await imageAttachments.whenSettled();
+    const allFiles = [...attachedFiles, ...readyImages.map((i) => i.path)];
+    const hasPayload = text || activeSkills.length > 0 || allFiles.length > 0;
     if (!hasPayload) return;
     setHistoryIndex(null);
 
-    if (text === '/mission' && activeSkills.length === 0 && attachedFiles.length === 0) {
+    const clearAfterSubmit = () => {
+      resetComposerAfterSubmit({
+        draftUntouched: composerRevisionRef.current === composerRevision,
+        clearImages: () => {
+          imageAttachments.clear();
+        },
+        resetDraft: () => {
+          setInput('');
+          setActiveSkills([]);
+          setAttachedFiles([]);
+        },
+      });
+    };
+
+    if (text === '/mission' && activeSkills.length === 0 && allFiles.length === 0) {
       dispatch({ type: 'TOGGLE_MISSION_CONTROL' });
-      setInput('');
+      clearAfterSubmit();
       return;
     }
 
-    if (COMPACT_COMMANDS.has(text) && activeSkills.length === 0 && attachedFiles.length === 0) {
+    if (COMPACT_COMMANDS.has(text) && activeSkills.length === 0 && allFiles.length === 0) {
       if (!primaryActionsEnabled) return;
       if (activeSession) compactSession(activeSession.appSessionId);
-      setInput('');
+      clearAfterSubmit();
       return;
     }
 
     if (!childActionsEnabled) return;
 
-    const composed = composeText(text);
+    const composed = composeText(text, readyImages);
 
     const skillNames = activeSkills.map((s) => s.name);
-    const registerPending = (ref: string) =>
+    const registerPending = (ref: string) => {
       dispatch({
         type: 'SET_PENDING_COMPOSE',
         clientRef: ref,
         text,
         skills: skillNames,
-        files: [...attachedFiles],
+        files: allFiles,
       });
+    };
 
     // Mission Control preview with no active session: prompt is the objective.
     if (missionPreview && !activeSession) {
@@ -497,8 +592,7 @@ export default function PromptInput({
       registerPending(clientRef);
       // Clear the composer before the git-baseline await below so a prompt the
       // user starts typing during that delay is never wiped by a late clear.
-      setInput('');
-      resetAttachments();
+      clearAfterSubmit();
       // Snapshot the tree before the agent's first turn so the Review "Last
       // turn" scope only attributes changes this session actually makes.
       await markGitTurnStart(dir);
@@ -531,8 +625,7 @@ export default function PromptInput({
       const clientRef = newClientRef();
       registerPending(clientRef);
       // Clear before the baseline await (see above) so fast typing isn't lost.
-      setInput('');
-      resetAttachments();
+      clearAfterSubmit();
       if (dir) await markGitTurnStart(dir);
       createSession({
         clientRef,
@@ -552,18 +645,15 @@ export default function PromptInput({
       return;
     }
 
-    if (!activeSession) return;
-
     // Model is working and the user chose to queue: stage the prompt locally.
     // It is held client-side and delivered automatically when the turn finishes.
     if (isLive && mode === 'queue' && !targetChildSessionId) {
       dispatch({
         type: 'QUEUE_PROMPT',
         appSessionId: activeSession.appSessionId,
-        prompt: { id: newQueueId(), text, skills: skillNames, files: [...attachedFiles] },
+        prompt: { id: newQueueId(), text, skills: skillNames, files: allFiles },
       });
-      setInput('');
-      resetAttachments();
+      clearAfterSubmit();
       return;
     }
 
@@ -571,7 +661,7 @@ export default function PromptInput({
       dispatch({
         type: 'SESSION_TRANSCRIPT',
         event: {
-          id: `local-${Date.now()}`,
+          id: `local-${String(Date.now())}`,
           appSessionId: activeSession.appSessionId,
           sourceSessionId: targetChildSessionId ?? 'user',
           role: targetChild?.role ?? 'primary',
@@ -580,14 +670,10 @@ export default function PromptInput({
           text,
           author: 'user',
           skills: activeSkills.map((s) => s.name),
-          files: [...attachedFiles],
+          files: allFiles,
           steered: isLive && mode === 'now',
         },
       });
-    };
-    const resetComposer = () => {
-      setInput('');
-      resetAttachments();
     };
     const sendCommand = () => {
       try {
@@ -611,14 +697,14 @@ export default function PromptInput({
         currentTarget: () => visibleTargetRef.current,
         currentComposerRevision: () => composerRevisionRef.current,
         appendTranscript,
-        resetComposer,
+        resetComposer: clearAfterSubmit,
         sendCommand,
       });
       return;
     }
 
     appendTranscript();
-    resetComposer();
+    clearAfterSubmit();
 
     // Capture the last-turn baseline before the agent can touch the tree;
     // a fire-and-forget call here races the first edit and corrupts the diff.
@@ -644,7 +730,7 @@ export default function PromptInput({
     // The queue stays editable while that runs, so deliver whatever is now at
     // the head: this honors deletes and edits (both remove the item) as well as
     // reorders, and never sends a stale prompt out of the visible order.
-    const head = (promptQueueRef.current[activeSession.appSessionId] ?? [])[0];
+    const head = (promptQueueRef.current[activeSession.appSessionId] ?? []).at(0);
     if (!head) return;
 
     if (head.design) {
@@ -678,7 +764,7 @@ export default function PromptInput({
     dispatch({
       type: 'SESSION_TRANSCRIPT',
       event: {
-        id: `local-${Date.now()}`,
+        id: `local-${String(Date.now())}`,
         appSessionId: activeSession.appSessionId,
         sourceSessionId: 'user',
         role: 'primary',
@@ -703,13 +789,8 @@ export default function PromptInput({
     const prev = prevLive.current;
     // Only deliver when the same session transitioned live -> idle. Switching
     // sessions mid-turn must not drain a different session's queue.
-    if (
-      prev.live &&
-      !primaryIsLive &&
-      activeSession &&
-      prev.appSessionId === activeSession.appSessionId
-    ) {
-      const next = (state.promptQueue[activeSession.appSessionId] ?? [])[0];
+    if (prev.live && !primaryIsLive && prev.appSessionId === activeSession?.appSessionId) {
+      const next = (state.promptQueue[activeSession.appSessionId] ?? []).at(0);
       if (next) void deliverPrompt();
     }
     prevLive.current = {
@@ -721,6 +802,10 @@ export default function PromptInput({
 
   const editQueuedInComposer = (p: QueuedPrompt) => {
     if (!activeSession) return;
+    // The queued prompt carries its own files; drop any images pasted after it
+    // was queued so they don't ride along on the edited prompt, and delete
+    // their temp files — no prompt ever referenced them.
+    imageAttachments.clearAndDiscard();
     setInput(p.text);
     setAttachedFiles(p.files);
     setActiveSkills(invocableSkills.filter((s) => p.skills.includes(s.name)));
@@ -728,20 +813,19 @@ export default function PromptInput({
     requestAnimationFrame(() => textareaRef.current?.focus());
   };
 
-  const handleQueueDrop = (to: number) => {
-    if (activeSession && dragIndex !== null && dragIndex !== to) {
-      dispatch({
-        type: 'REORDER_QUEUE',
-        appSessionId: activeSession.appSessionId,
-        from: dragIndex,
-        to,
-      });
-    }
-    setDragIndex(null);
-    setDragOverIndex(null);
+  const reorderQueue = (from: number, to: number) => {
+    if (activeSession)
+      dispatch({ type: 'REORDER_QUEUE', appSessionId: activeSession.appSessionId, from, to });
   };
 
-  const syncCaret = (el: HTMLTextAreaElement) => setCaret(el.selectionStart ?? 0);
+  const removeQueued = (id: string) => {
+    if (activeSession)
+      dispatch({ type: 'REMOVE_QUEUED_PROMPT', appSessionId: activeSession.appSessionId, id });
+  };
+
+  const syncCaret = (el: HTMLTextAreaElement) => {
+    setCaret(el.selectionStart);
+  };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (menuOpen) {
@@ -766,9 +850,14 @@ export default function PromptInput({
         return;
       }
     }
-    if (e.key === 'Backspace' && input === '' && attachedFiles.length > 0) {
+    if (
+      e.key === 'Backspace' &&
+      input === '' &&
+      (attachedFiles.length > 0 || imageAttachments.images.length > 0)
+    ) {
       e.preventDefault();
-      setAttachedFiles((prev) => prev.slice(0, -1));
+      if (attachedFiles.length > 0) setAttachedFiles((prev) => prev.slice(0, -1));
+      else imageAttachments.remove(imageAttachments.images[imageAttachments.images.length - 1].id);
       return;
     }
     // Shell-style history recall. ArrowUp starts only from the top of the field
@@ -815,7 +904,9 @@ export default function PromptInput({
     ? 'border-droid-orange/40 focus-within:border-droid-orange/60'
     : 'border-droid-border focus-within:border-droid-border-hover';
 
-  const hasChips = activeSkills.length > 0 || attachedFiles.length > 0;
+  const hasChips =
+    activeSkills.length > 0 || attachedFiles.length > 0 || imageAttachments.images.length > 0;
+  const viewerImage = imageAttachments.images.find((i) => i.id === viewerImageId) ?? null;
   // The "Start in" repo/worktree/branch row only applies while drafting a brand
   // new chat; it renders as the top section of the composer card.
   const showStartIn = !activeSession && !missionPreview && !!cwd;
@@ -823,14 +914,22 @@ export default function PromptInput({
   const idleSendTooltip = childActionsEnabled
     ? 'Enter: send\nShift+Enter: newline'
     : 'This child transcript is read-only';
-  const hasContent = input.trim().length > 0 || activeSkills.length > 0 || attachedFiles.length > 0;
+  const hasContent =
+    input.trim().length > 0 ||
+    activeSkills.length > 0 ||
+    attachedFiles.length > 0 ||
+    imageAttachments.images.length > 0;
 
   return (
     <div
       className={`w-full min-w-0 shrink-0 ${compact ? 'px-3 pb-3 pt-2' : 'px-6 pb-5 pt-2'}`}
       style={{ paddingRight: rightInset ? 312 : undefined, transition: 'padding-right 0.2s ease' }}
     >
-      <div className={`relative mx-auto min-w-0 ${compact ? 'max-w-4xl' : 'max-w-3xl'}`}>
+      <div
+        className={`relative mx-auto min-w-0 ${compact ? 'max-w-4xl' : 'max-w-3xl'}`}
+        onDragOver={fileDrop.onDragOver}
+        onDrop={fileDrop.onDrop}
+      >
         <AnimatePresence>
           {menuOpen && (
             <motion.div
@@ -840,7 +939,7 @@ export default function PromptInput({
               transition={{ duration: 0.14, ease: [0.16, 1, 0.3, 1] }}
               className="absolute bottom-full left-0 right-0 mb-2 z-50 rounded-xl border border-droid-border bg-droid-elevated shadow-2xl shadow-black/40 overflow-hidden py-1 max-h-72 overflow-y-auto"
             >
-              {trigger?.kind === 'file' && (
+              {trigger.kind === 'file' && (
                 <div className="px-3 py-1.5 text-[10px] uppercase tracking-wide text-droid-text-muted/60 flex items-center gap-1.5">
                   <FileText className="w-3 h-3" /> Files{filesCwd ? '' : ' — loading…'}
                 </div>
@@ -852,7 +951,9 @@ export default function PromptInput({
                   return (
                     <button
                       key={`cmd-${item.command.cmd}`}
-                      onMouseEnter={() => setMenuIndex(i)}
+                      onMouseEnter={() => {
+                        setMenuIndex(i);
+                      }}
                       onMouseDown={(e) => {
                         e.preventDefault();
                         runMenuItem(item);
@@ -869,12 +970,14 @@ export default function PromptInput({
                   );
                 }
                 if (item.type === 'skill') {
-                  const LocIcon = LOCATION_ICON[item.skill.location] ?? Box;
+                  const LocIcon = LOCATION_ICON[item.skill.location];
                   const added = activeSkills.some((s) => s.filePath === item.skill.filePath);
                   return (
                     <button
                       key={`skill-${item.skill.filePath}`}
-                      onMouseEnter={() => setMenuIndex(i)}
+                      onMouseEnter={() => {
+                        setMenuIndex(i);
+                      }}
                       onMouseDown={(e) => {
                         e.preventDefault();
                         runMenuItem(item);
@@ -902,7 +1005,9 @@ export default function PromptInput({
                 return (
                   <button
                     key={`file-${item.path}`}
-                    onMouseEnter={() => setMenuIndex(i)}
+                    onMouseEnter={() => {
+                      setMenuIndex(i);
+                    }}
                     onMouseDown={(e) => {
                       e.preventDefault();
                       runMenuItem(item);
@@ -945,85 +1050,20 @@ export default function PromptInput({
           </div>
         ) : null}
 
-        {queue.length > 0 && (
-          <div className="mb-2 flex flex-col gap-1.5">
-            <div className="flex items-center gap-1.5 px-1 text-[10px] font-medium tracking-wide text-droid-text-muted">
-              <ListPlus className="w-3 h-3" />
-              Queued · sends after the current turn
-            </div>
-            {queue.map((p, i) => (
-              <div
-                key={p.id}
-                draggable
-                onDragStart={() => setDragIndex(i)}
-                onDragOver={(e) => {
-                  e.preventDefault();
-                  setDragOverIndex(i);
-                }}
-                onDrop={() => handleQueueDrop(i)}
-                onDragEnd={() => {
-                  setDragIndex(null);
-                  setDragOverIndex(null);
-                }}
-                className={`group flex items-start gap-2 rounded-xl border bg-droid-elevated px-2 py-1.5 transition-colors ${
-                  dragOverIndex === i && dragIndex !== null && dragIndex !== i
-                    ? 'border-droid-orange'
-                    : 'border-droid-border'
-                }`}
-              >
-                <span
-                  className="mt-0.5 cursor-grab text-droid-text-muted/60 active:cursor-grabbing"
-                  title="Drag to reorder"
-                >
-                  <GripVertical className="w-3.5 h-3.5" />
-                </span>
-                <span className="flex-1 min-w-0">
-                  <span className="block whitespace-pre-wrap break-words text-[12px] text-droid-text-secondary">
-                    {p.text || '(empty)'}
-                  </span>
-                  {p.design && p.design.references.length > 0 && (
-                    <span className="mt-1 inline-flex items-center gap-1 rounded-md bg-black/20 px-1.5 py-0.5 text-[10px] text-droid-text-muted">
-                      <MousePointerSquareDashed className="w-3 h-3" />
-                      {p.design.references.length} reference
-                      {p.design.references.length === 1 ? '' : 's'}
-                    </span>
-                  )}
-                </span>
-                <div className="flex shrink-0 items-center gap-0.5">
-                  {!p.design && (
-                    <button
-                      onClick={() => editQueuedInComposer(p)}
-                      className="rounded p-1 text-droid-text-muted hover:text-droid-text hover:bg-black/20"
-                      title="Edit in composer"
-                    >
-                      <Pencil className="w-3.5 h-3.5" />
-                    </button>
-                  )}
-                  <button
-                    onClick={() =>
-                      activeSession &&
-                      dispatch({
-                        type: 'REMOVE_QUEUED_PROMPT',
-                        appSessionId: activeSession.appSessionId,
-                        id: p.id,
-                      })
-                    }
-                    className="rounded p-1 text-droid-text-muted hover:text-droid-orange hover:bg-black/20"
-                    title="Delete"
-                  >
-                    <X className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
+        <QueuedPrompts
+          queue={queue}
+          onReorder={reorderQueue}
+          onEdit={editQueuedInComposer}
+          onRemove={removeQueued}
+        />
 
         {showStartIn && (
           <div className="relative z-0 mx-[6%] -mb-3 min-w-0 rounded-t-2xl border border-droid-border bg-droid-surface px-4 pb-4 pt-1.5">
             <StartInBar />
           </div>
         )}
+
+        <PlanSteps />
 
         <div
           className={`relative z-10 bg-droid-elevated border rounded-2xl transition-colors ${missionPreview ? '' : boxBorder}`}
@@ -1038,6 +1078,18 @@ export default function PromptInput({
         >
           {hasChips && (
             <div className="flex flex-wrap gap-1.5 px-3 pt-3">
+              {imageAttachments.images.map((img) => (
+                <ImageChip
+                  key={img.id}
+                  image={img}
+                  onOpen={() => {
+                    setViewerImageId(img.id);
+                  }}
+                  onRemove={() => {
+                    imageAttachments.remove(img.id);
+                  }}
+                />
+              ))}
               {activeSkills.map((skill) => (
                 <span
                   key={skill.filePath}
@@ -1051,9 +1103,9 @@ export default function PromptInput({
                 >
                   {skill.name}
                   <button
-                    onClick={() =>
-                      setActiveSkills((prev) => prev.filter((s) => s.filePath !== skill.filePath))
-                    }
+                    onClick={() => {
+                      setActiveSkills((prev) => prev.filter((s) => s.filePath !== skill.filePath));
+                    }}
                     className="p-0.5 rounded hover:bg-black/20 transition-colors"
                     title="Remove skill"
                   >
@@ -1070,7 +1122,9 @@ export default function PromptInput({
                   <FileText className="w-3 h-3 text-droid-text-muted" />
                   {basename(f)}
                   <button
-                    onClick={() => setAttachedFiles((prev) => prev.filter((x) => x !== f))}
+                    onClick={() => {
+                      setAttachedFiles((prev) => prev.filter((x) => x !== f));
+                    }}
                     className="p-0.5 rounded hover:bg-black/20 transition-colors"
                     title="Remove file"
                   >
@@ -1089,10 +1143,27 @@ export default function PromptInput({
               syncCaret(e.target);
               setHistoryIndex(null);
             }}
-            onKeyUp={(e) => syncCaret(e.currentTarget)}
-            onClick={(e) => syncCaret(e.currentTarget)}
-            onSelect={(e) => syncCaret(e.currentTarget)}
+            onKeyUp={(e) => {
+              syncCaret(e.currentTarget);
+            }}
+            onClick={(e) => {
+              syncCaret(e.currentTarget);
+            }}
+            onSelect={(e) => {
+              syncCaret(e.currentTarget);
+            }}
             onKeyDown={handleKeyDown}
+            onPaste={(e) => {
+              const items = Array.from(e.clipboardData.items).filter(
+                (it) => it.kind === 'file' && it.type.startsWith('image/'),
+              );
+              if (items.length === 0) return;
+              e.preventDefault();
+              for (const item of items) {
+                const blob = item.getAsFile();
+                if (blob) imageAttachments.addBlob(blob);
+              }
+            }}
             placeholder={
               missionPreview
                 ? activeSession
@@ -1108,11 +1179,21 @@ export default function PromptInput({
             className="w-full bg-transparent px-4 pt-3 pb-2 text-sm text-droid-text placeholder-droid-text-muted/50 resize-none focus:outline-none min-h-[44px] max-h-[200px]"
           />
 
-          {/* Toolbar */}
-          <div className="flex items-center gap-2 px-3 py-2.5 border-t border-droid-border">
+          {/* Toolbar — one seamless surface with the textarea, no divider line */}
+          <div className="flex items-center gap-1.5 px-2.5 pb-2.5 pt-1">
+            <button
+              onClick={() => void handleAttachFiles()}
+              className="p-1.5 rounded-lg text-droid-text-muted hover:text-droid-text hover:bg-droid-bg/50 transition-colors shrink-0"
+              title="Add files"
+            >
+              <Plus className="w-4 h-4" />
+            </button>
+
             <div className="relative shrink-0">
               <button
-                onClick={() => setModelsOpen((v) => !v)}
+                onClick={() => {
+                  setModelsOpen((v) => !v);
+                }}
                 className={`flex items-center gap-1.5 px-2 py-1 rounded-lg text-[11px] transition-colors max-w-[200px] ${
                   modelsOpen
                     ? 'bg-droid-bg/60 text-droid-text'
@@ -1146,7 +1227,7 @@ export default function PromptInput({
                   <>
                     <ModelIcon provider={providerOf(selectedModel, primaryModelId)} size={14} />
                     <span className="truncate">{selectedModelLabel}</span>
-                    {showReasoningBadge && primaryReasoning && (
+                    {showReasoningBadge && (
                       <span
                         className="shrink-0 px-1.5 py-0.5 rounded-md text-[9px] font-medium capitalize leading-none"
                         style={{
@@ -1169,15 +1250,15 @@ export default function PromptInput({
               <AnimatePresence>
                 {modelsOpen && (
                   <ModelSelectorPopover
-                    onClose={() => setModelsOpen(false)}
+                    onClose={() => {
+                      setModelsOpen(false);
+                    }}
                     singleAgent={!missionPreview}
                     childTarget={childSettingsTarget}
                   />
                 )}
               </AnimatePresence>
             </div>
-
-            <div className="h-4 w-px bg-droid-border/50 shrink-0" />
 
             <button
               onClick={toggleSpec}
@@ -1196,12 +1277,12 @@ export default function PromptInput({
 
             {isLive && !hasContent ? (
               <button
-                onClick={() =>
-                  activeSession &&
-                  interruptVisibleSession(activeSession.appSessionId, targetChildSessionId)
-                }
+                onClick={() => {
+                  if (activeSession)
+                    interruptVisibleSession(activeSession.appSessionId, targetChildSessionId);
+                }}
                 title="Working — click to stop"
-                className="p-2 rounded-xl text-droid-bg shrink-0 transition-colors"
+                className="p-2 rounded-full text-droid-bg shrink-0 transition-opacity hover:opacity-90"
                 style={{ background: ACCENT }}
               >
                 <Square className="w-3.5 h-3.5" fill="currentColor" strokeWidth={0} />
@@ -1209,8 +1290,12 @@ export default function PromptInput({
             ) : isLive ? (
               <div
                 className="relative shrink-0"
-                onMouseEnter={() => setSendHover(true)}
-                onMouseLeave={() => setSendHover(false)}
+                onMouseEnter={() => {
+                  setSendHover(true);
+                }}
+                onMouseLeave={() => {
+                  setSendHover(false);
+                }}
               >
                 <AnimatePresence>
                   {sendHover && (
@@ -1244,7 +1329,8 @@ export default function PromptInput({
                 </AnimatePresence>
                 <button
                   onClick={() => void handleSubmit(enterSteers ? 'now' : 'queue')}
-                  className="p-2 rounded-xl bg-droid-text text-droid-bg hover:bg-droid-text-secondary transition-colors"
+                  className="p-2 rounded-full text-droid-bg transition-opacity hover:opacity-90"
+                  style={{ background: ACCENT }}
                 >
                   <ArrowUp className="w-3.5 h-3.5" />
                 </button>
@@ -1254,7 +1340,8 @@ export default function PromptInput({
                 onClick={() => void handleSubmit()}
                 disabled={!hasContent || !childActionsEnabled}
                 title={idleSendTooltip}
-                className="p-2 rounded-xl bg-droid-text text-droid-bg disabled:opacity-20 disabled:cursor-not-allowed hover:bg-droid-text-secondary transition-colors shrink-0"
+                className="p-2 rounded-full text-droid-bg transition-all enabled:hover:opacity-90 disabled:opacity-25 disabled:cursor-not-allowed shrink-0"
+                style={{ background: ACCENT }}
               >
                 <ArrowUp className="w-3.5 h-3.5" />
               </button>
@@ -1262,6 +1349,16 @@ export default function PromptInput({
           </div>
         </div>
       </div>
+
+      {viewerImage && (
+        <ImageViewerModal
+          image={viewerImage}
+          onClose={() => {
+            setViewerImageId(null);
+          }}
+          onCrop={imageAttachments.applyCrop}
+        />
+      )}
     </div>
   );
 }

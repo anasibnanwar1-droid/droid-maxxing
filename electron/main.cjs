@@ -20,6 +20,7 @@ const gitVcs = require('./git.cjs');
 const githubVcs = require('./github.cjs');
 const { createTerminalManager, createTerminalSubscriptionRegistry } = require('./terminal.cjs');
 const files = require('./files.cjs');
+const attachments = require('./attachments.cjs');
 const {
   normalizeBrowserConsoleMessage,
   redactBrowserDiagnosticUrl,
@@ -127,6 +128,17 @@ function registerIpc() {
     if (selected) await filesRootAccess.authorize(selected);
     return selected;
   });
+  ipcMain.handle('pick-files', async () => {
+    const result = await dialog.showOpenDialog({ properties: ['openFile', 'multiSelections'] });
+    return result.canceled ? [] : result.filePaths;
+  });
+  // Composer image pastes/drops land in a temp dir and travel to Droid as
+  // ordinary @-mentioned paths; discard only ever unlinks inside that dir.
+  const attachmentsDir = path.join(os.tmpdir(), 'droid-control-attachments');
+  ipcMain.handle('save-image', (_event, { dataUrl }) => attachments.save(attachmentsDir, dataUrl));
+  ipcMain.handle('discard-image', (_event, { path: target }) =>
+    attachments.discard(attachmentsDir, target),
+  );
   ipcMain.handle('notify', (_event, { title, body }) => {
     new Notification({ title, body }).show();
   });

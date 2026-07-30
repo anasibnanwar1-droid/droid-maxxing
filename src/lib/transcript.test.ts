@@ -1,6 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { classifyEvent, isChatContent, isDiagnosticContent } from './transcript';
+import {
+  classifyEvent,
+  isChatContent,
+  isDiagnosticContent,
+  scopeTranscriptToAgent,
+} from './transcript';
 import type { TranscriptEvent } from '../types/bridge';
 
 function ev(extra: Partial<TranscriptEvent>): TranscriptEvent {
@@ -73,4 +78,27 @@ test('chat vs diagnostic partitioning', () => {
   assert.equal(isDiagnosticContent('plan_update'), true);
   assert.equal(isDiagnosticContent('tool_activity'), true);
   assert.equal(isDiagnosticContent('assistant_chat'), false);
+});
+
+test('scopeTranscriptToAgent keeps primary-role events by default', () => {
+  const events = [
+    ev({ id: 'p1', role: 'primary', sourceSessionId: 'primary' }),
+    ev({ id: 'c1', role: 'worker', sourceSessionId: 'child-1' }),
+  ];
+  assert.deepEqual(
+    scopeTranscriptToAgent(events, null).map((e) => e.id),
+    ['p1'],
+  );
+});
+
+test('scopeTranscriptToAgent isolates a child session by its id', () => {
+  const events = [
+    ev({ id: 'p1', role: 'primary', sourceSessionId: 'primary' }),
+    ev({ id: 'c1', role: 'worker', sourceSessionId: 'child-1' }),
+    ev({ id: 'c2', role: 'worker', sourceSessionId: 'child-2' }),
+  ];
+  assert.deepEqual(
+    scopeTranscriptToAgent(events, 'child-1').map((e) => e.id),
+    ['c1'],
+  );
 });

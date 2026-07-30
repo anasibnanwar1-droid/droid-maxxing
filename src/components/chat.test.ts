@@ -8,10 +8,12 @@ import {
   collectTurnFiles,
   conversationAnchors,
   correlateResults,
+  fetchSizeBadge,
   groupTurns,
   isResultFor,
   sameFeedEvents,
   MessageFeed,
+  WebFetchBody,
   type FeedItem,
 } from './chat';
 import { hasTodoPayload, parseTruncatedTail } from '../lib/tools';
@@ -910,6 +912,56 @@ test('MessageFeed strips the truncation sentinel and shows no truncation note', 
   assert.ok(html.includes('Big answer body.'));
   assert.equal(html.includes('[truncated'), false);
   assert.equal(html.includes('characters truncated'), false);
+});
+
+test('fetch size badge counts the truncated-away characters', () => {
+  // The sentinel's number is the omitted character count, so a kept 10-char
+  // body with 4096 omitted chars must badge the full fetched size, not "10+".
+  assert.equal(fetchSizeBadge(10, 4096), '4.1k+');
+  assert.equal(fetchSizeBadge(10, null), '10');
+  assert.equal(fetchSizeBadge(0, null), null);
+});
+
+test('a short fetched page body renders its URLs as links outside the source row', () => {
+  // Bodies within the snippet threshold render only as the snippet (no
+  // separate body block), so the snippet must linkify — otherwise URLs in a
+  // short fetched page are plain text and not clickable. But the source row
+  // is itself an anchor, so the linkified snippet must render outside it:
+  // nested anchors are invalid HTML and a click would open both links.
+  const body = 'See https://example.com/docs for the full guide.';
+  const html = renderToStaticMarkup(
+    createElement(WebFetchBody, {
+      error: false,
+      hasBody: true,
+      body,
+      url: 'https://example.com',
+      title: 'Example',
+      snippet: body,
+    }),
+  );
+  const rowClose = html.indexOf('</a>');
+  const snippetLink = html.indexOf('href="https://example.com/docs"');
+  assert.ok(rowClose !== -1);
+  assert.ok(snippetLink > rowClose);
+});
+
+test('a fetched page body never renders an svg fence as inline markup', () => {
+  // Regression: fetched pages are untrusted, so ```svg blocks must render as
+  // plain code, never through SvgCodeBlock's unsanitized dangerouslySetInnerHTML.
+  const body = `${'Intro text. '.repeat(30)}\n\n\`\`\`svg\n<svg onload="alert(1)"><rect width="10" height="10"/></svg>\n\`\`\`\n`;
+  const html = renderToStaticMarkup(
+    createElement(WebFetchBody, {
+      error: false,
+      hasBody: true,
+      body,
+      url: 'https://evil.example',
+      title: 'Evil',
+      snippet: 'Intro text.',
+    }),
+  );
+  assert.equal(html.includes('<svg onload'), false);
+  // The fence survives only as escaped text inside a plain code card.
+  assert.ok(html.includes('&lt;svg'));
 });
 
 test('sameFeedEvents skips stable items and flags the streaming tail', () => {

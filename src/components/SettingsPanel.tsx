@@ -2,6 +2,7 @@ import {
   useStore,
   type DiffStyle,
   type DiffViewMode,
+  type ImagePasteQuality,
   type LiveEnterBehavior,
 } from '../hooks/useStore';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -34,7 +35,7 @@ import { activeSessionCwds } from '../lib/sessions';
 import { utilityTerminalCwds } from '../lib/utilityPanel';
 import { workspaceName } from '../lib/workspaces';
 import { toast } from '../lib/toast';
-import { diffPaletteForTheme } from '../lib/diffTheme';
+import { applyTheme, paletteForMode, UI_FONTS, PRESET_THEMES } from '../lib/theme';
 
 const PRESET_ACCENTS = [
   '#ee6018',
@@ -48,49 +49,6 @@ const PRESET_ACCENTS = [
   '#f87171',
   '#fcfcfc',
 ];
-
-// Each preset carries a theme-matched neutral accent so switching mode/preset
-// keeps the UI monochrome (the accent tracks the foreground tone) instead of
-// leaving a stale colored accent behind. Tinted themes (midnight/warm) use their
-// own fg tone as the accent so they stay on a single tonal scale.
-const PRESET_THEMES = {
-  dark: { bg: '#0a0a0a', fg: '#ededed', surface: '#111111', border: '#1f1f1f', accent: '#f2f2f2' },
-  light: { bg: '#fcfcfc', fg: '#141414', surface: '#f3f3f3', border: '#eeeeee', accent: '#1a1a1a' },
-  midnight: {
-    bg: '#0a0e1a',
-    fg: '#c8d0e0',
-    surface: '#11152a',
-    border: '#1a2040',
-    accent: '#c8d0e0',
-  },
-  warm: { bg: '#1a1612', fg: '#d8d0c8', surface: '#221e18', border: '#322a22', accent: '#d8d0c8' },
-};
-
-const SYSTEM_FONT_STACK = '-apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif';
-const UI_FONTS: { id: string; label: string; stack: string }[] = [
-  { id: 'system', label: 'System', stack: SYSTEM_FONT_STACK },
-  { id: 'inter', label: 'Inter', stack: `"Inter", ${SYSTEM_FONT_STACK}` },
-  { id: 'sf', label: 'SF Pro', stack: `"SF Pro Display", "SF Pro Text", ${SYSTEM_FONT_STACK}` },
-  { id: 'geist', label: 'Geist', stack: `"Geist", ${SYSTEM_FONT_STACK}` },
-  { id: 'helvetica', label: 'Helvetica', stack: `"Helvetica Neue", Helvetica, Arial, sans-serif` },
-  { id: 'georgia', label: 'Georgia', stack: `Georgia, "Times New Roman", serif` },
-  { id: 'mono', label: 'Mono', stack: `"JetBrains Mono", "Fira Code", ui-monospace, monospace` },
-];
-
-export function uiFontStack(id: string): string {
-  return UI_FONTS.find((f) => f.id === id)?.stack ?? SYSTEM_FONT_STACK;
-}
-
-// Base palette for a theme mode. `system` follows the OS preference.
-export function paletteForMode(mode: 'dark' | 'light' | 'system') {
-  const resolved =
-    mode === 'system'
-      ? window.matchMedia?.('(prefers-color-scheme: light)').matches
-        ? 'light'
-        : 'dark'
-      : mode;
-  return resolved === 'light' ? PRESET_THEMES.light : PRESET_THEMES.dark;
-}
 
 type NavItem = { label: string };
 const NAV: { group: string; items: NavItem[] }[] = [
@@ -874,6 +832,26 @@ function GeneralSection() {
             }
           />
         </SettingRow>
+        <SettingRow
+          label="Image paste quality"
+          description="How pasted or dropped images are encoded for the model. Original keeps the exact pixels; smaller tiers save context tokens."
+        >
+          <Dropdown
+            value={state.imagePasteQuality}
+            width="w-52"
+            options={[
+              { value: 'original', label: 'Original · exact bytes' },
+              { value: 'high', label: 'High · 2048px PNG' },
+              { value: 'compact', label: 'Compact · 1568px JPEG' },
+            ]}
+            onChange={(quality) => {
+              dispatch({
+                type: 'SET_IMAGE_PASTE_QUALITY',
+                quality: quality as ImagePasteQuality,
+              });
+            }}
+          />
+        </SettingRow>
       </div>
 
       <GroupLabel>Diff display</GroupLabel>
@@ -1428,112 +1406,4 @@ export default function SettingsPanel() {
   );
 }
 
-/* ── apply CSS variables to document ── */
-export function applyTheme(theme: ReturnType<typeof useStore>['state']['theme']) {
-  const root = document.documentElement;
-  root.style.setProperty('--droid-bg', theme.bg);
-  root.style.setProperty('--droid-surface', theme.surface);
-  // Build the elevation ramp in the correct direction for the theme. Dark themes
-  // get lighter as surfaces rise (bg < surface < elevated < active); light themes
-  // step progressively darker, since there is no headroom above a near-white base
-  // (e.g. surface #f3f3f3 over bg #fcfcfc). This keeps a real, visible tonal
-  // hierarchy in both modes instead of an inverted/flat ramp.
-  const bgIsDark = colorLuminance(theme.bg) < 0.4;
-  const lift = (amount: number) => adjustColor(theme.surface, bgIsDark ? amount : -amount);
-  root.style.setProperty('--droid-elevated', lift(13));
-  // The most-raised neutral, for selected/active rows.
-  root.style.setProperty('--droid-active', lift(26));
-  // Soften resting borders by blending toward the background so panel/section
-  // separators read as gentle hairlines rather than hard lines. Dark themes need
-  // a stronger blend: at low luminance the same edge reads as a harsh outline, so
-  // we push it closer to the background to keep the subtle look light mode has.
-  root.style.setProperty('--droid-border', mixHex(theme.border, theme.bg, bgIsDark ? 0.72 : 0.6));
-  root.style.setProperty(
-    '--droid-border-hover',
-    mixHex(theme.border, theme.bg, bgIsDark ? 0.4 : 0.2),
-  );
-  root.style.setProperty('--droid-text', theme.fg);
-  root.style.setProperty('--droid-text-secondary', adjustColor(theme.fg, -30));
-  root.style.setProperty('--droid-text-muted', adjustColor(theme.fg, -50));
-  root.style.setProperty('--droid-accent', theme.accent);
-  // Semantic status colors are FIXED, never accent-derived, so success/warning
-  // and diff add/remove always read as green/amber/red even when the accent is a
-  // neutral monochrome tone.
-  root.style.setProperty('--droid-green', '#4fae82');
-  root.style.setProperty('--droid-orange', '#d9913a');
-  root.style.setProperty('--droid-red', '#cf5d54');
-  root.setAttribute('data-diff-style', theme.diffStyle);
-  const diffPalette = diffPaletteForTheme(bgIsDark, theme.diffStyle);
-  root.style.setProperty('--diff-add-fg', diffPalette.addFg);
-  root.style.setProperty('--diff-add-bg', diffPalette.addBg);
-  root.style.setProperty('--diff-add-gutter', diffPalette.addGutter);
-  root.style.setProperty('--diff-del-fg', diffPalette.delFg);
-  root.style.setProperty('--diff-del-bg', diffPalette.delBg);
-  root.style.setProperty('--diff-del-gutter', diffPalette.delGutter);
-  root.style.setProperty('--diff-hunk-bg', diffPalette.hunkBg);
-  root.style.setProperty('--diff-hunk-fg', diffPalette.hunkFg);
-
-  root.style.setProperty('--ui-font-family', uiFontStack(theme.uiFont));
-  root.style.setProperty('--ui-font-size', `${theme.uiFontSize}px`);
-  // The UI is built with fixed px text sizes, so scale the whole app relative
-  // to the 14px baseline to make the size slider take visible effect.
-  root.style.setProperty('--ui-zoom', `${theme.uiFontSize / 14}`);
-  root.style.setProperty('--code-font-size', `${theme.codeFontSize}px`);
-
-  // Dedicated sidebar surface so translucency only affects the sidebar. When
-  // enabled, the window becomes transparent (see index.css + Electron vibrancy)
-  // and the sidebar uses a semi-transparent fill so the wallpaper behind the
-  // window shows through a little — frosted, not fully clear.
-  // Light surfaces sit over a dark macOS vibrancy material, so a low-opacity
-  // fill plus a strong saturation boost lets the wallpaper bleed through as a
-  // muddy tint. Keep light themes mostly opaque with gentle saturation so the
-  // sidebar stays a clean frosted white; dark themes can show more through.
-  root.setAttribute('data-translucent', theme.translucentSidebar ? 'true' : 'false');
-  const sidebarAlpha = bgIsDark ? '99' : 'f2';
-  const sidebarSaturate = bgIsDark ? 'saturate(150%)' : 'saturate(108%)';
-  root.style.setProperty(
-    '--sidebar-bg',
-    theme.translucentSidebar ? `${theme.surface}${sidebarAlpha}` : theme.surface,
-  );
-  root.style.setProperty(
-    '--sidebar-blur',
-    theme.translucentSidebar ? `blur(6px) ${sidebarSaturate}` : 'none',
-  );
-
-  // Apply contrast as a filter only below 100% so it never creates a stacking
-  // context that would defeat the sidebar's backdrop blur at the default value.
-  const rootEl = document.getElementById('root');
-  if (rootEl) rootEl.style.filter = theme.contrast >= 100 ? '' : `contrast(${theme.contrast}%)`;
-}
-
-/* ── tiny color utils ── */
-// Relative luminance (0 = black, 1 = white) used to tell dark themes from light.
-function colorLuminance(hex: string): number {
-  const r = parseInt(hex.slice(1, 3), 16) / 255;
-  const g = parseInt(hex.slice(3, 5), 16) / 255;
-  const b = parseInt(hex.slice(5, 7), 16) / 255;
-  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
-}
-
-function adjustColor(hex: string, lighten: number): string {
-  const r = parseInt(hex.slice(1, 3), 16);
-  const g = parseInt(hex.slice(3, 5), 16);
-  const b = parseInt(hex.slice(5, 7), 16);
-  const clamp = (n: number) => Math.max(0, Math.min(255, n + lighten));
-  const toHex = (n: number) => n.toString(16).padStart(2, '0');
-  return `#${toHex(clamp(r))}${toHex(clamp(g))}${toHex(clamp(b))}`;
-}
-
-// Blend `hex` toward `target` by t (0..1).
-function mixHex(hex: string, target: string, t: number): string {
-  const parse = (h: string) => [
-    parseInt(h.slice(1, 3), 16),
-    parseInt(h.slice(3, 5), 16),
-    parseInt(h.slice(5, 7), 16),
-  ];
-  const [r1, g1, b1] = parse(hex);
-  const [r2, g2, b2] = parse(target);
-  const mix = (a: number, b: number) => Math.round(a * (1 - t) + b * t);
-  const toHex = (n: number) => Math.max(0, Math.min(255, n)).toString(16).padStart(2, '0');
-  return `#${toHex(mix(r1, r2))}${toHex(mix(g1, g2))}${toHex(mix(b1, b2))}`;
-}
+/* theme application lives in ../lib/theme (imported above) */

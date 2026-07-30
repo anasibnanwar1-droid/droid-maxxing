@@ -1,6 +1,7 @@
 import { createContext, useContext, useMemo, useReducer, ReactNode, useEffect } from 'react';
 import { bridge } from '../lib/bridge';
 import { updateCompactionSettings } from '../lib/commands';
+import { migrateLegacyLightPreset } from '../lib/theme';
 import {
   clearDesignMode,
   setDesignMode,
@@ -51,11 +52,13 @@ import {
   type UtilityPanelState,
   type UtilityTool,
 } from '../lib/utilityPanel';
+import type { ImagePasteQuality } from '../lib/images';
 
 export type AgentKind = 'primary' | 'worker' | 'validator';
 export type ChildSettingsReadiness = 'opening' | 'ready' | 'failed';
 export type LiveEnterBehavior = 'queue' | 'interrupt';
 export type DiffViewMode = 'unified' | 'split';
+export type { ImagePasteQuality } from '../lib/images';
 
 export type ChildSessionInfo = ChildSessionSummary;
 
@@ -192,6 +195,9 @@ export interface AppState {
   theme: ThemeConfig;
   missionControlMode: boolean;
   draftChat: { cwd: string; branch?: string } | null;
+  // One-shot text seeded into the composer (welcome-screen suggestion cards).
+  // A fresh id per seed lets clicking the same card twice re-arm the effect.
+  composerSeed: { text: string; id: number } | null;
   workspaceCwds: string[];
   // Derived (synced by the reducer): whether the browser pane is open for the
   // *currently active* session. Source of truth is `browserOpenKeys`.
@@ -227,6 +233,8 @@ export interface AppState {
   // the push effect always re-fires and the sidecar snapshot never goes stale.
   compactionSettingsRev: number;
   liveEnterBehavior: LiveEnterBehavior;
+  // Fidelity tier for images pasted or dropped into the composer.
+  imagePasteQuality: ImagePasteQuality;
 
   // Per-session model/reasoning the user picked in the selector. These are
   // authoritative: a stale server summary (e.g. an in-flight resume) must not
@@ -381,6 +389,8 @@ type Action =
   | { type: 'TOGGLE_SETTINGS' }
   | { type: 'TOGGLE_MISSION_CONTROL' }
   | { type: 'START_CHAT'; cwd: string; branch?: string }
+  | { type: 'SEED_COMPOSER'; text: string }
+  | { type: 'CLEAR_COMPOSER_SEED' }
   | { type: 'ADD_WORKSPACE'; cwd: string }
   | { type: 'TOGGLE_BROWSER' }
   | { type: 'SET_BROWSER_OPEN'; open: boolean }
@@ -412,7 +422,8 @@ type Action =
   | { type: 'SET_COMPACTION_MODEL_GLOBAL'; compactionModel: string }
   | { type: 'SET_COMPACTION_TOKEN_LIMIT_GLOBAL'; limit?: number }
   | { type: 'SET_COMPACTION_TOKEN_LIMIT_FOR_MODEL'; modelId: string; limit?: number }
-  | { type: 'SET_LIVE_ENTER_BEHAVIOR'; behavior: LiveEnterBehavior };
+  | { type: 'SET_LIVE_ENTER_BEHAVIOR'; behavior: LiveEnterBehavior }
+  | { type: 'SET_IMAGE_PASTE_QUALITY'; quality: ImagePasteQuality };
 
 const defaultTheme: ThemeConfig = {
   mode: 'dark',
@@ -461,6 +472,7 @@ function getLocalStorage(): Storage | undefined {
 // it to a theme-matched neutral and let the monochrome scale show through.
 const LEGACY_DEFAULT_ACCENTS = new Set(['#ee6018', '#ff5d2e']);
 const THEME_ACCENT_MIGRATED_KEY = 'droid-theme-accent-migrated';
+const THEME_LIGHT_PRESET_MIGRATED_KEY = 'droid-theme-light-preset-migrated';
 
 function neutralAccentFor(bg: string): string {
   const r = parseInt(bg.slice(1, 3), 16);
@@ -494,6 +506,23 @@ function loadTheme(): ThemeConfig {
           storage.setItem('droid-theme', JSON.stringify(theme));
         }
         storage.setItem(THEME_ACCENT_MIGRATED_KEY, '1');
+      } catch {
+        /* migration write failed; retry on a later load */
+      }
+    }
+    // One-time migration: a saved theme still matching the old white-on-white
+    // light preset exactly was never customized, so swap it to the readable
+    // warm-grey palette. Same persisted-flag pattern as the accent migration.
+    if (storage && storage.getItem(THEME_LIGHT_PRESET_MIGRATED_KEY) !== '1') {
+      try {
+        if (saved) {
+          const migrated = migrateLegacyLightPreset(theme);
+          if (migrated !== theme) {
+            Object.assign(theme, migrated);
+            storage.setItem('droid-theme', JSON.stringify(theme));
+          }
+        }
+        storage.setItem(THEME_LIGHT_PRESET_MIGRATED_KEY, '1');
       } catch {
         /* migration write failed; retry on a later load */
       }
@@ -546,6 +575,7 @@ function saveAgentConfig(config: AgentConfig): AgentConfig {
 // for compaction across every session.
 const COMPACTION_MODEL_STORAGE_KEY = 'droid-compaction-model';
 const LIVE_ENTER_BEHAVIOR_STORAGE_KEY = 'droid-live-enter-behavior';
+const IMAGE_PASTE_QUALITY_STORAGE_KEY = 'droid-image-paste-quality';
 const DIFF_VIEW_STORAGE_KEY = 'droid-diff-view';
 const REVIEW_SCOPE_STORAGE_KEY = 'droid-review-scope';
 const WORKSPACES_STORAGE_KEY = 'droid-workspaces';
@@ -612,6 +642,28 @@ function saveLiveEnterBehavior(value: LiveEnterBehavior): LiveEnterBehavior {
     /* ignore */
   }
   return behavior;
+}
+
+function normalizeImagePasteQuality(value: unknown): ImagePasteQuality {
+  return value === 'high' || value === 'compact' ? value : 'original';
+}
+
+function loadImagePasteQuality(): ImagePasteQuality {
+  try {
+    return normalizeImagePasteQuality(getLocalStorage()?.getItem(IMAGE_PASTE_QUALITY_STORAGE_KEY));
+  } catch {
+    return 'original';
+  }
+}
+
+function saveImagePasteQuality(value: ImagePasteQuality): ImagePasteQuality {
+  const quality = normalizeImagePasteQuality(value);
+  try {
+    getLocalStorage()?.setItem(IMAGE_PASTE_QUALITY_STORAGE_KEY, quality);
+  } catch {
+    /* ignore */
+  }
+  return quality;
 }
 
 function loadDiffView(): DiffViewMode {
@@ -812,6 +864,7 @@ export const initialState: AppState = {
   theme: loadTheme(),
   missionControlMode: persistedUiState.missionControlMode ?? false,
   draftChat: null,
+  composerSeed: null,
   workspaceCwds: loadWorkspaceCwds(),
   browserOpen: false,
   browserOpenKeys: persistedUiState.browserOpenKeys ?? {},
@@ -827,6 +880,7 @@ export const initialState: AppState = {
   compactionTokenLimitPerModel: loadCompactionTokenLimitPerModel(),
   compactionSettingsRev: 0,
   liveEnterBehavior: loadLiveEnterBehavior(),
+  imagePasteQuality: loadImagePasteQuality(),
   reviewOpenAppSessionId: null,
   reviewScope: loadReviewScope(),
   reviewFocusPath: null,
@@ -1991,6 +2045,14 @@ function baseReducer(state: AppState, action: Action): AppState {
       };
     }
 
+    case 'SEED_COMPOSER':
+      return { ...state, composerSeed: { text: action.text, id: Date.now() } };
+
+    // The composer consumes the seed once; it must not linger, or remounting
+    // the composer (e.g. toggling Mission Control) would re-apply stale text.
+    case 'CLEAR_COMPOSER_SEED':
+      return { ...state, composerSeed: null };
+
     case 'ADD_WORKSPACE':
       return {
         ...state,
@@ -2290,6 +2352,11 @@ function baseReducer(state: AppState, action: Action): AppState {
     case 'SET_LIVE_ENTER_BEHAVIOR': {
       const behavior = saveLiveEnterBehavior(action.behavior);
       return { ...state, liveEnterBehavior: behavior };
+    }
+
+    case 'SET_IMAGE_PASTE_QUALITY': {
+      const quality = saveImagePasteQuality(action.quality);
+      return { ...state, imagePasteQuality: quality };
     }
 
     default:
