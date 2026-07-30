@@ -316,17 +316,20 @@ test('[E2] pre-ready fixture failure cleans the temporary profile and process', 
 
 test('[E2] cleanup force-stops a fixture that ignores stdin closure', async () => {
   const smokeHome = mkdtempSync(path.join(tmpdir(), 'droid-control-child-cleanup-timeout-'));
-  const fixtureProcess = spawn(
-    process.execPath,
-    [
-      '-e',
-      "process.stdout.write('HANGING_READY\\n'); process.stdin.resume(); setInterval(() => {}, 1000);",
-    ],
-    { stdio: ['pipe', 'pipe', 'pipe'] },
-  );
-  const resources: SmokeResources = { smokeHome, fixtureProcess };
+  const resources: SmokeResources = { smokeHome };
+  let fixtureProcess: ChildProcessWithoutNullStreams | undefined;
+  let stoppedByCleanup = false;
 
   try {
+    fixtureProcess = spawn(
+      process.execPath,
+      [
+        '-e',
+        "process.stdout.write('HANGING_READY\\n'); process.stdin.resume(); setInterval(() => {}, 1000);",
+      ],
+      { stdio: ['pipe', 'pipe', 'pipe'] },
+    );
+    resources.fixtureProcess = fixtureProcess;
     await new Promise<void>((resolve, reject) => {
       fixtureProcess.once('error', reject);
       fixtureProcess.once('exit', (code) =>
@@ -335,13 +338,17 @@ test('[E2] cleanup force-stops a fixture that ignores stdin closure', async () =
       fixtureProcess.stdout.once('data', () => resolve());
     });
     await cleanupSmokeResources(resources, 25);
+    stoppedByCleanup = fixtureProcess.exitCode !== null || fixtureProcess.signalCode !== null;
   } finally {
-    if (fixtureProcess.exitCode === null && fixtureProcess.signalCode === null)
-      fixtureProcess.kill('SIGKILL');
-    await waitForExit(fixtureProcess).catch(() => undefined);
+    const fixture = resources.fixtureProcess;
+    if (fixture && fixture.exitCode === null && fixture.signalCode === null)
+      fixture.kill('SIGKILL');
+    if (fixture) await waitForExit(fixture).catch(() => undefined);
     rmSync(smokeHome, { recursive: true, force: true });
   }
 
+  assert.equal(stoppedByCleanup, true);
+  assert.ok(fixtureProcess);
   assert.equal(fixtureProcess.signalCode, 'SIGKILL');
   assert.equal(existsSync(smokeHome), false);
 });
