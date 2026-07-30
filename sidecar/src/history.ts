@@ -160,10 +160,13 @@ const SEQ_SEGMENT_STRIDE = 1_000_000;
 const MAX_SESSION_BYTES = 5_000_000;
 const SESSION_START_BYTES = 256_000;
 const HISTORY_SCHEMA_VERSION = 1;
+export const SESSION_INDEX_FILENAME = 'session-index.sqlite';
 const HISTORY_SCHEMA_RECOVERY =
   'DROIDEX local history index uses an incompatible schema. Quit DROIDEX, remove ' +
-  '~/.factory/droid-control/index.sqlite, ~/.factory/droid-control/index.sqlite-wal, and ' +
-  '~/.factory/droid-control/index.sqlite-shm, then restart. Raw Factory session history is not removed.';
+  `~/.factory/droid-control/${SESSION_INDEX_FILENAME}, ` +
+  `~/.factory/droid-control/${SESSION_INDEX_FILENAME}-wal, and ` +
+  `~/.factory/droid-control/${SESSION_INDEX_FILENAME}-shm, then restart. ` +
+  'Raw Factory session history is not removed.';
 
 export function loadMissionControlSessions(
   options: HistoricalSummaryFilter = {},
@@ -292,7 +295,7 @@ export class HistoryIndex {
   constructor() {
     const dir = join(homedir(), '.factory', 'droid-control');
     mkdirSync(dir, { recursive: true });
-    const db = new DatabaseSync(join(dir, 'index.sqlite'));
+    const db = new DatabaseSync(join(dir, SESSION_INDEX_FILENAME));
     try {
       HistoryIndex.initializeOrValidateHistorySchema(db);
       db.exec('PRAGMA journal_mode = WAL');
@@ -855,7 +858,7 @@ function whenReasoning(
 }
 
 function readStoredSummaryPatches(): Map<string, Partial<SessionSummary>> {
-  const path = join(homedir(), '.factory', 'droid-control', 'index.sqlite');
+  const path = join(homedir(), '.factory', 'droid-control', SESSION_INDEX_FILENAME);
   if (!existsSync(path)) return new Map();
   const db = new DatabaseSync(path);
   try {
@@ -868,7 +871,7 @@ function readStoredSummaryPatches(): Map<string, Partial<SessionSummary>> {
 }
 
 function readStoredChildSessions(parentAppSessionId: string): PersistedChildSession[] {
-  const path = join(homedir(), '.factory', 'droid-control', 'index.sqlite');
+  const path = join(homedir(), '.factory', 'droid-control', SESSION_INDEX_FILENAME);
   if (!existsSync(path)) return [];
   const db = new DatabaseSync(path);
   try {

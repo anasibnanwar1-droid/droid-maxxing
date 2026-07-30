@@ -42,13 +42,14 @@ The local index uses one canonical schema and has no migration or compatibility 
 1. Quit Droid Control.
 2. Remove only the local derived index files:
    ```bash
-   rm -f "$HOME/.factory/droid-control/index.sqlite"
-   rm -f "$HOME/.factory/droid-control/index.sqlite-wal"
-   rm -f "$HOME/.factory/droid-control/index.sqlite-shm"
+   rm -f "$HOME/.factory/droid-control/session-index.sqlite"
+   rm -f "$HOME/.factory/droid-control/session-index.sqlite-wal"
+   rm -f "$HOME/.factory/droid-control/session-index.sqlite-shm"
    ```
 3. Restart Droid Control. The sidecar rebuilds the index from current local Factory session history.
 
 These commands do not remove raw Factory session history. Do not delete the broader `~/.factory` directory.
+Do not remove `index.sqlite`; that filename remains reserved for older app/worktree schemas.
 
 ## Verify child navigation without Factory authentication
 
