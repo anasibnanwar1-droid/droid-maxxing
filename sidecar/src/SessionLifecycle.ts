@@ -48,6 +48,7 @@ interface LiveTurnState {
   streaming: boolean;
   autoCompacting: boolean;
   pendingSends: string[];
+  turnAbortController?: AbortController;
   interruptingForSteer?: boolean;
   interrupting?: boolean; // Marks user Stop so the resulting stream abort settles quietly.
 }
@@ -83,7 +84,11 @@ export interface SessionLifecycleDependencies {
   childSessions: Pick<ChildSessions, 'attachParent' | 'closeParent'>;
   applyPendingSettingsToSummary: (summary: SessionSummary) => SessionSummary;
   applyPendingSessionSettings: (appSessionId: string) => Promise<boolean>;
-  runPrimaryTurn: (liveSession: LiveSession, prompt: string) => Promise<void>;
+  runPrimaryTurn: (
+    liveSession: LiveSession,
+    prompt: string,
+    abortSignal: AbortSignal,
+  ) => Promise<void>;
   context: Pick<SessionContext, 'refresh' | 'stopPolling' | 'stopSession' | 'forgetSession'>;
   forgetInteractions: (appSessionId: string) => void;
   forgetEventFlow: (appSessionId: string) => void;
@@ -329,6 +334,7 @@ export class SessionLifecycle {
     this.dependencies.emitStatus(liveSession.summary.appSessionId, 'Steering now...');
     try {
       await liveSession.session.interrupt();
+      liveSession.turnAbortController?.abort();
     } catch (error) {
       liveSession.interruptingForSteer = false;
       this.dependencies.emitError({
@@ -353,6 +359,7 @@ export class SessionLifecycle {
     liveSession.interrupting = true;
     try {
       await liveSession.session.interrupt();
+      liveSession.turnAbortController?.abort();
     } catch (error) {
       liveSession.interrupting = false;
       throw error;
@@ -460,6 +467,7 @@ export class SessionLifecycle {
     await run(() => {
       liveSession.unsubscribe?.();
     });
+    liveSession.turnAbortController?.abort();
     for (const server of liveSession.mcpServers) {
       await run(() => server.close());
     }
@@ -589,6 +597,8 @@ export class SessionLifecycle {
     const liveSession = d.registry.getLive(appSessionId);
     if (!liveSession || liveSession.closeMode || d.isShutdownStarted()) return;
     const stableAppSessionId = liveSession.summary.appSessionId;
+    const turnAbortController = new AbortController();
+    liveSession.turnAbortController = turnAbortController;
     try {
       liveSession.streaming = true;
       d.registry.updateSummary(stableAppSessionId, {
@@ -596,8 +606,11 @@ export class SessionLifecycle {
         streaming: true,
         queuedSends: liveSession.pendingSends.length,
       });
-      await d.runPrimaryTurn(liveSession, prompt);
+      await d.runPrimaryTurn(liveSession, prompt, turnAbortController.signal);
     } finally {
+      if (liveSession.turnAbortController === turnAbortController) {
+        delete liveSession.turnAbortController;
+      }
       liveSession.interruptingForSteer = false;
       liveSession.interrupting = false;
       liveSession.streaming = false;

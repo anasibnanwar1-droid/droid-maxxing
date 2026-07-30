@@ -189,8 +189,11 @@ function createHarness(ordinarySummaries: SessionSummary[] = []) {
     isShutdownStarted: () => shutdownStarted,
     applyPendingSettingsToSummary: (item) => ({ ...item, ...projection }),
     applyPendingSessionSettings: (appSessionId) => applyPending(appSessionId),
-    runPrimaryTurn: async (live, prompt) => {
-      for await (const event of live.session.stream(prompt, { includePartialMessages: true })) {
+    runPrimaryTurn: async (live, prompt, abortSignal) => {
+      for await (const event of live.session.stream(prompt, {
+        includePartialMessages: true,
+        abortSignal,
+      })) {
         void event;
       }
     },
@@ -674,7 +677,7 @@ test('failed turn setup clears streaming so the next send can run', async () => 
   assert.deepEqual(provider.prompts, ['first', 'recovered']);
 });
 
-test('queued sends stay FIFO while send-now prompts are newest first', async () => {
+test('queued sends stay FIFO while consecutive send-now prompts each replace the active turn', async () => {
   const fifo = createHarness();
   const fifoProvider = queueCreate(fifo, 'fifo');
   const fifoGate = fifoProvider.deferNextStream();
@@ -694,7 +697,7 @@ test('queued sends stay FIFO while send-now prompts are newest first', async () 
   await steered.lifecycle.sendNow('steered', 'steer two');
   steerGate.resolve();
   await steerProvider.waitForPrompts(3);
-  assert.deepEqual(steerProvider.prompts, ['first', 'steer two', 'steer one']);
+  assert.deepEqual(steerProvider.prompts, ['first', 'steer one', 'steer two']);
   assert.equal(interruptCount(steered), 2);
 });
 
@@ -793,6 +796,26 @@ test('interrupt handles idle, streaming, manual compaction, and auto-compaction 
     ),
     true,
   );
+});
+
+test('interrupt aborts a stalled local stream so the next turn can start', async () => {
+  const harness = createHarness();
+  const provider = queueCreate(harness, 'abort-stalled');
+  provider.deferNextStream();
+  await harness.lifecycle.create(createCommand());
+  await provider.waitForPrompts(1);
+
+  const live = requireLive(harness, 'abort-stalled');
+  assert.equal(live.streaming, true);
+  await harness.lifecycle.interrupt('abort-stalled');
+  await new Promise<void>((resolve) => setImmediate(resolve));
+
+  assert.equal(live.streaming, false);
+  assert.equal(live.turnAbortController, undefined);
+  assert.equal(live.summary.phase, 'paused');
+
+  await harness.lifecycle.send('abort-stalled', 'next turn');
+  assert.deepEqual(provider.prompts, ['first', 'next turn']);
 });
 
 test('resuming an already-live session does not reload or persist it', async () => {

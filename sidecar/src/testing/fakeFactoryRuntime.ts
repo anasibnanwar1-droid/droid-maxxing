@@ -103,7 +103,9 @@ export class FakeFactorySession implements FactorySession {
       args: [this.sessionId, prompt, options],
     });
     this.resolvePromptWaiters();
-    await this.streamGates.shift()?.promise;
+    const streamGate = this.streamGates.shift();
+    if (streamGate) await waitForGateOrAbort(streamGate.promise, options.abortSignal);
+    else options.abortSignal?.throwIfAborted();
     const streamError = this.nextStreamError;
     delete this.nextStreamError;
     if (streamError) throw streamError;
@@ -348,6 +350,20 @@ export class FakeFactorySession implements FactorySession {
       waiter.resolve();
     }
   }
+}
+
+function waitForGateOrAbort(gate: Promise<void>, abortSignal?: AbortSignal): Promise<void> {
+  if (!abortSignal) return gate;
+  abortSignal.throwIfAborted();
+  return new Promise<void>((resolve, reject) => {
+    const onAbort = (): void => {
+      reject(abortSignal.reason);
+    };
+    abortSignal.addEventListener('abort', onAbort, { once: true });
+    void gate.then(resolve, reject).finally(() => {
+      abortSignal.removeEventListener('abort', onAbort);
+    });
+  });
 }
 
 export class FakeFactoryRuntime implements FactoryRuntime {

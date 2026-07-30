@@ -328,7 +328,8 @@ export class SessionManager {
       childSessions: this.childSessions,
       applyPendingSettingsToSummary: (summary) => this.applyPendingSettingsToSummary(summary),
       applyPendingSessionSettings: (appSessionId) => this.applyPendingSessionSettings(appSessionId),
-      runPrimaryTurn: (liveSession, prompt) => this.runPrimaryTurn(liveSession, prompt),
+      runPrimaryTurn: (liveSession, prompt, abortSignal) =>
+        this.runPrimaryTurn(liveSession, prompt, abortSignal),
       context: this.context,
       forgetInteractions: (appSessionId) => {
         this.interactions.forgetSession(appSessionId);
@@ -910,7 +911,11 @@ export class SessionManager {
     this.emit({ type: 'sessions.list', sessions: this.registry.listSummaries(options) });
   }
 
-  private async runPrimaryTurn(liveSession: LiveSession, prompt: string): Promise<void> {
+  private async runPrimaryTurn(
+    liveSession: LiveSession,
+    prompt: string,
+    abortSignal: AbortSignal,
+  ): Promise<void> {
     const appSessionId = liveSession.summary.appSessionId;
     const contextTarget = this.primaryContextTarget(liveSession);
     if (!this.isCurrentPrimarySession(liveSession)) return;
@@ -923,7 +928,10 @@ export class SessionManager {
         isDesignStudioSession(liveSession.summary) || isDesignPrompt(prompt),
       );
       if (!this.isCurrentPrimarySession(liveSession)) return;
-      const stream = liveSession.session.stream(prompt, { includePartialMessages: true });
+      const stream = liveSession.session.stream(prompt, {
+        includePartialMessages: true,
+        abortSignal,
+      });
       for await (const ev of stream) {
         if (!this.isCurrentPrimarySession(liveSession)) break;
         this.eventFlow.applyStreamEvent(appSessionId, appSessionId, 'primary', ev);
