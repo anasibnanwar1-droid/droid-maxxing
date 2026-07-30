@@ -955,16 +955,6 @@ function definedPatch(patch: Partial<SessionSummary>): Partial<SessionSummary> {
   ) as Partial<SessionSummary>;
 }
 
-// Order merged transcript events chronologically, tie-breaking by the
-// chain-derived `seq` so equal-`ts` events keep a deterministic order. Events
-// without a seq (live, or child sessions) sort after same-`ts` primary events.
-function byChronology(a: TranscriptEvent, b: TranscriptEvent): number {
-  if (a.ts !== b.ts) return a.ts - b.ts;
-  const as = a.seq ?? Number.POSITIVE_INFINITY;
-  const bs = b.seq ?? Number.POSITIVE_INFINITY;
-  return as - bs;
-}
-
 export function hydrateHistoricalSession(
   missionId: string,
   opts: { cursor?: string; limit?: number } = {},
