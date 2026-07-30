@@ -463,6 +463,41 @@ test('closing suppresses in-flight policy and context updates', async () => {
   }
 });
 
+test('a completed turn settles while context telemetry is still pending', async () => {
+  const h = createSessionManagerTestContext();
+  const provider = new FakeFactorySession('provider-hung-context', {}, h.calls);
+  const contextGate = provider.deferNextContextStats();
+  h.runtime.createQueue.push(provider);
+
+  try {
+    await h.create({
+      sessionPurpose: 'chat',
+      clientRef: 'hung-context',
+      title: 'Hung context',
+      goal: 'finish the turn',
+      interactionMode: 'auto',
+      autonomy: 'low',
+    });
+    await h.provider.waitForPrompts('provider-hung-context', 1);
+    await h.waitForIdle();
+
+    const latestUpdate = h.events
+      .filter((event) => event.type === 'session.updated')
+      .findLast((event) => event.session.appSessionId === 'provider-hung-context');
+    assert.equal(latestUpdate?.session.streaming, false);
+
+    await h.handle({
+      type: 'session.send',
+      appSessionId: 'provider-hung-context',
+      text: 'next turn',
+    });
+    assert.deepEqual(provider.prompts, ['finish the turn', 'next turn']);
+  } finally {
+    contextGate.resolve();
+    await h.dispose();
+  }
+});
+
 test('[L8] Stop state matrix', { concurrency: false }, async () => {
   const h = createSessionManagerTestContext();
 

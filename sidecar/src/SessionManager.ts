@@ -939,10 +939,10 @@ export class SessionManager {
       }
     } finally {
       this.context.stopPolling(contextTarget);
-      // Keep streaming=true while the context refresh is in flight so concurrent
-      // sends queue instead of racing a second lifecycle turn.
+      // Context telemetry is informational. Turn settlement and queued sends
+      // must not wait on a slow or unavailable provider stats endpoint.
       if (this.isCurrentPrimarySession(liveSession)) {
-        await this.context.refresh(contextTarget);
+        void this.context.refresh(contextTarget);
       }
     }
   }

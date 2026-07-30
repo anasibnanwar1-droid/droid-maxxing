@@ -1,4 +1,5 @@
 import type { ContextBreakdownResult, GetContextStatsResult } from '@factory/droid-sdk';
+import { clearTimeout, setTimeout } from 'node:timers';
 
 import type { FactoryRuntime, FactorySession } from './DroidRuntime.js';
 import type {
@@ -55,12 +56,22 @@ interface SessionContextDependencies {
   // Reports the context window the provider itself measured for a model, so
   // compaction limits can be clamped even for models missing from the catalog.
   noteContextWindow: (modelId: string, contextWindowTokens: number) => void;
+  providerTimeoutMs?: number;
 }
 
 interface ContextPoller {
   timer: ReturnType<typeof setInterval>;
   session: FactorySession;
 }
+
+interface ContextRefresh {
+  session: FactorySession;
+  generation: number;
+  persist: boolean;
+  promise: Promise<void>;
+}
+
+const DEFAULT_PROVIDER_TIMEOUT_MS = 10_000;
 
 export class SessionContext {
   private readonly usageOffsets = new Map<string, UsageOffset>();
@@ -78,6 +89,7 @@ export class SessionContext {
   // resurrect the old meter.
   private readonly pendingCompactionResets = new Set<string>();
   private readonly pollers = new Map<string, ContextPoller>();
+  private readonly refreshes = new Map<string, ContextRefresh>();
   private epoch = 0;
 
   constructor(private readonly dependencies: SessionContextDependencies) {}
@@ -162,14 +174,46 @@ export class SessionContext {
     options: { persist?: boolean } = {},
   ): Promise<void> {
     const epoch = this.epoch;
-    const generation = this.compactions.get(contextResourceKey(target)) ?? 0;
     if (!target.isCurrent()) return;
+
+    const key = contextResourceKey(target);
+    const generation = this.compactions.get(key) ?? 0;
+    const current = this.refreshes.get(key);
+    if (current?.session === target.session && current.generation === generation) {
+      current.persist ||= options.persist !== false;
+      return current.promise;
+    }
+
+    const refresh: ContextRefresh = {
+      session: target.session,
+      generation,
+      persist: options.persist !== false,
+      promise: Promise.resolve(),
+    };
+    refresh.promise = this.runRefresh(target, epoch, refresh).finally(() => {
+      if (this.refreshes.get(key) === refresh) this.refreshes.delete(key);
+    });
+    this.refreshes.set(key, refresh);
+    return refresh.promise;
+  }
+
+  private async runRefresh(
+    target: ContextOperationTarget,
+    epoch: number,
+    refresh: ContextRefresh,
+  ): Promise<void> {
     try {
-      const stats = await target.session.getContextStats();
+      const stats = await withTimeout(
+        target.session.getContextStats(),
+        this.dependencies.providerTimeoutMs ?? DEFAULT_PROVIDER_TIMEOUT_MS,
+      );
       if (!this.isCurrent(target, epoch)) return;
       let breakdown: unknown;
       try {
-        breakdown = await this.dependencies.runtime.readContextBreakdown(target.session);
+        breakdown = await withTimeout(
+          this.dependencies.runtime.readContextBreakdown(target.session),
+          this.dependencies.providerTimeoutMs ?? DEFAULT_PROVIDER_TIMEOUT_MS,
+        );
       } catch {
         breakdown = undefined;
       }
@@ -177,8 +221,8 @@ export class SessionContext {
       this.publishSnapshot(
         target,
         contextStatsSnapshot(stats, contextBreakdownSnapshot(breakdown)),
-        options,
-        generation,
+        { persist: refresh.persist },
+        refresh.generation,
       );
     } catch {
       // Context is informational and must never disrupt an active turn.
@@ -244,6 +288,7 @@ export class SessionContext {
     this.epoch += 1;
     for (const poller of this.pollers.values()) clearInterval(poller.timer);
     this.pollers.clear();
+    this.refreshes.clear();
     this.snapshots.clear();
     this.compactions.clear();
     this.pendingCompactionResets.clear();
@@ -372,6 +417,21 @@ function contextResourceKey(target: ContextOperationTarget): string {
   return isChildTarget(target)
     ? childIdentityKey(target)
     : primaryResourceKey(target.sourceSessionId);
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(() => { reject(new Error('Context provider read timed out.')); }, timeoutMs);
+        if (timeoutMs > 0) timer.unref();
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 function applyExactUsage(
