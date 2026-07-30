@@ -86,7 +86,13 @@ function createHarness(
       },
       refresh: () => Promise.resolve(),
       startPolling: () => undefined,
-      stopPolling: () => undefined,
+      stopPolling: (target) => {
+        calls.push({
+          target: 'cleanup',
+          method: 'context.stopPolling',
+          args: [target.sourceSessionId],
+        });
+      },
     },
     compaction: {
       afterTurn: () => undefined,
@@ -416,6 +422,7 @@ test('completion during a live stream rejects queued resurrection', async () => 
   const gate = runtime.deferNextStream();
   const active = h.owner.send(record, 'active turn');
   await runtime.waitForPrompts(1);
+  await h.owner.send(record, 'queued before completion');
 
   h.owner.admitChildObservation({
     parentAppSessionId: h.parentId,
@@ -423,7 +430,6 @@ test('completion during a live stream rejects queued resurrection', async () => 
     role: 'worker',
     done: true,
   });
-  await h.owner.send(record, 'must not queue');
   gate.resolve();
   await active;
 
@@ -436,6 +442,28 @@ test('completion during a live stream rejects queued resurrection', async () => 
         call.method === 'session.close' &&
         call.args[0] === record.providerSessionId,
     ),
+    true,
+  );
+});
+
+test('completion during automatic compaction discards queued resurrection', async () => {
+  const record = childRecord('child', 'provider');
+  const h = createHarness([record]);
+  const captured = await queueForAutomaticSettlement(h, record.childSessionId);
+
+  h.owner.admitChildObservation({
+    parentAppSessionId: h.parentId,
+    providerSessionId: record.providerSessionId,
+    role: 'worker',
+    done: true,
+  });
+  h.owner.settleAutomatic(captured.settlement);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+
+  assert.deepEqual(captured.runtime.prompts, []);
+  assert.equal(h.owner.list(h.parentId)[0]?.status, 'completed');
+  assert.equal(
+    h.calls.some((call) => call.target === 'cleanup' && call.method === 'session.close'),
     true,
   );
 });
@@ -708,6 +736,46 @@ test('queued settings admitted to an old runtime cannot cross provider replaceme
   assert.equal(h.owner.list(h.parentId)[0]?.modelId, 'model-default');
 });
 
+test('rapid provider replacements retire every intermediate identity', async () => {
+  const record = childRecord('child', 'provider-a');
+  const h = createHarness([record]);
+  const original = await h.open(record);
+  const settingsGate = original.deferNextUpdateSettings();
+  const update = h.owner.updateSettings({
+    type: 'child.updateSettings',
+    parentAppSessionId: h.parentId,
+    childSessionId: record.childSessionId,
+    modelId: 'accepted-before-replacement',
+  });
+  await original.waitForSettings(1);
+
+  for (const providerSessionId of ['provider-b', 'provider-c'])
+    h.owner.admitChildObservation({
+      parentAppSessionId: h.parentId,
+      providerSessionId,
+      role: 'worker',
+      ...(record.spawnLink ? { spawnLink: record.spawnLink } : {}),
+    });
+  settingsGate.resolve();
+  await update;
+  await new Promise<void>((resolve) => setImmediate(resolve));
+
+  const replacement = { ...record, providerSessionId: 'provider-c' };
+  await h.open(replacement, new FakeFactorySession('provider-c', {}, h.calls));
+  const before = mutationCount(h);
+  const observed = h.owner.admitChildObservation({
+    parentAppSessionId: h.parentId,
+    providerSessionId: 'provider-b',
+    role: 'validator',
+    ...(record.spawnLink ? { spawnLink: record.spawnLink } : {}),
+  });
+
+  assert.equal(observed, undefined);
+  assert.equal(mutationCount(h), before);
+  assert.equal(h.target(record.childSessionId).providerSessionId, 'provider-c');
+  assert.equal(h.owner.list(h.parentId)[0]?.role, 'worker');
+});
+
 test('runtime close invalidates immediately and waits for in-flight settings teardown', async () => {
   const record = childRecord('child', 'provider');
   const h = createHarness([record]);
@@ -722,7 +790,16 @@ test('runtime close invalidates immediately and waits for in-flight settings tea
   await runtime.waitForSettings(1);
 
   const closing = h.owner.close(record);
+  await Promise.resolve();
   assert.equal(h.owner.compactionRetuneTargets().length, 0);
+  assert.equal(
+    h.calls.some((call) => call.target === 'cleanup' && call.method === 'context.forgetChild'),
+    true,
+  );
+  assert.equal(
+    h.calls.some((call) => call.target === 'cleanup' && call.method === 'context.stopPolling'),
+    true,
+  );
   assert.equal(
     h.calls.some((call) => call.target === 'cleanup' && call.method === 'session.close'),
     false,

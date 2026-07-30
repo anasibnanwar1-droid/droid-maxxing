@@ -35,7 +35,8 @@ type ChildSettingsCommand = Extract<ClientCommand, { type: 'child.updateSettings
 
 const CHILD_OPEN_CANCELLED = Symbol('child-open-cancelled');
 const ignoreError = (): undefined => undefined;
-const runCleanup = (operation: () => void | Promise<void>) => Promise.resolve().then(operation);
+const runCleanup = (operation: () => void | Promise<void>) =>
+  Promise.resolve().then(operation).catch(ignoreError);
 
 export class ChildSessions {
   private readonly parents = new Map<string, ParentChildSessions>();
@@ -117,6 +118,8 @@ export class ChildSessions {
     }
     const apply = () => {
       if (!this.isCurrentChild(parent, child) || !childAcceptsWork(child)) return;
+      if (child.providerSessionId && child.providerSessionId !== providerSessionId)
+        child.retiredProviderSessionIds.add(child.providerSessionId);
       if (child.role !== observation.role) {
         if (child.turn.autoCompacting)
           this.d.compaction.cancel(this.automaticTarget(parent, child));
@@ -287,7 +290,7 @@ export class ChildSessions {
     if (!parent || !child?.runtime || !this.isCurrentChild(parent, child)) return;
     const target = this.automaticTarget(parent, child);
     if (!matchesChildGenerationSnapshot(target, settlement)) return;
-    if (child.turn.pendingSends.length === 0 && child.closeWhenIdle) {
+    if (child.closeWhenIdle) {
       void this.close(child.identity);
       return;
     }
@@ -606,7 +609,7 @@ export class ChildSessions {
     if (!this.isCurrentTurn(parent, child, runtime, turnGeneration)) return;
     child.turn.interruptingForSteer = false;
     child.turn.interrupting = false;
-    if (child.turn.pendingSends.length === 0 && child.closeWhenIdle && !child.turn.autoCompacting) {
+    if (child.closeWhenIdle && !child.turn.autoCompacting) {
       child.turn.phase = 'idle';
       await this.closeRuntime(parent, child, true);
       return;
@@ -755,10 +758,7 @@ export class ChildSessions {
     publish: boolean,
   ): Promise<void> {
     const runtime = child.runtime;
-    if (!runtime) {
-      await child.mutationTail;
-      return;
-    }
+    if (!runtime) return child.mutationTail;
     try {
       this.d.compaction.cancel(this.automaticTarget(parent, child));
     } catch {
@@ -774,9 +774,9 @@ export class ChildSessions {
     child.turn.interruptingForSteer = false;
     child.turn.interrupting = false;
     const cleanupTarget = this.contextTarget(parent, child, runtime);
+    void runCleanup(this.d.context.forgetChild.bind(this.d.context, child.identity));
+    void runCleanup(this.d.context.stopPolling.bind(this.d.context, cleanupTarget));
     const cleanupTasks = [
-      this.d.context.forgetChild.bind(this.d.context, child.identity),
-      this.d.context.stopPolling.bind(this.d.context, cleanupTarget),
       runtime.unsubscribe ?? ignoreError,
       runtime.session.close.bind(runtime.session),
     ];
