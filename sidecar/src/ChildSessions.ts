@@ -473,6 +473,7 @@ export class ChildSessions {
       child.transcriptAvailable = true;
       let active: ChildAutomaticCompactionTarget | undefined;
       runtime.unsubscribe = loaded.onNotification((note: Record<string, unknown>) => {
+        if (!this.isCurrentRuntime(parent, child, runtime)) return;
         const target = active?.isAutoCompacting() ? active : this.automaticTarget(parent, child);
         if (!target.isCurrent()) return;
         if (this.d.compaction.handleChildNotification(target, note)) {
@@ -582,9 +583,8 @@ export class ChildSessions {
         );
       }
     } catch (error) {
-      if (!this.isCurrentRuntime(parent, child, runtime)) {
-        // Closing a runtime commonly rejects its active stream.
-      } else if (child.turn.interruptingForSteer)
+      if (!this.isCurrentRuntime(parent, child, runtime)) return;
+      if (child.turn.interruptingForSteer)
         this.d.timeline.appendStatus(
           parent.parentAppSessionId,
           'Child-session turn interrupted for steering.',

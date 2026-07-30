@@ -235,6 +235,11 @@ export class FakeFactorySession implements FactorySession {
     dispatchNotification(note, this.notifications);
   }
 
+  captureNotification(note: Record<string, unknown>): () => void {
+    const listeners = new Set(this.notifications);
+    return () => dispatchNotification(note, listeners);
+  }
+
   async getContextStats(): ReturnType<FactorySession['getContextStats']> {
     this.contextStatsCalls += 1;
     const gate = this.nextContextStatsGate;

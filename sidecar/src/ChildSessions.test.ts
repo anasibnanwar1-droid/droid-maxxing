@@ -65,7 +65,9 @@ function createHarness(
       beginTurn: (...args) => {
         calls.push({ target: 'protocol', method: 'turn.begin', args });
       },
-      applyNotification: () => undefined,
+      applyNotification: (...args) => {
+        calls.push({ target: 'protocol', method: 'notification.apply', args });
+      },
       applyStreamEvent: () => undefined,
     },
     interactions: {
@@ -92,7 +94,10 @@ function createHarness(
       cancel: (target) => {
         if (target.kind === 'child') target.setAutoCompacting(false);
       },
-      handleChildNotification: () => false,
+      handleChildNotification: (_target, note) => {
+        calls.push({ target: 'protocol', method: 'compaction.notification', args: [note] });
+        return false;
+      },
       rearmModelChangedChild: () => Promise.resolve(),
       resolveLimit: () => Promise.resolve(800),
     },
@@ -686,6 +691,33 @@ test('capacity eviction blocks victim reopen until old provider close settles', 
   );
   assert.ok(oldClose >= 0);
   assert.ok(laterLoad > oldClose);
+});
+
+test('late notification after child close cannot publish, mutate, or rearm compaction', async () => {
+  const record = childRecord('child', 'provider');
+  const h = createHarness([record]);
+  const runtime = await h.open(record);
+  const automatic = h.target(record.childSessionId);
+  automatic.setAutoCompacting(true);
+  const deliverLate = runtime.captureNotification({
+    type: 'droid_working_state_changed',
+    newState: 'streaming',
+  });
+  const closeGate = runtime.deferNextClose();
+  const closing = h.owner.close(record);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+
+  const callsBefore = h.calls.length;
+  const eventsBefore = h.events.length;
+  const summaryBefore = h.owner.list(h.parentId);
+  assert.doesNotThrow(deliverLate);
+  assert.equal(h.calls.length, callsBefore);
+  assert.equal(h.events.length, eventsBefore);
+  assert.deepEqual(h.owner.list(h.parentId), summaryBefore);
+  assert.equal(automatic.isAutoCompacting(), false);
+
+  closeGate.resolve();
+  await closing;
 });
 
 test('stale interrupt and turn settlement cannot make a replacement turn idle', async () => {
