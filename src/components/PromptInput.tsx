@@ -8,7 +8,6 @@ import {
   sendToSessionNow,
   sendToChild,
   sendToChildNow,
-  sendDesignPrompt,
   createSession,
   interruptVisibleSession,
   compactSession,
@@ -16,7 +15,6 @@ import {
   newClientRef,
   listSkills,
 } from '../lib/commands';
-import { browserTranscriptReferencesFromDesignReferences } from './browser/browserTranscriptReferences';
 import { pickDirectory, pickFiles, listFiles, isDesktop } from '../lib/desktop';
 import { type AttachedImage, useImageAttachments } from '../hooks/useImageAttachments';
 import { useImageFileDrop } from '../hooks/useImageFileDrop';
@@ -25,7 +23,7 @@ import { ImageViewerModal } from './composer/ImageViewerModal';
 import PlanSteps from './composer/PlanSteps';
 import { QueuedPrompts } from './composer/QueuedPrompts';
 import { markGitTurnStart } from '../lib/git';
-import { createLocalDesignTranscriptEvent, newQueueId } from '../lib/promptQueue';
+import { newQueueId } from '../lib/promptQueue';
 import { composePrompt } from '../lib/composePrompt';
 import { resolveReasoningEffortDisplay } from '../lib/reasoningEffort';
 import { compactionSettingsSnapshot } from '../lib/compactionSettings';
@@ -129,11 +127,6 @@ export default function PromptInput({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const submittingRef = useRef(false);
   const pendingCaret = useRef<number | null>(null);
-  const prevLive = useRef<{ appSessionId: string | null; live: boolean }>({
-    appSessionId: null,
-    live: false,
-  });
-
   const activeSession = state.activeAppSessionId ? state.sessions[state.activeAppSessionId] : null;
   const primaryIsLive = useSessionLive(state.activeAppSessionId);
 
@@ -693,89 +686,6 @@ export default function PromptInput({
   const queue: QueuedPrompt[] = activeSession
     ? (state.promptQueue[activeSession.appSessionId] ?? [])
     : [];
-
-  // Mirror the live queue so an async delivery can re-check membership after an
-  // await, even though deliverPrompt closes over a stale render snapshot.
-  const promptQueueRef = useRef(state.promptQueue);
-  promptQueueRef.current = state.promptQueue;
-
-  const deliverPrompt = async () => {
-    if (!activeSession) return;
-    // Capture the Last-turn git baseline before sending ANY prompt (design
-    // included) so the Review tab diffs the turn from the right starting point.
-    if (activeSession.cwd) await markGitTurnStart(activeSession.cwd, activeSession.appSessionId);
-    // The queue stays editable while that runs, so deliver whatever is now at
-    // the head: this honors deletes and edits (both remove the item) as well as
-    // reorders, and never sends a stale prompt out of the visible order.
-    const head = (promptQueueRef.current[activeSession.appSessionId] ?? []).at(0);
-    if (!head) return;
-
-    if (head.design) {
-      try {
-        sendDesignPrompt(head.design.browserKey, head.text, head.design.referenceIds);
-      } catch (err) {
-        console.error('[PromptInput] queued design send failed:', err);
-        return;
-      }
-      const browserRefs = browserTranscriptReferencesFromDesignReferences(head.design.references);
-      dispatch({
-        type: 'SESSION_TRANSCRIPT',
-        event: createLocalDesignTranscriptEvent(activeSession.appSessionId, head.text, browserRefs),
-      });
-      dispatch({
-        type: 'REMOVE_QUEUED_PROMPT',
-        appSessionId: activeSession.appSessionId,
-        id: head.id,
-      });
-      return;
-    }
-
-    try {
-      sendToSession(activeSession.appSessionId, composeFrom(head.text, head.skills, head.files));
-    } catch (err) {
-      // Keep the prompt staged and skip the transcript echo so a send failure
-      // neither loses queued input nor leaves a duplicate user message behind.
-      console.error('[PromptInput] queued send failed:', err);
-      return;
-    }
-    dispatch({
-      type: 'SESSION_TRANSCRIPT',
-      event: {
-        id: `local-${String(Date.now())}`,
-        appSessionId: activeSession.appSessionId,
-        sourceSessionId: 'user',
-        role: 'primary',
-        ts: Date.now(),
-        kind: 'text',
-        text: head.text,
-        author: 'user',
-        skills: head.skills,
-        files: head.files,
-      },
-    });
-    dispatch({
-      type: 'REMOVE_QUEUED_PROMPT',
-      appSessionId: activeSession.appSessionId,
-      id: head.id,
-    });
-  };
-
-  // When the current turn finishes, deliver the next staged prompt. Delivering
-  // it restarts the turn, so the effect drains the queue one prompt at a time.
-  useEffect(() => {
-    const prev = prevLive.current;
-    // Only deliver when the same session transitioned live -> idle. Switching
-    // sessions mid-turn must not drain a different session's queue.
-    if (prev.live && !primaryIsLive && prev.appSessionId === activeSession?.appSessionId) {
-      const next = (state.promptQueue[activeSession.appSessionId] ?? []).at(0);
-      if (next) void deliverPrompt();
-    }
-    prevLive.current = {
-      appSessionId: activeSession?.appSessionId ?? null,
-      live: primaryIsLive,
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [primaryIsLive, activeSession?.appSessionId]);
 
   const editQueuedInComposer = (p: QueuedPrompt) => {
     if (!activeSession) return;

@@ -24,6 +24,7 @@ import Sidebar from './components/Sidebar';
 import ChatView from './components/ChatView';
 import MissionControl from './components/MissionControl';
 import PromptInput from './components/PromptInput';
+import PromptQueueCoordinator from './components/PromptQueueCoordinator';
 import RightPanel from './components/RightPanel';
 import { ReviewPanel } from './components/environment/ReviewPanel';
 import EditorOpenMenu from './components/EditorOpenMenu';
@@ -364,6 +365,7 @@ export default function App() {
       id="app-root"
       className="h-screen w-screen flex flex-col bg-droid-bg text-droid-text overflow-hidden relative"
     >
+      <PromptQueueCoordinator />
       {showBanner && (
         <SetupBanner
           kind="blocker"
