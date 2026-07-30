@@ -661,6 +661,31 @@ test('repeated same-provider observation preserves automatic compaction settleme
   assert.deepEqual(runtime.prompts, ['queued after compaction']);
 });
 
+test('repeated child observations publish only new task prompts', () => {
+  const record = childRecord('child', 'provider');
+  const h = createHarness([record]);
+  const observe = (prompt?: string) =>
+    h.owner.admitChildObservation({
+      parentAppSessionId: h.parentId,
+      providerSessionId: record.providerSessionId,
+      role: record.role,
+      ...(record.spawnLink ? { spawnLink: record.spawnLink } : {}),
+      ...(prompt ? { prompt } : {}),
+    });
+
+  observe('first prompt');
+  observe();
+  observe('first prompt');
+  observe('changed prompt');
+
+  assert.deepEqual(
+    h.calls
+      .filter((call) => call.target === 'protocol' && call.method === 'timeline.status')
+      .map((call) => call.args[1]),
+    ['Task prompt\n\nfirst prompt', 'Task prompt\n\nchanged prompt'],
+  );
+});
+
 test('repeated same-provider observation preserves in-flight settings settlement', async () => {
   const record = childRecord('child', 'provider');
   const h = createHarness([record]);

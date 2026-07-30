@@ -70,9 +70,7 @@ export class ChildSessions {
 
   list(parentAppSessionId: string): ChildSessionSummary[] {
     const parent = this.parents.get(parentAppSessionId);
-    const children = parent
-      ? parent.children.values()
-      : this.d.history.childSessions(parentAppSessionId);
+    const children = parent?.children.values() ?? this.d.history.childSessions(parentAppSessionId);
     return [...children].map(childSummary);
   }
 
@@ -121,6 +119,7 @@ export class ChildSessions {
       if (child.retiredProviderSessionIds.has(providerSessionId)) return;
       if (child.providerSessionId && child.providerSessionId !== providerSessionId)
         child.retiredProviderSessionIds.add(child.providerSessionId);
+      const previousPrompt = child.prompt;
       if (child.role !== observation.role) {
         if (child.turn.autoCompacting)
           this.d.compaction.cancel(this.automaticTarget(parent, child));
@@ -135,7 +134,7 @@ export class ChildSessions {
       child.transcriptAvailable = true;
       child.startedAt ??= this.d.now();
       this.commit(child);
-      if (child.prompt)
+      if (child.prompt && child.prompt !== previousPrompt)
         this.d.timeline.appendStatus(
           child.identity.parentAppSessionId,
           `Task prompt\n\n${child.prompt}`,
