@@ -1,10 +1,14 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { motion } from 'framer-motion';
 import { Check, Crop, X } from 'lucide-react';
 import type { AttachedImage } from '../../hooks/useImageAttachments';
 import { displayedToNaturalRect, isFullImageRect, type CropRect } from '../../lib/images';
 import { toast } from '../../lib/toast';
 import { CropOverlay } from './CropOverlay';
+
+// Same focusable-element query the environment Popover uses for its Tab trap.
+const FOCUSABLE_SELECTOR =
+  'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 /**
  * In-app viewer for an attached image: click a chip to inspect it full-size,
@@ -24,6 +28,45 @@ export function ImageViewerModal({
   const [rect, setRect] = useState<CropRect | null>(null);
   const [saving, setSaving] = useState(false);
   const imgRef = useRef<HTMLImageElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+
+  // Modal focus boundary: without it, keyboard and AT users keep reaching the
+  // composer controls behind this full-screen overlay. Move focus inside on
+  // open and hand it back to the opener on close.
+  useEffect(() => {
+    const opener = document.activeElement;
+    const dialog = dialogRef.current;
+    if (dialog) {
+      const focusables = dialog.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR);
+      if (focusables.length > 0) focusables[0].focus();
+      else dialog.focus();
+    }
+    return () => {
+      if (opener instanceof HTMLElement) opener.focus();
+    };
+  }, []);
+
+  // Keep Tab/Shift+Tab cycling inside the dialog while it is open. Focus on
+  // the container itself (clicked non-focusable backdrop content focuses the
+  // nearest tabindex ancestor) wraps to the edges instead of escaping.
+  const trapTab = (e: ReactKeyboardEvent) => {
+    if (e.key !== 'Tab') return;
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    const focusables = dialog.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR);
+    if (focusables.length === 0) return;
+    const first = focusables[0];
+    const last = focusables[focusables.length - 1];
+    const active = document.activeElement;
+    const onDialog = active === dialog;
+    if (e.shiftKey && (active === first || onDialog || !dialog.contains(active))) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && (active === last || onDialog || !dialog.contains(active))) {
+      e.preventDefault();
+      first.focus();
+    }
+  };
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -67,6 +110,12 @@ export function ImageViewerModal({
 
   return (
     <motion.div
+      ref={dialogRef}
+      role="dialog"
+      aria-modal="true"
+      aria-label="Image viewer"
+      tabIndex={-1}
+      onKeyDown={trapTab}
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       transition={{ duration: 0.12 }}

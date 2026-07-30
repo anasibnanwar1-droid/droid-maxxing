@@ -19,6 +19,21 @@ export const IMAGE_QUALITY_TIERS: Record<ImagePasteQuality, ImageQualityTier> = 
   compact: { maxSide: 1568, mime: 'image/jpeg', jpegQuality: 0.8 },
 };
 
+// Must mirror EXTENSION_BY_MIME in electron/attachments.cjs: at Original
+// fidelity the pasted bytes are persisted untouched, so anything outside this
+// list would be rejected at save time.
+export const PERSISTABLE_IMAGE_MIMES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'];
+
+/** Reads the MIME type of a data URL, or undefined when it is not one. */
+export function dataUrlMime(dataUrl: string): string | undefined {
+  return /^data:([^;,]+)/.exec(dataUrl)?.[1];
+}
+
+/** True when the desktop attachment store can persist this MIME type as-is. */
+export function isPersistableMime(mime: string | undefined): boolean {
+  return mime !== undefined && PERSISTABLE_IMAGE_MIMES.includes(mime);
+}
+
 export interface Size {
   width: number;
   height: number;

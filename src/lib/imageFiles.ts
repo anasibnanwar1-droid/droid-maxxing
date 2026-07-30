@@ -5,8 +5,10 @@
 import {
   IMAGE_QUALITY_TIERS,
   clampCropRect,
+  dataUrlMime,
   fitWithin,
   isFullImageRect,
+  isPersistableMime,
   type CropRect,
   type ImagePasteQuality,
   type Size,
@@ -85,12 +87,15 @@ function encodeTier(
 
 /**
  * Encodes a pasted/dropped image according to the fidelity tier. Original
- * returns the pasted bytes untouched; the other tiers re-encode via canvas.
+ * returns the pasted bytes untouched when the desktop store can persist the
+ * type; anything else (SVG, AVIF, ...) is normalized to PNG so saving cannot
+ * fail on the MIME allowlist. The other tiers always re-encode via canvas.
  */
 export async function processImage(dataUrl: string, quality: ImagePasteQuality): Promise<string> {
-  if (quality === 'original') return dataUrl;
+  if (quality === 'original' && isPersistableMime(dataUrlMime(dataUrl))) return dataUrl;
   const img = await loadImage(dataUrl);
   const full = { x: 0, y: 0, width: img.naturalWidth, height: img.naturalHeight };
+  if (quality === 'original') return encode(img, full);
   return encodeTier(img, full, quality);
 }
 

@@ -18,7 +18,7 @@ import {
 } from '../lib/commands';
 import { browserTranscriptReferencesFromDesignReferences } from './browser/browserTranscriptReferences';
 import { pickDirectory, pickFiles, listFiles, isDesktop } from '../lib/desktop';
-import { useImageAttachments } from '../hooks/useImageAttachments';
+import { type AttachedImage, useImageAttachments } from '../hooks/useImageAttachments';
 import { useImageFileDrop } from '../hooks/useImageFileDrop';
 import { ImageChip } from './composer/ImageChip';
 import { ImageViewerModal } from './composer/ImageViewerModal';
@@ -501,13 +501,11 @@ export default function PromptInput({
 
   const composeFrom = composePrompt;
 
-  const imagePaths = () => imageAttachments.images.map((i) => i.path);
-
-  const composeText = (text: string): string =>
+  const composeText = (text: string, images: AttachedImage[]): string =>
     composeFrom(
       text,
       activeSkills.map((s) => s.name),
-      [...attachedFiles, ...imagePaths()],
+      [...attachedFiles, ...images.map((i) => i.path)],
     );
 
   const resetAttachments = () => {
@@ -531,7 +529,10 @@ export default function PromptInput({
 
   const runSubmit = async (mode: SubmitMode = 'queue') => {
     const text = input.trim();
-    const allFiles = [...attachedFiles, ...imagePaths()];
+    // Pasted/dropped images encode asynchronously; wait out any in-flight adds
+    // so they make this prompt instead of surfacing on the next one via clear().
+    const readyImages = await imageAttachments.whenSettled();
+    const allFiles = [...attachedFiles, ...readyImages.map((i) => i.path)];
     const hasPayload = text || activeSkills.length > 0 || allFiles.length > 0;
     if (!hasPayload) return;
     setHistoryIndex(null);
@@ -551,7 +552,7 @@ export default function PromptInput({
 
     if (!childActionsEnabled) return;
 
-    const composed = composeText(text);
+    const composed = composeText(text, readyImages);
 
     const skillNames = activeSkills.map((s) => s.name);
     const registerPending = (ref: string) => {
@@ -1145,7 +1146,7 @@ export default function PromptInput({
               e.preventDefault();
               for (const item of items) {
                 const blob = item.getAsFile();
-                if (blob) void imageAttachments.addBlob(blob);
+                if (blob) imageAttachments.addBlob(blob);
               }
             }}
             placeholder={

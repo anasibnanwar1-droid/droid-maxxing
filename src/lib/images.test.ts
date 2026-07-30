@@ -2,9 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   clampCropRect,
+  dataUrlMime,
   displayedToNaturalRect,
   fitWithin,
   isFullImageRect,
+  isPersistableMime,
   MIN_CROP_SIDE,
 } from './images';
 
@@ -92,4 +94,20 @@ test('isFullImageRect detects a no-op crop', () => {
   const image = { width: 100, height: 100 };
   assert.equal(isFullImageRect({ x: 0, y: 0, width: 100, height: 100 }, image), true);
   assert.equal(isFullImageRect({ x: 1, y: 0, width: 100, height: 100 }, image), false);
+});
+
+test('dataUrlMime reads the MIME type from a data URL', () => {
+  assert.equal(dataUrlMime('data:image/png;base64,iVBOR'), 'image/png');
+  assert.equal(dataUrlMime('data:image/svg+xml;base64,PHN2Zw'), 'image/svg+xml');
+  assert.equal(dataUrlMime('not-a-data-url'), undefined);
+});
+
+test('isPersistableMime matches the desktop store allowlist', () => {
+  assert.equal(isPersistableMime('image/png'), true);
+  assert.equal(isPersistableMime('image/jpeg'), true);
+  assert.equal(isPersistableMime('image/webp'), true);
+  assert.equal(isPersistableMime('image/gif'), true);
+  assert.equal(isPersistableMime('image/svg+xml'), false);
+  assert.equal(isPersistableMime('image/avif'), false);
+  assert.equal(isPersistableMime(undefined), false);
 });

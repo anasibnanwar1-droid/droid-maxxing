@@ -27,6 +27,27 @@ export function CropOverlay({
     };
   };
 
+  const dragRect = (origin: { x: number; y: number }, p: { x: number; y: number }): CropRect => ({
+    x: Math.min(origin.x, p.x),
+    y: Math.min(origin.y, p.y),
+    width: Math.abs(p.x - origin.x),
+    height: Math.abs(p.y - origin.y),
+  });
+
+  // pointermove is not guaranteed to deliver the release point, so the up and
+  // cancel events fold their own coordinates into the published rect; ending
+  // from the last move alone could stop the crop short of the release. Cancel
+  // (touch scroll takeover, OS interrupt) ends the drag identically — without
+  // it originRef would stay set and stray pointermoves would keep resizing.
+  const endDrag = (e: React.PointerEvent) => {
+    const origin = originRef.current;
+    originRef.current = null;
+    if (!origin) return;
+    const final = dragRect(origin, pointFrom(e));
+    // A tap (near-zero drag) clears the selection instead of cropping.
+    onChange(final.width < MIN_CROP_SIDE && final.height < MIN_CROP_SIDE ? null : final);
+  };
+
   return (
     <div
       ref={layerRef}
@@ -40,26 +61,10 @@ export function CropOverlay({
       onPointerMove={(e) => {
         const origin = originRef.current;
         if (!origin) return;
-        const p = pointFrom(e);
-        onChange({
-          x: Math.min(origin.x, p.x),
-          y: Math.min(origin.y, p.y),
-          width: Math.abs(p.x - origin.x),
-          height: Math.abs(p.y - origin.y),
-        });
+        onChange(dragRect(origin, pointFrom(e)));
       }}
-      onPointerUp={() => {
-        originRef.current = null;
-        // A tap (near-zero drag) clears the selection instead of cropping.
-        if (rect && rect.width < MIN_CROP_SIDE && rect.height < MIN_CROP_SIDE) onChange(null);
-      }}
-      onPointerCancel={() => {
-        // End the drag like pointerup; without this a cancelled gesture (touch
-        // scroll takeover, OS interrupt) leaves originRef set and stray
-        // pointermove events would keep resizing the crop rect.
-        originRef.current = null;
-        if (rect && rect.width < MIN_CROP_SIDE && rect.height < MIN_CROP_SIDE) onChange(null);
-      }}
+      onPointerUp={endDrag}
+      onPointerCancel={endDrag}
     >
       {rect && rect.width > 0 && rect.height > 0 && (
         <div
