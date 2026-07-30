@@ -21,6 +21,8 @@ interface SmokeResources {
   app?: ElectronApplication;
 }
 
+const FIXTURE_EXIT_TIMEOUT_MS = 5_000;
+
 async function startFixture(
   logPath: string,
   environment: NodeJS.ProcessEnv,
@@ -64,22 +66,58 @@ async function startFixture(
   });
 }
 
-function waitForExit(child: ChildProcessWithoutNullStreams): Promise<void> {
+function waitForExit(
+  child: ChildProcessWithoutNullStreams,
+  timeoutMs = FIXTURE_EXIT_TIMEOUT_MS,
+): Promise<void> {
   if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
   return new Promise((resolve, reject) => {
-    child.once('error', reject);
-    child.once('exit', () => resolve());
+    const finish = (error?: Error) => {
+      clearTimeout(timeout);
+      child.off('error', onError);
+      child.off('exit', onExit);
+      if (error) reject(error);
+      else resolve();
+    };
+    const onError = (error: Error) => finish(error);
+    const onExit = () => finish();
+    const timeout = setTimeout(
+      () => finish(new Error(`Smoke fixture did not exit within ${String(timeoutMs)}ms.`)),
+      timeoutMs,
+    );
+    child.once('error', onError);
+    child.once('exit', onExit);
+    if (child.exitCode !== null || child.signalCode !== null) onExit();
   });
 }
 
-async function cleanupSmokeResources(resources: SmokeResources): Promise<void> {
+async function stopFixture(
+  fixture: ChildProcessWithoutNullStreams,
+  timeoutMs: number,
+): Promise<void> {
+  if (fixture.exitCode === null && fixture.signalCode === null) fixture.stdin.end();
+  try {
+    await waitForExit(fixture, timeoutMs);
+  } catch (gracefulError) {
+    if (fixture.exitCode === null && fixture.signalCode === null) fixture.kill('SIGKILL');
+    try {
+      await waitForExit(fixture, timeoutMs);
+    } catch {
+      throw gracefulError;
+    }
+  }
+}
+
+async function cleanupSmokeResources(
+  resources: SmokeResources,
+  fixtureExitTimeoutMs = FIXTURE_EXIT_TIMEOUT_MS,
+): Promise<void> {
   try {
     await resources.app?.close();
   } finally {
     try {
       const fixture = resources.fixtureProcess;
-      if (fixture && fixture.exitCode === null && fixture.signalCode === null) fixture.stdin.end();
-      if (fixture) await waitForExit(fixture);
+      if (fixture) await stopFixture(fixture, fixtureExitTimeoutMs);
     } finally {
       rmSync(resources.smokeHome, { recursive: true, force: true });
     }
@@ -274,4 +312,36 @@ test('[E2] pre-ready fixture failure cleans the temporary profile and process', 
   assert.ok(
     resources.fixtureProcess.exitCode !== null || resources.fixtureProcess.signalCode !== null,
   );
+});
+
+test('[E2] cleanup force-stops a fixture that ignores stdin closure', async () => {
+  const smokeHome = mkdtempSync(path.join(tmpdir(), 'droid-control-child-cleanup-timeout-'));
+  const fixtureProcess = spawn(
+    process.execPath,
+    [
+      '-e',
+      "process.stdout.write('HANGING_READY\\n'); process.stdin.resume(); setInterval(() => {}, 1000);",
+    ],
+    { stdio: ['pipe', 'pipe', 'pipe'] },
+  );
+  const resources: SmokeResources = { smokeHome, fixtureProcess };
+  await new Promise<void>((resolve, reject) => {
+    fixtureProcess.once('error', reject);
+    fixtureProcess.once('exit', (code) =>
+      reject(new Error(`Hanging fixture exited before ready (${String(code)}).`)),
+    );
+    fixtureProcess.stdout.once('data', () => resolve());
+  });
+
+  try {
+    await cleanupSmokeResources(resources, 25);
+  } finally {
+    if (fixtureProcess.exitCode === null && fixtureProcess.signalCode === null)
+      fixtureProcess.kill('SIGKILL');
+    await waitForExit(fixtureProcess).catch(() => undefined);
+    rmSync(smokeHome, { recursive: true, force: true });
+  }
+
+  assert.equal(fixtureProcess.signalCode, 'SIGKILL');
+  assert.equal(existsSync(smokeHome), false);
 });
