@@ -107,7 +107,7 @@ export type DesignAction =
   | { type: 'SET_SESSION'; cwd: string; appSessionId: string | null }
   | { type: 'BRIDGE_EVENT'; event: ServerEvent };
 
-const initialState: DesignState = {
+export const initialDesignState: DesignState = {
   studioOpen: false,
   studioTab: 'dna',
   sessions: {},
@@ -232,12 +232,25 @@ function applyEvent(state: DesignState, ev: ServerEvent): DesignState {
         expected,
       };
     }
+    case 'error': {
+      if (!ev.clientRef) return state;
+      const cwd = state.expected[ev.clientRef];
+      if (!cwd) return state;
+      const expected = Object.fromEntries(
+        Object.entries(state.expected).filter(([clientRef]) => clientRef !== ev.clientRef),
+      );
+      return {
+        ...state,
+        expected,
+        lastError: { cwd, message: ev.message },
+      };
+    }
     default:
       return state;
   }
 }
 
-function reducer(state: DesignState, action: DesignAction): DesignState {
+export function designReducer(state: DesignState, action: DesignAction): DesignState {
   switch (action.type) {
     case 'OPEN_STUDIO':
       return { ...state, studioOpen: true, studioTab: action.tab ?? state.studioTab };
@@ -285,11 +298,11 @@ const DesignStoreContext = createContext<{
 } | null>(null);
 
 export function DesignStoreProvider({ children }: { children: ReactNode }) {
-  const [design, designDispatch] = useReducer(reducer, initialState);
+  const [design, designDispatch] = useReducer(designReducer, initialDesignState);
 
   useEffect(() => {
     const unsub = bridge.subscribe((ev) => {
-      if (ev.type.startsWith('design.') || ev.type === 'session.created')
+      if (ev.type.startsWith('design.') || ev.type === 'session.created' || ev.type === 'error')
         designDispatch({ type: 'BRIDGE_EVENT', event: ev });
     });
     return () => {

@@ -110,7 +110,6 @@ export class SessionLifecycle {
   constructor(private readonly dependencies: SessionLifecycleDependencies) {}
   async create(command: SessionCreateCommand): Promise<void> {
     const d = this.dependencies;
-    d.ensureConnected();
     const appCwd = command.cwd ?? '';
     const ref = { id: '' };
     let pendingMcpServers: LocalMcpResource[] = [];
@@ -118,6 +117,7 @@ export class SessionLifecycle {
     let pendingLiveSession: LiveSession | undefined;
 
     try {
+      d.ensureConnected();
       const defaults = await d.getFactoryDefaults();
       const interactionMode = createInteractionModeForCommand(command, defaults);
       const defaultsMode = createDefaultsModeForCommand(command, interactionMode);
@@ -191,7 +191,13 @@ export class SessionLifecycle {
       this.driveInBackground(appSessionId, command.goal);
     } catch (error) {
       await this.cleanupFailedOpen(pendingMcpServers, pendingSession, pendingLiveSession);
-      if (!isOpenAdmissionClosed(error)) d.emitError({ message: errMsg(error) });
+      if (!isOpenAdmissionClosed(error)) {
+        d.emitError({
+          code: 'session.create_failed',
+          clientRef: command.clientRef,
+          message: errMsg(error),
+        });
+      }
     }
   }
 

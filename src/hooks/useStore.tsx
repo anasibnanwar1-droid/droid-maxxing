@@ -355,6 +355,7 @@ type Action =
   | { type: 'SESSION_QUESTION'; question: SessionQuestion }
   | {
       type: 'SESSION_ERROR';
+      clientRef?: string;
       appSessionId?: string;
       providerSessionId?: string;
       message: string;
@@ -1567,12 +1568,22 @@ function baseReducer(state: AppState, action: Action): AppState {
 
     case 'SESSION_ERROR': {
       let next = state;
-      if (action.appSessionId && state.sessions[action.appSessionId]) {
-        const m = state.sessions[action.appSessionId];
+      if (action.clientRef && state.pendingCompose[action.clientRef]) {
         next = {
-          ...state,
+          ...next,
+          pendingCompose: Object.fromEntries(
+            Object.entries(next.pendingCompose).filter(
+              ([clientRef]) => clientRef !== action.clientRef,
+            ),
+          ),
+        };
+      }
+      if (action.appSessionId && state.sessions[action.appSessionId]) {
+        const m = next.sessions[action.appSessionId];
+        next = {
+          ...next,
           sessions: {
-            ...state.sessions,
+            ...next.sessions,
             [action.appSessionId]: { ...m, phase: 'failed' as const },
           },
         };
@@ -2521,7 +2532,9 @@ function finiteNumber(value: unknown): number | undefined {
 
 /* ── Bridge event adapter ── */
 export function toastMessageForEvent(ev: ServerEvent): string | undefined {
-  return ev.type === 'child.error' && ev.operation !== 'open' ? ev.message : undefined;
+  if (ev.type === 'child.error' && ev.operation !== 'open') return ev.message;
+  if (ev.type === 'error' && ev.clientRef && !ev.recoverable) return ev.message;
+  return undefined;
 }
 
 export function adaptEvent(ev: ServerEvent): Action | null {
@@ -2583,15 +2596,13 @@ export function adaptEvent(ev: ServerEvent): Action | null {
       return { type: 'SESSION_QUESTION', question: ev.question };
     case 'error':
       if (ev.recoverable) return null;
-      if (ev.appSessionId) {
-        return {
-          type: 'SESSION_ERROR',
-          appSessionId: ev.appSessionId,
-          providerSessionId: ev.providerSessionId,
-          message: ev.message,
-        };
-      }
-      return { type: 'SESSION_ERROR', message: ev.message };
+      return {
+        type: 'SESSION_ERROR',
+        clientRef: ev.clientRef,
+        appSessionId: ev.appSessionId,
+        providerSessionId: ev.providerSessionId,
+        message: ev.message,
+      };
     case 'sessions.list':
       return { type: 'SESSION_LIST', sessions: ev.sessions };
     case 'session.history':

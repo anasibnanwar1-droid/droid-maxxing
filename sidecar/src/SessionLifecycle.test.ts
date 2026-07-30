@@ -90,6 +90,7 @@ function createHarness(ordinarySummaries: SessionSummary[] = []) {
   let applyPending: (appSessionId: string) => Promise<boolean> = () => Promise.resolve(true);
   let enableAutoCompaction = (): Promise<boolean> => Promise.resolve(true);
   let compactionLimit = (): Promise<number> => Promise.resolve(800);
+  let connectionError: Error | undefined;
   let shutdownStarted = false;
   let closeChildren: (appSessionId: string) => Promise<void> = () => Promise.resolve();
   let nextEmitFailure: { type: ServerEvent['type']; error: Error } | undefined;
@@ -131,6 +132,7 @@ function createHarness(ordinarySummaries: SessionSummary[] = []) {
     registry,
     ensureConnected: () => {
       calls.push({ target: 'runtime', method: 'ensureConnected', args: [] });
+      if (connectionError) throw connectionError;
     },
     getFactoryDefaults: () => Promise.resolve(defaults),
     maxContextTokensForModel: () => 1_000,
@@ -284,6 +286,9 @@ function createHarness(ordinarySummaries: SessionSummary[] = []) {
     },
     setCompactionLimit: (action: () => Promise<number>) => {
       compactionLimit = action;
+    },
+    setConnectionError: (error: Error | undefined) => {
+      connectionError = error;
     },
     setShutdownStarted: (started: boolean) => {
       shutdownStarted = started;
@@ -441,8 +446,36 @@ test('create failure closes started MCP resources without publishing', async () 
     false,
   );
   assert.equal(
-    harness.events.some((event) => event.type === 'error' && event.message === 'create failed'),
+    harness.events.some(
+      (event) =>
+        event.type === 'error' &&
+        event.code === 'session.create_failed' &&
+        event.clientRef === 'client-1' &&
+        event.message === 'create failed',
+    ),
     true,
+  );
+});
+
+test('a disconnected create failure remains correlated to its pending composer', async () => {
+  const harness = createHarness();
+  harness.setConnectionError(new Error('Factory is not connected'));
+
+  await harness.lifecycle.create(createCommand());
+
+  assert.equal(
+    harness.events.some(
+      (event) =>
+        event.type === 'error' &&
+        event.code === 'session.create_failed' &&
+        event.clientRef === 'client-1' &&
+        event.message === 'Factory is not connected',
+    ),
+    true,
+  );
+  assert.equal(
+    harness.calls.some((call) => call.method === 'mcp.start'),
+    false,
   );
 });
 
