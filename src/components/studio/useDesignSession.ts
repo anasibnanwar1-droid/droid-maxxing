@@ -193,8 +193,12 @@ export function useDesignSession(cwd: string, sessionKey?: string) {
       interactionMode: 'auto',
       // High autonomy so design turns don't stop for tool/MCP permission prompts.
       autonomy: 'high',
-      modelId,
-      reasoningEffort,
+      modelId: modelId ?? state.agentConfig.primary.modelId,
+      reasoningEffort: reasoningEffort ?? state.agentConfig.primary.reasoning,
+      compactionModel:
+        state.compactionModel === 'current-model' ? undefined : state.compactionModel,
+      compactionTokenLimit: state.compactionTokenLimit,
+      compactionTokenLimitPerModel: state.compactionTokenLimitPerModel,
     });
   };
 

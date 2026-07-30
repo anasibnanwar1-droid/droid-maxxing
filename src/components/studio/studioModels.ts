@@ -14,6 +14,7 @@ export function resolveStudioModelId(
   hasSession: boolean,
   sessionModelId: string | undefined,
   draftModelId: string | undefined,
+  defaultModelId?: string,
 ): string | undefined {
-  return hasSession ? sessionModelId : draftModelId;
+  return hasSession ? sessionModelId : (draftModelId ?? defaultModelId);
 }

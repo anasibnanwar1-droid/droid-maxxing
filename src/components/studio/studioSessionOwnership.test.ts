@@ -23,3 +23,19 @@ test('Studio leaves queued prompt delivery to the app-level queue owner', () => 
 test('the Libraries shelf reuses the Agent panel design session', () => {
   assert.equal(dnaShelfSource.includes('useDesignSession'), false);
 });
+
+test('new Studio sessions carry the same model and compaction settings as chat', () => {
+  for (const setting of [
+    'state.agentConfig.primary.modelId',
+    'state.agentConfig.primary.reasoning',
+    'state.compactionModel',
+    'state.compactionTokenLimit',
+    'state.compactionTokenLimitPerModel',
+  ]) {
+    assert.equal(
+      designSessionSource.includes(setting),
+      true,
+      `useDesignSession must include ${setting}`,
+    );
+  }
+});

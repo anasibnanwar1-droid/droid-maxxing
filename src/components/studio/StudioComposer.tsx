@@ -91,7 +91,10 @@ export default function StudioComposer({
   // so it reflects a pick instantly and stays correct across thread switches
   // (a lingering local pick would leak into other threads). Local only covers
   // the pre-session compose.
-  const modelId = resolveStudioModelId(hasSession, sessionModelId, localModelId);
+  const defaultModelId =
+    state.agentConfig.primary.modelId ??
+    resolveStudioDefaultModel(state.models, state.agentConfig.primary.modelId)?.id;
+  const modelId = resolveStudioModelId(hasSession, sessionModelId, localModelId, defaultModelId);
   const selectedFrame =
     studio.selectedFrameIds.length === 1
       ? studio.frames.find((f) => f.id === studio.selectedFrameIds[0])

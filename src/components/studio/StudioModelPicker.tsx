@@ -10,7 +10,8 @@ import { resolveStudioDefaultModel } from './studioModels';
 /**
  * Model selector for the studio composer, fed by the real Droid CLI catalog
  * (`state.models`) — the same source the chat model picker uses — so every
- * model the CLI exposes shows up here. `undefined` = the CLI default.
+ * model the CLI exposes shows up here. The app default resolves to its concrete
+ * model id so the trigger and the session command always describe the same model.
  */
 export default function StudioModelPicker({
   value,
@@ -32,19 +33,18 @@ export default function StudioModelPicker({
   const selected = value ? models.find((m) => m.id === value) : undefined;
   const defaultModel = resolveStudioDefaultModel(models, state.agentConfig.primary.modelId);
   const activeModel = selected ?? defaultModel;
-  const label = value
-    ? (selected?.displayName ?? value)
-    : defaultModel
-      ? `Default · ${defaultModel.displayName}`
-      : 'Default model';
+  const label = activeModel?.displayName ?? value ?? 'Default model';
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return models;
-    return models.filter(
+    const candidates = defaultModel
+      ? models.filter((model) => model.id !== defaultModel.id)
+      : models;
+    if (!q) return candidates;
+    return candidates.filter(
       (m) => m.displayName.toLowerCase().includes(q) || m.id.toLowerCase().includes(q),
     );
-  }, [models, query]);
+  }, [defaultModel, models, query]);
 
   return (
     <div className="shrink-0">
@@ -89,12 +89,12 @@ export default function StudioModelPicker({
           </div>
           <div className="max-h-[260px] overflow-y-auto p-1">
             <Row
-              label="Default"
-              sub={defaultModel ? `Uses ${defaultModel.displayName}` : 'Uses Factory CLI default'}
+              label="App default"
+              sub={defaultModel?.displayName ?? 'Factory CLI default'}
               model={defaultModel}
-              selected={!value}
+              selected={defaultModel ? value === defaultModel.id : !value}
               onClick={() => {
-                onChange(undefined);
+                onChange(defaultModel?.id);
                 setOpen(false);
                 setQuery('');
               }}
