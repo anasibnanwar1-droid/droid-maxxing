@@ -149,7 +149,63 @@ test('drawing-only prompts receive an explicit instruction', () => {
     attachedAnnotationIds: [measure.id],
   };
   const result = buildStudioPrompt('', studio);
-  assert.equal(result.displayText, 'Apply the attached canvas notes.');
+  assert.equal(result.displayText, 'Apply the attached canvas references.');
+});
+
+test('canvas moodboards pass agent-visible library ids without embedding base64', () => {
+  const studio = {
+    ...emptyStudioCanvasState(),
+    images: [
+      {
+        id: 'canvas-image-1',
+        libraryId: 'canvas-image-1',
+        src: 'data:image/png;base64,do-not-leak',
+        name: 'Warm editorial',
+        tag: 'moodboard' as const,
+        x: 120,
+        y: 80,
+        width: 360,
+        height: 240,
+        naturalWidth: 1800,
+        naturalHeight: 1200,
+      },
+    ],
+    attachedImageIds: ['canvas-image-1'],
+  };
+  const result = buildStudioPrompt('Use this visual direction', studio);
+
+  assert.match(result.prompt, /"libraryId": "canvas-image-1"/);
+  assert.match(result.prompt, /"tag": "moodboard"/);
+  assert.match(result.prompt, /"width": 1800/);
+  assert.match(result.prompt, /design_reference_library/);
+  assert.doesNotMatch(result.prompt, /do-not-leak/);
+});
+
+test('canvas images remain on the board after their prompt context is consumed', () => {
+  const studio = {
+    ...emptyStudioCanvasState(),
+    images: [
+      {
+        id: 'canvas-image-1',
+        libraryId: 'canvas-image-1',
+        src: 'data:image/png;base64,unused',
+        name: 'Reference',
+        tag: 'reference' as const,
+        x: 0,
+        y: 0,
+        width: 100,
+        height: 100,
+        naturalWidth: 100,
+        naturalHeight: 100,
+      },
+    ],
+    attachedImageIds: [],
+  };
+
+  assert.deepEqual(buildStudioPrompt('Continue designing', studio), {
+    prompt: 'Continue designing',
+    displayText: 'Continue designing',
+  });
 });
 
 test('explicit fit may upscale while automatic fit keeps pages at 100 percent', () => {

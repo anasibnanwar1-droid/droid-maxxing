@@ -1,4 +1,4 @@
-import { Maximize2, Minus, Plus } from 'lucide-react';
+import { ImagePlus, Maximize2, Minus, Plus } from 'lucide-react';
 import { useStudioCanvas, sizeOf } from './StudioCanvasContext';
 import { fitRects, setZoomAtPoint, type Rect, type CanvasView } from './studioCanvasMath';
 import { MAX_ZOOM } from './studioCanvasMath';
@@ -10,12 +10,14 @@ import { MAX_ZOOM } from './studioCanvasMath';
 export default function CanvasControls({
   getSize,
   onRequestAddFrame,
+  onRequestAddImage,
 }: {
   getSize: () => { width: number; height: number } | null;
   onRequestAddFrame: () => void;
+  onRequestAddImage: () => void;
 }) {
   const { studio, studioDispatch } = useStudioCanvas();
-  const { view, frames } = studio;
+  const { view, frames, images } = studio;
 
   const setView = (v: CanvasView) => {
     studioDispatch({ type: 'SET_VIEW', view: v });
@@ -31,14 +33,22 @@ export default function CanvasControls({
   const fit = () => {
     const size = getSize();
     if (!size) return;
-    if (frames.length === 0) {
+    if (frames.length === 0 && images.length === 0) {
       setView({ pan: { x: size.width / 2, y: size.height / 2 }, zoom: 1 });
       return;
     }
-    const rects: Rect[] = frames.map((f) => {
-      const s = sizeOf(f);
-      return { x: f.x, y: f.y, width: s.width, height: s.height };
-    });
+    const rects: Rect[] = [
+      ...frames.map((f) => {
+        const s = sizeOf(f);
+        return { x: f.x, y: f.y, width: s.width, height: s.height };
+      }),
+      ...images.map((image) => ({
+        x: image.x,
+        y: image.y,
+        width: image.width,
+        height: image.height,
+      })),
+    ];
     setView(fitRects(rects, size, 120, MAX_ZOOM));
   };
 
@@ -50,6 +60,13 @@ export default function CanvasControls({
       >
         <Plus className="h-3.5 w-3.5" strokeWidth={1.75} />
         Add page
+      </button>
+      <button
+        onClick={onRequestAddImage}
+        className="flex h-7 items-center gap-1.5 rounded-lg px-2 text-[11.5px] text-droid-text-secondary transition-colors hover:bg-droid-active/70 hover:text-droid-text"
+      >
+        <ImagePlus className="h-3.5 w-3.5" strokeWidth={1.75} />
+        Add image
       </button>
       <div className="mx-1 h-4 w-px bg-droid-border" />
       <div className="flex items-center gap-0.5">

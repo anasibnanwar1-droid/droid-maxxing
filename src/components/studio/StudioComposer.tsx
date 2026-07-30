@@ -1,20 +1,23 @@
 import { useEffect, useRef, useState } from 'react';
 import { ArrowUp, Copy, Gauge, ImagePlus, PenLine, Square, X } from 'lucide-react';
+import { AnimatePresence, motion } from 'framer-motion';
 import { useStore } from '../../hooks/useStore';
-import { useStudioCanvas } from './StudioCanvasContext';
+import { useStudioCanvas, type StudioCanvasImage } from './StudioCanvasContext';
 import StudioModelPicker from './StudioModelPicker';
-import { useImageAttachments } from './useImageAttachments';
 import { buildStudioPrompt } from './studioPromptContext';
 import { resolveStudioDefaultModel, resolveStudioModelId } from './studioModels';
 import StudioSelector from './StudioSelector';
 import type { ReasoningEffort } from '../../types/bridge';
+import { CANVAS_IMAGE_INPUT_ID } from './studioCanvasImages';
+import StudioPromptQueue from './StudioPromptQueue';
 
 export interface SendOptions {
   modelId?: string;
   reasoningEffort?: ReasoningEffort;
   count: number;
-  images?: string[];
+  canvasImages?: StudioCanvasImage[];
   displayText?: string;
+  mode?: 'queue' | 'now';
 }
 
 const COUNTS = [1, 2, 3, 4];
@@ -53,6 +56,7 @@ export default function StudioComposer({
   disabledReason,
   streaming,
   onStop,
+  sessionId,
   hasSession,
   sessionModelId,
   sessionReasoning,
@@ -64,6 +68,7 @@ export default function StudioComposer({
   disabledReason?: string;
   streaming?: boolean;
   onStop?: () => void;
+  sessionId?: string | null;
   hasSession: boolean;
   /** Live session model (when a design chat already exists). */
   sessionModelId?: string;
@@ -72,22 +77,15 @@ export default function StudioComposer({
   onModelChange?: (modelId?: string, reasoningEffort?: ReasoningEffort) => void;
 }) {
   const { studio, studioDispatch } = useStudioCanvas();
-  const { state } = useStore();
+  const { state, dispatch } = useStore();
   // Local picks for a brand-new chat; once a session exists, prefer its model.
   const [localModelId, setLocalModelId] = useState<string | undefined>(undefined);
   const [localReasoning, setLocalReasoning] = useState<ReasoningEffort | undefined>(undefined);
   const [reasoningOpen, setReasoningOpen] = useState(false);
   const [count, setCount] = useState(1);
   const [countOpen, setCountOpen] = useState(false);
+  const [sendHover, setSendHover] = useState(false);
   const taRef = useRef<HTMLTextAreaElement>(null);
-  const fileRef = useRef<HTMLInputElement>(null);
-  const {
-    images,
-    addFiles,
-    onPaste,
-    remove: removeImage,
-    clear: clearImages,
-  } = useImageAttachments();
 
   // Session value first: setModel dispatches MISSION_SET_MODEL optimistically,
   // so it reflects a pick instantly and stays correct across thread switches
@@ -102,8 +100,12 @@ export default function StudioComposer({
   const attachedAnnotations = studio.annotations.filter((annotation) =>
     studio.attachedAnnotationIds.includes(annotation.id),
   );
-  const hasContent = text.trim().length > 0 || images.length > 0 || attachedAnnotations.length > 0;
+  const canvasImages = studio.images.filter((image) => studio.attachedImageIds.includes(image.id));
+  const hasContent =
+    text.trim().length > 0 || attachedAnnotations.length > 0 || canvasImages.length > 0;
   const canSend = hasContent && disabledReason === undefined;
+  const queue = sessionId ? (state.promptQueue[sessionId] ?? []) : [];
+  const enterSteers = state.liveEnterBehavior === 'interrupt';
   const selectedModel = modelId
     ? state.models.find((m) => m.id === modelId)
     : resolveStudioDefaultModel(state.models, state.agentConfig.primary.modelId);
@@ -153,30 +155,43 @@ export default function StudioComposer({
     }
   };
 
-  const submit = () => {
+  const submit = (mode: 'queue' | 'now' = 'queue') => {
     if (!canSend) return;
     const studioPrompt = buildStudioPrompt(text, studio);
     onSend(studioPrompt.prompt, {
       modelId,
       reasoningEffort,
       count,
-      images: images.length > 0 ? images : undefined,
+      canvasImages: canvasImages.length > 0 ? canvasImages : undefined,
       displayText: studioPrompt.displayText,
+      mode,
     });
     onTextChange('');
-    clearImages();
     studioDispatch({ type: 'CLEAR_ANNOTATION_CONTEXT' });
+    studioDispatch({ type: 'CLEAR_CANVAS_IMAGE_CONTEXT' });
     if (taRef.current) taRef.current.style.height = 'auto';
   };
 
   return (
     <div className="border-t border-droid-border bg-droid-surface/35 px-3 pb-3 pt-3">
+      {sessionId && (
+        <StudioPromptQueue
+          appSessionId={sessionId}
+          queue={queue}
+          onRemove={(appSessionId, id) => {
+            dispatch({ type: 'REMOVE_QUEUED_PROMPT', appSessionId, id });
+          }}
+          onReorder={(appSessionId, from, to) => {
+            dispatch({ type: 'REORDER_QUEUE', appSessionId, from, to });
+          }}
+        />
+      )}
       <div className="rounded-xl border border-droid-border bg-droid-bg/75 shadow-sm transition-colors focus-within:border-droid-border-hover">
         {/* Reference chips + attached images */}
         {(chips.length > 0 ||
           selectedFrame !== undefined ||
-          images.length > 0 ||
-          attachedAnnotations.length > 0) && (
+          attachedAnnotations.length > 0 ||
+          canvasImages.length > 0) && (
           <div className="flex flex-wrap items-center gap-1.5 px-3 pt-3">
             {selectedFrame && (
               <Chip
@@ -211,23 +226,16 @@ export default function StudioComposer({
                 }}
               />
             )}
-            {images.map((src, i) => (
-              <span key={i} className="group relative">
-                <img
-                  src={src}
-                  alt="attachment"
-                  className="h-10 w-10 rounded-md object-cover ring-1 ring-droid-border"
-                />
-                <button
-                  onClick={() => {
-                    removeImage(i);
-                  }}
-                  className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-droid-active text-droid-text-secondary opacity-0 transition-opacity group-hover:opacity-100"
-                >
-                  <X className="h-2.5 w-2.5" />
-                </button>
-              </span>
-            ))}
+            {canvasImages.length > 0 && (
+              <Chip
+                label="Canvas moodboard"
+                sub={`${String(canvasImages.length)} image${canvasImages.length === 1 ? '' : 's'}`}
+                kind="image"
+                onRemove={() => {
+                  studioDispatch({ type: 'CLEAR_CANVAS_IMAGE_CONTEXT' });
+                }}
+              />
+            )}
           </div>
         )}
 
@@ -238,11 +246,13 @@ export default function StudioComposer({
             onTextChange(e.target.value);
             grow();
           }}
-          onPaste={onPaste}
           onKeyDown={(e) => {
             if (e.key === 'Enter' && !e.shiftKey) {
               e.preventDefault();
-              submit();
+              const defaultMode = streaming && enterSteers ? 'now' : 'queue';
+              submit(
+                streaming && (e.metaKey || e.ctrlKey) ? oppositeMode(defaultMode) : defaultMode,
+              );
             }
           }}
           rows={1}
@@ -288,34 +298,81 @@ export default function StudioComposer({
 
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-0.5">
-              <input
-                ref={fileRef}
-                type="file"
-                accept="image/*"
-                multiple
-                className="hidden"
-                onChange={(e) => {
-                  if (e.target.files) addFiles(e.target.files);
-                  e.target.value = '';
+              <IconChip
+                title="Add an image to the canvas"
+                onClick={() => {
+                  document.getElementById(CANVAS_IMAGE_INPUT_ID)?.click();
                 }}
-              />
-              <IconChip title="Attach an image" onClick={() => fileRef.current?.click()}>
+              >
                 <ImagePlus className="h-4 w-4" />
               </IconChip>
               <span className="px-1 text-[10.5px] text-droid-text-muted">@ mention</span>
             </div>
 
-            {streaming ? (
+            {streaming && !hasContent ? (
               <button
+                type="button"
                 onClick={() => onStop?.()}
                 title="Working — click to stop"
-                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-droid-accent text-droid-bg transition-opacity duration-150 hover:opacity-90 active:translate-y-px"
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-droid-accent text-droid-bg transition-opacity hover:opacity-90"
               >
                 <Square className="h-3.5 w-3.5" fill="currentColor" strokeWidth={0} />
               </button>
+            ) : streaming ? (
+              <div
+                className="relative shrink-0"
+                onMouseEnter={() => {
+                  setSendHover(true);
+                }}
+                onMouseLeave={() => {
+                  setSendHover(false);
+                }}
+              >
+                <AnimatePresence>
+                  {sendHover && (
+                    <motion.div
+                      initial={{ opacity: 0, y: 4 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: 4 }}
+                      transition={{ duration: 0.12, ease: [0.16, 1, 0.3, 1] }}
+                      className="absolute bottom-full right-0 z-50 mb-2 flex flex-col gap-0.5 rounded-xl border border-droid-border bg-droid-elevated p-1.5 shadow-2xl shadow-black/40"
+                    >
+                      {[
+                        { label: enterSteers ? 'Steer' : 'Queue', keys: ['⏎'] },
+                        { label: enterSteers ? 'Queue' : 'Steer', keys: ['⌘', '⏎'] },
+                      ].map((row) => (
+                        <div
+                          key={row.label}
+                          className="flex items-center justify-between gap-3 rounded-lg px-2 py-1 text-[12px] text-droid-text"
+                        >
+                          <span>{row.label}</span>
+                          <span className="flex items-center gap-0.5 rounded-md bg-droid-bg/70 px-1.5 py-0.5 text-[11px] text-droid-text-secondary">
+                            {row.keys.map((key) => (
+                              <kbd key={key} className="font-sans leading-none">
+                                {key}
+                              </kbd>
+                            ))}
+                          </span>
+                        </div>
+                      ))}
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+                <button
+                  type="button"
+                  onClick={() => {
+                    submit(enterSteers ? 'now' : 'queue');
+                  }}
+                  className="flex h-8 w-8 items-center justify-center rounded-lg bg-droid-text text-droid-bg transition-colors hover:bg-droid-text-secondary"
+                >
+                  <ArrowUp className="h-3.5 w-3.5" />
+                </button>
+              </div>
             ) : (
               <button
-                onClick={submit}
+                onClick={() => {
+                  submit();
+                }}
                 disabled={!canSend}
                 title={disabledReason ?? 'Send (Enter)'}
                 className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg transition-all duration-150 ${
@@ -337,6 +394,10 @@ export default function StudioComposer({
   );
 }
 
+function oppositeMode(mode: 'queue' | 'now'): 'queue' | 'now' {
+  return mode === 'queue' ? 'now' : 'queue';
+}
+
 function Chip({
   label,
   sub,
@@ -345,7 +406,7 @@ function Chip({
 }: {
   label: string;
   sub?: string;
-  kind: 'frame' | 'element' | 'drawing';
+  kind: 'frame' | 'element' | 'drawing' | 'image';
   onRemove?: () => void;
 }) {
   // Element references read as "hot" (ready to act on); frame chips stay muted
@@ -357,10 +418,13 @@ function Chip({
       'rounded-lg border border-droid-accent/30 bg-droid-accent/10 px-2 py-0.5 text-[11.5px] font-medium text-droid-accent',
     drawing:
       'rounded-lg border border-droid-accent/30 bg-droid-accent/10 px-2 py-1 text-[11.5px] font-medium text-droid-accent',
+    image:
+      'rounded-lg border border-droid-accent/30 bg-droid-accent/10 px-2 py-1 text-[11.5px] font-medium text-droid-accent',
   }[kind];
   return (
     <span className={`inline-flex items-center gap-1 ${style}`}>
       {kind === 'drawing' && <PenLine className="h-3 w-3" strokeWidth={1.75} />}
+      {kind === 'image' && <ImagePlus className="h-3 w-3" strokeWidth={1.75} />}
       <span className="max-w-[140px] truncate">{label}</span>
       {sub && <span className="text-[9.5px] opacity-60">{sub}</span>}
       {onRemove && (

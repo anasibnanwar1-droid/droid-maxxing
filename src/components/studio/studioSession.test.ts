@@ -1,13 +1,18 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { pendingStudioClientRef, studioSessionTitle } from './studioSession';
+import {
+  createQueuedStudioPrompt,
+  pendingStudioClientRef,
+  shouldDeliverStudioQueue,
+  studioSessionTitle,
+} from './studioSession';
 
 test('studio titles come from clean visible user intent', () => {
   assert.equal(
     studioSessionTitle('  Build   a calmer settings page  '),
     'Build a calmer settings page',
   );
-  assert.equal(studioSessionTitle('Apply the attached canvas notes.'), 'Canvas notes');
+  assert.equal(studioSessionTitle('Apply the attached canvas references.'), 'Canvas references');
   assert.equal(studioSessionTitle('x'.repeat(80)), `${'x'.repeat(47)}…`);
 });
 
@@ -16,4 +21,50 @@ test('pending Studio compose is scoped to its project', () => {
   const pending = { 'client-b': { text: 'B' } };
   assert.equal(pendingStudioClientRef(expected, pending, ['/repo/a']), undefined);
   assert.equal(pendingStudioClientRef(expected, pending, ['/repo/b']), 'client-b');
+});
+
+test('Studio queue delivery requires the same session to finish its live turn', () => {
+  assert.equal(
+    shouldDeliverStudioQueue(
+      { appSessionId: 'session-a', live: true },
+      { appSessionId: 'session-a', live: false },
+    ),
+    true,
+  );
+  assert.equal(
+    shouldDeliverStudioQueue(
+      { appSessionId: 'session-a', live: true },
+      { appSessionId: 'session-b', live: false },
+    ),
+    false,
+  );
+  assert.equal(
+    shouldDeliverStudioQueue(
+      { appSessionId: 'session-a', live: false },
+      { appSessionId: 'session-a', live: false },
+    ),
+    false,
+  );
+});
+
+test('Studio queue preserves provider context separately from visible text', () => {
+  const browserRefs = [{ id: 'image-1', label: 'Moodboard', kind: 'region' as const }];
+  assert.deepEqual(
+    createQueuedStudioPrompt({
+      id: 'queue-1',
+      displayText: 'Use this visual direction',
+      prompt: 'Use this visual direction\n\nDROIDEX DESIGN reference pack: {...}',
+      browserRefs,
+    }),
+    {
+      id: 'queue-1',
+      text: 'Use this visual direction',
+      skills: [],
+      files: [],
+      studio: {
+        prompt: 'Use this visual direction\n\nDROIDEX DESIGN reference pack: {...}',
+        browserRefs,
+      },
+    },
+  );
 });

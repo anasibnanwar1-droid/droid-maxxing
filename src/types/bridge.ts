@@ -554,6 +554,8 @@ export interface DesignLibraryItem {
   url: string;
   createdAt: string;
   screenshotPath?: string;
+  mimeType?: 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif';
+  category?: 'moodboard' | 'inspiration' | 'reference';
   selector?: string;
   source?: { component?: string; file?: string; line?: number };
   styles?: Record<string, string>;
@@ -857,6 +859,14 @@ export type ClientCommand =
       referenceId: string;
       name?: string;
       note?: string;
+    }
+  | {
+      type: 'design.library.importImage';
+      cwd: string;
+      id: string;
+      name: string;
+      category: 'moodboard' | 'inspiration' | 'reference';
+      dataUrl: string;
     }
   | { type: 'design.library.delete'; cwd: string; id: string }
   | { type: 'design.library.extract'; cwd: string; id: string }

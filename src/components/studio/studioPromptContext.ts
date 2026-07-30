@@ -1,12 +1,13 @@
 import {
   sizeOf,
   type StudioAnnotation,
+  type StudioCanvasImage,
   type StudioCanvasState,
   type StudioFrame,
 } from './StudioCanvasContext';
 import { annotationRect, measureDistance } from './studioAnnotations';
 
-const DEFAULT_DRAWING_INSTRUCTION = 'Apply the attached canvas notes.';
+const DEFAULT_DRAWING_INSTRUCTION = 'Apply the attached canvas references.';
 
 export interface StudioPrompt {
   prompt: string;
@@ -21,6 +22,9 @@ export function buildStudioPrompt(instruction: string, studio: StudioCanvasState
   const annotations = studio.annotations
     .filter((annotation) => studio.attachedAnnotationIds.includes(annotation.id))
     .map((annotation) => annotationReference(annotation, studio.frames));
+  const images = studio.images
+    .filter((image) => studio.attachedImageIds.includes(image.id))
+    .map(canvasImageReference);
   const elements = studio.selection.map((selection) => ({
     frame: selection.frameName,
     label: selection.label,
@@ -29,7 +33,12 @@ export function buildStudioPrompt(instruction: string, studio: StudioCanvasState
     ...(selection.file ? { file: selection.file, line: selection.line } : {}),
   }));
 
-  if (selectedFrames.length === 0 && annotations.length === 0 && elements.length === 0) {
+  if (
+    selectedFrames.length === 0 &&
+    annotations.length === 0 &&
+    elements.length === 0 &&
+    images.length === 0
+  ) {
     return { prompt: displayText, displayText };
   }
 
@@ -38,9 +47,12 @@ export function buildStudioPrompt(instruction: string, studio: StudioCanvasState
       coordinateSystem: 'CSS pixels; frame annotations are relative to the frame viewport',
       annotationGuidance:
         'Treat geometry, measurements, stroke, fill, and frame anchors as precise user intent for the requested UI or wireframe.',
+      imageGuidance:
+        'Each canvas image is stored at original resolution. Call design_reference_library with its libraryId to inspect the actual image before designing.',
       selectedFrames,
       elements,
       annotations,
+      images,
     },
     null,
     2,
@@ -48,6 +60,25 @@ export function buildStudioPrompt(instruction: string, studio: StudioCanvasState
   return {
     displayText,
     prompt: `${displayText}\n\nDROIDEX DESIGN reference pack:\n${context}`,
+  };
+}
+
+function canvasImageReference(image: StudioCanvasImage) {
+  return {
+    id: image.id,
+    libraryId: image.libraryId,
+    name: clean(image.name),
+    tag: image.tag,
+    canvasRect: {
+      x: round(image.x),
+      y: round(image.y),
+      width: round(image.width),
+      height: round(image.height),
+    },
+    originalResolution: {
+      width: image.naturalWidth,
+      height: image.naturalHeight,
+    },
   };
 }
 

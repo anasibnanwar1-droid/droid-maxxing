@@ -284,6 +284,14 @@ export const saveDesignLibraryItem = (p: {
   note?: string;
 }) => bridge.send({ type: 'design.library.save', ...p });
 
+export const importDesignLibraryImage = (input: {
+  cwd: string;
+  id: string;
+  name: string;
+  category: 'moodboard' | 'inspiration' | 'reference';
+  dataUrl: string;
+}) => bridge.send({ type: 'design.library.importImage', ...input });
+
 export const deleteDesignLibraryItem = (cwd: string, id: string) =>
   bridge.send({ type: 'design.library.delete', cwd, id });
 

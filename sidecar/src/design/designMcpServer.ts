@@ -185,9 +185,9 @@ export function createDesignMcpServer(
       tool(
         'design_reference_library',
         [
-          'List design references the user saved from the live browser (name, source URL, note, captured styles).',
-          'Pass an id to get one item with its captured computed styles, markup excerpt, and screenshot.',
-          'Use these as visual targets when the user asks to make something look like a saved reference.',
+          'List visual references saved from the live browser or pasted onto the DROIDEX canvas as moodboard, inspiration, or reference images.',
+          'Pass an id to get one item with its original-resolution image plus any captured styles and markup.',
+          'Use these as visual targets when the user asks to match a moodboard or saved reference.',
         ].join(' '),
         {
           id: z.string().optional().describe('Library item id to fetch in full.'),
@@ -203,7 +203,11 @@ export function createDesignMcpServer(
                 return {
                   content: [
                     { type: 'text' as const, text },
-                    { type: 'image' as const, data, mimeType: 'image/png' as const },
+                    {
+                      type: 'image' as const,
+                      data,
+                      mimeType: item.mimeType ?? ('image/png' as const),
+                    },
                   ],
                 };
               } catch {

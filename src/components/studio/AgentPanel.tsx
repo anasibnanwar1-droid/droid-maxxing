@@ -1,8 +1,9 @@
 import { useState } from 'react';
 import { ArrowLeft } from 'lucide-react';
 import { useStore } from '../../hooks/useStore';
-import type { MissionSummary } from '../../types/bridge';
-import { interruptMission } from '../../lib/commands';
+import type { SessionSummary } from '../../types/bridge';
+import { interruptSession } from '../../lib/commands';
+import { isDesktop } from '../../lib/desktop';
 import AskUserModal from '../AskUserModal';
 import { useStudioCanvas, type StudioLeftTab } from './StudioCanvasContext';
 import { useDesignSession } from './useDesignSession';
@@ -37,15 +38,30 @@ export default function AgentPanel({
   const { sessionId, transcript, isCreating, send, setModel, modelId, reasoningEffort } =
     useDesignSession(cwd, sessionKey);
   // Record index can miss at runtime even though the type says otherwise.
-  const mission = sessionId ? (state.missions[sessionId] as MissionSummary | undefined) : undefined;
-  const streaming = !!mission?.streaming;
+  const session = sessionId ? (state.sessions[sessionId] as SessionSummary | undefined) : undefined;
+  const streaming = !!session?.streaming;
+  const hasMacTrafficLights =
+    isDesktop() && typeof navigator !== 'undefined' && navigator.userAgent.includes('Macintosh');
 
   const handleSubmit = (instruction: string, opts: SendOptions) => {
     const prompt =
       opts.count > 1
         ? `${instruction}\n\nCreate ${String(opts.count)} clearly distinct design directions.`
         : instruction;
-    send(prompt, opts.modelId, opts.reasoningEffort, opts.displayText);
+    const imageRefs = opts.canvasImages?.map((image) => ({
+      id: image.libraryId,
+      label: image.name,
+      kind: 'region' as const,
+      url: `droidex://canvas/${image.libraryId}`,
+      imageDataUrl: image.src,
+    }));
+    send(prompt, {
+      modelId: opts.modelId,
+      reasoningEffort: opts.reasoningEffort,
+      displayText: opts.displayText,
+      browserRefs: imageRefs,
+      mode: opts.mode,
+    });
   };
 
   return (
@@ -59,7 +75,9 @@ export default function AgentPanel({
     >
       <header
         data-electron-drag-region
-        className="flex h-[52px] shrink-0 items-center gap-2.5 border-b border-droid-border px-3"
+        className={`flex h-[52px] shrink-0 items-center gap-2.5 border-b border-droid-border pr-3 ${
+          hasMacTrafficLights ? 'pl-[82px]' : 'pl-3'
+        }`}
       >
         <button
           type="button"
@@ -113,7 +131,7 @@ export default function AgentPanel({
               <ThreadBody messages={[]} onPickSuggestion={setText} />
             )}
           </div>
-          {state.pendingQuestion?.missionId === sessionId && <AskUserModal inline />}
+          {state.pendingQuestion?.appSessionId === sessionId && <AskUserModal inline />}
           <StudioComposer
             key={sessionId ?? `new:${sessionKey}`}
             text={text}
@@ -121,8 +139,9 @@ export default function AgentPanel({
             onSend={handleSubmit}
             streaming={streaming}
             onStop={() => {
-              if (sessionId) interruptMission(sessionId);
+              if (sessionId) interruptSession(sessionId);
             }}
+            sessionId={sessionId}
             disabledReason={isCreating ? 'Starting design session…' : undefined}
             hasSession={sessionId !== null}
             sessionModelId={modelId}

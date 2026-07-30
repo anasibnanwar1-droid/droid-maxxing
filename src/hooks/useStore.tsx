@@ -23,6 +23,7 @@ import type {
   ContextStatsSnapshot,
   BrowserState,
   BrowserViewportMode,
+  BrowserTranscriptReference,
   DesignReference,
 } from '../types/bridge';
 import { addWorkspaceCwd } from '../lib/workspaces';
@@ -93,12 +94,18 @@ export interface QueuedDesignContext {
   referenceIds: string[];
 }
 
+export interface QueuedStudioContext {
+  prompt: string;
+  browserRefs?: BrowserTranscriptReference[];
+}
+
 export interface QueuedPrompt {
   id: string;
   text: string;
   skills: string[];
   files: string[];
   design?: QueuedDesignContext;
+  studio?: QueuedStudioContext;
 }
 
 export interface AgentModelConfig {
@@ -257,7 +264,15 @@ export interface AppState {
   skillsProviderSessionId?: string | null;
 
   // Attachments for the first message of a not-yet-created session, keyed by clientRef.
-  pendingCompose: Record<string, { text: string; skills: string[]; files: string[] }>;
+  pendingCompose: Record<
+    string,
+    {
+      text: string;
+      skills: string[];
+      files: string[];
+      browserRefs?: BrowserTranscriptReference[];
+    }
+  >;
 }
 
 type Action =
@@ -276,6 +291,7 @@ type Action =
       text: string;
       skills: string[];
       files: string[];
+      browserRefs?: BrowserTranscriptReference[];
     }
   | { type: 'SESSION_UPDATED'; session: SessionSummary }
   | { type: 'SESSION_CLOSED'; appSessionId: string }
@@ -1099,6 +1115,7 @@ function baseReducer(state: AppState, action: Action): AppState {
           author: 'user',
           skills: pending?.skills.length ? pending.skills : undefined,
           files: pending?.files.length ? pending.files : undefined,
+          browserRefs: pending?.browserRefs?.length ? pending.browserRefs : undefined,
         };
         transcripts = { ...state.transcripts, [action.session.appSessionId]: [seed] };
       }
@@ -1140,7 +1157,12 @@ function baseReducer(state: AppState, action: Action): AppState {
         ...state,
         pendingCompose: {
           ...state.pendingCompose,
-          [action.clientRef]: { text: action.text, skills: action.skills, files: action.files },
+          [action.clientRef]: {
+            text: action.text,
+            skills: action.skills,
+            files: action.files,
+            ...(action.browserRefs?.length ? { browserRefs: action.browserRefs } : {}),
+          },
         },
       };
 

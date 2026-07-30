@@ -134,6 +134,8 @@ export interface DesignLibraryItem {
   url: string;
   createdAt: string;
   screenshotPath?: string;
+  mimeType?: 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif';
+  category?: 'moodboard' | 'inspiration' | 'reference';
   selector?: string;
   source?: { component?: string; file?: string; line?: number };
   styles?: Record<string, string>;

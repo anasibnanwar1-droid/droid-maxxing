@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react';
 import { listDnaLibraries, readDesignDna, scanComponentRegistry } from '../../lib/commands';
-import { useStudioCanvas, type StudioTool } from './StudioCanvasContext';
 import { usePreviewFrames } from './usePreviewFrames';
 import AgentPanel from './AgentPanel';
 import TopBar from './TopBar';
@@ -8,13 +7,6 @@ import ToolRail from './ToolRail';
 import StudioCanvas from './StudioCanvas';
 import SelectionContextPanel from './SelectionContextPanel';
 import AddFrameDialog from './AddFrameDialog';
-
-const TOOL_KEYS: Record<string, StudioTool> = {
-  v: 'select',
-  h: 'hand',
-  t: 'text',
-  p: 'draw',
-};
 
 export default function StudioShell({
   cwd,
@@ -33,7 +25,6 @@ export default function StudioShell({
   onAddRepository: () => Promise<void>;
   onClose: () => void;
 }) {
-  const { studioDispatch } = useStudioCanvas();
   const [addFrameOpen, setAddFrameOpen] = useState(false);
   const [isAgentPanelOpen, setIsAgentPanelOpen] = useState(true);
   usePreviewFrames(cwd);
@@ -50,33 +41,13 @@ export default function StudioShell({
       if ((e.metaKey || e.ctrlKey) && e.key === '\\') {
         e.preventDefault();
         setIsAgentPanelOpen((open) => !open);
-        return;
-      }
-      if (e.metaKey || e.ctrlKey || e.altKey) return;
-      const element = e.target as HTMLElement | null;
-      if (
-        element &&
-        (element.tagName === 'INPUT' || element.tagName === 'TEXTAREA' || element.isContentEditable)
-      ) {
-        return;
-      }
-      const key = e.key.toLowerCase();
-      if (key === 'f') {
-        e.preventDefault();
-        setAddFrameOpen(true);
-        return;
-      }
-      const tool = TOOL_KEYS[key];
-      if (tool) {
-        e.preventDefault();
-        studioDispatch({ type: 'SET_TOOL', tool });
       }
     };
     window.addEventListener('keydown', onKey);
     return () => {
       window.removeEventListener('keydown', onKey);
     };
-  }, [studioDispatch]);
+  }, []);
 
   return (
     <div className="studio-shell flex h-full w-full bg-droid-bg">
@@ -103,6 +74,7 @@ export default function StudioShell({
         />
         <div className="relative min-h-0 flex-1">
           <StudioCanvas
+            cwd={cwd}
             onRequestAddFrame={() => {
               setAddFrameOpen(true);
             }}

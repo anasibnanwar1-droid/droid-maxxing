@@ -9,6 +9,15 @@ import {
 import type { BrowserViewportMode } from '../../types/bridge';
 import { PRESET_VIEWPORTS, FIT_FALLBACK_VIEWPORT } from '../browser/browserViewport';
 import { DEFAULT_VIEW, type CanvasView } from './studioCanvasMath';
+import {
+  emptyCanvasImageSlice,
+  isCanvasImageAction,
+  reduceCanvasImages,
+  type StudioCanvasImage,
+  type StudioCanvasImageAction,
+} from './studioCanvasImages';
+
+export type { StudioCanvasImage, StudioCanvasImageTag } from './studioCanvasImages';
 
 export type StudioTool = 'select' | 'hand' | 'frame' | 'draw';
 export type StudioLeftTab = 'agent' | 'components' | 'libraries';
@@ -95,8 +104,11 @@ export interface StudioCanvasState {
   selectedFrameIds: string[];
   selection: StudioSelection[];
   annotations: StudioAnnotation[];
+  images: StudioCanvasImage[];
   attachedAnnotationIds: string[];
+  attachedImageIds: string[];
   selectedAnnotationId: string | null;
+  selectedImageId: string | null;
   drawingStyle: StudioDrawingStyle;
   settings: StudioSettings;
   // The frame currently in interactive mode (its iframe receives pointer events).
@@ -134,6 +146,7 @@ export type StudioCanvasAction =
   | { type: 'UNDO_ANNOTATION' }
   | { type: 'CLEAR_ANNOTATIONS' }
   | { type: 'CLEAR_ANNOTATION_CONTEXT' }
+  | StudioCanvasImageAction
   // Restore a snapshot when switching design threads (per-thread canvas).
   | { type: 'HYDRATE'; state: StudioCanvasState };
 
@@ -209,6 +222,7 @@ const initialState: StudioCanvasState = {
   selectedFrameIds: [],
   selection: [],
   annotations: [],
+  ...emptyCanvasImageSlice(),
   attachedAnnotationIds: [],
   selectedAnnotationId: null,
   drawingStyle: { kind: 'pencil', color: 'blue', fill: 'none', strokeWidth: 2 },
@@ -221,6 +235,18 @@ export function studioCanvasReducer(
   state: StudioCanvasState,
   action: StudioCanvasAction,
 ): StudioCanvasState {
+  if (isCanvasImageAction(action)) {
+    const imageState = reduceCanvasImages(state, action);
+    const selectsImage =
+      action.type === 'ADD_CANVAS_IMAGE' ||
+      (action.type === 'SELECT_CANVAS_IMAGE' && action.id !== null);
+    return {
+      ...state,
+      ...imageState,
+      selectedFrameIds: selectsImage ? [] : state.selectedFrameIds,
+      selectedAnnotationId: selectsImage ? null : state.selectedAnnotationId,
+    };
+  }
   switch (action.type) {
     case 'SET_VIEW':
       return { ...state, view: action.view };
@@ -319,15 +345,17 @@ export function studioCanvasReducer(
             : state.selectedAnnotationId,
       };
     case 'SELECT_FRAMES':
-      return { ...state, selectedFrameIds: action.ids };
+      return { ...state, selectedFrameIds: action.ids, selectedImageId: null };
     case 'TOGGLE_FRAME': {
-      if (!action.additive) return { ...state, selectedFrameIds: [action.id] };
+      if (!action.additive)
+        return { ...state, selectedFrameIds: [action.id], selectedImageId: null };
       const has = state.selectedFrameIds.includes(action.id);
       return {
         ...state,
         selectedFrameIds: has
           ? state.selectedFrameIds.filter((id) => id !== action.id)
           : [...state.selectedFrameIds, action.id],
+        selectedImageId: null,
       };
     }
     case 'ADD_SELECTION': {
@@ -354,6 +382,7 @@ export function studioCanvasReducer(
         annotations: [...state.annotations, action.annotation],
         attachedAnnotationIds: [...state.attachedAnnotationIds, action.annotation.id],
         selectedAnnotationId: action.annotation.id,
+        selectedImageId: null,
       };
     case 'UPDATE_ANNOTATION':
       return {
@@ -363,7 +392,11 @@ export function studioCanvasReducer(
         ),
       };
     case 'SELECT_ANNOTATION':
-      return { ...state, selectedAnnotationId: action.id };
+      return {
+        ...state,
+        selectedAnnotationId: action.id,
+        selectedImageId: action.id ? null : state.selectedImageId,
+      };
     case 'REMOVE_ANNOTATION':
       return {
         ...state,
@@ -414,6 +447,7 @@ export function emptyStudioCanvasState(): StudioCanvasState {
     selectedFrameIds: [],
     selection: [],
     annotations: [],
+    ...emptyCanvasImageSlice(),
     attachedAnnotationIds: [],
     selectedAnnotationId: null,
     drawingStyle: { kind: 'pencil', color: 'blue', fill: 'none', strokeWidth: 2 },

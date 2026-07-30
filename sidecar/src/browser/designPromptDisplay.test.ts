@@ -117,3 +117,52 @@ test('designPromptDisplayFromText ignores reference packs outside browser data',
 test('designPromptDisplayFromText leaves non-design prompts alone', () => {
   assert.equal(designPromptDisplayFromText('hello'), null);
 });
+
+test('designPromptDisplayFromText hides the internal Design DNA pointer', () => {
+  assert.deepEqual(
+    designPromptDisplayFromText(
+      [
+        "Help me design an AI chat interface for my doctor's clinic.",
+        '',
+        'Project design DNA:',
+        '- This project has a Design DNA at /project/DESIGN.md. Pull exact token values on demand with the design_system tool; do not paste the whole file into context.',
+        '- Motion rules live in /project/MOTION.md; consult them for timing and easing.',
+      ].join('\n'),
+    ),
+    { text: "Help me design an AI chat interface for my doctor's clinic." },
+  );
+});
+
+test('designPromptDisplayFromText preserves user-authored Design DNA prose', () => {
+  assert.equal(
+    designPromptDisplayFromText('Review this section:\n\nProject design DNA:\nUse warm neutrals.'),
+    null,
+  );
+});
+
+test('designPromptDisplayFromText hides Studio canvas reference metadata', () => {
+  assert.deepEqual(
+    designPromptDisplayFromText(
+      [
+        'Apply these references to the dashboard.',
+        '',
+        'DROIDEX DESIGN reference pack:',
+        '{"images":[{"libraryId":"canvas-example","name":"Clinic inspiration"}]}',
+        '',
+        'Project design DNA:',
+        '- Pull exact token values on demand with the design_system tool.',
+      ].join('\n'),
+    ),
+    {
+      text: 'Apply these references to the dashboard.',
+      browserRefs: [
+        {
+          id: 'canvas-example',
+          label: 'Clinic inspiration',
+          kind: 'region',
+          url: 'droidex://canvas/canvas-example',
+        },
+      ],
+    },
+  );
+});

@@ -4,6 +4,7 @@ import {
   emptyStudioCanvasState,
   studioCanvasReducer,
   type StudioAnnotation,
+  type StudioCanvasImage,
   type StudioFrame,
 } from './StudioCanvasContext';
 
@@ -35,6 +36,23 @@ function annotation(overrides: Partial<StudioAnnotation> = {}): StudioAnnotation
     fill: 'none',
     strokeWidth: 2,
     frameId: 'frame-1',
+    ...overrides,
+  };
+}
+
+function canvasImage(overrides: Partial<StudioCanvasImage> = {}): StudioCanvasImage {
+  return {
+    id: 'canvas-image-1',
+    libraryId: 'canvas-image-1',
+    src: 'data:image/png;base64,YWJj',
+    name: 'Soft dashboard',
+    tag: 'inspiration',
+    x: 100,
+    y: 120,
+    width: 320,
+    height: 200,
+    naturalWidth: 1600,
+    naturalHeight: 1000,
     ...overrides,
   };
 }
@@ -119,4 +137,54 @@ test('removing a frame also removes its anchored drawing context', () => {
     ['canvas-note'],
   );
   assert.deepEqual(next.attachedAnnotationIds, ['canvas-note']);
+});
+
+test('canvas images can be added, arranged, tagged, and removed', () => {
+  const initial = {
+    ...emptyStudioCanvasState(),
+    frames: [frame()],
+    selectedFrameIds: ['frame-1'],
+  };
+  const added = studioCanvasReducer(initial, {
+    type: 'ADD_CANVAS_IMAGE',
+    image: canvasImage(),
+  });
+  assert.equal(added.selectedImageId, 'canvas-image-1');
+  assert.deepEqual(added.selectedFrameIds, []);
+  assert.deepEqual(added.attachedImageIds, ['canvas-image-1']);
+
+  const arranged = studioCanvasReducer(added, {
+    type: 'UPDATE_CANVAS_IMAGE',
+    id: 'canvas-image-1',
+    patch: { x: 240, y: 80, width: 400, height: 250, tag: 'moodboard' },
+  });
+  assert.deepEqual(
+    {
+      x: arranged.images[0].x,
+      y: arranged.images[0].y,
+      width: arranged.images[0].width,
+      height: arranged.images[0].height,
+      tag: arranged.images[0].tag,
+    },
+    { x: 240, y: 80, width: 400, height: 250, tag: 'moodboard' },
+  );
+
+  const cleared = studioCanvasReducer(arranged, { type: 'CLEAR_CANVAS_IMAGE_CONTEXT' });
+  assert.deepEqual(cleared.attachedImageIds, []);
+  assert.equal(cleared.images.length, 1);
+
+  const reattached = studioCanvasReducer(cleared, {
+    type: 'SET_CANVAS_IMAGE_ATTACHED',
+    id: 'canvas-image-1',
+    attached: true,
+  });
+  assert.deepEqual(reattached.attachedImageIds, ['canvas-image-1']);
+
+  const removed = studioCanvasReducer(reattached, {
+    type: 'REMOVE_CANVAS_IMAGE',
+    id: 'canvas-image-1',
+  });
+  assert.deepEqual(removed.images, []);
+  assert.deepEqual(removed.attachedImageIds, []);
+  assert.equal(removed.selectedImageId, null);
 });

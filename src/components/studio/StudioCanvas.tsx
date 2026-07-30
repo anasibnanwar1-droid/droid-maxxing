@@ -25,17 +25,27 @@ import StudioFrameChrome from './StudioFrameChrome';
 import CanvasControls from './CanvasControls';
 import CanvasEmptyState from './CanvasEmptyState';
 import CanvasAnnotationLayer from './CanvasAnnotationLayer';
+import CanvasImageLayer from './CanvasImageLayer';
 import AnnotationToolbar from './AnnotationToolbar';
 import { useCanvasDrawing } from './useCanvasDrawing';
+import { useCanvasImageImport } from './useCanvasImageImport';
 import { hitTestAnnotation, topFrameAtPoint } from './studioAnnotations';
+import { CANVAS_IMAGE_INPUT_ID } from './studioCanvasImages';
 
 type DragMode = 'pan' | 'marquee';
 
-export default function StudioCanvas({ onRequestAddFrame }: { onRequestAddFrame: () => void }) {
+export default function StudioCanvas({
+  cwd,
+  onRequestAddFrame,
+}: {
+  cwd: string;
+  onRequestAddFrame: () => void;
+}) {
   const { studio, studioDispatch } = useStudioCanvas();
   const { view, tool, frames, selectedFrameIds } = studio;
   const rootRef = useRef<HTMLDivElement>(null);
   const drawing = useCanvasDrawing(rootRef);
+  const imageImport = useCanvasImageImport(rootRef, cwd);
   // Latest view for the native wheel listener (bound once, reads via ref).
   const viewRef = useRef(view);
   viewRef.current = view;
@@ -145,19 +155,29 @@ export default function StudioCanvas({ onRequestAddFrame }: { onRequestAddFrame:
         studioDispatch({ type: 'UNDO_ANNOTATION' });
       }
       if (
-        studio.selectedAnnotationId &&
+        (studio.selectedAnnotationId || studio.selectedImageId) &&
         (e.key === 'Delete' || e.key === 'Backspace') &&
         !isTypingTarget(e.target)
       ) {
         e.preventDefault();
-        studioDispatch({ type: 'REMOVE_ANNOTATION', id: studio.selectedAnnotationId });
+        if (studio.selectedAnnotationId) {
+          studioDispatch({ type: 'REMOVE_ANNOTATION', id: studio.selectedAnnotationId });
+        } else if (studio.selectedImageId) {
+          studioDispatch({ type: 'REMOVE_CANVAS_IMAGE', id: studio.selectedImageId });
+        }
       }
     };
     window.addEventListener('keydown', onKey);
     return () => {
       window.removeEventListener('keydown', onKey);
     };
-  }, [onRequestAddFrame, studio.selectedAnnotationId, studio.tool, studioDispatch]);
+  }, [
+    onRequestAddFrame,
+    studio.selectedAnnotationId,
+    studio.selectedImageId,
+    studio.tool,
+    studioDispatch,
+  ]);
 
   const localPoint = useCallback((clientX: number, clientY: number): Point => {
     const rect = rootRef.current?.getBoundingClientRect();
@@ -247,6 +267,7 @@ export default function StudioCanvas({ onRequestAddFrame }: { onRequestAddFrame:
   };
 
   const onPointerMove = (e: ReactPointerEvent) => {
+    imageImport.trackPointer(e.clientX, e.clientY);
     if (drawing.move(e)) return;
     const d = drag.current;
     if (!d) {
@@ -293,6 +314,7 @@ export default function StudioCanvas({ onRequestAddFrame }: { onRequestAddFrame:
         studioDispatch({ type: 'SELECT_FRAMES', ids: [] });
         studioDispatch({ type: 'CLEAR_SELECTION' });
         studioDispatch({ type: 'SELECT_ANNOTATION', id: null });
+        studioDispatch({ type: 'SELECT_CANVAS_IMAGE', id: null });
       }
     }
     setMarquee(null);
@@ -310,10 +332,17 @@ export default function StudioCanvas({ onRequestAddFrame }: { onRequestAddFrame:
     const screen = localPoint(event.clientX, event.clientY);
     const world = screenToWorld(screen, view);
     const overFrame = topFrameAtPoint(frames, world) !== undefined;
+    const overImage = studio.images.some(
+      (image) =>
+        world.x >= image.x &&
+        world.x <= image.x + image.width &&
+        world.y >= image.y &&
+        world.y <= image.y + image.height,
+    );
     const overAnnotation = studio.annotations.some((annotation) =>
       hitTestAnnotation(annotation, screen, frames, view),
     );
-    if (overFrame || overAnnotation) return;
+    if (overFrame || overImage || overAnnotation) return;
     drawing.cancel();
     studioDispatch({ type: 'SET_TOOL', tool: 'select' });
     studioDispatch({ type: 'SET_INTERACTING', id: null });
@@ -347,6 +376,18 @@ export default function StudioCanvas({ onRequestAddFrame }: { onRequestAddFrame:
       }}
       onDoubleClick={onDoubleClick}
     >
+      <input
+        id={CANVAS_IMAGE_INPUT_ID}
+        ref={imageImport.fileInputRef}
+        type="file"
+        accept="image/png,image/jpeg,image/webp,image/gif"
+        multiple
+        className="hidden"
+        onChange={(event) => {
+          if (event.target.files) void imageImport.addFiles(event.target.files);
+          event.target.value = '';
+        }}
+      />
       {/* Dot grid, anchored to the world so it tracks pan/zoom */}
       <div
         className="pointer-events-none absolute inset-0"
@@ -370,6 +411,8 @@ export default function StudioCanvas({ onRequestAddFrame }: { onRequestAddFrame:
           <StudioFrameBody key={f.id} frame={f} entrance={!restoring} />
         ))}
       </div>
+
+      <CanvasImageLayer />
 
       {/* Chrome overlay — crisp, screen-space */}
       <div className="pointer-events-none absolute inset-0">
@@ -406,8 +449,8 @@ export default function StudioCanvas({ onRequestAddFrame }: { onRequestAddFrame:
         />
       )}
 
-      {frames.length === 0 && studio.annotations.length === 0 && (
-        <CanvasEmptyState onAddFrame={requestAddFrame} />
+      {frames.length === 0 && studio.annotations.length === 0 && studio.images.length === 0 && (
+        <CanvasEmptyState onAddFrame={requestAddFrame} onAddImage={imageImport.requestFilePicker} />
       )}
 
       <AnnotationToolbar />
@@ -418,6 +461,7 @@ export default function StudioCanvas({ onRequestAddFrame }: { onRequestAddFrame:
           return r ? { width: r.width, height: r.height } : null;
         }}
         onRequestAddFrame={requestAddFrame}
+        onRequestAddImage={imageImport.requestFilePicker}
       />
     </div>
   );

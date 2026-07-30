@@ -24,6 +24,7 @@ import {
 import {
   deleteLibraryItem,
   getLibraryItem,
+  importReferenceImage,
   listLibraryItems,
   saveReference,
 } from './referenceLibrary.js';
@@ -189,6 +190,13 @@ export class DesignManager {
         this.options.emit({ type: 'design.library.state', cwd: cmd.cwd, items });
         return;
       }
+      case 'design.library.importImage':
+        this.options.emit({
+          type: 'design.library.state',
+          cwd: cmd.cwd,
+          items: importReferenceImage(cmd),
+        });
+        return;
       case 'design.library.delete':
         this.options.emit({
           type: 'design.library.state',

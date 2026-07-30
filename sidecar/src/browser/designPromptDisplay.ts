@@ -10,14 +10,28 @@ export interface DesignPromptDisplay {
 
 const PACK_PATH_RE = /^- References JSON:\s*(.+)$/m;
 const INSTRUCTION_RE = /\nUser instruction:\n([\s\S]*)$/;
+const DNA_POINTER_MARKER = '\n\nProject design DNA:\n';
+const STUDIO_REFERENCE_MARKER = '\n\nDROIDEX DESIGN reference pack:\n';
 
 export function designPromptDisplayFromText(
   text: string,
   options: { browserDataDir?: string } = {},
 ): DesignPromptDisplay | null {
-  if (!text.startsWith('Design Mode reference pack:')) return null;
-  const instruction = INSTRUCTION_RE.exec(text)?.[1]?.trim() ?? text.trim();
-  const packPath = PACK_PATH_RE.exec(text)?.[1]?.trim();
+  const visibleText = withoutInternalDnaPointer(text);
+  const studioReferenceIndex = visibleText.indexOf(STUDIO_REFERENCE_MARKER);
+  if (studioReferenceIndex >= 0) {
+    const pack = visibleText.slice(studioReferenceIndex + STUDIO_REFERENCE_MARKER.length).trim();
+    const browserRefs = readStudioCanvasRefs(pack);
+    return {
+      text: visibleText.slice(0, studioReferenceIndex).trimEnd(),
+      browserRefs: browserRefs.length ? browserRefs : undefined,
+    };
+  }
+  if (!visibleText.startsWith('Design Mode reference pack:')) {
+    return visibleText === text ? null : { text: visibleText };
+  }
+  const instruction = INSTRUCTION_RE.exec(visibleText)?.[1]?.trim() ?? visibleText.trim();
+  const packPath = PACK_PATH_RE.exec(visibleText)?.[1]?.trim();
   const browserRefs =
     packPath && isBrowserAssetPath(packPath, options.browserDataDir)
       ? readBrowserRefsFromPack(packPath)
@@ -26,6 +40,42 @@ export function designPromptDisplayFromText(
     text: instruction,
     browserRefs: browserRefs.length ? browserRefs : undefined,
   };
+}
+
+function withoutInternalDnaPointer(text: string): string {
+  const markerIndex = text.lastIndexOf(DNA_POINTER_MARKER);
+  if (markerIndex < 0) return text;
+  const pointer = text.slice(markerIndex + DNA_POINTER_MARKER.length);
+  const isInternalPointer =
+    pointer.includes('design_system tool') || pointer.includes('Motion rules live in');
+  return isInternalPointer ? text.slice(0, markerIndex).trimEnd() : text;
+}
+
+function readStudioCanvasRefs(pack: string): BrowserTranscriptReference[] {
+  try {
+    const parsed = JSON.parse(pack) as { images?: unknown };
+    if (!Array.isArray(parsed.images)) return [];
+    return parsed.images.flatMap((value) => {
+      if (!value || typeof value !== 'object') return [];
+      const image = value as Record<string, unknown>;
+      const id = typeof image.libraryId === 'string' ? image.libraryId : undefined;
+      if (!id) return [];
+      const label =
+        (typeof image.name === 'string' && image.name.trim()) ||
+        (typeof image.tag === 'string' && image.tag.trim()) ||
+        'canvas-image';
+      return [
+        {
+          id,
+          label,
+          kind: 'region' as const,
+          url: `droidex://canvas/${id}`,
+        },
+      ];
+    });
+  } catch {
+    return [];
+  }
 }
 
 function readBrowserRefsFromPack(packPath: string): BrowserTranscriptReference[] {

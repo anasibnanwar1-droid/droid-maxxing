@@ -731,6 +731,14 @@ export type ClientCommand =
       name?: string;
       note?: string;
     }
+  | {
+      type: 'design.library.importImage';
+      cwd: string;
+      id: string;
+      name: string;
+      category: 'moodboard' | 'inspiration' | 'reference';
+      dataUrl: string;
+    }
   | { type: 'design.library.delete'; cwd: string; id: string }
   | { type: 'design.library.extract'; cwd: string; id: string }
   | { type: 'design.prototypes.list'; cwd: string }
