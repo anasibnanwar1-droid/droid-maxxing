@@ -27,6 +27,7 @@ const {
 } = require('./browserDiagnostics.cjs');
 const { runWithWebContentsDebugger } = require('./nativeBrowserEmulation.cjs');
 const { attachChildView, detachChildView } = require('./nativeBrowserHost.cjs');
+const { createSidecarSupervisor } = require('./sidecarSupervisor.cjs');
 
 const APP_NAME = 'Droid Control';
 const BRIDGE_PORT = Number(process.env.BRIDGE_PORT ?? 8765);
@@ -37,7 +38,6 @@ const filesRootAccess = files.createRootAccessRegistry();
 
 let mainWindow = null;
 let hiddenNativeBrowserWindow = null;
-let sidecar = null;
 let attachedBrowserSessionId = null;
 const nativeBrowsers = new Map();
 // Keep hidden browser sessions warm by default so authenticated pages and
@@ -78,6 +78,7 @@ app.on('before-quit', () => {
 
 app.on('activate', () => {
   if (!mainWindow) createMainWindow();
+  ensureSidecar();
 });
 
 app.on('child-process-gone', (_event, details) => {
@@ -480,28 +481,35 @@ function nodeBin() {
 }
 
 function ensureSidecar() {
-  if (sidecar && sidecar.exitCode === null && sidecar.signalCode === null) return;
-  sidecar = spawn(nodeBin(), [sidecarEntry()], {
-    cwd: appRoot(),
-    stdio: ['pipe', 'inherit', 'inherit'],
-    env: {
-      ...process.env,
-      BRIDGE_PORT: String(bridge.port),
-      BRIDGE_TOKEN: bridge.token,
-      BRIDGE_EXIT_ON_STDIN_CLOSE: '1',
-      BRIDGE_ALLOW_LOCAL_NO_TOKEN: app.isPackaged ? '0' : '1',
-    },
-  });
-  sidecar.on('exit', (code, signal) => {
-    if (code || signal) console.error(`sidecar exited: ${code ?? signal}`);
-  });
+  sidecarSupervisor.start();
 }
 
 function stopSidecar() {
-  if (!sidecar || sidecar.killed) return;
-  sidecar.kill();
-  sidecar = null;
+  sidecarSupervisor.stop();
 }
+
+const sidecarSupervisor = createSidecarSupervisor({
+  spawnProcess: () =>
+    spawn(nodeBin(), [sidecarEntry()], {
+      cwd: appRoot(),
+      stdio: ['pipe', 'pipe', 'inherit'],
+      env: {
+        ...process.env,
+        BRIDGE_PORT: String(bridge.port),
+        BRIDGE_TOKEN: bridge.token,
+        BRIDGE_EXIT_ON_STDIN_CLOSE: '1',
+        BRIDGE_ALLOW_LOCAL_NO_TOKEN: app.isPackaged ? '0' : '1',
+      },
+    }),
+  writeOutput: (chunk) => process.stdout.write(chunk),
+  onUnexpectedExit: ({ code, signal, error, delayMs }) => {
+    const reason = error?.message ?? code ?? signal ?? 'unknown';
+    console.error(`sidecar exited: ${reason}; restarting in ${delayMs}ms`);
+  },
+  onStopError: (error) => {
+    console.error(`could not stop sidecar: ${error instanceof Error ? error.message : error}`);
+  },
+});
 
 function configureBrowserSession() {
   if (browserSessionConfigured) return;
