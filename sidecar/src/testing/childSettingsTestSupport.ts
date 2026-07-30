@@ -89,10 +89,13 @@ export async function openChildForParent(
 
 export function exactSettingsEvents(
   events: ServerEvent[],
+  parentAppSessionId: string,
   childSessionId: string,
 ): ChildSessionSummary[] {
   return events.flatMap((event) =>
-    event.type === 'session.child' && event.child.childSessionId === childSessionId
+    event.type === 'session.child' &&
+    event.child.parentAppSessionId === parentAppSessionId &&
+    event.child.childSessionId === childSessionId
       ? [event.child]
       : [],
   );

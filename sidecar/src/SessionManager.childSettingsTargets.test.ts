@@ -4,6 +4,7 @@ import { ProgressLogEntryType } from '@factory/droid-sdk';
 
 import {
   createMission,
+  exactSettingsEvents,
   openChild,
   openChildForParent,
 } from './testing/childSettingsTestSupport.js';
@@ -101,23 +102,47 @@ test('the same child identity under another parent is not interchangeable', asyn
   try {
     await createMission(h);
     await createMission(h);
-    const child = await openChildForParent(h, 'provider-1', {
+    const first = await openChildForParent(h, 'provider-1', {
       childSessionId: 'shared-logical',
-      providerSessionId: 'worker-backend',
+      providerSessionId: 'worker-backend-1',
       role: 'worker',
       modelId: 'worker-old',
     });
-    const writes = child.settings.length;
+    const second = await openChildForParent(h, 'provider-2', {
+      childSessionId: 'shared-logical',
+      providerSessionId: 'worker-backend-2',
+      role: 'worker',
+      modelId: 'worker-old',
+    });
+    const firstWrites = first.settings.length;
+    const secondWrites = second.settings.length;
 
     await h.handle({
       type: 'child.updateSettings',
       parentAppSessionId: 'provider-2',
       childSessionId: 'shared-logical',
-      modelId: 'must-not-apply',
+      modelId: 'second-only',
     });
 
-    assert.equal(child.settings.length, writes);
-    assert.equal(invalidTargetErrors(h.events, 'provider-2', 'shared-logical'), 1);
+    assert.equal(first.settings.length, firstWrites);
+    assert.deepEqual(
+      second.settings.slice(secondWrites).map((settings) => ({
+        modelId: settings['modelId'],
+        limit: settings['compactionTokenLimit'],
+      })),
+      [
+        { modelId: 'second-only', limit: undefined },
+        { modelId: undefined, limit: 250_000 },
+      ],
+    );
+    assert.equal(
+      exactSettingsEvents(h.events, 'provider-1', 'shared-logical').at(-1)?.modelId,
+      'worker-old',
+    );
+    assert.equal(
+      exactSettingsEvents(h.events, 'provider-2', 'shared-logical').at(-1)?.modelId,
+      'second-only',
+    );
   } finally {
     await h.dispose();
   }

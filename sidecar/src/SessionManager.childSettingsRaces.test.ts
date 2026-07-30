@@ -53,7 +53,10 @@ test('concurrent child settings updates serialize so the latest selection wins',
         .map((settings) => settings['modelId']),
       ['worker-first', 'worker-latest'],
     );
-    assert.equal(exactSettingsEvents(h.events, 'worker-logical').at(-1)?.modelId, 'worker-latest');
+    assert.equal(
+      exactSettingsEvents(h.events, 'provider-1', 'worker-logical').at(-1)?.modelId,
+      'worker-latest',
+    );
   } finally {
     await h.dispose();
   }
@@ -67,7 +70,7 @@ test(
     try {
       await createMission(h, { workerModel: 'worker-accepted' });
       const child = await openChild(h, 'worker-logical', 'worker-backend', 'worker', 'worker-old');
-      const successes = exactSettingsEvents(h.events, 'worker-logical').length;
+      const successes = exactSettingsEvents(h.events, 'provider-1', 'worker-logical').length;
       const writes = child.settings.length;
       child.nextUpdateSettingsError = new Error('child provider rejected');
 
@@ -80,7 +83,7 @@ test(
 
       assert.equal(child.settings.length, writes + 1);
       assert.equal(child.settings.at(-1)?.['modelId'], 'worker-rejected');
-      assert.equal(exactSettingsEvents(h.events, 'worker-logical').length, successes);
+      assert.equal(exactSettingsEvents(h.events, 'provider-1', 'worker-logical').length, successes);
       assert.equal(
         h.events.some(
           (event) =>
@@ -121,7 +124,7 @@ test(
       await createMission(h);
       const child = await openChild(h, 'worker-logical', 'worker-backend', 'worker', 'worker-old');
       const gate = h.provider.deferNextUpdateSettings('worker-backend');
-      const successes = exactSettingsEvents(h.events, 'worker-logical').length;
+      const successes = exactSettingsEvents(h.events, 'provider-1', 'worker-logical').length;
       const update = h.handle({
         type: 'child.updateSettings',
         parentAppSessionId: 'provider-1',
@@ -136,7 +139,7 @@ test(
       gate.resolve();
       await update;
 
-      assert.equal(exactSettingsEvents(h.events, 'worker-logical').length, successes);
+      assert.equal(exactSettingsEvents(h.events, 'provider-1', 'worker-logical').length, successes);
       assert.equal(child.settings.length, writesAfterProvider);
     } finally {
       await h.dispose();
@@ -345,7 +348,7 @@ test(
         false,
       );
       assert.equal(
-        exactSettingsEvents(h.events, 'worker-logical').some(
+        exactSettingsEvents(h.events, 'provider-1', 'worker-logical').some(
           (event) => event.modelId === 'stale-new-model',
         ),
         false,

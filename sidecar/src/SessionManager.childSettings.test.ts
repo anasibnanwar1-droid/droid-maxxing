@@ -80,7 +80,7 @@ test(
       assert.equal(workerB.settings.length, before[1]);
       assert.equal(validator.settings.length, before[2]);
       assert.equal(parentProvider.settings.length, before[3]);
-      const workerEvent = exactSettingsEvents(h.events, 'worker-logical-a').at(-1);
+      const workerEvent = exactSettingsEvents(h.events, 'provider-1', 'worker-logical-a').at(-1);
       assert.ok(workerEvent);
       assert.equal(workerEvent.parentAppSessionId, 'provider-1');
       assert.equal(workerEvent.modelId, 'worker-new');
@@ -298,7 +298,7 @@ test(
       await createMission(h);
       const child = await openChild(h, 'worker-logical', 'worker-backend', 'worker', 'worker-old');
       const writes = child.settings.length;
-      const successes = exactSettingsEvents(h.events, 'worker-logical').length;
+      const successes = exactSettingsEvents(h.events, 'provider-1', 'worker-logical').length;
       const malformed = {
         type: 'child.updateSettings',
         parentAppSessionId: 'provider-1',
@@ -309,7 +309,7 @@ test(
       await h.handle(malformed);
 
       assert.equal(child.settings.length, writes);
-      assert.equal(exactSettingsEvents(h.events, 'worker-logical').length, successes);
+      assert.equal(exactSettingsEvents(h.events, 'provider-1', 'worker-logical').length, successes);
       assert.equal(
         h.events.some(
           (event) =>

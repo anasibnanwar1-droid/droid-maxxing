@@ -195,13 +195,13 @@ export class SessionContext {
   }
 
   stopSession(liveSession: LiveSession): void {
-    this.stopPollingKey(liveSession.summary.appSessionId);
+    this.stopPollingKey(primaryResourceKey(liveSession.summary.appSessionId));
   }
 
   forgetSession(liveSession: LiveSession): void {
     const appSessionId = liveSession.summary.appSessionId;
     this.usageOffsets.delete(appSessionId);
-    this.snapshots.delete(appSessionId);
+    this.snapshots.delete(primaryResourceKey(appSessionId));
   }
 
   clearAll(): void {
@@ -271,7 +271,8 @@ export class SessionContext {
 
   private emitEstimate(sourceSessionId: string, summary: SessionSummary): void {
     if (summary.contextTokens <= 0) return;
-    const previous = this.snapshots.get(sourceSessionId);
+    const resourceKey = primaryResourceKey(sourceSessionId);
+    const previous = this.snapshots.get(resourceKey);
     const limit =
       this.dependencies.maxContextTokensForSummary(summary) ??
       summary.maxContextTokens ??
@@ -294,7 +295,7 @@ export class SessionContext {
       updatedAt: new Date().toISOString(),
       breakdown,
     };
-    this.snapshots.set(sourceSessionId, snapshot);
+    this.snapshots.set(resourceKey, snapshot);
     this.dependencies.emit({
       type: 'context.updated',
       appSessionId: summary.appSessionId,
@@ -309,11 +310,17 @@ function isChildTarget(target: ContextOperationTarget): target is ChildOperation
 }
 
 function childIdentityKey(identity: ChildIdentity): string {
-  return `${String(identity.parentAppSessionId.length)}:${identity.parentAppSessionId}${identity.childSessionId}`;
+  return `child:${String(identity.parentAppSessionId.length)}:${identity.parentAppSessionId}${identity.childSessionId}`;
+}
+
+function primaryResourceKey(sourceSessionId: string): string {
+  return `primary:${sourceSessionId}`;
 }
 
 function contextResourceKey(target: ContextOperationTarget): string {
-  return isChildTarget(target) ? childIdentityKey(target) : target.sourceSessionId;
+  return isChildTarget(target)
+    ? childIdentityKey(target)
+    : primaryResourceKey(target.sourceSessionId);
 }
 
 function applyExactUsage(

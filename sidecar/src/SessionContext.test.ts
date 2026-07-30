@@ -264,6 +264,48 @@ test('child identities scope snapshots, pollers, and compaction generations by p
   assert.equal(parentB.summary.autoCompactions, undefined);
 });
 
+test('primary and child resource keys cannot alias', async (t) => {
+  const h = createHarness();
+  const primary = registerLive(h, '1:px');
+  const parent = registerLive(h, 'p').live;
+  const child = addChild(h, parent, 'x', 'child-provider');
+  t.after(() => h.context.clearAll());
+  child.session.nextContextStats = {
+    used: 100,
+    remaining: 900,
+    limit: 1_000,
+    accuracy: ContextStatsAccuracy.Estimated,
+    updatedAt: '2026-07-30T00:00:00.000Z',
+  };
+  h.runtime.contextBreakdowns.set('child-provider', {
+    usedTokens: 100,
+    contextBudget: 1_000,
+    categories: [{ name: 'Child tools', tokens: 100 }],
+  });
+  await h.context.refresh(child.target);
+
+  h.context.recordUsage('1:px', '1:px', {
+    tokensIn: 10,
+    tokensOut: 5,
+    contextTokens: 50,
+  });
+  const primaryEstimate = contextEvents(h).findLast(
+    (event) => event.appSessionId === '1:px' && event.sourceSessionId === '1:px',
+  );
+  assert.equal(primaryEstimate?.stats.breakdown, undefined);
+
+  h.context.startPolling(primaryTarget(h, primary.live));
+  h.context.startPolling(child.target);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(primary.session.contextStatsCalls, 1);
+  assert.equal(child.session.contextStatsCalls, 2);
+
+  h.context.stopSession(primary.live);
+  h.context.startPolling(child.target);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(child.session.contextStatsCalls, 2);
+});
+
 test('forgetChild clears the resolved backend snapshot and logical generation', async () => {
   const h = createHarness();
   const parent = registerLive(h, 'parent').live;
