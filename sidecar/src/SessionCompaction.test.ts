@@ -10,7 +10,6 @@ import {
   type PrimaryCompactionTarget,
   type SessionCompactionDependencies,
 } from './SessionCompaction.js';
-import type { LiveChildSession } from './SessionLifecycle.js';
 import { createCompactionTestLiveSession } from './testing/compactionTestSupport.js';
 import {
   FakeFactoryRuntime,
@@ -111,16 +110,7 @@ function childTarget(
   setModel(value: string): void;
 } {
   const session = new FakeFactorySession('child-backend', {}, h.calls);
-  const child: LiveChildSession = {
-    session,
-    childSessionId: 'child-logical',
-    appSessionId: 'app-1',
-    role: 'worker',
-    lastUsedAt: 1,
-    streaming: false,
-    autoCompacting: false,
-    pendingSends: [],
-  };
+  const child = { session, childSessionId: 'child-logical', autoCompacting: false };
   let current = true;
   let modelId = effectiveModelId;
   const target: ChildCompactionTarget = {
@@ -131,8 +121,16 @@ function childTarget(
     providerSessionId: session.sessionId,
     sourceSessionId: session.sessionId,
     session,
-    role: child.role,
-    child,
+    role: 'worker',
+    parentGeneration: 1,
+    runtimeGeneration: 1,
+    turnGeneration: 1,
+    configurationGeneration: 1,
+    isAutoCompacting: () => child.autoCompacting,
+    setAutoCompacting: (active) => {
+      child.autoCompacting = active;
+    },
+    isStreaming: () => false,
     effectiveModelId,
     isCurrent: () => current && modelId === effectiveModelId && child.session === session,
   };

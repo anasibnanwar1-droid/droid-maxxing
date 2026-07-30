@@ -12,11 +12,7 @@ import {
   Loader2,
   SquarePen,
 } from 'lucide-react';
-import {
-  buildWorkspaceSections,
-  isChildSession,
-  SIDEBAR_VISIBLE_SESSION_LIMIT,
-} from '../lib/workspaces';
+import { buildWorkspaceSections, SIDEBAR_VISIBLE_SESSION_LIMIT } from '../lib/workspaces';
 import { useSessionLive } from '../hooks/useSessionLive';
 import { useAppUpdate } from '../lib/appUpdate';
 import { formatRelativeTime } from '../lib/time';
@@ -92,6 +88,8 @@ function SessionRow({
   return (
     <div>
       <button
+        data-testid="top-level-session-row"
+        data-app-session-id={session.appSessionId}
         onClick={onClick}
         className={`group w-full flex items-center gap-2.5 pl-3 pr-2 py-1.5 rounded-xl text-left transition-colors ${
           active ? 'bg-droid-active' : 'hover:bg-droid-elevated/40'
@@ -193,17 +191,17 @@ export default function Sidebar() {
     startChat(cwd);
   };
 
-  // Plain, folder-less chats (child session sessions never appear as standalone rows).
+  // The sidecar publishes top-level sessions only; children live in the right panel.
   const chatSessions = useMemo<SessionSummary[]>(() => {
     return (state.sessionOrder.map((id) => state.sessions[id]).filter(Boolean) as SessionSummary[])
-      .filter((m) => !m.cwd && !isChildSession(m))
+      .filter((m) => !m.cwd)
       .sort((a, b) => b.updatedAt - a.updatedAt);
   }, [state.sessionOrder, state.sessions]);
 
   const workspaces = useMemo(() => {
-    const sessions = (
-      state.sessionOrder.map((id) => state.sessions[id]).filter(Boolean) as SessionSummary[]
-    ).filter((m) => !isChildSession(m));
+    const sessions = state.sessionOrder
+      .map((id) => state.sessions[id])
+      .filter(Boolean) as SessionSummary[];
     return buildWorkspaceSections(state.workspaceCwds, sessions);
   }, [state.sessionOrder, state.sessions, state.workspaceCwds]);
 
@@ -216,7 +214,7 @@ export default function Sidebar() {
       now={now}
       onClick={() => {
         dispatch({ type: 'SET_ACTIVE_SESSION', id: m.appSessionId });
-        dispatch({ type: 'SELECT_PROVIDER_SESSION', id: null });
+        dispatch({ type: 'SELECT_CHILD', selection: null });
       }}
     />
   );
@@ -268,6 +266,7 @@ export default function Sidebar() {
 
   return (
     <aside
+      data-testid="left-navigation"
       className="w-[280px] h-full flex flex-col border-r border-droid-border shrink-0"
       style={{
         background: 'var(--sidebar-bg)',

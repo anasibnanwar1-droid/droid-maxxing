@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
-import { DatabaseSync } from 'node:sqlite';
 import path from 'node:path';
 import test from 'node:test';
 
+import { HistoryIndex } from './history.js';
 import { createSessionManagerTestContext } from './testing/sessionManagerTestContext.js';
-import type { SessionSummary, ServerEvent, ChildSessionHistoryLink } from './protocol.js';
+import type { ChildSessionSummary, SessionSummary, ServerEvent } from './protocol.js';
 
 type SessionHistoryEvent = Extract<ServerEvent, { type: 'session.history' }>;
 type SessionUpdatedEvent = Extract<ServerEvent, { type: 'session.updated' }>;
@@ -48,37 +48,20 @@ function writeHistoryChain(
   sessionId: string,
   compactedFromProviderSessionIds: string[],
 ): void {
-  const dir = path.join(home, '.factory', 'droid-control');
-  mkdirSync(dir, { recursive: true });
-  const db = new DatabaseSync(path.join(dir, 'index.sqlite'));
+  const previousHome = process.env.HOME;
+  process.env.HOME = home;
   try {
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS app_sessions (
-        app_session_id TEXT PRIMARY KEY,
-        provider_session_id TEXT NOT NULL,
-        compacted_from_provider_session_ids TEXT NOT NULL,
-        session_purpose TEXT NOT NULL,
-        interaction_mode TEXT NOT NULL,
-        title TEXT NOT NULL,
-        updated_at INTEGER NOT NULL
-      )
-    `);
-    db.prepare(
-      `INSERT INTO app_sessions (
-        app_session_id, provider_session_id, compacted_from_provider_session_ids,
-        session_purpose, interaction_mode, title, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    ).run(
-      appSessionId,
-      sessionId,
-      JSON.stringify(compactedFromProviderSessionIds),
-      'chat',
-      'auto',
-      'History',
-      0,
-    );
+    const index = new HistoryIndex();
+    index.syncSummaries([
+      {
+        ...summary(appSessionId, sessionId),
+        compactedFromProviderSessionIds,
+      },
+    ]);
+    index.close();
   } finally {
-    db.close();
+    if (previousHome === undefined) delete process.env.HOME;
+    else process.env.HOME = previousHome;
   }
 }
 
@@ -116,8 +99,21 @@ function summary(appSessionId: string, providerSessionId: string): SessionSummar
   };
 }
 
-function linkedWorker(providerSessionId: string, toolUseId: string): ChildSessionHistoryLink {
-  return { providerSessionId, toolUseId };
+function linkedWorker(
+  parentAppSessionId: string,
+  childSessionId: string,
+  toolUseId: string,
+  status: ChildSessionSummary['status'] = 'completed',
+): ChildSessionSummary {
+  return {
+    parentAppSessionId,
+    childSessionId,
+    role: 'worker',
+    status,
+    modelId: 'model-default',
+    spawnLink: { kind: 'tool-use', id: toolUseId },
+    transcriptAvailable: true,
+  };
 }
 
 test('[H1] Initial history restore', { concurrency: false }, async () => {
@@ -248,38 +244,217 @@ test('[A1] Child-session link persistence', { concurrency: false }, async () => 
       interactionMode: 'agi',
       autonomy: 'low',
     });
-    await h.handle({
-      type: 'child.open',
-      appSessionId: 'provider-1',
-      providerSessionId: 'provider-1',
-      role: 'worker',
-    });
-    h.provider.emitNotification('provider-1', {
-      type: 'tool_progress_update',
-      toolName: 'Task',
-      toolUseId: 'tool-a1',
-      update: {
-        type: 'tool_call',
-        subagentSessionId: 'worker-a1',
-        parameters: { subagent_type: 'worker' },
+    const parent = h.provider.session('provider-1');
+    await parent.waitForPrompts(1);
+    await h.waitForIdle();
+    parent.queueStreamEvents([
+      {
+        type: 'tool_progress',
+        toolName: 'Task',
+        toolUseId: 'tool-a1',
+        content: '',
+        update: {
+          type: 'tool_call',
+          subagentSessionId: 'worker-a1',
+          parameters: { subagent_type: 'worker' },
+        },
       },
+    ]);
+    await h.handle({
+      type: 'session.send',
+      appSessionId: 'provider-1',
+      text: 'spawn worker',
     });
 
+    const persistence = h.calls.find(
+      (call) => call.target === 'history' && call.method === 'upsertChildSession',
+    )?.args[0];
+    assert.ok(persistence && typeof persistence === 'object');
     assert.deepEqual(
-      h.calls.find((call) => call.target === 'history' && call.method === 'recordChildSessionLink')
-        ?.args,
-      ['provider-1', 'tool-a1', 'worker-a1', 'worker'],
+      {
+        parentAppSessionId: Reflect.get(persistence, 'parentAppSessionId'),
+        childSessionId: Reflect.get(persistence, 'childSessionId'),
+        providerSessionId: Reflect.get(persistence, 'providerSessionId'),
+        role: Reflect.get(persistence, 'role'),
+        label: Reflect.get(persistence, 'label'),
+        status: Reflect.get(persistence, 'status'),
+        modelId: Reflect.get(persistence, 'modelId'),
+        spawnLink: Reflect.get(persistence, 'spawnLink'),
+        transcriptAvailable: Reflect.get(persistence, 'transcriptAvailable'),
+      },
+      {
+        parentAppSessionId: 'provider-1',
+        childSessionId: 'child-1',
+        providerSessionId: 'worker-a1',
+        role: 'worker',
+        label: 'worker',
+        status: 'running',
+        modelId: 'model-default',
+        spawnLink: { kind: 'tool-use', id: 'tool-a1' },
+        transcriptAvailable: true,
+      },
     );
     assert.equal(
       h.events.some(
         (event) =>
           event.type === 'session.child' &&
-          'appSessionId' in event &&
-          event.appSessionId === 'provider-1' &&
-          event.providerSessionId === 'worker-a1' &&
-          event.event === 'started',
+          event.child.parentAppSessionId === 'provider-1' &&
+          event.child.childSessionId === 'child-1' &&
+          event.child.status === 'running',
       ),
       true,
+    );
+  } finally {
+    await h.dispose();
+  }
+});
+
+test('[A1b] child persistence resolves the accepted catalog default when settings are empty', async () => {
+  const h = createSessionManagerTestContext({
+    getFactoryDefaults: () => Promise.resolve({}),
+  });
+
+  try {
+    await h.create({
+      sessionPurpose: 'mission-control',
+      clientRef: 'a1b',
+      title: 'A1b',
+      goal: 'go',
+      interactionMode: 'agi',
+      autonomy: 'low',
+    });
+    const parent = h.provider.session('provider-1');
+    await parent.waitForPrompts(1);
+    await h.waitForIdle();
+    parent.queueStreamEvents([
+      {
+        type: 'tool_progress',
+        toolName: 'Task',
+        toolUseId: 'tool-a1b',
+        content: '',
+        update: {
+          type: 'tool_call',
+          subagentSessionId: 'worker-a1b',
+          parameters: { subagent_type: 'worker' },
+        },
+      },
+    ]);
+    await h.handle({
+      type: 'session.send',
+      appSessionId: 'provider-1',
+      text: 'spawn worker',
+    });
+
+    const persistence = h.calls.find(
+      (call) => call.target === 'history' && call.method === 'upsertChildSession',
+    )?.args[0];
+    assert.ok(persistence && typeof persistence === 'object');
+    assert.equal(Reflect.get(persistence, 'childSessionId'), 'child-1');
+    assert.equal(Reflect.get(persistence, 'modelId'), 'model-default');
+    assert.equal(
+      h.events.some(
+        (event) =>
+          event.type === 'error' && event.message.includes('accepted model is unavailable'),
+      ),
+      false,
+    );
+  } finally {
+    await h.dispose();
+  }
+});
+
+test('[A1c] provider replacement preserves the logical child identity', async () => {
+  const h = createSessionManagerTestContext();
+
+  try {
+    await h.create({
+      sessionPurpose: 'mission-control',
+      clientRef: 'a1c',
+      title: 'A1c',
+      goal: 'go',
+      interactionMode: 'agi',
+      autonomy: 'low',
+    });
+    const parent = h.provider.session('provider-1');
+    await parent.waitForPrompts(1);
+    await h.waitForIdle();
+    const observeProvider = async (providerSessionId: string, text: string): Promise<void> => {
+      parent.queueStreamEvents([
+        {
+          type: 'tool_progress',
+          toolName: 'Task',
+          toolUseId: 'tool-a1c',
+          content: '',
+          update: {
+            type: 'tool_call',
+            subagentSessionId: providerSessionId,
+            parameters: { subagent_type: 'worker' },
+          },
+        },
+      ]);
+      await h.handle({
+        type: 'session.send',
+        appSessionId: 'provider-1',
+        text,
+      });
+    };
+
+    await observeProvider('worker-a1c-old', 'spawn worker');
+    await h.handle({
+      type: 'child.open',
+      parentAppSessionId: 'provider-1',
+      childSessionId: 'child-1',
+      requestId: 'open-child-a1c-old',
+    });
+    await observeProvider('worker-a1c-new', 'replace worker runtime');
+    await h.waitForIdle();
+
+    const children = h.history.childSessions('provider-1');
+    assert.equal(children.length, 1);
+    assert.equal(children[0]?.childSessionId, 'child-1');
+    assert.equal(children[0]?.providerSessionId, 'worker-a1c-new');
+    assert.equal(
+      h.calls.some(
+        (call) =>
+          call.target === 'cleanup' &&
+          call.method === 'session.close' &&
+          call.args[0] === 'worker-a1c-old',
+      ),
+      true,
+    );
+
+    await h.handle({
+      type: 'child.open',
+      parentAppSessionId: 'provider-1',
+      childSessionId: 'child-1',
+      requestId: 'open-child-a1c-new',
+    });
+    assert.equal(h.runtime.loadCalls.at(-1)?.sessionId, 'worker-a1c-new');
+    assert.equal(
+      h.events.some(
+        (event) =>
+          event.type === 'child.updated' &&
+          event.requestId === 'open-child-a1c-new' &&
+          event.childSessionId === 'child-1' &&
+          event.access === 'ready' &&
+          event.runtimeGeneration === 4,
+      ),
+      true,
+    );
+
+    await observeProvider('worker-a1c-old', 'late stale worker observation');
+    assert.equal(
+      h.history.childSession('provider-1', 'child-1')?.providerSessionId,
+      'worker-a1c-new',
+    );
+    assert.equal(
+      h.calls.some(
+        (call) =>
+          call.target === 'cleanup' &&
+          call.method === 'session.close' &&
+          call.args[0] === 'worker-a1c-new',
+      ),
+      false,
     );
   } finally {
     await h.dispose();
@@ -291,9 +466,9 @@ test('[A2] Open and replay a linked child session', { concurrency: false }, asyn
 
   try {
     h.fixture.seedHistorySummaries([summary('app-a2', 'provider-a2')]);
-    h.fixture.seedChildSessionLinks('app-a2', [
-      linkedWorker('worker-a2', 'tool-a2'),
-      linkedWorker('worker-unknown-a2', 'tool-unknown-a2'),
+    h.fixture.seedChildSessions([
+      linkedWorker('app-a2', 'worker-a2', 'tool-a2', 'paused'),
+      linkedWorker('app-a2', 'worker-unknown-a2', 'tool-unknown-a2'),
     ]);
     writeHistorySession(h.home, 'provider-a2', []);
     writeHistorySession(h.home, 'worker-a2', [assistantMessage('child-a2', 'child replay', 0)], {
@@ -305,21 +480,21 @@ test('[A2] Open and replay a linked child session', { concurrency: false }, asyn
     const historical = h.events.filter(isSessionHistory).at(-1);
     assert.ok(historical);
     assert.equal(
-      historical.childSessions?.find((link) => link.providerSessionId === 'worker-a2')?.status,
-      undefined,
+      historical.childSessions?.find((child) => child.childSessionId === 'worker-a2')?.status,
+      'paused',
     );
     assert.equal(
-      historical.childSessions?.find((link) => link.providerSessionId === 'worker-unknown-a2')
+      historical.childSessions?.find((child) => child.childSessionId === 'worker-unknown-a2')
         ?.status,
-      undefined,
+      'completed',
     );
 
     await h.handle({ type: 'session.resume', appSessionId: 'app-a2' });
     await h.handle({
       type: 'child.open',
-      appSessionId: 'app-a2',
-      providerSessionId: 'worker-a2',
-      role: 'worker',
+      parentAppSessionId: 'app-a2',
+      childSessionId: 'worker-a2',
+      requestId: 'open-worker-a2',
     });
     const primary = h.provider.session('provider-a2');
     primary.queueStreamEvents([
@@ -365,10 +540,8 @@ test('[A2] Open and replay a linked child session', { concurrency: false }, asyn
       h.events.some(
         (event) =>
           event.type === 'child.updated' &&
-          'parentAppSessionId' in event &&
           event.childSessionId === 'worker-a2' &&
-          event.status === 'opened' &&
-          event.settingsReady,
+          event.access === 'ready',
       ),
       true,
     );
@@ -384,20 +557,20 @@ test('[A2] Open and replay a linked child session', { concurrency: false }, asyn
     const live = h.events.filter(isSessionHistory).at(-1);
     assert.ok(live);
     assert.equal(
-      live.childSessions?.find((link) => link.providerSessionId === 'worker-a2')?.status,
-      'running',
+      live.childSessions?.find((child) => child.childSessionId === 'worker-a2')?.status,
+      'paused',
     );
     assert.equal(
-      live.childSessions?.find((link) => link.providerSessionId === 'worker-completed-a2')?.status,
+      live.childSessions?.find((child) => child.spawnLink?.id === 'tool-completed-a2')?.status,
       'completed',
     );
     assert.equal(
-      live.childSessions?.find((link) => link.providerSessionId === 'worker-running-a2')?.status,
+      live.childSessions?.find((child) => child.spawnLink?.id === 'tool-running-a2')?.status,
       'running',
     );
     assert.equal(
-      live.childSessions?.find((link) => link.providerSessionId === 'worker-unknown-a2')?.status,
-      undefined,
+      live.childSessions?.find((child) => child.childSessionId === 'worker-unknown-a2')?.status,
+      'completed',
     );
   } finally {
     await h.dispose();
@@ -409,31 +582,31 @@ test('[A3] Child send, steer, and interrupt', { concurrency: false }, async () =
 
   try {
     h.fixture.seedHistorySummaries([summary('app-a3', 'provider-a3')]);
-    h.fixture.seedChildSessionLinks('app-a3', [
-      linkedWorker('worker-a3', 'tool-a3'),
-      linkedWorker('worker-failed-a3', 'tool-failed-a3'),
+    h.fixture.seedChildSessions([
+      linkedWorker('app-a3', 'worker-a3', 'tool-a3', 'paused'),
+      linkedWorker('app-a3', 'worker-failed-a3', 'tool-failed-a3', 'paused'),
     ]);
 
     await h.handle({ type: 'session.resume', appSessionId: 'app-a3' });
     await h.handle({
       type: 'child.open',
-      appSessionId: 'app-a3',
-      providerSessionId: 'worker-a3',
-      role: 'worker',
+      parentAppSessionId: 'app-a3',
+      childSessionId: 'worker-a3',
+      requestId: 'open-worker-a3',
     });
 
     const gate = h.provider.deferNextStream('worker-a3');
     const sending = h.handle({
       type: 'child.send',
-      appSessionId: 'app-a3',
-      providerSessionId: 'worker-a3',
+      parentAppSessionId: 'app-a3',
+      childSessionId: 'worker-a3',
       text: 'normal',
     });
     await h.provider.waitForPrompts('worker-a3', 1);
     await h.handle({
       type: 'child.sendNow',
-      appSessionId: 'app-a3',
-      providerSessionId: 'worker-a3',
+      parentAppSessionId: 'app-a3',
+      childSessionId: 'worker-a3',
       text: 'steer',
     });
     gate.resolve();
@@ -441,8 +614,8 @@ test('[A3] Child send, steer, and interrupt', { concurrency: false }, async () =
     await h.provider.waitForPrompts('worker-a3', 2);
     await h.handle({
       type: 'child.interrupt',
-      appSessionId: 'app-a3',
-      providerSessionId: 'worker-a3',
+      parentAppSessionId: 'app-a3',
+      childSessionId: 'worker-a3',
     });
 
     const parentUpdates = h.events.filter(
@@ -451,9 +624,9 @@ test('[A3] Child send, steer, and interrupt', { concurrency: false }, async () =
     h.runtime.loadQueue.set('worker-failed-a3', [new Error('child load failed')]);
     await h.handle({
       type: 'child.open',
-      appSessionId: 'app-a3',
-      providerSessionId: 'worker-failed-a3',
-      role: 'worker',
+      parentAppSessionId: 'app-a3',
+      childSessionId: 'worker-failed-a3',
+      requestId: 'open-worker-failed-a3',
     });
 
     assert.deepEqual(h.provider.session('worker-a3').prompts, ['normal', 'steer']);
@@ -467,40 +640,35 @@ test('[A3] Child send, steer, and interrupt', { concurrency: false }, async () =
     assert.equal(
       h.events.some(
         (event) =>
-          event.type === 'error' &&
+          event.type === 'child.error' &&
           event.code === 'child.open_failed' &&
           event.parentAppSessionId === 'app-a3' &&
-          event.childSessionId === 'worker-failed-a3' &&
-          !event.providerSessionId,
+          event.childSessionId === 'worker-failed-a3',
       ),
       true,
     );
     const loadCallCount = h.runtime.loadCalls.length;
     await h.handle({
       type: 'child.open',
-      appSessionId: 'app-a3',
-      providerSessionId: 'worker-unknown-a3',
-      role: 'worker',
+      parentAppSessionId: 'app-a3',
+      childSessionId: 'worker-unknown-a3',
+      requestId: 'open-worker-unknown-a3',
     });
     assert.equal(h.runtime.loadCalls.length, loadCallCount);
     assert.equal(
       h.events.some(
         (event) =>
-          event.type === 'error' &&
+          event.type === 'child.error' &&
           event.code === 'child.not_in_session' &&
-          event.providerSessionId === 'worker-unknown-a3',
+          event.childSessionId === 'worker-unknown-a3',
       ),
       true,
     );
     assert.equal(
       h.events.some(
-        (event) =>
-          event.type === 'child.updated' &&
-          'providerSessionId' in event &&
-          event.providerSessionId === 'worker-unknown-a3' &&
-          event.status === 'opened',
+        (event) => event.type === 'child.updated' && event.childSessionId === 'worker-unknown-a3',
       ),
-      true,
+      false,
     );
     assert.deepEqual(
       h.events.filter(
@@ -518,13 +686,13 @@ test('[A4] Opening a child for a non-live historical session settles honestly', 
 
   try {
     h.fixture.seedHistorySummaries([summary('app-a4', 'provider-a4')]);
-    h.fixture.seedChildSessionLinks('app-a4', [linkedWorker('worker-a4', 'tool-a4')]);
+    h.fixture.seedChildSessions([linkedWorker('app-a4', 'worker-a4', 'tool-a4')]);
 
     await h.handle({
       type: 'child.open',
-      appSessionId: 'app-a4',
-      providerSessionId: 'worker-a4',
-      role: 'worker',
+      parentAppSessionId: 'app-a4',
+      childSessionId: 'worker-a4',
+      requestId: 'open-worker-a4',
     });
 
     assert.equal(h.runtime.loadCalls.length, 0);
@@ -532,19 +700,18 @@ test('[A4] Opening a child for a non-live historical session settles honestly', 
       h.events.some(
         (event) =>
           event.type === 'child.updated' &&
-          'appSessionId' in event &&
-          event.appSessionId === 'app-a4' &&
-          event.providerSessionId === 'worker-a4' &&
-          event.status === 'opened',
+          event.parentAppSessionId === 'app-a4' &&
+          event.childSessionId === 'worker-a4' &&
+          event.access === 'history',
       ),
       true,
     );
     assert.equal(
       h.events.some(
         (event) =>
-          event.type === 'error' &&
-          event.appSessionId === 'app-a4' &&
-          event.providerSessionId === 'worker-a4',
+          event.type === 'child.error' &&
+          event.parentAppSessionId === 'app-a4' &&
+          event.childSessionId === 'worker-a4',
       ),
       false,
     );

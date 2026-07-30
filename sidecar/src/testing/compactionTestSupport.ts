@@ -34,13 +34,6 @@ export function createCompactionTestLiveSession(
     streaming: false,
     autoCompacting: false,
     pendingSends: [],
-    childSessions: new Map(),
-    knownChildSessions: new Set(),
-    completedChildSessions: new Set(),
-    linkedChildSessions: new Set(),
-    childSessionToolUseIds: new Map(),
-    childSessionSettings: new Map(),
-    pendingChildSessions: [],
     mcpServers: [],
     mcpConfigs: [],
   };

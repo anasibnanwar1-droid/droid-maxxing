@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { ProgressLogEntryType } from '@factory/droid-sdk';
 
 import type { FactoryDefaultSettings } from './protocol.js';
 import {
@@ -52,7 +53,10 @@ test('concurrent child settings updates serialize so the latest selection wins',
         .map((settings) => settings['modelId']),
       ['worker-first', 'worker-latest'],
     );
-    assert.equal(exactSettingsEvents(h.events, 'worker-logical').at(-1)?.modelId, 'worker-latest');
+    assert.equal(
+      exactSettingsEvents(h.events, 'provider-1', 'worker-logical').at(-1)?.modelId,
+      'worker-latest',
+    );
   } finally {
     await h.dispose();
   }
@@ -66,7 +70,7 @@ test(
     try {
       await createMission(h, { workerModel: 'worker-accepted' });
       const child = await openChild(h, 'worker-logical', 'worker-backend', 'worker', 'worker-old');
-      const successes = exactSettingsEvents(h.events, 'worker-logical').length;
+      const successes = exactSettingsEvents(h.events, 'provider-1', 'worker-logical').length;
       const writes = child.settings.length;
       child.nextUpdateSettingsError = new Error('child provider rejected');
 
@@ -79,15 +83,14 @@ test(
 
       assert.equal(child.settings.length, writes + 1);
       assert.equal(child.settings.at(-1)?.['modelId'], 'worker-rejected');
-      assert.equal(exactSettingsEvents(h.events, 'worker-logical').length, successes);
+      assert.equal(exactSettingsEvents(h.events, 'provider-1', 'worker-logical').length, successes);
       assert.equal(
         h.events.some(
           (event) =>
-            event.type === 'error' &&
+            event.type === 'child.error' &&
             event.code === 'child.settings_update_failed' &&
             event.parentAppSessionId === 'provider-1' &&
-            event.childSessionId === 'worker-logical' &&
-            !event.providerSessionId,
+            event.childSessionId === 'worker-logical',
         ),
         true,
       );
@@ -121,7 +124,7 @@ test(
       await createMission(h);
       const child = await openChild(h, 'worker-logical', 'worker-backend', 'worker', 'worker-old');
       const gate = h.provider.deferNextUpdateSettings('worker-backend');
-      const successes = exactSettingsEvents(h.events, 'worker-logical').length;
+      const successes = exactSettingsEvents(h.events, 'provider-1', 'worker-logical').length;
       const update = h.handle({
         type: 'child.updateSettings',
         parentAppSessionId: 'provider-1',
@@ -132,11 +135,21 @@ test(
       assert.equal(child.settings.at(-1)?.['modelId'], 'worker-late');
       const writesAfterProvider = child.settings.length;
 
-      await h.handle({ type: 'session.close', appSessionId: 'provider-1' });
+      const closing = h.handle({ type: 'session.close', appSessionId: 'provider-1' });
+      await h.waitForIdle();
+      assert.equal(
+        h.calls.some(
+          (call) =>
+            call.target === 'cleanup' &&
+            call.method === 'session.close' &&
+            call.args[0] === 'worker-backend',
+        ),
+        false,
+      );
       gate.resolve();
-      await update;
+      await Promise.all([update, closing]);
 
-      assert.equal(exactSettingsEvents(h.events, 'worker-logical').length, successes);
+      assert.equal(exactSettingsEvents(h.events, 'provider-1', 'worker-logical').length, successes);
       assert.equal(child.settings.length, writesAfterProvider);
     } finally {
       await h.dispose();
@@ -192,8 +205,19 @@ test(
 
       parent.queueStreamEvents([
         {
+          type: 'mission_progress_entry',
+          progressLog: [
+            {
+              type: ProgressLogEntryType.WorkerStarted,
+              timestamp: '2026-07-29T00:00:00.000Z',
+              workerSessionId: 'worker-backend',
+              spawnId: 'spawn-worker-logical',
+            },
+          ],
+        },
+        {
           type: 'mission_worker_completed',
-          workerSessionId: 'worker-logical',
+          workerSessionId: 'worker-backend',
           exitCode: 0,
         },
       ]);
@@ -206,8 +230,8 @@ test(
         h.events.some(
           (event) =>
             event.type === 'session.child' &&
-            event.event === 'completed' &&
-            event.providerSessionId === 'worker-logical',
+            event.child.childSessionId === 'worker-logical' &&
+            event.child.status === 'completed',
         ),
         true,
       );
@@ -233,13 +257,25 @@ test(
       const child = new FakeFactorySession('worker-backend', {}, h.calls);
       child.setInitModel('worker-old');
       const gate = child.deferNextUpdateSettings();
-      h.runtime.loadQueue.set('worker-logical', [child]);
+      h.history.seedChildSessions([
+        {
+          parentAppSessionId: 'provider-1',
+          childSessionId: 'worker-logical',
+          providerSessionId: 'worker-backend',
+          role: 'worker',
+          status: 'paused',
+          modelId: 'worker-old',
+          transcriptAvailable: true,
+          updatedAt: Date.now(),
+        },
+      ]);
+      h.runtime.loadQueue.set('worker-backend', [child]);
 
       const opening = h.handle({
         type: 'child.open',
-        appSessionId: 'provider-1',
-        providerSessionId: 'worker-logical',
-        role: 'worker',
+        parentAppSessionId: 'provider-1',
+        childSessionId: 'worker-logical',
+        requestId: 'open-worker-logical',
       });
       await h.waitForIdle();
       await h.handle({ type: 'session.close', appSessionId: 'provider-1' });
@@ -250,9 +286,8 @@ test(
         h.events.some(
           (event) =>
             event.type === 'child.updated' &&
-            'parentAppSessionId' in event &&
             event.childSessionId === 'worker-logical' &&
-            event.settingsReady,
+            event.access === 'ready',
         ),
         false,
       );
@@ -272,7 +307,7 @@ test(
 );
 
 test(
-  'an evicted and replaced child cannot receive a stale settings completion',
+  'an evicted and replaced child cannot overlap close with a stale settings completion',
   { concurrency: false },
   async () => {
     const h = createSessionManagerTestContext();
@@ -304,7 +339,20 @@ test(
       await h.waitForIdle();
       assert.equal(original.settings.at(-1)?.['modelId'], 'stale-new-model');
 
-      await openChild(h, 'filler-4', 'filler-backend-4', 'worker', 'worker-old');
+      const evicting = openChild(h, 'filler-4', 'filler-backend-4', 'worker', 'worker-old');
+      await h.waitForIdle();
+      assert.equal(
+        h.calls.some(
+          (call) =>
+            call.target === 'cleanup' &&
+            call.method === 'session.close' &&
+            call.args[0] === 'worker-backend-old',
+        ),
+        false,
+      );
+
+      providerGate.resolve();
+      await Promise.all([update, evicting]);
       const replacement = await openChild(
         h,
         'worker-logical',
@@ -312,18 +360,26 @@ test(
         'worker',
         'replacement-model',
       );
-      const originalWrites = original.settings.length;
 
-      providerGate.resolve();
-      await update;
-
-      assert.equal(original.settings.length, originalWrites);
+      assert.equal(
+        original.settings.filter((settings) => settings['modelId'] === 'stale-new-model').length,
+        1,
+      );
+      assert.equal(
+        h.calls.filter(
+          (call) =>
+            call.target === 'cleanup' &&
+            call.method === 'session.close' &&
+            call.args[0] === 'worker-backend-old',
+        ).length,
+        1,
+      );
       assert.equal(
         replacement.settings.some((settings) => settings['modelId'] === 'stale-new-model'),
         false,
       );
       assert.equal(
-        exactSettingsEvents(h.events, 'worker-logical').some(
+        exactSettingsEvents(h.events, 'provider-1', 'worker-logical').some(
           (event) => event.modelId === 'stale-new-model',
         ),
         false,

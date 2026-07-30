@@ -52,7 +52,7 @@ export interface SessionManagerTestContext {
   readonly history: FakeHistoryIndex;
   readonly fixture: {
     seedHistorySummaries(summaries: Protocol.SessionSummary[]): void;
-    seedChildSessionLinks(appSessionId: string, links: Protocol.ChildSessionHistoryLink[]): void;
+    seedChildSessions(children: Protocol.ChildSessionSummary[]): void;
   };
   readonly browsers: FakeBrowserSessionManager;
   readonly home: string;
@@ -88,11 +88,13 @@ export function createSessionManagerTestContext(
   const runtime = new FakeFactoryRuntime(calls);
   const history = new FakeHistoryIndex(calls);
   const browsers = new FakeBrowserSessionManager((call) => calls.push(call), recordEvent);
+  let childSequence = 0;
   const dependencies: SessionManagerDependencies = {
     runtime,
     history,
     browsers,
     createLocalMcpResource: () => new FakeLocalMcpResource(calls),
+    nextChildSessionId: () => `child-${++childSequence}`,
     ...(options.getFactoryDefaults ? { getFactoryDefaults: options.getFactoryDefaults } : {}),
   };
 
@@ -139,8 +141,14 @@ export function createSessionManagerTestContext(
       seedHistorySummaries: (summaries) => {
         history.seedSummaries(summaries);
       },
-      seedChildSessionLinks: (appSessionId, links) => {
-        history.seedChildSessionLinks(appSessionId, links);
+      seedChildSessions: (children) => {
+        history.seedChildSessions(
+          children.map((child) => ({
+            ...child,
+            providerSessionId: child.childSessionId,
+            updatedAt: Date.now(),
+          })),
+        );
       },
     },
     browsers,
@@ -227,25 +235,49 @@ function createTestHome(defaults?: Protocol.FactoryDefaultSettings): string {
 }
 
 async function withHome<T>(home: string, action: () => Promise<T>): Promise<T> {
-  const previousHome = process.env['HOME'];
-  process.env['HOME'] = home;
+  enterTestHome(home);
   try {
     return await action();
   } finally {
-    if (previousHome === undefined) delete process.env['HOME'];
-    else process.env['HOME'] = previousHome;
+    leaveTestHome();
   }
 }
 
 function withHomeSync<T>(home: string, action: () => T): T {
-  const previousHome = process.env['HOME'];
-  process.env['HOME'] = home;
+  enterTestHome(home);
   try {
     return action();
   } finally {
-    if (previousHome === undefined) delete process.env['HOME'];
-    else process.env['HOME'] = previousHome;
+    leaveTestHome();
   }
+}
+
+interface TestHomeScope {
+  home: string;
+  previousHome: string | undefined;
+  operations: number;
+}
+
+let testHomeScope: TestHomeScope | undefined;
+
+function enterTestHome(home: string): void {
+  if (!testHomeScope) {
+    testHomeScope = { home, previousHome: process.env['HOME'], operations: 0 };
+    process.env['HOME'] = home;
+  } else if (testHomeScope.home !== home) {
+    throw new Error('Concurrent SessionManager test homes are not supported.');
+  }
+  testHomeScope.operations += 1;
+}
+
+function leaveTestHome(): void {
+  if (!testHomeScope) throw new Error('SessionManager test HOME scope is not active.');
+  testHomeScope.operations -= 1;
+  if (testHomeScope.operations > 0) return;
+  const { previousHome } = testHomeScope;
+  testHomeScope = undefined;
+  if (previousHome === undefined) delete process.env['HOME'];
+  else process.env['HOME'] = previousHome;
 }
 
 function writeDefaults(home: string, defaults?: Protocol.FactoryDefaultSettings): void {

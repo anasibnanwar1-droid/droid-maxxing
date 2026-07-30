@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { ProgressLogEntryType } from '@factory/droid-sdk';
 
 import {
   createMission,
+  exactSettingsEvents,
   openChild,
   openChildForParent,
 } from './testing/childSettingsTestSupport.js';
@@ -15,7 +17,7 @@ function invalidTargetErrors(
 ): number {
   return events.filter(
     (event) =>
-      event.type === 'error' &&
+      event.type === 'child.error' &&
       event.code === 'child.settings_target_invalid' &&
       event.parentAppSessionId === parentAppSessionId &&
       event.childSessionId === childSessionId,
@@ -30,8 +32,19 @@ test('a completed child is not an exact settings target', async () => {
     const child = await openChild(h, 'worker-logical', 'worker-backend', 'worker', 'worker-old');
     parent.queueStreamEvents([
       {
+        type: 'mission_progress_entry',
+        progressLog: [
+          {
+            type: ProgressLogEntryType.WorkerStarted,
+            timestamp: '2026-07-29T00:00:00.000Z',
+            workerSessionId: 'worker-backend',
+            spawnId: 'spawn-worker-logical',
+          },
+        ],
+      },
+      {
         type: 'mission_worker_completed',
-        workerSessionId: 'worker-logical',
+        workerSessionId: 'worker-backend',
         exitCode: 0,
       },
     ]);
@@ -41,6 +54,7 @@ test('a completed child is not an exact settings target', async () => {
       text: 'settle worker',
     });
     const writes = child.settings.length;
+    const errors = invalidTargetErrors(h.events, 'provider-1', 'worker-logical');
 
     await h.handle({
       type: 'child.updateSettings',
@@ -50,7 +64,7 @@ test('a completed child is not an exact settings target', async () => {
     });
 
     assert.equal(child.settings.length, writes);
-    assert.equal(invalidTargetErrors(h.events, 'provider-1', 'worker-logical'), 1);
+    assert.equal(invalidTargetErrors(h.events, 'provider-1', 'worker-logical'), errors + 1);
   } finally {
     await h.dispose();
   }
@@ -88,29 +102,53 @@ test('the same child identity under another parent is not interchangeable', asyn
   try {
     await createMission(h);
     await createMission(h);
-    const child = await openChildForParent(h, 'provider-1', {
+    const first = await openChildForParent(h, 'provider-1', {
       childSessionId: 'shared-logical',
-      providerSessionId: 'worker-backend',
+      providerSessionId: 'worker-backend-1',
       role: 'worker',
       modelId: 'worker-old',
     });
-    const writes = child.settings.length;
+    const second = await openChildForParent(h, 'provider-2', {
+      childSessionId: 'shared-logical',
+      providerSessionId: 'worker-backend-2',
+      role: 'worker',
+      modelId: 'worker-old',
+    });
+    const firstWrites = first.settings.length;
+    const secondWrites = second.settings.length;
 
     await h.handle({
       type: 'child.updateSettings',
       parentAppSessionId: 'provider-2',
       childSessionId: 'shared-logical',
-      modelId: 'must-not-apply',
+      modelId: 'second-only',
     });
 
-    assert.equal(child.settings.length, writes);
-    assert.equal(invalidTargetErrors(h.events, 'provider-2', 'shared-logical'), 1);
+    assert.equal(first.settings.length, firstWrites);
+    assert.deepEqual(
+      second.settings.slice(secondWrites).map((settings) => ({
+        modelId: settings['modelId'],
+        limit: settings['compactionTokenLimit'],
+      })),
+      [
+        { modelId: 'second-only', limit: undefined },
+        { modelId: undefined, limit: 250_000 },
+      ],
+    );
+    assert.equal(
+      exactSettingsEvents(h.events, 'provider-1', 'shared-logical').at(-1)?.modelId,
+      'worker-old',
+    );
+    assert.equal(
+      exactSettingsEvents(h.events, 'provider-2', 'shared-logical').at(-1)?.modelId,
+      'second-only',
+    );
   } finally {
     await h.dispose();
   }
 });
 
-test('a primary role cannot enter the parent-owned child map', async () => {
+test('an unknown child cannot enter the parent-owned child map', async () => {
   const h = createSessionManagerTestContext();
   try {
     await createMission(h);
@@ -118,30 +156,25 @@ test('a primary role cannot enter the parent-owned child map', async () => {
 
     await h.handle({
       type: 'child.open',
-      appSessionId: 'provider-1',
-      providerSessionId: 'invalid-primary-child',
-      role: 'primary',
+      parentAppSessionId: 'provider-1',
+      childSessionId: 'unknown-child',
+      requestId: 'open-unknown-child',
     });
 
     assert.equal(h.runtime.loadCalls.length, loads);
     assert.equal(
       h.events.some(
-        (event) =>
-          event.type === 'child.updated' &&
-          ('childSessionId' in event
-            ? event.childSessionId === 'invalid-primary-child'
-            : event.providerSessionId === 'invalid-primary-child'),
+        (event) => event.type === 'child.updated' && event.childSessionId === 'unknown-child',
       ),
       false,
     );
     assert.equal(
       h.events.some(
         (event) =>
-          event.type === 'error' &&
-          event.code === 'child.open_failed' &&
+          event.type === 'child.error' &&
+          event.code === 'child.not_in_session' &&
           event.parentAppSessionId === 'provider-1' &&
-          event.childSessionId === 'invalid-primary-child' &&
-          !event.providerSessionId,
+          event.childSessionId === 'unknown-child',
       ),
       true,
     );
@@ -149,10 +182,10 @@ test('a primary role cannot enter the parent-owned child map', async () => {
     await h.handle({
       type: 'child.updateSettings',
       parentAppSessionId: 'provider-1',
-      childSessionId: 'invalid-primary-child',
+      childSessionId: 'unknown-child',
       modelId: 'must-not-apply',
     });
-    assert.equal(invalidTargetErrors(h.events, 'provider-1', 'invalid-primary-child'), 1);
+    assert.equal(invalidTargetErrors(h.events, 'provider-1', 'unknown-child'), 1);
   } finally {
     await h.dispose();
   }

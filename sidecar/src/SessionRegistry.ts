@@ -11,8 +11,7 @@ type IdentityField =
   | 'appSessionId'
   | 'providerSessionId'
   | 'compactedFromProviderSessionIds'
-  | 'missionId'
-  | 'parentProviderSessionId';
+  | 'missionId';
 
 export type SessionSummaryPatch = Omit<Partial<SessionSummary>, IdentityField>;
 
@@ -39,6 +38,9 @@ export class SessionRegistry<TLive extends RegisteredSession> {
   constructor(private readonly dependencies: SessionRegistryDependencies) {}
 
   register(liveSession: TLive): void {
+    if (liveSession.summary.role !== 'primary' && liveSession.summary.role !== 'user') {
+      throw new Error('SessionRegistry accepts top-level sessions only.');
+    }
     this.persist(liveSession.summary);
 
     const previous = this.sessions.get(liveSession.summary.appSessionId);
@@ -231,7 +233,6 @@ function withoutIdentityFields(patch: Partial<SessionSummary>): SessionSummaryPa
   delete safePatch.providerSessionId;
   delete safePatch.compactedFromProviderSessionIds;
   delete safePatch.missionId;
-  delete safePatch.parentProviderSessionId;
   return safePatch;
 }
 
@@ -252,8 +253,5 @@ function copyFeature(feature: BridgeFeature): BridgeFeature {
     expectedBehavior: [...feature.expectedBehavior],
     verificationSteps: [...feature.verificationSteps],
     ...(feature.fulfills ? { fulfills: [...feature.fulfills] } : {}),
-    ...(feature.workerProviderSessionIds
-      ? { workerProviderSessionIds: [...feature.workerProviderSessionIds] }
-      : {}),
   };
 }

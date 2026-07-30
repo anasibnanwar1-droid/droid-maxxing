@@ -13,6 +13,7 @@ test('sessionIsLive treats terminal and awaiting phases as not live', () => {
   assert.equal(sessionIsLive({ phase: 'awaiting_plan_approval' }), false);
   // streaming wins over a non-terminal, not-clearly-active phase
   assert.equal(sessionIsLive({ phase: 'running', streaming: true }), true);
+  assert.equal(sessionIsLive({ phase: 'running', streaming: false }), false);
   // a completed session is never live even while a stale streaming flag lingers
   assert.equal(sessionIsLive({ phase: 'completed', streaming: true }), false);
   assert.equal(sessionIsLive({ phase: 'orchestrator_turn' }), true);
@@ -47,11 +48,30 @@ test('activeSessionCwds pins an idle session that still has a running worker', (
       idle: [{ status: 'completed' }, { status: 'running' }],
       done: [{ status: 'completed' }, { status: 'paused' }],
     },
+    childRuntime: {
+      idle: {
+        1: { available: true },
+      },
+    },
   });
   // the worker is still running in the idle session's cwd, so it must stay pinned
   assert.equal(cwds.includes('/repo/idle'), true);
   // no running worker (only completed/paused) leaves the worktree removable
   assert.equal(cwds.includes('/repo/done'), false);
+});
+
+test('activeSessionCwds ignores historical running status without a live child runtime', () => {
+  const cwds = activeSessionCwds({
+    sessions: [session({ appSessionId: 'closed', cwd: '/repo/closed', phase: 'completed' })],
+    activeAppSessionId: null,
+    childSessions: {
+      closed: {
+        child: { status: 'running' },
+      },
+    },
+  });
+
+  assert.deepEqual(cwds, []);
 });
 
 test('activeSessionCwds includes directories pinned by embedded terminals', () => {

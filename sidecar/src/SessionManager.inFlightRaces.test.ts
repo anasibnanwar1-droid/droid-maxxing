@@ -69,7 +69,7 @@ test('shutdown admission immediately suppresses a queued primary stream failure'
 
     assert.deepEqual(
       h.events.slice(eventsAtShutdownAdmission).map((event) => event.type),
-      ['sessions.list'],
+      ['session.closed', 'sessions.list'],
     );
   } finally {
     await h.dispose().catch(() => undefined);
@@ -89,27 +89,37 @@ test('shutdown abandons a child open before map insertion and readiness', async 
     });
     await h.waitForIdle();
     const child = new FakeFactorySession('opening-backend', {}, h.calls);
-    const armGate = child.deferNextUpdateSettings();
-    h.runtime.loadQueue.set('opening-logical', [child]);
+    child.deferNextUpdateSettings();
+    h.history.seedChildSessions([
+      {
+        parentAppSessionId: 'provider-1',
+        childSessionId: 'opening-logical',
+        providerSessionId: 'opening-backend',
+        role: 'validator',
+        status: 'paused',
+        modelId: 'model-default',
+        transcriptAvailable: true,
+        updatedAt: Date.now(),
+      },
+    ]);
+    h.runtime.loadQueue.set('opening-backend', [child]);
     const opening = h.handle({
       type: 'child.open',
-      appSessionId: 'provider-1',
-      providerSessionId: 'opening-logical',
-      role: 'validator',
+      parentAppSessionId: 'provider-1',
+      childSessionId: 'opening-logical',
+      requestId: 'open-opening-logical',
     });
     await h.waitForIdle();
 
     await h.shutdown();
-    armGate.resolve();
     await opening;
 
     assert.equal(
       h.events.some(
         (event) =>
           event.type === 'child.updated' &&
-          'childSessionId' in event &&
           event.childSessionId === 'opening-logical' &&
-          event.settingsReady,
+          event.access === 'ready',
       ),
       false,
     );
@@ -184,20 +194,32 @@ test('a child send waits for the shared parent-owned open attempt', async () => 
     await h.waitForIdle();
     const child = new FakeFactorySession('same-backend', {}, h.calls);
     const armGate = child.deferNextUpdateSettings();
-    h.runtime.loadQueue.set('same-logical', [child]);
+    h.history.seedChildSessions([
+      {
+        parentAppSessionId: 'provider-1',
+        childSessionId: 'same-logical',
+        providerSessionId: 'same-backend',
+        role: 'worker',
+        status: 'paused',
+        modelId: 'model-default',
+        transcriptAvailable: true,
+        updatedAt: Date.now(),
+      },
+    ]);
+    h.runtime.loadQueue.set('same-backend', [child]);
     const command = {
       type: 'child.open' as const,
-      appSessionId: 'provider-1',
-      providerSessionId: 'same-logical',
-      role: 'worker' as const,
+      parentAppSessionId: 'provider-1',
+      childSessionId: 'same-logical',
+      requestId: 'open-same-logical',
     };
 
     const opening = h.handle(command);
     await h.waitForIdle();
     const sending = h.handle({
       type: 'child.send',
-      appSessionId: 'provider-1',
-      providerSessionId: 'same-logical',
+      parentAppSessionId: 'provider-1',
+      childSessionId: 'same-logical',
       text: 'queued during open',
     });
     await h.waitForIdle();
@@ -205,19 +227,148 @@ test('a child send waits for the shared parent-owned open attempt', async () => 
     armGate.resolve();
     await Promise.all([opening, sending]);
 
-    assert.equal(h.runtime.loadCalls.filter((call) => call.sessionId === 'same-logical').length, 1);
+    assert.equal(h.runtime.loadCalls.filter((call) => call.sessionId === 'same-backend').length, 1);
     assert.deepEqual(child.prompts, ['queued during open']);
     assert.equal(
       h.events.filter(
         (event) =>
           event.type === 'child.updated' &&
-          'childSessionId' in event &&
           event.childSessionId === 'same-logical' &&
-          event.settingsReady,
+          event.access === 'ready',
       ).length,
       1,
     );
   } finally {
     await h.dispose();
+  }
+});
+
+test('joined child opens cannot settle after the parent closes', async () => {
+  const h = createSessionManagerTestContext();
+  try {
+    await h.create({
+      sessionPurpose: 'mission-control',
+      clientRef: 'joined-open-close',
+      title: 'Joined open close',
+      goal: 'go',
+      interactionMode: 'agi',
+      autonomy: 'low',
+    });
+    await h.provider.waitForPrompts('provider-1', 1);
+    await h.waitForIdle();
+    const child = new FakeFactorySession('joined-backend', {}, h.calls);
+    child.deferNextUpdateSettings();
+    h.history.seedChildSessions([
+      {
+        parentAppSessionId: 'provider-1',
+        childSessionId: 'joined-logical',
+        providerSessionId: 'joined-backend',
+        role: 'worker',
+        status: 'paused',
+        modelId: 'model-default',
+        transcriptAvailable: true,
+        updatedAt: Date.now(),
+      },
+    ]);
+    h.runtime.loadQueue.set('joined-backend', [child]);
+
+    const first = h.handle({
+      type: 'child.open',
+      parentAppSessionId: 'provider-1',
+      childSessionId: 'joined-logical',
+      requestId: 'joined-open-1',
+    });
+    await h.waitForIdle();
+    const second = h.handle({
+      type: 'child.open',
+      parentAppSessionId: 'provider-1',
+      childSessionId: 'joined-logical',
+      requestId: 'joined-open-2',
+    });
+    await h.waitForIdle();
+    await h.handle({ type: 'session.close', appSessionId: 'provider-1' });
+    const eventsAfterClose = h.events.length;
+
+    await Promise.all([first, second]);
+    await h.waitForIdle();
+
+    assert.equal(h.events.length, eventsAfterClose);
+    assert.equal(
+      h.events.some(
+        (event) =>
+          event.type === 'child.updated' &&
+          (event.requestId === 'joined-open-1' || event.requestId === 'joined-open-2'),
+      ),
+      false,
+    );
+    assert.equal(
+      h.calls.filter(
+        (call) =>
+          call.target === 'cleanup' &&
+          call.method === 'session.close' &&
+          call.args[0] === 'joined-backend',
+      ).length,
+      1,
+    );
+  } finally {
+    await h.dispose().catch(() => undefined);
+  }
+});
+
+test('an existing child runtime cannot acknowledge after parent close admission', async () => {
+  const h = createSessionManagerTestContext();
+  try {
+    await h.create({
+      sessionPurpose: 'mission-control',
+      clientRef: 'existing-open-close',
+      title: 'Existing open close',
+      goal: 'go',
+      interactionMode: 'agi',
+      autonomy: 'low',
+    });
+    await h.provider.waitForPrompts('provider-1', 1);
+    await h.waitForIdle();
+    h.history.seedChildSessions([
+      {
+        parentAppSessionId: 'provider-1',
+        childSessionId: 'existing-logical',
+        providerSessionId: 'existing-backend',
+        role: 'worker',
+        status: 'paused',
+        modelId: 'model-default',
+        transcriptAvailable: true,
+        updatedAt: Date.now(),
+      },
+    ]);
+    await h.handle({
+      type: 'child.open',
+      parentAppSessionId: 'provider-1',
+      childSessionId: 'existing-logical',
+      requestId: 'existing-open-initial',
+    });
+    const parent = h.provider.session('provider-1');
+    const closeGate = parent.deferNextClose();
+    const closing = h.handle({ type: 'session.close', appSessionId: 'provider-1' });
+    await h.waitForIdle();
+    const eventsAtCloseAdmission = h.events.length;
+
+    await h.handle({
+      type: 'child.open',
+      parentAppSessionId: 'provider-1',
+      childSessionId: 'existing-logical',
+      requestId: 'existing-open-stale',
+    });
+
+    assert.equal(h.events.length, eventsAtCloseAdmission);
+    assert.equal(
+      h.events.some(
+        (event) => event.type === 'child.updated' && event.requestId === 'existing-open-stale',
+      ),
+      false,
+    );
+    closeGate.resolve();
+    await closing;
+  } finally {
+    await h.dispose().catch(() => undefined);
   }
 });

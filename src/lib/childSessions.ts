@@ -1,5 +1,5 @@
-import type { TranscriptEvent } from '../types/bridge';
-import type { ChildSessionInfo } from '../hooks/useStore';
+import type { ProgressEntry, TranscriptEvent } from '../types/bridge';
+import type { ChildAccess, ChildSessionInfo } from '../hooks/useStore';
 import { childSessionInfo, toolMeta, CAT_LABEL } from './tools';
 
 // A single Task spawn streams many tool_call/tool_call_delta events sharing one
@@ -42,41 +42,235 @@ export type ChildSessionLatest = {
 export type ChildSessionTarget = { toolUseId?: string; label?: string };
 
 export type ChildSessionActivity = {
-  status?: ChildSessionInfo['status'];
+  status?: 'running' | 'paused' | 'completed';
   startedAt?: number;
   latest?: ChildSessionLatest;
 };
+
+export type VisibleSessionTarget =
+  | { kind: 'primary' }
+  | {
+      kind: 'child';
+      parentAppSessionId: string;
+      childSessionId: string;
+      child: ChildSessionInfo;
+      access: ChildAccess | undefined;
+      canSend: boolean;
+      canInterrupt: boolean;
+      settingsReadiness: 'opening' | 'ready' | 'failed';
+    };
+
+export type ChildRuntimeSubmitTarget = {
+  parentAppSessionId: string;
+  childSessionId: string;
+  runtimeGeneration: number;
+};
+
+export function childRuntimeSubmitTarget(
+  target: VisibleSessionTarget,
+): ChildRuntimeSubmitTarget | undefined {
+  if (target.kind !== 'child' || !target.canSend || target.access?.state !== 'ready')
+    return undefined;
+  return {
+    parentAppSessionId: target.parentAppSessionId,
+    childSessionId: target.childSessionId,
+    runtimeGeneration: target.access.runtimeGeneration,
+  };
+}
+
+export async function commitChildPromptAfterBaseline({
+  capturedTarget,
+  capturedComposerRevision,
+  waitForBaseline,
+  currentTarget,
+  currentComposerRevision,
+  appendTranscript,
+  resetComposer,
+  sendCommand,
+}: {
+  capturedTarget: ChildRuntimeSubmitTarget;
+  capturedComposerRevision: number;
+  waitForBaseline: () => Promise<void>;
+  currentTarget: () => VisibleSessionTarget;
+  currentComposerRevision: () => number;
+  appendTranscript: () => void;
+  resetComposer: () => void;
+  sendCommand: () => void;
+}): Promise<boolean> {
+  await waitForBaseline();
+  const current = childRuntimeSubmitTarget(currentTarget());
+  if (
+    current?.parentAppSessionId !== capturedTarget.parentAppSessionId ||
+    current.childSessionId !== capturedTarget.childSessionId ||
+    current.runtimeGeneration !== capturedTarget.runtimeGeneration
+  )
+    return false;
+  appendTranscript();
+  if (currentComposerRevision() === capturedComposerRevision) resetComposer();
+  sendCommand();
+  return true;
+}
+
+export function selectedChildForParent(
+  activeAppSessionId: string | undefined,
+  selection: { parentAppSessionId: string; childSessionId: string } | null,
+  childrenByParent: Record<string, Record<string, ChildSessionInfo>>,
+): ChildSessionInfo | undefined {
+  if (!activeAppSessionId || selection?.parentAppSessionId !== activeAppSessionId) return undefined;
+  return childrenByParent[activeAppSessionId]?.[selection.childSessionId];
+}
+
+export function visibleSessionTarget(
+  activeAppSessionId: string | undefined,
+  selection: { parentAppSessionId: string; childSessionId: string } | null,
+  childrenByParent: Record<string, Record<string, ChildSessionInfo>>,
+  accessByParent: Record<string, Record<string, ChildAccess>>,
+): VisibleSessionTarget {
+  const child = selectedChildForParent(activeAppSessionId, selection, childrenByParent);
+  if (!activeAppSessionId || !selection || !child) return { kind: 'primary' };
+  const access = accessByParent[activeAppSessionId]?.[selection.childSessionId];
+  const ready = access?.state === 'ready' && child.status !== 'completed';
+  return {
+    kind: 'child',
+    parentAppSessionId: activeAppSessionId,
+    childSessionId: selection.childSessionId,
+    child,
+    access,
+    canSend: ready,
+    canInterrupt: ready && child.status === 'running',
+    settingsReadiness:
+      child.status === 'completed'
+        ? 'failed'
+        : ready
+          ? 'ready'
+          : access === undefined || access.state === 'opening'
+            ? 'opening'
+            : 'failed',
+  };
+}
+
+export function visibleSessionIsPending(
+  target: VisibleSessionTarget,
+  primaryIsLive: boolean,
+  activeAgentId: string | null,
+): boolean {
+  return target.kind === 'child'
+    ? target.canInterrupt
+    : primaryIsLive && activeAgentId === 'primary';
+}
+
+export function visibleSessionCanCompact(target: VisibleSessionTarget): boolean {
+  return target.kind === 'primary';
+}
+
+export function transcriptForVisibleSession(
+  transcript: TranscriptEvent[],
+  childSessionId: string | null,
+): TranscriptEvent[] {
+  if (childSessionId) {
+    return transcript.filter((event) => event.sourceSessionId === childSessionId);
+  }
+  return transcript.filter(
+    (event) =>
+      event.role === 'primary' || (event.author === 'user' && event.sourceSessionId === 'user'),
+  );
+}
+
+export function shouldOpenSelectedChild(access: ChildAccess | undefined): boolean {
+  return access === undefined;
+}
+
+export function childSessionIdForFeature(
+  progress: ProgressEntry[],
+  featureId: string,
+): string | undefined {
+  for (let i = progress.length - 1; i >= 0; i--) {
+    const entry = progress[i];
+    if (entry.featureId === featureId && entry.workerChildSessionId) {
+      return entry.workerChildSessionId;
+    }
+  }
+  return undefined;
+}
+
+export function childSelectionForFeature(
+  progress: ProgressEntry[],
+  childSessions: ChildSessionInfo[],
+  featureId: string,
+): string | null {
+  const childSessionId = childSessionIdForFeature(progress, featureId);
+  return childSessionId &&
+    childSessions.some((childSession) => childSession.childSessionId === childSessionId)
+    ? childSessionId
+    : null;
+}
+
+export function orderedChildSessions(
+  childSessions: readonly ChildSessionInfo[],
+): ChildSessionInfo[] {
+  return [...childSessions].sort(
+    (a, b) =>
+      (a.startedAt ?? 0) - (b.startedAt ?? 0) || a.childSessionId.localeCompare(b.childSessionId),
+  );
+}
+
+export function childSessionIsLive(
+  childSession: Pick<ChildSessionInfo, 'status'>,
+  runtime?: { available: boolean },
+): boolean {
+  return childSession.status === 'running' && runtime?.available === true;
+}
+
+export function childSessionLabel(childSession: ChildSessionInfo, index: number): string {
+  if (childSession.label) return childSession.label;
+  const role = childSession.role === 'validator' ? 'Validator' : 'Worker';
+  return `${role} ${index + 1}`;
+}
+
+export function childSessionMeta(
+  childSession: ChildSessionInfo,
+  displayedModel = childSession.modelId,
+): string {
+  return [
+    childSession.role,
+    childSession.status,
+    displayedModel,
+    childSession.reasoningEffort,
+    childSession.transcriptAvailable ? 'transcript' : 'no transcript',
+  ]
+    .filter(Boolean)
+    .join(' · ');
+}
 
 export function findChildSessionForTarget(
   childSessions: ChildSessionInfo[],
   target: ChildSessionTarget,
 ): ChildSessionInfo | undefined {
-  if (target.toolUseId) {
-    const byId = childSessions.find((childSession) => childSession.toolUseId === target.toolUseId);
-    if (byId) return byId;
-  }
-  const label = target.label?.toLowerCase();
-  if (!label) return undefined;
-  const matches = childSessions.filter(
-    (childSession) => (childSession.label ?? '').toLowerCase() === label,
-  );
-  return (
-    matches.find((childSession) => childSession.status === 'running') ?? matches[matches.length - 1]
+  if (!target.toolUseId) return undefined;
+  return childSessions.find(
+    (childSession) =>
+      childSession.spawnLink?.kind === 'tool-use' && childSession.spawnLink.id === target.toolUseId,
   );
 }
 
 export function childSessionActivityForTarget(
   childSessions: ChildSessionInfo[],
   allTx: TranscriptEvent[],
+  childRuntime: Record<string, Record<string, { available: boolean }>>,
   target: ChildSessionTarget,
 ): ChildSessionActivity | undefined {
   const childSession = findChildSessionForTarget(childSessions, target);
   if (!childSession) return undefined;
+  const isLive = childSessionIsLive(
+    childSession,
+    childRuntime[childSession.parentAppSessionId]?.[childSession.childSessionId],
+  );
   let latest: ChildSessionLatest | undefined;
   for (let i = allTx.length - 1; i >= 0; i--) {
     const t = allTx[i];
     if (
-      t.sourceSessionId !== childSession.providerSessionId ||
+      t.appSessionId !== childSession.parentAppSessionId ||
+      t.sourceSessionId !== childSession.childSessionId ||
       (t.kind === 'tool_result' && !t.isError) ||
       t.author === 'user'
     )
@@ -90,7 +284,14 @@ export function childSessionActivityForTarget(
     };
     break;
   }
-  return { status: childSession.status, startedAt: childSession.startedAt, latest };
+  return {
+    status:
+      childSession.status === 'pending' || (childSession.status === 'running' && !isLive)
+        ? 'paused'
+        : childSession.status,
+    startedAt: childSession.startedAt,
+    latest,
+  };
 }
 
 // Last non-empty line, capped, so a long thinking block stays a one-line cue.

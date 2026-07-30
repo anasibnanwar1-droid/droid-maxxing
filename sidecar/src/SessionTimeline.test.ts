@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import type {
-  ChildSessionHistoryLink,
+  ChildSessionSummary,
   ServerEvent,
   SessionHistoryEntry,
   SessionSummary,
@@ -17,7 +17,7 @@ import {
 interface HarnessOptions {
   summaries?: SessionSummary[];
   liveAppSessionIds?: string[];
-  childSessions?: ChildSessionHistoryLink[];
+  childSessions?: ChildSessionSummary[];
   loaders?: Partial<SessionTimelineLoaders>;
   now?: () => number;
   onRecordEvent?: (event: TranscriptEvent) => void;
@@ -57,7 +57,7 @@ function createHarness(options: HarnessOptions = {}) {
         recorded.push(event);
       },
     },
-    getChildSessionLinks: () => options.childSessions ?? [],
+    getChildSessions: () => options.childSessions ?? [],
     emit: (event) => {
       trace.push(`emit:${event.type}`);
       emitted.push(event);
@@ -98,6 +98,21 @@ function summary(
   };
 }
 
+function child(
+  parentAppSessionId: string,
+  childSessionId: string,
+  status: ChildSessionSummary['status'],
+): ChildSessionSummary {
+  return {
+    parentAppSessionId,
+    childSessionId,
+    role: 'worker',
+    status,
+    modelId: 'model-default',
+    transcriptAvailable: true,
+  };
+}
+
 function transcript(id: string, appSessionId = 'provider-source'): TranscriptEvent {
   return {
     id,
@@ -133,9 +148,7 @@ test('append records before emitting exactly one live transcript event', () => {
 
 test('plain restore resolves aliases, records in order, and emits replace telemetry', () => {
   const restored = [transcript('first'), transcript('second')];
-  const childSessions: ChildSessionHistoryLink[] = [
-    { providerSessionId: 'worker-1', status: 'running' },
-  ];
+  const childSessions = [child('app-1', 'worker-1', 'running')];
   const calls: unknown[][] = [];
   const stable = summary('app-1', 'provider-current', {
     compactedFromProviderSessionIds: ['provider-old'],
@@ -183,9 +196,7 @@ test('plain restore resolves aliases, records in order, and emits replace teleme
 test('Mission Control restore preserves progress, child links, cursor, identity, and order', () => {
   const progress = [{ type: 'feature', timestamp: '2026-07-28T00:00:00.000Z' }];
   const restored = [transcript('mission-first'), transcript('mission-second')];
-  const childSessions: ChildSessionHistoryLink[] = [
-    { providerSessionId: 'mission-worker', status: 'running' },
-  ];
+  const childSessions = [child('mission-app', 'mission-worker', 'running')];
   const calls: unknown[][] = [];
   const harness = createHarness({
     summaries: [summary('mission-app', 'mission-provider', { sessionPurpose: 'mission-control' })],
@@ -236,7 +247,7 @@ test('older restore prepends only transcripts and preserves page telemetry', () 
       getLive: () => undefined,
     },
     history: { recordEvent: (recorded) => harness.recorded.push(recorded) },
-    getChildSessionLinks: () => {
+    getChildSessions: () => {
       childLinkReads += 1;
       return [];
     },
@@ -292,9 +303,7 @@ test('older failure emits an empty terminal prepend without an error', () => {
 });
 
 test('missing live history emits an authoritative empty replace page', () => {
-  const childSessions: ChildSessionHistoryLink[] = [
-    { providerSessionId: 'worker-live', status: 'running' },
-  ];
+  const childSessions = [child('app-live', 'worker-live', 'running')];
   const harness = createHarness({
     summaries: [summary('app-live', 'provider-live')],
     liveAppSessionIds: ['app-live'],
@@ -430,7 +439,7 @@ test('child replay uses the live append path and silently tolerates missing hist
     },
   });
 
-  harness.timeline.replayChild('app-1', 'child-provider');
+  harness.timeline.replayChild('app-1', 'child-logical', 'child-provider');
 
   assert.deepEqual(harness.trace, [
     'record:child-first',
@@ -438,8 +447,19 @@ test('child replay uses the live append path and silently tolerates missing hist
     'record:child-second',
     'emit:event.appended',
   ]);
+  assert.deepEqual(
+    harness.emitted.map((event) =>
+      event.type === 'event.appended'
+        ? [event.event.appSessionId, event.event.sourceSessionId]
+        : null,
+    ),
+    [
+      ['app-1', 'child-logical'],
+      ['app-1', 'child-logical'],
+    ],
+  );
   fail = true;
-  harness.timeline.replayChild('app-1', 'child-provider');
+  harness.timeline.replayChild('app-1', 'child-logical', 'child-provider');
   assert.equal(harness.errors.length, 0);
   assert.equal(harness.emitted.length, 2);
 });

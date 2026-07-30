@@ -21,7 +21,7 @@ import type {
   ProviderOperationTarget,
   SessionContext,
 } from './SessionContext.js';
-import type { LiveChildSession, LiveSession } from './SessionLifecycle.js';
+import type { LiveSession } from './SessionLifecycle.js';
 import { defaultsModeForSummary, errMsg, modelDefaultForMode } from './sessionHelpers.js';
 import {
   SessionCompactionExecution,
@@ -45,6 +45,13 @@ export interface PrimaryAutomaticCompactionTarget extends LiveOperationTarget {
 
 export interface ChildAutomaticCompactionTarget extends ChildOperationTarget {
   kind: 'child';
+  parentGeneration: number;
+  runtimeGeneration: number;
+  turnGeneration: number;
+  configurationGeneration: number;
+  isAutoCompacting(): boolean;
+  setAutoCompacting(active: boolean): void;
+  isStreaming(): boolean;
 }
 
 export type AutomaticCompactionTarget =
@@ -64,16 +71,36 @@ export type CompactionRetuneTarget = PrimaryCompactionTarget | ChildCompactionTa
 
 export type CompactionResourceKey =
   | { kind: 'primary'; appSessionId: string }
-  | { kind: 'child'; parentAppSessionId: string; childSessionId: string };
-
-export type AutoCompactionSettlement =
-  | { kind: 'primary'; appSessionId: string }
-  | {
+  | ({
       kind: 'child';
       parentAppSessionId: string;
       childSessionId: string;
-      child: LiveChildSession;
-    };
+    } & ChildGenerationSnapshot);
+
+export type ChildGenerationSnapshot = Pick<
+  ChildAutomaticCompactionTarget,
+  'parentGeneration' | 'runtimeGeneration' | 'turnGeneration' | 'configurationGeneration'
+>;
+
+export function matchesChildGenerationSnapshot(
+  target: ChildGenerationSnapshot,
+  snapshot: ChildGenerationSnapshot,
+): boolean {
+  return (
+    target.parentGeneration === snapshot.parentGeneration &&
+    target.runtimeGeneration === snapshot.runtimeGeneration &&
+    target.turnGeneration === snapshot.turnGeneration &&
+    target.configurationGeneration === snapshot.configurationGeneration
+  );
+}
+
+export type AutoCompactionSettlement =
+  | { kind: 'primary'; appSessionId: string }
+  | ({
+      kind: 'child';
+      parentAppSessionId: string;
+      childSessionId: string;
+    } & ChildGenerationSnapshot);
 
 export interface SessionCompactionDependencies extends Omit<
   SessionCompactionExecutionDependencies,
@@ -197,7 +224,7 @@ export class SessionCompaction {
 
   cancel(target: AutomaticCompactionTarget): void {
     if (target.kind === 'primary') target.liveSession.autoCompacting = false;
-    else target.child.autoCompacting = false;
+    else target.setAutoCompacting(false);
     this.watchdogs.clear(compactionResourceKey(target));
   }
 
@@ -264,7 +291,7 @@ export class SessionCompaction {
     if (!target.isCurrent()) return;
     const wasActive = automaticCompactionActive(target);
     if (target.kind === 'primary') target.liveSession.autoCompacting = active;
-    else target.child.autoCompacting = active;
+    else target.setAutoCompacting(active);
 
     const key = compactionResourceKey(target);
     if (active) this.watchdogs.arm(key, AUTO_COMPACTION_WATCHDOG_MS);
@@ -279,12 +306,15 @@ export class SessionCompaction {
       });
       return;
     }
-    if (target.child.streaming) return;
+    if (target.isStreaming()) return;
     this.dependencies.settleAutomatic({
       kind: 'child',
       parentAppSessionId: target.parentAppSessionId,
       childSessionId: target.childSessionId,
-      child: target.child,
+      parentGeneration: target.parentGeneration,
+      runtimeGeneration: target.runtimeGeneration,
+      turnGeneration: target.turnGeneration,
+      configurationGeneration: target.configurationGeneration,
     });
   }
 
@@ -380,9 +410,7 @@ function mergeLimitPatch(
 }
 
 function automaticCompactionActive(target: AutomaticCompactionTarget): boolean {
-  return target.kind === 'primary'
-    ? target.liveSession.autoCompacting
-    : target.child.autoCompacting;
+  return target.kind === 'primary' ? target.liveSession.autoCompacting : target.isAutoCompacting();
 }
 
 function compactionResourceKey(target: AutomaticCompactionTarget): CompactionResourceKey {
@@ -392,6 +420,10 @@ function compactionResourceKey(target: AutomaticCompactionTarget): CompactionRes
         kind: 'child',
         parentAppSessionId: target.parentAppSessionId,
         childSessionId: target.childSessionId,
+        parentGeneration: target.parentGeneration,
+        runtimeGeneration: target.runtimeGeneration,
+        turnGeneration: target.turnGeneration,
+        configurationGeneration: target.configurationGeneration,
       };
 }
 

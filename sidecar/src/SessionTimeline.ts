@@ -7,7 +7,7 @@ import {
   resolveSessionChain,
 } from './history.js';
 import type {
-  ChildSessionHistoryLink,
+  ChildSessionSummary,
   ProgressEntry,
   ServerEvent,
   SessionRole,
@@ -36,7 +36,7 @@ export interface SessionTimelineRegistry {
 export interface SessionTimelineDependencies {
   registry: SessionTimelineRegistry;
   history: TimelineHistory;
-  getChildSessionLinks: (appSessionId: string) => ChildSessionHistoryLink[];
+  getChildSessions: (appSessionId: string) => ChildSessionSummary[];
   emit: (event: ServerEvent) => void;
   emitError: (error: TimelineError) => void;
   now?: () => number;
@@ -47,7 +47,7 @@ interface SessionHistoryPage {
   appSessionId: string;
   progress: ProgressEntry[];
   transcripts: TranscriptEvent[];
-  childSessions?: ChildSessionHistoryLink[];
+  childSessions?: ChildSessionSummary[];
   mode: 'replace' | 'prepend';
   olderCursor?: string;
 }
@@ -107,7 +107,7 @@ export class SessionTimeline {
         appSessionId,
         progress: history.progress,
         transcripts,
-        childSessions: this.dependencies.getChildSessionLinks(appSessionId),
+        childSessions: this.dependencies.getChildSessions(appSessionId),
         mode: 'replace',
         ...(history.olderCursor ? { olderCursor: history.olderCursor } : {}),
       });
@@ -126,7 +126,7 @@ export class SessionTimeline {
           appSessionId,
           progress: [],
           transcripts: [],
-          childSessions: this.dependencies.getChildSessionLinks(appSessionId),
+          childSessions: this.dependencies.getChildSessions(appSessionId),
           mode: 'replace',
         });
         return;
@@ -164,10 +164,15 @@ export class SessionTimeline {
     }
   }
 
-  replayChild(appSessionId: string, childProviderSessionId: string): void {
+  replayChild(appSessionId: string, childSessionId: string, childProviderSessionId: string): void {
     try {
       const page = this.loaders.page(childProviderSessionId, appSessionId, undefined, 200);
-      for (const event of page.events) this.append(event);
+      for (const event of page.events)
+        this.append({
+          ...event,
+          appSessionId,
+          sourceSessionId: childSessionId,
+        });
     } catch {
       // Some live child sessions have not flushed history yet.
     }

@@ -1685,7 +1685,6 @@ const FeedItemView = memo(function FeedItemView({
       return (
         <ChildSessionLine
           event={item.event}
-          active={live}
           onOpen={onOpenChildSession}
           activity={childSessionActivity?.({
             toolUseId: item.event.toolUseId,
@@ -1949,12 +1948,10 @@ function childSessionColor(label: string): string {
 /* ── In-chat spawned child session: inline thinking-style line + click to navigate ── */
 function ChildSessionLine({
   event,
-  active,
   onOpen,
   activity,
 }: {
   event: TranscriptEvent;
-  active?: boolean;
   onOpen?: (target: ChildSessionTarget) => void;
   activity?: ChildSessionActivity;
 }) {
@@ -1962,7 +1959,7 @@ function ChildSessionLine({
   const { label, description } = childSessionInfo(event.toolArgs);
   const name = label ?? 'child session';
   const color = childSessionColor(name);
-  const running = activity?.status === 'running' || (!!active && activity?.status !== 'completed');
+  const running = childSessionLineIsRunning(activity);
   const startTs = activity?.startedAt;
   const elapsed = useElapsed(startTs, running);
   const timer = running && startTs != null && elapsed >= 1000 ? formatDuration(elapsed) : '';
@@ -2036,6 +2033,10 @@ function ChildSessionLine({
       </Expand>
     </div>
   );
+}
+
+export function childSessionLineIsRunning(activity?: ChildSessionActivity): boolean {
+  return activity?.status === 'running';
 }
 
 /* ── The activity feed (list only; parent owns the scroll container) ── */

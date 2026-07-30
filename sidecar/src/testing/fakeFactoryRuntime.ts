@@ -75,6 +75,7 @@ export class FakeFactorySession implements FactorySession {
   private readonly streamGates: DeferredStream[] = [];
   private readonly streamEventQueue: DroidStreamEvent[][] = [];
   private readonly promptWaiters: { count: number; resolve(): void }[] = [];
+  private readonly settingsWaiters: { count: number; resolve(): void }[] = [];
   private nextCompactGate?: DeferredStream;
   private nextContextStatsGate?: DeferredStream;
   private nextUpdateSettingsGate?: DeferredStream;
@@ -163,6 +164,11 @@ export class FakeFactorySession implements FactorySession {
     return new Promise((resolve) => this.promptWaiters.push({ count, resolve }));
   }
 
+  waitForSettings(count: number): Promise<void> {
+    if (this.settings.length >= count) return Promise.resolve();
+    return new Promise((resolve) => this.settingsWaiters.push({ count, resolve }));
+  }
+
   async compactSession(
     options: Parameters<FactorySession['compactSession']>[0] = {},
   ): Promise<Awaited<ReturnType<FactorySession['compactSession']>>> {
@@ -209,6 +215,7 @@ export class FakeFactorySession implements FactorySession {
       method: 'updateSettings',
       args: [this.sessionId, settings],
     });
+    this.resolveWaiters(this.settingsWaiters, this.settings.length);
     const error = this.nextUpdateSettingsError;
     delete this.nextUpdateSettingsError;
     const gate = this.nextUpdateSettingsGate;
@@ -233,6 +240,13 @@ export class FakeFactorySession implements FactorySession {
 
   emitNotification(note: Record<string, unknown>): void {
     dispatchNotification(note, this.notifications);
+  }
+
+  captureNotification(note: Record<string, unknown>): () => void {
+    const listeners = new Set(this.notifications);
+    return () => {
+      dispatchNotification(note, listeners);
+    };
   }
 
   async getContextStats(): ReturnType<FactorySession['getContextStats']> {
@@ -309,10 +323,17 @@ export class FakeFactorySession implements FactorySession {
   }
 
   private resolvePromptWaiters(): void {
-    for (let index = this.promptWaiters.length - 1; index >= 0; index -= 1) {
-      const waiter = this.promptWaiters.at(index);
-      if (!waiter || this.prompts.length < waiter.count) continue;
-      this.promptWaiters.splice(index, 1);
+    this.resolveWaiters(this.promptWaiters, this.prompts.length);
+  }
+
+  private resolveWaiters(
+    waiters: { count: number; resolve(): void }[],
+    observedCount: number,
+  ): void {
+    for (let index = waiters.length - 1; index >= 0; index -= 1) {
+      const waiter = waiters.at(index);
+      if (!waiter || observedCount < waiter.count) continue;
+      waiters.splice(index, 1);
       waiter.resolve();
     }
   }

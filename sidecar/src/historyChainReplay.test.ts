@@ -3,13 +3,14 @@ import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
+import type { SessionSummary } from './protocol.js';
 
 const originalHome = process.env.HOME;
 const home = mkdtempSync(join(tmpdir(), 'droid-chain-replay-'));
 process.env.HOME = home;
 
-const { loadSessionTranscriptWindow, resolveSessionChain } = await import('./history.js');
+const { HistoryIndex, loadSessionTranscriptWindow, resolveSessionChain } =
+  await import('./history.js');
 
 test.after(() => {
   if (originalHome === undefined) delete process.env.HOME;
@@ -224,16 +225,9 @@ test('resolveSessionChain rebuilds the chain from the persisted app-session row'
   writeSession('app0', [assistant('c0')]);
   writeSession('mid1', [compactionState(3), assistant('c1')]);
   writeSession('cur2', [compactionState(4), assistant('c2')]);
-  const dbDir = join(home, '.factory', 'droid-control');
-  mkdirSync(dbDir, { recursive: true });
-  const db = new DatabaseSync(join(dbDir, 'index.sqlite'));
-  db.exec(
-    'CREATE TABLE app_sessions (app_session_id TEXT, provider_session_id TEXT, compacted_from_provider_session_ids TEXT)',
-  );
-  db.prepare(
-    'INSERT INTO app_sessions (app_session_id, provider_session_id, compacted_from_provider_session_ids) VALUES (?, ?, ?)',
-  ).run('app0', 'cur2', JSON.stringify(['app0', 'mid1']));
-  db.close();
+  const index = new HistoryIndex();
+  index.syncSummaries([historicalSummary('app0', 'cur2', ['app0', 'mid1'])]);
+  index.close();
 
   assert.deepEqual(resolveSessionChain('app0', 'cur2'), ['app0', 'mid1', 'cur2']);
   // Replaying that chain yields the full conversation in order.
@@ -245,3 +239,32 @@ test('resolveSessionChain rebuilds the chain from the persisted app-session row'
     ['c0', 'c1', 'c2'],
   );
 });
+
+function historicalSummary(
+  appSessionId: string,
+  providerSessionId: string,
+  compactedFromProviderSessionIds: string[],
+): SessionSummary {
+  return {
+    appSessionId,
+    providerSessionId,
+    compactedFromProviderSessionIds,
+    sessionPurpose: 'chat',
+    interactionMode: 'auto',
+    role: 'primary',
+    title: 'History chain',
+    goal: '',
+    cwd: home,
+    workspaceKind: 'folder',
+    autonomy: 'low',
+    phase: 'paused',
+    streaming: false,
+    queuedSends: 0,
+    features: [],
+    tokensIn: 0,
+    tokensOut: 0,
+    contextTokens: 0,
+    createdAt: 0,
+    updatedAt: 0,
+  };
+}

@@ -1,14 +1,15 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { BridgeFeature, ModelInfo } from '../types/bridge.js';
+import type { ModelInfo } from '../types/bridge.js';
 import {
-  buildExactChildSettingsTarget,
   buildSelectedChildSettingsTarget,
+  buildVisibleChildSettingsTarget,
   childSettingsReadinessLabel,
   planChildModelUpdate,
   type ExactChildSettingsTarget,
 } from './exactChildSettings.js';
+import { visibleSessionTarget } from './childSessions.js';
 
 test('child settings readiness uses reader-facing labels', () => {
   assert.equal(childSettingsReadinessLabel('opening'), 'Opening child…');
@@ -16,26 +17,11 @@ test('child settings readiness uses reader-facing labels', () => {
   assert.equal(childSettingsReadinessLabel('failed'), 'Child unavailable');
 });
 
-function feature(input: Partial<BridgeFeature> = {}): BridgeFeature {
-  return {
-    id: 'worker-feature',
-    description: 'Implement the feature',
-    status: 'in_progress',
-    skillName: 'implementation',
-    preconditions: [],
-    expectedBehavior: [],
-    verificationSteps: [],
-    currentWorkerProviderSessionId: 'worker-logical',
-    ...input,
-  };
-}
-
-test('exact child targets require the current live feature and preserve validator settings', () => {
-  const worker = buildExactChildSettingsTarget({
+test('exact child targets use canonical child role and settings', () => {
+  const worker = buildSelectedChildSettingsTarget({
     parentAppSessionId: 'parent-a',
     childSessionId: 'worker-logical',
-    features: [feature()],
-    child: { modelId: 'worker-model', reasoningEffort: 'high' },
+    child: { role: 'worker', modelId: 'worker-model', reasoningEffort: 'high' },
     label: 'Sub-agent 1',
     readiness: 'opening',
   });
@@ -49,17 +35,10 @@ test('exact child targets require the current live feature and preserve validato
     readiness: 'opening',
   });
 
-  const validator = buildExactChildSettingsTarget({
+  const validator = buildSelectedChildSettingsTarget({
     parentAppSessionId: 'parent-a',
     childSessionId: 'validator-logical',
-    features: [
-      feature({
-        id: 'validation-feature',
-        description: 'Scrutiny pass',
-        currentWorkerProviderSessionId: 'validator-logical',
-      }),
-    ],
-    child: { modelId: 'validator-model', reasoningEffort: 'xhigh' },
+    child: { role: 'validator', modelId: 'validator-model', reasoningEffort: 'xhigh' },
     label: 'Sub-agent 2',
     readiness: 'ready',
   });
@@ -67,41 +46,20 @@ test('exact child targets require the current live feature and preserve validato
   assert.equal(validator?.modelId, 'validator-model');
   assert.equal(validator?.reasoningEffort, 'xhigh');
 
-  assert.equal(
-    buildExactChildSettingsTarget({
-      parentAppSessionId: 'parent-a',
-      childSessionId: 'worker-logical',
-      features: [
-        feature({
-          status: 'completed',
-          currentWorkerProviderSessionId: null,
-          completedWorkerProviderSessionId: 'worker-logical',
-        }),
-      ],
-      label: 'Historical worker',
-      readiness: 'ready',
-    }),
-    undefined,
-  );
-  assert.equal(
-    buildExactChildSettingsTarget({
-      parentAppSessionId: 'parent-a',
-      childSessionId: 'historical-only',
-      features: [feature()],
-      label: 'Historical worker',
-      readiness: 'ready',
-    }),
-    undefined,
-  );
+  const missing = buildSelectedChildSettingsTarget({
+    parentAppSessionId: 'parent-a',
+    childSessionId: 'missing-child',
+    label: 'Missing child',
+    readiness: 'ready',
+  });
+  assert.equal(missing.readiness, 'failed');
 });
 
-test('a selected child remains in disabled child scope after completion or replacement', () => {
-  const currentFeature = feature();
+test('a selected child remains in exact scope while readiness controls writes', () => {
   const current = buildSelectedChildSettingsTarget({
     parentAppSessionId: 'parent-a',
     childSessionId: 'worker-logical',
-    features: [currentFeature],
-    child: { modelId: 'worker-model', reasoningEffort: 'high' },
+    child: { role: 'worker', modelId: 'worker-model', reasoningEffort: 'high' },
     label: 'Sub-agent 1',
     readiness: 'ready',
   });
@@ -110,31 +68,22 @@ test('a selected child remains in disabled child scope after completion or repla
   const completed = buildSelectedChildSettingsTarget({
     parentAppSessionId: 'parent-a',
     childSessionId: 'worker-logical',
-    features: [
-      feature({
-        status: 'completed',
-        currentWorkerProviderSessionId: null,
-        completedWorkerProviderSessionId: 'worker-logical',
-      }),
-    ],
-    child: { modelId: 'worker-model', reasoningEffort: 'high' },
+    child: { role: 'worker', modelId: 'worker-model', reasoningEffort: 'high' },
     label: 'Sub-agent 1',
-    readiness: 'ready',
+    readiness: 'failed',
   });
   assert.equal(completed.readiness, 'failed');
   assert.equal(completed.childSessionId, 'worker-logical');
   assert.equal(planChildModelUpdate(completed, 'other-model', 'high', []), undefined);
 
-  const replaced = buildSelectedChildSettingsTarget({
+  const unavailable = buildSelectedChildSettingsTarget({
     parentAppSessionId: 'parent-a',
     childSessionId: 'worker-logical',
-    features: [feature({ currentWorkerProviderSessionId: 'replacement-logical' })],
-    child: { modelId: 'worker-model', reasoningEffort: 'high' },
     label: 'Sub-agent 1',
     readiness: 'ready',
   });
-  assert.equal(replaced.readiness, 'failed');
-  assert.equal(planChildModelUpdate(replaced, 'other-model', 'high', []), undefined);
+  assert.equal(unavailable.readiness, 'failed');
+  assert.equal(planChildModelUpdate(unavailable, 'other-model', 'high', []), undefined);
 });
 
 test('child model planning is readiness-gated and emits only the exact command identity', () => {
@@ -176,4 +125,41 @@ test('child model planning is readiness-gated and emits only the exact command i
     childSessionId: 'validator-logical',
     modelId: null,
   });
+});
+
+test('auto and spec selections plan settings for the exact visible child', () => {
+  for (const interactionMode of ['auto', 'spec'] as const) {
+    const parentAppSessionId = `parent-${interactionMode}`;
+    const childSessionId = `child-${interactionMode}`;
+    const child = {
+      parentAppSessionId,
+      childSessionId,
+      role: 'worker' as const,
+      status: 'paused' as const,
+      modelId: 'old-model',
+      reasoningEffort: 'high' as const,
+      transcriptAvailable: true,
+    };
+    const visible = visibleSessionTarget(
+      parentAppSessionId,
+      { parentAppSessionId, childSessionId },
+      { [parentAppSessionId]: { [childSessionId]: child } },
+      {
+        [parentAppSessionId]: {
+          [childSessionId]: {
+            state: 'ready',
+            requestId: `request-${interactionMode}`,
+            runtimeGeneration: 3,
+          },
+        },
+      },
+    );
+    const target = buildVisibleChildSettingsTarget(visible, `${interactionMode} child`);
+    assert.ok(target);
+    assert.deepEqual(planChildModelUpdate(target, 'new-model', 'high', []), {
+      parentAppSessionId,
+      childSessionId,
+      modelId: 'new-model',
+    });
+  }
 });

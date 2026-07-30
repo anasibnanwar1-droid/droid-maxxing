@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useMemo } from 'react';
+import { useState, useRef, useEffect, useMemo, type SetStateAction } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { useStore } from '../hooks/useStore';
 import type { QueuedPrompt } from '../hooks/useStore';
@@ -10,8 +10,7 @@ import {
   sendToChildNow,
   sendDesignPrompt,
   createSession,
-  interruptSession,
-  interruptChild,
+  interruptVisibleSession,
   compactSession,
   updateSessionSettings,
   newClientRef,
@@ -22,6 +21,15 @@ import { pickDirectory, listFiles } from '../lib/desktop';
 import { markGitTurnStart } from '../lib/git';
 import { createLocalDesignTranscriptEvent, newQueueId } from '../lib/promptQueue';
 import { composePrompt } from '../lib/composePrompt';
+import {
+  childRuntimeSubmitTarget,
+  childSessionLabel,
+  commitChildPromptAfterBaseline,
+  orderedChildSessions,
+  visibleSessionCanCompact,
+  visibleSessionTarget,
+  type VisibleSessionTarget,
+} from '../lib/childSessions';
 import {
   ArrowUp,
   ChevronDown,
@@ -39,8 +47,8 @@ import {
 } from 'lucide-react';
 import ModelSelectorPopover from './ModelSelectorPopover';
 import {
+  buildVisibleChildSettingsTarget,
   childSettingsReadinessLabel,
-  type ExactChildSettingsTarget,
 } from '../lib/exactChildSettings';
 import ContextStatusCluster from './ContextStatusCluster';
 import PermissionInline from './PermissionInline';
@@ -89,15 +97,18 @@ export default function PromptInput({
   rightInset = false,
   compact = false,
   onOverlayChange,
-  childSettingsTarget,
 }: {
   rightInset?: boolean;
   compact?: boolean;
   onOverlayChange?: (open: boolean) => void;
-  childSettingsTarget?: ExactChildSettingsTarget;
 }) {
   const { state, dispatch } = useStore();
-  const [input, setInput] = useState('');
+  const composerRevisionRef = useRef(0);
+  const [input, setInputState] = useState('');
+  const setInput = (value: SetStateAction<string>) => {
+    composerRevisionRef.current += 1;
+    setInputState(value);
+  };
   const [caret, setCaret] = useState(0);
   // Shell-style prompt history: null while composing, otherwise an index into
   // promptHistory. The draft is stashed so ArrowDown past the newest restores it.
@@ -107,8 +118,16 @@ export default function PromptInput({
   const [menuIndex, setMenuIndex] = useState(0);
   const [files, setFiles] = useState<string[]>([]);
   const [filesCwd, setFilesCwd] = useState<string | null>(null);
-  const [attachedFiles, setAttachedFiles] = useState<string[]>([]);
-  const [activeSkills, setActiveSkills] = useState<SkillInfo[]>([]);
+  const [attachedFiles, setAttachedFilesState] = useState<string[]>([]);
+  const setAttachedFiles = (value: SetStateAction<string[]>) => {
+    composerRevisionRef.current += 1;
+    setAttachedFilesState(value);
+  };
+  const [activeSkills, setActiveSkillsState] = useState<SkillInfo[]>([]);
+  const setActiveSkills = (value: SetStateAction<SkillInfo[]>) => {
+    composerRevisionRef.current += 1;
+    setActiveSkillsState(value);
+  };
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
   const [sendHover, setSendHover] = useState(false);
@@ -121,7 +140,7 @@ export default function PromptInput({
   });
 
   const activeSession = state.activeAppSessionId ? state.sessions[state.activeAppSessionId] : null;
-  const isLive = useSessionLive(state.activeAppSessionId);
+  const primaryIsLive = useSessionLive(state.activeAppSessionId);
 
   // The user's own prompts in this conversation, oldest to newest, for ArrowUp
   // recall (reuse a previous prompt). Consecutive duplicates are collapsed.
@@ -143,12 +162,30 @@ export default function PromptInput({
     activeSession?.sessionPurpose !== 'mission-control'
       ? activeSession?.interactionMode === 'spec' || (!activeSession && state.specMode)
       : false;
-  const targetProviderSessionId =
-    activeSession?.sessionPurpose !== 'mission-control' &&
-    state.selectedProviderSessionId &&
-    state.selectedProviderSessionId !== 'primary'
-      ? state.selectedProviderSessionId
-      : null;
+  const selectedChild = state.selectedChild;
+  const visibleTarget: VisibleSessionTarget = visibleSessionTarget(
+    activeSession?.appSessionId,
+    selectedChild,
+    state.childSessions,
+    state.childAccess,
+  );
+  const visibleTargetRef = useRef(visibleTarget);
+  visibleTargetRef.current = visibleTarget;
+  const targetChild = visibleTarget.kind === 'child' ? visibleTarget.child : undefined;
+  const targetChildSessionId = targetChild?.childSessionId ?? null;
+  const targetChildIndex =
+    visibleTarget.kind === 'child' && activeSession
+      ? orderedChildSessions(
+          Object.values(state.childSessions[activeSession.appSessionId] ?? {}),
+        ).findIndex((childSession) => childSession.childSessionId === visibleTarget.childSessionId)
+      : -1;
+  const childSettingsTarget = buildVisibleChildSettingsTarget(
+    visibleTarget,
+    targetChild ? childSessionLabel(targetChild, Math.max(0, targetChildIndex)) : 'Child session',
+  );
+  const childActionsEnabled = visibleTarget.kind !== 'child' || visibleTarget.canSend;
+  const primaryActionsEnabled = visibleSessionCanCompact(visibleTarget);
+  const isLive = visibleTarget.kind === 'child' ? visibleTarget.canInterrupt : primaryIsLive;
 
   const cwd = activeSession?.cwd ?? state.draftChat?.cwd ?? null;
   const skillsProviderSessionId = activeSession?.providerSessionId ?? null;
@@ -189,17 +226,20 @@ export default function PromptInput({
     {
       cmd: '/compact',
       desc: 'Compact current session',
-      run: () => activeSession && compactSession(activeSession.appSessionId),
+      run: () =>
+        primaryActionsEnabled && activeSession && compactSession(activeSession.appSessionId),
     },
     {
       cmd: '/compaction',
       desc: 'Compact current session',
-      run: () => activeSession && compactSession(activeSession.appSessionId),
+      run: () =>
+        primaryActionsEnabled && activeSession && compactSession(activeSession.appSessionId),
     },
     {
       cmd: '/compression',
       desc: 'Compact current session',
-      run: () => activeSession && compactSession(activeSession.appSessionId),
+      run: () =>
+        primaryActionsEnabled && activeSession && compactSession(activeSession.appSessionId),
     },
     { cmd: '/spec', desc: 'Toggle spec mode', run: () => toggleSpec() },
     { cmd: '/settings', desc: 'Open settings', run: () => dispatch({ type: 'TOGGLE_SETTINGS' }) },
@@ -428,10 +468,13 @@ export default function PromptInput({
     }
 
     if (COMPACT_COMMANDS.has(text) && activeSkills.length === 0 && attachedFiles.length === 0) {
+      if (!primaryActionsEnabled) return;
       if (activeSession) compactSession(activeSession.appSessionId);
       setInput('');
       return;
     }
+
+    if (!childActionsEnabled) return;
 
     const composed = composeText(text);
 
@@ -513,7 +556,7 @@ export default function PromptInput({
 
     // Model is working and the user chose to queue: stage the prompt locally.
     // It is held client-side and delivered automatically when the turn finishes.
-    if (isLive && mode === 'queue' && !targetProviderSessionId) {
+    if (isLive && mode === 'queue' && !targetChildSessionId) {
       dispatch({
         type: 'QUEUE_PROMPT',
         appSessionId: activeSession.appSessionId,
@@ -524,42 +567,64 @@ export default function PromptInput({
       return;
     }
 
-    dispatch({
-      type: 'SESSION_TRANSCRIPT',
-      event: {
-        id: `local-${Date.now()}`,
-        appSessionId: activeSession.appSessionId,
-        sourceSessionId: targetProviderSessionId ?? 'user',
-        role: targetProviderSessionId ? 'worker' : 'primary',
-        ts: Date.now(),
-        kind: 'text',
-        text,
-        author: 'user',
-        skills: activeSkills.map((s) => s.name),
-        files: [...attachedFiles],
-        steered: isLive && mode === 'now',
-      },
-    });
+    const appendTranscript = () => {
+      dispatch({
+        type: 'SESSION_TRANSCRIPT',
+        event: {
+          id: `local-${Date.now()}`,
+          appSessionId: activeSession.appSessionId,
+          sourceSessionId: targetChildSessionId ?? 'user',
+          role: targetChild?.role ?? 'primary',
+          ts: Date.now(),
+          kind: 'text',
+          text,
+          author: 'user',
+          skills: activeSkills.map((s) => s.name),
+          files: [...attachedFiles],
+          steered: isLive && mode === 'now',
+        },
+      });
+    };
+    const resetComposer = () => {
+      setInput('');
+      resetAttachments();
+    };
+    const sendCommand = () => {
+      try {
+        if (targetChildSessionId) {
+          if (mode === 'now')
+            sendToChildNow(activeSession.appSessionId, targetChildSessionId, composed);
+          else sendToChild(activeSession.appSessionId, targetChildSessionId, composed);
+        } else if (mode === 'now') sendToSessionNow(activeSession.appSessionId, composed);
+        else sendToSession(activeSession.appSessionId, composed);
+      } catch (err) {
+        console.error('[PromptInput] sendToSession failed:', err);
+      }
+    };
 
-    // Clear the composer now (before any await) so a prompt the user starts
-    // typing during the git-baseline delay below is never wiped out.
-    setInput('');
-    resetAttachments();
+    const childRuntimeTarget = childRuntimeSubmitTarget(visibleTarget);
+    if (childRuntimeTarget && activeSession.cwd) {
+      await commitChildPromptAfterBaseline({
+        capturedTarget: childRuntimeTarget,
+        capturedComposerRevision: composerRevisionRef.current,
+        waitForBaseline: () => markGitTurnStart(activeSession.cwd, activeSession.appSessionId),
+        currentTarget: () => visibleTargetRef.current,
+        currentComposerRevision: () => composerRevisionRef.current,
+        appendTranscript,
+        resetComposer,
+        sendCommand,
+      });
+      return;
+    }
+
+    appendTranscript();
+    resetComposer();
 
     // Capture the last-turn baseline before the agent can touch the tree;
     // a fire-and-forget call here races the first edit and corrupts the diff.
-    if (activeSession.cwd) await markGitTurnStart(activeSession.cwd, activeSession.appSessionId);
-
-    try {
-      if (targetProviderSessionId) {
-        if (mode === 'now')
-          sendToChildNow(activeSession.appSessionId, targetProviderSessionId, composed);
-        else sendToChild(activeSession.appSessionId, targetProviderSessionId, composed);
-      } else if (mode === 'now') sendToSessionNow(activeSession.appSessionId, composed);
-      else sendToSession(activeSession.appSessionId, composed);
-    } catch (err) {
-      console.error('[PromptInput] sendToSession failed:', err);
-    }
+    if (!childRuntimeTarget && activeSession.cwd)
+      await markGitTurnStart(activeSession.cwd, activeSession.appSessionId);
+    sendCommand();
   };
 
   const queue: QueuedPrompt[] = activeSession
@@ -638,13 +703,21 @@ export default function PromptInput({
     const prev = prevLive.current;
     // Only deliver when the same session transitioned live -> idle. Switching
     // sessions mid-turn must not drain a different session's queue.
-    if (prev.live && !isLive && activeSession && prev.appSessionId === activeSession.appSessionId) {
+    if (
+      prev.live &&
+      !primaryIsLive &&
+      activeSession &&
+      prev.appSessionId === activeSession.appSessionId
+    ) {
       const next = (state.promptQueue[activeSession.appSessionId] ?? [])[0];
       if (next) void deliverPrompt();
     }
-    prevLive.current = { appSessionId: activeSession?.appSessionId ?? null, live: isLive };
+    prevLive.current = {
+      appSessionId: activeSession?.appSessionId ?? null,
+      live: primaryIsLive,
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isLive, activeSession?.appSessionId]);
+  }, [primaryIsLive, activeSession?.appSessionId]);
 
   const editQueuedInComposer = (p: QueuedPrompt) => {
     if (!activeSession) return;
@@ -747,7 +820,9 @@ export default function PromptInput({
   // new chat; it renders as the top section of the composer card.
   const showStartIn = !activeSession && !missionPreview && !!cwd;
   const enterSteers = state.liveEnterBehavior === 'interrupt';
-  const idleSendTooltip = 'Enter: send\nShift+Enter: newline';
+  const idleSendTooltip = childActionsEnabled
+    ? 'Enter: send\nShift+Enter: newline'
+    : 'This child transcript is read-only';
   const hasContent = input.trim().length > 0 || activeSkills.length > 0 || attachedFiles.length > 0;
 
   return (
@@ -1021,7 +1096,7 @@ export default function PromptInput({
             placeholder={
               missionPreview
                 ? activeSession
-                  ? targetProviderSessionId
+                  ? targetChildSessionId
                     ? 'Steer the selected child session…'
                     : 'Direct the orchestrator…'
                   : 'Describe the mission objective…'
@@ -1123,9 +1198,7 @@ export default function PromptInput({
               <button
                 onClick={() =>
                   activeSession &&
-                  (targetProviderSessionId
-                    ? interruptChild(activeSession.appSessionId, targetProviderSessionId)
-                    : interruptSession(activeSession.appSessionId))
+                  interruptVisibleSession(activeSession.appSessionId, targetChildSessionId)
                 }
                 title="Working — click to stop"
                 className="p-2 rounded-xl text-droid-bg shrink-0 transition-colors"
@@ -1179,7 +1252,7 @@ export default function PromptInput({
             ) : (
               <button
                 onClick={() => void handleSubmit()}
-                disabled={!hasContent}
+                disabled={!hasContent || !childActionsEnabled}
                 title={idleSendTooltip}
                 className="p-2 rounded-xl bg-droid-text text-droid-bg disabled:opacity-20 disabled:cursor-not-allowed hover:bg-droid-text-secondary transition-colors shrink-0"
               >

@@ -86,19 +86,13 @@ test('syncSummaries persists autoCompactions and loadHistoricalSessions restores
   assert.equal(row?.summary.autoCompactions, 3);
 });
 
-test('loadHistoricalSessions hides a Task-spawned child with a persisted link', () => {
+test('loadHistoricalSessions hides a Task-spawned child from its raw parent link', () => {
   const cwd = join(home, 'workspace-child');
   writeSession('real-session', cwd);
   writeSession('child-session', cwd, {
     callingSessionId: 'real-session',
     callingToolUseId: 'tool-1',
   });
-  // A persisted link lets the parent chat open it as a worker, so it must not
-  // also surface as a standalone session.
-  const index = new HistoryIndex();
-  index.recordChildSessionLink('real-session', 'tool-1', 'child-session');
-  index.close();
-
   const rows = loadHistoricalSessions({ workspaceCwds: [cwd] });
 
   assert.deepEqual(
@@ -130,11 +124,6 @@ test('loadHistoricalSessions keeps a rekeyed worker hidden under its superseded 
   writeSession('rekey-parent', cwd);
   writeSession('worker-old', cwd, { callingSessionId: 'rekey-parent', callingToolUseId: 'tool-r' });
   writeSession('worker-new', cwd, { callingSessionId: 'rekey-parent', callingToolUseId: 'tool-r' });
-  const index = new HistoryIndex();
-  index.recordChildSessionLink('rekey-parent', 'tool-r', 'worker-old', 'builder');
-  // Worker compaction rekeys the spawn, repointing the link at the new id.
-  index.recordChildSessionLink('rekey-parent', 'tool-r', 'worker-new', 'builder');
-  index.close();
 
   const rows = loadHistoricalSessions({ workspaceCwds: [cwd] });
 
@@ -151,17 +140,12 @@ test('loadHistoricalSessions keeps forked chats (bare parent, no spawn markers) 
   // A forked chat carries a `parent` link but no callingSessionId/callingToolUseId;
   // it is a standalone conversation and must stay in history.
   writeSession('forked-session', cwd, { parent: 'source-session' });
-  // A real Task child (spawn markers present) with a persisted link must still
-  // be hidden (it is openable from the parent as a worker).
+  // A real Task child (spawn markers present) must still be hidden.
   writeSession('task-child', cwd, {
     parent: 'source-session',
     callingSessionId: 'source-session',
     callingToolUseId: 'tool-9',
   });
-  const index = new HistoryIndex();
-  index.recordChildSessionLink('source-session', 'tool-9', 'task-child');
-  index.close();
-
   const rows = loadHistoricalSessions({ workspaceCwds: [cwd] });
 
   assert.deepEqual(rows.map((row) => row.summary.appSessionId).sort(), [

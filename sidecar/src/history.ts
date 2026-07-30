@@ -24,7 +24,6 @@ import type {
   ProgressEntry,
   ReasoningEffort,
   TranscriptEvent,
-  ChildSessionHistoryLink,
 } from './protocol.js';
 import { mapFeature } from './normalize.js';
 import { designPromptDisplayFromText } from './browser/designPromptDisplay.js';
@@ -88,6 +87,11 @@ export interface HistoricalSession {
   progress: ProgressEntry[];
 }
 
+interface StoredProgressEntry extends ProgressEntry {
+  workerProviderSessionId?: string;
+  spawnId?: string;
+}
+
 export interface HistoricalSummaryFilter {
   workspaceCwds?: string[];
   includePlainChats?: boolean;
@@ -109,6 +113,30 @@ export interface HistoryPage {
   nextCursor?: string;
 }
 
+export type PersistedChildRole = 'worker' | 'validator';
+export type PersistedChildStatus = 'pending' | 'running' | 'paused' | 'completed';
+
+export interface PersistedChildSpawnLink {
+  kind: 'tool-use' | 'spawn';
+  id: string;
+}
+
+export interface PersistedChildSession {
+  parentAppSessionId: string;
+  childSessionId: string;
+  providerSessionId?: string;
+  role: PersistedChildRole;
+  label?: string;
+  prompt?: string;
+  status: PersistedChildStatus;
+  modelId: string;
+  reasoningEffort?: ReasoningEffort;
+  spawnLink?: PersistedChildSpawnLink;
+  transcriptAvailable: boolean;
+  startedAt?: number;
+  updatedAt: number;
+}
+
 const STATE_TO_PHASE: Record<string, SessionPhase> = {
   initializing: 'initializing',
   running: 'running',
@@ -122,7 +150,6 @@ const STATE_TO_PHASE: Record<string, SessionPhase> = {
 const MAX_TEXT_CHARS = 12_000;
 // Safety cap for worker transcript events on the initial page (the orchestrator
 // scrollback is paged via the cursor, so only workers need bounding here).
-const MAX_WORKER_EVENTS = 3_000;
 // How many orchestrator scrollback events to load per page (initial open and
 // each lazy older-page fetch). Bounds work for very long, multi-compaction chats.
 const DEFAULT_HISTORY_WINDOW = 400;
@@ -132,6 +159,14 @@ const DEFAULT_HISTORY_WINDOW = 400;
 const SEQ_SEGMENT_STRIDE = 1_000_000;
 const MAX_SESSION_BYTES = 5_000_000;
 const SESSION_START_BYTES = 256_000;
+const HISTORY_SCHEMA_VERSION = 1;
+export const SESSION_INDEX_FILENAME = 'session-index.sqlite';
+const HISTORY_SCHEMA_RECOVERY =
+  'DROIDEX local history index uses an incompatible schema. Quit DROIDEX, remove ' +
+  `~/.factory/droid-control/${SESSION_INDEX_FILENAME}, ` +
+  `~/.factory/droid-control/${SESSION_INDEX_FILENAME}-wal, and ` +
+  `~/.factory/droid-control/${SESSION_INDEX_FILENAME}-shm, then restart. ` +
+  'Raw Factory session history is not removed.';
 
 export function loadMissionControlSessions(
   options: HistoricalSummaryFilter = {},
@@ -179,7 +214,6 @@ export function loadHistoricalSessions(options: HistoricalSummaryFilter = {}): H
         appSessionId: providerSessionId,
         providerSessionId,
         missionId: classification.missionId,
-        parentProviderSessionId: classification.parentProviderSessionId,
         sessionPurpose: classification.sessionPurpose,
         interactionMode: classification.interactionMode,
         role: classification.role,
@@ -261,9 +295,37 @@ export class HistoryIndex {
   constructor() {
     const dir = join(homedir(), '.factory', 'droid-control');
     mkdirSync(dir, { recursive: true });
-    this.db = new DatabaseSync(join(dir, 'index.sqlite'));
-    this.db.exec('PRAGMA journal_mode = WAL');
-    this.db.exec(`
+    const db = new DatabaseSync(join(dir, SESSION_INDEX_FILENAME));
+    try {
+      HistoryIndex.initializeOrValidateHistorySchema(db);
+      db.exec('PRAGMA journal_mode = WAL');
+      this.db = db;
+    } catch (error) {
+      db.close();
+      throw error;
+    }
+  }
+
+  private static initializeOrValidateHistorySchema(db: DatabaseSync): void {
+    const row = db.prepare('PRAGMA user_version').get() as Record<string, unknown> | undefined;
+    const version = numberValue(row?.user_version) ?? 0;
+    const nonEmpty =
+      db
+        .prepare(
+          "SELECT 1 AS present FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%' LIMIT 1",
+        )
+        .get() !== undefined;
+    if (!nonEmpty) {
+      HistoryIndex.createSchema(db);
+      return;
+    }
+    if (version !== HISTORY_SCHEMA_VERSION || !hasCanonicalChildSchema(db))
+      throw new Error(HISTORY_SCHEMA_RECOVERY);
+  }
+
+  private static createSchema(db: DatabaseSync): void {
+    db.exec(`
+      BEGIN;
       CREATE TABLE IF NOT EXISTS app_sessions (
         app_session_id TEXT PRIMARY KEY,
         provider_session_id TEXT NOT NULL,
@@ -292,12 +354,32 @@ export class HistoryIndex {
         auto_compactions INTEGER
       );
       CREATE TABLE IF NOT EXISTS child_sessions (
-        provider_session_id TEXT PRIMARY KEY,
-        parent_provider_session_id TEXT,
-        mission_id TEXT,
-        role TEXT NOT NULL,
-        updated_at INTEGER NOT NULL
+        parent_app_session_id TEXT NOT NULL,
+        child_session_id TEXT NOT NULL,
+        provider_session_id TEXT,
+        role TEXT NOT NULL CHECK (role IN ('worker', 'validator')),
+        label TEXT,
+        prompt TEXT,
+        status TEXT NOT NULL CHECK (status IN ('pending', 'running', 'paused', 'completed')),
+        model_id TEXT NOT NULL,
+        reasoning_effort TEXT,
+        spawn_link_kind TEXT CHECK (spawn_link_kind IN ('tool-use', 'spawn')),
+        spawn_link_id TEXT,
+        transcript_available INTEGER NOT NULL CHECK (transcript_available IN (0, 1)),
+        started_at INTEGER,
+        updated_at INTEGER NOT NULL,
+        CHECK (
+          (spawn_link_kind IS NULL AND spawn_link_id IS NULL) OR
+          (spawn_link_kind IS NOT NULL AND spawn_link_id IS NOT NULL)
+        ),
+        PRIMARY KEY (parent_app_session_id, child_session_id)
       );
+      CREATE UNIQUE INDEX child_sessions_provider_identity
+        ON child_sessions (parent_app_session_id, provider_session_id)
+        WHERE provider_session_id IS NOT NULL;
+      CREATE UNIQUE INDEX child_sessions_spawn_identity
+        ON child_sessions (parent_app_session_id, spawn_link_kind, spawn_link_id)
+        WHERE spawn_link_id IS NOT NULL;
       CREATE TABLE IF NOT EXISTS events (
         id TEXT PRIMARY KEY,
         source_session_id TEXT NOT NULL,
@@ -317,18 +399,6 @@ export class HistoryIndex {
         key TEXT NOT NULL,
         ts INTEGER NOT NULL,
         PRIMARY KEY (mission_id, key)
-      );
-      CREATE TABLE IF NOT EXISTS child_session_links (
-        app_session_id TEXT NOT NULL,
-        tool_use_id TEXT NOT NULL,
-        provider_session_id TEXT NOT NULL,
-        label TEXT,
-        updated_at INTEGER NOT NULL,
-        PRIMARY KEY (app_session_id, tool_use_id)
-      );
-      CREATE TABLE IF NOT EXISTS linked_child_sessions (
-        provider_session_id TEXT PRIMARY KEY,
-        updated_at INTEGER NOT NULL
       );
       CREATE TABLE IF NOT EXISTS approvals (
         request_id TEXT PRIMARY KEY,
@@ -351,6 +421,8 @@ export class HistoryIndex {
         value_json TEXT NOT NULL,
         updated_at INTEGER NOT NULL
       );
+      PRAGMA user_version = ${String(HISTORY_SCHEMA_VERSION)};
+      COMMIT;
     `);
   }
 
@@ -471,55 +543,79 @@ export class HistoryIndex {
       .run(event.id, event.sourceSessionId, event.appSessionId, event.kind, event.ts);
   }
 
-  // Persist the exact spawn-to-child mapping when a live child session resolves,
-  // so historical loads can rebuild precise links rather than pairing by order.
-  recordChildSessionLink(
-    appSessionId: string,
-    toolUseId: string,
-    providerSessionId: string,
-    label?: string,
-  ): void {
-    const now = Date.now();
+  upsertChildSession(child: PersistedChildSession): void {
     this.db
       .prepare(
         `
-      INSERT INTO child_session_links (app_session_id, tool_use_id, provider_session_id, label, updated_at)
-      VALUES (?, ?, ?, ?, ?)
-      ON CONFLICT(app_session_id, tool_use_id) DO UPDATE SET
+      INSERT INTO child_sessions (
+        parent_app_session_id,
+        child_session_id,
+        provider_session_id,
+        role,
+        label,
+        prompt,
+        status,
+        model_id,
+        reasoning_effort,
+        spawn_link_kind,
+        spawn_link_id,
+        transcript_available,
+        started_at,
+        updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(parent_app_session_id, child_session_id) DO UPDATE SET
         provider_session_id = excluded.provider_session_id,
+        role = excluded.role,
         label = excluded.label,
+        prompt = excluded.prompt,
+        status = excluded.status,
+        model_id = excluded.model_id,
+        reasoning_effort = excluded.reasoning_effort,
+        spawn_link_kind = excluded.spawn_link_kind,
+        spawn_link_id = excluded.spawn_link_id,
+        transcript_available = excluded.transcript_available,
+        started_at = excluded.started_at,
         updated_at = excluded.updated_at
     `,
       )
-      .run(appSessionId, toolUseId, providerSessionId, sqlValue(label), now);
-    // Remember every child provider session ever linked to a spawn. A rekey
-    // compaction repoints child_session_links at the new id, dropping the old id
-    // from the current mapping; this append-only set keeps superseded child
-    // sessions hidden so they never resurface as standalone history chats.
-    this.db
-      .prepare(
-        `
-      INSERT INTO linked_child_sessions (provider_session_id, updated_at)
-      VALUES (?, ?)
-      ON CONFLICT(provider_session_id) DO UPDATE SET updated_at = excluded.updated_at
-    `,
-      )
-      .run(providerSessionId, now);
+      .run(
+        child.parentAppSessionId,
+        child.childSessionId,
+        sqlValue(child.providerSessionId),
+        child.role,
+        sqlValue(child.label),
+        sqlValue(child.prompt),
+        child.status,
+        child.modelId,
+        sqlValue(child.reasoningEffort),
+        sqlValue(child.spawnLink?.kind),
+        sqlValue(child.spawnLink?.id),
+        child.transcriptAvailable ? 1 : 0,
+        sqlValue(child.startedAt),
+        child.updatedAt,
+      );
   }
 
-  childSessionLinks(appSessionId: string): ChildSessionHistoryLink[] {
+  childSessions(parentAppSessionId: string): PersistedChildSession[] {
     const rows = this.db
       .prepare(
-        'SELECT tool_use_id, provider_session_id, label FROM child_session_links WHERE app_session_id = ? ORDER BY updated_at ASC',
+        'SELECT * FROM child_sessions WHERE parent_app_session_id = ? ORDER BY updated_at ASC, child_session_id ASC',
       )
-      .all(appSessionId) as Record<string, unknown>[];
-    return rows
-      .map((row) => ({
-        providerSessionId: stringValue(row.provider_session_id) ?? '',
-        toolUseId: stringValue(row.tool_use_id),
-        label: stringValue(row.label),
-      }))
-      .filter((link) => link.providerSessionId);
+      .all(parentAppSessionId) as Record<string, unknown>[];
+    return rows.map(persistedChildSessionFromRow);
+  }
+
+  childSession(
+    parentAppSessionId: string,
+    childSessionId: string,
+  ): PersistedChildSession | undefined {
+    const row = this.db
+      .prepare(
+        'SELECT * FROM child_sessions WHERE parent_app_session_id = ? AND child_session_id = ?',
+      )
+      .get(parentAppSessionId, childSessionId) as Record<string, unknown> | undefined;
+    return row ? persistedChildSessionFromRow(row) : undefined;
   }
 
   close(): void {
@@ -527,13 +623,276 @@ export class HistoryIndex {
   }
 }
 
+const CANONICAL_TABLE_COLUMNS = {
+  app_sessions: [
+    'app_session_id',
+    'provider_session_id',
+    'compacted_from_provider_session_ids',
+    'session_purpose',
+    'interaction_mode',
+    'title',
+    'cwd',
+    'workspace_kind',
+    'updated_at',
+    'model_id',
+    'reasoning_effort',
+    'compaction_model',
+    'worker_model_id',
+    'worker_reasoning_effort',
+    'validator_model_id',
+    'validator_reasoning_effort',
+    'autonomy',
+    'tokens_in',
+    'tokens_out',
+    'context_tokens',
+    'context_remaining_tokens',
+    'context_accuracy',
+    'context_updated_at',
+    'max_context_tokens',
+    'auto_compactions',
+  ],
+  child_sessions: [
+    'parent_app_session_id',
+    'child_session_id',
+    'provider_session_id',
+    'role',
+    'label',
+    'prompt',
+    'status',
+    'model_id',
+    'reasoning_effort',
+    'spawn_link_kind',
+    'spawn_link_id',
+    'transcript_available',
+    'started_at',
+    'updated_at',
+  ],
+  events: ['id', 'source_session_id', 'app_session_id', 'kind', 'ts'],
+  features: ['mission_id', 'feature_id', 'status', 'updated_at'],
+  progress: ['mission_id', 'key', 'ts'],
+  approvals: ['request_id', 'app_session_id', 'kind', 'created_at'],
+  questions: ['request_id', 'app_session_id', 'created_at'],
+  settings: ['scope', 'value_json', 'updated_at'],
+  catalog_cache: ['catalog', 'value_json', 'updated_at'],
+} as const;
+
+const CHILD_SCHEMA_CHECKS = [
+  "check (role in ('worker', 'validator'))",
+  "check (status in ('pending', 'running', 'paused', 'completed'))",
+  "check (spawn_link_kind in ('tool-use', 'spawn'))",
+  'check (transcript_available in (0, 1))',
+  '(spawn_link_kind is null and spawn_link_id is null)',
+  '(spawn_link_kind is not null and spawn_link_id is not null)',
+] as const;
+
+const CANONICAL_PRIMARY_KEYS = {
+  app_sessions: ['app_session_id'],
+  child_sessions: ['parent_app_session_id', 'child_session_id'],
+  events: ['id'],
+  features: ['mission_id', 'feature_id'],
+  progress: ['mission_id', 'key'],
+  approvals: ['request_id'],
+  questions: ['request_id'],
+  settings: ['scope'],
+  catalog_cache: ['catalog'],
+} as const;
+
+function hasCanonicalChildSchema(db: DatabaseSync): boolean {
+  for (const [table, expected] of Object.entries(CANONICAL_TABLE_COLUMNS)) {
+    if (
+      !hasExactColumns(db, table, expected) ||
+      !hasPrimaryKey(
+        db,
+        table,
+        CANONICAL_PRIMARY_KEYS[table as keyof typeof CANONICAL_PRIMARY_KEYS],
+      )
+    )
+      return false;
+  }
+  return (
+    hasPartialUniqueIndex(
+      db,
+      'child_sessions_provider_identity',
+      ['parent_app_session_id', 'provider_session_id'],
+      'provider_session_id is not null',
+    ) &&
+    hasPartialUniqueIndex(
+      db,
+      'child_sessions_spawn_identity',
+      ['parent_app_session_id', 'spawn_link_kind', 'spawn_link_id'],
+      'spawn_link_id is not null',
+    ) &&
+    childSchemaHasChecks(db)
+  );
+}
+
+function hasExactColumns(db: DatabaseSync, table: string, expected: readonly string[]): boolean {
+  const columns = tableInfo(db, table)
+    .map((row) => stringValue(row.name))
+    .filter((name) => name !== undefined);
+  return columns.length === expected.length && expected.every((column) => columns.includes(column));
+}
+
+function hasPrimaryKey(
+  db: DatabaseSync,
+  table: string,
+  expectedColumns: readonly string[],
+): boolean {
+  const columns = tableInfo(db, table)
+    .filter((row) => (numberValue(row.pk) ?? 0) > 0)
+    .sort((left, right) => (numberValue(left.pk) ?? 0) - (numberValue(right.pk) ?? 0))
+    .map((row) => stringValue(row.name));
+  return (
+    columns.length === expectedColumns.length &&
+    expectedColumns.every((column, position) => columns[position] === column)
+  );
+}
+
+function tableInfo(db: DatabaseSync, table: string): Record<string, unknown>[] {
+  if (!/^[a-z_]+$/.test(table)) return [];
+  return db.prepare(`PRAGMA table_info(${table})`).all() as Record<string, unknown>[];
+}
+
+function hasPartialUniqueIndex(
+  db: DatabaseSync,
+  indexName: string,
+  expectedColumns: readonly string[],
+  expectedPredicate: string,
+): boolean {
+  const index = (
+    db.prepare('PRAGMA index_list(child_sessions)').all() as Record<string, unknown>[]
+  ).find((row) => stringValue(row.name) === indexName);
+  if (!index || numberValue(index.unique) !== 1 || numberValue(index.partial) !== 1) return false;
+  const columns = (
+    db.prepare(`PRAGMA index_info(${indexName})`).all() as Record<string, unknown>[]
+  ).map((row) => stringValue(row.name));
+  const schema = db
+    .prepare("SELECT sql FROM sqlite_schema WHERE type = 'index' AND name = ?")
+    .get(indexName) as Record<string, unknown> | undefined;
+  const sql = stringValue(schema?.sql)?.toLowerCase().replace(/\s+/g, ' ').trim().replace(/;$/, '');
+  const expectedSql = `create unique index ${indexName} on child_sessions (${expectedColumns.join(', ')}) where ${expectedPredicate}`;
+  return (
+    columns.length === expectedColumns.length &&
+    expectedColumns.every((column, position) => columns[position] === column) &&
+    sql === expectedSql
+  );
+}
+
+function childSchemaHasChecks(db: DatabaseSync): boolean {
+  const row = db
+    .prepare("SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = 'child_sessions'")
+    .get() as Record<string, unknown> | undefined;
+  const sql = stringValue(row?.sql)?.toLowerCase().replace(/\s+/g, ' ');
+  return Boolean(sql && CHILD_SCHEMA_CHECKS.every((check) => sql.includes(check)));
+}
+
+function assertCanonicalHistorySchema(db: DatabaseSync): void {
+  const row = db.prepare('PRAGMA user_version').get() as Record<string, unknown> | undefined;
+  if (
+    (numberValue(row?.user_version) ?? 0) !== HISTORY_SCHEMA_VERSION ||
+    !hasCanonicalChildSchema(db)
+  )
+    throw new Error(HISTORY_SCHEMA_RECOVERY);
+}
+
+function persistedChildSessionFromRow(row: Record<string, unknown>): PersistedChildSession {
+  const parentAppSessionId = stringValue(row.parent_app_session_id);
+  const childSessionId = stringValue(row.child_session_id);
+  const role = persistedChildRole(row.role);
+  const status = persistedChildStatus(row.status);
+  const modelId = stringValue(row.model_id);
+  const updatedAt = numberValue(row.updated_at);
+  if (!parentAppSessionId || !childSessionId || !modelId || updatedAt === undefined)
+    throw new Error(HISTORY_SCHEMA_RECOVERY);
+  const spawnLink = persistedChildSpawnLink(row);
+  return {
+    parentAppSessionId,
+    childSessionId,
+    ...whenString(row.provider_session_id, (providerSessionId) => ({ providerSessionId })),
+    role,
+    ...whenString(row.label, (label) => ({ label })),
+    ...whenString(row.prompt, (prompt) => ({ prompt })),
+    status,
+    modelId,
+    ...whenReasoning(row.reasoning_effort),
+    ...(spawnLink ? { spawnLink } : {}),
+    transcriptAvailable: numberValue(row.transcript_available) === 1,
+    ...whenNumber(row.started_at, (startedAt) => ({ startedAt })),
+    updatedAt,
+  };
+}
+
+function persistedChildRole(value: unknown): PersistedChildRole {
+  const role = stringValue(value);
+  if (role === 'worker' || role === 'validator') return role;
+  throw new Error(HISTORY_SCHEMA_RECOVERY);
+}
+
+function persistedChildStatus(value: unknown): PersistedChildStatus {
+  const status = stringValue(value);
+  if (status === 'pending' || status === 'running' || status === 'paused' || status === 'completed')
+    return status;
+  throw new Error(HISTORY_SCHEMA_RECOVERY);
+}
+
+function persistedChildSpawnLink(
+  row: Record<string, unknown>,
+): PersistedChildSpawnLink | undefined {
+  const kind = stringValue(row.spawn_link_kind);
+  const id = stringValue(row.spawn_link_id);
+  if (kind === undefined && id === undefined) return undefined;
+  if ((kind === 'tool-use' || kind === 'spawn') && id) return { kind, id };
+  throw new Error(HISTORY_SCHEMA_RECOVERY);
+}
+
+function whenString<T extends object>(
+  value: unknown,
+  create: (value: string) => T,
+): T | Record<string, never> {
+  const resolved = stringValue(value);
+  return resolved === undefined ? {} : create(resolved);
+}
+
+function whenNumber<T extends object>(
+  value: unknown,
+  create: (value: number) => T,
+): T | Record<string, never> {
+  const resolved = numberValue(value);
+  return resolved === undefined ? {} : create(resolved);
+}
+
+function whenReasoning(
+  value: unknown,
+): { reasoningEffort: ReasoningEffort } | Record<string, never> {
+  const reasoningEffort = mapReasoning(stringValue(value));
+  return reasoningEffort === undefined ? {} : { reasoningEffort };
+}
+
 function readStoredSummaryPatches(): Map<string, Partial<SessionSummary>> {
-  const path = join(homedir(), '.factory', 'droid-control', 'index.sqlite');
+  const path = join(homedir(), '.factory', 'droid-control', SESSION_INDEX_FILENAME);
   if (!existsSync(path)) return new Map();
   const db = new DatabaseSync(path);
   try {
+    assertCanonicalHistorySchema(db);
     const rows = db.prepare('SELECT * FROM app_sessions').all() as Record<string, unknown>[];
     return summaryPatchesFromRows(rows);
+  } finally {
+    db.close();
+  }
+}
+
+function readStoredChildSessions(parentAppSessionId: string): PersistedChildSession[] {
+  const path = join(homedir(), '.factory', 'droid-control', SESSION_INDEX_FILENAME);
+  if (!existsSync(path)) return [];
+  const db = new DatabaseSync(path);
+  try {
+    assertCanonicalHistorySchema(db);
+    const rows = db
+      .prepare(
+        'SELECT * FROM child_sessions WHERE parent_app_session_id = ? ORDER BY updated_at ASC, child_session_id ASC',
+      )
+      .all(parentAppSessionId) as Record<string, unknown>[];
+    return rows.map(persistedChildSessionFromRow);
   } finally {
     db.close();
   }
@@ -595,7 +954,6 @@ export function applyCachedSummary(
     appSessionId: defined.appSessionId ?? summary.appSessionId,
     providerSessionId: defined.providerSessionId ?? summary.providerSessionId,
     missionId: defined.missionId ?? summary.missionId,
-    parentProviderSessionId: defined.parentProviderSessionId ?? summary.parentProviderSessionId,
     sessionPurpose: defined.sessionPurpose ?? summary.sessionPurpose,
     interactionMode: defined.interactionMode ?? summary.interactionMode,
     role: defined.role ?? summary.role,
@@ -608,16 +966,6 @@ function definedPatch(patch: Partial<SessionSummary>): Partial<SessionSummary> {
   ) as Partial<SessionSummary>;
 }
 
-// Order merged transcript events chronologically, tie-breaking by the
-// chain-derived `seq` so equal-`ts` events keep a deterministic order. Events
-// without a seq (live, or child sessions) sort after same-`ts` primary events.
-function byChronology(a: TranscriptEvent, b: TranscriptEvent): number {
-  if (a.ts !== b.ts) return a.ts - b.ts;
-  const as = a.seq ?? Number.POSITIVE_INFINITY;
-  const bs = b.seq ?? Number.POSITIVE_INFINITY;
-  return as - bs;
-}
-
 export function hydrateHistoricalSession(
   missionId: string,
   opts: { cursor?: string; limit?: number } = {},
@@ -625,7 +973,11 @@ export function hydrateHistoricalSession(
   const dir = resolveMissionDir(missionId);
   if (!dir) throw new Error(`Mission history not found for ${missionId}`);
 
-  const { summary, progress, state, features } = loadMissionControlSession(dir);
+  const { summary, storedProgress } = loadMissionControlSession(dir);
+  const progress = projectMissionProgress(
+    storedProgress,
+    readStoredChildSessions(summary.appSessionId),
+  );
   const sessionIndex = buildSessionIndex();
 
   // The orchestrator backing session is rekeyed on every compaction, so the
@@ -641,26 +993,7 @@ export function hydrateHistoricalSession(
     return { progress: [], transcripts: window.events, olderCursor: window.olderCursor };
   }
 
-  const agentRoles = buildAgentRoles(state, features, progress);
-  const chainSet = new Set(chain);
-  const workerEvents: TranscriptEvent[] = [];
-  for (const [providerSessionId, role] of agentRoles) {
-    if (chainSet.has(providerSessionId)) continue;
-    const path = sessionIndex.get(providerSessionId);
-    if (!path) continue;
-    workerEvents.push(
-      ...parseSessionTranscript(summary.appSessionId, providerSessionId, path, role),
-    );
-  }
-  // The orchestrator scrollback is paged via the cursor; only the (bounded)
-  // worker events need a safety cap so a worker-heavy mission stays responsive.
-  const cappedWorkers =
-    workerEvents.length > MAX_WORKER_EVENTS
-      ? workerEvents.slice(workerEvents.length - MAX_WORKER_EVENTS)
-      : workerEvents;
-
-  const transcripts = [...window.events, ...cappedWorkers].sort(byChronology);
-  return { progress, transcripts, olderCursor: window.olderCursor };
+  return { progress, transcripts: window.events, olderCursor: window.olderCursor };
 }
 
 // Resolve the orchestrator's compaction chain (oldest -> newest backing session
@@ -883,9 +1216,11 @@ function tokenLimitRecordValue(value: unknown): Record<string, number> | undefin
 function loadMissionControlSession(dir: string): HistoricalSession & {
   state: StoredMissionState;
   features: BridgeFeature[];
+  storedProgress: StoredProgressEntry[];
 } {
   const state = readJson<StoredMissionState>(join(dir, 'state.json'));
-  const progress = readProgress(join(dir, 'progress_log.jsonl'));
+  const storedProgress = readProgress(join(dir, 'progress_log.jsonl'));
+  const progress = storedProgress.map(publicProgressEntry);
   const features = readFeatures(join(dir, 'features.json'));
   const dirId = basename(dir);
   const providerSessionId = state.baseSessionId || dirId;
@@ -927,6 +1262,7 @@ function loadMissionControlSession(dir: string): HistoricalSession & {
       updatedAt,
     },
     progress,
+    storedProgress,
     state,
     features,
   };
@@ -950,7 +1286,7 @@ function readMissionModelSettings(dir: string): FactoryDefaults {
   };
 }
 
-function readProgress(path: string): ProgressEntry[] {
+function readProgress(path: string): StoredProgressEntry[] {
   if (!existsSync(path)) return [];
   return readJsonLines<Record<string, unknown>>(path).map((entry) => {
     const handoff = objectValue(entry.handoff);
@@ -965,9 +1301,77 @@ function readProgress(path: string): ProgressEntry[] {
         stringValue(validation?.summary) ||
         stringValue(entry.reason),
       featureId: stringValue(entry.featureId),
-      workerProviderSessionId: stringValue(entry.workerSessionId),
+      ...whenString(entry.workerSessionId, (workerProviderSessionId) => ({
+        workerProviderSessionId,
+      })),
+      ...whenString(entry.spawnId, (spawnId) => ({ spawnId })),
     };
   });
+}
+
+export function projectMissionProgress(
+  entries: StoredProgressEntry[],
+  children: PersistedChildSession[],
+): ProgressEntry[] {
+  const childrenBySpawn = new Map(
+    children.flatMap((child) =>
+      child.spawnLink?.kind === 'spawn'
+        ? [[child.spawnLink.id, child.childSessionId] as const]
+        : [],
+    ),
+  );
+  const childrenByProvider = new Map<string, string>();
+  const correlatedSpawns = new Map<string, string>();
+  const providerBySpawn = new Map<string, string>();
+  const spawnByProvider = new Map<string, string>();
+  const retiredProviders = new Set<string>();
+  return entries.map((entry) => {
+    if (
+      entry.type === 'worker_started' &&
+      entry.workerProviderSessionId &&
+      entry.spawnId &&
+      !retiredProviders.has(entry.workerProviderSessionId) &&
+      (!spawnByProvider.has(entry.workerProviderSessionId) ||
+        spawnByProvider.get(entry.workerProviderSessionId) === entry.spawnId)
+    ) {
+      const childSessionId = childrenBySpawn.get(entry.spawnId);
+      if (childSessionId) {
+        const previousProviderSessionId = providerBySpawn.get(entry.spawnId);
+        if (
+          previousProviderSessionId &&
+          previousProviderSessionId !== entry.workerProviderSessionId
+        ) {
+          childrenByProvider.delete(previousProviderSessionId);
+          retiredProviders.add(previousProviderSessionId);
+        }
+        childrenByProvider.set(entry.workerProviderSessionId, childSessionId);
+        correlatedSpawns.set(entry.spawnId, childSessionId);
+        providerBySpawn.set(entry.spawnId, entry.workerProviderSessionId);
+        spawnByProvider.set(entry.workerProviderSessionId, entry.spawnId);
+      }
+    }
+    const byProvider =
+      entry.workerProviderSessionId && !retiredProviders.has(entry.workerProviderSessionId)
+        ? childrenByProvider.get(entry.workerProviderSessionId)
+        : undefined;
+    const bySpawn = entry.spawnId ? correlatedSpawns.get(entry.spawnId) : undefined;
+    const childSessionId =
+      entry.workerProviderSessionId && entry.spawnId
+        ? providerBySpawn.get(entry.spawnId) === entry.workerProviderSessionId &&
+          byProvider === bySpawn
+          ? byProvider
+          : undefined
+        : (byProvider ?? bySpawn);
+    const publicEntry = publicProgressEntry(entry);
+    return childSessionId ? { ...publicEntry, workerChildSessionId: childSessionId } : publicEntry;
+  });
+}
+
+function publicProgressEntry(entry: StoredProgressEntry): ProgressEntry {
+  const publicEntry = { ...entry };
+  delete publicEntry.workerProviderSessionId;
+  delete publicEntry.spawnId;
+  return publicEntry;
 }
 
 function readFeatures(path: string): BridgeFeature[] {
@@ -991,9 +1395,6 @@ function mapStoredFeature(feature: unknown): BridgeFeature {
       verificationSteps: stringArray(f.verificationSteps),
       fulfills: stringArray(f.fulfills),
       milestone: stringValue(f.milestone),
-      workerProviderSessionIds: stringArray(f.workerSessionIds),
-      currentWorkerProviderSessionId: stringValue(f.currentWorkerSessionId) ?? null,
-      completedWorkerProviderSessionId: stringValue(f.completedWorkerSessionId) ?? null,
     };
   }
 }
@@ -1144,42 +1545,6 @@ function event(
   };
 }
 
-function buildAgentRoles(
-  state: StoredMissionState,
-  features: BridgeFeature[],
-  progress: ProgressEntry[],
-): Map<string, SessionRole> {
-  const roles = new Map<string, SessionRole>();
-  const stateWorkers = state.workerSessionIds ?? [];
-  stateWorkers.forEach((id) => roles.set(id, 'worker'));
-
-  features.forEach((feature) => {
-    const role = isValidatorFeature(feature) ? 'validator' : 'worker';
-    for (const id of featureWorkerIds(feature)) roles.set(id, role);
-  });
-
-  progress.forEach((entry) => {
-    if (entry.workerProviderSessionId && !roles.has(entry.workerProviderSessionId)) {
-      roles.set(entry.workerProviderSessionId, 'worker');
-    }
-  });
-
-  return roles;
-}
-
-function featureWorkerIds(feature: BridgeFeature): string[] {
-  return [
-    ...(feature.workerProviderSessionIds ?? []),
-    feature.currentWorkerProviderSessionId,
-    feature.completedWorkerProviderSessionId,
-  ].filter(Boolean) as string[];
-}
-
-function isValidatorFeature(feature: BridgeFeature): boolean {
-  const text = `${feature.id} ${feature.skillName} ${feature.description}`.toLowerCase();
-  return text.includes('validator') || text.includes('validation') || text.includes('scrutiny');
-}
-
 function missionDirs(): string[] {
   const root = join(homedir(), '.factory', 'missions');
   if (!existsSync(root)) return [];
@@ -1322,10 +1687,7 @@ function readSessionStart(path: string): StoredSessionStart {
 
 function classifyStoredSession(
   start: StoredSessionStart,
-): Pick<
-  SessionSummary,
-  'sessionPurpose' | 'interactionMode' | 'role' | 'missionId' | 'parentProviderSessionId'
-> | null {
+): Pick<SessionSummary, 'sessionPurpose' | 'interactionMode' | 'role' | 'missionId'> | null {
   if (start.decompSessionType === 'worker') return null;
   if (start.decompSessionType === 'validator') return null;
   // Factory Task-tool children are never standalone conversations.
@@ -1338,7 +1700,6 @@ function classifyStoredSession(
       interactionMode: 'agi',
       role: 'primary',
       missionId: missionControlId,
-      parentProviderSessionId: undefined,
     };
   }
   if (mode === 'spec') {
@@ -1347,7 +1708,6 @@ function classifyStoredSession(
       interactionMode: 'spec',
       role: 'primary',
       missionId: undefined,
-      parentProviderSessionId: undefined,
     };
   }
   return {
@@ -1355,7 +1715,6 @@ function classifyStoredSession(
     interactionMode: mode === 'agi' ? 'agi' : 'auto',
     role: 'primary',
     missionId: undefined,
-    parentProviderSessionId: undefined,
   };
 }
 

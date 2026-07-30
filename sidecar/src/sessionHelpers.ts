@@ -95,15 +95,14 @@ export function reasoningValue(value?: string): ReasoningEffort | undefined {
 function classifySession(
   init: SessionInitResult,
   historical?: SessionSummary,
-): Pick<
-  SessionSummary,
-  'sessionPurpose' | 'interactionMode' | 'role' | 'missionId' | 'parentProviderSessionId'
-> {
+): Pick<SessionSummary, 'sessionPurpose' | 'interactionMode' | 'role' | 'missionId'> {
   const session = init.session ?? {};
   const decompType = stringValue(session.decompSessionType);
   const missionId = stringValue(session.decompMissionId) ?? historical?.missionId;
 
-  if (decompType === 'worker') return workerClassification(historical, missionId);
+  if (decompType === 'worker' || decompType === 'validator') {
+    throw new Error('Child provider sessions cannot be resumed as top-level sessions.');
+  }
 
   const mode = init.settings?.interactionMode ?? (init.mission ? 'agi' : undefined);
   if (isMissionControl(init, historical, decompType, missionId)) {
@@ -128,21 +127,6 @@ function standardSessionClassification(
     sessionPurpose: historical?.sessionPurpose ?? 'chat',
     interactionMode: mode === 'agi' ? 'agi' : 'auto',
     role: 'primary',
-  };
-}
-
-function workerClassification(
-  historical: SessionSummary | undefined,
-  missionId: string | undefined,
-): ReturnType<typeof classifySession> {
-  return {
-    sessionPurpose: 'mission-control',
-    interactionMode: 'agi',
-    role: historical?.role === 'validator' ? 'validator' : 'worker',
-    ...(missionId !== undefined ? { missionId } : {}),
-    ...(historical?.parentProviderSessionId !== undefined
-      ? { parentProviderSessionId: historical.parentProviderSessionId }
-      : {}),
   };
 }
 

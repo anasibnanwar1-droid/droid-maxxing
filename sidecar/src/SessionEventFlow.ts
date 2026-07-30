@@ -32,10 +32,11 @@ export class SessionEventFlow {
     sourceProviderSessionId: string,
     role: SessionRole,
     event: DroidStreamEvent,
+    childSessionId?: string,
   ): void {
     const normalized = normalizeStreamEvent(appSessionId, sourceProviderSessionId, role, event);
     if (normalized) {
-      this.applyNormalized(appSessionId, sourceProviderSessionId, normalized);
+      this.applyNormalized(appSessionId, sourceProviderSessionId, normalized, childSessionId);
     }
   }
 
@@ -44,6 +45,7 @@ export class SessionEventFlow {
     sourceProviderSessionId: string,
     role: SessionRole,
     notification: Record<string, unknown>,
+    childSessionId?: string,
   ): void {
     for (const normalized of normalizeNotification(
       appSessionId,
@@ -51,7 +53,7 @@ export class SessionEventFlow {
       role,
       notification,
     )) {
-      this.applyNormalized(appSessionId, sourceProviderSessionId, normalized);
+      this.applyNormalized(appSessionId, sourceProviderSessionId, normalized, childSessionId);
     }
   }
 
@@ -63,6 +65,7 @@ export class SessionEventFlow {
     appSessionId: string,
     sourceProviderSessionId: string,
     normalized: NormalizedEvent,
+    childSessionId?: string,
   ): void {
     if (normalized.done) {
       this.terminalScope(appSessionId).add(sourceProviderSessionId);
@@ -74,7 +77,10 @@ export class SessionEventFlow {
       terminal && isPostTerminalGeneration(normalized.transcript)
         ? undefined
         : normalized.transcript;
-    if (transcript) this.dependencies.appendTranscript(transcript);
+    if (transcript)
+      this.dependencies.appendTranscript(
+        childSessionId ? { ...transcript, sourceSessionId: childSessionId } : transcript,
+      );
     if (normalized.tokens)
       this.dependencies.recordUsage(appSessionId, sourceProviderSessionId, normalized.tokens);
 

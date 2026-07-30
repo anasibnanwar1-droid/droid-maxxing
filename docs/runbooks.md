@@ -35,6 +35,32 @@ These runbooks cover local development and release triage for Droid Control.
    ```
 4. If a custom sidecar entry is configured, verify `SIDECAR_ENTRY` points to an existing built file.
 
+## Local child-session index has an incompatible schema
+
+The local index uses one canonical schema and has no migration or compatibility fallback. If startup reports an incompatible child-session index:
+
+1. Quit Droid Control.
+2. Remove only the local derived index files:
+   ```bash
+   rm -f "$HOME/.factory/droid-control/session-index.sqlite"
+   rm -f "$HOME/.factory/droid-control/session-index.sqlite-wal"
+   rm -f "$HOME/.factory/droid-control/session-index.sqlite-shm"
+   ```
+3. Restart Droid Control. The sidecar rebuilds the index from current local Factory session history.
+
+These commands do not remove raw Factory session history. Do not delete the broader `~/.factory` directory.
+Do not remove `index.sqlite`; that filename remains reserved for older app/worktree schemas.
+
+## Verify child navigation without Factory authentication
+
+Run the deterministic local Electron smoke:
+
+```bash
+npm run test:smoke:electron-child-sessions
+```
+
+The smoke uses the real Electron main process, preload, and built renderer with a local fixture sidecar. It strips `FACTORY_API_KEY` and `DROID_PATH`, makes no Factory/Droid calls, and verifies parent-only left navigation, parent-scoped child rows, exact transcripts, stale-open isolation, steer, and Stop targeting.
+
 ## Droid CLI cannot be found
 
 1. Run `droid --version` in the same shell that starts the app.

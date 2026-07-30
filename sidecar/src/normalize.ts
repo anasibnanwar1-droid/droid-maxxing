@@ -29,15 +29,20 @@ export function mapFeature(f: MissionFeature): BridgeFeature {
     verificationSteps: (f as { verificationSteps?: string[] }).verificationSteps ?? [],
     fulfills: f.fulfills,
     milestone: f.milestone,
-    workerProviderSessionIds: f.workerSessionIds,
-    currentWorkerProviderSessionId: f.currentWorkerSessionId ?? null,
-    completedWorkerProviderSessionId: f.completedWorkerSessionId ?? null,
   };
 }
 
-export function mapProgress(entries: ProgressLogEntry[]): ProgressEntry[] {
+export interface NormalizedProgressEntry extends ProgressEntry {
+  workerProviderSessionId?: string;
+  spawnId?: string;
+}
+
+export function mapProgress(entries: ProgressLogEntry[]): NormalizedProgressEntry[] {
   return entries.map((e) => {
     const any = e as Record<string, unknown>;
+    const workerProviderSessionId =
+      typeof any.workerSessionId === 'string' ? any.workerSessionId : undefined;
+    const spawnId = typeof any.spawnId === 'string' ? any.spawnId : undefined;
     return {
       type: String(any.type ?? 'entry'),
       timestamp: String(any.timestamp ?? new Date().toISOString()),
@@ -49,8 +54,8 @@ export function mapProgress(entries: ProgressLogEntry[]): ProgressEntry[] {
             ? (any.summary as string)
             : undefined,
       featureId: typeof any.featureId === 'string' ? (any.featureId as string) : undefined,
-      workerProviderSessionId:
-        typeof any.workerSessionId === 'string' ? (any.workerSessionId as string) : undefined,
+      ...(workerProviderSessionId ? { workerProviderSessionId } : {}),
+      ...(spawnId ? { spawnId } : {}),
     };
   });
 }
@@ -68,7 +73,7 @@ function transcript(
 export interface NormalizedEvent {
   transcript?: TranscriptEvent;
   features?: BridgeFeature[];
-  progress?: ProgressEntry[];
+  progress?: NormalizedProgressEntry[];
   missionState?: string;
   missionChild?: {
     event: 'started' | 'completed';
@@ -142,6 +147,11 @@ function slimChildSessionArgs(input: Record<string, unknown>): Record<string, un
     if (typeof input[key] === 'string') out[key] = input[key];
   }
   return out;
+}
+
+function taskResultProviderSessionId(content: unknown): string | undefined {
+  if (typeof content !== 'string') return undefined;
+  return content.match(/^session_id:[ \t]*(\S+)(?:\r?\n|$)/)?.[1];
 }
 
 // Translate a single SDK stream event into zero-or-one normalized bridge updates.
@@ -239,13 +249,16 @@ export function normalizeStreamEvent(
     case 'tool_result': {
       const isTask = isTaskToolName(ev.toolName);
       const toolUseId = toolUseIdFrom((ev as { toolUseId?: string }).toolUseId, eventToolUseId);
+      const resultProviderSessionId =
+        subagentSessionId ??
+        (isTask && !ev.isError ? taskResultProviderSessionId(ev.content) : undefined);
       // A successful subagent Task result is just the subagent's output, so it
       // surfaces only as a completion signal and never leaks into the main feed.
       // A *failed* spawn must stay visible, so keep its error transcript.
-      if (subagentSessionId || isTask) {
+      if (resultProviderSessionId || isTask) {
         const done = {
           childSession: {
-            providerSessionId: subagentSessionId,
+            providerSessionId: resultProviderSessionId,
             toolUseId,
             done: true,
           },

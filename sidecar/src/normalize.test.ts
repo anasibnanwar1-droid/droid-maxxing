@@ -5,9 +5,35 @@ import {
   confirmationType,
   extractCompactionNotification,
   extractDroidWorkingState,
+  mapProgress,
   permissionSignature,
   normalizeStreamEvent,
 } from './normalize.js';
+
+test('mapProgress keeps Mission provider and spawn correlation internal for policy projection', () => {
+  assert.deepEqual(
+    mapProgress([
+      {
+        type: 'worker_started',
+        timestamp: '2026-07-29T00:00:00.000Z',
+        workerSessionId: 'provider-worker',
+        spawnId: 'spawn-1',
+        featureId: 'feature-1',
+      },
+    ] as never),
+    [
+      {
+        type: 'worker_started',
+        timestamp: '2026-07-29T00:00:00.000Z',
+        title: undefined,
+        message: undefined,
+        featureId: 'feature-1',
+        workerProviderSessionId: 'provider-worker',
+        spawnId: 'spawn-1',
+      },
+    ],
+  );
+});
 
 test('extractCompactionNotification detects the daemon compaction start', () => {
   assert.deepEqual(
@@ -230,4 +256,38 @@ test('marks Task results as correlated subagent completion', () => {
 
   assert.equal(normalized?.childSession?.done, true);
   assert.equal(normalized?.childSession?.toolUseId, 'tool-1');
+});
+
+test('captures the current SDK child session id from a successful Task result', () => {
+  const normalized = normalizeStreamEvent('app-session-1', 'app-session-1', 'primary', {
+    type: 'tool_result',
+    toolName: 'Task',
+    toolUseId: 'tool-current',
+    content: 'session_id: provider-child-current\nCHILD_SMOKE_OK',
+    isError: false,
+  } as never);
+
+  assert.equal(normalized?.childSession?.providerSessionId, 'provider-child-current');
+  assert.equal(normalized?.childSession?.done, true);
+  assert.equal(normalized?.childSession?.toolUseId, 'tool-current');
+});
+
+test('does not treat child output or failed Task text as a provider session id', () => {
+  const laterOutput = normalizeStreamEvent('app-session-1', 'app-session-1', 'primary', {
+    type: 'tool_result',
+    toolName: 'Task',
+    toolUseId: 'tool-later',
+    content: 'child output\nsession_id: fake-provider',
+    isError: false,
+  } as never);
+  const failed = normalizeStreamEvent('app-session-1', 'app-session-1', 'primary', {
+    type: 'tool_result',
+    toolName: 'Task',
+    toolUseId: 'tool-failed',
+    content: 'session_id: fake-provider\nspawn failed',
+    isError: true,
+  } as never);
+
+  assert.equal(laterOutput?.childSession?.providerSessionId, undefined);
+  assert.equal(failed?.childSession?.providerSessionId, undefined);
 });

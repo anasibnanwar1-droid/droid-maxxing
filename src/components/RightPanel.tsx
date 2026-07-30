@@ -8,7 +8,6 @@ import { interruptChild } from '../lib/commands';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Hash,
-  Activity,
   Loader2,
   ChevronRight,
   CornerDownRight,
@@ -23,9 +22,18 @@ import { EnvironmentSection } from './environment/EnvironmentSection';
 import { PullRequestPanel } from './environment/PullRequestPanel';
 import type { DiffStatMode } from '../types/vcs';
 import { diffModeToReviewScope } from '../lib/reviewScopes';
+import {
+  childSessionIsLive,
+  childSessionLabel,
+  childSessionMeta,
+  orderedChildSessions,
+  visibleSessionTarget,
+} from '../lib/childSessions';
 
-// Mirrors the sub-agent row design used in the left sidebar.
+// Parent-owned children are shown only in the right context panel.
 function ChildSessionRow({
+  parentAppSessionId,
+  childSessionId,
   label,
   meta,
   prompt,
@@ -35,6 +43,8 @@ function ChildSessionRow({
   onClick,
   onStop,
 }: {
+  parentAppSessionId: string;
+  childSessionId: string;
   label: string;
   meta?: string;
   prompt?: string;
@@ -46,6 +56,9 @@ function ChildSessionRow({
 }) {
   return (
     <div
+      data-testid="child-session-row"
+      data-parent-app-session-id={parentAppSessionId}
+      data-child-session-id={childSessionId}
       className={`group w-full flex items-center gap-1.5 pr-2 py-1.5 rounded-lg transition-colors ${
         selected ? 'bg-droid-elevated/70' : 'hover:bg-droid-elevated/40'
       }`}
@@ -119,7 +132,13 @@ export default function RightPanel() {
   // Mission control owns its own feature-based progress; for chat/spec sessions
   // we always prefer the model's own TodoWrite list as the source of truth.
   const transcript = activeSession ? (state.transcripts[activeSession.appSessionId] ?? []) : [];
-  const selectedAgent = state.selectedProviderSessionId;
+  const visibleTarget = visibleSessionTarget(
+    activeSession?.appSessionId,
+    state.selectedChild,
+    state.childSessions,
+    state.childAccess,
+  );
+  const selectedAgent = visibleTarget.kind === 'child' ? visibleTarget.childSessionId : null;
   const todoResult = useMemo(() => {
     if (!activeSession || activeSession.sessionPurpose === 'mission-control')
       return { todos: [] as TodoItem[], foundPayload: false };
@@ -156,10 +175,13 @@ export default function RightPanel() {
 
   // Child sessions spawned here (the same source the sidebar uses).
   const childSessions = activeSession
-    ? (state.childSessions[activeSession.appSessionId] ?? [])
+    ? orderedChildSessions(Object.values(state.childSessions[activeSession.appSessionId] ?? {}))
     : [];
-  const childSessionsRunning = childSessions.some(
-    (childSession) => childSession.status === 'running',
+  const childSessionsRunning = childSessions.some((childSession) =>
+    childSessionIsLive(
+      childSession,
+      state.childRuntime[childSession.parentAppSessionId]?.[childSession.childSessionId],
+    ),
   );
   const [childSessionsOpen, setChildSessionsOpen] = useState(true);
 
@@ -171,7 +193,10 @@ export default function RightPanel() {
     : 'default';
 
   return (
-    <div className="shrink-0 w-[300px] pt-11 pb-3 pr-3 h-full flex items-start">
+    <div
+      data-testid="right-context-panel"
+      className="shrink-0 w-[300px] pt-11 pb-3 pr-3 h-full flex items-start"
+    >
       <div className="droid-card w-full max-h-full">
         {/* Header (no close button — the top toolbar button toggles this panel) */}
         <div className="flex items-center justify-between pl-3 pr-3 h-11 shrink-0">
@@ -255,39 +280,46 @@ export default function RightPanel() {
                         >
                           {childSessions.map((childSession, index) => (
                             <ChildSessionRow
-                              key={childSession.providerSessionId}
-                              label={childSession.label ?? `Child ${index + 1}`}
-                              meta={
-                                [
-                                  childSession.modelId
-                                    ? (state.models.find(
-                                        (model) => model.id === childSession.modelId,
-                                      )?.displayName ?? childSession.modelId)
-                                    : undefined,
-                                  childSession.reasoningEffort,
-                                ]
-                                  .filter(Boolean)
-                                  .join(' · ') || undefined
-                              }
+                              key={childSession.childSessionId}
+                              parentAppSessionId={childSession.parentAppSessionId}
+                              childSessionId={childSession.childSessionId}
+                              label={childSessionLabel(childSession, index)}
+                              meta={childSessionMeta(
+                                childSession,
+                                state.models.find((model) => model.id === childSession.modelId)
+                                  ?.displayName ?? childSession.modelId,
+                              )}
                               prompt={childSession.prompt}
-                              running={childSession.status === 'running'}
+                              running={childSessionIsLive(
+                                childSession,
+                                state.childRuntime[childSession.parentAppSessionId]?.[
+                                  childSession.childSessionId
+                                ],
+                              )}
                               depth={0}
-                              selected={
-                                state.selectedProviderSessionId === childSession.providerSessionId
-                              }
+                              selected={selectedAgent === childSession.childSessionId}
                               onClick={() => {
-                                const next =
-                                  state.selectedProviderSessionId === childSession.providerSessionId
-                                    ? null
-                                    : childSession.providerSessionId;
-                                dispatch({ type: 'SELECT_PROVIDER_SESSION', id: next });
+                                dispatch({
+                                  type: 'SELECT_CHILD',
+                                  selection:
+                                    selectedAgent === childSession.childSessionId
+                                      ? null
+                                      : {
+                                          parentAppSessionId: childSession.parentAppSessionId,
+                                          childSessionId: childSession.childSessionId,
+                                        },
+                                });
                               }}
-                              onStop={() =>
-                                activeSession &&
-                                interruptChild(
-                                  activeSession.appSessionId,
-                                  childSession.providerSessionId,
-                                )
+                              onStop={
+                                visibleTarget.kind === 'child' &&
+                                visibleTarget.childSessionId === childSession.childSessionId &&
+                                visibleTarget.canInterrupt
+                                  ? () =>
+                                      interruptChild(
+                                        childSession.parentAppSessionId,
+                                        childSession.childSessionId,
+                                      )
+                                  : undefined
                               }
                             />
                           ))}
@@ -426,14 +458,6 @@ export default function RightPanel() {
                             <Hash className="w-3.5 h-3.5 text-droid-text-muted" />
                             <span className="font-mono text-[11px] text-droid-text-secondary">
                               {f.skillName}
-                            </span>
-                          </div>
-                        )}
-                        {f.currentWorkerProviderSessionId && (
-                          <div className="flex items-center gap-2">
-                            <Activity className="w-3.5 h-3.5 text-droid-accent" />
-                            <span className="font-mono text-[11px] text-droid-accent">
-                              {f.currentWorkerProviderSessionId.slice(0, 12)}
                             </span>
                           </div>
                         )}

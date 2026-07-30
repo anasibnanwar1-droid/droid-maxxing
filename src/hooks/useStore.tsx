@@ -17,7 +17,6 @@ import type {
   SessionQuestion,
   ModelInfo,
   ChildSessionSummary,
-  ChildSessionHistoryLink,
   SkillInfo,
   ReasoningEffort,
   ContextStatsSnapshot,
@@ -58,8 +57,23 @@ export type ChildSettingsReadiness = 'opening' | 'ready' | 'failed';
 export type LiveEnterBehavior = 'queue' | 'interrupt';
 export type DiffViewMode = 'unified' | 'split';
 
-export interface ChildSessionInfo extends ChildSessionSummary {
-  startedAt: number;
+export type ChildSessionInfo = ChildSessionSummary;
+
+export interface ChildSelection {
+  parentAppSessionId: string;
+  childSessionId: string;
+}
+
+export type ChildAccess =
+  | { state: 'opening'; requestId: string }
+  | { state: 'ready'; requestId: string; runtimeGeneration: number }
+  | { state: 'history'; requestId: string }
+  | { state: 'failed'; requestId: string | null }
+  | { state: 'closed'; requestId: null };
+
+export interface ChildRuntimeState {
+  available: boolean;
+  runtimeGeneration: number;
 }
 
 export interface QueuedDesignContext {
@@ -124,7 +138,7 @@ export interface AppState {
   sessionLastSeen: Record<string, number>;
   transcripts: Record<string, TranscriptEvent[]>;
   progress: Record<string, ProgressEntry[]>;
-  childSessions: Record<string, ChildSessionInfo[]>; // keyed by parent app session
+  childSessions: Record<string, Record<string, ChildSessionInfo>>;
   historyLoaded: Record<string, boolean>;
   // Cursor for the next older page of primary-session scrollback;
   // undefined/absent once the oldest compaction segment has been loaded.
@@ -137,17 +151,14 @@ export interface AppState {
   // Lets the chat show an honest restoring/partial/retry surface instead of a
   // blank or silently truncated transcript (#29).
   sessionRestore: Record<string, SessionRestore>;
-  // Whether a child session's inner transcript is currently being fetched, keyed by
-  // child provider session id. A child's events only stream after its card is opened,
-  // so the view shows a loading state until the first event (or the opened ack)
-  // arrives instead of a misleading "no activity" empty state.
-  childHistoryLoading: Record<string, boolean>;
-  // Exact child settings are enabled only after a success-only open
-  // acknowledgement. Child identities are parent-scoped.
-  childSettingsReadiness: Partial<Record<string, Partial<Record<string, ChildSettingsReadiness>>>>;
+  childAccess: Record<string, Record<string, ChildAccess>>;
+  childRuntime: Record<string, Record<string, ChildRuntimeState>>;
   pendingPermission: PermissionRequest | null;
   pendingQuestion: SessionQuestion | null;
-  contextStats: Record<string, ContextStatsSnapshot>;
+  contextStats: {
+    primary: Record<string, ContextStatsSnapshot>;
+    child: Record<string, Record<string, ContextStatsSnapshot>>;
+  };
   specPlans: Record<string, string>; // latest ExitSpecMode plan per session
   // Persisted spec per session (file path + rendered content). Survives exiting
   // spec mode so the inline card, mermaid, and the wiki reader stay available.
@@ -196,7 +207,7 @@ export interface AppState {
 
   // Mission Control view
   selectedFeatureId: string | null;
-  selectedProviderSessionId: string | null; // 'primary' or child provider session id
+  selectedChild: ChildSelection | null;
 
   // Models / per-agent config
   models: ModelInfo[];
@@ -248,33 +259,39 @@ type Action =
       files: string[];
     }
   | { type: 'SESSION_UPDATED'; session: SessionSummary }
+  | { type: 'SESSION_CLOSED'; appSessionId: string }
   | { type: 'SESSION_FEATURES'; appSessionId: string; features: SessionSummary['features'] }
   | { type: 'SESSION_PROGRESS'; appSessionId: string; entries: ProgressEntry[] }
   | {
       type: 'SESSION_CHILD';
-      parentAppSessionId: string;
-      event: 'started' | 'updated' | 'completed';
-      childSessionId: string;
-      label?: string;
-      prompt?: string;
-      modelId?: string;
-      reasoningEffort?: ReasoningEffort;
-      toolUseId?: string;
-      canonicalIdentity?: true;
+      child: ChildSessionSummary;
+      runtimeAvailable: boolean;
+      runtimeGeneration: number;
     }
+  | (
+      | {
+          type: 'CHILD_UPDATED';
+          parentAppSessionId: string;
+          childSessionId: string;
+          requestId: string;
+          access: 'ready';
+          runtimeGeneration: number;
+        }
+      | {
+          type: 'CHILD_UPDATED';
+          parentAppSessionId: string;
+          childSessionId: string;
+          requestId: string;
+          access: 'history';
+        }
+    )
   | {
-      type: 'CHILD_UPDATED';
+      type: 'CHILD_ERROR';
       parentAppSessionId: string;
       childSessionId: string;
-      role: AgentKind;
-      status: 'opened' | 'running' | 'paused' | 'completed';
-      settingsReady?: true;
-    }
-  | {
-      type: 'CHILD_SETTINGS_READINESS';
-      parentAppSessionId: string;
-      childSessionId: string;
-      status: ChildSettingsReadiness;
+      requestId: string | null;
+      operation: 'open' | 'send' | 'sendNow' | 'interrupt' | 'settings';
+      message: string;
     }
   | {
       type: 'SESSION_TOKENS';
@@ -288,6 +305,8 @@ type Action =
       type: 'CONTEXT_UPDATED';
       appSessionId: string;
       sourceSessionId: string;
+      parentAppSessionId?: string;
+      childSessionId?: string;
       stats: ContextStatsSnapshot;
     }
   | { type: 'SESSION_TRANSCRIPT'; event: TranscriptEvent }
@@ -311,7 +330,7 @@ type Action =
       appSessionId: string;
       progress: ProgressEntry[];
       transcripts: TranscriptEvent[];
-      childSessions?: ChildSessionHistoryLink[];
+      childSessions?: ChildSessionSummary[];
       mode?: 'replace' | 'prepend';
       olderCursor?: string;
       loadedCount?: number;
@@ -320,7 +339,6 @@ type Action =
   | { type: 'SESSION_RESTORE_START'; appSessionId: string }
   | { type: 'SESSION_HISTORY_FAILED'; appSessionId: string; message: string }
   | { type: 'SESSION_HISTORY_LOADING_OLDER'; appSessionId: string }
-  | { type: 'CHILD_HISTORY_LOADING'; providerSessionId: string; loading: boolean }
   | { type: 'CLEAR_PERMISSION' }
   | { type: 'CLEAR_QUESTION' }
 
@@ -381,7 +399,7 @@ type Action =
   | { type: 'SET_DESIGN_MODE'; appSessionId: string; open: boolean }
   | { type: 'SET_THEME'; theme: Partial<ThemeConfig> }
   | { type: 'SELECT_FEATURE'; id: string | null }
-  | { type: 'SELECT_PROVIDER_SESSION'; id: string | null }
+  | { type: 'SELECT_CHILD'; selection: ChildSelection | null; requestId?: string }
 
   // Models / per-agent config
   | { type: 'MODELS_LIST'; models: ModelInfo[] }
@@ -532,7 +550,7 @@ const DIFF_VIEW_STORAGE_KEY = 'droid-diff-view';
 const REVIEW_SCOPE_STORAGE_KEY = 'droid-review-scope';
 const WORKSPACES_STORAGE_KEY = 'droid-workspaces';
 const SESSION_LAST_SEEN_STORAGE_KEY = 'droid-session-last-seen-v1';
-const UI_STATE_STORAGE_KEY = 'droid-ui-state-v1';
+const UI_STATE_STORAGE_KEY = 'droid-ui-state-v2';
 const BROWSER_VIEWPORT_MODES = new Set<BrowserViewportMode>([
   'fit',
   'desktop',
@@ -552,7 +570,6 @@ interface PersistedUiState {
   browsers: Record<string, BrowserState>;
   browserOpenKeys: Record<string, boolean>;
   selectedFeatureId: string | null;
-  selectedProviderSessionId: string | null;
 }
 
 function loadCompactionModel(): string {
@@ -675,10 +692,6 @@ export function loadPersistedUiState(): Partial<PersistedUiState> {
       browserOpenKeys: loadPersistedBrowserOpenKeys(parsed.browserOpenKeys),
       selectedFeatureId:
         typeof parsed.selectedFeatureId === 'string' ? parsed.selectedFeatureId : null,
-      selectedProviderSessionId:
-        typeof parsed.selectedProviderSessionId === 'string'
-          ? parsed.selectedProviderSessionId
-          : null,
     };
   } catch {
     return {};
@@ -696,7 +709,6 @@ function savePersistedUiState(state: AppState): void {
     browsers: persistBrowsers(state.browsers),
     browserOpenKeys: state.browserOpenKeys,
     selectedFeatureId: state.selectedFeatureId,
-    selectedProviderSessionId: state.selectedProviderSessionId,
   };
   try {
     getLocalStorage()?.setItem(UI_STATE_STORAGE_KEY, JSON.stringify(snapshot));
@@ -781,11 +793,11 @@ export const initialState: AppState = {
   historyCursor: {},
   historyLoadingOlder: {},
   sessionRestore: {},
-  childHistoryLoading: {},
-  childSettingsReadiness: {},
+  childAccess: {},
+  childRuntime: {},
   pendingPermission: null,
   pendingQuestion: null,
-  contextStats: {},
+  contextStats: { primary: {}, child: {} },
   specPlans: {},
   sessionSpecs: {},
   specWikiAppSessionId: null,
@@ -808,7 +820,7 @@ export const initialState: AppState = {
   browserGlobalError: undefined,
   designModes: {},
   selectedFeatureId: persistedUiState.selectedFeatureId ?? null,
-  selectedProviderSessionId: persistedUiState.selectedProviderSessionId ?? null,
+  selectedChild: null,
   models: [],
   compactionModel: loadCompactionModel(),
   compactionTokenLimit: loadCompactionTokenLimit(),
@@ -827,7 +839,7 @@ export const initialState: AppState = {
 };
 
 function progressKey(entry: ProgressEntry): string {
-  return `${entry.timestamp}|${entry.type}|${entry.featureId ?? ''}|${entry.workerProviderSessionId ?? ''}|${entry.title ?? ''}`;
+  return `${entry.timestamp}|${entry.type}|${entry.featureId ?? ''}|${entry.workerChildSessionId ?? ''}|${entry.title ?? ''}`;
 }
 
 function activeBrowserKey(state: AppState): string | undefined {
@@ -892,30 +904,61 @@ function closeActiveUtilityPanel(state: AppState): AppState {
     : { ...state, utilityPanels: { ...state.utilityPanels, [appSessionId]: panel } };
 }
 
-function withChildSettingsReadiness(
+function withChildAccess(
   state: AppState,
   parentAppSessionId: string,
   childSessionId: string,
-  status: ChildSettingsReadiness,
+  access: ChildAccess,
 ): AppState {
-  const parent = state.childSettingsReadiness[parentAppSessionId] ?? {};
-  const settleHistory = status === 'failed' && state.childHistoryLoading[childSessionId];
-  if (parent[childSessionId] === status && !settleHistory) return state;
+  const parent = state.childAccess[parentAppSessionId] ?? {};
   return {
     ...state,
-    childSettingsReadiness: {
-      ...state.childSettingsReadiness,
-      [parentAppSessionId]: { ...parent, [childSessionId]: status },
+    childAccess: {
+      ...state.childAccess,
+      [parentAppSessionId]: { ...parent, [childSessionId]: access },
     },
-    ...(settleHistory
-      ? {
-          childHistoryLoading: {
-            ...state.childHistoryLoading,
-            [childSessionId]: false,
-          },
-        }
-      : {}),
   };
+}
+
+function withoutChildAccess(
+  state: AppState,
+  parentAppSessionId: string,
+  childSessionId: string,
+): AppState {
+  const parent = { ...(state.childAccess[parentAppSessionId] ?? {}) };
+  delete parent[childSessionId];
+  const childAccess = { ...state.childAccess };
+  if (Object.keys(parent).length === 0) delete childAccess[parentAppSessionId];
+  else childAccess[parentAppSessionId] = parent;
+  return { ...state, childAccess };
+}
+
+function withChildRuntime(
+  state: AppState,
+  parentAppSessionId: string,
+  childSessionId: string,
+  runtime: ChildRuntimeState,
+): AppState {
+  const parent = state.childRuntime[parentAppSessionId] ?? {};
+  return {
+    ...state,
+    childRuntime: {
+      ...state.childRuntime,
+      [parentAppSessionId]: { ...parent, [childSessionId]: runtime },
+    },
+  };
+}
+
+function invalidateSelectedChildOpening(state: AppState): AppState {
+  const selected = state.selectedChild;
+  if (!selected) return state;
+  const access = state.childAccess[selected.parentAppSessionId]?.[selected.childSessionId];
+  return access?.state === 'opening'
+    ? withChildAccess(state, selected.parentAppSessionId, selected.childSessionId, {
+        state: 'closed',
+        requestId: null,
+      })
+    : state;
 }
 
 export function reducer(state: AppState, action: Action): AppState {
@@ -939,10 +982,27 @@ function mergeToolArgs(prev: unknown, next: unknown): unknown {
 
 function baseReducer(state: AppState, action: Action): AppState {
   switch (action.type) {
-    case 'SET_CONNECTION':
-      return { ...state, connection: action.status, connectionError: action.message };
+    case 'SET_CONNECTION': {
+      if (action.status === 'connected')
+        return { ...state, connection: action.status, connectionError: action.message };
+      const next = invalidateSelectedChildOpening(state);
+      return {
+        ...next,
+        connection: action.status,
+        connectionError: action.message,
+        selectedChild: null,
+        childAccess: {},
+        childRuntime: {},
+        contextStats: { ...next.contextStats, child: {} },
+      };
+    }
 
     case 'SESSION_CREATED': {
+      const childReset = invalidateSelectedChildOpening(state);
+      const childAccess = { ...childReset.childAccess };
+      const childRuntime = { ...childReset.childRuntime };
+      delete childAccess[action.session.appSessionId];
+      delete childRuntime[action.session.appSessionId];
       const order = state.sessionOrder.includes(action.session.appSessionId)
         ? state.sessionOrder
         : [action.session.appSessionId, ...state.sessionOrder];
@@ -975,7 +1035,7 @@ function baseReducer(state: AppState, action: Action): AppState {
         : state.pendingCompose;
 
       const next = {
-        ...state,
+        ...childReset,
         sessions: {
           ...state.sessions,
           [action.session.appSessionId]: applySessionOverride(
@@ -987,6 +1047,9 @@ function baseReducer(state: AppState, action: Action): AppState {
         transcripts,
         activeAppSessionId: action.session.appSessionId,
         draftChat: null,
+        selectedChild: null,
+        childAccess,
+        childRuntime,
         pendingCompose,
         // A chat you just started is, by definition, already seen.
         sessionLastSeen: {
@@ -1017,17 +1080,39 @@ function baseReducer(state: AppState, action: Action): AppState {
       const nextCompactions =
         (m.compactedFromProviderSessionIds?.length ?? 0) + (m.autoCompactions ?? 0);
       const contextStats =
-        nextCompactions > previousCompactions && previous?.providerSessionId
-          ? Object.fromEntries(
-              Object.entries(state.contextStats).filter(
-                ([sourceSessionId]) => sourceSessionId !== previous.providerSessionId,
+        nextCompactions > previousCompactions
+          ? {
+              ...state.contextStats,
+              primary: Object.fromEntries(
+                Object.entries(state.contextStats.primary).filter(
+                  ([appSessionId]) => appSessionId !== m.appSessionId,
+                ),
               ),
-            )
+            }
           : state.contextStats;
       return {
         ...state,
         sessions: { ...state.sessions, [m.appSessionId]: m },
         contextStats,
+      };
+    }
+
+    case 'SESSION_CLOSED': {
+      const childAccess = { ...state.childAccess };
+      const childRuntime = { ...state.childRuntime };
+      const childContext = { ...state.contextStats.child };
+      delete childAccess[action.appSessionId];
+      delete childRuntime[action.appSessionId];
+      delete childContext[action.appSessionId];
+      return {
+        ...state,
+        childAccess,
+        childRuntime,
+        contextStats: { ...state.contextStats, child: childContext },
+        selectedChild:
+          state.selectedChild?.parentAppSessionId === action.appSessionId
+            ? null
+            : state.selectedChild,
       };
     }
 
@@ -1059,116 +1144,123 @@ function baseReducer(state: AppState, action: Action): AppState {
     }
 
     case 'SESSION_CHILD': {
-      const mid = action.parentAppSessionId;
-      const prev = state.childSessions[mid] ?? [];
-      const idx = prev.findIndex((w) => w.providerSessionId === action.childSessionId);
-      let next: ChildSessionInfo[];
-      if (idx >= 0) {
-        next = [...prev];
-        next[idx] = {
-          ...next[idx],
-          status:
-            action.event === 'completed'
-              ? 'completed'
-              : action.event === 'updated'
-                ? next[idx].status
-                : 'running',
-          label: action.label ?? next[idx].label,
-          prompt: action.prompt ?? next[idx].prompt,
-          modelId: action.modelId ?? next[idx].modelId,
-          reasoningEffort: action.reasoningEffort ?? next[idx].reasoningEffort,
-          toolUseId: action.toolUseId ?? next[idx].toolUseId,
-        };
-      } else {
-        if (action.event === 'updated' && !action.canonicalIdentity) return state;
-        next = [
-          ...prev,
-          {
-            providerSessionId: action.childSessionId,
-            status: action.event === 'completed' ? 'completed' : 'running',
-            startedAt: Date.now(),
-            label: action.label,
-            prompt: action.prompt,
-            modelId: action.modelId,
-            reasoningEffort: action.reasoningEffort,
-            toolUseId: action.toolUseId,
-          },
-        ];
-      }
-      return { ...state, childSessions: { ...state.childSessions, [mid]: next } };
-    }
-
-    case 'CHILD_SETTINGS_READINESS':
-      return withChildSettingsReadiness(
-        state,
-        action.parentAppSessionId,
-        action.childSessionId,
-        action.status,
-      );
-
-    case 'CHILD_HISTORY_LOADING': {
-      if ((state.childHistoryLoading[action.providerSessionId] ?? false) === action.loading)
+      const child = action.child;
+      const parent = state.childSessions[child.parentAppSessionId] ?? {};
+      const runtimeParent = state.childRuntime[child.parentAppSessionId] ?? {};
+      const previousRuntime = runtimeParent[child.childSessionId];
+      if (previousRuntime && action.runtimeGeneration < previousRuntime.runtimeGeneration)
         return state;
-      return {
+      const clearContext =
+        !action.runtimeAvailable ||
+        (previousRuntime !== undefined &&
+          action.runtimeGeneration > previousRuntime.runtimeGeneration);
+      const contextParent = state.contextStats.child[child.parentAppSessionId] ?? {};
+      let next = {
         ...state,
-        childHistoryLoading: {
-          ...state.childHistoryLoading,
-          [action.providerSessionId]: action.loading,
+        childSessions: {
+          ...state.childSessions,
+          [child.parentAppSessionId]: {
+            ...parent,
+            [child.childSessionId]: child,
+          },
+        },
+        contextStats: clearContext
+          ? {
+              ...state.contextStats,
+              child: {
+                ...state.contextStats.child,
+                [child.parentAppSessionId]: Object.fromEntries(
+                  Object.entries(contextParent).filter(
+                    ([childSessionId]) => childSessionId !== child.childSessionId,
+                  ),
+                ),
+              },
+            }
+          : state.contextStats,
+      };
+      if (
+        previousRuntime &&
+        action.runtimeGeneration === previousRuntime.runtimeGeneration &&
+        action.runtimeAvailable === previousRuntime.available
+      )
+        return next;
+      next = {
+        ...next,
+        childRuntime: {
+          ...state.childRuntime,
+          [child.parentAppSessionId]: {
+            ...runtimeParent,
+            [child.childSessionId]: {
+              available: action.runtimeAvailable,
+              runtimeGeneration: action.runtimeGeneration,
+            },
+          },
         },
       };
+      const access = state.childAccess[child.parentAppSessionId]?.[child.childSessionId];
+      if (!access) return next;
+      if (!action.runtimeAvailable && (access.state === 'opening' || access.state === 'ready'))
+        return withChildAccess(next, child.parentAppSessionId, child.childSessionId, {
+          state: 'closed',
+          requestId: null,
+        });
+      if (action.runtimeAvailable && access.state === 'ready')
+        return withChildAccess(next, child.parentAppSessionId, child.childSessionId, {
+          ...access,
+          runtimeGeneration: action.runtimeGeneration,
+        });
+      return next;
     }
 
     case 'CHILD_UPDATED': {
-      // The 'opened' ack fires after a worker's history replay completes (even
-      // when nothing was captured), so it reliably ends the loading state.
-      let base =
-        action.status === 'opened' && state.childHistoryLoading[action.childSessionId]
+      if (
+        state.selectedChild?.parentAppSessionId !== action.parentAppSessionId ||
+        state.selectedChild.childSessionId !== action.childSessionId
+      )
+        return state;
+      const current = state.childAccess[action.parentAppSessionId]?.[action.childSessionId];
+      if (current?.state !== 'opening' || current.requestId !== action.requestId) return state;
+      const runtime = state.childRuntime[action.parentAppSessionId]?.[action.childSessionId];
+      if (
+        action.access === 'ready' &&
+        runtime &&
+        (action.runtimeGeneration < runtime.runtimeGeneration ||
+          (action.runtimeGeneration === runtime.runtimeGeneration && !runtime.available))
+      )
+        return state;
+      const settled = withChildAccess(
+        state,
+        action.parentAppSessionId,
+        action.childSessionId,
+        action.access === 'ready'
           ? {
-              ...state,
-              childHistoryLoading: {
-                ...state.childHistoryLoading,
-                [action.childSessionId]: false,
-              },
+              state: 'ready',
+              requestId: action.requestId,
+              runtimeGeneration: action.runtimeGeneration,
             }
-          : state;
-      if (action.status === 'opened') {
-        const current =
-          base.childSettingsReadiness[action.parentAppSessionId]?.[action.childSessionId];
-        if (action.settingsReady)
-          base = withChildSettingsReadiness(
-            base,
-            action.parentAppSessionId,
-            action.childSessionId,
-            'ready',
-          );
-        else if (current === 'opening')
-          base = withChildSettingsReadiness(
-            base,
-            action.parentAppSessionId,
-            action.childSessionId,
-            'failed',
-          );
-      } else if (
-        action.status === 'completed' &&
-        base.childSettingsReadiness[action.parentAppSessionId]?.[action.childSessionId]
-      ) {
-        base = withChildSettingsReadiness(
-          base,
-          action.parentAppSessionId,
-          action.childSessionId,
-          'failed',
-        );
-      }
-      if (action.role !== 'worker' || action.status === 'opened') return base;
-      const prev = base.childSessions[action.parentAppSessionId] ?? [];
-      const idx = prev.findIndex((w) => w.providerSessionId === action.childSessionId);
-      if (idx < 0) return base;
-      const next = [...prev];
-      next[idx] = { ...next[idx], status: action.status };
-      return {
-        ...base,
-        childSessions: { ...base.childSessions, [action.parentAppSessionId]: next },
-      };
+          : { state: 'history', requestId: action.requestId },
+      );
+      return action.access === 'ready'
+        ? withChildRuntime(settled, action.parentAppSessionId, action.childSessionId, {
+            available: true,
+            runtimeGeneration: action.runtimeGeneration,
+          })
+        : settled;
+    }
+
+    case 'CHILD_ERROR': {
+      if (action.operation !== 'open' || !action.requestId) return state;
+      if (
+        state.selectedChild?.parentAppSessionId !== action.parentAppSessionId ||
+        state.selectedChild.childSessionId !== action.childSessionId
+      )
+        return state;
+      const current = state.childAccess[action.parentAppSessionId]?.[action.childSessionId];
+      if (current?.state !== 'opening' || current.requestId !== action.requestId) return state;
+      return withChildAccess(state, action.parentAppSessionId, action.childSessionId, {
+        state: 'failed',
+        requestId: action.requestId,
+      });
     }
 
     case 'SESSION_TOKENS': {
@@ -1192,9 +1284,28 @@ function baseReducer(state: AppState, action: Action): AppState {
 
     case 'CONTEXT_UPDATED': {
       const existing = state.sessions[action.appSessionId];
+      if (action.parentAppSessionId && action.childSessionId) {
+        const parent = state.contextStats.child[action.parentAppSessionId] ?? {};
+        return {
+          ...state,
+          contextStats: {
+            ...state.contextStats,
+            child: {
+              ...state.contextStats.child,
+              [action.parentAppSessionId]: {
+                ...parent,
+                [action.childSessionId]: action.stats,
+              },
+            },
+          },
+        };
+      }
       return {
         ...state,
-        contextStats: { ...state.contextStats, [action.sourceSessionId]: action.stats },
+        contextStats: {
+          ...state.contextStats,
+          primary: { ...state.contextStats.primary, [action.appSessionId]: action.stats },
+        },
         sessions: existing
           ? {
               ...state.sessions,
@@ -1366,15 +1477,6 @@ function baseReducer(state: AppState, action: Action): AppState {
           sessions: {
             ...state.sessions,
             [action.appSessionId]: { ...m, phase: 'failed' as const },
-          },
-        };
-      }
-      if (action.providerSessionId) {
-        next = {
-          ...next,
-          childHistoryLoading: {
-            ...next.childHistoryLoading,
-            [action.providerSessionId]: false,
           },
         };
       }
@@ -1599,51 +1701,17 @@ function baseReducer(state: AppState, action: Action): AppState {
       const after = liveOnly.filter((e) => e.ts >= firstTs);
       const mergedTranscript = page.length > 0 ? [...before, ...page, ...after] : existing;
       const transcripts = { ...state.transcripts, [action.appSessionId]: mergedTranscript };
-      // Merge exact child-session links from history with any live child sessions
-      // already in state (a live session.child may arrive before history). Live
-      // entries win; history links add missing sessions and backfill toolUseId.
-      const histLinks = action.childSessions ?? [];
-      const existingChildSessions = state.childSessions[action.appSessionId] ?? [];
+      const historicalChildren = action.childSessions ?? [];
+      const existingChildSessions = state.childSessions[action.appSessionId] ?? {};
       let childSessions = state.childSessions;
-      if (histLinks.length > 0) {
-        const bySession = new Map(
-          existingChildSessions.map((childSession) => [
-            childSession.providerSessionId,
-            childSession,
-          ]),
-        );
-        let changed = false;
-        for (const link of histLinks) {
-          const existing = bySession.get(link.providerSessionId);
-          if (!existing) {
-            bySession.set(link.providerSessionId, {
-              providerSessionId: link.providerSessionId,
-              // Honor the live run state the backend attaches for active
-              // sessions so a reconnect/reload doesn't mark a still-running
-              // child session as finished; historical loads omit it (-> completed).
-              status: link.status ?? 'completed',
-              // A running link has no persisted start time; seed "now" so the
-              // elapsed timer counts from reconnect rather than the Unix epoch.
-              // Completed links don't render a timer, so 0 is fine.
-              startedAt: link.status === 'running' ? Date.now() : 0,
-              label: link.label,
-              toolUseId: link.toolUseId,
-            });
-            changed = true;
-          } else if (existing.toolUseId === undefined && link.toolUseId !== undefined) {
-            bySession.set(link.providerSessionId, {
-              ...existing,
-              toolUseId: link.toolUseId,
-              label: existing.label ?? link.label,
-            });
-            changed = true;
-          }
-        }
-        if (changed)
-          childSessions = {
-            ...state.childSessions,
-            [action.appSessionId]: Array.from(bySession.values()),
-          };
+      if (historicalChildren.length > 0) {
+        const byChild = { ...existingChildSessions };
+        for (const child of historicalChildren)
+          byChild[child.childSessionId] = byChild[child.childSessionId] ?? child;
+        childSessions = {
+          ...state.childSessions,
+          [action.appSessionId]: byChild,
+        };
       }
       const hasMore = Boolean(action.olderCursor);
       // An empty restore (e.g. a live session with no persisted history yet)
@@ -1686,12 +1754,13 @@ function baseReducer(state: AppState, action: Action): AppState {
         sessionLastSeen[state.activeAppSessionId] = now;
       }
       if (action.id) sessionLastSeen[action.id] = now;
+      const next = invalidateSelectedChildOpening(state);
       return {
-        ...state,
+        ...next,
         activeAppSessionId: action.id,
         sessionLastSeen,
         draftChat: null,
-        selectedProviderSessionId: null,
+        selectedChild: null,
       };
     }
 
@@ -1911,11 +1980,13 @@ function baseReducer(state: AppState, action: Action): AppState {
       if (state.activeAppSessionId && state.sessions[state.activeAppSessionId]) {
         sessionLastSeen[state.activeAppSessionId] = Date.now();
       }
+      const next = invalidateSelectedChildOpening(state);
       return {
-        ...state,
+        ...next,
         draftChat: { cwd: action.cwd, branch: action.branch },
         activeAppSessionId: null,
         missionControlMode: false,
+        selectedChild: null,
         sessionLastSeen,
       };
     }
@@ -2064,8 +2135,32 @@ function baseReducer(state: AppState, action: Action): AppState {
     case 'SELECT_FEATURE':
       return { ...state, selectedFeatureId: action.id };
 
-    case 'SELECT_PROVIDER_SESSION':
-      return { ...state, selectedProviderSessionId: action.id };
+    case 'SELECT_CHILD': {
+      const previous = state.selectedChild;
+      let next =
+        previous &&
+        (action.selection?.parentAppSessionId !== previous.parentAppSessionId ||
+          action.selection.childSessionId !== previous.childSessionId)
+          ? invalidateSelectedChildOpening(state)
+          : state;
+      if (!action.selection) return { ...next, selectedChild: null };
+      const { parentAppSessionId, childSessionId } = action.selection;
+      if (
+        next.activeAppSessionId !== parentAppSessionId ||
+        !next.childSessions[parentAppSessionId]?.[childSessionId]
+      )
+        return { ...next, selectedChild: null };
+      next = { ...next, selectedChild: action.selection };
+      if (action.requestId)
+        return withChildAccess(next, parentAppSessionId, childSessionId, {
+          state: 'opening',
+          requestId: action.requestId,
+        });
+      const access = next.childAccess[parentAppSessionId]?.[childSessionId];
+      return access?.state === 'failed' || access?.state === 'closed'
+        ? withoutChildAccess(next, parentAppSessionId, childSessionId)
+        : next;
+    }
 
     case 'MODELS_LIST':
       return {
@@ -2292,7 +2387,7 @@ function finiteNumber(value: unknown): number | undefined {
 
 /* ── Bridge event adapter ── */
 export function toastMessageForEvent(ev: ServerEvent): string | undefined {
-  return ev.type === 'error' && ev.code === 'child.settings_update_failed' ? ev.message : undefined;
+  return ev.type === 'child.error' && ev.operation !== 'open' ? ev.message : undefined;
 }
 
 export function adaptEvent(ev: ServerEvent): Action | null {
@@ -2307,33 +2402,44 @@ export function adaptEvent(ev: ServerEvent): Action | null {
       return { type: 'SESSION_CREATED', clientRef: ev.clientRef, session: ev.session };
     case 'session.updated':
       return { type: 'SESSION_UPDATED', session: ev.session };
+    case 'session.closed':
+      return { type: 'SESSION_CLOSED', appSessionId: ev.appSessionId };
     case 'mission.features':
       return { type: 'SESSION_FEATURES', appSessionId: ev.appSessionId, features: ev.features };
     case 'mission.progress':
       return { type: 'SESSION_PROGRESS', appSessionId: ev.appSessionId, entries: ev.entries };
     case 'session.child':
-      // PR 6 deletes this translation when general child events adopt canonical identity.
       return {
         type: 'SESSION_CHILD',
-        parentAppSessionId: 'parentAppSessionId' in ev ? ev.parentAppSessionId : ev.appSessionId,
-        event: ev.event,
-        childSessionId: 'childSessionId' in ev ? ev.childSessionId : ev.providerSessionId,
-        label: 'label' in ev ? ev.label : undefined,
-        prompt: 'prompt' in ev ? ev.prompt : undefined,
-        modelId: ev.modelId,
-        reasoningEffort: ev.reasoningEffort,
-        toolUseId: 'toolUseId' in ev ? ev.toolUseId : undefined,
-        ...('childSessionId' in ev ? { canonicalIdentity: true as const } : {}),
+        child: ev.child,
+        runtimeAvailable: ev.runtimeAvailable,
+        runtimeGeneration: ev.runtimeGeneration,
       };
     case 'child.updated':
-      // PR 6 deletes this translation when general child events adopt canonical identity.
+      return ev.access === 'ready'
+        ? {
+            type: 'CHILD_UPDATED',
+            parentAppSessionId: ev.parentAppSessionId,
+            childSessionId: ev.childSessionId,
+            requestId: ev.requestId,
+            access: 'ready',
+            runtimeGeneration: ev.runtimeGeneration,
+          }
+        : {
+            type: 'CHILD_UPDATED',
+            parentAppSessionId: ev.parentAppSessionId,
+            childSessionId: ev.childSessionId,
+            requestId: ev.requestId,
+            access: 'history',
+          };
+    case 'child.error':
       return {
-        type: 'CHILD_UPDATED',
-        parentAppSessionId: 'parentAppSessionId' in ev ? ev.parentAppSessionId : ev.appSessionId,
-        childSessionId: 'childSessionId' in ev ? ev.childSessionId : ev.providerSessionId,
-        role: ev.role,
-        status: ev.status,
-        ...('settingsReady' in ev ? { settingsReady: ev.settingsReady } : {}),
+        type: 'CHILD_ERROR',
+        parentAppSessionId: ev.parentAppSessionId,
+        childSessionId: ev.childSessionId,
+        requestId: ev.requestId,
+        operation: ev.operation,
+        message: ev.message,
       };
     case 'event.appended':
       return { type: 'SESSION_TRANSCRIPT', event: ev.event };
@@ -2342,50 +2448,13 @@ export function adaptEvent(ev: ServerEvent): Action | null {
     case 'question.requested':
       return { type: 'SESSION_QUESTION', question: ev.question };
     case 'error':
-      if (
-        ev.parentAppSessionId &&
-        ev.childSessionId &&
-        (ev.code === 'child.open_failed' || ev.code === 'child.settings_target_invalid')
-      ) {
-        return {
-          type: 'CHILD_SETTINGS_READINESS',
-          parentAppSessionId: ev.parentAppSessionId,
-          childSessionId: ev.childSessionId,
-          status: 'failed',
-        };
-      }
-      if (ev.code === 'child.settings_update_failed') return null;
-      if (ev.providerSessionId && ev.code?.startsWith('child.')) {
-        return {
-          type: 'CHILD_HISTORY_LOADING',
-          providerSessionId: ev.providerSessionId,
-          loading: false,
-        };
-      }
-      if (ev.recoverable) {
-        return ev.providerSessionId
-          ? {
-              type: 'CHILD_HISTORY_LOADING',
-              providerSessionId: ev.providerSessionId,
-              loading: false,
-            }
-          : null;
-      }
-      // Session-level failures can also carry a child provider id. Preserve both
-      // effects: fail the parent session and settle the child loading state.
+      if (ev.recoverable) return null;
       if (ev.appSessionId) {
         return {
           type: 'SESSION_ERROR',
           appSessionId: ev.appSessionId,
           providerSessionId: ev.providerSessionId,
           message: ev.message,
-        };
-      }
-      if (ev.providerSessionId) {
-        return {
-          type: 'CHILD_HISTORY_LOADING',
-          providerSessionId: ev.providerSessionId,
-          loading: false,
         };
       }
       return { type: 'SESSION_ERROR', message: ev.message };
@@ -2410,6 +2479,10 @@ export function adaptEvent(ev: ServerEvent): Action | null {
         type: 'CONTEXT_UPDATED',
         appSessionId: ev.appSessionId,
         sourceSessionId: ev.sourceSessionId,
+        ...(ev.parentAppSessionId === undefined
+          ? {}
+          : { parentAppSessionId: ev.parentAppSessionId }),
+        ...(ev.childSessionId === undefined ? {} : { childSessionId: ev.childSessionId }),
         stats: ev.stats,
       };
     case 'catalog.updated':
@@ -2458,7 +2531,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     state.missionControlMode,
     state.rightPanelOpen,
     state.utilityPanels,
-    state.selectedProviderSessionId,
+    state.selectedChild,
     state.selectedFeatureId,
     state.sidebarCollapsed,
     state.specMode,

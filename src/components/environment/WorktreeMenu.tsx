@@ -60,6 +60,7 @@ export function WorktreeMenu({
         activeAppSessionId: state.activeAppSessionId,
         draftCwd: state.draftChat?.cwd,
         childSessions: state.childSessions,
+        childRuntime: state.childRuntime,
         pinnedCwds: utilityTerminalCwds(
           state.utilityPanels,
           Object.fromEntries(
@@ -72,6 +73,7 @@ export function WorktreeMenu({
       state.activeAppSessionId,
       state.draftChat?.cwd,
       state.childSessions,
+      state.childRuntime,
       state.utilityPanels,
     ],
   );

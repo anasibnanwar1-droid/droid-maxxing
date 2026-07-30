@@ -8,7 +8,7 @@ import type {
   SessionSummary,
 } from './protocol.js';
 import type { SessionRegistry } from './SessionRegistry.js';
-import type { LiveChildSession, LiveSession } from './SessionLifecycle.js';
+import type { LiveSession } from './SessionLifecycle.js';
 import { numberValue, stringValue } from './values.js';
 
 export interface ProviderOperationTarget {
@@ -32,7 +32,6 @@ export interface ChildOperationTarget extends ProviderOperationTarget, ChildIden
   providerSessionId: string;
   sourceSessionId: string;
   role: 'worker' | 'validator';
-  child: LiveChildSession;
 }
 
 export type ContextOperationTarget = LiveOperationTarget | ChildOperationTarget;
@@ -55,11 +54,16 @@ interface SessionContextDependencies {
   maxContextTokensForSummary: (summary: SessionSummary) => number | undefined;
 }
 
+interface ContextPoller {
+  timer: ReturnType<typeof setInterval>;
+  session: FactorySession;
+}
+
 export class SessionContext {
   private readonly usageOffsets = new Map<string, UsageOffset>();
   private readonly snapshots = new Map<string, ContextStatsSnapshot>();
   private readonly childCompactions = new Map<string, number>();
-  private readonly pollers = new Map<string, ReturnType<typeof setInterval>>();
+  private readonly pollers = new Map<string, ContextPoller>();
   private epoch = 0;
 
   constructor(private readonly dependencies: SessionContextDependencies) {}
@@ -113,22 +117,24 @@ export class SessionContext {
   }
 
   startPolling(target: ContextOperationTarget): void {
-    if (this.pollers.has(target.sourceSessionId) || !target.isCurrent()) return;
+    const key = contextResourceKey(target);
+    if (this.pollers.has(key) || !target.isCurrent()) return;
     const epoch = this.epoch;
     const poll = () => {
       if (epoch !== this.epoch || !target.isCurrent()) return;
       void this.refresh(target, { persist: false });
     };
     const timer = setInterval(poll, 2_500);
-    this.pollers.set(target.sourceSessionId, timer);
+    this.pollers.set(key, { timer, session: target.session });
     poll();
   }
 
-  stopPolling(sourceSessionId: string): void {
-    const timer = this.pollers.get(sourceSessionId);
-    if (!timer) return;
-    clearInterval(timer);
-    this.pollers.delete(sourceSessionId);
+  stopPolling(target: ContextOperationTarget): void {
+    const key = contextResourceKey(target);
+    const poller = this.pollers.get(key);
+    if (poller?.session !== target.session) return;
+    clearInterval(poller.timer);
+    this.pollers.delete(key);
   }
 
   async refresh(
@@ -182,35 +188,25 @@ export class SessionContext {
     this.usageOffsets.set(appSessionId, offset);
   }
 
-  forgetChild(identity: ChildIdentity, sourceSessionId: string): void {
-    this.snapshots.delete(sourceSessionId);
-    this.childCompactions.delete(childIdentityKey(identity));
+  forgetChild(identity: ChildIdentity): void {
+    const key = childIdentityKey(identity);
+    this.snapshots.delete(key);
+    this.childCompactions.delete(key);
   }
 
   stopSession(liveSession: LiveSession): void {
-    this.stopPolling(liveSession.summary.appSessionId);
-    if (liveSession.summary.providerSessionId)
-      this.stopPolling(liveSession.summary.providerSessionId);
+    this.stopPollingKey(primaryResourceKey(liveSession.summary.appSessionId));
   }
 
   forgetSession(liveSession: LiveSession): void {
     const appSessionId = liveSession.summary.appSessionId;
-    for (const [childSessionId, child] of liveSession.childSessions) {
-      this.snapshots.delete(child.session.sessionId);
-      this.snapshots.delete(childSessionId);
-      this.childCompactions.delete(
-        childIdentityKey({ parentAppSessionId: appSessionId, childSessionId }),
-      );
-    }
     this.usageOffsets.delete(appSessionId);
-    this.snapshots.delete(appSessionId);
-    if (liveSession.summary.providerSessionId)
-      this.snapshots.delete(liveSession.summary.providerSessionId);
+    this.snapshots.delete(primaryResourceKey(appSessionId));
   }
 
   clearAll(): void {
     this.epoch += 1;
-    for (const timer of this.pollers.values()) clearInterval(timer);
+    for (const poller of this.pollers.values()) clearInterval(poller.timer);
     this.pollers.clear();
     this.snapshots.clear();
     this.childCompactions.clear();
@@ -219,6 +215,13 @@ export class SessionContext {
 
   private isCurrent(target: ContextOperationTarget, epoch: number): boolean {
     return epoch === this.epoch && target.isCurrent();
+  }
+
+  private stopPollingKey(key: string): void {
+    const poller = this.pollers.get(key);
+    if (!poller) return;
+    clearInterval(poller.timer);
+    this.pollers.delete(key);
   }
 
   private publishSnapshot(
@@ -238,11 +241,17 @@ export class SessionContext {
       : applyExactUsage(providerSnapshot, liveSession.summary);
 
     if (!target.isCurrent()) return;
-    this.snapshots.set(target.sourceSessionId, snapshot);
+    this.snapshots.set(contextResourceKey(target), snapshot);
     this.dependencies.emit({
       type: 'context.updated',
       appSessionId: target.appSessionId,
       sourceSessionId: target.sourceSessionId,
+      ...(isChildTarget(target)
+        ? {
+            parentAppSessionId: target.parentAppSessionId,
+            childSessionId: target.childSessionId,
+          }
+        : {}),
       stats: snapshot,
     });
 
@@ -262,7 +271,8 @@ export class SessionContext {
 
   private emitEstimate(sourceSessionId: string, summary: SessionSummary): void {
     if (summary.contextTokens <= 0) return;
-    const previous = this.snapshots.get(sourceSessionId);
+    const resourceKey = primaryResourceKey(sourceSessionId);
+    const previous = this.snapshots.get(resourceKey);
     const limit =
       this.dependencies.maxContextTokensForSummary(summary) ??
       summary.maxContextTokens ??
@@ -285,7 +295,7 @@ export class SessionContext {
       updatedAt: new Date().toISOString(),
       breakdown,
     };
-    this.snapshots.set(sourceSessionId, snapshot);
+    this.snapshots.set(resourceKey, snapshot);
     this.dependencies.emit({
       type: 'context.updated',
       appSessionId: summary.appSessionId,
@@ -300,7 +310,17 @@ function isChildTarget(target: ContextOperationTarget): target is ChildOperation
 }
 
 function childIdentityKey(identity: ChildIdentity): string {
-  return `${String(identity.parentAppSessionId.length)}:${identity.parentAppSessionId}${identity.childSessionId}`;
+  return `child:${String(identity.parentAppSessionId.length)}:${identity.parentAppSessionId}${identity.childSessionId}`;
+}
+
+function primaryResourceKey(sourceSessionId: string): string {
+  return `primary:${sourceSessionId}`;
+}
+
+function contextResourceKey(target: ContextOperationTarget): string {
+  return isChildTarget(target)
+    ? childIdentityKey(target)
+    : primaryResourceKey(target.sourceSessionId);
 }
 
 function applyExactUsage(

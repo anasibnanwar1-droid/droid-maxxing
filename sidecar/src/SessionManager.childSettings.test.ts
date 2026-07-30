@@ -80,7 +80,7 @@ test(
       assert.equal(workerB.settings.length, before[1]);
       assert.equal(validator.settings.length, before[2]);
       assert.equal(parentProvider.settings.length, before[3]);
-      const workerEvent = exactSettingsEvents(h.events, 'worker-logical-a').at(-1);
+      const workerEvent = exactSettingsEvents(h.events, 'provider-1', 'worker-logical-a').at(-1);
       assert.ok(workerEvent);
       assert.equal(workerEvent.parentAppSessionId, 'provider-1');
       assert.equal(workerEvent.modelId, 'worker-new');
@@ -215,11 +215,10 @@ test(
       assert.equal(
         h.events.some(
           (event) =>
-            event.type === 'error' &&
+            event.type === 'child.error' &&
             event.code === 'child.settings_target_invalid' &&
             event.parentAppSessionId === 'provider-1' &&
-            event.childSessionId === 'worker-backend' &&
-            !event.providerSessionId,
+            event.childSessionId === 'worker-backend',
         ),
         true,
       );
@@ -244,12 +243,24 @@ test(
       await h.handle({ type: 'session.compact', appSessionId: 'provider-1' });
       const child = new FakeFactorySession('child-backend', {}, h.calls);
       child.setInitModel('worker-old');
-      h.runtime.loadQueue.set('child-logical', [child]);
+      h.history.seedChildSessions([
+        {
+          parentAppSessionId: 'provider-1',
+          childSessionId: 'child-logical',
+          providerSessionId: 'child-backend',
+          role: 'worker',
+          status: 'paused',
+          modelId: 'worker-old',
+          transcriptAvailable: true,
+          updatedAt: Date.now(),
+        },
+      ]);
+      h.runtime.loadQueue.set('child-backend', [child]);
       await h.handle({
         type: 'child.open',
-        appSessionId: 'provider-1',
-        providerSessionId: 'child-logical',
-        role: 'worker',
+        parentAppSessionId: 'provider-1',
+        childSessionId: 'child-logical',
+        requestId: 'open-child-logical',
       });
       const writes = child.settings.length;
 
@@ -270,7 +281,7 @@ test(
       assert.equal(
         child.settings.slice(writes)[0]?.['modelId'],
         'worker-new',
-        JSON.stringify(h.events.filter((event) => event.type === 'error')),
+        JSON.stringify(h.events.filter((event) => event.type === 'child.error')),
       );
     } finally {
       await h.dispose();
@@ -287,7 +298,7 @@ test(
       await createMission(h);
       const child = await openChild(h, 'worker-logical', 'worker-backend', 'worker', 'worker-old');
       const writes = child.settings.length;
-      const successes = exactSettingsEvents(h.events, 'worker-logical').length;
+      const successes = exactSettingsEvents(h.events, 'provider-1', 'worker-logical').length;
       const malformed = {
         type: 'child.updateSettings',
         parentAppSessionId: 'provider-1',
@@ -298,11 +309,11 @@ test(
       await h.handle(malformed);
 
       assert.equal(child.settings.length, writes);
-      assert.equal(exactSettingsEvents(h.events, 'worker-logical').length, successes);
+      assert.equal(exactSettingsEvents(h.events, 'provider-1', 'worker-logical').length, successes);
       assert.equal(
         h.events.some(
           (event) =>
-            event.type === 'error' &&
+            event.type === 'child.error' &&
             event.code === 'child.settings_target_invalid' &&
             event.parentAppSessionId === 'provider-1' &&
             event.childSessionId === 'worker-logical',
@@ -343,7 +354,7 @@ test(
       assert.equal(
         h.events.some(
           (event) =>
-            event.type === 'error' &&
+            event.type === 'child.error' &&
             event.code === 'child.settings_target_invalid' &&
             event.parentAppSessionId === 'provider-1' &&
             event.childSessionId === 'missing',

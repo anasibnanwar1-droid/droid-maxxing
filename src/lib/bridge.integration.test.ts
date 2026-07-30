@@ -43,7 +43,8 @@ test('[R1] Renderer command round trip', { concurrency: false }, async () => {
       },
       WebSocket: FakeWebSocket,
     });
-    const { createSession, openChild, updateChildSettings } = await import('./commands.js');
+    const { createSession, interruptVisibleSession, openChild, updateChildSettings } =
+      await import('./commands.js');
     const { bridge } = await import('./bridge.js');
     const seen: ServerEvent[] = [];
     const unsubscribe = bridge.subscribe((event) => seen.push(event));
@@ -62,14 +63,16 @@ test('[R1] Renderer command round trip', { concurrency: false }, async () => {
       modelId: 'model-r1',
       reasoningEffort: 'high',
     });
-    openChild('r1', 'validator-r1', 'validator');
+    openChild('r1', 'validator-r1', 'open-validator-r1');
+    interruptVisibleSession('r1', 'worker-r1');
+    interruptVisibleSession('r1');
     await bridge.start();
     const socket = FakeWebSocket.instances.at(-1)!;
 
     assert.equal(socket.url, 'ws://127.0.0.1:43123?token=r1-token');
     assert.deepEqual(socket.sent, []);
     socket.open();
-    assert.equal(socket.sent.length, 3);
+    assert.equal(socket.sent.length, 5);
     assert.deepEqual(JSON.parse(socket.sent[0]), {
       type: 'session.create',
       clientRef: 'r1-create',
@@ -88,9 +91,18 @@ test('[R1] Renderer command round trip', { concurrency: false }, async () => {
     });
     assert.deepEqual(JSON.parse(socket.sent[2]), {
       type: 'child.open',
+      parentAppSessionId: 'r1',
+      childSessionId: 'validator-r1',
+      requestId: 'open-validator-r1',
+    });
+    assert.deepEqual(JSON.parse(socket.sent[3]), {
+      type: 'child.interrupt',
+      parentAppSessionId: 'r1',
+      childSessionId: 'worker-r1',
+    });
+    assert.deepEqual(JSON.parse(socket.sent[4]), {
+      type: 'session.interrupt',
       appSessionId: 'r1',
-      providerSessionId: 'validator-r1',
-      role: 'validator',
     });
     const session = {
       appSessionId: 'r1',
