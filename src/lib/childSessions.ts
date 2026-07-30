@@ -205,10 +205,15 @@ export function findChildSessionForTarget(
 export function childSessionActivityForTarget(
   childSessions: ChildSessionInfo[],
   allTx: TranscriptEvent[],
+  childRuntime: Record<string, Record<string, { available: boolean }>>,
   target: ChildSessionTarget,
 ): ChildSessionActivity | undefined {
   const childSession = findChildSessionForTarget(childSessions, target);
   if (!childSession) return undefined;
+  const isLive = childSessionIsLive(
+    childSession,
+    childRuntime[childSession.parentAppSessionId]?.[childSession.childSessionId],
+  );
   let latest: ChildSessionLatest | undefined;
   for (let i = allTx.length - 1; i >= 0; i--) {
     const t = allTx[i];
@@ -229,7 +234,10 @@ export function childSessionActivityForTarget(
     break;
   }
   return {
-    status: childSession.status === 'pending' ? 'paused' : childSession.status,
+    status:
+      childSession.status === 'pending' || (childSession.status === 'running' && !isLive)
+        ? 'paused'
+        : childSession.status,
     startedAt: childSession.startedAt,
     latest,
   };

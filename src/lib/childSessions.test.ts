@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import type { TranscriptEvent } from '../types/bridge';
 import {
+  childSessionActivityForTarget,
   childSessionIdForFeature,
   childSessionLabel,
   childSelectionForFeature,
@@ -181,6 +182,32 @@ test('child ordering gives unlabeled siblings one stable label across surfaces',
       ['worker-earlier', 'Worker 1'],
       ['worker-later', 'Worker 2'],
     ],
+  );
+});
+
+test('historical running child activity is paused without an authoritative runtime', () => {
+  const child = {
+    parentAppSessionId: 'parent-a',
+    childSessionId: 'child-a',
+    role: 'worker' as const,
+    status: 'running' as const,
+    modelId: 'model-default',
+    transcriptAvailable: true,
+    spawnLink: { kind: 'tool-use' as const, id: 'tool-a' },
+  };
+
+  assert.equal(
+    childSessionActivityForTarget([child], [], {}, { toolUseId: 'tool-a' })?.status,
+    'paused',
+  );
+  assert.equal(
+    childSessionActivityForTarget(
+      [child],
+      [],
+      { 'parent-a': { 'child-a': { available: true } } },
+      { toolUseId: 'tool-a' },
+    )?.status,
+    'running',
   );
 });
 

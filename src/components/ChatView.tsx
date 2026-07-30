@@ -249,9 +249,14 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
   // start time (for the timer), and its newest meaningful transcript event.
   const childSessionActivity = useCallback(
     (target: { toolUseId?: string; label?: string }) => {
-      return childSessionActivityForTarget(childSessions, allTranscript, target);
+      return childSessionActivityForTarget(
+        childSessions,
+        allTranscript,
+        state.childRuntime,
+        target,
+      );
     },
-    [childSessions, allTranscript],
+    [childSessions, allTranscript, state.childRuntime],
   );
 
   const transcript = useMemo(() => {

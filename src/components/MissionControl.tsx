@@ -867,9 +867,9 @@ export default function MissionControl() {
 
   const childSessionActivity = useCallback(
     (target: { toolUseId?: string; label?: string }) => {
-      return childSessionActivityForTarget(childSessions, allTx, target);
+      return childSessionActivityForTarget(childSessions, allTx, state.childRuntime, target);
     },
-    [childSessions, allTx],
+    [childSessions, allTx, state.childRuntime],
   );
   const isLive = mission ? sessionIsLive(mission) : false;
   const phaseLabel = mission
