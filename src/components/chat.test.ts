@@ -940,6 +940,25 @@ test('a short fetched page body renders its URLs as links in the source row', ()
   assert.ok(html.includes('href="https://example.com/docs"'));
 });
 
+test('a fetched page body never renders an svg fence as inline markup', () => {
+  // Regression: fetched pages are untrusted, so ```svg blocks must render as
+  // plain code, never through SvgCodeBlock's unsanitized dangerouslySetInnerHTML.
+  const body = `${'Intro text. '.repeat(30)}\n\n\`\`\`svg\n<svg onload="alert(1)"><rect width="10" height="10"/></svg>\n\`\`\`\n`;
+  const html = renderToStaticMarkup(
+    createElement(WebFetchBody, {
+      error: false,
+      hasBody: true,
+      body,
+      url: 'https://evil.example',
+      title: 'Evil',
+      snippet: 'Intro text.',
+    }),
+  );
+  assert.equal(html.includes('<svg onload'), false);
+  // The fence survives only as escaped text inside a plain code card.
+  assert.ok(html.includes('&lt;svg'));
+});
+
 test('sameFeedEvents skips stable items and flags the streaming tail', () => {
   const prior = userMsg('hi');
   const tail = asst('Answer so far');

@@ -811,7 +811,9 @@ function FetchBodyContent({ body }: { body: string }) {
   }
   return (
     <div className="max-h-96 overflow-auto rounded-lg bg-droid-elevated/30 px-3.5 py-2.5">
-      <Markdown>{body}</Markdown>
+      {/* Fetched pages are untrusted: diagrams must stay off so an ```svg fence
+          in the body can never reach SvgCodeBlock's dangerouslySetInnerHTML. */}
+      <Markdown allowDiagrams={false}>{body}</Markdown>
     </div>
   );
 }
