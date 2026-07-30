@@ -4,20 +4,8 @@ import {
   createQueuedStudioPrompt,
   latestStudioSessionId,
   pendingStudioClientRef,
-  studioComposerActions,
   studioSessionTitle,
 } from './studioSession';
-
-test('Studio keeps Stop available while a follow-up or reference is attached', () => {
-  assert.deepEqual(studioComposerActions(true, true), {
-    showStop: true,
-    showSend: true,
-  });
-  assert.deepEqual(studioComposerActions(true, false), {
-    showStop: true,
-    showSend: false,
-  });
-});
 
 test('studio titles come from clean visible user intent', () => {
   assert.equal(

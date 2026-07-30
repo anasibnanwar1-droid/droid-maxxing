@@ -1,8 +1,8 @@
-import { useEffect, useRef, useState } from 'react';
-import { ArrowUp, Copy, Gauge, ImagePlus, PenLine, Square, X } from 'lucide-react';
-import { AnimatePresence, motion } from 'framer-motion';
+import { useEffect, useState } from 'react';
+import { Copy, Gauge, ImagePlus, PenLine, X } from 'lucide-react';
 import { useStore } from '../../hooks/useStore';
 import { useStudioCanvas, type StudioCanvasImage } from './StudioCanvasContext';
+import SessionComposer from '../SessionComposer';
 import StudioModelPicker from './StudioModelPicker';
 import { buildStudioPrompt } from './studioPromptContext';
 import { resolveStudioDefaultModel, resolveStudioModelId } from './studioModels';
@@ -10,8 +10,7 @@ import StudioSelector from './StudioSelector';
 import type { ReasoningEffort } from '../../types/bridge';
 import { CANVAS_IMAGE_INPUT_ID } from './studioCanvasImages';
 import StudioPromptQueue from './StudioPromptQueue';
-import { studioComposerActions } from './studioSession';
-import { resolveSessionPromptMode, type SessionPromptMode } from '../../lib/promptQueue';
+import type { SessionPromptMode } from '../../lib/promptQueue';
 
 export interface SendOptions {
   modelId?: string;
@@ -23,6 +22,7 @@ export interface SendOptions {
 }
 
 const COUNTS = [1, 2, 3, 4];
+const NO_REASONING_EFFORTS: ReasoningEffort[] = [];
 
 /** Coerce an effort to one the model supports (fall back to its default). */
 function snapEffort(
@@ -86,8 +86,6 @@ export default function StudioComposer({
   const [reasoningOpen, setReasoningOpen] = useState(false);
   const [count, setCount] = useState(1);
   const [countOpen, setCountOpen] = useState(false);
-  const [sendHover, setSendHover] = useState(false);
-  const taRef = useRef<HTMLTextAreaElement>(null);
 
   // Session value first: setModel dispatches MISSION_SET_MODEL optimistically,
   // so it reflects a pick instantly and stays correct across thread switches
@@ -109,27 +107,15 @@ export default function StudioComposer({
   const hasContent =
     text.trim().length > 0 || attachedAnnotations.length > 0 || canvasImages.length > 0;
   const canSend = hasContent && disabledReason === undefined;
-  const actions = studioComposerActions(streaming ?? false, hasContent);
   const queue = sessionId ? (state.promptQueue[sessionId] ?? []) : [];
-  const enterSteers = state.liveEnterBehavior === 'interrupt';
   const selectedModel = modelId
     ? state.models.find((m) => m.id === modelId)
     : resolveStudioDefaultModel(state.models, state.agentConfig.primary.modelId);
-  const efforts = selectedModel?.supportedReasoningEfforts ?? [];
+  const efforts = selectedModel?.supportedReasoningEfforts ?? NO_REASONING_EFFORTS;
   // Session-first for the same reason as the model above; never show a level
   // the model doesn't support (e.g. leftover "max" from the previous model).
   const rawReasoning = hasSession ? sessionReasoning : localReasoning;
   const reasoningEffort = snapEffort(selectedModel, rawReasoning);
-
-  const grow = () => {
-    const ta = taRef.current;
-    if (!ta) return;
-    ta.style.height = 'auto';
-    ta.style.height = `${String(Math.min(ta.scrollHeight, 200))}px`;
-  };
-
-  // Keep height in sync when the text is set externally (e.g. a suggestion).
-  useEffect(grow, [text]);
 
   // If the live session still carries an unsupported effort (after a model switch),
   // snap it so the badge and the next send agree with the catalog.
@@ -175,7 +161,6 @@ export default function StudioComposer({
     onTextChange('');
     studioDispatch({ type: 'CLEAR_ANNOTATION_CONTEXT' });
     studioDispatch({ type: 'CLEAR_CANVAS_IMAGE_CONTEXT' });
-    if (taRef.current) taRef.current.style.height = 'auto';
   };
 
   return (
@@ -192,90 +177,76 @@ export default function StudioComposer({
           }}
         />
       )}
-      <div className="rounded-xl border border-droid-border bg-droid-bg/75 shadow-sm transition-colors focus-within:border-droid-border-hover">
-        {/* Reference chips + attached images */}
-        {(chips.length > 0 ||
+      <SessionComposer
+        value={text}
+        onValueChange={(value) => {
+          onTextChange(value);
+        }}
+        onSubmit={submit}
+        isLive={streaming ?? false}
+        hasContent={hasContent}
+        canSubmit={canSend}
+        liveEnterBehavior={state.liveEnterBehavior}
+        placeholder="Describe a design change…"
+        onStop={onStop}
+        idleSendTitle={disabledReason ?? 'Enter: send\nShift+Enter: newline'}
+        context={
+          chips.length > 0 ||
           selectedFrame !== undefined ||
           attachedAnnotations.length > 0 ||
-          canvasImages.length > 0) && (
-          <div className="flex flex-wrap items-center gap-1.5 px-3 pt-3">
-            {selectedFrame && (
-              <Chip
-                label={selectedFrame.name}
-                sub={frameHost(selectedFrame.url)}
-                kind="frame"
-                onRemove={() => {
-                  studioDispatch({ type: 'SELECT_FRAMES', ids: [] });
-                }}
-              />
-            )}
-            {chips.map((c) => (
-              <Chip
-                key={c.id}
-                label={c.label}
-                sub={c.tag}
-                kind="element"
-                onRemove={() => {
-                  studioDispatch({ type: 'REMOVE_SELECTION', id: c.id });
-                }}
-              />
-            ))}
-            {attachedAnnotations.length > 0 && (
-              <Chip
-                label="Canvas notes"
-                sub={`${String(attachedAnnotations.length)} mark${
-                  attachedAnnotations.length === 1 ? '' : 's'
-                }`}
-                kind="drawing"
-                onRemove={() => {
-                  studioDispatch({ type: 'CLEAR_ANNOTATION_CONTEXT' });
-                }}
-              />
-            )}
-            {canvasImages.length > 0 && (
-              <Chip
-                label="Canvas moodboard"
-                sub={`${String(canvasImages.length)} image${canvasImages.length === 1 ? '' : 's'}`}
-                kind="image"
-                onRemove={() => {
-                  studioDispatch({ type: 'CLEAR_CANVAS_IMAGE_CONTEXT' });
-                }}
-              />
-            )}
-          </div>
-        )}
-
-        <textarea
-          ref={taRef}
-          value={text}
-          onChange={(e) => {
-            onTextChange(e.target.value);
-            grow();
-          }}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-              e.preventDefault();
-              submit(
-                resolveSessionPromptMode({
-                  isLive: streaming ?? false,
-                  liveEnterBehavior: state.liveEnterBehavior,
-                  alternate: e.metaKey || e.ctrlKey,
-                }),
-              );
-            }
-          }}
-          rows={1}
-          placeholder="Describe a design change…"
-          className="max-h-[200px] w-full resize-none bg-transparent px-3.5 pt-3 pb-2 text-[13.5px] leading-relaxed text-droid-text placeholder:text-droid-text-muted focus:outline-none"
-        />
-
-        {/* Controls: selectors wrap onto their own line so a long model name
-            never collides with the fan-out/send in the narrow 336px column. */}
-        <div className="space-y-1.5 px-2.5 pb-2.5 pt-1">
-          <div className="flex flex-wrap items-center gap-1.5">
-            {/* Model selector — fed by the real Droid CLI catalog */}
+          canvasImages.length > 0 ? (
+            <div className="flex flex-wrap items-center gap-1.5 px-3 pt-3">
+              {selectedFrame && (
+                <Chip
+                  label={selectedFrame.name}
+                  sub={frameHost(selectedFrame.url)}
+                  kind="frame"
+                  onRemove={() => {
+                    studioDispatch({ type: 'SELECT_FRAMES', ids: [] });
+                  }}
+                />
+              )}
+              {chips.map((chip) => (
+                <Chip
+                  key={chip.id}
+                  label={chip.label}
+                  sub={chip.tag}
+                  kind="element"
+                  onRemove={() => {
+                    studioDispatch({ type: 'REMOVE_SELECTION', id: chip.id });
+                  }}
+                />
+              ))}
+              {attachedAnnotations.length > 0 && (
+                <Chip
+                  label="Canvas notes"
+                  sub={`${String(attachedAnnotations.length)} mark${
+                    attachedAnnotations.length === 1 ? '' : 's'
+                  }`}
+                  kind="drawing"
+                  onRemove={() => {
+                    studioDispatch({ type: 'CLEAR_ANNOTATION_CONTEXT' });
+                  }}
+                />
+              )}
+              {canvasImages.length > 0 && (
+                <Chip
+                  label="Canvas moodboard"
+                  sub={`${String(canvasImages.length)} image${
+                    canvasImages.length === 1 ? '' : 's'
+                  }`}
+                  kind="image"
+                  onRemove={() => {
+                    studioDispatch({ type: 'CLEAR_CANVAS_IMAGE_CONTEXT' });
+                  }}
+                />
+              )}
+            </div>
+          ) : undefined
+        }
+        toolbarTop={
+          <>
             <StudioModelPicker value={modelId} onChange={pickModel} />
-            {/* Reasoning effort — shown when the picked model exposes a choice */}
             {efforts.length > 1 && (
               <StudioSelector
                 open={reasoningOpen}
@@ -290,7 +261,6 @@ export default function StudioComposer({
                 hint="reasoning"
               />
             )}
-            {/* Generation-count fan-out */}
             <StudioSelector
               open={countOpen}
               setOpen={setCountOpen}
@@ -303,9 +273,10 @@ export default function StudioComposer({
               icon={<Copy className="h-3 w-3" />}
               hint="directions"
             />
-          </div>
-
-          <div className="flex items-center justify-between gap-2">
+          </>
+        }
+        toolbarLeading={
+          <>
             <div className="flex items-center gap-0.5">
               <IconChip
                 title="Add an image to the canvas"
@@ -317,95 +288,9 @@ export default function StudioComposer({
               </IconChip>
               <span className="px-1 text-[10.5px] text-droid-text-muted">@ mention</span>
             </div>
-
-            {actions.showStop ? (
-              <div className="flex shrink-0 items-center gap-1">
-                <button
-                  type="button"
-                  onClick={() => onStop?.()}
-                  title="Working — click to stop"
-                  aria-label="Stop current design turn"
-                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-droid-accent text-droid-bg transition-opacity hover:opacity-90"
-                >
-                  <Square className="h-3.5 w-3.5" fill="currentColor" strokeWidth={0} />
-                </button>
-                {actions.showSend && (
-                  <div
-                    className="relative shrink-0"
-                    onMouseEnter={() => {
-                      setSendHover(true);
-                    }}
-                    onMouseLeave={() => {
-                      setSendHover(false);
-                    }}
-                  >
-                    <AnimatePresence>
-                      {sendHover && (
-                        <motion.div
-                          initial={{ opacity: 0, y: 4 }}
-                          animate={{ opacity: 1, y: 0 }}
-                          exit={{ opacity: 0, y: 4 }}
-                          transition={{ duration: 0.12, ease: [0.16, 1, 0.3, 1] }}
-                          className="absolute bottom-full right-0 z-50 mb-2 flex flex-col gap-0.5 rounded-xl border border-droid-border bg-droid-elevated p-1.5 shadow-2xl shadow-black/40"
-                        >
-                          {[
-                            { label: enterSteers ? 'Steer' : 'Queue', keys: ['⏎'] },
-                            { label: enterSteers ? 'Queue' : 'Steer', keys: ['⌘', '⏎'] },
-                          ].map((row) => (
-                            <div
-                              key={row.label}
-                              className="flex items-center justify-between gap-3 rounded-lg px-2 py-1 text-[12px] text-droid-text"
-                            >
-                              <span>{row.label}</span>
-                              <span className="flex items-center gap-0.5 rounded-md bg-droid-bg/70 px-1.5 py-0.5 text-[11px] text-droid-text-secondary">
-                                {row.keys.map((key) => (
-                                  <kbd key={key} className="font-sans leading-none">
-                                    {key}
-                                  </kbd>
-                                ))}
-                              </span>
-                            </div>
-                          ))}
-                        </motion.div>
-                      )}
-                    </AnimatePresence>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        submit(
-                          resolveSessionPromptMode({
-                            isLive: streaming ?? false,
-                            liveEnterBehavior: state.liveEnterBehavior,
-                          }),
-                        );
-                      }}
-                      aria-label={enterSteers ? 'Steer current design turn' : 'Queue design prompt'}
-                      className="flex h-8 w-8 items-center justify-center rounded-lg bg-droid-text text-droid-bg transition-colors hover:bg-droid-text-secondary"
-                    >
-                      <ArrowUp className="h-3.5 w-3.5" />
-                    </button>
-                  </div>
-                )}
-              </div>
-            ) : (
-              <button
-                onClick={() => {
-                  submit();
-                }}
-                disabled={!canSend}
-                title={disabledReason ?? 'Send (Enter)'}
-                className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg transition-all duration-150 ${
-                  canSend
-                    ? 'bg-droid-accent text-droid-bg hover:opacity-90 active:translate-y-px'
-                    : 'cursor-not-allowed bg-droid-elevated text-droid-text-muted'
-                }`}
-              >
-                <ArrowUp className="h-4 w-4" strokeWidth={2.5} />
-              </button>
-            )}
-          </div>
-        </div>
-      </div>
+          </>
+        }
+      />
       {disabledReason && (
         <div className="px-2 pt-1.5 text-[11px] text-droid-text-muted">{disabledReason}</div>
       )}

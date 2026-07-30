@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useMemo, type SetStateAction } from 'react';
-import { AnimatePresence, motion } from 'framer-motion';
+import { AnimatePresence } from 'framer-motion';
 import { useStore } from '../hooks/useStore';
 import type { QueuedPrompt } from '../hooks/useStore';
 import { useSessionLive } from '../hooks/useSessionLive';
@@ -20,12 +20,10 @@ import { useImageFileDrop } from '../hooks/useImageFileDrop';
 import { ImageChip } from './composer/ImageChip';
 import { ImageViewerModal } from './composer/ImageViewerModal';
 import PlanSteps from './composer/PlanSteps';
-import { QueuedPrompts } from './composer/QueuedPrompts';
 import { markGitTurnStart } from '../lib/git';
 import {
   createLocalUserTranscriptEvent,
   newQueueId,
-  resolveSessionPromptMode,
   shouldQueueSessionPrompt,
   type SessionPromptMode,
 } from '../lib/promptQueue';
@@ -42,7 +40,17 @@ import {
   visibleSessionTarget,
   type VisibleSessionTarget,
 } from '../lib/childSessions';
-import { ArrowUp, ChevronDown, Plus, SlidersHorizontal, Square, FileText, X } from 'lucide-react';
+import {
+  ChevronDown,
+  Plus,
+  SlidersHorizontal,
+  FileText,
+  X,
+  ListPlus,
+  GripVertical,
+  Pencil,
+  MousePointerSquareDashed,
+} from 'lucide-react';
 import ComposerMenu, { type MenuItem, type SlashCommand } from './ComposerMenu';
 import ModelSelectorPopover from './ModelSelectorPopover';
 import {
@@ -53,12 +61,12 @@ import ContextStatusCluster from './ContextStatusCluster';
 import PermissionInline from './PermissionInline';
 import PlanApprovalInline from './PlanApprovalInline';
 import { ModelIcon, providerOf } from './ModelIcon';
+import SessionComposer from './SessionComposer';
 import { StartInBar } from './environment/StartInBar';
 import type { SkillInfo } from '../types/bridge';
 
 const ACCENT = 'var(--droid-accent)';
-const accentMix = (pct: number) =>
-  `color-mix(in srgb, var(--droid-accent) ${String(pct)}%, transparent)`;
+const accentMix = (pct: number) => `color-mix(in srgb, var(--droid-accent) ${pct}%, transparent)`;
 
 interface Trigger {
   kind: 'slash' | 'file';
@@ -69,16 +77,11 @@ interface Trigger {
 
 function getTrigger(text: string, caret: number): Trigger | null {
   const upto = text.slice(0, caret);
-  const m = /(^|\s)([/@][^\s]*)$/.exec(upto);
+  const m = upto.match(/(^|\s)([/@][^\s]*)$/);
   if (!m) return null;
   const token = m[2];
   const start = caret - token.length;
-  return {
-    kind: token.startsWith('/') ? 'slash' : 'file',
-    query: token.slice(1),
-    start,
-    end: caret,
-  };
+  return { kind: token[0] === '/' ? 'slash' : 'file', query: token.slice(1), start, end: caret };
 }
 
 function basename(p: string): string {
@@ -126,7 +129,9 @@ export default function PromptInput({
     composerRevisionRef.current += 1;
     setActiveSkillsState(value);
   };
-  const [sendHover, setSendHover] = useState(false);
+  const [dragIndex, setDragIndex] = useState<number | null>(null);
+  const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
+  const [actionOverlayOpen, setActionOverlayOpen] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const submittingRef = useRef(false);
   const pendingCaret = useRef<number | null>(null);
@@ -211,60 +216,33 @@ export default function PromptInput({
     {
       cmd: '/mission',
       desc: 'Enter Mission Control',
-      run: () => {
-        dispatch({ type: 'TOGGLE_MISSION_CONTROL' });
-      },
+      run: () => dispatch({ type: 'TOGGLE_MISSION_CONTROL' }),
     },
-    {
-      cmd: '/model',
-      desc: 'Open model selector',
-      run: () => {
-        setModelsOpen(true);
-      },
-    },
+    { cmd: '/model', desc: 'Open model selector', run: () => setModelsOpen(true) },
     {
       cmd: '/compact',
       desc: 'Compact current session',
-      run: () => {
-        if (primaryActionsEnabled && activeSession) compactSession(activeSession.appSessionId);
-      },
+      run: () =>
+        primaryActionsEnabled && activeSession && compactSession(activeSession.appSessionId),
     },
     {
       cmd: '/compaction',
       desc: 'Compact current session',
-      run: () => {
-        if (primaryActionsEnabled && activeSession) compactSession(activeSession.appSessionId);
-      },
+      run: () =>
+        primaryActionsEnabled && activeSession && compactSession(activeSession.appSessionId),
     },
     {
       cmd: '/compression',
       desc: 'Compact current session',
-      run: () => {
-        if (primaryActionsEnabled && activeSession) compactSession(activeSession.appSessionId);
-      },
+      run: () =>
+        primaryActionsEnabled && activeSession && compactSession(activeSession.appSessionId),
     },
-    {
-      cmd: '/spec',
-      desc: 'Toggle spec mode',
-      run: () => {
-        toggleSpec();
-      },
-    },
-    {
-      cmd: '/settings',
-      desc: 'Open settings',
-      run: () => {
-        dispatch({ type: 'TOGGLE_SETTINGS' });
-      },
-    },
+    { cmd: '/spec', desc: 'Toggle spec mode', run: () => toggleSpec() },
+    { cmd: '/settings', desc: 'Open settings', run: () => dispatch({ type: 'TOGGLE_SETTINGS' }) },
   ];
 
   const trigger = useMemo(() => getTrigger(input, caret), [input, caret]);
-  const overlayOpen = Boolean(trigger ?? (modelsOpen || (isLive && sendHover)));
-
-  useEffect(() => {
-    if (!isLive) setSendHover(false);
-  }, [isLive]);
+  const overlayOpen = Boolean(trigger || modelsOpen || actionOverlayOpen);
 
   useEffect(() => {
     onOverlayChange?.(overlayOpen);
@@ -345,7 +323,7 @@ export default function PromptInput({
 
   // Lazy-load files when an @-trigger is active and cwd changed.
   useEffect(() => {
-    if (trigger?.kind !== 'file' || !cwd) return;
+    if (!trigger || trigger.kind !== 'file' || !cwd) return;
     if (filesCwd === cwd) return;
     let cancelled = false;
     void listFiles(cwd).then((list) => {
@@ -364,10 +342,8 @@ export default function PromptInput({
   }, [trigger?.kind, trigger?.query]);
 
   // Leave history-recall mode and drop any composer draft attachments when
-  // switching conversations, so skills/files/images staged for one chat don't
-  // linger on another chat's prompt bar. No prompt referenced the staged
-  // images, so their temp files are deleted too. clearAndDiscardImages is
-  // useCallback-stable, so this still fires only on a session switch.
+  // switching conversations. Unsent pasted images have no prompt owner, so
+  // discard their temporary files as well.
   const clearAndDiscardImages = imageAttachments.clearAndDiscard;
   useEffect(() => {
     setHistoryIndex(null);
@@ -376,29 +352,15 @@ export default function PromptInput({
     clearAndDiscardImages();
   }, [activeSession?.appSessionId, clearAndDiscardImages]);
 
-  // Welcome-screen suggestion cards and saved notes seed the composer through
-  // the store so those surfaces and this input stay decoupled. The pendingCaret
-  // effect below focuses the field and moves the caret to the end of the text.
   const composerSeed = state.composerSeed;
   useEffect(() => {
     if (!composerSeed) return;
     setHistoryIndex(null);
-    // Append to an in-progress draft instead of clobbering it (welcome cards
-    // only appear over an empty composer, so this is a plain set for them).
     const text = input.trim() ? `${input.trimEnd()}\n\n${composerSeed.text}` : composerSeed.text;
     setInput(text);
     pendingCaret.current = text.length;
-    // Consume the seed so a later remount (e.g. toggling Mission Control, which
-    // unmounts this input) does not re-apply stale text over the user's edits.
     dispatch({ type: 'CLEAR_COMPOSER_SEED' });
   }, [composerSeed, input, dispatch]);
-
-  useEffect(() => {
-    if (textareaRef.current) {
-      textareaRef.current.style.height = 'auto';
-      textareaRef.current.style.height = `${String(Math.min(textareaRef.current.scrollHeight, 200))}px`;
-    }
-  }, [input]);
 
   // Restore caret after programmatic token replacement.
   useEffect(() => {
@@ -430,6 +392,8 @@ export default function PromptInput({
     state.agentConfig.primary.reasoning,
     selectedModel,
   );
+  const showReasoningBadge =
+    !selectedModel || (selectedModel.supportedReasoningEfforts?.length ?? 0) > 0;
 
   const replaceTrigger = (replacement: string) => {
     if (!trigger) return;
@@ -445,8 +409,6 @@ export default function PromptInput({
     replaceTrigger('');
   };
 
-  // Plus button: native multi-file picker in the desktop app; in a plain
-  // browser there is no dialog, so drop an @ trigger to open the file menu.
   const handleAttachFiles = async () => {
     if (!isDesktop()) {
       const next = input.length === 0 || input.endsWith(' ') ? `${input}@` : `${input} @`;
@@ -456,7 +418,10 @@ export default function PromptInput({
     }
     const paths = await pickFiles();
     if (paths.length > 0) {
-      setAttachedFiles((prev) => [...prev, ...paths.filter((p) => !prev.includes(p))]);
+      setAttachedFiles((previous) => [
+        ...previous,
+        ...paths.filter((path) => !previous.includes(path)),
+      ]);
     }
   };
 
@@ -484,7 +449,7 @@ export default function PromptInput({
     composeFrom(
       text,
       activeSkills.map((s) => s.name),
-      [...attachedFiles, ...images.map((i) => i.path)],
+      [...attachedFiles, ...images.map((image) => image.path)],
     );
 
   // Re-entry guard: a send awaits markGitTurnStart before the input is cleared,
@@ -502,15 +467,9 @@ export default function PromptInput({
 
   const runSubmit = async (mode: SessionPromptMode = 'queue') => {
     const text = input.trim();
-    // Snapshot the composer revision before the settle wait: text, files, and
-    // skills are render-closure snapshots, so anything typed or staged while
-    // images finish encoding is not part of this prompt — and must survive
-    // the post-submit clear below.
     const composerRevision = composerRevisionRef.current;
-    // Pasted/dropped images encode asynchronously; wait out any in-flight adds
-    // so they make this prompt instead of surfacing on the next one via clear().
     const readyImages = await imageAttachments.whenSettled();
-    const allFiles = [...attachedFiles, ...readyImages.map((i) => i.path)];
+    const allFiles = [...attachedFiles, ...readyImages.map((image) => image.path)];
     const hasPayload = text || activeSkills.length > 0 || allFiles.length > 0;
     if (!hasPayload) return;
     setHistoryIndex(null);
@@ -518,9 +477,7 @@ export default function PromptInput({
     const clearAfterSubmit = () => {
       resetComposerAfterSubmit({
         draftUntouched: composerRevisionRef.current === composerRevision,
-        clearImages: () => {
-          imageAttachments.clear();
-        },
+        clearImages: imageAttachments.clear,
         resetDraft: () => {
           setInput('');
           setActiveSkills([]);
@@ -547,7 +504,7 @@ export default function PromptInput({
     const composed = composeText(text, readyImages);
 
     const skillNames = activeSkills.map((s) => s.name);
-    const registerPending = (ref: string) => {
+    const registerPending = (ref: string) =>
       dispatch({
         type: 'SET_PENDING_COMPOSE',
         clientRef: ref,
@@ -555,7 +512,6 @@ export default function PromptInput({
         skills: skillNames,
         files: allFiles,
       });
-    };
 
     // Mission Control preview with no active session: prompt is the objective.
     if (missionPreview && !activeSession) {
@@ -618,6 +574,8 @@ export default function PromptInput({
       return;
     }
 
+    if (!activeSession) return;
+
     // Model is working and the user chose to queue: stage the prompt locally.
     // It is held client-side and delivered automatically when the turn finishes.
     if (
@@ -650,6 +608,7 @@ export default function PromptInput({
         }),
       });
     };
+    const resetComposer = clearAfterSubmit;
     const sendCommand = () => {
       try {
         if (targetChildSessionId) {
@@ -671,14 +630,14 @@ export default function PromptInput({
         currentTarget: () => visibleTargetRef.current,
         currentComposerRevision: () => composerRevisionRef.current,
         appendTranscript,
-        resetComposer: clearAfterSubmit,
+        resetComposer,
         sendCommand,
       });
       return;
     }
 
     appendTranscript();
-    clearAfterSubmit();
+    resetComposer();
 
     // Capture the last-turn baseline before the agent can touch the tree;
     // a fire-and-forget call here races the first edit and corrupts the diff.
@@ -693,9 +652,6 @@ export default function PromptInput({
 
   const editQueuedInComposer = (p: QueuedPrompt) => {
     if (!activeSession) return;
-    // The queued prompt carries its own files; drop any images pasted after it
-    // was queued so they don't ride along on the edited prompt, and delete
-    // their temp files — no prompt ever referenced them.
     imageAttachments.clearAndDiscard();
     setInput(p.text);
     setAttachedFiles(p.files);
@@ -704,41 +660,42 @@ export default function PromptInput({
     requestAnimationFrame(() => textareaRef.current?.focus());
   };
 
-  const reorderQueue = (from: number, to: number) => {
-    if (activeSession)
-      dispatch({ type: 'REORDER_QUEUE', appSessionId: activeSession.appSessionId, from, to });
+  const handleQueueDrop = (to: number) => {
+    if (activeSession && dragIndex !== null && dragIndex !== to) {
+      dispatch({
+        type: 'REORDER_QUEUE',
+        appSessionId: activeSession.appSessionId,
+        from: dragIndex,
+        to,
+      });
+    }
+    setDragIndex(null);
+    setDragOverIndex(null);
   };
 
-  const removeQueued = (id: string) => {
-    if (activeSession)
-      dispatch({ type: 'REMOVE_QUEUED_PROMPT', appSessionId: activeSession.appSessionId, id });
-  };
+  const syncCaret = (el: HTMLTextAreaElement) => setCaret(el.selectionStart ?? 0);
 
-  const syncCaret = (el: HTMLTextAreaElement) => {
-    setCaret(el.selectionStart);
-  };
-
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+  const handleComposerKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>): boolean => {
     if (menuOpen) {
       if (e.key === 'ArrowDown') {
         e.preventDefault();
         setMenuIndex((i) => (i + 1) % menuItems.length);
-        return;
+        return true;
       }
       if (e.key === 'ArrowUp') {
         e.preventDefault();
         setMenuIndex((i) => (i - 1 + menuItems.length) % menuItems.length);
-        return;
+        return true;
       }
       if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey)) {
         e.preventDefault();
         runMenuItem(menuItems[Math.min(menuIndex, menuItems.length - 1)]);
-        return;
+        return true;
       }
       if (e.key === 'Escape') {
         e.preventDefault();
         replaceTrigger('');
-        return;
+        return true;
       }
     }
     if (
@@ -747,9 +704,9 @@ export default function PromptInput({
       (attachedFiles.length > 0 || imageAttachments.images.length > 0)
     ) {
       e.preventDefault();
-      if (attachedFiles.length > 0) setAttachedFiles((prev) => prev.slice(0, -1));
+      if (attachedFiles.length > 0) setAttachedFiles((previous) => previous.slice(0, -1));
       else imageAttachments.remove(imageAttachments.images[imageAttachments.images.length - 1].id);
-      return;
+      return true;
     }
     // Shell-style history recall. ArrowUp starts only from the top of the field
     // (so it doesn't hijack caret movement in a multi-line draft); once in
@@ -767,7 +724,7 @@ export default function PromptInput({
         const text = promptHistory[nextIndex];
         setInput(text);
         pendingCaret.current = text.length;
-        return;
+        return true;
       }
     }
     if (e.key === 'ArrowDown' && plain && historyIndex !== null) {
@@ -779,18 +736,9 @@ export default function PromptInput({
       setHistoryIndex(historyIndex >= promptHistory.length - 1 ? null : historyIndex + 1);
       setInput(text);
       pendingCaret.current = text.length;
-      return;
+      return true;
     }
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      void handleSubmit(
-        resolveSessionPromptMode({
-          isLive,
-          liveEnterBehavior: state.liveEnterBehavior,
-          alternate: e.metaKey || e.ctrlKey,
-        }),
-      );
-    }
+    return false;
   };
 
   const boxBorder = isSpecMode
@@ -799,11 +747,10 @@ export default function PromptInput({
 
   const hasChips =
     activeSkills.length > 0 || attachedFiles.length > 0 || imageAttachments.images.length > 0;
-  const viewerImage = imageAttachments.images.find((i) => i.id === viewerImageId) ?? null;
+  const viewerImage = imageAttachments.images.find((image) => image.id === viewerImageId) ?? null;
   // The "Start in" repo/worktree/branch row only applies while drafting a brand
   // new chat; it renders as the top section of the composer card.
   const showStartIn = !activeSession && !missionPreview && !!cwd;
-  const enterSteers = state.liveEnterBehavior === 'interrupt';
   const idleSendTooltip = childActionsEnabled
     ? 'Enter: send\nShift+Enter: newline'
     : 'This child transcript is read-only';
@@ -852,12 +799,86 @@ export default function PromptInput({
           </div>
         ) : null}
 
-        <QueuedPrompts
-          queue={queue}
-          onReorder={reorderQueue}
-          onEdit={editQueuedInComposer}
-          onRemove={removeQueued}
-        />
+        {queue.length > 0 && (
+          <div className="mb-2 flex flex-col gap-1.5">
+            <div className="flex items-center gap-1.5 px-1 text-[10px] font-medium tracking-wide text-droid-text-muted">
+              <ListPlus className="w-3 h-3" />
+              Queued · sends after the current turn
+            </div>
+            {queue.map((p, i) => (
+              <div
+                key={p.id}
+                draggable
+                onDragStart={() => setDragIndex(i)}
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  setDragOverIndex(i);
+                }}
+                onDrop={() => handleQueueDrop(i)}
+                onDragEnd={() => {
+                  setDragIndex(null);
+                  setDragOverIndex(null);
+                }}
+                className={`group flex items-start gap-2 rounded-xl border bg-droid-elevated px-2 py-1.5 transition-colors ${
+                  dragOverIndex === i && dragIndex !== null && dragIndex !== i
+                    ? 'border-droid-orange'
+                    : 'border-droid-border'
+                }`}
+              >
+                <span
+                  className="mt-0.5 cursor-grab text-droid-text-muted/60 active:cursor-grabbing"
+                  title="Drag to reorder"
+                >
+                  <GripVertical className="w-3.5 h-3.5" />
+                </span>
+                <span className="flex-1 min-w-0">
+                  <span className="block whitespace-pre-wrap break-words text-[12px] text-droid-text-secondary">
+                    {p.text || '(empty)'}
+                  </span>
+                  {p.design && p.design.references.length > 0 && (
+                    <span className="mt-1 inline-flex items-center gap-1 rounded-md bg-black/20 px-1.5 py-0.5 text-[10px] text-droid-text-muted">
+                      <MousePointerSquareDashed className="w-3 h-3" />
+                      {p.design.references.length} reference
+                      {p.design.references.length === 1 ? '' : 's'}
+                    </span>
+                  )}
+                  {p.studio && (p.studio.browserRefs?.length ?? 0) > 0 && (
+                    <span className="mt-1 inline-flex items-center gap-1 rounded-md bg-black/20 px-1.5 py-0.5 text-[10px] text-droid-text-muted">
+                      <MousePointerSquareDashed className="w-3 h-3" />
+                      {p.studio.browserRefs?.length} reference
+                      {p.studio.browserRefs?.length === 1 ? '' : 's'}
+                    </span>
+                  )}
+                </span>
+                <div className="flex shrink-0 items-center gap-0.5">
+                  {!p.design && !p.studio && (
+                    <button
+                      onClick={() => editQueuedInComposer(p)}
+                      className="rounded p-1 text-droid-text-muted hover:text-droid-text hover:bg-black/20"
+                      title="Edit in composer"
+                    >
+                      <Pencil className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                  <button
+                    onClick={() =>
+                      activeSession &&
+                      dispatch({
+                        type: 'REMOVE_QUEUED_PROMPT',
+                        appSessionId: activeSession.appSessionId,
+                        id: p.id,
+                      })
+                    }
+                    className="rounded p-1 text-droid-text-muted hover:text-droid-orange hover:bg-black/20"
+                    title="Delete"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
 
         {showStartIn && (
           <div className="relative z-0 mx-[6%] -mb-3 min-w-0 rounded-t-2xl border border-droid-border bg-droid-surface px-4 pb-4 pt-1.5">
@@ -867,9 +888,51 @@ export default function PromptInput({
 
         <PlanSteps />
 
-        <div
-          className={`relative z-10 bg-droid-elevated border rounded-2xl transition-colors ${missionPreview ? '' : boxBorder}`}
-          style={
+        <SessionComposer
+          ref={textareaRef}
+          value={input}
+          onValueChange={(value, textarea) => {
+            setInput(value);
+            syncCaret(textarea);
+            setHistoryIndex(null);
+          }}
+          onSelectionChange={syncCaret}
+          onPaste={(event) => {
+            const items = Array.from(event.clipboardData.items).filter(
+              (item) => item.kind === 'file' && item.type.startsWith('image/'),
+            );
+            if (items.length === 0) return;
+            event.preventDefault();
+            for (const item of items) {
+              const blob = item.getAsFile();
+              if (blob) imageAttachments.addBlob(blob);
+            }
+          }}
+          onBeforeKeyDown={handleComposerKeyDown}
+          onSubmit={handleSubmit}
+          isLive={isLive}
+          hasContent={hasContent}
+          canSubmit={hasContent && childActionsEnabled}
+          liveEnterBehavior={state.liveEnterBehavior}
+          placeholder={
+            missionPreview
+              ? activeSession
+                ? targetChildSessionId
+                  ? 'Steer the selected child session…'
+                  : 'Direct the orchestrator…'
+                : 'Describe the mission objective…'
+              : isSpecMode
+                ? 'Describe what to build in spec mode...'
+                : 'What would you like to work on?  (/ for skills, @ for files)'
+          }
+          onStop={() => {
+            if (activeSession)
+              interruptVisibleSession(activeSession.appSessionId, targetChildSessionId);
+          }}
+          onActionOverlayChange={setActionOverlayOpen}
+          idleSendTitle={idleSendTooltip}
+          cardClassName={missionPreview ? '' : boxBorder}
+          cardStyle={
             missionPreview
               ? {
                   borderColor: accentMix(40),
@@ -877,290 +940,177 @@ export default function PromptInput({
                 }
               : undefined
           }
-        >
-          {hasChips && (
-            <div className="flex flex-wrap gap-1.5 px-3 pt-3">
-              {imageAttachments.images.map((img) => (
-                <ImageChip
-                  key={img.id}
-                  image={img}
-                  onOpen={() => {
-                    setViewerImageId(img.id);
-                  }}
-                  onRemove={() => {
-                    imageAttachments.remove(img.id);
-                  }}
-                />
-              ))}
-              {activeSkills.map((skill) => (
-                <span
-                  key={skill.filePath}
-                  className="group flex items-center gap-1.5 pl-2 pr-1 py-1 rounded-lg text-[11px] font-medium"
-                  style={{
-                    background: accentMix(14),
-                    color: ACCENT,
-                    boxShadow: `inset 0 0 0 1px ${accentMix(35)}`,
-                  }}
-                  title={skill.description ?? skill.filePath}
-                >
-                  {skill.name}
-                  <button
-                    onClick={() => {
-                      setActiveSkills((prev) => prev.filter((s) => s.filePath !== skill.filePath));
+          context={
+            hasChips ? (
+              <div className="flex flex-wrap gap-1.5 px-3 pt-3">
+                {imageAttachments.images.map((image) => (
+                  <ImageChip
+                    key={image.id}
+                    image={image}
+                    onOpen={() => {
+                      setViewerImageId(image.id);
                     }}
-                    className="p-0.5 rounded hover:bg-black/20 transition-colors"
-                    title="Remove skill"
-                  >
-                    <X className="w-2.5 h-2.5" />
-                  </button>
-                </span>
-              ))}
-              {attachedFiles.map((f) => (
-                <span
-                  key={f}
-                  className="group flex items-center gap-1.5 pl-2 pr-1 py-1 rounded-lg text-[11px] bg-droid-bg/60 text-droid-text-secondary border border-droid-border"
-                  title={f}
-                >
-                  <FileText className="w-3 h-3 text-droid-text-muted" />
-                  {basename(f)}
-                  <button
-                    onClick={() => {
-                      setAttachedFiles((prev) => prev.filter((x) => x !== f));
+                    onRemove={() => {
+                      imageAttachments.remove(image.id);
                     }}
-                    className="p-0.5 rounded hover:bg-black/20 transition-colors"
-                    title="Remove file"
-                  >
-                    <X className="w-2.5 h-2.5" />
-                  </button>
-                </span>
-              ))}
-            </div>
-          )}
-
-          <textarea
-            ref={textareaRef}
-            value={input}
-            onChange={(e) => {
-              setInput(e.target.value);
-              syncCaret(e.target);
-              setHistoryIndex(null);
-            }}
-            onKeyUp={(e) => {
-              syncCaret(e.currentTarget);
-            }}
-            onClick={(e) => {
-              syncCaret(e.currentTarget);
-            }}
-            onSelect={(e) => {
-              syncCaret(e.currentTarget);
-            }}
-            onKeyDown={handleKeyDown}
-            onPaste={(e) => {
-              const items = Array.from(e.clipboardData.items).filter(
-                (it) => it.kind === 'file' && it.type.startsWith('image/'),
-              );
-              if (items.length === 0) return;
-              e.preventDefault();
-              for (const item of items) {
-                const blob = item.getAsFile();
-                if (blob) imageAttachments.addBlob(blob);
-              }
-            }}
-            placeholder={
-              missionPreview
-                ? activeSession
-                  ? targetChildSessionId
-                    ? 'Steer the selected child session…'
-                    : 'Direct the orchestrator…'
-                  : 'Describe the mission objective…'
-                : isSpecMode
-                  ? 'Describe what to build in spec mode...'
-                  : 'What would you like to work on?  (/ for skills, @ for files)'
-            }
-            rows={1}
-            className="w-full bg-transparent px-4 pt-3 pb-2 text-sm text-droid-text placeholder-droid-text-muted/50 resize-none focus:outline-none min-h-[44px] max-h-[200px]"
-          />
-
-          {/* Toolbar — one seamless surface with the textarea, no divider line */}
-          <div className="flex items-center gap-1.5 px-2.5 pb-2.5 pt-1">
-            <button
-              onClick={() => void handleAttachFiles()}
-              className="p-1.5 rounded-lg text-droid-text-muted hover:text-droid-text hover:bg-droid-bg/50 transition-colors shrink-0"
-              title="Add files"
-            >
-              <Plus className="w-4 h-4" />
-            </button>
-
-            <div className="relative shrink-0">
-              <button
-                onClick={() => {
-                  setModelsOpen((v) => !v);
-                }}
-                className={`flex items-center gap-1.5 px-2 py-1 rounded-lg text-[11px] transition-colors max-w-[200px] ${
-                  modelsOpen
-                    ? 'bg-droid-bg/60 text-droid-text'
-                    : 'text-droid-text-secondary hover:text-droid-text hover:bg-droid-bg/40'
-                }`}
-                title={
-                  childSettingsTarget
-                    ? `${childSettingsTarget.label} · ${childSettingsReadinessLabel(childSettingsTarget.readiness)}`
-                    : missionPreview
-                      ? 'Configure orchestrator / worker / validator models'
-                      : 'Select chat model'
-                }
-              >
-                {childSettingsTarget ? (
-                  <>
-                    <ModelIcon
-                      provider={providerOf(
-                        state.models.find((model) => model.id === childSettingsTarget.modelId),
-                        childSettingsTarget.modelId,
-                      )}
-                      size={14}
-                    />
-                    <span className="truncate">{childSettingsTarget.label}</span>
-                  </>
-                ) : missionPreview ? (
-                  <>
-                    <SlidersHorizontal className="w-3.5 h-3.5 shrink-0" />
-                    <span>Models</span>
-                  </>
-                ) : (
-                  <>
-                    <ModelIcon provider={providerOf(selectedModel, primaryModelId)} size={14} />
-                    <span className="truncate">{selectedModelLabel}</span>
-                    {primaryReasoning && (
-                      <span
-                        className="shrink-0 px-1.5 py-0.5 rounded-md text-[9px] font-medium capitalize leading-none"
-                        style={{
-                          color: 'var(--droid-accent)',
-                          backgroundColor:
-                            'color-mix(in srgb, var(--droid-accent) 13%, transparent)',
-                        }}
-                        title={`Reasoning: ${primaryReasoning}`}
-                      >
-                        {primaryReasoning}
-                      </span>
-                    )}
-                  </>
-                )}
-                <ChevronDown
-                  className={`w-3 h-3 shrink-0 text-droid-text-muted/40 transition-transform ${modelsOpen ? 'rotate-180' : ''}`}
-                />
-              </button>
-
-              <AnimatePresence>
-                {modelsOpen && (
-                  <ModelSelectorPopover
-                    onClose={() => {
-                      setModelsOpen(false);
-                    }}
-                    singleAgent={!missionPreview}
-                    childTarget={childSettingsTarget}
                   />
-                )}
-              </AnimatePresence>
-            </div>
-
-            <button
-              onClick={toggleSpec}
-              className={`flex items-center gap-1.5 px-2 py-1 rounded-lg text-[11px] transition-colors shrink-0 ${
-                isSpecMode
-                  ? 'text-droid-accent bg-droid-accent/10 hover:bg-droid-accent/15'
-                  : 'text-droid-text-secondary hover:text-droid-text hover:bg-droid-bg/40'
-              }`}
-            >
-              <span>{isSpecMode ? 'Spec' : 'Chat'}</span>
-            </button>
-
-            <div className="flex-1 min-w-0" />
-
-            <ContextStatusCluster />
-
-            {isLive && !hasContent ? (
-              <button
-                onClick={() => {
-                  if (activeSession)
-                    interruptVisibleSession(activeSession.appSessionId, targetChildSessionId);
-                }}
-                title="Working — click to stop"
-                className="p-2 rounded-full text-droid-bg shrink-0 transition-opacity hover:opacity-90"
-                style={{ background: ACCENT }}
-              >
-                <Square className="w-3.5 h-3.5" fill="currentColor" strokeWidth={0} />
-              </button>
-            ) : isLive ? (
-              <div
-                className="relative shrink-0"
-                onMouseEnter={() => {
-                  setSendHover(true);
-                }}
-                onMouseLeave={() => {
-                  setSendHover(false);
-                }}
-              >
-                <AnimatePresence>
-                  {sendHover && (
-                    <motion.div
-                      initial={{ opacity: 0, y: 4 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      exit={{ opacity: 0, y: 4 }}
-                      transition={{ duration: 0.12, ease: [0.16, 1, 0.3, 1] }}
-                      className="absolute bottom-full right-0 mb-2 z-50 flex flex-col gap-0.5 rounded-xl border border-droid-border bg-droid-elevated p-1.5 shadow-2xl shadow-black/40"
+                ))}
+                {activeSkills.map((skill) => (
+                  <span
+                    key={skill.filePath}
+                    className="group flex items-center gap-1.5 rounded-lg py-1 pl-2 pr-1 text-[11px] font-medium"
+                    style={{
+                      background: accentMix(14),
+                      color: ACCENT,
+                      boxShadow: `inset 0 0 0 1px ${accentMix(35)}`,
+                    }}
+                    title={skill.description ?? skill.filePath}
+                  >
+                    {skill.name}
+                    <button
+                      onClick={() => {
+                        setActiveSkills((prev) =>
+                          prev.filter((s) => s.filePath !== skill.filePath),
+                        );
+                      }}
+                      className="rounded p-0.5 transition-colors hover:bg-black/20"
+                      title="Remove skill"
                     >
-                      {[
-                        { label: enterSteers ? 'Steer' : 'Queue', keys: ['⏎'] },
-                        { label: enterSteers ? 'Queue' : 'Steer', keys: ['⌘', '⏎'] },
-                      ].map((row) => (
-                        <div
-                          key={row.label}
-                          className="flex items-center justify-between gap-3 rounded-lg px-2 py-1 text-[12px] text-droid-text"
+                      <X className="h-2.5 w-2.5" />
+                    </button>
+                  </span>
+                ))}
+                {attachedFiles.map((file) => (
+                  <span
+                    key={file}
+                    className="group flex items-center gap-1.5 rounded-lg border border-droid-border bg-droid-bg/60 py-1 pl-2 pr-1 text-[11px] text-droid-text-secondary"
+                    title={file}
+                  >
+                    <FileText className="h-3 w-3 text-droid-text-muted" />
+                    {basename(file)}
+                    <button
+                      onClick={() => {
+                        setAttachedFiles((prev) => prev.filter((candidate) => candidate !== file));
+                      }}
+                      className="rounded p-0.5 transition-colors hover:bg-black/20"
+                      title="Remove file"
+                    >
+                      <X className="h-2.5 w-2.5" />
+                    </button>
+                  </span>
+                ))}
+              </div>
+            ) : undefined
+          }
+          toolbarLeading={
+            <>
+              <button
+                onClick={() => void handleAttachFiles()}
+                className="shrink-0 rounded-lg p-1.5 text-droid-text-muted transition-colors hover:bg-droid-bg/50 hover:text-droid-text"
+                title="Add files"
+                aria-label="Add files"
+              >
+                <Plus className="h-4 w-4" />
+              </button>
+
+              <div className="relative shrink-0">
+                <button
+                  onClick={() => {
+                    setModelsOpen((v) => !v);
+                  }}
+                  className={`flex items-center gap-1.5 px-2 py-1 rounded-lg text-[11px] transition-colors max-w-[200px] ${
+                    modelsOpen
+                      ? 'bg-droid-bg/60 text-droid-text'
+                      : 'text-droid-text-secondary hover:text-droid-text hover:bg-droid-bg/40'
+                  }`}
+                  title={
+                    childSettingsTarget
+                      ? `${childSettingsTarget.label} · ${childSettingsReadinessLabel(childSettingsTarget.readiness)}`
+                      : missionPreview
+                        ? 'Configure orchestrator / worker / validator models'
+                        : 'Select chat model'
+                  }
+                >
+                  {childSettingsTarget ? (
+                    <>
+                      <ModelIcon
+                        provider={providerOf(
+                          state.models.find((model) => model.id === childSettingsTarget.modelId),
+                          childSettingsTarget.modelId,
+                        )}
+                        size={14}
+                      />
+                      <span className="truncate">{childSettingsTarget.label}</span>
+                    </>
+                  ) : missionPreview ? (
+                    <>
+                      <SlidersHorizontal className="w-3.5 h-3.5 shrink-0" />
+                      <span>Models</span>
+                    </>
+                  ) : (
+                    <>
+                      <ModelIcon provider={providerOf(selectedModel, primaryModelId)} size={14} />
+                      <span className="truncate">{selectedModelLabel}</span>
+                      {showReasoningBadge && primaryReasoning && (
+                        <span
+                          className="shrink-0 px-1.5 py-0.5 rounded-md text-[9px] font-medium capitalize leading-none"
+                          style={{
+                            color: 'var(--droid-accent)',
+                            backgroundColor:
+                              'color-mix(in srgb, var(--droid-accent) 13%, transparent)',
+                          }}
+                          title={`Reasoning: ${primaryReasoning}`}
                         >
-                          <span>{row.label}</span>
-                          <span className="flex items-center gap-0.5 rounded-md bg-droid-bg/70 px-1.5 py-0.5 text-[11px] text-droid-text-secondary">
-                            {row.keys.map((k) => (
-                              <kbd key={k} className="font-sans leading-none">
-                                {k}
-                              </kbd>
-                            ))}
-                          </span>
-                        </div>
-                      ))}
-                    </motion.div>
+                          {primaryReasoning}
+                        </span>
+                      )}
+                    </>
+                  )}
+                  <ChevronDown
+                    className={`w-3 h-3 shrink-0 text-droid-text-muted/40 transition-transform ${modelsOpen ? 'rotate-180' : ''}`}
+                  />
+                </button>
+
+                <AnimatePresence>
+                  {modelsOpen && (
+                    <ModelSelectorPopover
+                      onClose={() => {
+                        setModelsOpen(false);
+                      }}
+                      singleAgent={!missionPreview}
+                      childTarget={childSettingsTarget}
+                    />
                   )}
                 </AnimatePresence>
-                <button
-                  onClick={() => void handleSubmit(enterSteers ? 'now' : 'queue')}
-                  className="p-2 rounded-full text-droid-bg transition-opacity hover:opacity-90"
-                  style={{ background: ACCENT }}
-                >
-                  <ArrowUp className="w-3.5 h-3.5" />
-                </button>
               </div>
-            ) : (
-              <button
-                onClick={() => void handleSubmit()}
-                disabled={!hasContent || !childActionsEnabled}
-                title={idleSendTooltip}
-                className="p-2 rounded-full text-droid-bg transition-all enabled:hover:opacity-90 disabled:opacity-25 disabled:cursor-not-allowed shrink-0"
-                style={{ background: ACCENT }}
-              >
-                <ArrowUp className="w-3.5 h-3.5" />
-              </button>
-            )}
-          </div>
-        </div>
-      </div>
 
-      {viewerImage && (
-        <ImageViewerModal
-          image={viewerImage}
-          onClose={() => {
-            setViewerImageId(null);
-          }}
-          onCrop={imageAttachments.applyCrop}
+              <div className="h-4 w-px shrink-0 bg-droid-border/50" />
+
+              <button
+                onClick={toggleSpec}
+                className={`flex shrink-0 items-center gap-1.5 rounded-lg px-2 py-1 text-[11px] transition-colors ${
+                  isSpecMode
+                    ? 'bg-droid-accent/10 text-droid-accent hover:bg-droid-accent/15'
+                    : 'text-droid-text-secondary hover:bg-droid-bg/40 hover:text-droid-text'
+                }`}
+              >
+                <span>{isSpecMode ? 'Spec' : 'Chat'}</span>
+              </button>
+            </>
+          }
+          toolbarTrailing={<ContextStatusCluster />}
         />
-      )}
+
+        {viewerImage && (
+          <ImageViewerModal
+            image={viewerImage}
+            onClose={() => {
+              setViewerImageId(null);
+            }}
+            onCrop={imageAttachments.applyCrop}
+          />
+        )}
+      </div>
     </div>
   );
 }
