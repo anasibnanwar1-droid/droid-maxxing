@@ -21,8 +21,9 @@ export const IMAGE_QUALITY_TIERS: Record<ImagePasteQuality, ImageQualityTier> = 
 
 // Must mirror EXTENSION_BY_MIME in electron/attachments.cjs: at Original
 // fidelity the pasted bytes are persisted untouched, so anything outside this
-// list would be rejected at save time.
-export const PERSISTABLE_IMAGE_MIMES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'];
+// list would be rejected at save time. Module-private: the public check is
+// isPersistableMime below.
+const PERSISTABLE_IMAGE_MIMES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'];
 
 /** Reads the MIME type of a data URL, or undefined when it is not one. */
 export function dataUrlMime(dataUrl: string): string | undefined {
