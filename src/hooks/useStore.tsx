@@ -390,6 +390,7 @@ type Action =
   | { type: 'TOGGLE_MISSION_CONTROL' }
   | { type: 'START_CHAT'; cwd: string; branch?: string }
   | { type: 'SEED_COMPOSER'; text: string }
+  | { type: 'CLEAR_COMPOSER_SEED' }
   | { type: 'ADD_WORKSPACE'; cwd: string }
   | { type: 'TOGGLE_BROWSER' }
   | { type: 'SET_BROWSER_OPEN'; open: boolean }
@@ -2046,6 +2047,11 @@ function baseReducer(state: AppState, action: Action): AppState {
 
     case 'SEED_COMPOSER':
       return { ...state, composerSeed: { text: action.text, id: Date.now() } };
+
+    // The composer consumes the seed once; it must not linger, or remounting
+    // the composer (e.g. toggling Mission Control) would re-apply stale text.
+    case 'CLEAR_COMPOSER_SEED':
+      return { ...state, composerSeed: null };
 
     case 'ADD_WORKSPACE':
       return {

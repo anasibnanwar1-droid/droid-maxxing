@@ -49,13 +49,19 @@ export function useImageAttachments(quality: ImagePasteQuality) {
     if (!target) return;
     const cropped = await cropImage(target.preview, rect, quality);
     const path = await saveImage(cropped);
-    setImages((prev) =>
-      prev.map((i) => {
+    setImages((prev) => {
+      // The chip may have been removed while the crop was saving; discard the
+      // new file instead of orphaning it in the temp dir.
+      if (!prev.some((i) => i.id === id)) {
+        void discardImage(path);
+        return prev;
+      }
+      return prev.map((i) => {
         if (i.id !== id) return i;
         void discardImage(i.path);
         return { ...i, path, preview: cropped };
-      }),
-    );
+      });
+    });
   };
 
   // After a submit the saved files are referenced by the in-flight prompt, so

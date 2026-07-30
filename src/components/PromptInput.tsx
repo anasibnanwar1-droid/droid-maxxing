@@ -409,7 +409,10 @@ export default function PromptInput({
     setHistoryIndex(null);
     setInput(composerSeed.text);
     pendingCaret.current = composerSeed.text.length;
-  }, [composerSeed]);
+    // Consume the seed so a later remount (e.g. toggling Mission Control, which
+    // unmounts this input) does not re-apply stale text over the user's edits.
+    dispatch({ type: 'CLEAR_COMPOSER_SEED' });
+  }, [composerSeed, dispatch]);
 
   useEffect(() => {
     if (textareaRef.current) {

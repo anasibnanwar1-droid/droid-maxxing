@@ -53,6 +53,13 @@ export function CropOverlay({
         // A tap (near-zero drag) clears the selection instead of cropping.
         if (rect && rect.width < MIN_CROP_SIDE && rect.height < MIN_CROP_SIDE) onChange(null);
       }}
+      onPointerCancel={() => {
+        // End the drag like pointerup; without this a cancelled gesture (touch
+        // scroll takeover, OS interrupt) leaves originRef set and stray
+        // pointermove events would keep resizing the crop rect.
+        originRef.current = null;
+        if (rect && rect.width < MIN_CROP_SIDE && rect.height < MIN_CROP_SIDE) onChange(null);
+      }}
     >
       {rect && rect.width > 0 && rect.height > 0 && (
         <div
