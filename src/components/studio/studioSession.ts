@@ -3,6 +3,16 @@ import type { BrowserTranscriptReference } from '../../types/bridge';
 
 const MAX_TITLE_LENGTH = 48;
 
+export function studioComposerActions(
+  streaming: boolean,
+  hasContent: boolean,
+): { showStop: boolean; showSend: boolean } {
+  return {
+    showStop: streaming,
+    showSend: !streaming || hasContent,
+  };
+}
+
 export function studioSessionTitle(displayText: string): string {
   const clean = displayText.replace(/\s+/g, ' ').trim();
   if (!clean) return 'Untitled design';

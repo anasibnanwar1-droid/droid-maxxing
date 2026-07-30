@@ -10,6 +10,7 @@ import StudioSelector from './StudioSelector';
 import type { ReasoningEffort } from '../../types/bridge';
 import { CANVAS_IMAGE_INPUT_ID } from './studioCanvasImages';
 import StudioPromptQueue from './StudioPromptQueue';
+import { studioComposerActions } from './studioSession';
 
 export interface SendOptions {
   modelId?: string;
@@ -107,6 +108,7 @@ export default function StudioComposer({
   const hasContent =
     text.trim().length > 0 || attachedAnnotations.length > 0 || canvasImages.length > 0;
   const canSend = hasContent && disabledReason === undefined;
+  const actions = studioComposerActions(streaming ?? false, hasContent);
   const queue = sessionId ? (state.promptQueue[sessionId] ?? []) : [];
   const enterSteers = state.liveEnterBehavior === 'interrupt';
   const selectedModel = modelId
@@ -312,64 +314,69 @@ export default function StudioComposer({
               <span className="px-1 text-[10.5px] text-droid-text-muted">@ mention</span>
             </div>
 
-            {streaming && !hasContent ? (
-              <button
-                type="button"
-                onClick={() => onStop?.()}
-                title="Working — click to stop"
-                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-droid-accent text-droid-bg transition-opacity hover:opacity-90"
-              >
-                <Square className="h-3.5 w-3.5" fill="currentColor" strokeWidth={0} />
-              </button>
-            ) : streaming ? (
-              <div
-                className="relative shrink-0"
-                onMouseEnter={() => {
-                  setSendHover(true);
-                }}
-                onMouseLeave={() => {
-                  setSendHover(false);
-                }}
-              >
-                <AnimatePresence>
-                  {sendHover && (
-                    <motion.div
-                      initial={{ opacity: 0, y: 4 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      exit={{ opacity: 0, y: 4 }}
-                      transition={{ duration: 0.12, ease: [0.16, 1, 0.3, 1] }}
-                      className="absolute bottom-full right-0 z-50 mb-2 flex flex-col gap-0.5 rounded-xl border border-droid-border bg-droid-elevated p-1.5 shadow-2xl shadow-black/40"
-                    >
-                      {[
-                        { label: enterSteers ? 'Steer' : 'Queue', keys: ['⏎'] },
-                        { label: enterSteers ? 'Queue' : 'Steer', keys: ['⌘', '⏎'] },
-                      ].map((row) => (
-                        <div
-                          key={row.label}
-                          className="flex items-center justify-between gap-3 rounded-lg px-2 py-1 text-[12px] text-droid-text"
-                        >
-                          <span>{row.label}</span>
-                          <span className="flex items-center gap-0.5 rounded-md bg-droid-bg/70 px-1.5 py-0.5 text-[11px] text-droid-text-secondary">
-                            {row.keys.map((key) => (
-                              <kbd key={key} className="font-sans leading-none">
-                                {key}
-                              </kbd>
-                            ))}
-                          </span>
-                        </div>
-                      ))}
-                    </motion.div>
-                  )}
-                </AnimatePresence>
+            {actions.showStop ? (
+              <div className="flex shrink-0 items-center gap-1">
                 <button
                   type="button"
-                  onClick={() => {
-                    submit(enterSteers ? 'now' : 'queue');
-                  }}
-                  className="flex h-8 w-8 items-center justify-center rounded-lg bg-droid-text text-droid-bg transition-colors hover:bg-droid-text-secondary"
+                  onClick={() => onStop?.()}
+                  title="Working — click to stop"
+                  aria-label="Stop current design turn"
+                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-droid-accent text-droid-bg transition-opacity hover:opacity-90"
                 >
-                  <ArrowUp className="h-3.5 w-3.5" />
+                  <Square className="h-3.5 w-3.5" fill="currentColor" strokeWidth={0} />
                 </button>
+                {actions.showSend && (
+                  <div
+                    className="relative shrink-0"
+                    onMouseEnter={() => {
+                      setSendHover(true);
+                    }}
+                    onMouseLeave={() => {
+                      setSendHover(false);
+                    }}
+                  >
+                    <AnimatePresence>
+                      {sendHover && (
+                        <motion.div
+                          initial={{ opacity: 0, y: 4 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          exit={{ opacity: 0, y: 4 }}
+                          transition={{ duration: 0.12, ease: [0.16, 1, 0.3, 1] }}
+                          className="absolute bottom-full right-0 z-50 mb-2 flex flex-col gap-0.5 rounded-xl border border-droid-border bg-droid-elevated p-1.5 shadow-2xl shadow-black/40"
+                        >
+                          {[
+                            { label: enterSteers ? 'Steer' : 'Queue', keys: ['⏎'] },
+                            { label: enterSteers ? 'Queue' : 'Steer', keys: ['⌘', '⏎'] },
+                          ].map((row) => (
+                            <div
+                              key={row.label}
+                              className="flex items-center justify-between gap-3 rounded-lg px-2 py-1 text-[12px] text-droid-text"
+                            >
+                              <span>{row.label}</span>
+                              <span className="flex items-center gap-0.5 rounded-md bg-droid-bg/70 px-1.5 py-0.5 text-[11px] text-droid-text-secondary">
+                                {row.keys.map((key) => (
+                                  <kbd key={key} className="font-sans leading-none">
+                                    {key}
+                                  </kbd>
+                                ))}
+                              </span>
+                            </div>
+                          ))}
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        submit(enterSteers ? 'now' : 'queue');
+                      }}
+                      aria-label={enterSteers ? 'Steer current design turn' : 'Queue design prompt'}
+                      className="flex h-8 w-8 items-center justify-center rounded-lg bg-droid-text text-droid-bg transition-colors hover:bg-droid-text-secondary"
+                    >
+                      <ArrowUp className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                )}
               </div>
             ) : (
               <button
