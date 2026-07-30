@@ -80,6 +80,7 @@ export class ChildSessions {
     const spawnKey = observation.spawnLink
       ? `${observation.spawnLink.kind}:${observation.spawnLink.id}`
       : undefined;
+    const pending = spawnKey ? parent.pendingSpawns.get(spawnKey) : undefined;
     if (!observation.providerSessionId) {
       if (observation.done && observation.spawnLink)
         this.complete(parent, findChildBySpawn(parent, observation.spawnLink));
@@ -94,11 +95,13 @@ export class ChildSessions {
       const spawnChild = observation.spawnLink
         ? findChildBySpawn(parent, observation.spawnLink)
         : providerChild;
-      if (providerChild === spawnChild) this.complete(parent, providerChild);
+      if (providerChild && providerChild === spawnChild) this.complete(parent, providerChild);
+      else if (!providerChild && !spawnChild && pending) {
+        const identity = this.admitChildObservation({ ...observation, done: false });
+        this.complete(parent, identity ? parent.children.get(identity.childSessionId) : undefined);
+      }
       return undefined;
     }
-
-    const pending = spawnKey ? parent.pendingSpawns.get(spawnKey) : undefined;
     const spawnLink = observation.spawnLink ?? pending?.spawnLink;
     const spawnChild = spawnLink ? findChildBySpawn(parent, spawnLink) : undefined;
     const providerChild = findChildByProvider(parent, providerSessionId);
@@ -762,7 +765,7 @@ export class ChildSessions {
     try {
       this.d.compaction.cancel(this.automaticTarget(parent, child));
     } catch {
-      // Runtime invalidation and the remaining cleanup must still proceed.
+      // Cleanup remains authoritative even when cancellation cannot resolve its target.
     }
     child.runtime = undefined;
     const closedGeneration = (child.runtimeGeneration =

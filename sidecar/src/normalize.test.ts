@@ -257,3 +257,17 @@ test('marks Task results as correlated subagent completion', () => {
   assert.equal(normalized?.childSession?.done, true);
   assert.equal(normalized?.childSession?.toolUseId, 'tool-1');
 });
+
+test('captures the current SDK child session id from a successful Task result', () => {
+  const normalized = normalizeStreamEvent('app-session-1', 'app-session-1', 'primary', {
+    type: 'tool_result',
+    toolName: 'Task',
+    toolUseId: 'tool-current',
+    content: 'session_id: provider-child-current\nCHILD_SMOKE_OK',
+    isError: false,
+  } as never);
+
+  assert.equal(normalized?.childSession?.providerSessionId, 'provider-child-current');
+  assert.equal(normalized?.childSession?.done, true);
+  assert.equal(normalized?.childSession?.toolUseId, 'tool-current');
+});

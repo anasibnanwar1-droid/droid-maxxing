@@ -310,6 +310,80 @@ test('terminal enforcement is scoped to each provider and includes notification 
   }
 });
 
+test('current SDK Task result persists and opens the exact completed child', async () => {
+  const context = createSessionManagerTestContext();
+  try {
+    await context.create({
+      sessionPurpose: 'chat',
+      clientRef: 'event-task-result-child',
+      title: 'Task result child',
+      goal: 'initial',
+      interactionMode: 'auto',
+      autonomy: 'low',
+    });
+    const provider = context.provider.session('provider-1');
+    await provider.waitForPrompts(1);
+    await context.waitForIdle();
+    context.events.length = 0;
+
+    provider.queueStreamEvents([
+      {
+        type: 'tool_call',
+        toolUse: {
+          type: 'tool_use',
+          id: 'task-current',
+          name: 'Task',
+          input: {
+            subagent_type: 'worker',
+            description: 'Smoke test reply',
+            prompt: 'Reply exactly CHILD_SMOKE_OK and stop.',
+          },
+        },
+      },
+      {
+        type: 'tool_result',
+        toolName: 'Task',
+        toolUseId: 'task-current',
+        content: 'session_id: provider-child-current\nCHILD_SMOKE_OK',
+        isError: false,
+      },
+    ]);
+    await context.handle({
+      type: 'session.send',
+      appSessionId: 'provider-1',
+      text: 'spawn worker',
+    });
+
+    const child = context.history.childSessions('provider-1')[0];
+    assert.equal(child?.parentAppSessionId, 'provider-1');
+    assert.equal(child?.childSessionId, 'child-1');
+    assert.equal(child?.providerSessionId, 'provider-child-current');
+    assert.equal(child?.status, 'completed');
+    assert.equal(child?.transcriptAvailable, true);
+    assert.deepEqual(child?.spawnLink, { kind: 'tool-use', id: 'task-current' });
+
+    await context.handle({
+      type: 'child.open',
+      parentAppSessionId: 'provider-1',
+      childSessionId: 'child-1',
+      requestId: 'open-current-child',
+    });
+    assert.equal(
+      context.events.some(
+        (event) =>
+          event.type === 'child.updated' &&
+          event.access === 'history' &&
+          event.parentAppSessionId === 'provider-1' &&
+          event.childSessionId === 'child-1' &&
+          event.requestId === 'open-current-child',
+      ),
+      true,
+    );
+  } finally {
+    await context.dispose();
+  }
+});
+
 test('worker token usage updates totals without replacing the primary context reading', async () => {
   const context = createSessionManagerTestContext();
   try {

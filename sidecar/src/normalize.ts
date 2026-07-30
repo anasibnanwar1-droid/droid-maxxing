@@ -149,6 +149,11 @@ function slimChildSessionArgs(input: Record<string, unknown>): Record<string, un
   return out;
 }
 
+function taskResultProviderSessionId(content: unknown): string | undefined {
+  if (typeof content !== 'string') return undefined;
+  return content.match(/(?:^|\n)session_id:\s*(\S+)/i)?.[1];
+}
+
 // Translate a single SDK stream event into zero-or-one normalized bridge updates.
 export function normalizeStreamEvent(
   appSessionId: string,
@@ -244,13 +249,15 @@ export function normalizeStreamEvent(
     case 'tool_result': {
       const isTask = isTaskToolName(ev.toolName);
       const toolUseId = toolUseIdFrom((ev as { toolUseId?: string }).toolUseId, eventToolUseId);
+      const resultProviderSessionId =
+        subagentSessionId ?? (isTask ? taskResultProviderSessionId(ev.content) : undefined);
       // A successful subagent Task result is just the subagent's output, so it
       // surfaces only as a completion signal and never leaks into the main feed.
       // A *failed* spawn must stay visible, so keep its error transcript.
-      if (subagentSessionId || isTask) {
+      if (resultProviderSessionId || isTask) {
         const done = {
           childSession: {
-            providerSessionId: subagentSessionId,
+            providerSessionId: resultProviderSessionId,
             toolUseId,
             done: true,
           },

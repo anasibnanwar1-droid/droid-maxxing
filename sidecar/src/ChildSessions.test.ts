@@ -345,6 +345,42 @@ test('completion requires provider and spawn to resolve the same exact child', (
   );
 });
 
+test('result-only completion admits the exact pending spawn as historical', () => {
+  const h = createHarness([]);
+  h.owner.admitChildObservation({
+    parentAppSessionId: h.parentId,
+    role: 'worker',
+    spawnLink: { kind: 'tool-use', id: 'tool-current' },
+    label: 'worker',
+    prompt: 'Reply exactly CHILD_SMOKE_OK and stop.',
+  });
+
+  h.owner.admitChildObservation({
+    parentAppSessionId: h.parentId,
+    providerSessionId: 'provider-child-current',
+    role: 'worker',
+    spawnLink: { kind: 'tool-use', id: 'tool-current' },
+    done: true,
+  });
+
+  assert.deepEqual(h.owner.list(h.parentId), [
+    {
+      parentAppSessionId: h.parentId,
+      childSessionId: 'generated-child',
+      role: 'worker',
+      status: 'completed',
+      label: 'worker',
+      prompt: 'Reply exactly CHILD_SMOKE_OK and stop.',
+      modelId: 'model-default',
+      reasoningEffort: ReasoningEffort.Low,
+      spawnLink: { kind: 'tool-use', id: 'tool-current' },
+      transcriptAvailable: true,
+      startedAt: 100,
+    },
+  ]);
+  assert.equal(h.history.childSessions(h.parentId)[0]?.providerSessionId, 'provider-child-current');
+});
+
 test('completed child under a live parent opens only as history', async () => {
   const record = { ...childRecord('child', 'provider'), status: 'completed' as const };
   const h = createHarness([record]);
