@@ -4,7 +4,14 @@ const fsp = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
 
-const { save, discard, decodeImageDataUrl, MAX_ATTACHMENT_BYTES } = require('./attachments.cjs');
+const {
+  save,
+  discard,
+  decodeImageDataUrl,
+  writeExclusive,
+  MAX_ATTACHMENT_BYTES,
+  MAX_DATA_URL_BASE64_CHARS,
+} = require('./attachments.cjs');
 
 // 1x1 transparent PNG.
 const PNG_DATA_URL =
@@ -55,3 +62,97 @@ test('discard refuses paths outside the attachments directory', async () => {
   await assert.rejects(() => discard(dir, path.join(dir, '..', 'other.png')), /outside/);
   await assert.rejects(() => discard(dir, '/tmp/whatever.png'), /outside/);
 });
+
+test('save rejects composer-accepted but unsupported types with an explicit message', async () => {
+  const dir = await tempDir();
+  // The composer paste filter accepts any image/* blob (e.g. SVG); at Original
+  // fidelity the bytes reach us unconverted, so the refusal must say why.
+  await assert.rejects(
+    () => save(dir, 'data:image/svg+xml;base64,PHN2Zy8+'),
+    /Unsupported image type: image\/svg\+xml \(supported: image\/png, image\/jpeg, image\/webp, image\/gif\)/,
+  );
+});
+
+test('save rejects over-long encoded payloads before decoding them', async () => {
+  const dir = await tempDir();
+  // '!' is not in the base64 alphabet, so decoding would yield an empty
+  // buffer; getting the size-limit error proves the check ran pre-decode.
+  const huge = `data:image/png;base64,${'!'.repeat(MAX_DATA_URL_BASE64_CHARS + 4)}`;
+  await assert.rejects(() => save(dir, huge), /size limit/);
+});
+
+test(
+  'save and discard refuse a symlinked attachments root',
+  { skip: process.platform === 'win32' },
+  async () => {
+    const parent = await tempDir();
+    const realDir = path.join(parent, 'real');
+    await fsp.mkdir(realDir);
+    const link = path.join(parent, 'link');
+    await fsp.symlink(realDir, link, 'dir');
+    await assert.rejects(() => save(link, PNG_DATA_URL), /not a real directory/);
+    await assert.rejects(() => discard(link, path.join(link, 'x.png')), /not a real directory/);
+    // Nothing was written through the link.
+    assert.deepEqual(await fsp.readdir(realDir), []);
+  },
+);
+
+test(
+  'save creates a missing attachments root with owner-only permissions',
+  { skip: process.platform === 'win32' },
+  async () => {
+    const dir = path.join(await tempDir(), 'nested', 'attachments');
+    const target = await save(dir, PNG_DATA_URL);
+    assert.equal(path.dirname(target), dir);
+    const stats = await fsp.stat(dir);
+    assert.equal(stats.mode & 0o777, 0o700);
+  },
+);
+
+test('save sweeps stale attachments but keeps fresh ones', async () => {
+  const dir = await tempDir();
+  const stale = path.join(dir, 'paste-old.png');
+  const fresh = path.join(dir, 'paste-new.png');
+  await fsp.writeFile(stale, 'stale');
+  await fsp.writeFile(fresh, 'fresh');
+  const twoDaysAgo = new Date(Date.now() - 48 * 60 * 60 * 1000);
+  await fsp.utimes(stale, twoDaysAgo, twoDaysAgo);
+  await save(dir, PNG_DATA_URL);
+  await assert.rejects(() => fsp.stat(stale), /ENOENT/);
+  assert.equal(await fsp.readFile(fresh, 'utf8'), 'fresh');
+});
+
+test('writeExclusive retries with a fresh name and never clobbers an existing file', async () => {
+  const dir = await tempDir();
+  const names = ['clash.png', 'clash.png', 'fresh.png'];
+  await fsp.writeFile(path.join(dir, 'clash.png'), 'occupied');
+  const target = await writeExclusive(dir, () => names.shift(), Buffer.from('payload'));
+  assert.equal(path.basename(target), 'fresh.png');
+  assert.equal(await fsp.readFile(target, 'utf8'), 'payload');
+  assert.equal(await fsp.readFile(path.join(dir, 'clash.png'), 'utf8'), 'occupied');
+});
+
+test('writeExclusive gives up after the attempt cap when every name collides', async () => {
+  const dir = await tempDir();
+  await fsp.writeFile(path.join(dir, 'taken.png'), 'occupied');
+  await assert.rejects(
+    () => writeExclusive(dir, () => 'taken.png', Buffer.from('x')),
+    (error) => error.code === 'EEXIST',
+  );
+  assert.equal(await fsp.readFile(path.join(dir, 'taken.png'), 'utf8'), 'occupied');
+});
+
+test(
+  'writeExclusive does not follow a pre-created symlink',
+  { skip: process.platform === 'win32' },
+  async () => {
+    const dir = await tempDir();
+    await fsp.writeFile(path.join(dir, 'victim.png'), 'victim');
+    await fsp.symlink(path.join(dir, 'victim.png'), path.join(dir, 'link.png'));
+    await assert.rejects(
+      () => writeExclusive(dir, () => 'link.png', Buffer.from('x')),
+      (error) => error.code === 'EEXIST',
+    );
+    assert.equal(await fsp.readFile(path.join(dir, 'victim.png'), 'utf8'), 'victim');
+  },
+);
