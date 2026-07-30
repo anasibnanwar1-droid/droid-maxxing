@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
+import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
-import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -15,21 +15,51 @@ type RecordedCommand = {
   droidPathConfigured?: boolean;
 };
 
-async function allocateLoopbackPort(): Promise<number> {
-  const server = createServer();
-  await new Promise<void>((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(0, '127.0.0.1', resolve);
-  });
-  const address = server.address();
-  if (!address || typeof address === 'string') {
-    await new Promise<void>((resolve) => server.close(() => resolve()));
-    throw new Error('Could not allocate a loopback bridge port.');
-  }
-  await new Promise<void>((resolve, reject) =>
-    server.close((error) => (error ? reject(error) : resolve())),
+async function startFixture(
+  logPath: string,
+  environment: NodeJS.ProcessEnv,
+): Promise<{ process: ChildProcessWithoutNullStreams; port: number }> {
+  const child = spawn(
+    process.execPath,
+    [path.resolve('sidecar/test-fixtures/childSessionsSidecar.mjs')],
+    {
+      cwd: process.cwd(),
+      env: {
+        ...environment,
+        BRIDGE_PORT: '0',
+        BRIDGE_TOKEN: '',
+        BRIDGE_EXIT_ON_STDIN_CLOSE: '1',
+        CHILD_SESSIONS_SMOKE_ALLOW_ANY_TOKEN: '1',
+        CHILD_SESSIONS_SMOKE_LOG: logPath,
+      },
+      stdio: ['pipe', 'pipe', 'pipe'],
+    },
   );
-  return address.port;
+  return new Promise((resolve, reject) => {
+    let output = '';
+    const fail = (error: unknown) => {
+      child.kill();
+      reject(error);
+    };
+    child.once('error', fail);
+    child.once('exit', (code) => fail(new Error(`Smoke fixture exited before ready (${code}).`)));
+    child.stdout.on('data', (chunk) => {
+      output += String(chunk);
+      const match = output.match(/SIDECAR_READY (\d+)/);
+      if (!match) return;
+      child.removeListener('error', fail);
+      child.removeAllListeners('exit');
+      resolve({ process: child, port: Number(match[1]) });
+    });
+  });
+}
+
+function waitForExit(child: ChildProcessWithoutNullStreams): Promise<void> {
+  if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    child.once('error', reject);
+    child.once('exit', () => resolve());
+  });
 }
 
 function recordedCommands(logPath: string): RecordedCommand[] {
@@ -69,7 +99,6 @@ test('[E2] parent-scoped child navigation and visible commands', async () => {
   };
   for (const directory of Object.values(profile)) mkdirSync(directory, { recursive: true });
 
-  const bridgePort = await allocateLoopbackPort();
   const commandLog = path.join(smokeHome, 'commands.jsonl');
   const bootstrapUrl = `data:text/html;charset=utf-8,${encodeURIComponent(
     '<!doctype html><html><body>Child-session smoke bootstrap</body></html>',
@@ -79,6 +108,7 @@ test('[E2] parent-scoped child navigation and visible commands', async () => {
     DROID_PATH: _droidPath,
     ...unauthenticatedEnvironment
   } = process.env;
+  const fixture = await startFixture(commandLog, unauthenticatedEnvironment);
   const launchEnvironment = {
     ...unauthenticatedEnvironment,
     HOME: smokeHome,
@@ -88,9 +118,8 @@ test('[E2] parent-scoped child navigation and visible commands', async () => {
     APPDATA: profile.roamingAppData,
     LOCALAPPDATA: profile.localAppData,
     ELECTRON_START_URL: bootstrapUrl,
-    SIDECAR_ENTRY: path.resolve('sidecar/test-fixtures/childSessionsSidecar.mjs'),
-    CHILD_SESSIONS_SMOKE_LOG: commandLog,
-    BRIDGE_PORT: String(bridgePort),
+    SIDECAR_ENTRY: path.resolve('sidecar/test-fixtures/noopSidecar.mjs'),
+    BRIDGE_PORT: String(fixture.port),
     NODE_BIN: process.execPath,
   };
 
@@ -145,7 +174,7 @@ test('[E2] parent-scoped child navigation and visible commands', async () => {
     await alphaSibling.locator('button').first().click();
     await expect(chat.getByText('ALPHA CHILD TWO OUTPUT', { exact: true })).toBeVisible();
     await expect(chat.getByText('ALPHA PRIMARY OUTPUT', { exact: true })).toHaveCount(0);
-    await page.waitForTimeout(700);
+    await expect(chat.getByText('STALE OPEN PROCESSED', { exact: true })).toBeVisible();
     await expect(chat.getByText('Alpha Worker Two', { exact: true })).toBeVisible();
 
     await chat.getByTitle('Back to primary session').click();
@@ -191,7 +220,12 @@ test('[E2] parent-scoped child navigation and visible commands', async () => {
     try {
       await app?.close();
     } finally {
-      rmSync(smokeHome, { recursive: true, force: true });
+      try {
+        fixture.process.stdin.end();
+        await waitForExit(fixture.process);
+      } finally {
+        rmSync(smokeHome, { recursive: true, force: true });
+      }
     }
   }
 });

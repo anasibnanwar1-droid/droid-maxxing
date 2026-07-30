@@ -4,9 +4,12 @@ import { WebSocket, WebSocketServer } from 'ws';
 const port = Number(process.env.BRIDGE_PORT);
 const token = process.env.BRIDGE_TOKEN ?? '';
 const logPath = process.env.CHILD_SESSIONS_SMOKE_LOG;
+const allowAnyToken = process.env.CHILD_SESSIONS_SMOKE_ALLOW_ANY_TOKEN === '1';
 
-if (!Number.isSafeInteger(port) || port <= 0 || !token || !logPath) {
-  throw new Error('Child-session smoke fixture requires BRIDGE_PORT, BRIDGE_TOKEN, and log path.');
+if (!Number.isSafeInteger(port) || port < 0 || (!token && !allowAnyToken) || !logPath) {
+  throw new Error(
+    'Child-session smoke fixture requires BRIDGE_PORT, bridge authentication, and log path.',
+  );
 }
 
 const now = Date.now();
@@ -193,6 +196,17 @@ function openChild(socket, command) {
     const timer = setTimeout(() => {
       timers.delete(timer);
       reply();
+      send(socket, {
+        type: 'event.appended',
+        event: transcriptEvent(
+          'parent-alpha',
+          'stale-open-processed',
+          'alpha-sibling',
+          'worker',
+          'STALE OPEN PROCESSED',
+          Date.now(),
+        ),
+      });
     }, 500);
     timers.add(timer);
   } else {
@@ -204,7 +218,7 @@ server.on('connection', (socket, request) => {
   const provided = new URL(request.url ?? '/', `http://${request.headers.host}`).searchParams.get(
     'token',
   );
-  if (provided !== token) {
+  if (!allowAnyToken && provided !== token) {
     socket.close(1008, 'invalid bridge token');
     return;
   }
@@ -266,10 +280,18 @@ server.on('connection', (socket, request) => {
   });
 });
 
-server.on('listening', () => process.stdout.write(`SIDECAR_READY ${port}\n`));
+server.on('listening', () => {
+  const address = server.address();
+  if (!address || typeof address === 'string') throw new Error('Fixture has no TCP address.');
+  process.stdout.write(`SIDECAR_READY ${String(address.port)}\n`);
+});
 
+let shuttingDown = false;
 function shutdown() {
+  if (shuttingDown) return;
+  shuttingDown = true;
   for (const timer of timers) clearTimeout(timer);
+  for (const client of server.clients) client.terminate();
   server.close(() => process.exit(0));
 }
 
