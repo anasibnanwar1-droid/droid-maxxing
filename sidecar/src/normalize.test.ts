@@ -271,3 +271,23 @@ test('captures the current SDK child session id from a successful Task result', 
   assert.equal(normalized?.childSession?.done, true);
   assert.equal(normalized?.childSession?.toolUseId, 'tool-current');
 });
+
+test('does not treat child output or failed Task text as a provider session id', () => {
+  const laterOutput = normalizeStreamEvent('app-session-1', 'app-session-1', 'primary', {
+    type: 'tool_result',
+    toolName: 'Task',
+    toolUseId: 'tool-later',
+    content: 'child output\nsession_id: fake-provider',
+    isError: false,
+  } as never);
+  const failed = normalizeStreamEvent('app-session-1', 'app-session-1', 'primary', {
+    type: 'tool_result',
+    toolName: 'Task',
+    toolUseId: 'tool-failed',
+    content: 'session_id: fake-provider\nspawn failed',
+    isError: true,
+  } as never);
+
+  assert.equal(laterOutput?.childSession?.providerSessionId, undefined);
+  assert.equal(failed?.childSession?.providerSessionId, undefined);
+});
