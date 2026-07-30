@@ -351,14 +351,24 @@ function inferFetchTitle(clean: string, h1?: string, titleMeta?: string): string
   return stripped.length > 0 ? stripped : undefined;
 }
 
+// Fetch results prepend a small metadata preamble (`Title: …`, `URL: …`) before
+// the page body, so only the opening lines are metadata candidates. Matching
+// document-wide would strip genuine body lines that begin with "Title:"/"URL:".
+const FETCH_META_PREAMBLE_LINES = 5;
+
 function stripFetchMeta(
   clean: string,
-  opts: { h1?: string; titleMeta?: string; urlLine?: string },
+  opts: { h1?: string; titleMeta?: string; urlLine?: string; firstLineTitle?: boolean },
 ): string {
   let preview = clean;
   if (opts.titleMeta) preview = preview.replace(/^Title:\s*.+$/im, '');
   if (opts.urlLine) preview = preview.replace(/^URL:\s*\S+$/im, '');
   if (opts.h1) preview = preview.replace(/^#\s+.+$/m, '');
+  // A title inferred from the first body line would otherwise repeat as the
+  // body's opening line; drop it so the card's title and preview stay distinct.
+  // Safe after the removals above: in the fallback case the first line is never
+  // a Title:/URL:/# line, so those removals cannot change which line leads.
+  if (opts.firstLineTitle) preview = preview.replace(/^[^\n]*(?:\n|$)/, '');
   preview = preview.replace(/^\n+/, '').trim();
   return preview.length > 0 ? preview : clean;
 }
@@ -366,20 +376,27 @@ function stripFetchMeta(
 // Pull a title + clean body out of a FetchUrl-style tool result so the UI can
 // render a source card instead of a mono dump. Title sources (first match wins):
 //   1. markdown `# heading`
-//   2. `Title: …` metadata line
-//   3. first short non-URL line
-// The URL prefers the tool arg; a `URL: …` body line is the fallback.
+//   2. `Title: …` metadata line (preamble only — see FETCH_META_PREAMBLE_LINES)
+//   3. first short non-URL line (stripped from the body so it isn't duplicated)
+// The URL prefers the tool arg; a `URL: …` preamble line is the fallback.
 export function parseWebFetch(text: string, urlFromArgs?: string): WebFetchPage {
   const { body: stripped, truncatedChars } = parseTruncatedTail(text);
   const clean = stripped.replace(/\r\n/g, '\n').trim();
-  const urlLine = /^URL:\s*(\S+)/im.exec(clean)?.[1]?.trim();
+  const preamble = clean.split('\n').slice(0, FETCH_META_PREAMBLE_LINES).join('\n');
+  const urlLine = /^URL:\s*(\S+)/im.exec(preamble)?.[1]?.trim();
   const argUrl = urlFromArgs?.trim();
   const url = argUrl && argUrl.length > 0 ? argUrl : urlLine;
 
   const h1 = /^#\s+(.+)$/m.exec(clean)?.[1]?.trim();
-  const titleMeta = /^Title:\s*(.+)$/im.exec(clean)?.[1]?.trim();
+  const titleMeta = /^Title:\s*(.+)$/im.exec(preamble)?.[1]?.trim();
   const title = inferFetchTitle(clean, h1, titleMeta);
-  const body = stripFetchMeta(clean, { h1: title ? h1 : undefined, titleMeta, urlLine });
+  const firstLineTitle = title !== undefined && h1 === undefined && titleMeta === undefined;
+  const body = stripFetchMeta(clean, {
+    h1: title ? h1 : undefined,
+    titleMeta,
+    urlLine,
+    firstLineTitle,
+  });
 
   return { url, title, body, chars: body.length, truncatedChars };
 }

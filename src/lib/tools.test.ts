@@ -153,6 +153,45 @@ test('parseWebFetch reads Title/URL meta lines and strips the truncation sentine
   assert.equal(page.truncatedChars, 4096);
 });
 
+test('parseWebFetch treats Title:/URL: lines as metadata only in the preamble', () => {
+  const page = parseWebFetch(
+    [
+      'Title: Sentry for Electron',
+      'URL: https://docs.sentry.io/platforms/javascript/guides/electron/',
+      '',
+      'Learn how to set up Sentry.',
+      '',
+      'See the advanced guide for more.',
+      '',
+      'Title: Advanced configuration',
+      'URL: https://docs.sentry.io/advanced/',
+      '',
+      'More detail here.',
+    ].join('\n'),
+  );
+  assert.equal(page.title, 'Sentry for Electron');
+  assert.equal(page.url, 'https://docs.sentry.io/platforms/javascript/guides/electron/');
+  // Body lines that later begin with Title:/URL: are content, not metadata —
+  // they must survive in the preview.
+  assert.ok(page.body.includes('Title: Advanced configuration'));
+  assert.ok(page.body.includes('URL: https://docs.sentry.io/advanced/'));
+});
+
+test('parseWebFetch strips a first-line fallback title so it does not repeat in the body', () => {
+  const page = parseWebFetch(
+    'Electron Auto-Update Guide\n\nShip updates safely with differential releases.\n\nMore detail here.',
+  );
+  assert.equal(page.title, 'Electron Auto-Update Guide');
+  assert.equal(page.body, 'Ship updates safely with differential releases.\n\nMore detail here.');
+});
+
+test('parseWebFetch strips a fallback title while keeping a preamble URL line', () => {
+  const page = parseWebFetch('My Guide\nURL: https://example.com/guide\n\nBody text.');
+  assert.equal(page.title, 'My Guide');
+  assert.equal(page.url, 'https://example.com/guide');
+  assert.equal(page.body, 'Body text.');
+});
+
 test('formatCharCount uses compact k labels', () => {
   assert.equal(formatCharCount(42), '42');
   assert.equal(formatCharCount(1240), '1.2k');

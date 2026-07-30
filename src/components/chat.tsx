@@ -576,7 +576,7 @@ function WebSourceRow({
   emphasize = false,
 }: {
   title: string;
-  snippet?: string;
+  snippet?: React.ReactNode;
   url: string;
   emphasize?: boolean;
 }) {
@@ -623,8 +623,10 @@ function fetchSnippet(body: string): string {
     .slice(0, 280);
 }
 
-function fetchSizeBadge(chars: number, truncatedChars: number | null): string | null {
-  if (truncatedChars != null) return `${formatCharCount(chars)}+`;
+export function fetchSizeBadge(chars: number, truncatedChars: number | null): string | null {
+  // The sentinel counts the omitted characters, so include them: the badge
+  // reflects the full fetched page size, not just the kept prefix.
+  if (truncatedChars != null) return `${formatCharCount(chars + truncatedChars)}+`;
   if (chars > 0) return formatCharCount(chars);
   return null;
 }
@@ -755,7 +757,7 @@ function WebSearchCard({
   );
 }
 
-function WebFetchBody({
+export function WebFetchBody({
   error,
   hasBody,
   body,
@@ -781,15 +783,18 @@ function WebFetchBody({
     );
   }
   if (!hasBody && url.length === 0) return null;
+  const showBody = hasBody && body.length > 280;
+  // A short body renders only as the source-row snippet (no FetchBodyContent
+  // below), so linkify it — URLs in a short fetched page stay clickable. A long
+  // body keeps the plain-text preview since the full body renders below.
+  let snippetNode: React.ReactNode;
+  if (snippet.length === 0) snippetNode = undefined;
+  else if (showBody) snippetNode = snippet;
+  else snippetNode = linkify(snippet);
   return (
     <div className="mt-2 space-y-1">
-      <WebSourceRow
-        title={title}
-        snippet={snippet.length > 0 ? snippet : undefined}
-        url={url}
-        emphasize
-      />
-      {hasBody && body.length > 280 ? <FetchBodyContent body={body} /> : null}
+      <WebSourceRow title={title} snippet={snippetNode} url={url} emphasize />
+      {showBody ? <FetchBodyContent body={body} /> : null}
     </div>
   );
 }
