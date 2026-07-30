@@ -5,6 +5,7 @@ import type {
   BrowserScrollDirection,
   BrowserViewport,
   BrowserViewportMode,
+  CanvasDocumentContent,
   ConfigurableSessionRole,
   DesignReference,
   DesignSwapReplacementRef,
@@ -68,6 +69,13 @@ export const sendToSession = (appSessionId: string, text: string) =>
 
 export const sendToSessionNow = (appSessionId: string, text: string) =>
   bridge.send({ type: 'session.sendNow', appSessionId, text });
+
+export type SessionPromptMode = 'queue' | 'now';
+
+export const sendSessionPrompt = (appSessionId: string, text: string, mode: SessionPromptMode) => {
+  if (mode === 'now') sendToSessionNow(appSessionId, text);
+  else sendToSession(appSessionId, text);
+};
 
 export const sendToChild = (parentAppSessionId: string, childSessionId: string, text: string) =>
   bridge.send({
@@ -320,6 +328,16 @@ export const renderDesignPreview = (cwd: string) =>
 
 export const prepareDesignWorkspace = (cwd: string) =>
   bridge.send({ type: 'design.workspace.prepare', cwd });
+
+export const readDesignCanvas = (cwd: string, canvasId: string) =>
+  bridge.send({ type: 'design.canvas.read', cwd, canvasId });
+
+export const writeDesignCanvas = (input: {
+  cwd: string;
+  canvasId: string;
+  expectedRevision: number;
+  content: CanvasDocumentContent;
+}) => bridge.send({ type: 'design.canvas.write', ...input });
 
 export const previewComponent = (input: {
   cwd: string;

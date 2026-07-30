@@ -54,7 +54,7 @@ export default function AgentPanel({
       label: image.name,
       kind: 'region' as const,
       url: `droidex://canvas/${image.libraryId}`,
-      imageDataUrl: image.src,
+      ...(image.src.startsWith('data:image/') ? { imageDataUrl: image.src } : {}),
     }));
     send(prompt, {
       modelId: opts.modelId,

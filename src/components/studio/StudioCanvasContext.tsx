@@ -6,7 +6,7 @@ import {
   type Dispatch,
   type ReactNode,
 } from 'react';
-import type { BrowserViewportMode } from '../../types/bridge';
+import type { BrowserViewportMode, CanvasFrameSource } from '../../types/bridge';
 import { PRESET_VIEWPORTS, FIT_FALLBACK_VIEWPORT } from '../browser/browserViewport';
 import { DEFAULT_VIEW, type CanvasView } from './studioCanvasMath';
 import {
@@ -62,6 +62,8 @@ export interface StudioFrame {
   id: string;
   name: string;
   url: string;
+  /** Durable origin used to reconstruct the runtime URL after reopening. */
+  source?: CanvasFrameSource;
   mode: BrowserViewportMode;
   kind: StudioFrameKind;
   // Explicit size for free/custom frames; presets derive size from `mode`.
@@ -153,6 +155,7 @@ export type StudioCanvasAction =
 export interface NewFrame {
   name: string;
   url: string;
+  source?: CanvasFrameSource;
   mode?: BrowserViewportMode;
   kind?: StudioFrameKind;
   width?: number;
@@ -276,6 +279,7 @@ export function studioCanvasReducer(
         id: action.frame.id ?? newFrameId(),
         name: action.frame.name,
         url: action.frame.url,
+        ...(action.frame.source === undefined ? {} : { source: action.frame.source }),
         mode,
         kind: action.frame.kind ?? 'route',
         width: action.frame.width,

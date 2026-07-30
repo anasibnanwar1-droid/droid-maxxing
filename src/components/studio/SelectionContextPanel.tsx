@@ -103,7 +103,12 @@ export default function SelectionContextPanel() {
               onClick={() => {
                 studioDispatch({
                   type: 'ADD_FRAME',
-                  frame: { name: `${frame.name} copy`, url: frame.url, mode: frame.mode },
+                  frame: {
+                    name: `${frame.name} copy`,
+                    url: frame.url,
+                    ...(frame.source === undefined ? {} : { source: frame.source }),
+                    mode: frame.mode,
+                  },
                 });
               }}
             />

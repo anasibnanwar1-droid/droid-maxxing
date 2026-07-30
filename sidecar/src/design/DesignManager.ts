@@ -1,13 +1,10 @@
-import { createHash } from 'node:crypto';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { basename, dirname, join, resolve, sep } from 'node:path';
 import type { BrowserSessionManager } from '../browser/BrowserSessionManager.js';
 import { VIEWPORT_PRESETS } from '../browser/BrowserSessionManager.js';
 import type { BrowserViewportMode } from '../browser/types.js';
 import type { ClientCommand, ServerEvent } from '../protocol.js';
-import { renderBrandBook } from './brandBook.js';
 import type { PreviewServer } from './previewServer.js';
+import { CanvasDocumentManager } from './CanvasDocumentManager.js';
+import { DesignPreviewManager } from './DesignPreviewManager.js';
 import { dnaFilePath, readDnaState, writeDnaFile } from './dnaFiles.js';
 import { getDnaLibrary, listDnaLibraries } from './dnaLibraries.js';
 import { scanRepoForDna } from './dnaScan.js';
@@ -29,7 +26,6 @@ import {
   saveReference,
 } from './referenceLibrary.js';
 import { extractTokensFromItem } from './referenceExtract.js';
-import { buildComponentPreview, componentPreviewLabel } from './componentPreview.js';
 import { scanComponentRegistry } from './registryScan.js';
 import { formatSwapPrompt, type SwapReplacement } from './swapPrompt.js';
 import { prepareDesignWorkspace, type WorkspaceInfo } from './isolatedWorkspace.js';
@@ -50,9 +46,18 @@ export class DesignManager {
   private readonly lastReports = new Map<string, ValidatorReport>();
   private readonly workspaces = new Map<string, WorkspaceInfo>();
   private readonly workspaceInflight = new Map<string, Promise<WorkspaceInfo>>();
+  private readonly previews: DesignPreviewManager;
+  private readonly canvases: CanvasDocumentManager;
   private validatorRunning = false;
 
-  constructor(private readonly options: DesignManagerOptions) {}
+  constructor(private readonly options: DesignManagerOptions) {
+    this.previews = new DesignPreviewManager(options.emit, options.previewServer);
+    this.canvases = new CanvasDocumentManager({
+      emit: options.emit,
+      resolveFrameSource: (cwd, source) => this.previews.resolveSource(cwd, source),
+      resolveImageAsset: (cwd, libraryId) => this.previews.resolveImageAsset(cwd, libraryId),
+    });
+  }
 
   isDesignCommand(cmd: ClientCommand): cmd is DesignCommand {
     return cmd.type.startsWith('design.');
@@ -248,25 +253,11 @@ export class DesignManager {
         return;
       }
       case 'design.preview.render': {
-        await this.renderBrandBookPreview(cmd.cwd);
+        await this.previews.renderBrandBook(cmd.cwd);
         return;
       }
       case 'design.component.preview': {
-        const built = await buildComponentPreview({
-          cwd: cmd.cwd,
-          file: cmd.file,
-          name: cmd.name,
-          exportKind: cmd.exportKind,
-        });
-        if (built.error) throw new Error(built.error);
-        await this.servePreview(
-          cmd.cwd,
-          built.id,
-          built.dir,
-          'index.html',
-          componentPreviewLabel(cmd.name),
-          'component',
-        );
+        await this.previews.renderComponent(cmd);
         return;
       }
       case 'design.workspace.prepare': {
@@ -281,6 +272,12 @@ export class DesignManager {
         });
         return;
       }
+      case 'design.canvas.read':
+        await this.canvases.read(cmd);
+        return;
+      case 'design.canvas.write':
+        this.canvases.write(cmd);
+        return;
     }
   }
 
@@ -305,96 +302,13 @@ export class DesignManager {
     return promise;
   }
 
-  // Render the project's DNA into a designed brand-guidelines page, serve it from
-  // an isolated temp dir (never the project tree — no dev-server watchers touched),
-  // and hand the studio a URL to render as a canvas frame.
-  private async renderBrandBookPreview(cwd: string): Promise<void> {
-    const state = readDnaState(cwd);
-    if (!state.tokens) {
-      throw new Error(
-        'No design tokens yet — run the DNA intake (interview or scan) before generating a brand book.',
-      );
-    }
-    const html = renderBrandBook({
-      cwd,
-      tokens: state.tokens,
-      designMd: state.design.content,
-      motionMd: state.motion.content,
-    });
-    const id = `brand-${createHash('sha1').update(cwd).digest('hex').slice(0, 12)}`;
-    const dir = join(tmpdir(), 'droidex-preview', id);
-    await mkdir(dir, { recursive: true });
-    await writeFile(join(dir, 'index.html'), html, 'utf8');
-    await this.options.previewServer.start();
-    const url = this.options.previewServer.register(id, dir);
-    this.options.emit({ type: 'design.preview', cwd, id, name: 'Brand guidelines', url });
-  }
-
-  // Render an agent-authored HTML file or saved prototype onto the Studio canvas.
-  // This is how the design agent shows work - never a native browser window. A
-  // stable per-target id reloads the same canvas frame instead of piling up frames.
-  //
-  // File previews serve the HTML's own directory (path-confined by the preview
-  // server), so relative CSS/JS/fonts/images next to the page resolve - a
-  // multi-file component gallery with real motion renders as-is. Prototypes are
-  // a single stored HTML string served from an isolated temp dir.
   async renderPreview(input: {
     cwd: string;
     path?: string;
     prototypeId?: string;
     name?: string;
   }): Promise<{ ok: true; url: string; name: string } | { ok: false; error: string }> {
-    const { cwd } = input;
-    if (!cwd) return { ok: false, error: 'No workspace folder for this session.' };
-    const requestedName = input.name?.trim();
-    let label = requestedName !== undefined && requestedName !== '' ? requestedName : 'Preview';
-    try {
-      if (input.prototypeId) {
-        const proto = listPrototypes(cwd).find((entry) => entry.id === input.prototypeId);
-        if (!proto) return { ok: false, error: `No prototype ${input.prototypeId}.` };
-        if (!input.name?.trim()) label = proto.name;
-        const id = previewId(cwd, `proto:${proto.id}`);
-        const dir = join(tmpdir(), 'droidex-preview', id);
-        await mkdir(dir, { recursive: true });
-        await writeFile(join(dir, 'index.html'), proto.html, 'utf8');
-        return await this.servePreview(cwd, id, dir, 'index.html', label);
-      }
-      if (input.path?.trim()) {
-        const abs = resolve(cwd, input.path.trim());
-        if (abs !== cwd && !abs.startsWith(cwd + sep)) {
-          return { ok: false, error: 'That path is outside the workspace.' };
-        }
-        if (!/\.html?$/i.test(abs)) {
-          return { ok: false, error: 'The entry page must be an .html file.' };
-        }
-        await readFile(abs, 'utf8'); // fail fast with a readable error
-        if (!input.name?.trim()) label = basename(abs);
-        const id = previewId(cwd, `dir:${dirname(abs)}`);
-        return await this.servePreview(cwd, id, dirname(abs), basename(abs), label);
-      }
-      return { ok: false, error: 'Pass a path or a prototypeId to preview.' };
-    } catch (error) {
-      return {
-        ok: false,
-        error: error instanceof Error ? error.message : 'Could not read the file.',
-      };
-    }
-  }
-
-  // Register the dir and emit the canvas frame event for a preview target.
-  private async servePreview(
-    cwd: string,
-    id: string,
-    dir: string,
-    entry: string,
-    label: string,
-    kind: 'page' | 'component' = 'page',
-  ): Promise<{ ok: true; url: string; name: string }> {
-    await this.options.previewServer.start();
-    const base = this.options.previewServer.register(id, dir);
-    const url = entry === 'index.html' ? base : `${base}${encodeURIComponent(entry)}`;
-    this.options.emit({ type: 'design.preview', cwd, id, name: label, url, kind });
-    return { ok: true, url, name: label };
+    return this.previews.render(input);
   }
 
   private finalizeDna(cmd: Extract<DesignCommand, { type: 'design.dna.finalize' }>): void {
@@ -523,9 +437,4 @@ export class DesignManager {
       audit: () => browsers.audit(missionId),
     };
   }
-}
-
-// Stable preview id per (workspace, target) so re-previews reload in place.
-function previewId(cwd: string, key: string): string {
-  return `preview-${createHash('sha1').update(`${cwd} ${key}`).digest('hex').slice(0, 12)}`;
 }

@@ -323,7 +323,13 @@ export default function StudioCanvas({
   const duplicateFrame = (frame: StudioFrame) => {
     studioDispatch({
       type: 'ADD_FRAME',
-      frame: { name: `${frame.name} copy`, url: frame.url, mode: frame.mode, kind: frame.kind },
+      frame: {
+        name: `${frame.name} copy`,
+        url: frame.url,
+        ...(frame.source === undefined ? {} : { source: frame.source }),
+        mode: frame.mode,
+        kind: frame.kind,
+      },
     });
   };
 

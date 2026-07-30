@@ -45,10 +45,10 @@ export default function AddFrameDialog({ onClose }: { onClose: () => void }) {
       frame: {
         name: name.trim() || deriveName(normalized),
         url: normalized,
+        source: { type: 'url', url: normalized },
         mode,
         kind: 'route',
-        width: custom ? clampSize(w) : undefined,
-        height: custom ? clampSize(h) : undefined,
+        ...(custom ? { width: clampSize(w), height: clampSize(h) } : {}),
       },
     });
     onClose();

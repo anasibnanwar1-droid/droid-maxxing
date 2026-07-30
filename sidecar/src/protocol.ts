@@ -525,6 +525,80 @@ export interface DesignReference {
   createdAt?: string;
 }
 
+export type CanvasFrameSource =
+  | { type: 'url'; url: string }
+  | { type: 'workspace-html'; relativePath: string }
+  | { type: 'prototype'; prototypeId: string }
+  | { type: 'brand-book' }
+  | {
+      type: 'component';
+      file: string;
+      name: string;
+      exportKind: 'default' | 'named';
+    };
+
+export interface CanvasFrameRecord {
+  id: string;
+  name: string;
+  source: CanvasFrameSource;
+  kind: 'route' | 'generated' | 'showcase' | 'prototype';
+  viewport: {
+    mode: 'fit' | 'desktop' | 'laptop' | 'tablet' | 'mobile' | 'custom';
+    width?: number | undefined;
+    height?: number | undefined;
+  };
+  x: number;
+  y: number;
+}
+
+export interface CanvasAnnotationRecord {
+  id: string;
+  kind: 'pencil' | 'line' | 'arrow' | 'rectangle' | 'square' | 'ellipse' | 'measure';
+  points: { x: number; y: number }[];
+  color: 'blue' | 'red' | 'green' | 'amber';
+  fill: 'none' | 'blue' | 'red' | 'green' | 'amber';
+  strokeWidth: 1 | 2 | 4;
+  frameId?: string | undefined;
+}
+
+export interface CanvasImagePlacement {
+  id: string;
+  libraryId: string;
+  tag: 'moodboard' | 'inspiration' | 'reference';
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface CanvasDocumentContent {
+  view: { pan: { x: number; y: number }; zoom: number };
+  frames: CanvasFrameRecord[];
+  annotations: CanvasAnnotationRecord[];
+  images: CanvasImagePlacement[];
+}
+
+export interface CanvasDocument extends CanvasDocumentContent {
+  schemaVersion: 1;
+  projectId: string;
+  threadId: string;
+  revision: number;
+  updatedAt: string;
+}
+
+export interface CanvasFrameRuntime {
+  frameId: string;
+  url?: string;
+  error?: string;
+}
+
+export interface CanvasImageAsset {
+  libraryId: string;
+  name?: string;
+  url?: string;
+  error?: string;
+}
+
 export type PermissionOutcome =
   | 'proceed_once'
   | 'proceed_always'
@@ -762,6 +836,14 @@ export type ClientCommand =
       exportKind: 'default' | 'named';
     }
   | { type: 'design.workspace.prepare'; cwd: string }
+  | { type: 'design.canvas.read'; cwd: string; canvasId: string }
+  | {
+      type: 'design.canvas.write';
+      cwd: string;
+      canvasId: string;
+      expectedRevision: number;
+      content: CanvasDocumentContent;
+    }
   | { type: 'spec.read'; appSessionId: string; path: string };
 
 export type ChildUpdatedEvent =
@@ -924,6 +1006,7 @@ export type ServerEvent =
       name: string;
       url: string;
       kind?: 'page' | 'component';
+      source: CanvasFrameSource;
     }
   | {
       type: 'design.workspace.ready';
@@ -932,5 +1015,27 @@ export type ServerEvent =
       isWorktree: boolean;
       branch?: string;
       note?: string;
+    }
+  | {
+      type: 'design.canvas.state';
+      cwd: string;
+      canvasId: string;
+      document: CanvasDocument | null;
+      frames: CanvasFrameRuntime[];
+      images: CanvasImageAsset[];
+    }
+  | {
+      type: 'design.canvas.saved';
+      cwd: string;
+      canvasId: string;
+      document: CanvasDocument;
+    }
+  | {
+      type: 'design.canvas.error';
+      cwd: string;
+      canvasId: string;
+      operation: 'read' | 'write';
+      message: string;
+      actualRevision?: number;
     }
   | { type: 'design.error'; cwd?: string; message: string };

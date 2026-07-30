@@ -5,8 +5,6 @@ import { useDesignStore } from '../../hooks/useDesignStore';
 import { listSessions, loadSessionHistory } from '../../lib/commands';
 import type { TranscriptEvent } from '../../types/bridge';
 import { Popover } from '../environment/Popover';
-import { emptyStudioCanvasState, useStudioCanvas } from './StudioCanvasContext';
-import type { StudioCanvasState } from './StudioCanvasContext';
 
 function relativeTime(ts?: number): string {
   if (!ts) return '';
@@ -20,34 +18,10 @@ function relativeTime(ts?: number): string {
   return `${String(days)}d ago`;
 }
 
-function threadKey(projectKey: string, appSessionId: string | null | undefined): string {
-  // Empty / null = intentional new thread. Never use || here — '' is falsy.
-  return appSessionId != null && appSessionId !== '' ? appSessionId : `__new__:${projectKey}`;
-}
-
-function snapshotCanvas(studio: StudioCanvasState): StudioCanvasState {
-  return {
-    ...studio,
-    frames: studio.frames.map((f) => ({ ...f })),
-    selectedFrameIds: [...studio.selectedFrameIds],
-    selection: studio.selection.map((s) => ({ ...s })),
-    annotations: studio.annotations.map((annotation) => ({
-      ...annotation,
-      points: annotation.points.map((point) => ({ ...point })),
-    })),
-    images: studio.images.map((image) => ({ ...image })),
-    attachedAnnotationIds: [...studio.attachedAnnotationIds],
-    attachedImageIds: [...studio.attachedImageIds],
-    drawingStyle: { ...studio.drawingStyle },
-    view: { ...studio.view },
-    settings: { ...studio.settings },
-    interactingFrameId: null,
-  };
-}
-
 /**
- * History control: open earlier design threads, start a new one, restore each
- * thread's canvas from design.canvasByThread (store-backed so remounts keep it).
+ * History control: open earlier design threads or start a new one. The canvas
+ * persistence owner observes the session change, flushes the old document, and
+ * hydrates the selected thread.
  */
 export default function ThreadHistoryMenu({
   cwd,
@@ -60,7 +34,6 @@ export default function ThreadHistoryMenu({
 }) {
   const { state } = useStore();
   const { design, designDispatch } = useDesignStore();
-  const { studio, studioDispatch } = useStudioCanvas();
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
   // sessionKey may be '' — the cwd fallback must still apply for it.
@@ -104,11 +77,7 @@ export default function ThreadHistoryMenu({
       setOpen(false);
       return;
     }
-    const prevKey = threadKey(key, activeId);
-    designDispatch({ type: 'SAVE_CANVAS', threadKey: prevKey, state: snapshotCanvas(studio) });
     designDispatch({ type: 'SET_SESSION', cwd: key, appSessionId });
-    const next = design.canvasByThread[appSessionId] ?? emptyStudioCanvasState();
-    studioDispatch({ type: 'HYDRATE', state: next });
     // Record index access can miss at runtime; widen so the empty-check stays safe.
     const transcript = state.transcripts[appSessionId] as TranscriptEvent[] | undefined;
     if (!state.historyLoaded[appSessionId] && (transcript?.length ?? 0) === 0) {
@@ -122,11 +91,7 @@ export default function ThreadHistoryMenu({
       setOpen(false);
       return;
     }
-    const prevKey = threadKey(key, activeId);
-    designDispatch({ type: 'SAVE_CANVAS', threadKey: prevKey, state: snapshotCanvas(studio) });
     designDispatch({ type: 'SET_SESSION', cwd: key, appSessionId: null });
-    const next = design.canvasByThread[threadKey(key, null)] ?? emptyStudioCanvasState();
-    studioDispatch({ type: 'HYDRATE', state: next });
     setOpen(false);
   };
 

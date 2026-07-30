@@ -8,6 +8,7 @@ import {
 } from 'react';
 import { bridge } from '../lib/bridge';
 import type {
+  CanvasFrameSource,
   ComponentRegistryEntry,
   DesignLibraryItem,
   DesignTokens,
@@ -20,7 +21,6 @@ import type {
   ValidatorConfig,
   ValidatorReport,
 } from '../types/bridge';
-import type { StudioCanvasState } from '../components/studio/StudioCanvasContext';
 
 export interface ValidatorRunStatus {
   status: 'running' | 'done' | 'failed';
@@ -54,7 +54,16 @@ export interface DesignState {
   sessions: Record<string, string>;
   expected: Record<string, string>;
   // Latest brand-book / design preview per cwd (served by the preview harness).
-  previews: Record<string, { id: string; name: string; url: string; kind?: 'page' | 'component' }>;
+  previews: Record<
+    string,
+    {
+      id: string;
+      name: string;
+      url: string;
+      kind?: 'page' | 'component';
+      source: CanvasFrameSource;
+    }
+  >;
   // All design data is project-scoped, keyed by the session cwd.
   dna: Record<string, DnaState>;
   drafts: Record<string, DnaDraft>;
@@ -82,9 +91,6 @@ export interface DesignState {
   registry: Record<string, ComponentRegistryEntry[]>;
   gitResults: Record<string, GitCommitResult>;
   lastError: { cwd?: string; message: string } | null;
-  // Per-thread canvas snapshots (appSessionId or `__new__:<projectKey>`). Survives
-  // StudioShell remounts when the worktree path resolves, so switch restores frames.
-  canvasByThread: Record<string, StudioCanvasState>;
 }
 
 export type DesignAction =
@@ -99,7 +105,6 @@ export type DesignAction =
   | { type: 'ADOPT_SESSION'; cwd: string; appSessionId: string }
   // Switch the active design thread for a cwd (or clear it to start a new one).
   | { type: 'SET_SESSION'; cwd: string; appSessionId: string | null }
-  | { type: 'SAVE_CANVAS'; threadKey: string; state: StudioCanvasState }
   | { type: 'BRIDGE_EVENT'; event: ServerEvent };
 
 const initialState: DesignState = {
@@ -123,7 +128,6 @@ const initialState: DesignState = {
   registry: {},
   gitResults: {},
   lastError: null,
-  canvasByThread: {},
 };
 
 function applyEvent(state: DesignState, ev: ServerEvent): DesignState {
@@ -204,7 +208,13 @@ function applyEvent(state: DesignState, ev: ServerEvent): DesignState {
         ...state,
         previews: {
           ...state.previews,
-          [ev.cwd]: { id: ev.id, name: ev.name, url: ev.url, kind: ev.kind },
+          [ev.cwd]: {
+            id: ev.id,
+            name: ev.name,
+            url: ev.url,
+            ...(ev.kind === undefined ? {} : { kind: ev.kind }),
+            source: ev.source,
+          },
         },
       };
     case 'design.error':
@@ -264,11 +274,6 @@ function reducer(state: DesignState, action: DesignAction): DesignState {
         sessions: { ...state.sessions, [action.cwd]: nextId },
       };
     }
-    case 'SAVE_CANVAS':
-      return {
-        ...state,
-        canvasByThread: { ...state.canvasByThread, [action.threadKey]: action.state },
-      };
     case 'BRIDGE_EVENT':
       return applyEvent(state, action.event);
   }

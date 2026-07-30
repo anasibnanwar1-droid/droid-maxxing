@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { listDnaLibraries, readDesignDna, scanComponentRegistry } from '../../lib/commands';
 import { usePreviewFrames } from './usePreviewFrames';
+import { useStudioCanvasPersistence } from './useStudioCanvasPersistence';
 import AgentPanel from './AgentPanel';
 import TopBar from './TopBar';
 import ToolRail from './ToolRail';
@@ -27,7 +28,8 @@ export default function StudioShell({
 }) {
   const [addFrameOpen, setAddFrameOpen] = useState(false);
   const [isAgentPanelOpen, setIsAgentPanelOpen] = useState(true);
-  usePreviewFrames(cwd);
+  const { notices, isHydrating } = useStudioCanvasPersistence(cwd, sessionKey);
+  usePreviewFrames(cwd, !isHydrating);
 
   useEffect(() => {
     if (!cwd) return;
@@ -89,6 +91,23 @@ export default function StudioShell({
           </div>
 
           <SelectionContextPanel />
+
+          {isHydrating && (
+            <div className="absolute inset-0 z-40 flex items-center justify-center bg-droid-bg/55 backdrop-blur-[1px]">
+              <div className="studio-popover px-3 py-2 text-[11.5px] text-droid-text-secondary">
+                Restoring canvas…
+              </div>
+            </div>
+          )}
+
+          {notices.length > 0 && (
+            <div
+              role="status"
+              className="studio-popover absolute left-1/2 top-3 z-30 max-w-[520px] -translate-x-1/2 px-3 py-2 text-[11.5px] leading-relaxed text-droid-text-secondary"
+            >
+              {notices[0]}
+            </div>
+          )}
 
           {addFrameOpen && (
             <AddFrameDialog
