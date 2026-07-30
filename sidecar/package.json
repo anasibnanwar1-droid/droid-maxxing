@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "@factory/droid-sdk": "^0.6.0",
+    "@napi-rs/canvas": "1.0.2",
     "ws": "^8.18.0",
     "zod": "^3.25.76"
   },

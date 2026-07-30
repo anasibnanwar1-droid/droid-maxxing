@@ -1,13 +1,19 @@
 import { createSdkMcpServer, tool } from '@factory/droid-sdk';
-import { readFile } from 'node:fs/promises';
 import { z } from 'zod';
 import { jsonResult, safeTool } from '../mcpToolUtils.js';
 import { readDnaState } from './dnaFiles.js';
+import {
+  createModelReferenceDerivative,
+  MODEL_REFERENCE_MAX_IMAGE_BYTES,
+  MODEL_REFERENCE_MAX_IMAGES_PER_RESPONSE,
+  MODEL_REFERENCE_MAX_RESPONSE_IMAGE_BYTES,
+} from './modelReferenceImage.js';
 import { listPrototypes, prototypePromptGuidance } from './prototypes.js';
 import { getLibraryItem, listLibraryItems } from './referenceLibrary.js';
 import { scanComponentRegistry } from './registryScan.js';
 import { nearestPaletteColor } from './tokens.js';
 import { DESIGN_GUIDELINES } from './guidelines.js';
+import type { DesignLibraryItem } from './types.js';
 
 export type DesignPreviewFn = (input: {
   cwd: string;
@@ -16,9 +22,14 @@ export type DesignPreviewFn = (input: {
   name?: string;
 }) => Promise<{ ok: true; url: string; name: string } | { ok: false; error: string }>;
 
+interface DesignMcpServerOptions {
+  referenceLibraryBaseDir?: string;
+}
+
 export function createDesignMcpServer(
   cwdForTool: () => string | undefined,
   preview?: DesignPreviewFn,
+  options: DesignMcpServerOptions = {},
 ) {
   const cwd = () => {
     const value = cwdForTool();
@@ -186,42 +197,153 @@ export function createDesignMcpServer(
         'design_reference_library',
         [
           'List visual references saved from the live browser or pasted onto the DROIDEX canvas as moodboard, inspiration, or reference images.',
-          'Pass an id to get one item with its original-resolution image plus any captured styles and markup.',
+          `Pass an id or up to ${String(MODEL_REFERENCE_MAX_IMAGES_PER_RESPONSE)} ids to receive bounded model-safe image derivatives plus source and derivative dimensions.`,
+          `Each derivative is at most ${String(MODEL_REFERENCE_MAX_IMAGE_BYTES)} encoded bytes and all images in one response total at most ${String(MODEL_REFERENCE_MAX_RESPONSE_IMAGE_BYTES)} encoded bytes; the durable originals remain unchanged on disk.`,
           'Use these as visual targets when the user asks to match a moodboard or saved reference.',
         ].join(' '),
         {
           id: z.string().optional().describe('Library item id to fetch in full.'),
+          ids: z
+            .array(z.string())
+            .min(1)
+            .max(MODEL_REFERENCE_MAX_IMAGES_PER_RESPONSE)
+            .optional()
+            .describe('Library item ids to fetch together as bounded model-safe derivatives.'),
         },
         safeTool(async (input) => {
-          if (input.id) {
-            const item = getLibraryItem(cwd(), input.id);
-            if (!item) return jsonResult({ ok: false, error: `No library item ${input.id}.` });
-            const text = jsonResult({ ok: true, item });
-            if (item.screenshotPath) {
+          if (input.id && input.ids) {
+            throw new Error('Pass either id or ids, not both.');
+          }
+          const requestedIds = input.ids ?? (input.id ? [input.id] : undefined);
+          if (requestedIds) {
+            if (
+              requestedIds.length === 0 ||
+              requestedIds.length > MODEL_REFERENCE_MAX_IMAGES_PER_RESPONSE
+            ) {
+              throw new Error(
+                `Request between 1 and ${String(MODEL_REFERENCE_MAX_IMAGES_PER_RESPONSE)} reference images.`,
+              );
+            }
+            const ids = [...new Set(requestedIds)];
+            const items = ids.map((id) =>
+              getLibraryItem(cwd(), id, options.referenceLibraryBaseDir),
+            );
+            const missingIndex = items.findIndex((item) => !item);
+            if (missingIndex >= 0) {
+              return jsonResult({ ok: false, error: `No library item ${ids[missingIndex]}.` });
+            }
+
+            let remainingBytes = MODEL_REFERENCE_MAX_RESPONSE_IMAGE_BYTES;
+            let remainingImages = items.filter((item) => item?.screenshotPath).length;
+            const imageContent: {
+              type: 'image';
+              data: string;
+              mimeType: string;
+            }[] = [];
+            const responseItems = [];
+            for (const item of items) {
+              if (!item) continue;
+              const metadata = modelReferenceMetadata(item, true);
+              if (!item.screenshotPath) {
+                responseItems.push({ ...metadata, modelImage: { error: 'No image is stored.' } });
+                continue;
+              }
+              const maxBytes = Math.min(
+                MODEL_REFERENCE_MAX_IMAGE_BYTES,
+                Math.floor(remainingBytes / remainingImages),
+              );
+              remainingImages -= 1;
               try {
-                const data = await readFile(item.screenshotPath, 'base64');
-                return {
-                  content: [
-                    { type: 'text' as const, text },
-                    {
-                      type: 'image' as const,
-                      data,
-                      mimeType: item.mimeType ?? ('image/png' as const),
+                const derivative = await createModelReferenceDerivative({
+                  path: item.screenshotPath,
+                  maxBytes,
+                });
+                const base64 = derivative.data.toString('base64');
+                remainingBytes -= derivative.data.length;
+                responseItems.push({
+                  ...metadata,
+                  modelImage: {
+                    imageIndex: imageContent.length,
+                    mimeType: derivative.mimeType,
+                    source: {
+                      ...derivative.source,
+                      declaredMimeType: item.mimeType,
                     },
-                  ],
-                };
-              } catch {
-                return text;
+                    derivative: {
+                      ...derivative.derivative,
+                      base64Characters: base64.length,
+                    },
+                    maxBytes,
+                  },
+                });
+                imageContent.push({
+                  type: 'image',
+                  data: base64,
+                  mimeType: derivative.mimeType,
+                });
+              } catch (error) {
+                responseItems.push({
+                  ...metadata,
+                  modelImage: {
+                    error:
+                      error instanceof Error
+                        ? error.message
+                        : 'Reference image could not be prepared.',
+                  },
+                });
               }
             }
-            return text;
+
+            return {
+              content: [
+                {
+                  type: 'text' as const,
+                  text: jsonResult({
+                    ok: true,
+                    imageCount: imageContent.length,
+                    budget: {
+                      maxImages: MODEL_REFERENCE_MAX_IMAGES_PER_RESPONSE,
+                      perImageEncodedBytes: MODEL_REFERENCE_MAX_IMAGE_BYTES,
+                      responseEncodedImageBytes: MODEL_REFERENCE_MAX_RESPONSE_IMAGE_BYTES,
+                      usedEncodedImageBytes:
+                        MODEL_REFERENCE_MAX_RESPONSE_IMAGE_BYTES - remainingBytes,
+                      usedBase64Characters: imageContent.reduce(
+                        (total, image) => total + image.data.length,
+                        0,
+                      ),
+                      note: 'Byte limits apply to JPEG payloads before base64 transport; actual base64 character counts are reported separately.',
+                    },
+                    ...(input.id
+                      ? { item: responseItems[0] }
+                      : { count: responseItems.length, items: responseItems }),
+                  }),
+                },
+                ...imageContent,
+              ],
+            };
           }
-          const items = listLibraryItems(cwd()).map(
-            ({ html: _html, styles: _styles, ...item }) => item,
+          const items = listLibraryItems(cwd(), options.referenceLibraryBaseDir).map((item) =>
+            modelReferenceMetadata(item, false),
           );
           return jsonResult({ ok: true, count: items.length, items });
         }),
       ),
     ],
   });
+}
+
+function modelReferenceMetadata(item: DesignLibraryItem, includeDetail: boolean) {
+  const sourceUrl = /^https?:\/\//.test(item.url) ? item.url : undefined;
+  return {
+    id: item.id,
+    name: item.name,
+    note: item.note,
+    category: item.category,
+    createdAt: item.createdAt,
+    sourceUrl,
+    selector: item.selector,
+    sourceComponent: item.source?.component,
+    hasImage: item.screenshotPath !== undefined,
+    ...(includeDetail ? { styles: item.styles, html: item.html } : {}),
+  };
 }
