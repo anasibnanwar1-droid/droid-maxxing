@@ -54,7 +54,7 @@ app.setName(APP_NAME);
 // the main one without fighting over the Chromium profile lock.
 app.setPath(
   'userData',
-  process.env.DROID_USER_DATA_DIR ?? path.join(app.getPath('appData'), APP_NAME),
+  process.env.DROID_USER_DATA_DIR || path.join(app.getPath('appData'), APP_NAME),
 );
 
 app.whenReady().then(() => {
