@@ -37,6 +37,14 @@ import {
 } from '../lib/compactionSettings';
 import { sanitizeForLog } from '../lib/sensitiveLogRedaction';
 import { composePrompt } from '../lib/composePrompt';
+import {
+  addSessionNote,
+  loadSessionNotes,
+  markSessionNoteUsed,
+  removeSessionNote,
+  saveSessionNotes,
+  type SessionNotesMap,
+} from '../lib/sessionNotes';
 import { toast } from '../lib/toast';
 import { DIFF_SCOPES, type DiffScope } from '../types/vcs';
 import {
@@ -170,6 +178,9 @@ export interface AppState {
   specWikiAppSessionId: string | null;
   // Held locally until the current turn finishes, then delivered one at a time.
   promptQueue: Record<string, QueuedPrompt[]>;
+  // Scratch notes parked from the Context panel, per session. Persisted in
+  // localStorage so reminders survive app restarts.
+  sessionNotes: SessionNotesMap;
 
   // UI flags
   rightPanelOpen: boolean;
@@ -195,8 +206,8 @@ export interface AppState {
   theme: ThemeConfig;
   missionControlMode: boolean;
   draftChat: { cwd: string; branch?: string } | null;
-  // One-shot text seeded into the composer (welcome-screen suggestion cards).
-  // A fresh id per seed lets clicking the same card twice re-arm the effect.
+  // One-shot text seeded into the composer (welcome-screen suggestion cards,
+  // saved-note clicks). A fresh id per seed lets re-clicking re-arm the effect.
   composerSeed: { text: string; id: number } | null;
   workspaceCwds: string[];
   // Derived (synced by the reducer): whether the browser pane is open for the
@@ -391,6 +402,9 @@ type Action =
   | { type: 'START_CHAT'; cwd: string; branch?: string }
   | { type: 'SEED_COMPOSER'; text: string }
   | { type: 'CLEAR_COMPOSER_SEED' }
+  | { type: 'SESSION_NOTE_ADD'; appSessionId: string; text: string }
+  | { type: 'SESSION_NOTE_MARK_USED'; appSessionId: string; noteId: string }
+  | { type: 'SESSION_NOTE_REMOVE'; appSessionId: string; noteId: string }
   | { type: 'ADD_WORKSPACE'; cwd: string }
   | { type: 'TOGGLE_BROWSER' }
   | { type: 'SET_BROWSER_OPEN'; open: boolean }
@@ -854,6 +868,7 @@ export const initialState: AppState = {
   sessionSpecs: {},
   specWikiAppSessionId: null,
   promptQueue: {},
+  sessionNotes: loadSessionNotes(),
   rightPanelOpen: persistedUiState.rightPanelOpen ?? true,
   utilityPanels: persistedUiState.utilityPanels ?? {},
   sidebarCollapsed: persistedUiState.sidebarCollapsed ?? false,
@@ -2053,6 +2068,30 @@ function baseReducer(state: AppState, action: Action): AppState {
     case 'CLEAR_COMPOSER_SEED':
       return { ...state, composerSeed: null };
 
+    case 'SESSION_NOTE_ADD': {
+      const sessionNotes = addSessionNote(state.sessionNotes, action.appSessionId, action.text);
+      // Blank notes are rejected by the helper; nothing changed.
+      if (!sessionNotes) return state;
+      return { ...state, sessionNotes };
+    }
+
+    case 'SESSION_NOTE_MARK_USED': {
+      const sessionNotes = markSessionNoteUsed(
+        state.sessionNotes,
+        action.appSessionId,
+        action.noteId,
+      );
+      // Already marked or unknown note; nothing changed.
+      if (!sessionNotes) return state;
+      return { ...state, sessionNotes };
+    }
+
+    case 'SESSION_NOTE_REMOVE':
+      return {
+        ...state,
+        sessionNotes: removeSessionNote(state.sessionNotes, action.appSessionId, action.noteId),
+      };
+
     case 'ADD_WORKSPACE':
       return {
         ...state,
@@ -2590,8 +2629,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     savePersistedUiState(state);
     saveSessionLastSeen(state.sessionLastSeen);
+    saveSessionNotes(state.sessionNotes);
   }, [
     state.sessionLastSeen,
+    state.sessionNotes,
     state.activeAppSessionId,
     state.browserOpenKeys,
     state.browsers,
