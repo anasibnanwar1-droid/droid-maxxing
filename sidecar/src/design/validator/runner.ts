@@ -26,10 +26,11 @@ export interface RunValidatorOptions {
   tokens: DesignTokens;
   browser: ValidatorBrowser;
   onProgress?: (progress: ValidatorProgress) => void;
+  signal?: AbortSignal;
 }
 
 export async function runValidator(options: RunValidatorOptions): Promise<ValidatorReport> {
-  const { cwd, config, tokens, browser, onProgress } = options;
+  const { cwd, config, tokens, browser, onProgress, signal } = options;
   const startedAt = new Date().toISOString();
   const findings: ValidatorFinding[] = [];
   const total = config.pages.length * config.viewports.length;
@@ -40,17 +41,22 @@ export async function runValidator(options: RunValidatorOptions): Promise<Valida
   for (const page of config.pages) {
     let opened = false;
     for (const viewport of config.viewports) {
+      signal?.throwIfAborted();
       onProgress?.({ pageId: page.id, viewport, completed, total });
       try {
         await browser.setViewportMode(viewport);
+        signal?.throwIfAborted();
         if (!opened) {
           await browser.open(page.url);
+          signal?.throwIfAborted();
           opened = true;
         }
         const elements = await browser.audit();
+        signal?.throwIfAborted();
         elementsAudited += elements.length;
         findings.push(...auditElements(elements, tokens, { pageId: page.id, viewport }));
       } catch (error) {
+        signal?.throwIfAborted();
         findings.push({
           id: `${page.id}-${viewport}-audit-error`,
           rule: 'off-palette-color',

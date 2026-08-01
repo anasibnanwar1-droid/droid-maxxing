@@ -32,7 +32,7 @@ test('configured post-prompt validation runs and publishes a report', async (t) 
   const openedUrls: string[] = [];
   const manager = createManager(t, events, openedUrls);
 
-  await manager.afterDesignPrompt(cwd, 'design-session');
+  await manager.afterDesignPrompt(cwd, 'design-session', () => true);
 
   assert.deepEqual(openedUrls, ['http://127.0.0.1:4173']);
   assert.equal(
@@ -50,7 +50,7 @@ test('disabled post-prompt validation does not touch the browser', async (t) => 
   const openedUrls: string[] = [];
   const manager = createManager(t, [], openedUrls);
 
-  await manager.afterDesignPrompt(cwd, 'design-session');
+  await manager.afterDesignPrompt(cwd, 'design-session', () => true);
 
   assert.deepEqual(openedUrls, []);
 });
@@ -68,10 +68,81 @@ test('unknown design commands emit an actionable error', async (t) => {
   assert.equal(error?.message, 'Unsupported design command: design.unknown');
 });
 
+test('a newer automatic audit cancels and follows the prior run for the same session', async (t) => {
+  const cwd = temporaryProject(t);
+  writeDnaFile(cwd, 'design', serializeTokenBlock(TOKENS));
+  writeValidatorConfig(cwd, {
+    pages: [{ id: 'home', url: 'http://127.0.0.1:4173' }],
+    viewports: ['desktop'],
+    runAfterDesignPrompt: true,
+  });
+  let releaseFirstAudit = () => {};
+  const firstAudit = new Promise<[]>((resolve) => {
+    releaseFirstAudit = () => resolve([]);
+  });
+  let auditCalls = 0;
+  const events: ServerEvent[] = [];
+  const manager = createManager(t, events, [], {
+    audit: () => {
+      auditCalls += 1;
+      return auditCalls === 1 ? firstAudit : Promise.resolve([]);
+    },
+  });
+
+  const first = manager.afterDesignPrompt(cwd, 'design-session', () => true);
+  await new Promise((resolve) => setImmediate(resolve));
+  const second = manager.afterDesignPrompt(cwd, 'design-session', () => true);
+  releaseFirstAudit();
+  await Promise.all([first, second]);
+
+  assert.equal(auditCalls, 2);
+  assert.equal(events.filter((event) => event.type === 'design.validator.report').length, 1);
+  assert.equal(
+    events.some((event) => event.type === 'design.error'),
+    false,
+  );
+});
+
+test('automatic audit suppresses stale results and closes its isolated browser', async (t) => {
+  const cwd = temporaryProject(t);
+  writeDnaFile(cwd, 'design', serializeTokenBlock(TOKENS));
+  writeValidatorConfig(cwd, {
+    pages: [{ id: 'home', url: 'http://127.0.0.1:4173' }],
+    viewports: ['desktop'],
+    runAfterDesignPrompt: true,
+  });
+  let current = true;
+  let closeCalls = 0;
+  const events: ServerEvent[] = [];
+  const manager = createManager(t, events, [], {
+    audit: () => {
+      current = false;
+      return Promise.resolve([]);
+    },
+    close: () => {
+      closeCalls += 1;
+      return Promise.resolve();
+    },
+  });
+
+  await manager.afterDesignPrompt(cwd, 'design-session', () => current);
+
+  assert.equal(
+    events.some((event) => event.type === 'design.validator.report'),
+    false,
+  );
+  assert.equal(
+    events.some((event) => event.type === 'design.error'),
+    false,
+  );
+  assert.equal(closeCalls, 1);
+});
+
 function createManager(
   t: test.TestContext,
   events: ServerEvent[],
   openedUrls: string[],
+  overrides: Partial<Pick<DesignManagerOptions['browsers'], 'audit' | 'close'>> = {},
 ): DesignManager {
   const previewServer = new PreviewServer();
   t.after(() => previewServer.close());
@@ -91,7 +162,8 @@ function createManager(
       return Promise.resolve(state(input.url));
     },
     resizeViewport: () => Promise.resolve(state('http://127.0.0.1:4173')),
-    audit: () => Promise.resolve([]),
+    audit: overrides.audit ?? (() => Promise.resolve([])),
+    close: overrides.close ?? (() => Promise.resolve()),
   };
   return new DesignManager({
     emit: (event) => events.push(event),

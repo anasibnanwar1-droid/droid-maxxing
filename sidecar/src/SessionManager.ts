@@ -987,7 +987,9 @@ export class SessionManager {
       }
       const cwd = liveSession.summary.cwd;
       if (completed && cwd && isDesignStudioSession(liveSession.summary)) {
-        void this.design.afterDesignPrompt(cwd, appSessionId);
+        void this.design.afterDesignPrompt(cwd, appSessionId, () =>
+          this.isCurrentPrimarySession(liveSession),
+        );
       }
     }
   }

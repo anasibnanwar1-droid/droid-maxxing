@@ -3,6 +3,7 @@ import { VIEWPORT_PRESETS } from '../browser/BrowserSessionManager.js';
 import type { BrowserViewportMode } from '../browser/types.js';
 import type { ClientCommand, ServerEvent } from '../protocol.js';
 import type { PreviewServer } from './previewServer.js';
+import { AutomaticValidatorCoordinator } from './AutomaticValidatorCoordinator.js';
 import { CanvasDocumentManager } from './CanvasDocumentManager.js';
 import { DesignPreviewManager } from './DesignPreviewManager.js';
 import { dnaFilePath, readDnaState, writeDnaFile } from './dnaFiles.js';
@@ -35,8 +36,11 @@ import { formatFindingsPrompt, runValidator, type ValidatorBrowser } from './val
 
 export interface DesignManagerOptions {
   emit: (event: ServerEvent) => void;
-  browsers: BrowserSessionManager;
-  sendPrompt: (missionId: string, prompt: string) => Promise<void>;
+  browsers: Pick<
+    BrowserSessionManager,
+    'referenceDetail' | 'open' | 'resizeViewport' | 'audit' | 'close'
+  >;
+  sendPrompt: (appSessionId: string, prompt: string) => Promise<void>;
   previewServer: PreviewServer;
 }
 
@@ -48,7 +52,8 @@ export class DesignManager {
   private readonly workspaceInflight = new Map<string, Promise<WorkspaceInfo>>();
   private readonly previews: DesignPreviewManager;
   private readonly canvases: CanvasDocumentManager;
-  private validatorRunning = false;
+  private readonly validatorRuns = new Set<string>();
+  private readonly automaticValidator: AutomaticValidatorCoordinator;
 
   constructor(private readonly options: DesignManagerOptions) {
     this.previews = new DesignPreviewManager(options.emit, options.previewServer);
@@ -56,6 +61,18 @@ export class DesignManager {
       emit: options.emit,
       resolveFrameSource: (cwd, source) => this.previews.resolveSource(cwd, source),
       resolveImageAsset: (cwd, libraryId) => this.previews.resolveImageAsset(cwd, libraryId),
+    });
+    this.automaticValidator = new AutomaticValidatorCoordinator({
+      run: ({ cwd, appSessionId, browserAppSessionId, signal, isCurrent }) =>
+        this.runValidator(cwd, appSessionId, {
+          browserAppSessionId,
+          signal,
+          isCurrent,
+        }),
+      closeBrowser: (browserAppSessionId) => this.options.browsers.close(browserAppSessionId),
+      reportError: (cwd, message) => {
+        this.options.emit({ type: 'design.error', cwd, message });
+      },
     });
   }
 
@@ -75,17 +92,12 @@ export class DesignManager {
     }
   }
 
-  async afterDesignPrompt(cwd: string, appSessionId: string): Promise<void> {
-    if (!readValidatorConfig(cwd).runAfterDesignPrompt) return;
-    try {
-      await this.runValidator(cwd, appSessionId);
-    } catch (error) {
-      this.options.emit({
-        type: 'design.error',
-        cwd,
-        message: error instanceof Error ? error.message : String(error),
-      });
-    }
+  async afterDesignPrompt(
+    cwd: string,
+    appSessionId: string,
+    isCurrent: () => boolean,
+  ): Promise<void> {
+    await this.automaticValidator.run(cwd, appSessionId, isCurrent);
   }
 
   // Injected into Design Mode prompts so agents read the project DNA before
@@ -180,7 +192,7 @@ export class DesignManager {
         });
         return;
       case 'design.validator.run':
-        await this.runValidator(cmd.cwd, cmd.missionId);
+        await this.runValidator(cmd.cwd, cmd.appSessionId);
         return;
       case 'design.validator.fix': {
         const report = this.lastReports.get(cmd.cwd);
@@ -189,7 +201,7 @@ export class DesignManager {
         }
         const config = readValidatorConfig(cmd.cwd);
         await this.options.sendPrompt(
-          cmd.missionId,
+          cmd.appSessionId,
           formatFindingsPrompt(report, config.fixPrompt),
         );
         return;
@@ -198,7 +210,7 @@ export class DesignManager {
         this.emitLibraryState(cmd.cwd);
         return;
       case 'design.library.save': {
-        const reference = this.options.browsers.referenceDetail(cmd.missionId, cmd.referenceId);
+        const reference = this.options.browsers.referenceDetail(cmd.appSessionId, cmd.referenceId);
         if (!reference) throw new Error('Browser reference not found; reselect the element.');
         const items = saveReference({
           cwd: cmd.cwd,
@@ -258,7 +270,7 @@ export class DesignManager {
           strategy: cmd.strategy,
           note: cmd.note,
         });
-        await this.options.sendPrompt(cmd.missionId, prompt);
+        await this.options.sendPrompt(cmd.appSessionId, prompt);
         return;
       }
       case 'design.git.commit': {
@@ -383,8 +395,19 @@ export class DesignManager {
     return { kind: 'component', entry };
   }
 
-  private async runValidator(cwd: string, missionId: string): Promise<void> {
-    if (this.validatorRunning) throw new Error('A validator run is already in progress.');
+  private async runValidator(
+    cwd: string,
+    appSessionId: string,
+    options: {
+      browserAppSessionId?: string;
+      signal?: AbortSignal;
+      isCurrent?: () => boolean;
+    } = {},
+  ): Promise<void> {
+    const browserAppSessionId = options.browserAppSessionId ?? appSessionId;
+    if (this.validatorRuns.has(browserAppSessionId)) {
+      throw new Error('A validator run is already in progress for this session.');
+    }
     const state = readDnaState(cwd);
     if (!state.tokens) {
       throw new Error(
@@ -395,41 +418,51 @@ export class DesignManager {
     if (config.pages.length === 0) {
       throw new Error('Add at least one page to the validator config before running it.');
     }
-    this.validatorRunning = true;
+    this.validatorRuns.add(browserAppSessionId);
+    const isCurrent = options.isCurrent ?? (() => true);
+    const ensureCurrent = () => {
+      options.signal?.throwIfAborted();
+      if (!isCurrent()) throw new Error('Validator run no longer owns the session.');
+    };
     try {
+      ensureCurrent();
       const report = await runValidator({
         cwd,
         config,
         tokens: state.tokens,
-        browser: this.validatorBrowser(missionId),
+        browser: this.validatorBrowser(browserAppSessionId),
+        signal: options.signal,
         onProgress: (progress) => {
+          ensureCurrent();
           this.options.emit({
             type: 'design.validator.status',
             cwd,
-            missionId,
+            appSessionId,
             status: 'running',
             ...progress,
           });
         },
       });
+      ensureCurrent();
       this.lastReports.set(cwd, report);
-      this.options.emit({ type: 'design.validator.status', cwd, missionId, status: 'done' });
+      this.options.emit({ type: 'design.validator.status', cwd, appSessionId, status: 'done' });
       this.options.emit({ type: 'design.validator.report', report });
     } catch (error) {
+      if (options.signal?.aborted || !isCurrent()) throw error;
       this.options.emit({
         type: 'design.validator.status',
         cwd,
-        missionId,
+        appSessionId,
         status: 'failed',
         error: error instanceof Error ? error.message : String(error),
       });
       throw error;
     } finally {
-      this.validatorRunning = false;
+      this.validatorRuns.delete(browserAppSessionId);
     }
   }
 
-  private validatorBrowser(missionId: string): ValidatorBrowser {
+  private validatorBrowser(appSessionId: string): ValidatorBrowser {
     const { browsers } = this.options;
     let mode: BrowserViewportMode = 'desktop';
     let opened = false;
@@ -442,23 +475,14 @@ export class DesignManager {
         }
         const viewport = presetFor(mode);
         if (opened && viewport) {
-          await browsers.resizeViewport({
-            appSessionId: missionId,
-            viewport,
-            viewportMode: mode,
-          });
+          await browsers.resizeViewport({ appSessionId, viewport, viewportMode: mode });
         }
       },
       async open(url: string): Promise<void> {
-        await browsers.open({
-          appSessionId: missionId,
-          url,
-          viewport: presetFor(mode),
-          viewportMode: mode,
-        });
+        await browsers.open({ appSessionId, url, viewport: presetFor(mode), viewportMode: mode });
         opened = true;
       },
-      audit: () => browsers.audit(missionId),
+      audit: () => browsers.audit(appSessionId),
     };
   }
 }
