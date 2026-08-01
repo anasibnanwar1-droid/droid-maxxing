@@ -13,7 +13,7 @@ export interface ValidatorBrowser {
   audit(): Promise<AuditElement[]>;
 }
 
-export interface ValidatorProgress {
+interface ValidatorProgress {
   pageId: string;
   viewport: string;
   completed: number;

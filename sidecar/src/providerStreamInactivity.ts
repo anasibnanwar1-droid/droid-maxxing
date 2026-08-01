@@ -1,4 +1,4 @@
-export const PRIMARY_STREAM_INACTIVITY_TIMEOUT_MS = 5 * 60 * 1_000;
+const PRIMARY_STREAM_INACTIVITY_TIMEOUT_MS = 5 * 60 * 1_000;
 
 export type ScheduleInactivityTimer = (callback: () => void, timeoutMs: number) => () => void;
 

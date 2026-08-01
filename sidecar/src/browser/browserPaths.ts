@@ -1,7 +1,7 @@
 import { homedir } from 'node:os';
 import { join, resolve, sep } from 'node:path';
 
-export function browserDataRoot(baseDir = defaultBrowserDataRoot()): string {
+function browserDataRoot(baseDir = defaultBrowserDataRoot()): string {
   return baseDir;
 }
 

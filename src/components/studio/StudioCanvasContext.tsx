@@ -21,8 +21,8 @@ export type { StudioCanvasImage, StudioCanvasImageTag } from './studioCanvasImag
 
 export type StudioTool = 'select' | 'hand' | 'frame' | 'draw';
 export type StudioLeftTab = 'agent' | 'components' | 'libraries';
-export type StudioFrameKind = 'route' | 'generated' | 'showcase' | 'prototype';
-export type StudioFrameStatus = 'loading' | 'ready' | 'building' | 'failed';
+type StudioFrameKind = 'route' | 'generated' | 'showcase' | 'prototype';
+type StudioFrameStatus = 'loading' | 'ready' | 'building' | 'failed';
 export type StudioAnnotationKind =
   | 'pencil'
   | 'line'
@@ -35,7 +35,7 @@ export type StudioAnnotationColor = 'blue' | 'red' | 'green' | 'amber';
 export type StudioAnnotationFill = 'none' | StudioAnnotationColor;
 export type StudioStrokeWidth = 1 | 2 | 4;
 
-export interface StudioAnnotationPoint {
+interface StudioAnnotationPoint {
   x: number;
   y: number;
 }
@@ -51,7 +51,7 @@ export interface StudioAnnotation {
   frameId?: string;
 }
 
-export interface StudioDrawingStyle {
+interface StudioDrawingStyle {
   kind: StudioAnnotationKind;
   color: StudioAnnotationColor;
   fill: StudioAnnotationFill;
@@ -80,7 +80,7 @@ export interface StudioFrame {
 }
 
 /** A resolved on-canvas selection that becomes context for the next prompt. */
-export interface StudioSelection {
+interface StudioSelection {
   id: string;
   frameId: string;
   frameName: string;
@@ -152,7 +152,7 @@ export type StudioCanvasAction =
   // Restore a snapshot when switching design threads (per-thread canvas).
   | { type: 'HYDRATE'; state: StudioCanvasState };
 
-export interface NewFrame {
+interface NewFrame {
   name: string;
   url: string;
   source?: CanvasFrameSource;
@@ -171,7 +171,7 @@ const GAP = 96; // world-space gutter between auto-placed frames
 const MAX_FRAMES = 24; // guard against runaway frame creation pegging the machine
 const MAX_ANNOTATIONS = 128;
 
-export function frameSize(mode: BrowserViewportMode): { width: number; height: number } {
+function frameSize(mode: BrowserViewportMode): { width: number; height: number } {
   const preset = PRESET_VIEWPORTS[mode] ?? FIT_FALLBACK_VIEWPORT;
   return { width: preset.width, height: preset.height };
 }
@@ -185,7 +185,7 @@ export function sizeOf(frame: Pick<StudioFrame, 'mode' | 'width' | 'height'>): {
   return frameSize(frame.mode);
 }
 
-export function newFrameId(): string {
+function newFrameId(): string {
   try {
     return `frame_${crypto.randomUUID().slice(0, 8)}`;
   } catch {

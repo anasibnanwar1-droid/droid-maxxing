@@ -15,12 +15,8 @@ export function answered(a: Answer | undefined): boolean {
   return !!a && (a.selected.length > 0 || a.text.trim().length > 0 || a.images.length > 0);
 }
 
-export function briefImageCount(brief: DesignBrief): number {
-  return Object.values(brief).reduce((n, a) => n + a.images.length, 0);
-}
-
 /** All reference images across the brief, for sending as multimodal context. */
-export function briefImages(brief: DesignBrief): string[] {
+function briefImages(brief: DesignBrief): string[] {
   return Object.values(brief).flatMap((a) => a.images);
 }
 

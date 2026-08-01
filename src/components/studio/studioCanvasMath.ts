@@ -21,12 +21,12 @@ export interface CanvasView {
   zoom: number; // world→screen scale factor
 }
 
-export const MIN_ZOOM = 0.1;
+const MIN_ZOOM = 0.1;
 export const MAX_ZOOM = 3;
 
 export const DEFAULT_VIEW: CanvasView = { pan: { x: 0, y: 0 }, zoom: 1 };
 
-export function clampZoom(zoom: number): number {
+function clampZoom(zoom: number): number {
   return Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, zoom));
 }
 
@@ -97,7 +97,7 @@ export function fitRects(
   };
 }
 
-export function boundingRect(rects: Rect[]): Rect {
+function boundingRect(rects: Rect[]): Rect {
   let minX = Infinity;
   let minY = Infinity;
   let maxX = -Infinity;

@@ -2,7 +2,6 @@ import { bridge } from './bridge';
 import type {
   Autonomy,
   BrowserNativeResult,
-  BrowserScrollDirection,
   BrowserViewport,
   BrowserViewportMode,
   CanvasDocumentContent,
@@ -58,12 +57,10 @@ export const installCli = (channel: InstallChannel) =>
   bridge.send({ type: 'cli.install', channel });
 export const updateCli = (channel?: InstallChannel) => bridge.send({ type: 'cli.update', channel });
 export const startCliLogin = () => bridge.send({ type: 'auth.startCliLogin' });
-export const requestRuntimeStatus = () => bridge.send({ type: 'runtime.status' });
 
 export const listModels = () => bridge.send({ type: 'catalog.models' });
 export const listSkills = (providerSessionId?: string) =>
   bridge.send({ type: 'catalog.skills', providerSessionId });
-export const listFactoryDefaults = () => bridge.send({ type: 'settings.defaults' });
 
 export const sendToSession = (appSessionId: string, text: string) =>
   bridge.send({ type: 'session.send', appSessionId, text });
@@ -133,9 +130,6 @@ export const newChildOpenRequestId = () =>
 export const openChild = (parentAppSessionId: string, childSessionId: string, requestId: string) =>
   bridge.send({ type: 'child.open', parentAppSessionId, childSessionId, requestId });
 
-export const closeSession = (appSessionId: string) =>
-  bridge.send({ type: 'session.close', appSessionId });
-
 export const listSessions = (options?: {
   workspaceCwds?: string[];
   includePlainChats?: boolean;
@@ -144,9 +138,6 @@ export const listSessions = (options?: {
 
 export const loadSessionHistory = (appSessionId: string, cursor?: string) =>
   bridge.send({ type: 'session.loadHistory', appSessionId, cursor });
-
-export const resumeSession = (appSessionId: string) =>
-  bridge.send({ type: 'session.resume', appSessionId });
 
 export const updateAgentSettings = (input: {
   appSessionId?: string;
@@ -185,42 +176,14 @@ export const reopenBrowserAfterReconnect = (input: {
   bridge.sendOnNextOpen({ type: 'browser.open', ...input });
 };
 
-export const closeBrowser = (appSessionId: string) =>
-  bridge.send({ type: 'browser.close', appSessionId });
-
 export const reloadBrowser = (appSessionId: string) =>
   bridge.send({ type: 'browser.reload', appSessionId });
-
-export const refreshBrowser = (appSessionId: string) =>
-  bridge.send({ type: 'browser.refresh', appSessionId });
 
 export const resizeBrowserViewport = (input: {
   appSessionId: string;
   viewport: BrowserViewport;
   viewportMode: BrowserViewportMode;
 }) => bridge.send({ type: 'browser.resizeViewport', ...input });
-
-export const clickBrowser = (input: {
-  appSessionId: string;
-  ref?: string;
-  x?: number;
-  y?: number;
-  source?: 'agent' | 'user';
-}) => bridge.send({ type: 'browser.click', ...input });
-
-export const typeBrowser = (appSessionId: string, text: string) =>
-  bridge.send({ type: 'browser.type', appSessionId, text });
-
-export const keypressBrowser = (appSessionId: string, key: string) =>
-  bridge.send({ type: 'browser.keypress', appSessionId, key });
-
-export const scrollBrowser = (input: {
-  appSessionId: string;
-  direction: BrowserScrollDirection;
-  pixels?: number;
-  ref?: string;
-  source?: 'agent' | 'user';
-}) => bridge.send({ type: 'browser.scroll', ...input });
 
 export const addDesignReference = (appSessionId: string, reference: DesignReference) =>
   bridge.send({ type: 'browser.design.addReference', appSessionId, reference });
@@ -291,14 +254,6 @@ export const fixValidatorFindings = (cwd: string, appSessionId: string) =>
   bridge.send({ type: 'design.validator.fix', cwd, appSessionId });
 
 export const listDesignLibrary = (cwd: string) => bridge.send({ type: 'design.library.list', cwd });
-
-export const saveDesignLibraryItem = (p: {
-  cwd: string;
-  appSessionId: string;
-  referenceId: string;
-  name?: string;
-  note?: string;
-}) => bridge.send({ type: 'design.library.save', ...p });
 
 export const importDesignLibraryImage = (input: {
   cwd: string;

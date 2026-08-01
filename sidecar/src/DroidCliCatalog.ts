@@ -47,7 +47,7 @@ function writeDroidCliModelCatalogCache(droidPath: string, models: ModelInfo[]):
   }
 }
 
-export function parseDroidExecHelp(help: string): ModelInfo[] {
+function parseDroidExecHelp(help: string): ModelInfo[] {
   const models = new Map<string, ModelInfo>();
   const idsByDisplayName = new Map<string, string[]>();
   let section: Section = null;

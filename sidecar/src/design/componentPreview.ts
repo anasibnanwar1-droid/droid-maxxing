@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
-import { mkdir, readdir, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join, resolve, sep } from 'node:path';
@@ -49,8 +49,7 @@ export async function buildComponentPreview(
     .update(`${input.cwd} ${input.file} ${input.name}`)
     .digest('hex')
     .slice(0, 12)}`;
-  const dir = join(tmpdir(), 'droidex-preview', id);
-  await mkdir(dir, { recursive: true });
+  const dir = await componentPreviewDirectory(id);
 
   const entry = join(dir, 'entry.tsx');
   await writeFile(entry, entrySource(abs, input));
@@ -94,9 +93,12 @@ function entrySource(absComponentPath: string, input: ComponentPreviewInput): st
       ? `import Component from ${JSON.stringify(absComponentPath)};`
       : `import { ${input.name} as Component } from ${JSON.stringify(absComponentPath)};`;
   const globalCss = GLOBAL_CSS_CANDIDATES.map((rel) => join(input.cwd, rel)).filter((p) => {
-    if (!existsSync(p)) return false;
-    // Tailwind directives need the project's own build pipeline; skip raw files.
-    return !readFileSync(p, 'utf8').includes('@tailwind');
+    try {
+      // Tailwind directives need the project's own build pipeline; skip raw files.
+      return !readFileSync(p, 'utf8').includes('@tailwind');
+    } catch {
+      return false;
+    }
   });
   return [
     ...globalCss.map((p) => `import ${JSON.stringify(p)};`),
@@ -174,4 +176,13 @@ function escapeHtml(value: string): string {
 
 export function componentPreviewLabel(name: string): string {
   return `${name} · component`;
+}
+
+let componentPreviewRoot: Promise<string> | undefined;
+
+async function componentPreviewDirectory(id: string): Promise<string> {
+  componentPreviewRoot ??= mkdtemp(join(tmpdir(), 'droidex-component-preview-'));
+  const dir = join(await componentPreviewRoot, id);
+  await mkdir(dir, { recursive: true });
+  return dir;
 }

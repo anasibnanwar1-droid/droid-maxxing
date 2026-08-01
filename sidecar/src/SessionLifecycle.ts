@@ -228,7 +228,7 @@ export class SessionLifecycle {
     const providerSessionId = historical?.providerSessionId ?? requestedAppSessionId;
 
     const inFlight = this.inFlightResumes.get(appSessionId);
-    if (inFlight) return inFlight;
+    if (inFlight) return await inFlight;
 
     const existing = d.registry.getLive(appSessionId);
     if (existing) {

@@ -79,7 +79,7 @@ function useElapsed(startTs: number | undefined, active: boolean): number {
 }
 
 /* ── Streaming caret (text being written) ── */
-export function StreamingCaret() {
+function StreamingCaret() {
   return (
     <motion.span
       className="inline-block w-[2px] h-[1.05em] -mb-[0.15em] ml-0.5 rounded-sm align-baseline"
@@ -141,7 +141,7 @@ export function TranscriptSkeleton() {
 }
 
 /* ── Compaction indicator — centered, larger shimmer while compacting ── */
-export function CompactingIndicator() {
+function CompactingIndicator() {
   return (
     <div className="flex justify-center py-3">
       <span className="shimmer-text text-[16px] font-semibold tracking-tight" aria-live="polite">
@@ -152,7 +152,7 @@ export function CompactingIndicator() {
 }
 
 /* ── Compaction divider — persistent marker once compaction has completed ── */
-export function CompactionDivider({ compactType }: { compactType?: 'auto' | 'manual' }) {
+function CompactionDivider({ compactType }: { compactType?: 'auto' | 'manual' }) {
   const manual = compactType === 'manual';
   const label = manual ? 'Session compacted' : 'Context automatically compacted';
   return (
@@ -173,13 +173,13 @@ export function CompactionDivider({ compactType }: { compactType?: 'auto' | 'man
 // line). Match the active gerund ("Compacting conversation...") specifically so
 // terminal lines ("Compaction complete.", "Nothing to compact.") and rejections
 // ("Cannot compact while a turn is active.") don't keep the shimmer running.
-export function isCompactingStatus(text?: string): boolean {
+function isCompactingStatus(text?: string): boolean {
   const t = text ?? '';
   return /compacting/i.test(t) && !/complete/i.test(t);
 }
 
 // A status line that signals compaction finished.
-export function isCompactionCompleteStatus(text?: string): boolean {
+function isCompactionCompleteStatus(text?: string): boolean {
   const t = text ?? '';
   return /compact/i.test(t) && /complete/i.test(t);
 }
@@ -1152,7 +1152,7 @@ export function collectTurnFiles(run: FeedItem[]): TurnFile[] {
 // each in-flight tool ("… cancelled by user") plus a "Request interrupted/
 // cancelled by user" note. A user Stop is not a failure, so these are hidden
 // from the feed — both live and on replay.
-export function isCancellationArtifact(e: TranscriptEvent): boolean {
+function isCancellationArtifact(e: TranscriptEvent): boolean {
   const text = (e.text ?? '').trim();
   if (!text) return false;
   if (e.isError && /cancell?ed by user/i.test(text)) return true;
@@ -1428,7 +1428,7 @@ export interface ConversationAnchor {
 // One anchor per turn: the turn's final model response (its summary). The id is
 // the feed item key, which MessageFeed also stamps onto the rendered row so the
 // timeline can scroll to it.
-export function finalResponseAnchorsFromItems(items: FeedItem[]): ConversationAnchor[] {
+function finalResponseAnchorsFromItems(items: FeedItem[]): ConversationAnchor[] {
   const out: ConversationAnchor[] = [];
   let pendingKey: string | null = null;
   let pendingText: string | undefined;

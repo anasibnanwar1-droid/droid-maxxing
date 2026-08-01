@@ -1,13 +1,13 @@
 import { createHash, randomUUID } from 'node:crypto';
 import {
   closeSync,
+  fstatSync,
   fsyncSync,
   mkdirSync,
   openSync,
   readFileSync,
   renameSync,
   rmSync,
-  statSync,
   writeFileSync,
 } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
@@ -22,15 +22,7 @@ import {
 import { designDataRoot } from './designPaths.js';
 import { resolveDesignProjectIdentity } from './projectIdentity.js';
 
-export const MAX_CANVAS_DOCUMENT_BYTES = 2 * 1024 * 1024;
-export type {
-  CanvasAnnotationRecord,
-  CanvasDocument,
-  CanvasDocumentContent,
-  CanvasFrameRecord,
-  CanvasFrameSource,
-  CanvasImagePlacement,
-} from './canvasDocumentSchema.js';
+const MAX_CANVAS_DOCUMENT_BYTES = 2 * 1024 * 1024;
 
 export class CanvasDocumentValidationError extends Error {
   override name = 'CanvasDocumentValidationError';
@@ -73,18 +65,22 @@ export function readCanvasDocument(input: {
 function readCanvasDocumentAt(location: CanvasLocation): CanvasDocument | null {
   const { file, projectId, threadId } = location;
   let raw: string;
+  let descriptor: number | undefined;
   try {
-    const info = statSync(file);
+    descriptor = openSync(file, 'r');
+    const info = fstatSync(descriptor);
     if (info.size > MAX_CANVAS_DOCUMENT_BYTES) {
       throw corrupt(file, `file exceeds ${String(MAX_CANVAS_DOCUMENT_BYTES)} bytes`);
     }
-    raw = readFileSync(file, 'utf8');
+    raw = readFileSync(descriptor, 'utf8');
   } catch (error) {
     if (isMissingFile(error)) return null;
     if (error instanceof CanvasDocumentCorruptError) throw error;
     throw new Error(`Could not read canvas document ${file}: ${messageOf(error)}`, {
       cause: error,
     });
+  } finally {
+    if (descriptor !== undefined) closeSync(descriptor);
   }
 
   let value: unknown;

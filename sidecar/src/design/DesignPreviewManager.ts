@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdir, readFile, realpath, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, open, readFile, realpath, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, extname, join, relative, resolve, sep } from 'node:path';
 import type { CanvasFrameSource, ServerEvent } from '../protocol.js';
@@ -45,8 +45,7 @@ export class DesignPreviewManager {
       motionMd: state.motion.content,
     });
     const id = `brand-${createHash('sha1').update(cwd).digest('hex').slice(0, 12)}`;
-    const dir = join(tmpdir(), 'droidex-preview', id);
-    await mkdir(dir, { recursive: true });
+    const dir = await generatedPreviewDirectory(id);
     await writeFile(join(dir, 'index.html'), html, 'utf8');
     return this.serve({
       cwd,
@@ -130,8 +129,7 @@ export class DesignPreviewManager {
     const proto = listPrototypes(cwd).find((entry) => entry.id === prototypeId);
     if (!proto) return { ok: false, error: `No prototype ${prototypeId}.` };
     const id = previewId(cwd, `proto:${proto.id}`);
-    const dir = join(tmpdir(), 'droidex-preview', id);
-    await mkdir(dir, { recursive: true });
+    const dir = await generatedPreviewDirectory(id);
     await writeFile(join(dir, 'index.html'), proto.html, 'utf8');
     return this.serve({
       cwd,
@@ -310,12 +308,13 @@ async function workspaceHtmlAssets(entryPath: string, html: string): Promise<str
       const relativePath = relative(root, resolved).split(sep).join('/');
       if (!isSafePreviewAsset(relativePath) || assets.has(relativePath)) continue;
       try {
-        const info = await stat(resolved);
-        if (!info.isFile()) continue;
+        const content = await readPreviewAsset(
+          resolved,
+          PARSED_PREVIEW_EXTENSIONS.has(extname(relativePath).toLowerCase()),
+        );
+        if (content === null) continue;
         assets.add(relativePath);
-        if (PARSED_PREVIEW_EXTENSIONS.has(extname(relativePath).toLowerCase())) {
-          queued.push({ relativePath, content: await readFile(resolved, 'utf8') });
-        }
+        if (content !== undefined) queued.push({ relativePath, content });
       } catch {
         // A missing optional asset should not make the whole preview unusable.
       }
@@ -323,6 +322,28 @@ async function workspaceHtmlAssets(entryPath: string, html: string): Promise<str
     }
   }
   return [...assets];
+}
+
+async function readPreviewAsset(
+  file: string,
+  includeContent: boolean,
+): Promise<string | null | undefined> {
+  const asset = await open(file, 'r');
+  try {
+    if (!(await asset.stat()).isFile()) return null;
+    return includeContent ? await asset.readFile('utf8') : undefined;
+  } finally {
+    await asset.close();
+  }
+}
+
+let generatedPreviewRoot: Promise<string> | undefined;
+
+async function generatedPreviewDirectory(id: string): Promise<string> {
+  generatedPreviewRoot ??= mkdtemp(join(tmpdir(), 'droidex-preview-'));
+  const dir = join(await generatedPreviewRoot, id);
+  await mkdir(dir, { recursive: true });
+  return dir;
 }
 
 function previewReferences(content: string): string[] {

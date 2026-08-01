@@ -18,18 +18,22 @@ export function listPrototypes(cwd: string): PrototypeInfo[] {
   for (const entry of entries) {
     if (!entry.isFile() || !entry.name.endsWith('.html')) continue;
     const file = path.join(dir, entry.name);
+    let descriptor: number | undefined;
     try {
-      const stat = fs.statSync(file);
+      descriptor = fs.openSync(file, 'r');
+      const stat = fs.fstatSync(descriptor);
       if (stat.size > MAX_HTML_BYTES) continue;
       prototypes.push({
         id: entry.name.replace(/\.html$/, ''),
         name: humanize(entry.name.replace(/\.html$/, '')),
         path: file,
         updatedAt: stat.mtime.toISOString(),
-        html: fs.readFileSync(file, 'utf8'),
+        html: fs.readFileSync(descriptor, 'utf8'),
       });
     } catch {
       continue;
+    } finally {
+      if (descriptor !== undefined) fs.closeSync(descriptor);
     }
   }
   return prototypes.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, MAX_PROTOTYPES);

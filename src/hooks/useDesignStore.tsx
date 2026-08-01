@@ -22,7 +22,7 @@ import type {
   ValidatorReport,
 } from '../types/bridge';
 
-export interface ValidatorRunStatus {
+interface ValidatorRunStatus {
   status: 'running' | 'done' | 'failed';
   appSessionId?: string;
   pageId?: string;
@@ -32,13 +32,13 @@ export interface ValidatorRunStatus {
   error?: string;
 }
 
-export interface ExtractedLibraryTokens {
+interface ExtractedLibraryTokens {
   id: string;
   tokens: Partial<DesignTokens>;
   summary: string;
 }
 
-export interface GitCommitResult {
+interface GitCommitResult {
   ok: boolean;
   sha?: string;
   error?: string;

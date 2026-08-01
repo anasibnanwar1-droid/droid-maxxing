@@ -1,4 +1,4 @@
-export type DiffOpType = 'add' | 'del' | 'ctx';
+type DiffOpType = 'add' | 'del' | 'ctx';
 export interface DiffOp {
   type: DiffOpType;
   text: string;

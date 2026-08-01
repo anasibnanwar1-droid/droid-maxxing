@@ -64,14 +64,13 @@ import {
 import type { ImagePasteQuality } from '../lib/images';
 
 export type AgentKind = 'primary' | 'worker' | 'validator';
-export type ChildSettingsReadiness = 'opening' | 'ready' | 'failed';
 export type LiveEnterBehavior = 'queue' | 'interrupt';
 export type DiffViewMode = 'unified' | 'split';
 export type { ImagePasteQuality } from '../lib/images';
 
 export type ChildSessionInfo = ChildSessionSummary;
 
-export interface ChildSelection {
+interface ChildSelection {
   parentAppSessionId: string;
   childSessionId: string;
 }
@@ -83,18 +82,18 @@ export type ChildAccess =
   | { state: 'failed'; requestId: string | null }
   | { state: 'closed'; requestId: null };
 
-export interface ChildRuntimeState {
+interface ChildRuntimeState {
   available: boolean;
   runtimeGeneration: number;
 }
 
-export interface QueuedDesignContext {
+interface QueuedDesignContext {
   browserKey: string;
   references: DesignReference[];
   referenceIds: string[];
 }
 
-export interface QueuedStudioContext {
+interface QueuedStudioContext {
   prompt: string;
   browserRefs?: BrowserTranscriptReference[];
 }
@@ -108,12 +107,12 @@ export interface QueuedPrompt {
   studio?: QueuedStudioContext;
 }
 
-export interface AgentModelConfig {
+interface AgentModelConfig {
   modelId?: string;
   reasoning: ReasoningEffort;
 }
 
-export type AgentConfig = Record<AgentKind, AgentModelConfig>;
+type AgentConfig = Record<AgentKind, AgentModelConfig>;
 
 export type DiffStyle = 'soft' | 'focused';
 
@@ -132,9 +131,9 @@ export interface ThemeConfig {
   contrast: number;
 }
 
-export type SessionRestoreStatus = 'loading' | 'paged' | 'loaded' | 'failed';
+type SessionRestoreStatus = 'loading' | 'paged' | 'loaded' | 'failed';
 
-export interface SessionRestore {
+interface SessionRestore {
   status: SessionRestoreStatus;
   loadedCount: number;
   hasMore: boolean;

@@ -31,7 +31,7 @@ export interface ChildRuntimeState {
   lastUsedAt: number;
   unsubscribe?: () => void;
 }
-export interface ChildTurnState {
+interface ChildTurnState {
   generation: number;
   phase: 'idle' | 'streaming';
   autoCompacting: boolean;

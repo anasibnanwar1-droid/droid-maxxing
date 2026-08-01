@@ -29,7 +29,7 @@ export function normalizeTokenLimit(value: unknown): number | undefined {
   return Math.floor(n);
 }
 
-export function normalizeTokenLimitRecord(
+function normalizeTokenLimitRecord(
   value: Record<string, number> | undefined,
 ): Record<string, number> {
   return Object.fromEntries(
@@ -47,7 +47,7 @@ export function loadCompactionTokenLimit(): number | undefined {
   }
 }
 
-export function hasUserConfiguredCompactionTokenLimit(): boolean {
+function hasUserConfiguredCompactionTokenLimit(): boolean {
   try {
     return getLocalStorage()?.getItem(COMPACTION_TOKEN_LIMIT_CONFIGURED_STORAGE_KEY) === '1';
   } catch {
@@ -108,7 +108,7 @@ export function loadCompactionTokenLimitPerModel(): Record<string, number> {
   }
 }
 
-export function hasUserConfiguredCompactionTokenLimitPerModel(): boolean {
+function hasUserConfiguredCompactionTokenLimitPerModel(): boolean {
   try {
     return (
       getLocalStorage()?.getItem(COMPACTION_TOKEN_LIMIT_PER_MODEL_CONFIGURED_STORAGE_KEY) === '1'

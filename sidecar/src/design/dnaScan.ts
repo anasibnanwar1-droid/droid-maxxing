@@ -35,12 +35,16 @@ export function scanRepoForDna(cwd: string): DnaDraft {
 
   for (const file of collectFiles(cwd)) {
     let text: string;
+    let descriptor: number | undefined;
     try {
-      const stat = fs.statSync(file);
+      descriptor = fs.openSync(file, 'r');
+      const stat = fs.fstatSync(descriptor);
       if (stat.size > MAX_FILE_BYTES) continue;
-      text = fs.readFileSync(file, 'utf8');
+      text = fs.readFileSync(descriptor, 'utf8');
     } catch {
       continue;
+    } finally {
+      if (descriptor !== undefined) fs.closeSync(descriptor);
     }
     const relative = path.relative(cwd, file);
     let matched = false;
@@ -163,7 +167,7 @@ function pickFonts(fonts: Set<string>): DesignTokens['fonts'] {
   for (const stack of fonts) {
     const lower = stack.toLowerCase();
     if (!out.mono && (lower.includes('mono') || lower.includes('courier'))) out.mono = stack;
-    else if (!out.sans) out.sans = stack;
+    else out.sans ??= stack;
   }
   return out;
 }

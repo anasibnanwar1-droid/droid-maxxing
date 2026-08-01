@@ -5,7 +5,7 @@ import type { DesignTokens, SavedDnaEntry } from './types.js';
 
 const MAX_ENTRIES = 48;
 
-export type SavedDnaSource = SavedDnaEntry['source'];
+type SavedDnaSource = SavedDnaEntry['source'];
 
 export function listSavedDna(cwd: string, baseDir?: string): SavedDnaEntry[] {
   try {

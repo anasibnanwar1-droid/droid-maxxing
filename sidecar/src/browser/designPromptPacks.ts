@@ -33,7 +33,7 @@ export async function writeDesignPromptPack(
 // First line of every design prompt. Used both as the human-facing header and
 // as a content marker so other layers (transcript display, tool-policy scoping)
 // can recognize a design turn from the prompt text alone.
-export const DESIGN_PROMPT_HEADER = 'Design Mode reference pack:';
+const DESIGN_PROMPT_HEADER = 'Design Mode reference pack:';
 
 export function isDesignPrompt(text: string): boolean {
   return text.startsWith(DESIGN_PROMPT_HEADER);

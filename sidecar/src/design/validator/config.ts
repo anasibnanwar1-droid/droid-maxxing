@@ -5,7 +5,7 @@ import type { ValidatorConfig, ValidatorPage } from '../types.js';
 
 const VIEWPORTS = new Set(['desktop', 'laptop', 'tablet', 'mobile']);
 
-export function defaultValidatorConfig(): ValidatorConfig {
+function defaultValidatorConfig(): ValidatorConfig {
   return { pages: [], viewports: ['desktop', 'mobile'] };
 }
 

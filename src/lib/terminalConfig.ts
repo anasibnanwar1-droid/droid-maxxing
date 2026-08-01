@@ -10,12 +10,10 @@ export const MAX_GLOBAL_TERMINALS = 8;
 // 2 MiB cap on the rolling replay buffer that is handed to a late subscriber
 // when it attaches to an already-running PTY.
 export const MAX_REPLAY_BYTES = 2 * 1024 * 1024;
-export const DEFAULT_TERMINAL_COLS = 80;
-export const DEFAULT_TERMINAL_ROWS = 24;
 export const MAX_TERMINAL_COLS = 1000;
 export const MAX_TERMINAL_ROWS = 500;
-export const TERMINAL_TERM = 'xterm-256color';
-export const TERMINAL_COLORTERM = 'truecolor';
+const TERMINAL_TERM = 'xterm-256color';
+const TERMINAL_COLORTERM = 'truecolor';
 
 export interface TerminalLimits {
   maxPerSession: number;
@@ -34,17 +32,17 @@ export interface ResolvedShell {
   args: string[];
 }
 
-export interface ValidateCwdOk {
+interface ValidateCwdOk {
   ok: true;
   cwd: string;
 }
-export interface ValidateCwdErr {
+interface ValidateCwdErr {
   ok: false;
   error: string;
 }
 export type ValidateCwdResult = ValidateCwdOk | ValidateCwdErr;
 
-export interface FsStatLike {
+interface FsStatLike {
   isDirectory: () => boolean;
 }
 

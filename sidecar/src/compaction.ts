@@ -56,7 +56,7 @@ export function resumedCompactionTokenLimit(
 // turn itself: a trigger at 100% of the window means the provider rejects the
 // oversized request before the daemon's threshold check ever gets to compact,
 // which presents as "compaction never happens and the session is stuck".
-export const COMPACTION_WINDOW_FRACTION = 0.8;
+const COMPACTION_WINDOW_FRACTION = 0.8;
 
 export function compactionTriggerCeiling(maxContextTokens?: number): number | undefined {
   const max = normalizeCompactionTokenLimit(maxContextTokens);

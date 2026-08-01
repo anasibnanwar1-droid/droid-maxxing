@@ -110,7 +110,7 @@ async function ensureWorktreesIgnored(repoRoot: string): Promise<void> {
   const gitDir = isAbsolute(commonDir) ? commonDir : join(repoRoot, commonDir);
   const excludePath = join(gitDir, 'info', 'exclude');
   try {
-    const current = existsSync(excludePath) ? await readFile(excludePath, 'utf8') : '';
+    const current = await readOptionalFile(excludePath);
     if (
       current
         .split('\n')
@@ -128,13 +128,30 @@ async function ensureWorktreesIgnored(repoRoot: string): Promise<void> {
 async function seedDna(liveCwd: string, worktreePath: string): Promise<void> {
   for (const name of SEED_FILES) {
     const src = join(liveCwd, name);
-    if (!existsSync(src)) continue;
     try {
       await copyFile(src, join(worktreePath, name));
     } catch {
       // Best-effort continuity; not fatal.
     }
   }
+}
+
+async function readOptionalFile(file: string): Promise<string> {
+  try {
+    return await readFile(file, 'utf8');
+  } catch (error) {
+    if (isMissingFile(error)) return '';
+    throw error;
+  }
+}
+
+function isMissingFile(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    (error as { code?: unknown }).code === 'ENOENT'
+  );
 }
 
 function firstLine(error: unknown): string {

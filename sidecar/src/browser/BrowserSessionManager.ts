@@ -78,7 +78,7 @@ interface ManagedBrowserSession {
 
 type BrowserInputSource = 'agent' | 'user';
 
-export const DEFAULT_BROWSER_VIEWPORT: BrowserViewport = {
+const DEFAULT_BROWSER_VIEWPORT: BrowserViewport = {
   width: 1200,
   height: 800,
   deviceScaleFactor: 2,

@@ -1,9 +1,9 @@
 import { sanitizeInline } from '../browser/designPromptPacks.js';
 import type { ComponentRegistryEntry, DesignLibraryItem } from './types.js';
 
-export const SWAP_PROMPT_HEADER = 'Design swap request:';
+const SWAP_PROMPT_HEADER = 'Design swap request:';
 
-export interface SwapTarget {
+interface SwapTarget {
   label: string;
   selector?: string;
   file?: string;
@@ -15,7 +15,7 @@ export type SwapReplacement =
   | { kind: 'component'; entry: ComponentRegistryEntry }
   | { kind: 'reference'; item: DesignLibraryItem };
 
-export type SwapStrategy = 'preserve-api' | 'exact-copy';
+type SwapStrategy = 'preserve-api' | 'exact-copy';
 
 export interface SwapPromptInput {
   target: SwapTarget;

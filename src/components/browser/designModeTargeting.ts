@@ -50,11 +50,6 @@ export function pickDesignModeTarget(
   return matches[0]?.ref;
 }
 
-export function labelForBrowserRef(ref: BrowserElementRef): string {
-  const label = ref.name || ref.text || ref.role || ref.tagName;
-  return `${label} - ${ref.tagName.toLowerCase()}`;
-}
-
 function targetScore(ref: BrowserElementRef, viewport: Size): number {
   const boxArea = area(ref.box);
   const viewportArea = Math.max(1, viewport.width * viewport.height);

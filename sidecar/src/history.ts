@@ -113,8 +113,8 @@ export interface HistoryPage {
   nextCursor?: string;
 }
 
-export type PersistedChildRole = 'worker' | 'validator';
-export type PersistedChildStatus = 'pending' | 'running' | 'paused' | 'completed';
+type PersistedChildRole = 'worker' | 'validator';
+type PersistedChildStatus = 'pending' | 'running' | 'paused' | 'completed';
 
 export interface PersistedChildSpawnLink {
   kind: 'tool-use' | 'spawn';

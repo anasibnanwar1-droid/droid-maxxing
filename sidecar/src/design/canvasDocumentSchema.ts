@@ -158,10 +158,6 @@ export const canvasDocumentSchema = z
   .strict()
   .superRefine(refineCanvasContent);
 
-export type CanvasFrameSource = z.infer<typeof frameSourceSchema>;
-export type CanvasFrameRecord = z.infer<typeof frameSchema>;
-export type CanvasAnnotationRecord = z.infer<typeof annotationSchema>;
-export type CanvasImagePlacement = z.infer<typeof imagePlacementSchema>;
 export type CanvasDocumentContent = z.infer<typeof canvasContentSchema>;
 export type CanvasDocument = z.infer<typeof canvasDocumentSchema>;
 

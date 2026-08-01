@@ -12,7 +12,7 @@ export interface DesignTokens {
 }
 
 // Suppress findings for matching elements. Every provided field must match.
-export interface TokenAllowRule {
+interface TokenAllowRule {
   selector?: string;
   property?: string;
   value?: string;
@@ -84,7 +84,7 @@ export interface ValidatorConfig {
   runAfterDesignPrompt?: boolean;
 }
 
-export type FindingSeverity = 'error' | 'warning';
+type FindingSeverity = 'error' | 'warning';
 
 export type FindingRule =
   | 'off-palette-color'

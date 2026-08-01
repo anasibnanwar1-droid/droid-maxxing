@@ -4,8 +4,8 @@ import { getActiveDnaId } from './savedDna.js';
 import { parseTokens } from './tokens.js';
 import type { DnaFileState, DnaState } from './types.js';
 
-export const DESIGN_FILE = 'DESIGN.md';
-export const MOTION_FILE = 'MOTION.md';
+const DESIGN_FILE = 'DESIGN.md';
+const MOTION_FILE = 'MOTION.md';
 
 export const MAX_DNA_BYTES = 256 * 1024;
 
@@ -29,16 +29,20 @@ export function readDnaState(cwd: string): DnaState {
 
 export function readDnaFile(cwd: string, kind: DnaFileKind): DnaFileState {
   const filePath = dnaFilePath(cwd, kind);
+  let descriptor: number | undefined;
   try {
-    const info = fs.statSync(filePath);
+    descriptor = fs.openSync(filePath, 'r');
+    const info = fs.fstatSync(descriptor);
     if (info.size > MAX_DNA_BYTES) throw dnaSizeError(filePath, info.size);
-    const content = fs.readFileSync(filePath, 'utf8');
+    const content = fs.readFileSync(descriptor, 'utf8');
     const bytes = Buffer.byteLength(content, 'utf8');
     if (bytes > MAX_DNA_BYTES) throw dnaSizeError(filePath, bytes);
     return { path: filePath, exists: true, content };
   } catch (error) {
     if (isMissingFile(error)) return { path: filePath, exists: false, content: '' };
     throw error;
+  } finally {
+    if (descriptor !== undefined) fs.closeSync(descriptor);
   }
 }
 

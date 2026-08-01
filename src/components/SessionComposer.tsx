@@ -14,7 +14,7 @@ import { ArrowUp, Square } from 'lucide-react';
 import type { LiveEnterBehavior } from '../hooks/useStore';
 import { resolveSessionPromptMode, type SessionPromptMode } from '../lib/promptQueue';
 
-export interface SessionComposerProps {
+interface SessionComposerProps {
   value: string;
   onValueChange: (value: string, textarea: HTMLTextAreaElement) => void;
   onSubmit: (mode: SessionPromptMode) => void | Promise<void>;

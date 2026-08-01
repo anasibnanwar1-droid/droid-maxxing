@@ -1,7 +1,7 @@
 // Bridge protocol shared between the Node sidecar and the React frontend.
 // The frontend keeps a mirror copy at src/types/bridge.ts — keep them in sync.
 
-export type SessionPhase =
+type SessionPhase =
   | 'intake'
   | 'planning'
   | 'awaiting_plan_approval'
@@ -13,11 +13,10 @@ export type SessionPhase =
   | 'completed'
   | 'failed';
 
-export type FeatureStatus = 'pending' | 'in_progress' | 'completed' | 'cancelled';
+type FeatureStatus = 'pending' | 'in_progress' | 'completed' | 'cancelled';
 export type SessionRole = 'primary' | 'worker' | 'validator';
 export type SessionPurpose = 'chat' | 'design' | 'mission-control';
 export type SessionInteractionMode = 'auto' | 'spec' | 'agi';
-export type RunStatus = 'pending' | 'running' | 'paused' | 'done' | 'failed' | 'blocked';
 export type Autonomy = 'off' | 'low' | 'medium' | 'high';
 export type ReasoningEffort =
   | 'off'
@@ -51,10 +50,10 @@ export interface ProgressEntry {
   workerChildSessionId?: string;
 }
 
-export type ChildRole = 'worker' | 'validator';
-export type ChildStatus = 'pending' | 'running' | 'paused' | 'completed';
+type ChildRole = 'worker' | 'validator';
+type ChildStatus = 'pending' | 'running' | 'paused' | 'completed';
 
-export interface ChildSpawnLink {
+interface ChildSpawnLink {
   kind: 'tool-use' | 'spawn';
   id: string;
 }
@@ -146,7 +145,7 @@ export interface TranscriptEvent {
   compactType?: 'auto' | 'manual';
 }
 
-export type BrowserTranscriptReferenceKind = 'element' | 'region' | 'text';
+type BrowserTranscriptReferenceKind = 'element' | 'region' | 'text';
 
 export interface BrowserTranscriptReference {
   id: string;
@@ -228,14 +227,14 @@ export interface FactoryDefaultSettings {
 
 export type InstallChannel = 'script' | 'brew' | 'npm';
 
-export interface PackageManagers {
+interface PackageManagers {
   brew: boolean;
   npm: boolean;
   curl: boolean;
   pnpm: boolean;
 }
 
-export interface CliInfo {
+interface CliInfo {
   present: boolean;
   path: string;
   version?: string;
@@ -264,13 +263,13 @@ export interface ContextStatsSnapshot {
   compactions?: number;
 }
 
-export interface ContextBreakdownCategory {
+interface ContextBreakdownCategory {
   name: string;
   tokens: number;
   colorKey?: string;
 }
 
-export interface ContextBreakdownSnapshot {
+interface ContextBreakdownSnapshot {
   modelId?: string;
   modelDisplayName?: string;
   contextBudget: number;
@@ -279,7 +278,7 @@ export interface ContextBreakdownSnapshot {
   categories: ContextBreakdownCategory[];
 }
 
-export interface SessionHistoryEntry {
+interface SessionHistoryEntry {
   providerSessionId: string;
   title: string;
   cwd?: string;
@@ -445,7 +444,7 @@ export interface DesignTokens {
   allowlist?: TokenAllowRule[];
 }
 
-export interface TokenAllowRule {
+interface TokenAllowRule {
   selector?: string;
   property?: string;
   value?: string;
@@ -509,9 +508,9 @@ export interface ValidatorConfig {
   runAfterDesignPrompt?: boolean;
 }
 
-export type FindingSeverity = 'error' | 'warning';
+type FindingSeverity = 'error' | 'warning';
 
-export type FindingRule =
+type FindingRule =
   | 'off-palette-color'
   | 'off-scale-font-size'
   | 'off-scale-radius'
@@ -594,7 +593,7 @@ export type DesignSwapReplacementRef =
 
 export type DesignSwapStrategy = 'preserve-api' | 'exact-copy';
 
-export interface ElementSource {
+interface ElementSource {
   framework?: 'react' | 'vue' | 'svelte' | 'unknown';
   component?: string;
   componentChain?: string[];
@@ -604,7 +603,7 @@ export interface ElementSource {
   confidence: 'exact' | 'attribute' | 'heuristic' | 'none';
 }
 
-export interface DesignAnchorAncestor {
+interface DesignAnchorAncestor {
   tag: string;
   component?: string;
   selector?: string;
@@ -668,7 +667,7 @@ export type CanvasFrameSource =
       exportKind: 'default' | 'named';
     };
 
-export interface CanvasFrameRecord {
+interface CanvasFrameRecord {
   id: string;
   name: string;
   source: CanvasFrameSource;
@@ -682,7 +681,7 @@ export interface CanvasFrameRecord {
   y: number;
 }
 
-export interface CanvasAnnotationRecord {
+interface CanvasAnnotationRecord {
   id: string;
   kind: 'pencil' | 'line' | 'arrow' | 'rectangle' | 'square' | 'ellipse' | 'measure';
   points: { x: number; y: number }[];
@@ -692,7 +691,7 @@ export interface CanvasAnnotationRecord {
   frameId?: string | undefined;
 }
 
-export interface CanvasImagePlacement {
+interface CanvasImagePlacement {
   id: string;
   libraryId: string;
   tag: 'moodboard' | 'inspiration' | 'reference';
@@ -977,7 +976,7 @@ export type ClientCommand =
     }
   | { type: 'spec.read'; appSessionId: string; path: string };
 
-export type ChildUpdatedEvent =
+type ChildUpdatedEvent =
   | {
       type: 'child.updated';
       parentAppSessionId: string;
@@ -994,7 +993,7 @@ export type ChildUpdatedEvent =
       access: 'history';
     };
 
-export interface SessionChildEvent {
+interface SessionChildEvent {
   type: 'session.child';
   event: 'upserted';
   child: ChildSessionSummary;
@@ -1002,7 +1001,7 @@ export interface SessionChildEvent {
   runtimeGeneration: number;
 }
 
-export interface ChildErrorEvent {
+interface ChildErrorEvent {
   type: 'child.error';
   parentAppSessionId: string;
   childSessionId: string;

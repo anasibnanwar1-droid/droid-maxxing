@@ -85,7 +85,7 @@ export interface BrowserState extends BrowserSnapshot {
   error?: string;
 }
 
-export interface ElementSource {
+interface ElementSource {
   framework?: 'react' | 'vue' | 'svelte' | 'unknown';
   component?: string;
   componentChain?: string[];
@@ -95,13 +95,13 @@ export interface ElementSource {
   confidence: 'exact' | 'attribute' | 'heuristic' | 'none';
 }
 
-export interface DesignAnchorAncestor {
+interface DesignAnchorAncestor {
   tag: string;
   component?: string;
   selector?: string;
 }
 
-export interface DesignStrokePoint {
+interface DesignStrokePoint {
   x: number;
   y: number;
 }

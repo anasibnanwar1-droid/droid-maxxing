@@ -280,11 +280,6 @@ export async function setApiKey(key: string): Promise<void> {
   await window.droidControl!.setApiKey(key);
 }
 
-export async function clearApiKey(): Promise<void> {
-  if (!isDesktop()) return;
-  await window.droidControl!.clearApiKey();
-}
-
 export async function createTerminal(options: {
   appSessionId: string;
   cwd: string;

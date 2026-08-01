@@ -8,7 +8,7 @@
  * (hierarchy, rhythm, contrast, restraint) without forcing one aesthetic.
  */
 
-export interface InterviewOption {
+interface InterviewOption {
   value: string;
   label: string;
 }
