@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { motion, useReducedMotion } from 'framer-motion';
 import { ArrowLeft } from 'lucide-react';
 import { useStore } from '../../hooks/useStore';
 import type { SessionSummary } from '../../types/bridge';
@@ -32,6 +33,7 @@ export default function AgentPanel({
   sessionKey: string;
   onBack: () => void;
 }) {
+  const shouldReduceMotion = useReducedMotion();
   const { state } = useStore();
   const { studio, studioDispatch } = useStudioCanvas();
   const [text, setText] = useState('');
@@ -97,78 +99,102 @@ export default function AgentPanel({
         </div>
       </header>
 
-      <nav className="flex h-10 shrink-0 items-center gap-1 border-b border-droid-border px-2">
-        {TABS.map((t) => (
-          <button
-            key={t.id}
-            onClick={() => {
-              studioDispatch({ type: 'SET_LEFT_TAB', tab: t.id });
-            }}
-            aria-current={tab === t.id ? 'page' : undefined}
-            className={`rounded-lg px-3 py-1.5 text-[12px] transition-colors duration-150 ${
-              tab === t.id
-                ? 'bg-droid-active text-droid-text'
-                : 'text-droid-text-muted hover:bg-droid-elevated/60 hover:text-droid-text'
-            }`}
-          >
-            {t.label}
-          </button>
-        ))}
+      <nav className="shrink-0 border-b border-droid-border px-3 pb-2.5 pt-1.5">
+        <div className="relative flex rounded-lg bg-droid-elevated/50 p-0.5">
+          {TABS.map((t) => {
+            const active = tab === t.id;
+            return (
+              <button
+                key={t.id}
+                onClick={() => {
+                  studioDispatch({ type: 'SET_LEFT_TAB', tab: t.id });
+                }}
+                aria-current={active ? 'page' : undefined}
+                className={`relative flex-1 rounded-md px-3 py-1.5 text-[12px] transition-colors duration-150 ${
+                  active ? 'text-droid-text' : 'text-droid-text-muted hover:text-droid-text'
+                }`}
+              >
+                {active && (
+                  <motion.span
+                    layoutId="studio-left-tab-indicator"
+                    transition={
+                      shouldReduceMotion
+                        ? { duration: 0 }
+                        : { type: 'spring', stiffness: 520, damping: 42 }
+                    }
+                    className="absolute inset-0 rounded-md bg-droid-active shadow-sm ring-1 ring-droid-border/60"
+                  />
+                )}
+                <span className="relative">{t.label}</span>
+              </button>
+            );
+          })}
+        </div>
       </nav>
 
-      {tab === 'agent' && (
-        <>
-          <div className="min-h-0 flex-1 overflow-y-auto">
-            {sessionId || isCreating ? (
-              sessionId && transcript.length === 0 && !state.historyLoaded[sessionId] ? (
-                <ThreadSkeleton />
+      <motion.div
+        key={tab}
+        initial={shouldReduceMotion ? false : { opacity: 0, y: 4 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={
+          shouldReduceMotion ? { duration: 0 } : { duration: 0.18, ease: [0.16, 1, 0.3, 1] }
+        }
+        className="flex min-h-0 flex-1 flex-col"
+      >
+        {tab === 'agent' && (
+          <>
+            <div className="min-h-0 flex-1 overflow-y-auto">
+              {sessionId || isCreating ? (
+                sessionId && transcript.length === 0 && !state.historyLoaded[sessionId] ? (
+                  <ThreadSkeleton />
+                ) : (
+                  <div className="px-4 py-4">
+                    {/* Same feed as the main chat — tool cards, thinking, diffs, streaming. */}
+                    <MessageFeed events={transcript} pending={streaming || isCreating} />
+                  </div>
+                )
               ) : (
-                <div className="px-4 py-4">
-                  {/* Same feed as the main chat — tool cards, thinking, diffs, streaming. */}
-                  <MessageFeed events={transcript} pending={streaming || isCreating} />
-                </div>
-              )
-            ) : (
-              <ThreadBody messages={[]} onPickSuggestion={setText} />
-            )}
+                <ThreadBody messages={[]} onPickSuggestion={setText} />
+              )}
+            </div>
+            {state.pendingQuestion?.appSessionId === sessionId && <AskUserModal inline />}
+            <StudioComposer
+              key={sessionId ?? `new:${sessionKey}`}
+              text={text}
+              onTextChange={setText}
+              onSend={handleSubmit}
+              streaming={streaming}
+              onStop={() => {
+                if (sessionId) interruptSession(sessionId);
+              }}
+              sessionId={sessionId}
+              disabledReason={isCreating ? 'Starting design session…' : undefined}
+              hasSession={sessionId !== null}
+              sessionModelId={modelId}
+              sessionReasoning={reasoningEffort}
+              onModelChange={setModel}
+            />
+          </>
+        )}
+
+        {tab === 'components' && (
+          <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-4">
+            <ComponentShelf cwd={cwd} />
           </div>
-          {state.pendingQuestion?.appSessionId === sessionId && <AskUserModal inline />}
-          <StudioComposer
-            key={sessionId ?? `new:${sessionKey}`}
-            text={text}
-            onTextChange={setText}
-            onSend={handleSubmit}
-            streaming={streaming}
-            onStop={() => {
-              if (sessionId) interruptSession(sessionId);
-            }}
-            sessionId={sessionId}
-            disabledReason={isCreating ? 'Starting design session…' : undefined}
-            hasSession={sessionId !== null}
-            sessionModelId={modelId}
-            sessionReasoning={reasoningEffort}
-            onModelChange={setModel}
-          />
-        </>
-      )}
+        )}
 
-      {tab === 'components' && (
-        <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-4">
-          <ComponentShelf cwd={cwd} />
-        </div>
-      )}
-
-      {tab === 'libraries' && (
-        <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-4">
-          <DnaShelf
-            cwd={cwd}
-            sessionId={sessionId}
-            send={(instruction) => {
-              send(instruction);
-            }}
-          />
-        </div>
-      )}
+        {tab === 'libraries' && (
+          <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-4">
+            <DnaShelf
+              cwd={cwd}
+              sessionId={sessionId}
+              send={(instruction) => {
+                send(instruction);
+              }}
+            />
+          </div>
+        )}
+      </motion.div>
     </aside>
   );
 }

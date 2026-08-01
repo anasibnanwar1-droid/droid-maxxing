@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { RefreshCw, Search } from 'lucide-react';
+import { AtSign, Component, RefreshCw, Search } from 'lucide-react';
 import { useDesignStore } from '../../hooks/useDesignStore';
 import { previewComponent, scanComponentRegistry } from '../../lib/commands';
 import type { ComponentRegistryEntry } from '../../types/bridge';
@@ -79,7 +79,7 @@ export default function ComponentShelf({ cwd }: { cwd: string }) {
           Nothing matches “{query.trim()}”.
         </div>
       ) : (
-        <div className="space-y-1">
+        <div className="space-y-1.5">
           {filtered.map((c) => (
             <ComponentRow
               key={`${c.file}:${String(c.line)}`}
@@ -108,7 +108,7 @@ function ComponentRow({
   onMention: () => void;
 }) {
   return (
-    // Row click = render live on canvas (the primary, visual action).
+    // Card click = render live on canvas (the primary, visual action).
     <div
       role="button"
       tabIndex={0}
@@ -119,17 +119,15 @@ function ComponentRow({
           onOpen();
         }
       }}
-      className="group flex w-full cursor-pointer items-start gap-2.5 rounded-lg px-2.5 py-2.5 text-left transition-colors hover:bg-droid-elevated"
+      className="group flex w-full cursor-pointer items-center gap-3 rounded-xl border border-droid-border/70 bg-droid-elevated/25 px-3 py-2.5 text-left transition-[background-color,border-color,transform] duration-150 hover:border-droid-border-hover hover:bg-droid-elevated/60 active:scale-[0.99]"
     >
+      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-droid-active/50 text-droid-text-secondary transition-colors group-hover:bg-droid-active group-hover:text-droid-text">
+        <Component className="h-4 w-4" strokeWidth={1.75} />
+      </span>
       <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-1.5">
-          <span className="truncate text-[12.5px] font-medium text-droid-text">{entry.name}</span>
-          <span className="shrink-0 rounded bg-droid-active/60 px-1.5 py-px text-[9.5px] text-droid-text-muted">
-            {entry.exportKind}
-          </span>
-        </div>
-        <div className="truncate text-[10.5px] text-droid-text-muted">
-          {shortFile(entry.file)}:{entry.line}
+        <div className="truncate text-[12.5px] font-medium text-droid-text">{entry.name}</div>
+        <div className="mt-0.5 truncate text-[11px] text-droid-text-muted">
+          {shortFile(entry.file)}
         </div>
       </div>
       <button
@@ -138,9 +136,10 @@ function ComponentRow({
           onMention();
         }}
         title="Attach as reference in the composer"
-        className="mt-0.5 shrink-0 rounded-md px-2 py-1 text-[10.5px] text-droid-text-muted opacity-0 transition-all group-hover:opacity-100 hover:bg-droid-active/70 hover:text-droid-text"
+        aria-label={`Attach ${entry.name} as reference`}
+        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-droid-text-muted opacity-0 transition-all hover:bg-droid-active/70 hover:text-droid-text focus-visible:opacity-100 group-hover:opacity-100"
       >
-        Reference
+        <AtSign className="h-3.5 w-3.5" strokeWidth={1.75} />
       </button>
     </div>
   );
