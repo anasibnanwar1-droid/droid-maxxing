@@ -348,6 +348,7 @@ export class SessionManager {
       forgetMissionControl: (appSessionId) => {
         this.missionControlPolicy.forget(appSessionId);
       },
+      closeDesignSession: (appSessionId) => this.design.closeSession(appSessionId),
       closeBrowserSession: (appSessionId) => this.browsers.close(appSessionId),
       emit: (event) => {
         this.emit(event);

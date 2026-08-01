@@ -138,6 +138,54 @@ test('automatic audit suppresses stale results and closes its isolated browser',
   assert.equal(closeCalls, 1);
 });
 
+test('closing a session aborts its automatic audit and waits for settlement', async (t) => {
+  const cwd = temporaryProject(t);
+  writeDnaFile(cwd, 'design', serializeTokenBlock(TOKENS));
+  writeValidatorConfig(cwd, {
+    pages: [{ id: 'home', url: 'http://127.0.0.1:4173' }],
+    viewports: ['desktop'],
+    runAfterDesignPrompt: true,
+  });
+  let releaseAudit = () => {};
+  const audit = new Promise<[]>((resolve) => {
+    releaseAudit = () => resolve([]);
+  });
+  const closedSessions: string[] = [];
+  const events: ServerEvent[] = [];
+  const manager = createManager(t, events, [], {
+    audit: () => audit,
+    close: (appSessionId) => {
+      closedSessions.push(appSessionId);
+      return Promise.resolve();
+    },
+  });
+
+  const validation = manager.afterDesignPrompt(cwd, 'design-session', () => true);
+  await new Promise((resolve) => setImmediate(resolve));
+  let closeSettled = false;
+  const close = manager.closeSession('design-session').then(() => {
+    closeSettled = true;
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(closeSettled, false);
+  assert.deepEqual(closedSessions, ['design-session:automatic-validator']);
+
+  releaseAudit();
+  await Promise.all([validation, close]);
+
+  assert.equal(closeSettled, true);
+  assert.deepEqual(closedSessions, ['design-session:automatic-validator']);
+  assert.equal(
+    events.some((event) => event.type === 'design.validator.report'),
+    false,
+  );
+  assert.equal(
+    events.some((event) => event.type === 'design.error'),
+    false,
+  );
+});
+
 function createManager(
   t: test.TestContext,
   events: ServerEvent[],

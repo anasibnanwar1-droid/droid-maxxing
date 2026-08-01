@@ -98,6 +98,7 @@ export interface SessionLifecycleDependencies {
   forgetInteractions: (appSessionId: string) => void;
   forgetEventFlow: (appSessionId: string) => void;
   forgetMissionControl: (appSessionId: string) => void;
+  closeDesignSession: (appSessionId: string) => Promise<void>;
   closeBrowserSession: (appSessionId: string) => Promise<void>;
   emit: (event: ServerEvent) => void;
   emitError: (error: LifecycleError) => void;
@@ -457,6 +458,7 @@ export class SessionLifecycle {
 
   private async closeSessionResources(liveSession: LiveSession): Promise<void> {
     const d = this.dependencies;
+    const appSessionId = liveSession.summary.appSessionId;
     let firstError: unknown;
     const run = async (action: () => void | Promise<void>): Promise<void> => {
       try {
@@ -466,7 +468,8 @@ export class SessionLifecycle {
       }
     };
 
-    await run(() => d.childSessions.closeParent(liveSession.summary.appSessionId));
+    await run(() => d.closeDesignSession(appSessionId));
+    await run(() => d.childSessions.closeParent(appSessionId));
     await run(() => {
       d.context.stopSession(liveSession);
     });
@@ -481,26 +484,26 @@ export class SessionLifecycle {
       await run(() => server.close());
     }
     await run(() => liveSession.session.close());
-    await run(() => d.closeBrowserSession(liveSession.summary.appSessionId));
+    await run(() => d.closeBrowserSession(appSessionId));
     await run(() => {
       d.context.forgetSession(liveSession);
     });
     let unregistered: LiveSession | undefined;
     try {
-      unregistered = d.registry.unregister(liveSession.summary.appSessionId);
+      unregistered = d.registry.unregister(appSessionId);
     } catch (error) {
       firstError ??= error;
     }
     if (unregistered) {
       await run(() => {
-        d.forgetMissionControl(liveSession.summary.appSessionId);
+        d.forgetMissionControl(appSessionId);
       });
-      d.emit({ type: 'session.closed', appSessionId: liveSession.summary.appSessionId });
+      d.emit({ type: 'session.closed', appSessionId });
       await run(() => {
-        d.forgetInteractions(liveSession.summary.appSessionId);
+        d.forgetInteractions(appSessionId);
       });
       await run(() => {
-        d.forgetEventFlow(liveSession.summary.appSessionId);
+        d.forgetEventFlow(appSessionId);
       });
     }
     await run(() => {

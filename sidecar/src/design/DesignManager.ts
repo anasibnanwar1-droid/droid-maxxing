@@ -100,6 +100,10 @@ export class DesignManager {
     await this.automaticValidator.run(cwd, appSessionId, isCurrent);
   }
 
+  closeSession(appSessionId: string): Promise<void> {
+    return this.automaticValidator.cancel(appSessionId);
+  }
+
   // Injected into Design Mode prompts so agents read the project DNA before
   // touching UI code.
   // A tiny, prompt-cache-friendly pointer — not the DNA contents. Values are

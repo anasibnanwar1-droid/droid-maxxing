@@ -93,6 +93,7 @@ function createHarness(ordinarySummaries: SessionSummary[] = []) {
   let connectionError: Error | undefined;
   let shutdownStarted = false;
   let closeChildren: (appSessionId: string) => Promise<void> = () => Promise.resolve();
+  let closeDesign: (appSessionId: string) => Promise<void> = () => Promise.resolve();
   let nextEmitFailure: { type: ServerEvent['type']; error: Error } | undefined;
   let now = 10_000;
   let mcpId = 0;
@@ -251,6 +252,10 @@ function createHarness(ordinarySummaries: SessionSummary[] = []) {
       missionForgettingAfterUnregister.push(registry.getLive(appSessionId) === undefined);
       calls.push({ target: 'cleanup', method: 'missionControl.forget', args: [appSessionId] });
     },
+    closeDesignSession: (appSessionId) => {
+      calls.push({ target: 'cleanup', method: 'design.close', args: [appSessionId] });
+      return closeDesign(appSessionId);
+    },
     closeBrowserSession: (appSessionId) => {
       calls.push({ target: 'browser', method: 'browser.close', args: [appSessionId] });
       return Promise.resolve();
@@ -295,6 +300,9 @@ function createHarness(ordinarySummaries: SessionSummary[] = []) {
     },
     setChildCloser: (action: (appSessionId: string) => Promise<void>) => {
       closeChildren = action;
+    },
+    setDesignCloser: (action: (appSessionId: string) => Promise<void>) => {
+      closeDesign = action;
     },
     failNextEmit: (type: ServerEvent['type'], error: Error) => {
       nextEmitFailure = { type, error };
@@ -1217,6 +1225,46 @@ test('close follows ownership order and closeAll closes its initial snapshot', a
   );
   await all.lifecycle.closeAll();
   assert.equal(all.registry.liveSessionsSnapshot().length, 0);
+});
+
+test('close cancels automatic design validation before provider teardown', async () => {
+  const harness = createHarness();
+  const provider = queueCreate(harness, 'design-owner');
+  await harness.lifecycle.create(createCommand());
+  await provider.waitForPrompts(1);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  let releaseValidation = () => {};
+  harness.setDesignCloser(
+    () =>
+      new Promise<void>((resolve) => {
+        releaseValidation = resolve;
+      }),
+  );
+  harness.calls.length = 0;
+
+  const close = harness.lifecycle.close('design-owner');
+  await new Promise<void>((resolve) => setImmediate(resolve));
+
+  assert.deepEqual(
+    harness.calls.filter((call) => call.method === 'design.close').map((call) => call.args[0]),
+    ['design-owner'],
+  );
+  assert.equal(
+    harness.calls.some(
+      (call) => call.method === 'session.close' && call.args[0] === 'design-owner',
+    ),
+    false,
+  );
+
+  releaseValidation();
+  await close;
+
+  assert.equal(
+    harness.calls.some(
+      (call) => call.method === 'session.close' && call.args[0] === 'design-owner',
+    ),
+    true,
+  );
 });
 
 test('closeAll marks its full snapshot before sequential cleanup', async () => {
