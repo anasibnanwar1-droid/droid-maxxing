@@ -176,6 +176,66 @@ test('opening an identical target stays pending without starting a duplicate res
   assert.equal(harness.reads.length, 1);
 });
 
+test('a late restore establishes revision without overwriting newer local edits', () => {
+  const harness = fixture();
+  harness.coordinator.open(target('thread-a'), emptyContent());
+  const hydrateCount = harness.hydrated.length;
+  const local = content(1.6);
+  harness.coordinator.update(local);
+
+  harness.coordinator.receive(stateEvent(document('thread-a', 4, 0.8)));
+  assert.equal(harness.hydrated.length, hydrateCount);
+  harness.scheduler.run();
+  assert.deepEqual(harness.writes, [
+    {
+      cwd: '/repo/worktree',
+      canvasId: 'thread-a',
+      expectedRevision: 4,
+      content: local,
+    },
+  ]);
+});
+
+test('read failures preserve edits and enable a non-destructive save', () => {
+  const harness = fixture();
+  harness.coordinator.open(target('thread-a'), emptyContent());
+  const hydrateCount = harness.hydrated.length;
+  const local = content(1.4);
+  harness.coordinator.update(local);
+
+  harness.coordinator.receive(errorEvent('read', 'could not read canvas'));
+  harness.scheduler.run();
+
+  assert.equal(harness.hydrated.length, hydrateCount);
+  assert.deepEqual(harness.notices.at(-1), ['could not read canvas']);
+  assert.deepEqual(harness.writes.at(-1), {
+    cwd: '/repo/worktree',
+    canvasId: 'thread-a',
+    expectedRevision: 0,
+    content: local,
+  });
+});
+
+test('write failures retry local content without rereading or hydrating stale state', () => {
+  const harness = fixture();
+  harness.coordinator.open(target('thread-a'), emptyContent());
+  harness.coordinator.receive(stateEvent(document('thread-a', 3, 1)));
+  const hydrateCount = harness.hydrated.length;
+  const local = content(1.7);
+  harness.coordinator.update(local);
+  harness.scheduler.run();
+  harness.coordinator.receive(errorEvent('write', 'revision conflict', 5));
+  harness.scheduler.run();
+
+  assert.equal(harness.reads.length, 1);
+  assert.equal(harness.hydrated.length, hydrateCount);
+  assert.deepEqual(
+    harness.writes.map((write) => write.expectedRevision),
+    [3, 5],
+  );
+  assert.deepEqual(harness.writes.at(-1)?.content, local);
+});
+
 test('thread switches flush the previous canvas and ignore stale responses', () => {
   const harness = fixture();
   harness.coordinator.open(target('thread-a'), emptyContent());
@@ -322,5 +382,20 @@ function savedEvent(value: CanvasDocument): Extract<ServerEvent, { type: 'design
     cwd: '/repo/worktree',
     canvasId: value.threadId,
     document: value,
+  };
+}
+
+function errorEvent(
+  operation: 'read' | 'write',
+  message: string,
+  actualRevision?: number,
+): Extract<ServerEvent, { type: 'design.canvas.error' }> {
+  return {
+    type: 'design.canvas.error',
+    cwd: '/repo/worktree',
+    canvasId: 'thread-a',
+    operation,
+    message,
+    ...(actualRevision === undefined ? {} : { actualRevision }),
   };
 }

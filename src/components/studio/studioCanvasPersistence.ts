@@ -190,6 +190,10 @@ export class CanvasSaveCoordinator {
   private isLoaded = false;
   private current: CanvasDocumentContent | null = null;
   private lastSaved = '';
+  private localGeneration = 0;
+  private restoreGeneration = 0;
+  private writeInFlight = false;
+  private writeFailureCount = 0;
   private cancelSchedule: CancelSchedule | null = null;
 
   constructor(
@@ -220,6 +224,10 @@ export class CanvasSaveCoordinator {
       previous?.projectKey === target.projectKey && previous.canvasId === target.canvasId;
     this.target = target;
     this.current = cloneContent(current);
+    this.localGeneration = 0;
+    this.restoreGeneration = 0;
+    this.writeInFlight = false;
+    this.writeFailureCount = 0;
     this.cancelTimer();
     if (promotesDraft) {
       this.revision = 0;
@@ -237,62 +245,89 @@ export class CanvasSaveCoordinator {
   }
 
   update(content: CanvasDocumentContent): void {
-    this.current = cloneContent(content);
+    const serialized = stableContent(content);
+    if (this.current === null || stableContent(this.current) !== serialized) {
+      this.localGeneration += 1;
+      this.current = cloneContent(content);
+    }
     if (!this.isLoaded || stableContent(content) === this.lastSaved) {
       this.cancelTimer();
       return;
     }
-    this.cancelTimer();
-    this.cancelSchedule = this.schedule(() => {
-      this.cancelSchedule = null;
-      this.flush();
-    }, AUTOSAVE_DELAY_MS);
+    this.scheduleFlush(AUTOSAVE_DELAY_MS);
   }
 
   receive(event: CanvasEvent): void {
     if (!this.matches(event.cwd, event.canvasId)) return;
     if (event.type === 'design.canvas.state') {
-      this.cancelTimer();
-      this.revision = event.document?.revision ?? 0;
-      this.isLoaded = true;
-      const content = event.document ? documentContent(event.document) : emptyContent();
-      this.current = cloneContent(content);
-      this.lastSaved = stableContent(content);
-      this.onHydrate(hydrateStudioCanvas(event.document, event.frames, event.images));
+      this.receiveState(event);
       return;
     }
     if (event.type === 'design.canvas.saved') {
-      if (event.document.revision >= this.revision) {
-        this.revision = event.document.revision;
-        this.lastSaved = stableContent(documentContent(event.document));
-      }
-      if (this.current && stableContent(this.current) !== this.lastSaved) this.update(this.current);
+      this.receiveSaved(event);
       return;
     }
+    this.receiveError(event);
+  }
+
+  private receiveState(event: Extract<CanvasEvent, { type: 'design.canvas.state' }>): void {
+    this.cancelTimer();
+    this.revision = event.document?.revision ?? 0;
+    this.isLoaded = true;
+    const content = event.document ? documentContent(event.document) : emptyContent();
+    const hasNewerLocalContent = this.localGeneration !== this.restoreGeneration;
+    this.lastSaved = stableContent(content);
+    if (hasNewerLocalContent) {
+      if (this.current && stableContent(this.current) !== this.lastSaved) {
+        this.scheduleFlush(AUTOSAVE_DELAY_MS);
+      }
+      return;
+    }
+    this.current = cloneContent(content);
+    this.onHydrate(hydrateStudioCanvas(event.document, event.frames, event.images));
+  }
+
+  private receiveSaved(event: Extract<CanvasEvent, { type: 'design.canvas.saved' }>): void {
+    this.writeInFlight = false;
+    this.writeFailureCount = 0;
+    if (event.document.revision >= this.revision) {
+      this.revision = event.document.revision;
+      this.lastSaved = stableContent(documentContent(event.document));
+    }
+    if (this.current && stableContent(this.current) !== this.lastSaved) this.update(this.current);
+  }
+
+  private receiveError(event: Extract<CanvasEvent, { type: 'design.canvas.error' }>): void {
     this.onNotice([event.message]);
     if (event.operation === 'read') {
-      this.onHydrate(hydrateStudioCanvas(null, [], []));
+      this.isLoaded = true;
+      const hasNewerLocalContent = this.localGeneration !== this.restoreGeneration;
+      this.restoreGeneration = this.localGeneration;
+      if (this.current) {
+        this.lastSaved = hasNewerLocalContent ? '' : stableContent(this.current);
+      }
+      if (hasNewerLocalContent) this.scheduleFlush(AUTOSAVE_DELAY_MS);
+      else this.scheduleReadRetry();
       return;
     }
-    this.cancelTimer();
-    this.isLoaded = false;
-    this.lastSaved = '';
-    this.transport.read(event.cwd, event.canvasId);
+    this.writeInFlight = false;
+    if (event.actualRevision !== undefined) this.revision = event.actualRevision;
+    this.writeFailureCount += 1;
+    this.scheduleFlush(Math.min(AUTOSAVE_DELAY_MS * 2 ** this.writeFailureCount, 5_000));
   }
 
   flush(): void {
     this.cancelTimer();
-    if (!this.target || !this.isLoaded || !this.current) return;
+    if (!this.target || !this.isLoaded || !this.current || this.writeInFlight) return;
     const serialized = stableContent(this.current);
     if (serialized === this.lastSaved) return;
+    this.writeInFlight = true;
     this.transport.write({
       cwd: this.target.cwd,
       canvasId: this.target.canvasId,
       expectedRevision: this.revision,
       content: cloneContent(this.current),
     });
-    this.revision += 1;
-    this.lastSaved = serialized;
   }
 
   dispose(): void {
@@ -307,6 +342,26 @@ export class CanvasSaveCoordinator {
   private cancelTimer(): void {
     this.cancelSchedule?.();
     this.cancelSchedule = null;
+  }
+
+  private scheduleFlush(delayMs: number): void {
+    this.cancelTimer();
+    this.cancelSchedule = this.schedule(() => {
+      this.cancelSchedule = null;
+      this.flush();
+    }, delayMs);
+  }
+
+  private scheduleReadRetry(): void {
+    const target = this.target;
+    if (!target) return;
+    this.cancelTimer();
+    this.cancelSchedule = this.schedule(() => {
+      this.cancelSchedule = null;
+      if (!this.matches(target.cwd, target.canvasId)) return;
+      this.restoreGeneration = this.localGeneration;
+      this.transport.read(target.cwd, target.canvasId);
+    }, AUTOSAVE_DELAY_MS);
   }
 }
 
