@@ -279,7 +279,6 @@ const PREVIEW_ASSET_EXTENSIONS = new Set([
   '.jpg',
   '.js',
   '.json',
-  '.map',
   '.mjs',
   '.mp4',
   '.otf',
@@ -328,41 +327,55 @@ async function workspaceHtmlAssets(entryPath: string, html: string): Promise<str
 
 function previewReferences(content: string): string[] {
   const references = new Set<string>();
+  const addReference = (value: string): void => {
+    const reference = value.trim().split(/[?#]/, 1)[0];
+    if (
+      reference === '' ||
+      reference.startsWith('/') ||
+      reference.startsWith('//') ||
+      /^[a-z][a-z\d+.-]*:/i.test(reference)
+    ) {
+      return;
+    }
+    references.add(reference);
+  };
   const patterns = [
-    /\b(?:src|href)\s*=\s*["']([^"']+)["']/gi,
+    /\b(?:src|href|poster)\s*=\s*["']([^"']+)["']/gi,
     /\b(?:import|export)\s+(?:[^"']*?\s+from\s+)?["']([^"']+)["']/gi,
     /\bimport\s*\(\s*["']([^"']+)["']\s*\)/gi,
     /\burl\(\s*["']?([^"')]+)["']?\s*\)/gi,
     /\bnew\s+(?:Shared)?Worker\s*\(\s*["']([^"']+)["']/gi,
+    /\bnew\s+URL\s*\(\s*["']([^"']+)["']\s*,\s*import\.meta\.url\s*\)/gi,
   ];
   for (const pattern of patterns) {
     for (const match of content.matchAll(pattern)) {
-      const reference = match[1].trim().split(/[?#]/, 1)[0];
-      if (
-        reference === '' ||
-        reference.startsWith('/') ||
-        reference.startsWith('//') ||
-        /^[a-z][a-z\d+.-]*:/i.test(reference)
-      ) {
-        continue;
-      }
-      references.add(reference);
+      addReference(match[1]);
+    }
+  }
+  for (const match of content.matchAll(/\bsrcset\s*=\s*["']([^"']+)["']/gi)) {
+    for (const candidate of match[1].split(',')) {
+      const [reference] = candidate.trim().split(/\s+/, 1);
+      if (reference) addReference(reference);
     }
   }
   return [...references];
 }
 
 function isSafePreviewAsset(relativePath: string): boolean {
+  const segments = relativePath.split('/');
+  if (relativePath === '..' || relativePath.startsWith('../')) {
+    return false;
+  }
   if (
-    relativePath === '..' ||
-    relativePath.startsWith('../') ||
-    relativePath.split('/').some((segment) => segment.startsWith('.'))
+    segments.some(
+      (segment) =>
+        segment.startsWith('.') ||
+        SENSITIVE_ASSET_NAME.test(segment) ||
+        /^(?:package|pnpm-lock|yarn\.lock)/i.test(segment),
+    )
   ) {
     return false;
   }
   const name = basename(relativePath);
-  if (SENSITIVE_ASSET_NAME.test(name) || /^(?:package|pnpm-lock|yarn\.lock)/i.test(name)) {
-    return false;
-  }
   return PREVIEW_ASSET_EXTENSIONS.has(extname(name).toLowerCase());
 }

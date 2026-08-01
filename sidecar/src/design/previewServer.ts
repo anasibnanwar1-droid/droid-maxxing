@@ -7,16 +7,26 @@ import { pipeline } from 'node:stream/promises';
 import type { Readable } from 'node:stream';
 
 const CONTENT_TYPES: Record<string, string> = {
+  '.htm': 'text/html; charset=utf-8',
   '.html': 'text/html; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
   '.js': 'application/javascript; charset=utf-8',
+  '.mjs': 'application/javascript; charset=utf-8',
   '.json': 'application/json; charset=utf-8',
+  '.map': 'application/json; charset=utf-8',
+  '.wasm': 'application/wasm',
   '.svg': 'image/svg+xml',
+  '.avif': 'image/avif',
+  '.ico': 'image/x-icon',
   '.png': 'image/png',
   '.jpg': 'image/jpeg',
   '.jpeg': 'image/jpeg',
   '.webp': 'image/webp',
   '.gif': 'image/gif',
+  '.mp4': 'video/mp4',
+  '.webm': 'video/webm',
+  '.otf': 'font/otf',
+  '.ttf': 'font/ttf',
   '.woff2': 'font/woff2',
   '.woff': 'font/woff',
 };
