@@ -110,12 +110,11 @@ export function addSessionNote(
   // honest (the same pattern the store uses for these maps).
   const byId: Partial<SessionNotesMap> = map;
   const existing = byId[appSessionId] ?? [];
-  // Re-insert the session at the end of the map so adding a note also
-  // refreshes its eviction position. Bound the session count here too, not
-  // only on load: an unbounded map grows storage without limit, and
-  // loadSessionNotes would then silently drop notes on restart. The prune
-  // drops least-recently-touched sessions first, so the freshest notes
-  // always survive.
+  // Re-insert the session at the end of the map so a new note also refreshes
+  // its eviction position; the prune below drops least-recently-touched
+  // sessions, and bounding here (not only on load) keeps storage capped.
+  // Recency relies on string-key insertion order, which holds because
+  // daemon session ids always carry a non-numeric suffix ("1:px").
   const rest = Object.fromEntries(Object.entries(map).filter(([id]) => id !== appSessionId));
   const next = { ...rest, [appSessionId]: [note, ...existing].slice(0, MAX_NOTES_PER_SESSION) };
   const sessionIds = Object.keys(next);
@@ -146,8 +145,6 @@ export function removeSessionNote(
   appSessionId: string,
   noteId: string,
 ): SessionNotesMap {
-  // Record index access types as always-present; Partial keeps the lookup
-  // honest (the same pattern the store uses for these maps).
   const byId: Partial<SessionNotesMap> = map;
   const existing = byId[appSessionId];
   if (!existing) return map;
