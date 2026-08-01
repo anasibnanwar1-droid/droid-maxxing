@@ -225,3 +225,21 @@ test('resize and diagnostic requests use dedicated native actions', async () => 
   assert.equal(requests[2]?.clearNetworkLog, true);
   assert.equal(requests[3]?.clearConsoleLog, true);
 });
+
+test('truncated style audits fail visibly instead of reporting a clean sample', async () => {
+  const runtime = new NativeBrowserRuntime({
+    appSessionId: 'app-session-one',
+    browserSessionId: 'browser-one',
+    viewport: { width: 900, height: 700, deviceScaleFactor: 2 },
+    request: async (request) => ({
+      requestId: request.requestId,
+      appSessionId: request.appSessionId,
+      browserSessionId: request.browserSessionId,
+      ok: true,
+      audit: [],
+      auditTruncated: true,
+    }),
+  });
+
+  await assert.rejects(runtime.audit(), /sample is incomplete/);
+});

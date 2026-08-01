@@ -79,6 +79,7 @@ export interface NativeBrowserAgentResult {
   networkEvents?: BrowserNetworkEvent[];
   consoleEvents?: BrowserConsoleEvent[];
   audit?: AuditElement[];
+  auditTruncated?: boolean;
   error?: string;
 }
 
@@ -271,6 +272,7 @@ export function nativeBrowserResultFromAgentResult(
     networkEvents: result.networkEvents,
     consoleEvents: result.consoleEvents,
     audit: result.audit,
+    auditTruncated: result.auditTruncated,
     error: result.error,
   };
 }

@@ -50,10 +50,11 @@ test('native browser results preserve audit samples across the renderer bridge',
       browserSessionId: 'browser-1',
       action: 'audit',
     },
-    { requestId: 'request-2', ok: true, audit },
+    { requestId: 'request-2', ok: true, audit, auditTruncated: true },
   );
 
   assert.deepEqual(result.audit, audit);
+  assert.equal(result.auditTruncated, true);
   assert.equal(result.appSessionId, 'app-1');
   assert.equal(result.browserSessionId, 'browser-1');
 });

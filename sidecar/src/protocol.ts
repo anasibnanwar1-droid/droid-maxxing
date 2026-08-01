@@ -445,6 +445,7 @@ export interface BrowserNativeResult {
   consoleEvents?: BrowserConsoleEvent[];
   image?: string;
   audit?: AuditElement[];
+  auditTruncated?: boolean;
   error?: string;
 }
 
