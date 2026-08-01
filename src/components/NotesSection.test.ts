@@ -88,10 +88,11 @@ test('typing @ in the pad opens the tag menu with every option and hint', () => 
   assert.match(html, />idea</);
   assert.match(html, />constraint</);
   assert.match(html, /something broken/);
-  // The menu drops below the pad: above the pad it is clipped away by the
-  // collapse container's overflow-hidden (the bug that hid it before).
-  assert.match(html, /top-full/);
-  assert.doesNotMatch(html, /bottom-full/);
+  // The menu sits in flow directly below the pad: an absolute overlay is
+  // clipped by the collapse container's overflow-hidden whenever the note
+  // list is shorter than the menu (the empty first-run state).
+  assert.ok(html.indexOf('Write a note to use later') < html.indexOf('something broken'));
+  assert.doesNotMatch(html, /top-full/);
   // Pills are fully rounded to match the app's geometry.
   assert.match(html, /rounded-full/);
 });

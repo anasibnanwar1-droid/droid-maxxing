@@ -251,45 +251,7 @@ export function NotesPanel({
                 {/* Notepad box: intentionally plain — Enter saves, no send chrome.
                     Uses the field token: raised like the composer on dark, crisp
                     card-surface on light. */}
-                <div className="relative">
-                  <AnimatePresence>
-                    {tagMenuOpen && (
-                      <motion.div
-                        initial={{ opacity: 0, y: -4 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        exit={{ opacity: 0, y: -4 }}
-                        transition={{ duration: 0.15, ease: EASE }}
-                        className="absolute left-0 right-0 top-full z-50 mt-1.5 overflow-hidden rounded-xl border border-droid-border bg-droid-elevated py-1 shadow-2xl shadow-black/40"
-                      >
-                        {matchingTags.map((option, index) => (
-                          <button
-                            key={option}
-                            type="button"
-                            onMouseDown={(event) => {
-                              event.preventDefault();
-                              selectTag(option);
-                            }}
-                            onMouseEnter={() => {
-                              setTagMenuIndex(index);
-                            }}
-                            className={`flex w-full items-center gap-2 px-2.5 py-1.5 text-left transition-colors ${
-                              index === activeTagIndex ? 'bg-droid-hover/60' : ''
-                            }`}
-                          >
-                            <span
-                              className={`px-1.5 py-px font-mono text-[9.5px] font-medium uppercase tracking-wide ${NOTE_TAG_CHIP[option]}`}
-                            >
-                              {option}
-                            </span>
-                            <span className="text-[11.5px] text-droid-text-muted">
-                              {NOTE_TAG_HINT[option]}
-                            </span>
-                          </button>
-                        ))}
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
-
+                <div>
                   <div className="rounded-lg border border-droid-border/60 bg-droid-field px-2.5 py-1.5 transition-colors focus-within:border-droid-accent/40">
                     {tag && (
                       <div className="mb-1 flex">
@@ -371,6 +333,48 @@ export function NotesPanel({
                       className="w-full resize-none bg-transparent text-[12.5px] leading-snug text-droid-text placeholder:text-droid-text-muted/50 focus:outline-none"
                     />
                   </div>
+
+                  {/* Tag menu in flow directly below the pad: as an absolute
+                      overlay it was clipped by the collapse container's
+                      overflow-hidden whenever the note list was shorter than
+                      the menu (the empty first-run state). */}
+                  <AnimatePresence>
+                    {tagMenuOpen && (
+                      <motion.div
+                        initial={{ opacity: 0, y: -4 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: -4 }}
+                        transition={{ duration: 0.15, ease: EASE }}
+                        className="mt-1.5 overflow-hidden rounded-xl border border-droid-border bg-droid-elevated py-1 shadow-2xl shadow-black/40"
+                      >
+                        {matchingTags.map((option, index) => (
+                          <button
+                            key={option}
+                            type="button"
+                            onMouseDown={(event) => {
+                              event.preventDefault();
+                              selectTag(option);
+                            }}
+                            onMouseEnter={() => {
+                              setTagMenuIndex(index);
+                            }}
+                            className={`flex w-full items-center gap-2 px-2.5 py-1.5 text-left transition-colors ${
+                              index === activeTagIndex ? 'bg-droid-hover/60' : ''
+                            }`}
+                          >
+                            <span
+                              className={`px-1.5 py-px font-mono text-[9.5px] font-medium uppercase tracking-wide ${NOTE_TAG_CHIP[option]}`}
+                            >
+                              {option}
+                            </span>
+                            <span className="text-[11.5px] text-droid-text-muted">
+                              {NOTE_TAG_HINT[option]}
+                            </span>
+                          </button>
+                        ))}
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
                 </div>
 
                 <div className="mt-1">
