@@ -186,6 +186,7 @@ export default function AgentPanel({
             <DnaShelf
               cwd={cwd}
               sessionId={sessionId}
+              streaming={streaming}
               send={(instruction, browserRefs) => {
                 send(instruction, { browserRefs });
               }}

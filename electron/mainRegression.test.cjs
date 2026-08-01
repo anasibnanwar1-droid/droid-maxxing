@@ -60,3 +60,10 @@ test('main renderer reload closes renderer-owned terminals before navigation', (
   assert.match(mainSource, /contents\.on\('render-process-gone', cleanupForRendererReplacement\)/);
   assert.match(mainSource, explicitReloadCleanup);
 });
+
+test('unexpected sidecar exit closes native browser views before restart', () => {
+  const unexpectedExitCleanup =
+    /onUnexpectedExit: \(\{ code, signal, error, delayMs \}\) => \{\s*closeAllNativeBrowsers\(\);\s*const reason =/;
+
+  assert.match(mainSource, unexpectedExitCleanup);
+});

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { X } from 'lucide-react';
 import { useDesignStore, type StudioTab } from '../../hooks/useDesignStore';
 import {
   listDesignLibrary,
@@ -39,7 +40,7 @@ export default function StudioShell({
   onAddRepository: () => Promise<void>;
   onClose: () => void;
 }) {
-  const { design } = useDesignStore();
+  const { design, designDispatch } = useDesignStore();
   const [addFrameOpen, setAddFrameOpen] = useState(false);
   const [isAgentPanelOpen, setIsAgentPanelOpen] = useState(true);
   const { notices, isHydrating } = useStudioCanvasPersistence(cwd, sessionKey);
@@ -95,6 +96,28 @@ export default function StudioShell({
           }}
         />
         <div className="relative min-h-0 flex-1">
+          {design.lastError &&
+            (!design.lastError.cwd ||
+              design.lastError.cwd === cwd ||
+              design.lastError.cwd === sessionKey) && (
+              <div
+                role="alert"
+                className="studio-popover absolute left-1/2 top-3 z-50 flex max-w-[560px] -translate-x-1/2 items-start gap-3 px-3 py-2 text-[11.5px] leading-relaxed text-droid-text-secondary"
+              >
+                <span className="min-w-0 flex-1">{design.lastError.message}</span>
+                <button
+                  type="button"
+                  aria-label="Dismiss error"
+                  title="Dismiss"
+                  onClick={() => {
+                    designDispatch({ type: 'CLEAR_ERROR' });
+                  }}
+                  className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-md text-droid-text-muted transition-colors hover:bg-droid-active hover:text-droid-text"
+                >
+                  <X className="h-3.5 w-3.5" strokeWidth={1.75} />
+                </button>
+              </div>
+            )}
           {design.studioTab === 'canvas' ? (
             <>
               <StudioCanvas

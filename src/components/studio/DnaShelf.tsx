@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Check, RefreshCw, Trash2 } from 'lucide-react';
 import { useDesignStore } from '../../hooks/useDesignStore';
 import {
@@ -35,10 +35,12 @@ import MotionPreview from './MotionPreview';
 export default function DnaShelf({
   cwd,
   sessionId,
+  streaming,
   send,
 }: {
   cwd: string;
   sessionId: string | null;
+  streaming: boolean;
   send: (instruction: string, browserRefs?: BrowserTranscriptReference[]) => void;
 }) {
   const { design } = useDesignStore();
@@ -73,20 +75,15 @@ export default function DnaShelf({
     listSavedDna(cwd);
   }, [cwd]);
 
-  // When the design session goes idle, re-read DNA — the agent may have written
-  // DESIGN.md via file tools (not design.dna.write), so the shelf would otherwise
-  // stay stale ("doesn't come as selected").
-  const streaming = !!sessionId && cwd in design.sessions; // session exists; streaming checked via store in AgentPanel
+  // When this design session finishes a turn, re-read DNA. The agent may have
+  // written DESIGN.md through file tools rather than design.dna.write.
+  const previousSessionState = useRef({ sessionId, streaming });
   useEffect(() => {
-    if (!cwd || !sessionId) return;
-    // Soft re-fetch on session attach; AgentPanel's streaming edge is the real
-    // idle signal, but a mount refresh already covers most cases.
-    const t = setTimeout(() => {
+    const previous = previousSessionState.current;
+    if (cwd && sessionId && previous.sessionId === sessionId && previous.streaming && !streaming) {
       readDesignDna(cwd);
-    }, 400);
-    return () => {
-      clearTimeout(t);
-    };
+    }
+    previousSessionState.current = { sessionId, streaming };
   }, [cwd, sessionId, streaming]);
 
   const scan = () => {
