@@ -38,12 +38,35 @@ export function resolveDesignProjectIdentity(cwd: string): DesignProjectIdentity
   }
 
   const digest = createHash('sha256').update(`${kind}:${canonicalRoot}`).digest('hex').slice(0, 24);
-  return { id: `project-${digest}`, canonicalRoot, kind };
+  const pathIdentity = `project-${digest}`;
+  const id = commonDir ? stableGitIdentity(canonicalCwd, pathIdentity) : pathIdentity;
+  return { id, canonicalRoot, kind };
+}
+
+function stableGitIdentity(cwd: string, initialIdentity: string): string {
+  const existing = git(cwd, ['config', '--local', '--get', 'droidex.projectId']);
+  if (existing && /^project-[a-f\d]{24}$/.test(existing)) return existing;
+  try {
+    execFileSync('git', ['config', '--local', 'droidex.projectId', initialIdentity], {
+      cwd,
+      stdio: 'ignore',
+      timeout: 10_000,
+    });
+    return initialIdentity;
+  } catch (error) {
+    throw new Error(`Could not persist the design project identity: ${messageOf(error)}`, {
+      cause: error,
+    });
+  }
 }
 
 function gitCommonDir(cwd: string): string | undefined {
+  return git(cwd, ['rev-parse', '--git-common-dir']);
+}
+
+function git(cwd: string, args: string[]): string | undefined {
   try {
-    return execFileSync('git', ['rev-parse', '--git-common-dir'], {
+    return execFileSync('git', args, {
       cwd,
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore'],

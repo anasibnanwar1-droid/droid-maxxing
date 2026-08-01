@@ -14,10 +14,18 @@ test('workspace previews emit and later resolve an honest canonical source descr
   mkdirSync(pageDir);
   writeFileSync(
     join(pageDir, 'dashboard.html'),
-    '<link rel="stylesheet" href="styles.css"><h1>Dashboard</h1>',
+    '<link rel="stylesheet" href="styles.css"><link href=".env"><script type="module" src="app.js"></script><h1>Dashboard</h1>',
     'utf8',
   );
-  writeFileSync(join(pageDir, 'styles.css'), 'h1 { color: green; }', 'utf8');
+  mkdirSync(join(pageDir, 'assets'));
+  writeFileSync(
+    join(pageDir, 'styles.css'),
+    '@font-face { font-family: Demo; src: url("assets/demo.woff2") } h1 { color: green; }',
+    'utf8',
+  );
+  writeFileSync(join(pageDir, 'app.js'), 'import "./chunk.js";', 'utf8');
+  writeFileSync(join(pageDir, 'chunk.js'), 'document.body.dataset.ready = "true";', 'utf8');
+  writeFileSync(join(pageDir, 'assets', 'demo.woff2'), 'font', 'utf8');
   writeFileSync(join(pageDir, '.env'), 'SECRET=not-for-preview', 'utf8');
   const server = new PreviewServer();
   t.after(async () => {
@@ -39,7 +47,11 @@ test('workspace previews emit and later resolve an honest canonical source descr
   });
   const stylesheet = await fetch(new URL('styles.css', rendered.ok ? rendered.url : ''));
   assert.equal(stylesheet.status, 200);
-  assert.equal(await stylesheet.text(), 'h1 { color: green; }');
+  assert.match(await stylesheet.text(), /h1 \{ color: green; \}/);
+  const chunk = await fetch(new URL('chunk.js', rendered.ok ? rendered.url : ''));
+  assert.equal(chunk.status, 200);
+  const font = await fetch(new URL('assets/demo.woff2', rendered.ok ? rendered.url : ''));
+  assert.equal(font.status, 200);
   const unreferenced = await fetch(new URL('.env', rendered.ok ? rendered.url : ''));
   assert.equal(unreferenced.status, 404);
 

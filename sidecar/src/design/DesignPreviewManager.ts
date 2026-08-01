@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { mkdir, readFile, realpath, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { basename, dirname, join, relative, resolve, sep } from 'node:path';
+import { basename, dirname, extname, join, relative, resolve, sep } from 'node:path';
 import type { CanvasFrameSource, ServerEvent } from '../protocol.js';
 import { renderBrandBook } from './brandBook.js';
 import { buildComponentPreview, componentPreviewLabel } from './componentPreview.js';
@@ -165,7 +165,7 @@ export class DesignPreviewManager {
       id,
       dir: dirname(abs),
       entry: basename(abs),
-      assets: workspaceHtmlAssets(abs, html),
+      assets: await workspaceHtmlAssets(abs, html),
       label: requestedName ?? basename(abs),
       source: {
         type: 'workspace-html',
@@ -268,23 +268,101 @@ function previewId(cwd: string, key: string): string {
   return `preview-${createHash('sha1').update(`${cwd} ${key}`).digest('hex').slice(0, 12)}`;
 }
 
-function workspaceHtmlAssets(entryPath: string, html: string): string[] {
+const PREVIEW_ASSET_EXTENSIONS = new Set([
+  '.avif',
+  '.css',
+  '.gif',
+  '.htm',
+  '.html',
+  '.ico',
+  '.jpeg',
+  '.jpg',
+  '.js',
+  '.json',
+  '.map',
+  '.mjs',
+  '.mp4',
+  '.otf',
+  '.png',
+  '.svg',
+  '.ttf',
+  '.wasm',
+  '.webm',
+  '.webp',
+  '.woff',
+  '.woff2',
+]);
+const PARSED_PREVIEW_EXTENSIONS = new Set(['.css', '.htm', '.html', '.js', '.mjs']);
+const SENSITIVE_ASSET_NAME =
+  /(^|[-_.])(credential|credentials|env|key|private|secret|secrets|token|tokens)([-_.]|$)/i;
+const MAX_PREVIEW_ASSETS = 512;
+
+async function workspaceHtmlAssets(entryPath: string, html: string): Promise<string[]> {
   const root = dirname(entryPath);
-  const assets = new Set([basename(entryPath)]);
-  const sourcePattern = /\b(?:src|href)\s*=\s*["']([^"']+)["']/gi;
-  for (const match of html.matchAll(sourcePattern)) {
-    const reference = match[1].split(/[?#]/, 1)[0];
-    if (
-      reference === '' ||
-      reference.startsWith('/') ||
-      reference.startsWith('//') ||
-      /^[a-z][a-z\d+.-]*:/i.test(reference)
-    ) {
-      continue;
+  const entry = basename(entryPath);
+  const assets = new Set([entry]);
+  const queued = [{ relativePath: entry, content: html }];
+
+  while (queued.length > 0 && assets.size < MAX_PREVIEW_ASSETS) {
+    const current = queued.shift();
+    if (!current) break;
+    for (const reference of previewReferences(current.content)) {
+      const resolved = resolve(root, dirname(current.relativePath), reference);
+      const relativePath = relative(root, resolved).split(sep).join('/');
+      if (!isSafePreviewAsset(relativePath) || assets.has(relativePath)) continue;
+      try {
+        const info = await stat(resolved);
+        if (!info.isFile()) continue;
+        assets.add(relativePath);
+        if (PARSED_PREVIEW_EXTENSIONS.has(extname(relativePath).toLowerCase())) {
+          queued.push({ relativePath, content: await readFile(resolved, 'utf8') });
+        }
+      } catch {
+        // A missing optional asset should not make the whole preview unusable.
+      }
+      if (assets.size >= MAX_PREVIEW_ASSETS) break;
     }
-    const assetPath = resolve(root, reference);
-    const relativePath = relative(root, assetPath).split(sep).join('/');
-    if (relativePath !== '..' && !relativePath.startsWith('../')) assets.add(relativePath);
   }
   return [...assets];
+}
+
+function previewReferences(content: string): string[] {
+  const references = new Set<string>();
+  const patterns = [
+    /\b(?:src|href)\s*=\s*["']([^"']+)["']/gi,
+    /\b(?:import|export)\s+(?:[^"']*?\s+from\s+)?["']([^"']+)["']/gi,
+    /\bimport\s*\(\s*["']([^"']+)["']\s*\)/gi,
+    /\burl\(\s*["']?([^"')]+)["']?\s*\)/gi,
+    /\bnew\s+(?:Shared)?Worker\s*\(\s*["']([^"']+)["']/gi,
+  ];
+  for (const pattern of patterns) {
+    for (const match of content.matchAll(pattern)) {
+      const reference = match[1].trim().split(/[?#]/, 1)[0];
+      if (
+        reference === '' ||
+        reference.startsWith('/') ||
+        reference.startsWith('//') ||
+        /^[a-z][a-z\d+.-]*:/i.test(reference)
+      ) {
+        continue;
+      }
+      references.add(reference);
+    }
+  }
+  return [...references];
+}
+
+function isSafePreviewAsset(relativePath: string): boolean {
+  if (
+    relativePath === '..' ||
+    relativePath.startsWith('../') ||
+    relativePath.split('/').some((segment) => segment.startsWith('.'))
+  ) {
+    return false;
+  }
+  const name = basename(relativePath);
+  if (SENSITIVE_ASSET_NAME.test(name) || /^(?:package|pnpm-lock|yarn\.lock)/i.test(name)) {
+    return false;
+  }
+  return PREVIEW_ASSET_EXTENSIONS.has(extname(name).toLowerCase());
 }

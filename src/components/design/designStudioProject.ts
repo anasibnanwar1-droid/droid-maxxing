@@ -17,6 +17,11 @@ export function canonicalLiveProjectCwd(
   for (const workspace of workspaces) {
     if (workspace.path === cwd) return workspace.liveCwd;
   }
+  const normalized = cwd.replaceAll('\\', '/');
+  const isolatedSuffix = '/.worktrees/droidex-design';
+  if (normalized.endsWith(isolatedSuffix)) {
+    return cwd.slice(0, cwd.length - isolatedSuffix.length);
+  }
   return cwd;
 }
 

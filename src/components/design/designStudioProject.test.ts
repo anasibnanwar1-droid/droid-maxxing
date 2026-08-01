@@ -16,6 +16,10 @@ test('Studio project identity remains anchored to the live repository', () => {
   assert.equal(canonicalLiveProjectCwd('/other', workspaces), '/other');
 });
 
+test('Studio recovers the live repository from a persisted isolated cwd after cold start', () => {
+  assert.equal(canonicalLiveProjectCwd('/repo/.worktrees/droidex-design', []), '/repo');
+});
+
 test('Studio repository options never expose its internal worktree as another project', () => {
   assert.deepEqual(
     studioRepositoryCwds(

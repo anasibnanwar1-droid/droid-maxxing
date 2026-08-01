@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, symlinkSync } from 'node:fs';
+import { mkdtempSync, renameSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -28,4 +28,16 @@ test('project design data resolves symlinked directories to one identity', () =>
   symlinkSync(project, alias);
 
   assert.equal(projectDesignDir(project, root), projectDesignDir(alias, root));
+});
+
+test('git project design data keeps its identity when the repository moves', () => {
+  const root = mkdtempSync(join(tmpdir(), 'droidex-design-paths-move-'));
+  const original = join(root, 'before');
+  const moved = join(root, 'after');
+  execFileSync('git', ['init', original], { stdio: 'ignore' });
+
+  const before = projectDesignDir(original, root);
+  renameSync(original, moved);
+
+  assert.equal(projectDesignDir(moved, root), before);
 });
