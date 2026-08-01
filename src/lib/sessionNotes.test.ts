@@ -84,6 +84,15 @@ test('addSessionNote keeps the map within the session bound, pruning the oldest'
   const same = addSessionNote(next, 'fresh', 'another');
   assert.equal(Object.keys(same ?? {}).length, MAX_NOTE_SESSIONS);
   assert.ok(same?.s1);
+
+  // Adding to an existing session also refreshes its eviction position:
+  // after bumping s1, the next new session evicts s2 instead of s1.
+  const bumped = addSessionNote(next, 's1', 'bump');
+  assert.ok(bumped);
+  const after = addSessionNote(bumped, 'fresher', 'note');
+  assert.ok(after);
+  assert.ok(after.s1);
+  assert.equal('s2' in after, false);
 });
 
 test('markSessionNoteUsed stamps the first use only', () => {

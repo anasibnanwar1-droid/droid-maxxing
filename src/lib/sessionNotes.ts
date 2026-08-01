@@ -110,11 +110,14 @@ export function addSessionNote(
   // honest (the same pattern the store uses for these maps).
   const byId: Partial<SessionNotesMap> = map;
   const existing = byId[appSessionId] ?? [];
-  const next = { ...map, [appSessionId]: [note, ...existing].slice(0, MAX_NOTES_PER_SESSION) };
-  // Bound the session count here too, not only on load: an unbounded map
-  // grows storage without limit, and loadSessionNotes would then silently
-  // drop notes on restart. Oldest sessions (front of insertion order) go
-  // first, so the freshest notes always survive.
+  // Re-insert the session at the end of the map so adding a note also
+  // refreshes its eviction position. Bound the session count here too, not
+  // only on load: an unbounded map grows storage without limit, and
+  // loadSessionNotes would then silently drop notes on restart. The prune
+  // drops least-recently-touched sessions first, so the freshest notes
+  // always survive.
+  const rest = Object.fromEntries(Object.entries(map).filter(([id]) => id !== appSessionId));
+  const next = { ...rest, [appSessionId]: [note, ...existing].slice(0, MAX_NOTES_PER_SESSION) };
   const sessionIds = Object.keys(next);
   if (sessionIds.length <= MAX_NOTE_SESSIONS) return next;
   return Object.fromEntries(Object.entries(next).slice(sessionIds.length - MAX_NOTE_SESSIONS));
