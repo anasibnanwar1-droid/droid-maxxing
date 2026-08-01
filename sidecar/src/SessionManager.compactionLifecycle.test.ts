@@ -378,7 +378,7 @@ test('[C2] Provider-session swap', { concurrency: false }, async () => {
     assert.equal(typeof load.handlers.permissionHandler, 'function');
     assert.equal(typeof load.handlers.askUserHandler, 'function');
     assert.equal(load.handlers.mcpServers, creation.mcpServers);
-    assert.equal(load.handlers.mcpServers?.length, 1);
+    assert.equal(load.handlers.mcpServers?.length, 2);
     assert.equal(callCount(h.calls, 'provider', 'onNotification', 'provider-2'), 1);
     assert.equal(callCount(h.calls, 'cleanup', 'unsubscribe', 'provider-1'), 1);
     assert.equal(
