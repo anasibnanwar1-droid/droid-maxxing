@@ -316,7 +316,7 @@ Track S (correctness and finish):
 | PR | Contents | Seam / acceptance |
 |---|---|---|
 | S0 | Provider-owned automatic compaction; delete pre-send manual compaction and synthetic recap behavior | **Landed.** Sidecar only; same provider identity; native queue/steer/Stop semantics; explicit manual Compact remains a separate user action |
-| S1 | Audit, then land the current Studio visual-polish diff | Before staging, restore the removed `exportKind` selection context and add reduced-motion handling; the resulting commit is renderer visuals only: app theme, calm sans typography (mono only for code), soft rounded surfaces, restrained icons, visible focus |
+| S1 | Audit, then land the current Studio visual-polish diff | **Landed.** Restores `exportKind`, honors reduced motion, and keeps the slice renderer-only: app theme, calm sans typography (mono only for code), soft rounded surfaces, restrained icons, visible focus |
 | S2 | Studio chrome truth: one back action, `DROIDEX DESIGN`, repository selector beside Canvas, and truthful add-page/zoom/fit/expand controls | Renderer only; every icon has a tooltip, keyboard focus, active/disabled state, and a real command |
 | S3 | Composer/model truth | Reuse the canonical composer; Auto/default resolve to and display the exact active model; send has no artificial UI delay; Stop, queue, and safe-boundary steer match main chat |
 | S4a | Canvas restore state machine | A persisted canvas reopens once; an empty document never shows `Restoring canvas`; stale restore responses cannot replace the current thread |
@@ -383,7 +383,7 @@ Later phases follow the same pattern; their PR splits are defined when the phase
 
 ### Starting point from this worktree
 
-1. S0 is landed. Audit the current uncommitted renderer polish, repair its `exportKind` and reduced-motion regressions, then land it alone as S1.
+1. S0 and S1 are landed.
 2. The **runtime trust gate** is S2, S3, S4a-b, S5a-c, S8a, S9a, S9c, and P1/P2/P4. Land each independently and run the Electron smoke matrix after every cross-process slice.
 3. S6, S7, S8b, S9b, P1a/P3/P5/P6 continue as small parallel interaction/finish slices; they do not get folded into the runtime gate PRs.
 4. Resume A1, B1, and T1 in parallel after the runtime trust gate is green; they remain the dependency-free Wave 1 entry points.
