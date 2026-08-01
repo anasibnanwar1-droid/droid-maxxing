@@ -41,6 +41,9 @@ import { BrowserSessionManager } from './browser/BrowserSessionManager.js';
 import { createBrowserMcpServer } from './browser/browserMcpServer.js';
 import { isDesignPrompt } from './browser/designPromptPacks.js';
 import { NativeBrowserRuntime } from './browser/NativeBrowserRuntime.js';
+import { DesignManager } from './design/DesignManager.js';
+import { PreviewServer } from './design/previewServer.js';
+import { createDesignMcpServer } from './design/designMcpServer.js';
 import { SessionRegistry } from './SessionRegistry.js';
 import { SessionEventFlow, type NormalizedSideEffects } from './SessionEventFlow.js';
 import { SessionInteractions } from './SessionInteractions.js';
@@ -101,6 +104,8 @@ type SessionBrowsers = Pick<
   | 'inspectPoint'
   | 'addReference'
   | 'designPrompt'
+  | 'referenceDetail'
+  | 'audit'
 >;
 
 export interface StartableLocalMcpResource {
@@ -178,6 +183,8 @@ export class SessionManager {
   private shutdownPromise?: Promise<void>;
   private readonly pendingNativeBrowserRequests = new Map<string, PendingNativeBrowserRequest>();
   private readonly browsers: SessionBrowsers;
+  private readonly design: DesignManager;
+  private readonly previewServer = new PreviewServer();
   private readonly createLocalMcpResource: SessionManagerDependencies['createLocalMcpResource'];
   private readonly factoryDefaultsOverride: SessionManagerDependencies['getFactoryDefaults'];
   private readonly nextChildSessionId: () => string;
@@ -218,6 +225,14 @@ export class SessionManager {
       this.factoryDefaultsOverride = undefined;
       this.nextChildSessionId = nextChildSessionId;
     }
+    this.design = new DesignManager({
+      emit: (event) => {
+        this.emit(event);
+      },
+      browsers: this.browsers,
+      sendPrompt: (appSessionId, prompt) => this.lifecycle.send(appSessionId, prompt),
+      previewServer: this.previewServer,
+    });
     this.cachedModels = options.initialModels ? [...options.initialModels] : null;
     this.registry = new SessionRegistry({
       history: this.history,
@@ -375,6 +390,10 @@ export class SessionManager {
   // eslint-disable-next-line complexity -- Public command dispatch is intentionally unchanged in PR 3.
   async handle(cmd: ClientCommand): Promise<void> {
     if (this.shutdownPromise) throw new Error('Session manager is shutting down.');
+    if (this.design.isDesignCommand(cmd)) {
+      await this.design.handle(cmd);
+      return;
+    }
     switch (cmd.type) {
       case 'connect':
         this.connect(cmd.apiKey);
@@ -600,7 +619,13 @@ export class SessionManager {
       case 'browser.design.sendPrompt':
         await this.handleBrowser(cmd.appSessionId, async () => {
           const appSessionId = this.requireBrowserAppSessionId(cmd.appSessionId);
-          const { prompt } = await this.browsers.designPrompt({ ...cmd, appSessionId });
+          const cwd = this.registry.resolveSummary(appSessionId)?.cwd;
+          const dnaLines = cwd ? this.design.dnaPromptLines(cwd) : [];
+          const { prompt } = await this.browsers.designPrompt({
+            ...cmd,
+            appSessionId,
+            promptContext: dnaLines.length > 0 ? { dnaLines } : undefined,
+          });
           await this.lifecycle.send(appSessionId, prompt);
         });
         return;
@@ -696,7 +721,13 @@ export class SessionManager {
   }
 
   private async startLocalMcpServers(ref: { id: string }): Promise<StartedLocalMcpResources> {
-    const servers = [this.createLocalMcpResource(() => ref.id)];
+    const servers = [
+      this.createLocalMcpResource(() => ref.id),
+      createDesignMcpServer(
+        () => this.registry.resolveSummary(ref.id)?.cwd,
+        (input) => this.design.renderPreview(input),
+      ),
+    ];
     const configs: StartedLocalMcpResources['configs'] = [];
     try {
       for (const server of servers) configs.push(await server.start());
@@ -1482,6 +1513,7 @@ export class SessionManager {
       this.compaction.clearAll();
     });
     await run(() => this.browsers.closeAll());
+    await run(() => this.previewServer.close());
     await run(() => {
       this.history.close();
     });

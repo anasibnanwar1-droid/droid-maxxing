@@ -27,10 +27,10 @@ const STRATEGIES: { id: DesignSwapStrategy; label: string; description: string }
 
 export default function ComponentsTab({
   cwd,
-  missionId,
+  appSessionId,
 }: {
   cwd: string;
-  missionId: string | null;
+  appSessionId: string | null;
 }) {
   const { design } = useDesignStore();
   const registry = design.registry[cwd] ?? [];
@@ -64,13 +64,13 @@ export default function ComponentsTab({
       ? libraryItems.find((item) => item.id === replacement.id)
       : null;
 
-  const canSend = target !== null && replacement !== null && missionId !== null;
+  const canSend = target !== null && replacement !== null && appSessionId !== null;
 
   const send = () => {
-    if (!target || !replacement || !missionId) return;
+    if (!target || !replacement || !appSessionId) return;
     requestDesignSwap({
       cwd,
-      missionId,
+      appSessionId,
       target,
       replacement,
       strategy,
@@ -215,7 +215,7 @@ export default function ComponentsTab({
           <div className="min-w-0">
             {sent ? (
               <span className="text-[12px] text-droid-accent">Swap prompt sent to the agent.</span>
-            ) : !missionId ? (
+            ) : !appSessionId ? (
               <span className="text-[11px] text-droid-text-muted">
                 Open a session to send swaps
               </span>

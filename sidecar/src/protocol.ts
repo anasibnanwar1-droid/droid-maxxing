@@ -796,13 +796,13 @@ export type ClientCommand =
   | { type: 'design.dna.savedDelete'; cwd: string; id: string }
   | { type: 'design.validator.readConfig'; cwd: string }
   | { type: 'design.validator.writeConfig'; cwd: string; config: ValidatorConfig }
-  | { type: 'design.validator.run'; cwd: string; missionId: string }
-  | { type: 'design.validator.fix'; cwd: string; missionId: string }
+  | { type: 'design.validator.run'; cwd: string; appSessionId: string }
+  | { type: 'design.validator.fix'; cwd: string; appSessionId: string }
   | { type: 'design.library.list'; cwd: string }
   | {
       type: 'design.library.save';
       cwd: string;
-      missionId: string;
+      appSessionId: string;
       referenceId: string;
       name?: string;
       note?: string;
@@ -822,7 +822,7 @@ export type ClientCommand =
   | {
       type: 'design.swap';
       cwd: string;
-      missionId: string;
+      appSessionId: string;
       target: DesignSwapTarget;
       replacement: DesignSwapReplacementRef;
       strategy: DesignSwapStrategy;
@@ -982,7 +982,7 @@ export type ServerEvent =
   | {
       type: 'design.validator.status';
       cwd: string;
-      missionId?: string;
+      appSessionId?: string;
       status: 'running' | 'done' | 'failed';
       pageId?: string;
       viewport?: string;

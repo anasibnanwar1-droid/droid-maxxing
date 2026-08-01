@@ -83,6 +83,10 @@ export class FakeBrowserSessionManager implements SessionBrowserDependencies {
   readonly designPrompt: SessionBrowserDependencies['designPrompt'] = () =>
     unsupportedBrowserMethod('designPrompt');
 
+  readonly referenceDetail: SessionBrowserDependencies['referenceDetail'] = () => undefined;
+
+  readonly audit: SessionBrowserDependencies['audit'] = () => unsupportedBrowserMethod('audit');
+
   close(appSessionId: string): Promise<void> {
     this.states.delete(appSessionId);
     this.recordCall('cleanup', 'browser.close', [appSessionId]);

@@ -22,8 +22,14 @@ interface EditorState {
   seeded: string;
 }
 
-export default function DnaTab({ cwd, missionId }: { cwd: string; missionId: string | null }) {
-  void missionId;
+export default function DnaTab({
+  cwd,
+  appSessionId,
+}: {
+  cwd: string;
+  appSessionId: string | null;
+}) {
+  void appSessionId;
   const { design, designDispatch } = useDesignStore();
   const dna = design.dna[cwd];
   const draft = design.drafts[cwd];

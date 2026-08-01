@@ -15,12 +15,12 @@ const basename = (path: string) => path.split('/').pop() ?? path;
 
 export default function PrototypesTab({
   cwd,
-  missionId,
+  appSessionId,
 }: {
   cwd: string;
-  missionId: string | null;
+  appSessionId: string | null;
 }) {
-  void missionId;
+  void appSessionId;
   const { design } = useDesignStore();
   const prototypes = useMemo(() => design.prototypes[cwd] ?? [], [design.prototypes, cwd]);
 

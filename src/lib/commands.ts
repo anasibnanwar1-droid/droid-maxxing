@@ -284,17 +284,17 @@ export const readValidatorConfig = (cwd: string) =>
 export const writeValidatorConfig = (cwd: string, config: ValidatorConfig) =>
   bridge.send({ type: 'design.validator.writeConfig', cwd, config });
 
-export const runValidator = (cwd: string, missionId: string) =>
-  bridge.send({ type: 'design.validator.run', cwd, missionId });
+export const runValidator = (cwd: string, appSessionId: string) =>
+  bridge.send({ type: 'design.validator.run', cwd, appSessionId });
 
-export const fixValidatorFindings = (cwd: string, missionId: string) =>
-  bridge.send({ type: 'design.validator.fix', cwd, missionId });
+export const fixValidatorFindings = (cwd: string, appSessionId: string) =>
+  bridge.send({ type: 'design.validator.fix', cwd, appSessionId });
 
 export const listDesignLibrary = (cwd: string) => bridge.send({ type: 'design.library.list', cwd });
 
 export const saveDesignLibraryItem = (p: {
   cwd: string;
-  missionId: string;
+  appSessionId: string;
   referenceId: string;
   name?: string;
   note?: string;
@@ -321,7 +321,7 @@ export const scanComponentRegistry = (cwd: string) =>
 
 export const requestDesignSwap = (p: {
   cwd: string;
-  missionId: string;
+  appSessionId: string;
   target: DesignSwapTarget;
   replacement: DesignSwapReplacementRef;
   strategy: DesignSwapStrategy;

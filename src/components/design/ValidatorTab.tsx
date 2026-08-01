@@ -15,10 +15,10 @@ const inputClass =
 
 export default function ValidatorTab({
   cwd,
-  missionId,
+  appSessionId,
 }: {
   cwd: string;
-  missionId: string | null;
+  appSessionId: string | null;
 }) {
   const { design } = useDesignStore();
   const storedConfig = design.validatorConfigs[cwd];
@@ -213,14 +213,14 @@ export default function ValidatorTab({
           <div className="min-w-0">
             <div className="text-[12.5px] font-medium text-droid-text">Run</div>
             <div className="mt-0.5 text-[11px] text-droid-text-muted">
-              {missionId
+              {appSessionId
                 ? 'Drives the active session\u2019s browser through each page and viewport.'
                 : 'Open a session to run the validator.'}
             </div>
           </div>
           <button
-            onClick={() => missionId && runValidator(cwd, missionId)}
-            disabled={!missionId || running || pages.length === 0}
+            onClick={() => appSessionId && runValidator(cwd, appSessionId)}
+            disabled={!appSessionId || running || pages.length === 0}
             className="flex items-center gap-1.5 h-8 px-3.5 rounded-md bg-droid-accent text-white text-[12.5px] font-medium hover:opacity-90 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
           >
             <Play className="w-3.5 h-3.5" />
@@ -286,9 +286,9 @@ export default function ValidatorTab({
                   </span>
                 )}
               </div>
-              {report.findings.length > 0 && missionId && (
+              {report.findings.length > 0 && appSessionId && (
                 <button
-                  onClick={() => fixValidatorFindings(cwd, missionId)}
+                  onClick={() => fixValidatorFindings(cwd, appSessionId)}
                   className="flex items-center gap-1.5 h-8 px-3 rounded-md border border-droid-accent/40 bg-droid-accent/15 text-droid-accent text-[12.5px] font-medium hover:bg-droid-accent/25 transition-colors shrink-0"
                 >
                   <Wand2 className="w-3.5 h-3.5" />

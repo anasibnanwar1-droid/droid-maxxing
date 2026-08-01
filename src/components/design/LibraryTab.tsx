@@ -83,8 +83,14 @@ function LibraryCard({ item, cwd }: { item: DesignLibraryItem; cwd: string }) {
   );
 }
 
-export default function LibraryTab({ cwd, missionId }: { cwd: string; missionId: string | null }) {
-  void missionId;
+export default function LibraryTab({
+  cwd,
+  appSessionId,
+}: {
+  cwd: string;
+  appSessionId: string | null;
+}) {
+  void appSessionId;
   const { design } = useDesignStore();
   const items = design.libraryItems[cwd] ?? [];
   const extracted = design.extracted[cwd];
