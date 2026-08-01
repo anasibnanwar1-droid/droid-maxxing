@@ -1,6 +1,6 @@
 # DROIDEX Studio visual exploration
 
-Date: 2026-07-29  
+Date: 2026-07-29
 Branch reviewed: `feat/droidex-design-platform`
 
 ## Scope

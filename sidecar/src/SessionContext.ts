@@ -425,7 +425,9 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T
     return await Promise.race([
       promise,
       new Promise<T>((_, reject) => {
-        timer = setTimeout(() => { reject(new Error('Context provider read timed out.')); }, timeoutMs);
+        timer = setTimeout(() => {
+          reject(new Error('Context provider read timed out.'));
+        }, timeoutMs);
         if (timeoutMs > 0) timer.unref();
       }),
     ]);
