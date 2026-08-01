@@ -1,4 +1,5 @@
 import { INTERVIEW_QUESTIONS, type InterviewQuestion } from './interviewQuestions';
+import type { BrowserTranscriptReference } from '../../types/bridge';
 
 export interface Answer {
   selected: string[];
@@ -21,6 +22,35 @@ export function briefImageCount(brief: DesignBrief): number {
 /** All reference images across the brief, for sending as multimodal context. */
 export function briefImages(brief: DesignBrief): string[] {
   return Object.values(brief).flatMap((a) => a.images);
+}
+
+export interface BriefImageReference {
+  id: string;
+  name: string;
+  dataUrl: string;
+  transcript: BrowserTranscriptReference;
+}
+
+export function briefImageReferences(
+  brief: DesignBrief,
+  createId: () => string,
+): BriefImageReference[] {
+  return briefImages(brief).map((dataUrl, index) => {
+    const id = `canvas-intake-${createId()}`;
+    const name = `Intake reference ${String(index + 1)}`;
+    return {
+      id,
+      name,
+      dataUrl,
+      transcript: {
+        id,
+        label: name,
+        kind: 'region',
+        url: `droidex://canvas/${id}`,
+        imageDataUrl: dataUrl,
+      },
+    };
+  });
 }
 
 function line(q: InterviewQuestion, a: Answer | undefined): string | undefined {
@@ -79,12 +109,18 @@ export function toBriefMarkdown(brief: DesignBrief): string {
  *  gathered brief) is READ from DESIGN.md, never embedded here — so the CLI shows
  *  the task, not a forced brief. Fundamentals are stated as knowledge to apply,
  *  not a single forced aesthetic. */
-export function authoringInstruction(directions = 3): string {
+export function authoringInstruction(directions = 3, referenceIds: readonly string[] = []): string {
   const n = Math.max(1, Math.min(4, directions));
   const many = n > 1;
   return [
     "Author this project's design system. The user's intake is captured in DESIGN.md —",
     'read it first (design_dna tool) to understand their taste and direction, and read design_guidelines.',
+    ...(referenceIds.length > 0
+      ? [
+          `The user supplied visual references saved as ${referenceIds.join(', ')}. Call design_reference_library`,
+          'with these ids before proposing directions so you inspect the actual images at model-safe quality.',
+        ]
+      : []),
     '',
     ...(many
       ? [

@@ -44,7 +44,7 @@ export interface GitCommitResult {
   error?: string;
 }
 
-export type StudioTab = 'dna' | 'validator' | 'library' | 'prototypes' | 'components';
+export type StudioTab = 'canvas' | 'dna' | 'validator' | 'library' | 'prototypes' | 'components';
 
 export interface DesignState {
   studioOpen: boolean;
@@ -109,7 +109,7 @@ export type DesignAction =
 
 export const initialDesignState: DesignState = {
   studioOpen: false,
-  studioTab: 'dna',
+  studioTab: 'canvas',
   sessions: {},
   expected: {},
   previews: {},

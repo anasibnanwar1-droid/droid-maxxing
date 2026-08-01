@@ -6,18 +6,25 @@ import {
   applySavedDna,
   deleteSavedDna,
   finalizeDesignDna,
+  importDesignLibraryImage,
   listSavedDna,
   readDesignDna,
   renderDesignPreview,
   scanDesignDna,
   writeDesignDna,
 } from '../../lib/commands';
-import type { DnaDraft, DnaLibrarySummary, DnaState, SavedDnaEntry } from '../../types/bridge';
+import type {
+  BrowserTranscriptReference,
+  DnaDraft,
+  DnaLibrarySummary,
+  DnaState,
+  SavedDnaEntry,
+} from '../../types/bridge';
 import { useStudioCanvas } from './StudioCanvasContext';
 import { FontLine, Header, Swatches } from './DnaPrimitives';
 import DnaDraftProposal from './DnaDraftProposal';
 import DnaInterview from './DnaInterview';
-import { authoringInstruction, toBriefMarkdown } from './designBrief';
+import { authoringInstruction, briefImageReferences, toBriefMarkdown } from './designBrief';
 import MotionPreview from './MotionPreview';
 
 /**
@@ -32,7 +39,7 @@ export default function DnaShelf({
 }: {
   cwd: string;
   sessionId: string | null;
-  send: (instruction: string) => void;
+  send: (instruction: string, browserRefs?: BrowserTranscriptReference[]) => void;
 }) {
   const { design } = useDesignStore();
   // Record lookups can miss at runtime even though the index type says otherwise.
@@ -140,13 +147,29 @@ export default function DnaShelf({
               setInterview(false);
             }}
             onComplete={(brief, directions) => {
+              const references = briefImageReferences(brief, () => crypto.randomUUID());
+              references.forEach((reference) => {
+                importDesignLibraryImage({
+                  cwd,
+                  id: reference.id,
+                  name: reference.name,
+                  category: 'inspiration',
+                  dataUrl: reference.dataUrl,
+                });
+              });
               // Write the intake to DESIGN.md (the agent reads it), then hand off
               // to the design session to author the full system, and switch to the
               // Agent tab so the user watches it work. With directions > 1 the
               // agent renders that many live specimens on the canvas and waits
               // for the user's pick before committing the DNA.
               writeDesignDna(cwd, 'design', toBriefMarkdown(brief));
-              send(authoringInstruction(directions));
+              send(
+                authoringInstruction(
+                  directions,
+                  references.map((reference) => reference.id),
+                ),
+                references.map((reference) => reference.transcript),
+              );
               studioDispatch({ type: 'SET_LEFT_TAB', tab: 'agent' });
               setInterview(false);
             }}

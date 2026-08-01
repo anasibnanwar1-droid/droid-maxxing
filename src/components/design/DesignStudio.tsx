@@ -5,6 +5,7 @@ import { useDesignStore } from '../../hooks/useDesignStore';
 import { prepareDesignWorkspace } from '../../lib/commands';
 import { pickDirectory } from '../../lib/desktop';
 import { pushEscapeLayer } from '../environment/usePopover';
+import AskUserModal from '../AskUserModal';
 import { StudioCanvasProvider } from '../studio/StudioCanvasContext';
 import StudioShell from '../studio/StudioShell';
 import {
@@ -118,6 +119,7 @@ export default function DesignStudio() {
               }}
             />
           )}
+          {state.pendingQuestion && <AskUserModal />}
         </motion.div>
       )}
     </AnimatePresence>

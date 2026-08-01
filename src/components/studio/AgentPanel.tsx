@@ -6,7 +6,6 @@ import type { SessionSummary } from '../../types/bridge';
 import { interruptSession } from '../../lib/commands';
 import { isDesktop } from '../../lib/desktop';
 import { sessionIsLive } from '../../lib/sessions';
-import AskUserModal from '../AskUserModal';
 import { useStudioCanvas, type StudioLeftTab } from './StudioCanvasContext';
 import { useDesignSession } from './useDesignSession';
 import StudioComposer, { type SendOptions } from './StudioComposer';
@@ -157,7 +156,6 @@ export default function AgentPanel({
                 <ThreadBody messages={[]} onPickSuggestion={setText} />
               )}
             </div>
-            {state.pendingQuestion?.appSessionId === sessionId && <AskUserModal inline />}
             <StudioComposer
               key={sessionId ?? `new:${sessionKey}`}
               text={text}
@@ -188,8 +186,8 @@ export default function AgentPanel({
             <DnaShelf
               cwd={cwd}
               sessionId={sessionId}
-              send={(instruction) => {
-                send(instruction);
+              send={(instruction, browserRefs) => {
+                send(instruction, { browserRefs });
               }}
             />
           </div>

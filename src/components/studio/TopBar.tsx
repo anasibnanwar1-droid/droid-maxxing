@@ -1,7 +1,10 @@
+import { useState } from 'react';
 import { PanelLeft } from 'lucide-react';
+import { useDesignStore, type StudioTab } from '../../hooks/useDesignStore';
 import type { BrowserViewportMode } from '../../types/bridge';
 import { useStudioCanvas } from './StudioCanvasContext';
 import RepositorySelector from './RepositorySelector';
+import StudioSelector from './StudioSelector';
 import StudioSettingsMenu from './StudioSettingsMenu';
 
 const VIEWPORTS: { mode: BrowserViewportMode; label: string }[] = [
@@ -9,6 +12,15 @@ const VIEWPORTS: { mode: BrowserViewportMode; label: string }[] = [
   { mode: 'laptop', label: 'Laptop' },
   { mode: 'tablet', label: 'Tablet' },
   { mode: 'mobile', label: 'Mobile' },
+];
+
+const SURFACES: { tab: StudioTab; label: string }[] = [
+  { tab: 'canvas', label: 'Canvas' },
+  { tab: 'dna', label: 'Design DNA' },
+  { tab: 'validator', label: 'Validator' },
+  { tab: 'library', label: 'References' },
+  { tab: 'prototypes', label: 'Prototypes' },
+  { tab: 'components', label: 'Components' },
 ];
 
 export default function TopBar({
@@ -26,11 +38,14 @@ export default function TopBar({
   isAgentPanelOpen: boolean;
   onToggleAgentPanel: () => void;
 }) {
+  const { design, designDispatch } = useDesignStore();
   const { studio, studioDispatch } = useStudioCanvas();
+  const [surfaceMenuOpen, setSurfaceMenuOpen] = useState(false);
   const selectedIds = studio.selectedFrameIds;
   const selectedFrame =
     selectedIds.length === 1 ? studio.frames.find((f) => f.id === selectedIds[0]) : undefined;
   const activeMode = selectedFrame?.mode ?? studio.defaultMode;
+  const activeSurface = SURFACES.find((surface) => surface.tab === design.studioTab) ?? SURFACES[0];
 
   const setMode = (mode: BrowserViewportMode) => {
     if (selectedFrame) {
@@ -55,7 +70,20 @@ export default function TopBar({
           <PanelLeft className="h-4 w-4" strokeWidth={1.75} />
         </button>
         <div className="h-4 w-px bg-droid-border" />
-        <div className="shrink-0 text-[12.5px] font-medium text-droid-text">Canvas</div>
+        <div className="no-drag">
+          <StudioSelector
+            open={surfaceMenuOpen}
+            setOpen={setSurfaceMenuOpen}
+            value={activeSurface.label}
+            options={SURFACES.map((surface) => surface.label)}
+            width={172}
+            hint="Studio workspace"
+            onPick={(label) => {
+              const surface = SURFACES.find((candidate) => candidate.label === label);
+              if (surface) designDispatch({ type: 'SET_TAB', tab: surface.tab });
+            }}
+          />
+        </div>
         <RepositorySelector
           repositoryCwds={repositoryCwds}
           selectedCwd={selectedRepositoryCwd}
@@ -65,35 +93,37 @@ export default function TopBar({
             studioDispatch({ type: 'SET_INTERACTING', id: null });
           }}
         />
-        {selectedFrame && (
+        {design.studioTab === 'canvas' && selectedFrame && (
           <div className="min-w-0 truncate text-[12px] text-droid-text-muted">
             / {selectedFrame.name}
           </div>
         )}
       </div>
 
-      <div className="flex items-center gap-2">
-        <div className="no-drag flex items-center gap-0.5 rounded-lg bg-droid-surface p-0.5">
-          {VIEWPORTS.map((v) => (
-            <button
-              key={v.mode}
-              title={selectedFrame ? `${v.label} · this frame` : `${v.label} · new frames`}
-              aria-pressed={activeMode === v.mode}
-              onClick={() => {
-                setMode(v.mode);
-              }}
-              className={`rounded-md px-2.5 py-1 text-[11px] transition-colors ${
-                activeMode === v.mode
-                  ? 'bg-droid-active text-droid-text'
-                  : 'text-droid-text-muted hover:text-droid-text'
-              }`}
-            >
-              {v.label}
-            </button>
-          ))}
+      {design.studioTab === 'canvas' && (
+        <div className="flex items-center gap-2">
+          <div className="no-drag flex items-center gap-0.5 rounded-lg bg-droid-surface p-0.5">
+            {VIEWPORTS.map((v) => (
+              <button
+                key={v.mode}
+                title={selectedFrame ? `${v.label} · this frame` : `${v.label} · new frames`}
+                aria-pressed={activeMode === v.mode}
+                onClick={() => {
+                  setMode(v.mode);
+                }}
+                className={`rounded-md px-2.5 py-1 text-[11px] transition-colors ${
+                  activeMode === v.mode
+                    ? 'bg-droid-active text-droid-text'
+                    : 'text-droid-text-muted hover:text-droid-text'
+                }`}
+              >
+                {v.label}
+              </button>
+            ))}
+          </div>
+          <StudioSettingsMenu />
         </div>
-        <StudioSettingsMenu />
-      </div>
+      )}
     </div>
   );
 }
