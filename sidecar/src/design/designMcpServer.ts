@@ -13,7 +13,7 @@ import { getLibraryItem, listLibraryItems } from './referenceLibrary.js';
 import { scanComponentRegistry } from './registryScan.js';
 import { nearestPaletteColor } from './tokens.js';
 import { DESIGN_GUIDELINES } from './guidelines.js';
-import type { DesignLibraryItem } from './types.js';
+import type { DesignLibraryItem, MotionDuration, MotionTokens } from './types.js';
 
 export type DesignPreviewFn = (input: {
   cwd: string;
@@ -46,10 +46,10 @@ export function createDesignMcpServer(
         [
           'Read this project design DNA: DESIGN.md (visual system, tokens, rules) and MOTION.md (animation rules).',
           'Call this before any UI change so colors, type, spacing, radii, and motion match the project system.',
-          'Returns file contents plus the parsed design-tokens block when present.',
+          'Returns file contents plus parsed design-tokens and motion-tokens blocks when present.',
         ].join(' '),
         {},
-        safeTool(async () => {
+        safeTool(() => {
           const state = readDnaState(cwd());
           return jsonResult({
             ok: true,
@@ -57,6 +57,7 @@ export function createDesignMcpServer(
             design: state.design,
             motion: state.motion,
             tokens: state.tokens,
+            motionTokens: state.motionTokens,
           });
         }),
       ),
@@ -67,13 +68,13 @@ export function createDesignMcpServer(
           'Read this at the start of a design turn and follow it; pair it with design_dna / design_system for the actual token values.',
         ].join(' '),
         {},
-        safeTool(async () => jsonResult({ ok: true, guidelines: DESIGN_GUIDELINES })),
+        safeTool(() => jsonResult({ ok: true, guidelines: DESIGN_GUIDELINES })),
       ),
       tool(
         'design_system',
         [
           'Look up exact Design DNA token values on demand — the context-lean way to stay on-system without loading all of DESIGN.md into context.',
-          'Returns the token summary: color roles and values, font roles, type scale, spacing, and radii.',
+          'Returns color, font, type, spacing, radius, duration, and easing tokens.',
           'Pass a color (e.g. "#6b7280" or "rgb(107,114,128)") to find the nearest palette token and whether it is an on-palette match — use it to answer "is this the muted token?" before hardcoding a value.',
         ].join(' '),
         {
@@ -81,35 +82,68 @@ export function createDesignMcpServer(
             .string()
             .optional()
             .describe('A CSS color to match against the palette, e.g. "#6b7280".'),
+          duration: z
+            .number()
+            .min(0)
+            .max(10_000)
+            .optional()
+            .describe('A duration in milliseconds to match against the project motion scale.'),
+          easing: z
+            .string()
+            .optional()
+            .describe('An easing role or exact CSS easing value to resolve from MOTION.md.'),
         },
-        safeTool(async (input) => {
-          const tokens = readDnaState(cwd()).tokens;
-          if (!tokens) {
+        safeTool((input) => {
+          const state = readDnaState(cwd());
+          const tokens = state.tokens;
+          if (!tokens && input.color?.trim()) {
             return jsonResult({
               ok: false,
-              error: 'No design-tokens block in DESIGN.md yet. Run the DNA intake first.',
+              error: 'Color lookup needs a design-tokens block in DESIGN.md.',
             });
           }
-          const summary = {
-            colors: tokens.colors,
-            fonts: tokens.fonts,
-            typeScale: tokens.typeScale,
-            spacing: tokens.spacing,
-            radii: tokens.radii,
-          };
-          const color = input.color?.trim();
-          if (!color) return jsonResult({ ok: true, tokens: summary });
-          const near = nearestPaletteColor(color, tokens.colors);
-          const match = near
+          if (!tokens && !state.motionTokens) {
+            return jsonResult({
+              ok: false,
+              error: 'No executable design or motion tokens exist yet. Run the DNA intake first.',
+            });
+          }
+          const summary = tokens
             ? {
-                input: color,
-                nearest: near.name,
-                value: near.value,
-                distance: Math.round(near.distance),
-                onPalette: near.distance <= 6,
+                colors: tokens.colors,
+                fonts: tokens.fonts,
+                typeScale: tokens.typeScale,
+                spacing: tokens.spacing,
+                radii: tokens.radii,
               }
-            : { input: color, error: 'Could not parse that color.' };
-          return jsonResult({ ok: true, tokens: summary, match });
+            : undefined;
+          const color = input.color?.trim();
+          const near = color && tokens ? nearestPaletteColor(color, tokens.colors) : undefined;
+          const colorMatch = !color
+            ? undefined
+            : near
+              ? {
+                  input: color,
+                  nearest: near.name,
+                  value: near.value,
+                  distance: Math.round(near.distance),
+                  onPalette: near.distance <= 6,
+                }
+              : { input: color, error: 'Could not parse that color.' };
+          return jsonResult({
+            ok: true,
+            tokens: summary,
+            motion: state.motionTokens,
+            matches: {
+              ...(colorMatch ? { color: colorMatch } : {}),
+              ...(input.duration === undefined || !state.motionTokens
+                ? {}
+                : { duration: nearestMotionDuration(input.duration, state.motionTokens) }),
+              ...(input.easing?.trim() && state.motionTokens
+                ? { easing: resolveMotionEasing(input.easing, state.motionTokens) }
+                : {}),
+            },
+          });
         }),
       ),
       tool(
@@ -124,7 +158,7 @@ export function createDesignMcpServer(
             .optional()
             .describe('Optional case-insensitive filter on component name or file path.'),
         },
-        safeTool(async (input) => {
+        safeTool((input) => {
           let components = scanComponentRegistry(cwd());
           const query = input.query?.trim().toLowerCase();
           if (query) {
@@ -147,7 +181,7 @@ export function createDesignMcpServer(
         {
           id: z.string().optional().describe('Prototype id to fetch full HTML for.'),
         },
-        safeTool(async (input) => {
+        safeTool((input) => {
           const prototypes = listPrototypes(cwd());
           if (input.id) {
             const match = prototypes.find((proto) => proto.id === input.id);
@@ -157,7 +191,12 @@ export function createDesignMcpServer(
           return jsonResult({
             ok: true,
             guidance: prototypePromptGuidance(cwd()),
-            prototypes: prototypes.map(({ html: _html, ...info }) => info),
+            prototypes: prototypes.map(({ id, name, path, updatedAt }) => ({
+              id,
+              name,
+              path,
+              updatedAt,
+            })),
           });
         }),
       ),
@@ -335,6 +374,34 @@ export function createDesignMcpServer(
       ),
     ],
   });
+}
+
+function nearestMotionDuration(input: number, tokens: MotionTokens) {
+  const candidates = Object.entries(tokens.durations).map(([name, value]) => ({
+    name,
+    value,
+    distanceMs: distanceFromDuration(input, value),
+  }));
+  candidates.sort((a, b) => a.distanceMs - b.distanceMs || a.name.localeCompare(b.name));
+  const nearest = candidates[0];
+  return { input, ...nearest, onScale: nearest.distanceMs === 0 };
+}
+
+function distanceFromDuration(input: number, duration: MotionDuration): number {
+  if (!Array.isArray(duration)) return Math.abs(input - duration);
+  if (input < duration[0]) return duration[0] - input;
+  if (input > duration[1]) return input - duration[1];
+  return 0;
+}
+
+function resolveMotionEasing(input: string, tokens: MotionTokens) {
+  const normalized = input.trim().toLowerCase();
+  const match = Object.entries(tokens.easings).find(
+    ([name, value]) => name.toLowerCase() === normalized || value.toLowerCase() === normalized,
+  );
+  return match
+    ? { input: input.trim(), role: match[0], value: match[1] }
+    : { input: input.trim(), error: 'No matching project easing.', available: tokens.easings };
 }
 
 function modelReferenceMetadata(item: DesignLibraryItem, includeDetail: boolean) {

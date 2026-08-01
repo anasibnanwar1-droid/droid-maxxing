@@ -1,6 +1,8 @@
 import { basename } from 'node:path';
 import type { DesignTokens } from './types.js';
 import { parseColor, type Rgba } from './tokens.js';
+import { brandBookMotionCss, renderMotionSamples } from './brandBookMotion.js';
+import { parseMotionTokens } from './motionTokens.js';
 
 export interface BrandBookInput {
   cwd: string;
@@ -31,6 +33,7 @@ export function renderBrandBook(input: BrandBookInput): string {
     ? tokens.radii.slice().sort((a, b) => a - b)
     : [0, 4, 8, 14, 999];
   const swatches = Object.entries(tokens.colors);
+  const motionTokens = parseMotionTokens(input.motionMd);
 
   const proseSections = prose.map((p, i) => proseSection(p, i + 1));
   const contents = [
@@ -48,7 +51,7 @@ export function renderBrandBook(input: BrandBookInput): string {
     colorSection(swatches, theme, pad(prose.length + 1)),
     typographySection(scale, tokens.fonts, theme, pad(prose.length + 2)),
     spacingSection(spacing, radii, theme, pad(prose.length + 3)),
-    motionSection(input.motionMd, theme, pad(prose.length + 4)),
+    motionSection(input.motionMd, motionTokens, pad(prose.length + 4)),
     colophon(brandName),
   ].join('\n');
 
@@ -140,7 +143,12 @@ function colorSection(swatches: [string, string][], theme: Theme, n: string): st
       </div>`;
     })
     .join('');
-  return numbered(n, 'Color', `<div class="swatches">${cards}</div>`);
+  const application = `<div class="ui-sample">
+    <div><span class="kicker">Token specimen</span><h3>Interface roles</h3><p>An illustrative composition using only this project's surface, text, border, muted, and action tokens.</p></div>
+    <label>Input role<input value="Project token preview" readonly></label>
+    <div class="ui-sample-actions"><button type="button">Primary action</button><a href="#color">Secondary action</a></div>
+  </div>`;
+  return numbered(n, 'Color', `<div class="swatches">${cards}</div>${application}`);
 }
 
 function typographySection(
@@ -166,7 +174,7 @@ function typographySection(
     .reverse()
     .map(
       (px) =>
-        `<div class="ladder-row"><span class="ladder-aa" style="font-size:${px}px">Aa</span><span class="mono ladder-meta">${px}px</span></div>`,
+        `<div class="ladder-row"><span class="ladder-aa" style="font-size:${String(px)}px">Aa</span><span class="mono ladder-meta">${String(px)}px</span></div>`,
     )
     .join('');
   return numbered(
@@ -174,8 +182,8 @@ function typographySection(
     'Typography',
     `<div class="fonts">${names}</div>
      <div class="ladder">${ladder}</div>
-     <div class="specimen"><p style="font-family:var(--font-display);font-size:clamp(28px,4vw,${scale[scale.length - 1]}px);line-height:1.05;margin:0 0 .4em">The quick brown fox.</p>
-     <p class="body" style="color:${theme.muted}">A system is only as good as its rhythm. Consistent type, spacing, and color let every screen feel like one product — considered, calm, and unmistakably this brand.</p></div>`,
+     <div class="specimen"><p style="font-family:var(--font-display);font-size:clamp(28px,4vw,${String(scale[scale.length - 1])}px);line-height:1.05;margin:0 0 .4em">The quick brown fox.</p>
+     <p class="body" style="color:${theme.muted}">Declared display and body stacks rendered across the project's type scale.</p></div>`,
   );
 }
 
@@ -183,14 +191,15 @@ function spacingSection(spacing: number[], radii: number[], theme: Theme, n: str
   const bars = spacing
     .map(
       (px) =>
-        `<div class="bar-row"><span class="bar" style="width:${Math.min(100, px)}%;background:${theme.brand}"></span><span class="mono">${px}px</span></div>`,
+        `<div class="bar-row"><span class="bar" style="width:${String(Math.min(100, px))}%;background:${theme.brand}"></span><span class="mono">${String(px)}px</span></div>`,
     )
     .join('');
   const radiiRow = radii
-    .map(
-      (r) =>
-        `<div class="radius"><span class="radius-box" style="border-radius:${r > 100 ? 999 : r}px"></span><span class="mono">${r > 100 ? 'pill' : `${r}px`}</span></div>`,
-    )
+    .map((r) => {
+      const radius = r > 100 ? 999 : r;
+      const label = r > 100 ? 'pill' : `${String(r)}px`;
+      return `<div class="radius"><span class="radius-box" style="border-radius:${String(radius)}px"></span><span class="mono">${label}</span></div>`;
+    })
     .join('');
   return numbered(
     n,
@@ -199,11 +208,18 @@ function spacingSection(spacing: number[], radii: number[], theme: Theme, n: str
   );
 }
 
-function motionSection(motionMd: string, theme: Theme, n: string): string {
-  const prose = motionMd.trim()
-    ? `<div class="prose body">${renderMarkdownish(stripTitle(motionMd))}</div>`
-    : `<p class="body" style="color:${theme.muted}">Quick, intentional motion. Hover the block.</p>`;
-  return numbered(n, 'Motion', `${prose}<div class="motion-demo" aria-hidden="true"></div>`);
+function motionSection(
+  motionMd: string,
+  motionTokens: ReturnType<typeof parseMotionTokens>,
+  n: string,
+): string {
+  const motionProse = stripTitle(motionMd)
+    .replace(/```motion-tokens\s*\n[\s\S]*?```/g, '')
+    .trim();
+  const prose = motionProse
+    ? `<div class="prose body">${renderMarkdownish(motionProse)}</div>`
+    : '';
+  return numbered(n, 'Motion', `${prose}${renderMotionSamples(motionTokens)}`);
 }
 
 function colophon(name: string): string {
@@ -222,7 +238,7 @@ function numbered(n: string, title: string, inner: string): string {
   </section>`;
 }
 function pad(n: number): string {
-  return n < 10 ? `0${n}` : String(n);
+  return n < 10 ? `0${String(n)}` : String(n);
 }
 
 // ── Prose parsing (light markdown) ───────────────────────────────────
@@ -242,7 +258,7 @@ function parseProse(md: string): ProseBlock[] {
   for (let i = 0; i < matches.length; i++) {
     const title = matches[i][1].trim();
     if (/^(tokens|themes|scanned sources)$/i.test(title)) continue;
-    const start = (matches[i].index ?? 0) + matches[i][0].length;
+    const start = matches[i].index + matches[i][0].length;
     const end = i + 1 < matches.length ? matches[i + 1].index : withoutTokens.length;
     const content = withoutTokens.slice(start, end).trim();
     if (content) blocks.push({ title, content });
@@ -327,7 +343,7 @@ function wcag(ratio: number): string {
   return 'Fail';
 }
 function mix(a: string, b: string, weightB: number): string {
-  return `color-mix(in srgb, ${a} ${Math.round((1 - weightB) * 100)}%, ${b})`;
+  return `color-mix(in srgb, ${a} ${String(Math.round((1 - weightB) * 100))}%, ${b})`;
 }
 
 // Only let syntactically-valid CSS colors reach a style attribute / custom
@@ -402,6 +418,9 @@ function css(theme: Theme, fonts: DesignTokens['fonts'], scale: number[], radii:
   const sans = safeFont(fonts.sans, 'ui-sans-serif, system-ui, sans-serif');
   const mono = safeFont(fonts.mono, 'ui-monospace, SFMono-Regular, Menlo, monospace');
   const bodyPx = scale.find((s) => s >= 15 && s <= 18) ?? 16;
+  const cardRadius = String(Math.min(12, radii[radii.length - 1] || 10));
+  const sampleRadius = String(Math.min(16, radii[radii.length - 1] || 10));
+  const controlRadius = String(Math.min(10, radii[radii.length - 1] || 8));
   return `
   :root{
     --surface:${theme.surface}; --text:${theme.text}; --muted:${theme.muted};
@@ -410,7 +429,7 @@ function css(theme: Theme, fonts: DesignTokens['fonts'], scale: number[], radii:
   }
   *{box-sizing:border-box;margin:0;padding:0}
   html{-webkit-font-smoothing:antialiased}
-  body{background:var(--surface);color:var(--text);font-family:var(--font-sans);font-size:${bodyPx}px;line-height:1.6}
+  body{background:var(--surface);color:var(--text);font-family:var(--font-sans);font-size:${String(bodyPx)}px;line-height:1.6}
   .mono{font-family:var(--font-mono)}
   .body{max-width:65ch}
   .kicker{font-size:11px;text-transform:uppercase;letter-spacing:.14em;color:var(--muted)}
@@ -431,11 +450,15 @@ function css(theme: Theme, fonts: DesignTokens['fonts'], scale: number[], radii:
   .prose ul{margin:.2em 0 1em 0;padding-left:1.1em}
   .prose li{margin:.25em 0}
   .swatches{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:16px}
-  .swatch{border:1px solid var(--border);border-radius:${Math.min(12, radii[radii.length - 1] || 10)}px;overflow:hidden}
+  .swatch{border:1px solid var(--border);border-radius:${cardRadius}px;overflow:hidden}
   .swatch-block{height:132px;display:flex;align-items:flex-end;padding:12px;font-size:12px}
   .swatch-foot{padding:12px 14px}
   .swatch-role{font-weight:600;text-transform:capitalize}
   .swatch-note{font-size:11px;color:var(--muted);margin-top:2px}
+  .ui-sample{margin-top:28px;padding:clamp(20px,4vw,40px);display:grid;grid-template-columns:1.2fr 1fr;gap:24px;background:var(--surface);border:1px solid var(--border);border-radius:${sampleRadius}px}
+  .ui-sample h3{font:600 clamp(22px,3vw,34px)/1.1 var(--font-display);margin:8px 0}.ui-sample p{color:var(--muted)}
+  .ui-sample label{display:flex;flex-direction:column;gap:6px;font-size:12px;color:var(--muted)}.ui-sample input{width:100%;padding:12px 14px;border:1px solid var(--border);border-radius:${controlRadius}px;background:var(--surface);color:var(--text);font:inherit}
+  .ui-sample-actions{grid-column:1/-1;display:flex;align-items:center;gap:16px}.ui-sample button{padding:10px 16px;border:0;border-radius:${controlRadius}px;background:var(--brand);color:var(--surface);font:600 13px var(--font-sans)}.ui-sample a{color:var(--text);text-underline-offset:4px}
   .fonts{display:flex;flex-wrap:wrap;gap:32px;margin-bottom:36px}
   .font-name{font-size:26px;margin-top:6px}
   .ladder{border-top:1px solid var(--border)}
@@ -451,15 +474,14 @@ function css(theme: Theme, fonts: DesignTokens['fonts'], scale: number[], radii:
   .radius{display:flex;flex-direction:column;align-items:center;gap:8px}
   .radius-box{width:56px;height:56px;background:var(--brand);opacity:.9}
   .radius .mono{font-size:11px;color:var(--muted)}
-  .motion-demo{width:120px;height:120px;margin-top:28px;background:var(--brand);border-radius:${Math.min(14, radii[radii.length - 1] || 12)}px;transition:transform .32s cubic-bezier(.16,1,.3,1),border-radius .32s cubic-bezier(.16,1,.3,1)}
-  .motion-demo:hover{transform:translateY(-8px) rotate(-3deg);border-radius:${Math.min(28, (radii[radii.length - 1] || 12) * 2)}px}
+  ${brandBookMotionCss(Math.min(16, radii[radii.length - 1] || 12))}
   .colophon{display:flex;justify-content:space-between;padding:clamp(40px,8vh,90px) clamp(24px,6vw,120px);background:var(--text);color:var(--surface);font-size:13px}
   @media (max-width:900px){
     .split{grid-template-columns:1fr;gap:8px}
     .rail{position:static}
     .section-num{font-size:clamp(36px,10vw,64px)}
     .contents{columns:1}
+    .ui-sample{grid-template-columns:1fr}
   }
-  @media (prefers-reduced-motion:reduce){.motion-demo{transition:none}}
   `;
 }

@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { scanRepoForDna } from './dnaScan.js';
+import { parseMotionTokens } from './motionTokens.js';
 import { scanComponentRegistry } from './registryScan.js';
 
 function makeRepo(files: Record<string, string>): string {
@@ -41,6 +42,7 @@ test('scanRepoForDna extracts tailwind colors, css props and fonts', (t) => {
   assert.ok(draft.sources.includes('tailwind.config.js'));
   assert.ok(draft.content.includes('```design-tokens'));
   assert.ok(draft.content.includes('## Palette'));
+  assert.deepEqual(parseMotionTokens(draft.motion)?.durations.micro, [120, 160]);
 });
 
 test('scanRepoForDna produces a usable draft for an empty project', (t) => {

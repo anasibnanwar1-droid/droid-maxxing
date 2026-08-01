@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { renderBrandBook } from './brandBook.js';
+import { serializeMotionTokenBlock } from './motionTokens.js';
 import type { DesignTokens } from './types.js';
 
 const tokens: DesignTokens = {
@@ -89,4 +90,69 @@ test('renderBrandBook falls back to the cwd name when the DNA has no title', () 
     motionMd: '',
   });
   assert.match(html, /My Cool Project/);
+});
+
+test('renderBrandBook plays the executable MOTION.md values instead of defaults', () => {
+  const html = renderBrandBook({
+    cwd: '/tmp/acme-app',
+    tokens,
+    designMd,
+    motionMd: `# Motion\n\n${serializeMotionTokenBlock({
+      durations: { element: [180, 220] },
+      easings: { standard: 'cubic-bezier(0.2, 0.8, 0.2, 1)' },
+      pressScale: 0.94,
+      reducedMotion: 'reduce',
+    })}`,
+  });
+  assert.match(html, /--demo-duration:200ms/);
+  assert.match(html, /--demo-ease:cubic-bezier\(0\.2, 0\.8, 0\.2, 1\)/);
+  assert.match(html, /--press-scale:0\.94/);
+  assert.doesNotMatch(html, /\.32s cubic-bezier/);
+  assert.doesNotMatch(html, /```motion-tokens/);
+});
+
+test('renderBrandBook does not invent motion for prose-only MOTION.md', () => {
+  const html = renderBrandBook({ cwd: '/tmp/acme-app', tokens, designMd, motionMd });
+  assert.match(html, /Motion is documented, but not executable yet/);
+  assert.doesNotMatch(html, /type="button" class="motion-demo-card"/);
+});
+
+test('renderBrandBook previews a page-only duration and preserves reduced policy', () => {
+  const html = renderBrandBook({
+    cwd: '/tmp/acme-app',
+    tokens,
+    designMd,
+    motionMd: serializeMotionTokenBlock({
+      durations: { page: 320 },
+      easings: { enter: 'ease-out' },
+      reducedMotion: 'reduce',
+    }),
+  });
+
+  assert.match(html, /--demo-duration:320ms/);
+  assert.match(html, /motion-stage motion-reduce/);
+  assert.match(html, /\.motion-reduce \.motion-demo-card:hover/);
+});
+
+test('renderBrandBook makes every duration and easing token playable', () => {
+  const html = renderBrandBook({
+    cwd: '/tmp/acme-app',
+    tokens,
+    designMd,
+    motionMd: serializeMotionTokenBlock({
+      durations: { micro: 120, element: 220, page: 360 },
+      easings: { standard: 'ease-out', exit: 'ease-in' },
+      reducedMotion: 'disable',
+    }),
+  });
+
+  for (const token of [
+    'duration:micro',
+    'duration:element',
+    'duration:page',
+    'easing:standard',
+    'easing:exit',
+  ]) {
+    assert.match(html, new RegExp(`data-motion-token="${token}"`));
+  }
 });

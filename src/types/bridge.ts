@@ -444,6 +444,15 @@ export interface DesignTokens {
   allowlist?: TokenAllowRule[];
 }
 
+export type MotionDuration = number | [number, number];
+
+export interface MotionTokens {
+  durations: Record<string, MotionDuration>;
+  easings: Record<string, string>;
+  pressScale?: number;
+  reducedMotion: 'disable' | 'reduce';
+}
+
 interface TokenAllowRule {
   selector?: string;
   property?: string;
@@ -462,6 +471,7 @@ export interface DnaState {
   design: DnaFileState;
   motion: DnaFileState;
   tokens?: DesignTokens;
+  motionTokens?: MotionTokens;
   /** Id of the saved DNA entry currently applied, if any. */
   activeSavedId?: string | null;
 }

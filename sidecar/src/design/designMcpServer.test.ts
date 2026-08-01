@@ -1,10 +1,11 @@
 import { createCanvas, loadImage } from '@napi-rs/canvas';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { createDesignMcpServer } from './designMcpServer.js';
+import { serializeMotionTokenBlock } from './motionTokens.js';
 import {
   MODEL_REFERENCE_MAX_EDGE_PX,
   MODEL_REFERENCE_MAX_IMAGE_BYTES,
@@ -12,6 +13,7 @@ import {
   MODEL_REFERENCE_MAX_RESPONSE_IMAGE_BYTES,
 } from './modelReferenceImage.js';
 import { importReferenceImage } from './referenceLibrary.js';
+import { serializeTokenBlock } from './tokens.js';
 
 interface ToolImageContent {
   type: 'image';
@@ -45,6 +47,98 @@ interface ReferenceMetadata {
     };
   };
 }
+
+test('design DNA and system tools expose executable project motion', async (t) => {
+  const cwd = mkdtempSync(join(tmpdir(), 'droidex-design-tools-'));
+  t.after(() => rmSync(cwd, { recursive: true, force: true }));
+  writeFileSync(
+    join(cwd, 'DESIGN.md'),
+    serializeTokenBlock({
+      colors: { accent: '#3366ff' },
+      fonts: { sans: 'Inter, sans-serif' },
+      typeScale: [14, 16],
+      spacing: [4, 8],
+      radii: [6, 10],
+    }),
+  );
+  writeFileSync(
+    join(cwd, 'MOTION.md'),
+    serializeMotionTokenBlock({
+      durations: { element: [200, 260], page: 320 },
+      easings: { standard: 'cubic-bezier(0.16, 1, 0.3, 1)' },
+      pressScale: 0.97,
+      reducedMotion: 'reduce',
+    }),
+  );
+  const server = createDesignMcpServer(() => cwd);
+  const dna = server.tools.find((candidate) => candidate.name === 'design_dna');
+  const system = server.tools.find((candidate) => candidate.name === 'design_system');
+  assert.ok(dna);
+  assert.ok(system);
+
+  const dnaResult = JSON.parse(String(await dna.handler({}))) as {
+    motionTokens: { durations: Record<string, number | [number, number]> };
+  };
+  const systemResult = JSON.parse(
+    String(await system.handler({ duration: 230, easing: 'standard' })),
+  ) as {
+    motion: { pressScale: number };
+    matches: {
+      duration: {
+        input: number;
+        name: string;
+        value: number | [number, number];
+        distanceMs: number;
+        onScale: boolean;
+      };
+      easing: { role: string; value: string };
+    };
+  };
+
+  assert.deepEqual(dnaResult.motionTokens.durations.element, [200, 260]);
+  assert.equal(systemResult.motion.pressScale, 0.97);
+  assert.deepEqual(systemResult.matches.duration, {
+    input: 230,
+    name: 'element',
+    value: [200, 260],
+    distanceMs: 0,
+    onScale: true,
+  });
+  assert.deepEqual(systemResult.matches.easing, {
+    input: 'standard',
+    role: 'standard',
+    value: 'cubic-bezier(0.16, 1, 0.3, 1)',
+  });
+});
+
+test('design system resolves motion for a MOTION-only project', async (t) => {
+  const cwd = mkdtempSync(join(tmpdir(), 'droidex-motion-tools-'));
+  t.after(() => rmSync(cwd, { recursive: true, force: true }));
+  writeFileSync(
+    join(cwd, 'MOTION.md'),
+    serializeMotionTokenBlock({
+      durations: { page: 300 },
+      easings: { enter: 'ease-out' },
+      reducedMotion: 'reduce',
+    }),
+  );
+  const system = createDesignMcpServer(() => cwd).tools.find(
+    (candidate) => candidate.name === 'design_system',
+  );
+  assert.ok(system);
+
+  const result = JSON.parse(String(await system.handler({ duration: 280, easing: 'enter' }))) as {
+    ok: boolean;
+    tokens?: unknown;
+    motion: { durations: { page: number } };
+    matches: { duration: { name: string }; easing: { role: string } };
+  };
+  assert.equal(result.ok, true);
+  assert.equal(result.tokens, undefined);
+  assert.equal(result.motion.durations.page, 300);
+  assert.equal(result.matches.duration.name, 'page');
+  assert.equal(result.matches.easing.role, 'enter');
+});
 
 test('design_reference_library keeps the original and returns a bounded derivative', async (t) => {
   const baseDir = mkdtempSync(join(tmpdir(), 'droidex-model-reference-'));

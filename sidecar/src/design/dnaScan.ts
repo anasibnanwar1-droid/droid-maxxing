@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { serializeTokenBlock } from './tokens.js';
+import { serializeMotionTokenBlock } from './motionTokens.js';
 import type { DesignTokens, DnaDraft } from './types.js';
 
 // Bounded repo scan that drafts a DESIGN.md from what the project already
@@ -126,6 +127,18 @@ function defaultMotionMarkdown(): string {
     '',
     '- Honor `prefers-reduced-motion`: drop transforms, keep opacity-only fades,',
     '  and never auto-play looping motion.',
+    '',
+    '## Motion tokens',
+    '',
+    serializeMotionTokenBlock({
+      durations: { micro: [120, 160], element: [200, 260], page: [300, 420] },
+      easings: {
+        standard: 'cubic-bezier(0.16, 1, 0.3, 1)',
+        exit: 'cubic-bezier(0.4, 0, 1, 1)',
+      },
+      pressScale: 0.97,
+      reducedMotion: 'reduce',
+    }),
     '',
   ].join('\n');
 }

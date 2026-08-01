@@ -1,5 +1,6 @@
 import { serializeTokenBlock } from './tokens.js';
-import type { DesignTokens, DnaLibrary, DnaLibrarySummary } from './types.js';
+import { serializeMotionTokenBlock } from './motionTokens.js';
+import type { DesignTokens, DnaLibrary, DnaLibrarySummary, MotionTokens } from './types.js';
 
 interface LibraryDefinition {
   id: string;
@@ -9,6 +10,7 @@ interface LibraryDefinition {
   voice: string[];
   rules: string[];
   motion: string[];
+  motionTokens: MotionTokens;
 }
 
 const DEFINITIONS: LibraryDefinition[] = [
@@ -47,6 +49,11 @@ const DEFINITIONS: LibraryDefinition[] = [
       'Hover states change color only; no scale, no translate.',
       'Page transitions are instant cuts, like turning a printed page.',
     ],
+    motionTokens: {
+      durations: { micro: 120, element: 120, page: 0 },
+      easings: { standard: 'linear', exit: 'linear' },
+      reducedMotion: 'disable',
+    },
   },
   {
     id: 'terminal-mono',
@@ -83,6 +90,11 @@ const DEFINITIONS: LibraryDefinition[] = [
       'New rows appear instantly; no slide-ins.',
       'A subtle scanline shimmer is acceptable on empty states, nowhere else.',
     ],
+    motionTokens: {
+      durations: { micro: 80, element: 80, page: 0 },
+      easings: { standard: 'linear', exit: 'linear' },
+      reducedMotion: 'disable',
+    },
   },
   {
     id: 'soft-depth',
@@ -120,6 +132,12 @@ const DEFINITIONS: LibraryDefinition[] = [
       'Hover lifts cards 1px with the larger shadow at 40% opacity.',
       'Overlays fade + scale from 0.98; nothing bounces.',
     ],
+    motionTokens: {
+      durations: { micro: 160, element: 250, page: 320 },
+      easings: { standard: 'cubic-bezier(0.16, 1, 0.3, 1)', exit: 'ease-in' },
+      pressScale: 0.98,
+      reducedMotion: 'reduce',
+    },
   },
   {
     id: 'warm-print',
@@ -156,6 +174,12 @@ const DEFINITIONS: LibraryDefinition[] = [
       'Underlines draw in from the left on link hover.',
       'No parallax, no auto-playing movement.',
     ],
+    motionTokens: {
+      durations: { micro: 200, element: 300, page: 300 },
+      easings: { standard: 'ease-in-out', exit: 'ease-in' },
+      pressScale: 0.98,
+      reducedMotion: 'disable',
+    },
   },
 ];
 
@@ -218,6 +242,10 @@ function renderMotion(definition: LibraryDefinition): string {
     `# ${definition.name}: motion`,
     '',
     definition.motion.map((line) => `- ${line}`).join('\n'),
+    '',
+    '## Motion tokens',
+    '',
+    serializeMotionTokenBlock(definition.motionTokens),
     '',
   ].join('\n');
 }

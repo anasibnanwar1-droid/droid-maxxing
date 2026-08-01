@@ -55,7 +55,8 @@ export default function DnaShelf({
   const tokens = dna?.tokens;
   const currentColors = tokens ? Object.values(tokens.colors) : [];
 
-  const { studioDispatch } = useStudioCanvas();
+  const { studio, studioDispatch } = useStudioCanvas();
+  const brandBookFrame = studio.frames.find((frame) => frame.source?.type === 'brand-book');
   const [dismissed, setDismissed] = useState<string | null>(null);
   const [scanning, setScanning] = useState(false);
   const [interview, setInterview] = useState(false);
@@ -195,11 +196,16 @@ export default function DnaShelf({
               <div className="mt-3 flex flex-wrap items-center gap-1.5">
                 <button
                   onClick={() => {
+                    if (brandBookFrame) {
+                      studioDispatch({ type: 'SELECT_FRAMES', ids: [brandBookFrame.id] });
+                      studioDispatch({ type: 'REQUEST_FRAME_FOCUS', id: brandBookFrame.id });
+                    }
                     renderDesignPreview(cwd);
+                    studioDispatch({ type: 'SET_LEFT_TAB', tab: 'agent' });
                   }}
                   className="inline-flex items-center gap-1.5 rounded-lg bg-droid-accent px-3 py-1.5 text-[12px] font-medium text-droid-bg transition-opacity hover:opacity-90"
                 >
-                  Generate brand book
+                  {brandBookFrame ? 'Open brand book' : 'Generate brand book'}
                 </button>
                 <button
                   onClick={openFinalize}
@@ -254,7 +260,7 @@ export default function DnaShelf({
 
       <div>
         <Header title="Motion" />
-        <MotionPreview colors={dna?.tokens?.colors} />
+        <MotionPreview colors={dna?.tokens?.colors} motionTokens={dna?.motionTokens} />
       </div>
 
       {saved.length > 0 && (
