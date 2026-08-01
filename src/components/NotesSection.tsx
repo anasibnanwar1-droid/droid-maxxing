@@ -198,13 +198,14 @@ export function NotesPanel({
 
   // The pad starts five lines tall so it reads as a place to write, then grows
   // with the text like the main composer, capped so a long note scrolls
-  // instead of swallowing the panel.
+  // instead of swallowing the panel. Reopen is a dep too: collapsing unmounts
+  // the pad and drops its fitted height, so it must refit on the fresh mount.
   useEffect(() => {
     const el = textareaRef.current;
     if (!el) return;
     el.style.height = 'auto';
     el.style.height = `${String(Math.min(el.scrollHeight, 168))}px`;
-  }, [draft]);
+  }, [draft, open]);
 
   // anchorRect only exists client-side after measurement, so window is safe.
   const introPos = anchorRect ? notesIntroPosition(anchorRect, window.innerHeight) : null;
