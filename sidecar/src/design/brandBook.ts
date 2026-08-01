@@ -21,9 +21,15 @@ export function renderBrandBook(input: BrandBookInput): string {
   const brandName = deriveBrandName(input);
   const tagline = deriveTagline(input.designMd) || 'Design system & brand guidelines';
   const prose = parseProse(input.designMd);
-  const scale = (tokens.typeScale.length ? tokens.typeScale : [13, 15, 18, 22, 30, 44, 68]).slice().sort((a, b) => a - b);
-  const spacing = (tokens.spacing.length ? tokens.spacing : [4, 8, 12, 16, 24, 32, 48, 64, 96]).slice().sort((a, b) => a - b);
-  const radii = tokens.radii.length ? tokens.radii.slice().sort((a, b) => a - b) : [0, 4, 8, 14, 999];
+  const scale = (tokens.typeScale.length ? tokens.typeScale : [13, 15, 18, 22, 30, 44, 68])
+    .slice()
+    .sort((a, b) => a - b);
+  const spacing = (tokens.spacing.length ? tokens.spacing : [4, 8, 12, 16, 24, 32, 48, 64, 96])
+    .slice()
+    .sort((a, b) => a - b);
+  const radii = tokens.radii.length
+    ? tokens.radii.slice().sort((a, b) => a - b)
+    : [0, 4, 8, 14, 999];
   const swatches = Object.entries(tokens.colors);
 
   const proseSections = prose.map((p, i) => proseSection(p, i + 1));
@@ -69,7 +75,10 @@ function resolveTheme(tokens: DesignTokens): Theme {
   };
   // Every value is passed through safeColor before it reaches CSS, so a malformed
   // or hostile token (e.g. `red" onload=...`) can't break out of a style attribute.
-  const surface = safeColor(match(['surface', 'background', 'bg', 'base', 'paper', 'canvas']), '#ffffff');
+  const surface = safeColor(
+    match(['surface', 'background', 'bg', 'base', 'paper', 'canvas']),
+    '#ffffff',
+  );
   const surfaceRgb = parseColor(surface) ?? [255, 255, 255, 1];
   const text = safeColor(
     match(['text', 'ink', 'foreground', 'body']),
@@ -77,7 +86,10 @@ function resolveTheme(tokens: DesignTokens): Theme {
   );
   const brand = safeColor(match(['brand', 'primary', 'accent']) ?? Object.values(c)[0], text);
   const border = safeColor(match(['border', 'line', 'rule', 'divider']), mix(text, surface, 0.14));
-  const muted = safeColor(match(['muted', 'secondary', 'subtle', 'tertiary']), mix(text, surface, 0.55));
+  const muted = safeColor(
+    match(['muted', 'secondary', 'subtle', 'tertiary']),
+    mix(text, surface, 0.55),
+  );
   return { surface, text, muted, border, brand };
 }
 
@@ -99,15 +111,14 @@ function contentsSection(items: { n: string; label: string }[]): string {
   const rows = items
     .map((i) => `<li><span class="mono num">${i.n}</span><span>${esc(i.label)}</span></li>`)
     .join('');
-  return section('contents', `<div class="rail"><span class="kicker">Contents</span></div><ol class="contents body">${rows}</ol>`);
+  return section(
+    'contents',
+    `<div class="rail"><span class="kicker">Contents</span></div><ol class="contents body">${rows}</ol>`,
+  );
 }
 
 function proseSection(p: ProseBlock, n: number): string {
-  return numbered(
-    pad(n),
-    p.title,
-    `<div class="prose body">${renderMarkdownish(p.content)}</div>`,
-  );
+  return numbered(pad(n), p.title, `<div class="prose body">${renderMarkdownish(p.content)}</div>`);
 }
 
 function colorSection(swatches: [string, string][], theme: Theme, n: string): string {
@@ -132,13 +143,23 @@ function colorSection(swatches: [string, string][], theme: Theme, n: string): st
   return numbered(n, 'Color', `<div class="swatches">${cards}</div>`);
 }
 
-function typographySection(scale: number[], fonts: DesignTokens['fonts'], theme: Theme, n: string): string {
-  const fontName = (stack: string | undefined) =>
-    esc(firstFamily(safeFont(stack, '')));
+function typographySection(
+  scale: number[],
+  fonts: DesignTokens['fonts'],
+  theme: Theme,
+  n: string,
+): string {
+  const fontName = (stack: string | undefined) => esc(firstFamily(safeFont(stack, '')));
   const names = [
-    fonts.display ? `<div><span class="kicker">Display</span><div class="font-name" style="font-family:var(--font-display)">${fontName(fonts.display)}</div></div>` : '',
-    fonts.sans ? `<div><span class="kicker">Body</span><div class="font-name">${fontName(fonts.sans)}</div></div>` : '',
-    fonts.mono ? `<div><span class="kicker">Mono</span><div class="font-name mono">${fontName(fonts.mono)}</div></div>` : '',
+    fonts.display
+      ? `<div><span class="kicker">Display</span><div class="font-name" style="font-family:var(--font-display)">${fontName(fonts.display)}</div></div>`
+      : '',
+    fonts.sans
+      ? `<div><span class="kicker">Body</span><div class="font-name">${fontName(fonts.sans)}</div></div>`
+      : '',
+    fonts.mono
+      ? `<div><span class="kicker">Mono</span><div class="font-name mono">${fontName(fonts.mono)}</div></div>`
+      : '',
   ].join('');
   const ladder = scale
     .slice()
@@ -182,11 +203,7 @@ function motionSection(motionMd: string, theme: Theme, n: string): string {
   const prose = motionMd.trim()
     ? `<div class="prose body">${renderMarkdownish(stripTitle(motionMd))}</div>`
     : `<p class="body" style="color:${theme.muted}">Quick, intentional motion. Hover the block.</p>`;
-  return numbered(
-    n,
-    'Motion',
-    `${prose}<div class="motion-demo" aria-hidden="true"></div>`,
-  );
+  return numbered(n, 'Motion', `${prose}<div class="motion-demo" aria-hidden="true"></div>`);
 }
 
 function colophon(name: string): string {
@@ -216,7 +233,9 @@ interface ProseBlock {
 }
 
 function parseProse(md: string): ProseBlock[] {
-  const withoutTokens = md.replace(/```design-tokens[\s\S]*?```/g, '').replace(/```[\s\S]*?```/g, '');
+  const withoutTokens = md
+    .replace(/```design-tokens[\s\S]*?```/g, '')
+    .replace(/```[\s\S]*?```/g, '');
   const blocks: ProseBlock[] = [];
   const re = /^##\s+(.+)$/gm;
   const matches = [...withoutTokens.matchAll(re)];
@@ -232,7 +251,10 @@ function parseProse(md: string): ProseBlock[] {
 }
 
 function stripTitle(md: string): string {
-  return md.replace(/^#\s+.+$/m, '').replace(/```[\s\S]*?```/g, '').trim();
+  return md
+    .replace(/^#\s+.+$/m, '')
+    .replace(/```[\s\S]*?```/g, '')
+    .trim();
 }
 
 function renderMarkdownish(text: string): string {
@@ -273,7 +295,9 @@ function renderMarkdownish(text: string): string {
 }
 
 function inline(text: string): string {
-  return esc(text).replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>').replace(/`(.+?)`/g, '<code class="mono">$1</code>');
+  return esc(text)
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/`(.+?)`/g, '<code class="mono">$1</code>');
 }
 
 // ── Color math ───────────────────────────────────────────────────────
@@ -292,7 +316,9 @@ function contrastRatio(a: Rgba, b: Rgba): number {
   return (hi + 0.05) / (lo + 0.05);
 }
 function readableInk(bg: Rgba): string {
-  return contrastRatio(bg, [255, 255, 255, 1]) >= contrastRatio(bg, [0, 0, 0, 1]) ? '#ffffff' : '#000000';
+  return contrastRatio(bg, [255, 255, 255, 1]) >= contrastRatio(bg, [0, 0, 0, 1])
+    ? '#ffffff'
+    : '#000000';
 }
 function wcag(ratio: number): string {
   if (ratio >= 7) return 'AAA';
@@ -350,7 +376,12 @@ function titleCase(s: string): string {
     .join(' ');
 }
 function firstFamily(stack: string): string {
-  return stack.split(',')[0]?.trim().replace(/^["']|["']$/g, '') || stack;
+  return (
+    stack
+      .split(',')[0]
+      ?.trim()
+      .replace(/^["']|["']$/g, '') || stack
+  );
 }
 function esc(s: string): string {
   return s

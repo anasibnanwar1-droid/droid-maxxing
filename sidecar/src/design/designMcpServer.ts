@@ -172,7 +172,9 @@ export function createDesignMcpServer(
           path: z
             .string()
             .optional()
-            .describe('Path to a self-contained .html file in the workspace to render on the canvas.'),
+            .describe(
+              'Path to a self-contained .html file in the workspace to render on the canvas.',
+            ),
           prototypeId: z
             .string()
             .optional()
@@ -181,7 +183,10 @@ export function createDesignMcpServer(
         },
         safeTool(async (input) => {
           if (!preview) {
-            return jsonResult({ ok: false, error: 'Canvas preview is not available in this session.' });
+            return jsonResult({
+              ok: false,
+              error: 'Canvas preview is not available in this session.',
+            });
           }
           return jsonResult(
             await preview({

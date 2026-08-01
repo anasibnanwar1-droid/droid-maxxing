@@ -17,11 +17,7 @@ export function listSavedDna(cwd: string, baseDir?: string): SavedDnaEntry[] {
   }
 }
 
-export function getSavedDna(
-  cwd: string,
-  id: string,
-  baseDir?: string,
-): SavedDnaEntry | undefined {
+export function getSavedDna(cwd: string, id: string, baseDir?: string): SavedDnaEntry | undefined {
   return listSavedDna(cwd, baseDir).find((entry) => entry.id === id);
 }
 

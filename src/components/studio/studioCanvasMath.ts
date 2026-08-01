@@ -113,9 +113,7 @@ export function boundingRect(rects: Rect[]): Rect {
 
 /** Axis-aligned rect intersection test (world space), used by marquee select. */
 export function rectsIntersect(a: Rect, b: Rect): boolean {
-  return (
-    a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y
-  );
+  return a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y;
 }
 
 /** Normalize a two-point drag into a positive-size rect. */

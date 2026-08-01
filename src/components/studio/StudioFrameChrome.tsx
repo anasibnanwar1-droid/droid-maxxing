@@ -2,12 +2,7 @@ import { useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import { AnimatePresence, motion } from 'framer-motion';
 import { Copy, Monitor, Play, Smartphone, Tablet, Trash2, X } from 'lucide-react';
 import type { BrowserViewportMode } from '../../types/bridge';
-import {
-  sizeOf,
-  useStudioCanvas,
-  type StudioFrame,
-  type StudioTool,
-} from './StudioCanvasContext';
+import { sizeOf, useStudioCanvas, type StudioFrame, type StudioTool } from './StudioCanvasContext';
 import type { Rect } from './studioCanvasMath';
 
 const STATUS_COLOR: Record<StudioFrame['status'], string> = {
@@ -98,8 +93,12 @@ export default function StudioFrameChrome({
     <div
       className="pointer-events-none absolute"
       style={{ left: rect.x, top: rect.y, width: rect.width, height: rect.height }}
-      onMouseEnter={() => { setHovered(true); }}
-      onMouseLeave={() => { setHovered(false); }}
+      onMouseEnter={() => {
+        setHovered(true);
+      }}
+      onMouseLeave={() => {
+        setHovered(false);
+      }}
     >
       {/* Selection / hover ring */}
       <div
@@ -119,7 +118,9 @@ export default function StudioFrameChrome({
         style={{ top: -headerScaledOffset, height: headerScaledOffset - 8 }}
         onPointerDown={beginDrag}
         onPointerMove={onDragMove}
-        onPointerUp={(e) => { endDrag(e, e.shiftKey); }}
+        onPointerUp={(e) => {
+          endDrag(e, e.shiftKey);
+        }}
       >
         <span
           className="h-[7px] w-[7px] shrink-0 rounded-full"
@@ -148,7 +149,9 @@ export default function StudioFrameChrome({
           />
         ) : (
           <button
-            onDoubleClick={() => { setEditing(true); }}
+            onDoubleClick={() => {
+              setEditing(true);
+            }}
             className={`max-w-[220px] cursor-grab truncate text-[12.5px] font-medium leading-none transition-colors ${
               selected ? 'text-droid-text' : 'text-droid-text-secondary hover:text-droid-text'
             }`}
@@ -186,17 +189,26 @@ export default function StudioFrameChrome({
             </ToolbarButton>
             <ToolbarButton
               label="Interact"
-              onClick={() => { studioDispatch({ type: 'SET_INTERACTING', id: frame.id }); }}
+              onClick={() => {
+                studioDispatch({ type: 'SET_INTERACTING', id: frame.id });
+              }}
             >
               <Play className="h-3.5 w-3.5" />
             </ToolbarButton>
-            <ToolbarButton label="Duplicate" onClick={() => { onDuplicate(frame); }}>
+            <ToolbarButton
+              label="Duplicate"
+              onClick={() => {
+                onDuplicate(frame);
+              }}
+            >
               <Copy className="h-3.5 w-3.5" />
             </ToolbarButton>
             <ToolbarButton
               label="Delete"
               danger
-              onClick={() => { studioDispatch({ type: 'REMOVE_FRAME', id: frame.id }); }}
+              onClick={() => {
+                studioDispatch({ type: 'REMOVE_FRAME', id: frame.id });
+              }}
             >
               <Trash2 className="h-3.5 w-3.5" />
             </ToolbarButton>
@@ -213,7 +225,9 @@ export default function StudioFrameChrome({
           style={{ pointerEvents: 'auto', cursor: active ? 'grab' : 'default' }}
           onPointerDown={beginDrag}
           onPointerMove={onDragMove}
-          onPointerUp={(e) => { endDrag(e, e.shiftKey); }}
+          onPointerUp={(e) => {
+            endDrag(e, e.shiftKey);
+          }}
           onDoubleClick={() => {
             if (studio.settings.interactOnDoubleClick)
               studioDispatch({ type: 'SET_INTERACTING', id: frame.id });
@@ -230,7 +244,9 @@ export default function StudioFrameChrome({
           <span className="h-1.5 w-1.5 rounded-full bg-droid-accent" />
           Interacting
           <button
-            onClick={() => { studioDispatch({ type: 'SET_INTERACTING', id: null }); }}
+            onClick={() => {
+              studioDispatch({ type: 'SET_INTERACTING', id: null });
+            }}
             className="ml-0.5 text-droid-text-muted transition-colors hover:text-droid-text"
           >
             <X className="h-3 w-3" />

@@ -57,8 +57,7 @@ export function formatDesignPrompt(
   context?: DesignPromptContext,
 ): string {
   const first = references[0];
-  const dnaBlock =
-    context?.dnaLines && context.dnaLines.length > 0 ? context.dnaLines : [];
+  const dnaBlock = context?.dnaLines && context.dnaLines.length > 0 ? context.dnaLines : [];
   return [
     DESIGN_PROMPT_HEADER,
     `- URL: ${sanitizeInline(first?.url ?? 'about:blank')}`,

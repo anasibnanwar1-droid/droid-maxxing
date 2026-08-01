@@ -21,7 +21,9 @@ const ANNOTATE: ToolDef[] = [{ id: 'draw', icon: Pencil, label: 'Draw', key: 'P'
  */
 export default function ToolRail({ onRequestAddFrame }: { onRequestAddFrame: () => void }) {
   const { studio, studioDispatch } = useStudioCanvas();
-  const setTool = (tool: StudioTool) => { studioDispatch({ type: 'SET_TOOL', tool }); };
+  const setTool = (tool: StudioTool) => {
+    studioDispatch({ type: 'SET_TOOL', tool });
+  };
 
   return (
     <div className="studio-floating-surface flex flex-col items-center gap-1 rounded-xl p-1">
@@ -31,7 +33,9 @@ export default function ToolRail({ onRequestAddFrame }: { onRequestAddFrame: () 
           active={studio.tool === t.id}
           label={t.label}
           shortcut={t.key}
-          onClick={() => { setTool(t.id); }}
+          onClick={() => {
+            setTool(t.id);
+          }}
         >
           <t.icon className="h-[18px] w-[18px]" strokeWidth={1.75} />
         </RailButton>
@@ -51,7 +55,9 @@ export default function ToolRail({ onRequestAddFrame }: { onRequestAddFrame: () 
           active={studio.tool === t.id}
           label={t.label}
           shortcut={t.key}
-          onClick={() => { setTool(t.id); }}
+          onClick={() => {
+            setTool(t.id);
+          }}
         >
           <t.icon className="h-[18px] w-[18px]" strokeWidth={1.75} />
         </RailButton>

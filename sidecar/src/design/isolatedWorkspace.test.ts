@@ -50,7 +50,11 @@ test('prepareDesignWorkspace creates an isolated droidex/design worktree and see
 
   // Writing in the worktree must not appear in the live tree root.
   await writeFile(join(info.path, 'scratch.txt'), 'agent output\n', 'utf8');
-  assert.equal(existsSync(join(repo, 'scratch.txt')), false, 'worktree writes never touch the live tree');
+  assert.equal(
+    existsSync(join(repo, 'scratch.txt')),
+    false,
+    'worktree writes never touch the live tree',
+  );
 
   // The live repo stays clean (.worktrees is excluded).
   const status = await git(repo, ['status', '--porcelain']);

@@ -76,7 +76,9 @@ export async function prepareDesignWorkspace(liveCwd: string): Promise<Workspace
   const branchRef = `refs/heads/${BRANCH}`;
 
   // Reuse the worktree at our path, or wherever the design branch is already checked out.
-  const records = parseWorktrees((await tryGit(repoRoot, ['worktree', 'list', '--porcelain'])) ?? '');
+  const records = parseWorktrees(
+    (await tryGit(repoRoot, ['worktree', 'list', '--porcelain'])) ?? '',
+  );
   const existing = records.find((r) => r.path === worktreePath || r.branch === branchRef);
   if (existing && existsSync(existing.path)) {
     return { liveCwd, path: existing.path, isWorktree: true, branch: BRANCH };
@@ -85,7 +87,8 @@ export async function prepareDesignWorkspace(liveCwd: string): Promise<Workspace
   try {
     await ensureWorktreesIgnored(repoRoot);
     await mkdir(join(repoRoot, '.worktrees'), { recursive: true });
-    const branchExists = (await tryGit(repoRoot, ['show-ref', '--verify', '--quiet', branchRef])) !== null;
+    const branchExists =
+      (await tryGit(repoRoot, ['show-ref', '--verify', '--quiet', branchRef])) !== null;
     const args = branchExists
       ? ['worktree', 'add', worktreePath, BRANCH]
       : ['worktree', 'add', '-b', BRANCH, worktreePath, 'HEAD'];
@@ -108,7 +111,11 @@ async function ensureWorktreesIgnored(repoRoot: string): Promise<void> {
   const excludePath = join(gitDir, 'info', 'exclude');
   try {
     const current = existsSync(excludePath) ? await readFile(excludePath, 'utf8') : '';
-    if (current.split('\n').some((line) => line.trim() === '/.worktrees/' || line.trim() === '.worktrees/')) {
+    if (
+      current
+        .split('\n')
+        .some((line) => line.trim() === '/.worktrees/' || line.trim() === '.worktrees/')
+    ) {
       return;
     }
     const prefix = current === '' || current.endsWith('\n') ? '' : '\n';
