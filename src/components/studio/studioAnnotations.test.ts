@@ -6,7 +6,7 @@ import {
   type StudioFrame,
 } from './StudioCanvasContext';
 import { buildStudioPrompt } from './studioPromptContext';
-import { fitRects, MAX_ZOOM } from './studioCanvasMath';
+import { fitRects, MAX_ZOOM, readableFrameRect } from './studioCanvasMath';
 import {
   annotationHandles,
   annotationPointToWorld,
@@ -216,4 +216,13 @@ test('explicit fit may upscale while automatic fit keeps pages at 100 percent', 
   assert.equal(automatic.zoom, 1);
   assert.equal(explicit.zoom, 3);
   assert.deepEqual(explicit.pan, { x: 200, y: 250 });
+});
+
+test('generated tall documents focus a readable top viewport', () => {
+  const viewport = { width: 1200, height: 800 };
+  const tall = readableFrameRect({ x: 40, y: 80, width: 1200, height: 3200 }, viewport, 100);
+  const ordinary = readableFrameRect({ x: 40, y: 80, width: 1200, height: 800 }, viewport, 100);
+
+  assert.deepEqual(tall, { x: 40, y: 80, width: 1200, height: 720 });
+  assert.deepEqual(ordinary, { x: 40, y: 80, width: 1200, height: 800 });
 });

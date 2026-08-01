@@ -7,16 +7,19 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from 'react';
 import { pushEscapeLayer } from '../environment/usePopover';
-import { useStudioCanvas, sizeOf, type StudioFrame } from './StudioCanvasContext';
 import {
-  fitRects,
+  duplicateStudioFrame,
+  useStudioCanvas,
+  sizeOf,
+  type StudioFrame,
+} from './StudioCanvasContext';
+import {
   panBy,
   rectFromPoints,
   rectsIntersect,
   screenToWorld,
   worldToScreen,
   zoomAtPoint,
-  type CanvasView,
   type Point,
   type Rect,
 } from './studioCanvasMath';
@@ -31,6 +34,8 @@ import { useCanvasDrawing } from './useCanvasDrawing';
 import { useCanvasImageImport } from './useCanvasImageImport';
 import { hitTestAnnotation, topFrameAtPoint } from './studioAnnotations';
 import { CANVAS_IMAGE_INPUT_ID } from './studioCanvasImages';
+import { isStudioTypingTarget, shouldUndoCanvasAnnotation } from './studioCanvasKeyboard';
+import { useStudioFrameNavigation } from './useStudioFrameNavigation';
 
 type DragMode = 'pan' | 'marquee';
 
@@ -46,80 +51,16 @@ export default function StudioCanvas({
   const rootRef = useRef<HTMLDivElement>(null);
   const drawing = useCanvasDrawing(rootRef);
   const imageImport = useCanvasImageImport(rootRef, cwd);
-  // Latest view for the native wheel listener (bound once, reads via ref).
-  const viewRef = useRef(view);
-  viewRef.current = view;
+  const { interactWithFrame, restoring, stopAnimation, viewRef } =
+    useStudioFrameNavigation(rootRef);
   const [spaceHeld, setSpaceHeld] = useState(false);
   const [marquee, setMarquee] = useState<Rect | null>(null);
-  const prevFrameCount = useRef(frames.length);
-  const rafRef = useRef<number | null>(null);
   const drag = useRef<{
     mode: DragMode;
     startClient: Point;
     startPan: Point;
     moved: boolean;
   } | null>(null);
-
-  // Ease the view (pan + zoom together) to a target so frames, labels, and grid
-  // all move in sync — a snap would desync the screen-space chrome.
-  const animateView = useCallback(
-    (target: CanvasView) => {
-      if (rafRef.current) cancelAnimationFrame(rafRef.current);
-      const start = viewRef.current;
-      const t0 = performance.now();
-      const dur = 500;
-      const step = (now: number) => {
-        const t = Math.min(1, (now - t0) / dur);
-        const k = 1 - Math.pow(1 - t, 3);
-        studioDispatch({
-          type: 'SET_VIEW',
-          view: {
-            zoom: start.zoom + (target.zoom - start.zoom) * k,
-            pan: {
-              x: start.pan.x + (target.pan.x - start.pan.x) * k,
-              y: start.pan.y + (target.pan.y - start.pan.y) * k,
-            },
-          },
-        });
-        if (t < 1) rafRef.current = requestAnimationFrame(step);
-      };
-      rafRef.current = requestAnimationFrame(step);
-    },
-    [studioDispatch],
-  );
-
-  const stopAnimation = useCallback(() => {
-    if (rafRef.current) cancelAnimationFrame(rafRef.current);
-    rafRef.current = null;
-  }, []);
-
-  // Fly the canvas to a newly added frame so focus lands on the new work.
-  // A thread-switch HYDRATE swaps the whole set and must restore the saved
-  // view untouched, so skip the fly-to right after one.
-  const hydrateSeen = useRef(studio.hydrateCount);
-  // True only during the render that swapped in a restored thread (the effect
-  // below syncs the ref right after) — used to mount frames without animation.
-  const restoring = studio.hydrateCount !== hydrateSeen.current;
-  useEffect(() => {
-    const hydrated = studio.hydrateCount !== hydrateSeen.current;
-    hydrateSeen.current = studio.hydrateCount;
-    if (!hydrated && frames.length > prevFrameCount.current) {
-      const added = frames[frames.length - 1];
-      const rect = rootRef.current?.getBoundingClientRect();
-      if (rect) {
-        const size = sizeOf(added);
-        const target = fitRects(
-          [{ x: added.x, y: added.y, width: size.width, height: size.height }],
-          { width: rect.width, height: rect.height },
-          180,
-        );
-        animateView(target);
-      }
-    }
-    prevFrameCount.current = frames.length;
-  }, [frames, studio.hydrateCount, animateView]);
-
-  useEffect(() => stopAnimation, [stopAnimation]);
 
   // Interactive iframe mode is an Escape layer above the Studio itself.
   useEffect(() => {
@@ -131,7 +72,7 @@ export default function StudioCanvas({
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (!e.repeat && !e.metaKey && !e.ctrlKey && !e.altKey && !isTypingTarget(e.target)) {
+      if (!e.repeat && !e.metaKey && !e.ctrlKey && !e.altKey && !isStudioTypingTarget(e.target)) {
         const shortcut = e.key.toLowerCase();
         const shortcutTool =
           shortcut === 'v'
@@ -150,14 +91,14 @@ export default function StudioCanvas({
           onRequestAddFrame();
         }
       }
-      if (studio.tool === 'draw' && (e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') {
+      if (shouldUndoCanvasAnnotation(e, studio.tool)) {
         e.preventDefault();
         studioDispatch({ type: 'UNDO_ANNOTATION' });
       }
       if (
         (studio.selectedAnnotationId || studio.selectedImageId) &&
         (e.key === 'Delete' || e.key === 'Backspace') &&
-        !isTypingTarget(e.target)
+        !isStudioTypingTarget(e.target)
       ) {
         e.preventDefault();
         if (studio.selectedAnnotationId) {
@@ -187,7 +128,7 @@ export default function StudioCanvas({
   // Space-to-pan, like every real canvas.
   useEffect(() => {
     const down = (e: KeyboardEvent) => {
-      if (e.code === 'Space' && !isTypingTarget(e.target)) {
+      if (e.code === 'Space' && !isStudioTypingTarget(e.target)) {
         e.preventDefault();
         setSpaceHeld(true);
       }
@@ -213,7 +154,7 @@ export default function StudioCanvas({
     if (!node) return;
     const onWheelNative = (e: WheelEvent) => {
       e.preventDefault();
-      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+      stopAnimation();
       const v = viewRef.current;
       const rect = node.getBoundingClientRect();
       const anchor = { x: e.clientX - rect.left, y: e.clientY - rect.top };
@@ -228,7 +169,7 @@ export default function StudioCanvas({
     return () => {
       node.removeEventListener('wheel', onWheelNative);
     };
-  }, [studioDispatch]);
+  }, [stopAnimation, studioDispatch, viewRef]);
 
   const onPointerDown = (e: ReactPointerEvent) => {
     // Canvas gestures must never capture the pointer from controls layered over
@@ -323,13 +264,7 @@ export default function StudioCanvas({
   const duplicateFrame = (frame: StudioFrame) => {
     studioDispatch({
       type: 'ADD_FRAME',
-      frame: {
-        name: `${frame.name} copy`,
-        url: frame.url,
-        ...(frame.source === undefined ? {} : { source: frame.source }),
-        mode: frame.mode,
-        kind: frame.kind,
-      },
+      frame: duplicateStudioFrame(frame),
     });
   };
 
@@ -440,6 +375,7 @@ export default function StudioCanvas({
               tool={tool}
               selected={selectedFrameIds.includes(f.id)}
               onDuplicate={duplicateFrame}
+              onInteract={interactWithFrame}
             />
           );
         })}
@@ -476,13 +412,6 @@ export default function StudioCanvas({
 function frameWorldRect(f: StudioFrame): Rect {
   const size = sizeOf(f);
   return { x: f.x, y: f.y, width: size.width, height: size.height };
-}
-
-function isTypingTarget(target: EventTarget | null): boolean {
-  const el = target as HTMLElement | null;
-  if (!el) return false;
-  const tag = el.tagName;
-  return tag === 'INPUT' || tag === 'TEXTAREA' || el.isContentEditable;
 }
 
 function isInteractiveCanvasTarget(target: EventTarget | null): boolean {

@@ -32,6 +32,7 @@ export default function StudioFrameChrome({
   tool,
   selected,
   onDuplicate,
+  onInteract,
 }: {
   frame: StudioFrame;
   rect: Rect;
@@ -39,6 +40,7 @@ export default function StudioFrameChrome({
   tool: StudioTool;
   selected: boolean;
   onDuplicate: (frame: StudioFrame) => void;
+  onInteract: (frame: StudioFrame) => void;
 }) {
   const { studio, studioDispatch } = useStudioCanvas();
   const interacting = studio.interactingFrameId === frame.id;
@@ -63,7 +65,7 @@ export default function StudioFrameChrome({
 
   const beginDrag = (e: ReactPointerEvent) => {
     e.stopPropagation();
-    (e.target as Element).setPointerCapture?.(e.pointerId);
+    e.currentTarget.setPointerCapture(e.pointerId);
     drag.current = { px: e.clientX, py: e.clientY, fx: frame.x, fy: frame.y, moved: false, zoom };
   };
   const onDragMove = (e: ReactPointerEvent) => {
@@ -77,7 +79,7 @@ export default function StudioFrameChrome({
   const endDrag = (e: ReactPointerEvent, additive: boolean) => {
     const d = drag.current;
     drag.current = null;
-    (e.target as Element).releasePointerCapture?.(e.pointerId);
+    e.currentTarget.releasePointerCapture(e.pointerId);
     if (d && !d.moved) studioDispatch({ type: 'TOGGLE_FRAME', id: frame.id, additive });
   };
 
@@ -188,9 +190,9 @@ export default function StudioFrameChrome({
               })()}
             </ToolbarButton>
             <ToolbarButton
-              label="Interact"
+              label="Open live preview"
               onClick={() => {
-                studioDispatch({ type: 'SET_INTERACTING', id: frame.id });
+                onInteract(frame);
               }}
             >
               <Play className="h-3.5 w-3.5" />
@@ -229,8 +231,7 @@ export default function StudioFrameChrome({
             endDrag(e, e.shiftKey);
           }}
           onDoubleClick={() => {
-            if (studio.settings.interactOnDoubleClick)
-              studioDispatch({ type: 'SET_INTERACTING', id: frame.id });
+            if (studio.settings.interactOnDoubleClick) onInteract(frame);
           }}
         />
       )}

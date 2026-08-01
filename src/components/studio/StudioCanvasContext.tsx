@@ -115,6 +115,8 @@ export interface StudioCanvasState {
   settings: StudioSettings;
   // The frame currently in interactive mode (its iframe receives pointer events).
   interactingFrameId: string | null;
+  // Ephemeral request for a canvas consumer to bring a known frame into view.
+  focusFrameRequest: { id: string; revision: number } | null;
   // Bumped on every HYDRATE so views can tell a thread-switch restore apart
   // from an organic frame add (no fly-to, no entrance animation).
   hydrateCount: number;
@@ -127,6 +129,7 @@ export type StudioCanvasAction =
   | { type: 'SET_DEFAULT_MODE'; mode: BrowserViewportMode }
   | { type: 'SET_SETTING'; key: keyof StudioSettings; value: boolean }
   | { type: 'SET_INTERACTING'; id: string | null }
+  | { type: 'REQUEST_FRAME_FOCUS'; id: string }
   | { type: 'ADD_FRAME'; frame: NewFrame }
   | { type: 'UPDATE_FRAME'; id: string; patch: Partial<StudioFrame> }
   | { type: 'RELOAD_FRAME'; id: string }
@@ -193,6 +196,18 @@ function newFrameId(): string {
   }
 }
 
+export function duplicateStudioFrame(frame: StudioFrame) {
+  return {
+    name: `${frame.name} copy`,
+    url: frame.url,
+    ...(frame.source === undefined ? {} : { source: frame.source }),
+    mode: frame.mode,
+    kind: frame.kind,
+    width: frame.width,
+    height: frame.height,
+  };
+}
+
 function selectionId(): string {
   try {
     return `sel_${crypto.randomUUID().slice(0, 8)}`;
@@ -231,6 +246,7 @@ const initialState: StudioCanvasState = {
   drawingStyle: { kind: 'pencil', color: 'blue', fill: 'none', strokeWidth: 2 },
   settings: { interactOnDoubleClick: true },
   interactingFrameId: null,
+  focusFrameRequest: null,
   hydrateCount: 0,
 };
 
@@ -267,6 +283,14 @@ export function studioCanvasReducer(
       return { ...state, settings: { ...state.settings, [action.key]: action.value } };
     case 'SET_INTERACTING':
       return { ...state, interactingFrameId: action.id };
+    case 'REQUEST_FRAME_FOCUS':
+      return {
+        ...state,
+        focusFrameRequest: {
+          id: action.id,
+          revision: (state.focusFrameRequest?.revision ?? 0) + 1,
+        },
+      };
     case 'ADD_FRAME': {
       if (action.frame.id && state.frames.some((f) => f.id === action.frame.id)) return state;
       if (state.frames.length >= MAX_FRAMES) return state;
@@ -434,6 +458,7 @@ export function studioCanvasReducer(
         ...action.state,
         // Always drop interactive mode on restore — the iframe needs a fresh attach.
         interactingFrameId: null,
+        focusFrameRequest: null,
         hydrateCount: state.hydrateCount + 1,
       };
     default:
@@ -457,6 +482,7 @@ export function emptyStudioCanvasState(): StudioCanvasState {
     drawingStyle: { kind: 'pencil', color: 'blue', fill: 'none', strokeWidth: 2 },
     settings: { interactOnDoubleClick: true },
     interactingFrameId: null,
+    focusFrameRequest: null,
     hydrateCount: 0,
   };
 }

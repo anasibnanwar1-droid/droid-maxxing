@@ -1,7 +1,12 @@
 import { useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { ChevronDown, Copy, ExternalLink, RotateCw, Trash2 } from 'lucide-react';
-import { useStudioCanvas, sizeOf, type StudioFrame } from './StudioCanvasContext';
+import {
+  duplicateStudioFrame,
+  useStudioCanvas,
+  sizeOf,
+  type StudioFrame,
+} from './StudioCanvasContext';
 
 const STATUS_LABEL: Record<StudioFrame['status'], string> = {
   loading: 'connecting',
@@ -103,12 +108,7 @@ export default function SelectionContextPanel() {
               onClick={() => {
                 studioDispatch({
                   type: 'ADD_FRAME',
-                  frame: {
-                    name: `${frame.name} copy`,
-                    url: frame.url,
-                    ...(frame.source === undefined ? {} : { source: frame.source }),
-                    mode: frame.mode,
-                  },
+                  frame: duplicateStudioFrame(frame),
                 });
               }}
             />

@@ -122,9 +122,15 @@ export async function attachNativeBrowser(
   browserSessionId: string,
   bounds: NativeBrowserBounds,
   url?: string,
+  contentZoom?: number,
 ): Promise<void> {
   if (!isDesktop()) return;
-  await desktopBridge().nativeBrowserAttach(browserSessionId, normalizeBounds(bounds), url);
+  await desktopBridge().nativeBrowserAttach(
+    browserSessionId,
+    normalizeBounds(bounds),
+    url,
+    contentZoom,
+  );
 }
 
 export async function detachNativeBrowser(browserSessionId?: string): Promise<void> {
@@ -135,9 +141,14 @@ export async function detachNativeBrowser(browserSessionId?: string): Promise<vo
 export async function setNativeBrowserBounds(
   browserSessionId: string,
   bounds: NativeBrowserBounds,
+  contentZoom?: number,
 ): Promise<void> {
   if (!isDesktop()) return;
-  await desktopBridge().nativeBrowserSetBounds(browserSessionId, normalizeBounds(bounds));
+  await desktopBridge().nativeBrowserSetBounds(
+    browserSessionId,
+    normalizeBounds(bounds),
+    contentZoom,
+  );
 }
 
 export async function setNativeBrowserVisible(

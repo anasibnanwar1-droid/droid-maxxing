@@ -35,6 +35,8 @@ export default function StudioFrameBody({
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const previousReloadRevision = useRef(frame.reloadRevision);
+  const canvasZoomRef = useRef(studio.view.zoom);
+  canvasZoomRef.current = studio.view.zoom;
   const nativeNavigationRef = useRef(false);
   const frameUrlRef = useRef(frame.url);
   frameUrlRef.current = frame.url;
@@ -119,18 +121,21 @@ export default function StudioFrameBody({
     if (!native || !interacting || !hasUrl || isSelf) return;
     const bounds = nativeBounds(iframeRef.current);
     if (!bounds) return;
-    void attachNativeBrowser(nativeBrowserSessionId, bounds, frameUrlRef.current).catch(
-      (error: unknown) => {
-        studioDispatch({
-          type: 'UPDATE_FRAME',
-          id: frame.id,
-          patch: {
-            status: 'failed',
-            error: error instanceof Error ? error.message : String(error),
-          },
-        });
-      },
-    );
+    void attachNativeBrowser(
+      nativeBrowserSessionId,
+      bounds,
+      frameUrlRef.current,
+      canvasZoomRef.current,
+    ).catch((error: unknown) => {
+      studioDispatch({
+        type: 'UPDATE_FRAME',
+        id: frame.id,
+        patch: {
+          status: 'failed',
+          error: error instanceof Error ? error.message : String(error),
+        },
+      });
+    });
     return () => {
       void detachNativeBrowser(nativeBrowserSessionId);
     };
@@ -148,12 +153,16 @@ export default function StudioFrameBody({
   useEffect(() => {
     if (!native || !interacting) return;
     let animationFrame = 0;
-    let previous: NativeBrowserBounds | null = null;
+    let previous: { bounds: NativeBrowserBounds; contentZoom: number } | null = null;
     const syncBounds = () => {
       const bounds = nativeBounds(iframeRef.current);
-      if (bounds && !sameBounds(bounds, previous)) {
-        previous = bounds;
-        void setNativeBrowserBounds(nativeBrowserSessionId, bounds);
+      const contentZoom = canvasZoomRef.current;
+      if (
+        bounds &&
+        (!sameBounds(bounds, previous?.bounds ?? null) || previous?.contentZoom !== contentZoom)
+      ) {
+        previous = { bounds, contentZoom };
+        void setNativeBrowserBounds(nativeBrowserSessionId, bounds, contentZoom);
       }
       animationFrame = requestAnimationFrame(syncBounds);
     };

@@ -97,6 +97,24 @@ export function fitRects(
   };
 }
 
+/**
+ * Pick the readable portion of a frame to focus. Tall generated documents are
+ * canvas artifacts, not thumbnails: fitting their full height makes the first
+ * screen illegible. Focus their top viewport while ordinary app frames remain
+ * fully visible.
+ */
+export function readableFrameRect(
+  rect: Rect,
+  viewport: { width: number; height: number },
+  padding = 96,
+): Rect {
+  const availableWidth = Math.max(1, viewport.width - padding * 2);
+  const availableHeight = Math.max(1, viewport.height - padding * 2);
+  const readableHeight = rect.width * (availableHeight / availableWidth);
+  if (rect.height <= readableHeight * 1.35) return rect;
+  return { ...rect, height: Math.min(rect.height, readableHeight) };
+}
+
 function boundingRect(rects: Rect[]): Rect {
   let minX = Infinity;
   let minY = Infinity;

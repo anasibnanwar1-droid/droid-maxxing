@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  duplicateStudioFrame,
   emptyStudioCanvasState,
   studioCanvasReducer,
   type StudioAnnotation,
@@ -65,6 +66,46 @@ test('RELOAD_FRAME starts a real new load and clears the previous error', () => 
   assert.equal(next.frames[0].status, 'loading');
   assert.equal(next.frames[0].error, undefined);
   assert.equal(initial.frames[0].reloadRevision, 2);
+});
+
+test('duplicate frame input preserves its rendering kind and custom dimensions', () => {
+  const original = frame({
+    id: 'prototype-1',
+    kind: 'prototype',
+    width: 420,
+    height: 280,
+  });
+  const initial = { ...emptyStudioCanvasState(), frames: [original] };
+  const duplicated = studioCanvasReducer(initial, {
+    type: 'ADD_FRAME',
+    frame: duplicateStudioFrame(original),
+  });
+  const copy = duplicated.frames[1];
+
+  assert.equal(copy.name, 'Home copy');
+  assert.equal(copy.kind, 'prototype');
+  assert.equal(copy.width, 420);
+  assert.equal(copy.height, 280);
+});
+
+test('frame focus requests are repeatable ephemeral canvas intents', () => {
+  const initial = emptyStudioCanvasState();
+  const first = studioCanvasReducer(initial, { type: 'REQUEST_FRAME_FOCUS', id: 'brand-book' });
+  const second = studioCanvasReducer(first, { type: 'REQUEST_FRAME_FOCUS', id: 'brand-book' });
+
+  assert.deepEqual(first.focusFrameRequest, { id: 'brand-book', revision: 1 });
+  assert.deepEqual(second.focusFrameRequest, { id: 'brand-book', revision: 2 });
+
+  const hydrated = studioCanvasReducer(second, {
+    type: 'HYDRATE',
+    state: emptyStudioCanvasState(),
+  });
+  const afterHydrate = studioCanvasReducer(hydrated, {
+    type: 'REQUEST_FRAME_FOCUS',
+    id: 'brand-book',
+  });
+  assert.equal(hydrated.focusFrameRequest, null);
+  assert.deepEqual(afterHydrate.focusFrameRequest, { id: 'brand-book', revision: 1 });
 });
 
 test('new annotations are attached as prompt context and undo removes both', () => {

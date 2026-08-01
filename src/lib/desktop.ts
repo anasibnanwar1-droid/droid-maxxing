@@ -193,9 +193,14 @@ interface DroidControlApi {
     browserSessionId: string,
     bounds: NativeBrowserBounds,
     url?: string,
+    contentZoom?: number,
   ) => Promise<void>;
   nativeBrowserDetach: (browserSessionId?: string) => Promise<void>;
-  nativeBrowserSetBounds: (browserSessionId: string, bounds: NativeBrowserBounds) => Promise<void>;
+  nativeBrowserSetBounds: (
+    browserSessionId: string,
+    bounds: NativeBrowserBounds,
+    contentZoom?: number,
+  ) => Promise<void>;
   nativeBrowserSetVisible: (browserSessionId: string, visible: boolean) => Promise<void>;
   nativeBrowserClose: (browserSessionId: string) => Promise<void>;
   nativeBrowserReload: (browserSessionId: string) => Promise<void>;

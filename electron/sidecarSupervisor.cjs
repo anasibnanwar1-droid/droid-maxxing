@@ -6,15 +6,25 @@ function createSidecarSupervisor(options) {
   const initialRestartDelayMs = options.initialRestartDelayMs ?? 250;
   const maxRestartDelayMs = options.maxRestartDelayMs ?? 8_000;
   const stableReadyMs = options.stableReadyMs ?? 30_000;
+  const configuredFailureLimit = options.maxConsecutiveFailures ?? 5;
+  const maxConsecutiveFailures =
+    Number.isFinite(configuredFailureLimit) && configuredFailureLimit >= 1
+      ? Math.floor(configuredFailureLimit)
+      : 5;
 
   let child = null;
   let restartTimer = null;
   let stableTimer = null;
   let consecutiveFailures = 0;
   let stopped = true;
+  let terminalFailure = false;
   let detachOutput = () => undefined;
 
   function start() {
+    if (terminalFailure) {
+      terminalFailure = false;
+      consecutiveFailures = 0;
+    }
     stopped = false;
     spawnIfNeeded();
   }
@@ -31,7 +41,9 @@ function createSidecarSupervisor(options) {
     }
 
     child = spawned;
-    detachOutput = observeReadyOutput(spawned, options.writeOutput, () => markReady(spawned));
+    detachOutput = observeReadyOutput(spawned, options.writeOutput, () =>
+      scheduleStableReady(spawned),
+    );
     spawned.once('error', (error) => handleUnexpectedExit(spawned, { error }));
     spawned.once('exit', (code, signal) => handleUnexpectedExit(spawned, { code, signal }));
     scheduleStableReady(spawned);
@@ -48,15 +60,23 @@ function createSidecarSupervisor(options) {
   }
 
   function scheduleRestart(details) {
-    if (stopped || child || restartTimer) return;
-    const delayMs = Math.min(maxRestartDelayMs, initialRestartDelayMs * 2 ** consecutiveFailures);
+    if (stopped || terminalFailure || child || restartTimer) return;
     consecutiveFailures += 1;
-    options.onUnexpectedExit?.({ ...details, delayMs });
+    const failureCount = consecutiveFailures;
+    if (failureCount >= maxConsecutiveFailures) {
+      terminalFailure = true;
+      stopped = true;
+      options.onTerminalFailure?.({ ...details, failureCount });
+      return;
+    }
+
+    const delayMs = Math.min(maxRestartDelayMs, initialRestartDelayMs * 2 ** (failureCount - 1));
     restartTimer = schedule(() => {
       restartTimer = null;
       spawnIfNeeded();
     }, delayMs);
     restartTimer.unref?.();
+    options.onUnexpectedExit?.({ ...details, delayMs, failureCount });
   }
 
   function scheduleStableReady(expectedChild) {
@@ -76,6 +96,7 @@ function createSidecarSupervisor(options) {
 
   function stop() {
     stopped = true;
+    terminalFailure = false;
     consecutiveFailures = 0;
     clearRestartTimer();
     clearStableTimer();
@@ -103,7 +124,7 @@ function createSidecarSupervisor(options) {
     stableTimer = null;
   }
 
-  return { start, stop, markReady };
+  return { start, stop };
 }
 
 function observeReadyOutput(child, writeOutput, onReady) {
