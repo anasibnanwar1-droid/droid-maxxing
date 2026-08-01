@@ -7,6 +7,7 @@ type ReconnectScheduler = (action: () => void, delayMs: number) => void;
 
 export class Bridge {
   private ws: WebSocket | null = null;
+  private readyWs: WebSocket | null = null;
   private listeners = new Set<Listener>();
   private openListeners = new Set<OpenListener>();
   private queue: ClientCommand[] = [];
@@ -56,6 +57,7 @@ export class Bridge {
     ws.onclose = () => {
       if (this.ws !== ws) return;
       this.ws = null;
+      this.readyWs = null;
       this.scheduleReconnect();
     };
     ws.onerror = () => {
@@ -77,24 +79,28 @@ export class Bridge {
     if (this.ws !== ws) return;
     this.backoff = 500;
     if (this.openListeners.size === 0) {
+      this.readyWs = ws;
       this.flushQueue(ws);
       return;
     }
-    const handshakes = await Promise.allSettled(
-      [...this.openListeners].map((listener) => Promise.resolve().then(listener)),
-    );
-    if (this.ws !== ws || ws.readyState !== WebSocket.OPEN) return;
-    for (const handshake of handshakes) {
-      if (handshake.status !== 'fulfilled') continue;
-      handshake.value.forEach((command) => {
+    try {
+      const handshakes = await Promise.all(
+        [...this.openListeners].map((listener) => Promise.resolve().then(listener)),
+      );
+      if (this.ws !== ws || ws.readyState !== WebSocket.OPEN) return;
+      handshakes.flat().forEach((command) => {
         ws.send(JSON.stringify(command));
       });
+      this.readyWs = ws;
+      this.flushQueue(ws);
+    } catch (error) {
+      console.error('[bridge] reconnect bootstrap failed:', error);
+      if (this.ws === ws) ws.close();
     }
-    this.flushQueue(ws);
   }
 
   private flushQueue(ws: WebSocket): void {
-    if (this.ws !== ws || ws.readyState !== WebSocket.OPEN) return;
+    if (this.ws !== ws || this.readyWs !== ws || ws.readyState !== WebSocket.OPEN) return;
     const pending = this.queue;
     this.queue = [];
     pending.forEach((command) => {
@@ -103,8 +109,12 @@ export class Bridge {
   }
 
   send(cmd: ClientCommand): void {
-    if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(cmd));
-    else this.queue.push(cmd);
+    const ws = this.ws;
+    if (ws && this.readyWs === ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify(cmd));
+      return;
+    }
+    this.queue.push(cmd);
   }
 
   subscribe(l: Listener): () => void {
@@ -117,7 +127,8 @@ export class Bridge {
   subscribeOpen(listener: OpenListener): () => void {
     this.openListeners.add(listener);
     const ws = this.ws;
-    if (ws?.readyState === WebSocket.OPEN) {
+    if (ws && this.readyWs === ws && ws.readyState === WebSocket.OPEN) {
+      this.readyWs = null;
       void Promise.resolve()
         .then(listener)
         .then((commands) => {
@@ -125,9 +136,12 @@ export class Bridge {
           commands.forEach((command) => {
             ws.send(JSON.stringify(command));
           });
+          this.readyWs = ws;
+          this.flushQueue(ws);
         })
         .catch((error: unknown) => {
           console.error('[bridge] open listener failed:', error);
+          if (this.ws === ws) ws.close();
         });
     }
     return () => {
@@ -136,7 +150,7 @@ export class Bridge {
   }
 
   isOpen(): boolean {
-    return this.ws?.readyState === WebSocket.OPEN;
+    return this.ws !== null && this.readyWs === this.ws && this.ws.readyState === WebSocket.OPEN;
   }
 }
 

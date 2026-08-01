@@ -947,8 +947,11 @@ export class SessionManager {
           ...this.providerStreamInactivity,
           settleInactivity: async () => {
             liveSession.interrupting = true;
-            await liveSession.session.interrupt();
-            liveSession.interrupting = false;
+            try {
+              await liveSession.session.interrupt();
+            } finally {
+              liveSession.interrupting = false;
+            }
           },
         },
       );

@@ -546,7 +546,7 @@ test('[L8] Stop state matrix', { concurrency: false }, async () => {
 });
 
 test(
-  'failed inactivity interruption holds queued prompts until Stop clears them',
+  'failed inactivity interruption releases queued prompts without requiring Stop',
   { concurrency: false },
   async () => {
     let expireInactivity = (): void => {
@@ -590,23 +590,14 @@ test(
       expireInactivity();
       failingInterrupt.reject(new Error('provider interrupt failed'));
       await sending;
+      await h.provider.waitForPrompts('provider-1', 3);
       await h.waitForIdle();
 
-      assert.deepEqual(h.provider.session('provider-1').prompts, ['initial', 'stalled']);
-      assert.equal(
-        h.events
-          .filter((event) => event.type === 'session.updated')
-          .findLast((event) => event.session.appSessionId === 'provider-1')?.session.queuedSends,
-        1,
-      );
-      assert.equal(
-        h.events.some(
-          (event) => event.type === 'error' && event.message.includes('provider interrupt failed'),
-        ),
-        true,
-      );
-
-      await h.handle({ type: 'session.interrupt', appSessionId: 'provider-1' });
+      assert.deepEqual(h.provider.session('provider-1').prompts, [
+        'initial',
+        'stalled',
+        'keep queued',
+      ]);
       assert.equal(
         h.events
           .filter((event) => event.type === 'session.updated')
@@ -614,12 +605,11 @@ test(
         0,
       );
       assert.equal(
-        h.events
-          .filter((event) => event.type === 'session.updated')
-          .findLast((event) => event.session.appSessionId === 'provider-1')?.session.phase,
-        'paused',
+        h.events.some(
+          (event) => event.type === 'error' && event.message.includes('provider interrupt failed'),
+        ),
+        true,
       );
-      assert.deepEqual(h.provider.session('provider-1').prompts, ['initial', 'stalled']);
 
       await h.handle({
         type: 'session.send',
@@ -629,6 +619,7 @@ test(
       assert.deepEqual(h.provider.session('provider-1').prompts, [
         'initial',
         'stalled',
+        'keep queued',
         'fresh after recovery',
       ]);
       stalledTurn.resolve();

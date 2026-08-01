@@ -78,6 +78,90 @@ test('reconnect handshakes run before commands queued while disconnected', async
   }
 });
 
+test('commands remain queued while asynchronous reconnect bootstrap is pending', async () => {
+  const oldWindow = globalThis.window;
+  const OldWebSocket = globalThis.WebSocket;
+  FakeWebSocket.instances = [];
+  let finishBootstrap = (): void => {
+    throw new Error('Bootstrap listener did not start.');
+  };
+  try {
+    Object.assign(globalThis, {
+      window: {
+        droidControl: {
+          bridgeInfo: async () => ({ port: 43125, token: 'pending-token' }),
+        },
+      },
+      WebSocket: FakeWebSocket,
+    });
+    const bridge = new Bridge();
+    bridge.subscribeOpen(
+      () =>
+        new Promise((resolve) => {
+          finishBootstrap = resolve;
+        }),
+    );
+
+    await bridge.start();
+    const socket = FakeWebSocket.instances[0];
+    assert.ok(socket);
+    socket.open();
+    bridge.send({ type: 'sessions.list', includePlainChats: true });
+    await nextTask();
+
+    assert.equal(bridge.isOpen(), false);
+    assert.deepEqual(socket.sent, []);
+
+    finishBootstrap([{ type: 'connect', apiKey: 'ready-key' }]);
+    await nextTask();
+    assert.equal(bridge.isOpen(), true);
+    assert.deepEqual(socket.sent.map(parseCommand), [
+      { type: 'connect', apiKey: 'ready-key' },
+      { type: 'sessions.list', includePlainChats: true },
+    ]);
+  } finally {
+    Object.assign(globalThis, { window: oldWindow, WebSocket: OldWebSocket });
+  }
+});
+
+test('failed reconnect bootstrap closes the socket without flushing queued commands', async () => {
+  const oldWindow = globalThis.window;
+  const OldWebSocket = globalThis.WebSocket;
+  const oldConsoleError = console.error;
+  FakeWebSocket.instances = [];
+  const reconnects: (() => void)[] = [];
+  try {
+    console.error = () => undefined;
+    Object.assign(globalThis, {
+      window: {
+        droidControl: {
+          bridgeInfo: async () => ({ port: 43126, token: 'failed-token' }),
+        },
+      },
+      WebSocket: FakeWebSocket,
+    });
+    const bridge = new Bridge((action) => {
+      reconnects.push(action);
+    });
+    bridge.subscribeOpen(() => Promise.reject(new Error('authentication failed')));
+
+    await bridge.start();
+    const socket = FakeWebSocket.instances[0];
+    assert.ok(socket);
+    socket.open();
+    bridge.send({ type: 'sessions.list', includePlainChats: true });
+    await nextTask();
+
+    assert.equal(socket.readyState, 3);
+    assert.equal(bridge.isOpen(), false);
+    assert.deepEqual(socket.sent, []);
+    assert.equal(reconnects.length, 1);
+  } finally {
+    console.error = oldConsoleError;
+    Object.assign(globalThis, { window: oldWindow, WebSocket: OldWebSocket });
+  }
+});
+
 function parseCommand(value: string): unknown {
   return JSON.parse(value);
 }

@@ -133,7 +133,7 @@ export class PrimaryPromptDelivery {
         liveSession.streaming = false;
         if (d.isShutdownStarted() || this.shouldDiscardPendingPrompts(liveSession)) {
           liveSession.promptQueue.clear();
-        } else if (!d.registry.getLive(stableAppSessionId)) {
+        } else if (d.registry.getLive(stableAppSessionId) !== liveSession) {
           const queued = liveSession.promptQueue.drain();
           if (queued.length > 0) {
             void d.redeliverQueuedPrompts(stableAppSessionId, queued);
