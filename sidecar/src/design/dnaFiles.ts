@@ -7,7 +7,7 @@ import type { DnaFileState, DnaState } from './types.js';
 export const DESIGN_FILE = 'DESIGN.md';
 export const MOTION_FILE = 'MOTION.md';
 
-const MAX_DNA_BYTES = 256 * 1024;
+export const MAX_DNA_BYTES = 256 * 1024;
 
 export type DnaFileKind = 'design' | 'motion';
 
@@ -30,10 +30,15 @@ export function readDnaState(cwd: string): DnaState {
 export function readDnaFile(cwd: string, kind: DnaFileKind): DnaFileState {
   const filePath = dnaFilePath(cwd, kind);
   try {
+    const info = fs.statSync(filePath);
+    if (info.size > MAX_DNA_BYTES) throw dnaSizeError(filePath, info.size);
     const content = fs.readFileSync(filePath, 'utf8');
-    return { path: filePath, exists: true, content: content.slice(0, MAX_DNA_BYTES) };
-  } catch {
-    return { path: filePath, exists: false, content: '' };
+    const bytes = Buffer.byteLength(content, 'utf8');
+    if (bytes > MAX_DNA_BYTES) throw dnaSizeError(filePath, bytes);
+    return { path: filePath, exists: true, content };
+  } catch (error) {
+    if (isMissingFile(error)) return { path: filePath, exists: false, content: '' };
+    throw error;
   }
 }
 
@@ -42,6 +47,18 @@ export function writeDnaFile(cwd: string, kind: DnaFileKind, content: string): D
     throw new Error(`Workspace directory not found: ${cwd}`);
   }
   const filePath = dnaFilePath(cwd, kind);
-  fs.writeFileSync(filePath, content.slice(0, MAX_DNA_BYTES), 'utf8');
+  const bytes = Buffer.byteLength(content, 'utf8');
+  if (bytes > MAX_DNA_BYTES) throw dnaSizeError(filePath, bytes);
+  fs.writeFileSync(filePath, content, 'utf8');
   return { path: filePath, exists: true, content };
+}
+
+function dnaSizeError(filePath: string, bytes: number): Error {
+  return new Error(
+    `${filePath} is ${String(bytes)} bytes; Design DNA files must not exceed ${String(MAX_DNA_BYTES)} bytes.`,
+  );
+}
+
+function isMissingFile(error: unknown): boolean {
+  return error instanceof Error && 'code' in error && error.code === 'ENOENT';
 }

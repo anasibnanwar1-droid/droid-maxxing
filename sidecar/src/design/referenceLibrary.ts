@@ -54,7 +54,7 @@ export function saveReference(input: SaveReferenceInput): DesignLibraryItem[] {
     styles: reference.detail?.styles,
     html: reference.detail?.html?.slice(0, 20_000),
   };
-  const items = [item, ...listLibraryItems(cwd, baseDir)].slice(0, MAX_ITEMS);
+  const items = retainNewestItems(cwd, [item, ...listLibraryItems(cwd, baseDir)], baseDir);
   writeItems(cwd, items, baseDir);
   return items;
 }
@@ -101,7 +101,7 @@ export function importReferenceImage(input: {
     mimeType,
     category: input.category,
   };
-  const next = [item, ...items].slice(0, MAX_ITEMS);
+  const next = retainNewestItems(input.cwd, [item, ...items], input.baseDir);
   writeItems(input.cwd, next, input.baseDir);
   return next;
 }
@@ -129,6 +129,27 @@ function writeItems(cwd: string, items: DesignLibraryItem[], baseDir?: string): 
   const file = referenceLibraryFile(cwd, baseDir);
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, JSON.stringify({ items }, null, 2), 'utf8');
+}
+
+function retainNewestItems(
+  cwd: string,
+  items: DesignLibraryItem[],
+  baseDir?: string,
+): DesignLibraryItem[] {
+  const retained = items.slice(0, MAX_ITEMS);
+  const retainedImages = new Set(retained.flatMap((item) => item.screenshotPath ?? []));
+  for (const item of items.slice(MAX_ITEMS)) {
+    if (item.screenshotPath && !retainedImages.has(item.screenshotPath)) {
+      removeStoredImage(cwd, item.screenshotPath, baseDir);
+    }
+  }
+  return retained;
+}
+
+function removeStoredImage(cwd: string, imagePath: string, baseDir?: string): void {
+  const imageRoot = path.resolve(referenceImageDir(cwd, baseDir));
+  const candidate = path.resolve(imagePath);
+  if (candidate.startsWith(`${imageRoot}${path.sep}`)) fs.rmSync(candidate, { force: true });
 }
 
 function persistScreenshot(

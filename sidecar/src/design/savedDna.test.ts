@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -25,6 +25,7 @@ test('saveDnaEntry persists, sets active, and list/get work', async () => {
   const baseDir = await mkdtemp(join(tmpdir(), 'droidex-saved-dna-'));
   try {
     const cwd = join(baseDir, 'project');
+    await mkdir(cwd);
     const { entry, items } = saveDnaEntry({
       cwd,
       name: 'Halden',
@@ -49,6 +50,7 @@ test('deleteSavedDna clears active when the active entry is removed', async () =
   const baseDir = await mkdtemp(join(tmpdir(), 'droidex-saved-dna-'));
   try {
     const cwd = join(baseDir, 'project');
+    await mkdir(cwd);
     const { entry } = saveDnaEntry({
       cwd,
       name: 'A',
@@ -71,6 +73,7 @@ test('setActiveDna can clear or re-point active id', async () => {
   const baseDir = await mkdtemp(join(tmpdir(), 'droidex-saved-dna-'));
   try {
     const cwd = join(baseDir, 'project');
+    await mkdir(cwd);
     const a = saveDnaEntry({
       cwd,
       name: 'A',

@@ -1,6 +1,6 @@
 import { createCanvas, loadImage } from '@napi-rs/canvas';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -48,11 +48,13 @@ interface ReferenceMetadata {
 
 test('design_reference_library keeps the original and returns a bounded derivative', async (t) => {
   const baseDir = mkdtempSync(join(tmpdir(), 'droidex-model-reference-'));
+  const cwd = join(baseDir, 'project');
+  mkdirSync(cwd);
   t.after(() => rmSync(baseDir, { recursive: true, force: true }));
   const original = createNoiseJpeg(1_800, 1_200, 17);
   assert.ok(original.length > MODEL_REFERENCE_MAX_IMAGE_BYTES);
   const [saved] = importReferenceImage({
-    cwd: '/workspace/product',
+    cwd,
     id: 'canvas-oversized-reference',
     name: 'Oversized reference',
     category: 'inspiration',
@@ -60,7 +62,7 @@ test('design_reference_library keeps the original and returns a bounded derivati
     baseDir,
   });
 
-  const tool = referenceTool(baseDir);
+  const tool = referenceTool(cwd, baseDir);
   const result = await tool.handler({ id: saved.id });
   const content = resultContent(result);
   const metadata = JSON.parse(textContent(content).text) as {
@@ -109,6 +111,8 @@ test('design_reference_library keeps the original and returns a bounded derivati
 
 test('design_reference_library bounds a multi-reference response', async (t) => {
   const baseDir = mkdtempSync(join(tmpdir(), 'droidex-model-references-'));
+  const cwd = join(baseDir, 'project');
+  mkdirSync(cwd);
   t.after(() => rmSync(baseDir, { recursive: true, force: true }));
   const original = createNoiseJpeg(1_600, 1_000, 29);
   assert.ok(original.length > MODEL_REFERENCE_MAX_IMAGE_BYTES);
@@ -118,7 +122,7 @@ test('design_reference_library bounds a multi-reference response', async (t) => 
   );
   for (const [index, id] of ids.entries()) {
     importReferenceImage({
-      cwd: '/workspace/product',
+      cwd,
       id,
       name: `Reference ${index + 1}`,
       category: 'moodboard',
@@ -127,7 +131,7 @@ test('design_reference_library bounds a multi-reference response', async (t) => 
     });
   }
 
-  const result = await referenceTool(baseDir).handler({ ids });
+  const result = await referenceTool(cwd, baseDir).handler({ ids });
   const content = resultContent(result);
   const metadata = JSON.parse(textContent(content).text) as {
     ok: boolean;
@@ -181,10 +185,12 @@ test('design_reference_library bounds a multi-reference response', async (t) => 
 
 test('design_reference_library never falls back to original bytes', async (t) => {
   const baseDir = mkdtempSync(join(tmpdir(), 'droidex-invalid-model-reference-'));
+  const cwd = join(baseDir, 'project');
+  mkdirSync(cwd);
   t.after(() => rmSync(baseDir, { recursive: true, force: true }));
   const original = Buffer.from([0xff, 0xd8, 0xff, 0xdb, 0x01, 0x02, 0x03]);
   const [saved] = importReferenceImage({
-    cwd: '/workspace/product',
+    cwd,
     id: 'canvas-invalid-reference',
     name: 'Invalid reference',
     category: 'reference',
@@ -192,7 +198,7 @@ test('design_reference_library never falls back to original bytes', async (t) =>
     baseDir,
   });
 
-  const result = await referenceTool(baseDir).handler({ id: saved.id });
+  const result = await referenceTool(cwd, baseDir).handler({ id: saved.id });
   const content = resultContent(result);
   const metadata = JSON.parse(textContent(content).text) as {
     item: { modelImage: { error: string } };
@@ -203,8 +209,8 @@ test('design_reference_library never falls back to original bytes', async (t) =>
   assert.deepEqual(readFileSync(saved.screenshotPath ?? ''), original);
 });
 
-function referenceTool(baseDir: string) {
-  const server = createDesignMcpServer(() => '/workspace/product', undefined, {
+function referenceTool(cwd: string, baseDir: string) {
+  const server = createDesignMcpServer(() => cwd, undefined, {
     referenceLibraryBaseDir: baseDir,
   });
   const reference = server.tools.find((candidate) => candidate.name === 'design_reference_library');

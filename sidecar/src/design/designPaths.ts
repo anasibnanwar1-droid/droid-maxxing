@@ -1,16 +1,13 @@
-import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
-import { basename, join } from 'node:path';
+import { join } from 'node:path';
+import { resolveDesignProjectIdentity } from './projectIdentity.js';
 
 export function designDataRoot(baseDir = defaultDataRoot()): string {
   return join(baseDir, 'design');
 }
 
-// Per-project storage keyed by a stable hash of the workspace path, so
-// renames of the folder name alone do not orphan saved references.
 export function projectDesignDir(cwd: string, baseDir?: string): string {
-  const hash = createHash('sha1').update(cwd).digest('hex').slice(0, 12);
-  return join(designDataRoot(baseDir), `${sanitizeSegment(basename(cwd))}-${hash}`);
+  return join(designDataRoot(baseDir), resolveDesignProjectIdentity(cwd).id);
 }
 
 export function referenceLibraryFile(cwd: string, baseDir?: string): string {
@@ -41,9 +38,4 @@ export function validatorConfigFile(cwd: string): string {
 
 function defaultDataRoot(): string {
   return join(homedir(), 'Library', 'Application Support', 'Droid Control');
-}
-
-function sanitizeSegment(value: string): string {
-  const segment = value.trim().replace(/[^a-zA-Z0-9._-]/g, '-');
-  return segment || 'project';
 }
