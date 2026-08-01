@@ -1,15 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useDesignStore } from '../../hooks/useDesignStore';
-import { readDesignCanvas, writeDesignCanvas } from '../../lib/commands';
-import { bridge } from '../../lib/bridge';
-import type { ServerEvent } from '../../types/bridge';
+import { readDesignCanvas } from '../../lib/commands';
 import { useStudioCanvas } from './StudioCanvasContext';
-import {
-  CanvasSaveCoordinator,
-  canvasIdForSession,
-  serializeStudioCanvas,
-  type HydratedStudioCanvas,
-} from './studioCanvasPersistence';
+import { canvasIdForSession, serializeStudioCanvas } from './studioCanvasPersistence';
+import { studioCanvasPersistenceOwner } from './studioCanvasPersistenceOwner';
 
 const CANVAS_RESTORE_TIMEOUT_MS = 5_000;
 const RESTORE_TIMEOUT_NOTICE =
@@ -33,7 +27,7 @@ export function useStudioCanvasPersistence(
   dispatchRef.current = studioDispatch;
   const [hydrationNotices, setHydrationNotices] = useState<string[]>([]);
   const [isHydrating, setIsHydrating] = useState(true);
-  const coordinatorRef = useRef<CanvasSaveCoordinator | null>(null);
+  const skipNextUpdateRef = useRef(false);
   const restoreTimerRef = useRef<number | null>(null);
   const clearRestoreTimer = useCallback(() => {
     if (restoreTimerRef.current === null) return;
@@ -41,39 +35,24 @@ export function useStudioCanvasPersistence(
     restoreTimerRef.current = null;
   }, []);
 
-  coordinatorRef.current ??= new CanvasSaveCoordinator(
-    {
-      read: readDesignCanvas,
-      write: writeDesignCanvas,
-    },
-    (hydrated: HydratedStudioCanvas) => {
-      clearRestoreTimer();
-      setIsHydrating(false);
-      setHydrationNotices(hydrated.notices);
-      dispatchRef.current({ type: 'HYDRATE', state: hydrated.state });
-    },
-    setHydrationNotices,
-  );
-
   useEffect(() => {
-    const unsubscribe = bridge.subscribe((event: ServerEvent) => {
-      if (
-        event.type === 'design.canvas.state' ||
-        event.type === 'design.canvas.saved' ||
-        event.type === 'design.canvas.error'
-      ) {
-        coordinatorRef.current?.receive(event);
-      }
+    return studioCanvasPersistenceOwner.attach({
+      onHydrate: (hydrated) => {
+        clearRestoreTimer();
+        setIsHydrating(false);
+        setHydrationNotices(hydrated.notices);
+        dispatchRef.current({ type: 'HYDRATE', state: hydrated.state });
+      },
+      onNotice: setHydrationNotices,
     });
-    return unsubscribe;
-  }, []);
+  }, [clearRestoreTimer]);
 
   useEffect(() => {
-    const status = coordinatorRef.current?.open(
+    const status = studioCanvasPersistenceOwner.open(
       { cwd, projectKey, canvasId },
       currentContentRef.current,
     );
-    if (status === undefined || status === 'ready') return;
+    skipNextUpdateRef.current = status !== 'started';
 
     setIsHydrating(true);
     clearRestoreTimer();
@@ -90,19 +69,16 @@ export function useStudioCanvasPersistence(
   }, [canvasId, clearRestoreTimer, cwd, projectKey]);
 
   useEffect(() => {
-    coordinatorRef.current?.update(serialized.content);
+    if (skipNextUpdateRef.current) {
+      skipNextUpdateRef.current = false;
+      return;
+    }
+    studioCanvasPersistenceOwner.update(serialized.content);
   }, [serialized.content]);
 
   useEffect(() => {
-    return () => {
-      clearRestoreTimer();
-      coordinatorRef.current?.dispose();
-    };
-  }, [clearRestoreTimer]);
-
-  useEffect(() => {
     const flush = () => {
-      coordinatorRef.current?.flush();
+      studioCanvasPersistenceOwner.flush();
     };
     window.addEventListener('beforeunload', flush);
     return () => {

@@ -198,6 +198,7 @@ export class CanvasSaveCoordinator {
     string,
     { target: CanvasPersistenceTarget; content: CanvasDocumentContent }
   >();
+  private readonly detachedReadRetries = new Map<string, CancelSchedule>();
   private cancelSchedule: CancelSchedule | null = null;
 
   constructor(
@@ -227,9 +228,12 @@ export class CanvasSaveCoordinator {
       target.canvasId !== DRAFT_CANVAS_ID;
     const sameCanvas =
       previous?.projectKey === target.projectKey && previous.canvasId === target.canvasId;
+    const detachedKey = this.persistenceKey(target.cwd, target.canvasId);
+    const detached = this.detachedWrites.get(detachedKey);
+    this.clearDetached(detachedKey);
     this.target = target;
-    this.current = cloneContent(current);
-    this.localGeneration = 0;
+    this.current = cloneContent(detached?.content ?? current);
+    this.localGeneration = Number(detached !== undefined);
     this.restoreGeneration = 0;
     this.writeInFlight = false;
     this.writeFailureCount = 0;
@@ -247,6 +251,11 @@ export class CanvasSaveCoordinator {
     }
     this.transport.read(target.cwd, target.canvasId);
     return 'started';
+  }
+
+  refresh(): void {
+    if (!this.target) return;
+    this.transport.read(this.target.cwd, this.target.canvasId);
   }
 
   update(content: CanvasDocumentContent): void {
@@ -302,6 +311,9 @@ export class CanvasSaveCoordinator {
       this.revision = event.document.revision;
       this.lastSaved = stableContent(documentContent(event.document));
     }
+    if (this.current && stableContent(this.current) === this.lastSaved) {
+      this.restoreGeneration = this.localGeneration;
+    }
     if (this.current && stableContent(this.current) !== this.lastSaved) this.update(this.current);
   }
 
@@ -338,14 +350,9 @@ export class CanvasSaveCoordinator {
     });
   }
 
-  dispose(): void {
-    this.flush();
-    this.detachPendingWrite();
-    this.target = null;
-  }
-
   private detachPendingWrite(): void {
     if (!this.target || !this.current) return;
+    if (!this.isLoaded && this.localGeneration === this.restoreGeneration) return;
     if (stableContent(this.current) === this.lastSaved) return;
     this.detachedWrites.set(this.persistenceKey(this.target.cwd, this.target.canvasId), {
       target: this.target,
@@ -360,7 +367,7 @@ export class CanvasSaveCoordinator {
     if (event.type === 'design.canvas.saved') {
       const saved = stableContent(documentContent(event.document));
       if (stableContent(pending.content) === saved) {
-        this.detachedWrites.delete(key);
+        this.clearDetached(key);
         return;
       }
       this.transport.write({
@@ -371,16 +378,50 @@ export class CanvasSaveCoordinator {
       });
       return;
     }
-    if (event.type === 'design.canvas.error' && event.operation === 'write') {
-      this.onNotice([event.message]);
-      if (event.actualRevision === undefined) return;
+    if (event.type === 'design.canvas.state') {
+      const saved = stableContent(
+        event.document ? documentContent(event.document) : emptyContent(),
+      );
+      if (stableContent(pending.content) === saved) {
+        this.clearDetached(key);
+        return;
+      }
       this.transport.write({
         cwd: pending.target.cwd,
         canvasId: pending.target.canvasId,
-        expectedRevision: event.actualRevision,
+        expectedRevision: event.document?.revision ?? 0,
         content: cloneContent(pending.content),
       });
+      return;
     }
+    this.onNotice([event.message]);
+    if (event.actualRevision === undefined) {
+      this.scheduleDetachedRead(key, pending.target);
+      return;
+    }
+    this.transport.write({
+      cwd: pending.target.cwd,
+      canvasId: pending.target.canvasId,
+      expectedRevision: event.actualRevision,
+      content: cloneContent(pending.content),
+    });
+  }
+
+  private clearDetached(key: string): void {
+    this.detachedWrites.delete(key);
+    this.detachedReadRetries.get(key)?.();
+    this.detachedReadRetries.delete(key);
+  }
+
+  private scheduleDetachedRead(key: string, target: CanvasPersistenceTarget): void {
+    this.detachedReadRetries.get(key)?.();
+    this.detachedReadRetries.set(
+      key,
+      this.schedule(() => {
+        this.detachedReadRetries.delete(key);
+        if (this.detachedWrites.has(key)) this.transport.read(target.cwd, target.canvasId);
+      }, AUTOSAVE_DELAY_MS),
+    );
   }
 
   private persistenceKey(cwd: string, canvasId: string): string {

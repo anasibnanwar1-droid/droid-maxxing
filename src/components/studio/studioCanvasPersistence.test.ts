@@ -151,7 +151,6 @@ test('same-thread reopen and app reload hydrate the last acknowledged revision',
     content: changed,
   });
   first.coordinator.receive(savedEvent(document('thread-a', 4, 1.5)));
-  first.coordinator.dispose();
 
   const afterReload = fixture();
   afterReload.coordinator.open(target('thread-a'), emptyContent());
@@ -342,7 +341,13 @@ function emptyContent(): CanvasDocumentContent {
 }
 
 function content(zoom: number): CanvasDocumentContent {
-  return document('fixture', 1, zoom);
+  const value = document('fixture', 1, zoom);
+  return {
+    view: value.view,
+    frames: value.frames,
+    annotations: value.annotations,
+    images: value.images,
+  };
 }
 
 function document(threadId: string, revision: number, zoom: number): CanvasDocument {
