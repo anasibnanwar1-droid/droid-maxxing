@@ -311,8 +311,15 @@ export default function RightPanel() {
               </div>
             )}
 
-            {/* Notes — scratch reminders that hand their text to the composer */}
-            {activeSession && <NotesSection appSessionId={activeSession.appSessionId} />}
+            {/* Notes — scratch reminders that hand their text to the composer.
+                Keyed by session so the pad's draft and chipped tag reset on a
+                session switch instead of leaking into the next session. */}
+            {activeSession && (
+              <NotesSection
+                key={activeSession.appSessionId}
+                appSessionId={activeSession.appSessionId}
+              />
+            )}
 
             {/* Selected step detail */}
             <AnimatePresence>
