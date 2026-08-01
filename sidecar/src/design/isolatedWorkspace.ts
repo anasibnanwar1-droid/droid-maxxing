@@ -12,7 +12,7 @@ const execFileAsync = promisify(execFile);
  * linked worktree on a dedicated `droidex/design` branch, so design work never
  * touches the live tree the user's dev server is watching (this was also a
  * contributor to the CPU/wakeup storm) and the user reviews + merges when happy.
- * Non-git projects fall back to working in place, with a note so the UI can say so.
+ * Isolation failures are fatal: Studio never falls back to the live checkout.
  */
 export interface WorkspaceInfo {
   liveCwd: string;
@@ -67,12 +67,9 @@ function parseWorktrees(porcelain: string): WorktreeRecord[] {
 export async function prepareDesignWorkspace(liveCwd: string): Promise<WorkspaceInfo> {
   const repoRoot = (await tryGit(liveCwd, ['rev-parse', '--show-toplevel']))?.trim();
   if (!repoRoot) {
-    return {
-      liveCwd,
-      path: liveCwd,
-      isWorktree: false,
-      note: 'Not a git repository — the design agent works in this folder directly. Initialize git for an isolated workspace.',
-    };
+    throw new Error(
+      'DROIDEX Design requires a Git repository so it can create an isolated worktree. Initialize Git and commit the project before opening Studio.',
+    );
   }
 
   const worktreePath = join(repoRoot, '.worktrees', DIRNAME);
@@ -96,12 +93,9 @@ export async function prepareDesignWorkspace(liveCwd: string): Promise<Workspace
     await seedDna(liveCwd, worktreePath);
     return { liveCwd, path: worktreePath, isWorktree: true, branch: BRANCH };
   } catch (error) {
-    return {
-      liveCwd,
-      path: liveCwd,
-      isWorktree: false,
-      note: `Could not create an isolated worktree (${firstLine(error)}). Working in this folder for now.`,
-    };
+    throw new Error(
+      `Could not create the isolated DROIDEX Design worktree: ${firstLine(error)}. Resolve the Git worktree error and retry; the live checkout was not opened for design work.`,
+    );
   }
 }
 

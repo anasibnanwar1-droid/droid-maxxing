@@ -65,10 +65,18 @@ test('prepareDesignWorkspace is idempotent — a second call reuses the worktree
   assert.equal(second.path, first.path);
 });
 
-test('prepareDesignWorkspace works in place when the folder is not a git repo', async () => {
+test('prepareDesignWorkspace fails closed when the folder is not a git repo', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'droidex-plain-'));
-  const info = await prepareDesignWorkspace(dir);
-  assert.equal(info.isWorktree, false);
-  assert.equal(info.path, dir);
-  assert.match(info.note ?? '', /not a git repo/i);
+  await assert.rejects(prepareDesignWorkspace(dir), /requires a Git repository/i);
+});
+
+test('prepareDesignWorkspace fails closed when worktree creation fails', async () => {
+  const repo = await makeRepo();
+  await writeFile(join(repo, '.worktrees'), 'blocks the worktree directory', 'utf8');
+
+  await assert.rejects(
+    prepareDesignWorkspace(repo),
+    /Could not create the isolated DROIDEX Design worktree/,
+  );
+  assert.equal(existsSync(join(repo, '.worktrees', 'droidex-design')), false);
 });

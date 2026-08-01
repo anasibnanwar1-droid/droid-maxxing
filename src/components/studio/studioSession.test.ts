@@ -4,6 +4,7 @@ import {
   createQueuedStudioPrompt,
   latestStudioSessionId,
   pendingStudioClientRef,
+  recoverStudioSessionId,
   studioSessionTitle,
 } from './studioSession';
 
@@ -55,6 +56,38 @@ test('Studio recovers the latest design thread for a project after renderer relo
       ['/repo/live', '/repo/worktree'],
     ),
     'design-latest',
+  );
+});
+
+test('Studio never adopts ordinary or live-checkout sessions', () => {
+  const sessions = [
+    {
+      appSessionId: 'ordinary-active',
+      cwd: '/repo/worktree',
+      updatedAt: 40,
+      sessionPurpose: 'chat' as const,
+    },
+    {
+      appSessionId: 'design-live',
+      cwd: '/repo/live',
+      updatedAt: 30,
+      sessionPurpose: 'design' as const,
+    },
+    {
+      appSessionId: 'design-isolated',
+      cwd: '/repo/worktree',
+      updatedAt: 20,
+      sessionPurpose: 'design' as const,
+    },
+  ];
+
+  assert.equal(
+    recoverStudioSessionId(sessions, 'ordinary-active', '/repo/worktree'),
+    'design-isolated',
+  );
+  assert.equal(
+    recoverStudioSessionId(sessions, 'design-live', '/repo/worktree'),
+    'design-isolated',
   );
 });
 

@@ -43,6 +43,21 @@ export function latestStudioSessionId(
   return latest?.appSessionId;
 }
 
+export function recoverStudioSessionId(
+  sessions: Iterable<Pick<SessionSummary, 'appSessionId' | 'cwd' | 'updatedAt' | 'sessionPurpose'>>,
+  activeAppSessionId: string | null,
+  isolatedCwd: string,
+): string | undefined {
+  const candidates = [...sessions];
+  const active = activeAppSessionId
+    ? candidates.find((session) => session.appSessionId === activeAppSessionId)
+    : undefined;
+  if (active?.sessionPurpose === 'design' && active.cwd === isolatedCwd) {
+    return active.appSessionId;
+  }
+  return latestStudioSessionId(candidates, [isolatedCwd]);
+}
+
 export function createQueuedStudioPrompt({
   id,
   displayText,

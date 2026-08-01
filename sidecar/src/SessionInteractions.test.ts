@@ -192,6 +192,21 @@ test('ProceedAlways bypasses only an equivalent later permission signature', asy
   assert.equal(await different, ToolConfirmationOutcome.Cancel);
 });
 
+test('Design Studio sessions use the normal permission flow', async () => {
+  const harness = createHarness();
+  const liveSession = harness.addLiveSession('design-session');
+  liveSession.summary.sessionPurpose = 'design';
+  liveSession.summary.autonomy = 'high';
+  const handler = harness.interactions.makePermissionHandler({ id: 'design-session' });
+
+  const pending = Promise.resolve(handler(permissionInput('design-tool', 'touch outside')));
+  const request = latestApprovalRequest(harness.emitted);
+  assert.equal(request.appSessionId, 'design-session');
+
+  await harness.interactions.respondToApproval('design-session', request.requestId, 'cancel');
+  assert.equal(await pending, ToolConfirmationOutcome.Cancel);
+});
+
 test('invalid outcomes emit an error, settle Cancel once, and create no grant', async () => {
   const harness = createHarness();
   harness.addLiveSession('app-1');

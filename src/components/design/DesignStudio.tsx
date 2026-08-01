@@ -7,6 +7,11 @@ import { pickDirectory } from '../../lib/desktop';
 import { pushEscapeLayer } from '../environment/usePopover';
 import { StudioCanvasProvider } from '../studio/StudioCanvasContext';
 import StudioShell from '../studio/StudioShell';
+import {
+  canonicalLiveProjectCwd,
+  studioRepositoryCwds,
+  studioWorkspaceAccess,
+} from './designStudioProject';
 
 /**
  * DROIDEX Studio — a full-screen, agent-native design surface: an infinite live
@@ -23,15 +28,21 @@ export default function DesignStudio() {
   const activeSession = state.activeAppSessionId ? state.sessions[state.activeAppSessionId] : null;
   // Live project path (the user's open workspace / active chat).
   const firstWorkspaceCwd = state.workspaceCwds[0] ?? '';
-  const preferredLiveCwd = activeSession?.cwd ?? firstWorkspaceCwd;
+  const knownWorkspaces = Object.values(design.workspaces);
+  const preferredLiveCwd = canonicalLiveProjectCwd(
+    activeSession?.cwd ?? firstWorkspaceCwd,
+    knownWorkspaces,
+  );
   const [selectedLiveCwd, setSelectedLiveCwd] = useState('');
   const liveCwd = selectedLiveCwd || preferredLiveCwd;
-  const repositoryCwds = [preferredLiveCwd, ...state.workspaceCwds].filter(
-    (candidate, index, all) => candidate !== '' && all.indexOf(candidate) === index,
+  const repositoryCwds = studioRepositoryCwds(
+    preferredLiveCwd,
+    state.workspaceCwds,
+    knownWorkspaces,
   );
-  // Prefer the isolated worktree once prepared; fall back to live until ready.
   const workspace = liveCwd ? design.workspaces[liveCwd] : undefined;
-  const cwd = workspace?.path ?? liveCwd;
+  const workspaceError = design.lastError?.cwd === liveCwd ? design.lastError.message : undefined;
+  const workspaceAccess = studioWorkspaceAccess(liveCwd, workspace, workspaceError);
 
   useEffect(() => {
     if (!design.studioOpen) {
@@ -53,9 +64,9 @@ export default function DesignStudio() {
   // Prepare the isolated design workspace when the studio opens for a project.
   useEffect(() => {
     if (!design.studioOpen || !liveCwd) return;
-    if (liveCwd in design.workspaces) return;
+    if (liveCwd in design.workspaces || design.lastError?.cwd === liveCwd) return;
     prepareDesignWorkspace(liveCwd);
-  }, [design.studioOpen, liveCwd, design.workspaces]);
+  }, [design.studioOpen, liveCwd, design.workspaces, design.lastError]);
 
   // The native browser is an OS layer painted above the DOM; hide it while the
   // full-screen studio is up or it renders over the canvas.
@@ -75,10 +86,10 @@ export default function DesignStudio() {
           transition={{ duration: 0.18 }}
           className="fixed inset-0 z-[60] bg-droid-bg"
         >
-          {cwd ? (
+          {workspaceAccess.kind === 'ready' && (
             <StudioCanvasProvider key={liveCwd}>
               <StudioShell
-                cwd={cwd}
+                cwd={workspaceAccess.cwd}
                 sessionKey={liveCwd}
                 repositoryCwds={repositoryCwds}
                 onSelectRepository={setSelectedLiveCwd}
@@ -88,7 +99,19 @@ export default function DesignStudio() {
                 }}
               />
             </StudioCanvasProvider>
-          ) : (
+          )}
+          {(workspaceAccess.kind === 'loading' || workspaceAccess.kind === 'error') && (
+            <WorkspaceState
+              error={workspaceAccess.kind === 'error' ? workspaceAccess.message : undefined}
+              onRetry={() => {
+                designDispatch({ type: 'CLEAR_ERROR' });
+              }}
+              onClose={() => {
+                designDispatch({ type: 'CLOSE_STUDIO' });
+              }}
+            />
+          )}
+          {workspaceAccess.kind === 'empty' && (
             <EmptyState
               onClose={() => {
                 designDispatch({ type: 'CLOSE_STUDIO' });
@@ -98,6 +121,49 @@ export default function DesignStudio() {
         </motion.div>
       )}
     </AnimatePresence>
+  );
+}
+
+function WorkspaceState({
+  error,
+  onRetry,
+  onClose,
+}: {
+  error?: string;
+  onRetry: () => void;
+  onClose: () => void;
+}) {
+  return (
+    <div className="flex h-full w-full flex-col items-center justify-center px-6">
+      <div data-electron-drag-region className="absolute inset-x-0 top-0 h-11" />
+      <div className="max-w-md text-center">
+        <div className="text-[15px] font-medium text-droid-text">
+          {error ? 'Could not open an isolated workspace' : 'Preparing isolated workspace…'}
+        </div>
+        <div className="mt-2 text-[12.5px] leading-relaxed text-droid-text-muted">
+          {error ??
+            'DROIDEX Design is creating a dedicated Git worktree before prompts are enabled.'}
+        </div>
+        {error && (
+          <div className="mt-5 flex items-center justify-center gap-2">
+            <button
+              type="button"
+              onClick={onRetry}
+              className="rounded-lg bg-droid-text px-4 py-2 text-[12.5px] font-medium text-droid-bg"
+            >
+              Retry
+            </button>
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-lg border border-droid-border px-4 py-2 text-[12.5px] text-droid-text-secondary"
+            >
+              Close
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 

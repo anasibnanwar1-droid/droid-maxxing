@@ -11,7 +11,6 @@ import {
 import type {
   BrowserTranscriptReference,
   ReasoningEffort,
-  SessionSummary,
   TranscriptEvent,
 } from '../../types/bridge';
 import {
@@ -23,8 +22,8 @@ import {
 import { sessionIsLive } from '../../lib/sessions';
 import {
   createQueuedStudioPrompt,
-  latestStudioSessionId,
   pendingStudioClientRef,
+  recoverStudioSessionId,
   studioSessionTitle,
 } from './studioSession';
 
@@ -82,38 +81,14 @@ export function useDesignSession(cwd: string, sessionKey?: string) {
   // After New thread (sessions[key] === '') or an explicit switch, leave it alone.
   useEffect(() => {
     if (!cwd || hasMapping || isCreating) return;
-    const projectPaths = new Set([cwd, key]);
-    for (const workspace of Object.values(design.workspaces)) {
-      if (
-        projectPaths.has(workspace.liveCwd) ||
-        projectPaths.has(workspace.path) ||
-        workspace.liveCwd === cwd ||
-        workspace.path === cwd
-      ) {
-        projectPaths.add(workspace.liveCwd);
-        projectPaths.add(workspace.path);
-      }
-    }
-    const activeId = state.activeAppSessionId;
-    const active = activeId ? (state.sessions[activeId] as SessionSummary | undefined) : undefined;
-    const activeMatch =
-      active && active.sessionPurpose !== 'mission-control' && projectPaths.has(active.cwd)
-        ? active.appSessionId
-        : undefined;
-    const recovered =
-      activeMatch ?? latestStudioSessionId(Object.values(state.sessions), projectPaths);
+    const recovered = recoverStudioSessionId(
+      Object.values(state.sessions),
+      state.activeAppSessionId,
+      cwd,
+    );
     if (!recovered) return;
     designDispatch({ type: 'ADOPT_SESSION', cwd: key, appSessionId: recovered });
-  }, [
-    cwd,
-    key,
-    hasMapping,
-    state.activeAppSessionId,
-    state.sessions,
-    design.workspaces,
-    designDispatch,
-    isCreating,
-  ]);
+  }, [cwd, key, hasMapping, state.activeAppSessionId, state.sessions, designDispatch, isCreating]);
 
   useEffect(() => {
     if (!sessionId) return;
@@ -197,7 +172,8 @@ export function useDesignSession(cwd: string, sessionKey?: string) {
       goal: text,
       sessionPurpose: 'design',
       interactionMode: 'auto',
-      // High autonomy so design turns don't stop for tool/MCP permission prompts.
+      // Match the focused, user-selected Studio autonomy while retaining the
+      // canonical permission handler for destructive operations.
       autonomy: 'high',
       modelId: modelId ?? state.agentConfig.primary.modelId,
       reasoningEffort: reasoningEffort ?? state.agentConfig.primary.reasoning,

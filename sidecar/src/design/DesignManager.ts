@@ -282,7 +282,7 @@ export class DesignManager {
   }
 
   // Resolve (and cache) an isolated design workspace for the live project path.
-  // Git repos get a linked worktree on droidex/design; non-git projects work in place.
+  // Failures are not cached, so an explicit retry can run after Git is repaired.
   private async prepareWorkspace(liveCwd: string): Promise<WorkspaceInfo> {
     const cached = this.workspaces.get(liveCwd);
     if (cached) return cached;
