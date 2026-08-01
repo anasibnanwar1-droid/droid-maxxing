@@ -5,36 +5,26 @@ export interface PrimaryQueuedPrompt {
   priority: PrimaryPromptPriority;
 }
 
-interface QueueEntry extends PrimaryQueuedPrompt {
-  protected: boolean;
-}
-
 /**
- * Owns primary-session prompt ordering. An elected preflight prompt remains the
- * absolute head; later steers stay FIFO ahead of ordinary queued prompts.
+ * Owns primary-session prompt ordering. Steers stay FIFO ahead of ordinary
+ * queued prompts while preserving order within each priority.
  */
 export class PrimaryPromptQueue {
-  private readonly entries: QueueEntry[] = [];
+  private readonly entries: PrimaryQueuedPrompt[] = [];
 
   get size(): number {
     return this.entries.length;
   }
 
   enqueue(text: string, priority: PrimaryPromptPriority): void {
-    const entry = { text, priority, protected: false };
+    const entry = { text, priority };
     if (priority === 'queue') {
       this.entries.push(entry);
       return;
     }
-    const firstOrdinary = this.entries.findIndex(
-      (candidate) => !candidate.protected && candidate.priority === 'queue',
-    );
+    const firstOrdinary = this.entries.findIndex((candidate) => candidate.priority === 'queue');
     if (firstOrdinary < 0) this.entries.push(entry);
     else this.entries.splice(firstOrdinary, 0, entry);
-  }
-
-  protectHead(prompt: PrimaryQueuedPrompt): void {
-    this.entries.unshift({ ...prompt, protected: true });
   }
 
   take(): PrimaryQueuedPrompt | undefined {
@@ -52,7 +42,7 @@ export class PrimaryPromptQueue {
     this.entries.length = 0;
   }
 
-  snapshot(): readonly (PrimaryQueuedPrompt & { protected: boolean })[] {
+  snapshot(): readonly PrimaryQueuedPrompt[] {
     return this.entries.map((entry) => ({ ...entry }));
   }
 }

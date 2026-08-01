@@ -1,6 +1,5 @@
 import type { ServerEvent } from './protocol.js';
-import type { PrimaryPromptPriority, PrimaryQueuedPrompt } from './PrimaryPromptQueue.js';
-import { PrimaryTurnPreflight } from './PrimaryTurnPreflight.js';
+import type { PrimaryQueuedPrompt } from './PrimaryPromptQueue.js';
 import type { SessionRegistry } from './SessionRegistry.js';
 import type { LiveSession } from './SessionLifecycle.js';
 import { errMsg } from './sessionHelpers.js';
@@ -19,7 +18,6 @@ interface PrimaryPromptDeliveryDependencies {
     prompt: string,
     abortSignal: AbortSignal,
   ) => Promise<void>;
-  compactBeforeSend: (appSessionId: string) => Promise<void>;
   afterAutomaticCompactionTurn: (liveSession: LiveSession) => void;
   redeliverQueuedPrompts: (appSessionId: string, prompts: PrimaryQueuedPrompt[]) => Promise<void>;
   isShutdownStarted: () => boolean;
@@ -29,22 +27,13 @@ interface PrimaryPromptDeliveryDependencies {
 
 /**
  * Owns admission and delivery for primary-session prompts: queue priority,
- * exact-context preflight, active-turn state, and post-turn draining.
+ * active-turn state, and post-turn draining. Context compaction remains owned
+ * by the provider's automatic threshold check.
  */
 export class PrimaryPromptDelivery {
-  private readonly preflight = new PrimaryTurnPreflight();
-
   constructor(private readonly dependencies: PrimaryPromptDeliveryDependencies) {}
 
   async send(liveSession: LiveSession, text: string): Promise<void> {
-    const preflight = this.preflight.queuePrompt(liveSession, text, 'queue');
-    if (preflight.handled) {
-      this.updateQueuedSends(liveSession);
-      if (preflight.status) {
-        this.dependencies.emitStatus(liveSession.summary.appSessionId, preflight.status);
-      }
-      return;
-    }
     if (this.isBusy(liveSession)) {
       liveSession.promptQueue.enqueue(text, 'queue');
       this.updateQueuedSends(liveSession);
@@ -55,24 +44,16 @@ export class PrimaryPromptDelivery {
       await this.driveNextPending(liveSession);
       return;
     }
-    await this.drive(liveSession.summary.appSessionId, text, 'queue');
+    await this.drive(liveSession.summary.appSessionId, text);
   }
 
   async sendNow(liveSession: LiveSession, text: string): Promise<void> {
-    const preflight = this.preflight.queuePrompt(liveSession, text, 'steer');
-    if (preflight.handled) {
-      this.updateQueuedSends(liveSession);
-      if (preflight.status) {
-        this.dependencies.emitStatus(liveSession.summary.appSessionId, preflight.status);
-      }
-      return;
-    }
     if (!this.isBusy(liveSession)) {
       if (liveSession.promptQueue.size > 0) {
         liveSession.promptQueue.enqueue(text, 'steer');
         await this.driveNextPending(liveSession);
       } else {
-        await this.drive(liveSession.summary.appSessionId, text, 'steer');
+        await this.drive(liveSession.summary.appSessionId, text);
       }
       return;
     }
@@ -102,7 +83,7 @@ export class PrimaryPromptDelivery {
   }
 
   startInBackground(liveSession: LiveSession, prompt: string): void {
-    this.driveInBackground(liveSession.summary.appSessionId, prompt, 'queue');
+    this.driveInBackground(liveSession.summary.appSessionId, prompt);
   }
 
   async settle(liveSession: LiveSession): Promise<void> {
@@ -120,35 +101,17 @@ export class PrimaryPromptDelivery {
 
   discard(liveSession: LiveSession): void {
     liveSession.promptQueue.clear();
-    this.preflight.clear(liveSession.summary.appSessionId);
   }
 
   drain(liveSession: LiveSession): PrimaryQueuedPrompt[] {
     return liveSession.promptQueue.drain();
   }
 
-  private async drive(
-    appSessionId: string,
-    prompt: string,
-    priority: PrimaryPromptPriority,
-  ): Promise<void> {
+  private async drive(appSessionId: string, prompt: string): Promise<void> {
     const d = this.dependencies;
     const liveSession = d.registry.getLive(appSessionId);
     if (!liveSession || liveSession.closeMode || d.isShutdownStarted()) return;
     const stableAppSessionId = liveSession.summary.appSessionId;
-    const preflight = this.preflight.intercept(liveSession, prompt, priority, {
-      compactBeforeSend: d.compactBeforeSend,
-      updateQueuedSends: () => {
-        this.updateQueuedSends(liveSession);
-      },
-      emitStatus: d.emitStatus,
-      emitError: d.emitError,
-    });
-    if (preflight) {
-      await preflight;
-      return;
-    }
-
     const turnAbortController = new AbortController();
     const turnSettlement = createTurnSettlement();
     liveSession.turnAbortController = turnAbortController;
@@ -183,7 +146,7 @@ export class PrimaryPromptDelivery {
         } else {
           const next = liveSession.promptQueue.take();
           this.updateQueuedSends(liveSession);
-          if (next) this.driveInBackground(stableAppSessionId, next.text, next.priority);
+          if (next) this.driveInBackground(stableAppSessionId, next.text);
         }
       } finally {
         turnSettlement.resolve();
@@ -191,12 +154,8 @@ export class PrimaryPromptDelivery {
     }
   }
 
-  private driveInBackground(
-    appSessionId: string,
-    prompt: string,
-    priority: PrimaryPromptPriority,
-  ): void {
-    void this.drive(appSessionId, prompt, priority).catch((error: unknown) => {
+  private driveInBackground(appSessionId: string, prompt: string): void {
+    void this.drive(appSessionId, prompt).catch((error: unknown) => {
       if (!this.dependencies.isShutdownStarted()) {
         this.dependencies.emitError({ appSessionId, message: errMsg(error) });
       }
@@ -206,7 +165,7 @@ export class PrimaryPromptDelivery {
   private async driveNextPending(liveSession: LiveSession): Promise<void> {
     const next = liveSession.promptQueue.take();
     this.updateQueuedSends(liveSession);
-    if (next) await this.drive(liveSession.summary.appSessionId, next.text, next.priority);
+    if (next) await this.drive(liveSession.summary.appSessionId, next.text);
   }
 
   private updateQueuedSends(liveSession: LiveSession): void {

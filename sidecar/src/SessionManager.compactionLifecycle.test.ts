@@ -94,7 +94,74 @@ test('[C0] Create arms daemon compaction without client-side turn compaction', a
   }
 });
 
-test('[C1] Manual in-place compaction', { concurrency: false }, async () => {
+test('Design auto-compaction keeps provider identity and drains queued work once', async () => {
+  const h = createSessionManagerTestContext();
+
+  try {
+    await h.create({
+      sessionPurpose: 'design',
+      clientRef: 'design-auto-compaction',
+      title: 'Design auto-compaction',
+      goal: 'Create the first frame',
+      interactionMode: 'auto',
+      autonomy: 'low',
+    });
+    await h.waitForIdle();
+
+    const activeTurnGate = h.provider.deferNextStream('provider-1');
+    const activeTurn = h.handle({
+      type: 'session.send',
+      appSessionId: 'provider-1',
+      text: 'Build the prototype',
+    });
+    await h.provider.waitForPrompts('provider-1', 2);
+    h.provider.emitNotification('provider-1', {
+      params: {
+        notification: {
+          type: 'droid_working_state_changed',
+          newState: 'compacting_conversation',
+        },
+      },
+    });
+    await h.handle({
+      type: 'session.send',
+      appSessionId: 'provider-1',
+      text: 'Then polish the interactions',
+    });
+
+    activeTurnGate.resolve();
+    await activeTurn;
+    assert.deepEqual(h.provider.session('provider-1').prompts, [
+      'Create the first frame',
+      'Build the prototype',
+    ]);
+
+    h.provider.emitNotification('provider-1', {
+      params: {
+        notification: {
+          type: 'session_compacted',
+          summaryId: 'summary-1',
+          removedCount: 12,
+          visibleBoundaryMessageId: null,
+        },
+      },
+    });
+    await h.provider.waitForPrompts('provider-1', 3);
+
+    assert.deepEqual(h.provider.session('provider-1').prompts, [
+      'Create the first frame',
+      'Build the prototype',
+      'Then polish the interactions',
+    ]);
+    assert.equal(callCount(h.calls, 'provider', 'compactSession', 'provider-1'), 0);
+    assert.equal(h.runtime.loadCalls.length, 0);
+    assert.equal(sessionUpdates(h.events).at(-1)?.session.providerSessionId, 'provider-1');
+  } finally {
+    await h.dispose();
+  }
+});
+
+test('[C1] Manual compaction without provider swap', { concurrency: false }, async () => {
   const h = createSessionManagerTestContext();
 
   try {

@@ -178,7 +178,7 @@ function closeCount(calls: RecordedCall[], providerSessionId: string): number {
   ).length;
 }
 
-test('manual in-place compaction refreshes context and returns ready to settle', async () => {
+test('manual compaction without provider swap refreshes context and returns ready to settle', async () => {
   const h = createHarness();
   const { live, session } = addLive(h);
   session.nextCompactResult = { newSessionId: session.sessionId, removedCount: 1 };

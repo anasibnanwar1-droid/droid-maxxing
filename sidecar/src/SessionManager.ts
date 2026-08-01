@@ -332,7 +332,6 @@ export class SessionManager {
       makePermissionHandler: (ref) => this.interactions.makePermissionHandler(ref),
       makeAskUserHandler: (ref) => this.interactions.makeAskUserHandler(ref),
       compaction: this.compaction,
-      compactBeforeSend: (appSessionId) => this.compactSession(appSessionId),
       isShutdownStarted: () => this.shutdownPromise !== undefined,
       childSessions: this.childSessions,
       applyPendingSettingsToSummary: (summary) => this.applyPendingSettingsToSummary(summary),

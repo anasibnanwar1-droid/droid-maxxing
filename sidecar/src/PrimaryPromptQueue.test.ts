@@ -17,22 +17,9 @@ test('steers stay FIFO ahead of ordinary queued prompts', () => {
   ]);
 });
 
-test('an elected preflight prompt remains ahead of later steers', () => {
+test('clear removes all work', () => {
   const queue = new PrimaryPromptQueue();
-  queue.protectHead({ text: 'causal prompt', priority: 'queue' });
-  queue.enqueue('steer one', 'steer');
-  queue.enqueue('steer two', 'steer');
-
-  assert.deepEqual(queue.drain(), [
-    { text: 'causal prompt', priority: 'queue' },
-    { text: 'steer one', priority: 'steer' },
-    { text: 'steer two', priority: 'steer' },
-  ]);
-});
-
-test('clear removes protected and ordinary work', () => {
-  const queue = new PrimaryPromptQueue();
-  queue.protectHead({ text: 'protected', priority: 'steer' });
+  queue.enqueue('steer', 'steer');
   queue.enqueue('ordinary', 'queue');
 
   queue.clear();

@@ -16,7 +16,6 @@ import type { LiveOperationTarget, SessionContext } from './SessionContext.js';
 import type { ChildSessions } from './ChildSessions.js';
 import { PrimaryPromptQueue, type PrimaryQueuedPrompt } from './PrimaryPromptQueue.js';
 import { PrimaryPromptDelivery, type PrimaryTurnSettlement } from './PrimaryPromptDelivery.js';
-import { AUTO_COMPACTION_UNAVAILABLE_MESSAGE } from './PrimaryTurnPreflight.js';
 import {
   buildCreatedSessionSummary,
   buildCreateRuntimeOptions,
@@ -28,6 +27,9 @@ import {
   createModelDefaultsForMode,
   errMsg,
 } from './sessionHelpers.js';
+
+const AUTO_COMPACTION_UNAVAILABLE_MESSAGE =
+  'Automatic compaction could not be enabled for this session. Start a new conversation before the context limit is reached.';
 
 export type SessionCreateCommand = Extract<ClientCommand, { type: 'session.create' }>;
 interface LocalMcpResource {
@@ -83,7 +85,6 @@ export interface SessionLifecycleDependencies {
     SessionCompaction,
     'resolveLimit' | 'arm' | 'subscribePrimary' | 'afterTurn' | 'cancel'
   >;
-  compactBeforeSend: (appSessionId: string) => Promise<void>;
   isShutdownStarted: () => boolean;
   childSessions: Pick<ChildSessions, 'attachParent' | 'closeParent'>;
   applyPendingSettingsToSummary: (summary: SessionSummary) => SessionSummary;
@@ -112,7 +113,6 @@ export class SessionLifecycle {
     this.promptDelivery = new PrimaryPromptDelivery({
       registry: dependencies.registry,
       runPrimaryTurn: dependencies.runPrimaryTurn,
-      compactBeforeSend: dependencies.compactBeforeSend,
       afterAutomaticCompactionTurn: (liveSession) => {
         dependencies.compaction.afterTurn(this.primaryAutomaticCompactionTarget(liveSession));
       },
@@ -361,7 +361,6 @@ export class SessionLifecycle {
       this.dependencies.registry.updateSummary(appSessionId, { queuedSends: 0 });
       return;
     }
-    const wasAutoCompacting = liveSession.autoCompacting;
     const compactionTarget = this.primaryAutomaticCompactionTarget(liveSession);
     const turnAbortController = liveSession.turnAbortController;
     const turnSettlement = liveSession.turnSettlement?.promise ?? Promise.resolve();
@@ -374,13 +373,14 @@ export class SessionLifecycle {
     } catch (error) {
       await turnSettlement;
       liveSession.interrupting = false;
+      this.settlePendingPromptsInBackground(appSessionId);
       throw error;
     }
     if (!compactionTarget.isCurrent()) {
       liveSession.interrupting = false;
       return;
     }
-    if (wasAutoCompacting) {
+    if (liveSession.autoCompacting) {
       this.dependencies.compaction.cancel(compactionTarget);
     }
     liveSession.interrupting = false;
@@ -389,7 +389,7 @@ export class SessionLifecycle {
       streaming: false,
       queuedSends: 0,
     });
-    this.settleAfterCompactionInBackground(appSessionId);
+    this.settlePendingPromptsInBackground(appSessionId);
   }
 
   async settleAfterCompaction(
@@ -601,7 +601,7 @@ export class SessionLifecycle {
     }
   }
 
-  private settleAfterCompactionInBackground(appSessionId: string): void {
+  private settlePendingPromptsInBackground(appSessionId: string): void {
     void this.settleAfterCompaction(appSessionId).catch((error: unknown) => {
       if (!this.dependencies.isShutdownStarted())
         this.dependencies.emitError({ appSessionId, message: errMsg(error) });

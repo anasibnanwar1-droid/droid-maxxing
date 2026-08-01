@@ -90,10 +90,6 @@ function createHarness(ordinarySummaries: SessionSummary[] = []) {
   let applyPending: (appSessionId: string) => Promise<boolean> = () => Promise.resolve(true);
   let enableAutoCompaction = (): Promise<boolean> => Promise.resolve(true);
   let compactionLimit = (): Promise<number> => Promise.resolve(800);
-  let compactBeforeSend = (appSessionId: string): Promise<void> => {
-    calls.push({ target: 'provider', method: 'compaction.preflight', args: [appSessionId] });
-    return Promise.resolve();
-  };
   let connectionError: Error | undefined;
   let shutdownStarted = false;
   let closeChildren: (appSessionId: string) => Promise<void> = () => Promise.resolve();
@@ -199,7 +195,6 @@ function createHarness(ordinarySummaries: SessionSummary[] = []) {
         });
       },
     },
-    compactBeforeSend: (appSessionId) => compactBeforeSend(appSessionId),
     isShutdownStarted: () => shutdownStarted,
     applyPendingSettingsToSummary: (item) => ({ ...item, ...projection }),
     applyPendingSessionSettings: (appSessionId) => applyPending(appSessionId),
@@ -291,9 +286,6 @@ function createHarness(ordinarySummaries: SessionSummary[] = []) {
     },
     setCompactionLimit: (action: () => Promise<number>) => {
       compactionLimit = action;
-    },
-    setCompactBeforeSend: (action: (appSessionId: string) => Promise<void>) => {
-      compactBeforeSend = action;
     },
     setConnectionError: (error: Error | undefined) => {
       connectionError = error;
@@ -450,7 +442,7 @@ test('create omits an unarmed daemon compaction limit from its summary', async (
       (call) =>
         call.method === 'status' &&
         call.args[0] === 'unarmed-create' &&
-        String(call.args[1]).includes('Automatic compaction is unavailable'),
+        String(call.args[1]).includes('Automatic compaction could not be enabled'),
     ),
     true,
   );
@@ -754,7 +746,7 @@ test('concurrent idle sends admit one provider stream and queue the other', asyn
 
   assert.deepEqual(provider.prompts, ['first', 'first follow-up']);
   assert.deepEqual(queuedPrompts(harness, 'concurrent-idle-send'), [
-    { text: 'second follow-up', priority: 'queue', protected: false },
+    { text: 'second follow-up', priority: 'queue' },
   ]);
 
   firstTurn.resolve();
@@ -763,317 +755,45 @@ test('concurrent idle sends admit one provider stream and queue the other', asyn
   assert.deepEqual(provider.prompts, ['first', 'first follow-up', 'second follow-up']);
 });
 
-test('an exact exhausted design session compacts before delivering its next prompt', async () => {
+test('exact context telemetry never invokes manual compaction before send or steer', async () => {
   const harness = createHarness();
-  const provider = queueCreate(harness, 'preflight-design');
+  const provider = queueCreate(harness, 'auto-compaction-only');
   await harness.lifecycle.create({
     ...createCommand(),
     sessionPurpose: 'design',
   });
   await provider.waitForPrompts(1);
   await new Promise<void>((resolve) => setImmediate(resolve));
-  harness.registry.updateSummary('preflight-design', {
+  harness.registry.updateSummary('auto-compaction-only', {
     contextTokens: 1_000,
     contextRemainingTokens: 0,
     contextAccuracy: 'exact',
     maxContextTokens: 1_000,
     compactionTokenLimit: 800,
   });
-  harness.setCompactBeforeSend(async (appSessionId) => {
-    harness.calls.push({
-      target: 'provider',
-      method: 'compaction.preflight',
-      args: [appSessionId],
-    });
-    assert.deepEqual(provider.prompts, ['first']);
-    harness.registry.updateSummary(appSessionId, {
-      contextTokens: 100,
-      contextRemainingTokens: 900,
-      contextAccuracy: 'exact',
-    });
-    await harness.lifecycle.settleAfterCompaction(appSessionId);
-  });
 
-  await harness.lifecycle.send('preflight-design', 'Build now');
+  await harness.lifecycle.send('auto-compaction-only', 'Build now');
 
-  assert.deepEqual(provider.prompts, ['first', 'Build now']);
-  const preflightCall = harness.calls.findIndex(
-    (call) => call.target === 'provider' && call.method === 'compaction.preflight',
-  );
-  const secondStream = harness.calls.findIndex(
-    (call) =>
-      call.target === 'provider' && call.method === 'stream' && call.args[1] === 'Build now',
-  );
-  assert.deepEqual([preflightCall >= 0, secondStream > preflightCall], [true, true]);
-});
-
-test('an unsuccessful context preflight blocks once instead of recursively compacting', async () => {
-  const harness = createHarness();
-  const provider = queueCreate(harness, 'blocked-preflight');
-  await harness.lifecycle.create(createCommand());
-  await provider.waitForPrompts(1);
-  await new Promise<void>((resolve) => setImmediate(resolve));
-  harness.registry.updateSummary('blocked-preflight', {
-    contextTokens: 1_000,
-    contextRemainingTokens: 0,
-    contextAccuracy: 'exact',
-    maxContextTokens: 1_000,
-    compactionTokenLimit: 800,
-  });
-  harness.setCompactBeforeSend(async (appSessionId) => {
-    harness.calls.push({
-      target: 'provider',
-      method: 'compaction.preflight',
-      args: [appSessionId],
-    });
-    await harness.lifecycle.settleAfterCompaction(appSessionId);
-  });
-
-  await harness.lifecycle.send('blocked-preflight', 'Do not loop');
-
-  assert.deepEqual(provider.prompts, ['first']);
-  assert.deepEqual(queuedPrompts(harness, 'blocked-preflight'), [
-    { text: 'Do not loop', priority: 'queue', protected: true },
-  ]);
-  assert.equal(methodCount(harness, 'compaction.preflight'), 1);
-  assert.equal(
-    harness.events.some(
-      (event) =>
-        event.type === 'error' &&
-        event.code === 'session.context_exhausted' &&
-        event.appSessionId === 'blocked-preflight',
-    ),
-    true,
-  );
-});
-
-test('steering an exhausted active turn waits for compaction instead of bypassing it', async () => {
-  const harness = createHarness();
-  const provider = queueCreate(harness, 'exhausted-steer');
-  const activeTurn = provider.deferNextStream();
-  await harness.lifecycle.create({
-    ...createCommand(),
-    sessionPurpose: 'design',
-  });
-  await provider.waitForPrompts(1);
-  harness.registry.updateSummary('exhausted-steer', {
-    contextTokens: 1_000,
-    contextRemainingTokens: 0,
-    contextAccuracy: 'exact',
-    maxContextTokens: 1_000,
-    compactionTokenLimit: 800,
-  });
-  harness.setCompactBeforeSend(async (appSessionId) => {
-    harness.calls.push({
-      target: 'provider',
-      method: 'compaction.preflight',
-      args: [appSessionId],
-    });
-    harness.registry.updateSummary(appSessionId, {
-      contextTokens: 100,
-      contextRemainingTokens: 900,
-      contextAccuracy: 'exact',
-    });
-    await harness.lifecycle.settleAfterCompaction(appSessionId);
-  });
-
-  await harness.lifecycle.sendNow('exhausted-steer', 'Safe-boundary follow-up');
-
-  assert.deepEqual(provider.prompts, ['first']);
-  assert.deepEqual(queuedPrompts(harness, 'exhausted-steer'), [
-    { text: 'Safe-boundary follow-up', priority: 'steer', protected: false },
-  ]);
-  assert.equal(methodCount(harness, 'send'), 0);
-  activeTurn.resolve();
-  await provider.waitForPrompts(2);
-
-  assert.deepEqual(provider.prompts, ['first', 'Safe-boundary follow-up']);
-  assert.equal(methodCount(harness, 'compaction.preflight'), 1);
-});
-
-test('a steer arriving during preflight cannot reorder or repeat compaction', async () => {
-  const harness = createHarness();
-  const provider = queueCreate(harness, 'preflight-steer-order');
-  await harness.lifecycle.create(createCommand());
-  await provider.waitForPrompts(1);
-  await new Promise<void>((resolve) => setImmediate(resolve));
-  harness.registry.updateSummary('preflight-steer-order', {
-    contextTokens: 1_000,
-    contextRemainingTokens: 0,
-    contextAccuracy: 'exact',
-    maxContextTokens: 1_000,
-    compactionTokenLimit: 800,
-  });
-  let releaseCompaction = (): void => undefined;
-  const compactionGate = new Promise<void>((resolve) => {
-    releaseCompaction = resolve;
-  });
-  harness.setCompactBeforeSend(async (appSessionId) => {
-    harness.calls.push({
-      target: 'provider',
-      method: 'compaction.preflight',
-      args: [appSessionId],
-    });
-    requireLive(harness, appSessionId).compacting = true;
-    await compactionGate;
-    requireLive(harness, appSessionId).compacting = false;
-    await harness.lifecycle.settleAfterCompaction(appSessionId);
-  });
-
-  const sending = harness.lifecycle.send('preflight-steer-order', 'Original');
-  await new Promise<void>((resolve) => setImmediate(resolve));
-  await harness.lifecycle.sendNow('preflight-steer-order', 'Steer');
-  assert.deepEqual(queuedPrompts(harness, 'preflight-steer-order'), [
-    { text: 'Original', priority: 'queue', protected: true },
-    { text: 'Steer', priority: 'steer', protected: false },
-  ]);
-  releaseCompaction();
-  await sending;
-
-  assert.equal(methodCount(harness, 'compaction.preflight'), 1);
-  assert.deepEqual(provider.prompts, ['first']);
-  assert.deepEqual(queuedPrompts(harness, 'preflight-steer-order'), [
-    { text: 'Original', priority: 'queue', protected: true },
-    { text: 'Steer', priority: 'steer', protected: false },
-  ]);
-});
-
-test('a successful preflight keeps its causal prompt ahead of later steers', async () => {
-  const harness = createHarness();
-  const provider = queueCreate(harness, 'preflight-causal-order');
-  await harness.lifecycle.create(createCommand());
-  await provider.waitForPrompts(1);
-  await new Promise<void>((resolve) => setImmediate(resolve));
-  harness.registry.updateSummary('preflight-causal-order', {
-    contextTokens: 1_000,
-    contextRemainingTokens: 0,
-    contextAccuracy: 'exact',
-    maxContextTokens: 1_000,
-    compactionTokenLimit: 800,
-  });
-  let releaseCompaction = (): void => undefined;
-  const compactionGate = new Promise<void>((resolve) => {
-    releaseCompaction = resolve;
-  });
-  harness.setCompactBeforeSend(async (appSessionId) => {
-    harness.calls.push({
-      target: 'provider',
-      method: 'compaction.preflight',
-      args: [appSessionId],
-    });
-    requireLive(harness, appSessionId).compacting = true;
-    await compactionGate;
-    requireLive(harness, appSessionId).compacting = false;
-    harness.registry.updateSummary(appSessionId, {
-      contextTokens: 100,
-      contextRemainingTokens: 900,
-      contextAccuracy: 'exact',
-    });
-    await harness.lifecycle.settleAfterCompaction(appSessionId);
-  });
-
-  const sending = harness.lifecycle.send('preflight-causal-order', 'Original');
-  await new Promise<void>((resolve) => setImmediate(resolve));
-  await harness.lifecycle.sendNow('preflight-causal-order', 'Steer');
-  releaseCompaction();
-  await sending;
+  const activeTurnGate = provider.deferNextStream();
+  const activeTurn = harness.lifecycle.send('auto-compaction-only', 'Keep working');
   await provider.waitForPrompts(3);
+  await harness.lifecycle.sendNow('auto-compaction-only', 'Use the calmer direction');
 
-  assert.deepEqual(provider.prompts, ['first', 'Original', 'Steer']);
-  assert.equal(methodCount(harness, 'compaction.preflight'), 1);
-});
-
-test('a rejected context preflight preserves its prompts until context becomes available', async () => {
-  const harness = createHarness();
-  const provider = queueCreate(harness, 'rejected-preflight');
-  await harness.lifecycle.create(createCommand());
-  await provider.waitForPrompts(1);
-  await new Promise<void>((resolve) => setImmediate(resolve));
-  harness.registry.updateSummary('rejected-preflight', {
-    contextTokens: 1_000,
-    contextRemainingTokens: 0,
-    contextAccuracy: 'exact',
-    maxContextTokens: 1_000,
-    compactionTokenLimit: 800,
-  });
-  harness.setCompactBeforeSend(() => Promise.reject(new Error('compaction rejected')));
-
-  await harness.lifecycle.send('rejected-preflight', 'Not stranded');
-
-  assert.deepEqual(queuedPrompts(harness, 'rejected-preflight'), [
-    { text: 'Not stranded', priority: 'queue', protected: true },
+  assert.deepEqual(provider.prompts, [
+    'first',
+    'Build now',
+    'Keep working',
+    'Use the calmer direction',
   ]);
+  assert.equal(methodCount(harness, 'compactSession'), 0);
+  assert.equal(methodCount(harness, 'send'), 1);
   assert.equal(
-    harness.events.some(
-      (event) =>
-        event.type === 'error' &&
-        event.code === 'session.preflight_compaction_failed' &&
-        event.appSessionId === 'rejected-preflight',
-    ),
-    true,
+    requireLive(harness, 'auto-compaction-only').summary.providerSessionId,
+    'auto-compaction-only',
   );
-  harness.registry.updateSummary('rejected-preflight', {
-    contextTokens: 100,
-    contextRemainingTokens: 900,
-    contextAccuracy: 'exact',
-  });
-  await harness.lifecycle.send('rejected-preflight', 'Recovered');
-  await provider.waitForPrompts(3);
-  assert.deepEqual(provider.prompts, ['first', 'Not stranded', 'Recovered']);
-});
 
-test('Stop clears a pending preflight so an identical later prompt can retry', async () => {
-  const harness = createHarness();
-  const provider = queueCreate(harness, 'stopped-preflight');
-  await harness.lifecycle.create(createCommand());
-  await provider.waitForPrompts(1);
-  await new Promise<void>((resolve) => setImmediate(resolve));
-  harness.registry.updateSummary('stopped-preflight', {
-    contextTokens: 1_000,
-    contextRemainingTokens: 0,
-    contextAccuracy: 'exact',
-    maxContextTokens: 1_000,
-    compactionTokenLimit: 800,
-  });
-  let releaseCompaction = (): void => undefined;
-  const compactionGate = new Promise<void>((resolve) => {
-    releaseCompaction = resolve;
-  });
-  harness.setCompactBeforeSend(async (appSessionId) => {
-    harness.calls.push({
-      target: 'provider',
-      method: 'compaction.preflight',
-      args: [appSessionId],
-    });
-    requireLive(harness, appSessionId).compacting = true;
-    await compactionGate;
-    requireLive(harness, appSessionId).compacting = false;
-    await harness.lifecycle.settleAfterCompaction(appSessionId);
-  });
-
-  const stoppedSend = harness.lifecycle.send('stopped-preflight', 'Same prompt');
-  await new Promise<void>((resolve) => setImmediate(resolve));
-  await harness.lifecycle.interrupt('stopped-preflight');
-  releaseCompaction();
-  await stoppedSend;
-  harness.setCompactBeforeSend(async (appSessionId) => {
-    harness.calls.push({
-      target: 'provider',
-      method: 'compaction.preflight',
-      args: [appSessionId],
-    });
-    harness.registry.updateSummary(appSessionId, {
-      contextTokens: 100,
-      contextRemainingTokens: 900,
-      contextAccuracy: 'exact',
-    });
-    await harness.lifecycle.settleAfterCompaction(appSessionId);
-  });
-
-  await harness.lifecycle.send('stopped-preflight', 'Same prompt');
-
-  assert.equal(methodCount(harness, 'compaction.preflight'), 2);
-  assert.deepEqual(provider.prompts, ['first', 'Same prompt']);
+  activeTurnGate.resolve();
+  await activeTurn;
 });
 
 test('queued sends stay FIFO while consecutive native steers join the active turn', async () => {
@@ -1100,45 +820,6 @@ test('queued sends stay FIFO while consecutive native steers join the active tur
   assert.equal(interruptCount(steered), 0);
 });
 
-test('multiple exhausted steers remain FIFO through preflight compaction', async () => {
-  const harness = createHarness();
-  const provider = queueCreate(harness, 'exhausted-steer-fifo');
-  const activeTurn = provider.deferNextStream();
-  await harness.lifecycle.create(createCommand());
-  await provider.waitForPrompts(1);
-  harness.registry.updateSummary('exhausted-steer-fifo', {
-    contextTokens: 1_000,
-    contextRemainingTokens: 0,
-    contextAccuracy: 'exact',
-    maxContextTokens: 1_000,
-    compactionTokenLimit: 800,
-  });
-  harness.setCompactBeforeSend(async (appSessionId) => {
-    harness.calls.push({
-      target: 'provider',
-      method: 'compaction.preflight',
-      args: [appSessionId],
-    });
-    harness.registry.updateSummary(appSessionId, {
-      contextTokens: 100,
-      contextRemainingTokens: 900,
-      contextAccuracy: 'exact',
-    });
-    await harness.lifecycle.settleAfterCompaction(appSessionId);
-  });
-
-  await harness.lifecycle.sendNow('exhausted-steer-fifo', 'Steer one');
-  await harness.lifecycle.sendNow('exhausted-steer-fifo', 'Steer two');
-  assert.deepEqual(queuedPrompts(harness, 'exhausted-steer-fifo'), [
-    { text: 'Steer one', priority: 'steer', protected: false },
-    { text: 'Steer two', priority: 'steer', protected: false },
-  ]);
-  activeTurn.resolve();
-  await provider.waitForPrompts(3);
-
-  assert.deepEqual(provider.prompts, ['first', 'Steer one', 'Steer two']);
-});
-
 test('send-now queues during compaction and reports native steer rejection', async () => {
   const compacting = createHarness();
   const provider = queueCreate(compacting, 'compacting');
@@ -1152,8 +833,8 @@ test('send-now queues during compaction and reports native steer rejection', asy
   live.autoCompacting = true;
   await compacting.lifecycle.sendNow('compacting', 'automatic');
   assert.deepEqual(live.promptQueue.snapshot(), [
-    { text: 'manual', priority: 'steer', protected: false },
-    { text: 'automatic', priority: 'steer', protected: false },
+    { text: 'manual', priority: 'steer' },
+    { text: 'automatic', priority: 'steer' },
   ]);
   assert.equal(interruptCount(compacting), 0);
   const rejected = createHarness();
@@ -1239,6 +920,56 @@ test('interrupt handles idle, streaming, manual compaction, and auto-compaction 
   );
 });
 
+test('interrupt clears auto-compaction that starts while Stop is in flight', async () => {
+  const harness = createHarness();
+  const provider = queueCreate(harness, 'stop-started-compaction');
+  await harness.lifecycle.create(createCommand());
+  await provider.waitForPrompts(1);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+
+  const live = requireLive(harness, 'stop-started-compaction');
+  const interruptGate = provider.deferNextInterrupt();
+  const stopping = harness.lifecycle.interrupt('stop-started-compaction');
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  live.autoCompacting = true;
+
+  interruptGate.resolve();
+  await stopping;
+
+  assert.equal(live.autoCompacting, false);
+  assert.equal(
+    harness.calls.some(
+      (call) => call.method === 'watchdog.clear' && call.args[0] === 'stop-started-compaction',
+    ),
+    true,
+  );
+});
+
+test('interrupt rejection releases a prompt queued while Stop is in flight', async () => {
+  const harness = createHarness();
+  const provider = queueCreate(harness, 'rejected-stop-queue');
+  await harness.lifecycle.create(createCommand());
+  await provider.waitForPrompts(1);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+
+  const interruptGate = provider.deferNextInterrupt();
+  const stopping = harness.lifecycle.interrupt('rejected-stop-queue');
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  await harness.lifecycle.send('rejected-stop-queue', 'after rejected Stop');
+
+  assert.deepEqual(queuedPrompts(harness, 'rejected-stop-queue'), [
+    { text: 'after rejected Stop', priority: 'queue' },
+  ]);
+
+  interruptGate.reject(new Error('interrupt rejected'));
+  await assert.rejects(stopping, /interrupt rejected/);
+  await provider.waitForPrompts(2);
+
+  assert.deepEqual(provider.prompts, ['first', 'after rejected Stop']);
+  assert.equal(requireLive(harness, 'rejected-stop-queue').interrupting, false);
+  assert.deepEqual(queuedPrompts(harness, 'rejected-stop-queue'), []);
+});
+
 test('interrupt aborts a stalled local stream so the next turn can start', async () => {
   const harness = createHarness();
   const provider = queueCreate(harness, 'abort-stalled');
@@ -1278,7 +1009,7 @@ test('compaction settlement cannot start queued work before Stop settles', async
 
   assert.deepEqual(provider.prompts, ['first']);
   assert.deepEqual(queuedPrompts(harness, 'stop-compaction-race'), [
-    { text: 'after Stop', priority: 'queue', protected: false },
+    { text: 'after Stop', priority: 'queue' },
   ]);
 
   interruptGate.resolve();
