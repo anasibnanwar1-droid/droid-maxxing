@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-non-null-assertion, @typescript-eslint/no-empty-function -- Desktop guards establish the preload bridge invariant; non-desktop listeners intentionally return no-op cleanup. */
 import type {
   NativeBrowserAgentAction,
   NativeBrowserAgentResult,
@@ -214,6 +215,7 @@ interface DroidControlApi {
   onNativeBrowserDesignPrompt: (handler: (prompt: NativeBrowserDesignPrompt) => void) => () => void;
   onNativeBrowserLoaded: (handler: (event: NativeBrowserLoaded) => void) => () => void;
   onNativeBrowserLoadFailed: (handler: (event: NativeBrowserLoadFailed) => void) => () => void;
+  onNativeBrowserReset: (handler: () => void) => () => void;
   onNativeBrowserAgentResult: (handler: (result: NativeBrowserAgentResult) => void) => () => void;
 }
 

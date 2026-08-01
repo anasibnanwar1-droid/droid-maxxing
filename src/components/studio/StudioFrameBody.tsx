@@ -13,6 +13,7 @@ import {
   type NativeBrowserBounds,
 } from '../../lib/nativeBrowser';
 import { isSelfBrowserUrl } from '../browser/browserUrlSafety';
+import { useNativeBrowserResetGeneration } from '../browser/useNativeBrowserReset';
 import { useStudioCanvas, sizeOf, type StudioFrame } from './StudioCanvasContext';
 
 /**
@@ -39,6 +40,7 @@ export default function StudioFrameBody({
   frameUrlRef.current = frame.url;
   const hasUrl = !!frame.url && frame.url !== 'about:blank';
   const native = isDesktop();
+  const browserResetGeneration = useNativeBrowserResetGeneration(native);
   const nativeBrowserSessionId = `studio-frame:${frame.id}`;
   const appOrigin = typeof window === 'undefined' ? undefined : window.location.origin;
   // A frame pointed at the app's own origin would recursively embed the whole app
@@ -132,7 +134,16 @@ export default function StudioFrameBody({
     return () => {
       void detachNativeBrowser(nativeBrowserSessionId);
     };
-  }, [frame.id, hasUrl, interacting, isSelf, native, nativeBrowserSessionId, studioDispatch]);
+  }, [
+    browserResetGeneration,
+    frame.id,
+    hasUrl,
+    interacting,
+    isSelf,
+    native,
+    nativeBrowserSessionId,
+    studioDispatch,
+  ]);
 
   useEffect(() => {
     if (!native || !interacting) return;

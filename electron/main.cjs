@@ -504,6 +504,9 @@ const sidecarSupervisor = createSidecarSupervisor({
   writeOutput: (chunk) => process.stdout.write(chunk),
   onUnexpectedExit: ({ code, signal, error, delayMs }) => {
     closeAllNativeBrowsers();
+    if (isWindowUsable(mainWindow)) {
+      mainWindow.webContents.send('native-browser-reset');
+    }
     const reason = error?.message ?? code ?? signal ?? 'unknown';
     console.error(`sidecar exited: ${reason}; restarting in ${delayMs}ms`);
   },

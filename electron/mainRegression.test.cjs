@@ -63,7 +63,7 @@ test('main renderer reload closes renderer-owned terminals before navigation', (
 
 test('unexpected sidecar exit closes native browser views before restart', () => {
   const unexpectedExitCleanup =
-    /onUnexpectedExit: \(\{ code, signal, error, delayMs \}\) => \{\s*closeAllNativeBrowsers\(\);\s*const reason =/;
+    /onUnexpectedExit: \(\{ code, signal, error, delayMs \}\) => \{\s*closeAllNativeBrowsers\(\);\s*if \(isWindowUsable\(mainWindow\)\) \{\s*mainWindow\.webContents\.send\('native-browser-reset'\);\s*\}\s*const reason =/;
 
   assert.match(mainSource, unexpectedExitCleanup);
 });

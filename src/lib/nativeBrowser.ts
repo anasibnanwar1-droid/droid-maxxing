@@ -365,6 +365,11 @@ export function onNativeBrowserLoadFailed(
   return Promise.resolve(desktopBridge().onNativeBrowserLoadFailed(handler));
 }
 
+export function onNativeBrowserReset(handler: () => void): Promise<() => void> {
+  if (!isDesktop()) return Promise.resolve(noop);
+  return Promise.resolve(desktopBridge().onNativeBrowserReset(handler));
+}
+
 export async function waitForNextNativeBrowserLoad(
   browserSessionId: string,
   timeoutMs = 8_000,

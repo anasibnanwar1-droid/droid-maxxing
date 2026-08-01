@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useStore } from '../hooks/useStore';
 import { respondQuestion } from '../lib/commands';
@@ -14,6 +14,8 @@ export default function AskUserModal({ inline = false }: { inline?: boolean } = 
   const [answers, setAnswers] = useState<Record<number, string>>({});
   const [customOpen, setCustomOpen] = useState<Record<number, boolean>>({});
   const inputRef = useRef<HTMLInputElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const titleId = useId();
 
   const requestId = question?.requestId;
   useEffect(() => {
@@ -25,9 +27,53 @@ export default function AskUserModal({ inline = false }: { inline?: boolean } = 
   useEffect(() => {
     if (customOpen[question?.questions[current]?.index ?? -1]) {
       const t = setTimeout(() => inputRef.current?.focus(), 40);
-      return () => clearTimeout(t);
+      return () => {
+        clearTimeout(t);
+      };
     }
   }, [customOpen, current, question]);
+
+  useEffect(() => {
+    if (inline || !question) return;
+    const previousFocus =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const dialog = dialogRef.current;
+    const focusable = () => [
+      ...(dialog?.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled)') ??
+        []),
+    ];
+    focusable()[0]?.focus();
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        event.stopPropagation();
+        respondQuestion(question.appSessionId, question.requestId, true, []);
+        dispatch({ type: 'CLEAR_QUESTION' });
+        return;
+      }
+      if (event.key !== 'Tab') return;
+      const items = focusable();
+      if (items.length === 0) {
+        event.preventDefault();
+        dialog?.focus();
+        return;
+      }
+      const first = items[0];
+      const last = items.at(-1);
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last?.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener('keydown', onKeyDown, true);
+    return () => {
+      document.removeEventListener('keydown', onKeyDown, true);
+      previousFocus?.focus();
+    };
+  }, [dispatch, inline, question]);
 
   if (!question) return null;
 
@@ -35,7 +81,7 @@ export default function AskUserModal({ inline = false }: { inline?: boolean } = 
   const total = question.questions.length;
   const isLast = current === total - 1;
   const answer = (answers[q.index] ?? '').trim();
-  const typing = !!customOpen[q.index];
+  const typing = customOpen[q.index];
   const canAdvance = answer.length > 0;
 
   const pickOption = (opt: string) => {
@@ -43,7 +89,9 @@ export default function AskUserModal({ inline = false }: { inline?: boolean } = 
     setCustomOpen((p) => ({ ...p, [q.index]: false }));
   };
 
-  const openCustom = () => setCustomOpen((p) => ({ ...p, [q.index]: true }));
+  const openCustom = () => {
+    setCustomOpen((p) => ({ ...p, [q.index]: true }));
+  };
 
   const next = () => {
     if (!canAdvance) return;
@@ -67,7 +115,13 @@ export default function AskUserModal({ inline = false }: { inline?: boolean } = 
 
   return (
     <AnimatePresence>
+      {!inline && <div aria-hidden="true" className="fixed inset-0 z-[69] bg-black/20" />}
       <motion.div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal={inline ? undefined : true}
+        aria-labelledby={titleId}
+        tabIndex={-1}
         initial={{ y: 24, opacity: 0 }}
         animate={{ y: 0, opacity: 1 }}
         exit={{ y: 24, opacity: 0 }}
@@ -81,7 +135,7 @@ export default function AskUserModal({ inline = false }: { inline?: boolean } = 
         <div className="px-5 pt-4 pb-3">
           {/* Question */}
           <div className="flex items-baseline justify-between gap-3 mb-3">
-            <div className="text-[15px] leading-relaxed text-droid-text break-words">
+            <div id={titleId} className="text-[15px] leading-relaxed text-droid-text break-words">
               {q.question}
             </div>
             {total > 1 && (
@@ -97,8 +151,10 @@ export default function AskUserModal({ inline = false }: { inline?: boolean } = 
               const selected = !typing && answer === opt.trim();
               return (
                 <button
-                  key={`${opt}-${i}`}
-                  onClick={() => pickOption(opt)}
+                  key={`${opt}-${String(i)}`}
+                  onClick={() => {
+                    pickOption(opt);
+                  }}
                   className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-left transition-colors border border-dashed ${
                     selected
                       ? 'border-droid-border-hover bg-droid-elevated/40'
@@ -137,7 +193,9 @@ export default function AskUserModal({ inline = false }: { inline?: boolean } = 
                   ref={inputRef}
                   type="text"
                   value={answers[q.index] ?? ''}
-                  onChange={(e) => setAnswers((p) => ({ ...p, [q.index]: e.target.value }))}
+                  onChange={(e) => {
+                    setAnswers((p) => ({ ...p, [q.index]: e.target.value }));
+                  }}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter' && !e.shiftKey) {
                       e.preventDefault();
@@ -162,7 +220,9 @@ export default function AskUserModal({ inline = false }: { inline?: boolean } = 
           <div className="flex items-center justify-end gap-2 mt-3">
             {current > 0 && (
               <button
-                onClick={() => setCurrent((c) => c - 1)}
+                onClick={() => {
+                  setCurrent((c) => c - 1);
+                }}
                 className="px-3.5 py-1.5 rounded-lg text-[12.5px] uppercase tracking-wide text-droid-text-secondary hover:bg-droid-elevated/60 transition-colors"
               >
                 Back

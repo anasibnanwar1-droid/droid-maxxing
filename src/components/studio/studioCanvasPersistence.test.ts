@@ -252,6 +252,33 @@ test('thread switches flush the previous canvas and ignore stale responses', () 
   assert.equal(harness.hydrated.at(-1)?.state.view.zoom, 0.8);
 });
 
+test('thread switches finish a newer edit queued behind an in-flight save', () => {
+  const harness = fixture();
+  harness.coordinator.open(target('thread-a'), emptyContent());
+  harness.coordinator.receive(stateEvent(document('thread-a', 1, 1)));
+  harness.coordinator.update(content(1.2));
+  harness.scheduler.run();
+  harness.coordinator.update(content(1.6));
+
+  harness.coordinator.open(target('thread-b'), emptyContent());
+  harness.coordinator.receive(savedEvent(document('thread-a', 2, 1.2)));
+
+  assert.deepEqual(harness.writes, [
+    {
+      cwd: '/repo/worktree',
+      canvasId: 'thread-a',
+      expectedRevision: 1,
+      content: content(1.2),
+    },
+    {
+      cwd: '/repo/worktree',
+      canvasId: 'thread-a',
+      expectedRevision: 2,
+      content: content(1.6),
+    },
+  ]);
+});
+
 test('an unsent draft uses one safe durable id and reopens independently', () => {
   assert.equal(canvasIdForSession(undefined), DRAFT_CANVAS_ID);
   assert.equal(canvasIdForSession(null), DRAFT_CANVAS_ID);

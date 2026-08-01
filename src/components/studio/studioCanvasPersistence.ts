@@ -194,6 +194,10 @@ export class CanvasSaveCoordinator {
   private restoreGeneration = 0;
   private writeInFlight = false;
   private writeFailureCount = 0;
+  private readonly detachedWrites = new Map<
+    string,
+    { target: CanvasPersistenceTarget; content: CanvasDocumentContent }
+  >();
   private cancelSchedule: CancelSchedule | null = null;
 
   constructor(
@@ -216,6 +220,7 @@ export class CanvasSaveCoordinator {
       return this.isLoaded ? 'ready' : 'pending';
     }
     this.flush();
+    this.detachPendingWrite();
     const promotesDraft =
       previous?.projectKey === target.projectKey &&
       previous.canvasId === DRAFT_CANVAS_ID &&
@@ -258,7 +263,10 @@ export class CanvasSaveCoordinator {
   }
 
   receive(event: CanvasEvent): void {
-    if (!this.matches(event.cwd, event.canvasId)) return;
+    if (!this.matches(event.cwd, event.canvasId)) {
+      this.receiveDetached(event);
+      return;
+    }
     if (event.type === 'design.canvas.state') {
       this.receiveState(event);
       return;
@@ -332,7 +340,51 @@ export class CanvasSaveCoordinator {
 
   dispose(): void {
     this.flush();
+    this.detachPendingWrite();
     this.target = null;
+  }
+
+  private detachPendingWrite(): void {
+    if (!this.target || !this.current) return;
+    if (stableContent(this.current) === this.lastSaved) return;
+    this.detachedWrites.set(this.persistenceKey(this.target.cwd, this.target.canvasId), {
+      target: this.target,
+      content: cloneContent(this.current),
+    });
+  }
+
+  private receiveDetached(event: CanvasEvent): void {
+    const key = this.persistenceKey(event.cwd, event.canvasId);
+    const pending = this.detachedWrites.get(key);
+    if (!pending) return;
+    if (event.type === 'design.canvas.saved') {
+      const saved = stableContent(documentContent(event.document));
+      if (stableContent(pending.content) === saved) {
+        this.detachedWrites.delete(key);
+        return;
+      }
+      this.transport.write({
+        cwd: pending.target.cwd,
+        canvasId: pending.target.canvasId,
+        expectedRevision: event.document.revision,
+        content: cloneContent(pending.content),
+      });
+      return;
+    }
+    if (event.type === 'design.canvas.error' && event.operation === 'write') {
+      this.onNotice([event.message]);
+      if (event.actualRevision === undefined) return;
+      this.transport.write({
+        cwd: pending.target.cwd,
+        canvasId: pending.target.canvasId,
+        expectedRevision: event.actualRevision,
+        content: cloneContent(pending.content),
+      });
+    }
+  }
+
+  private persistenceKey(cwd: string, canvasId: string): string {
+    return `${cwd}\u0000${canvasId}`;
   }
 
   private matches(cwd: string, canvasId: string): boolean {
