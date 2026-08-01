@@ -926,6 +926,7 @@ export class SessionManager {
   ): Promise<void> {
     const appSessionId = liveSession.summary.appSessionId;
     const contextTarget = this.primaryContextTarget(liveSession);
+    let completed = false;
     if (!this.isCurrentPrimarySession(liveSession)) return;
     this.eventFlow.beginTurn(appSessionId, appSessionId);
     this.context.beginTurn(appSessionId);
@@ -959,6 +960,7 @@ export class SessionManager {
         if (!this.isCurrentPrimarySession(liveSession)) break;
         this.eventFlow.applyStreamEvent(appSessionId, appSessionId, 'primary', ev);
       }
+      completed = this.isCurrentPrimarySession(liveSession);
     } catch (err) {
       if (!this.isCurrentPrimarySession(liveSession)) {
         return;
@@ -982,6 +984,10 @@ export class SessionManager {
       // must not wait on a slow or unavailable provider stats endpoint.
       if (this.isCurrentPrimarySession(liveSession)) {
         void this.context.refresh(contextTarget);
+      }
+      const cwd = liveSession.summary.cwd;
+      if (completed && cwd && isDesignStudioSession(liveSession.summary)) {
+        void this.design.afterDesignPrompt(cwd, appSessionId);
       }
     }
   }

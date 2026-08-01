@@ -1,7 +1,13 @@
 import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import test from 'node:test';
 
 import type { ServerEvent } from './protocol.js';
+import { writeDnaFile } from './design/dnaFiles.js';
+import { serializeTokenBlock } from './design/tokens.js';
+import { writeValidatorConfig } from './design/validator/config.js';
 import {
   assistantTextDelta,
   FakeFactorySession,
@@ -61,6 +67,51 @@ test('attached-reference Studio prompts keep TodoWrite disabled', async () => {
     await context.waitForIdle();
 
     assert.deepEqual(designToolPolicies(provider), [['TodoWrite']]);
+  } finally {
+    await context.dispose();
+  }
+});
+
+test('a completed Studio turn starts configured validation without delaying settlement', async (t) => {
+  const cwd = mkdtempSync(join(tmpdir(), 'droidex-post-prompt-validator-'));
+  t.after(() => rmSync(cwd, { recursive: true, force: true }));
+  writeDnaFile(
+    cwd,
+    'design',
+    serializeTokenBlock({
+      colors: { background: '#ffffff', text: '#111111' },
+      fonts: { sans: 'Inter, sans-serif' },
+      typeScale: [12, 14, 16],
+      spacing: [4, 8, 12],
+      radii: [4, 8],
+    }),
+  );
+  writeValidatorConfig(cwd, {
+    pages: [{ id: 'home', url: 'http://127.0.0.1:4173' }],
+    viewports: ['desktop'],
+    runAfterDesignPrompt: true,
+  });
+  const context = createSessionManagerTestContext();
+  try {
+    await context.create({
+      sessionPurpose: 'design',
+      clientRef: 'studio-validator',
+      cwd,
+      title: 'Studio validator',
+      goal: 'Polish the home page',
+      interactionMode: 'auto',
+      autonomy: 'low',
+    });
+    await context.waitForIdle();
+
+    assert.equal(
+      context.calls.some((call) => call.target === 'browser' && call.method === 'open'),
+      true,
+    );
+    assert.equal(
+      context.events.some((event) => event.type === 'design.validator.report'),
+      true,
+    );
   } finally {
     await context.dispose();
   }

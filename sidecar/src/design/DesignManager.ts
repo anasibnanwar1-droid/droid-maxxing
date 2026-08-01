@@ -75,6 +75,19 @@ export class DesignManager {
     }
   }
 
+  async afterDesignPrompt(cwd: string, appSessionId: string): Promise<void> {
+    if (!readValidatorConfig(cwd).runAfterDesignPrompt) return;
+    try {
+      await this.runValidator(cwd, appSessionId);
+    } catch (error) {
+      this.options.emit({
+        type: 'design.error',
+        cwd,
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
   // Injected into Design Mode prompts so agents read the project DNA before
   // touching UI code.
   // A tiny, prompt-cache-friendly pointer — not the DNA contents. Values are
@@ -102,6 +115,7 @@ export class DesignManager {
   }
 
   private async dispatch(cmd: DesignCommand): Promise<void> {
+    const commandType: string = cmd.type;
     switch (cmd.type) {
       case 'design.dna.read':
         this.emitDnaState(cmd.cwd);
@@ -279,6 +293,7 @@ export class DesignManager {
         this.canvases.write(cmd);
         return;
     }
+    throw new Error(`Unsupported design command: ${commandType}`);
   }
 
   // Resolve (and cache) an isolated design workspace for the live project path.
