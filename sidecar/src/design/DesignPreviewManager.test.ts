@@ -12,7 +12,13 @@ test('workspace previews emit and later resolve an honest canonical source descr
   const cwd = mkdtempSync(join(tmpdir(), 'droidex-preview-source-'));
   const pageDir = join(cwd, 'preview');
   mkdirSync(pageDir);
-  writeFileSync(join(pageDir, 'dashboard.html'), '<h1>Dashboard</h1>', 'utf8');
+  writeFileSync(
+    join(pageDir, 'dashboard.html'),
+    '<link rel="stylesheet" href="styles.css"><h1>Dashboard</h1>',
+    'utf8',
+  );
+  writeFileSync(join(pageDir, 'styles.css'), 'h1 { color: green; }', 'utf8');
+  writeFileSync(join(pageDir, '.env'), 'SECRET=not-for-preview', 'utf8');
   const server = new PreviewServer();
   t.after(async () => {
     await server.close();
@@ -31,6 +37,11 @@ test('workspace previews emit and later resolve an honest canonical source descr
     type: 'workspace-html',
     relativePath: 'preview/dashboard.html',
   });
+  const stylesheet = await fetch(new URL('styles.css', rendered.ok ? rendered.url : ''));
+  assert.equal(stylesheet.status, 200);
+  assert.equal(await stylesheet.text(), 'h1 { color: green; }');
+  const unreferenced = await fetch(new URL('.env', rendered.ok ? rendered.url : ''));
+  assert.equal(unreferenced.status, 404);
 
   const beforeResolve = events.length;
   const resolved = await previews.resolveSource(cwd, {

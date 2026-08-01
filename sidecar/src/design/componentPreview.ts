@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join, resolve, sep } from 'node:path';
@@ -21,6 +21,7 @@ export interface ComponentPreviewInput {
 export interface ComponentPreviewResult {
   dir: string;
   id: string;
+  assets?: string[];
   error?: string;
 }
 
@@ -81,7 +82,10 @@ export async function buildComponentPreview(
   }
 
   await writeFile(join(dir, 'index.html'), stageHtml(input.name));
-  return { dir, id };
+  const assets = (await readdir(dir, { withFileTypes: true }))
+    .filter((entry) => entry.isFile() && entry.name !== 'entry.tsx')
+    .map((entry) => entry.name);
+  return { dir, id, assets };
 }
 
 function entrySource(absComponentPath: string, input: ComponentPreviewInput): string {

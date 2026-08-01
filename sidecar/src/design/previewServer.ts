@@ -1,8 +1,10 @@
 import http from 'node:http';
 import { createReadStream } from 'node:fs';
-import { stat } from 'node:fs/promises';
+import { realpath, stat } from 'node:fs/promises';
 import type { AddressInfo } from 'node:net';
-import { extname, join, resolve, sep } from 'node:path';
+import { extname, isAbsolute, resolve, sep } from 'node:path';
+import { pipeline } from 'node:stream/promises';
+import type { Readable } from 'node:stream';
 
 const CONTENT_TYPES: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -28,7 +30,9 @@ const CONTENT_TYPES: Record<string, string> = {
 export class PreviewServer {
   private server?: http.Server;
   private port = 0;
-  private readonly registry = new Map<string, string>();
+  private readonly registry = new Map<string, PreviewRegistration>();
+
+  constructor(private readonly openFile: (path: string) => Readable = createReadStream) {}
 
   async start(): Promise<void> {
     if (this.server) return;
@@ -43,9 +47,21 @@ export class PreviewServer {
     this.server = server;
   }
 
-  /** Pin an id to an absolute directory and return the URL that serves it. */
-  register(id: string, dir: string): string {
-    this.registry.set(id, resolve(dir));
+  /** Pin an id to an explicit set of canonical files and return its base URL. */
+  async register(id: string, dir: string, assetPaths: readonly string[]): Promise<string> {
+    const root = await realpath(dir);
+    const assets = new Map<string, string>();
+    for (const assetPath of assetPaths) {
+      const key = normalizeAssetPath(assetPath);
+      const canonicalPath = await realpath(resolve(root, key));
+      if (!isWithin(root, canonicalPath)) {
+        throw new Error(`Preview asset is outside its registered root: ${assetPath}`);
+      }
+      const info = await stat(canonicalPath);
+      if (!info.isFile()) throw new Error(`Preview asset is not a file: ${assetPath}`);
+      assets.set(key, canonicalPath);
+    }
+    this.registry.set(id, { root, assets });
     return this.urlFor(id);
   }
 
@@ -69,31 +85,70 @@ export class PreviewServer {
         return;
       }
       const id = decodeURIComponent(match[1]);
-      const rel = match[2] ? decodeURIComponent(match[2]) : 'index.html';
-      const dir = this.registry.get(id);
-      if (!dir) {
+      const registration = this.registry.get(id);
+      if (!registration) {
         res.writeHead(404).end('unknown preview');
         return;
       }
-      const full = resolve(join(dir, rel));
-      if (full !== dir && !full.startsWith(`${dir}${sep}`)) {
+
+      let key: string;
+      try {
+        key = normalizeAssetPath(match[2] ? decodeURIComponent(match[2]) : 'index.html');
+      } catch {
         res.writeHead(403).end('forbidden');
         return;
       }
-      const info = await stat(full).catch(() => null);
-      const target = info?.isDirectory() ? resolve(join(full, 'index.html')) : full;
-      const finalInfo = info?.isDirectory() ? await stat(target).catch(() => null) : info;
-      if (!finalInfo?.isFile()) {
+
+      const registeredPath = registration.assets.get(key);
+      if (!registeredPath) {
         res.writeHead(404).end('not found');
         return;
       }
+
+      const target = await realpath(registeredPath).catch(() => null);
+      if (target !== registeredPath || !isWithin(registration.root, target)) {
+        res.writeHead(404).end('not found');
+        return;
+      }
+      const info = await stat(target).catch(() => null);
+      if (!info?.isFile()) {
+        res.writeHead(404).end('not found');
+        return;
+      }
+
       res.writeHead(200, {
         'content-type': CONTENT_TYPES[extname(target).toLowerCase()] ?? 'application/octet-stream',
         'cache-control': 'no-store',
       });
-      createReadStream(target).pipe(res);
+      await pipeline(this.openFile(target), res);
     } catch {
-      res.writeHead(500).end('error');
+      if (res.headersSent) {
+        res.destroy();
+      } else {
+        res.writeHead(500).end('error');
+      }
     }
   }
+}
+
+interface PreviewRegistration {
+  root: string;
+  assets: Map<string, string>;
+}
+
+function normalizeAssetPath(assetPath: string): string {
+  const normalized = assetPath.replaceAll('\\', '/');
+  const parts = normalized.split('/');
+  if (
+    normalized === '' ||
+    isAbsolute(normalized) ||
+    parts.some((part) => part === '' || part === '.' || part === '..')
+  ) {
+    throw new Error(`Invalid preview asset path: ${assetPath}`);
+  }
+  return normalized;
+}
+
+function isWithin(root: string, candidate: string): boolean {
+  return candidate === root || candidate.startsWith(`${root}${sep}`);
 }

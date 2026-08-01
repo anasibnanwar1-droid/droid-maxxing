@@ -53,6 +53,7 @@ export class DesignPreviewManager {
       id,
       dir,
       entry: 'index.html',
+      assets: ['index.html'],
       label: 'Brand guidelines',
       source: { type: 'brand-book' },
       shouldEmit,
@@ -75,6 +76,7 @@ export class DesignPreviewManager {
       id: built.id,
       dir: built.dir,
       entry: 'index.html',
+      assets: built.assets ?? ['index.html'],
       label: componentPreviewLabel(input.name),
       kind: 'component',
       source: {
@@ -96,50 +98,19 @@ export class DesignPreviewManager {
   }): Promise<PreviewResult | PreviewFailure> {
     const { cwd } = input;
     if (!cwd) return { ok: false, error: 'No workspace folder for this session.' };
-    const requestedName = input.name?.trim();
-    let label = requestedName !== undefined && requestedName !== '' ? requestedName : 'Preview';
+    const name = input.name?.trim();
+    const requestedName = name === '' ? undefined : name;
     try {
       if (input.prototypeId) {
-        const proto = listPrototypes(cwd).find((entry) => entry.id === input.prototypeId);
-        if (!proto) return { ok: false, error: `No prototype ${input.prototypeId}.` };
-        if (!input.name?.trim()) label = proto.name;
-        const id = previewId(cwd, `proto:${proto.id}`);
-        const dir = join(tmpdir(), 'droidex-preview', id);
-        await mkdir(dir, { recursive: true });
-        await writeFile(join(dir, 'index.html'), proto.html, 'utf8');
-        return await this.serve({
-          cwd,
-          id,
-          dir,
-          entry: 'index.html',
-          label,
-          source: { type: 'prototype', prototypeId: proto.id },
-          shouldEmit: input.shouldEmit ?? true,
-        });
+        return await this.renderPrototype(cwd, input.prototypeId, requestedName, input.shouldEmit);
       }
       if (input.path?.trim()) {
-        const abs = resolve(cwd, input.path.trim());
-        if (abs !== cwd && !abs.startsWith(cwd + sep)) {
-          return { ok: false, error: 'That path is outside the workspace.' };
-        }
-        if (!/\.html?$/i.test(abs)) {
-          return { ok: false, error: 'The entry page must be an .html file.' };
-        }
-        await readFile(abs, 'utf8');
-        if (!input.name?.trim()) label = basename(abs);
-        const id = previewId(cwd, `dir:${dirname(abs)}`);
-        return await this.serve({
+        return await this.renderWorkspaceHtml(
           cwd,
-          id,
-          dir: dirname(abs),
-          entry: basename(abs),
-          label,
-          source: {
-            type: 'workspace-html',
-            relativePath: relative(cwd, abs).split(sep).join('/'),
-          },
-          shouldEmit: input.shouldEmit ?? true,
-        });
+          input.path.trim(),
+          requestedName,
+          input.shouldEmit,
+        );
       }
       return { ok: false, error: 'Pass a path or a prototypeId to preview.' };
     } catch (error) {
@@ -148,6 +119,60 @@ export class DesignPreviewManager {
         error: error instanceof Error ? error.message : 'Could not read the file.',
       };
     }
+  }
+
+  private async renderPrototype(
+    cwd: string,
+    prototypeId: string,
+    requestedName: string | undefined,
+    shouldEmit: boolean | undefined,
+  ): Promise<PreviewResult | PreviewFailure> {
+    const proto = listPrototypes(cwd).find((entry) => entry.id === prototypeId);
+    if (!proto) return { ok: false, error: `No prototype ${prototypeId}.` };
+    const id = previewId(cwd, `proto:${proto.id}`);
+    const dir = join(tmpdir(), 'droidex-preview', id);
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, 'index.html'), proto.html, 'utf8');
+    return this.serve({
+      cwd,
+      id,
+      dir,
+      entry: 'index.html',
+      assets: ['index.html'],
+      label: requestedName ?? proto.name,
+      source: { type: 'prototype', prototypeId: proto.id },
+      shouldEmit: shouldEmit ?? true,
+    });
+  }
+
+  private async renderWorkspaceHtml(
+    cwd: string,
+    path: string,
+    requestedName: string | undefined,
+    shouldEmit: boolean | undefined,
+  ): Promise<PreviewResult | PreviewFailure> {
+    const abs = resolve(cwd, path);
+    if (abs !== cwd && !abs.startsWith(cwd + sep)) {
+      return { ok: false, error: 'That path is outside the workspace.' };
+    }
+    if (!/\.html?$/i.test(abs)) {
+      return { ok: false, error: 'The entry page must be an .html file.' };
+    }
+    const html = await readFile(abs, 'utf8');
+    const id = previewId(cwd, `dir:${dirname(abs)}`);
+    return this.serve({
+      cwd,
+      id,
+      dir: dirname(abs),
+      entry: basename(abs),
+      assets: workspaceHtmlAssets(abs, html),
+      label: requestedName ?? basename(abs),
+      source: {
+        type: 'workspace-html',
+        relativePath: relative(cwd, abs).split(sep).join('/'),
+      },
+      shouldEmit: shouldEmit ?? true,
+    });
   }
 
   async resolveSource(
@@ -203,7 +228,7 @@ export class DesignPreviewManager {
         .update(`${projectId}:${libraryId}`)
         .digest('hex')
         .slice(0, 16)}`;
-      const base = this.previewServer.register(id, imageDirectory);
+      const base = await this.previewServer.register(id, imageDirectory, [basename(imageFile)]);
       return { name: item.name, url: `${base}${encodeURIComponent(basename(imageFile))}` };
     } catch {
       return { name: item.name, error: 'The durable library image could not be read.' };
@@ -215,13 +240,14 @@ export class DesignPreviewManager {
     id: string;
     dir: string;
     entry: string;
+    assets: readonly string[];
     label: string;
     source: CanvasFrameSource;
     kind?: 'page' | 'component';
     shouldEmit: boolean;
   }): Promise<PreviewResult> {
     await this.previewServer.start();
-    const base = this.previewServer.register(input.id, input.dir);
+    const base = await this.previewServer.register(input.id, input.dir, input.assets);
     const url = input.entry === 'index.html' ? base : `${base}${encodeURIComponent(input.entry)}`;
     if (input.shouldEmit) {
       this.emit({
@@ -240,4 +266,25 @@ export class DesignPreviewManager {
 
 function previewId(cwd: string, key: string): string {
   return `preview-${createHash('sha1').update(`${cwd} ${key}`).digest('hex').slice(0, 12)}`;
+}
+
+function workspaceHtmlAssets(entryPath: string, html: string): string[] {
+  const root = dirname(entryPath);
+  const assets = new Set([basename(entryPath)]);
+  const sourcePattern = /\b(?:src|href)\s*=\s*["']([^"']+)["']/gi;
+  for (const match of html.matchAll(sourcePattern)) {
+    const reference = match[1].split(/[?#]/, 1)[0];
+    if (
+      reference === '' ||
+      reference.startsWith('/') ||
+      reference.startsWith('//') ||
+      /^[a-z][a-z\d+.-]*:/i.test(reference)
+    ) {
+      continue;
+    }
+    const assetPath = resolve(root, reference);
+    const relativePath = relative(root, assetPath).split(sep).join('/');
+    if (relativePath !== '..' && !relativePath.startsWith('../')) assets.add(relativePath);
+  }
+  return [...assets];
 }
