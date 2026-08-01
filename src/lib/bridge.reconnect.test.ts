@@ -78,6 +78,114 @@ test('reconnect handshakes run before commands queued while disconnected', async
   }
 });
 
+test('native reset replay waits for the next bridge-ready socket', async () => {
+  const oldWindow = globalThis.window;
+  const OldWebSocket = globalThis.WebSocket;
+  FakeWebSocket.instances = [];
+  try {
+    Object.assign(globalThis, {
+      window: {
+        droidControl: {
+          bridgeInfo: async () => ({ port: 43127, token: 'reset-token' }),
+        },
+      },
+      WebSocket: FakeWebSocket,
+    });
+    const bridge = new Bridge((action) => {
+      action();
+    });
+    bridge.subscribeOpen(() => [{ type: 'connect', apiKey: 'reconnect-key' }]);
+
+    await bridge.start();
+    const first = FakeWebSocket.instances[0];
+    assert.ok(first);
+    first.open();
+    await nextTask();
+
+    bridge.sendOnNextOpen({
+      type: 'browser.open',
+      appSessionId: 'browser-session',
+      url: 'http://127.0.0.1:3000',
+    });
+    assert.deepEqual(first.sent.map(parseCommand), [{ type: 'connect', apiKey: 'reconnect-key' }]);
+
+    first.close();
+    const second = FakeWebSocket.instances[1];
+    assert.ok(second);
+    second.open();
+    await nextTask();
+
+    assert.deepEqual(second.sent.map(parseCommand), [
+      { type: 'connect', apiKey: 'reconnect-key' },
+      {
+        type: 'browser.open',
+        appSessionId: 'browser-session',
+        url: 'http://127.0.0.1:3000',
+      },
+    ]);
+  } finally {
+    Object.assign(globalThis, { window: oldWindow, WebSocket: OldWebSocket });
+  }
+});
+
+test('native reset during bootstrap never replays on the dying socket', async () => {
+  const oldWindow = globalThis.window;
+  const OldWebSocket = globalThis.WebSocket;
+  FakeWebSocket.instances = [];
+  let finishBootstrap = (): void => {
+    throw new Error('Bootstrap listener did not start.');
+  };
+  try {
+    Object.assign(globalThis, {
+      window: {
+        droidControl: {
+          bridgeInfo: async () => ({ port: 43128, token: 'bootstrap-reset-token' }),
+        },
+      },
+      WebSocket: FakeWebSocket,
+    });
+    const bridge = new Bridge((action) => action());
+    bridge.subscribeOpen(
+      () =>
+        new Promise((resolve) => {
+          finishBootstrap = () => resolve([{ type: 'connect', apiKey: 'ready-key' }]);
+        }),
+    );
+
+    await bridge.start();
+    const first = FakeWebSocket.instances[0];
+    assert.ok(first);
+    first.open();
+    await nextTask();
+    bridge.sendOnNextOpen({
+      type: 'browser.open',
+      appSessionId: 'browser-session',
+      url: 'http://127.0.0.1:3000',
+    });
+    finishBootstrap();
+    await nextTask();
+    assert.deepEqual(first.sent.map(parseCommand), [{ type: 'connect', apiKey: 'ready-key' }]);
+
+    first.close();
+    const second = FakeWebSocket.instances[1];
+    assert.ok(second);
+    second.open();
+    await nextTask();
+    finishBootstrap();
+    await nextTask();
+    assert.deepEqual(second.sent.map(parseCommand), [
+      { type: 'connect', apiKey: 'ready-key' },
+      {
+        type: 'browser.open',
+        appSessionId: 'browser-session',
+        url: 'http://127.0.0.1:3000',
+      },
+    ]);
+  } finally {
+    Object.assign(globalThis, { window: oldWindow, WebSocket: OldWebSocket });
+  }
+});
+
 test('commands remain queued while asynchronous reconnect bootstrap is pending', async () => {
   const oldWindow = globalThis.window;
   const OldWebSocket = globalThis.WebSocket;

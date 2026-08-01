@@ -11,6 +11,7 @@ export class Bridge {
   private listeners = new Set<Listener>();
   private openListeners = new Set<OpenListener>();
   private queue: ClientCommand[] = [];
+  private nextOpenQueue: { command: ClientCommand; excludedSocket: WebSocket | null }[] = [];
   private backoff = 500;
   private url = '';
   private started = false;
@@ -79,6 +80,7 @@ export class Bridge {
     if (this.ws !== ws) return;
     this.backoff = 500;
     if (this.openListeners.size === 0) {
+      this.flushNextOpenQueue(ws);
       this.readyWs = ws;
       this.flushQueue(ws);
       return;
@@ -91,6 +93,7 @@ export class Bridge {
       handshakes.flat().forEach((command) => {
         ws.send(JSON.stringify(command));
       });
+      this.flushNextOpenQueue(ws);
       this.readyWs = ws;
       this.flushQueue(ws);
     } catch (error) {
@@ -108,6 +111,15 @@ export class Bridge {
     });
   }
 
+  private flushNextOpenQueue(ws: WebSocket): void {
+    if (this.ws !== ws || ws.readyState !== WebSocket.OPEN) return;
+    const ready = this.nextOpenQueue.filter((pending) => pending.excludedSocket !== ws);
+    this.nextOpenQueue = this.nextOpenQueue.filter((pending) => pending.excludedSocket === ws);
+    ready.forEach(({ command }) => {
+      ws.send(JSON.stringify(command));
+    });
+  }
+
   send(cmd: ClientCommand): void {
     const ws = this.ws;
     if (ws && this.readyWs === ws && ws.readyState === WebSocket.OPEN) {
@@ -115,6 +127,10 @@ export class Bridge {
       return;
     }
     this.queue.push(cmd);
+  }
+
+  sendOnNextOpen(cmd: ClientCommand): void {
+    this.nextOpenQueue.push({ command: cmd, excludedSocket: this.ws });
   }
 
   subscribe(l: Listener): () => void {

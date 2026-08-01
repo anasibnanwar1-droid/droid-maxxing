@@ -176,6 +176,15 @@ export const openBrowser = (input: {
   viewportMode?: BrowserViewportMode;
 }) => bridge.send({ type: 'browser.open', ...input });
 
+export const reopenBrowserAfterReconnect = (input: {
+  appSessionId: string;
+  url: string;
+  viewport?: BrowserViewport;
+  viewportMode?: BrowserViewportMode;
+}) => {
+  bridge.sendOnNextOpen({ type: 'browser.open', ...input });
+};
+
 export const closeBrowser = (appSessionId: string) =>
   bridge.send({ type: 'browser.close', appSessionId });
 

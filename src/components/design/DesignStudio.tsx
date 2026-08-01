@@ -1,15 +1,17 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { useStore } from '../../hooks/useStore';
 import { useDesignStore } from '../../hooks/useDesignStore';
 import { prepareDesignWorkspace } from '../../lib/commands';
 import { pickDirectory } from '../../lib/desktop';
+import { getGitWorktrees } from '../../lib/git';
 import { pushEscapeLayer } from '../environment/usePopover';
 import AskUserModal from '../AskUserModal';
 import { StudioCanvasProvider } from '../studio/StudioCanvasContext';
 import StudioShell from '../studio/StudioShell';
 import {
-  canonicalLiveProjectCwd,
+  knownLiveProjectCwd,
+  recoverLiveProjectCwd,
   studioRepositoryCwds,
   studioWorkspaceAccess,
 } from './designStudioProject';
@@ -29,21 +31,44 @@ export default function DesignStudio() {
   const activeSession = state.activeAppSessionId ? state.sessions[state.activeAppSessionId] : null;
   // Live project path (the user's open workspace / active chat).
   const firstWorkspaceCwd = state.workspaceCwds[0] ?? '';
-  const knownWorkspaces = Object.values(design.workspaces);
-  const preferredLiveCwd = canonicalLiveProjectCwd(
-    activeSession?.cwd ?? firstWorkspaceCwd,
-    knownWorkspaces,
-  );
+  const knownWorkspaces = useMemo(() => Object.values(design.workspaces), [design.workspaces]);
+  const preferredProjectCwd = activeSession?.cwd ?? firstWorkspaceCwd;
+  const knownLiveCwd = knownLiveProjectCwd(preferredProjectCwd, knownWorkspaces);
+  const hasKnownWorkspace = knownLiveCwd !== undefined;
+  const [recoveredProject, setRecoveredProject] = useState({ source: '', liveCwd: '' });
+  const recoveredLiveCwd =
+    recoveredProject.source === preferredProjectCwd ? recoveredProject.liveCwd : '';
+  const preferredLiveCwd = knownLiveCwd ?? recoveredLiveCwd;
   const [selectedLiveCwd, setSelectedLiveCwd] = useState('');
   const liveCwd = selectedLiveCwd || preferredLiveCwd;
+  const projectIdentities = recoveredLiveCwd
+    ? [...knownWorkspaces, { liveCwd: recoveredLiveCwd, path: preferredProjectCwd }]
+    : knownWorkspaces;
   const repositoryCwds = studioRepositoryCwds(
     preferredLiveCwd,
     state.workspaceCwds,
-    knownWorkspaces,
+    projectIdentities,
   );
   const workspace = liveCwd ? design.workspaces[liveCwd] : undefined;
   const workspaceError = design.lastError?.cwd === liveCwd ? design.lastError.message : undefined;
   const workspaceAccess = studioWorkspaceAccess(liveCwd, workspace, workspaceError);
+  const isRecoveringProject =
+    !selectedLiveCwd && !!preferredProjectCwd && !hasKnownWorkspace && !preferredLiveCwd;
+
+  useEffect(() => {
+    if (!preferredProjectCwd || hasKnownWorkspace) return;
+    let disposed = false;
+    void recoverLiveProjectCwd(preferredProjectCwd, knownWorkspaces, getGitWorktrees).then(
+      (recoveredLiveCwd) => {
+        if (!disposed) {
+          setRecoveredProject({ source: preferredProjectCwd, liveCwd: recoveredLiveCwd });
+        }
+      },
+    );
+    return () => {
+      disposed = true;
+    };
+  }, [hasKnownWorkspace, knownWorkspaces, preferredProjectCwd]);
 
   useEffect(() => {
     if (!design.studioOpen) {
@@ -101,7 +126,9 @@ export default function DesignStudio() {
               />
             </StudioCanvasProvider>
           )}
-          {(workspaceAccess.kind === 'loading' || workspaceAccess.kind === 'error') && (
+          {(isRecoveringProject ||
+            workspaceAccess.kind === 'loading' ||
+            workspaceAccess.kind === 'error') && (
             <WorkspaceState
               error={workspaceAccess.kind === 'error' ? workspaceAccess.message : undefined}
               onRetry={() => {
@@ -112,7 +139,7 @@ export default function DesignStudio() {
               }}
             />
           )}
-          {workspaceAccess.kind === 'empty' && (
+          {!isRecoveringProject && workspaceAccess.kind === 'empty' && (
             <EmptyState
               onClose={() => {
                 designDispatch({ type: 'CLOSE_STUDIO' });

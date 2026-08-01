@@ -38,7 +38,7 @@ import {
   type NativeBrowserSelection,
   reloadNativeBrowser,
 } from '../../lib/nativeBrowser';
-import { openBrowser } from '../../lib/commands';
+import { reopenBrowserAfterReconnect } from '../../lib/commands';
 import { useNativeBrowserResetGeneration } from './useNativeBrowserReset';
 import { registerNativeBrowserController } from '../../lib/nativeBrowserAgent';
 import { nativeBrowserRequestTargetsVisibleSurface } from '../../lib/browserSessionIdentity';
@@ -125,7 +125,12 @@ export function NativeBrowserSurface({
     attachingSessionRef.current = undefined;
     lastBounds.current = null;
     if (visibleBrowserSessionId && urlRef.current && !obscuredRef.current) {
-      openBrowser({ appSessionId: browserKey, url: urlRef.current, viewport, viewportMode });
+      reopenBrowserAfterReconnect({
+        appSessionId: browserKey,
+        url: urlRef.current,
+        viewport,
+        viewportMode,
+      });
     }
   });
   const surface = useMemo(

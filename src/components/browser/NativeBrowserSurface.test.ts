@@ -12,3 +12,8 @@ test('iframe lifecycle uses callback refs instead of callback dependencies', () 
     /}, \[browserKey, designMode, native, pencilMode, url, visibleBrowserSessionId\]\);/,
   );
 });
+
+test('native reset defers browser replay until bridge reconnect', () => {
+  assert.match(source, /reopenBrowserAfterReconnect\(\{/);
+  assert.doesNotMatch(source, /openBrowser\(\{ appSessionId: browserKey/);
+});
