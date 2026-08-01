@@ -263,16 +263,42 @@ test('version-one index missing the canonical spawn-kind check uses hard-cut rec
     index.close();
     const indexPath = join(malformedHome, '.factory', 'droid-control', SESSION_INDEX_FILENAME);
     const db = new DatabaseSync(indexPath);
-    const table = db
-      .prepare("SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = 'child_sessions'")
-      .get() as { sql: string };
-    const malformedSql = table.sql.replace(" CHECK (spawn_link_kind IN ('tool-use', 'spawn'))", '');
-    assert.notEqual(malformedSql, table.sql);
-    db.exec('PRAGMA writable_schema = ON;');
-    db.prepare(
-      "UPDATE sqlite_schema SET sql = ? WHERE type = 'table' AND name = 'child_sessions'",
-    ).run(malformedSql);
-    db.exec('PRAGMA writable_schema = OFF;');
+    db.exec(`
+      BEGIN;
+      DROP INDEX child_sessions_provider_identity;
+      DROP INDEX child_sessions_spawn_identity;
+      ALTER TABLE child_sessions RENAME TO malformed_child_sessions;
+      CREATE TABLE child_sessions (
+        parent_app_session_id TEXT NOT NULL,
+        child_session_id TEXT NOT NULL,
+        provider_session_id TEXT,
+        role TEXT NOT NULL CHECK (role IN ('worker', 'validator')),
+        label TEXT,
+        prompt TEXT,
+        status TEXT NOT NULL CHECK (status IN ('pending', 'running', 'paused', 'completed')),
+        model_id TEXT NOT NULL,
+        reasoning_effort TEXT,
+        spawn_link_kind TEXT,
+        spawn_link_id TEXT,
+        transcript_available INTEGER NOT NULL CHECK (transcript_available IN (0, 1)),
+        started_at INTEGER,
+        updated_at INTEGER NOT NULL,
+        CHECK (
+          (spawn_link_kind IS NULL AND spawn_link_id IS NULL) OR
+          (spawn_link_kind IS NOT NULL AND spawn_link_id IS NOT NULL)
+        ),
+        PRIMARY KEY (parent_app_session_id, child_session_id)
+      );
+      INSERT INTO child_sessions SELECT * FROM malformed_child_sessions;
+      DROP TABLE malformed_child_sessions;
+      CREATE UNIQUE INDEX child_sessions_provider_identity
+        ON child_sessions (parent_app_session_id, provider_session_id)
+        WHERE provider_session_id IS NOT NULL;
+      CREATE UNIQUE INDEX child_sessions_spawn_identity
+        ON child_sessions (parent_app_session_id, spawn_link_kind, spawn_link_id)
+        WHERE spawn_link_id IS NOT NULL;
+      COMMIT;
+    `);
     db.close();
 
     assert.throws(

@@ -13,6 +13,7 @@ export default {
           bg: v('--droid-bg'),
           surface: v('--droid-surface'),
           elevated: v('--droid-elevated'),
+          field: v('--droid-field'),
           active: v('--droid-active'),
           border: v('--droid-border'),
           'border-hover': v('--droid-border-hover'),

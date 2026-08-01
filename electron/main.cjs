@@ -50,7 +50,12 @@ const BROWSER_PARTITION = 'persist:droid-control-browser';
 let browserSessionConfigured = false;
 
 app.setName(APP_NAME);
-app.setPath('userData', path.join(app.getPath('appData'), APP_NAME));
+// Overridable so a second dev instance (e.g. a feature worktree) can run beside
+// the main one without fighting over the Chromium profile lock.
+app.setPath(
+  'userData',
+  process.env.DROID_USER_DATA_DIR || path.join(app.getPath('appData'), APP_NAME),
+);
 
 app.whenReady().then(() => {
   installApplicationMenu();

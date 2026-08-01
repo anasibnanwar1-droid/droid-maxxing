@@ -7,6 +7,8 @@
     --droid-bg: #0a0a0a;
     --droid-surface: #111111;
     --droid-elevated: #1e1e1e;
+    /* Input fields inside cards; dark fallback, applyTheme derives per theme. */
+    --droid-field: #1e1e1e;
     /* One step above elevated: the lightest neutral, for selected/active rows so
        the surface ramp reads bg < surface < elevated < active. */
     --droid-active: #292929;

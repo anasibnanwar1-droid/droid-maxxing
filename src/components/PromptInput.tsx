@@ -405,19 +405,22 @@ export default function PromptInput({
     clearAndDiscardImages();
   }, [activeSession?.appSessionId, clearAndDiscardImages]);
 
-  // Welcome-screen suggestion cards seed the composer through the store so the
-  // empty state and this input stay decoupled. The pendingCaret effect below
-  // focuses the field and moves the caret to the end of the seeded text.
+  // Welcome-screen suggestion cards and saved notes seed the composer through
+  // the store so those surfaces and this input stay decoupled. The pendingCaret
+  // effect below focuses the field and moves the caret to the end of the text.
   const composerSeed = state.composerSeed;
   useEffect(() => {
     if (!composerSeed) return;
     setHistoryIndex(null);
-    setInput(composerSeed.text);
-    pendingCaret.current = composerSeed.text.length;
+    // Append to an in-progress draft instead of clobbering it (welcome cards
+    // only appear over an empty composer, so this is a plain set for them).
+    const text = input.trim() ? `${input.trimEnd()}\n\n${composerSeed.text}` : composerSeed.text;
+    setInput(text);
+    pendingCaret.current = text.length;
     // Consume the seed so a later remount (e.g. toggling Mission Control, which
     // unmounts this input) does not re-apply stale text over the user's edits.
     dispatch({ type: 'CLEAR_COMPOSER_SEED' });
-  }, [composerSeed, dispatch]);
+  }, [composerSeed, input, dispatch]);
 
   useEffect(() => {
     if (textareaRef.current) {

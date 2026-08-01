@@ -1,23 +1,13 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useStore } from '../hooks/useStore';
-import { latestTodoSnapshot, type TodoItem } from '../lib/tools';
-import { scopeTranscriptToAgent } from '../lib/transcript';
 import { useSessionLive } from '../hooks/useSessionLive';
 import { useGitEnvironment } from '../hooks/useGitEnvironment';
 import { usePullRequest } from '../hooks/usePullRequest';
 import { interruptChild } from '../lib/commands';
 import { motion, AnimatePresence } from 'framer-motion';
-import {
-  Hash,
-  Loader2,
-  ChevronRight,
-  CornerDownRight,
-  CheckCircle2,
-  Circle,
-  Square,
-  FileText,
-} from 'lucide-react';
+import { Hash, Loader2, ChevronRight, CornerDownRight, Square, FileText } from 'lucide-react';
 import { ModelIcon, providerOf } from './ModelIcon';
+import NotesSection from './NotesSection';
 import { Row, SectionHeader, Divider } from './environment/primitives';
 import { EnvironmentSection } from './environment/EnvironmentSection';
 import { PullRequestPanel } from './environment/PullRequestPanel';
@@ -102,18 +92,9 @@ function ChildSessionRow({
   );
 }
 
-function statusIcon(status: string) {
-  if (status === 'completed')
-    return <CheckCircle2 className="w-4 h-4" style={{ color: '#6f8f6f' }} />;
-  if (status === 'in_progress')
-    return <Loader2 className="w-4 h-4 animate-spin" style={{ color: '#b0985f' }} />;
-  return <Circle className="w-4 h-4 text-droid-text-muted/50" />;
-}
-
 export default function RightPanel() {
   const { state, dispatch } = useStore();
   const activeSession = state.activeAppSessionId ? state.sessions[state.activeAppSessionId] : null;
-  const features = activeSession?.features ?? [];
   const cwd = activeSession?.cwd ?? '';
 
   const [diffMode, setDiffMode] = useState<DiffStatMode>('worktree');
@@ -130,9 +111,6 @@ export default function RightPanel() {
     setView('context');
   }, [activeSession?.appSessionId, git.env?.branch]);
 
-  // Mission control owns its own feature-based progress; for chat/spec sessions
-  // we always prefer the model's own TodoWrite list as the source of truth.
-  const transcript = activeSession ? (state.transcripts[activeSession.appSessionId] ?? []) : [];
   const visibleTarget = visibleSessionTarget(
     activeSession?.appSessionId,
     state.selectedChild,
@@ -140,29 +118,13 @@ export default function RightPanel() {
     state.childAccess,
   );
   const selectedAgent = visibleTarget.kind === 'child' ? visibleTarget.childSessionId : null;
-  const todoResult = useMemo(() => {
-    if (!activeSession || activeSession.sessionPurpose === 'mission-control')
-      return { todos: [] as TodoItem[], foundPayload: false };
-    return latestTodoSnapshot(scopeTranscriptToAgent(transcript, selectedAgent));
-  }, [activeSession, transcript, selectedAgent]);
-  const todos = todoResult.todos;
-  const useTodos = todoResult.foundPayload;
 
   const sessionSpecsById: Partial<typeof state.sessionSpecs> = state.sessionSpecs;
   const activeSpec = activeSession ? sessionSpecsById[activeSession.appSessionId] : undefined;
-  const completed = useTodos
-    ? todos.filter((t) => t.status === 'completed').length
-    : features.filter((f) => f.status === 'completed').length;
-  const total = useTodos ? todos.length : features.length;
-  const pct = total > 0 ? Math.round((completed / total) * 100) : 0;
 
   // Authoritative "is the model generating right now" signal — respects the
   // backend `streaming` flag and terminal phases, so the spinner stops on reply.
   const working = useSessionLive(activeSession?.appSessionId ?? null);
-
-  // Auto-expand the step list while the model is working; otherwise collapse it.
-  const [progressManual, setProgressManual] = useState<boolean | null>(null);
-  const progressOpen = progressManual ?? working;
 
   // Child sessions spawned here (the same source the sidebar uses).
   const childSessions = activeSession
@@ -349,92 +311,14 @@ export default function RightPanel() {
               </div>
             )}
 
-            {/* Progress (collapsible) — under Environment */}
+            {/* Notes — scratch reminders that hand their text to the composer.
+                Keyed by session so the pad's draft and chipped tag reset on a
+                session switch instead of leaking into the next session. */}
             {activeSession && (
-              <div>
-                <Divider />
-                <button
-                  onClick={() => {
-                    setProgressManual(!progressOpen);
-                  }}
-                  className="w-full flex items-center justify-between px-3 pt-2 pb-1.5"
-                >
-                  <span className="flex items-center gap-1.5 text-[12.5px] font-medium text-droid-text-muted">
-                    <ChevronRight
-                      className={`w-3.5 h-3.5 transition-transform ${progressOpen ? 'rotate-90' : ''}`}
-                    />
-                    Progress
-                  </span>
-                  <span className="flex items-center gap-2">
-                    {working && <Loader2 className="w-3.5 h-3.5 animate-spin text-droid-accent" />}
-                    {total > 0 && (
-                      <span className="font-mono text-[11px] text-droid-text-muted">
-                        {completed}/{total}
-                      </span>
-                    )}
-                  </span>
-                </button>
-
-                <AnimatePresence initial={false}>
-                  {progressOpen && (
-                    <motion.div
-                      initial={{ height: 0, opacity: 0 }}
-                      animate={{ height: 'auto', opacity: 1 }}
-                      exit={{ height: 0, opacity: 0 }}
-                      className="overflow-hidden"
-                    >
-                      {total > 0 && (
-                        <div className="px-3 pt-1 pb-2">
-                          <div className="h-1.5 bg-droid-border/50 rounded-full overflow-hidden">
-                            <motion.div
-                              className="h-full rounded-full bg-droid-accent"
-                              initial={false}
-                              animate={{ width: `${String(pct)}%` }}
-                              transition={{ duration: 0.5, ease: 'easeOut' }}
-                            />
-                          </div>
-                        </div>
-                      )}
-                      {useTodos
-                        ? todos.map((t, i) => (
-                            <div key={i} className="flex items-start gap-2.5 px-3 py-1.5">
-                              <span className="mt-0.5 shrink-0">{statusIcon(t.status)}</span>
-                              <span
-                                className={`text-[12.5px] leading-snug ${
-                                  t.status === 'completed'
-                                    ? 'text-droid-text-muted line-through'
-                                    : t.status === 'in_progress'
-                                      ? 'text-droid-text'
-                                      : 'text-droid-text-secondary'
-                                }`}
-                              >
-                                {t.text}
-                              </span>
-                            </div>
-                          ))
-                        : features.map((f) => (
-                            <Row
-                              key={f.id}
-                              icon={statusIcon(f.status)}
-                              label={f.description}
-                              onClick={() => {
-                                dispatch({
-                                  type: 'SELECT_FEATURE',
-                                  id: state.selectedFeatureId === f.id ? null : f.id,
-                                });
-                              }}
-                              active={state.selectedFeatureId === f.id}
-                            />
-                          ))}
-                      {total === 0 && (
-                        <div className="px-3 py-1.5 text-[12px] text-droid-text-muted">
-                          {working ? 'Working…' : 'No steps yet'}
-                        </div>
-                      )}
-                    </motion.div>
-                  )}
-                </AnimatePresence>
-              </div>
+              <NotesSection
+                key={activeSession.appSessionId}
+                appSessionId={activeSession.appSessionId}
+              />
             )}
 
             {/* Selected step detail */}

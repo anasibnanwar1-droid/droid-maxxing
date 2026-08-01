@@ -99,6 +99,10 @@ export function applyTheme(theme: ThemeSettings) {
   const bgIsDark = colorLuminance(theme.bg) < 0.4;
   const lift = (amount: number) => adjustColor(theme.surface, bgIsDark ? amount : -amount);
   root.style.setProperty('--droid-elevated', lift(13));
+  // Input fields inside cards: lifted like elevated on dark (reads as a raised
+  // pad), plain surface on light so fields stay crisp on the tinted card
+  // instead of stepping darker into a grey smudge.
+  root.style.setProperty('--droid-field', bgIsDark ? lift(13) : theme.surface);
   // The most-raised neutral, for selected/active rows.
   root.style.setProperty('--droid-active', lift(26));
   // Soften resting borders by blending toward the background so panel/section
