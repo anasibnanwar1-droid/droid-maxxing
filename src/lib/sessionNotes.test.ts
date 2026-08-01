@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   MAX_NOTES_PER_SESSION,
+  MAX_NOTE_SESSIONS,
   MAX_NOTE_TEXT_LENGTH,
   addSessionNote,
   dismissNotesIntro,
@@ -63,6 +64,26 @@ test('addSessionNote bounds text length and notes per session', () => {
   assert.equal(map.s1.length, MAX_NOTES_PER_SESSION);
   // Oldest notes are dropped first.
   assert.equal(map.s1.at(-1)?.text, `note ${String(10)}`);
+});
+
+test('addSessionNote keeps the map within the session bound, pruning the oldest', () => {
+  let map: SessionNotesMap = {};
+  for (let i = 0; i < MAX_NOTE_SESSIONS; i++) {
+    map = addSessionNote(map, `s${String(i)}`, 'note') ?? map;
+  }
+  assert.equal(Object.keys(map).length, MAX_NOTE_SESSIONS);
+
+  // A note for a new session evicts the oldest session, keeping the freshest.
+  const next = addSessionNote(map, 'fresh', 'note');
+  assert.ok(next);
+  assert.equal(Object.keys(next).length, MAX_NOTE_SESSIONS);
+  assert.equal('s0' in next, false);
+  assert.ok(next.fresh);
+
+  // Adding to an existing session at capacity evicts nothing.
+  const same = addSessionNote(next, 'fresh', 'another');
+  assert.equal(Object.keys(same ?? {}).length, MAX_NOTE_SESSIONS);
+  assert.ok(same?.s1);
 });
 
 test('markSessionNoteUsed stamps the first use only', () => {
