@@ -104,6 +104,8 @@ The earlier Phase 1-5 plan in this document is built or absorbed. What exists to
 - **Preview plumbing.** Loopback-only, path-confined static preview server (`previewServer.ts`, MAX_FRAMES=24, in-place frame reload); single-component esbuild stage (`componentPreview.ts`); component registry scan (`registryScan.ts`).
 - **Validator core.** Rules for off-palette color, off-scale font/radius/spacing, unknown font family (`validator/audit.ts`), runner over pages x viewports (`validator/runner.ts`), collection via `auditEntryFor()` in `electron/nativeBrowserPreload.cjs`, config + Studio tab.
 - **References.** Browser-captured reference library with computed styles and screenshots (`referenceLibrary.ts`, `referenceExtract.ts`).
+- **Durable canvas context.** Revisioned per-thread canvas documents survive app restarts; frames, drawings, and pasted image placements are persisted without base64 or runtime state (`canvasDocument.ts`, `CanvasDocumentManager.ts`). Moodboard/inspiration/reference images resolve through bounded library IDs and can be attached to an agent turn.
+- **Shared session delivery.** Main chat and Studio use the same prompt-delivery/composer semantics. Active-turn steering uses the SDK's safe-boundary send, Stop owns interruption, and automatic compaction is provider-owned through `compactionThresholdCheckEnabled`: it reacts to `compacting_conversation` / `session_compacted` in place without changing provider identity or injecting a recap prompt.
 
 Known gaps this roadmap exists to close:
 
@@ -111,7 +113,8 @@ Known gaps this roadmap exists to close:
 - `MOTION.md` is freeform prose: never parsed, never measured. The audit collector captures 6 static style keys and zero transition/animation properties.
 - The validator is a user-operated tab, not a loop.
 - No discovery beyond the one-time intake; no durable understanding artifact; taste signals (picks, rejections, reasons) are not recorded anywhere.
-- Canvas restore is in-memory only.
+- The canvas has no authoritative, event-driven working state between prompt acceptance and the first preview. A build can look frozen, an empty restore overlay can linger, and preview arrival does not yet complete a stable working-frame -> rendered-frame handoff.
+- Studio trust and finish need a dedicated stabilization gate: model/repo/control truth, drawing selection ergonomics, visual-reference attachment integrity, embedded-browser recovery, popover layering, concise naming, and explicit diagnostics for stalled preview creation.
 - **Tokens are single-theme.** `DesignTokens.colors` is one flat map; light/dark exists only as prose policy. There is no live theme toggle for previews or the brand book, curated libraries ship one theme each, and the validator would flag a correct dark theme as off-palette against light tokens.
 - The validator's `runAfterDesignPrompt` config toggle is dead code: persisted and shown in the tab UI, but nothing consumes it (superseded by the Phase D post-turn gate; remove it there).
 - Validator coverage is narrow: six computed properties, `paddingTop`-only spacing, first-corner radius, no border/shadow/gradient/line-height checks; reports are in-memory only and require the native browser runtime.
@@ -232,11 +235,13 @@ Ordering follows the vision's priorities. A and B are independent and can run in
 
 **How.**
 
-1. **Web (now).** Canvas frames pointing at the worktree dev server with per-frame viewport presets; `attachIframeDesignMode` per frame for selection; source anchors via the existing `resolveSource` chain. Multi-viewport spreads of the same live page. Persist canvas layout per thread to disk (closes the in-memory restore gap) alongside the existing thread history storage.
+1. **Web (now).** Durable per-thread canvas persistence is built. The remaining web slice is canvas frames pointing at the worktree dev server with per-frame viewport presets; `attachIframeDesignMode` per frame for selection; source anchors via the existing `resolveSource` chain; and multi-viewport spreads of the same live page.
 2. **Electron (next).** Reuse the droid-control Electron-driving machinery: the embedded frame is a screenshot stream + forwarded input for the target app's window, rendered as a canvas frame. Design-mode selection maps through the same preload anchors when the target is a dev build; production builds degrade to region selection + screenshots until production source mapping lands.
 3. **iOS (spike first, stand on existing MCPs).** Do not build simulator plumbing from scratch: mature MCP servers already drive the iOS Simulator (`ios-simulator-mcp`, `mobile-mcp`, XcodeBuild MCP: boot, install, screenshot, tap/swipe, describe UI via accessibility). The spike wires one of them into the studio session as an external MCP server, and the canvas frame renders its screenshot stream (`simctl io` polling for v0, the recording pipe for v1) with touch injection mapped through the same tools. The agent edits SwiftUI in the worktree with hot reload (SwiftUI previews / Inject). Timebox a one-week spike to validate frame rate and input latency before committing; the exit artifact is a demo of the agent changing a SwiftUI view and the canvas frame updating.
+4. **Build presence (next).** Existing prompt, working-state, and `design.preview` events first drive a transient `accepted | working | opening_preview` model. A separate producer contract may refine `working` into tool-backed `editing_code | building_preview | rendering_preview` only when the corresponding operation actually starts. The first working event materializes one named frame, with a theme-semantic activity accent, while the canvas stays pannable. No fake percentages or timer-authored phases; reduced motion receives an opacity handoff instead of travel.
+5. **In-place preview handoff.** The first valid `design.preview` replaces the working shell without changing frame identity or camera position. Keep the shell painted until the first preview paint, then select/reveal the finished artifact exactly once. Updates preserve the user's camera and selection; Stop/failure clears activity with an actionable status.
 
-**Acceptance (web slice).** Two viewports of the real app live on the canvas, element selection resolves to `file:line`, layout survives app restart.
+**Acceptance (web slice).** Two viewports of the real app live on the canvas, element selection resolves to `file:line`, and layout survives app restart. A design turn responds visibly within 250ms of its owning event, keeps one stable frame through build and preview, never persists transient activity, and opens the rendered artifact automatically without a blank intermediate canvas.
 
 ### Phase G: The design-readiness pass (production-repo onboarding)
 
@@ -295,12 +300,51 @@ All work ships as small, independently green PRs off `feat/droidex-design-platfo
 - **Deterministic and agentic changes never mix.** A parser/measurement PR does not also change guidelines or task templates.
 - **Local-only hacks stay local.** The `history.ts` sqlite rename (`index-droidex.sqlite`) is dev isolation for this worktree and is never committed.
 
-### Wave 0: land the direction (now)
+### Wave 0: land the direction (landed)
 
 | PR | Contents | Notes |
 |---|---|---|
-| 0 | `docs/droidex-product-vision.md` + rewritten `docs/design-roadmap.md` + regenerated reference | Docs only; unblocks everyone |
-| 0.1 | The component-first rule already sitting in `guidelines.ts` | One string, zero risk |
+| 0 | `docs/droidex-product-vision.md` + rewritten `docs/design-roadmap.md` + regenerated reference | Landed; docs only |
+| 0.1 | Component-first rule in `guidelines.ts` | Landed |
+
+### Stabilization gate: make the current Studio trustworthy
+
+These slices land before the feature waves resume. They are intentionally split by owner and failure seam; a row that exceeds the review-size rule splits again rather than becoming a Studio mega-PR.
+
+Track S (correctness and finish):
+
+| PR | Contents | Seam / acceptance |
+|---|---|---|
+| S0 | Provider-owned automatic compaction; delete pre-send manual compaction and synthetic recap behavior | **Landed.** Sidecar only; same provider identity; native queue/steer/Stop semantics; explicit manual Compact remains a separate user action |
+| S1 | Audit, then land the current Studio visual-polish diff | Before staging, restore the removed `exportKind` selection context and add reduced-motion handling; the resulting commit is renderer visuals only: app theme, calm sans typography (mono only for code), soft rounded surfaces, restrained icons, visible focus |
+| S2 | Studio chrome truth: one back action, `DROIDEX DESIGN`, repository selector beside Canvas, and truthful add-page/zoom/fit/expand controls | Renderer only; every icon has a tooltip, keyboard focus, active/disabled state, and a real command |
+| S3 | Composer/model truth | Reuse the canonical composer; Auto/default resolve to and display the exact active model; send has no artificial UI delay; Stop, queue, and safe-boundary steer match main chat |
+| S4a | Canvas restore state machine | A persisted canvas reopens once; an empty document never shows `Restoring canvas`; stale restore responses cannot replace the current thread |
+| S4b | Transcript/reconnect state machine | Chat restore and bridge reconnect each settle once or fail actionably; no infinite connecting state and no duplicate prompt delivery |
+| S5a | Visual-reference persistence and resolution | Pasted images persist, remain arrangeable/taggable, and resolve to bounded library IDs after restart; original bytes stay path-confined |
+| S5b | Composer reference-chip lifecycle | One visible chip maps to those IDs in hidden agent context, stays connected to its prompt, then clears exactly once after accepted send |
+| S5c | Prompt presentation integrity | Internal DNA/reference enrichment stays hidden from the transcript and one user send creates exactly one visible user message |
+| S6 | Drawing/selection interaction hardening | Cancel cannot crash; select/move/resize/delete are deterministic; resize cursors match edges/corners; empty-canvas double-click exits the active creation tool; hover tooltips name every tool |
+| S7 | Wireframe tools and agent handoff | Line/ruler, rectangle, ellipse, text, fill, stroke color/width, and shape options; selected drawings attach to the shared composer as a compact structured canvas context the agent can resolve |
+| S8a | Embedded-browser navigation/reload recovery | External navigation, interaction, history, and reload work in a live frame; stale connecting states time out with diagnostics |
+| S8b | Canvas overlay layering | History, menus, tooltips, and popovers share one overlay layer above frames and remain keyboard-dismissable |
+| S9a | Canonical naming | First prompt derives a concise thread title (never generic `DESIGN`); preview metadata owns artifact/frame naming |
+| S9b | Prompt-to-preview latency telemetry | Measure prompt acceptance -> provider send -> first event -> preview without changing delivery policy; report regressions in diagnostics |
+| S9c | Stalled-build settlement | Tool/build failure and inactivity surface an actionable error and clear working state instead of leaving the model or canvas stuck forever |
+
+Track P (MagicPath-quality canvas work presence, from the July 31 recording):
+
+| PR | Contents | Depends on |
+|---|---|---|
+| P1 | Typed transient reducer driven only by existing events: `accepted`, `working`, `opening_preview`; transient state is never persisted | S0 |
+| P1a | Typed activity-event contract and producer for actual `editing_code`, `building_preview`, and `rendering_preview` operations; protocol dual edit + producer tests, no heuristics | P1 |
+| P2 | Active working frame with a theme-semantic activity accent and one cancelable 0.8-1.2s auto-fit; canvas remains interactive | P1 |
+| P3 | Spatial agent presence: labeled canvas cursor and restrained fading dot field move only on meaningful activity events; accessible live text mirrors the phase | P2, P1a |
+| P4 | First-paint-safe in-place preview handoff; same frame id and camera, auto-select exactly once, no blank shell | P1, P2 |
+| P5 | Canonical artifact naming/restoration; preview metadata names the frame and refresh never replays working animation | P4, S4a, S9a |
+| P6 | Contextual selected-frame controls and an in-place code drawer; controls stay hidden until hover/selection and never reload the preview | P4 |
+
+The recording's state language is deliberate: green means agent activity, blue means user selection, and neutral means ready. DROIDEX uses the application theme's semantic activity and selection tokens rather than hard-coded hues. Color is reserved for state; progress is spatial and semantic, never a decorative spinner.
 
 ### Wave 1: Phase A artifact core and Phase B pipeline (parallel tracks)
 
@@ -339,9 +383,11 @@ Later phases follow the same pattern; their PR splits are defined when the phase
 
 ### Starting point from this worktree
 
-1. Commit and PR Wave 0 today (docs, then the guidelines rule).
-2. Start A1 and B1 in parallel: they are the two highest-leverage, dependency-free slices, and everything else in their tracks stacks on them.
-3. Keep the `history.ts` local diff out of every commit (`git add -p` or a local stash).
+1. S0 is landed. Audit the current uncommitted renderer polish, repair its `exportKind` and reduced-motion regressions, then land it alone as S1.
+2. The **runtime trust gate** is S2, S3, S4a-b, S5a-c, S8a, S9a, S9c, and P1/P2/P4. Land each independently and run the Electron smoke matrix after every cross-process slice.
+3. S6, S7, S8b, S9b, P1a/P3/P5/P6 continue as small parallel interaction/finish slices; they do not get folded into the runtime gate PRs.
+4. Resume A1, B1, and T1 in parallel after the runtime trust gate is green; they remain the dependency-free Wave 1 entry points.
+5. Keep the `history.ts` sqlite rename local to this worktree and out of every commit (`git add -p` or a local stash).
 
 ## Open questions
 
