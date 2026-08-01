@@ -1,8 +1,8 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { existsSync } from 'node:fs';
-import { appendFile, copyFile, mkdir, readFile } from 'node:fs/promises';
-import { isAbsolute, join } from 'node:path';
+import { appendFile, copyFile, lstat, mkdir, readFile, readlink, symlink } from 'node:fs/promises';
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 
 const execFileAsync = promisify(execFile);
 
@@ -68,7 +68,7 @@ export async function prepareDesignWorkspace(liveCwd: string): Promise<Workspace
   const repoRoot = (await tryGit(liveCwd, ['rev-parse', '--show-toplevel']))?.trim();
   if (!repoRoot) {
     throw new Error(
-      'DROIDEX Design requires a Git repository so it can create an isolated worktree. Initialize Git and commit the project before opening Studio.',
+      'DROIDEX Design requires a Git repository so it can create an isolated worktree. Initialize Git before opening Studio.',
     );
   }
 
@@ -84,18 +84,33 @@ export async function prepareDesignWorkspace(liveCwd: string): Promise<Workspace
     return { liveCwd, path: existing.path, isWorktree: true, branch: BRANCH };
   }
 
+  let createdWorktree = false;
   try {
     await ensureWorktreesIgnored(repoRoot);
     await mkdir(join(repoRoot, '.worktrees'), { recursive: true });
     const branchExists =
       (await tryGit(repoRoot, ['show-ref', '--verify', '--quiet', branchRef])) !== null;
-    const args = branchExists
-      ? ['worktree', 'add', worktreePath, BRANCH]
-      : ['worktree', 'add', '-b', BRANCH, worktreePath, 'HEAD'];
+    const hasHead = (await tryGit(repoRoot, ['rev-parse', '--verify', 'HEAD'])) !== null;
+    let args: string[];
+    if (branchExists) {
+      args = ['worktree', 'add', worktreePath, BRANCH];
+    } else if (hasHead) {
+      args = ['worktree', 'add', '-b', BRANCH, worktreePath, 'HEAD'];
+    } else {
+      args = ['worktree', 'add', '--orphan', '-b', BRANCH, worktreePath];
+    }
     await git(repoRoot, args);
+    createdWorktree = true;
+    if (!hasHead && !branchExists) {
+      await seedUnbornWorkspace(repoRoot, worktreePath);
+    }
     await seedDna(liveCwd, worktreePath);
     return { liveCwd, path: worktreePath, isWorktree: true, branch: BRANCH };
   } catch (error) {
+    if (createdWorktree) {
+      await tryGit(repoRoot, ['worktree', 'remove', '--force', worktreePath]);
+      await tryGit(repoRoot, ['branch', '-D', BRANCH]);
+    }
     throw new Error(
       `Could not create the isolated DROIDEX Design worktree: ${firstLine(error)}. Resolve the Git worktree error and retry; the live checkout was not opened for design work.`,
     );
@@ -136,6 +151,53 @@ async function seedDna(liveCwd: string, worktreePath: string): Promise<void> {
   }
 }
 
+async function seedUnbornWorkspace(liveCwd: string, worktreePath: string): Promise<void> {
+  const listed = await git(liveCwd, [
+    'ls-files',
+    '-z',
+    '--cached',
+    '--others',
+    '--exclude-standard',
+  ]);
+  for (const relativePath of listed.split('\0').filter(Boolean)) {
+    const source = resolve(liveCwd, relativePath);
+    const destination = resolve(worktreePath, relativePath);
+    if (!isDescendant(liveCwd, source) || !isDescendant(worktreePath, destination)) {
+      throw new Error(`Git returned an unsafe workspace path: ${relativePath}`);
+    }
+
+    const info = await lstat(source);
+    await mkdir(dirname(destination), { recursive: true });
+    if (info.isSymbolicLink()) {
+      const target = await readlink(source);
+      const sourceTarget = resolve(dirname(source), target);
+      const destinationTarget = resolve(dirname(destination), target);
+      if (
+        isAbsolute(target) ||
+        !isDescendant(liveCwd, sourceTarget) ||
+        !isDescendant(worktreePath, destinationTarget)
+      ) {
+        throw new Error(
+          `Refusing to copy a symlink outside the isolated workspace: ${relativePath}`,
+        );
+      }
+      await symlink(target, destination);
+    } else if (info.isFile()) {
+      await copyFile(source, destination);
+    }
+  }
+}
+
+function isDescendant(root: string, candidate: string): boolean {
+  const pathFromRoot = relative(resolve(root), candidate);
+  return (
+    pathFromRoot !== '' &&
+    pathFromRoot !== '..' &&
+    !pathFromRoot.startsWith(`..${sep}`) &&
+    !isAbsolute(pathFromRoot)
+  );
+}
+
 async function readOptionalFile(file: string): Promise<string> {
   try {
     return await readFile(file, 'utf8');
@@ -155,6 +217,13 @@ function isMissingFile(error: unknown): boolean {
 }
 
 function firstLine(error: unknown): string {
+  if (typeof error === 'object' && error !== null && 'stderr' in error) {
+    const stderr = (error as { stderr?: unknown }).stderr;
+    if (typeof stderr === 'string') {
+      const line = stderr.trim().split('\n')[0];
+      if (line) return line.slice(0, 120);
+    }
+  }
   const message = error instanceof Error ? error.message : String(error);
   return message.split('\n')[0].slice(0, 120);
 }
