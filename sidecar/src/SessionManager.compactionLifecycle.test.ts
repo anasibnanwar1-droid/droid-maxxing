@@ -9,6 +9,7 @@ import { createSessionManagerTestContext } from './testing/sessionManagerTestCon
 import type { ServerEvent } from './protocol.js';
 import {
   contextUpdateCount,
+  notifyCompaction,
   runAutoCompactionScenario,
   runCloseCleanupScenario,
   runShutdownOnlyCleanupScenario,
@@ -771,3 +772,78 @@ test('[C10] Arm failure emits a visible recoverable error', { concurrency: false
     await h.dispose();
   }
 });
+
+test(
+  '[C11] Lowering the limit below current usage compacts in place and resets the meter',
+  { concurrency: false },
+  async () => {
+    const h = createSessionManagerTestContext();
+    const session = new FakeFactorySession('provider-1', {}, h.calls, {
+      settings: { modelId: 'custom-model' },
+    });
+    session.nextContextStats = {
+      used: 200_000,
+      remaining: 800_000,
+      limit: 1_000_000,
+      accuracy: ContextStatsAccuracy.Estimated,
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    };
+    h.runtime.createQueue.push(session);
+    try {
+      await h.create({
+        sessionPurpose: 'chat',
+        clientRef: 'c11',
+        title: 'C11',
+        goal: 'go',
+        interactionMode: 'auto',
+        autonomy: 'low',
+        modelId: 'custom-model',
+        compactionTokenLimit: 250_000,
+      });
+      for (let i = 0; i < 5; i++) await h.waitForIdle();
+
+      const compactionArms = () =>
+        h.provider
+          .session('provider-1')
+          .settings.filter((s) => s['compactionThresholdCheckEnabled'] === true);
+      assert.equal(compactionArms().at(-1)?.['compactionTokenLimit'], 250_000);
+      assert.equal(sessionUpdates(h.events).at(-1)?.session.contextTokens, 200_000);
+
+      // Drop the limit below the 200k already in the window. Our side only
+      // re-arms the daemon threshold; nothing is restarted or compacted here.
+      await h.handle({ type: 'settings.compaction.update', compactionTokenLimit: 100_000 });
+      await h.waitForIdle();
+      assert.equal(compactionArms().at(-1)?.['compactionTokenLimit'], 100_000);
+      assert.equal(callCount(h.calls, 'provider', 'compactSession', 'provider-1'), 0);
+
+      // The daemon reacts on its next threshold check with an in-place
+      // compaction; completion must reset the meter to the fresh reading.
+      session.nextContextStats = {
+        used: 12_000,
+        remaining: 988_000,
+        limit: 1_000_000,
+        accuracy: ContextStatsAccuracy.Estimated,
+        updatedAt: '2026-01-01T00:01:00.000Z',
+      };
+      notifyCompaction(h, 'provider-1', 'started');
+      notifyCompaction(h, 'provider-1', 'completed');
+      for (let i = 0; i < 5; i++) await h.waitForIdle();
+
+      const summary = sessionUpdates(h.events).at(-1)?.session;
+      assert.equal(summary?.autoCompactions, 1);
+      assert.equal(summary?.contextTokens, 12_000);
+      assert.equal(
+        h.events.some(
+          (event) => event.type === 'event.appended' && event.event.text === 'Compaction complete.',
+        ),
+        true,
+      );
+
+      // The session keeps taking turns afterwards.
+      await h.handle({ type: 'session.send', appSessionId: 'provider-1', text: 'after' });
+      assert.deepEqual(h.provider.session('provider-1').prompts, ['go', 'after']);
+    } finally {
+      await h.dispose();
+    }
+  },
+);
