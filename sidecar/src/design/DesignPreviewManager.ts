@@ -157,7 +157,7 @@ export class DesignPreviewManager {
       return { ok: false, error: 'The entry page must be an .html file.' };
     }
     const html = await readFile(abs, 'utf8');
-    const id = previewId(cwd, `dir:${dirname(abs)}`);
+    const id = previewId(cwd, `dir:${dirname(abs)}:${basename(abs)}`);
     return this.serve({
       cwd,
       id,

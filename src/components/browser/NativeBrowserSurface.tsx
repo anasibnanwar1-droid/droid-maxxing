@@ -25,6 +25,7 @@ import {
   openNativeBrowser,
   nativeBrowserAgentActionFromRequest,
   nativeBrowserCapture,
+  nativeBrowserResultFromAgentResult,
   runNativeBrowserAgentAction,
   setNativeBrowserBounds,
   setNativeBrowserDesignMode,
@@ -508,18 +509,7 @@ async function performNativeRequest(
       };
     }
     const result = await runNativeBrowserAgentAction(nativeBrowserAgentActionFromRequest(request));
-    return {
-      requestId: request.requestId,
-      appSessionId: request.appSessionId,
-      browserSessionId: request.browserSessionId,
-      ok: result.ok,
-      snapshot: result.snapshot,
-      inspection: result.inspection,
-      networkEvents: result.networkEvents,
-      consoleEvents: result.consoleEvents,
-      audit: result.audit,
-      error: result.error,
-    };
+    return nativeBrowserResultFromAgentResult(request, result);
   } catch (err) {
     return {
       requestId: request.requestId,

@@ -79,7 +79,12 @@ export async function prepareDesignWorkspace(liveCwd: string): Promise<Workspace
   const records = parseWorktrees(
     (await tryGit(repoRoot, ['worktree', 'list', '--porcelain'])) ?? '',
   );
-  const existing = records.find((r) => r.path === worktreePath || r.branch === branchRef);
+  const liveRoot = resolve(repoRoot);
+  const existing = records.find(
+    (record) =>
+      record.path === worktreePath ||
+      (record.branch === branchRef && resolve(record.path) !== liveRoot),
+  );
   if (existing && existsSync(existing.path)) {
     return { liveCwd, path: existing.path, isWorktree: true, branch: BRANCH };
   }

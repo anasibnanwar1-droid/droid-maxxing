@@ -52,6 +52,22 @@ test('intentional stop cancels recovery and never restarts', () => {
   assert.equal(pending.children.length, 1);
 });
 
+test('restart waits for an intentionally stopped child to exit', () => {
+  const harness = createHarness();
+  const supervisor = harness.createSupervisor();
+  supervisor.start();
+  const stoppingChild = harness.children[0];
+
+  supervisor.stop();
+  supervisor.start();
+  assert.equal(harness.children.length, 1, 'the terminating child still owns the process slot');
+
+  stoppingChild.emit('exit', 0, 'SIGTERM');
+  assert.equal(harness.children.length, 2, 'restart occurs only after the old child exits');
+  assert.deepEqual(harness.timerDelays(), [100], 'only the new child stability timer is armed');
+  assert.deepEqual(harness.unexpectedExits, []);
+});
+
 test('a stop requested by failure handling cancels the scheduled restart', () => {
   let supervisor;
   const harness = createHarness({

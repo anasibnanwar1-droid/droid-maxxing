@@ -88,6 +88,30 @@ test('workspace previews emit and later resolve an honest canonical source descr
   assert.equal(events.length, beforeResolve, 'hydration resolution does not add a duplicate frame');
 });
 
+test('workspace previews in one directory keep independent registrations', async (t) => {
+  const cwd = mkdtempSync(join(tmpdir(), 'droidex-preview-variants-'));
+  const variants = join(cwd, 'variants');
+  mkdirSync(variants);
+  writeFileSync(join(variants, 'a.html'), '<h1>Variant A</h1>', 'utf8');
+  writeFileSync(join(variants, 'b.html'), '<h1>Variant B</h1>', 'utf8');
+  const server = new PreviewServer();
+  t.after(async () => {
+    await server.close();
+    rmSync(cwd, { recursive: true, force: true });
+  });
+  const previews = new DesignPreviewManager(() => undefined, server);
+
+  const first = await previews.render({ cwd, path: 'variants/a.html' });
+  const second = await previews.render({ cwd, path: 'variants/b.html' });
+
+  assert.equal(first.ok, true);
+  assert.equal(second.ok, true);
+  if (!first.ok || !second.ok) return;
+  assert.notEqual(first.url, second.url);
+  assert.match(await (await fetch(first.url)).text(), /Variant A/);
+  assert.match(await (await fetch(second.url)).text(), /Variant B/);
+});
+
 test('library images resolve to stable confined HTTP assets without exposing file paths', async (t) => {
   const root = mkdtempSync(join(tmpdir(), 'droidex-preview-image-'));
   const cwd = join(root, 'project');

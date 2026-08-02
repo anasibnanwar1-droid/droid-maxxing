@@ -18,6 +18,7 @@ function createSidecarSupervisor(options) {
   let consecutiveFailures = 0;
   let stopped = true;
   let terminalFailure = false;
+  let stoppingChild = null;
   let detachOutput = () => undefined;
 
   function start() {
@@ -51,11 +52,17 @@ function createSidecarSupervisor(options) {
 
   function handleUnexpectedExit(exitedChild, details) {
     if (child !== exitedChild) return;
+    const wasStopping = stoppingChild === exitedChild;
+    if (wasStopping) stoppingChild = null;
     child = null;
     detachOutput();
     detachOutput = () => undefined;
     clearStableTimer();
     if (stopped) return;
+    if (wasStopping) {
+      spawnIfNeeded();
+      return;
+    }
     scheduleRestart(details);
   }
 
@@ -101,7 +108,7 @@ function createSidecarSupervisor(options) {
     clearRestartTimer();
     clearStableTimer();
     const ownedChild = child;
-    child = null;
+    stoppingChild = ownedChild;
     detachOutput();
     detachOutput = () => undefined;
     if (!ownedChild || ownedChild.killed) return;

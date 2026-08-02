@@ -75,6 +75,18 @@ test('prepareDesignWorkspace is idempotent — a second call reuses the worktree
   assert.equal(second.path, first.path);
 });
 
+test('prepareDesignWorkspace never reuses the live checkout for the design branch', async () => {
+  const repo = await makeRepo();
+  const isolated = await prepareDesignWorkspace(repo);
+  await git(repo, ['worktree', 'remove', '--force', isolated.path]);
+  await git(repo, ['checkout', '-q', 'droidex/design']);
+
+  await assert.rejects(
+    prepareDesignWorkspace(repo),
+    /Could not create the isolated DROIDEX Design worktree/,
+  );
+});
+
 test('prepareDesignWorkspace snapshots a repository before its first commit', async () => {
   const repo = await makeUnbornRepo();
   await mkdir(join(repo, 'src'), { recursive: true });
