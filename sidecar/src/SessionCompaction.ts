@@ -19,7 +19,6 @@ import type {
   ChildOperationTarget,
   LiveOperationTarget,
   ProviderOperationTarget,
-  SessionContext,
 } from './SessionContext.js';
 import type { LiveSession } from './SessionLifecycle.js';
 import { defaultsModeForSummary, errMsg, modelDefaultForMode } from './sessionHelpers.js';
@@ -102,12 +101,7 @@ export type AutoCompactionSettlement =
       childSessionId: string;
     } & ChildGenerationSnapshot);
 
-export interface SessionCompactionDependencies extends Omit<
-  SessionCompactionExecutionDependencies,
-  'context'
-> {
-  context: SessionCompactionExecutionDependencies['context'] &
-    Pick<SessionContext, 'recordCompaction'>;
+export interface SessionCompactionDependencies extends SessionCompactionExecutionDependencies {
   isShutdownStarted(): boolean;
   getFactoryDefaults(): Promise<FactoryDefaultSettings>;
   maxContextTokensForModel(modelId?: string): number | undefined;
@@ -157,17 +151,25 @@ export class SessionCompaction {
     });
   }
 
-  async arm(target: ProviderOperationTarget, limit: number): Promise<boolean> {
+  async arm(
+    target: ProviderOperationTarget & { appSessionId?: string },
+    limit: number,
+  ): Promise<boolean> {
     const epoch = this.epoch;
     if (!this.isCurrent(target, epoch)) return false;
     try {
       await target.session.updateSettings(daemonCompactionSettings(limit) as never);
       return this.isCurrent(target, epoch);
     } catch (error) {
+      // An unarmed session silently grows past its window and wedges once the
+      // provider rejects oversized requests, so the failure must be visible.
       if (this.isCurrent(target, epoch))
-        console.error(
-          `[compaction] could not arm auto-compaction on ${target.session.sessionId}: ${errMsg(error)}`,
-        );
+        this.dependencies.emitError({
+          ...(target.appSessionId === undefined ? {} : { appSessionId: target.appSessionId }),
+          providerSessionId: target.session.sessionId,
+          message: `Could not arm auto-compaction: ${errMsg(error)}. This session will not compact automatically until its settings are reapplied.`,
+          recoverable: true,
+        });
       return false;
     }
   }
@@ -181,6 +183,12 @@ export class SessionCompaction {
     targets: readonly CompactionRetuneTarget[],
   ): Promise<void> {
     this.uiSettings = limitPatch(update);
+    await this.retuneAll(targets);
+  }
+
+  // Re-arms every session's threshold from current inputs, e.g. after the
+  // context window for a catalog-missing model is learned from the provider.
+  async retuneAll(targets: readonly CompactionRetuneTarget[]): Promise<void> {
     const revision = ++this.retuneRevision;
     await Promise.allSettled(
       targets.map((target) =>

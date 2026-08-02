@@ -94,24 +94,23 @@ export function createSessionManagerTestContext(
     history,
     browsers,
     createLocalMcpResource: () => new FakeLocalMcpResource(calls),
-    nextChildSessionId: () => `child-${++childSequence}`,
+    nextChildSessionId: () => `child-${String(++childSequence)}`,
     ...(options.getFactoryDefaults ? { getFactoryDefaults: options.getFactoryDefaults } : {}),
   };
 
+  pinTestHome(home);
   let manager: SessionManager;
   try {
-    manager = withHomeSync(
-      home,
-      () => new SessionManager(recordEvent, { dependencies, initialModels: INITIAL_MODELS }),
-    );
+    manager = new SessionManager(recordEvent, { dependencies, initialModels: INITIAL_MODELS });
   } catch (error) {
+    unpinTestHome();
     rmSync(home, { recursive: true, force: true });
     throw error;
   }
 
   let disposed = false;
   const handle = async (command: Protocol.ClientCommand): Promise<void> => {
-    await withHome(home, () => manager.handle(command));
+    await manager.handle(command);
     await Promise.resolve();
     await Promise.resolve();
   };
@@ -159,14 +158,15 @@ export function createSessionManagerTestContext(
     },
     handle,
     create: (command) => handle({ type: 'session.create', ...command }),
-    shutdown: () => withHome(home, () => manager.shutdown()),
+    shutdown: () => manager.shutdown(),
     waitForIdle: () => new Promise((resolve) => setImmediate(resolve)),
     dispose: async () => {
       if (disposed) return;
       disposed = true;
       try {
-        await withHome(home, () => manager.shutdown());
+        await manager.shutdown();
       } finally {
+        unpinTestHome();
         rmSync(home, { recursive: true, force: true });
       }
     },
@@ -184,13 +184,12 @@ export function createNativeBrowserTestContext(): NativeBrowserTestContext {
   // BrowserSessionManager, so this one focused context intentionally uses that
   // production composition. It only exercises local browser messages under an
   // isolated HOME; no provider session or authenticated runtime is started.
+  pinTestHome(home);
   let manager: SessionManager;
   try {
-    manager = withHomeSync(
-      home,
-      () => new SessionManager(recordEvent, { initialModels: INITIAL_MODELS }),
-    );
+    manager = new SessionManager(recordEvent, { initialModels: INITIAL_MODELS });
   } catch (error) {
+    unpinTestHome();
     rmSync(home, { recursive: true, force: true });
     throw error;
   }
@@ -199,7 +198,7 @@ export function createNativeBrowserTestContext(): NativeBrowserTestContext {
   return {
     events,
     handle: async (command) => {
-      await withHome(home, () => manager.handle(command));
+      await manager.handle(command);
       await Promise.resolve();
       await Promise.resolve();
     },
@@ -207,8 +206,9 @@ export function createNativeBrowserTestContext(): NativeBrowserTestContext {
       if (disposed) return;
       disposed = true;
       try {
-        await withHome(home, () => manager.shutdown());
+        await manager.shutdown();
       } finally {
+        unpinTestHome();
         rmSync(home, { recursive: true, force: true });
       }
     },
@@ -234,48 +234,23 @@ function createTestHome(defaults?: Protocol.FactoryDefaultSettings): string {
   return home;
 }
 
-async function withHome<T>(home: string, action: () => Promise<T>): Promise<T> {
-  enterTestHome(home);
-  try {
-    return await action();
-  } finally {
-    leaveTestHome();
-  }
+let pinnedTestHome: { home: string; previousHome: string | undefined } | undefined;
+
+// The manager keeps reading $HOME after commands return (context pollers,
+// learned-window retunes, defaults reloads), so the fake home stays pinned for
+// the whole context lifetime. A per-command scope would let that async work
+// read the developer's real ~/.factory/settings.json and leak machine-local
+// compaction overrides into assertions.
+function pinTestHome(home: string): void {
+  if (pinnedTestHome) throw new Error('Concurrent SessionManager test homes are not supported.');
+  pinnedTestHome = { home, previousHome: process.env['HOME'] };
+  process.env['HOME'] = home;
 }
 
-function withHomeSync<T>(home: string, action: () => T): T {
-  enterTestHome(home);
-  try {
-    return action();
-  } finally {
-    leaveTestHome();
-  }
-}
-
-interface TestHomeScope {
-  home: string;
-  previousHome: string | undefined;
-  operations: number;
-}
-
-let testHomeScope: TestHomeScope | undefined;
-
-function enterTestHome(home: string): void {
-  if (!testHomeScope) {
-    testHomeScope = { home, previousHome: process.env['HOME'], operations: 0 };
-    process.env['HOME'] = home;
-  } else if (testHomeScope.home !== home) {
-    throw new Error('Concurrent SessionManager test homes are not supported.');
-  }
-  testHomeScope.operations += 1;
-}
-
-function leaveTestHome(): void {
-  if (!testHomeScope) throw new Error('SessionManager test HOME scope is not active.');
-  testHomeScope.operations -= 1;
-  if (testHomeScope.operations > 0) return;
-  const { previousHome } = testHomeScope;
-  testHomeScope = undefined;
+function unpinTestHome(): void {
+  if (!pinnedTestHome) throw new Error('SessionManager test HOME is not pinned.');
+  const { previousHome } = pinnedTestHome;
+  pinnedTestHome = undefined;
   if (previousHome === undefined) delete process.env['HOME'];
   else process.env['HOME'] = previousHome;
 }

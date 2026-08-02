@@ -595,6 +595,9 @@ test('[L10] Autonomy mutation reports provider rejection', { concurrency: false 
       'low',
     );
 
+    // Let the successful update's trailing context-refresh chain settle so the
+    // baseline below measures a quiescent state.
+    for (let i = 0; i < 5; i++) await h.waitForIdle();
     const updatesBeforeFailure = h.events.filter(
       (event) => event.type === 'session.updated',
     ).length;

@@ -25,11 +25,13 @@ interface Harness {
   history: FakeHistoryIndex;
   registry: SessionRegistry<LiveSession>;
   context: SessionContext;
+  contextWindowNotes: [string, number][];
 }
 
 function createHarness(): Harness {
   const calls: RecordedCall[] = [];
   const events: ServerEvent[] = [];
+  const contextWindowNotes: [string, number][] = [];
   const runtime = new FakeFactoryRuntime(calls);
   const history = new FakeHistoryIndex(calls);
   const registry = new SessionRegistry<LiveSession>({
@@ -47,8 +49,11 @@ function createHarness(): Harness {
     runtime,
     emit: (event) => events.push(event),
     maxContextTokensForSummary: (value) => value.maxContextTokens,
+    noteContextWindow: (modelId, contextWindowTokens) => {
+      contextWindowNotes.push([modelId, contextWindowTokens]);
+    },
   });
-  return { calls, events, runtime, history, registry, context };
+  return { calls, events, runtime, history, registry, context, contextWindowNotes };
 }
 
 function registerLive(
@@ -304,6 +309,62 @@ test('primary and child resource keys cannot alias', async (t) => {
   h.context.startPolling(child.target);
   await new Promise<void>((resolve) => setImmediate(resolve));
   assert.equal(child.session.contextStatsCalls, 2);
+});
+
+test('a refresh in flight across a primary compaction never republishes stale stats', async () => {
+  const h = createHarness();
+  const { live, session } = registerLive(h, 'app-1');
+  session.nextContextStats = {
+    used: 900,
+    remaining: 100,
+    limit: 1_000,
+    accuracy: ContextStatsAccuracy.Exact,
+    updatedAt: '2026-01-01T00:00:00.000Z',
+  };
+  const gate = session.deferNextContextStats();
+  const inFlight = h.context.refresh(primaryTarget(h, live));
+
+  h.context.recordCompaction(primaryTarget(h, live));
+  assert.equal(live.summary.contextTokens, 0);
+  assert.equal(live.summary.autoCompactions, 1);
+
+  gate.resolve();
+  await inFlight;
+  assert.equal(contextEvents(h).length, 0);
+  assert.equal(live.summary.contextTokens, 0);
+});
+
+test('queued pre-compaction exact usage cannot undo the reset before a fresh reading', async () => {
+  const h = createHarness();
+  const { live, session } = registerLive(h, 'app-1');
+  h.context.recordCompaction(primaryTarget(h, live));
+
+  h.context.recordUsage('app-1', 'app-1', { tokensIn: 10, tokensOut: 5, contextTokens: 800 });
+  assert.equal(live.summary.tokensIn, 10);
+  assert.equal(live.summary.tokensOut, 5);
+  assert.equal(live.summary.contextTokens, 0);
+  assert.equal(contextEvents(h).length, 0);
+
+  session.nextContextStats = {
+    used: 120,
+    remaining: 880,
+    limit: 1_000,
+    accuracy: ContextStatsAccuracy.Estimated,
+    updatedAt: '2026-01-01T00:00:01.000Z',
+  };
+  await h.context.refresh(primaryTarget(h, live));
+  assert.equal(contextEvents(h).at(-1)?.stats.used, 120);
+  assert.equal(live.summary.contextTokens, 120);
+
+  h.context.recordUsage('app-1', 'app-1', { tokensIn: 12, tokensOut: 6, contextTokens: 200 });
+  assert.equal(live.summary.contextTokens, 200);
+});
+
+test('provider-observed context windows are reported for compaction tuning', async () => {
+  const h = createHarness();
+  const { live } = registerLive(h, 'app-1');
+  await h.context.refresh(primaryTarget(h, live));
+  assert.deepEqual(h.contextWindowNotes.at(-1), ['model-default', 1_000]);
 });
 
 test('forgetChild clears the resolved backend snapshot and logical generation', async () => {
