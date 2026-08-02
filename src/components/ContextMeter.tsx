@@ -10,13 +10,17 @@ const EASE = [0.16, 1, 0.3, 1] as const;
 const fmt = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(n >= 100_000 ? 0 : 1)}K` : String(n));
 
 function Ring({ pct, size = 16 }: { pct: number; size?: number }) {
-  const stroke = 2.5;
+  const stroke = 2;
   const r = (size - stroke) / 2;
   const c = 2 * Math.PI * r;
   const clamped = Math.max(0, Math.min(pct, 1));
   const hot = clamped > 0.85;
   return (
-    <svg width={size} height={size} className="-rotate-90 shrink-0">
+    <svg
+      width={size}
+      height={size}
+      className={`-rotate-90 shrink-0 transition-opacity ${hot ? '' : 'opacity-55 group-hover:opacity-90'}`}
+    >
       <circle
         cx={size / 2}
         cy={size / 2}
@@ -202,19 +206,27 @@ export default function ContextMeter({
       setOpen(false);
     };
     window.addEventListener('mousedown', onClick);
-    return () => { window.removeEventListener('mousedown', onClick); };
+    return () => {
+      window.removeEventListener('mousedown', onClick);
+    };
   }, [open]);
 
   return (
     <div ref={ref} className="relative flex items-center">
       <button
-        onClick={() => { setOpen((v) => !v); }}
-        onMouseEnter={() => { setHover(true); }}
-        onMouseLeave={() => { setHover(false); }}
-        className="flex items-center rounded-md p-1 transition-colors hover:bg-droid-elevated/60"
+        onClick={() => {
+          setOpen((v) => !v);
+        }}
+        onMouseEnter={() => {
+          setHover(true);
+        }}
+        onMouseLeave={() => {
+          setHover(false);
+        }}
+        className="group flex items-center rounded-md p-1 transition-colors hover:bg-droid-elevated/60"
         aria-label="Context usage"
       >
-        <Ring pct={pct} size={18} />
+        <Ring pct={pct} size={14} />
       </button>
 
       {createPortal(
@@ -270,7 +282,9 @@ export default function ContextMeter({
               <div className="mb-3 flex items-center justify-between">
                 <span className="text-[13px] font-medium text-droid-text">Context</span>
                 <button
-                  onClick={() => { setOpen(false); }}
+                  onClick={() => {
+                    setOpen(false);
+                  }}
                   className="text-droid-text-muted transition-colors hover:text-droid-text"
                 >
                   <X className="h-3.5 w-3.5" />
