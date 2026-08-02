@@ -50,7 +50,9 @@ const PRESET_ACCENTS = [
   '#fcfcfc',
 ];
 
-type NavItem = { label: string };
+interface NavItem {
+  label: string;
+}
 const NAV: { group: string; items: NavItem[] }[] = [
   {
     group: 'Personal',
@@ -163,7 +165,9 @@ function Slider({
           min={min}
           max={max}
           value={value}
-          onChange={(e) => onChange(Number(e.target.value))}
+          onChange={(e) => {
+            onChange(Number(e.target.value));
+          }}
           className="w-32 h-1 rounded-full cursor-pointer"
           style={{ accentColor: 'var(--droid-accent)' }}
         />
@@ -194,7 +198,9 @@ function Toggle({
         {sub && <div className="text-[11px] text-droid-text-muted">{sub}</div>}
       </div>
       <button
-        onClick={() => onChange(!checked)}
+        onClick={() => {
+          onChange(!checked);
+        }}
         className={`w-10 h-6 rounded-full transition-colors shrink-0 flex items-center p-0.5 ${checked ? 'bg-droid-accent' : 'bg-droid-border'}`}
       >
         <span
@@ -212,10 +218,10 @@ function DiffPreview() {
         themePreview.ts
       </div>
       <div className="py-1.5 text-droid-text-secondary">
-        <div className="diff-preview-line diff-preview-del">− accent: "#ff5d2e",</div>
-        <div className="diff-preview-line diff-preview-add">+ accent: "#f2f2f2",</div>
-        <div className="diff-preview-line diff-preview-del">− surface: "#181818",</div>
-        <div className="diff-preview-line diff-preview-add">+ surface: "#111111",</div>
+        <div className="diff-preview-line diff-preview-del">− accent: &quot;#ff5d2e&quot;,</div>
+        <div className="diff-preview-line diff-preview-add">+ accent: &quot;#f2f2f2&quot;,</div>
+        <div className="diff-preview-line diff-preview-del">− surface: &quot;#181818&quot;,</div>
+        <div className="diff-preview-line diff-preview-add">+ surface: &quot;#111111&quot;,</div>
       </div>
     </div>
   );
@@ -263,19 +269,25 @@ function AppearanceSection() {
           <div className="flex gap-1">
             <ModeButton
               active={theme.mode === 'light'}
-              onClick={() => updateTheme({ mode: 'light', ...paletteForMode('light') })}
+              onClick={() => {
+                updateTheme({ mode: 'light', ...paletteForMode('light') });
+              }}
               icon={Sun}
               label="Light"
             />
             <ModeButton
               active={theme.mode === 'dark'}
-              onClick={() => updateTheme({ mode: 'dark', ...paletteForMode('dark') })}
+              onClick={() => {
+                updateTheme({ mode: 'dark', ...paletteForMode('dark') });
+              }}
               icon={Moon}
               label="Dark"
             />
             <ModeButton
               active={theme.mode === 'system'}
-              onClick={() => updateTheme({ mode: 'system', ...paletteForMode('system') })}
+              onClick={() => {
+                updateTheme({ mode: 'system', ...paletteForMode('system') });
+              }}
               icon={Monitor}
               label="System"
             />
@@ -290,7 +302,9 @@ function AppearanceSection() {
         {Object.entries(PRESET_THEMES).map(([name, colors]) => (
           <button
             key={name}
-            onClick={() => updateTheme(colors)}
+            onClick={() => {
+              updateTheme(colors);
+            }}
             className="flex flex-col items-center gap-1.5 p-2 rounded-lg border border-droid-border hover:border-droid-border-hover transition-colors"
           >
             <div
@@ -310,31 +324,41 @@ function AppearanceSection() {
             label="Accent"
             description="Highlights, active states, send button & design-mode controls"
             value={theme.accent}
-            onChange={(v) => updateTheme({ accent: v })}
+            onChange={(v) => {
+              updateTheme({ accent: v });
+            }}
           />
           <ColorField
             label="App background"
             description="The main window behind everything"
             value={theme.bg}
-            onChange={(v) => updateTheme({ bg: v })}
+            onChange={(v) => {
+              updateTheme({ bg: v });
+            }}
           />
           <ColorField
             label="Text color"
             description="Default color for all text"
             value={theme.fg}
-            onChange={(v) => updateTheme({ fg: v })}
+            onChange={(v) => {
+              updateTheme({ fg: v });
+            }}
           />
           <ColorField
             label="Panel background"
             description="Sidebar, cards and raised surfaces"
             value={theme.surface}
-            onChange={(v) => updateTheme({ surface: v })}
+            onChange={(v) => {
+              updateTheme({ surface: v });
+            }}
           />
           <ColorField
             label="Borders"
             description="Dividers and outlines between sections"
             value={theme.border}
-            onChange={(v) => updateTheme({ border: v })}
+            onChange={(v) => {
+              updateTheme({ border: v });
+            }}
           />
         </div>
         <div className="mt-3.5 pt-3.5 border-t border-droid-border">
@@ -345,7 +369,9 @@ function AppearanceSection() {
                 key={c}
                 color={c}
                 active={theme.accent.toLowerCase() === c.toLowerCase()}
-                onClick={() => updateTheme({ accent: c })}
+                onClick={() => {
+                  updateTheme({ accent: c });
+                }}
               />
             ))}
           </div>
@@ -366,7 +392,9 @@ function AppearanceSection() {
             value={theme.uiFont}
             width="w-44"
             options={UI_FONTS.map((f) => ({ value: f.id, label: f.label }))}
-            onChange={(v) => updateTheme({ uiFont: v })}
+            onChange={(v) => {
+              updateTheme({ uiFont: v });
+            }}
           />
         </div>
         <Slider
@@ -375,7 +403,9 @@ function AppearanceSection() {
           value={theme.uiFontSize}
           min={12}
           max={18}
-          onChange={(v) => updateTheme({ uiFontSize: v })}
+          onChange={(v) => {
+            updateTheme({ uiFontSize: v });
+          }}
           suffix="px"
         />
         <Slider
@@ -384,7 +414,9 @@ function AppearanceSection() {
           value={theme.codeFontSize}
           min={10}
           max={16}
-          onChange={(v) => updateTheme({ codeFontSize: v })}
+          onChange={(v) => {
+            updateTheme({ codeFontSize: v });
+          }}
           suffix="px"
         />
         <Slider
@@ -393,13 +425,17 @@ function AppearanceSection() {
           value={theme.contrast}
           min={40}
           max={100}
-          onChange={(v) => updateTheme({ contrast: v })}
+          onChange={(v) => {
+            updateTheme({ contrast: v });
+          }}
         />
         <Toggle
           label="Translucent sidebar"
           sub="Blur and lighten the sidebar surface"
           checked={theme.translucentSidebar}
-          onChange={(v) => updateTheme({ translucentSidebar: v })}
+          onChange={(v) => {
+            updateTheme({ translucentSidebar: v });
+          }}
         />
       </div>
     </div>
@@ -409,8 +445,8 @@ function AppearanceSection() {
 /* ── compaction token limit helpers ── */
 // Format a raw token count for display: 200000 → "200K", 1500000 → "1.5M".
 function formatTokenLimit(n: number): string {
-  if (n >= 1_000_000) return `${Number((n / 1_000_000).toFixed(2))}M`;
-  if (n >= 1_000) return `${Number((n / 1_000).toFixed(2))}K`;
+  if (n >= 1_000_000) return `${String(Number((n / 1_000_000).toFixed(2)))}M`;
+  if (n >= 1_000) return `${String(Number((n / 1_000).toFixed(2)))}K`;
   return String(n);
 }
 
@@ -461,7 +497,9 @@ function TokenLimitSelect({
     const active = value === n;
     return (
       <button
-        onClick={() => choose(n)}
+        onClick={() => {
+          choose(n);
+        }}
         className={`flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left transition-colors ${
           active ? 'bg-droid-elevated' : 'hover:bg-droid-elevated/50'
         }`}
@@ -482,7 +520,9 @@ function TokenLimitSelect({
   return (
     <div className="relative shrink-0" ref={ref}>
       <button
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => {
+          setOpen((v) => !v);
+        }}
         className={`${width} flex items-center justify-between gap-2 rounded-lg border px-2.5 py-1.5 text-[12px] transition-colors ${
           open
             ? 'border-droid-border-hover bg-droid-elevated text-droid-text'
@@ -509,8 +549,8 @@ function TokenLimitSelect({
             ))}
           </div>
           <p className="mt-2 border-t border-droid-border px-1.5 pt-2 text-[10.5px] leading-[1.5] text-droid-text-muted">
-            If a model's context window is lower than the selected value, the session starts with
-            the lower effective limit.
+            If a model&apos;s context window is lower than the selected value, the session starts
+            with the lower effective limit.
           </p>
         </div>
       )}
@@ -519,7 +559,11 @@ function TokenLimitSelect({
 }
 
 /* ── generic in-app dropdown (replaces native <select>) ── */
-type DropdownOption = { value: string; label: string; icon?: React.ReactNode };
+interface DropdownOption {
+  value: string;
+  label: string;
+  icon?: React.ReactNode;
+}
 function Dropdown({
   value,
   options,
@@ -561,7 +605,9 @@ function Dropdown({
   return (
     <div className={`relative ${width === 'w-full' ? 'w-full' : 'shrink-0'}`} ref={ref}>
       <button
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => {
+          setOpen((v) => !v);
+        }}
         className={`${width} flex items-center justify-between gap-2 rounded-lg border px-2.5 py-1.5 text-[12px] transition-colors ${
           open
             ? 'border-droid-border-hover bg-droid-elevated text-droid-text'
@@ -677,7 +723,9 @@ function CompactionModelPicker({
     const active = selected === id;
     return (
       <button
-        onClick={() => choose(id)}
+        onClick={() => {
+          choose(id);
+        }}
         className={`flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left transition-colors ${
           active ? 'bg-droid-elevated' : 'hover:bg-droid-elevated/50'
         }`}
@@ -709,7 +757,9 @@ function CompactionModelPicker({
   return (
     <div className="relative shrink-0" ref={ref}>
       <button
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => {
+          setOpen((v) => !v);
+        }}
         className={`flex items-center gap-2 rounded-lg border px-2.5 py-1.5 text-[12px] transition-colors ${
           open
             ? 'border-droid-border-hover bg-droid-elevated text-droid-text'
@@ -730,7 +780,9 @@ function CompactionModelPicker({
             <input
               autoFocus
               value={query}
-              onChange={(e) => setQuery(e.target.value)}
+              onChange={(e) => {
+                setQuery(e.target.value);
+              }}
               placeholder="Search models…"
               className="w-full bg-transparent text-[12px] text-droid-text placeholder:text-droid-text-muted focus:outline-none"
             />
@@ -827,9 +879,12 @@ function GeneralSection() {
               { value: 'queue', label: 'Queue message' },
               { value: 'interrupt', label: 'Send now' },
             ]}
-            onChange={(behavior) =>
-              dispatch({ type: 'SET_LIVE_ENTER_BEHAVIOR', behavior: behavior as LiveEnterBehavior })
-            }
+            onChange={(behavior) => {
+              dispatch({
+                type: 'SET_LIVE_ENTER_BEHAVIOR',
+                behavior: behavior as LiveEnterBehavior,
+              });
+            }}
           />
         </SettingRow>
         <SettingRow
@@ -867,7 +922,9 @@ function GeneralSection() {
               { value: 'unified', label: 'Unified' },
               { value: 'split', label: 'Split' },
             ]}
-            onChange={(mode) => dispatch({ type: 'SET_DIFF_VIEW', mode: mode as DiffViewMode })}
+            onChange={(mode) => {
+              dispatch({ type: 'SET_DIFF_VIEW', mode: mode as DiffViewMode });
+            }}
           />
         </SettingRow>
         <SettingRow
@@ -939,9 +996,17 @@ function GeneralSection() {
                 size={16}
               />
               <span className="text-[12px] text-droid-text truncate flex-1">{modelLabel(id)}</span>
-              <TokenLimitSelect value={limit} onSelect={(n) => setModelLimit(id, n)} width="w-32" />
+              <TokenLimitSelect
+                value={limit}
+                onSelect={(n) => {
+                  setModelLimit(id, n);
+                }}
+                width="w-32"
+              />
               <button
-                onClick={() => setModelLimit(id, undefined)}
+                onClick={() => {
+                  setModelLimit(id, undefined);
+                }}
                 className="p-1 rounded-md text-droid-text-muted hover:text-droid-text hover:bg-droid-elevated transition-colors shrink-0"
                 title="Remove override"
               >
@@ -964,7 +1029,9 @@ function GeneralSection() {
                 label: m.displayName,
                 icon: <ModelIcon provider={providerOf(m, m.id)} size={16} />,
               }))}
-              onChange={(id) => setModelLimit(id, state.compactionTokenLimit ?? 200_000)}
+              onChange={(id) => {
+                setModelLimit(id, state.compactionTokenLimit ?? 200_000);
+              }}
             />
           </div>
         )}
@@ -976,7 +1043,9 @@ function GeneralSection() {
 function Switch({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
   return (
     <button
-      onClick={() => onChange(!checked)}
+      onClick={() => {
+        onChange(!checked);
+      }}
       className={`w-10 h-6 rounded-full transition-colors shrink-0 flex items-center p-0.5 ${checked ? 'bg-droid-accent' : 'bg-droid-border'}`}
     >
       <span
@@ -999,7 +1068,7 @@ function SetupSection({ onClose }: { onClose: () => void }) {
 
   const cliAuto = onboarding?.cliAutoUpdate ?? true;
   const appAuto = onboarding?.appAutoUpdate ?? true;
-  const signedIn = Boolean(env?.auth.loginPresent || env?.auth.apiKeyConfigured);
+  const signedIn = Boolean(env?.auth.loginPresent) || Boolean(env?.auth.apiKeyConfigured);
 
   const runCheck = async () => {
     setChecking(true);
@@ -1038,7 +1107,9 @@ function SetupSection({ onClose }: { onClose: () => void }) {
               {env?.cli.present ? (env.cli.version ?? 'installed') : 'missing'}
             </span>
             <button
-              onClick={() => onboard.update(onboarding?.installChannel)}
+              onClick={() => {
+                onboard.update(onboarding?.installChannel);
+              }}
               disabled={!!installing || !env?.cli.present}
               className="px-2.5 h-7 rounded-md bg-droid-elevated border border-droid-border text-[12px] text-droid-text hover:border-droid-border-hover transition-colors disabled:opacity-40"
             >
@@ -1063,12 +1134,12 @@ function SetupSection({ onClose }: { onClose: () => void }) {
             <span className="text-[12px] text-droid-green">Signed in</span>
           ) : (
             <button
-              onClick={() => onboard.login()}
+              onClick={onboard.refreshEnv}
               disabled={!env?.cli.present}
               title={env?.cli.present ? undefined : 'The Droid CLI must be installed first.'}
               className="px-2.5 h-7 rounded-md bg-droid-elevated border border-droid-border text-[12px] text-droid-text hover:border-droid-border-hover transition-colors disabled:opacity-40"
             >
-              Sign in
+              Refresh status
             </button>
           )}
         </SettingRow>
@@ -1079,7 +1150,9 @@ function SetupSection({ onClose }: { onClose: () => void }) {
         <SettingRow label="Current version" description={updateStatus}>
           <div className="flex items-center gap-2">
             <button
-              onClick={runCheck}
+              onClick={() => {
+                void runCheck();
+              }}
               disabled={checking}
               className="px-2.5 h-7 rounded-md bg-droid-elevated border border-droid-border text-[12px] text-droid-text hover:border-droid-border-hover transition-colors disabled:opacity-40"
             >
@@ -1145,7 +1218,7 @@ function WorktreesSection() {
     for (const cwd of state.workspaceCwds) {
       const all = await getGitWorktrees(cwd);
       const main = all.find((w) => w.isMain) ?? all[0];
-      const root = main?.path ?? cwd;
+      const root = main.path ?? cwd;
       if (!root || seen.has(root)) continue;
       seen.add(root);
       const worktrees = all.filter((w) => !w.bare && w.path);
@@ -1175,7 +1248,7 @@ function WorktreesSection() {
       ) {
         toast.error('Has uncommitted changes — commit or discard them first');
       } else {
-        toast.error(res.message || 'Could not remove worktree');
+        toast.error(res.message ?? 'Could not remove worktree');
       }
     } finally {
       removingRef.current = false;
@@ -1267,7 +1340,9 @@ function WorktreesSection() {
                           Remove
                         </button>
                         <button
-                          onClick={() => setConfirming(null)}
+                          onClick={() => {
+                            setConfirming(null);
+                          }}
                           className="rounded-md px-2 py-1 text-[11px] text-droid-text-muted hover:bg-droid-elevated"
                         >
                           Cancel
@@ -1275,7 +1350,9 @@ function WorktreesSection() {
                       </div>
                     ) : (
                       <button
-                        onClick={() => w.path && setConfirming(w.path)}
+                        onClick={() => {
+                          if (w.path) setConfirming(w.path);
+                        }}
                         disabled={removing !== null}
                         title="Remove worktree"
                         className="flex shrink-0 items-center rounded-md p-1.5 text-droid-text-muted transition-colors hover:bg-droid-elevated hover:text-red-400 disabled:opacity-40"
@@ -1319,10 +1396,14 @@ export default function SettingsPanel() {
       if (e.key === 'Escape') dispatch({ type: 'TOGGLE_SETTINGS' });
     };
     window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+    };
   }, [dispatch]);
 
-  const close = () => dispatch({ type: 'TOGGLE_SETTINGS' });
+  const close = () => {
+    dispatch({ type: 'TOGGLE_SETTINGS' });
+  };
   const q = query.trim().toLowerCase();
 
   return (
@@ -1350,7 +1431,9 @@ export default function SettingsPanel() {
                 <Search className="w-3.5 h-3.5 text-droid-text-muted" />
                 <input
                   value={query}
-                  onChange={(e) => setQuery(e.target.value)}
+                  onChange={(e) => {
+                    setQuery(e.target.value);
+                  }}
                   placeholder="Search settings..."
                   className="bg-transparent text-[12px] text-droid-text placeholder:text-droid-text-muted focus:outline-none w-full"
                 />
@@ -1368,7 +1451,9 @@ export default function SettingsPanel() {
                     {filtered.map(({ label }) => (
                       <button
                         key={label}
-                        onClick={() => setActive(label)}
+                        onClick={() => {
+                          setActive(label);
+                        }}
                         className={`flex items-center w-full px-2 h-8 rounded-md text-[12px] transition-colors ${
                           active === label
                             ? 'bg-droid-active text-droid-text'

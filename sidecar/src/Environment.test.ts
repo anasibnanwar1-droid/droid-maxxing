@@ -1,8 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   availableChannels,
   compareSemver,
+  hasCliLogin,
   resolveDroidPath,
   wrapDroidInvocation,
 } from './Environment.js';
@@ -89,4 +93,24 @@ test('wrapDroidInvocation spawns the binary directly on POSIX', () => {
     execPath: '/usr/local/bin/droid',
     execArgs: ['exec'],
   });
+});
+
+test('hasCliLogin detects current Droid CLI credential markers', () => {
+  const authDir = mkdtempSync(join(tmpdir(), 'droid-auth-'));
+  try {
+    writeFileSync(join(authDir, 'auth.v2.key'), '');
+    assert.equal(hasCliLogin(authDir), true);
+  } finally {
+    rmSync(authDir, { recursive: true, force: true });
+  }
+});
+
+test('hasCliLogin ignores the retired auth.v2.file marker', () => {
+  const authDir = mkdtempSync(join(tmpdir(), 'droid-auth-'));
+  try {
+    writeFileSync(join(authDir, 'auth.v2.file'), '');
+    assert.equal(hasCliLogin(authDir), false);
+  } finally {
+    rmSync(authDir, { recursive: true, force: true });
+  }
 });

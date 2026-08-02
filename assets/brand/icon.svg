@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- DROIDEX app icon: registration mark on cream.
+       Big Sur tile (824 centered in 1024), viewfinder corner brackets in ink,
+       pixel-stepped X cut from the Silkscreen wordmark glyph, center pixel in
+       safety orange: the point you marked. -->
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="#F2EFE9" />
+
+  <!-- viewfinder corner brackets, ink -->
+  <g stroke="#141310" stroke-width="58" fill="none" stroke-linecap="square">
+    <path d="M 297 447 V 297 H 447" />
+    <path d="M 577 297 H 727 V 447" />
+    <path d="M 727 577 V 727 H 577" />
+    <path d="M 447 727 H 297 V 577" />
+  </g>
+
+  <!-- pixel X, 5x5 grid, cell 54, top-left at (377, 377) -->
+  <g fill="#141310">
+    <rect x="377" y="377" width="54" height="54" />
+    <rect x="593" y="377" width="54" height="54" />
+    <rect x="431" y="431" width="54" height="54" />
+    <rect x="539" y="431" width="54" height="54" />
+    <rect x="431" y="539" width="54" height="54" />
+    <rect x="539" y="539" width="54" height="54" />
+    <rect x="377" y="593" width="54" height="54" />
+    <rect x="593" y="593" width="54" height="54" />
+  </g>
+  <!-- the marked point -->
+  <rect x="485" y="485" width="54" height="54" fill="#FF4D00" />
+</svg>

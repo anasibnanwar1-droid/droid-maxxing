@@ -27,7 +27,6 @@ const {
 } = require('./browserDiagnostics.cjs');
 const { runWithWebContentsDebugger } = require('./nativeBrowserEmulation.cjs');
 const { attachChildView, detachChildView } = require('./nativeBrowserHost.cjs');
-
 const APP_NAME = 'Droid Control';
 const BRIDGE_PORT = Number(process.env.BRIDGE_PORT ?? 8765);
 const bridge = { port: BRIDGE_PORT, token: crypto.randomBytes(16).toString('hex') };
@@ -464,11 +463,20 @@ function closeRendererOwnedTerminals() {
 }
 
 function appRoot() {
-  return app.isPackaged ? process.resourcesPath : path.resolve(__dirname, '..');
+  // Packaged app files (renderer dist, electron/) live inside app.asar, which
+  // Electron resolves transparently for loadFile/loadURL.
+  return app.isPackaged
+    ? path.join(process.resourcesPath, 'app.asar')
+    : path.resolve(__dirname, '..');
 }
 
 function sidecarEntry() {
-  return process.env.SIDECAR_ENTRY || path.join(appRoot(), 'sidecar/dist/sidecar.mjs');
+  // The sidecar ships as an extraResource beside the asar so it can be spawned
+  // as a plain Node script; an asar path would not survive as a child cwd/argv.
+  if (process.env.SIDECAR_ENTRY) return process.env.SIDECAR_ENTRY;
+  return app.isPackaged
+    ? path.join(process.resourcesPath, 'sidecar/dist/sidecar.mjs')
+    : path.join(appRoot(), 'sidecar/dist/sidecar.mjs');
 }
 
 function nodeBin() {
@@ -482,7 +490,7 @@ function nodeBin() {
 function ensureSidecar() {
   if (sidecar && sidecar.exitCode === null && sidecar.signalCode === null) return;
   sidecar = spawn(nodeBin(), [sidecarEntry()], {
-    cwd: appRoot(),
+    cwd: app.isPackaged ? process.resourcesPath : appRoot(),
     stdio: ['pipe', 'inherit', 'inherit'],
     env: {
       ...process.env,

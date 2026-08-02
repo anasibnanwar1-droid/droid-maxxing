@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { bridge } from '../lib/bridge';
-import { connect, detectEnv, installCli, startCliLogin, updateCli } from '../lib/commands';
+import { connect, detectEnv, installCli, updateCli } from '../lib/commands';
 import { setApiKey as persistApiKey } from '../lib/desktop';
 import { getOnboarding, setOnboarding, type OnboardingState } from '../lib/onboarding';
 import type { EnvironmentReport, InstallChannel } from '../types/bridge';
@@ -22,7 +22,6 @@ export interface OnboardingController {
   refreshEnv: () => void;
   install: (channel: InstallChannel) => void;
   update: (channel?: InstallChannel) => void;
-  login: () => void;
   saveApiKey: (key: string) => Promise<void>;
   patch: (p: Partial<OnboardingState>) => Promise<void>;
 }
@@ -84,7 +83,9 @@ export function useOnboarding(): OnboardingController {
     };
   }, []);
 
-  const refreshEnv = useCallback(() => detectEnv(), []);
+  const refreshEnv = useCallback(() => {
+    detectEnv();
+  }, []);
 
   const install = useCallback((channel: InstallChannel) => {
     setInstallLog([]);
@@ -101,8 +102,6 @@ export function useOnboarding(): OnboardingController {
     setInstalling('update');
     updateCli(channel);
   }, []);
-
-  const login = useCallback(() => startCliLogin(), []);
 
   const saveApiKey = useCallback(async (key: string) => {
     await persistApiKey(key.trim());
@@ -126,7 +125,6 @@ export function useOnboarding(): OnboardingController {
     refreshEnv,
     install,
     update,
-    login,
     saveApiKey,
     patch,
   };
