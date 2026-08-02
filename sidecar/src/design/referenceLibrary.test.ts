@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { importReferenceImage, listLibraryItems } from './referenceLibrary.js';
+import { referenceLibraryFile } from './designPaths.js';
+import { deleteLibraryItem, importReferenceImage, listLibraryItems } from './referenceLibrary.js';
 
 test('importReferenceImage preserves original bytes and canvas metadata', () => {
   const baseDir = mkdtempSync(join(tmpdir(), 'droidex-canvas-image-'));
@@ -47,6 +48,37 @@ test('reference eviction removes the evicted durable image file', () => {
 
   assert.equal(listLibraryItems(cwd, baseDir).length, 200);
   assert.equal(existsSync(oldestPath), false);
+});
+
+test('deleteLibraryItem removes confined images without trusting persisted paths', () => {
+  const baseDir = mkdtempSync(join(tmpdir(), 'droidex-canvas-image-delete-'));
+  const cwd = join(baseDir, 'product');
+  mkdirSync(cwd);
+  const [stored] = importReferenceImage({
+    cwd,
+    id: 'canvas-reference-safe',
+    name: 'Safe reference',
+    category: 'reference',
+    dataUrl: 'data:image/png;base64,YQ==',
+    baseDir,
+  });
+  const storedPath = stored.screenshotPath ?? '';
+
+  deleteLibraryItem(cwd, stored.id, baseDir);
+  assert.equal(existsSync(storedPath), false);
+
+  const outsidePath = join(baseDir, 'must-survive.png');
+  writeFileSync(outsidePath, 'not a library image');
+  writeFileSync(
+    referenceLibraryFile(cwd, baseDir),
+    JSON.stringify({
+      items: [{ ...stored, id: 'tampered-reference', screenshotPath: outsidePath }],
+    }),
+  );
+
+  deleteLibraryItem(cwd, 'tampered-reference', baseDir);
+  assert.equal(existsSync(outsidePath), true);
+  assert.deepEqual(listLibraryItems(cwd, baseDir), []);
 });
 
 test('importReferenceImage rejects untrusted ids and image formats', () => {

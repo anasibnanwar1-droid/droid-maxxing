@@ -36,10 +36,12 @@ export interface SaveReferenceInput {
 export function saveReference(input: SaveReferenceInput): DesignLibraryItem[] {
   const { cwd, reference, baseDir } = input;
   const id = `lib-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  const name = [input.name?.trim(), reference.anchor.label, reference.anchor.tag].find(Boolean);
+  const note = input.note?.trim();
   const item: DesignLibraryItem = {
     id,
-    name: input.name?.trim() || reference.anchor.label || reference.anchor.tag || 'Reference',
-    note: input.note?.trim() || undefined,
+    name: name ?? 'Reference',
+    note: note === '' ? undefined : note,
     url: reference.url,
     createdAt: new Date().toISOString(),
     screenshotPath: persistScreenshot(cwd, id, reference, baseDir),
@@ -112,7 +114,7 @@ export function deleteLibraryItem(cwd: string, id: string, baseDir?: string): De
   const rest = items.filter((item) => item.id !== id);
   writeItems(cwd, rest, baseDir);
   if (target?.screenshotPath) {
-    fs.rmSync(target.screenshotPath, { force: true });
+    removeStoredImage(cwd, target.screenshotPath, baseDir);
   }
   return rest;
 }

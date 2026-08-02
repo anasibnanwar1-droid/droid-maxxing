@@ -107,6 +107,31 @@ test('an edit made during delayed restore survives a target switch and read retr
   harness.owner.destroy();
 });
 
+test('returning to a target with an in-flight save rehydrates its restored edit', () => {
+  const harness = fixture();
+  const hydrated: number[] = [];
+  harness.owner.attach({
+    onHydrate: (value) => hydrated.push(value.state.view.zoom),
+    onNotice: () => undefined,
+  });
+  harness.owner.open(target('thread-a'), content(1));
+  harness.emit(stateEvent(document(1, 1), 'thread-a'));
+  harness.owner.update(content(1.6));
+
+  harness.owner.open(target('thread-b'), content(1));
+  harness.owner.open(target('thread-a'), content(1));
+  harness.emit(stateEvent(document(1, 1), 'thread-a'));
+  harness.emit(savedEvent(document(2, 1.6)));
+
+  assert.deepEqual(
+    harness.reads.map((read) => read.canvasId),
+    ['thread-a', 'thread-b', 'thread-a', 'thread-a'],
+  );
+  harness.emit(stateEvent(document(2, 1.6), 'thread-a'));
+  assert.equal(hydrated.at(-1), 1.6);
+  harness.owner.destroy();
+});
+
 function fixture() {
   const reads: { cwd: string; canvasId: string }[] = [];
   const writes: Parameters<CanvasPersistenceTransport['write']>[0][] = [];

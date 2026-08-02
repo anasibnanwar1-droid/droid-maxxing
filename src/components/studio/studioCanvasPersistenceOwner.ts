@@ -62,8 +62,11 @@ export class StudioCanvasPersistenceOwner {
   }
 
   open(target: CanvasPersistenceTarget, current: CanvasDocumentContent): CanvasOpenStatus {
-    this.isWaitingForHydration = true;
     const status = this.coordinator.open(target, current);
+    // Opening a different target emits an immediate empty placeholder. That is
+    // not the authoritative restore, so keep waiting until state arrives—or a
+    // pending local save settles and triggers the re-read below.
+    this.isWaitingForHydration = true;
     if (status !== 'started') this.coordinator.refresh();
     return status;
   }
