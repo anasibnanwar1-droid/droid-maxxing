@@ -7,7 +7,7 @@ import type { ContextStatsSnapshot, SessionSummary } from '../types/bridge';
 
 const EASE = [0.16, 1, 0.3, 1] as const;
 
-const fmt = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(n >= 100_000 ? 0 : 1)}K` : `${n}`);
+const fmt = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(n >= 100_000 ? 0 : 1)}K` : String(n));
 
 function Ring({ pct, size = 16 }: { pct: number; size?: number }) {
   const stroke = 2.5;
@@ -90,7 +90,7 @@ function useStableUsed(
     // A new session or a compaction reset starts fresh: snap to the latest raw,
     // which may be undefined when the new session has no stats yet. Clearing it
     // here prevents the previous session's usage from lingering on the meter.
-    if (!prev || prev.key !== key || generation !== prev.gen) {
+    if (prev?.key !== key || generation !== prev.gen) {
       ref.current = raw === undefined ? null : { key, gen: generation, value: raw };
       setDisplayed(raw);
       return;
@@ -105,7 +105,7 @@ function useStableUsed(
     }
   }, [key, raw, isExact, generation]);
   const prev = ref.current;
-  return !prev || prev.key !== key || prev.gen !== generation ? raw : displayed;
+  return prev?.key !== key || prev.gen !== generation ? raw : displayed;
 }
 
 export default function ContextMeter({
@@ -140,11 +140,14 @@ export default function ContextMeter({
     session.maxContextTokens && session.maxContextTokens > 0 ? session.maxContextTokens : undefined;
   const statLimit = measured?.limit && measured.limit > 0 ? measured.limit : modelWindow;
 
-  // The meter measures usage against the session's context window only. When
-  // and where the daemon auto-compacts is its own business (it announces
-  // itself in the transcript when it happens), so no trigger line is drawn or
-  // listed here.
+  // The meter measures usage against the session's context window only. The
+  // armed auto-compaction threshold is listed in the details popover, but no
+  // trigger line is drawn on the ring itself.
   const max = statLimit;
+  const autoCompactLimit =
+    session.compactionTokenLimit && session.compactionTokenLimit > 0
+      ? session.compactionTokenLimit
+      : undefined;
 
   const accuracy = measured?.accuracy;
   const isEstimating = (accuracy ?? 'estimated') !== 'exact';
@@ -199,15 +202,15 @@ export default function ContextMeter({
       setOpen(false);
     };
     window.addEventListener('mousedown', onClick);
-    return () => window.removeEventListener('mousedown', onClick);
+    return () => { window.removeEventListener('mousedown', onClick); };
   }, [open]);
 
   return (
     <div ref={ref} className="relative flex items-center">
       <button
-        onClick={() => setOpen((v) => !v)}
-        onMouseEnter={() => setHover(true)}
-        onMouseLeave={() => setHover(false)}
+        onClick={() => { setOpen((v) => !v); }}
+        onMouseEnter={() => { setHover(true); }}
+        onMouseLeave={() => { setHover(false); }}
         className="flex items-center rounded-md p-1 transition-colors hover:bg-droid-elevated/60"
         aria-label="Context usage"
       >
@@ -267,7 +270,7 @@ export default function ContextMeter({
               <div className="mb-3 flex items-center justify-between">
                 <span className="text-[13px] font-medium text-droid-text">Context</span>
                 <button
-                  onClick={() => setOpen(false)}
+                  onClick={() => { setOpen(false); }}
                   className="text-droid-text-muted transition-colors hover:text-droid-text"
                 >
                   <X className="h-3.5 w-3.5" />
@@ -289,7 +292,7 @@ export default function ContextMeter({
                       style={{
                         background: pct > 0.85 ? 'var(--droid-orange)' : 'var(--droid-accent)',
                       }}
-                      animate={{ width: `${Math.min(100, pct * 100)}%` }}
+                      animate={{ width: `${String(Math.min(100, pct * 100))}%` }}
                       transition={{ duration: 0.5, ease: EASE }}
                     />
                   </div>
@@ -307,6 +310,13 @@ export default function ContextMeter({
                 )}
                 {modelWindow !== undefined && modelWindow !== max && (
                   <Row color="var(--droid-text-muted)" label="Model window" value={modelWindow} />
+                )}
+                {autoCompactLimit !== undefined && (
+                  <Row
+                    color="var(--droid-orange)"
+                    label="Auto-compact at"
+                    value={autoCompactLimit}
+                  />
                 )}
                 <Row
                   color="var(--droid-text-muted)"

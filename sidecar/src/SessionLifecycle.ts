@@ -238,6 +238,7 @@ export class SessionLifecycle {
       if (
         await d.compaction.arm(
           {
+            appSessionId,
             session,
             isCurrent: () => !d.isShutdownStarted() && pendingSession === session,
           },

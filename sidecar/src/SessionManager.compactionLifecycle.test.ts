@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import { ContextStatsAccuracy } from '@factory/droid-sdk';
+
 import { FakeFactorySession, type RecordedCall } from './testing/fakeFactoryRuntime.js';
 import { writeProviderSessionStart } from './testing/historyCharacterizationSupport.js';
 import { createSessionManagerTestContext } from './testing/sessionManagerTestContext.js';
@@ -646,4 +648,126 @@ test('[C6] Close and shutdown clean keyed resources', { concurrency: false }, as
   assert.deepEqual(shutdown.timerClears, [1, 1, 1, 1]);
   assert.deepEqual(shutdown.browserCounts, [1, 1]);
   assert.equal(shutdown.historyClose, 1);
+});
+
+test(
+  '[C8] Learned context window retunes with the 80% ceiling',
+  { concurrency: false },
+  async () => {
+    const h = createSessionManagerTestContext();
+    const custom = new FakeFactorySession('provider-1', {}, h.calls, {
+      settings: { modelId: 'custom-model' },
+    });
+    custom.nextContextStats = {
+      used: 100,
+      remaining: 9_900,
+      limit: 10_000,
+      accuracy: ContextStatsAccuracy.Estimated,
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    };
+    h.runtime.createQueue.push(custom);
+    try {
+      await h.create({
+        sessionPurpose: 'chat',
+        clientRef: 'c7',
+        title: 'C7',
+        goal: 'go',
+        interactionMode: 'auto',
+        autonomy: 'low',
+        modelId: 'custom-model',
+      });
+      await h.waitForIdle();
+
+      // Initial arm: custom-model is absent from the catalog, so there is no
+      // window ceiling and the daemon default (250k) is used verbatim.
+      const compactionArms = () =>
+        h.provider
+          .session('provider-1')
+          .settings.filter((s) => s['compactionThresholdCheckEnabled'] === true);
+      assert.equal(compactionArms().at(0)?.['compactionTokenLimit'], 250_000);
+
+      // Wait for the poll → refresh → noteContextWindow → retuneAll chain.
+      for (let i = 0; i < 5; i++) await h.waitForIdle();
+
+      // After learning the 10k window from provider stats, the retune clamps to
+      // 80% (8_000) — the compaction window fraction.
+      assert.equal(compactionArms().at(-1)?.['compactionTokenLimit'], 8_000);
+    } finally {
+      await h.dispose();
+    }
+  },
+);
+
+test(
+  '[C9] setInteractionMode re-arms the compaction threshold',
+  { concurrency: false },
+  async () => {
+    const h = createSessionManagerTestContext();
+    try {
+      await h.create({
+        sessionPurpose: 'chat',
+        clientRef: 'c8',
+        title: 'C8',
+        goal: 'go',
+        interactionMode: 'auto',
+        autonomy: 'low',
+      });
+      await h.waitForIdle();
+
+      const compactionArmCount = () =>
+        h.provider
+          .session('provider-1')
+          .settings.filter((s) => s['compactionThresholdCheckEnabled'] === true).length;
+
+      const armsBefore = compactionArmCount();
+
+      await h.handle({
+        type: 'session.updateSettings',
+        appSessionId: 'provider-1',
+        interactionMode: 'spec',
+      });
+      await h.waitForIdle();
+
+      // Switching to spec mode must re-arm with the new mode's default model.
+      assert.equal(compactionArmCount() > armsBefore, true);
+    } finally {
+      await h.dispose();
+    }
+  },
+);
+
+test('[C10] Arm failure emits a visible recoverable error', { concurrency: false }, async () => {
+  const h = createSessionManagerTestContext();
+  try {
+    await h.create({
+      sessionPurpose: 'chat',
+      clientRef: 'c9',
+      title: 'C9',
+      goal: 'go',
+      interactionMode: 'auto',
+      autonomy: 'low',
+    });
+    await h.waitForIdle();
+    h.events.length = 0;
+    h.provider.session('provider-1').nextUpdateSettingsError = new Error('provider rejected');
+
+    await h.handle({
+      type: 'settings.compaction.update',
+      compactionTokenLimit: 400,
+    });
+    await h.waitForIdle();
+
+    assert.equal(
+      h.events.some(
+        (event) =>
+          event.type === 'error' &&
+          event.appSessionId === 'provider-1' &&
+          event.recoverable === true &&
+          /Could not arm auto-compaction/.test(event.message),
+      ),
+      true,
+    );
+  } finally {
+    await h.dispose();
+  }
 });
