@@ -1,4 +1,5 @@
 import { useStore } from '../hooks/useStore';
+import type { ContextStatsSnapshot } from '../types/bridge';
 import ContextMeter from './ContextMeter';
 
 // Compact context/status cluster for the prompt-input toolbar: a queued-send
@@ -11,11 +12,15 @@ export default function ContextStatusCluster() {
   const session = state.activeAppSessionId ? state.sessions[state.activeAppSessionId] : null;
   const selectedChild =
     state.selectedChild?.parentAppSessionId === session?.appSessionId ? state.selectedChild : null;
-  const contextStats = selectedChild
-    ? state.contextStats.child[selectedChild.parentAppSessionId]?.[selectedChild.childSessionId]
-    : session
-      ? state.contextStats.primary[session.appSessionId]
-      : undefined;
+  // Explicit `| undefined` on the parent entry avoids a false positive from
+  // @typescript-eslint/no-unnecessary-condition: Record<string, T> indexing
+  // returns T (not T | undefined) in TypeScript, but the key may be absent at
+  // runtime, so the optional chain on childParent is semantically necessary.
+  const childParent: Record<string, ContextStatsSnapshot> | undefined = selectedChild
+    ? state.contextStats.child[selectedChild.parentAppSessionId]
+    : undefined;
+  const primaryStats = session ? state.contextStats.primary[session.appSessionId] : undefined;
+  const contextStats = selectedChild ? childParent?.[selectedChild.childSessionId] : primaryStats;
   const contextSessionSummary =
     session && selectedChild && !contextStats
       ? {
@@ -44,6 +49,7 @@ export default function ContextStatusCluster() {
             ? `${selectedChild.parentAppSessionId}:${selectedChild.childSessionId}`
             : contextSessionSummary.appSessionId
         }
+        isChild={!!selectedChild}
       />
     </div>
   );

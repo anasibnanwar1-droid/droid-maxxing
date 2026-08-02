@@ -69,9 +69,13 @@ export class SessionContext {
   // generation: stats fetched before a compaction must never be published after
   // it, or the meter would jump back to the pre-compaction reading.
   private readonly compactions = new Map<string, number>();
-  // Primary resources whose post-compaction reset has not been confirmed by a
-  // fresh provider reading yet. While pending, exact usage reported by queued
-  // pre-compaction stream events must not overwrite the reset summary.
+  // Primary resources whose post-compaction reset has not been cleared by a
+  // new turn boundary. While pending, exact usage reported by queued
+  // pre-compaction stream events must not overwrite the reset summary. The
+  // flag stays set after a provider reading confirms the reset (the poller
+  // keeps the meter accurate) and is only cleared when a new turn begins, so
+  // a late pre-compaction usage event delivered after the poll can never
+  // resurrect the old meter.
   private readonly pendingCompactionResets = new Set<string>();
   private readonly pollers = new Map<string, ContextPoller>();
   private epoch = 0;
@@ -205,6 +209,14 @@ export class SessionContext {
     });
   }
 
+  // A new primary turn begins: pre-compaction stream events from the previous
+  // turn can no longer be delivered, so the pending-compaction guard is safe to
+  // clear. The poller's provider readings already keep the meter accurate; this
+  // just re-enables usage-event context estimates for the new turn.
+  beginTurn(appSessionId: string): void {
+    this.pendingCompactionResets.delete(primaryResourceKey(appSessionId));
+  }
+
   preserveUsage(appSessionId: string, offset: UsageOffset): void {
     this.usageOffsets.set(appSessionId, offset);
   }
@@ -277,7 +289,9 @@ export class SessionContext {
       : applyExactUsage(providerSnapshot, liveSession.summary);
 
     if (!target.isCurrent()) return;
-    this.pendingCompactionResets.delete(key);
+    // Do NOT clear pendingCompactionResets here: a late pre-compaction usage
+    // event delivered after this provider reading could resurrect the old meter.
+    // The guard is cleared at the stream-settlement boundary (beginTurn) instead.
     this.snapshots.set(key, snapshot);
     this.dependencies.emit({
       type: 'context.updated',

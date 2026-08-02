@@ -98,7 +98,12 @@ export function createSessionManagerTestContext(
     ...(options.getFactoryDefaults ? { getFactoryDefaults: options.getFactoryDefaults } : {}),
   };
 
-  pinTestHome(home);
+  try {
+    pinTestHome(home);
+  } catch (error) {
+    rmSync(home, { recursive: true, force: true });
+    throw error;
+  }
   let manager: SessionManager;
   try {
     manager = new SessionManager(recordEvent, { dependencies, initialModels: INITIAL_MODELS });
@@ -184,7 +189,12 @@ export function createNativeBrowserTestContext(): NativeBrowserTestContext {
   // BrowserSessionManager, so this one focused context intentionally uses that
   // production composition. It only exercises local browser messages under an
   // isolated HOME; no provider session or authenticated runtime is started.
-  pinTestHome(home);
+  try {
+    pinTestHome(home);
+  } catch (error) {
+    rmSync(home, { recursive: true, force: true });
+    throw error;
+  }
   let manager: SessionManager;
   try {
     manager = new SessionManager(recordEvent, { initialModels: INITIAL_MODELS });

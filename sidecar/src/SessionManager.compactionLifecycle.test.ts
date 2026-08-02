@@ -720,6 +720,12 @@ test(
           .session('provider-1')
           .settings.filter((s) => s['compactionThresholdCheckEnabled'] === true).length;
 
+      const latestArmLimit = () =>
+        h.provider
+          .session('provider-1')
+          .settings.filter((s) => s['compactionThresholdCheckEnabled'] === true)
+          .at(-1)?.['compactionTokenLimit'];
+
       const armsBefore = compactionArmCount();
 
       await h.handle({
@@ -730,7 +736,10 @@ test(
       await h.waitForIdle();
 
       // Switching to spec mode must re-arm with the new mode's default model.
+      // The limit is the daemon default (250k) clamped to 80% of the model
+      // window (1k → 800), so the re-arm must carry compactionTokenLimit 800.
       assert.equal(compactionArmCount() > armsBefore, true);
+      assert.equal(latestArmLimit(), 800);
     } finally {
       await h.dispose();
     }

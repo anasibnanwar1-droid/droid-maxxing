@@ -105,7 +105,7 @@ function createHarness() {
         // context telemetry and bump the compaction counter so the sink's
         // in-place path produces the same summary the real context would.
         const live = registry.getLive(target.appSessionId);
-        if (live && live.session === target.session) {
+        if (target.isCurrent() && live && live.session === target.session) {
           live.summary = {
             ...live.summary,
             contextTokens: 0,

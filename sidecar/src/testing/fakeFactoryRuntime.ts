@@ -305,11 +305,17 @@ export class FakeFactorySession implements FactorySession {
     unsupportedSessionMethod('listMcpTools');
 
   private defer(gates?: DeferredStream[]): DeferredStream {
-    let release = (): void => undefined;
+    let settle = (): void => undefined;
     const promise = new Promise<void>((resolve) => {
-      release = resolve;
+      settle = resolve;
     });
-    const gate = { promise, resolve: release };
+    const gate: DeferredStream = {
+      promise,
+      resolve: () => {
+        this.allStreamGates.delete(gate);
+        settle();
+      },
+    };
     gates?.push(gate);
     this.allStreamGates.add(gate);
     return gate;
