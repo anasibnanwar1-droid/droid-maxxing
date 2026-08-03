@@ -1,38 +1,38 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
   <!-- DROIDEX app icon: pixel DX monogram on cream.
-       Big Sur tile (824 centered in 1024), Silkscreen-style 5-row pixel
-       glyphs on a 64px grid (D 5 cols, 1-col gap, X 5 cols; content 704x320
-       centered). D in ink, X in safety orange. -->
-  <rect x="100" y="100" width="824" height="824" rx="185" fill="#F2EFE9" />
+       Full-canvas macOS tile with transparent rounded corners. Silkscreen-style
+       5-row pixel glyphs on an 80px grid (D 5 cols, 1-col gap, X 5 cols;
+       content 880x400 centered). D in ink, X in safety orange. -->
+  <rect width="1024" height="1024" rx="228" fill="#F2EFE9" />
 
   <!-- D, ink -->
   <g fill="#141310">
-    <rect x="160" y="352" width="64" height="64" />
-    <rect x="224" y="352" width="64" height="64" />
-    <rect x="288" y="352" width="64" height="64" />
-    <rect x="352" y="352" width="64" height="64" />
-    <rect x="160" y="416" width="64" height="64" />
-    <rect x="416" y="416" width="64" height="64" />
-    <rect x="160" y="480" width="64" height="64" />
-    <rect x="416" y="480" width="64" height="64" />
-    <rect x="160" y="544" width="64" height="64" />
-    <rect x="416" y="544" width="64" height="64" />
-    <rect x="160" y="608" width="64" height="64" />
-    <rect x="224" y="608" width="64" height="64" />
-    <rect x="288" y="608" width="64" height="64" />
-    <rect x="352" y="608" width="64" height="64" />
+    <rect x="72" y="312" width="80" height="80" />
+    <rect x="152" y="312" width="80" height="80" />
+    <rect x="232" y="312" width="80" height="80" />
+    <rect x="312" y="312" width="80" height="80" />
+    <rect x="72" y="392" width="80" height="80" />
+    <rect x="392" y="392" width="80" height="80" />
+    <rect x="72" y="472" width="80" height="80" />
+    <rect x="392" y="472" width="80" height="80" />
+    <rect x="72" y="552" width="80" height="80" />
+    <rect x="392" y="552" width="80" height="80" />
+    <rect x="72" y="632" width="80" height="80" />
+    <rect x="152" y="632" width="80" height="80" />
+    <rect x="232" y="632" width="80" height="80" />
+    <rect x="312" y="632" width="80" height="80" />
   </g>
 
   <!-- X, safety orange -->
   <g fill="#FF4D00">
-    <rect x="544" y="352" width="64" height="64" />
-    <rect x="800" y="352" width="64" height="64" />
-    <rect x="608" y="416" width="64" height="64" />
-    <rect x="736" y="416" width="64" height="64" />
-    <rect x="672" y="480" width="64" height="64" />
-    <rect x="608" y="544" width="64" height="64" />
-    <rect x="736" y="544" width="64" height="64" />
-    <rect x="544" y="608" width="64" height="64" />
-    <rect x="800" y="608" width="64" height="64" />
+    <rect x="552" y="312" width="80" height="80" />
+    <rect x="872" y="312" width="80" height="80" />
+    <rect x="632" y="392" width="80" height="80" />
+    <rect x="792" y="392" width="80" height="80" />
+    <rect x="712" y="472" width="80" height="80" />
+    <rect x="632" y="552" width="80" height="80" />
+    <rect x="792" y="552" width="80" height="80" />
+    <rect x="552" y="632" width="80" height="80" />
+    <rect x="872" y="632" width="80" height="80" />
   </g>
 </svg>

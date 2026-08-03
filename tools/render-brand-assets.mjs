@@ -60,7 +60,7 @@ async function renderSvg(browser, svgPath, size, outPath) {
       return regular.length > 0 && medium.length > 0;
     });
     if (!fontsLoaded) throw new Error('Bundled JetBrains Mono fonts failed to load');
-    await page.screenshot({ path: outPath });
+    await page.screenshot({ path: outPath, omitBackground: true });
   } finally {
     await page.close();
   }
