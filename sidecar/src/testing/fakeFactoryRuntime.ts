@@ -403,6 +403,9 @@ export class FakeFactoryRuntime implements FactoryRuntime {
             ? {}
             : { reasoningEffort: options.reasoningEffort }),
           interactionMode: options.interactionMode,
+          // Mirror the real runtime: an explicit create-time autonomy level
+          // shows up in the session's init result.
+          ...(options.autonomyLevel === undefined ? {} : { autonomyLevel: options.autonomyLevel }),
         },
       });
     if (next instanceof Error) return Promise.reject(next);

@@ -108,10 +108,12 @@ export class SessionLifecycle {
     let pendingLiveSession: LiveSession | undefined;
 
     try {
+      // Validate the required autonomy snapshot before any slow or fallible
+      // discovery work so a missing snapshot always gets its own diagnostic.
+      const autonomy = requireAutonomyForCommand(command);
       const defaults = await d.getFactoryDefaults();
       const interactionMode = createInteractionModeForCommand(command, defaults);
       const defaultsMode = createDefaultsModeForCommand(command, interactionMode);
-      const autonomy = requireAutonomyForCommand(command);
       const primary = createModelDefaultsForMode(defaultsMode, command, defaults);
       const agents = createMissionAgentDefaultsForMode(defaultsMode, command, defaults);
       const compactionModel =
