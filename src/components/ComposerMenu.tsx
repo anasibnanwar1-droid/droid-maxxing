@@ -1,6 +1,6 @@
 import { AnimatePresence, motion } from 'framer-motion';
 import { Check, FileText, Hexagon, Terminal } from 'lucide-react';
-import { Fragment } from 'react';
+import { Fragment, type MouseEvent } from 'react';
 
 import type { SkillInfo, SkillLocation } from '../types/bridge';
 
@@ -90,6 +90,13 @@ export default function ComposerMenu({
             const on = i === Math.min(activeIndex, items.length - 1);
             const base = `w-full flex items-center gap-3 px-3 py-2 text-left transition-colors ${on ? 'bg-droid-surface' : 'hover:bg-droid-surface/50'}`;
             const section = menuSection(triggerKind, i, firstCommandIndex, firstSkillIndex);
+            // Mouse users run the row on mousedown (preventDefault keeps focus
+            // in the textarea). Keyboard and assistive-technology activation
+            // fire click with detail 0 and no preceding mousedown, so run the
+            // row there too without double-firing for mouse users.
+            const runOnKeyboardClick = (e: MouseEvent<HTMLButtonElement>) => {
+              if (e.detail === 0) onRunItem(item);
+            };
             const sectionHeader = section ? (
               <div
                 className={`px-3 pb-1 text-[10px] font-medium uppercase tracking-wide text-droid-text-muted/50 ${i === 0 ? 'pt-1.5' : 'pt-2.5'}`}
@@ -109,6 +116,7 @@ export default function ComposerMenu({
                       e.preventDefault();
                       onRunItem(item);
                     }}
+                    onClick={runOnKeyboardClick}
                     className={base}
                   >
                     <Terminal className="w-4 h-4 shrink-0 text-droid-text-muted/70" />
@@ -135,6 +143,7 @@ export default function ComposerMenu({
                       e.preventDefault();
                       onRunItem(item);
                     }}
+                    onClick={runOnKeyboardClick}
                     className={base}
                   >
                     <Hexagon className="w-4 h-4 shrink-0 text-droid-text-muted/70" />
@@ -171,6 +180,7 @@ export default function ComposerMenu({
                   e.preventDefault();
                   onRunItem(item);
                 }}
+                onClick={runOnKeyboardClick}
                 className={base}
               >
                 <FileText className="w-3.5 h-3.5 shrink-0 text-droid-text-muted" />
