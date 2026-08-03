@@ -4,7 +4,6 @@ import type { EnvironmentReport, InstallChannel } from './protocol.js';
 export interface ShellCommand {
   command: string;
   args: string[];
-  shell?: boolean;
 }
 
 // Prefer the official script when curl exists, then Homebrew, then npm.
@@ -22,10 +21,11 @@ export function buildInstallCommand(channel: InstallChannel): ShellCommand {
       // runs; a piped `curl | sh` would swallow download errors and could
       // report a successful install with nothing installed.
       return {
-        command:
+        command: 'sh',
+        args: [
+          '-c',
           'f="$(mktemp)" && curl -fsSL https://app.factory.ai/cli -o "$f" && sh "$f"; r=$?; rm -f "$f"; exit $r',
-        args: [],
-        shell: true,
+        ],
       };
     case 'brew':
       return { command: 'brew', args: ['install', '--cask', 'droid'] };
@@ -45,18 +45,31 @@ export function buildUpdateCommand(
   return buildInstallCommand(channel ?? 'script');
 }
 
-export type ProgressLine = { stream: 'stdout' | 'stderr'; line: string };
+export interface ProgressLine { stream: 'stdout' | 'stderr'; line: string }
+
+export function streamingInvocation(
+  cmd: ShellCommand,
+  platform: NodeJS.Platform = process.platform,
+  commandShell = process.env.ComSpec,
+): ShellCommand {
+  if (platform !== 'win32' || (cmd.command !== 'npm' && !/\.(?:cmd|bat)$/i.test(cmd.command))) {
+    return cmd;
+  }
+  return {
+    command: commandShell?.trim() ? commandShell : 'cmd.exe',
+    args: ['/d', '/s', '/c', cmd.command, ...cmd.args],
+  };
+}
 
 export function runStreaming(
   cmd: ShellCommand,
   onLine: (line: ProgressLine) => void,
 ): Promise<number> {
   return new Promise((resolve) => {
-    // On Windows, `npm` and npm-installed `droid` are `.cmd` shims that cannot
-    // be spawned directly, so route non-pipeline commands through a shell too.
-    const child = cmd.shell
-      ? spawn(cmd.command, { shell: true, env: process.env })
-      : spawn(cmd.command, cmd.args, { shell: process.platform === 'win32', env: process.env });
+    // Windows npm and Droid `.cmd` shims require cmd.exe. Invoke that executable
+    // explicitly; never enable Node's generic shell mode.
+    const invocation = streamingInvocation(cmd);
+    const child = spawn(invocation.command, invocation.args, { shell: false, env: process.env });
 
     const pump = (stream: 'stdout' | 'stderr') => (chunk: Buffer) => {
       for (const line of chunk.toString().split(/\r?\n/)) {
@@ -64,12 +77,12 @@ export function runStreaming(
       }
     };
 
-    child.stdout?.on('data', pump('stdout'));
-    child.stderr?.on('data', pump('stderr'));
+    child.stdout.on('data', pump('stdout'));
+    child.stderr.on('data', pump('stderr'));
     child.on('error', (err) => {
       onLine({ stream: 'stderr', line: err instanceof Error ? err.message : String(err) });
       resolve(1);
     });
-    child.on('close', (code) => resolve(code ?? 0));
+    child.on('close', (code) => { resolve(code ?? 0); });
   });
 }

@@ -1,6 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildInstallCommand, buildUpdateCommand, pickInstallChannel } from './CliInstaller.js';
+import {
+  buildInstallCommand,
+  buildUpdateCommand,
+  pickInstallChannel,
+  streamingInvocation,
+} from './CliInstaller.js';
 
 test('pickInstallChannel prefers script, then brew, then npm', () => {
   assert.equal(pickInstallChannel({ availableChannels: ['script', 'brew', 'npm'] }), 'script');
@@ -11,9 +16,10 @@ test('pickInstallChannel prefers script, then brew, then npm', () => {
 
 test('buildInstallCommand maps each channel to its command', () => {
   const script = buildInstallCommand('script');
-  assert.equal(script.shell, true);
-  assert.match(script.command, /curl -fsSL https:\/\/app\.factory\.ai\/cli/);
-  assert.match(script.command, /&& sh/);
+  assert.equal(script.command, 'sh');
+  assert.equal(script.args[0], '-c');
+  assert.match(script.args[1] ?? '', /curl -fsSL https:\/\/app\.factory\.ai\/cli/);
+  assert.match(script.args[1] ?? '', /&& sh/);
   assert.deepEqual(buildInstallCommand('brew'), {
     command: 'brew',
     args: ['install', '--cask', 'droid'],
@@ -27,7 +33,29 @@ test('buildInstallCommand maps each channel to its command', () => {
 test('the script install aborts when the download fails', () => {
   // `&&` chaining means `sh` only runs after a successful curl, so a failed
   // download cannot be reported as a successful install.
-  assert.match(buildInstallCommand('script').command, /curl[^&]*&&[^&]*sh/);
+  assert.match(buildInstallCommand('script').args[1] ?? '', /curl[^&]*&&[^&]*sh/);
+});
+
+test('streamingInvocation never enables a generic shell', () => {
+  assert.deepEqual(streamingInvocation({ command: '/usr/bin/droid', args: ['update'] }, 'darwin'), {
+    command: '/usr/bin/droid',
+    args: ['update'],
+  });
+  assert.deepEqual(
+    streamingInvocation(
+      { command: 'C:\\npm\\droid.cmd', args: ['update'] },
+      'win32',
+      'C:\\Windows\\System32\\cmd.exe',
+    ),
+    {
+      command: 'C:\\Windows\\System32\\cmd.exe',
+      args: ['/d', '/s', '/c', 'C:\\npm\\droid.cmd', 'update'],
+    },
+  );
+  assert.deepEqual(streamingInvocation({ command: 'npm', args: ['install', '-g'] }, 'win32'), {
+    command: 'cmd.exe',
+    args: ['/d', '/s', '/c', 'npm', 'install', '-g'],
+  });
 });
 
 test('buildUpdateCommand uses droid update when the CLI exists', () => {
