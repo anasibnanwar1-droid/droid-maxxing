@@ -608,7 +608,7 @@ function WebSourceRow({
 
 function CountBadge({ label }: { label: string }) {
   return (
-    <span className="ml-auto shrink-0 rounded-md border border-droid-border bg-droid-elevated/60 px-1.5 py-0.5 font-mono text-[11px] text-droid-text-secondary">
+    <span className="ml-auto shrink-0 rounded-md border border-droid-border bg-droid-elevated/60 px-1.5 py-0.5 tabular-nums text-[11px] text-droid-text-secondary">
       {label}
     </span>
   );
@@ -1804,7 +1804,7 @@ const InlineSpecCard = memo(function InlineSpecCard({
           <FileText className="w-4 h-4 shrink-0 text-droid-text-muted" />
           <span className="truncate text-[13px] font-medium text-droid-text">{title}</span>
           {sections > 0 && (
-            <span className="shrink-0 text-[11px] font-mono text-droid-text-muted/70">
+            <span className="shrink-0 text-[11px] tabular-nums text-droid-text-muted/70">
               {sections} sections
             </span>
           )}

@@ -47,7 +47,7 @@ export function NotesIntroCard({
 
         <div className="px-3.5 pb-3 pt-2.5">
           <div className="flex items-center gap-2">
-            <span className="rounded bg-droid-accent/15 px-1.5 py-0.5 font-mono text-[10px] font-medium uppercase tracking-wide text-droid-accent">
+            <span className="rounded bg-droid-accent/15 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-droid-accent">
               New
             </span>
             <span className="text-[13.5px] font-semibold text-droid-text">Meet Notes</span>

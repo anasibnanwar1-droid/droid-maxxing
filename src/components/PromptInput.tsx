@@ -27,6 +27,7 @@ import { QueuedPrompts } from './composer/QueuedPrompts';
 import { markGitTurnStart } from '../lib/git';
 import { createLocalDesignTranscriptEvent, newQueueId } from '../lib/promptQueue';
 import { composePrompt } from '../lib/composePrompt';
+import { resolveReasoningEffortDisplay } from '../lib/reasoningEffort';
 import { compactionSettingsSnapshot } from '../lib/compactionSettings';
 import { resetComposerAfterSubmit } from '../lib/composerReset';
 import {
@@ -38,18 +39,8 @@ import {
   visibleSessionTarget,
   type VisibleSessionTarget,
 } from '../lib/childSessions';
-import {
-  ArrowUp,
-  ChevronDown,
-  Plus,
-  SlidersHorizontal,
-  Square,
-  FileText,
-  X,
-  Folder,
-  User,
-  Box,
-} from 'lucide-react';
+import { ArrowUp, ChevronDown, Plus, SlidersHorizontal, Square, FileText, X } from 'lucide-react';
+import ComposerMenu, { type MenuItem, type SlashCommand } from './ComposerMenu';
 import ModelSelectorPopover from './ModelSelectorPopover';
 import {
   buildVisibleChildSettingsTarget,
@@ -60,7 +51,7 @@ import PermissionInline from './PermissionInline';
 import PlanApprovalInline from './PlanApprovalInline';
 import { ModelIcon, providerOf } from './ModelIcon';
 import { StartInBar } from './environment/StartInBar';
-import type { SkillInfo, SkillLocation } from '../types/bridge';
+import type { SkillInfo } from '../types/bridge';
 
 const ACCENT = 'var(--droid-accent)';
 const accentMix = (pct: number) =>
@@ -68,23 +59,12 @@ const accentMix = (pct: number) =>
 type SubmitMode = 'queue' | 'now';
 const oppositeSubmitMode = (mode: SubmitMode): SubmitMode => (mode === 'queue' ? 'now' : 'queue');
 
-interface SlashCommand {
-  cmd: string;
-  desc: string;
-  run: () => void;
-}
-
 interface Trigger {
   kind: 'slash' | 'file';
   query: string;
   start: number;
   end: number;
 }
-
-type MenuItem =
-  | { type: 'command'; command: SlashCommand }
-  | { type: 'skill'; skill: SkillInfo }
-  | { type: 'file'; path: string };
 
 function getTrigger(text: string, caret: number): Trigger | null {
   const upto = text.slice(0, caret);
@@ -104,12 +84,6 @@ function basename(p: string): string {
   const i = p.lastIndexOf('/');
   return i >= 0 ? p.slice(i + 1) : p;
 }
-
-const LOCATION_ICON: Record<SkillLocation, typeof User> = {
-  project: Folder,
-  personal: User,
-  builtin: Box,
-};
 
 const COMPACT_COMMANDS = new Set(['/compact', '/compaction', '/compression']);
 
@@ -449,17 +423,17 @@ export default function PromptInput({
   // default while composing a brand-new chat that has no session yet.
   const chatScoped = !missionPreview && !!activeSession;
   const primaryModelId = chatScoped ? activeSession.modelId : state.agentConfig.primary.modelId;
-  const primaryReasoning = chatScoped
-    ? (activeSession.reasoningEffort ?? state.agentConfig.primary.reasoning)
-    : state.agentConfig.primary.reasoning;
   const selectedModel = primaryModelId
     ? state.models.find((m) => m.id === primaryModelId)
     : undefined;
   const selectedModelLabel = primaryModelId
     ? (selectedModel?.displayName ?? primaryModelId)
     : 'Default model';
-  const showReasoningBadge =
-    !selectedModel || (selectedModel.supportedReasoningEfforts?.length ?? 0) > 0;
+  const primaryReasoning = resolveReasoningEffortDisplay(
+    chatScoped ? activeSession.reasoningEffort : undefined,
+    state.agentConfig.primary.reasoning,
+    selectedModel,
+  );
 
   const replaceTrigger = (replacement: string) => {
     if (!trigger) return;
@@ -933,108 +907,17 @@ export default function PromptInput({
         onDragOver={fileDrop.onDragOver}
         onDrop={fileDrop.onDrop}
       >
-        <AnimatePresence>
-          {menuOpen && (
-            <motion.div
-              initial={{ opacity: 0, y: 6 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: 6 }}
-              transition={{ duration: 0.14, ease: [0.16, 1, 0.3, 1] }}
-              className="absolute bottom-full left-0 right-0 mb-2 z-50 rounded-xl border border-droid-border bg-droid-elevated shadow-2xl shadow-black/40 overflow-hidden py-1 max-h-72 overflow-y-auto"
-            >
-              {trigger.kind === 'file' && (
-                <div className="px-3 py-1.5 text-[10px] uppercase tracking-wide text-droid-text-muted/60 flex items-center gap-1.5">
-                  <FileText className="w-3 h-3" /> Files{filesCwd ? '' : ' — loading…'}
-                </div>
-              )}
-              {menuItems.map((item, i) => {
-                const on = i === Math.min(menuIndex, menuItems.length - 1);
-                const base = `w-full flex items-center gap-3 px-3 py-2 text-left transition-colors ${on ? 'bg-droid-surface' : 'hover:bg-droid-surface/60'}`;
-                if (item.type === 'command') {
-                  return (
-                    <button
-                      key={`cmd-${item.command.cmd}`}
-                      onMouseEnter={() => {
-                        setMenuIndex(i);
-                      }}
-                      onMouseDown={(e) => {
-                        e.preventDefault();
-                        runMenuItem(item);
-                      }}
-                      className={base}
-                    >
-                      <span className="font-mono text-[12px] text-droid-text">
-                        {item.command.cmd}
-                      </span>
-                      <span className="text-[11px] text-droid-text-muted truncate">
-                        {item.command.desc}
-                      </span>
-                    </button>
-                  );
-                }
-                if (item.type === 'skill') {
-                  const LocIcon = LOCATION_ICON[item.skill.location];
-                  const added = activeSkills.some((s) => s.filePath === item.skill.filePath);
-                  return (
-                    <button
-                      key={`skill-${item.skill.filePath}`}
-                      onMouseEnter={() => {
-                        setMenuIndex(i);
-                      }}
-                      onMouseDown={(e) => {
-                        e.preventDefault();
-                        runMenuItem(item);
-                      }}
-                      className={base}
-                    >
-                      <span className="text-[12px] shrink-0" style={{ color: ACCENT }}>
-                        {item.skill.name}
-                      </span>
-                      <span className="text-[11px] text-droid-text-muted truncate flex-1">
-                        {item.skill.description}
-                      </span>
-                      {added && (
-                        <span className="text-[10px] shrink-0" style={{ color: ACCENT }}>
-                          added
-                        </span>
-                      )}
-                      <span className="flex items-center gap-1 text-[10px] text-droid-text-muted/60 shrink-0">
-                        <LocIcon className="w-3 h-3" />
-                        {item.skill.location}
-                      </span>
-                    </button>
-                  );
-                }
-                return (
-                  <button
-                    key={`file-${item.path}`}
-                    onMouseEnter={() => {
-                      setMenuIndex(i);
-                    }}
-                    onMouseDown={(e) => {
-                      e.preventDefault();
-                      runMenuItem(item);
-                    }}
-                    className={base}
-                  >
-                    <FileText className="w-3.5 h-3.5 shrink-0 text-droid-text-muted" />
-                    <span className="text-[12px] text-droid-text shrink-0">
-                      {basename(item.path)}
-                    </span>
-                    <span className="text-[11px] text-droid-text-muted/70 truncate flex-1">
-                      {item.path}
-                    </span>
-                    {attachedFiles.includes(item.path) && (
-                      <span className="text-[10px] shrink-0" style={{ color: ACCENT }}>
-                        added
-                      </span>
-                    )}
-                  </button>
-                );
-              })}
-            </motion.div>
-          )}
-        </AnimatePresence>
+        <ComposerMenu
+          open={menuOpen}
+          triggerKind={trigger?.kind ?? null}
+          filesLoading={!filesCwd}
+          items={menuItems}
+          activeIndex={menuIndex}
+          activeSkills={activeSkills}
+          attachedFiles={attachedFiles}
+          onHoverItem={setMenuIndex}
+          onRunItem={runMenuItem}
+        />
 
         <PlanApprovalInline />
         <PermissionInline />
@@ -1230,7 +1113,7 @@ export default function PromptInput({
                   <>
                     <ModelIcon provider={providerOf(selectedModel, primaryModelId)} size={14} />
                     <span className="truncate">{selectedModelLabel}</span>
-                    {showReasoningBadge && (
+                    {primaryReasoning && (
                       <span
                         className="shrink-0 px-1.5 py-0.5 rounded-md text-[9px] font-medium capitalize leading-none"
                         style={{

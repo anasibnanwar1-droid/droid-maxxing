@@ -52,7 +52,7 @@ function Row({ color, label, value }: { color: string; label: string; value: num
         <span className="h-2 w-2 rounded-sm" style={{ background: color }} />
         <span className="text-[12px] text-droid-text-secondary">{label}</span>
       </span>
-      <span className="font-mono text-[12px] text-droid-text">{value.toLocaleString()}</span>
+      <span className="tabular-nums text-[12px] text-droid-text">{value.toLocaleString()}</span>
     </div>
   );
 }
@@ -245,7 +245,7 @@ export default function ContextMeter({
               <div className="whitespace-nowrap text-[11px] text-droid-text-secondary">
                 {ready ? (
                   <>
-                    <span className="font-mono text-droid-text">
+                    <span className="tabular-nums text-droid-text">
                       {isEstimating ? '~' : ''}
                       {fmt(used)} / {fmt(max)}
                     </span>
@@ -297,7 +297,7 @@ export default function ContextMeter({
                 <>
                   <div className="mb-2 flex items-center justify-between">
                     <span className="text-[11px] text-droid-text-secondary">{pctLabel}% full</span>
-                    <span className="font-mono text-[11px] text-droid-text-secondary">
+                    <span className="tabular-nums text-[11px] text-droid-text-secondary">
                       {fmt(used)} / {fmt(max)} tokens
                     </span>
                   </div>

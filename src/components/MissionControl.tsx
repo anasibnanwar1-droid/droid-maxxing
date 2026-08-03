@@ -164,7 +164,7 @@ function FeaturesColumn({
     <div className="flex-1 min-h-0 overflow-y-auto px-2.5 pb-4 pt-2 space-y-4">
       {milestones.map(([milestone, feats]) => (
         <div key={milestone}>
-          <span className="block px-2 mb-1 text-[10px] font-mono text-droid-text-muted/70 uppercase tracking-wider">
+          <span className="block px-2 mb-1 text-[10px] font-medium text-droid-text-muted/70 uppercase tracking-wider">
             {milestone}
           </span>
           <div className="space-y-px">
@@ -183,7 +183,7 @@ function FeaturesColumn({
                     className="absolute left-0 top-1.5 bottom-1.5 w-[2px] rounded-full transition-opacity"
                     style={{ background: ACCENT, opacity: active ? 1 : running ? 0.45 : 0 }}
                   />
-                  <span className="font-mono text-[10px] text-droid-text-muted/70 w-4 shrink-0 text-right">
+                  <span className="tabular-nums text-[10px] text-droid-text-muted/70 w-4 shrink-0 text-right">
                     {numberOf.get(f.id)}
                   </span>
                   <span
@@ -198,7 +198,7 @@ function FeaturesColumn({
                     {f.skillName || f.description}
                   </span>
                   {running && !paused ? (
-                    <span className="shimmer-text font-mono text-[9px] tracking-wide shrink-0">
+                    <span className="shimmer-text text-[9px] font-medium uppercase tracking-wide shrink-0">
                       working
                     </span>
                   ) : completed ? (
@@ -334,7 +334,7 @@ function ContextColumn({
             className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-droid-text-muted hover:text-droid-text hover:bg-droid-elevated/60 transition-colors"
           >
             <Boxes className="w-4 h-4" />
-            {skills.length > 0 && <span className="text-[11px] font-mono">{skills.length}</span>}
+            {skills.length > 0 && <span className="text-[11px] tabular-nums">{skills.length}</span>}
           </button>
           <button
             title="Web"
@@ -348,7 +348,7 @@ function ContextColumn({
             {skills.map((s) => (
               <span
                 key={s}
-                className="px-1.5 py-0.5 rounded font-mono text-[10px] text-droid-text-muted bg-droid-elevated"
+                className="px-1.5 py-0.5 rounded text-[10px] text-droid-text-muted bg-droid-elevated"
               >
                 {s}
               </span>
@@ -395,7 +395,7 @@ function AgentsSection({
         <button
           onClick={cycleAutonomy}
           title="Cycle autonomy (off → low → medium → high)"
-          className="px-2 py-0.5 rounded-md font-mono text-[10px] capitalize text-droid-text-secondary hover:text-droid-text hover:bg-droid-elevated/60 transition-colors"
+          className="px-2 py-0.5 rounded-md text-[10px] font-medium capitalize text-droid-text-secondary hover:text-droid-text hover:bg-droid-elevated/60 transition-colors"
         >
           {mission.autonomy} autonomy
         </button>
@@ -477,9 +477,7 @@ function AgentRow({
             <span className="shimmer-text text-[10px] leading-none font-medium">working</span>
           )}
         </span>
-        <span className="mt-1 block font-mono text-[10px] text-droid-text-muted truncate">
-          {meta}
-        </span>
+        <span className="mt-1 block text-[10px] text-droid-text-muted truncate">{meta}</span>
       </span>
     </button>
   );
@@ -505,7 +503,7 @@ function ProgressSection({
       <div className="flex items-center justify-between px-2 mb-1.5">
         <SectionLabel>Progress</SectionLabel>
         {progress.length > 0 && (
-          <span className="font-mono text-[10px] text-droid-text-muted">{progress.length}</span>
+          <span className="tabular-nums text-[10px] text-droid-text-muted">{progress.length}</span>
         )}
       </div>
       <div className="space-y-0.5">
@@ -522,7 +520,7 @@ function ProgressSection({
               entry.workerChildSessionId ? 'hover:bg-droid-elevated/35' : 'cursor-default'
             }`}
           >
-            <span className="font-mono text-[9.5px] text-droid-text-muted/70 shrink-0">
+            <span className="tabular-nums text-[9.5px] text-droid-text-muted/70 shrink-0">
               {formatTime(entry.timestamp)}
             </span>
             <span className="min-w-0 truncate text-[12px] text-droid-text-secondary">
@@ -623,7 +621,7 @@ function PanelHeader({
         <span className="text-[11px] font-medium tracking-[0.09em] text-droid-text-secondary uppercase">
           {title}
         </span>
-        {count && <span className="font-mono text-[10px] text-droid-text-muted">{count}</span>}
+        {count && <span className="tabular-nums text-[10px] text-droid-text-muted">{count}</span>}
       </span>
       <div className="flex items-center gap-0.5">
         <button
@@ -753,18 +751,16 @@ function FeatureFocus({
             <div className="flex flex-wrap items-center gap-2 mt-2">
               {feature.skillName && (
                 <span
-                  className="px-1.5 py-0.5 rounded font-mono text-[11px]"
+                  className="px-1.5 py-0.5 rounded text-[11px] font-medium"
                   style={{ color: ACCENT, background: accentMix(10) }}
                 >
                   [{feature.skillName}]
                 </span>
               )}
               {feature.milestone && (
-                <span className="font-mono text-[11px] text-droid-text-muted">
-                  {feature.milestone}
-                </span>
+                <span className="text-[11px] text-droid-text-muted">{feature.milestone}</span>
               )}
-              <span className="font-mono text-[11px] text-droid-text-muted capitalize">
+              <span className="text-[11px] text-droid-text-muted capitalize">
                 {feature.status.replace(/_/g, ' ')}
               </span>
             </div>
@@ -790,7 +786,7 @@ function FeatureFocus({
             <span className="text-[11px] font-medium uppercase tracking-wider text-droid-text-secondary">
               Worker actions
             </span>
-            <span className="font-mono text-[10px] text-droid-text-muted">{shown.length}</span>
+            <span className="tabular-nums text-[10px] text-droid-text-muted">{shown.length}</span>
           </div>
           {toolCalls.length > curated.length && (
             <button

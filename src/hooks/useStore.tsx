@@ -2619,9 +2619,12 @@ export function adaptEvent(ev: ServerEvent): Action | null {
   }
 }
 
-const StoreContext = createContext<{ state: AppState; dispatch: React.Dispatch<Action> } | null>(
-  null,
-);
+// Exported so tests can mount a component against a reducer-built state
+// without standing up the full provider side effects (persistence, bridge).
+export const StoreContext = createContext<{
+  state: AppState;
+  dispatch: React.Dispatch<Action>;
+} | null>(null);
 
 export function StoreProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(reducer, initialState, syncBrowserOpen);

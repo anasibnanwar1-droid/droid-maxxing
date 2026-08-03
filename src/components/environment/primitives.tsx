@@ -44,7 +44,11 @@ export function Row({
         {icon}
       </span>
       <span className="min-w-0 flex-1 text-[13px] leading-snug text-droid-text">{label}</span>
-      {meta && <span className="shrink-0 font-mono text-[11px] text-droid-text-muted">{meta}</span>}
+      {meta && (
+        <span className="shrink-0 rounded-md bg-droid-elevated px-1.5 py-0.5 text-[10.5px] font-medium capitalize leading-none text-droid-text-secondary">
+          {meta}
+        </span>
+      )}
       {trailing}
     </button>
   );

@@ -109,9 +109,7 @@ function ChatHeader({
               {sub.label}
             </span>
             {sub.meta && (
-              <span className="shrink-0 font-mono text-[10px] text-droid-text-muted/70">
-                {sub.meta}
-              </span>
+              <span className="shrink-0 text-[10px] text-droid-text-muted/70">{sub.meta}</span>
             )}
           </>
         )}

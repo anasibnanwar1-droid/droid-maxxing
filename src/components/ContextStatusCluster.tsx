@@ -37,7 +37,7 @@ export default function ContextStatusCluster() {
   return (
     <div className="flex shrink-0 items-center gap-2">
       {session?.queuedSends ? (
-        <span className="rounded-md border border-droid-border bg-droid-elevated/70 px-1.5 py-0.5 font-mono text-[10px] text-droid-text-secondary">
+        <span className="rounded-md border border-droid-border bg-droid-elevated/70 px-1.5 py-0.5 tabular-nums text-[10px] text-droid-text-secondary">
           {session.queuedSends} queued
         </span>
       ) : null}

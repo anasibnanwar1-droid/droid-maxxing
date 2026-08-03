@@ -4,6 +4,7 @@ import { useSessionLive } from '../hooks/useSessionLive';
 import { useGitEnvironment } from '../hooks/useGitEnvironment';
 import { usePullRequest } from '../hooks/usePullRequest';
 import { interruptChild } from '../lib/commands';
+import { resolveReasoningEffortDisplay } from '../lib/reasoningEffort';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Hash, Loader2, ChevronRight, CornerDownRight, Square, FileText } from 'lucide-react';
 import { ModelIcon, providerOf } from './ModelIcon';
@@ -66,7 +67,7 @@ function ChildSessionRow({
             {label}
           </span>
           {meta && (
-            <span className="mt-0.5 block truncate font-mono text-[10px] text-droid-text-muted/70">
+            <span className="mt-0.5 block truncate text-[10px] text-droid-text-muted/70">
               {meta}
             </span>
           )}
@@ -147,6 +148,16 @@ export default function RightPanel() {
   const modelLabel = activeSession
     ? (modelInfo?.displayName ?? activeSession.modelId ?? 'default')
     : 'default';
+  // The pill next to the model carries the session's reasoning effort, resolved
+  // the same way as the composer badge: the session's own pinned effort, falling
+  // back to the global default. Models without reasoning support show no pill.
+  const reasoningEffort = activeSession
+    ? resolveReasoningEffortDisplay(
+        activeSession.reasoningEffort,
+        state.agentConfig.primary.reasoning,
+        modelInfo,
+      )
+    : undefined;
 
   return (
     <div
@@ -207,7 +218,7 @@ export default function RightPanel() {
                     <ModelIcon provider={providerOf(modelInfo, activeSession.modelId)} size={16} />
                   }
                   label={modelLabel}
-                  meta={activeSession.autonomy}
+                  meta={reasoningEffort}
                 />
 
                 {/* Child sessions — collapsible, nested under the model */}
@@ -225,7 +236,7 @@ export default function RightPanel() {
                       <span className="text-[12px] font-medium text-droid-text-muted">
                         Child sessions
                       </span>
-                      <span className="font-mono text-[11px] text-droid-text-muted/70">
+                      <span className="tabular-nums text-[11px] text-droid-text-muted/70">
                         {childSessions.length}
                       </span>
                       {childSessionsRunning && (
@@ -343,7 +354,7 @@ export default function RightPanel() {
                         {f.skillName && (
                           <div className="flex items-center gap-2">
                             <Hash className="w-3.5 h-3.5 text-droid-text-muted" />
-                            <span className="font-mono text-[11px] text-droid-text-secondary">
+                            <span className="text-[11px] font-medium text-droid-text-secondary">
                               {f.skillName}
                             </span>
                           </div>
