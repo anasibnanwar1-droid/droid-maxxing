@@ -19,8 +19,12 @@ const requiredSecrets = [
 
 const checks = [];
 
-function command(file, args) {
-  return execFileSync(file, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+function command(file, args, options = {}) {
+  return execFileSync(file, args, {
+    ...options,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  }).trim();
 }
 
 function readJson(file, args) {
@@ -161,7 +165,9 @@ check('release commit exactly matches origin/main', () => {
 
 check('local release artifacts pass the full verifier', () => {
   command(process.execPath, ['tools/verify-macos-release.mjs', 'release']);
-  command('/usr/bin/shasum', ['--algorithm', '256', '--check', 'release/SHA256SUMS']);
+  command('/usr/bin/shasum', ['--algorithm', '256', '--check', 'SHA256SUMS'], {
+    cwd: 'release',
+  });
   return `verified DROIDEX ${packageVersion} artifacts (not publication-authorized)`;
 });
 
