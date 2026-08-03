@@ -39,7 +39,11 @@ import { useOnboarding, shouldShowOnboarding, hasSetupBlocker } from './hooks/us
 import OnboardingWizard from './components/onboarding/OnboardingWizard';
 import SetupBanner from './components/onboarding/SetupBanner';
 import { updateCli } from './lib/commands';
-import { refreshAppUpdate, startAppUpdate } from './lib/appUpdate';
+import {
+  refreshAppUpdate,
+  shouldInstallAppUpdateAutomatically,
+  startAppUpdate,
+} from './lib/appUpdate';
 import { toast } from './lib/toast';
 import { UtilityPane } from './components/utility/UtilityPane';
 import { TerminalWorkspace } from './components/terminal/TerminalWorkspace';
@@ -213,7 +217,7 @@ export default function App() {
     }
     if (onboard.onboarding.appAutoUpdate !== false) {
       void refreshAppUpdate().then((info) => {
-        if (info?.updateAvailable) void startAppUpdate(info);
+        if (shouldInstallAppUpdateAutomatically(info)) void startAppUpdate(info);
       });
     }
   }, [embedded, onboard.ready, onboard.onboarding, onboard.env]);

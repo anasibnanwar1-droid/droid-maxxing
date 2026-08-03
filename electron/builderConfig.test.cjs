@@ -40,6 +40,7 @@ test('unsigned mac builds never attempt notarization', () => {
 
   assert.equal(config.mac.identity, null);
   assert.equal(config.mac.notarize, false);
+  assert.equal(config.extraMetadata.updateInstallMode, 'manual');
 });
 
 test('signed mac builds enable notarization when every credential is present', () => {
@@ -71,6 +72,7 @@ test('release builds emit canonical update artifacts', () => {
   });
 
   assert.equal(config.forceCodeSigning, true);
+  assert.equal(config.extraMetadata.updateInstallMode, 'automatic');
   assert.deepEqual(
     config.mac.target.map((target) => target.target),
     ['dmg', 'zip'],

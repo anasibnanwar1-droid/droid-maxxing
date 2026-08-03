@@ -37,7 +37,10 @@ module.exports = {
   appId: 'app.droidex',
   productName: 'DROIDEX',
   forceCodeSigning: isReleaseBuild,
-  extraMetadata: { sentryDsn },
+  extraMetadata: {
+    sentryDsn,
+    updateInstallMode: isReleaseBuild ? 'automatic' : 'manual',
+  },
   directories: {
     output: 'release',
     buildResources: 'assets/brand',

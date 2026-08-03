@@ -25,14 +25,18 @@ import type { SessionSummary } from '../types/bridge';
 function UpdateButton() {
   const { update, downloading, start } = useAppUpdate();
   if (!update?.updateAvailable) return null;
+  const actionLabel =
+    update.installMode === 'automatic'
+      ? `Update to ${update.latest} and restart`
+      : `Download DROIDEX ${update.latest}`;
   return (
     <button
       onClick={() => {
         void start();
       }}
       disabled={downloading}
-      title={`Update to ${update.latest} and restart`}
-      aria-label={`Update to ${update.latest}`}
+      title={actionLabel}
+      aria-label={actionLabel}
       className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-blue-500 transition-colors hover:bg-droid-elevated disabled:opacity-60"
     >
       {downloading ? (

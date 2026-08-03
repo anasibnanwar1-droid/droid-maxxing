@@ -105,8 +105,8 @@ export function PreferencesStep({
           disabled={saving}
         />
         <ToggleRow
-          label="Auto-update DROIDEX"
-          sub="Installs new app builds and restarts."
+          label="Check for DROIDEX updates"
+          sub="Checks for new app builds on launch."
           checked={appAuto}
           onChange={setAppAuto}
           disabled={saving}

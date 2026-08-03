@@ -7,6 +7,7 @@ const {
   dialog,
   ipcMain,
   nativeTheme,
+  net,
   safeStorage,
   session,
   shell,
@@ -35,10 +36,14 @@ const { createAppUpdater } = require('./appUpdater.cjs');
 const Sentry = require('@sentry/electron/main');
 const { createDiagnostics } = require('./diagnostics.cjs');
 const APP_NAME = 'DROIDEX';
+const RELEASES_URL = 'https://github.com/anasibnanwar1-droid/droidex-releases/releases/latest';
+const RELEASES_API_URL =
+  'https://api.github.com/repos/anasibnanwar1-droid/droidex-releases/releases/latest';
+const buildMetadata = readBuildMetadata();
 const terminalManager = createTerminalManager();
 const terminalSubscriptions = createTerminalSubscriptionRegistry(terminalManager);
 const filesRootAccess = files.createRootAccessRegistry();
-const diagnostics = createDiagnostics({ app, sentry: Sentry, dsn: diagnosticsDsn() });
+const diagnostics = createDiagnostics({ app, sentry: Sentry, dsn: buildMetadata.sentryDsn });
 const sidecarSupervisor = createSidecarSupervisor({
   entryPath: sidecarEntry,
   cwd: () => (app.isPackaged ? process.resourcesPath : appRoot()),
@@ -48,6 +53,9 @@ const sidecarSupervisor = createSidecarSupervisor({
 const appUpdater = createAppUpdater({
   app,
   autoUpdater,
+  installMode: buildMetadata.updateInstallMode,
+  fetchLatestVersion: latestPublicReleaseVersion,
+  openReleasePage: () => openExternal(RELEASES_URL),
   prepareToInstall: () => sidecarSupervisor.stop(),
   logError: (message, error) => console.error('[update] %s:', message, error),
 });
@@ -552,14 +560,36 @@ function sidecarEntry() {
     : path.join(appRoot(), 'sidecar/dist/sidecar.mjs');
 }
 
-function diagnosticsDsn() {
-  if (!app.isPackaged) return process.env.SENTRY_DSN || '';
+function readBuildMetadata() {
+  if (!app.isPackaged) {
+    return { sentryDsn: process.env.SENTRY_DSN || '', updateInstallMode: 'manual' };
+  }
   try {
     const metadata = require(path.join(app.getAppPath(), 'package.json'));
-    return typeof metadata.sentryDsn === 'string' ? metadata.sentryDsn : '';
+    return {
+      sentryDsn: typeof metadata.sentryDsn === 'string' ? metadata.sentryDsn : '',
+      updateInstallMode: metadata.updateInstallMode === 'automatic' ? 'automatic' : 'manual',
+    };
   } catch {
-    return '';
+    return { sentryDsn: '', updateInstallMode: 'manual' };
   }
+}
+
+async function latestPublicReleaseVersion() {
+  const response = await net.fetch(RELEASES_API_URL, {
+    headers: {
+      Accept: 'application/vnd.github+json',
+      'X-GitHub-Api-Version': '2026-03-10',
+    },
+  });
+  if (response.status === 404) return app.getVersion();
+  if (!response.ok) throw new Error(`GitHub release check failed with HTTP ${response.status}.`);
+  const release = await response.json();
+  const version = String(release?.tag_name || '').replace(/^v/, '');
+  if (!/^\d+\.\d+\.\d+(?:[-+].+)?$/.test(version)) {
+    throw new Error('GitHub latest release has an invalid version tag.');
+  }
+  return version;
 }
 
 function configureBrowserSession() {

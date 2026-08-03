@@ -264,6 +264,10 @@ for (const architecture of architectures) {
   const packagedMetadata = JSON.parse(extractFile(asarPath, 'package.json').toString('utf8'));
   assert(packagedMetadata.name === 'droidex', `${name} package identity is stale`);
   assert(packagedMetadata.version === packageJson.version, `${name} package version is stale`);
+  assert(
+    packagedMetadata.updateInstallMode === (requireSignedArtifacts ? 'automatic' : 'manual'),
+    `${name} package has the wrong update install mode`,
+  );
 
   const executableDescription = run('/usr/bin/file', [executablePath]);
   assert(

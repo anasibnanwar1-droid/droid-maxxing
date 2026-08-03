@@ -2,7 +2,12 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { createAppUpdater, compareSemverParts } = require('./appUpdater.cjs');
 
-function harness({ current = '1.2.3', latest = '1.3.0', packaged = true } = {}) {
+function harness({
+  current = '1.2.3',
+  latest = '1.3.0',
+  packaged = true,
+  installMode = 'automatic',
+} = {}) {
   const calls = [];
   let install;
   const autoUpdater = {
@@ -18,6 +23,12 @@ function harness({ current = '1.2.3', latest = '1.3.0', packaged = true } = {}) 
     app: { getVersion: () => current, isPackaged: packaged },
     platform: 'darwin',
     arch: 'arm64',
+    installMode,
+    fetchLatestVersion: async () => {
+      calls.push('manual-check');
+      return latest;
+    },
+    openReleasePage: async () => calls.push('open-release-page'),
     prepareToInstall: async () => calls.push('prepare'),
     scheduleInstall: (callback) => {
       install = callback;
@@ -35,7 +46,20 @@ test('update checks report the release selected by electron-updater', async () =
   assert.equal(result.current, '1.2.3');
   assert.equal(result.latest, '1.3.0');
   assert.equal(result.updateAvailable, true);
+  assert.equal(result.installMode, 'automatic');
   assert.deepEqual(calls, ['check']);
+});
+
+test('unsigned builds check and open the manual release page without invoking autoUpdater', async () => {
+  const { updater, calls } = harness({ installMode: 'manual' });
+
+  const result = await updater.check();
+  assert.equal(result.updateAvailable, true);
+  assert.equal(result.installMode, 'manual');
+  assert.deepEqual(calls, ['manual-check']);
+
+  assert.deepEqual(await updater.downloadAndInstall(), { status: 'opened' });
+  assert.deepEqual(calls, ['manual-check', 'open-release-page']);
 });
 
 test('install waits for sidecar shutdown before handing control to the updater', async () => {

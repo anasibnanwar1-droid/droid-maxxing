@@ -20,6 +20,10 @@ export function getAppUpdate(): AppUpdateInfo | null {
   return info;
 }
 
+export function shouldInstallAppUpdateAutomatically(update: AppUpdateInfo | null): boolean {
+  return update?.updateAvailable === true && update.installMode === 'automatic';
+}
+
 export async function refreshAppUpdate(): Promise<AppUpdateInfo | null> {
   const next = await ipcCheck();
   // Only surface a positive result; failures or up-to-date checks must not
@@ -39,6 +43,8 @@ export async function startAppUpdate(target: AppUpdateInfo | null = info): Promi
     const result = await ipcDownload();
     if (result?.status === 'downloaded') {
       toast.info('Update downloaded. Restarting DROIDEX…');
+    } else if (result?.status === 'opened') {
+      toast.info('Download page opened. Install the new DMG manually.');
     }
   } catch {
     toast.error('Update download failed. Please try again.');

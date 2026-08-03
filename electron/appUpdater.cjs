@@ -3,6 +3,7 @@ function createAppUpdater(options) {
   const scheduleInstall = options.scheduleInstall || setImmediate;
   const platform = options.platform || process.platform;
   const arch = options.arch || process.arch;
+  const installMode = options.installMode || 'automatic';
   updater.autoDownload = false;
   updater.autoInstallOnAppQuit = false;
   updater.allowDowngrade = false;
@@ -11,21 +12,34 @@ function createAppUpdater(options) {
   async function check() {
     const current = options.app.getVersion();
     if (!options.app.isPackaged || platform !== 'darwin') {
-      return updateInfo(current, current, false, platform, arch);
+      return updateInfo(current, current, false, platform, arch, installMode);
     }
     try {
-      const result = await updater.checkForUpdates();
-      const latest = String(result?.updateInfo?.version || current);
-      return updateInfo(current, latest, compareSemverParts(latest, current) > 0, platform, arch);
+      const latest =
+        installMode === 'manual'
+          ? String(await options.fetchLatestVersion())
+          : String((await updater.checkForUpdates())?.updateInfo?.version || current);
+      return updateInfo(
+        current,
+        latest,
+        compareSemverParts(latest, current) > 0,
+        platform,
+        arch,
+        installMode,
+      );
     } catch (error) {
       options.logError?.('update check failed', error);
-      return updateInfo(current, '', false, platform, arch);
+      return updateInfo(current, '', false, platform, arch, installMode);
     }
   }
 
   async function downloadAndInstall() {
     if (!options.app.isPackaged || platform !== 'darwin') {
       throw new Error('Automatic updates are available only in the packaged macOS app.');
+    }
+    if (installMode === 'manual') {
+      await options.openReleasePage();
+      return { status: 'opened' };
     }
     await updater.downloadUpdate();
     await options.prepareToInstall();
@@ -36,13 +50,14 @@ function createAppUpdater(options) {
   return { check, downloadAndInstall };
 }
 
-function updateInfo(current, latest, updateAvailable, platform, arch) {
+function updateInfo(current, latest, updateAvailable, platform, arch, installMode = 'automatic') {
   return {
     current,
     latest,
     updateAvailable,
     arch,
     platform,
+    installMode,
   };
 }
 

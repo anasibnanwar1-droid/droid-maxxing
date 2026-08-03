@@ -15,6 +15,7 @@ export interface AppUpdateInfo {
   updateAvailable: boolean;
   arch: string;
   platform: string;
+  installMode: 'automatic' | 'manual';
 }
 
 export async function getOnboarding(): Promise<OnboardingState> {
@@ -42,7 +43,7 @@ export async function checkAppUpdate(): Promise<AppUpdateInfo | null> {
 }
 
 export interface AppUpdateResult {
-  status: 'downloaded';
+  status: 'downloaded' | 'opened';
 }
 
 export async function downloadAppUpdate(): Promise<AppUpdateResult | null> {
