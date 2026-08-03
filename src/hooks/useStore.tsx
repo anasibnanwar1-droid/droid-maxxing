@@ -551,7 +551,11 @@ function loadTheme(): ThemeConfig {
         if (saved) {
           const migrated = migrateLegacyLightPreset(theme);
           if (migrated !== theme) {
-            Object.assign(theme, migrated);
+            theme.bg = migrated.bg;
+            theme.fg = migrated.fg;
+            theme.surface = migrated.surface;
+            theme.border = migrated.border;
+            theme.accent = migrated.accent;
             storage.setItem('droid-theme', JSON.stringify(theme));
           }
         }
