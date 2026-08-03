@@ -49,7 +49,7 @@ const appUpdater = createAppUpdater({
   app,
   autoUpdater,
   prepareToInstall: () => sidecarSupervisor.stop(),
-  logError: (message, error) => console.error(`[update] ${message}:`, error),
+  logError: (message, error) => console.error('[update] %s:', message, error),
 });
 
 let mainWindow = null;

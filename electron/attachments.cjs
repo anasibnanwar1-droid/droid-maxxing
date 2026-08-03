@@ -112,7 +112,7 @@ async function sweepStale(dir) {
         await fsp.rm(target, { force: true });
       } catch (error) {
         if (error && error.code === 'ENOENT') return; // vanished between readdir and stat
-        console.warn(`Could not sweep stale attachment ${target}:`, error);
+        console.warn('Could not sweep stale attachment %s:', target, error);
       }
     }),
   );
