@@ -29,7 +29,7 @@ Record these values with each release candidate:
 | `APPLE_API_KEY_P8_BASE64` | Base64-encoded App Store Connect key materialized as a temporary `.p8` file in CI |
 | `APPLE_API_KEY_ID` / `APPLE_API_ISSUER` / `APPLE_TEAM_ID` | Apple identities used for notarization and signature verification |
 | `SENTRY_DSN` | Public client DSN embedded for crash and `/bug` reporting |
-| `DROIDEX_RELEASE_TOKEN` | Fine-grained token with Contents write access only to the public releases repository |
+| `DROIDEX_RELEASE_TOKEN` | Fine-grained token with Contents write and Administration read access only to the public releases repository |
 
 Configure these in the protected `macos-release` GitHub environment. Keep real
 secrets out of release notes and CI logs. The release token is exposed only to

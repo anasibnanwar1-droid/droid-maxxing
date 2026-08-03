@@ -24,11 +24,11 @@ jobs:
     timeout-minutes: 60
     environment: macos-release
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
@@ -87,7 +87,7 @@ jobs:
         run: npm run release:verify:mac -- release --signed --write-checksums
 
       - name: Retain verified artifacts privately
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: droidex-${{ github.ref_name }}-macos
           if-no-files-found: error
@@ -103,6 +103,10 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.DROIDEX_RELEASE_TOKEN }}
         run: |
+          test "$(gh api \
+            -H 'X-GitHub-Api-Version: 2026-03-10' \
+            "repos/$RELEASE_REPOSITORY/immutable-releases" \
+            --jq '.enabled')" = "true"
           if gh release view "$GITHUB_REF_NAME" --repo "$RELEASE_REPOSITORY" >/dev/null 2>&1; then
             echo "Release $GITHUB_REF_NAME already exists in $RELEASE_REPOSITORY" >&2
             exit 1
@@ -118,6 +122,7 @@ jobs:
             --target main \
             --title "DROIDEX $GITHUB_REF_NAME" \
             --notes "Signed and notarized DROIDEX macOS release for Apple silicon and Intel Macs. Download the DMG matching your Mac."
+          gh release verify "$GITHUB_REF_NAME" --repo "$RELEASE_REPOSITORY"
 
       - name: Remove notarization key
         if: always()

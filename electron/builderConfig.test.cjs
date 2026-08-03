@@ -127,9 +127,9 @@ test('notarization rejects API key data instead of an absolute key path', () => 
 test('macOS protected project folders have truthful permission descriptions', () => {
   const config = loadConfig({});
 
-  assert.match(config.extendInfo.NSDesktopFolderUsageDescription, /choose them/);
-  assert.match(config.extendInfo.NSDocumentsFolderUsageDescription, /choose them/);
-  assert.match(config.extendInfo.NSDownloadsFolderUsageDescription, /choose them/);
-  assert.equal(config.extendInfo.NSCameraUsageDescription, undefined);
-  assert.equal(config.extendInfo.NSMicrophoneUsageDescription, undefined);
+  assert.match(config.mac.extendInfo.NSDesktopFolderUsageDescription, /choose them/);
+  assert.match(config.mac.extendInfo.NSDocumentsFolderUsageDescription, /choose them/);
+  assert.match(config.mac.extendInfo.NSDownloadsFolderUsageDescription, /choose them/);
+  assert.equal(config.mac.extendInfo.NSCameraUsageDescription, undefined);
+  assert.equal(config.mac.extendInfo.NSMicrophoneUsageDescription, undefined);
 });

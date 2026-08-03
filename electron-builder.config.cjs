@@ -38,14 +38,6 @@ module.exports = {
   productName: 'DROIDEX',
   forceCodeSigning: isReleaseBuild,
   extraMetadata: { sentryDsn },
-  extendInfo: {
-    NSDesktopFolderUsageDescription:
-      'DROIDEX accesses Desktop projects only when you choose them for an agent session.',
-    NSDocumentsFolderUsageDescription:
-      'DROIDEX accesses Documents projects only when you choose them for an agent session.',
-    NSDownloadsFolderUsageDescription:
-      'DROIDEX accesses downloaded project files only when you choose them for an agent session.',
-  },
   directories: {
     output: 'release',
     buildResources: 'assets/brand',
@@ -61,6 +53,14 @@ module.exports = {
   mac: {
     category: 'public.app-category.developer-tools',
     icon: 'electron/assets/icon.icns',
+    extendInfo: {
+      NSDesktopFolderUsageDescription:
+        'DROIDEX accesses Desktop projects only when you choose them for an agent session.',
+      NSDocumentsFolderUsageDescription:
+        'DROIDEX accesses Documents projects only when you choose them for an agent session.',
+      NSDownloadsFolderUsageDescription:
+        'DROIDEX accesses downloaded project files only when you choose them for an agent session.',
+    },
     identity,
     hardenedRuntime: hasSigningCredentials,
     entitlements: 'assets/brand/entitlements.mac.plist',
