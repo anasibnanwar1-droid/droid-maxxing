@@ -21,6 +21,7 @@ interface PersistenceCallbacks {
 }
 
 type Subscribe = (listener: (event: ServerEvent) => void) => () => void;
+type SubscribeOpen = (listener: () => void) => () => void;
 type Schedule = (callback: () => void, delayMs: number) => () => void;
 
 /** One app-lifetime owner prevents remounts from racing the same canvas writes. */
@@ -29,9 +30,15 @@ export class StudioCanvasPersistenceOwner {
   private callbacks: PersistenceCallbacks | null = null;
   private isWaitingForHydration = false;
   private ignoredHydrationContent: string | null = null;
-  private readonly unsubscribe: () => void;
+  private readonly unsubscribeEvents: () => void;
+  private readonly unsubscribeOpen: () => void;
 
-  constructor(transport: CanvasPersistenceTransport, subscribe: Subscribe, schedule?: Schedule) {
+  constructor(
+    transport: CanvasPersistenceTransport,
+    subscribe: Subscribe,
+    schedule?: Schedule,
+    subscribeOpen: SubscribeOpen = () => () => undefined,
+  ) {
     this.coordinator = new CanvasSaveCoordinator(
       transport,
       (hydrated) => {
@@ -44,9 +51,12 @@ export class StudioCanvasPersistenceOwner {
       (notices) => this.callbacks?.onNotice(notices),
       schedule,
     );
-    this.unsubscribe = subscribe((event) => {
+    this.unsubscribeEvents = subscribe((event) => {
       if (!isCanvasEvent(event)) return;
       this.receive(event);
+    });
+    this.unsubscribeOpen = subscribeOpen(() => {
+      if (this.callbacks && this.isWaitingForHydration) this.coordinator.refresh();
     });
   }
 
@@ -85,7 +95,8 @@ export class StudioCanvasPersistenceOwner {
   }
 
   destroy(): void {
-    this.unsubscribe();
+    this.unsubscribeEvents();
+    this.unsubscribeOpen();
   }
 
   private receive(event: CanvasEvent): void {
@@ -99,6 +110,12 @@ export class StudioCanvasPersistenceOwner {
 export const studioCanvasPersistenceOwner = new StudioCanvasPersistenceOwner(
   { read: readDesignCanvas, write: writeDesignCanvas },
   (listener) => bridge.subscribe(listener),
+  undefined,
+  (listener) =>
+    bridge.subscribeOpen(() => {
+      listener();
+      return [];
+    }),
 );
 
 function isCanvasEvent(event: ServerEvent): event is CanvasEvent {

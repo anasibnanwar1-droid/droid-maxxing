@@ -132,10 +132,28 @@ test('returning to a target with an in-flight save rehydrates its restored edit'
   harness.owner.destroy();
 });
 
+test('bridge reconnect retries only an outstanding canvas hydration', () => {
+  const harness = fixture();
+  harness.owner.attach({ onHydrate: () => undefined, onNotice: () => undefined });
+  harness.owner.open(target('thread-a'), content(1));
+
+  harness.reconnect();
+  assert.deepEqual(
+    harness.reads.map((read) => read.canvasId),
+    ['thread-a', 'thread-a'],
+  );
+
+  harness.emit(stateEvent(document(1, 1), 'thread-a'));
+  harness.reconnect();
+  assert.equal(harness.reads.length, 2);
+  harness.owner.destroy();
+});
+
 function fixture() {
   const reads: { cwd: string; canvasId: string }[] = [];
   const writes: Parameters<CanvasPersistenceTransport['write']>[0][] = [];
   const listeners = new Set<(event: ServerEvent) => void>();
+  const openListeners = new Set<() => void>();
   const scheduled: (() => void)[] = [];
   const owner = new StudioCanvasPersistenceOwner(
     {
@@ -153,6 +171,10 @@ function fixture() {
         if (index >= 0) scheduled.splice(index, 1);
       };
     },
+    (listener) => {
+      openListeners.add(listener);
+      return () => openListeners.delete(listener);
+    },
   );
   return {
     owner,
@@ -162,6 +184,7 @@ function fixture() {
       return listeners.size;
     },
     emit: (event: ServerEvent) => listeners.forEach((listener) => listener(event)),
+    reconnect: () => openListeners.forEach((listener) => listener()),
     runScheduled: () => {
       while (scheduled.length > 0) scheduled.shift()?.();
     },

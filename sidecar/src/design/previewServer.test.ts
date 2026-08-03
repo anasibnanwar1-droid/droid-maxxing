@@ -20,6 +20,18 @@ function get(url: string): Promise<{ status: number; body: string }> {
   });
 }
 
+test('PreviewServer shares one in-flight start across concurrent callers', async () => {
+  let createdServers = 0;
+  const server = new PreviewServer(createReadStream, (listener) => {
+    createdServers += 1;
+    return http.createServer(listener);
+  });
+
+  await Promise.all([server.start(), server.start(), server.start()]);
+  assert.equal(createdServers, 1);
+  await server.close();
+});
+
 test('PreviewServer serves a registered file and blocks unknown ids + traversal', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'droidex-preview-test-'));
   await writeFile(join(dir, 'index.html'), '<h1>brand book</h1>', 'utf8');

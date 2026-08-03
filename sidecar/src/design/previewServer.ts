@@ -6,6 +6,8 @@ import { extname, isAbsolute, resolve, sep } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import type { Readable } from 'node:stream';
 
+type CreateServer = (requestListener: http.RequestListener) => http.Server;
+
 const CONTENT_TYPES: Record<string, string> = {
   '.htm': 'text/html; charset=utf-8',
   '.html': 'text/html; charset=utf-8',
@@ -39,19 +41,36 @@ const CONTENT_TYPES: Record<string, string> = {
  */
 export class PreviewServer {
   private server?: http.Server;
+  private startPromise?: Promise<void>;
   private port = 0;
   private readonly registry = new Map<string, PreviewRegistration>();
 
-  constructor(private readonly openFile: (path: string) => Readable = createReadStream) {}
+  constructor(
+    private readonly openFile: (path: string) => Readable = createReadStream,
+    private readonly createServer: CreateServer = (listener) => http.createServer(listener),
+  ) {}
 
   async start(): Promise<void> {
     if (this.server) return;
-    const server = http.createServer((req, res) => {
+    if (this.startPromise) return this.startPromise;
+    const starting = this.listen();
+    this.startPromise = starting;
+    try {
+      await starting;
+    } finally {
+      if (this.startPromise === starting) this.startPromise = undefined;
+    }
+  }
+
+  private async listen(): Promise<void> {
+    const server = this.createServer((req, res) => {
       void this.handle(req, res);
     });
     await new Promise<void>((res, rej) => {
       server.once('error', rej);
-      server.listen(0, '127.0.0.1', () => res());
+      server.listen(0, '127.0.0.1', () => {
+        res();
+      });
     });
     this.port = (server.address() as AddressInfo).port;
     this.server = server;
@@ -76,19 +95,24 @@ export class PreviewServer {
   }
 
   urlFor(id: string): string {
-    return `http://127.0.0.1:${this.port}/${encodeURIComponent(id)}/`;
+    return `http://127.0.0.1:${String(this.port)}/${encodeURIComponent(id)}/`;
   }
 
   async close(): Promise<void> {
+    await this.startPromise?.catch(() => undefined);
     const server = this.server;
     if (!server) return;
     this.server = undefined;
-    await new Promise<void>((res) => server.close(() => res()));
+    await new Promise<void>((res) =>
+      server.close(() => {
+        res();
+      }),
+    );
   }
 
   private async handle(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
     try {
-      const url = new URL(req.url ?? '/', `http://127.0.0.1:${this.port}`);
+      const url = new URL(req.url ?? '/', `http://127.0.0.1:${String(this.port)}`);
       const match = /^\/([^/]+)(?:\/(.*))?$/.exec(url.pathname);
       if (!match) {
         res.writeHead(404).end('not found');
