@@ -41,10 +41,7 @@ test('update checks report the release selected by electron-updater', async () =
 test('install waits for sidecar shutdown before handing control to the updater', async () => {
   const { updater, calls, runInstall } = harness();
 
-  assert.deepEqual(await updater.downloadAndInstall(), {
-    mode: 'autoUpdater',
-    status: 'downloaded',
-  });
+  assert.deepEqual(await updater.downloadAndInstall(), { status: 'downloaded' });
   assert.deepEqual(calls, ['download', 'prepare']);
 
   runInstall();

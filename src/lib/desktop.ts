@@ -168,7 +168,7 @@ interface DroidControlApi {
   setOnboarding: (patch: Partial<OnboardingState>) => Promise<OnboardingState>;
   appVersion: () => Promise<string>;
   checkAppUpdate: () => Promise<AppUpdateInfo>;
-  downloadAppUpdate: (dmgUrl?: string) => Promise<AppUpdateResult>;
+  downloadAppUpdate: () => Promise<AppUpdateResult>;
   reportBug: (description: string) => Promise<BugReportReceipt>;
   relaunchApp: () => Promise<void>;
   setAppIcon: (mode: AppIconMode) => Promise<AppIconMode>;

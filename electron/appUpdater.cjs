@@ -30,7 +30,7 @@ function createAppUpdater(options) {
     await updater.downloadUpdate();
     await options.prepareToInstall();
     scheduleInstall(() => updater.quitAndInstall(false, true));
-    return { mode: 'autoUpdater', status: 'downloaded' };
+    return { status: 'downloaded' };
   }
 
   return { check, downloadAndInstall };
@@ -43,7 +43,6 @@ function updateInfo(current, latest, updateAvailable, platform, arch) {
     updateAvailable,
     arch,
     platform,
-    feedConfigured: false,
   };
 }
 

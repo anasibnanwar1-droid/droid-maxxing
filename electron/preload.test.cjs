@@ -65,3 +65,12 @@ test('app icon IPC carries the selected mode', async () => {
   assert.equal(calls[1].channel, 'app-set-icon');
   assert.equal(calls[1].payload.mode, 'system');
 });
+
+test('app update download does not accept a renderer-supplied URL', async () => {
+  const { api, calls } = loadApi();
+
+  await api.downloadAppUpdate();
+
+  assert.equal(calls[0].channel, 'app-download-update');
+  assert.equal(calls[0].payload, undefined);
+});

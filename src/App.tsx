@@ -213,13 +213,7 @@ export default function App() {
     }
     if (onboard.onboarding.appAutoUpdate !== false) {
       void refreshAppUpdate().then((info) => {
-        // Auto-update is on by default: download and (on the feed path) restart
-        // into the new build, not just record it for the sidebar pill.
-        // updateAvailable only reflects the managed manifest, so when an
-        // autoUpdater feed is configured we still kick it off (it resolves as
-        // up-to-date when there's nothing new) even if the manifest is stale,
-        // down, or absent.
-        if (info?.updateAvailable || info?.feedConfigured) void startAppUpdate(info);
+        if (info?.updateAvailable) void startAppUpdate(info);
       });
     }
   }, [embedded, onboard.ready, onboard.onboarding, onboard.env]);

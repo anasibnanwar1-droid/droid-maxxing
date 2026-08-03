@@ -15,8 +15,6 @@ export interface AppUpdateInfo {
   updateAvailable: boolean;
   arch: string;
   platform: string;
-  dmgUrl?: string;
-  feedConfigured: boolean;
 }
 
 export async function getOnboarding(): Promise<OnboardingState> {
@@ -44,14 +42,12 @@ export async function checkAppUpdate(): Promise<AppUpdateInfo | null> {
 }
 
 export interface AppUpdateResult {
-  mode: 'autoUpdater' | 'external' | 'download';
-  status?: 'downloaded' | 'up-to-date';
-  path?: string;
+  status: 'downloaded';
 }
 
-export async function downloadAppUpdate(dmgUrl?: string): Promise<AppUpdateResult | null> {
+export async function downloadAppUpdate(): Promise<AppUpdateResult | null> {
   if (!isDesktop()) return null;
-  return window.droidControl!.downloadAppUpdate(dmgUrl);
+  return window.droidControl!.downloadAppUpdate();
 }
 
 export async function relaunchApp(): Promise<void> {
