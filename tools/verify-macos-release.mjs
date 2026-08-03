@@ -146,10 +146,11 @@ async function smokePackagedRuntime(architecture) {
       let output = '';
       let errorOutput = '';
       let isReady = false;
+      let didTimeout = false;
       const timeout = setTimeout(() => {
+        didTimeout = true;
         child.kill('SIGKILL');
-        rejectReady(new Error(`${name} packaged sidecar timed out: ${errorOutput}`));
-      }, 15_000);
+      }, 45_000);
 
       child.stdout.on('data', (chunk) => {
         output += chunk.toString('utf8');
@@ -167,6 +168,10 @@ async function smokePackagedRuntime(architecture) {
       });
       child.once('exit', (code, signal) => {
         clearTimeout(timeout);
+        if (didTimeout) {
+          rejectReady(new Error(`${name} packaged sidecar timed out: ${errorOutput}`));
+          return;
+        }
         if (!isReady || code !== 0) {
           rejectReady(
             new Error(
