@@ -54,6 +54,8 @@ import PlanApprovalInline from './PlanApprovalInline';
 import { ModelIcon, providerOf } from './ModelIcon';
 import { StartInBar } from './environment/StartInBar';
 import type { Autonomy, SkillInfo } from '../types/bridge';
+import { bugDescriptionFromCommand, reportBug } from '../lib/bugReport';
+import { toast } from '../lib/toast';
 
 const ACCENT = 'var(--droid-accent)';
 const accentMix = (pct: number) =>
@@ -214,6 +216,15 @@ export default function PromptInput({
   };
 
   const slashCommands: SlashCommand[] = [
+    {
+      cmd: '/bug',
+      desc: 'Send a private bug report',
+      run: () => {
+        const command = '/bug ';
+        setInput(command);
+        pendingCaret.current = command.length;
+      },
+    },
     {
       cmd: '/mission',
       desc: 'Enter Mission Control',
@@ -545,6 +556,22 @@ export default function PromptInput({
         },
       });
     };
+
+    const bugDescription = bugDescriptionFromCommand(text);
+    if (bugDescription !== null && activeSkills.length === 0 && allFiles.length === 0) {
+      if (!bugDescription) {
+        toast.error('Add a short description after /bug.');
+        return;
+      }
+      try {
+        const receipt = await reportBug(bugDescription);
+        toast.success(`Sent ${receipt.reportId}. Support ID: ${receipt.userId}`);
+        clearAfterSubmit();
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : 'Bug report could not be sent.');
+      }
+      return;
+    }
 
     if (text === '/mission' && activeSkills.length === 0 && allFiles.length === 0) {
       dispatch({ type: 'TOGGLE_MISSION_CONTROL' });

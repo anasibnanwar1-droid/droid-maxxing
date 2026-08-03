@@ -105,6 +105,12 @@ export interface FilePreviewPayload {
   path: { root: string; relative: string };
 }
 
+export interface BugReportReceipt {
+  reportId: string;
+  userId: string;
+  eventId: string;
+}
+
 interface DroidControlApi {
   bridgeInfo: () => Promise<BridgeInfo>;
   pickDirectory: () => Promise<string | null>;
@@ -163,6 +169,7 @@ interface DroidControlApi {
   appVersion: () => Promise<string>;
   checkAppUpdate: () => Promise<AppUpdateInfo>;
   downloadAppUpdate: (dmgUrl?: string) => Promise<AppUpdateResult>;
+  reportBug: (description: string) => Promise<BugReportReceipt>;
   relaunchApp: () => Promise<void>;
   setAppIcon: (mode: AppIconMode) => Promise<AppIconMode>;
   openExternal: (url: string) => Promise<void>;
