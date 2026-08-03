@@ -1,29 +1,38 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
-  <!-- DROIDEX app icon: registration mark on cream.
-       Big Sur tile (824 centered in 1024), viewfinder corner brackets in ink,
-       pixel-stepped X cut from the Silkscreen wordmark glyph, center pixel in
-       safety orange: the point you marked. -->
+  <!-- DROIDEX app icon: pixel DX monogram on cream.
+       Big Sur tile (824 centered in 1024), Silkscreen-style 5-row pixel
+       glyphs on a 64px grid (D 5 cols, 1-col gap, X 5 cols; content 704x320
+       centered). D in ink, X in safety orange. -->
   <rect x="100" y="100" width="824" height="824" rx="185" fill="#F2EFE9" />
 
-  <!-- viewfinder corner brackets, ink -->
-  <g stroke="#141310" stroke-width="58" fill="none" stroke-linecap="square">
-    <path d="M 297 447 V 297 H 447" />
-    <path d="M 577 297 H 727 V 447" />
-    <path d="M 727 577 V 727 H 577" />
-    <path d="M 447 727 H 297 V 577" />
+  <!-- D, ink -->
+  <g fill="#141310">
+    <rect x="160" y="352" width="64" height="64" />
+    <rect x="224" y="352" width="64" height="64" />
+    <rect x="288" y="352" width="64" height="64" />
+    <rect x="352" y="352" width="64" height="64" />
+    <rect x="160" y="416" width="64" height="64" />
+    <rect x="416" y="416" width="64" height="64" />
+    <rect x="160" y="480" width="64" height="64" />
+    <rect x="416" y="480" width="64" height="64" />
+    <rect x="160" y="544" width="64" height="64" />
+    <rect x="416" y="544" width="64" height="64" />
+    <rect x="160" y="608" width="64" height="64" />
+    <rect x="224" y="608" width="64" height="64" />
+    <rect x="288" y="608" width="64" height="64" />
+    <rect x="352" y="608" width="64" height="64" />
   </g>
 
-  <!-- pixel X, 5x5 grid, cell 54, top-left at (377, 377) -->
-  <g fill="#141310">
-    <rect x="377" y="377" width="54" height="54" />
-    <rect x="593" y="377" width="54" height="54" />
-    <rect x="431" y="431" width="54" height="54" />
-    <rect x="539" y="431" width="54" height="54" />
-    <rect x="431" y="539" width="54" height="54" />
-    <rect x="539" y="539" width="54" height="54" />
-    <rect x="377" y="593" width="54" height="54" />
-    <rect x="593" y="593" width="54" height="54" />
+  <!-- X, safety orange -->
+  <g fill="#FF4D00">
+    <rect x="544" y="352" width="64" height="64" />
+    <rect x="800" y="352" width="64" height="64" />
+    <rect x="608" y="416" width="64" height="64" />
+    <rect x="736" y="416" width="64" height="64" />
+    <rect x="672" y="480" width="64" height="64" />
+    <rect x="608" y="544" width="64" height="64" />
+    <rect x="736" y="544" width="64" height="64" />
+    <rect x="544" y="608" width="64" height="64" />
+    <rect x="800" y="608" width="64" height="64" />
   </g>
-  <!-- the marked point -->
-  <rect x="485" y="485" width="54" height="54" fill="#FF4D00" />
 </svg>
