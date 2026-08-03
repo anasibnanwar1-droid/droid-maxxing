@@ -1,5 +1,7 @@
 {
-  "name": "droid-control",
+  "name": "droidex",
+  "description": "DROIDEX desktop agent workspace for Factory Droid.",
+  "author": "DROIDEX",
   "private": true,
   "version": "0.1.0",
   "type": "module",

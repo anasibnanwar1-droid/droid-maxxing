@@ -153,7 +153,7 @@ test('canonical indexes reject duplicate provider and spawn ownership within one
 test('fresh history index uses only the canonical child schema', () => {
   const index = new HistoryIndex();
   index.close();
-  const db = new DatabaseSync(join(home, '.factory', 'droid-control', SESSION_INDEX_FILENAME));
+  const db = new DatabaseSync(join(home, '.factory', 'droidex', SESSION_INDEX_FILENAME));
 
   const version = db.prepare('PRAGMA user_version').get() as { user_version: number };
   const tables = (
@@ -190,7 +190,7 @@ test('fresh history index uses only the canonical child schema', () => {
 
 test('canonical session index remains isolated from the legacy droid index', () => {
   const isolatedHome = mkdtempSync(join(tmpdir(), 'droid-session-index-isolation-'));
-  const indexDir = join(isolatedHome, '.factory', 'droid-control');
+  const indexDir = join(isolatedHome, '.factory', 'droidex');
   const legacyPath = join(indexDir, 'index.sqlite');
   const canonicalPath = join(indexDir, SESSION_INDEX_FILENAME);
   mkdirSync(indexDir, { recursive: true });
@@ -240,14 +240,14 @@ test('version-one index missing a canonical identity constraint uses hard-cut re
   try {
     const index = new HistoryIndex();
     index.close();
-    const indexPath = join(malformedHome, '.factory', 'droid-control', SESSION_INDEX_FILENAME);
+    const indexPath = join(malformedHome, '.factory', 'droidex', SESSION_INDEX_FILENAME);
     const db = new DatabaseSync(indexPath);
     db.exec('DROP INDEX child_sessions_provider_identity;');
     db.close();
 
     assert.throws(
       () => new HistoryIndex(),
-      /remove ~\/\.factory\/droid-control\/session-index\.sqlite.*Raw Factory session history is not removed\./,
+      /remove ~\/\.factory\/droidex\/session-index\.sqlite.*Raw Factory session history is not removed\./,
     );
   } finally {
     process.env.HOME = home;
@@ -261,7 +261,7 @@ test('version-one index missing the canonical spawn-kind check uses hard-cut rec
   try {
     const index = new HistoryIndex();
     index.close();
-    const indexPath = join(malformedHome, '.factory', 'droid-control', SESSION_INDEX_FILENAME);
+    const indexPath = join(malformedHome, '.factory', 'droidex', SESSION_INDEX_FILENAME);
     const db = new DatabaseSync(indexPath);
     db.exec(`
       BEGIN;
@@ -303,7 +303,7 @@ test('version-one index missing the canonical spawn-kind check uses hard-cut rec
 
     assert.throws(
       () => new HistoryIndex(),
-      /remove ~\/\.factory\/droid-control\/session-index\.sqlite.*Raw Factory session history is not removed\./,
+      /remove ~\/\.factory\/droidex\/session-index\.sqlite.*Raw Factory session history is not removed\./,
     );
   } finally {
     process.env.HOME = home;
@@ -336,7 +336,7 @@ test('version-one indexes with incompatible partial definitions use hard-cut rec
     try {
       const index = new HistoryIndex();
       index.close();
-      const indexPath = join(malformedHome, '.factory', 'droid-control', SESSION_INDEX_FILENAME);
+      const indexPath = join(malformedHome, '.factory', 'droidex', SESSION_INDEX_FILENAME);
       const db = new DatabaseSync(indexPath);
       db.exec(`
         DROP INDEX ${malformed.name};
@@ -348,7 +348,7 @@ test('version-one indexes with incompatible partial definitions use hard-cut rec
 
       assert.throws(
         () => new HistoryIndex(),
-        /remove ~\/\.factory\/droid-control\/session-index\.sqlite.*Raw Factory session history is not removed\./,
+        /remove ~\/\.factory\/droidex\/session-index\.sqlite.*Raw Factory session history is not removed\./,
         malformed.name,
       );
     } finally {
@@ -360,7 +360,7 @@ test('version-one indexes with incompatible partial definitions use hard-cut rec
 
 test('incompatible local index fails fast with explicit recovery and leaves raw history intact', () => {
   const incompatibleHome = mkdtempSync(join(tmpdir(), 'droid-child-schema-recovery-'));
-  const indexDir = join(incompatibleHome, '.factory', 'droid-control');
+  const indexDir = join(incompatibleHome, '.factory', 'droidex');
   const rawDir = join(incompatibleHome, '.factory', 'sessions', '2026', '07');
   mkdirSync(indexDir, { recursive: true });
   mkdirSync(rawDir, { recursive: true });
@@ -376,7 +376,7 @@ test('incompatible local index fails fast with explicit recovery and leaves raw 
   try {
     assert.throws(
       () => new HistoryIndex(),
-      /remove ~\/\.factory\/droid-control\/session-index\.sqlite.*Raw Factory session history is not removed\./,
+      /remove ~\/\.factory\/droidex\/session-index\.sqlite.*Raw Factory session history is not removed\./,
     );
     assert.equal(readFileSync(rawPath, 'utf8'), raw);
     const reopened = new DatabaseSync(incompatiblePath);

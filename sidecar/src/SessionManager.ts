@@ -1424,7 +1424,7 @@ export class SessionManager {
         this.pendingNativeBrowserRequests.delete(request.requestId);
         reject(
           new Error(
-            `Droid Control browser did not respond to ${request.action} within ${String(BROWSER_NATIVE_TIMEOUT_MS)}ms.`,
+            `DROIDEX browser did not respond to ${request.action} within ${String(BROWSER_NATIVE_TIMEOUT_MS)}ms.`,
           ),
         );
       }, BROWSER_NATIVE_TIMEOUT_MS);
@@ -1439,7 +1439,7 @@ export class SessionManager {
     clearTimeout(pending.timeout);
     this.pendingNativeBrowserRequests.delete(result.requestId);
     if (result.ok) pending.resolve(result);
-    else pending.reject(new Error(result.error ?? 'Droid Control browser action failed.'));
+    else pending.reject(new Error(result.error ?? 'DROIDEX browser action failed.'));
   }
 
   private requireBrowserAppSessionId(appSessionId?: string): string {

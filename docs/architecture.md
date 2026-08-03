@@ -1,6 +1,6 @@
 # Architecture
 
-Droid Control is split into three runtime surfaces: the React renderer, the Electron host, and the Node sidecar.
+DROIDEX is split into three runtime surfaces: the React renderer, the Electron host, and the Node sidecar.
 
 ## Runtime flow
 

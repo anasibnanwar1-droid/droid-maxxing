@@ -20,7 +20,7 @@ export function createBrowserMcpServer(
 ) {
   const appSessionId = () => {
     const id = appSessionIdForTool();
-    if (!id) throw new Error('Browser tools are not attached to a live Droid Control session yet.');
+    if (!id) throw new Error('Browser tools are not attached to a live DROIDEX session yet.');
     return id;
   };
 
@@ -31,10 +31,10 @@ export function createBrowserMcpServer(
       tool(
         'browser_open',
         [
-          'Open and show a URL in the live Droid Control browser pane for this chat session.',
-          'This is the browser the user can see and control in Droid Control.',
+          'Open and show a URL in the live DROIDEX browser pane for this chat session.',
+          'This is the browser the user can see and control in DROIDEX.',
           'When the user asks to open a site, navigate, click, inspect, or control a browser, call this tool first with the site URL.',
-          'If the user names a domain without a scheme, pass it directly; Droid Control will load it as https.',
+          'If the user names a domain without a scheme, pass it directly; DROIDEX will load it as https.',
           'Do not ask the user for a URL when they already named a site or domain.',
           'Do not use Read, FetchUrl, curl, or agent-browser as a substitute for browser work.',
         ].join(' '),
@@ -59,7 +59,7 @@ export function createBrowserMcpServer(
           });
           return jsonResult({
             message:
-              'Opened the live Droid Control browser. The response includes current page refs; use them directly with browser_click, browser_type, and browser_scroll.',
+              'Opened the live DROIDEX browser. The response includes current page refs; use them directly with browser_click, browser_type, and browser_scroll.',
             ...stateForTool(state),
           });
         }),
@@ -75,7 +75,7 @@ export function createBrowserMcpServer(
       ),
       tool(
         'browser_reload',
-        'Reload the current live Droid Control browser page. Use browser_snapshot after reload when fresh refs are needed.',
+        'Reload the current live DROIDEX browser page. Use browser_snapshot after reload when fresh refs are needed.',
         {},
         safeTool(async () => {
           const state = await manager.reload(appSessionId());
@@ -84,7 +84,7 @@ export function createBrowserMcpServer(
       ),
       tool(
         'browser_back',
-        'Go back one page in the live Droid Control browser history and return fresh page refs.',
+        'Go back one page in the live DROIDEX browser history and return fresh page refs.',
         {},
         safeTool(async () => {
           const state = await manager.goBack(appSessionId());
@@ -93,7 +93,7 @@ export function createBrowserMcpServer(
       ),
       tool(
         'browser_forward',
-        'Go forward one page in the live Droid Control browser history and return fresh page refs.',
+        'Go forward one page in the live DROIDEX browser history and return fresh page refs.',
         {},
         safeTool(async () => {
           const state = await manager.goForward(appSessionId());
@@ -102,7 +102,7 @@ export function createBrowserMcpServer(
       ),
       tool(
         'browser_screenshot',
-        'Capture the current live Droid Control browser viewport as a high-detail PNG image for visual inspection. Use browser_snapshot for normal navigation refs.',
+        'Capture the current live DROIDEX browser viewport as a high-detail PNG image for visual inspection. Use browser_snapshot for normal navigation refs.',
         {
           fullPage: z
             .boolean()
@@ -127,7 +127,7 @@ export function createBrowserMcpServer(
       ),
       tool(
         'browser_click',
-        'Move the agent cursor and click in the live Droid Control browser by ref or viewport coordinates. Prefer refs returned by browser_snapshot.',
+        'Move the agent cursor and click in the live DROIDEX browser by ref or viewport coordinates. Prefer refs returned by browser_snapshot.',
         {
           ref: z
             .string()
@@ -178,7 +178,7 @@ export function createBrowserMcpServer(
       ),
       tool(
         'browser_type',
-        'Type text into the currently focused element in the live Droid Control browser. Click or focus an input first.',
+        'Type text into the currently focused element in the live DROIDEX browser. Click or focus an input first.',
         {
           text: z.string().describe('Text to type into the currently focused browser element.'),
         },
@@ -189,7 +189,7 @@ export function createBrowserMcpServer(
       ),
       tool(
         'browser_keypress',
-        'Press a key in the live Droid Control browser.',
+        'Press a key in the live DROIDEX browser.',
         {
           key: z
             .string()
@@ -203,7 +203,7 @@ export function createBrowserMcpServer(
       ),
       tool(
         'browser_resize',
-        'Resize the viewport of the live Droid Control browser. Use this to check responsive layouts or to match a specific screen size.',
+        'Resize the viewport of the live DROIDEX browser. Use this to check responsive layouts or to match a specific screen size.',
         {
           viewport: viewportSchema.describe('New viewport dimensions.'),
           viewportMode: viewportModeSchema.optional().describe('Viewport preset label.'),
@@ -222,7 +222,7 @@ export function createBrowserMcpServer(
       ),
       tool(
         'browser_scroll',
-        'Scroll the live Droid Control browser page, then call browser_snapshot to refresh refs.',
+        'Scroll the live DROIDEX browser page, then call browser_snapshot to refresh refs.',
         {
           direction: scrollDirectionSchema.describe('Direction to scroll.'),
           pixels: z.number().positive().max(4000).optional().describe('Scroll amount in pixels.'),
@@ -315,7 +315,7 @@ export function createBrowserMcpServer(
       tool(
         'browser_fill_login',
         [
-          'Fill the saved login for the current site in the live Droid Control browser.',
+          'Fill the saved login for the current site in the live DROIDEX browser.',
           'You never see the username or password: the values are injected securely in the app and are redacted from every snapshot. This lets you authorize a sign-in without reading the secret.',
           'Saved logins are strictly opt-in. Use only when a sign-in form is visible and the user has previously enabled saved logins and saved a credential for this site.',
           'Returns an error if saved logins are disabled or no credential is saved; in that case ask the user to sign in once and accept the save-login prompt. After filling, you may submit the form with browser_click or browser_keypress.',
@@ -330,7 +330,7 @@ export function createBrowserMcpServer(
         'design-mode',
         [
           'Read the current Design Mode browser context for this chat only.',
-          'Use after the user selects, clicks, or sketches an area in the live Droid Control browser pane.',
+          'Use after the user selects, clicks, or sketches an area in the live DROIDEX browser pane.',
           'Returns compact source-anchored references: each has an @id, label, kind, tag/role/name/text, box, resolved source (framework/component/file), a verified CSS selector, and a cropped screenshotPath.',
           'When you need the full element detail (all attributes, computed styles, ancestor chain, outerHTML), call design_reference with the @id instead of asking the user.',
           'Design Mode is for visual/UI work only: change the referenced elements and their styling, and do not modify backend, data, or business logic. If achieving the requested look requires a backend or data change, stop and tell the user what is needed and why instead of changing it yourself or spawning subagents.',

@@ -7,7 +7,7 @@ import { wrapDroidInvocation } from './Environment.js';
 import type { ModelInfo, ReasoningEffort } from './protocol.js';
 
 const execFileAsync = promisify(execFile);
-const CACHE_PATH = join(homedir(), '.factory', 'droid-control', 'model-catalog.json');
+const CACHE_PATH = join(homedir(), '.factory', 'droidex', 'model-catalog.json');
 
 type Section = 'available' | 'custom' | 'details' | null;
 

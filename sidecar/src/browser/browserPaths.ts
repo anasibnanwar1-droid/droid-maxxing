@@ -28,7 +28,10 @@ export async function resolveBrowserAssetPath(
 }
 
 function defaultBrowserDataRoot(): string {
-  return join(homedir(), 'Library', 'Application Support', 'Droid Control');
+  return (
+    process.env.DROIDEX_USER_DATA_DIR ??
+    join(homedir(), 'Library', 'Application Support', 'DROIDEX')
+  );
 }
 
 function sanitizeSegment(value: string): string {

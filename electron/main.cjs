@@ -32,13 +32,14 @@ const { createSidecarSupervisor } = require('./sidecar.cjs');
 const { installRendererNavigationGuard } = require('./rendererSecurity.cjs');
 const { autoUpdater } = require('electron-updater');
 const { createAppUpdater } = require('./appUpdater.cjs');
-const APP_NAME = 'Droid Control';
+const APP_NAME = 'DROIDEX';
 const terminalManager = createTerminalManager();
 const terminalSubscriptions = createTerminalSubscriptionRegistry(terminalManager);
 const filesRootAccess = files.createRootAccessRegistry();
 const sidecarSupervisor = createSidecarSupervisor({
   entryPath: sidecarEntry,
   cwd: () => (app.isPackaged ? process.resourcesPath : appRoot()),
+  userData: () => app.getPath('userData'),
 });
 const appUpdater = createAppUpdater({
   app,
@@ -60,7 +61,7 @@ const HIDDEN_BROWSER_IDLE_MS = Number(process.env.DROID_NATIVE_BROWSER_IDLE_MS ?
 // A single persistent partition keeps cookies, localStorage, and registered
 // passkeys alive across reloads, dev-server restarts, and app restarts so the
 // user does not have to sign in again every time.
-const BROWSER_PARTITION = 'persist:droid-control-browser';
+const BROWSER_PARTITION = 'persist:droidex-browser';
 let browserSessionConfigured = false;
 
 app.setName(APP_NAME);
@@ -68,7 +69,7 @@ app.setName(APP_NAME);
 // the main one without fighting over the Chromium profile lock.
 app.setPath(
   'userData',
-  process.env.DROID_USER_DATA_DIR || path.join(app.getPath('appData'), APP_NAME),
+  process.env.DROIDEX_USER_DATA_DIR || path.join(app.getPath('appData'), APP_NAME),
 );
 
 app.whenReady().then(() => {
@@ -162,7 +163,7 @@ function registerIpc() {
   });
   // Composer image pastes/drops land in a temp dir and travel to Droid as
   // ordinary @-mentioned paths; discard only ever unlinks inside that dir.
-  const attachmentsDir = path.join(os.tmpdir(), 'droid-control-attachments');
+  const attachmentsDir = path.join(os.tmpdir(), 'droidex-attachments');
   ipcMain.handle('save-image', (_event, { dataUrl }) => attachments.save(attachmentsDir, dataUrl));
   ipcMain.handle('discard-image', (_event, { path: target }) =>
     attachments.discard(attachmentsDir, target),
@@ -426,12 +427,12 @@ function setAppIcon(mode) {
 function installApplicationMenu() {
   const isMac = process.platform === 'darwin';
   const reloadItem = () => ({
-    label: 'Reload Droid Control',
+    label: `Reload ${APP_NAME}`,
     accelerator: 'CmdOrCtrl+R',
     click: () => reloadShell(false),
   });
   const forceReloadItem = () => ({
-    label: 'Force Reload Droid Control',
+    label: `Force Reload ${APP_NAME}`,
     accelerator: 'CmdOrCtrl+Alt+R',
     click: () => reloadShell(true),
   });
@@ -662,8 +663,8 @@ async function handleCredentialCapture(senderContents, payload) {
         buttons: ['Enable & save login', 'Not now', 'Never'],
         defaultId: 0,
         cancelId: 1,
-        title: 'Save logins in Droid Control?',
-        message: 'Let Droid Control securely save logins for its browser?',
+        title: `Save logins in ${APP_NAME}?`,
+        message: `Let ${APP_NAME} securely save logins for its browser?`,
         detail: `Logins are encrypted with your OS keychain so you stay signed in across restarts (${origin}). The agent can use a saved login to sign in for you, but can never read the username or password. You can turn this off anytime by choosing Never.`,
       });
       if (response === 2) {
@@ -683,7 +684,7 @@ async function handleCredentialCapture(senderContents, payload) {
       title: 'Save password',
       message: `Save this login for ${origin}?`,
       detail:
-        'Droid Control stores it encrypted with your OS keychain. The agent can use it to sign in but can never read it.',
+        `${APP_NAME} stores it encrypted with your OS keychain. The agent can use it to sign in but can never read it.`,
     });
     if (response === 0) upsertCredential(origin, payload.username || '', password);
   } catch {
@@ -746,7 +747,7 @@ function createNativeBrowserEntry(browserSessionId) {
 function ensureNativeBrowserView(browserSessionId) {
   const entry = ensureNativeBrowserEntry(browserSessionId);
   if (isBrowserViewUsable(entry.view)) return entry;
-  if (!isWindowUsable(mainWindow)) throw new Error('Droid Control window is not available.');
+  if (!isWindowUsable(mainWindow)) throw new Error(`${APP_NAME} window is not available.`);
   configureBrowserSession();
   const view = new WebContentsView({
     webPreferences: {
@@ -837,12 +838,12 @@ async function openNativeBrowser(browserSessionId, url, bounds, viewport) {
 
 async function attachNativeBrowser(browserSessionId, bounds, options = {}) {
   const entry = ensureNativeBrowserView(browserSessionId);
-  if (!isWindowUsable(mainWindow)) throw new Error('Droid Control window is not available.');
+  if (!isWindowUsable(mainWindow)) throw new Error(`${APP_NAME} window is not available.`);
   if (attachedBrowserSessionId && attachedBrowserSessionId !== entry.browserSessionId) {
     detachNativeBrowser(attachedBrowserSessionId);
   }
   const view = entry.view;
-  if (!view) throw new Error('Droid Control browser is not open.');
+  if (!view) throw new Error(`${APP_NAME} browser is not open.`);
   attachNativeBrowserViewToMainWindow(entry);
   attachedBrowserSessionId = entry.browserSessionId;
   entry.attached = true;
@@ -901,7 +902,7 @@ function closeNativeBrowser(browserSessionId) {
 function reloadNativeBrowser(browserSessionId) {
   const entry = nativeBrowsers.get(normalizeNativeBrowserSessionId(browserSessionId));
   const contents = safeWebContents(entry?.view);
-  if (!contents) throw new Error('Droid Control browser is not open.');
+  if (!contents) throw new Error(`${APP_NAME} browser is not open.`);
   entry.targetUrl = contents.getURL();
   contents.reload();
 }
@@ -909,7 +910,7 @@ function reloadNativeBrowser(browserSessionId) {
 function navigateNativeBrowserHistory(browserSessionId, direction) {
   const entry = nativeBrowsers.get(normalizeNativeBrowserSessionId(browserSessionId));
   const contents = safeWebContents(entry?.view);
-  if (!contents) throw new Error('Droid Control browser is not open.');
+  if (!contents) throw new Error(`${APP_NAME} browser is not open.`);
   const history = contents.navigationHistory;
   if (!history) return false;
   if (direction === 'back') {
@@ -943,7 +944,7 @@ async function runNativeBrowserAgentAction(request) {
   const entry = await restoreNativeBrowserForAction(request.browserSessionId);
   try {
     const contents = safeWebContents(entry.view);
-    if (!contents) throw new Error('Droid Control browser is not open.');
+    if (!contents) throw new Error(`${APP_NAME} browser is not open.`);
     if (request.action === 'resize') {
       entry.viewport = normalizeBrowserViewport(request.viewport);
       // Attached bounds remain owned by the Browser pane layout.
@@ -1163,7 +1164,7 @@ async function fillCredentialsForAgent(contents, request) {
       requestId: request.requestId,
       ok: false,
       error:
-        'Saved logins are turned off for the Droid Control browser. Ask the user to sign in once; they will be prompted to enable and save the login first.',
+        `Saved logins are turned off for the ${APP_NAME} browser. Ask the user to sign in once; they will be prompted to enable and save the login first.`,
     };
   }
   const origin = originFor(contents.getURL());
@@ -1201,7 +1202,7 @@ async function fillCredentialsForAgent(contents, request) {
 async function captureNativeBrowser(browserSessionId, box, options = {}) {
   const entry = await restoreNativeBrowserForAction(browserSessionId);
   const contents = safeWebContents(entry.view);
-  if (!contents) throw new Error('Droid Control browser is not open.');
+  if (!contents) throw new Error(`${APP_NAME} browser is not open.`);
   contents.setBackgroundThrottling(false);
   try {
     const fullPage = Boolean(options?.fullPage);
@@ -1645,7 +1646,7 @@ function closeHiddenNativeBrowserWindowIfUnused() {
 
 function normalizeNativeBrowserSessionId(browserSessionId) {
   const value = String(browserSessionId || '').trim();
-  if (!value) throw new Error('Droid Control browser session id is required.');
+  if (!value) throw new Error(`${APP_NAME} browser session id is required.`);
   return value;
 }
 
@@ -1692,7 +1693,7 @@ function normalizeNativeBrowserUrl(entry, url) {
 function rejectHostAppUrl(url) {
   if (isHostAppUrl(url)) {
     throw new Error(
-      'Cannot open the Droid Control shell inside its own browser pane. Use a different local app port.',
+      `Cannot open the ${APP_NAME} shell inside its own browser pane. Use a different local app port.`,
     );
   }
 }
@@ -1906,7 +1907,7 @@ async function writeDiffFile(root) {
   } catch (err) {
     diff = `Unable to read git diff: ${err.message}\n`;
   }
-  const dir = path.join(app.getPath('temp'), 'droid-control-diffs');
+  const dir = path.join(app.getPath('temp'), 'droidex-diffs');
   await fsp.mkdir(dir, { recursive: true });
   const name = (path.basename(root) || 'repo').replace(/[^\w.-]+/g, '-');
   const filePath = path.join(dir, `${name}-${Date.now()}.diff`);

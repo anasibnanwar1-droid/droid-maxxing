@@ -308,7 +308,7 @@ Start from `.env.example` for local overrides.
 - `ELECTRON_START_URL`: Electron development URL
 - `BRIDGE_PORT`: local sidecar WebSocket port
 - `BRIDGE_TOKEN`: packaged Electron bridge token
-- `DROID_USER_DATA_DIR`: optional Electron profile directory override so a
+- `DROIDEX_USER_DATA_DIR`: optional Electron profile directory override so a
   second dev instance can run beside the main one
 - `DROID_PATH`: explicit Droid CLI path
 - `FACTORY_API_KEY`: optional Factory key for Droid child processes

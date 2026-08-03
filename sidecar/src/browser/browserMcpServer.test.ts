@@ -83,7 +83,7 @@ test('browser_open keeps high-detail viewport scale by default', async () => {
   });
 
   assert.equal(openedViewport?.deviceScaleFactor, 2);
-  assert.match(String(result), /Opened the live Droid Control browser/);
+  assert.match(String(result), /Opened the live DROIDEX browser/);
 });
 
 test('browser_reload returns a fresh browser state', async () => {

@@ -41,6 +41,11 @@ After installing a candidate build:
 5. Trigger an update check against the public releases repository.
 6. Inspect Electron and sidecar logs for bridge authentication, download, or update errors.
 
+The sidecar uses Electron's bundled Node 22 runtime and its built-in
+`node:sqlite`; users do not install or download SQLite. The canonical session
+index is `~/.factory/droidex/session-index.sqlite`. It is DROIDEX-owned derived
+state built from raw Factory session history under `~/.factory/sessions`.
+
 ## Incident triage
 
 If a deployment causes user impact:

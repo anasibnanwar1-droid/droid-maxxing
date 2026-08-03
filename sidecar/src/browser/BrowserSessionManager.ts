@@ -290,7 +290,7 @@ export class BrowserSessionManager {
   async fillCredentials(appSessionId: string): Promise<BrowserState> {
     const session = this.requireSession(appSessionId);
     if (!session.runtime.fillCredentials) {
-      throw new Error('Credential autofill is only available in the live Droid Control browser.');
+      throw new Error('Credential autofill is only available in the live DROIDEX browser.');
     }
     const snapshot = await session.runtime.fillCredentials();
     session.state = this.stateFromSnapshot(session, snapshot);

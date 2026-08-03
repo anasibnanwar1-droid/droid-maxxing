@@ -23,6 +23,7 @@ function harness(children) {
   const supervisor = createSidecarSupervisor({
     entryPath: () => '/app/sidecar.mjs',
     cwd: () => '/app',
+    userData: () => '/profiles/droidex',
     stdout: new PassThrough(),
     stderr: new PassThrough(),
     spawnProcess: (command, args, options) => {
@@ -49,6 +50,7 @@ test('sidecar binds an OS-assigned port and shares one concurrent startup', asyn
   assert.match(calls[0].options.env.BRIDGE_TOKEN, /^[a-f0-9]{64}$/);
   assert.match(calls[0].options.env.BROWSER_ASSET_TOKEN, /^[a-f0-9]{64}$/);
   assert.notEqual(calls[0].options.env.BROWSER_ASSET_TOKEN, calls[0].options.env.BRIDGE_TOKEN);
+  assert.equal(calls[0].options.env.DROIDEX_USER_DATA_DIR, '/profiles/droidex');
 
   child.stdout.write('SIDECAR_READY 43123\n');
   assert.deepEqual(await first, await second);
@@ -110,6 +112,7 @@ test('intentional shutdown is not reported as a crash', async () => {
   const supervisor = createSidecarSupervisor({
     entryPath: () => '/app/sidecar.mjs',
     cwd: () => '/app',
+    userData: () => '/profiles/droidex',
     stdout: new PassThrough(),
     stderr,
     spawnProcess: () => child,

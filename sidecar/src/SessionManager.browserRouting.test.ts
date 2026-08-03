@@ -209,7 +209,7 @@ test('[B2] Native request and result correlation', { concurrency: false }, async
         (event) =>
           event.type === 'browser.error' &&
           event.appSessionId === 'app-b2' &&
-          /Droid Control browser did not respond to reload within \d+ms\./.test(event.message),
+          /DROIDEX browser did not respond to reload within \d+ms\./.test(event.message),
       ),
       true,
     );
