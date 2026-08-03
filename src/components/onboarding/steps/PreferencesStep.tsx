@@ -81,10 +81,11 @@ export function PreferencesStep({
             {editorOptions.map((o) => (
               <button
                 key={o.id}
+                disabled={saving}
                 onClick={() => {
                   setEditor(o.id);
                 }}
-                className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-[12.5px] transition-colors ${
+                className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-[12.5px] transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
                   editor === o.id
                     ? 'border-droid-border-hover bg-droid-elevated text-droid-text'
                     : 'border-droid-border text-droid-text-secondary hover:border-droid-border-hover'
@@ -101,12 +102,14 @@ export function PreferencesStep({
           sub="Updates silently on launch."
           checked={cliAuto}
           onChange={setCliAuto}
+          disabled={saving}
         />
         <ToggleRow
           label="Auto-update DROIDEX"
           sub="Installs new app builds and restarts."
           checked={appAuto}
           onChange={setAppAuto}
+          disabled={saving}
         />
       </Panel>
 

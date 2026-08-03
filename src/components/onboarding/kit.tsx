@@ -112,11 +112,13 @@ export function ToggleRow({
   sub,
   checked,
   onChange,
+  disabled = false,
 }: {
   label: string;
   sub?: string;
   checked: boolean;
   onChange: (v: boolean) => void;
+  disabled?: boolean;
 }) {
   return (
     <div className="flex items-center justify-between px-4 py-3.5">
@@ -124,7 +126,7 @@ export function ToggleRow({
         <div className="text-[13.5px] text-droid-text">{label}</div>
         {sub && <div className="text-[11.5px] text-droid-text-muted mt-0.5">{sub}</div>}
       </div>
-      <Switch label={label} checked={checked} onChange={onChange} />
+      <Switch label={label} checked={checked} onChange={onChange} disabled={disabled} />
     </div>
   );
 }
