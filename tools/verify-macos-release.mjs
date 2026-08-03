@@ -197,11 +197,11 @@ async function smokePackagedRuntime(architecture) {
       executablePath,
       [
         '-e',
-        `const { createRequire } = require('node:module'); const appRequire = createRequire(${JSON.stringify(join(asarPath, 'package.json'))}); const pty = appRequire('node-pty'); console.log(typeof pty.spawn);`,
+        `const { createRequire } = require('node:module'); const appRequire = createRequire(${JSON.stringify(join(asarPath, 'package.json'))}); const pty = appRequire('node-pty'); const child = pty.spawn('/usr/bin/true', [], { name: 'xterm-color', cols: 80, rows: 24, cwd: '/tmp', env: { PATH: '/usr/bin:/bin' } }); const timeout = setTimeout(() => process.exit(2), 5000); child.onExit(({ exitCode }) => { clearTimeout(timeout); console.log(exitCode); });`,
       ],
       { env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' } },
     ).trim();
-    assert(nativeDependencyResult === 'function', `${name} packaged node-pty failed to load`);
+    assert(nativeDependencyResult === '0', `${name} packaged node-pty failed to spawn`);
   } finally {
     if (!child.killed && child.exitCode === null) child.kill('SIGKILL');
     rmSync(temporaryHome, { recursive: true, force: true });

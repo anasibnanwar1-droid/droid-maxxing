@@ -113,16 +113,20 @@ jobs:
             exit 1
           fi
           gh release create "$GITHUB_REF_NAME" \
+            --draft \
+            --repo "$RELEASE_REPOSITORY" \
+            --target main \
+            --title "DROIDEX $GITHUB_REF_NAME" \
+            --notes "Signed and notarized DROIDEX macOS release for Apple silicon and Intel Macs. Download the DMG matching your Mac."
+          gh release upload "$GITHUB_REF_NAME" \
             release/droidex-*.dmg \
             release/droidex-*.dmg.blockmap \
             release/droidex-*.zip \
             release/droidex-*.zip.blockmap \
             release/latest-mac.yml \
             release/SHA256SUMS \
-            --repo "$RELEASE_REPOSITORY" \
-            --target main \
-            --title "DROIDEX $GITHUB_REF_NAME" \
-            --notes "Signed and notarized DROIDEX macOS release for Apple silicon and Intel Macs. Download the DMG matching your Mac."
+            --repo "$RELEASE_REPOSITORY"
+          gh release edit "$GITHUB_REF_NAME" --repo "$RELEASE_REPOSITORY" --draft=false
           gh release verify "$GITHUB_REF_NAME" --repo "$RELEASE_REPOSITORY"
           for asset in \
             release/droidex-*.dmg \
