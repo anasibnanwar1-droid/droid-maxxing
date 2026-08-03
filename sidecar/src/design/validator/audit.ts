@@ -25,7 +25,7 @@ export function auditElements(
     counts.set(finding.rule, used + 1);
     findings.push({
       ...finding,
-      id: `${context.pageId}-${context.viewport}-${finding.rule}-${findings.length + 1}`,
+      id: `${context.pageId}-${context.viewport}-${finding.rule}-${String(findings.length + 1)}`,
       pageId: context.pageId,
       viewport: context.viewport,
     });
@@ -80,8 +80,8 @@ function checkFontSize(element: AuditElement, tokens: DesignTokens, push: Push):
     selector: element.selector,
     label: labelFor(element),
     property: 'fontSize',
-    actual: `${actual}px`,
-    expected: `type scale value (nearest ${nearest}px)`,
+    actual: `${String(actual)}px`,
+    expected: `type scale value (nearest ${String(nearest)}px)`,
     box: element.box,
   });
 }
@@ -101,8 +101,8 @@ function checkRadius(element: AuditElement, tokens: DesignTokens, push: Push): v
     selector: element.selector,
     label: labelFor(element),
     property: 'borderRadius',
-    actual: `${actual}px`,
-    expected: `radius scale value (nearest ${nearest}px)`,
+    actual: `${String(actual)}px`,
+    expected: `radius scale value (nearest ${String(nearest)}px)`,
     box: element.box,
   });
 }
@@ -124,7 +124,7 @@ function checkFontFamily(element: AuditElement, tokens: DesignTokens, push: Push
     label: labelFor(element),
     property: 'fontFamily',
     actual: element.styles.fontFamily ?? '',
-    expected: `one of the DNA font stacks (${stacks.length})`,
+    expected: `one of the DNA font stacks (${String(stacks.length)})`,
     box: element.box,
   });
 }
@@ -143,8 +143,8 @@ function checkSpacing(element: AuditElement, tokens: DesignTokens, push: Push): 
     selector: element.selector,
     label: labelFor(element),
     property: 'paddingTop',
-    actual: `${actual}px`,
-    expected: `spacing scale value (nearest ${nearest}px)`,
+    actual: `${String(actual)}px`,
+    expected: `spacing scale value (nearest ${String(nearest)}px)`,
     box: element.box,
   });
 }
@@ -160,12 +160,17 @@ function firstFamily(stack: string): string {
 }
 
 function labelFor(element: AuditElement): string {
-  return element.label?.slice(0, 60) || `<${element.tag}>`;
+  const label = element.label?.slice(0, 60);
+  return label && label.length > 0 ? label : `<${element.tag}>`;
 }
 
 function isAllowed(element: AuditElement, tokens: DesignTokens): boolean {
   return (tokens.allowlist ?? []).some(
-    (rule) => !rule.property && !rule.value && matchesSelector(rule.selector, element.selector),
+    (rule) =>
+      Boolean(rule.selector) &&
+      !rule.property &&
+      !rule.value &&
+      matchesSelector(rule.selector, element.selector),
   );
 }
 
@@ -179,7 +184,7 @@ function allowedValue(
     if (rule.selector && !matchesSelector(rule.selector, element.selector)) return false;
     if (rule.property && rule.property !== property) return false;
     if (rule.value && rule.value.trim().toLowerCase() !== value.trim().toLowerCase()) return false;
-    return Boolean(rule.selector || rule.property || rule.value);
+    return Boolean(rule.selector) || Boolean(rule.property) || Boolean(rule.value);
   });
 }
 

@@ -8,7 +8,6 @@ import {
   parsePx,
   parseTokens,
   serializeTokenBlock,
-  upsertTokenBlock,
 } from './tokens.js';
 import type { DesignTokens } from './types.js';
 
@@ -46,19 +45,25 @@ test('parseTokens drops non-string colors and non-numeric scale values', () => {
   assert.deepEqual(tokens.typeScale, [12, 16]);
 });
 
-test('upsertTokenBlock replaces an existing block in place', () => {
-  const original = `# DNA\n\n## Tokens\n\n${serializeTokenBlock(sampleTokens)}\n`;
-  const next = { ...sampleTokens, colors: { bg: '#111111' } };
-  const updated = upsertTokenBlock(original, next);
-  assert.equal(updated.match(/```design-tokens/g)?.length, 1);
-  assert.ok(updated.includes('#111111'));
-  assert.ok(!updated.includes('#e0653a'));
-});
-
-test('upsertTokenBlock appends a Tokens section when absent', () => {
-  const updated = upsertTokenBlock('# DNA', sampleTokens);
-  assert.ok(updated.includes('## Tokens'));
-  assert.deepEqual(parseTokens(updated)?.colors, sampleTokens.colors);
+test('parseTokens keeps only actionable string allowlist rules', () => {
+  const markdown = [
+    '```design-tokens',
+    JSON.stringify({
+      allowlist: [
+        null,
+        {},
+        { note: 'legacy' },
+        { selector: ' .chart ', note: 'intentional vendor output' },
+        { property: 'color', value: '#3366ff' },
+        { selector: 42, property: false },
+      ],
+    }),
+    '```',
+  ].join('\n');
+  assert.deepEqual(parseTokens(markdown)?.allowlist, [
+    { selector: '.chart', note: 'intentional vendor output' },
+    { property: 'color', value: '#3366ff' },
+  ]);
 });
 
 test('parseColor handles hex, rgb and named colors', () => {

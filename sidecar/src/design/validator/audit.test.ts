@@ -99,6 +99,15 @@ test('allowlist suppresses findings by selector and by property/value', () => {
   assert.equal(stillFlagged.length, 1);
 });
 
+test('empty and note-only allowlist rules never suppress validation', () => {
+  const allowTokens: DesignTokens = {
+    ...tokens,
+    allowlist: [{}, { note: 'legacy entry' }],
+  };
+  const findings = auditElements([element({ color: '#3366ff' })], allowTokens, context);
+  assert.equal(findings[0]?.rule, 'off-palette-color');
+});
+
 test('findings are capped per rule', () => {
   const many = Array.from({ length: 40 }, (_, i) =>
     element({ color: '#3366ff' }, `main > div:nth-child(${i})`),

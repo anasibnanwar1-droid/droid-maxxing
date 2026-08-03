@@ -555,7 +555,7 @@ export interface AuditElement {
   tag: string;
   label?: string;
   box: { x: number; y: number; width: number; height: number };
-  styles: Record<string, string>;
+  styles: Partial<Record<string, string>>;
 }
 
 export interface DesignLibraryItem {

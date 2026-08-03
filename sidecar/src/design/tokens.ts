@@ -19,13 +19,6 @@ export function serializeTokenBlock(tokens: DesignTokens): string {
   return '```design-tokens\n' + JSON.stringify(tokens, null, 2) + '\n```';
 }
 
-export function upsertTokenBlock(markdown: string, tokens: DesignTokens): string {
-  const block = serializeTokenBlock(tokens);
-  if (TOKEN_BLOCK.test(markdown)) return markdown.replace(TOKEN_BLOCK, block);
-  const suffix = markdown.endsWith('\n') ? '' : '\n';
-  return `${markdown}${suffix}\n## Tokens\n\n${block}\n`;
-}
-
 function normalizeTokens(raw: Record<string, unknown>): DesignTokens {
   const colors: Record<string, string> = {};
   if (raw.colors && typeof raw.colors === 'object') {
@@ -37,7 +30,8 @@ function normalizeTokens(raw: Record<string, unknown>): DesignTokens {
   if (raw.fonts && typeof raw.fonts === 'object') {
     const source = raw.fonts as Record<string, unknown>;
     for (const key of ['sans', 'mono', 'display'] as const) {
-      if (typeof source[key] === 'string') fonts[key] = source[key] as string;
+      const value = source[key];
+      if (typeof value === 'string') fonts[key] = value;
     }
   }
   return {
@@ -47,10 +41,23 @@ function normalizeTokens(raw: Record<string, unknown>): DesignTokens {
     spacing: numberList(raw.spacing),
     radii: numberList(raw.radii),
     shadows: stringList(raw.shadows),
-    allowlist: Array.isArray(raw.allowlist)
-      ? (raw.allowlist as DesignTokens['allowlist'])
-      : undefined,
+    allowlist: normalizeAllowlist(raw.allowlist),
   };
+}
+
+function normalizeAllowlist(value: unknown): DesignTokens['allowlist'] {
+  if (!Array.isArray(value)) return undefined;
+  const rules = value.flatMap((item) => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) return [];
+    const source = item as Record<string, unknown>;
+    const rule: NonNullable<DesignTokens['allowlist']>[number] = {};
+    for (const field of ['selector', 'property', 'value', 'note'] as const) {
+      const raw = source[field];
+      if (typeof raw === 'string' && raw.trim()) rule[field] = raw.trim();
+    }
+    return rule.selector || rule.property || rule.value ? [rule] : [];
+  });
+  return rules.length > 0 ? rules : undefined;
 }
 
 function numberList(value: unknown): number[] {
