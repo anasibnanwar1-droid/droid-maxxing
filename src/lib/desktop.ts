@@ -12,6 +12,7 @@ import type {
 import type { EditorId, EditorTarget } from './editorOpen';
 import type { RepoStatus } from './repoEnvironment';
 import type { AppUpdateInfo, AppUpdateResult, OnboardingState } from './onboarding';
+import type { AppIconMode } from './appIcon';
 import type {
   CommitOptions,
   CreateBranchOptions,
@@ -163,6 +164,7 @@ interface DroidControlApi {
   checkAppUpdate: () => Promise<AppUpdateInfo>;
   downloadAppUpdate: (dmgUrl?: string) => Promise<AppUpdateResult>;
   relaunchApp: () => Promise<void>;
+  setAppIcon: (mode: AppIconMode) => Promise<AppIconMode>;
   openExternal: (url: string) => Promise<void>;
   terminalCreate: (options: {
     appSessionId: string;
@@ -281,6 +283,11 @@ export async function setApiKey(key: string): Promise<void> {
 export async function clearApiKey(): Promise<void> {
   if (!isDesktop()) return;
   await window.droidControl!.clearApiKey();
+}
+
+export async function setAppIcon(mode: AppIconMode): Promise<void> {
+  if (!isDesktop()) return;
+  await window.droidControl!.setAppIcon(mode);
 }
 
 export async function createTerminal(options: {

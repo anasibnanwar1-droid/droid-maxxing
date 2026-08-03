@@ -124,6 +124,8 @@ function ModeButton({
 }) {
   return (
     <button
+      type="button"
+      aria-pressed={active}
       onClick={onClick}
       className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[11px] transition-colors ${
         active
@@ -295,6 +297,43 @@ function AppearanceSection() {
           </div>
         </div>
         <DiffPreview />
+      </div>
+
+      <div className="rounded-xl border border-droid-border bg-droid-surface p-4 mb-6">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <div className="text-[13px] text-droid-text">App icon</div>
+            <div className="text-[11px] text-droid-text-muted">
+              Match the system, or pick the light or dark DROIDEX icon
+            </div>
+          </div>
+          <div className="flex gap-1" role="group" aria-label="App icon">
+            <ModeButton
+              active={theme.appIconMode === 'light'}
+              onClick={() => {
+                updateTheme({ appIconMode: 'light' });
+              }}
+              icon={Sun}
+              label="Light"
+            />
+            <ModeButton
+              active={theme.appIconMode === 'dark'}
+              onClick={() => {
+                updateTheme({ appIconMode: 'dark' });
+              }}
+              icon={Moon}
+              label="Dark"
+            />
+            <ModeButton
+              active={theme.appIconMode === 'system'}
+              onClick={() => {
+                updateTheme({ appIconMode: 'system' });
+              }}
+              icon={Monitor}
+              label="System"
+            />
+          </div>
+        </div>
       </div>
 
       {/* Presets */}

@@ -1,5 +1,6 @@
 import { createContext, useContext, useMemo, useReducer, ReactNode, useEffect } from 'react';
 import { bridge } from '../lib/bridge';
+import { normalizeAppIconMode, type AppIconMode } from '../lib/appIcon';
 import { updateCompactionSettings } from '../lib/commands';
 import { migrateLegacyLightPreset } from '../lib/theme';
 import {
@@ -112,6 +113,7 @@ export type DiffStyle = 'soft' | 'focused';
 
 export interface ThemeConfig {
   mode: 'dark' | 'light' | 'system';
+  appIconMode: AppIconMode;
   accent: string;
   bg: string;
   fg: string;
@@ -441,6 +443,7 @@ type Action =
 
 const defaultTheme: ThemeConfig = {
   mode: 'dark',
+  appIconMode: 'system',
   accent: '#f2f2f2',
   bg: '#0a0a0a',
   fg: '#ededed',
@@ -507,6 +510,7 @@ function loadTheme(): ThemeConfig {
     const saved = storage?.getItem('droid-theme');
     const theme = saved ? { ...defaultTheme, ...JSON.parse(saved) } : { ...defaultTheme };
     theme.diffStyle = normalizeDiffStyle(theme.diffStyle);
+    theme.appIconMode = normalizeAppIconMode(theme.appIconMode);
     // One-time migration: a saved accent still carrying an old fixed-orange
     // default was never deliberately chosen, so neutralize it once. Keying off a
     // persisted flag (not the accent value) lets a user later pick that same

@@ -1,6 +1,7 @@
 // Renders the committed brand SVG sources (assets/brand/*.svg) into the raster
 // assets the app and installer need:
 //   electron/assets/icon.png           1024 master (non-darwin window icon)
+//   electron/assets/icon-dark.png      1024 dark runtime icon
 //   electron/assets/icon.icns          macOS icon (via iconutil, darwin only)
 //   assets/brand/dmg-background.png    DMG window background @1x
 //   assets/brand/dmg-background@2x.png DMG window background @2x
@@ -84,6 +85,7 @@ async function main() {
   const browser = await chromium.launch();
   try {
     const iconSvg = path.join(brandDir, 'icon.svg');
+    const darkIconSvg = path.join(brandDir, 'icon-dark.svg');
     const dmgSvg = path.join(brandDir, 'dmg-background.svg');
 
     // macOS iconset -> iconutil -> icon.icns (darwin only; other platforms keep
@@ -114,6 +116,12 @@ async function main() {
       iconSvg,
       { width: 1024, height: 1024 },
       path.join(electronAssets, 'icon.png'),
+    );
+    await renderSvg(
+      browser,
+      darkIconSvg,
+      { width: 1024, height: 1024 },
+      path.join(electronAssets, 'icon-dark.png'),
     );
 
     // DMG window background, 1x + 2x (electron-builder picks the @2x up when it

@@ -71,3 +71,28 @@ test('sidecar uses Electron runtime instead of requiring Node on the GUI PATH', 
   assert.match(ensureSidecar, /ELECTRON_RUN_AS_NODE: '1'/);
   assert.doesNotMatch(mainSource, /NODE_BIN|function nodeBin/);
 });
+
+test('app icon switching authorizes the renderer and accepts only committed icon modes', () => {
+  const handlerStart = mainSource.indexOf("ipcMain.handle('app-set-icon'");
+  const handlerEnd = mainSource.indexOf('\n  ipcMain.handle(', handlerStart + 1);
+  const handler = mainSource.slice(handlerStart, handlerEnd);
+
+  assert.notEqual(handlerStart, -1);
+  assert.match(handler, /assertMainRenderer\(event\)/);
+  assert.match(handler, /setAppIcon\(payload\?\.mode\)/);
+  assert.match(mainSource, /mode !== 'light' && mode !== 'dark' && mode !== 'system'/);
+  assert.match(mainSource, /app\.dock\.setIcon\(iconPath\)/);
+  assert.match(mainSource, /mainWindow\.setIcon\(iconPath\)/);
+});
+
+test('system app icon tracks the OS appearance and repaints on change', () => {
+  assert.match(
+    mainSource,
+    /mode === 'dark' \|\| \(mode === 'system' && nativeTheme\.shouldUseDarkColors\)/,
+  );
+  assert.match(mainSource, /useDark \? 'icon-dark\.png' : 'icon\.png'/);
+  assert.match(
+    mainSource,
+    /nativeTheme\.on\('updated', \(\) => \{\s*if \(appIconMode === 'system'\) applyAppIcon\(\);\s*\}\);/,
+  );
+});

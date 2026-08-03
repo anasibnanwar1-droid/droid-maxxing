@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { loadPersistedUiState, normalizeDiffStyle } from './useStore';
+import { normalizeAppIconMode } from '../lib/appIcon';
 import {
   applyFactoryCompactionDefaults,
   compactionSettingsSnapshot,
@@ -18,6 +19,14 @@ test('normalizeDiffStyle migrates the legacy symbol style and rejects invalid va
   assert.equal(normalizeDiffStyle('focused'), 'focused');
   assert.equal(normalizeDiffStyle('symbol'), 'focused');
   assert.equal(normalizeDiffStyle('unknown'), 'soft');
+});
+
+test('normalizeAppIconMode defaults missing and invalid values to system', () => {
+  assert.equal(normalizeAppIconMode('light'), 'light');
+  assert.equal(normalizeAppIconMode('dark'), 'dark');
+  assert.equal(normalizeAppIconMode('system'), 'system');
+  assert.equal(normalizeAppIconMode(undefined), 'system');
+  assert.equal(normalizeAppIconMode('bogus'), 'system');
 });
 
 test('loadPersistedUiState sanitizes persisted shell fields', () => {

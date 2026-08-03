@@ -6,6 +6,7 @@ const {
   WebContentsView,
   dialog,
   ipcMain,
+  nativeTheme,
   safeStorage,
   session,
   shell,
@@ -37,6 +38,9 @@ const filesRootAccess = files.createRootAccessRegistry();
 let mainWindow = null;
 let hiddenNativeBrowserWindow = null;
 let sidecar = null;
+// Selected app-icon appearance. 'system' tracks the OS light/dark setting via
+// nativeTheme; 'light'/'dark' pin a specific artwork.
+let appIconMode = 'system';
 let attachedBrowserSessionId = null;
 const nativeBrowsers = new Map();
 // Keep hidden browser sessions warm by default so authenticated pages and
@@ -60,6 +64,10 @@ app.whenReady().then(() => {
   installApplicationMenu();
   registerIpc();
   createMainWindow();
+  // Repaint the icon when the OS appearance flips while 'system' is selected.
+  nativeTheme.on('updated', () => {
+    if (appIconMode === 'system') applyAppIcon();
+  });
   ensureSidecar();
 });
 
@@ -203,6 +211,10 @@ function registerIpc() {
   ipcMain.handle('app-check-update', checkAppUpdate);
   ipcMain.handle('app-download-update', (_e, dmgUrl) => downloadAppUpdate(dmgUrl));
   ipcMain.handle('app-relaunch', () => relaunchApp());
+  ipcMain.handle('app-set-icon', (event, payload) => {
+    assertMainRenderer(event);
+    return setAppIcon(payload?.mode);
+  });
   ipcMain.handle('open-external', (_event, { url }) => openExternal(url));
 
   ipcMain.handle('terminal-create', (event, args) => {
@@ -360,6 +372,29 @@ function assertMainRenderer(event) {
   if (!mainWindow || event.sender !== mainWindow.webContents) {
     throw new Error('Desktop request rejected for unknown renderer.');
   }
+}
+
+function resolveAppIconFile(mode) {
+  const useDark = mode === 'dark' || (mode === 'system' && nativeTheme.shouldUseDarkColors);
+  return useDark ? 'icon-dark.png' : 'icon.png';
+}
+
+function applyAppIcon() {
+  const iconPath = path.join(__dirname, 'assets', resolveAppIconFile(appIconMode));
+  if (process.platform === 'darwin') {
+    app.dock.setIcon(iconPath);
+  } else if (mainWindow) {
+    mainWindow.setIcon(iconPath);
+  }
+}
+
+function setAppIcon(mode) {
+  if (mode !== 'light' && mode !== 'dark' && mode !== 'system') {
+    throw new Error('App icon mode must be light, dark, or system.');
+  }
+  appIconMode = mode;
+  applyAppIcon();
+  return mode;
 }
 
 function installApplicationMenu() {

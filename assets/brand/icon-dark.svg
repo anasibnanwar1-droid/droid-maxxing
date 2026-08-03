@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- Dark counterpart to icon.svg, based on the existing v1-bigger-dark
+       artwork. Uses the same full-canvas geometry so both choices have
+       transparent rounded corners and fill macOS icon slots consistently. -->
+  <rect width="1024" height="1024" rx="228" fill="#141310" />
+
+  <!-- D, cream -->
+  <g fill="#F2EFE9">
+    <rect x="72" y="312" width="80" height="80" />
+    <rect x="152" y="312" width="80" height="80" />
+    <rect x="232" y="312" width="80" height="80" />
+    <rect x="312" y="312" width="80" height="80" />
+    <rect x="72" y="392" width="80" height="80" />
+    <rect x="392" y="392" width="80" height="80" />
+    <rect x="72" y="472" width="80" height="80" />
+    <rect x="392" y="472" width="80" height="80" />
+    <rect x="72" y="552" width="80" height="80" />
+    <rect x="392" y="552" width="80" height="80" />
+    <rect x="72" y="632" width="80" height="80" />
+    <rect x="152" y="632" width="80" height="80" />
+    <rect x="232" y="632" width="80" height="80" />
+    <rect x="312" y="632" width="80" height="80" />
+  </g>
+
+  <!-- X, safety orange -->
+  <g fill="#FF4D00">
+    <rect x="552" y="312" width="80" height="80" />
+    <rect x="872" y="312" width="80" height="80" />
+    <rect x="632" y="392" width="80" height="80" />
+    <rect x="792" y="392" width="80" height="80" />
+    <rect x="712" y="472" width="80" height="80" />
+    <rect x="632" y="552" width="80" height="80" />
+    <rect x="792" y="552" width="80" height="80" />
+    <rect x="552" y="632" width="80" height="80" />
+    <rect x="872" y="632" width="80" height="80" />
+  </g>
+</svg>
