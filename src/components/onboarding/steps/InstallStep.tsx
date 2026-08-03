@@ -11,6 +11,14 @@ const CHANNEL_LABEL: Record<InstallChannel, string> = {
   npm: 'npm',
 };
 
+// eslint-disable-next-line react-refresh/only-export-components
+export function selectInstallChannel(
+  channels: InstallChannel[],
+  selected: InstallChannel | null,
+): InstallChannel | null {
+  return selected && channels.includes(selected) ? selected : (channels[0] ?? null);
+}
+
 export function InstallStep({
   controller,
   onNext,
@@ -22,9 +30,12 @@ export function InstallStep({
 }) {
   const { env, installLog, installing, lastResult, install, refreshEnv } = controller;
   const channels = useMemo(() => env?.availableChannels ?? [], [env?.availableChannels]);
-  const [channel, setChannel] = useState<InstallChannel | null>(channels[0] ?? null);
+  const [channel, setChannel] = useState<InstallChannel | null>(() =>
+    selectInstallChannel(channels, null),
+  );
   useEffect(() => {
-    if (!channel && channels.length) setChannel(channels[0]);
+    const nextChannel = selectInstallChannel(channels, channel);
+    if (nextChannel !== channel) setChannel(nextChannel);
   }, [channels, channel]);
 
   const installed = Boolean(env?.cli.present);
@@ -65,30 +76,35 @@ export function InstallStep({
         </div>
       )}
       {channels.length > 0 && (
-        <Panel className="mb-4">
-          {channels.map((c) => (
-            <button
-              key={c}
-              onClick={() => {
-                setChannel(c);
-              }}
-              disabled={!!installing}
-              className="w-full flex items-center justify-between px-4 py-3.5 text-left transition-colors hover:bg-droid-elevated/50"
-            >
-              <span className="flex items-center gap-3 text-[13.5px] text-droid-text">
-                <span
-                  className={`w-3.5 h-3.5 rounded-full border flex items-center justify-center ${
-                    channel === c ? 'border-droid-accent' : 'border-droid-border-hover'
-                  }`}
-                >
-                  {channel === c && <span className="w-1.5 h-1.5 rounded-full bg-droid-accent" />}
+        <div role="radiogroup" aria-label="Droid CLI installation method" className="mb-4">
+          <Panel>
+            {channels.map((c) => (
+              <button
+                key={c}
+                type="button"
+                role="radio"
+                aria-checked={channel === c}
+                onClick={() => {
+                  setChannel(c);
+                }}
+                disabled={!!installing}
+                className="w-full flex items-center justify-between px-4 py-3.5 text-left transition-colors hover:bg-droid-elevated/50"
+              >
+                <span className="flex items-center gap-3 text-[13.5px] text-droid-text">
+                  <span
+                    className={`w-3.5 h-3.5 rounded-full border flex items-center justify-center ${
+                      channel === c ? 'border-droid-accent' : 'border-droid-border-hover'
+                    }`}
+                  >
+                    {channel === c && <span className="w-1.5 h-1.5 rounded-full bg-droid-accent" />}
+                  </span>
+                  {CHANNEL_LABEL[c]}
                 </span>
-                {CHANNEL_LABEL[c]}
-              </span>
-              {channel === c && <Check className="w-4 h-4 text-droid-accent" strokeWidth={3} />}
-            </button>
-          ))}
-        </Panel>
+                {channel === c && <Check className="w-4 h-4 text-droid-accent" strokeWidth={3} />}
+              </button>
+            ))}
+          </Panel>
+        </div>
       )}
 
       {(Boolean(installing) || installLog.length > 0) && (

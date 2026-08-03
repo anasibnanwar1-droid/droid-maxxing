@@ -11,16 +11,32 @@
 
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { chromium } from 'playwright';
+import { chromium } from '@playwright/test';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const brandDir = path.join(repoRoot, 'assets', 'brand');
 const electronAssets = path.join(repoRoot, 'electron', 'assets');
+const require = createRequire(import.meta.url);
+const regularFontPath =
+  require.resolve('@fontsource/jetbrains-mono/files/jetbrains-mono-latin-400-normal.woff2');
+const mediumFontPath =
+  require.resolve('@fontsource/jetbrains-mono/files/jetbrains-mono-latin-500-normal.woff2');
 
-const FONT_STYLESHEET =
-  'https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap';
+function fontFace(fontPath, weight) {
+  const fontData = readFileSync(fontPath).toString('base64');
+  return `@font-face {
+    font-family: 'JetBrains Mono';
+    font-style: normal;
+    font-weight: ${weight};
+    font-display: block;
+    src: url(data:font/woff2;base64,${fontData}) format('woff2');
+  }`;
+}
+
+const FONT_STYLES = `${fontFace(regularFontPath, 400)}\n${fontFace(mediumFontPath, 500)}`;
 
 async function renderSvg(browser, svgPath, size, outPath) {
   const svg = readFileSync(svgPath, 'utf8');
@@ -31,15 +47,19 @@ async function renderSvg(browser, svgPath, size, outPath) {
   try {
     await page.setContent(
       `<!doctype html><html><head>
-         <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-         <link href="${FONT_STYLESHEET}" rel="stylesheet" />
-         <style>html,body{margin:0;padding:0}svg{display:block;width:100vw;height:100vh}</style>
+         <style>${FONT_STYLES}
+           html,body{margin:0;padding:0}svg{display:block;width:100vw;height:100vh}
+         </style>
        </head><body>${svg}</body></html>`,
     );
-    await page.waitForLoadState('networkidle');
-    await page
-      .waitForFunction(() => document.fonts.status === 'loaded', { timeout: 5000 })
-      .catch(() => {});
+    const fontsLoaded = await page.evaluate(async () => {
+      const [regular, medium] = await Promise.all([
+        document.fonts.load('400 12px "JetBrains Mono"'),
+        document.fonts.load('500 12px "JetBrains Mono"'),
+      ]);
+      return regular.length > 0 && medium.length > 0;
+    });
+    if (!fontsLoaded) throw new Error('Bundled JetBrains Mono fonts failed to load');
     await page.screenshot({ path: outPath });
   } finally {
     await page.close();
@@ -75,9 +95,13 @@ async function main() {
       await renderSvg(browser, iconSvg, { width: size, height: size }, path.join(iconsetDir, name));
     }
     if (process.platform === 'darwin') {
-      execFileSync('iconutil', ['-c', 'icns', iconsetDir, '-o', path.join(electronAssets, 'icon.icns')], {
-        stdio: 'inherit',
-      });
+      execFileSync(
+        'iconutil',
+        ['-c', 'icns', iconsetDir, '-o', path.join(electronAssets, 'icon.icns')],
+        {
+          stdio: 'inherit',
+        },
+      );
       console.log('rendered electron/assets/icon.icns');
       rmSync(iconsetDir, { recursive: true, force: true });
     } else {
@@ -85,11 +109,21 @@ async function main() {
     }
 
     // 1024 master PNG (window icon on non-darwin platforms).
-    await renderSvg(browser, iconSvg, { width: 1024, height: 1024 }, path.join(electronAssets, 'icon.png'));
+    await renderSvg(
+      browser,
+      iconSvg,
+      { width: 1024, height: 1024 },
+      path.join(electronAssets, 'icon.png'),
+    );
 
     // DMG window background, 1x + 2x (electron-builder picks the @2x up when it
     // sits next to the 1x file).
-    await renderSvg(browser, dmgSvg, { width: 600, height: 400 }, path.join(brandDir, 'dmg-background.png'));
+    await renderSvg(
+      browser,
+      dmgSvg,
+      { width: 600, height: 400 },
+      path.join(brandDir, 'dmg-background.png'),
+    );
     await renderSvg(
       browser,
       dmgSvg,

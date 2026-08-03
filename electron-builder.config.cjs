@@ -9,7 +9,10 @@ const process = require('node:process');
 
 const identity = process.env.APPLE_SIGNING_IDENTITY || null;
 const canNotarize = Boolean(
-  process.env.APPLE_ID && process.env.APPLE_APP_SPECIFIC_PASSWORD && process.env.APPLE_TEAM_ID,
+  identity &&
+  process.env.APPLE_ID &&
+  process.env.APPLE_APP_SPECIFIC_PASSWORD &&
+  process.env.APPLE_TEAM_ID,
 );
 
 /** @type {import('electron-builder').Configuration} */

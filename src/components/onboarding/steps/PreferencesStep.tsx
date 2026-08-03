@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { ArrowRight } from 'lucide-react';
+import { ArrowRight, Loader2 } from 'lucide-react';
 
 import type { OnboardingController } from '../../../hooks/useOnboarding';
 import {
@@ -32,6 +32,8 @@ export function PreferencesStep({
   );
   const [cliAuto, setCliAuto] = useState(controller.onboarding?.cliAutoUpdate ?? true);
   const [appAuto, setAppAuto] = useState(controller.onboarding?.appAutoUpdate ?? true);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   useEffect(() => {
     void listEditors().then((ids) => {
@@ -44,13 +46,21 @@ export function PreferencesStep({
   const editorOptions = EDITOR_OPTIONS.filter((o) => editors.includes(o.id));
 
   const save = async () => {
-    setDefaultEditor(editor);
-    await controller.patch({
-      defaultEditor: editor,
-      cliAutoUpdate: cliAuto,
-      appAutoUpdate: appAuto,
-    });
-    onNext();
+    setSaving(true);
+    setSaveError(null);
+    try {
+      await controller.patch({
+        defaultEditor: editor,
+        cliAutoUpdate: cliAuto,
+        appAutoUpdate: appAuto,
+      });
+      setDefaultEditor(editor);
+      onNext();
+    } catch {
+      setSaveError("Couldn't save your preferences. Try again.");
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -100,16 +110,27 @@ export function PreferencesStep({
         />
       </Panel>
 
+      {saveError && <p className="text-[12px] text-droid-red mb-3">{saveError}</p>}
+
       <div className="flex items-center gap-2">
-        <BackButton onClick={onBack} />
+        <BackButton onClick={onBack} disabled={saving} />
         <div className="flex-1">
           <PrimaryButton
             onClick={() => {
               void save();
             }}
+            disabled={saving}
             autoFocus
           >
-            Continue <ArrowRight className="w-4 h-4" />
+            {saving ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" /> Saving…
+              </>
+            ) : (
+              <>
+                Continue <ArrowRight className="w-4 h-4" />
+              </>
+            )}
           </PrimaryButton>
         </div>
       </div>

@@ -28,6 +28,7 @@ import { ModelIcon, providerOf } from './ModelIcon';
 import type { ModelInfo } from '../types/bridge';
 import type { GitWorktree } from '../types/vcs';
 import { useOnboarding } from '../hooks/useOnboarding';
+import { Switch } from './Switch';
 import { getAppVersion, type AppUpdateInfo } from '../lib/onboarding';
 import { refreshAppUpdate, startAppUpdate } from '../lib/appUpdate';
 import { getGitWorktrees, isWorktreeInUse, removeGitWorktree, worktreeName } from '../lib/git';
@@ -1040,21 +1041,6 @@ function GeneralSection() {
   );
 }
 
-function Switch({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
-  return (
-    <button
-      onClick={() => {
-        onChange(!checked);
-      }}
-      className={`w-10 h-6 rounded-full transition-colors shrink-0 flex items-center p-0.5 ${checked ? 'bg-droid-accent' : 'bg-droid-border'}`}
-    >
-      <span
-        className={`w-5 h-5 rounded-full bg-white shadow-sm transition-transform ${checked ? 'translate-x-4' : 'translate-x-0'}`}
-      />
-    </button>
-  );
-}
-
 function SetupSection({ onClose }: { onClose: () => void }) {
   const onboard = useOnboarding();
   const { env, onboarding, installing } = onboard;
@@ -1118,7 +1104,11 @@ function SetupSection({ onClose }: { onClose: () => void }) {
           </div>
         </SettingRow>
         <SettingRow label="Keep the CLI up to date" description="Updates silently on launch.">
-          <Switch checked={cliAuto} onChange={(v) => void onboard.patch({ cliAutoUpdate: v })} />
+          <Switch
+            label="Keep the CLI up to date"
+            checked={cliAuto}
+            onChange={(v) => void onboard.patch({ cliAutoUpdate: v })}
+          />
         </SettingRow>
         <SettingRow
           label="Sign-in"
@@ -1171,7 +1161,11 @@ function SetupSection({ onClose }: { onClose: () => void }) {
           </div>
         </SettingRow>
         <SettingRow label="Auto-update DROIDEX" description="Installs new builds and restarts.">
-          <Switch checked={appAuto} onChange={(v) => void onboard.patch({ appAutoUpdate: v })} />
+          <Switch
+            label="Auto-update DROIDEX"
+            checked={appAuto}
+            onChange={(v) => void onboard.patch({ appAutoUpdate: v })}
+          />
         </SettingRow>
       </div>
 
@@ -1217,8 +1211,8 @@ function WorktreesSection() {
     const result: RepoWorktrees[] = [];
     for (const cwd of state.workspaceCwds) {
       const all = await getGitWorktrees(cwd);
-      const main = all.find((w) => w.isMain) ?? all[0];
-      const root = main.path ?? cwd;
+      const main = all.find((w) => w.isMain) ?? all.at(0);
+      const root = main?.path ?? cwd;
       if (!root || seen.has(root)) continue;
       seen.add(root);
       const worktrees = all.filter((w) => !w.bare && w.path);

@@ -8,6 +8,7 @@ import {
   compareSemver,
   hasCliLogin,
   resolveDroidPath,
+  windowsExecutableExtensions,
   wrapDroidInvocation,
 } from './Environment.js';
 
@@ -86,6 +87,25 @@ test('wrapDroidInvocation routes a Windows .cmd shim through cmd.exe', () => {
     if (prev === undefined) delete process.env.ComSpec;
     else process.env.ComSpec = prev;
   }
+});
+
+test('wrapDroidInvocation falls back when ComSpec is empty', () => {
+  const prev = process.env.ComSpec;
+  process.env.ComSpec = '';
+  try {
+    assert.deepEqual(wrapDroidInvocation('C\\\\npm\\\\droid.cmd', ['exec'], 'win32'), {
+      execPath: 'cmd.exe',
+      execArgs: ['/c', 'C\\\\npm\\\\droid.cmd', 'exec'],
+    });
+  } finally {
+    if (prev === undefined) delete process.env.ComSpec;
+    else process.env.ComSpec = prev;
+  }
+});
+
+test('windowsExecutableExtensions retains defaults for an empty PATHEXT', () => {
+  assert.deepEqual(windowsExecutableExtensions(''), ['.COM', '.EXE', '.BAT', '.CMD']);
+  assert.deepEqual(windowsExecutableExtensions('.EXE;.CMD'), ['.EXE', '.CMD']);
 });
 
 test('wrapDroidInvocation spawns the binary directly on POSIX', () => {

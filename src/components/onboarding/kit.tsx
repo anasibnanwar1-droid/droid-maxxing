@@ -1,5 +1,6 @@
 import { ArrowLeft, Check, Loader2, RefreshCw } from 'lucide-react';
 import type { ReactNode } from 'react';
+import { Switch } from '../Switch';
 
 // Shared furniture for the first-run wizard, built entirely from the app's own
 // design system: droid-* theme tokens and the droid-button/droid-input classes
@@ -73,11 +74,12 @@ export function GhostButton({ children, onClick, disabled, autoFocus }: BtnProps
   );
 }
 
-export function BackButton({ onClick }: { onClick: () => void }) {
+export function BackButton({ onClick, disabled }: { onClick: () => void; disabled?: boolean }) {
   return (
     <button
       onClick={onClick}
-      className="px-3 h-10 inline-flex items-center gap-1.5 text-[12.5px] text-droid-text-muted hover:text-droid-text transition-colors shrink-0"
+      disabled={disabled}
+      className="px-3 h-10 inline-flex items-center gap-1.5 text-[12.5px] text-droid-text-muted hover:text-droid-text transition-colors shrink-0 disabled:opacity-40 disabled:pointer-events-none"
     >
       <ArrowLeft className="w-3.5 h-3.5" /> Back
     </button>
@@ -122,16 +124,7 @@ export function ToggleRow({
         <div className="text-[13.5px] text-droid-text">{label}</div>
         {sub && <div className="text-[11.5px] text-droid-text-muted mt-0.5">{sub}</div>}
       </div>
-      <button
-        onClick={() => {
-          onChange(!checked);
-        }}
-        className={`w-10 h-6 rounded-full transition-colors shrink-0 flex items-center p-0.5 ${checked ? 'bg-droid-accent' : 'bg-droid-border'}`}
-      >
-        <span
-          className={`w-5 h-5 rounded-full shadow-sm transition-transform ${checked ? 'bg-droid-bg translate-x-4' : 'bg-droid-text-secondary translate-x-0'}`}
-        />
-      </button>
+      <Switch label={label} checked={checked} onChange={onChange} />
     </div>
   );
 }

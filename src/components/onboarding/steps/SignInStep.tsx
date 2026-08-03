@@ -80,6 +80,7 @@ export function SignInStep({
             <div className="rounded-xl border border-droid-border bg-droid-surface p-3.5 space-y-2">
               <input
                 type="password"
+                aria-label="Factory API key"
                 value={key}
                 onChange={(e) => {
                   setKey(e.target.value);

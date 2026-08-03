@@ -1,4 +1,5 @@
-import { ArrowRight, Check } from 'lucide-react';
+import { useState } from 'react';
+import { ArrowRight, Check, Loader2 } from 'lucide-react';
 
 import type { OnboardingController } from '../../../hooks/useOnboarding';
 import { BrandMark } from '../../BrandMark';
@@ -13,6 +14,8 @@ export function DoneStep({
   onComplete: () => void;
 }) {
   const { env } = controller;
+  const [finishing, setFinishing] = useState(false);
+  const [finishError, setFinishError] = useState<string | null>(null);
   const summary = [
     { label: 'Droid CLI', ok: Boolean(env?.cli.present) },
     {
@@ -20,6 +23,19 @@ export function DoneStep({
       ok: Boolean(env?.auth.loginPresent) || Boolean(env?.auth.apiKeyConfigured),
     },
   ];
+
+  const finish = async () => {
+    setFinishing(true);
+    setFinishError(null);
+    try {
+      await controller.patch({ completed: true });
+      onComplete();
+    } catch {
+      setFinishError("Couldn't finish setup. Try again.");
+    } finally {
+      setFinishing(false);
+    }
+  };
 
   return (
     <div className="flex flex-col items-center text-center">
@@ -57,12 +73,22 @@ export function DoneStep({
         <button
           autoFocus
           onClick={() => {
-            void controller.patch({ completed: true }).then(onComplete);
+            void finish();
           }}
+          disabled={finishing}
           className="droid-button-primary inline-flex h-10 items-center gap-2 px-5 text-[13px]"
         >
-          Start building <ArrowRight className="w-4 h-4" />
+          {finishing ? (
+            <>
+              <Loader2 className="w-4 h-4 animate-spin" /> Finishing…
+            </>
+          ) : (
+            <>
+              Start building <ArrowRight className="w-4 h-4" />
+            </>
+          )}
         </button>
+        {finishError && <p className="mt-3 text-[12px] text-droid-red">{finishError}</p>}
       </div>
     </div>
   );

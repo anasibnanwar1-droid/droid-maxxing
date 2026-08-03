@@ -6,6 +6,7 @@ import { promisify } from 'node:util';
 import type { EnvironmentReport, InstallChannel, PackageManagers } from './protocol.js';
 
 const execFileAsync = promisify(execFile);
+const DEFAULT_WINDOWS_EXECUTABLE_EXTENSIONS = '.COM;.EXE;.BAT;.CMD';
 
 // Shared resolution order so what onboarding reports as "installed" is exactly
 // what DroidRuntime will spawn for login/update/session commands.
@@ -39,7 +40,11 @@ export function wrapDroidInvocation(
   platform: NodeJS.Platform = process.platform,
 ): { execPath: string; execArgs: string[] } {
   if (platform === 'win32' && /\.(cmd|bat)$/i.test(droidPath)) {
-    return { execPath: process.env.ComSpec ?? 'cmd.exe', execArgs: ['/c', droidPath, ...args] };
+    const commandShell = process.env.ComSpec;
+    return {
+      execPath: commandShell?.trim() ? commandShell : 'cmd.exe',
+      execArgs: ['/c', droidPath, ...args],
+    };
   }
   return { execPath: droidPath, execArgs: args };
 }
@@ -51,10 +56,7 @@ export function buildDroidInvocation(args: string[]): { execPath: string; execAr
 function resolveOnPathSync(command: string): string | undefined {
   const dirs = (process.env.PATH ?? '').split(delimiter).filter(Boolean);
   if (process.platform === 'win32') {
-    const exts = (process.env.PATHEXT ?? '.COM;.EXE;.BAT;.CMD')
-      .split(';')
-      .map((e) => e.trim())
-      .filter(Boolean);
+    const exts = windowsExecutableExtensions(process.env.PATHEXT);
     for (const dir of dirs) {
       for (const ext of exts) {
         const candidate = join(dir, command + ext);
@@ -68,6 +70,13 @@ function resolveOnPathSync(command: string): string | undefined {
     if (isExecutable(candidate)) return candidate;
   }
   return undefined;
+}
+
+export function windowsExecutableExtensions(pathExt: string | undefined): string[] {
+  return (pathExt?.trim() ? pathExt : DEFAULT_WINDOWS_EXECUTABLE_EXTENSIONS)
+    .split(';')
+    .map((extension) => extension.trim())
+    .filter(Boolean);
 }
 
 const AUTH_MARKER_NAMES = ['auth.v2.key', 'auth.v2.loginkeychain'];
