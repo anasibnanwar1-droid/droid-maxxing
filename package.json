@@ -12,6 +12,7 @@
     "assets:build": "node tools/render-brand-assets.mjs",
     "dist:mac": "npm run assets:build && npm run build && electron-builder --mac --x64 --arm64 --publish never -c electron-builder.config.cjs",
     "dist:mac:arm64": "npm run assets:build && npm run build && electron-builder --mac --arm64 --publish never -c electron-builder.config.cjs",
+    "release:verify:mac": "node tools/verify-macos-release.mjs",
     "electron": "npm run electron:dev",
     "electron:dev": "npm run sidecar:build && node electron/dev.cjs",
     "electron:check": "node --check electron/main.cjs && node --check electron/preload.cjs && node --check electron/nativeBrowserPreload.cjs && node --check electron/dev.cjs && node --check electron/git.cjs && node --check electron/github.cjs && node --check electron/terminal.cjs && node --check electron/files.cjs && node --check electron/attachments.cjs && node --check electron/sidecar.cjs && node --check electron/rendererSecurity.cjs && node --check electron/appUpdater.cjs && node --check electron/diagnostics.cjs",

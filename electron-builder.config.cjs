@@ -5,19 +5,27 @@
 // Developer ID certificate and notarization credentials are present.
 
 const process = require('node:process');
+const path = require('node:path');
 
 const isReleaseBuild = process.env.DROIDEX_RELEASE_BUILD === '1';
 const sentryDsn = process.env.SENTRY_DSN || '';
 const hasSigningCredentials = Boolean(process.env.CSC_LINK || process.env.APPLE_SIGNING_IDENTITY);
 const identity = process.env.APPLE_SIGNING_IDENTITY || (process.env.CSC_LINK ? undefined : null);
+const hasApiKeyCredentials = Boolean(
+  process.env.APPLE_API_KEY &&
+  path.isAbsolute(process.env.APPLE_API_KEY) &&
+  path.extname(process.env.APPLE_API_KEY) === '.p8' &&
+  process.env.APPLE_API_KEY_ID &&
+  process.env.APPLE_API_ISSUER,
+);
 const canNotarize = Boolean(
   hasSigningCredentials &&
   ((process.env.APPLE_ID && process.env.APPLE_APP_SPECIFIC_PASSWORD && process.env.APPLE_TEAM_ID) ||
-    (process.env.APPLE_API_KEY && process.env.APPLE_API_KEY_ID && process.env.APPLE_API_ISSUER)),
+    hasApiKeyCredentials),
 );
 if (isReleaseBuild && !canNotarize) {
   throw new Error(
-    'DROIDEX release builds require Developer ID signing and Apple notarization credentials.',
+    'DROIDEX release builds require Developer ID signing and Apple notarization credentials (APPLE_API_KEY must be an absolute .p8 path).',
   );
 }
 if (isReleaseBuild && !sentryDsn) {

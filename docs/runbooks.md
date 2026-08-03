@@ -35,14 +35,38 @@ These runbooks cover local development and release triage for DROIDEX.
 
 ## Sidecar bridge is unreachable
 
-1. Check that `BRIDGE_PORT` matches the port logged by Electron and sidecar.
-2. In development, use `BRIDGE_ALLOW_LOCAL_NO_TOKEN=1` unless you are testing packaged bridge-token behavior.
-3. Run sidecar tests and typecheck:
+1. Check the Electron log for the dynamically assigned bridge port. The
+   renderer must obtain its short-lived connection information through the
+   authenticated preload bridge; there is no unauthenticated local mode.
+2. Run sidecar tests and typecheck:
    ```bash
    npm --prefix sidecar run test
    npm run sidecar:typecheck
    ```
-4. If a custom sidecar entry is configured, verify `SIDECAR_ENTRY` points to an existing built file.
+3. In development, rebuild the canonical sidecar entry with
+   `npm run sidecar:build`. Packaged builds do not accept a sidecar path
+   override.
+
+## Publish a macOS release
+
+1. Confirm the private source version is final and default-branch CI is green.
+2. Confirm the protected `macos-release` GitHub environment contains the Apple
+   signing/notarization secrets, public Sentry DSN, and fine-grained public
+   release-repository token documented in `docs/deployment-observability.md`.
+3. Create and push a signed version tag that exactly matches `package.json`:
+   ```bash
+   git tag -s v0.1.0 -m "DROIDEX v0.1.0"
+   git push origin v0.1.0
+   ```
+4. Approve the protected release environment and wait for every verification
+   step to pass. Never upload locally produced unsigned artifacts.
+5. On the public repository, confirm the release is immutable and contains two
+   DMGs, two ZIPs, their blockmaps, `latest-mac.yml`, and `SHA256SUMS`.
+6. Download each DMG from the public release on a clean Intel/Apple silicon Mac
+   as applicable, install it, start a Droid session, submit a private `/bug`
+   report, and record the result.
+7. For subsequent releases, complete the signed N-1-to-N update smoke before
+   treating the release as operationally ready.
 
 ## Local child-session index has an incompatible schema
 

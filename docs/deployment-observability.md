@@ -1,6 +1,7 @@
 # Deployment Observability
 
-This project currently observes release readiness through GitHub Actions, build artifacts, updater configuration, and local runtime logs.
+This project observes release readiness through GitHub Actions, signed build
+artifacts, updater configuration, private crash intake, and local runtime logs.
 
 ## Pre-release signal checklist
 
@@ -25,11 +26,35 @@ Record these values with each release candidate:
 | --- | --- |
 | `DROIDEX_RELEASE_BUILD` | Enables the fail-closed signed/notarized release configuration |
 | `CSC_LINK` | Developer ID Application certificate supplied through CI secrets |
-| `APPLE_API_KEY` | App Store Connect API key used for notarization |
+| `APPLE_API_KEY_P8_BASE64` | Base64-encoded App Store Connect key materialized as a temporary `.p8` file in CI |
+| `APPLE_API_KEY_ID` / `APPLE_API_ISSUER` / `APPLE_TEAM_ID` | Apple identities used for notarization and signature verification |
 | `SENTRY_DSN` | Public client DSN embedded for crash and `/bug` reporting |
-| `SIDECAR_ENTRY` | Sidecar bundle override, if used |
+| `DROIDEX_RELEASE_TOKEN` | Fine-grained token with Contents write access only to the public releases repository |
 
-Keep real secrets out of release notes and CI logs.
+Configure these in the protected `macos-release` GitHub environment. Keep real
+secrets out of release notes and CI logs. The release token is exposed only to
+the final publish step.
+
+## Canonical release path
+
+`.github/workflows/release-macos.yml` is the only production publisher. A tag
+whose name exactly matches the private source package version, such as
+`v0.1.0`, runs all release gates, signs and notarizes Intel and Apple silicon
+builds, checks Gatekeeper and stapling, smoke-tests bundled `node:sqlite`, and
+generates `SHA256SUMS`.
+
+The workflow then publishes these files to the public
+`anasibnanwar1-droid/droidex-releases` repository in one `gh release create`
+operation. GitHub creates a draft, uploads every asset, and publishes it only
+after upload succeeds. Enable immutable releases on that public repository so
+published tags and assets cannot be replaced. The repository itself contains
+only public download documentation; its automatic source archives do not
+contain the private source repository.
+
+Do not attach `builder-debug.yml`, source maps, `.env` files, certificates, or
+private source archives. Electron application JavaScript shipped inside the
+DMG remains inspectable by users; keep secrets and privileged server logic out
+of the client.
 
 ## Runtime health checks
 
@@ -41,6 +66,12 @@ After installing a candidate build:
 4. Confirm CLI discovery or installation works on a clean machine.
 5. Trigger an update check against the public releases repository.
 6. Inspect Electron and sidecar logs for bridge authentication, download, or update errors.
+
+Before promoting every update after the first release, install the previous
+signed public version on a clean test account and confirm it discovers,
+downloads, installs, and relaunches into the candidate version. This signed
+N-1-to-N test is a manual release gate because an unsigned local build cannot
+exercise Gatekeeper or the production update signature path faithfully.
 
 The direct-download app is not App Sandbox–restricted. It asks macOS for access
 to Desktop, Documents, or Downloads only when the user selects a protected

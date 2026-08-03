@@ -64,7 +64,7 @@ test('release builds emit canonical update artifacts', () => {
   const config = loadConfig({
     DROIDEX_RELEASE_BUILD: '1',
     CSC_LINK: 'base64-certificate',
-    APPLE_API_KEY: 'base64-api-key',
+    APPLE_API_KEY: '/tmp/AuthKey.p8',
     APPLE_API_KEY_ID: 'KEYID',
     APPLE_API_ISSUER: 'ISSUER',
     SENTRY_DSN: 'https://public@example.invalid/1',
@@ -100,13 +100,28 @@ test('release builds require crash reporting configuration', () => {
 test('CI certificate and API key credentials enable notarization', () => {
   const config = loadConfig({
     CSC_LINK: 'base64-certificate',
-    APPLE_API_KEY: 'base64-api-key',
+    APPLE_API_KEY: '/tmp/AuthKey.p8',
     APPLE_API_KEY_ID: 'KEYID',
     APPLE_API_ISSUER: 'ISSUER',
   });
 
   assert.equal(config.mac.identity, undefined);
   assert.equal(config.mac.notarize, true);
+});
+
+test('notarization rejects API key data instead of an absolute key path', () => {
+  assert.throws(
+    () =>
+      loadConfig({
+        DROIDEX_RELEASE_BUILD: '1',
+        CSC_LINK: 'base64-certificate',
+        APPLE_API_KEY: 'base64-api-key',
+        APPLE_API_KEY_ID: 'KEYID',
+        APPLE_API_ISSUER: 'ISSUER',
+        SENTRY_DSN: 'https://public@example.invalid/1',
+      }),
+    /APPLE_API_KEY must be an absolute .p8 path/,
+  );
 });
 
 test('macOS protected project folders have truthful permission descriptions', () => {
