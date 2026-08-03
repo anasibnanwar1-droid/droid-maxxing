@@ -53,19 +53,23 @@ These runbooks cover local development and release triage for DROIDEX.
 2. Confirm the protected `macos-release` GitHub environment contains the Apple
    signing/notarization secrets, public Sentry DSN, and fine-grained public
    release-repository token documented in `docs/deployment-observability.md`.
-3. Create and push a signed version tag that exactly matches `package.json`:
+3. Run the executable release preflight and resolve every failure:
+   ```bash
+   npm run release:preflight
+   ```
+4. Create and push a signed version tag that exactly matches `package.json`:
    ```bash
    git tag -s v0.1.0 -m "DROIDEX v0.1.0"
    git push origin v0.1.0
    ```
-4. Approve the protected release environment and wait for every verification
+5. Approve the protected release environment and wait for every verification
    step to pass. Never upload locally produced unsigned artifacts.
-5. On the public repository, confirm the release is immutable and contains two
+6. On the public repository, confirm the release is immutable and contains two
    DMGs, two ZIPs, their blockmaps, `latest-mac.yml`, and `SHA256SUMS`.
-6. Download each DMG from the public release on a clean Intel/Apple silicon Mac
+7. Download each DMG from the public release on a clean Intel/Apple silicon Mac
    as applicable, install it, start a Droid session, submit a private `/bug`
    report, and record the result.
-7. For subsequent releases, complete the signed N-1-to-N update smoke before
+8. For subsequent releases, complete the signed N-1-to-N update smoke before
    treating the release as operationally ready.
 
 ## Local child-session index has an incompatible schema
