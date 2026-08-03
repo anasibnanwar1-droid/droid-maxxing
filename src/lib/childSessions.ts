@@ -236,6 +236,9 @@ export function childSessionMeta(
     childSession.status,
     displayedModel,
     childSession.reasoningEffort,
+    // Autonomy is only known once a live runtime confirmed it; a parent value
+    // must never stand in for an unopened or historical child.
+    childSession.autonomy ? `${childSession.autonomy} autonomy` : 'provider managed',
     childSession.transcriptAvailable ? 'transcript' : 'no transcript',
   ]
     .filter(Boolean)

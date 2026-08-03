@@ -468,6 +468,7 @@ export class ChildSessions {
       attempt.provisionalSession = undefined;
       child.modelId = settings.modelId;
       child.reasoningEffort = settings.reasoningEffort;
+      child.autonomy = actual.autonomy;
       child.status = 'paused';
       child.transcriptAvailable = true;
       let active: ChildAutomaticCompactionTarget | undefined;
@@ -770,6 +771,9 @@ export class ChildSessions {
       // Cleanup remains authoritative even when cancellation cannot resolve its target.
     }
     child.runtime = undefined;
+    // The confirmed autonomy belonged to the closed runtime; a later open
+    // re-reads it from the new provider session's init result.
+    child.autonomy = undefined;
     const closedGeneration = (child.runtimeGeneration =
       Math.max(child.runtimeGeneration, runtime.generation) + 1);
     child.turn.generation += 1;

@@ -637,13 +637,19 @@ test('child display preserves same-role sibling identity and required metadata',
 
   assert.equal(childSessionLabel(first, 0), 'Worker 1');
   assert.equal(childSessionLabel(second, 1), 'Worker 2');
+  // Without a live runtime confirmation the child shows "provider managed",
+  // never a parent or guessed autonomy value.
   assert.equal(
     childSessionMeta(first, 'Model A'),
-    'worker · running · Model A · high · transcript',
+    'worker · running · Model A · high · provider managed · transcript',
   );
   assert.equal(
     childSessionMeta(second, 'Model A'),
-    'worker · completed · Model A · high · no transcript',
+    'worker · completed · Model A · high · provider managed · no transcript',
+  );
+  assert.equal(
+    childSessionMeta({ ...first, autonomy: 'low' as const }, 'Model A'),
+    'worker · running · Model A · high · low autonomy · transcript',
   );
 });
 

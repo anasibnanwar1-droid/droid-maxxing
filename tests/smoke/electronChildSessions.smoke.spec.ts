@@ -248,7 +248,7 @@ test('[E2] parent-scoped child navigation and visible commands', async () => {
     await alphaSibling.locator('button').first().click();
     await expect(chat.getByText('ALPHA CHILD TWO OUTPUT', { exact: true })).toBeVisible();
 
-    const composer = page.locator('textarea');
+    const composer = page.getByPlaceholder(/What would you like to work on/);
     await composer.fill('STEER EXACT CHILD');
     await composer.press('Control+Enter');
     await waitForCommand(

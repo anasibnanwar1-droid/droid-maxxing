@@ -1,6 +1,12 @@
 import assert from 'node:assert/strict';
 
-import type { ChildSessionSummary, ServerEvent, SessionRole, SessionSummary } from '../protocol.js';
+import type {
+  Autonomy,
+  ChildSessionSummary,
+  ServerEvent,
+  SessionRole,
+  SessionSummary,
+} from '../protocol.js';
 import { FakeFactorySession } from './fakeFactoryRuntime.js';
 import type { SessionManagerTestContext } from './sessionManagerTestContext.js';
 
@@ -34,12 +40,7 @@ export async function openChild(
   role: Exclude<SessionRole, 'primary'>,
   modelId: string,
 ): Promise<FakeFactorySession> {
-  return openChildForParent(h, 'provider-1', {
-    childSessionId,
-    providerSessionId,
-    role,
-    modelId,
-  });
+  return openChildForParent(h, 'provider-1', { childSessionId, providerSessionId, role, modelId });
 }
 
 export async function openChildForParent(
@@ -50,10 +51,12 @@ export async function openChildForParent(
     providerSessionId: string;
     role: Exclude<SessionRole, 'primary'>;
     modelId: string;
+    initAutonomy?: Autonomy;
   },
 ): Promise<FakeFactorySession> {
   const child = new FakeFactorySession(input.providerSessionId, {}, h.calls);
   child.setInitModel(input.modelId);
+  if (input.initAutonomy !== undefined) child.setInitAutonomy(input.initAutonomy);
   h.history.seedChildSessions([
     {
       parentAppSessionId,

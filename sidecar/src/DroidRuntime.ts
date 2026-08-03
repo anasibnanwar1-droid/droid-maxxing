@@ -253,7 +253,7 @@ function mapInteractionMode(mode: SessionInteractionMode): DroidInteractionMode 
   return DroidInteractionMode.Auto;
 }
 
-function mapAutonomy(autonomy: Autonomy): AutonomyLevel {
+export function mapAutonomy(autonomy: Autonomy): AutonomyLevel {
   if (autonomy === 'off') return AutonomyLevel.Off;
   if (autonomy === 'high') return AutonomyLevel.High;
   if (autonomy === 'medium') return AutonomyLevel.Medium;

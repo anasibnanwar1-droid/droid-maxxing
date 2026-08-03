@@ -18,12 +18,12 @@ import {
   buildCreatedSessionSummary,
   buildCreateRuntimeOptions,
   buildResumedSession,
-  createAutonomyForCommand,
   createDefaultsModeForCommand,
   createInteractionModeForCommand,
   createMissionAgentDefaultsForMode,
   createModelDefaultsForMode,
   errMsg,
+  requireAutonomyForCommand,
 } from './sessionHelpers.js';
 
 export type SessionCreateCommand = Extract<ClientCommand, { type: 'session.create' }>;
@@ -111,7 +111,7 @@ export class SessionLifecycle {
       const defaults = await d.getFactoryDefaults();
       const interactionMode = createInteractionModeForCommand(command, defaults);
       const defaultsMode = createDefaultsModeForCommand(command, interactionMode);
-      const autonomy = createAutonomyForCommand(command, defaults);
+      const autonomy = requireAutonomyForCommand(command);
       const primary = createModelDefaultsForMode(defaultsMode, command, defaults);
       const agents = createMissionAgentDefaultsForMode(defaultsMode, command, defaults);
       const compactionModel =

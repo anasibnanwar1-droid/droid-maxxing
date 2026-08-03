@@ -25,7 +25,12 @@ import {
   type SessionInitResult,
 } from './sessionHelpers.js';
 import { boundedInt } from './values.js';
-import { DroidRuntime, type FactoryRuntime, type FactorySession } from './DroidRuntime.js';
+import {
+  DroidRuntime,
+  mapAutonomy,
+  type FactoryRuntime,
+  type FactorySession,
+} from './DroidRuntime.js';
 import { detectEnvironment } from './Environment.js';
 import { buildInstallCommand, buildUpdateCommand, runStreaming } from './CliInstaller.js';
 import {
@@ -169,6 +174,9 @@ export class SessionManager {
     Partial<Record<ConfigurableSessionRole, AgentSettingPatch>>
   >();
   private shutdownPromise?: Promise<void>;
+  // Per-session autonomy mutation queue: rapid changes settle against the
+  // provider in the order they were requested.
+  private readonly autonomyMutationTails = new Map<string, Promise<void>>();
   private readonly pendingNativeBrowserRequests = new Map<string, PendingNativeBrowserRequest>();
   private readonly browsers: SessionBrowsers;
   private readonly createLocalMcpResource: SessionManagerDependencies['createLocalMcpResource'];
@@ -1141,32 +1149,64 @@ export class SessionManager {
     }
   }
 
-  private async setAutonomy(appSessionId: string, autonomy: Autonomy): Promise<void> {
+  private setAutonomy(appSessionId: string, autonomy: Autonomy): Promise<void> {
+    const tail = this.autonomyMutationTails.get(appSessionId) ?? Promise.resolve();
+    const next = tail.then(() => this.applyAutonomy(appSessionId, autonomy));
+    this.autonomyMutationTails.set(appSessionId, next);
+    return next.finally(() => {
+      if (this.autonomyMutationTails.get(appSessionId) === next) {
+        this.autonomyMutationTails.delete(appSessionId);
+      }
+    });
+  }
+
+  private async applyAutonomy(appSessionId: string, autonomy: Autonomy): Promise<void> {
     const liveSession = this.registry.getLive(appSessionId);
     if (!liveSession) {
       this.emitError({
-        appSessionId: appSessionId,
+        code: 'session.autonomy_update_failed',
+        appSessionId,
         message: 'Autonomy can only be changed on a live session.',
+        recoverable: true,
       });
       return;
     }
     const nextAutonomy = normalizeAutonomy(autonomy);
     if (!nextAutonomy) {
       this.emitError({
+        code: 'session.autonomy_update_failed',
         appSessionId,
         message: `Unsupported autonomy level: ${autonomy}`,
+        recoverable: true,
       });
       return;
     }
+    if (liveSession.summary.autonomy === nextAutonomy) return;
+    const session = liveSession.session;
     try {
-      await liveSession.session.updateSettings({ autonomyLevel: nextAutonomy } as never);
-      this.registry.updateSummary(appSessionId, { autonomy: nextAutonomy });
+      await session.updateSettings({ autonomyLevel: mapAutonomy(nextAutonomy) });
     } catch (err) {
       this.emitError({
+        code: 'session.autonomy_update_failed',
         appSessionId,
         message: `Could not change autonomy: ${errMsg(err)}`,
+        recoverable: true,
       });
+      return;
     }
+    // The provider accepted the change, but the session may have closed or its
+    // provider session may have been swapped (compaction/resume) while the
+    // request was in flight. Publish only when the captured session is still
+    // the live one so a stale settlement cannot clobber its replacement.
+    if (
+      this.shutdownPromise ||
+      this.registry.getLive(appSessionId) !== liveSession ||
+      liveSession.session !== session ||
+      hasSessionCloseStarted(liveSession)
+    ) {
+      return;
+    }
+    this.registry.updateSummary(appSessionId, { autonomy: nextAutonomy });
   }
 
   private async setInteractionMode(
