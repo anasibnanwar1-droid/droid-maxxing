@@ -12,6 +12,7 @@ const appleEnvironmentKeys = [
   'APPLE_API_ISSUER',
   'CSC_LINK',
   'DROIDEX_RELEASE_BUILD',
+  'SENTRY_DSN',
 ];
 
 function loadConfig(environment) {
@@ -66,6 +67,7 @@ test('release builds emit canonical update artifacts', () => {
     APPLE_API_KEY: 'base64-api-key',
     APPLE_API_KEY_ID: 'KEYID',
     APPLE_API_ISSUER: 'ISSUER',
+    SENTRY_DSN: 'https://public@example.invalid/1',
   });
 
   assert.equal(config.forceCodeSigning, true);
@@ -79,6 +81,20 @@ test('release builds emit canonical update artifacts', () => {
     repo: 'droidex-releases',
     releaseType: 'release',
   });
+});
+
+test('release builds require crash reporting configuration', () => {
+  assert.throws(
+    () =>
+      loadConfig({
+        DROIDEX_RELEASE_BUILD: '1',
+        CSC_LINK: 'base64-certificate',
+        APPLE_API_KEY: '/tmp/AuthKey.p8',
+        APPLE_API_KEY_ID: 'KEYID',
+        APPLE_API_ISSUER: 'ISSUER',
+      }),
+    /require SENTRY_DSN/,
+  );
 });
 
 test('CI certificate and API key credentials enable notarization', () => {

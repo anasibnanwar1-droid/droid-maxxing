@@ -7,6 +7,7 @@
 const process = require('node:process');
 
 const isReleaseBuild = process.env.DROIDEX_RELEASE_BUILD === '1';
+const sentryDsn = process.env.SENTRY_DSN || '';
 const hasSigningCredentials = Boolean(process.env.CSC_LINK || process.env.APPLE_SIGNING_IDENTITY);
 const identity = process.env.APPLE_SIGNING_IDENTITY || (process.env.CSC_LINK ? undefined : null);
 const canNotarize = Boolean(
@@ -19,12 +20,16 @@ if (isReleaseBuild && !canNotarize) {
     'DROIDEX release builds require Developer ID signing and Apple notarization credentials.',
   );
 }
+if (isReleaseBuild && !sentryDsn) {
+  throw new Error('DROIDEX release builds require SENTRY_DSN for crash and bug reporting.');
+}
 
 /** @type {import('electron-builder').Configuration} */
 module.exports = {
   appId: 'app.droidex',
   productName: 'DROIDEX',
   forceCodeSigning: isReleaseBuild,
+  extraMetadata: { sentryDsn },
   extendInfo: {
     NSDesktopFolderUsageDescription:
       'DROIDEX accesses Desktop projects only when you choose them for an agent session.',

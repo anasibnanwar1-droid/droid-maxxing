@@ -26,6 +26,7 @@ Record these values with each release candidate:
 | `DROIDEX_RELEASE_BUILD` | Enables the fail-closed signed/notarized release configuration |
 | `CSC_LINK` | Developer ID Application certificate supplied through CI secrets |
 | `APPLE_API_KEY` | App Store Connect API key used for notarization |
+| `SENTRY_DSN` | Public client DSN embedded for crash and `/bug` reporting |
 | `SIDECAR_ENTRY` | Sidecar bundle override, if used |
 
 Keep real secrets out of release notes and CI logs.
@@ -51,6 +52,19 @@ The sidecar uses Electron's bundled Node 22 runtime and its built-in
 `node:sqlite`; users do not install or download SQLite. The canonical session
 index is `~/.factory/droidex/session-index.sqlite`. It is DROIDEX-owned derived
 state built from raw Factory session history under `~/.factory/sessions`.
+
+## Crash and bug intake
+
+Sentry captures uncaught main/renderer/native crashes and sidecar exits. The
+`/bug <description>` composer command creates a sortable `BUG-…` report ID and
+a stable pseudonymous `USR-…` support ID. DROIDEX disables default PII,
+performance tracing, request capture, and breadcrumbs. User prompts, project
+files, API keys, and GitHub credentials are not attached automatically.
+
+Connect the Sentry project to the private source repository using Sentry's
+server-side GitHub integration and an issue alert rule. No GitHub token belongs
+in the DMG. Upload private source maps from release CI only; never attach source
+maps to the public GitHub release.
 
 ## Incident triage
 

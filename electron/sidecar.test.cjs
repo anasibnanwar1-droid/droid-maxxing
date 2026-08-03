@@ -146,3 +146,24 @@ test('stop resolves only after the sidecar process exits', async () => {
   await stop;
   assert.equal(stopped, true);
 });
+
+test('unexpected sidecar exits are forwarded to diagnostics', async () => {
+  const child = fakeChild();
+  const crashes = [];
+  const supervisor = createSidecarSupervisor({
+    entryPath: () => '/app/sidecar.mjs',
+    cwd: () => '/app',
+    userData: () => '/profiles/droidex',
+    stdout: new PassThrough(),
+    stderr: new PassThrough(),
+    onUnexpectedExit: (error) => crashes.push(error.message),
+    spawnProcess: () => child,
+  });
+  const started = supervisor.start();
+  child.stdout.write('SIDECAR_READY 43001\n');
+  await started;
+
+  child.emit('exit', 1, null);
+
+  assert.deepEqual(crashes, ['Sidecar exited unexpectedly (1).']);
+});

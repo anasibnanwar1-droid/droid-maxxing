@@ -2,6 +2,15 @@
 
 These runbooks cover local development and release triage for DROIDEX.
 
+## User bug report
+
+1. Ask the user for the `BUG-…` report ID shown after `/bug` and, when needed,
+   their `USR-…` support ID.
+2. Search the private Sentry project by `report_id` or `installation_id`.
+3. Link or create the corresponding issue in the private source repository.
+4. Keep report descriptions and crash attachments out of the public releases
+   repository.
+
 ## App does not start in Electron development mode
 
 1. Confirm dependencies are installed:

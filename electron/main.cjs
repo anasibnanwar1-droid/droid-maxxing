@@ -32,14 +32,18 @@ const { createSidecarSupervisor } = require('./sidecar.cjs');
 const { installRendererNavigationGuard } = require('./rendererSecurity.cjs');
 const { autoUpdater } = require('electron-updater');
 const { createAppUpdater } = require('./appUpdater.cjs');
+const Sentry = require('@sentry/electron/main');
+const { createDiagnostics } = require('./diagnostics.cjs');
 const APP_NAME = 'DROIDEX';
 const terminalManager = createTerminalManager();
 const terminalSubscriptions = createTerminalSubscriptionRegistry(terminalManager);
 const filesRootAccess = files.createRootAccessRegistry();
+const diagnostics = createDiagnostics({ app, sentry: Sentry, dsn: diagnosticsDsn() });
 const sidecarSupervisor = createSidecarSupervisor({
   entryPath: sidecarEntry,
   cwd: () => (app.isPackaged ? process.resourcesPath : appRoot()),
   userData: () => app.getPath('userData'),
+  onUnexpectedExit: (error) => diagnostics.captureException(error, { process: 'sidecar' }),
 });
 const appUpdater = createAppUpdater({
   app,
@@ -71,6 +75,7 @@ app.setPath(
   'userData',
   process.env.DROIDEX_USER_DATA_DIR || path.join(app.getPath('appData'), APP_NAME),
 );
+diagnostics.initialize();
 
 app.whenReady().then(() => {
   installApplicationMenu();
@@ -100,9 +105,11 @@ app.on('activate', () => {
 });
 
 app.on('child-process-gone', (_event, details) => {
-  console.error(
+  const error = new Error(
     `Electron child process exited: type=${details.type} reason=${details.reason} exitCode=${details.exitCode}`,
   );
+  console.error(error.message);
+  diagnostics.captureException(error, { process: details.type, reason: details.reason });
 });
 
 function createMainWindow() {
@@ -232,6 +239,10 @@ function registerIpc() {
   ipcMain.handle('app-download-update', (event) => {
     assertMainRenderer(event);
     return appUpdater.downloadAndInstall();
+  });
+  ipcMain.handle('bug-report', (event, { description }) => {
+    assertMainRenderer(event);
+    return diagnostics.reportBug(description);
   });
   ipcMain.handle('app-relaunch', () => relaunchApp());
   ipcMain.handle('app-set-icon', (event, payload) => {
@@ -539,6 +550,16 @@ function sidecarEntry() {
   return app.isPackaged
     ? path.join(process.resourcesPath, 'sidecar/dist/sidecar.mjs')
     : path.join(appRoot(), 'sidecar/dist/sidecar.mjs');
+}
+
+function diagnosticsDsn() {
+  if (!app.isPackaged) return process.env.SENTRY_DSN || '';
+  try {
+    const metadata = require(path.join(app.getAppPath(), 'package.json'));
+    return typeof metadata.sentryDsn === 'string' ? metadata.sentryDsn : '';
+  } catch {
+    return '';
+  }
 }
 
 function configureBrowserSession() {

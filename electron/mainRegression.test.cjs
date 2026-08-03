@@ -79,6 +79,16 @@ test('bridge credentials require the top-level trusted renderer', () => {
   assert.match(mainSource, /installRendererNavigationGuard\(mainWindow\.webContents/);
 });
 
+test('manual bug reports require the trusted renderer', () => {
+  const handlerStart = mainSource.indexOf("ipcMain.handle('bug-report'");
+  const handlerEnd = mainSource.indexOf('\n  ipcMain.handle(', handlerStart + 1);
+  const handler = mainSource.slice(handlerStart, handlerEnd);
+
+  assert.notEqual(handlerStart, -1);
+  assert.match(handler, /assertMainRenderer\(event\)/);
+  assert.match(handler, /diagnostics\.reportBug\(description\)/);
+});
+
 test('embedded websites cannot request unused system permissions', () => {
   assert.match(mainSource, /ses\.setDevicePermissionHandler\(\(\) => false\)/);
   assert.match(mainSource, /ses\.setPermissionCheckHandler\(\(\) => false\)/);

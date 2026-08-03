@@ -78,7 +78,9 @@ function createSidecarSupervisor(options) {
         if (!settled) {
           fail(new Error(`Sidecar exited before ready (${code ?? signal ?? 'unknown'}).`));
         } else if (!run.intentionalStop && (code || signal)) {
-          errorOutput.write(`sidecar exited: ${code ?? signal}\n`);
+          const error = new Error(`Sidecar exited unexpectedly (${code ?? signal}).`);
+          errorOutput.write(`${error.message}\n`);
+          options.onUnexpectedExit?.(error);
         }
       });
       nextChild.stdout.on('data', (chunk) => {
