@@ -1,28 +1,114 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="600" height="400" viewBox="0 0 600 400">
-  <!-- DROIDEX DMG installer window background (600x400, rendered @1x and @2x).
+<svg xmlns="http://www.w3.org/2000/svg" width="600" height="300" viewBox="0 0 600 300">
+  <!-- DROIDEX DMG installer window background (600x300, rendered @1x and @2x).
        Finder icon positions are CENTERS: .app at (132,150), Applications link
-       at (372,150), icon size 96 (so icons span x 84-180 and x 324-420).
-       The arrow lives in the free gap between them (x 180-324, y 150).
-       Labels must stay readable at Finder's 1x scale: medium weight, strong
-       contrast, and the footer clear of the window's bottom edge. -->
-  <rect width="600" height="400" fill="#F2EFE9" />
-
-  <!-- top metadata row -->
-  <text x="48" y="52" font-family="'JetBrains Mono', monospace" font-weight="500" font-size="11.5"
-    letter-spacing="1.6" fill="#141310" fill-opacity="0.9">DRX-INSTALL / MACOS</text>
-  <text x="552" y="52" text-anchor="end" font-family="'JetBrains Mono', monospace" font-weight="400"
-    font-size="11.5" letter-spacing="1.6" fill="#141310" fill-opacity="0.55">DRX-2026-INSTALL-01</text>
-
-  <!-- drag arrow in the gap between the two icons, aligned to icon centers -->
-  <g stroke="#141310" stroke-opacity="0.9" stroke-width="2" fill="none">
-    <line x1="196" y1="150" x2="304" y2="150" />
-    <path d="M 296 144 L 304 150 L 296 156" />
-  </g>
-  <text x="252" y="176" text-anchor="middle" font-family="'JetBrains Mono', monospace"
-    font-weight="500" font-size="10" letter-spacing="1.8" fill="#141310" fill-opacity="0.7">DRAG TO INSTALL</text>
-
-  <!-- footer, clear of the window edge -->
-  <line x1="48" y1="332" x2="552" y2="332" stroke="#141310" stroke-opacity="0.2" stroke-width="1" />
-  <text x="300" y="356" text-anchor="middle" font-family="'JetBrains Mono', monospace"
-    font-weight="500" font-size="10.5" letter-spacing="1.6" fill="#141310" fill-opacity="0.85">DROIDEX · DESKTOP COCKPIT FOR AI AGENTS</text>
+       at (372,150), icon size 96 (icons span x 84-180 and x 324-420).
+       Pixel DROIDEX wordmark (Silkscreen-style 5-row glyphs, cell 8, X in
+       safety orange) centered up top; all-orange pixel arrow (cell 8) in the
+       free gap between the icons. No text: the arrow and Finder labels say it
+       all. -->
+  <rect width="600" height="300" fill="#F2EFE9" />
+  <rect x="148" y="42" width="8" height="8" fill="#141310" />
+  <rect x="156" y="42" width="8" height="8" fill="#141310" />
+  <rect x="164" y="42" width="8" height="8" fill="#141310" />
+  <rect x="172" y="42" width="8" height="8" fill="#141310" />
+  <rect x="196" y="42" width="8" height="8" fill="#141310" />
+  <rect x="204" y="42" width="8" height="8" fill="#141310" />
+  <rect x="212" y="42" width="8" height="8" fill="#141310" />
+  <rect x="220" y="42" width="8" height="8" fill="#141310" />
+  <rect x="244" y="42" width="8" height="8" fill="#141310" />
+  <rect x="252" y="42" width="8" height="8" fill="#141310" />
+  <rect x="260" y="42" width="8" height="8" fill="#141310" />
+  <rect x="268" y="42" width="8" height="8" fill="#141310" />
+  <rect x="276" y="42" width="8" height="8" fill="#141310" />
+  <rect x="292" y="42" width="8" height="8" fill="#141310" />
+  <rect x="300" y="42" width="8" height="8" fill="#141310" />
+  <rect x="308" y="42" width="8" height="8" fill="#141310" />
+  <rect x="324" y="42" width="8" height="8" fill="#141310" />
+  <rect x="332" y="42" width="8" height="8" fill="#141310" />
+  <rect x="340" y="42" width="8" height="8" fill="#141310" />
+  <rect x="348" y="42" width="8" height="8" fill="#141310" />
+  <rect x="372" y="42" width="8" height="8" fill="#141310" />
+  <rect x="380" y="42" width="8" height="8" fill="#141310" />
+  <rect x="388" y="42" width="8" height="8" fill="#141310" />
+  <rect x="396" y="42" width="8" height="8" fill="#141310" />
+  <rect x="412" y="42" width="8" height="8" fill="#FF4D00" />
+  <rect x="444" y="42" width="8" height="8" fill="#FF4D00" />
+  <rect x="148" y="50" width="8" height="8" fill="#141310" />
+  <rect x="180" y="50" width="8" height="8" fill="#141310" />
+  <rect x="196" y="50" width="8" height="8" fill="#141310" />
+  <rect x="228" y="50" width="8" height="8" fill="#141310" />
+  <rect x="244" y="50" width="8" height="8" fill="#141310" />
+  <rect x="276" y="50" width="8" height="8" fill="#141310" />
+  <rect x="300" y="50" width="8" height="8" fill="#141310" />
+  <rect x="324" y="50" width="8" height="8" fill="#141310" />
+  <rect x="356" y="50" width="8" height="8" fill="#141310" />
+  <rect x="372" y="50" width="8" height="8" fill="#141310" />
+  <rect x="420" y="50" width="8" height="8" fill="#FF4D00" />
+  <rect x="436" y="50" width="8" height="8" fill="#FF4D00" />
+  <rect x="148" y="58" width="8" height="8" fill="#141310" />
+  <rect x="180" y="58" width="8" height="8" fill="#141310" />
+  <rect x="196" y="58" width="8" height="8" fill="#141310" />
+  <rect x="204" y="58" width="8" height="8" fill="#141310" />
+  <rect x="212" y="58" width="8" height="8" fill="#141310" />
+  <rect x="220" y="58" width="8" height="8" fill="#141310" />
+  <rect x="244" y="58" width="8" height="8" fill="#141310" />
+  <rect x="276" y="58" width="8" height="8" fill="#141310" />
+  <rect x="300" y="58" width="8" height="8" fill="#141310" />
+  <rect x="324" y="58" width="8" height="8" fill="#141310" />
+  <rect x="356" y="58" width="8" height="8" fill="#141310" />
+  <rect x="372" y="58" width="8" height="8" fill="#141310" />
+  <rect x="380" y="58" width="8" height="8" fill="#141310" />
+  <rect x="388" y="58" width="8" height="8" fill="#141310" />
+  <rect x="428" y="58" width="8" height="8" fill="#FF4D00" />
+  <rect x="148" y="66" width="8" height="8" fill="#141310" />
+  <rect x="180" y="66" width="8" height="8" fill="#141310" />
+  <rect x="196" y="66" width="8" height="8" fill="#141310" />
+  <rect x="220" y="66" width="8" height="8" fill="#141310" />
+  <rect x="244" y="66" width="8" height="8" fill="#141310" />
+  <rect x="276" y="66" width="8" height="8" fill="#141310" />
+  <rect x="300" y="66" width="8" height="8" fill="#141310" />
+  <rect x="324" y="66" width="8" height="8" fill="#141310" />
+  <rect x="356" y="66" width="8" height="8" fill="#141310" />
+  <rect x="372" y="66" width="8" height="8" fill="#141310" />
+  <rect x="420" y="66" width="8" height="8" fill="#FF4D00" />
+  <rect x="436" y="66" width="8" height="8" fill="#FF4D00" />
+  <rect x="148" y="74" width="8" height="8" fill="#141310" />
+  <rect x="156" y="74" width="8" height="8" fill="#141310" />
+  <rect x="164" y="74" width="8" height="8" fill="#141310" />
+  <rect x="172" y="74" width="8" height="8" fill="#141310" />
+  <rect x="196" y="74" width="8" height="8" fill="#141310" />
+  <rect x="228" y="74" width="8" height="8" fill="#141310" />
+  <rect x="244" y="74" width="8" height="8" fill="#141310" />
+  <rect x="252" y="74" width="8" height="8" fill="#141310" />
+  <rect x="260" y="74" width="8" height="8" fill="#141310" />
+  <rect x="268" y="74" width="8" height="8" fill="#141310" />
+  <rect x="276" y="74" width="8" height="8" fill="#141310" />
+  <rect x="292" y="74" width="8" height="8" fill="#141310" />
+  <rect x="300" y="74" width="8" height="8" fill="#141310" />
+  <rect x="308" y="74" width="8" height="8" fill="#141310" />
+  <rect x="324" y="74" width="8" height="8" fill="#141310" />
+  <rect x="332" y="74" width="8" height="8" fill="#141310" />
+  <rect x="340" y="74" width="8" height="8" fill="#141310" />
+  <rect x="348" y="74" width="8" height="8" fill="#141310" />
+  <rect x="372" y="74" width="8" height="8" fill="#141310" />
+  <rect x="380" y="74" width="8" height="8" fill="#141310" />
+  <rect x="388" y="74" width="8" height="8" fill="#141310" />
+  <rect x="396" y="74" width="8" height="8" fill="#141310" />
+  <rect x="412" y="74" width="8" height="8" fill="#FF4D00" />
+  <rect x="444" y="74" width="8" height="8" fill="#FF4D00" />
+  <rect x="270" y="130" width="8" height="8" fill="#FF4D00" />
+  <rect x="278" y="138" width="8" height="8" fill="#FF4D00" />
+  <rect x="206" y="146" width="8" height="8" fill="#FF4D00" />
+  <rect x="214" y="146" width="8" height="8" fill="#FF4D00" />
+  <rect x="222" y="146" width="8" height="8" fill="#FF4D00" />
+  <rect x="230" y="146" width="8" height="8" fill="#FF4D00" />
+  <rect x="238" y="146" width="8" height="8" fill="#FF4D00" />
+  <rect x="246" y="146" width="8" height="8" fill="#FF4D00" />
+  <rect x="254" y="146" width="8" height="8" fill="#FF4D00" />
+  <rect x="262" y="146" width="8" height="8" fill="#FF4D00" />
+  <rect x="270" y="146" width="8" height="8" fill="#FF4D00" />
+  <rect x="278" y="146" width="8" height="8" fill="#FF4D00" />
+  <rect x="286" y="146" width="8" height="8" fill="#FF4D00" />
+  <rect x="278" y="154" width="8" height="8" fill="#FF4D00" />
+  <rect x="270" y="162" width="8" height="8" fill="#FF4D00" />
 </svg>

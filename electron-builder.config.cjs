@@ -44,7 +44,7 @@ module.exports = {
   dmg: {
     icon: 'electron/assets/icon.icns',
     background: 'assets/brand/dmg-background.png',
-    window: { width: 600, height: 400 },
+    window: { width: 600, height: 300 },
     iconSize: 96,
     contents: [
       { x: 132, y: 150, type: 'file' },

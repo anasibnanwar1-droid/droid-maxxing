@@ -117,17 +117,18 @@ async function main() {
     );
 
     // DMG window background, 1x + 2x (electron-builder picks the @2x up when it
-    // sits next to the 1x file).
+    // sits next to the 1x file). Must match dmg.window in
+    // electron-builder.config.cjs.
     await renderSvg(
       browser,
       dmgSvg,
-      { width: 600, height: 400 },
+      { width: 600, height: 300 },
       path.join(brandDir, 'dmg-background.png'),
     );
     await renderSvg(
       browser,
       dmgSvg,
-      { width: 1200, height: 800 },
+      { width: 1200, height: 600 },
       path.join(brandDir, 'dmg-background@2x.png'),
     );
   } finally {
