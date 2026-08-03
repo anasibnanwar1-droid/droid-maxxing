@@ -25,6 +25,14 @@ module.exports = {
   appId: 'app.droidex',
   productName: 'DROIDEX',
   forceCodeSigning: isReleaseBuild,
+  extendInfo: {
+    NSDesktopFolderUsageDescription:
+      'DROIDEX accesses Desktop projects only when you choose them for an agent session.',
+    NSDocumentsFolderUsageDescription:
+      'DROIDEX accesses Documents projects only when you choose them for an agent session.',
+    NSDownloadsFolderUsageDescription:
+      'DROIDEX accesses downloaded project files only when you choose them for an agent session.',
+  },
   directories: {
     output: 'release',
     buildResources: 'assets/brand',

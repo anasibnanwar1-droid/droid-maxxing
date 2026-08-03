@@ -41,6 +41,12 @@ After installing a candidate build:
 5. Trigger an update check against the public releases repository.
 6. Inspect Electron and sidecar logs for bridge authentication, download, or update errors.
 
+The direct-download app is not App Sandbox–restricted. It asks macOS for access
+to Desktop, Documents, or Downloads only when the user selects a protected
+project location. Camera, microphone, Accessibility, Screen Recording, and
+Apple Events permissions are not requested because current DROIDEX features do
+not use those system capabilities.
+
 The sidecar uses Electron's bundled Node 22 runtime and its built-in
 `node:sqlite`; users do not install or download SQLite. The canonical session
 index is `~/.factory/droidex/session-index.sqlite`. It is DROIDEX-owned derived

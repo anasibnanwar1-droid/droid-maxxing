@@ -92,3 +92,13 @@ test('CI certificate and API key credentials enable notarization', () => {
   assert.equal(config.mac.identity, undefined);
   assert.equal(config.mac.notarize, true);
 });
+
+test('macOS protected project folders have truthful permission descriptions', () => {
+  const config = loadConfig({});
+
+  assert.match(config.extendInfo.NSDesktopFolderUsageDescription, /choose them/);
+  assert.match(config.extendInfo.NSDocumentsFolderUsageDescription, /choose them/);
+  assert.match(config.extendInfo.NSDownloadsFolderUsageDescription, /choose them/);
+  assert.equal(config.extendInfo.NSCameraUsageDescription, undefined);
+  assert.equal(config.extendInfo.NSMicrophoneUsageDescription, undefined);
+});

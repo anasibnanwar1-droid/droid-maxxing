@@ -550,6 +550,8 @@ function configureBrowserSession() {
   // (and auto-selecting a device) would only open a hardware-permission
   // escalation path with no upside.
   ses.setDevicePermissionHandler(() => false);
+  ses.setPermissionCheckHandler(() => false);
+  ses.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
   ses.webRequest.onCompleted({ urls: ['http://*/*', 'https://*/*'] }, (details) => {
     recordNativeBrowserNetworkEvent(details);
   });
@@ -683,8 +685,7 @@ async function handleCredentialCapture(senderContents, payload) {
       cancelId: 1,
       title: 'Save password',
       message: `Save this login for ${origin}?`,
-      detail:
-        `${APP_NAME} stores it encrypted with your OS keychain. The agent can use it to sign in but can never read it.`,
+      detail: `${APP_NAME} stores it encrypted with your OS keychain. The agent can use it to sign in but can never read it.`,
     });
     if (response === 0) upsertCredential(origin, payload.username || '', password);
   } catch {
@@ -1163,8 +1164,7 @@ async function fillCredentialsForAgent(contents, request) {
     return {
       requestId: request.requestId,
       ok: false,
-      error:
-        `Saved logins are turned off for the ${APP_NAME} browser. Ask the user to sign in once; they will be prompted to enable and save the login first.`,
+      error: `Saved logins are turned off for the ${APP_NAME} browser. Ask the user to sign in once; they will be prompted to enable and save the login first.`,
     };
   }
   const origin = originFor(contents.getURL());
