@@ -21,6 +21,7 @@ function createSidecarSupervisor(options) {
     if (pendingStart) return pendingStart;
 
     const token = crypto.randomBytes(32).toString('hex');
+    const assetToken = crypto.randomBytes(32).toString('hex');
     const nextChild = spawnProcess(process.execPath, [options.entryPath()], {
       cwd: options.cwd(),
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -29,8 +30,8 @@ function createSidecarSupervisor(options) {
         ELECTRON_RUN_AS_NODE: '1',
         BRIDGE_PORT: process.env.BRIDGE_PORT || '0',
         BRIDGE_TOKEN: token,
+        BROWSER_ASSET_TOKEN: assetToken,
         BRIDGE_EXIT_ON_STDIN_CLOSE: '1',
-        BRIDGE_ALLOW_LOCAL_NO_TOKEN: options.isPackaged() ? '0' : '1',
       },
     });
     const run = {

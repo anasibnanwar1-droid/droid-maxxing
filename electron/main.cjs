@@ -16,6 +16,7 @@ const fs = require('node:fs');
 const fsp = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
+const { pathToFileURL } = require('node:url');
 const gitVcs = require('./git.cjs');
 const githubVcs = require('./github.cjs');
 const { createTerminalManager, createTerminalSubscriptionRegistry } = require('./terminal.cjs');
@@ -28,6 +29,7 @@ const {
 const { runWithWebContentsDebugger } = require('./nativeBrowserEmulation.cjs');
 const { attachChildView, detachChildView } = require('./nativeBrowserHost.cjs');
 const { createSidecarSupervisor } = require('./sidecar.cjs');
+const { installRendererNavigationGuard } = require('./rendererSecurity.cjs');
 const APP_NAME = 'Droid Control';
 const terminalManager = createTerminalManager();
 const terminalSubscriptions = createTerminalSubscriptionRegistry(terminalManager);
@@ -35,7 +37,6 @@ const filesRootAccess = files.createRootAccessRegistry();
 const sidecarSupervisor = createSidecarSupervisor({
   entryPath: sidecarEntry,
   cwd: () => (app.isPackaged ? process.resourcesPath : appRoot()),
-  isPackaged: () => app.isPackaged,
 });
 
 let mainWindow = null;
@@ -96,6 +97,9 @@ app.on('child-process-gone', (_event, details) => {
 });
 
 function createMainWindow() {
+  const devStartUrl = app.isPackaged ? undefined : process.env.ELECTRON_START_URL;
+  const rendererFile = path.join(appRoot(), 'dist/index.html');
+  const rendererEntryUrl = devStartUrl || pathToFileURL(rendererFile).toString();
   mainWindow = new BrowserWindow({
     width: 1440,
     height: 900,
@@ -116,11 +120,13 @@ function createMainWindow() {
     },
   });
 
+  installRendererNavigationGuard(mainWindow.webContents, rendererEntryUrl, (url) =>
+    shell.openExternal(url),
+  );
   installMainRendererLifecycle(mainWindow.webContents);
 
-  const startUrl = process.env.ELECTRON_START_URL;
-  if (startUrl) mainWindow.loadURL(startUrl);
-  else mainWindow.loadFile(path.join(appRoot(), 'dist/index.html'));
+  if (devStartUrl) mainWindow.loadURL(devStartUrl);
+  else mainWindow.loadFile(rendererFile);
 
   mainWindow.on('closed', () => {
     closeAllNativeBrowsers();
@@ -132,7 +138,10 @@ function createMainWindow() {
 }
 
 function registerIpc() {
-  ipcMain.handle('bridge-info', () => sidecarSupervisor.getBridgeInfo());
+  ipcMain.handle('bridge-info', (event) => {
+    assertMainRenderer(event);
+    return sidecarSupervisor.getBridgeInfo();
+  });
   ipcMain.handle('pick-directory', async () => {
     const result = await dialog.showOpenDialog({ properties: ['openDirectory'] });
     const selected = result.canceled ? null : (result.filePaths[0] ?? null);
@@ -368,7 +377,11 @@ function registerIpc() {
 }
 
 function assertMainRenderer(event) {
-  if (!mainWindow || event.sender !== mainWindow.webContents) {
+  if (
+    !mainWindow ||
+    event.sender !== mainWindow.webContents ||
+    event.senderFrame !== mainWindow.webContents.mainFrame
+  ) {
     throw new Error('Desktop request rejected for unknown renderer.');
   }
 }
@@ -507,7 +520,7 @@ function appRoot() {
 function sidecarEntry() {
   // The sidecar ships as an extraResource beside the asar so it can be spawned
   // as a plain Node script; an asar path would not survive as a child cwd/argv.
-  if (process.env.SIDECAR_ENTRY) return process.env.SIDECAR_ENTRY;
+  if (!app.isPackaged && process.env.SIDECAR_ENTRY) return process.env.SIDECAR_ENTRY;
   return app.isPackaged
     ? path.join(process.resourcesPath, 'sidecar/dist/sidecar.mjs')
     : path.join(appRoot(), 'sidecar/dist/sidecar.mjs');

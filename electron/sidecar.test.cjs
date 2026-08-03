@@ -23,7 +23,6 @@ function harness(children) {
   const supervisor = createSidecarSupervisor({
     entryPath: () => '/app/sidecar.mjs',
     cwd: () => '/app',
-    isPackaged: () => true,
     stdout: new PassThrough(),
     stderr: new PassThrough(),
     spawnProcess: (command, args, options) => {
@@ -46,9 +45,10 @@ test('sidecar binds an OS-assigned port and shares one concurrent startup', asyn
   assert.equal(calls[0].command, process.execPath);
   assert.deepEqual(calls[0].args, ['/app/sidecar.mjs']);
   assert.equal(calls[0].options.env.BRIDGE_PORT, '0');
-  assert.equal(calls[0].options.env.BRIDGE_ALLOW_LOCAL_NO_TOKEN, '0');
   assert.equal(calls[0].options.env.ELECTRON_RUN_AS_NODE, '1');
   assert.match(calls[0].options.env.BRIDGE_TOKEN, /^[a-f0-9]{64}$/);
+  assert.match(calls[0].options.env.BROWSER_ASSET_TOKEN, /^[a-f0-9]{64}$/);
+  assert.notEqual(calls[0].options.env.BROWSER_ASSET_TOKEN, calls[0].options.env.BRIDGE_TOKEN);
 
   child.stdout.write('SIDECAR_READY 43123\n');
   assert.deepEqual(await first, await second);
@@ -110,7 +110,6 @@ test('intentional shutdown is not reported as a crash', async () => {
   const supervisor = createSidecarSupervisor({
     entryPath: () => '/app/sidecar.mjs',
     cwd: () => '/app',
-    isPackaged: () => true,
     stdout: new PassThrough(),
     stderr,
     spawnProcess: () => child,

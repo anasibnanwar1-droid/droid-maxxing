@@ -1,5 +1,6 @@
 import { homedir } from 'node:os';
 import { join, resolve, sep } from 'node:path';
+import { realpath } from 'node:fs/promises';
 
 export function browserDataRoot(baseDir = defaultBrowserDataRoot()): string {
   return baseDir;
@@ -13,6 +14,17 @@ export function isBrowserAssetPath(filePath: string, baseDir?: string): boolean 
   const root = resolve(browserDataRoot(baseDir));
   const target = resolve(filePath);
   return target === root || target.startsWith(`${root}${sep}`);
+}
+
+export async function resolveBrowserAssetPath(
+  filePath: string,
+  baseDir?: string,
+): Promise<string | null> {
+  const [root, target] = await Promise.all([
+    realpath(browserDataRoot(baseDir)),
+    realpath(filePath),
+  ]);
+  return target === root || target.startsWith(`${root}${sep}`) ? target : null;
 }
 
 function defaultBrowserDataRoot(): string {

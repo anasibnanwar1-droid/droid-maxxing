@@ -68,6 +68,17 @@ test('sidecar lifecycle is delegated to the packaged-runtime supervisor', () => 
   assert.doesNotMatch(mainSource, /NODE_BIN|function nodeBin/);
 });
 
+test('bridge credentials require the top-level trusted renderer', () => {
+  const handlerStart = mainSource.indexOf("ipcMain.handle('bridge-info'");
+  const handlerEnd = mainSource.indexOf('\n  ipcMain.handle(', handlerStart + 1);
+  const handler = mainSource.slice(handlerStart, handlerEnd);
+
+  assert.notEqual(handlerStart, -1);
+  assert.match(handler, /assertMainRenderer\(event\)/);
+  assert.match(mainSource, /event\.senderFrame !== mainWindow\.webContents\.mainFrame/);
+  assert.match(mainSource, /installRendererNavigationGuard\(mainWindow\.webContents/);
+});
+
 test('app icon switching authorizes the renderer and accepts only committed icon modes', () => {
   const handlerStart = mainSource.indexOf("ipcMain.handle('app-set-icon'");
   const handlerEnd = mainSource.indexOf('\n  ipcMain.handle(', handlerStart + 1);

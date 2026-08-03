@@ -4,11 +4,11 @@ import { stat } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { SessionManager } from './SessionManager.js';
 import type { ClientCommand, ServerEvent } from './protocol.js';
-import { isBrowserAssetPath } from './browser/browserPaths.js';
+import { resolveBrowserAssetPath } from './browser/browserPaths.js';
 
 const REQUESTED_PORT = bridgePort(process.env.BRIDGE_PORT ?? '0');
-const TOKEN = process.env.BRIDGE_TOKEN ?? '';
-const ALLOW_LOCAL_NO_TOKEN = process.env.BRIDGE_ALLOW_LOCAL_NO_TOKEN === '1';
+const TOKEN = requiredSecret('BRIDGE_TOKEN');
+const ASSET_TOKEN = requiredSecret('BROWSER_ASSET_TOKEN');
 const EXIT_ON_STDIN_CLOSE = process.env.BRIDGE_EXIT_ON_STDIN_CLOSE !== '0';
 const HOST = '127.0.0.1';
 let boundPort = REQUESTED_PORT;
@@ -25,7 +25,7 @@ function broadcast(event: ServerEvent): void {
 function browserAssetUrl(filePath: string): string {
   const url = new URL(`http://${HOST}:${String(boundPort)}/browser-assets`);
   url.searchParams.set('path', filePath);
-  if (TOKEN) url.searchParams.set('token', TOKEN);
+  url.searchParams.set('token', ASSET_TOKEN);
   return url.toString();
 }
 
@@ -57,12 +57,10 @@ server.listen(REQUESTED_PORT, HOST, () => {
 });
 
 wss.on('connection', (ws, req) => {
-  if (TOKEN && !ALLOW_LOCAL_NO_TOKEN) {
-    const url = new URL(req.url ?? '', `http://${HOST}`);
-    if (url.searchParams.get('token') !== TOKEN) {
-      ws.close(1008, 'unauthorized');
-      return;
-    }
+  const url = new URL(req.url ?? '', `http://${HOST}`);
+  if (url.searchParams.get('token') !== TOKEN) {
+    ws.close(1008, 'unauthorized');
+    return;
   }
   clients.add(ws);
 
@@ -123,26 +121,40 @@ async function shutdown(): Promise<void> {
 function serveBrowserAsset(req: IncomingMessage, res: ServerResponse): boolean {
   const url = new URL(req.url ?? '/', `http://${HOST}:${String(boundPort)}`);
   if (url.pathname !== '/browser-assets') return false;
-  if (TOKEN && !ALLOW_LOCAL_NO_TOKEN && url.searchParams.get('token') !== TOKEN) {
+  if (url.searchParams.get('token') !== ASSET_TOKEN) {
     res.writeHead(401).end('unauthorized');
     return true;
   }
   const filePath = url.searchParams.get('path');
-  if (!filePath || !isBrowserAssetPath(filePath)) {
+  if (!filePath) {
     res.writeHead(403).end('forbidden');
     return true;
   }
-  void stat(filePath)
-    .then((info) => {
+  void resolveBrowserAssetPath(filePath)
+    .then(async (resolvedPath) => {
+      if (!resolvedPath) {
+        res.writeHead(403).end('forbidden');
+        return;
+      }
+      const info = await stat(resolvedPath);
       if (!info.isFile()) {
         res.writeHead(404).end('not found');
         return;
       }
-      res.writeHead(200, { 'content-type': contentType(filePath), 'cache-control': 'no-store' });
-      createReadStream(filePath).pipe(res);
+      res.writeHead(200, {
+        'content-type': contentType(resolvedPath),
+        'cache-control': 'no-store',
+      });
+      createReadStream(resolvedPath).pipe(res);
     })
     .catch(() => res.writeHead(404).end('not found'));
   return true;
+}
+
+function requiredSecret(name: 'BRIDGE_TOKEN' | 'BROWSER_ASSET_TOKEN'): string {
+  const value = process.env[name];
+  if (!value) throw new Error(`${name} is required.`);
+  return value;
 }
 
 function bridgePort(value: string): number {
