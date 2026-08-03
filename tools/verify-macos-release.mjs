@@ -1,4 +1,4 @@
-import { execFileSync, spawnSync } from 'node:child_process';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
   mkdtempSync,
@@ -120,6 +120,94 @@ function verifyDeveloperIdApp(appPath, label) {
   );
 }
 
+async function smokePackagedRuntime(architecture) {
+  const { appPath, name } = architecture;
+  const executablePath = join(appPath, 'Contents', 'MacOS', 'DROIDEX');
+  const resourcesPath = join(appPath, 'Contents', 'Resources');
+  const asarPath = join(resourcesPath, 'app.asar');
+  const sidecarPath = join(resourcesPath, 'sidecar', 'dist', 'sidecar.mjs');
+  const temporaryHome = mkdtempSync(join(tmpdir(), `droidex-${name}-runtime-`));
+  const databasePath = join(temporaryHome, '.factory', 'droidex', 'session-index.sqlite');
+  const child = spawn(executablePath, [sidecarPath], {
+    env: {
+      ...process.env,
+      HOME: temporaryHome,
+      DROIDEX_USER_DATA_DIR: join(temporaryHome, 'Library', 'Application Support', 'DROIDEX'),
+      ELECTRON_RUN_AS_NODE: '1',
+      BRIDGE_PORT: '0',
+      BRIDGE_TOKEN: 'release-verifier-bridge-token',
+      BROWSER_ASSET_TOKEN: 'release-verifier-asset-token',
+    },
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
+
+  try {
+    await new Promise((resolveReady, rejectReady) => {
+      let output = '';
+      let errorOutput = '';
+      let isReady = false;
+      const timeout = setTimeout(() => {
+        child.kill('SIGKILL');
+        rejectReady(new Error(`${name} packaged sidecar timed out: ${errorOutput}`));
+      }, 15_000);
+
+      child.stdout.on('data', (chunk) => {
+        output += chunk.toString('utf8');
+        if (!isReady && /(?:^|\n)SIDECAR_READY \d+(?:\n|$)/.test(output)) {
+          isReady = true;
+          child.stdin.end();
+        }
+      });
+      child.stderr.on('data', (chunk) => {
+        errorOutput += chunk.toString('utf8');
+      });
+      child.once('error', (error) => {
+        clearTimeout(timeout);
+        rejectReady(error);
+      });
+      child.once('exit', (code, signal) => {
+        clearTimeout(timeout);
+        if (!isReady || code !== 0) {
+          rejectReady(
+            new Error(
+              `${name} packaged sidecar exited before a clean shutdown (code=${String(code)}, signal=${String(signal)}): ${errorOutput}`,
+            ),
+          );
+          return;
+        }
+        resolveReady();
+      });
+    });
+
+    assert(statSync(databasePath).isFile(), `${name} sidecar did not create the canonical SQLite index`);
+    const sqliteResult = run(
+      executablePath,
+      [
+        '-e',
+        `const { DatabaseSync } = require('node:sqlite'); const db = new DatabaseSync(${JSON.stringify(databasePath)}, { readOnly: true }); const version = db.prepare('PRAGMA user_version').get().user_version; const tables = db.prepare("SELECT name FROM sqlite_schema WHERE type='table' ORDER BY name").all().map((row) => row.name); console.log(JSON.stringify({ version, tables })); db.close();`,
+      ],
+      { env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' } },
+    ).trim();
+    const sqliteState = JSON.parse(sqliteResult);
+    assert(sqliteState.version === 1, `${name} SQLite schema version is not canonical`);
+    assert(sqliteState.tables.includes('app_sessions'), `${name} SQLite app_sessions table is missing`);
+    assert(sqliteState.tables.includes('child_sessions'), `${name} SQLite child_sessions table is missing`);
+
+    const nativeDependencyResult = run(
+      executablePath,
+      [
+        '-e',
+        `const { createRequire } = require('node:module'); const appRequire = createRequire(${JSON.stringify(join(asarPath, 'package.json'))}); const pty = appRequire('node-pty'); console.log(typeof pty.spawn);`,
+      ],
+      { env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' } },
+    ).trim();
+    assert(nativeDependencyResult === 'function', `${name} packaged node-pty failed to load`);
+  } finally {
+    if (!child.killed && child.exitCode === null) child.kill('SIGKILL');
+    rmSync(temporaryHome, { recursive: true, force: true });
+  }
+}
+
 for (const assetName of releaseAssetNames) {
   assert(statSync(join(releaseDirectory, assetName)).isFile(), `missing ${assetName}`);
 }
@@ -178,16 +266,6 @@ for (const architecture of architectures) {
     `${name} app has the wrong executable architecture`,
   );
 
-  const sqliteResult = run(
-    executablePath,
-    [
-      '-e',
-      "const { DatabaseSync } = require('node:sqlite'); const db = new DatabaseSync(':memory:'); console.log(db.prepare('select 1 as value').get().value); db.close();",
-    ],
-    { env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' } },
-  ).trim();
-  assert(sqliteResult === '1', `${name} bundled node:sqlite smoke failed`);
-
   const infoPlist = join(appPath, 'Contents', 'Info.plist');
   for (const key of [
     'NSDesktopFolderUsageDescription',
@@ -203,11 +281,15 @@ for (const architecture of architectures) {
   if (requireSignedArtifacts) verifyDeveloperIdApp(appPath, `${name} staged app`);
 }
 
+for (const architecture of architectures) await smokePackagedRuntime(architecture);
+
 for (const architecture of architectures) {
-  run('/usr/bin/hdiutil', ['verify', join(releaseDirectory, `droidex-${architecture.name}.dmg`)]);
+  const dmgPath = join(releaseDirectory, `droidex-${architecture.name}.dmg`);
+  run('/usr/bin/hdiutil', ['verify', dmgPath]);
   if (!requireSignedArtifacts) continue;
 
   const extractionDirectory = mkdtempSync(join(tmpdir(), `droidex-${architecture.name}-`));
+  const mountDirectory = mkdtempSync(join(tmpdir(), `droidex-${architecture.name}-mount-`));
   try {
     run('/usr/bin/ditto', [
       '-x',
@@ -216,8 +298,23 @@ for (const architecture of architectures) {
       extractionDirectory,
     ]);
     verifyDeveloperIdApp(join(extractionDirectory, appName), `${architecture.name} updater ZIP app`);
+
+    run('/usr/bin/hdiutil', [
+      'attach',
+      '-readonly',
+      '-nobrowse',
+      '-mountpoint',
+      mountDirectory,
+      dmgPath,
+    ]);
+    try {
+      verifyDeveloperIdApp(join(mountDirectory, appName), `${architecture.name} DMG app`);
+    } finally {
+      run('/usr/bin/hdiutil', ['detach', mountDirectory]);
+    }
   } finally {
     rmSync(extractionDirectory, { recursive: true, force: true });
+    rmSync(mountDirectory, { recursive: true, force: true });
   }
 }
 

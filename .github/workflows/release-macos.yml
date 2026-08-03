@@ -107,6 +107,7 @@ jobs:
             -H 'X-GitHub-Api-Version: 2026-03-10' \
             "repos/$RELEASE_REPOSITORY/immutable-releases" \
             --jq '.enabled')" = "true"
+          gh release verify-asset --help >/dev/null
           if gh release view "$GITHUB_REF_NAME" --repo "$RELEASE_REPOSITORY" >/dev/null 2>&1; then
             echo "Release $GITHUB_REF_NAME already exists in $RELEASE_REPOSITORY" >&2
             exit 1
@@ -123,6 +124,15 @@ jobs:
             --title "DROIDEX $GITHUB_REF_NAME" \
             --notes "Signed and notarized DROIDEX macOS release for Apple silicon and Intel Macs. Download the DMG matching your Mac."
           gh release verify "$GITHUB_REF_NAME" --repo "$RELEASE_REPOSITORY"
+          for asset in \
+            release/droidex-*.dmg \
+            release/droidex-*.dmg.blockmap \
+            release/droidex-*.zip \
+            release/droidex-*.zip.blockmap \
+            release/latest-mac.yml \
+            release/SHA256SUMS; do
+            gh release verify-asset "$GITHUB_REF_NAME" "$asset" --repo "$RELEASE_REPOSITORY"
+          done
 
       - name: Remove notarization key
         if: always()
