@@ -1,4 +1,4 @@
-import { useEffect, useRef, type RefObject } from 'react';
+import { useCallback, useEffect, useRef, type RefObject } from 'react';
 import { importDesignLibraryImage } from '../../lib/commands';
 import { toast } from '../../lib/toast';
 import { useStudioCanvas, type StudioCanvasImage } from './StudioCanvasContext';
@@ -23,56 +23,59 @@ export function useCanvasImageImport(rootRef: RefObject<HTMLDivElement | null>, 
     lastPointerRef.current = { x: clientX - rect.left, y: clientY - rect.top };
   };
 
-  const addFiles = async (files: FileList | File[]) => {
-    const accepted = acceptedCanvasFiles(files, imageCountRef.current);
-    if (accepted.length === 0) return;
+  const addFiles = useCallback(
+    async (files: FileList | File[]) => {
+      const accepted = acceptedCanvasFiles(files, imageCountRef.current);
+      if (accepted.length === 0) return;
 
-    let placed = 0;
-    for (const file of accepted) {
-      try {
-        const dataUrl = await readDataUrl(file);
-        const natural = await readImageSize(dataUrl);
-        const size = fittedCanvasImageSize(natural.width, natural.height);
-        const root = rootRef.current?.getBoundingClientRect();
-        const screenAnchor = lastPointerRef.current ?? {
-          x: (root?.width ?? 800) / 2,
-          y: (root?.height ?? 600) / 2,
-        };
-        const worldAnchor = screenToWorld(screenAnchor, viewRef.current);
-        const id = canvasImageId();
-        const name = imageName(file.name, imageCountRef.current + placed + 1);
-        const offset = placed * 28;
-        const image: StudioCanvasImage = {
-          id,
-          libraryId: id,
-          src: dataUrl,
-          name,
-          tag: 'inspiration',
-          x: worldAnchor.x - size.width / 2 + offset,
-          y: worldAnchor.y - size.height / 2 + offset,
-          width: size.width,
-          height: size.height,
-          naturalWidth: natural.width,
-          naturalHeight: natural.height,
-        };
-        studioDispatch({ type: 'ADD_CANVAS_IMAGE', image });
-        importDesignLibraryImage({
-          cwd,
-          id,
-          name,
-          category: image.tag,
-          dataUrl,
-        });
-        placed += 1;
-      } catch (error) {
-        console.error('[Studio] Canvas image import failed:', error);
-        toast.error('That image could not be added to the canvas.');
+      let placed = 0;
+      for (const file of accepted) {
+        try {
+          const dataUrl = await readDataUrl(file);
+          const natural = await readImageSize(dataUrl);
+          const size = fittedCanvasImageSize(natural.width, natural.height);
+          const root = rootRef.current?.getBoundingClientRect();
+          const screenAnchor = lastPointerRef.current ?? {
+            x: (root?.width ?? 800) / 2,
+            y: (root?.height ?? 600) / 2,
+          };
+          const worldAnchor = screenToWorld(screenAnchor, viewRef.current);
+          const id = canvasImageId();
+          const name = imageName(file.name, imageCountRef.current + placed + 1);
+          const offset = placed * 28;
+          const image: StudioCanvasImage = {
+            id,
+            libraryId: id,
+            src: dataUrl,
+            name,
+            tag: 'inspiration',
+            x: worldAnchor.x - size.width / 2 + offset,
+            y: worldAnchor.y - size.height / 2 + offset,
+            width: size.width,
+            height: size.height,
+            naturalWidth: natural.width,
+            naturalHeight: natural.height,
+          };
+          studioDispatch({ type: 'ADD_CANVAS_IMAGE', image });
+          importDesignLibraryImage({
+            cwd,
+            id,
+            name,
+            category: image.tag,
+            dataUrl,
+          });
+          placed += 1;
+        } catch (error) {
+          console.error('[Studio] Canvas image import failed:', error);
+          toast.error('That image could not be added to the canvas.');
+        }
       }
-    }
-    if (placed > 0) {
-      toast.success(`${String(placed)} image${placed === 1 ? '' : 's'} added to the canvas.`);
-    }
-  };
+      if (placed > 0) {
+        toast.success(`${String(placed)} image${placed === 1 ? '' : 's'} added to the canvas.`);
+      }
+    },
+    [cwd, rootRef, studioDispatch],
+  );
 
   useEffect(() => {
     const onPaste = (event: ClipboardEvent) => {
@@ -87,7 +90,7 @@ export function useCanvasImageImport(rootRef: RefObject<HTMLDivElement | null>, 
     return () => {
       window.removeEventListener('paste', onPaste);
     };
-  });
+  }, [addFiles]);
 
   return {
     fileInputRef,

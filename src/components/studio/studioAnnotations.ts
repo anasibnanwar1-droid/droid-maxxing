@@ -101,14 +101,31 @@ export type AnnotationResizeHandle =
   | 'se'
   | 'sw';
 
+export interface AnnotationScreenGeometry {
+  points: Point[];
+  bounds: Rect | null;
+}
+
+export function annotationScreenGeometry(
+  annotation: StudioAnnotation,
+  frames: StudioFrame[],
+  view: CanvasView,
+): AnnotationScreenGeometry {
+  const frame = annotation.frameId
+    ? frames.find((candidate) => candidate.id === annotation.frameId)
+    : undefined;
+  const points = annotation.points.map((point) =>
+    worldToScreen(frame ? { x: frame.x + point.x, y: frame.y + point.y } : point, view),
+  );
+  return { points, bounds: screenBounds(points) };
+}
+
 export function annotationScreenPoints(
   annotation: StudioAnnotation,
   frames: StudioFrame[],
   view: CanvasView,
 ): Point[] {
-  return annotation.points.map((point) =>
-    worldToScreen(annotationPointToWorld(annotation, point, frames), view),
-  );
+  return annotationScreenGeometry(annotation, frames, view).points;
 }
 
 export function annotationScreenBounds(
@@ -116,7 +133,10 @@ export function annotationScreenBounds(
   frames: StudioFrame[],
   view: CanvasView,
 ): Rect | null {
-  const points = annotationScreenPoints(annotation, frames, view);
+  return annotationScreenGeometry(annotation, frames, view).bounds;
+}
+
+function screenBounds(points: Point[]): Rect | null {
   if (points.length === 0) return null;
   let minX = points[0].x;
   let minY = points[0].y;
@@ -138,21 +158,29 @@ export function hitTestAnnotation(
   view: CanvasView,
   tolerance = 8,
 ): boolean {
-  const points = annotationScreenPoints(annotation, frames, view);
+  return hitTestAnnotationGeometry(
+    annotation,
+    point,
+    annotationScreenGeometry(annotation, frames, view),
+    tolerance,
+  );
+}
+
+export function hitTestAnnotationGeometry(
+  annotation: StudioAnnotation,
+  point: Point,
+  geometry: AnnotationScreenGeometry,
+  tolerance = 8,
+): boolean {
+  const { points, bounds } = geometry;
   if (points.length < 2) return false;
+  if (!bounds || !isPointNearBounds(point, bounds, tolerance)) return false;
   if (
     annotation.kind === 'rectangle' ||
     annotation.kind === 'square' ||
     annotation.kind === 'ellipse'
   ) {
-    const bounds = annotationScreenBounds(annotation, frames, view);
-    if (!bounds) return false;
-    return (
-      point.x >= bounds.x - tolerance &&
-      point.x <= bounds.x + bounds.width + tolerance &&
-      point.y >= bounds.y - tolerance &&
-      point.y <= bounds.y + bounds.height + tolerance
-    );
+    return true;
   }
   return points.some((candidate, index) => {
     if (index === 0) return false;
@@ -166,7 +194,19 @@ export function hitResizeHandle(
   frames: StudioFrame[],
   view: CanvasView,
 ): AnnotationResizeHandle | null {
-  const handles = annotationHandles(annotation, frames, view);
+  return hitResizeHandleGeometry(
+    annotation,
+    point,
+    annotationScreenGeometry(annotation, frames, view),
+  );
+}
+
+export function hitResizeHandleGeometry(
+  annotation: StudioAnnotation,
+  point: Point,
+  geometry: AnnotationScreenGeometry,
+): AnnotationResizeHandle | null {
+  const handles = annotationHandlesFromGeometry(annotation, geometry);
   for (const [name, handle] of handles) {
     if (Math.hypot(point.x - handle.x, point.y - handle.y) <= 9) return name;
   }
@@ -178,8 +218,18 @@ export function annotationHandles(
   frames: StudioFrame[],
   view: CanvasView,
 ): [AnnotationResizeHandle, Point][] {
+  return annotationHandlesFromGeometry(
+    annotation,
+    annotationScreenGeometry(annotation, frames, view),
+  );
+}
+
+export function annotationHandlesFromGeometry(
+  annotation: StudioAnnotation,
+  geometry: AnnotationScreenGeometry,
+): [AnnotationResizeHandle, Point][] {
   if (annotation.kind === 'pencil') return [];
-  const points = annotationScreenPoints(annotation, frames, view);
+  const { points, bounds } = geometry;
   if (points.length < 2) return [];
   if (annotation.kind === 'line' || annotation.kind === 'arrow' || annotation.kind === 'measure') {
     return [
@@ -187,7 +237,6 @@ export function annotationHandles(
       ['end', points[1]],
     ];
   }
-  const bounds = annotationScreenBounds(annotation, frames, view);
   if (!bounds) return [];
   const corners: [AnnotationResizeHandle, Point][] = [
     ['nw', { x: bounds.x, y: bounds.y }],
@@ -266,4 +315,13 @@ function distanceToSegment(point: Point, start: Point, end: Point): number {
     Math.min(1, ((point.x - start.x) * dx + (point.y - start.y) * dy) / (dx * dx + dy * dy)),
   );
   return Math.hypot(point.x - (start.x + t * dx), point.y - (start.y + t * dy));
+}
+
+function isPointNearBounds(point: Point, bounds: Rect, tolerance: number): boolean {
+  return (
+    point.x >= bounds.x - tolerance &&
+    point.x <= bounds.x + bounds.width + tolerance &&
+    point.y >= bounds.y - tolerance &&
+    point.y <= bounds.y + bounds.height + tolerance
+  );
 }

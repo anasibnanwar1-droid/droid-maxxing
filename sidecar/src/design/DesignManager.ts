@@ -104,6 +104,10 @@ export class DesignManager {
     return this.automaticValidator.cancel(appSessionId);
   }
 
+  close(): Promise<void> {
+    return this.previews.close();
+  }
+
   // Injected into Design Mode prompts so agents read the project DNA before
   // touching UI code.
   // A tiny, prompt-cache-friendly pointer — not the DNA contents. Values are

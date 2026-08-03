@@ -10,7 +10,9 @@ import { fitRects, MAX_ZOOM, readableFrameRect } from './studioCanvasMath';
 import {
   annotationHandles,
   annotationPointToWorld,
+  annotationScreenGeometry,
   hitTestAnnotation,
+  hitTestAnnotationGeometry,
   isMeaningfulAnnotation,
   measureDistance,
   moveAnnotation,
@@ -109,6 +111,21 @@ test('canvas shapes can be selected, moved, and resized', () => {
     { x: 10, y: 10 },
     { x: 90, y: 40 },
   ]);
+});
+
+test('screen geometry resolves a frame once and prefilters distant line hits', () => {
+  const view = emptyStudioCanvasState().view;
+  const geometry = annotationScreenGeometry(measure, [frame], view);
+
+  assert.deepEqual(geometry, {
+    points: [
+      { x: 310, y: 220 },
+      { x: 410, y: 220 },
+    ],
+    bounds: { x: 310, y: 220, width: 100, height: 0 },
+  });
+  assert.equal(hitTestAnnotationGeometry(measure, { x: 360, y: 224 }, geometry), true);
+  assert.equal(hitTestAnnotationGeometry(measure, { x: 360, y: 300 }, geometry), false);
 });
 
 test('prompt context includes visible drawing geometry while keeping the user bubble clean', () => {

@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdir, mkdtemp, open, readFile, realpath, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, open, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, extname, join, relative, resolve, sep } from 'node:path';
 import type { CanvasFrameSource, ServerEvent } from '../protocol.js';
@@ -24,12 +24,33 @@ interface PreviewFailure {
   error: string;
 }
 
+export interface GeneratedPreviewStorage {
+  createRoot: () => Promise<string>;
+  removeRoot: (root: string) => Promise<void>;
+}
+
+const defaultGeneratedPreviewStorage: GeneratedPreviewStorage = {
+  createRoot: () => mkdtemp(join(tmpdir(), 'droidex-preview-')),
+  removeRoot: (root) => rm(root, { recursive: true, force: true }),
+};
+
 export class DesignPreviewManager {
+  private generatedPreviewRoot?: Promise<string>;
+
   constructor(
     private readonly emit: (event: ServerEvent) => void,
     private readonly previewServer: PreviewServer,
     private readonly baseDir?: string,
+    private readonly generatedPreviewStorage = defaultGeneratedPreviewStorage,
   ) {}
+
+  async close(): Promise<void> {
+    const root = this.generatedPreviewRoot;
+    this.generatedPreviewRoot = undefined;
+    if (!root) return;
+    const path = await root.catch(() => undefined);
+    if (path) await this.generatedPreviewStorage.removeRoot(path);
+  }
 
   async renderBrandBook(cwd: string, shouldEmit = true): Promise<PreviewResult> {
     const state = readDnaState(cwd);
@@ -45,7 +66,7 @@ export class DesignPreviewManager {
       motionMd: state.motion.content,
     });
     const id = `brand-${createHash('sha1').update(cwd).digest('hex').slice(0, 12)}`;
-    const dir = await generatedPreviewDirectory(id);
+    const dir = await this.generatedPreviewDirectory(id);
     await writeFile(join(dir, 'index.html'), html, 'utf8');
     return this.serve({
       cwd,
@@ -129,7 +150,7 @@ export class DesignPreviewManager {
     const proto = listPrototypes(cwd).find((entry) => entry.id === prototypeId);
     if (!proto) return { ok: false, error: `No prototype ${prototypeId}.` };
     const id = previewId(cwd, `proto:${proto.id}`);
-    const dir = await generatedPreviewDirectory(id);
+    const dir = await this.generatedPreviewDirectory(id);
     await writeFile(join(dir, 'index.html'), proto.html, 'utf8');
     return this.serve({
       cwd,
@@ -260,6 +281,21 @@ export class DesignPreviewManager {
     }
     return { ok: true, url, name: input.label, source: input.source };
   }
+
+  private async generatedPreviewDirectory(id: string): Promise<string> {
+    const root = this.generatedPreviewRoot ?? this.generatedPreviewStorage.createRoot();
+    this.generatedPreviewRoot = root;
+    let path: string;
+    try {
+      path = await root;
+    } catch (error) {
+      if (this.generatedPreviewRoot === root) this.generatedPreviewRoot = undefined;
+      throw error;
+    }
+    const dir = join(path, id);
+    await mkdir(dir, { recursive: true });
+    return dir;
+  }
 }
 
 function previewId(cwd: string, key: string): string {
@@ -335,15 +371,6 @@ async function readPreviewAsset(
   } finally {
     await asset.close();
   }
-}
-
-let generatedPreviewRoot: Promise<string> | undefined;
-
-async function generatedPreviewDirectory(id: string): Promise<string> {
-  generatedPreviewRoot ??= mkdtemp(join(tmpdir(), 'droidex-preview-'));
-  const dir = join(await generatedPreviewRoot, id);
-  await mkdir(dir, { recursive: true });
-  return dir;
 }
 
 function previewReferences(content: string): string[] {

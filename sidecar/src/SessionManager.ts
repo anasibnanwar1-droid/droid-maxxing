@@ -1513,6 +1513,7 @@ export class SessionManager {
       this.compaction.clearAll();
     });
     await run(() => this.browsers.closeAll());
+    await run(() => this.design.close());
     await run(() => this.previewServer.close());
     await run(() => {
       this.history.close();

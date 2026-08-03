@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type PointerEvent as ReactPointerEvent,
@@ -10,8 +11,9 @@ import { pushEscapeLayer } from '../environment/usePopover';
 import { useStudioCanvas, type StudioAnnotation } from './StudioCanvasContext';
 import { screenToWorld, type Point } from './studioCanvasMath';
 import {
-  hitResizeHandle,
-  hitTestAnnotation,
+  annotationScreenGeometry,
+  hitResizeHandleGeometry,
+  hitTestAnnotationGeometry,
   isMeaningfulAnnotation,
   moveAnnotation,
   resizeAnnotation,
@@ -50,6 +52,26 @@ export function useCanvasDrawing(rootRef: RefObject<HTMLDivElement | null>) {
   const editRef = useRef<EditGesture | null>(null);
   const pointerIdRef = useRef<number | null>(null);
   const escapeCleanupRef = useRef<(() => void) | null>(null);
+  const hoverPointRef = useRef<Point | null>(null);
+  const hoverFrameRef = useRef<number | null>(null);
+  const annotationTargets = useMemo(
+    () =>
+      studio.annotations
+        .map((annotation) => ({
+          annotation,
+          geometry: annotationScreenGeometry(annotation, studio.frames, studio.view),
+        }))
+        .reverse(),
+    [studio.annotations, studio.frames, studio.view],
+  );
+  const hoverStateRef = useRef({
+    targets: annotationTargets,
+    selectedAnnotationId: studio.selectedAnnotationId,
+  });
+  hoverStateRef.current = {
+    targets: annotationTargets,
+    selectedAnnotationId: studio.selectedAnnotationId,
+  };
 
   const screenFromEvent = (event: ReactPointerEvent): Point => {
     const rect = rootRef.current?.getBoundingClientRect();
@@ -108,20 +130,23 @@ export function useCanvasDrawing(rootRef: RefObject<HTMLDivElement | null>) {
   const beginEdit = (event: ReactPointerEvent): boolean => {
     if (studio.tool !== 'select' || event.button !== 0) return false;
     const screen = screenFromEvent(event);
-    const selected = studio.annotations.find(
-      (annotation) => annotation.id === studio.selectedAnnotationId,
+    const selected = annotationTargets.find(
+      ({ annotation }) => annotation.id === studio.selectedAnnotationId,
     );
-    const handle = selected ? hitResizeHandle(selected, screen, studio.frames, studio.view) : null;
-    const annotation =
+    const handle = selected
+      ? hitResizeHandleGeometry(selected.annotation, screen, selected.geometry)
+      : null;
+    const target =
       selected && handle
         ? selected
-        : [...studio.annotations]
-            .reverse()
-            .find((candidate) => hitTestAnnotation(candidate, screen, studio.frames, studio.view));
-    if (!annotation) {
+        : annotationTargets.find(({ annotation, geometry }) =>
+            hitTestAnnotationGeometry(annotation, screen, geometry),
+          );
+    if (!target) {
       studioDispatch({ type: 'SELECT_ANNOTATION', id: null });
       return false;
     }
+    const { annotation } = target;
     const start = worldPointToAnnotation(annotation, worldFromEvent(event), studio.frames);
     editRef.current = {
       id: annotation.id,
@@ -206,26 +231,37 @@ export function useCanvasDrawing(rootRef: RefObject<HTMLDivElement | null>) {
 
   const updateHover = (event: ReactPointerEvent) => {
     if (studio.tool !== 'select') {
-      if (cursor !== null) setCursor(null);
+      if (hoverFrameRef.current !== null) cancelAnimationFrame(hoverFrameRef.current);
+      hoverFrameRef.current = null;
+      hoverPointRef.current = null;
+      setCursor((current) => (current === null ? current : null));
       return;
     }
-    const screen = screenFromEvent(event);
-    const selected = studio.annotations.find(
-      (annotation) => annotation.id === studio.selectedAnnotationId,
-    );
-    const handle = selected ? hitResizeHandle(selected, screen, studio.frames, studio.view) : null;
-    const overAnnotation =
-      handle !== null ||
-      [...studio.annotations]
-        .reverse()
-        .some((annotation) => hitTestAnnotation(annotation, screen, studio.frames, studio.view));
-    const next = handle ? cursorForHandle(handle) : overAnnotation ? 'move' : null;
-    if (next !== cursor) setCursor(next);
+    hoverPointRef.current = screenFromEvent(event);
+    if (hoverFrameRef.current !== null) return;
+    hoverFrameRef.current = requestAnimationFrame(() => {
+      hoverFrameRef.current = null;
+      const point = hoverPointRef.current;
+      if (!point) return;
+      const { targets, selectedAnnotationId } = hoverStateRef.current;
+      const selected = targets.find(({ annotation }) => annotation.id === selectedAnnotationId);
+      const handle = selected
+        ? hitResizeHandleGeometry(selected.annotation, point, selected.geometry)
+        : null;
+      const overAnnotation =
+        handle !== null ||
+        targets.some(({ annotation, geometry }) =>
+          hitTestAnnotationGeometry(annotation, point, geometry),
+        );
+      const next = handle ? cursorForHandle(handle) : overAnnotation ? 'move' : null;
+      setCursor((current) => (current === next ? current : next));
+    });
   };
 
   useEffect(
     () => () => {
       escapeCleanupRef.current?.();
+      if (hoverFrameRef.current !== null) cancelAnimationFrame(hoverFrameRef.current);
     },
     [],
   );

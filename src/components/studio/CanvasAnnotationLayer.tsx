@@ -1,47 +1,67 @@
+import { memo, useMemo } from 'react';
 import { useStudioCanvas, type StudioAnnotation } from './StudioCanvasContext';
 import type { Point } from './studioCanvasMath';
 import {
   ANNOTATION_COLORS,
-  annotationHandles,
+  annotationHandlesFromGeometry,
   annotationRect,
-  annotationScreenBounds,
-  annotationScreenPoints,
+  annotationScreenGeometry,
   measureDistance,
+  type AnnotationScreenGeometry,
 } from './studioAnnotations';
 
 export default function CanvasAnnotationLayer({ draft }: { draft: StudioAnnotation | null }) {
   const { studio } = useStudioCanvas();
-  const annotations = draft ? [...studio.annotations, draft] : studio.annotations;
-  if (annotations.length === 0) return null;
+  const annotations = useMemo(
+    () =>
+      studio.annotations.map((annotation) => ({
+        annotation,
+        geometry: annotationScreenGeometry(annotation, studio.frames, studio.view),
+      })),
+    [studio.annotations, studio.frames, studio.view],
+  );
+  const draftGeometry = useMemo(
+    () => (draft ? annotationScreenGeometry(draft, studio.frames, studio.view) : null),
+    [draft, studio.frames, studio.view],
+  );
+  const selected = annotations.find(
+    ({ annotation }) => annotation.id === studio.selectedAnnotationId,
+  );
+  if (annotations.length === 0 && !draft) return null;
 
   return (
     <svg
       aria-label="Canvas annotations"
       className="pointer-events-none absolute inset-0 h-full w-full overflow-visible"
     >
-      {annotations.map((annotation) => (
+      {annotations.map(({ annotation, geometry }) => (
         <AnnotationShape
           key={annotation.id}
           annotation={annotation}
-          isDraft={annotation === draft}
+          geometry={geometry}
+          isDraft={false}
         />
       ))}
-      {studio.tool === 'select' && studio.selectedAnnotationId && (
-        <SelectionHandles annotationId={studio.selectedAnnotationId} />
+      {draft && draftGeometry && (
+        <AnnotationShape annotation={draft} geometry={draftGeometry} isDraft />
+      )}
+      {studio.tool === 'select' && selected && (
+        <SelectionHandles annotation={selected.annotation} geometry={selected.geometry} />
       )}
     </svg>
   );
 }
 
-function AnnotationShape({
+const AnnotationShape = memo(function AnnotationShape({
   annotation,
+  geometry,
   isDraft,
 }: {
   annotation: StudioAnnotation;
+  geometry: AnnotationScreenGeometry;
   isDraft: boolean;
 }) {
-  const { studio } = useStudioCanvas();
-  const points = annotationScreenPoints(annotation, studio.frames, studio.view);
+  const { points } = geometry;
   const color = ANNOTATION_COLORS[annotation.color];
   const fill = annotation.fill === 'none' ? 'transparent' : ANNOTATION_COLORS[annotation.fill];
   const strokeWidth = annotation.strokeWidth;
@@ -117,7 +137,7 @@ function AnnotationShape({
       )}
     </g>
   );
-}
+});
 
 function ArrowHead({ start, end, color }: { start: Point; end: Point; color: string }) {
   const angle = Math.atan2(end.y - start.y, end.x - start.x);
@@ -142,13 +162,16 @@ function ArrowHead({ start, end, color }: { start: Point; end: Point; color: str
   );
 }
 
-function SelectionHandles({ annotationId }: { annotationId: string }) {
-  const { studio } = useStudioCanvas();
-  const annotation = studio.annotations.find((candidate) => candidate.id === annotationId);
-  if (!annotation) return null;
-  const bounds = annotationScreenBounds(annotation, studio.frames, studio.view);
+function SelectionHandles({
+  annotation,
+  geometry,
+}: {
+  annotation: StudioAnnotation;
+  geometry: AnnotationScreenGeometry;
+}) {
+  const { bounds } = geometry;
   if (!bounds) return null;
-  const handles = annotationHandles(annotation, studio.frames, studio.view);
+  const handles = annotationHandlesFromGeometry(annotation, geometry);
   return (
     <g>
       <rect

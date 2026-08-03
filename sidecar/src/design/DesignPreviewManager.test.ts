@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -141,4 +141,41 @@ test('library images resolve to stable confined HTTP assets without exposing fil
   const response = await fetch(first.url ?? '');
   assert.equal(response.status, 200);
   assert.deepEqual(Buffer.from(await response.arrayBuffer()), Buffer.from('abc'));
+});
+
+test('generated preview storage retries failed setup and is removed on close', async (t) => {
+  const cwd = mkdtempSync(join(tmpdir(), 'droidex-generated-preview-'));
+  const prototypeDir = join(cwd, '.droidex', 'prototypes');
+  const generatedRoot = join(cwd, 'generated');
+  mkdirSync(prototypeDir, { recursive: true });
+  writeFileSync(join(prototypeDir, 'card.html'), '<h1>Card</h1>', 'utf8');
+  const server = new PreviewServer();
+  let createAttempts = 0;
+  const previews = new DesignPreviewManager(() => undefined, server, undefined, {
+    createRoot: async () => {
+      createAttempts += 1;
+      if (createAttempts === 1) throw new Error('temporary storage unavailable');
+      mkdirSync(generatedRoot);
+      return generatedRoot;
+    },
+    removeRoot: async (root) => {
+      rmSync(root, { recursive: true, force: true });
+    },
+  });
+  t.after(async () => {
+    await previews.close();
+    await server.close();
+    rmSync(cwd, { recursive: true, force: true });
+  });
+
+  const failed = await previews.render({ cwd, prototypeId: 'card' });
+  assert.deepEqual(failed, { ok: false, error: 'temporary storage unavailable' });
+
+  const rendered = await previews.render({ cwd, prototypeId: 'card' });
+  assert.equal(rendered.ok, true);
+  assert.equal(createAttempts, 2);
+  assert.equal(existsSync(generatedRoot), true);
+
+  await previews.close();
+  assert.equal(existsSync(generatedRoot), false);
 });
