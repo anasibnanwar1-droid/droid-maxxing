@@ -42,6 +42,8 @@ import {
 import { ArrowUp, ChevronDown, Plus, SlidersHorizontal, Square, FileText, X } from 'lucide-react';
 import ComposerMenu, { type MenuItem, type SlashCommand } from './ComposerMenu';
 import ModelSelectorPopover from './ModelSelectorPopover';
+import AutonomySelector from './AutonomySelector';
+import { AUTONOMY_LABELS, missionStartAllowed } from '../lib/autonomy';
 import {
   buildVisibleChildSettingsTarget,
   childSettingsReadinessLabel,
@@ -51,7 +53,7 @@ import PermissionInline from './PermissionInline';
 import PlanApprovalInline from './PlanApprovalInline';
 import { ModelIcon, providerOf } from './ModelIcon';
 import { StartInBar } from './environment/StartInBar';
-import type { SkillInfo } from '../types/bridge';
+import type { Autonomy, SkillInfo } from '../types/bridge';
 
 const ACCENT = 'var(--droid-accent)';
 const accentMix = (pct: number) =>
@@ -419,6 +421,17 @@ export default function PromptInput({
     ? activeSession.sessionPurpose === 'mission-control'
     : state.missionControlMode;
 
+  // Autonomy snapshot for a session this composer would create: the draft
+  // override when the user picked one, otherwise the persisted app default.
+  const draftAutonomy = state.draftAutonomy ?? state.defaultAutonomy;
+  const [missionAutonomyGateOpen, setMissionAutonomyGateOpen] = useState(false);
+  // The gate's premise is gone once the draft is at High (e.g. raised through
+  // the selector while the gate is showing).
+  useEffect(() => {
+    if (missionAutonomyGateOpen && missionStartAllowed(draftAutonomy))
+      setMissionAutonomyGateOpen(false);
+  }, [missionAutonomyGateOpen, draftAutonomy]);
+
   // A single chat carries its own model/reasoning; only fall back to the global
   // default while composing a brand-new chat that has no session yet.
   const chatScoped = !missionPreview && !!activeSession;
@@ -494,17 +507,17 @@ export default function PromptInput({
   // Re-entry guard: a send awaits markGitTurnStart before the input is cleared,
   // so without this a second Enter/click during that window would resend the
   // same payload (and create a duplicate session turn).
-  const handleSubmit = async (mode: SubmitMode = 'queue') => {
+  const handleSubmit = async (mode: SubmitMode = 'queue', autonomyOverride?: Autonomy) => {
     if (submittingRef.current) return;
     submittingRef.current = true;
     try {
-      await runSubmit(mode);
+      await runSubmit(mode, autonomyOverride);
     } finally {
       submittingRef.current = false;
     }
   };
 
-  const runSubmit = async (mode: SubmitMode = 'queue') => {
+  const runSubmit = async (mode: SubmitMode = 'queue', autonomyOverride?: Autonomy) => {
     const text = input.trim();
     // Snapshot the composer revision before the settle wait: text, files, and
     // skills are render-closure snapshots, so anything typed or staged while
@@ -563,6 +576,13 @@ export default function PromptInput({
 
     // Mission Control preview with no active session: prompt is the objective.
     if (missionPreview && !activeSession) {
+      const autonomy = autonomyOverride ?? draftAutonomy;
+      // Missions run unattended, so starting one below High is blocked until
+      // the user explicitly chooses High — the app never elevates silently.
+      if (!missionStartAllowed(autonomy)) {
+        setMissionAutonomyGateOpen(true);
+        return;
+      }
       const dir = state.draftChat?.cwd ?? (await pickDirectory());
       if (!dir) return;
       const { primary, worker, validator } = state.agentConfig;
@@ -581,7 +601,7 @@ export default function PromptInput({
         goal: composed,
         sessionPurpose: 'mission-control',
         interactionMode: 'agi',
-        autonomy: 'medium',
+        autonomy,
         modelId: primary.modelId,
         reasoningEffort: primary.reasoning,
         compactionModel:
@@ -612,7 +632,7 @@ export default function PromptInput({
         goal: composed,
         sessionPurpose: 'chat',
         interactionMode: isSpecMode ? 'spec' : 'auto',
-        autonomy: 'medium',
+        autonomy: draftAutonomy,
         modelId: primary.modelId,
         reasoningEffort: primary.reasoning,
         compactionModel:
@@ -1021,6 +1041,34 @@ export default function PromptInput({
             </div>
           )}
 
+          {missionAutonomyGateOpen && missionPreview && !activeSession && (
+            <div className="mx-3 mt-3 flex items-center gap-3 rounded-xl border border-droid-border bg-droid-bg/60 px-3 py-2.5">
+              <p className="flex-1 min-w-0 text-[11px] text-droid-text-secondary leading-snug">
+                Missions run unattended, so they need{' '}
+                <span className="text-droid-text font-medium">High autonomy</span> to start.
+              </p>
+              <button
+                onClick={() => {
+                  dispatch({ type: 'SET_DRAFT_AUTONOMY', autonomy: 'high' });
+                  setMissionAutonomyGateOpen(false);
+                  void handleSubmit('queue', 'high');
+                }}
+                className="shrink-0 px-2.5 py-1.5 rounded-lg text-[11px] font-medium text-droid-bg transition-opacity hover:opacity-90"
+                style={{ background: ACCENT }}
+              >
+                Set High and start
+              </button>
+              <button
+                onClick={() => {
+                  setMissionAutonomyGateOpen(false);
+                }}
+                className="shrink-0 px-2 py-1.5 rounded-lg text-[11px] text-droid-text-muted hover:text-droid-text transition-colors"
+              >
+                Not now
+              </button>
+            </div>
+          )}
+
           <textarea
             ref={textareaRef}
             value={input}
@@ -1160,6 +1208,50 @@ export default function PromptInput({
             <div className="flex-1 min-w-0" />
 
             <ContextStatusCluster />
+
+            {/* Autonomy: read-only for a targeted child, live control for an
+                open session, draft override before a session exists. */}
+            {targetChild ? (
+              <span
+                className="flex items-center gap-1.5 px-2 py-1 rounded-lg text-[11px] text-droid-text-muted shrink-0"
+                title={
+                  targetChild.autonomy
+                    ? `Child session autonomy: ${AUTONOMY_LABELS[targetChild.autonomy]}`
+                    : 'Child autonomy is managed by the provider until the session is opened'
+                }
+              >
+                <span>
+                  {targetChild.autonomy
+                    ? AUTONOMY_LABELS[targetChild.autonomy]
+                    : 'Provider managed'}
+                </span>
+              </span>
+            ) : activeSession ? (
+              <AutonomySelector
+                scope="session"
+                value={activeSession.autonomy}
+                pending={activeSession.appSessionId in state.pendingAutonomy}
+                onSelect={(level) => {
+                  dispatch({
+                    type: 'AUTONOMY_UPDATE_REQUESTED',
+                    appSessionId: activeSession.appSessionId,
+                    autonomy: level,
+                  });
+                  updateSessionSettings({
+                    appSessionId: activeSession.appSessionId,
+                    autonomy: level,
+                  });
+                }}
+              />
+            ) : (
+              <AutonomySelector
+                scope="draft"
+                value={draftAutonomy}
+                onSelect={(level) => {
+                  dispatch({ type: 'SET_DRAFT_AUTONOMY', autonomy: level });
+                }}
+              />
+            )}
 
             {isLive && !hasContent ? (
               <button

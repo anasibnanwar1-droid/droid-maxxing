@@ -29,7 +29,6 @@ import type {
   SessionSummary,
   ProgressEntry,
   ModelInfo,
-  Autonomy,
 } from '../types/bridge';
 import { extractFileChange, type FileChange } from '../lib/diff';
 import { environmentLabels } from '../lib/repoEnvironment';
@@ -53,6 +52,7 @@ import { sessionIsLive } from '../lib/sessions';
 import { MessageFeed } from './chat';
 import EditorOpenMenu, { openCodebase, openCurrentDiff } from './EditorOpenMenu';
 import PromptInput from './PromptInput';
+import AutonomySelector from './AutonomySelector';
 
 const ACCENT = 'var(--droid-accent)';
 const accentMix = (pct: number) => `color-mix(in srgb, var(--droid-accent) ${pct}%, transparent)`;
@@ -365,8 +365,6 @@ function modelLabel(models: ModelInfo[], id?: string): string {
   return models.find((m) => m.id === id)?.displayName ?? id;
 }
 
-const AUTONOMY_CYCLE: Autonomy[] = ['off', 'low', 'medium', 'high'];
-
 function AgentsSection({
   mission,
   childSessions,
@@ -381,24 +379,26 @@ function AgentsSection({
   onSelectChild: (childSessionId: string | null) => void;
 }) {
   const { state, dispatch } = useStore();
-  const cycleAutonomy = () => {
-    const i = AUTONOMY_CYCLE.indexOf(mission.autonomy);
-    const next = AUTONOMY_CYCLE[(i + 1) % AUTONOMY_CYCLE.length];
-    dispatch({ type: 'SESSION_UPDATED', session: { ...mission, autonomy: next } });
-    updateSessionSettings({ appSessionId: mission.appSessionId, autonomy: next });
-  };
 
   return (
     <section>
       <div className="flex items-center justify-between px-2 mb-1.5">
         <SectionLabel>Agents</SectionLabel>
-        <button
-          onClick={cycleAutonomy}
-          title="Cycle autonomy (off → low → medium → high)"
-          className="px-2 py-0.5 rounded-md text-[10px] font-medium capitalize text-droid-text-secondary hover:text-droid-text hover:bg-droid-elevated/60 transition-colors"
-        >
-          {mission.autonomy} autonomy
-        </button>
+        {/* Confirmed autonomy only — the pill never moves ahead of the provider. */}
+        <AutonomySelector
+          scope="session"
+          value={mission.autonomy}
+          pending={mission.appSessionId in state.pendingAutonomy}
+          placement="down"
+          onSelect={(level) => {
+            dispatch({
+              type: 'AUTONOMY_UPDATE_REQUESTED',
+              appSessionId: mission.appSessionId,
+              autonomy: level,
+            });
+            updateSessionSettings({ appSessionId: mission.appSessionId, autonomy: level });
+          }}
+        />
       </div>
 
       <div className="space-y-0.5">

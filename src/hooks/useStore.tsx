@@ -9,6 +9,7 @@ import {
   type DesignModes,
 } from './designModeState';
 import type {
+  Autonomy,
   FactoryDefaultSettings,
   ServerEvent,
   SessionSummary,
@@ -26,6 +27,7 @@ import type {
   DesignReference,
 } from '../types/bridge';
 import { addWorkspaceCwd } from '../lib/workspaces';
+import { loadDefaultAutonomy, saveDefaultAutonomy } from '../lib/autonomy';
 import {
   applyFactoryCompactionDefaults,
   compactionSettingsSnapshot,
@@ -206,6 +208,15 @@ export interface AppState {
   theme: ThemeConfig;
   missionControlMode: boolean;
   draftChat: { cwd: string; branch?: string } | null;
+  // Persisted app-wide default autonomy for new sessions. Owned by Settings;
+  // factory-default reloads and draft/session changes never overwrite it.
+  defaultAutonomy: Autonomy;
+  // Autonomy override for the current unsent draft. Null means the draft
+  // follows `defaultAutonomy`; reset whenever the draft lifecycle resets.
+  draftAutonomy: Autonomy | null;
+  // Live-session autonomy changes awaiting provider confirmation, keyed by
+  // appSessionId. The UI keeps showing the confirmed value while pending.
+  pendingAutonomy: Record<string, Autonomy>;
   // One-shot text seeded into the composer (welcome-screen suggestion cards,
   // saved-note clicks). A fresh id per seed lets re-clicking re-arm the effect.
   composerSeed: { text: string; id: number } | null;
@@ -437,7 +448,11 @@ type Action =
   | { type: 'SET_COMPACTION_TOKEN_LIMIT_GLOBAL'; limit?: number }
   | { type: 'SET_COMPACTION_TOKEN_LIMIT_FOR_MODEL'; modelId: string; limit?: number }
   | { type: 'SET_LIVE_ENTER_BEHAVIOR'; behavior: LiveEnterBehavior }
-  | { type: 'SET_IMAGE_PASTE_QUALITY'; quality: ImagePasteQuality };
+  | { type: 'SET_IMAGE_PASTE_QUALITY'; quality: ImagePasteQuality }
+  | { type: 'SET_DEFAULT_AUTONOMY'; autonomy: Autonomy }
+  | { type: 'SET_DRAFT_AUTONOMY'; autonomy: Autonomy }
+  | { type: 'AUTONOMY_UPDATE_REQUESTED'; appSessionId: string; autonomy: Autonomy }
+  | { type: 'AUTONOMY_UPDATE_SETTLED'; appSessionId: string };
 
 const defaultTheme: ThemeConfig = {
   mode: 'dark',
@@ -879,6 +894,9 @@ export const initialState: AppState = {
   theme: loadTheme(),
   missionControlMode: persistedUiState.missionControlMode ?? false,
   draftChat: null,
+  defaultAutonomy: loadDefaultAutonomy(),
+  draftAutonomy: null,
+  pendingAutonomy: {},
   composerSeed: null,
   workspaceCwds: loadWorkspaceCwds(),
   browserOpen: false,
@@ -1116,6 +1134,7 @@ function baseReducer(state: AppState, action: Action): AppState {
         transcripts,
         activeAppSessionId: action.session.appSessionId,
         draftChat: null,
+        draftAutonomy: null,
         selectedChild: null,
         childAccess,
         childRuntime,
@@ -1159,10 +1178,24 @@ function baseReducer(state: AppState, action: Action): AppState {
               ),
             }
           : state.contextStats;
+      // A pending autonomy change settles when the confirmed summary reaches
+      // the requested level, or when the level changed through another path.
+      const requestedAutonomy =
+        m.appSessionId in state.pendingAutonomy ? state.pendingAutonomy[m.appSessionId] : undefined;
+      const autonomySettled =
+        requestedAutonomy !== undefined &&
+        (m.autonomy === requestedAutonomy ||
+          (m.appSessionId in state.sessions && m.autonomy !== previous.autonomy));
+      const pendingAutonomy = autonomySettled
+        ? Object.fromEntries(
+            Object.entries(state.pendingAutonomy).filter(([id]) => id !== m.appSessionId),
+          )
+        : state.pendingAutonomy;
       return {
         ...state,
         sessions: { ...state.sessions, [m.appSessionId]: m },
         contextStats,
+        pendingAutonomy,
       };
     }
 
@@ -1178,6 +1211,9 @@ function baseReducer(state: AppState, action: Action): AppState {
         childAccess,
         childRuntime,
         contextStats: { ...state.contextStats, child: childContext },
+        pendingAutonomy: Object.fromEntries(
+          Object.entries(state.pendingAutonomy).filter(([id]) => id !== action.appSessionId),
+        ),
         selectedChild:
           state.selectedChild?.parentAppSessionId === action.appSessionId
             ? null
@@ -1829,6 +1865,7 @@ function baseReducer(state: AppState, action: Action): AppState {
         activeAppSessionId: action.id,
         sessionLastSeen,
         draftChat: null,
+        draftAutonomy: null,
         selectedChild: null,
       };
     }
@@ -2053,6 +2090,7 @@ function baseReducer(state: AppState, action: Action): AppState {
       return {
         ...next,
         draftChat: { cwd: action.cwd, branch: action.branch },
+        draftAutonomy: null,
         activeAppSessionId: null,
         missionControlMode: false,
         selectedChild: null,
@@ -2398,6 +2436,30 @@ function baseReducer(state: AppState, action: Action): AppState {
       return { ...state, imagePasteQuality: quality };
     }
 
+    case 'SET_DEFAULT_AUTONOMY': {
+      saveDefaultAutonomy(action.autonomy);
+      return { ...state, defaultAutonomy: action.autonomy };
+    }
+
+    case 'SET_DRAFT_AUTONOMY':
+      return { ...state, draftAutonomy: action.autonomy };
+
+    case 'AUTONOMY_UPDATE_REQUESTED':
+      return {
+        ...state,
+        pendingAutonomy: { ...state.pendingAutonomy, [action.appSessionId]: action.autonomy },
+      };
+
+    case 'AUTONOMY_UPDATE_SETTLED': {
+      if (!(action.appSessionId in state.pendingAutonomy)) return state;
+      return {
+        ...state,
+        pendingAutonomy: Object.fromEntries(
+          Object.entries(state.pendingAutonomy).filter(([id]) => id !== action.appSessionId),
+        ),
+      };
+    }
+
     default:
       return state;
   }
@@ -2493,6 +2555,7 @@ function finiteNumber(value: unknown): number | undefined {
 
 /* ── Bridge event adapter ── */
 export function toastMessageForEvent(ev: ServerEvent): string | undefined {
+  if (ev.type === 'error' && ev.code === 'session.autonomy_update_failed') return ev.message;
   return ev.type === 'child.error' && ev.operation !== 'open' ? ev.message : undefined;
 }
 
@@ -2554,6 +2617,14 @@ export function adaptEvent(ev: ServerEvent): Action | null {
     case 'question.requested':
       return { type: 'SESSION_QUESTION', question: ev.question };
     case 'error':
+      // A failed autonomy change is recoverable: the session keeps its last
+      // confirmed level, the pending state settles, and the toast carries the
+      // message (see toastMessageForEvent).
+      if (ev.code === 'session.autonomy_update_failed') {
+        return ev.appSessionId
+          ? { type: 'AUTONOMY_UPDATE_SETTLED', appSessionId: ev.appSessionId }
+          : null;
+      }
       if (ev.recoverable) return null;
       if (ev.appSessionId) {
         return {

@@ -68,6 +68,10 @@ export interface ChildSessionSummary {
   prompt?: string;
   modelId: string;
   reasoningEffort?: ReasoningEffort;
+  // Confirmed effective autonomy, runtime-scoped: present only while the child
+  // is live in this runtime (opened at least once). Absent for historical or
+  // never-opened children; never inherited from the parent.
+  autonomy?: Autonomy;
   spawnLink?: ChildSpawnLink;
   transcriptAvailable: boolean;
   startedAt?: number;
@@ -520,7 +524,8 @@ export type ClientCommand =
       compactionModel?: string;
       compactionTokenLimit?: number | null;
       compactionTokenLimitPerModel?: Record<string, number>;
-      autonomy?: Autonomy;
+      // Explicit snapshot chosen by the sender; there is no sidecar fallback.
+      autonomy: Autonomy;
       workerModel?: string;
       workerReasoning?: ReasoningEffort;
       validatorModel?: string;

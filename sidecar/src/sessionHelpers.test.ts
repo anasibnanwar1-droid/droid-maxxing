@@ -4,15 +4,20 @@ import test from 'node:test';
 import type { FactoryDefaultSettings, SessionSummary } from './protocol.js';
 import {
   buildResumedSession,
-  createAutonomyForCommand,
   createMissionAgentDefaultsForMode,
   createModelDefaultsForMode,
   defaultsModeForSummary,
+  requireAutonomyForCommand,
 } from './sessionHelpers.js';
 
-test('create defaults preserve explicit autonomy and mode-specific primary settings', () => {
-  assert.equal(createAutonomyForCommand({}, { autonomy: 'high' }), 'high');
-  assert.equal(createAutonomyForCommand({ autonomy: 'low' }, { autonomy: 'high' }), 'low');
+test('create requires an explicit autonomy snapshot and never falls back', () => {
+  assert.equal(requireAutonomyForCommand({ autonomy: 'low' }), 'low');
+  assert.equal(requireAutonomyForCommand({ autonomy: 'high' }), 'high');
+  assert.throws(() => requireAutonomyForCommand({}), /requires an explicit autonomy/);
+  assert.throws(
+    () => requireAutonomyForCommand({ autonomy: 'invalid' as never }),
+    /requires an explicit autonomy/,
+  );
 
   const defaults: Pick<
     FactoryDefaultSettings,

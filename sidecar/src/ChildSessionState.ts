@@ -1,7 +1,7 @@
 import type { FactorySession } from './DroidRuntime.js';
 import type { PersistedChildSession, PersistedChildSpawnLink } from './history.js';
-import type { ReasoningEffort, SessionSummary } from './protocol.js';
-import { reasoningValue, type SessionInitResult } from './sessionHelpers.js';
+import type { Autonomy, ReasoningEffort, SessionSummary } from './protocol.js';
+import { normalizeAutonomy, reasoningValue, type SessionInitResult } from './sessionHelpers.js';
 /* eslint-disable @typescript-eslint/no-unused-vars -- persisted-only fields are intentionally omitted. */
 export interface ChildIdentity {
   parentAppSessionId: string;
@@ -10,6 +10,7 @@ export interface ChildIdentity {
 export interface ChildSettings {
   modelId?: string;
   reasoningEffort?: ReasoningEffort;
+  autonomy?: Autonomy;
 }
 export interface ChildSpawnObservation {
   parentAppSessionId: string;
@@ -48,6 +49,10 @@ export interface ChildSessionState {
   prompt?: string;
   modelId: string;
   reasoningEffort?: ReasoningEffort;
+  // Confirmed effective autonomy reported by the child's init result. Runtime-
+  // scoped: set when the child opens, cleared when its runtime closes or is
+  // replaced. Never persisted and never inherited from the parent.
+  autonomy?: Autonomy;
   spawnLink?: PersistedChildSession['spawnLink'];
   transcriptAvailable: boolean;
   startedAt?: number;
@@ -91,6 +96,7 @@ export function childSettingsFromInit(init: SessionInitResult): ChildSettings {
   return {
     modelId: init.settings?.modelId,
     reasoningEffort: reasoningValue(init.settings?.reasoningEffort),
+    autonomy: normalizeAutonomy(init.settings?.autonomyLevel),
   };
 }
 
@@ -134,6 +140,10 @@ export function persistedChild(child: ChildSessionState): PersistedChildSession 
 export function childSummary(child: ChildSessionState | PersistedChildSession) {
   const record = 'identity' in child ? persistedChild(child) : child;
   const { providerSessionId: _provider, updatedAt: _updatedAt, ...summary } = record;
+  // Autonomy is runtime-scoped: only a live child reports its confirmed value.
+  if ('identity' in child && child.runtime && child.autonomy) {
+    return { ...summary, autonomy: child.autonomy };
+  }
   return summary;
 }
 

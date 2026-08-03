@@ -170,11 +170,17 @@ function phaseFromInit(init: SessionInitResult): SessionPhase {
   return phaseFromState(init.mission?.state) ?? 'paused';
 }
 
-export function createAutonomyForCommand(
-  command: { autonomy?: Autonomy },
-  defaults: Pick<FactoryDefaultSettings, 'autonomy'>,
-): Autonomy {
-  return normalizeAutonomy(command.autonomy) ?? defaults.autonomy ?? 'low';
+// session.create must carry an explicit autonomy snapshot chosen by the
+// sender; the sidecar never invents one. Anything missing or invalid fails
+// fast instead of silently falling back to a default.
+export function requireAutonomyForCommand(command: { autonomy?: Autonomy }): Autonomy {
+  const autonomy = normalizeAutonomy(command.autonomy);
+  if (!autonomy) {
+    throw new Error(
+      'session.create requires an explicit autonomy level (off, low, medium, or high)',
+    );
+  }
+  return autonomy;
 }
 
 export function createModelDefaultsForMode(

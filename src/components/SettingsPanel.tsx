@@ -24,6 +24,7 @@ import {
 } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ColorField } from './ColorPicker';
+import AutonomySelector from './AutonomySelector';
 import { ModelIcon, providerOf } from './ModelIcon';
 import type { ModelInfo } from '../types/bridge';
 import type { GitWorktree } from '../types/vcs';
@@ -850,6 +851,21 @@ function GeneralSection() {
                 quality: quality as ImagePasteQuality,
               });
             }}
+          />
+        </SettingRow>
+      </div>
+
+      <GroupLabel>Sessions</GroupLabel>
+      <div className="rounded-xl border border-droid-border bg-droid-surface divide-y divide-droid-border mb-8">
+        <SettingRow
+          label="Default autonomy"
+          description="How much new sessions may do without asking. The composer can override it for a single session."
+        >
+          <AutonomySelector
+            scope="settings"
+            value={state.defaultAutonomy}
+            placement="down"
+            onSelect={(level) => dispatch({ type: 'SET_DEFAULT_AUTONOMY', autonomy: level })}
           />
         </SettingRow>
       </div>

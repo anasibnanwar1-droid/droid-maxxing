@@ -14,7 +14,7 @@ import {
   type UpdateSessionSettingsRequestParams,
 } from '@factory/droid-sdk';
 
-import type { ReasoningEffort } from '../protocol.js';
+import type { Autonomy, ReasoningEffort } from '../protocol.js';
 import type {
   CreateRuntimeSessionOptions,
   FactoryRuntime,
@@ -50,6 +50,7 @@ export interface FakeFactorySessionInit {
     modelId?: string;
     reasoningEffort?: ReasoningEffort;
     interactionMode?: 'auto' | 'spec' | 'agi';
+    autonomyLevel?: Autonomy;
   };
   mission?: {
     state?: string;
@@ -123,6 +124,14 @@ export class FakeFactorySession implements FactorySession {
       ...this.initResult,
       sessionId: this.sessionId,
       settings: { ...this.initResult.settings, modelId },
+    });
+  }
+
+  setInitAutonomy(autonomyLevel: Autonomy): void {
+    this.initResult = InitializeSessionResultSchema.parse({
+      ...this.initResult,
+      sessionId: this.sessionId,
+      settings: { ...this.initResult.settings, autonomyLevel },
     });
   }
 
@@ -433,6 +442,7 @@ function buildInitResult(
       ...(settings.interactionMode === undefined
         ? {}
         : { interactionMode: settings.interactionMode }),
+      ...(settings.autonomyLevel === undefined ? {} : { autonomyLevel: settings.autonomyLevel }),
     },
     ...(init.mission === undefined
       ? {}
