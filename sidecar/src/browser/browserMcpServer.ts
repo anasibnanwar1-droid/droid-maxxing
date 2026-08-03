@@ -25,7 +25,7 @@ export function createBrowserMcpServer(
   };
 
   return createSdkMcpServer({
-    name: 'droidmaxx-browser',
+    name: 'droidex-browser',
     version: '0.1.0',
     tools: [
       tool(

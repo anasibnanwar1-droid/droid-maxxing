@@ -54,11 +54,6 @@ export async function downloadAppUpdate(dmgUrl?: string): Promise<AppUpdateResul
   return window.droidControl!.downloadAppUpdate(dmgUrl);
 }
 
-export async function relaunchApp(): Promise<void> {
-  if (!isDesktop()) return;
-  await window.droidControl!.relaunchApp();
-}
-
 export async function openExternal(url: string): Promise<void> {
   if (!isDesktop()) {
     window.open(url, '_blank', 'noopener');

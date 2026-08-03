@@ -71,12 +71,12 @@ contextBridge.exposeInMainWorld('droidControl', {
 
   nativeBrowserOpen: (browserSessionId, url, bounds, viewport) =>
     ipcRenderer.invoke('native-browser-open', { browserSessionId, url, bounds, viewport }),
-  nativeBrowserAttach: (browserSessionId, bounds, url) =>
-    ipcRenderer.invoke('native-browser-attach', { browserSessionId, bounds, url }),
+  nativeBrowserAttach: (browserSessionId, bounds, url, contentZoom) =>
+    ipcRenderer.invoke('native-browser-attach', { browserSessionId, bounds, url, contentZoom }),
   nativeBrowserDetach: (browserSessionId) =>
     ipcRenderer.invoke('native-browser-detach', { browserSessionId }),
-  nativeBrowserSetBounds: (browserSessionId, bounds) =>
-    ipcRenderer.invoke('native-browser-set-bounds', { browserSessionId, bounds }),
+  nativeBrowserSetBounds: (browserSessionId, bounds, contentZoom) =>
+    ipcRenderer.invoke('native-browser-set-bounds', { browserSessionId, bounds, contentZoom }),
   nativeBrowserSetVisible: (browserSessionId, visible) =>
     ipcRenderer.invoke('native-browser-visible', { browserSessionId, visible }),
   nativeBrowserClose: (browserSessionId) =>
@@ -100,5 +100,6 @@ contextBridge.exposeInMainWorld('droidControl', {
   onNativeBrowserDesignPrompt: (handler) => on('native-browser-design-prompt', handler),
   onNativeBrowserLoaded: (handler) => on('native-browser-loaded', handler),
   onNativeBrowserLoadFailed: (handler) => on('native-browser-load-failed', handler),
+  onNativeBrowserReset: (handler) => on('native-browser-reset', handler),
   onNativeBrowserAgentResult: (handler) => on('native-browser-agent-result', handler),
 });

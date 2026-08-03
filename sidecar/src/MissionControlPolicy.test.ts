@@ -311,6 +311,7 @@ function missionSummary(
     workspaceKind: 'none',
     autonomy: 'medium',
     phase: 'running',
+    compacting: false,
     features: [],
     tokensIn: 0,
     tokensOut: 0,

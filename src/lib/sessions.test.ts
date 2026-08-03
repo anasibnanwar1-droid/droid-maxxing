@@ -8,15 +8,16 @@ function session(over: Partial<SessionSummary>): SessionSummary {
 }
 
 test('sessionIsLive treats terminal and awaiting phases as not live', () => {
-  assert.equal(sessionIsLive({ phase: 'completed' }), false);
-  assert.equal(sessionIsLive({ phase: 'paused' }), false);
-  assert.equal(sessionIsLive({ phase: 'awaiting_plan_approval' }), false);
+  assert.equal(sessionIsLive({ phase: 'completed', compacting: false }), false);
+  assert.equal(sessionIsLive({ phase: 'paused', compacting: false }), false);
+  assert.equal(sessionIsLive({ phase: 'awaiting_plan_approval', compacting: false }), false);
   // streaming wins over a non-terminal, not-clearly-active phase
-  assert.equal(sessionIsLive({ phase: 'running', streaming: true }), true);
-  assert.equal(sessionIsLive({ phase: 'running', streaming: false }), false);
+  assert.equal(sessionIsLive({ phase: 'running', streaming: true, compacting: false }), true);
+  assert.equal(sessionIsLive({ phase: 'running', streaming: false, compacting: false }), false);
   // a completed session is never live even while a stale streaming flag lingers
-  assert.equal(sessionIsLive({ phase: 'completed', streaming: true }), false);
-  assert.equal(sessionIsLive({ phase: 'orchestrator_turn' }), true);
+  assert.equal(sessionIsLive({ phase: 'completed', streaming: true, compacting: false }), false);
+  assert.equal(sessionIsLive({ phase: 'orchestrator_turn', compacting: false }), true);
+  assert.equal(sessionIsLive({ phase: 'completed', compacting: true }), true);
 });
 
 test('activeSessionCwds includes the draft, active chat, and live sessions only', () => {

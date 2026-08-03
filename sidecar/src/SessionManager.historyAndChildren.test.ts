@@ -89,6 +89,7 @@ function summary(appSessionId: string, providerSessionId: string): SessionSummar
     autonomy: 'low',
     phase: 'paused',
     streaming: false,
+    compacting: false,
     queuedSends: 0,
     features: [],
     tokensIn: 0,

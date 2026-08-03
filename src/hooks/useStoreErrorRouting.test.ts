@@ -87,6 +87,30 @@ test('a primary error fails only the primary session', () => {
   assert.equal(next.sessions['app-1']?.phase, 'failed');
 });
 
+test('a correlated create error clears only its pending composer and is user-visible', () => {
+  const failure = {
+    type: 'error' as const,
+    code: 'session.create_failed',
+    clientRef: 'create-failed',
+    message: 'Could not start this session',
+  };
+  const action = adaptEvent(failure);
+  assert.ok(action);
+
+  const state = {
+    ...initialState,
+    pendingCompose: {
+      'create-failed': { text: 'Failed draft', skills: [], files: [] },
+      'create-unrelated': { text: 'Keep draft', skills: [], files: [] },
+    },
+  };
+  const next = reducer(state, action);
+
+  assert.equal(next.pendingCompose['create-failed'], undefined);
+  assert.equal(next.pendingCompose['create-unrelated']?.text, 'Keep draft');
+  assert.equal(toastMessageForEvent(failure), failure.message);
+});
+
 test('a matching child-open error settles access without failing the parent session', () => {
   const action = adaptEvent({
     type: 'child.error',

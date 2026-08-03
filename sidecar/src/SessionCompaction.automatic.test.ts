@@ -55,7 +55,12 @@ function createHarness(): Harness {
       getLive: () => undefined,
       resolveSummary: () => undefined,
       replaceProvider: () => undefined,
-      updateSummary: () => undefined,
+      updateSummary: (appSessionId, patch) => {
+        const target = targets.get(resourceId({ kind: 'primary', appSessionId }));
+        if (target?.kind !== 'primary') return undefined;
+        target.liveSession.summary = { ...target.liveSession.summary, ...patch };
+        return target.liveSession.summary;
+      },
     },
     context: {
       recordCompaction: (target) => {
@@ -246,10 +251,12 @@ test(
     h.compaction.subscribePrimary(primary.target);
     primary.session.emitNotification(startedNotification());
     assert.equal(primary.live.autoCompacting, true);
+    assert.equal(primary.live.summary.compacting, true);
     assert.deepEqual(h.trace, ['watchdog:arm:300000', 'status:app-1:Compacting conversation...']);
 
     h.trace.length = 0;
     primary.session.emitNotification(completedNotification());
+    assert.equal(primary.live.summary.compacting, false);
     assert.deepEqual(h.trace, [
       'watchdog:clear:300000',
       'settle:p:app-1:active=false',
@@ -342,6 +349,7 @@ test(
     assert.ok(tightened);
     timers.fire(tightened);
     assert.equal(primary.live.autoCompacting, false);
+    assert.equal(primary.live.summary.compacting, false);
     assert.deepEqual(h.trace, ['settle:p:app-1:active=false']);
 
     primary.session.emitNotification(startedNotification());

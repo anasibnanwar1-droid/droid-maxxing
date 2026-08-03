@@ -62,6 +62,9 @@
     font-size: var(--ui-font-size);
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+    /* Fixed-width digits everywhere: timers, counts, and zoom % stay steady
+       instead of jiggling as values tick. */
+    font-variant-numeric: tabular-nums;
   }
 
   #root {
@@ -476,5 +479,44 @@
     @apply bg-droid-elevated border border-droid-border rounded-lg px-4 py-2.5 text-sm;
     @apply text-droid-text placeholder-droid-text-muted focus:outline-none focus:border-droid-border-hover;
     @apply transition-colors duration-150;
+  }
+
+  .studio-shell {
+    --studio-canvas: color-mix(in srgb, var(--droid-bg) 94%, var(--droid-surface));
+  }
+
+  .studio-canvas {
+    background: var(--studio-canvas);
+  }
+
+  .studio-floating-surface {
+    border: 1px solid var(--droid-border);
+    background: color-mix(in srgb, var(--droid-surface) 92%, transparent);
+    box-shadow: 0 12px 32px rgb(0 0 0 / 16%);
+    backdrop-filter: blur(16px);
+  }
+
+  .studio-popover {
+    border: 1px solid color-mix(in srgb, var(--droid-border) 88%, transparent);
+    border-radius: 16px;
+    background: color-mix(in srgb, var(--droid-surface) 95%, transparent);
+    box-shadow: 0 18px 48px -20px rgb(0 0 0 / 55%);
+    backdrop-filter: blur(18px);
+  }
+
+  .studio-shell :where(button, input, textarea, select):focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--droid-accent) 48%, transparent);
+    outline-offset: 2px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .studio-shell *,
+    .studio-shell *::before,
+    .studio-shell *::after {
+      scroll-behavior: auto !important;
+      transition-duration: 0.01ms !important;
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+    }
   }
 }

@@ -113,8 +113,8 @@ export interface HistoryPage {
   nextCursor?: string;
 }
 
-export type PersistedChildRole = 'worker' | 'validator';
-export type PersistedChildStatus = 'pending' | 'running' | 'paused' | 'completed';
+type PersistedChildRole = 'worker' | 'validator';
+type PersistedChildStatus = 'pending' | 'running' | 'paused' | 'completed';
 
 export interface PersistedChildSpawnLink {
   kind: 'tool-use' | 'spawn';
@@ -225,6 +225,7 @@ export function loadHistoricalSessions(options: HistoricalSummaryFilter = {}): H
         autonomy: settings.autonomy ?? 'low',
         phase: 'paused',
         streaming: false,
+        compacting: false,
         queuedSends: 0,
         features: [],
         tokensIn: 0,
@@ -1254,6 +1255,7 @@ function loadMissionControlSession(dir: string): HistoricalSession & {
       ...modelSettings,
       autonomy: modelSettings.autonomy ?? 'medium',
       phase: STATE_TO_PHASE[String(state.state ?? '')] ?? 'paused',
+      compacting: false,
       features,
       tokensIn: 0,
       tokensOut: 0,

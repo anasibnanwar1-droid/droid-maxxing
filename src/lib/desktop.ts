@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-non-null-assertion, @typescript-eslint/no-empty-function -- Desktop guards establish the preload bridge invariant; non-desktop listeners intentionally return no-op cleanup. */
 import type {
   NativeBrowserAgentAction,
   NativeBrowserAgentResult,
@@ -192,9 +193,14 @@ interface DroidControlApi {
     browserSessionId: string,
     bounds: NativeBrowserBounds,
     url?: string,
+    contentZoom?: number,
   ) => Promise<void>;
   nativeBrowserDetach: (browserSessionId?: string) => Promise<void>;
-  nativeBrowserSetBounds: (browserSessionId: string, bounds: NativeBrowserBounds) => Promise<void>;
+  nativeBrowserSetBounds: (
+    browserSessionId: string,
+    bounds: NativeBrowserBounds,
+    contentZoom?: number,
+  ) => Promise<void>;
   nativeBrowserSetVisible: (browserSessionId: string, visible: boolean) => Promise<void>;
   nativeBrowserClose: (browserSessionId: string) => Promise<void>;
   nativeBrowserReload: (browserSessionId: string) => Promise<void>;
@@ -214,6 +220,7 @@ interface DroidControlApi {
   onNativeBrowserDesignPrompt: (handler: (prompt: NativeBrowserDesignPrompt) => void) => () => void;
   onNativeBrowserLoaded: (handler: (event: NativeBrowserLoaded) => void) => () => void;
   onNativeBrowserLoadFailed: (handler: (event: NativeBrowserLoadFailed) => void) => () => void;
+  onNativeBrowserReset: (handler: () => void) => () => void;
   onNativeBrowserAgentResult: (handler: (result: NativeBrowserAgentResult) => void) => () => void;
 }
 
@@ -276,11 +283,6 @@ export async function getApiKey(): Promise<string | null> {
 export async function setApiKey(key: string): Promise<void> {
   if (!isDesktop()) return;
   await window.droidControl!.setApiKey(key);
-}
-
-export async function clearApiKey(): Promise<void> {
-  if (!isDesktop()) return;
-  await window.droidControl!.clearApiKey();
 }
 
 export async function createTerminal(options: {

@@ -48,6 +48,13 @@ class RejectingInterruptSession extends FakeFactorySession {
   }
 }
 
+class RejectingSendSession extends FakeFactorySession {
+  override async send(...args: Parameters<FakeFactorySession['send']>): Promise<void> {
+    await super.send(...args);
+    throw new Error('steer rejected');
+  }
+}
+
 class CallbackCloseSession extends FakeFactorySession {
   constructor(
     sessionId: string,
@@ -83,8 +90,10 @@ function createHarness(ordinarySummaries: SessionSummary[] = []) {
   let applyPending: (appSessionId: string) => Promise<boolean> = () => Promise.resolve(true);
   let enableAutoCompaction = (): Promise<boolean> => Promise.resolve(true);
   let compactionLimit = (): Promise<number> => Promise.resolve(800);
+  let connectionError: Error | undefined;
   let shutdownStarted = false;
   let closeChildren: (appSessionId: string) => Promise<void> = () => Promise.resolve();
+  let closeDesign: (appSessionId: string) => Promise<void> = () => Promise.resolve();
   let nextEmitFailure: { type: ServerEvent['type']; error: Error } | undefined;
   let now = 10_000;
   let mcpId = 0;
@@ -124,6 +133,7 @@ function createHarness(ordinarySummaries: SessionSummary[] = []) {
     registry,
     ensureConnected: () => {
       calls.push({ target: 'runtime', method: 'ensureConnected', args: [] });
+      if (connectionError) throw connectionError;
     },
     getFactoryDefaults: () => Promise.resolve(defaults),
     maxContextTokensForModel: () => 1_000,
@@ -189,8 +199,11 @@ function createHarness(ordinarySummaries: SessionSummary[] = []) {
     isShutdownStarted: () => shutdownStarted,
     applyPendingSettingsToSummary: (item) => ({ ...item, ...projection }),
     applyPendingSessionSettings: (appSessionId) => applyPending(appSessionId),
-    runPrimaryTurn: async (live, prompt) => {
-      for await (const event of live.session.stream(prompt, { includePartialMessages: true })) {
+    runPrimaryTurn: async (live, prompt, abortSignal) => {
+      for await (const event of live.session.stream(prompt, {
+        includePartialMessages: true,
+        abortSignal,
+      })) {
         void event;
       }
     },
@@ -239,6 +252,10 @@ function createHarness(ordinarySummaries: SessionSummary[] = []) {
       missionForgettingAfterUnregister.push(registry.getLive(appSessionId) === undefined);
       calls.push({ target: 'cleanup', method: 'missionControl.forget', args: [appSessionId] });
     },
+    closeDesignSession: (appSessionId) => {
+      calls.push({ target: 'cleanup', method: 'design.close', args: [appSessionId] });
+      return closeDesign(appSessionId);
+    },
     closeBrowserSession: (appSessionId) => {
       calls.push({ target: 'browser', method: 'browser.close', args: [appSessionId] });
       return Promise.resolve();
@@ -275,11 +292,17 @@ function createHarness(ordinarySummaries: SessionSummary[] = []) {
     setCompactionLimit: (action: () => Promise<number>) => {
       compactionLimit = action;
     },
+    setConnectionError: (error: Error | undefined) => {
+      connectionError = error;
+    },
     setShutdownStarted: (started: boolean) => {
       shutdownStarted = started;
     },
     setChildCloser: (action: (appSessionId: string) => Promise<void>) => {
       closeChildren = action;
+    },
+    setDesignCloser: (action: (appSessionId: string) => Promise<void>) => {
+      closeDesign = action;
     },
     failNextEmit: (type: ServerEvent['type'], error: Error) => {
       nextEmitFailure = { type, error };
@@ -315,6 +338,7 @@ function summary(
     createdAt: 1,
     updatedAt: 1,
     ...patch,
+    compacting: patch.compacting ?? false,
   };
 }
 
@@ -352,9 +376,17 @@ function requireLive(harness: Harness, id: string): LiveSession {
   return live;
 }
 
+function queuedPrompts(harness: Harness, id: string) {
+  return requireLive(harness, id).promptQueue.snapshot();
+}
+
 function interruptCount(harness: Harness): number {
   return harness.calls.filter((call) => call.target === 'provider' && call.method === 'interrupt')
     .length;
+}
+
+function methodCount(harness: Harness, method: string): number {
+  return harness.calls.filter((call) => call.method === method).length;
 }
 
 test('create and cold resume publish only after registration', async () => {
@@ -413,6 +445,15 @@ test('create omits an unarmed daemon compaction limit from its summary', async (
     ),
     true,
   );
+  assert.equal(
+    harness.calls.some(
+      (call) =>
+        call.method === 'status' &&
+        call.args[0] === 'unarmed-create' &&
+        String(call.args[1]).includes('Automatic compaction could not be enabled'),
+    ),
+    true,
+  );
 });
 
 test('create failure closes started MCP resources without publishing', async () => {
@@ -426,8 +467,36 @@ test('create failure closes started MCP resources without publishing', async () 
     false,
   );
   assert.equal(
-    harness.events.some((event) => event.type === 'error' && event.message === 'create failed'),
+    harness.events.some(
+      (event) =>
+        event.type === 'error' &&
+        event.code === 'session.create_failed' &&
+        event.clientRef === 'client-1' &&
+        event.message === 'create failed',
+    ),
     true,
+  );
+});
+
+test('a disconnected create failure remains correlated to its pending composer', async () => {
+  const harness = createHarness();
+  harness.setConnectionError(new Error('Factory is not connected'));
+
+  await harness.lifecycle.create(createCommand());
+
+  assert.equal(
+    harness.events.some(
+      (event) =>
+        event.type === 'error' &&
+        event.code === 'session.create_failed' &&
+        event.clientRef === 'client-1' &&
+        event.message === 'Factory is not connected',
+    ),
+    true,
+  );
+  assert.equal(
+    harness.calls.some((call) => call.method === 'mcp.start'),
+    false,
   );
 });
 
@@ -546,6 +615,101 @@ test('send lazily resumes once and sends the prompt exactly once', async () => {
   assert.deepEqual(provider.prompts, ['only once']);
 });
 
+test('concurrent resumes share one provider and MCP admission', async () => {
+  const harness = createHarness([summary('shared-app', 'shared-provider')]);
+  queueLoad(harness, 'shared-provider');
+  let releaseLimit = (value: number): void => {
+    void value;
+  };
+  harness.setCompactionLimit(
+    () =>
+      new Promise<number>((resolve) => {
+        releaseLimit = resolve;
+      }),
+  );
+
+  const first = harness.lifecycle.resume('shared-app');
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  const second = harness.lifecycle.resume('shared-provider');
+  await new Promise<void>((resolve) => setImmediate(resolve));
+
+  assert.equal(harness.runtime.loadCalls.length, 1);
+  assert.equal(methodCount(harness, 'mcp.start'), 1);
+  releaseLimit(800);
+  assert.deepEqual(await Promise.all([first, second]), [true, true]);
+  assert.equal(methodCount(harness, 'children.attach'), 1);
+  assert.equal(harness.events.filter((event) => event.type === 'session.created').length, 1);
+});
+
+test('a concurrent resume and lazy send share one open and deliver once', async () => {
+  const harness = createHarness([summary('send-app', 'send-provider')]);
+  const provider = queueLoad(harness, 'send-provider');
+  let releaseLimit = (value: number): void => {
+    void value;
+  };
+  harness.setCompactionLimit(
+    () =>
+      new Promise<number>((resolve) => {
+        releaseLimit = resolve;
+      }),
+  );
+
+  const resuming = harness.lifecycle.resume('send-app');
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  const sending = harness.lifecycle.send('send-provider', 'deliver once');
+  await new Promise<void>((resolve) => setImmediate(resolve));
+
+  assert.equal(harness.runtime.loadCalls.length, 1);
+  assert.equal(methodCount(harness, 'mcp.start'), 1);
+  releaseLimit(800);
+  assert.equal(await resuming, true);
+  await sending;
+  assert.deepEqual(provider.prompts, ['deliver once']);
+  assert.equal(methodCount(harness, 'children.attach'), 1);
+});
+
+test('a shared failed resume cleans once and permits a clean retry', async () => {
+  const harness = createHarness([summary('retry-app', 'retry-provider')]);
+  const failedProvider = new FakeFactorySession('retry-provider', {}, harness.calls);
+  const retryProvider = new FakeFactorySession('retry-provider', {}, harness.calls);
+  harness.runtime.loadQueue.set('retry-provider', [failedProvider, retryProvider]);
+  let rejectLimit = (error: Error): void => {
+    void error;
+  };
+  let limitAttempts = 0;
+  harness.setCompactionLimit(() => {
+    limitAttempts += 1;
+    if (limitAttempts > 1) return Promise.resolve(800);
+    return new Promise<number>((_, reject) => {
+      rejectLimit = reject;
+    });
+  });
+
+  const first = harness.lifecycle.resume('retry-app');
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  const second = harness.lifecycle.resume('retry-provider');
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  rejectLimit(new Error('limit unavailable'));
+
+  assert.deepEqual(await Promise.all([first, second]), [false, false]);
+  assert.equal(harness.runtime.loadCalls.length, 1);
+  assert.equal(methodCount(harness, 'mcp.start'), 1);
+  assert.equal(methodCount(harness, 'mcp.close'), 1);
+  assert.equal(methodCount(harness, 'session.close'), 1);
+  assert.equal(harness.registry.getLive('retry-app'), undefined);
+  assert.equal(
+    harness.events.filter(
+      (event) => event.type === 'error' && event.message === 'limit unavailable',
+    ).length,
+    1,
+  );
+
+  assert.equal(await harness.lifecycle.resume('retry-app'), true);
+  assert.equal(harness.runtime.loadCalls.length, 2);
+  assert.equal(methodCount(harness, 'mcp.start'), 2);
+  assert.equal(harness.registry.getLive('retry-app')?.session, retryProvider);
+});
+
 test('failed lazy resume emits only the original load error', async () => {
   const harness = createHarness([summary('lazy-failure-app', 'lazy-failure-provider')]);
   harness.runtime.loadQueue.set('lazy-failure-provider', [new Error('provider load failed')]);
@@ -575,7 +739,72 @@ test('failed turn setup clears streaming so the next send can run', async () => 
   assert.deepEqual(provider.prompts, ['first', 'recovered']);
 });
 
-test('queued sends stay FIFO while send-now prompts are newest first', async () => {
+test('concurrent idle sends admit one provider stream and queue the other', async () => {
+  const harness = createHarness();
+  const provider = queueCreate(harness, 'concurrent-idle-send');
+  await harness.lifecycle.create(createCommand());
+  await provider.waitForPrompts(1);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+
+  const firstTurn = provider.deferNextStream();
+  const firstSend = harness.lifecycle.send('concurrent-idle-send', 'first follow-up');
+  const secondSend = harness.lifecycle.send('concurrent-idle-send', 'second follow-up');
+  await provider.waitForPrompts(2);
+  await secondSend;
+
+  assert.deepEqual(provider.prompts, ['first', 'first follow-up']);
+  assert.deepEqual(queuedPrompts(harness, 'concurrent-idle-send'), [
+    { text: 'second follow-up', priority: 'queue' },
+  ]);
+
+  firstTurn.resolve();
+  await firstSend;
+  await provider.waitForPrompts(3);
+  assert.deepEqual(provider.prompts, ['first', 'first follow-up', 'second follow-up']);
+});
+
+test('exact context telemetry never invokes manual compaction before send or steer', async () => {
+  const harness = createHarness();
+  const provider = queueCreate(harness, 'auto-compaction-only');
+  await harness.lifecycle.create({
+    ...createCommand(),
+    sessionPurpose: 'design',
+  });
+  await provider.waitForPrompts(1);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  harness.registry.updateSummary('auto-compaction-only', {
+    contextTokens: 1_000,
+    contextRemainingTokens: 0,
+    contextAccuracy: 'exact',
+    maxContextTokens: 1_000,
+    compactionTokenLimit: 800,
+  });
+
+  await harness.lifecycle.send('auto-compaction-only', 'Build now');
+
+  const activeTurnGate = provider.deferNextStream();
+  const activeTurn = harness.lifecycle.send('auto-compaction-only', 'Keep working');
+  await provider.waitForPrompts(3);
+  await harness.lifecycle.sendNow('auto-compaction-only', 'Use the calmer direction');
+
+  assert.deepEqual(provider.prompts, [
+    'first',
+    'Build now',
+    'Keep working',
+    'Use the calmer direction',
+  ]);
+  assert.equal(methodCount(harness, 'compactSession'), 0);
+  assert.equal(methodCount(harness, 'send'), 1);
+  assert.equal(
+    requireLive(harness, 'auto-compaction-only').summary.providerSessionId,
+    'auto-compaction-only',
+  );
+
+  activeTurnGate.resolve();
+  await activeTurn;
+});
+
+test('queued sends stay FIFO while consecutive native steers join the active turn', async () => {
   const fifo = createHarness();
   const fifoProvider = queueCreate(fifo, 'fifo');
   const fifoGate = fifoProvider.deferNextStream();
@@ -595,11 +824,11 @@ test('queued sends stay FIFO while send-now prompts are newest first', async () 
   await steered.lifecycle.sendNow('steered', 'steer two');
   steerGate.resolve();
   await steerProvider.waitForPrompts(3);
-  assert.deepEqual(steerProvider.prompts, ['first', 'steer two', 'steer one']);
-  assert.equal(interruptCount(steered), 2);
+  assert.deepEqual(steerProvider.prompts, ['first', 'steer one', 'steer two']);
+  assert.equal(interruptCount(steered), 0);
 });
 
-test('send-now queues without interrupting compaction and reports interrupt rejection', async () => {
+test('send-now queues during compaction and reports native steer rejection', async () => {
   const compacting = createHarness();
   const provider = queueCreate(compacting, 'compacting');
   await compacting.lifecycle.create(createCommand());
@@ -611,25 +840,28 @@ test('send-now queues without interrupting compaction and reports interrupt reje
   live.compacting = false;
   live.autoCompacting = true;
   await compacting.lifecycle.sendNow('compacting', 'automatic');
-  assert.deepEqual(live.pendingSends, ['automatic', 'manual']);
+  assert.deepEqual(live.promptQueue.snapshot(), [
+    { text: 'manual', priority: 'steer' },
+    { text: 'automatic', priority: 'steer' },
+  ]);
   assert.equal(interruptCount(compacting), 0);
   const rejected = createHarness();
-  const rejectingProvider = new RejectingInterruptSession('rejected', {}, rejected.calls);
+  const rejectingProvider = new RejectingSendSession('rejected', {}, rejected.calls);
   const gate = rejectingProvider.deferNextStream();
   rejected.runtime.createQueue.push(rejectingProvider);
   await rejected.lifecycle.create(createCommand());
   await rejectingProvider.waitForPrompts(1);
   await rejected.lifecycle.sendNow('rejected', 'keep queued');
-  assert.deepEqual(requireLive(rejected, 'rejected').pendingSends, ['keep queued']);
-  assert.equal(requireLive(rejected, 'rejected').interruptingForSteer, false);
+  assert.deepEqual(queuedPrompts(rejected, 'rejected'), []);
   assert.equal(
     rejected.events.some(
       (event) => event.type === 'error' && event.code === 'session.send_now_failed',
     ),
     true,
   );
+  assert.deepEqual(rejectingProvider.prompts, ['first', 'keep queued']);
+  assert.equal(requireLive(rejected, 'rejected').streaming, true);
   gate.resolve();
-  await rejectingProvider.waitForPrompts(2);
 });
 
 test('interrupt handles idle, streaming, manual compaction, and auto-compaction states', async () => {
@@ -645,14 +877,14 @@ test('interrupt handles idle, streaming, manual compaction, and auto-compaction 
   live.streaming = true;
   await harness.lifecycle.interrupt('stop');
   assert.equal(interruptCount(harness), 2);
-  assert.equal(live.interrupting, true);
+  assert.equal(live.interrupting, false);
   live.streaming = false;
   live.interrupting = false;
   live.compacting = true;
-  live.pendingSends = ['drop'];
+  live.promptQueue.enqueue('drop', 'queue');
   await harness.lifecycle.interrupt('stop');
   assert.equal(interruptCount(harness), 2);
-  assert.deepEqual(live.pendingSends, []);
+  assert.deepEqual(live.promptQueue.snapshot(), []);
   live.compacting = false;
   live.autoCompacting = true;
   await harness.lifecycle.interrupt('stop');
@@ -694,6 +926,139 @@ test('interrupt handles idle, streaming, manual compaction, and auto-compaction 
     ),
     true,
   );
+});
+
+test('interrupt clears auto-compaction that starts while Stop is in flight', async () => {
+  const harness = createHarness();
+  const provider = queueCreate(harness, 'stop-started-compaction');
+  await harness.lifecycle.create(createCommand());
+  await provider.waitForPrompts(1);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+
+  const live = requireLive(harness, 'stop-started-compaction');
+  const interruptGate = provider.deferNextInterrupt();
+  const stopping = harness.lifecycle.interrupt('stop-started-compaction');
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  live.autoCompacting = true;
+
+  interruptGate.resolve();
+  await stopping;
+
+  assert.equal(live.autoCompacting, false);
+  assert.equal(
+    harness.calls.some(
+      (call) => call.method === 'watchdog.clear' && call.args[0] === 'stop-started-compaction',
+    ),
+    true,
+  );
+});
+
+test('interrupt rejection releases a prompt queued while Stop is in flight', async () => {
+  const harness = createHarness();
+  const provider = queueCreate(harness, 'rejected-stop-queue');
+  await harness.lifecycle.create(createCommand());
+  await provider.waitForPrompts(1);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+
+  const interruptGate = provider.deferNextInterrupt();
+  const stopping = harness.lifecycle.interrupt('rejected-stop-queue');
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  await harness.lifecycle.send('rejected-stop-queue', 'after rejected Stop');
+
+  assert.deepEqual(queuedPrompts(harness, 'rejected-stop-queue'), [
+    { text: 'after rejected Stop', priority: 'queue' },
+  ]);
+
+  interruptGate.reject(new Error('interrupt rejected'));
+  await assert.rejects(stopping, /interrupt rejected/);
+  await provider.waitForPrompts(2);
+
+  assert.deepEqual(provider.prompts, ['first', 'after rejected Stop']);
+  assert.equal(requireLive(harness, 'rejected-stop-queue').interrupting, false);
+  assert.deepEqual(queuedPrompts(harness, 'rejected-stop-queue'), []);
+});
+
+test('interrupt aborts a stalled local stream so the next turn can start', async () => {
+  const harness = createHarness();
+  const provider = queueCreate(harness, 'abort-stalled');
+  provider.deferNextStream();
+  await harness.lifecycle.create(createCommand());
+  await provider.waitForPrompts(1);
+
+  const live = requireLive(harness, 'abort-stalled');
+  assert.equal(live.streaming, true);
+  await harness.lifecycle.interrupt('abort-stalled');
+  await new Promise<void>((resolve) => setImmediate(resolve));
+
+  assert.equal(live.streaming, false);
+  assert.equal(live.turnAbortController, undefined);
+  assert.equal(live.summary.phase, 'paused');
+
+  await harness.lifecycle.send('abort-stalled', 'next turn');
+  assert.deepEqual(provider.prompts, ['first', 'next turn']);
+});
+
+test('compaction settlement cannot start queued work before Stop settles', async () => {
+  const harness = createHarness();
+  const provider = queueCreate(harness, 'stop-compaction-race');
+  await harness.lifecycle.create(createCommand());
+  await provider.waitForPrompts(1);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+
+  const live = requireLive(harness, 'stop-compaction-race');
+  live.autoCompacting = true;
+  const interruptGate = provider.deferNextInterrupt();
+  const stopping = harness.lifecycle.interrupt('stop-compaction-race');
+  await new Promise<void>((resolve) => setImmediate(resolve));
+
+  await harness.lifecycle.send('stop-compaction-race', 'after Stop');
+  live.autoCompacting = false;
+  await harness.lifecycle.settleAfterCompaction('stop-compaction-race');
+
+  assert.deepEqual(provider.prompts, ['first']);
+  assert.deepEqual(queuedPrompts(harness, 'stop-compaction-race'), [
+    { text: 'after Stop', priority: 'queue' },
+  ]);
+
+  interruptGate.resolve();
+  await stopping;
+  await provider.waitForPrompts(2);
+  assert.deepEqual(provider.prompts, ['first', 'after Stop']);
+});
+
+test('interrupt settles a stalled local stream before the provider interrupt returns', async () => {
+  const harness = createHarness();
+  const provider = queueCreate(harness, 'abort-before-provider');
+  provider.deferNextStream();
+  const interruptGate = provider.deferNextInterrupt();
+  await harness.lifecycle.create(createCommand());
+  await provider.waitForPrompts(1);
+
+  const interrupting = harness.lifecycle.interrupt('abort-before-provider');
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  const live = requireLive(harness, 'abort-before-provider');
+  assert.equal(live.streaming, false);
+  assert.equal(live.turnAbortController, undefined);
+
+  interruptGate.resolve();
+  await interrupting;
+});
+
+test('send-now uses native provider steering without stopping the active turn', async () => {
+  const harness = createHarness();
+  const provider = queueCreate(harness, 'steer-provider-gate');
+  const streamGate = provider.deferNextStream();
+  await harness.lifecycle.create(createCommand());
+  await provider.waitForPrompts(1);
+
+  await harness.lifecycle.sendNow('steer-provider-gate', 'replacement');
+  assert.deepEqual(provider.prompts, ['first', 'replacement']);
+  assert.equal(interruptCount(harness), 0);
+  assert.equal(requireLive(harness, 'steer-provider-gate').streaming, true);
+
+  streamGate.resolve();
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(requireLive(harness, 'steer-provider-gate').streaming, false);
 });
 
 test('resuming an already-live session does not reload or persist it', async () => {
@@ -862,6 +1227,46 @@ test('close follows ownership order and closeAll closes its initial snapshot', a
   assert.equal(all.registry.liveSessionsSnapshot().length, 0);
 });
 
+test('close cancels automatic design validation before provider teardown', async () => {
+  const harness = createHarness();
+  const provider = queueCreate(harness, 'design-owner');
+  await harness.lifecycle.create(createCommand());
+  await provider.waitForPrompts(1);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  let releaseValidation = () => {};
+  harness.setDesignCloser(
+    () =>
+      new Promise<void>((resolve) => {
+        releaseValidation = resolve;
+      }),
+  );
+  harness.calls.length = 0;
+
+  const close = harness.lifecycle.close('design-owner');
+  await new Promise<void>((resolve) => setImmediate(resolve));
+
+  assert.deepEqual(
+    harness.calls.filter((call) => call.method === 'design.close').map((call) => call.args[0]),
+    ['design-owner'],
+  );
+  assert.equal(
+    harness.calls.some(
+      (call) => call.method === 'session.close' && call.args[0] === 'design-owner',
+    ),
+    false,
+  );
+
+  releaseValidation();
+  await close;
+
+  assert.equal(
+    harness.calls.some(
+      (call) => call.method === 'session.close' && call.args[0] === 'design-owner',
+    ),
+    true,
+  );
+});
+
 test('closeAll marks its full snapshot before sequential cleanup', async () => {
   const harness = createHarness();
   let releaseFirst = (): void => undefined;
@@ -943,7 +1348,7 @@ test('closing an active session discards queued sends without reopening it', asy
   await new Promise<void>((resolve) => setImmediate(resolve));
 
   assert.deepEqual(provider.prompts, ['active']);
-  assert.deepEqual(live.pendingSends, []);
+  assert.deepEqual(live.promptQueue.snapshot(), []);
   assert.equal(harness.runtime.loadCalls.length, 0);
   assert.equal(harness.registry.getLive('closing'), undefined);
 });
@@ -964,7 +1369,7 @@ test('concurrent close waits for cleanup and discard overrides queue preservatio
   await provider.waitForPrompts(1);
   await new Promise<void>((resolve) => setImmediate(resolve));
   const live = requireLive(harness, 'concurrent-close');
-  live.pendingSends = ['preserve unless user closes'];
+  live.promptQueue.enqueue('preserve unless user closes', 'queue');
 
   const preserving = harness.lifecycle.close('concurrent-close', 'preserve-pending');
   await new Promise<void>((resolve) => setImmediate(resolve));
@@ -976,7 +1381,7 @@ test('concurrent close waits for cleanup and discard overrides queue preservatio
 
   assert.equal(discardSettled, false);
   assert.equal(live.closeMode, 'discard-pending');
-  assert.deepEqual(live.pendingSends, []);
+  assert.deepEqual(live.promptQueue.snapshot(), []);
   finishProviderClose();
   await Promise.all([preserving, discarding]);
   assert.equal(harness.registry.getLive('concurrent-close'), undefined);

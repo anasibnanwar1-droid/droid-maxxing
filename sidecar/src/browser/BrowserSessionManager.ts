@@ -4,6 +4,8 @@ import { join } from 'node:path';
 import { browserDesignReferenceDir } from './browserPaths.js';
 import { normalizeBrowserUrl } from './browserUrl.js';
 import { formatDesignPrompt, writeDesignPromptPack } from './designPromptPacks.js';
+import type { DesignPromptContext } from './designPromptPacks.js';
+import type { AuditElement } from '../design/types.js';
 import type {
   BrowserBox,
   BrowserConsoleEvent,
@@ -62,6 +64,7 @@ export interface BrowserRuntime {
   network(clear?: boolean): Promise<BrowserNetworkEvent[]>;
   console(clear?: boolean): Promise<BrowserConsoleEvent[]>;
   fillCredentials?(): Promise<BrowserSnapshot>;
+  audit?(): Promise<AuditElement[]>;
   close(): Promise<void>;
 }
 
@@ -75,7 +78,7 @@ interface ManagedBrowserSession {
 
 type BrowserInputSource = 'agent' | 'user';
 
-export const DEFAULT_BROWSER_VIEWPORT: BrowserViewport = {
+const DEFAULT_BROWSER_VIEWPORT: BrowserViewport = {
   width: 1200,
   height: 800,
   deviceScaleFactor: 2,
@@ -362,6 +365,7 @@ export class BrowserSessionManager {
     appSessionId: string;
     instruction: string;
     referenceIds: string[];
+    promptContext?: DesignPromptContext;
   }): Promise<{ path: string; prompt: string }> {
     const session = this.requireSession(input.appSessionId);
     const instruction = input.instruction.trim();
@@ -379,7 +383,15 @@ export class BrowserSessionManager {
       instruction,
       references,
     });
-    return { path, prompt: formatDesignPrompt(path, instruction, references) };
+    return { path, prompt: formatDesignPrompt(path, instruction, references, input.promptContext) };
+  }
+
+  async audit(appSessionId: string): Promise<AuditElement[]> {
+    const session = this.requireSession(appSessionId);
+    if (!session.runtime.audit) {
+      throw new Error('This browser runtime does not support style audits.');
+    }
+    return session.runtime.audit();
   }
 
   state(appSessionId: string): BrowserState | undefined {

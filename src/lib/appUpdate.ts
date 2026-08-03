@@ -16,10 +16,6 @@ function emit() {
   for (const listener of listeners) listener();
 }
 
-export function getAppUpdate(): AppUpdateInfo | null {
-  return info;
-}
-
 export async function refreshAppUpdate(): Promise<AppUpdateInfo | null> {
   const next = await ipcCheck();
   // Only surface a positive result; failures or up-to-date checks must not

@@ -95,6 +95,7 @@ function summary(
     createdAt: 1,
     updatedAt: 1,
     ...overrides,
+    compacting: overrides.compacting ?? false,
   };
 }
 

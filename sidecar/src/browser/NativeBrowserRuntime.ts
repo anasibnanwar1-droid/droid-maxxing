@@ -1,4 +1,5 @@
 import type { BrowserNativeRequest, BrowserNativeResult } from '../protocol.js';
+import type { AuditElement } from '../design/types.js';
 import type { BrowserRuntime } from './BrowserSessionManager.js';
 import type {
   BrowserBox,
@@ -125,8 +126,19 @@ export class NativeBrowserRuntime implements BrowserRuntime {
     return this.snapshotFrom(await this.send({ action: 'fillCredentials' }));
   }
 
+  async audit(): Promise<AuditElement[]> {
+    const result = await this.send({ action: 'audit' });
+    if (!result.ok) throw new Error(result.error ?? 'Native browser audit failed.');
+    if (result.auditTruncated) {
+      throw new Error(
+        'Native browser audit exceeded 600 visible elements; the sample is incomplete and cannot be reported as clean.',
+      );
+    }
+    return result.audit ?? [];
+  }
+
   async close(): Promise<void> {
-    await this.send({ action: 'close' }).catch(() => {});
+    await this.send({ action: 'close' }).catch(() => undefined);
   }
 
   private async action(

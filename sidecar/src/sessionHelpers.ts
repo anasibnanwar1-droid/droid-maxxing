@@ -75,6 +75,11 @@ export function defaultsModeForSummary(summary: SessionSummary): SessionInteract
   return 'auto';
 }
 
+/** Design Studio authoring sessions use an explicit purpose, independent of their title. */
+export function isDesignStudioSession(summary: SessionSummary): boolean {
+  return summary.sessionPurpose === 'design';
+}
+
 export function reasoningValue(value?: string): ReasoningEffort | undefined {
   if (
     value === 'off' ||
@@ -329,6 +334,7 @@ export function buildCreatedSessionSummary(input: {
     autonomy: input.autonomy,
     phase: 'intake',
     streaming: false,
+    compacting: false,
     queuedSends: 0,
     features: [],
     tokensIn: 0,
@@ -371,6 +377,7 @@ export function buildResumedSession(input: BuildResumedSessionInput): {
           ? phaseFromInit(input.init)
           : (input.historical?.phase ?? 'paused'),
       streaming: false,
+      compacting: false,
       queuedSends: 0,
       ...(input.historical?.proposal !== undefined ? { proposal: input.historical.proposal } : {}),
       features: resumedFeatures(input.init, classification.sessionPurpose),

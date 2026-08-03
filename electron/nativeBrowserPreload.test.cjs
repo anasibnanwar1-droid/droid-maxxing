@@ -36,3 +36,9 @@ test('browser inspection covers URL-bearing and executable attributes', () => {
 test('select option matching accepts the option label attribute', () => {
   assert.match(source, /cleanText\(item\.label\) === expected/);
 });
+
+test('style audits report when the element sample is truncated', () => {
+  assert.match(source, /const AUDIT_ELEMENT_LIMIT = 600/);
+  assert.match(source, /auditTruncated: audit\.truncated/);
+  assert.match(source, /return \{ elements: out, truncated \}/);
+});

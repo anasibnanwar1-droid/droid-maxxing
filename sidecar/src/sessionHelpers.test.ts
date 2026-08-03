@@ -8,6 +8,7 @@ import {
   createMissionAgentDefaultsForMode,
   createModelDefaultsForMode,
   defaultsModeForSummary,
+  isDesignStudioSession,
 } from './sessionHelpers.js';
 
 test('create defaults preserve explicit autonomy and mode-specific primary settings', () => {
@@ -77,6 +78,7 @@ test('summary defaults depend on purpose and spec mode, not AGI interaction alon
     workspaceKind: 'folder',
     autonomy: 'low',
     phase: 'paused',
+    compacting: false,
     features: [],
     tokensIn: 0,
     tokensOut: 0,
@@ -95,6 +97,8 @@ test('summary defaults depend on purpose and spec mode, not AGI interaction alon
     }),
     'agi',
   );
+  assert.equal(isDesignStudioSession({ ...ordinary, sessionPurpose: 'design' }), true);
+  assert.equal(isDesignStudioSession({ ...ordinary, title: 'Design' }), false);
 });
 
 test('cold resume preserves a persisted Mission Control proposal', () => {
@@ -111,6 +115,7 @@ test('cold resume preserves a persisted Mission Control proposal', () => {
     workspaceKind: 'folder',
     autonomy: 'low',
     phase: 'paused',
+    compacting: false,
     proposal: '# Persisted plan',
     features: [],
     tokensIn: 0,

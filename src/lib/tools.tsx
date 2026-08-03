@@ -70,7 +70,7 @@ export function toolMeta(name?: string, args?: unknown): { cat: ToolCat; detail:
   return { cat, detail: file ?? cmd ?? pattern ?? url ?? childSessionDetail ?? skill ?? '' };
 }
 
-export type TodoStatus = 'completed' | 'in_progress' | 'pending';
+type TodoStatus = 'completed' | 'in_progress' | 'pending';
 export interface TodoItem {
   text: string;
   status: TodoStatus;

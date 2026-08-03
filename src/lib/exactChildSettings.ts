@@ -1,7 +1,7 @@
 import type { ChildSessionSummary, ModelInfo, ReasoningEffort } from '../types/bridge';
 import type { VisibleSessionTarget } from './childSessions';
 
-export type ExactChildRole = 'worker' | 'validator';
+type ExactChildRole = 'worker' | 'validator';
 export type ExactChildSettingsReadiness = 'opening' | 'ready' | 'failed';
 
 export interface ExactChildSettingsTarget {

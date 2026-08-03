@@ -59,6 +59,8 @@ test('formatDesignPrompt returns path-backed context', () => {
   assert.match(text, /References JSON: \/tmp\/pack\.json/);
   assert.match(text, /User instruction:\nMake this cleaner/);
   assert.ok(text.startsWith('Design Mode reference pack:'));
-  assert.match(text, /Avoid AI slop/);
-  assert.match(text, /do not modify backend/i);
+  // Guidance is read on demand via tools, not forced into the prompt.
+  assert.match(text, /design_guidelines/);
+  assert.match(text, /design_dna/);
+  assert.doesNotMatch(text, /Avoid AI slop/);
 });

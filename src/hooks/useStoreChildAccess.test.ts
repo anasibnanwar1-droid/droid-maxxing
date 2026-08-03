@@ -371,6 +371,38 @@ test('creating a new parent invalidates the selected child open request', () => 
   });
 });
 
+test('a new session keeps canvas references on its seeded user message', () => {
+  const pending = reducer(initialState, {
+    type: 'SET_PENDING_COMPOSE',
+    clientRef: 'design-image',
+    text: 'Use this direction',
+    skills: [],
+    files: [],
+    browserRefs: [
+      {
+        id: 'canvas-image',
+        label: 'Clinic inspiration',
+        kind: 'region',
+        imageDataUrl: 'data:image/png;base64,preview',
+      },
+    ],
+  });
+  const next = reducer(pending, {
+    type: 'SESSION_CREATED',
+    clientRef: 'design-image',
+    session: { ...session('design-session'), goal: 'provider prompt', sessionPurpose: 'design' },
+  });
+
+  assert.deepEqual(next.transcripts['design-session']?.[0]?.browserRefs, [
+    {
+      id: 'canvas-image',
+      label: 'Clinic inspiration',
+      kind: 'region',
+      imageDataUrl: 'data:image/png;base64,preview',
+    },
+  ]);
+});
+
 test('resuming a historical parent clears its terminal child access state', () => {
   let state = select(initialState, 'parent-a', 'child-a', 'request-a');
   state = reducer(state, {

@@ -4,16 +4,12 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { PanelLeft, PanelRight } from 'lucide-react';
 import { bridge } from './lib/bridge';
 import {
-  connect,
-  listFactoryDefaults,
-  listSessions,
   loadSessionHistory,
   sendNativeBrowserResult,
   openChild,
   newChildOpenRequestId,
 } from './lib/commands';
 import { isEmbedded } from './lib/embed';
-import { getApiKey } from './lib/desktop';
 import { performNativeBrowserRequest } from './lib/nativeBrowserAgent';
 import {
   activeSessionAfterNativeBrowserRequest,
@@ -24,6 +20,7 @@ import Sidebar from './components/Sidebar';
 import ChatView from './components/ChatView';
 import MissionControl from './components/MissionControl';
 import PromptInput from './components/PromptInput';
+import PromptQueueCoordinator from './components/PromptQueueCoordinator';
 import RightPanel from './components/RightPanel';
 import { ReviewPanel } from './components/environment/ReviewPanel';
 import EditorOpenMenu from './components/EditorOpenMenu';
@@ -32,6 +29,8 @@ import { useRepoStatus } from './hooks/useRepoStatus';
 import CommandPalette from './components/CommandPalette';
 import SettingsPanel from './components/SettingsPanel';
 import { applyTheme, paletteForMode } from './lib/theme';
+import DesignStudio from './components/design/DesignStudio';
+import { useDesignStore } from './hooks/useDesignStore';
 import AskUserModal from './components/AskUserModal';
 import SpecWikiModal from './components/SpecWikiModal';
 import { BrowserFocusWorkspace } from './components/browser/BrowserFocusWorkspace';
@@ -47,6 +46,7 @@ import { FilesWorkspace } from './components/files/FilesWorkspace';
 import { closeTerminalForTab } from './lib/terminal';
 import { utilityPanelForSession, type UtilityTool } from './lib/utilityPanel';
 import { isTerminalInputTarget, isTerminalTabShortcut } from './lib/keyboardShortcuts';
+import { useBridgeSessionBootstrap } from './hooks/useBridgeSessionBootstrap';
 
 function ContextListIcon({ className }: { className?: string }) {
   return (
@@ -74,7 +74,9 @@ const UTILITY_PANE_WIDTH_STORAGE_KEY = 'droid-utility-pane-width';
 
 export default function App() {
   const { state, dispatch } = useStore();
+  const { design, designDispatch } = useDesignStore();
   const embedded = isEmbedded();
+  useBridgeSessionBootstrap(embedded, state.workspaceCwds);
   const onboard = useOnboarding();
   const [forceWizard, setForceWizard] = useState(false);
   const [bannerDismissed, setBannerDismissed] = useState(false);
@@ -173,23 +175,6 @@ export default function App() {
     mq.addEventListener('change', onChange);
     return () => mq.removeEventListener('change', onChange);
   }, [state.theme.mode, dispatch]);
-
-  useEffect(() => {
-    if (embedded) return;
-    void (async () => {
-      await bridge.start();
-      const key = await getApiKey();
-      connect(key ?? '');
-      listFactoryDefaults();
-    })();
-  }, [embedded]);
-
-  useEffect(() => {
-    if (embedded) return;
-    // Load every known session for the chosen workspaces; the sidebar shows the
-    // latest few and reveals the rest behind "Show more" rather than capping.
-    listSessions({ workspaceCwds: state.workspaceCwds, includePlainChats: true });
-  }, [embedded, state.workspaceCwds]);
 
   // Post-onboarding launch tasks: silent CLI update + non-blocking app update
   // check. Runs once, only after the first-run tour is complete.
@@ -320,6 +305,11 @@ export default function App() {
           return;
         }
       }
+      if (e.shiftKey && e.key.toLowerCase() === 'd') {
+        e.preventDefault();
+        designDispatch({ type: 'OPEN_STUDIO' });
+        return;
+      }
       switch (e.key.toLowerCase()) {
         case 'k':
           e.preventDefault();
@@ -341,7 +331,7 @@ export default function App() {
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [dispatch, openUtilityTool, toggleUtilityPane]);
+  }, [dispatch, designDispatch, openUtilityTool, toggleUtilityPane]);
 
   const setupBlocker =
     !showWizard &&
@@ -356,6 +346,7 @@ export default function App() {
       id="app-root"
       className="h-screen w-screen flex flex-col bg-droid-bg text-droid-text overflow-hidden relative"
     >
+      <PromptQueueCoordinator />
       {showBanner && (
         <SetupBanner
           kind="blocker"
@@ -524,7 +515,7 @@ export default function App() {
                 </motion.div>
               )}
             </AnimatePresence>
-            {state.pendingQuestion && <AskUserModal />}
+            {state.pendingQuestion && !design.studioOpen && <AskUserModal />}
           </div>
         </main>
 
@@ -600,6 +591,7 @@ export default function App() {
 
       {state.commandPaletteOpen && <CommandPalette />}
       {state.settingsOpen && <SettingsPanel />}
+      <DesignStudio />
       <SpecWikiModal />
       <Toaster />
 

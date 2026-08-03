@@ -59,7 +59,7 @@ export function attachIframeDesignMode(
   const win = iframe.contentWindow;
   if (!doc || !win || !doc.documentElement) return () => {};
 
-  const overlay = makeBox(doc, '__droidmaxx_fallback_design_overlay', [
+  const overlay = makeBox(doc, '__droidex_fallback_design_overlay', [
     'border:2px solid #2997ff',
     'box-shadow:0 0 0 1px rgba(0,0,0,.45),0 0 0 99999px rgba(0,0,0,.08)',
     'border-radius:4px',
@@ -82,7 +82,7 @@ export function attachIframeDesignMode(
   // Freehand pencil: SVG overlay for multi-stroke drawing.
   const svgNs = 'http://www.w3.org/2000/svg';
   const svg = doc.createElementNS(svgNs, 'svg');
-  svg.id = '__droidmaxx_pencil_svg';
+  svg.id = '__droidex_pencil_svg';
   svg.setAttribute(
     'style',
     [
@@ -103,7 +103,7 @@ export function attachIframeDesignMode(
   let currentPath: SVGPolylineElement | null = null;
 
   // Shift-drag text range highlight.
-  const textHighlight = makeBox(doc, '__droidmaxx_text_highlight', [
+  const textHighlight = makeBox(doc, '__droidex_text_highlight', [
     'background:rgba(47,128,237,.25)',
     'border-radius:2px',
     'mix-blend-mode:multiply',

@@ -38,6 +38,22 @@ test('native browser invoke handlers authorize the main renderer', () => {
   }
 });
 
+test('studio browser content zoom follows canvas scale and resets when detached', () => {
+  assert.match(
+    mainSource,
+    /attachNativeBrowser\(browserSessionId, bounds, \{ restoreUrl: url, contentZoom \}\)/,
+  );
+  assert.match(mainSource, /setNativeBrowserBounds\(browserSessionId, bounds, contentZoom\)/);
+  assert.match(
+    mainSource,
+    /function detachNativeBrowser[\s\S]*?setNativeBrowserContentZoom\(entry, 1\)/,
+  );
+  assert.match(
+    mainSource,
+    /contents\.setZoomFactor\(normalizeNativeBrowserContentZoom\(contentZoom\)\)/,
+  );
+});
+
 test('force reload does not reuse the Review accelerator', () => {
   assert.match(mainSource, /accelerator: 'CmdOrCtrl\+Alt\+R'/);
   assert.doesNotMatch(mainSource, /accelerator: 'CmdOrCtrl\+Shift\+R'/);
@@ -59,4 +75,19 @@ test('main renderer reload closes renderer-owned terminals before navigation', (
   assert.match(mainSource, didStartNavigationCleanup);
   assert.match(mainSource, /contents\.on\('render-process-gone', cleanupForRendererReplacement\)/);
   assert.match(mainSource, explicitReloadCleanup);
+});
+
+test('sidecar recovery resets native browsers once and exposes terminal failure', () => {
+  assert.match(
+    mainSource,
+    /function resetNativeBrowsersAfterSidecarFailure\(\) \{\s*closeAllNativeBrowsers\(\);\s*if \(isWindowUsable\(mainWindow\)\) \{\s*mainWindow\.webContents\.send\('native-browser-reset'\);/,
+  );
+  assert.match(
+    mainSource,
+    /onUnexpectedExit: \(\{ code, signal, error, delayMs, failureCount \}\) => \{\s*if \(failureCount === 1\) resetNativeBrowsersAfterSidecarFailure\(\);/,
+  );
+  assert.match(
+    mainSource,
+    /onTerminalFailure: \(\{ code, signal, error, failureCount \}\) => \{[\s\S]*dialog\.showErrorBox\([\s\S]*DROIDEX runtime could not start/,
+  );
 });

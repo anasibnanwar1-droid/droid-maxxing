@@ -3,6 +3,7 @@
   "entry": [
     "src/main.tsx",
     "vite.config.ts",
+    "playwright*.config.ts",
     "electron/*.cjs",
     "src/**/*.test.ts",
     "src/**/*.test.tsx"

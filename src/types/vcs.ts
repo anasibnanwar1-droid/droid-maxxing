@@ -21,7 +21,7 @@ export const DIFF_SCOPES = [
 
 export type DiffScope = (typeof DIFF_SCOPES)[number];
 
-export type DiffFileStatus =
+type DiffFileStatus =
   | 'added'
   | 'modified'
   | 'deleted'
@@ -70,7 +70,7 @@ export interface GitEnvironment {
   isGitHub?: boolean;
 }
 
-export interface GitBranch {
+interface GitBranch {
   name: string;
   upstream: string | null;
   ahead: number;
@@ -171,7 +171,7 @@ export interface DetectPrResult {
 // when gh omits the bucket, so other strings are possible at runtime. The
 // `string & {}` arm keeps the literals suggested without collapsing the union
 // to plain string.
-export type PrCheckBucket = 'pass' | 'fail' | 'pending' | 'skipping' | 'cancel' | (string & {});
+type PrCheckBucket = 'pass' | 'fail' | 'pending' | 'skipping' | 'cancel' | (string & {});
 
 export interface PrCheck {
   name: string;

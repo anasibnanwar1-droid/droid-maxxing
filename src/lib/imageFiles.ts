@@ -27,7 +27,7 @@ export function blobToDataUrl(blob: Blob): Promise<string> {
   });
 }
 
-export function loadImage(dataUrl: string): Promise<HTMLImageElement> {
+function loadImage(dataUrl: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const img = new Image();
     img.onload = () => {

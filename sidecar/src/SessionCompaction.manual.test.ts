@@ -178,7 +178,7 @@ function closeCount(calls: RecordedCall[], providerSessionId: string): number {
   ).length;
 }
 
-test('manual in-place compaction refreshes context and returns ready to settle', async () => {
+test('manual compaction without provider swap refreshes context and returns ready to settle', async () => {
   const h = createHarness();
   const { live, session } = addLive(h);
   session.nextCompactResult = { newSessionId: session.sessionId, removedCount: 1 };
@@ -196,6 +196,20 @@ test('manual in-place compaction refreshes context and returns ready to settle',
     'provider-1',
     { customInstructions: 'preserve decisions' },
   ]);
+});
+
+test('manual compaction publishes its full active interval on the session summary', async () => {
+  const h = createHarness();
+  const { live, session } = addLive(h);
+  const compactGate = session.deferNextCompaction();
+  session.nextCompactResult = { newSessionId: session.sessionId, removedCount: 1 };
+
+  const compacting = h.compaction.compact('app-1');
+  assert.equal(live.summary.compacting, true);
+
+  compactGate.resolve();
+  await compacting;
+  assert.equal(live.summary.compacting, false);
 });
 
 test('manual noop and failure outcomes remain ready to settle', async () => {
@@ -224,6 +238,7 @@ test('manual noop and failure outcomes remain ready to settle', async () => {
     kind: 'ready-to-settle',
   });
   assert.equal(failedLive.compacting, false);
+  assert.equal(failedLive.summary.compacting, false);
   assert.deepEqual(failedHarness.refreshed, []);
   assert.deepEqual([failedLive.summary.contextTokens, failedLive.summary.autoCompactions], [80, 2]);
   assert.deepEqual(failedHarness.statuses, [

@@ -10,6 +10,7 @@ import {
   type LiveOperationTarget,
 } from './SessionContext.js';
 import type { LiveSession } from './SessionLifecycle.js';
+import { PrimaryPromptQueue } from './PrimaryPromptQueue.js';
 import { SessionRegistry } from './SessionRegistry.js';
 import {
   FakeFactoryRuntime,
@@ -28,7 +29,7 @@ interface Harness {
   contextWindowNotes: [string, number][];
 }
 
-function createHarness(): Harness {
+function createHarness(options: { providerTimeoutMs?: number } = {}): Harness {
   const calls: RecordedCall[] = [];
   const events: ServerEvent[] = [];
   const contextWindowNotes: [string, number][] = [];
@@ -52,6 +53,7 @@ function createHarness(): Harness {
     noteContextWindow: (modelId, contextWindowTokens) => {
       contextWindowNotes.push([modelId, contextWindowTokens]);
     },
+    ...options,
   });
   return { calls, events, runtime, history, registry, context, contextWindowNotes };
 }
@@ -67,7 +69,7 @@ function registerLive(
     session,
     streaming: false,
     autoCompacting: false,
-    pendingSends: [],
+    promptQueue: new PrimaryPromptQueue(),
     mcpServers: [],
     mcpConfigs: [],
   };
@@ -425,6 +427,7 @@ test('polling and cleanup are idempotent and reset child generation state', asyn
   h.context.startPolling(target);
   await Promise.resolve();
   assert.equal(session.contextStatsCalls, 1);
+  await new Promise<void>((resolve) => setImmediate(resolve));
   h.context.stopPolling(target);
   h.context.stopPolling(target);
   h.context.startPolling(target);
@@ -442,6 +445,40 @@ test('polling and cleanup are idempotent and reset child generation state', asyn
   h.events.length = 0;
   await h.context.refresh(childTarget);
   assert.equal(contextEvents(h).at(-1)?.stats.compactions, 0);
+});
+
+test('overlapping refreshes share one provider read and preserve a persistence request', async () => {
+  const h = createHarness();
+  const { live, session } = registerLive(h, 'app-1');
+  const target = primaryTarget(h, live);
+  const gate = session.deferNextContextStats();
+
+  const pollingRefresh = h.context.refresh(target, { persist: false });
+  const finalRefresh = h.context.refresh(target);
+
+  assert.equal(session.contextStatsCalls, 1);
+  gate.resolve();
+  await Promise.all([pollingRefresh, finalRefresh]);
+
+  assert.equal(session.contextStatsCalls, 1);
+  assert.equal(contextEvents(h).length, 1);
+  assert.equal(
+    h.events.some((event) => event.type === 'session.updated'),
+    true,
+  );
+});
+
+test('a hung provider context read settles at the local deadline without duplicate calls', async () => {
+  const h = createHarness({ providerTimeoutMs: 0 });
+  const { live, session } = registerLive(h, 'app-1');
+  const target = primaryTarget(h, live);
+  const gate = session.deferNextContextStats();
+
+  await Promise.all([h.context.refresh(target), h.context.refresh(target)]);
+
+  assert.equal(session.contextStatsCalls, 1);
+  assert.equal(contextEvents(h).length, 0);
+  gate.resolve();
 });
 
 test('a stale child runtime cannot stop its replacement poller', async (t) => {
@@ -558,6 +595,7 @@ function summary(appSessionId: string, providerSessionId: string): SessionSummar
     reasoningEffort: ReasoningEffort.Low,
     autonomy: 'low',
     phase: 'paused',
+    compacting: false,
     features: [],
     tokensIn: 0,
     tokensOut: 0,

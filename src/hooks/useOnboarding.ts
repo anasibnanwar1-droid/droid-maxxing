@@ -5,7 +5,7 @@ import { setApiKey as persistApiKey } from '../lib/desktop';
 import { getOnboarding, setOnboarding, type OnboardingState } from '../lib/onboarding';
 import type { EnvironmentReport, InstallChannel } from '../types/bridge';
 
-export interface RuntimeStatus {
+interface RuntimeStatus {
   mode: 'cli_auth';
   droidPath: string;
   apiKeyConfigured: boolean;

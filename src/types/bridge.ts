@@ -1,7 +1,7 @@
 // Bridge protocol shared between the Node sidecar and the React frontend.
 // The frontend keeps a mirror copy at src/types/bridge.ts — keep them in sync.
 
-export type SessionPhase =
+type SessionPhase =
   | 'intake'
   | 'planning'
   | 'awaiting_plan_approval'
@@ -13,11 +13,10 @@ export type SessionPhase =
   | 'completed'
   | 'failed';
 
-export type FeatureStatus = 'pending' | 'in_progress' | 'completed' | 'cancelled';
+type FeatureStatus = 'pending' | 'in_progress' | 'completed' | 'cancelled';
 export type SessionRole = 'primary' | 'worker' | 'validator';
 export type SessionPurpose = 'chat' | 'design' | 'mission-control';
 export type SessionInteractionMode = 'auto' | 'spec' | 'agi';
-export type RunStatus = 'pending' | 'running' | 'paused' | 'done' | 'failed' | 'blocked';
 export type Autonomy = 'off' | 'low' | 'medium' | 'high';
 export type ReasoningEffort =
   | 'off'
@@ -51,10 +50,10 @@ export interface ProgressEntry {
   workerChildSessionId?: string;
 }
 
-export type ChildRole = 'worker' | 'validator';
-export type ChildStatus = 'pending' | 'running' | 'paused' | 'completed';
+type ChildRole = 'worker' | 'validator';
+type ChildStatus = 'pending' | 'running' | 'paused' | 'completed';
 
-export interface ChildSpawnLink {
+interface ChildSpawnLink {
   kind: 'tool-use' | 'spawn';
   id: string;
 }
@@ -95,6 +94,7 @@ export interface SessionSummary {
   autonomy: Autonomy;
   phase: SessionPhase;
   streaming?: boolean; // true while a turn is actively generating
+  compacting: boolean; // true for the full primary manual or automatic compaction interval
   queuedSends?: number;
   proposal?: string; // markdown plan from propose_mission
   features: BridgeFeature[];
@@ -145,7 +145,7 @@ export interface TranscriptEvent {
   compactType?: 'auto' | 'manual';
 }
 
-export type BrowserTranscriptReferenceKind = 'element' | 'region' | 'text';
+type BrowserTranscriptReferenceKind = 'element' | 'region' | 'text';
 
 export interface BrowserTranscriptReference {
   id: string;
@@ -227,14 +227,14 @@ export interface FactoryDefaultSettings {
 
 export type InstallChannel = 'script' | 'brew' | 'npm';
 
-export interface PackageManagers {
+interface PackageManagers {
   brew: boolean;
   npm: boolean;
   curl: boolean;
   pnpm: boolean;
 }
 
-export interface CliInfo {
+interface CliInfo {
   present: boolean;
   path: string;
   version?: string;
@@ -263,13 +263,13 @@ export interface ContextStatsSnapshot {
   compactions?: number;
 }
 
-export interface ContextBreakdownCategory {
+interface ContextBreakdownCategory {
   name: string;
   tokens: number;
   colorKey?: string;
 }
 
-export interface ContextBreakdownSnapshot {
+interface ContextBreakdownSnapshot {
   modelId?: string;
   modelDisplayName?: string;
   contextBudget: number;
@@ -278,7 +278,7 @@ export interface ContextBreakdownSnapshot {
   categories: ContextBreakdownCategory[];
 }
 
-export interface SessionHistoryEntry {
+interface SessionHistoryEntry {
   providerSessionId: string;
   title: string;
   cwd?: string;
@@ -392,7 +392,8 @@ export type BrowserNativeAction =
   | 'console'
   | 'capture'
   | 'close'
-  | 'fillCredentials';
+  | 'fillCredentials'
+  | 'audit';
 
 export interface BrowserNativeRequest {
   requestId: string;
@@ -426,10 +427,183 @@ export interface BrowserNativeResult {
   networkEvents?: BrowserNetworkEvent[];
   consoleEvents?: BrowserConsoleEvent[];
   image?: string;
+  audit?: AuditElement[];
+  auditTruncated?: boolean;
   error?: string;
 }
 
-export interface ElementSource {
+// ── Design platform ──────────────────────────────────────────────────
+
+export interface DesignTokens {
+  colors: Record<string, string>;
+  fonts: { sans?: string; mono?: string; display?: string };
+  typeScale: number[];
+  spacing: number[];
+  radii: number[];
+  shadows?: string[];
+  allowlist?: TokenAllowRule[];
+}
+
+export type MotionDuration = number | [number, number];
+
+export interface MotionTokens {
+  durations: Record<string, MotionDuration>;
+  easings: Record<string, string>;
+  pressScale?: number;
+  reducedMotion: 'disable' | 'reduce';
+}
+
+interface TokenAllowRule {
+  selector?: string;
+  property?: string;
+  value?: string;
+  note?: string;
+}
+
+export interface DnaFileState {
+  path: string;
+  exists: boolean;
+  content: string;
+}
+
+export interface DnaState {
+  cwd: string;
+  design: DnaFileState;
+  motion: DnaFileState;
+  tokens?: DesignTokens;
+  motionTokens?: MotionTokens;
+  /** Id of the saved DNA entry currently applied, if any. */
+  activeSavedId?: string | null;
+}
+
+/** A user-finalized design direction, re-applicable from the Libraries tab. */
+export interface SavedDnaEntry {
+  id: string;
+  name: string;
+  tagline?: string;
+  createdAt: string;
+  tokens: DesignTokens;
+  design: string;
+  motion: string;
+  source: 'scan' | 'interview' | 'library' | 'manual';
+  sourceLibraryId?: string;
+}
+
+export interface DnaLibrarySummary {
+  id: string;
+  name: string;
+  tagline: string;
+  colors: string[];
+  fonts: string[];
+}
+
+export interface DnaDraft {
+  cwd: string;
+  content: string;
+  motion: string;
+  tokens: DesignTokens;
+  sources: string[];
+}
+
+export interface ValidatorPage {
+  id: string;
+  url: string;
+  label?: string;
+}
+
+export interface ValidatorConfig {
+  pages: ValidatorPage[];
+  viewports: ('desktop' | 'laptop' | 'tablet' | 'mobile')[];
+  fixPrompt?: string;
+  runAfterDesignPrompt?: boolean;
+}
+
+type FindingSeverity = 'error' | 'warning';
+
+type FindingRule =
+  | 'off-palette-color'
+  | 'off-scale-font-size'
+  | 'off-scale-radius'
+  | 'unknown-font-family'
+  | 'off-scale-spacing';
+
+export interface ValidatorFinding {
+  id: string;
+  rule: FindingRule;
+  severity: FindingSeverity;
+  pageId: string;
+  viewport: string;
+  selector: string;
+  label: string;
+  property: string;
+  actual: string;
+  expected: string;
+  box?: { x: number; y: number; width: number; height: number };
+}
+
+export interface ValidatorReport {
+  cwd: string;
+  startedAt: string;
+  finishedAt: string;
+  pagesAudited: number;
+  elementsAudited: number;
+  findings: ValidatorFinding[];
+}
+
+export interface AuditElement {
+  selector: string;
+  tag: string;
+  label?: string;
+  box: { x: number; y: number; width: number; height: number };
+  styles: Partial<Record<string, string>>;
+}
+
+export interface DesignLibraryItem {
+  id: string;
+  name: string;
+  note?: string;
+  url: string;
+  createdAt: string;
+  screenshotPath?: string;
+  mimeType?: 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif';
+  category?: 'moodboard' | 'inspiration' | 'reference';
+  selector?: string;
+  source?: { component?: string; file?: string; line?: number };
+  styles?: Record<string, string>;
+  html?: string;
+}
+
+export interface PrototypeInfo {
+  id: string;
+  name: string;
+  path: string;
+  updatedAt: string;
+  html: string;
+}
+
+export interface ComponentRegistryEntry {
+  name: string;
+  file: string;
+  line: number;
+  exportKind: 'default' | 'named';
+  props?: string;
+}
+
+export interface DesignSwapTarget {
+  label: string;
+  selector?: string;
+  file?: string;
+  line?: number;
+  component?: string;
+}
+
+export type DesignSwapReplacementRef =
+  | { kind: 'component'; name: string; file: string }
+  | { kind: 'reference'; id: string };
+
+export type DesignSwapStrategy = 'preserve-api' | 'exact-copy';
+
+interface ElementSource {
   framework?: 'react' | 'vue' | 'svelte' | 'unknown';
   component?: string;
   componentChain?: string[];
@@ -439,7 +613,7 @@ export interface ElementSource {
   confidence: 'exact' | 'attribute' | 'heuristic' | 'none';
 }
 
-export interface DesignAnchorAncestor {
+interface DesignAnchorAncestor {
   tag: string;
   component?: string;
   selector?: string;
@@ -489,6 +663,80 @@ export interface DesignReference {
   scroll?: { x: number; y: number };
   screenshot?: DesignSelectionScreenshot;
   createdAt?: string;
+}
+
+export type CanvasFrameSource =
+  | { type: 'url'; url: string }
+  | { type: 'workspace-html'; relativePath: string }
+  | { type: 'prototype'; prototypeId: string }
+  | { type: 'brand-book' }
+  | {
+      type: 'component';
+      file: string;
+      name: string;
+      exportKind: 'default' | 'named';
+    };
+
+interface CanvasFrameRecord {
+  id: string;
+  name: string;
+  source: CanvasFrameSource;
+  kind: 'route' | 'generated' | 'showcase' | 'prototype';
+  viewport: {
+    mode: 'fit' | 'desktop' | 'laptop' | 'tablet' | 'mobile' | 'custom';
+    width?: number | undefined;
+    height?: number | undefined;
+  };
+  x: number;
+  y: number;
+}
+
+interface CanvasAnnotationRecord {
+  id: string;
+  kind: 'pencil' | 'line' | 'arrow' | 'rectangle' | 'square' | 'ellipse' | 'measure';
+  points: { x: number; y: number }[];
+  color: 'blue' | 'red' | 'green' | 'amber';
+  fill: 'none' | 'blue' | 'red' | 'green' | 'amber';
+  strokeWidth: 1 | 2 | 4;
+  frameId?: string | undefined;
+}
+
+interface CanvasImagePlacement {
+  id: string;
+  libraryId: string;
+  tag: 'moodboard' | 'inspiration' | 'reference';
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface CanvasDocumentContent {
+  view: { pan: { x: number; y: number }; zoom: number };
+  frames: CanvasFrameRecord[];
+  annotations: CanvasAnnotationRecord[];
+  images: CanvasImagePlacement[];
+}
+
+export interface CanvasDocument extends CanvasDocumentContent {
+  schemaVersion: 1;
+  projectId: string;
+  threadId: string;
+  revision: number;
+  updatedAt: string;
+}
+
+export interface CanvasFrameRuntime {
+  frameId: string;
+  url?: string;
+  error?: string;
+}
+
+export interface CanvasImageAsset {
+  libraryId: string;
+  name?: string;
+  url?: string;
+  error?: string;
 }
 
 export type PermissionOutcome =
@@ -668,9 +916,77 @@ export type ClientCommand =
       referenceIds: string[];
     }
   | { type: 'browser.native.result'; result: BrowserNativeResult }
+  | { type: 'design.dna.read'; cwd: string }
+  | { type: 'design.dna.write'; cwd: string; file: 'design' | 'motion'; content: string }
+  | { type: 'design.dna.scan'; cwd: string }
+  | { type: 'design.dna.libraries' }
+  | { type: 'design.dna.applyLibrary'; cwd: string; libraryId: string }
+  | {
+      type: 'design.dna.finalize';
+      cwd: string;
+      name: string;
+      tagline?: string;
+      source?: 'scan' | 'interview' | 'library' | 'manual';
+      sourceLibraryId?: string;
+    }
+  | { type: 'design.dna.savedList'; cwd: string }
+  | { type: 'design.dna.savedApply'; cwd: string; id: string }
+  | { type: 'design.dna.savedDelete'; cwd: string; id: string }
+  | { type: 'design.validator.readConfig'; cwd: string }
+  | { type: 'design.validator.writeConfig'; cwd: string; config: ValidatorConfig }
+  | { type: 'design.validator.run'; cwd: string; appSessionId: string }
+  | { type: 'design.validator.fix'; cwd: string; appSessionId: string }
+  | { type: 'design.library.list'; cwd: string }
+  | {
+      type: 'design.library.save';
+      cwd: string;
+      appSessionId: string;
+      referenceId: string;
+      name?: string;
+      note?: string;
+    }
+  | {
+      type: 'design.library.importImage';
+      cwd: string;
+      id: string;
+      name: string;
+      category: 'moodboard' | 'inspiration' | 'reference';
+      dataUrl: string;
+    }
+  | { type: 'design.library.delete'; cwd: string; id: string }
+  | { type: 'design.library.extract'; cwd: string; id: string }
+  | { type: 'design.prototypes.list'; cwd: string }
+  | { type: 'design.registry.scan'; cwd: string }
+  | {
+      type: 'design.swap';
+      cwd: string;
+      appSessionId: string;
+      target: DesignSwapTarget;
+      replacement: DesignSwapReplacementRef;
+      strategy: DesignSwapStrategy;
+      note?: string;
+    }
+  | { type: 'design.git.commit'; cwd: string; message: string }
+  | { type: 'design.preview.render'; cwd: string }
+  | {
+      type: 'design.component.preview';
+      cwd: string;
+      file: string;
+      name: string;
+      exportKind: 'default' | 'named';
+    }
+  | { type: 'design.workspace.prepare'; cwd: string }
+  | { type: 'design.canvas.read'; cwd: string; canvasId: string }
+  | {
+      type: 'design.canvas.write';
+      cwd: string;
+      canvasId: string;
+      expectedRevision: number;
+      content: CanvasDocumentContent;
+    }
   | { type: 'spec.read'; appSessionId: string; path: string };
 
-export type ChildUpdatedEvent =
+type ChildUpdatedEvent =
   | {
       type: 'child.updated';
       parentAppSessionId: string;
@@ -687,7 +1003,7 @@ export type ChildUpdatedEvent =
       access: 'history';
     };
 
-export interface SessionChildEvent {
+interface SessionChildEvent {
   type: 'session.child';
   event: 'upserted';
   child: ChildSessionSummary;
@@ -695,7 +1011,7 @@ export interface SessionChildEvent {
   runtimeGeneration: number;
 }
 
-export interface ChildErrorEvent {
+interface ChildErrorEvent {
   type: 'child.error';
   parentAppSessionId: string;
   childSessionId: string;
@@ -755,6 +1071,7 @@ export type ServerEvent =
   | {
       type: 'error';
       code?: string;
+      clientRef?: string;
       appSessionId?: string;
       providerSessionId?: string;
       message: string;
@@ -789,4 +1106,77 @@ export type ServerEvent =
   | { type: 'browser.updated'; state: BrowserState }
   | { type: 'browser.native.request'; request: BrowserNativeRequest }
   | { type: 'browser.closed'; appSessionId: string }
-  | { type: 'browser.error'; appSessionId?: string; message: string };
+  | { type: 'browser.error'; appSessionId?: string; message: string }
+  | { type: 'design.dna.state'; state: DnaState }
+  | { type: 'design.dna.draft'; draft: DnaDraft }
+  | { type: 'design.dna.libraries'; libraries: DnaLibrarySummary[] }
+  | {
+      type: 'design.dna.saved';
+      cwd: string;
+      items: SavedDnaEntry[];
+      activeId: string | null;
+    }
+  | { type: 'design.validator.config'; cwd: string; config: ValidatorConfig }
+  | {
+      type: 'design.validator.status';
+      cwd: string;
+      appSessionId?: string;
+      status: 'running' | 'done' | 'failed';
+      pageId?: string;
+      viewport?: string;
+      completed?: number;
+      total?: number;
+      error?: string;
+    }
+  | { type: 'design.validator.report'; report: ValidatorReport }
+  | { type: 'design.library.state'; cwd: string; items: DesignLibraryItem[] }
+  | {
+      type: 'design.library.extracted';
+      cwd: string;
+      id: string;
+      tokens: Partial<DesignTokens>;
+      summary: string;
+    }
+  | { type: 'design.prototypes.state'; cwd: string; prototypes: PrototypeInfo[] }
+  | { type: 'design.registry.state'; cwd: string; components: ComponentRegistryEntry[] }
+  | { type: 'design.git.committed'; cwd: string; ok: boolean; sha?: string; error?: string }
+  | {
+      type: 'design.preview';
+      cwd: string;
+      id: string;
+      name: string;
+      url: string;
+      kind?: 'page' | 'component';
+      source: CanvasFrameSource;
+    }
+  | {
+      type: 'design.workspace.ready';
+      liveCwd: string;
+      path: string;
+      isWorktree: boolean;
+      branch?: string;
+      note?: string;
+    }
+  | {
+      type: 'design.canvas.state';
+      cwd: string;
+      canvasId: string;
+      document: CanvasDocument | null;
+      frames: CanvasFrameRuntime[];
+      images: CanvasImageAsset[];
+    }
+  | {
+      type: 'design.canvas.saved';
+      cwd: string;
+      canvasId: string;
+      document: CanvasDocument;
+    }
+  | {
+      type: 'design.canvas.error';
+      cwd: string;
+      canvasId: string;
+      operation: 'read' | 'write';
+      message: string;
+      actualRevision?: number;
+    }
+  | { type: 'design.error'; cwd?: string; message: string };

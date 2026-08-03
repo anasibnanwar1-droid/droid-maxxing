@@ -23,6 +23,7 @@ import type {
   ContextStatsSnapshot,
   BrowserState,
   BrowserViewportMode,
+  BrowserTranscriptReference,
   DesignReference,
 } from '../types/bridge';
 import { addWorkspaceCwd } from '../lib/workspaces';
@@ -63,14 +64,13 @@ import {
 import type { ImagePasteQuality } from '../lib/images';
 
 export type AgentKind = 'primary' | 'worker' | 'validator';
-export type ChildSettingsReadiness = 'opening' | 'ready' | 'failed';
 export type LiveEnterBehavior = 'queue' | 'interrupt';
 export type DiffViewMode = 'unified' | 'split';
 export type { ImagePasteQuality } from '../lib/images';
 
 export type ChildSessionInfo = ChildSessionSummary;
 
-export interface ChildSelection {
+interface ChildSelection {
   parentAppSessionId: string;
   childSessionId: string;
 }
@@ -82,15 +82,20 @@ export type ChildAccess =
   | { state: 'failed'; requestId: string | null }
   | { state: 'closed'; requestId: null };
 
-export interface ChildRuntimeState {
+interface ChildRuntimeState {
   available: boolean;
   runtimeGeneration: number;
 }
 
-export interface QueuedDesignContext {
+interface QueuedDesignContext {
   browserKey: string;
   references: DesignReference[];
   referenceIds: string[];
+}
+
+interface QueuedStudioContext {
+  prompt: string;
+  browserRefs?: BrowserTranscriptReference[];
 }
 
 export interface QueuedPrompt {
@@ -99,14 +104,15 @@ export interface QueuedPrompt {
   skills: string[];
   files: string[];
   design?: QueuedDesignContext;
+  studio?: QueuedStudioContext;
 }
 
-export interface AgentModelConfig {
+interface AgentModelConfig {
   modelId?: string;
   reasoning: ReasoningEffort;
 }
 
-export type AgentConfig = Record<AgentKind, AgentModelConfig>;
+type AgentConfig = Record<AgentKind, AgentModelConfig>;
 
 export type DiffStyle = 'soft' | 'focused';
 
@@ -125,9 +131,9 @@ export interface ThemeConfig {
   contrast: number;
 }
 
-export type SessionRestoreStatus = 'loading' | 'paged' | 'loaded' | 'failed';
+type SessionRestoreStatus = 'loading' | 'paged' | 'loaded' | 'failed';
 
-export interface SessionRestore {
+interface SessionRestore {
   status: SessionRestoreStatus;
   loadedCount: number;
   hasMore: boolean;
@@ -257,7 +263,15 @@ export interface AppState {
   skillsProviderSessionId?: string | null;
 
   // Attachments for the first message of a not-yet-created session, keyed by clientRef.
-  pendingCompose: Record<string, { text: string; skills: string[]; files: string[] }>;
+  pendingCompose: Record<
+    string,
+    {
+      text: string;
+      skills: string[];
+      files: string[];
+      browserRefs?: BrowserTranscriptReference[];
+    }
+  >;
 }
 
 type Action =
@@ -276,6 +290,7 @@ type Action =
       text: string;
       skills: string[];
       files: string[];
+      browserRefs?: BrowserTranscriptReference[];
     }
   | { type: 'SESSION_UPDATED'; session: SessionSummary }
   | { type: 'SESSION_CLOSED'; appSessionId: string }
@@ -339,6 +354,7 @@ type Action =
   | { type: 'SESSION_QUESTION'; question: SessionQuestion }
   | {
       type: 'SESSION_ERROR';
+      clientRef?: string;
       appSessionId?: string;
       providerSessionId?: string;
       message: string;
@@ -817,8 +833,14 @@ function sanitizeAgentConfig(config: AgentConfig, models: ModelInfo[]): AgentCon
 
 function sanitizeAgent(config: AgentModelConfig, models: ModelInfo[]): AgentModelConfig {
   if (!config.modelId) return config;
+  // Empty catalog (still loading / failed refresh) must never wipe a user pick —
+  // that was the "model picker stuck on default" bug: MODELS_LIST with [] or a
+  // catalog missing a custom GLM id cleared orchestrator.modelId back to Default.
+  if (models.length === 0) return config;
   const model = models.find((item) => item.id === config.modelId);
-  if (!model) return { modelId: undefined, reasoning: config.reasoning };
+  // Unknown id (custom model not yet in the CLI help parse, race, etc.): keep it.
+  // The runtime accepts any modelId the droid CLI knows; the UI should not second-guess.
+  if (!model) return config;
   const supported = model.supportedReasoningEfforts;
   if (supported?.length && !supported.includes(config.reasoning)) {
     return { modelId: config.modelId, reasoning: model.defaultReasoningEffort ?? supported[0] };
@@ -1093,6 +1115,7 @@ function baseReducer(state: AppState, action: Action): AppState {
           author: 'user',
           skills: pending?.skills.length ? pending.skills : undefined,
           files: pending?.files.length ? pending.files : undefined,
+          browserRefs: pending?.browserRefs?.length ? pending.browserRefs : undefined,
         };
         transcripts = { ...state.transcripts, [action.session.appSessionId]: [seed] };
       }
@@ -1134,7 +1157,12 @@ function baseReducer(state: AppState, action: Action): AppState {
         ...state,
         pendingCompose: {
           ...state.pendingCompose,
-          [action.clientRef]: { text: action.text, skills: action.skills, files: action.files },
+          [action.clientRef]: {
+            text: action.text,
+            skills: action.skills,
+            files: action.files,
+            ...(action.browserRefs?.length ? { browserRefs: action.browserRefs } : {}),
+          },
         },
       };
 
@@ -1539,12 +1567,22 @@ function baseReducer(state: AppState, action: Action): AppState {
 
     case 'SESSION_ERROR': {
       let next = state;
-      if (action.appSessionId && state.sessions[action.appSessionId]) {
-        const m = state.sessions[action.appSessionId];
+      if (action.clientRef && state.pendingCompose[action.clientRef]) {
         next = {
-          ...state,
+          ...next,
+          pendingCompose: Object.fromEntries(
+            Object.entries(next.pendingCompose).filter(
+              ([clientRef]) => clientRef !== action.clientRef,
+            ),
+          ),
+        };
+      }
+      if (action.appSessionId && state.sessions[action.appSessionId]) {
+        const m = next.sessions[action.appSessionId];
+        next = {
+          ...next,
           sessions: {
-            ...state.sessions,
+            ...next.sessions,
             [action.appSessionId]: { ...m, phase: 'failed' as const },
           },
         };
@@ -2493,7 +2531,9 @@ function finiteNumber(value: unknown): number | undefined {
 
 /* ── Bridge event adapter ── */
 export function toastMessageForEvent(ev: ServerEvent): string | undefined {
-  return ev.type === 'child.error' && ev.operation !== 'open' ? ev.message : undefined;
+  if (ev.type === 'child.error' && ev.operation !== 'open') return ev.message;
+  if (ev.type === 'error' && ev.clientRef && !ev.recoverable) return ev.message;
+  return undefined;
 }
 
 export function adaptEvent(ev: ServerEvent): Action | null {
@@ -2555,15 +2595,13 @@ export function adaptEvent(ev: ServerEvent): Action | null {
       return { type: 'SESSION_QUESTION', question: ev.question };
     case 'error':
       if (ev.recoverable) return null;
-      if (ev.appSessionId) {
-        return {
-          type: 'SESSION_ERROR',
-          appSessionId: ev.appSessionId,
-          providerSessionId: ev.providerSessionId,
-          message: ev.message,
-        };
-      }
-      return { type: 'SESSION_ERROR', message: ev.message };
+      return {
+        type: 'SESSION_ERROR',
+        clientRef: ev.clientRef,
+        appSessionId: ev.appSessionId,
+        providerSessionId: ev.providerSessionId,
+        message: ev.message,
+      };
     case 'sessions.list':
       return { type: 'SESSION_LIST', sessions: ev.sessions };
     case 'session.history':

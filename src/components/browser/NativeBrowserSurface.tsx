@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-empty-function, @typescript-eslint/no-confusing-void-expression -- Native browser UI effects intentionally use no-op cleanup and best-effort promise handlers. */
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import type { RefObject } from 'react';
 import { isDesktop } from '../../lib/desktop';
@@ -24,6 +25,7 @@ import {
   openNativeBrowser,
   nativeBrowserAgentActionFromRequest,
   nativeBrowserCapture,
+  nativeBrowserResultFromAgentResult,
   runNativeBrowserAgentAction,
   setNativeBrowserBounds,
   setNativeBrowserDesignMode,
@@ -37,6 +39,8 @@ import {
   type NativeBrowserSelection,
   reloadNativeBrowser,
 } from '../../lib/nativeBrowser';
+import { reopenBrowserAfterReconnect } from '../../lib/commands';
+import { useNativeBrowserResetGeneration } from './useNativeBrowserReset';
 import { registerNativeBrowserController } from '../../lib/nativeBrowserAgent';
 import { nativeBrowserRequestTargetsVisibleSurface } from '../../lib/browserSessionIdentity';
 import type {
@@ -117,6 +121,19 @@ export function NativeBrowserSurface({
   const urlRef = useRef(url);
   urlRef.current = url;
   const native = isDesktop();
+  const browserResetGeneration = useNativeBrowserResetGeneration(native, () => {
+    attachedSessionRef.current = undefined;
+    attachingSessionRef.current = undefined;
+    lastBounds.current = null;
+    if (visibleBrowserSessionId && urlRef.current && !obscuredRef.current) {
+      reopenBrowserAfterReconnect({
+        appSessionId: browserKey,
+        url: urlRef.current,
+        viewport,
+        viewportMode,
+      });
+    }
+  });
   const surface = useMemo(
     () => surfaceLayout(frameSize, viewport, viewportMode, expanded),
     [expanded, frameSize, viewport, viewportMode],
@@ -304,6 +321,7 @@ export function NativeBrowserSurface({
     surfaceReady,
     scheduleBoundsUpdate,
     visibleBrowserSessionId,
+    browserResetGeneration,
   ]);
 
   useEffect(
@@ -491,17 +509,7 @@ async function performNativeRequest(
       };
     }
     const result = await runNativeBrowserAgentAction(nativeBrowserAgentActionFromRequest(request));
-    return {
-      requestId: request.requestId,
-      appSessionId: request.appSessionId,
-      browserSessionId: request.browserSessionId,
-      ok: result.ok,
-      snapshot: result.snapshot,
-      inspection: result.inspection,
-      networkEvents: result.networkEvents,
-      consoleEvents: result.consoleEvents,
-      error: result.error,
-    };
+    return nativeBrowserResultFromAgentResult(request, result);
   } catch (err) {
     return {
       requestId: request.requestId,

@@ -48,8 +48,12 @@ export function Popover({
       setEntered(false);
       return;
     }
-    const raf = requestAnimationFrame(() => setEntered(true));
-    return () => cancelAnimationFrame(raf);
+    const raf = requestAnimationFrame(() => {
+      setEntered(true);
+    });
+    return () => {
+      cancelAnimationFrame(raf);
+    };
   }, [open]);
 
   // If focus is inside the panel when it closes (Escape from the search input,
@@ -190,7 +194,7 @@ export function Popover({
         maxHeight: pos.maxHeight,
         transformOrigin: pos.top !== undefined ? 'top' : 'bottom',
       }}
-      className={`z-[1000] flex flex-col overflow-hidden rounded-xl border border-droid-border bg-droid-surface shadow-2xl shadow-black/50 transition-[opacity,transform] duration-150 ease-out ${
+      className={`z-[1000] flex flex-col overflow-hidden rounded-2xl border border-droid-border bg-droid-surface/95 shadow-[0_18px_48px_-20px_rgba(0,0,0,0.55)] backdrop-blur-xl transition-[opacity,transform] duration-150 ease-out ${
         entered ? 'scale-100 opacity-100' : 'scale-95 opacity-0'
       } ${className}`}
     >

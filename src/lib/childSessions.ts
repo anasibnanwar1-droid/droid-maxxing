@@ -295,7 +295,7 @@ export function childSessionActivityForTarget(
 }
 
 // Last non-empty line, capped, so a long thinking block stays a one-line cue.
-export function previewLine(text?: string): string | undefined {
+function previewLine(text?: string): string | undefined {
   if (!text) return undefined;
   const line = text.trim().split('\n').filter(Boolean).pop() ?? '';
   return line.length > 160 ? `${line.slice(0, 159)}…` : line || undefined;

@@ -10,9 +10,11 @@ import {
   type StartableLocalMcpResource,
 } from '../SessionManager.js';
 import type * as Protocol from '../protocol.js';
+import type { ProviderStreamInactivityConfig } from '../providerStreamInactivity.js';
 import { FakeBrowserSessionManager } from './browserCharacterizationSupport.js';
 import {
   FakeFactoryRuntime,
+  type RejectableGate,
   type FakeFactorySession,
   type RecordedCall,
   type StreamGate,
@@ -46,6 +48,7 @@ export interface SessionManagerTestContext {
     deferNextCompaction(id: string): StreamGate;
     deferNextContextStats(id: string): StreamGate;
     deferNextUpdateSettings(id: string): StreamGate;
+    deferNextInterrupt(id: string): RejectableGate;
     waitForPrompts(id: string, count: number): Promise<void>;
     emitNotification(id: string, note: Record<string, unknown>): void;
   };
@@ -76,6 +79,7 @@ export function createSessionManagerTestContext(
   options: {
     defaults?: Protocol.FactoryDefaultSettings;
     getFactoryDefaults?: () => Promise<Protocol.FactoryDefaultSettings>;
+    providerStreamInactivity?: ProviderStreamInactivityConfig;
   } = {},
 ): SessionManagerTestContext {
   const calls: RecordedCall[] = [];
@@ -106,7 +110,11 @@ export function createSessionManagerTestContext(
   }
   let manager: SessionManager;
   try {
-    manager = new SessionManager(recordEvent, { dependencies, initialModels: INITIAL_MODELS });
+    manager = new SessionManager(recordEvent, {
+      dependencies,
+      initialModels: INITIAL_MODELS,
+      providerStreamInactivity: options.providerStreamInactivity,
+    });
   } catch (error) {
     unpinTestHome();
     rmSync(home, { recursive: true, force: true });
@@ -135,6 +143,7 @@ export function createSessionManagerTestContext(
       deferNextCompaction: (id) => providerSession(id).deferNextCompaction(),
       deferNextContextStats: (id) => providerSession(id).deferNextContextStats(),
       deferNextUpdateSettings: (id) => providerSession(id).deferNextUpdateSettings(),
+      deferNextInterrupt: (id) => providerSession(id).deferNextInterrupt(),
       waitForPrompts: (id, count) => providerSession(id).waitForPrompts(count),
       emitNotification: (id, note) => {
         providerSession(id).emitNotification(note);

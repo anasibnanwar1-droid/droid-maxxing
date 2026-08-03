@@ -27,6 +27,7 @@ const {
 } = require('./browserDiagnostics.cjs');
 const { runWithWebContentsDebugger } = require('./nativeBrowserEmulation.cjs');
 const { attachChildView, detachChildView } = require('./nativeBrowserHost.cjs');
+const { createSidecarSupervisor } = require('./sidecarSupervisor.cjs');
 
 const APP_NAME = 'Droid Control';
 const BRIDGE_PORT = Number(process.env.BRIDGE_PORT ?? 8765);
@@ -37,7 +38,6 @@ const filesRootAccess = files.createRootAccessRegistry();
 
 let mainWindow = null;
 let hiddenNativeBrowserWindow = null;
-let sidecar = null;
 let attachedBrowserSessionId = null;
 const nativeBrowsers = new Map();
 // Keep hidden browser sessions warm by default so authenticated pages and
@@ -78,6 +78,7 @@ app.on('before-quit', () => {
 
 app.on('activate', () => {
   if (!mainWindow) createMainWindow();
+  ensureSidecar();
 });
 
 app.on('child-process-gone', (_event, details) => {
@@ -281,17 +282,19 @@ function registerIpc() {
     assertMainRenderer(event);
     return openNativeBrowser(browserSessionId, url, bounds, viewport);
   });
-  ipcMain.handle('native-browser-attach', (event, { browserSessionId, bounds, url }) => {
+  ipcMain.handle('native-browser-attach', (event, payload) => {
     assertMainRenderer(event);
-    return attachNativeBrowser(browserSessionId, bounds, { restoreUrl: url });
+    const { browserSessionId, bounds, url, contentZoom } = payload;
+    return attachNativeBrowser(browserSessionId, bounds, { restoreUrl: url, contentZoom });
   });
   ipcMain.handle('native-browser-detach', (event, { browserSessionId }) => {
     assertMainRenderer(event);
     return detachNativeBrowser(browserSessionId);
   });
-  ipcMain.handle('native-browser-set-bounds', (event, { browserSessionId, bounds }) => {
+  ipcMain.handle('native-browser-set-bounds', (event, payload) => {
     assertMainRenderer(event);
-    return setNativeBrowserBounds(browserSessionId, bounds);
+    const { browserSessionId, bounds, contentZoom } = payload;
+    return setNativeBrowserBounds(browserSessionId, bounds, contentZoom);
   });
   ipcMain.handle('native-browser-visible', (event, { browserSessionId, visible }) => {
     assertMainRenderer(event);
@@ -480,28 +483,52 @@ function nodeBin() {
 }
 
 function ensureSidecar() {
-  if (sidecar && sidecar.exitCode === null && sidecar.signalCode === null) return;
-  sidecar = spawn(nodeBin(), [sidecarEntry()], {
-    cwd: appRoot(),
-    stdio: ['pipe', 'inherit', 'inherit'],
-    env: {
-      ...process.env,
-      BRIDGE_PORT: String(bridge.port),
-      BRIDGE_TOKEN: bridge.token,
-      BRIDGE_EXIT_ON_STDIN_CLOSE: '1',
-      BRIDGE_ALLOW_LOCAL_NO_TOKEN: app.isPackaged ? '0' : '1',
-    },
-  });
-  sidecar.on('exit', (code, signal) => {
-    if (code || signal) console.error(`sidecar exited: ${code ?? signal}`);
-  });
+  sidecarSupervisor.start();
 }
 
 function stopSidecar() {
-  if (!sidecar || sidecar.killed) return;
-  sidecar.kill();
-  sidecar = null;
+  sidecarSupervisor.stop();
 }
+
+function resetNativeBrowsersAfterSidecarFailure() {
+  closeAllNativeBrowsers();
+  if (isWindowUsable(mainWindow)) {
+    mainWindow.webContents.send('native-browser-reset');
+  }
+}
+
+const sidecarSupervisor = createSidecarSupervisor({
+  spawnProcess: () =>
+    spawn(nodeBin(), [sidecarEntry()], {
+      cwd: appRoot(),
+      stdio: ['pipe', 'pipe', 'inherit'],
+      env: {
+        ...process.env,
+        BRIDGE_PORT: String(bridge.port),
+        BRIDGE_TOKEN: bridge.token,
+        BRIDGE_EXIT_ON_STDIN_CLOSE: '1',
+        BRIDGE_ALLOW_LOCAL_NO_TOKEN: app.isPackaged ? '0' : '1',
+      },
+    }),
+  writeOutput: (chunk) => process.stdout.write(chunk),
+  onUnexpectedExit: ({ code, signal, error, delayMs, failureCount }) => {
+    if (failureCount === 1) resetNativeBrowsersAfterSidecarFailure();
+    const reason = error?.message ?? code ?? signal ?? 'unknown';
+    console.error(`sidecar exited: ${reason}; restart attempt ${failureCount} in ${delayMs}ms`);
+  },
+  onTerminalFailure: ({ code, signal, error, failureCount }) => {
+    if (failureCount === 1) resetNativeBrowsersAfterSidecarFailure();
+    const reason = error?.message ?? code ?? signal ?? 'unknown';
+    console.error(`sidecar recovery stopped after ${failureCount} failures: ${reason}`);
+    dialog.showErrorBox(
+      'DROIDEX runtime could not start',
+      `Automatic recovery stopped after ${failureCount} failures (${reason}). Check that Node.js and ${sidecarEntry()} are available, then restart Droid Control.`,
+    );
+  },
+  onStopError: (error) => {
+    console.error(`could not stop sidecar: ${error instanceof Error ? error.message : error}`);
+  },
+});
 
 function configureBrowserSession() {
   if (browserSessionConfigured) return;
@@ -809,6 +836,7 @@ async function attachNativeBrowser(browserSessionId, bounds, options = {}) {
   attachNativeBrowserViewToMainWindow(entry);
   attachedBrowserSessionId = entry.browserSessionId;
   entry.attached = true;
+  setNativeBrowserContentZoom(entry, options.contentZoom);
   view.setBounds(normalizeBounds(bounds));
   clearNativeBrowserIdleTimer(entry);
   if (entry.state.designMode) applyNativeBrowserDesignState(entry);
@@ -835,6 +863,7 @@ function detachNativeBrowser(browserSessionId) {
   if (!entry) return;
   if (attachedBrowserSessionId === targetBrowserSessionId) attachedBrowserSessionId = null;
   entry.attached = false;
+  setNativeBrowserContentZoom(entry, 1);
   safeWebContents(entry.view)?.setBackgroundThrottling(true);
   removeNativeBrowserViewFromWindow(entry, entry.view);
   setHiddenNativeBrowserBounds(entry, entry.viewport);
@@ -842,10 +871,17 @@ function detachNativeBrowser(browserSessionId) {
   scheduleNativeBrowserIdleClose(entry);
 }
 
-function setNativeBrowserBounds(browserSessionId, bounds) {
+function setNativeBrowserBounds(browserSessionId, bounds, contentZoom) {
   const entry = nativeBrowsers.get(normalizeNativeBrowserSessionId(browserSessionId));
   if (!entry?.attached || !isBrowserViewUsable(entry.view)) return;
+  if (contentZoom !== undefined) setNativeBrowserContentZoom(entry, contentZoom);
   entry.view.setBounds(normalizeBounds(bounds));
+}
+
+function setNativeBrowserContentZoom(entry, contentZoom = 1) {
+  const contents = safeWebContents(entry.view);
+  if (!contents) return;
+  contents.setZoomFactor(normalizeNativeBrowserContentZoom(contentZoom));
 }
 
 function setNativeBrowserVisible(browserSessionId, visible) {
@@ -1711,6 +1747,12 @@ function normalizeBounds(bounds) {
     width: Math.max(1, Math.round(bounds?.width ?? 1)),
     height: Math.max(1, Math.round(bounds?.height ?? 1)),
   };
+}
+
+function normalizeNativeBrowserContentZoom(value) {
+  const zoom = Number(value);
+  if (!Number.isFinite(zoom) || zoom <= 0) return 1;
+  return Math.min(3, Math.max(0.1, zoom));
 }
 
 async function getApiKey() {

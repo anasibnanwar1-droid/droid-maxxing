@@ -2,17 +2,22 @@ import { bridge } from './bridge';
 import type {
   Autonomy,
   BrowserNativeResult,
-  BrowserScrollDirection,
   BrowserViewport,
   BrowserViewportMode,
+  CanvasDocumentContent,
   ConfigurableSessionRole,
   DesignReference,
+  DesignSwapReplacementRef,
+  DesignSwapStrategy,
+  DesignSwapTarget,
   InstallChannel,
   PermissionOutcome,
   ReasoningEffort,
   SessionInteractionMode,
   SessionPurpose,
+  ValidatorConfig,
 } from '../types/bridge';
+import type { SessionPromptMode } from './promptQueue';
 
 let refCounter = 0;
 
@@ -52,18 +57,21 @@ export const installCli = (channel: InstallChannel) =>
   bridge.send({ type: 'cli.install', channel });
 export const updateCli = (channel?: InstallChannel) => bridge.send({ type: 'cli.update', channel });
 export const startCliLogin = () => bridge.send({ type: 'auth.startCliLogin' });
-export const requestRuntimeStatus = () => bridge.send({ type: 'runtime.status' });
 
 export const listModels = () => bridge.send({ type: 'catalog.models' });
 export const listSkills = (providerSessionId?: string) =>
   bridge.send({ type: 'catalog.skills', providerSessionId });
-export const listFactoryDefaults = () => bridge.send({ type: 'settings.defaults' });
 
 export const sendToSession = (appSessionId: string, text: string) =>
   bridge.send({ type: 'session.send', appSessionId, text });
 
 export const sendToSessionNow = (appSessionId: string, text: string) =>
   bridge.send({ type: 'session.sendNow', appSessionId, text });
+
+export const sendSessionPrompt = (appSessionId: string, text: string, mode: SessionPromptMode) => {
+  if (mode === 'now') sendToSessionNow(appSessionId, text);
+  else sendToSession(appSessionId, text);
+};
 
 export const sendToChild = (parentAppSessionId: string, childSessionId: string, text: string) =>
   bridge.send({
@@ -122,9 +130,6 @@ export const newChildOpenRequestId = () =>
 export const openChild = (parentAppSessionId: string, childSessionId: string, requestId: string) =>
   bridge.send({ type: 'child.open', parentAppSessionId, childSessionId, requestId });
 
-export const closeSession = (appSessionId: string) =>
-  bridge.send({ type: 'session.close', appSessionId });
-
 export const listSessions = (options?: {
   workspaceCwds?: string[];
   includePlainChats?: boolean;
@@ -133,9 +138,6 @@ export const listSessions = (options?: {
 
 export const loadSessionHistory = (appSessionId: string, cursor?: string) =>
   bridge.send({ type: 'session.loadHistory', appSessionId, cursor });
-
-export const resumeSession = (appSessionId: string) =>
-  bridge.send({ type: 'session.resume', appSessionId });
 
 export const updateAgentSettings = (input: {
   appSessionId?: string;
@@ -165,42 +167,23 @@ export const openBrowser = (input: {
   viewportMode?: BrowserViewportMode;
 }) => bridge.send({ type: 'browser.open', ...input });
 
-export const closeBrowser = (appSessionId: string) =>
-  bridge.send({ type: 'browser.close', appSessionId });
+export const reopenBrowserAfterReconnect = (input: {
+  appSessionId: string;
+  url: string;
+  viewport?: BrowserViewport;
+  viewportMode?: BrowserViewportMode;
+}) => {
+  bridge.sendOnNextOpen({ type: 'browser.open', ...input });
+};
 
 export const reloadBrowser = (appSessionId: string) =>
   bridge.send({ type: 'browser.reload', appSessionId });
-
-export const refreshBrowser = (appSessionId: string) =>
-  bridge.send({ type: 'browser.refresh', appSessionId });
 
 export const resizeBrowserViewport = (input: {
   appSessionId: string;
   viewport: BrowserViewport;
   viewportMode: BrowserViewportMode;
 }) => bridge.send({ type: 'browser.resizeViewport', ...input });
-
-export const clickBrowser = (input: {
-  appSessionId: string;
-  ref?: string;
-  x?: number;
-  y?: number;
-  source?: 'agent' | 'user';
-}) => bridge.send({ type: 'browser.click', ...input });
-
-export const typeBrowser = (appSessionId: string, text: string) =>
-  bridge.send({ type: 'browser.type', appSessionId, text });
-
-export const keypressBrowser = (appSessionId: string, key: string) =>
-  bridge.send({ type: 'browser.keypress', appSessionId, key });
-
-export const scrollBrowser = (input: {
-  appSessionId: string;
-  direction: BrowserScrollDirection;
-  pixels?: number;
-  ref?: string;
-  source?: 'agent' | 'user';
-}) => bridge.send({ type: 'browser.scroll', ...input });
 
 export const addDesignReference = (appSessionId: string, reference: DesignReference) =>
   bridge.send({ type: 'browser.design.addReference', appSessionId, reference });
@@ -219,3 +202,109 @@ export const sendDesignPrompt = (
 
 export const sendNativeBrowserResult = (result: BrowserNativeResult) =>
   bridge.send({ type: 'browser.native.result', result });
+
+export const readDesignDna = (cwd: string) => bridge.send({ type: 'design.dna.read', cwd });
+
+export const writeDesignDna = (cwd: string, file: 'design' | 'motion', content: string) =>
+  bridge.send({ type: 'design.dna.write', cwd, file, content });
+
+export const scanDesignDna = (cwd: string) => bridge.send({ type: 'design.dna.scan', cwd });
+
+export const listDnaLibraries = () => bridge.send({ type: 'design.dna.libraries' });
+
+export const applyDnaLibrary = (cwd: string, libraryId: string) =>
+  bridge.send({ type: 'design.dna.applyLibrary', cwd, libraryId });
+
+export const finalizeDesignDna = (
+  cwd: string,
+  name: string,
+  opts?: {
+    tagline?: string;
+    source?: 'scan' | 'interview' | 'library' | 'manual';
+    sourceLibraryId?: string;
+  },
+) =>
+  bridge.send({
+    type: 'design.dna.finalize',
+    cwd,
+    name,
+    tagline: opts?.tagline,
+    source: opts?.source ?? 'manual',
+    sourceLibraryId: opts?.sourceLibraryId,
+  });
+
+export const listSavedDna = (cwd: string) => bridge.send({ type: 'design.dna.savedList', cwd });
+
+export const applySavedDna = (cwd: string, id: string) =>
+  bridge.send({ type: 'design.dna.savedApply', cwd, id });
+
+export const deleteSavedDna = (cwd: string, id: string) =>
+  bridge.send({ type: 'design.dna.savedDelete', cwd, id });
+
+export const readValidatorConfig = (cwd: string) =>
+  bridge.send({ type: 'design.validator.readConfig', cwd });
+
+export const writeValidatorConfig = (cwd: string, config: ValidatorConfig) =>
+  bridge.send({ type: 'design.validator.writeConfig', cwd, config });
+
+export const runValidator = (cwd: string, appSessionId: string) =>
+  bridge.send({ type: 'design.validator.run', cwd, appSessionId });
+
+export const fixValidatorFindings = (cwd: string, appSessionId: string) =>
+  bridge.send({ type: 'design.validator.fix', cwd, appSessionId });
+
+export const listDesignLibrary = (cwd: string) => bridge.send({ type: 'design.library.list', cwd });
+
+export const importDesignLibraryImage = (input: {
+  cwd: string;
+  id: string;
+  name: string;
+  category: 'moodboard' | 'inspiration' | 'reference';
+  dataUrl: string;
+}) => bridge.send({ type: 'design.library.importImage', ...input });
+
+export const deleteDesignLibraryItem = (cwd: string, id: string) =>
+  bridge.send({ type: 'design.library.delete', cwd, id });
+
+export const extractDesignLibraryTokens = (cwd: string, id: string) =>
+  bridge.send({ type: 'design.library.extract', cwd, id });
+
+export const listPrototypes = (cwd: string) => bridge.send({ type: 'design.prototypes.list', cwd });
+
+export const scanComponentRegistry = (cwd: string) =>
+  bridge.send({ type: 'design.registry.scan', cwd });
+
+export const requestDesignSwap = (p: {
+  cwd: string;
+  appSessionId: string;
+  target: DesignSwapTarget;
+  replacement: DesignSwapReplacementRef;
+  strategy: DesignSwapStrategy;
+  note?: string;
+}) => bridge.send({ type: 'design.swap', ...p });
+
+export const commitDesignChange = (cwd: string, message: string) =>
+  bridge.send({ type: 'design.git.commit', cwd, message });
+
+export const renderDesignPreview = (cwd: string) =>
+  bridge.send({ type: 'design.preview.render', cwd });
+
+export const prepareDesignWorkspace = (cwd: string) =>
+  bridge.send({ type: 'design.workspace.prepare', cwd });
+
+export const readDesignCanvas = (cwd: string, canvasId: string) =>
+  bridge.send({ type: 'design.canvas.read', cwd, canvasId });
+
+export const writeDesignCanvas = (input: {
+  cwd: string;
+  canvasId: string;
+  expectedRevision: number;
+  content: CanvasDocumentContent;
+}) => bridge.send({ type: 'design.canvas.write', ...input });
+
+export const previewComponent = (input: {
+  cwd: string;
+  file: string;
+  name: string;
+  exportKind: 'default' | 'named';
+}) => bridge.send({ type: 'design.component.preview', ...input });

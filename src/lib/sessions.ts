@@ -9,7 +9,10 @@ const CLEARLY_ACTIVE = ['planning', 'initializing', 'orchestrator_turn'];
 
 // Whether a session is actively generating. Pure counterpart of the
 // useSessionLive hook so non-React code can reuse the same rule.
-export function sessionIsLive(session: Pick<SessionSummary, 'phase' | 'streaming'>): boolean {
+export function sessionIsLive(
+  session: Pick<SessionSummary, 'phase' | 'streaming' | 'compacting'>,
+): boolean {
+  if (session.compacting) return true;
   if (INACTIVE.includes(session.phase)) return false;
   if (session.streaming) return true;
   return CLEARLY_ACTIVE.includes(session.phase);

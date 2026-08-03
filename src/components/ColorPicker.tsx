@@ -83,13 +83,7 @@ const HUE_GRADIENT =
 /* ── the picker surface ── */
 const hasEyeDropper = typeof window !== 'undefined' && 'EyeDropper' in window;
 
-export function ColorPicker({
-  value,
-  onChange,
-}: {
-  value: string;
-  onChange: (hex: string) => void;
-}) {
+function ColorPicker({ value, onChange }: { value: string; onChange: (hex: string) => void }) {
   const { h, s, v } = hexToHsv(value);
   const satRef = useRef<HTMLDivElement>(null);
   const hueRef = useRef<HTMLDivElement>(null);

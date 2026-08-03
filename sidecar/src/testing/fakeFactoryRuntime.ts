@@ -63,6 +63,7 @@ export class FakeFactorySession implements FactorySession {
   contextStatsCalls = 0;
   nextCompactResult?: Awaited<ReturnType<FactorySession['compactSession']>>;
   nextCompactError?: Error;
+  nextSendError?: Error;
   nextStreamError?: Error;
   nextEnterSpecModeError?: Error;
   nextUpdateSettingsError?: Error;
@@ -103,7 +104,9 @@ export class FakeFactorySession implements FactorySession {
       args: [this.sessionId, prompt, options],
     });
     this.resolvePromptWaiters();
-    await this.streamGates.shift()?.promise;
+    const streamGate = this.streamGates.shift();
+    if (streamGate) await waitForGateOrAbort(streamGate.promise, options.abortSignal);
+    else options.abortSignal?.throwIfAborted();
     const streamError = this.nextStreamError;
     delete this.nextStreamError;
     if (streamError) throw streamError;
@@ -112,6 +115,20 @@ export class FakeFactorySession implements FactorySession {
     if (!events.some((event) => event.type === 'result')) {
       yield successfulResultEvent(this.sessionId);
     }
+  }
+
+  send(...args: Parameters<FactorySession['send']>): Promise<void> {
+    const [prompt, options] = args;
+    this.prompts.push(prompt);
+    this.calls.push({
+      target: 'provider',
+      method: 'send',
+      args: [this.sessionId, prompt, options],
+    });
+    this.resolvePromptWaiters();
+    const error = this.nextSendError;
+    delete this.nextSendError;
+    return error ? Promise.reject(error) : Promise.resolve();
   }
 
   queueStreamEvents(events: DroidStreamEvent[]): void {
@@ -348,6 +365,24 @@ export class FakeFactorySession implements FactorySession {
       waiter.resolve();
     }
   }
+}
+
+function waitForGateOrAbort(gate: Promise<void>, abortSignal?: AbortSignal): Promise<void> {
+  if (!abortSignal) return gate;
+  abortSignal.throwIfAborted();
+  return new Promise<void>((resolve, reject) => {
+    const onAbort = (): void => {
+      reject(
+        abortSignal.reason instanceof Error
+          ? abortSignal.reason
+          : new Error('Fake provider stream aborted'),
+      );
+    };
+    abortSignal.addEventListener('abort', onAbort, { once: true });
+    void gate.then(resolve, reject).finally(() => {
+      abortSignal.removeEventListener('abort', onAbort);
+    });
+  });
 }
 
 export class FakeFactoryRuntime implements FactoryRuntime {

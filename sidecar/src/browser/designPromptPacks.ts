@@ -33,72 +33,51 @@ export async function writeDesignPromptPack(
 // First line of every design prompt. Used both as the human-facing header and
 // as a content marker so other layers (transcript display, tool-policy scoping)
 // can recognize a design turn from the prompt text alone.
-export const DESIGN_PROMPT_HEADER = 'Design Mode reference pack:';
+const DESIGN_PROMPT_HEADER = 'Design Mode reference pack:';
 
 export function isDesignPrompt(text: string): boolean {
   return text.startsWith(DESIGN_PROMPT_HEADER);
 }
 
+export interface DesignPromptContext {
+  // Extra lines injected after the guidance block, e.g. project DNA file
+  // pointers produced by the design manager. Must already be sanitized.
+  dnaLines?: string[];
+}
+
+// The visible prompt is deliberately compact — a marker, the pack path, and
+// pointers. The heavy context (per-reference detail, the operating guidelines,
+// the DNA tokens) is READ by the agent through MCP tools (design_reference,
+// design_guidelines, design_dna / design_system), never force-injected here, so
+// the CLI shows the user's real instruction, not a wall of text.
 export function formatDesignPrompt(
   packPath: string,
   instruction: string,
   references: DesignReference[],
+  context?: DesignPromptContext,
 ): string {
   const first = references[0];
+  const dnaBlock = context?.dnaLines && context.dnaLines.length > 0 ? context.dnaLines : [];
   return [
     DESIGN_PROMPT_HEADER,
     `- URL: ${sanitizeInline(first?.url ?? 'about:blank')}`,
     `- References JSON: ${packPath}`,
-    '',
-    'Anchored references:',
-    ...references.map(formatReferenceLine),
-    '',
-    'Call the design_reference tool with an @id for full attributes, computed styles, ancestors, and outerHTML.',
-    '',
-    DESIGN_MODE_GUIDANCE,
+    `- ${references.length} selection(s). Use the design_reference tool (ids are in the pack) for full attributes, computed styles, ancestors, outerHTML, and source file:line.`,
+    "- Act as this project's designer: read the design_guidelines tool (how to work + what to avoid) and design_dna / design_system (tokens) before changing anything, then follow them.",
+    ...dnaBlock,
     '',
     'User instruction:',
     instruction,
   ].join('\n');
 }
 
-// Kept as the last block before the user instruction so it stays close to the
-// request without breaking the `Design Mode reference pack:` / `User
-// instruction:` markers the transcript display parser relies on.
-const DESIGN_MODE_GUIDANCE = [
-  'How to work in Design Mode:',
-  '- Scope: change only the design/UI of the referenced elements and the code that renders them. Do not modify backend, data models, APIs, or business logic, and do not spawn subagents to do so. If the requested result truly needs a backend or data change, stop and tell the user exactly what is needed and why, then wait for their go-ahead. Stay on design until the user says otherwise.',
-  '- Before writing code, pick one clear visual idea. Avoid AI slop: purple gradients, Inter/Roboto/Arial defaults, generic cards, sparkles, emoji icons, glassmorphism/glow. Use real content, ASCII punctuation, no em dashes. Vary the style to fit this product rather than reusing one default look.',
-].join('\n');
-
 // Page-derived strings (labels, selectors, component names, paths) are
 // attacker-influenced via page content. Collapse control characters and
 // newlines so they cannot break out of their line and inject prompt structure.
-function sanitizeInline(value: string, max = 500): string {
+export function sanitizeInline(value: string, max = 500): string {
   const cleaned = value
     .replace(/[\u0000-\u001F\u007F]+/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
   return cleaned.length > max ? `${cleaned.slice(0, max)}…` : cleaned;
-}
-
-function formatReferenceLine(reference: DesignReference): string {
-  const anchor = reference.anchor;
-  const parts = [
-    `- ${sanitizeInline(reference.id)} (${sanitizeInline(anchor.kind)}) ${sanitizeInline(anchor.label)}`,
-  ];
-  if (reference.detail?.selector) {
-    parts.push(
-      `selector=${sanitizeInline(reference.detail.selector)}${reference.detail.selectorVerified ? ' [verified]' : ''}`,
-    );
-  }
-  const source = anchor.source;
-  if (source?.component) {
-    const file = source.file ? sanitizeInline(source.file) : '';
-    parts.push(
-      `component=${sanitizeInline(source.component)}${file ? ` (${file}${source.line ? `:${source.line}` : ''})` : ''}`,
-    );
-  }
-  if (anchor.screenshotPath) parts.push(`crop=${sanitizeInline(anchor.screenshotPath)}`);
-  return parts.join(' | ');
 }

@@ -1,3 +1,4 @@
+/* eslint-disable no-undef -- this preload executes inside the browser page context */
 const { contextBridge, ipcRenderer } = require('electron');
 const { isSensitiveBrowserKey, redactBrowserDiagnosticUrl } = require('./browserDiagnostics.cjs');
 
@@ -515,7 +516,15 @@ async function runAgentAction(request) {
     else if (action === 'keypress') pressKey(request.key || '');
     else if (action === 'scroll')
       scrollPage(request.direction || 'down', Number(request.pixels || 500));
-    else if (action !== 'snapshot') throw new Error(`Unsupported browser action: ${action}`);
+    else if (action === 'audit') {
+      const audit = collectAudit();
+      return sendAgent({
+        requestId: request.requestId,
+        ok: true,
+        audit: audit.elements,
+        auditTruncated: audit.truncated,
+      });
+    } else if (action !== 'snapshot') throw new Error(`Unsupported browser action: ${action}`);
     await settle();
     return sendAgent({ requestId: request.requestId, ok: true, snapshot: pageSnapshot() });
   } catch (err) {
@@ -628,6 +637,54 @@ function collectRefs() {
   return refs;
 }
 
+// Style audit sample for the design validator: unlike collectRefs (interaction
+// targets, capped low), this walks every visible rendered element so token
+// drift in decorative markup is caught too.
+const AUDIT_ELEMENT_LIMIT = 600;
+function collectAudit() {
+  const out = [];
+  let truncated = false;
+  const root = document.body || document.documentElement;
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+  let node = root;
+  while (node) {
+    const entry = auditEntryFor(node);
+    if (entry) {
+      if (out.length === AUDIT_ELEMENT_LIMIT) {
+        truncated = true;
+        break;
+      }
+      out.push(entry);
+    }
+    node = walker.nextNode();
+  }
+  return { elements: out, truncated };
+}
+
+function auditEntryFor(el) {
+  if (!el || el.nodeType !== Node.ELEMENT_NODE) return null;
+  const tag = el.tagName.toLowerCase();
+  if (tag === 'script' || tag === 'style' || tag === 'link' || tag === 'meta' || tag === 'svg')
+    return null;
+  const rect = el.getBoundingClientRect();
+  if (rect.width < 4 || rect.height < 4) return null;
+  const style = getComputedStyle(el);
+  if (style.visibility === 'hidden' || style.display === 'none') return null;
+  return {
+    selector: selectorFor(el),
+    tag,
+    label: cleanText(el.getAttribute('aria-label') || directText(el), 60) || undefined,
+    box: boxFor(rect),
+    styles: {
+      color: style.color,
+      backgroundColor: style.backgroundColor,
+      fontFamily: style.fontFamily,
+      fontSize: style.fontSize,
+      borderRadius: style.borderRadius,
+      paddingTop: style.paddingTop,
+    },
+  };
+}
 function refFor(el) {
   const rect = el.getBoundingClientRect();
   const text = safeElementText(el);

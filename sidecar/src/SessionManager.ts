@@ -18,6 +18,7 @@ import type {
 import {
   defaultsModeForSummary,
   errMsg,
+  isDesignStudioSession,
   isUserCancellation,
   modelDefaultForMode,
   normalizeAutonomy,
@@ -40,6 +41,9 @@ import { BrowserSessionManager } from './browser/BrowserSessionManager.js';
 import { createBrowserMcpServer } from './browser/browserMcpServer.js';
 import { isDesignPrompt } from './browser/designPromptPacks.js';
 import { NativeBrowserRuntime } from './browser/NativeBrowserRuntime.js';
+import { DesignManager } from './design/DesignManager.js';
+import { PreviewServer } from './design/previewServer.js';
+import { createDesignMcpServer } from './design/designMcpServer.js';
 import { SessionRegistry } from './SessionRegistry.js';
 import { SessionEventFlow, type NormalizedSideEffects } from './SessionEventFlow.js';
 import { SessionInteractions } from './SessionInteractions.js';
@@ -59,6 +63,11 @@ import {
   type LiveSession,
   type StartedLocalMcpResources,
 } from './SessionLifecycle.js';
+import {
+  guardProviderStream,
+  ProviderStreamInactivityError,
+  type ProviderStreamInactivityConfig,
+} from './providerStreamInactivity.js';
 import { ChildSessions } from './ChildSessions.js';
 import type { ChildSettings } from './ChildSessionState.js';
 import { MissionControlPolicy } from './MissionControlPolicy.js';
@@ -95,6 +104,8 @@ type SessionBrowsers = Pick<
   | 'inspectPoint'
   | 'addReference'
   | 'designPrompt'
+  | 'referenceDetail'
+  | 'audit'
 >;
 
 export interface StartableLocalMcpResource {
@@ -115,6 +126,7 @@ export interface SessionManagerOptions {
   assetUrlFor?: (path: string) => string;
   dependencies?: SessionManagerDependencies;
   initialModels?: ModelInfo[];
+  providerStreamInactivity?: ProviderStreamInactivityConfig;
 }
 
 export interface AgentSettingPatch {
@@ -171,14 +183,18 @@ export class SessionManager {
   private shutdownPromise?: Promise<void>;
   private readonly pendingNativeBrowserRequests = new Map<string, PendingNativeBrowserRequest>();
   private readonly browsers: SessionBrowsers;
+  private readonly design: DesignManager;
+  private readonly previewServer = new PreviewServer();
   private readonly createLocalMcpResource: SessionManagerDependencies['createLocalMcpResource'];
   private readonly factoryDefaultsOverride: SessionManagerDependencies['getFactoryDefaults'];
   private readonly nextChildSessionId: () => string;
+  private readonly providerStreamInactivity?: ProviderStreamInactivityConfig;
 
   constructor(
     private readonly emit: Emit,
     options: SessionManagerOptions = {},
   ) {
+    this.providerStreamInactivity = options.providerStreamInactivity;
     if (options.dependencies) {
       this.runtime = options.dependencies.runtime;
       this.history = options.dependencies.history;
@@ -209,6 +225,14 @@ export class SessionManager {
       this.factoryDefaultsOverride = undefined;
       this.nextChildSessionId = nextChildSessionId;
     }
+    this.design = new DesignManager({
+      emit: (event) => {
+        this.emit(event);
+      },
+      browsers: this.browsers,
+      sendPrompt: (appSessionId, prompt) => this.lifecycle.send(appSessionId, prompt),
+      previewServer: this.previewServer,
+    });
     this.cachedModels = options.initialModels ? [...options.initialModels] : null;
     this.registry = new SessionRegistry({
       history: this.history,
@@ -327,7 +351,8 @@ export class SessionManager {
       childSessions: this.childSessions,
       applyPendingSettingsToSummary: (summary) => this.applyPendingSettingsToSummary(summary),
       applyPendingSessionSettings: (appSessionId) => this.applyPendingSessionSettings(appSessionId),
-      runPrimaryTurn: (liveSession, prompt) => this.runPrimaryTurn(liveSession, prompt),
+      runPrimaryTurn: (liveSession, prompt, abortSignal) =>
+        this.runPrimaryTurn(liveSession, prompt, abortSignal),
       context: this.context,
       forgetInteractions: (appSessionId) => {
         this.interactions.forgetSession(appSessionId);
@@ -338,6 +363,7 @@ export class SessionManager {
       forgetMissionControl: (appSessionId) => {
         this.missionControlPolicy.forget(appSessionId);
       },
+      closeDesignSession: (appSessionId) => this.design.closeSession(appSessionId),
       closeBrowserSession: (appSessionId) => this.browsers.close(appSessionId),
       emit: (event) => {
         this.emit(event);
@@ -364,6 +390,10 @@ export class SessionManager {
   // eslint-disable-next-line complexity -- Public command dispatch is intentionally unchanged in PR 3.
   async handle(cmd: ClientCommand): Promise<void> {
     if (this.shutdownPromise) throw new Error('Session manager is shutting down.');
+    if (this.design.isDesignCommand(cmd)) {
+      await this.design.handle(cmd);
+      return;
+    }
     switch (cmd.type) {
       case 'connect':
         this.connect(cmd.apiKey);
@@ -589,7 +619,13 @@ export class SessionManager {
       case 'browser.design.sendPrompt':
         await this.handleBrowser(cmd.appSessionId, async () => {
           const appSessionId = this.requireBrowserAppSessionId(cmd.appSessionId);
-          const { prompt } = await this.browsers.designPrompt({ ...cmd, appSessionId });
+          const cwd = this.registry.resolveSummary(appSessionId)?.cwd;
+          const dnaLines = cwd ? this.design.dnaPromptLines(cwd) : [];
+          const { prompt } = await this.browsers.designPrompt({
+            ...cmd,
+            appSessionId,
+            promptContext: dnaLines.length > 0 ? { dnaLines } : undefined,
+          });
           await this.lifecycle.send(appSessionId, prompt);
         });
         return;
@@ -685,7 +721,13 @@ export class SessionManager {
   }
 
   private async startLocalMcpServers(ref: { id: string }): Promise<StartedLocalMcpResources> {
-    const servers = [this.createLocalMcpResource(() => ref.id)];
+    const servers = [
+      this.createLocalMcpResource(() => ref.id),
+      createDesignMcpServer(
+        () => this.registry.resolveSummary(ref.id)?.cwd,
+        (input) => this.design.renderPreview(input),
+      ),
+    ];
     const configs: StartedLocalMcpResources['configs'] = [];
     try {
       for (const server of servers) configs.push(await server.start());
@@ -909,40 +951,77 @@ export class SessionManager {
     this.emit({ type: 'sessions.list', sessions: this.registry.listSummaries(options) });
   }
 
-  private async runPrimaryTurn(liveSession: LiveSession, prompt: string): Promise<void> {
+  private async runPrimaryTurn(
+    liveSession: LiveSession,
+    prompt: string,
+    abortSignal: AbortSignal,
+  ): Promise<void> {
     const appSessionId = liveSession.summary.appSessionId;
     const contextTarget = this.primaryContextTarget(liveSession);
+    let completed = false;
     if (!this.isCurrentPrimarySession(liveSession)) return;
     this.eventFlow.beginTurn(appSessionId, appSessionId);
     this.context.beginTurn(appSessionId);
     this.context.startPolling(contextTarget);
     try {
-      await this.applyDesignToolPolicy(liveSession, isDesignPrompt(prompt));
+      await this.applyDesignToolPolicy(
+        liveSession,
+        isDesignStudioSession(liveSession.summary) || isDesignPrompt(prompt),
+      );
       if (!this.isCurrentPrimarySession(liveSession)) return;
-      const stream = liveSession.session.stream(prompt, { includePartialMessages: true });
+      const stream = guardProviderStream(
+        (streamAbortSignal) =>
+          liveSession.session.stream(prompt, {
+            includePartialMessages: true,
+            abortSignal: streamAbortSignal,
+          }),
+        abortSignal,
+        {
+          ...this.providerStreamInactivity,
+          settleInactivity: async () => {
+            liveSession.interrupting = true;
+            try {
+              await liveSession.session.interrupt();
+            } finally {
+              liveSession.interrupting = false;
+            }
+          },
+        },
+      );
       for await (const ev of stream) {
         if (!this.isCurrentPrimarySession(liveSession)) break;
         this.eventFlow.applyStreamEvent(appSessionId, appSessionId, 'primary', ev);
       }
+      completed = this.isCurrentPrimarySession(liveSession);
     } catch (err) {
       if (!this.isCurrentPrimarySession(liveSession)) {
         return;
-      } else if (liveSession.interruptingForSteer) {
-        this.timeline.appendStatus(appSessionId, 'Current turn interrupted for steering.');
       } else if (liveSession.interrupting && isUserCancellation(err)) {
         // The user pressed Stop; interrupt() already set the paused phase, so
         // settle quietly without surfacing an error.
         this.registry.updateSummary(appSessionId, { phase: 'paused' });
       } else {
-        this.emitError({ appSessionId, message: errMsg(err) });
+        this.emitError({
+          appSessionId,
+          message: errMsg(err),
+          ...(err instanceof ProviderStreamInactivityError
+            ? { code: 'session.stream_inactive', recoverable: true }
+            : {}),
+        });
         this.registry.updateSummary(appSessionId, { phase: 'failed' });
       }
     } finally {
       this.context.stopPolling(contextTarget);
-      // Keep streaming=true while the context refresh is in flight so concurrent
-      // sends queue instead of racing a second lifecycle turn.
+      // Context telemetry is informational. Turn settlement and queued sends
+      // must not wait on a slow or unavailable provider stats endpoint.
       if (this.isCurrentPrimarySession(liveSession)) {
-        await this.context.refresh(contextTarget);
+        void this.context.refresh(contextTarget);
+      }
+      const cwd = liveSession.summary.cwd;
+      if (completed && cwd && isDesignStudioSession(liveSession.summary)) {
+        void this.design.afterDesignPrompt(cwd, appSessionId, () =>
+          this.isCurrentPrimarySession(liveSession),
+        );
       }
     }
   }
@@ -991,10 +1070,10 @@ export class SessionManager {
     };
   }
 
-  // Design turns are a single focused task (extra prompts queue), so the model
-  // does not need TodoWrite — it otherwise loops updating the list after it has
-  // already answered. Disable TodoWrite for design turns and restore it for
-  // normal turns, calling updateSettings only when the policy changes.
+  // Studio sessions and explicit browser Design Mode turns are focused design
+  // tasks, so the model does not need TodoWrite — it otherwise loops updating
+  // the list after it has already answered. Restore it for ordinary chat turns,
+  // calling updateSettings only when the policy changes.
   private async applyDesignToolPolicy(liveSession: LiveSession, design: boolean): Promise<void> {
     // When the in-memory flag is unset (cold start / page reload) we don't
     // know the session's current disabledToolIds, so always call updateSettings
@@ -1352,6 +1431,7 @@ export class SessionManager {
 
   private emitError(error: {
     code?: string;
+    clientRef?: string;
     providerSessionId?: string;
     appSessionId?: string;
     message: string;
@@ -1433,6 +1513,8 @@ export class SessionManager {
       this.compaction.clearAll();
     });
     await run(() => this.browsers.closeAll());
+    await run(() => this.design.close());
+    await run(() => this.previewServer.close());
     await run(() => {
       this.history.close();
     });
