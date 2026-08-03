@@ -61,14 +61,10 @@ test('main renderer reload closes renderer-owned terminals before navigation', (
   assert.match(mainSource, explicitReloadCleanup);
 });
 
-test('sidecar uses Electron runtime instead of requiring Node on the GUI PATH', () => {
-  const ensureSidecarStart = mainSource.indexOf('function ensureSidecar()');
-  const ensureSidecarEnd = mainSource.indexOf('\nfunction stopSidecar()', ensureSidecarStart);
-  const ensureSidecar = mainSource.slice(ensureSidecarStart, ensureSidecarEnd);
-
-  assert.notEqual(ensureSidecarStart, -1);
-  assert.match(ensureSidecar, /spawn\(process\.execPath, \[sidecarEntry\(\)\]/);
-  assert.match(ensureSidecar, /ELECTRON_RUN_AS_NODE: '1'/);
+test('sidecar lifecycle is delegated to the packaged-runtime supervisor', () => {
+  assert.match(mainSource, /createSidecarSupervisor\(\{/);
+  assert.match(mainSource, /entryPath: sidecarEntry/);
+  assert.match(mainSource, /sidecarSupervisor\.getBridgeInfo\(\)/);
   assert.doesNotMatch(mainSource, /NODE_BIN|function nodeBin/);
 });
 

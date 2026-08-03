@@ -3,7 +3,9 @@ import type { ClientCommand, ServerEvent } from '../types/bridge';
 
 type Listener = (ev: ServerEvent) => void;
 
-class Bridge {
+type ReconnectScheduler = (callback: () => void, delayMs: number) => void;
+
+export class Bridge {
   private ws: WebSocket | null = null;
   private listeners = new Set<Listener>();
   private queue: ClientCommand[] = [];
@@ -11,11 +13,29 @@ class Bridge {
   private url = '';
   private started = false;
 
+  constructor(
+    private readonly loadBridgeInfo = getBridgeInfo,
+    private readonly schedule: ReconnectScheduler = (callback, delayMs) => {
+      setTimeout(callback, delayMs);
+    },
+  ) {}
+
   async start(): Promise<void> {
     if (this.started) return;
     this.started = true;
-    const { port, token } = await getBridgeInfo();
-    this.url = `ws://127.0.0.1:${port}${token ? `?token=${token}` : ''}`;
+    await this.connect();
+  }
+
+  private async connect(): Promise<void> {
+    let port: number;
+    let token: string;
+    try {
+      ({ port, token } = await this.loadBridgeInfo());
+    } catch {
+      this.scheduleReconnect();
+      return;
+    }
+    this.url = `ws://127.0.0.1:${String(port)}${token ? `?token=${token}` : ''}`;
     this.open();
   }
 
@@ -32,31 +52,38 @@ class Bridge {
       this.backoff = 500;
       const pending = this.queue;
       this.queue = [];
-      pending.forEach((c) => ws.send(JSON.stringify(c)));
+      pending.forEach((command) => {
+        ws.send(JSON.stringify(command));
+      });
     };
     ws.onmessage = (e) => {
+      if (typeof e.data !== 'string') return;
       let ev: ServerEvent;
       try {
         ev = JSON.parse(e.data) as ServerEvent;
       } catch {
         return;
       }
-      this.listeners.forEach((l) => l(ev));
+      this.listeners.forEach((listener) => {
+        listener(ev);
+      });
     };
     ws.onclose = () => {
       this.ws = null;
       this.scheduleReconnect();
     };
-    ws.onerror = () => ws.close();
+    ws.onerror = () => {
+      ws.close();
+    };
   }
 
   private scheduleReconnect(): void {
-    setTimeout(() => this.open(), this.backoff);
+    this.schedule(() => void this.connect(), this.backoff);
     this.backoff = Math.min(this.backoff * 2, 5000);
   }
 
   send(cmd: ClientCommand): void {
-    if (this.ws && this.ws.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(cmd));
+    if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(cmd));
     else this.queue.push(cmd);
   }
 

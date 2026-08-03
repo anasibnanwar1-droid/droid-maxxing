@@ -12,7 +12,6 @@ const {
   shell,
 } = require('electron');
 const { execFile, spawn } = require('node:child_process');
-const crypto = require('node:crypto');
 const fs = require('node:fs');
 const fsp = require('node:fs/promises');
 const os = require('node:os');
@@ -28,16 +27,19 @@ const {
 } = require('./browserDiagnostics.cjs');
 const { runWithWebContentsDebugger } = require('./nativeBrowserEmulation.cjs');
 const { attachChildView, detachChildView } = require('./nativeBrowserHost.cjs');
+const { createSidecarSupervisor } = require('./sidecar.cjs');
 const APP_NAME = 'Droid Control';
-const BRIDGE_PORT = Number(process.env.BRIDGE_PORT ?? 8765);
-const bridge = { port: BRIDGE_PORT, token: crypto.randomBytes(16).toString('hex') };
 const terminalManager = createTerminalManager();
 const terminalSubscriptions = createTerminalSubscriptionRegistry(terminalManager);
 const filesRootAccess = files.createRootAccessRegistry();
+const sidecarSupervisor = createSidecarSupervisor({
+  entryPath: sidecarEntry,
+  cwd: () => (app.isPackaged ? process.resourcesPath : appRoot()),
+  isPackaged: () => app.isPackaged,
+});
 
 let mainWindow = null;
 let hiddenNativeBrowserWindow = null;
-let sidecar = null;
 // Selected app-icon appearance. 'system' tracks the OS light/dark setting via
 // nativeTheme; 'light'/'dark' pin a specific artwork.
 let appIconMode = 'system';
@@ -68,16 +70,16 @@ app.whenReady().then(() => {
   nativeTheme.on('updated', () => {
     if (appIconMode === 'system') applyAppIcon();
   });
-  ensureSidecar();
+  void sidecarSupervisor.start().catch((error) => console.error(error));
 });
 
 app.on('window-all-closed', () => {
-  stopSidecar();
+  sidecarSupervisor.stop();
   if (process.platform !== 'darwin') app.quit();
 });
 
 app.on('before-quit', () => {
-  stopSidecar();
+  sidecarSupervisor.stop();
   terminalManager.closeAll();
   terminalSubscriptions.clear();
   filesRootAccess.clear();
@@ -130,10 +132,7 @@ function createMainWindow() {
 }
 
 function registerIpc() {
-  ipcMain.handle('bridge-info', () => {
-    ensureSidecar();
-    return bridge;
-  });
+  ipcMain.handle('bridge-info', () => sidecarSupervisor.getBridgeInfo());
   ipcMain.handle('pick-directory', async () => {
     const result = await dialog.showOpenDialog({ properties: ['openDirectory'] });
     const selected = result.canceled ? null : (result.filePaths[0] ?? null);
@@ -512,31 +511,6 @@ function sidecarEntry() {
   return app.isPackaged
     ? path.join(process.resourcesPath, 'sidecar/dist/sidecar.mjs')
     : path.join(appRoot(), 'sidecar/dist/sidecar.mjs');
-}
-
-function ensureSidecar() {
-  if (sidecar && sidecar.exitCode === null && sidecar.signalCode === null) return;
-  sidecar = spawn(process.execPath, [sidecarEntry()], {
-    cwd: app.isPackaged ? process.resourcesPath : appRoot(),
-    stdio: ['pipe', 'inherit', 'inherit'],
-    env: {
-      ...process.env,
-      ELECTRON_RUN_AS_NODE: '1',
-      BRIDGE_PORT: String(bridge.port),
-      BRIDGE_TOKEN: bridge.token,
-      BRIDGE_EXIT_ON_STDIN_CLOSE: '1',
-      BRIDGE_ALLOW_LOCAL_NO_TOKEN: app.isPackaged ? '0' : '1',
-    },
-  });
-  sidecar.on('exit', (code, signal) => {
-    if (code || signal) console.error(`sidecar exited: ${code ?? signal}`);
-  });
-}
-
-function stopSidecar() {
-  if (!sidecar || sidecar.killed) return;
-  sidecar.kill();
-  sidecar = null;
 }
 
 function configureBrowserSession() {

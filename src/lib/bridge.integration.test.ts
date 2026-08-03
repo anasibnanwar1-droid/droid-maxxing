@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { Bridge } from './bridge';
 import type { ServerEvent } from '../types/bridge';
 
 class FakeWebSocket {
@@ -29,12 +30,55 @@ class FakeWebSocket {
   message(event: ServerEvent): void {
     this.onmessage?.({ data: JSON.stringify(event) } as MessageEvent<string>);
   }
+
+  close(): void {
+    this.readyState = 3;
+    this.onclose?.();
+  }
 }
+
+test('bridge refreshes sidecar identity before reconnecting', { concurrency: false }, async () => {
+  const OldWebSocket = globalThis.WebSocket;
+  const reconnects: Array<() => void> = [];
+  const bridgeInfos = [
+    { port: 43001, token: 'first-token' },
+    { port: 43002, token: 'second-token' },
+  ];
+  try {
+    Object.assign(globalThis, { WebSocket: FakeWebSocket });
+    FakeWebSocket.instances = [];
+    const bridge = new Bridge(
+      async () => {
+        const info = bridgeInfos.shift();
+        assert.ok(info);
+        return info;
+      },
+      (callback) => reconnects.push(callback),
+    );
+
+    await bridge.start();
+    const first = FakeWebSocket.instances.at(-1);
+    assert.ok(first);
+    assert.equal(first.url, 'ws://127.0.0.1:43001?token=first-token');
+    first.close();
+    assert.equal(reconnects.length, 1);
+
+    reconnects.shift()?.();
+    await Promise.resolve();
+    await Promise.resolve();
+    const second = FakeWebSocket.instances.at(-1);
+    assert.ok(second);
+    assert.equal(second.url, 'ws://127.0.0.1:43002?token=second-token');
+  } finally {
+    Object.assign(globalThis, { WebSocket: OldWebSocket });
+  }
+});
 
 test('[R1] Renderer command round trip', { concurrency: false }, async () => {
   const oldWindow = globalThis.window;
   const OldWebSocket = globalThis.WebSocket;
   try {
+    FakeWebSocket.instances = [];
     Object.assign(globalThis, {
       window: {
         droidControl: {

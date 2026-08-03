@@ -1,4 +1,4 @@
-import { WebSocketServer, type WebSocket } from 'ws';
+import { WebSocketServer, type RawData, type WebSocket } from 'ws';
 import { createReadStream } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
@@ -6,11 +6,12 @@ import { SessionManager } from './SessionManager.js';
 import type { ClientCommand, ServerEvent } from './protocol.js';
 import { isBrowserAssetPath } from './browser/browserPaths.js';
 
-const PORT = Number(process.env.BRIDGE_PORT ?? 8765);
+const REQUESTED_PORT = bridgePort(process.env.BRIDGE_PORT ?? '0');
 const TOKEN = process.env.BRIDGE_TOKEN ?? '';
 const ALLOW_LOCAL_NO_TOKEN = process.env.BRIDGE_ALLOW_LOCAL_NO_TOKEN === '1';
 const EXIT_ON_STDIN_CLOSE = process.env.BRIDGE_EXIT_ON_STDIN_CLOSE !== '0';
 const HOST = '127.0.0.1';
+let boundPort = REQUESTED_PORT;
 
 const clients = new Set<WebSocket>();
 
@@ -22,7 +23,7 @@ function broadcast(event: ServerEvent): void {
 }
 
 function browserAssetUrl(filePath: string): string {
-  const url = new URL(`http://${HOST}:${PORT}/browser-assets`);
+  const url = new URL(`http://${HOST}:${String(boundPort)}/browser-assets`);
   url.searchParams.set('path', filePath);
   if (TOKEN) url.searchParams.set('token', TOKEN);
   return url.toString();
@@ -38,9 +39,21 @@ const server = createServer((req, res) => {
 const wss = new WebSocketServer({ server });
 let shuttingDown = false;
 
-server.listen(PORT, HOST, () => {
+server.once('error', (error) => {
+  console.error(`Sidecar bridge failed to listen: ${error.message}`);
+  process.exit(1);
+});
+
+server.listen(REQUESTED_PORT, HOST, () => {
+  const address = server.address();
+  if (!address || typeof address === 'string') {
+    console.error('Sidecar bridge did not expose a TCP address.');
+    process.exit(1);
+    return;
+  }
+  boundPort = address.port;
   // Stdout line consumed by the desktop supervisor to confirm readiness.
-  process.stdout.write(`SIDECAR_READY ${PORT}\n`);
+  process.stdout.write(`SIDECAR_READY ${String(boundPort)}\n`);
 });
 
 wss.on('connection', (ws, req) => {
@@ -53,34 +66,42 @@ wss.on('connection', (ws, req) => {
   }
   clients.add(ws);
 
-  ws.on('message', async (raw) => {
-    let cmd: ClientCommand;
-    try {
-      cmd = JSON.parse(raw.toString()) as ClientCommand;
-    } catch {
-      ws.send(
-        JSON.stringify({
-          type: 'error',
-          message: 'Invalid JSON command',
-        } satisfies ServerEvent),
-      );
-      return;
-    }
-    try {
-      await manager.handle(cmd);
-    } catch (err) {
-      ws.send(
-        JSON.stringify({
-          type: 'error',
-          message: err instanceof Error ? err.message : String(err),
-        } satisfies ServerEvent),
-      );
-    }
-  });
+  ws.on('message', (raw) => void handleMessage(ws, raw));
 
   ws.on('close', () => clients.delete(ws));
   ws.on('error', () => clients.delete(ws));
 });
+
+async function handleMessage(ws: WebSocket, raw: RawData): Promise<void> {
+  let cmd: ClientCommand;
+  try {
+    cmd = JSON.parse(messageText(raw)) as ClientCommand;
+  } catch {
+    ws.send(
+      JSON.stringify({
+        type: 'error',
+        message: 'Invalid JSON command',
+      } satisfies ServerEvent),
+    );
+    return;
+  }
+  try {
+    await manager.handle(cmd);
+  } catch (err) {
+    ws.send(
+      JSON.stringify({
+        type: 'error',
+        message: err instanceof Error ? err.message : String(err),
+      } satisfies ServerEvent),
+    );
+  }
+}
+
+function messageText(raw: RawData): string {
+  if (Buffer.isBuffer(raw)) return raw.toString('utf8');
+  if (raw instanceof ArrayBuffer) return Buffer.from(raw).toString('utf8');
+  return Buffer.concat(raw).toString('utf8');
+}
 
 async function shutdown(): Promise<void> {
   if (shuttingDown) return;
@@ -100,7 +121,7 @@ async function shutdown(): Promise<void> {
 }
 
 function serveBrowserAsset(req: IncomingMessage, res: ServerResponse): boolean {
-  const url = new URL(req.url ?? '/', `http://${HOST}:${PORT}`);
+  const url = new URL(req.url ?? '/', `http://${HOST}:${String(boundPort)}`);
   if (url.pathname !== '/browser-assets') return false;
   if (TOKEN && !ALLOW_LOCAL_NO_TOKEN && url.searchParams.get('token') !== TOKEN) {
     res.writeHead(401).end('unauthorized');
@@ -124,6 +145,14 @@ function serveBrowserAsset(req: IncomingMessage, res: ServerResponse): boolean {
   return true;
 }
 
+function bridgePort(value: string): number {
+  const port = Number(value);
+  if (!Number.isInteger(port) || port < 0 || port > 65_535) {
+    throw new Error(`BRIDGE_PORT must be an integer from 0 to 65535; received ${value}.`);
+  }
+  return port;
+}
+
 function contentType(filePath: string): string {
   if (filePath.endsWith('.png')) return 'image/png';
   if (filePath.endsWith('.jpg') || filePath.endsWith('.jpeg')) return 'image/jpeg';
@@ -131,10 +160,10 @@ function contentType(filePath: string): string {
   return 'application/octet-stream';
 }
 
-process.on('SIGINT', shutdown);
-process.on('SIGTERM', shutdown);
+process.on('SIGINT', () => void shutdown());
+process.on('SIGTERM', () => void shutdown());
 if (EXIT_ON_STDIN_CLOSE) {
   process.stdin.resume();
-  process.stdin.once('end', shutdown);
-  process.stdin.once('close', shutdown);
+  process.stdin.once('end', () => void shutdown());
+  process.stdin.once('close', () => void shutdown());
 }
