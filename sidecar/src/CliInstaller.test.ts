@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   buildInstallCommand,
   buildUpdateCommand,
+  completedProcessExitCode,
   pickInstallChannel,
   streamingInvocation,
 } from './CliInstaller.js';
@@ -56,6 +57,12 @@ test('streamingInvocation never enables a generic shell', () => {
     command: 'cmd.exe',
     args: ['/d', '/s', '/c', 'npm', 'install', '-g'],
   });
+});
+
+test('signal termination is never reported as installer success', () => {
+  assert.equal(completedProcessExitCode(null), 1);
+  assert.equal(completedProcessExitCode(0), 0);
+  assert.equal(completedProcessExitCode(9), 9);
 });
 
 test('buildUpdateCommand uses droid update when the CLI exists', () => {

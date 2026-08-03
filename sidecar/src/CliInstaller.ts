@@ -45,7 +45,14 @@ export function buildUpdateCommand(
   return buildInstallCommand(channel ?? 'script');
 }
 
-export interface ProgressLine { stream: 'stdout' | 'stderr'; line: string }
+export interface ProgressLine {
+  stream: 'stdout' | 'stderr';
+  line: string;
+}
+
+export function completedProcessExitCode(code: number | null): number {
+  return code ?? 1;
+}
 
 export function streamingInvocation(
   cmd: ShellCommand,
@@ -83,6 +90,6 @@ export function runStreaming(
       onLine({ stream: 'stderr', line: err instanceof Error ? err.message : String(err) });
       resolve(1);
     });
-    child.on('close', (code) => { resolve(code ?? 0); });
+    child.on('close', (code) => resolve(completedProcessExitCode(code)));
   });
 }
