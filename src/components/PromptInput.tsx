@@ -1,4 +1,4 @@
-import { Fragment, useState, useRef, useEffect, useMemo, type SetStateAction } from 'react';
+import { useState, useRef, useEffect, useMemo, type SetStateAction } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { useStore } from '../hooks/useStore';
 import type { QueuedPrompt } from '../hooks/useStore';
@@ -39,18 +39,8 @@ import {
   visibleSessionTarget,
   type VisibleSessionTarget,
 } from '../lib/childSessions';
-import {
-  ArrowUp,
-  ChevronDown,
-  Plus,
-  SlidersHorizontal,
-  Square,
-  FileText,
-  X,
-  Check,
-  Terminal,
-  Hexagon,
-} from 'lucide-react';
+import { ArrowUp, ChevronDown, Plus, SlidersHorizontal, Square, FileText, X } from 'lucide-react';
+import ComposerMenu, { type MenuItem, type SlashCommand } from './ComposerMenu';
 import ModelSelectorPopover from './ModelSelectorPopover';
 import {
   buildVisibleChildSettingsTarget,
@@ -61,7 +51,7 @@ import PermissionInline from './PermissionInline';
 import PlanApprovalInline from './PlanApprovalInline';
 import { ModelIcon, providerOf } from './ModelIcon';
 import { StartInBar } from './environment/StartInBar';
-import type { SkillInfo, SkillLocation } from '../types/bridge';
+import type { SkillInfo } from '../types/bridge';
 
 const ACCENT = 'var(--droid-accent)';
 const accentMix = (pct: number) =>
@@ -69,23 +59,12 @@ const accentMix = (pct: number) =>
 type SubmitMode = 'queue' | 'now';
 const oppositeSubmitMode = (mode: SubmitMode): SubmitMode => (mode === 'queue' ? 'now' : 'queue');
 
-interface SlashCommand {
-  cmd: string;
-  desc: string;
-  run: () => void;
-}
-
 interface Trigger {
   kind: 'slash' | 'file';
   query: string;
   start: number;
   end: number;
 }
-
-type MenuItem =
-  | { type: 'command'; command: SlashCommand }
-  | { type: 'skill'; skill: SkillInfo }
-  | { type: 'file'; path: string };
 
 function getTrigger(text: string, caret: number): Trigger | null {
   const upto = text.slice(0, caret);
@@ -106,28 +85,7 @@ function basename(p: string): string {
   return i >= 0 ? p.slice(i + 1) : p;
 }
 
-const LOCATION_LABEL: Record<SkillLocation, string> = {
-  project: 'Project',
-  personal: 'Personal',
-  builtin: 'Built-in',
-};
-
 const COMPACT_COMMANDS = new Set(['/compact', '/compaction', '/compression']);
-
-// Slash-menu section for a row: the first command and first skill each open
-// their labeled group. findIndex returns -1 for a missing group, which no row
-// index can match.
-function menuSection(
-  kind: Trigger['kind'],
-  index: number,
-  firstCommandIndex: number,
-  firstSkillIndex: number,
-): 'Commands' | 'Skills' | null {
-  if (kind !== 'slash') return null;
-  if (index === firstCommandIndex) return 'Commands';
-  if (index === firstSkillIndex) return 'Skills';
-  return null;
-}
 
 export default function PromptInput({
   rightInset = false,
@@ -388,10 +346,6 @@ export default function PromptInput({
   }, [trigger, files, invocableSkills, slashCommands]);
 
   const menuOpen = !!trigger && menuItems.length > 0;
-  // Section labels split the slash menu into command and skill groups; files
-  // already render their own header row.
-  const firstCommandIndex = menuItems.findIndex((item) => item.type === 'command');
-  const firstSkillIndex = menuItems.findIndex((item) => item.type === 'skill');
 
   // Lazy-load files when an @-trigger is active and cwd changed.
   useEffect(() => {
@@ -953,130 +907,17 @@ export default function PromptInput({
         onDragOver={fileDrop.onDragOver}
         onDrop={fileDrop.onDrop}
       >
-        <AnimatePresence>
-          {menuOpen && (
-            <motion.div
-              initial={{ opacity: 0, y: 6 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: 6 }}
-              transition={{ duration: 0.14, ease: [0.16, 1, 0.3, 1] }}
-              className="absolute bottom-full left-0 right-0 mb-2 z-50 rounded-xl border border-droid-border bg-droid-elevated shadow-2xl shadow-black/40 overflow-hidden py-1 max-h-72 overflow-y-auto"
-            >
-              {trigger.kind === 'file' && (
-                <div className="flex items-center gap-1.5 px-3 pb-1 pt-1.5 text-[10px] font-medium uppercase tracking-wide text-droid-text-muted/60">
-                  <FileText className="w-3 h-3" /> Files{filesCwd ? '' : ' — loading…'}
-                </div>
-              )}
-              {menuItems.map((item, i) => {
-                const on = i === Math.min(menuIndex, menuItems.length - 1);
-                const base = `w-full flex items-center gap-3 px-3 py-2 text-left transition-colors ${on ? 'bg-droid-surface' : 'hover:bg-droid-surface/50'}`;
-                const section = menuSection(trigger.kind, i, firstCommandIndex, firstSkillIndex);
-                const sectionHeader = section ? (
-                  <div
-                    className={`px-3 pb-1 text-[10px] font-medium uppercase tracking-wide text-droid-text-muted/50 ${i === 0 ? 'pt-1.5' : 'pt-2.5'}`}
-                  >
-                    {section}
-                  </div>
-                ) : null;
-                if (item.type === 'command') {
-                  return (
-                    <Fragment key={`cmd-${item.command.cmd}`}>
-                      {sectionHeader}
-                      <button
-                        onMouseEnter={() => {
-                          setMenuIndex(i);
-                        }}
-                        onMouseDown={(e) => {
-                          e.preventDefault();
-                          runMenuItem(item);
-                        }}
-                        className={base}
-                      >
-                        <Terminal className="w-4 h-4 shrink-0 text-droid-text-muted/70" />
-                        <span className="shrink-0 text-[12.5px] font-medium text-droid-text">
-                          {item.command.cmd}
-                        </span>
-                        <span className="min-w-0 flex-1 truncate text-[11.5px] text-droid-text-muted">
-                          {item.command.desc}
-                        </span>
-                      </button>
-                    </Fragment>
-                  );
-                }
-                if (item.type === 'skill') {
-                  const added = activeSkills.some((s) => s.filePath === item.skill.filePath);
-                  return (
-                    <Fragment key={`skill-${item.skill.filePath}`}>
-                      {sectionHeader}
-                      <button
-                        onMouseEnter={() => {
-                          setMenuIndex(i);
-                        }}
-                        onMouseDown={(e) => {
-                          e.preventDefault();
-                          runMenuItem(item);
-                        }}
-                        className={base}
-                      >
-                        <Hexagon className="w-4 h-4 shrink-0 text-droid-text-muted/70" />
-                        <span className="shrink-0 text-[12.5px] font-medium text-droid-text">
-                          {item.skill.name}
-                        </span>
-                        <span className="min-w-0 flex-1 truncate text-[11.5px] text-droid-text-muted">
-                          {item.skill.description}
-                        </span>
-                        {added && (
-                          <>
-                            <Check
-                              className="w-3.5 h-3.5 shrink-0"
-                              style={{ color: ACCENT }}
-                              aria-hidden="true"
-                            />
-                            <span className="sr-only">added</span>
-                          </>
-                        )}
-                        <span className="shrink-0 text-[10.5px] text-droid-text-muted/60">
-                          {LOCATION_LABEL[item.skill.location]}
-                        </span>
-                      </button>
-                    </Fragment>
-                  );
-                }
-                return (
-                  <button
-                    key={`file-${item.path}`}
-                    onMouseEnter={() => {
-                      setMenuIndex(i);
-                    }}
-                    onMouseDown={(e) => {
-                      e.preventDefault();
-                      runMenuItem(item);
-                    }}
-                    className={base}
-                  >
-                    <FileText className="w-3.5 h-3.5 shrink-0 text-droid-text-muted" />
-                    <span className="shrink-0 text-[12px] font-medium text-droid-text">
-                      {basename(item.path)}
-                    </span>
-                    <span className="min-w-0 flex-1 truncate text-[11.5px] text-droid-text-muted/70">
-                      {item.path}
-                    </span>
-                    {attachedFiles.includes(item.path) && (
-                      <>
-                        <Check
-                          className="w-3 h-3 shrink-0"
-                          style={{ color: ACCENT }}
-                          aria-hidden="true"
-                        />
-                        <span className="sr-only">attached</span>
-                      </>
-                    )}
-                  </button>
-                );
-              })}
-            </motion.div>
-          )}
-        </AnimatePresence>
+        <ComposerMenu
+          open={menuOpen}
+          triggerKind={trigger?.kind ?? null}
+          filesLoading={!filesCwd}
+          items={menuItems}
+          activeIndex={menuIndex}
+          activeSkills={activeSkills}
+          attachedFiles={attachedFiles}
+          onHoverItem={setMenuIndex}
+          onRunItem={runMenuItem}
+        />
 
         <PlanApprovalInline />
         <PermissionInline />
