@@ -1,8 +1,7 @@
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
-import { mkdir, mkdtemp, readdir, writeFile } from 'node:fs/promises';
+import { readdir, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
-import { tmpdir } from 'node:os';
 import { join, resolve, sep } from 'node:path';
 
 /**
@@ -37,6 +36,7 @@ const GLOBAL_CSS_CANDIDATES = [
 
 export async function buildComponentPreview(
   input: ComponentPreviewInput,
+  createDirectory: (id: string) => Promise<string>,
 ): Promise<ComponentPreviewResult> {
   const abs = resolve(input.cwd, input.file);
   if (abs !== input.cwd && !abs.startsWith(input.cwd + sep)) {
@@ -49,7 +49,7 @@ export async function buildComponentPreview(
     .update(`${input.cwd} ${input.file} ${input.name}`)
     .digest('hex')
     .slice(0, 12)}`;
-  const dir = await componentPreviewDirectory(id);
+  const dir = await createDirectory(id);
 
   const entry = join(dir, 'entry.tsx');
   await writeFile(entry, entrySource(abs, input));
@@ -176,13 +176,4 @@ function escapeHtml(value: string): string {
 
 export function componentPreviewLabel(name: string): string {
   return `${name} · component`;
-}
-
-let componentPreviewRoot: Promise<string> | undefined;
-
-async function componentPreviewDirectory(id: string): Promise<string> {
-  componentPreviewRoot ??= mkdtemp(join(tmpdir(), 'droidex-component-preview-'));
-  const dir = join(await componentPreviewRoot, id);
-  await mkdir(dir, { recursive: true });
-  return dir;
 }

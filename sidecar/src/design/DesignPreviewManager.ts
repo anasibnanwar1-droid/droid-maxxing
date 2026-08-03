@@ -89,7 +89,7 @@ export class DesignPreviewManager {
     },
     shouldEmit = true,
   ): Promise<PreviewResult> {
-    const built = await buildComponentPreview(input);
+    const built = await buildComponentPreview(input, (id) => this.generatedPreviewDirectory(id));
     if (built.error) throw new Error(built.error);
     return this.serve({
       cwd: input.cwd,

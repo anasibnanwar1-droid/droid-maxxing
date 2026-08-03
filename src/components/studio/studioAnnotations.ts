@@ -120,22 +120,6 @@ export function annotationScreenGeometry(
   return { points, bounds: screenBounds(points) };
 }
 
-export function annotationScreenPoints(
-  annotation: StudioAnnotation,
-  frames: StudioFrame[],
-  view: CanvasView,
-): Point[] {
-  return annotationScreenGeometry(annotation, frames, view).points;
-}
-
-export function annotationScreenBounds(
-  annotation: StudioAnnotation,
-  frames: StudioFrame[],
-  view: CanvasView,
-): Rect | null {
-  return annotationScreenGeometry(annotation, frames, view).bounds;
-}
-
 function screenBounds(points: Point[]): Rect | null {
   if (points.length === 0) return null;
   let minX = points[0].x;
@@ -188,19 +172,6 @@ export function hitTestAnnotationGeometry(
   });
 }
 
-export function hitResizeHandle(
-  annotation: StudioAnnotation,
-  point: Point,
-  frames: StudioFrame[],
-  view: CanvasView,
-): AnnotationResizeHandle | null {
-  return hitResizeHandleGeometry(
-    annotation,
-    point,
-    annotationScreenGeometry(annotation, frames, view),
-  );
-}
-
 export function hitResizeHandleGeometry(
   annotation: StudioAnnotation,
   point: Point,
@@ -211,17 +182,6 @@ export function hitResizeHandleGeometry(
     if (Math.hypot(point.x - handle.x, point.y - handle.y) <= 9) return name;
   }
   return null;
-}
-
-export function annotationHandles(
-  annotation: StudioAnnotation,
-  frames: StudioFrame[],
-  view: CanvasView,
-): [AnnotationResizeHandle, Point][] {
-  return annotationHandlesFromGeometry(
-    annotation,
-    annotationScreenGeometry(annotation, frames, view),
-  );
 }
 
 export function annotationHandlesFromGeometry(

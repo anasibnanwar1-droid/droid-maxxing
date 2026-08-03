@@ -8,7 +8,7 @@ import {
 import { buildStudioPrompt } from './studioPromptContext';
 import { fitRects, MAX_ZOOM, readableFrameRect } from './studioCanvasMath';
 import {
-  annotationHandles,
+  annotationHandlesFromGeometry,
   annotationPointToWorld,
   annotationScreenGeometry,
   hitTestAnnotation,
@@ -92,7 +92,9 @@ test('canvas shapes can be selected, moved, and resized', () => {
   const view = emptyStudioCanvasState().view;
   assert.equal(hitTestAnnotation(rectangle, { x: 30, y: 25 }, [], view), true);
   assert.deepEqual(
-    annotationHandles(rectangle, [], view).map(([handle]) => handle),
+    annotationHandlesFromGeometry(rectangle, annotationScreenGeometry(rectangle, [], view)).map(
+      ([handle]) => handle,
+    ),
     ['nw', 'ne', 'se', 'sw', 'n', 'e', 's', 'w'],
   );
 

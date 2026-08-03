@@ -25,6 +25,7 @@ import { FontLine, Header, Swatches } from './DnaPrimitives';
 import DnaDraftProposal from './DnaDraftProposal';
 import DnaInterview from './DnaInterview';
 import { authoringInstruction, briefImageReferences, toBriefMarkdown } from './designBrief';
+import { recordSessionStreamingState } from './dnaRefresh';
 import MotionPreview from './MotionPreview';
 
 /**
@@ -78,13 +79,16 @@ export default function DnaShelf({
 
   // When this design session finishes a turn, re-read DNA. The agent may have
   // written DESIGN.md through file tools rather than design.dna.write.
-  const previousSessionState = useRef({ sessionId, streaming });
+  const previousStreamingBySession = useRef(new Map<string, boolean>());
   useEffect(() => {
-    const previous = previousSessionState.current;
-    if (cwd && sessionId && previous.sessionId === sessionId && previous.streaming && !streaming) {
+    const didFinishStreaming = recordSessionStreamingState(
+      previousStreamingBySession.current,
+      sessionId,
+      streaming,
+    );
+    if (cwd && didFinishStreaming) {
       readDesignDna(cwd);
     }
-    previousSessionState.current = { sessionId, streaming };
   }, [cwd, sessionId, streaming]);
 
   const scan = () => {

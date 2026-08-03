@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { X } from 'lucide-react';
 import { useDesignStore, type StudioTab } from '../../hooks/useDesignStore';
 import {
@@ -71,6 +71,9 @@ export default function StudioShell({
 
   const rawSessionId = design.sessions[sessionKey] ?? design.sessions[cwd];
   const appSessionId = rawSessionId ? rawSessionId : null;
+  const requestAddFrame = useCallback(() => {
+    setAddFrameOpen(true);
+  }, []);
 
   return (
     <div className="studio-shell flex h-full w-full bg-droid-bg">
@@ -120,19 +123,10 @@ export default function StudioShell({
             )}
           {design.studioTab === 'canvas' ? (
             <>
-              <StudioCanvas
-                cwd={cwd}
-                onRequestAddFrame={() => {
-                  setAddFrameOpen(true);
-                }}
-              />
+              <StudioCanvas cwd={cwd} onRequestAddFrame={requestAddFrame} />
 
               <div className="absolute left-3 top-1/2 z-20 -translate-y-1/2">
-                <ToolRail
-                  onRequestAddFrame={() => {
-                    setAddFrameOpen(true);
-                  }}
-                />
+                <ToolRail onRequestAddFrame={requestAddFrame} />
               </div>
 
               <SelectionContextPanel />
