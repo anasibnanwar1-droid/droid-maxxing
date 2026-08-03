@@ -274,7 +274,7 @@ export default function ModelSelectorPopover({
             <span className="text-[10px] text-droid-text-muted uppercase tracking-wider">
               Reasoning
             </span>
-            <span className="text-[10px] font-mono capitalize" style={{ color: ACCENT }}>
+            <span className="text-[10px] font-medium capitalize" style={{ color: ACCENT }}>
               {effReasoning}
             </span>
           </div>

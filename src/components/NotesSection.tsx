@@ -257,7 +257,7 @@ export function NotesPanel({
                     {tag && (
                       <div className="mb-1 flex">
                         <span
-                          className={`inline-flex items-center gap-1 px-2 py-0.5 font-mono text-[10px] font-medium uppercase tracking-wide ${NOTE_TAG_CHIP[tag]}`}
+                          className={`inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide ${NOTE_TAG_CHIP[tag]}`}
                         >
                           {tag}
                           <button
@@ -364,7 +364,7 @@ export function NotesPanel({
                             }`}
                           >
                             <span
-                              className={`px-1.5 py-px font-mono text-[9.5px] font-medium uppercase tracking-wide ${NOTE_TAG_CHIP[option]}`}
+                              className={`px-1.5 py-px text-[9.5px] font-medium uppercase tracking-wide ${NOTE_TAG_CHIP[option]}`}
                             >
                               {option}
                             </span>
@@ -416,7 +416,7 @@ export function NotesPanel({
                             >
                               {tag && (
                                 <span
-                                  className={`mr-1.5 px-1.5 py-px font-mono text-[9.5px] font-medium uppercase tracking-wide ${NOTE_TAG_CHIP[tag]}`}
+                                  className={`mr-1.5 px-1.5 py-px text-[9.5px] font-medium uppercase tracking-wide ${NOTE_TAG_CHIP[tag]}`}
                                 >
                                   {tag}
                                 </span>
