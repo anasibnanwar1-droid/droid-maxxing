@@ -855,21 +855,6 @@ function GeneralSection() {
         </SettingRow>
       </div>
 
-      <GroupLabel>Sessions</GroupLabel>
-      <div className="rounded-xl border border-droid-border bg-droid-surface divide-y divide-droid-border mb-8">
-        <SettingRow
-          label="Default autonomy"
-          description="How much new sessions may do without asking. The composer can override it for a single session."
-        >
-          <AutonomySelector
-            scope="settings"
-            value={state.defaultAutonomy}
-            placement="down"
-            onSelect={(level) => dispatch({ type: 'SET_DEFAULT_AUTONOMY', autonomy: level })}
-          />
-        </SettingRow>
-      </div>
-
       <GroupLabel>Diff display</GroupLabel>
       <div className="rounded-xl border border-droid-border bg-droid-surface divide-y divide-droid-border mb-8">
         <SettingRow
@@ -1313,6 +1298,32 @@ function WorktreesSection() {
   );
 }
 
+/* ── configuration content ── */
+function ConfigurationSection() {
+  const { state, dispatch } = useStore();
+  return (
+    <div className="max-w-2xl mx-auto">
+      <SectionTitle title="Configuration" />
+      <GroupLabel>Sessions</GroupLabel>
+      <div className="rounded-xl border border-droid-border bg-droid-surface divide-y divide-droid-border mb-8">
+        <SettingRow
+          label="Default autonomy"
+          description="How much new sessions may do without asking. The composer can override it for a single session."
+        >
+          <AutonomySelector
+            scope="settings"
+            value={state.defaultAutonomy}
+            placement="down"
+            onSelect={(level) => {
+              dispatch({ type: 'SET_DEFAULT_AUTONOMY', autonomy: level });
+            }}
+          />
+        </SettingRow>
+      </div>
+    </div>
+  );
+}
+
 function PlaceholderSection({ title }: { title: string }) {
   return (
     <div className="max-w-2xl mx-auto">
@@ -1340,6 +1351,27 @@ export default function SettingsPanel() {
 
   const close = () => dispatch({ type: 'TOGGLE_SETTINGS' });
   const q = query.trim().toLowerCase();
+
+  let content: React.ReactNode;
+  switch (active) {
+    case 'Appearance':
+      content = <AppearanceSection />;
+      break;
+    case 'General':
+      content = <GeneralSection />;
+      break;
+    case 'Setup & updates':
+      content = <SetupSection onClose={close} />;
+      break;
+    case 'Worktrees':
+      content = <WorktreesSection />;
+      break;
+    case 'Configuration':
+      content = <ConfigurationSection />;
+      break;
+    default:
+      content = <PlaceholderSection title={active} />;
+  }
 
   return (
     <AnimatePresence>
@@ -1402,19 +1434,7 @@ export default function SettingsPanel() {
 
           {/* Content */}
           <div className="flex-1 overflow-y-auto">
-            <div className="px-10 py-8">
-              {active === 'Appearance' ? (
-                <AppearanceSection />
-              ) : active === 'General' ? (
-                <GeneralSection />
-              ) : active === 'Setup & updates' ? (
-                <SetupSection onClose={close} />
-              ) : active === 'Worktrees' ? (
-                <WorktreesSection />
-              ) : (
-                <PlaceholderSection title={active} />
-              )}
-            </div>
+            <div className="px-10 py-8">{content}</div>
           </div>
         </motion.div>
       )}

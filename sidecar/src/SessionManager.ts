@@ -1151,7 +1151,8 @@ export class SessionManager {
 
   private setAutonomy(appSessionId: string, autonomy: Autonomy): Promise<void> {
     const tail = this.autonomyMutationTails.get(appSessionId) ?? Promise.resolve();
-    const next = tail.then(() => this.applyAutonomy(appSessionId, autonomy));
+    // A rejected predecessor must not drop the changes queued behind it.
+    const next = tail.catch(() => undefined).then(() => this.applyAutonomy(appSessionId, autonomy));
     this.autonomyMutationTails.set(appSessionId, next);
     return next.finally(() => {
       if (this.autonomyMutationTails.get(appSessionId) === next) {
@@ -1204,9 +1205,26 @@ export class SessionManager {
       liveSession.session !== session ||
       hasSessionCloseStarted(liveSession)
     ) {
+      // Dropping the confirmation silently would leave the caller's pending
+      // state spinning forever; settle it with a recoverable error instead.
+      this.emitError({
+        code: 'session.autonomy_update_failed',
+        appSessionId,
+        message: 'Autonomy change was interrupted by a session restart or close.',
+        recoverable: true,
+      });
       return;
     }
-    this.registry.updateSummary(appSessionId, { autonomy: nextAutonomy });
+    try {
+      this.registry.updateSummary(appSessionId, { autonomy: nextAutonomy });
+    } catch (err) {
+      this.emitError({
+        code: 'session.autonomy_update_failed',
+        appSessionId,
+        message: `Could not record the autonomy change: ${errMsg(err)}`,
+        recoverable: true,
+      });
+    }
   }
 
   private async setInteractionMode(

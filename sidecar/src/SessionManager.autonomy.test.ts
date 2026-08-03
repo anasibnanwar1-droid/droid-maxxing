@@ -173,8 +173,37 @@ test(
   },
 );
 
+test('a failed autonomy update does not drop changes queued behind it', async () => {
+  const h = createSessionManagerTestContext();
+  try {
+    await createChat(h, 'low');
+    await h.waitForIdle();
+    const session = h.provider.session('provider-1');
+    session.nextUpdateSettingsError = new Error('provider rejected');
+    const writesBefore = session.settings.length;
+
+    // The first update rejects at the provider; the second, queued behind it,
+    // must still reach the provider once the queue advances.
+    const first = updateAutonomy(h, 'provider-1', 'medium');
+    const second = updateAutonomy(h, 'provider-1', 'high');
+    await Promise.all([first, second]);
+    await h.waitForIdle();
+
+    assert.deepEqual(session.settings.slice(writesBefore), [
+      { autonomyLevel: AutonomyLevel.Medium },
+      { autonomyLevel: AutonomyLevel.High },
+    ]);
+    assert.equal(sessionUpdates(h.events, 'provider-1').at(-1)?.autonomy, 'high');
+    const errors = errorEvents(h.events);
+    assert.equal(errors.length, 1);
+    assert.match(errors[0]?.message ?? '', /Could not change autonomy/);
+  } finally {
+    await h.dispose();
+  }
+});
+
 test(
-  'an autonomy update that settles after close publishes nothing',
+  'an autonomy update dropped by a close settles the caller and publishes nothing',
   { concurrency: false },
   async () => {
     const h = createSessionManagerTestContext();
@@ -194,7 +223,16 @@ test(
         sessionUpdates(h.events, 'provider-1').some((session) => session.autonomy === 'high'),
         false,
       );
-      assert.equal(errorEvents(h.events).length, 0);
+      // The dropped confirmation settles the caller with a recoverable error
+      // instead of leaving its pending state spinning forever.
+      const errors = errorEvents(h.events);
+      assert.equal(errors.length, 1);
+      assert.equal(
+        errors[0]?.type === 'error' ? errors[0].code : undefined,
+        'session.autonomy_update_failed',
+      );
+      assert.equal(errors[0]?.type === 'error' ? errors[0].recoverable : undefined, true);
+      assert.match(errors[0]?.message ?? '', /interrupted/);
     } finally {
       await h.dispose();
     }
