@@ -248,7 +248,7 @@ function GroupLabel({ children }: { children: React.ReactNode }) {
 }
 
 /* ── appearance content ── */
-function AppearanceSection() {
+export function AppearanceSection() {
   const { state, dispatch } = useStore();
   const theme = state.theme;
   const updateTheme = (patch: Partial<typeof theme>) => {
