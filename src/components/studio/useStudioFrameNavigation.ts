@@ -7,6 +7,8 @@ import {
   type StudioFrame,
 } from './StudioCanvasContext';
 
+const FOCUS_DURATION_MS = 420;
+
 /** Owns animated frame focus and restore-aware entrance behavior for the canvas. */
 export function useStudioFrameNavigation(rootRef: RefObject<HTMLDivElement | null>) {
   const { studio, studioDispatch } = useStudioCanvas();
@@ -27,11 +29,15 @@ export function useStudioFrameNavigation(rootRef: RefObject<HTMLDivElement | nul
   const animateView = useCallback(
     (target: CanvasView) => {
       stopAnimation();
+      if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+        studioDispatch({ type: 'SET_VIEW', view: target });
+        return;
+      }
       const start = viewRef.current;
       const startedAt = performance.now();
       const step = (now: number) => {
-        const progress = Math.min(1, (now - startedAt) / 500);
-        const eased = 1 - Math.pow(1 - progress, 3);
+        const progress = Math.min(1, (now - startedAt) / FOCUS_DURATION_MS);
+        const eased = 1 - Math.pow(1 - progress, 4);
         studioDispatch({
           type: 'SET_VIEW',
           view: {
@@ -43,6 +49,7 @@ export function useStudioFrameNavigation(rootRef: RefObject<HTMLDivElement | nul
           },
         });
         if (progress < 1) animationFrame.current = requestAnimationFrame(step);
+        else animationFrame.current = null;
       };
       animationFrame.current = requestAnimationFrame(step);
     },

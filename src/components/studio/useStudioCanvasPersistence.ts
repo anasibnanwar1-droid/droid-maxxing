@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useDesignStore } from '../../hooks/useDesignStore';
 import { readDesignCanvas } from '../../lib/commands';
 import { useStudioCanvas } from './StudioCanvasContext';
@@ -20,12 +20,12 @@ export function useStudioCanvasPersistence(
   const { studio, studioDispatch } = useStudioCanvas();
   const rawSession = design.sessions[projectKey] ?? design.sessions[cwd];
   const canvasId = canvasIdForSession(rawSession);
-  const serialized = useMemo(() => serializeStudioCanvas(studio), [studio]);
-  const currentContentRef = useRef(serialized.content);
-  currentContentRef.current = serialized.content;
+  const currentStudioRef = useRef(studio);
+  currentStudioRef.current = studio;
   const dispatchRef = useRef(studioDispatch);
   dispatchRef.current = studioDispatch;
   const [hydrationNotices, setHydrationNotices] = useState<string[]>([]);
+  const [serializationNotices, setSerializationNotices] = useState<string[]>([]);
   const [isHydrating, setIsHydrating] = useState(true);
   const skipNextUpdateRef = useRef(false);
   const restoreTimerRef = useRef<number | null>(null);
@@ -44,13 +44,14 @@ export function useStudioCanvasPersistence(
         dispatchRef.current({ type: 'HYDRATE', state: hydrated.state });
       },
       onNotice: setHydrationNotices,
+      onSerialize: setSerializationNotices,
     });
   }, [clearRestoreTimer]);
 
   useEffect(() => {
     const status = studioCanvasPersistenceOwner.open(
       { cwd, projectKey, canvasId },
-      currentContentRef.current,
+      serializeStudioCanvas(currentStudioRef.current).content,
     );
     skipNextUpdateRef.current = status !== 'started';
 
@@ -73,8 +74,8 @@ export function useStudioCanvasPersistence(
       skipNextUpdateRef.current = false;
       return;
     }
-    studioCanvasPersistenceOwner.update(serialized.content);
-  }, [serialized.content]);
+    studioCanvasPersistenceOwner.update(studio);
+  }, [studio]);
 
   useEffect(() => {
     const flush = () => {
@@ -87,7 +88,7 @@ export function useStudioCanvasPersistence(
   }, []);
 
   return {
-    notices: [...hydrationNotices, ...serialized.notices],
+    notices: [...hydrationNotices, ...serializationNotices],
     isHydrating,
   };
 }

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { CanvasDocument, CanvasDocumentContent, ServerEvent } from '../../types/bridge';
+import { emptyStudioCanvasState } from './StudioCanvasContext';
 import type { CanvasPersistenceTransport } from './studioCanvasPersistence';
 import { StudioCanvasPersistenceOwner } from './studioCanvasPersistenceOwner';
 
@@ -25,9 +26,9 @@ test('remount keeps one writer and newer edits win across an in-flight save', ()
   });
   harness.owner.open(target(), content(1));
   harness.emit(stateEvent(document(1, 1)));
-  harness.owner.update(content(1.2));
+  harness.owner.update(studio(1.2));
   harness.runScheduled();
-  harness.owner.update(content(1.6));
+  harness.owner.update(studio(1.6));
   detach();
 
   const secondHydrations: number[] = [];
@@ -36,7 +37,7 @@ test('remount keeps one writer and newer edits win across an in-flight save', ()
     onNotice: () => undefined,
   });
   assert.equal(harness.owner.open(target(), content(1)), 'ready');
-  harness.owner.update(content(2));
+  harness.owner.update(studio(2));
 
   harness.emit(savedEvent(document(2, 1.2)));
   harness.emit(stateEvent(document(2, 1.2)));
@@ -68,14 +69,14 @@ test('target hydration cannot turn the destination empty state into a write', ()
     onNotice: () => undefined,
   });
   harness.owner.open(target('thread-a'), content(1));
-  harness.owner.update(content(1));
+  harness.owner.update(studio(1));
   harness.emit(stateEvent(document(1, 1), 'thread-a'));
-  harness.owner.update(content(1));
+  harness.owner.update(studio(1));
 
   harness.owner.open(target('thread-b'), content(1));
-  harness.owner.update(content(1));
+  harness.owner.update(studio(1));
   harness.emit(stateEvent(document(7, 1.8, 'thread-b'), 'thread-b'));
-  harness.owner.update(content(1.8));
+  harness.owner.update(studio(1.8));
 
   assert.deepEqual(hydrated, [1, 1, 1, 1.8]);
   assert.equal(harness.writes.length, 0);
@@ -86,8 +87,8 @@ test('an edit made during delayed restore survives a target switch and read retr
   const harness = fixture();
   harness.owner.attach({ onHydrate: () => undefined, onNotice: () => undefined });
   harness.owner.open(target('thread-a'), content(1));
-  harness.owner.update(content(1));
-  harness.owner.update(content(1.6));
+  harness.owner.update(studio(1));
+  harness.owner.update(studio(1.6));
   harness.owner.open(target('thread-b'), content(1));
 
   harness.emit(readErrorEvent('thread-a'));
@@ -116,7 +117,7 @@ test('returning to a target with an in-flight save rehydrates its restored edit'
   });
   harness.owner.open(target('thread-a'), content(1));
   harness.emit(stateEvent(document(1, 1), 'thread-a'));
-  harness.owner.update(content(1.6));
+  harness.owner.update(studio(1.6));
 
   harness.owner.open(target('thread-b'), content(1));
   harness.owner.open(target('thread-a'), content(1));
@@ -146,6 +147,29 @@ test('bridge reconnect retries only an outstanding canvas hydration', () => {
   harness.emit(stateEvent(document(1, 1), 'thread-a'));
   harness.reconnect();
   assert.equal(harness.reads.length, 2);
+  harness.owner.destroy();
+});
+
+test('rapid canvas updates serialize once after the persistence boundary', () => {
+  const harness = fixture();
+  const serialized: number[] = [];
+  harness.owner.attach({
+    onHydrate: () => undefined,
+    onNotice: () => undefined,
+    onSerialize: () => serialized.push(1),
+  });
+  harness.owner.open(target(), content(1));
+  harness.emit(stateEvent(document(1, 1)));
+
+  harness.owner.update(studio(1.2));
+  harness.owner.update(studio(1.4));
+  harness.owner.update(studio(1.6));
+
+  assert.equal(serialized.length, 0);
+  assert.equal(harness.writes.length, 0);
+  harness.runScheduled();
+  assert.equal(serialized.length, 1);
+  assert.equal(harness.writes.at(-1)?.content.view.zoom, 1.6);
   harness.owner.destroy();
 });
 
@@ -201,6 +225,13 @@ function content(zoom: number): CanvasDocumentContent {
     frames: [],
     annotations: [],
     images: [],
+  };
+}
+
+function studio(zoom: number) {
+  return {
+    ...emptyStudioCanvasState(),
+    view: { pan: { x: 0, y: 0 }, zoom },
   };
 }
 
