@@ -1,0 +1,150 @@
+// Renders the committed brand SVG sources (assets/brand/*.svg) into the raster
+// assets the app and installer need:
+//   electron/assets/icon.png           1024 master (non-darwin window icon)
+//   electron/assets/icon-dark.png      1024 dark runtime icon
+//   electron/assets/icon.icns          macOS icon (via iconutil, darwin only)
+//   assets/brand/dmg-background.png    DMG window background @1x
+//   assets/brand/dmg-background@2x.png DMG window background @2x
+//
+// Rendering is deterministic: Playwright screenshots the vector source at each
+// exact pixel size (no resampling), so small sizes stay crisp. Run after
+// editing a brand SVG:  node tools/render-brand-assets.mjs
+
+import { execFileSync } from 'node:child_process';
+import { mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { createRequire } from 'node:module';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { chromium } from '@playwright/test';
+
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const brandDir = path.join(repoRoot, 'assets', 'brand');
+const electronAssets = path.join(repoRoot, 'electron', 'assets');
+const require = createRequire(import.meta.url);
+const regularFontPath =
+  require.resolve('@fontsource/jetbrains-mono/files/jetbrains-mono-latin-400-normal.woff2');
+const mediumFontPath =
+  require.resolve('@fontsource/jetbrains-mono/files/jetbrains-mono-latin-500-normal.woff2');
+
+function fontFace(fontPath, weight) {
+  const fontData = readFileSync(fontPath).toString('base64');
+  return `@font-face {
+    font-family: 'JetBrains Mono';
+    font-style: normal;
+    font-weight: ${weight};
+    font-display: block;
+    src: url(data:font/woff2;base64,${fontData}) format('woff2');
+  }`;
+}
+
+const FONT_STYLES = `${fontFace(regularFontPath, 400)}\n${fontFace(mediumFontPath, 500)}`;
+
+async function renderSvg(browser, svgPath, size, outPath) {
+  const svg = readFileSync(svgPath, 'utf8');
+  const page = await browser.newPage({
+    viewport: { width: size.width, height: size.height },
+    deviceScaleFactor: 1,
+  });
+  try {
+    await page.setContent(
+      `<!doctype html><html><head>
+         <style>${FONT_STYLES}
+           html,body{margin:0;padding:0}svg{display:block;width:100vw;height:100vh}
+         </style>
+       </head><body>${svg}</body></html>`,
+    );
+    const fontsLoaded = await page.evaluate(async () => {
+      const [regular, medium] = await Promise.all([
+        document.fonts.load('400 12px "JetBrains Mono"'),
+        document.fonts.load('500 12px "JetBrains Mono"'),
+      ]);
+      return regular.length > 0 && medium.length > 0;
+    });
+    if (!fontsLoaded) throw new Error('Bundled JetBrains Mono fonts failed to load');
+    await page.screenshot({ path: outPath, omitBackground: true });
+  } finally {
+    await page.close();
+  }
+  console.log(`rendered ${path.relative(repoRoot, outPath)} (${size.width}x${size.height})`);
+}
+
+const ICONSET_SIZES = [
+  ['icon_16x16.png', 16],
+  ['icon_16x16@2x.png', 32],
+  ['icon_32x32.png', 32],
+  ['icon_32x32@2x.png', 64],
+  ['icon_128x128.png', 128],
+  ['icon_128x128@2x.png', 256],
+  ['icon_256x256.png', 256],
+  ['icon_256x256@2x.png', 512],
+  ['icon_512x512.png', 512],
+  ['icon_512x512@2x.png', 1024],
+];
+
+async function main() {
+  const browser = await chromium.launch();
+  try {
+    const iconSvg = path.join(brandDir, 'icon.svg');
+    const darkIconSvg = path.join(brandDir, 'icon-dark.svg');
+    const dmgSvg = path.join(brandDir, 'dmg-background.svg');
+
+    // macOS iconset -> iconutil -> icon.icns (darwin only; other platforms keep
+    // the committed .icns).
+    const iconsetDir = path.join(electronAssets, 'icon.iconset');
+    rmSync(iconsetDir, { recursive: true, force: true });
+    mkdirSync(iconsetDir, { recursive: true });
+    for (const [name, size] of ICONSET_SIZES) {
+      await renderSvg(browser, iconSvg, { width: size, height: size }, path.join(iconsetDir, name));
+    }
+    if (process.platform === 'darwin') {
+      execFileSync(
+        'iconutil',
+        ['-c', 'icns', iconsetDir, '-o', path.join(electronAssets, 'icon.icns')],
+        {
+          stdio: 'inherit',
+        },
+      );
+      console.log('rendered electron/assets/icon.icns');
+      rmSync(iconsetDir, { recursive: true, force: true });
+    } else {
+      console.log('not darwin: iconset kept at electron/assets/icon.iconset, iconutil skipped');
+    }
+
+    // 1024 master PNG (window icon on non-darwin platforms).
+    await renderSvg(
+      browser,
+      iconSvg,
+      { width: 1024, height: 1024 },
+      path.join(electronAssets, 'icon.png'),
+    );
+    await renderSvg(
+      browser,
+      darkIconSvg,
+      { width: 1024, height: 1024 },
+      path.join(electronAssets, 'icon-dark.png'),
+    );
+
+    // DMG window background, 1x + 2x (electron-builder picks the @2x up when it
+    // sits next to the 1x file). Must match dmg.window in
+    // electron-builder.config.cjs.
+    await renderSvg(
+      browser,
+      dmgSvg,
+      { width: 600, height: 300 },
+      path.join(brandDir, 'dmg-background.png'),
+    );
+    await renderSvg(
+      browser,
+      dmgSvg,
+      { width: 1200, height: 600 },
+      path.join(brandDir, 'dmg-background@2x.png'),
+    );
+  } finally {
+    await browser.close();
+  }
+}
+
+main().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});

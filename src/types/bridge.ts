@@ -514,7 +514,6 @@ export type ClientCommand =
   | { type: 'connect'; apiKey?: string }
   | { type: 'runtime.status' }
   | { type: 'auth.status' }
-  | { type: 'auth.startCliLogin' }
   | { type: 'env.detect' }
   | { type: 'cli.install'; channel: InstallChannel }
   | { type: 'cli.update'; channel?: InstallChannel }

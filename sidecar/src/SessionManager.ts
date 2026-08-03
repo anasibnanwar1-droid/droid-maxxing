@@ -380,11 +380,6 @@ export class SessionManager {
       case 'auth.status':
         this.emit({ type: 'runtime.updated', status: this.runtime.status() });
         return;
-      case 'auth.startCliLogin':
-        await this.runtime.startCliLogin();
-        this.emit({ type: 'runtime.updated', status: this.runtime.status() });
-        void this.pollAuthAfterLogin();
-        return;
       case 'env.detect':
         await this.emitEnvironment();
         return;
@@ -656,25 +651,17 @@ export class SessionManager {
   private async runCliUpdate(channel?: InstallChannel): Promise<void> {
     const status = this.runtime.status();
     const env = await detectEnvironment(status.apiKeyConfigured);
-    const cmd = buildUpdateCommand(channel, status.droidPath, env.cli.present);
+    // status.droidPath can be a bare `droid` name that relies on PATH, which
+    // GUI-launched apps don't populate (packaged builds), so spawning it
+    // fails outright. env.cli.path is the absolute executable detection just
+    // verified — use it as the update command's target.
+    const cmd = buildUpdateCommand(channel, env.cli.path, env.cli.present);
     const exitCode = await runStreaming(cmd, ({ stream, line }) => {
       this.emit({ type: 'cli.install.progress', phase: 'update', stream, line });
     });
     this.emit({ type: 'cli.install.done', phase: 'update', ok: exitCode === 0, exitCode });
     this.emit({ type: 'runtime.updated', status: this.runtime.status() });
     await this.emitEnvironment();
-  }
-
-  // After `droid login` opens the browser, the auth marker appears once the
-  // user finishes. Re-emit environment a few times so the UI flips to signed-in
-  // without forcing the user to click refresh.
-  private async pollAuthAfterLogin(): Promise<void> {
-    for (let i = 0; i < 30; i++) {
-      await new Promise((resolve) => setTimeout(resolve, 2000));
-      const report = await detectEnvironment(this.runtime.status().apiKeyConfigured);
-      this.emit({ type: 'env.report', report });
-      if (report.auth.loginPresent) return;
-    }
   }
 
   private async getFactoryDefaults(): Promise<FactoryDefaultSettings> {

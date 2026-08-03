@@ -9,6 +9,7 @@
   ],
   "project": ["src/**/*.{ts,tsx}", "electron/**/*.cjs", "*.config.{js,ts}"],
   "ignore": ["sidecar/**"],
+  "ignoreBinaries": ["iconutil"],
   "ignoreDependencies": [
     "@types/react",
     "@types/react-dom",

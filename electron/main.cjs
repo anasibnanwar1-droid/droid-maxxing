@@ -6,6 +6,7 @@ const {
   WebContentsView,
   dialog,
   ipcMain,
+  nativeTheme,
   safeStorage,
   session,
   shell,
@@ -27,7 +28,6 @@ const {
 } = require('./browserDiagnostics.cjs');
 const { runWithWebContentsDebugger } = require('./nativeBrowserEmulation.cjs');
 const { attachChildView, detachChildView } = require('./nativeBrowserHost.cjs');
-
 const APP_NAME = 'Droid Control';
 const BRIDGE_PORT = Number(process.env.BRIDGE_PORT ?? 8765);
 const bridge = { port: BRIDGE_PORT, token: crypto.randomBytes(16).toString('hex') };
@@ -38,6 +38,9 @@ const filesRootAccess = files.createRootAccessRegistry();
 let mainWindow = null;
 let hiddenNativeBrowserWindow = null;
 let sidecar = null;
+// Selected app-icon appearance. 'system' tracks the OS light/dark setting via
+// nativeTheme; 'light'/'dark' pin a specific artwork.
+let appIconMode = 'system';
 let attachedBrowserSessionId = null;
 const nativeBrowsers = new Map();
 // Keep hidden browser sessions warm by default so authenticated pages and
@@ -61,6 +64,10 @@ app.whenReady().then(() => {
   installApplicationMenu();
   registerIpc();
   createMainWindow();
+  // Repaint the icon when the OS appearance flips while 'system' is selected.
+  nativeTheme.on('updated', () => {
+    if (appIconMode === 'system') applyAppIcon();
+  });
   ensureSidecar();
 });
 
@@ -204,6 +211,10 @@ function registerIpc() {
   ipcMain.handle('app-check-update', checkAppUpdate);
   ipcMain.handle('app-download-update', (_e, dmgUrl) => downloadAppUpdate(dmgUrl));
   ipcMain.handle('app-relaunch', () => relaunchApp());
+  ipcMain.handle('app-set-icon', (event, payload) => {
+    assertMainRenderer(event);
+    return setAppIcon(payload?.mode);
+  });
   ipcMain.handle('open-external', (_event, { url }) => openExternal(url));
 
   ipcMain.handle('terminal-create', (event, args) => {
@@ -363,6 +374,29 @@ function assertMainRenderer(event) {
   }
 }
 
+function resolveAppIconFile(mode) {
+  const useDark = mode === 'dark' || (mode === 'system' && nativeTheme.shouldUseDarkColors);
+  return useDark ? 'icon-dark.png' : 'icon.png';
+}
+
+function applyAppIcon() {
+  const iconPath = path.join(__dirname, 'assets', resolveAppIconFile(appIconMode));
+  if (process.platform === 'darwin') {
+    app.dock.setIcon(iconPath);
+  } else if (mainWindow) {
+    mainWindow.setIcon(iconPath);
+  }
+}
+
+function setAppIcon(mode) {
+  if (mode !== 'light' && mode !== 'dark' && mode !== 'system') {
+    throw new Error('App icon mode must be light, dark, or system.');
+  }
+  appIconMode = mode;
+  applyAppIcon();
+  return mode;
+}
+
 function installApplicationMenu() {
   const isMac = process.platform === 'darwin';
   const reloadItem = () => ({
@@ -464,28 +498,30 @@ function closeRendererOwnedTerminals() {
 }
 
 function appRoot() {
-  return app.isPackaged ? process.resourcesPath : path.resolve(__dirname, '..');
+  // Packaged app files (renderer dist, electron/) live inside app.asar, which
+  // Electron resolves transparently for loadFile/loadURL.
+  return app.isPackaged
+    ? path.join(process.resourcesPath, 'app.asar')
+    : path.resolve(__dirname, '..');
 }
 
 function sidecarEntry() {
-  return process.env.SIDECAR_ENTRY || path.join(appRoot(), 'sidecar/dist/sidecar.mjs');
-}
-
-function nodeBin() {
-  if (process.env.NODE_BIN) return process.env.NODE_BIN;
-  for (const candidate of ['/opt/homebrew/bin/node', '/usr/local/bin/node']) {
-    if (fs.existsSync(candidate)) return candidate;
-  }
-  return 'node';
+  // The sidecar ships as an extraResource beside the asar so it can be spawned
+  // as a plain Node script; an asar path would not survive as a child cwd/argv.
+  if (process.env.SIDECAR_ENTRY) return process.env.SIDECAR_ENTRY;
+  return app.isPackaged
+    ? path.join(process.resourcesPath, 'sidecar/dist/sidecar.mjs')
+    : path.join(appRoot(), 'sidecar/dist/sidecar.mjs');
 }
 
 function ensureSidecar() {
   if (sidecar && sidecar.exitCode === null && sidecar.signalCode === null) return;
-  sidecar = spawn(nodeBin(), [sidecarEntry()], {
-    cwd: appRoot(),
+  sidecar = spawn(process.execPath, [sidecarEntry()], {
+    cwd: app.isPackaged ? process.resourcesPath : appRoot(),
     stdio: ['pipe', 'inherit', 'inherit'],
     env: {
       ...process.env,
+      ELECTRON_RUN_AS_NODE: '1',
       BRIDGE_PORT: String(bridge.port),
       BRIDGE_TOKEN: bridge.token,
       BRIDGE_EXIT_ON_STDIN_CLOSE: '1',

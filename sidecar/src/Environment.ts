@@ -6,6 +6,7 @@ import { promisify } from 'node:util';
 import type { EnvironmentReport, InstallChannel, PackageManagers } from './protocol.js';
 
 const execFileAsync = promisify(execFile);
+const DEFAULT_WINDOWS_EXECUTABLE_EXTENSIONS = '.COM;.EXE;.BAT;.CMD';
 
 // Shared resolution order so what onboarding reports as "installed" is exactly
 // what DroidRuntime will spawn for login/update/session commands.
@@ -39,7 +40,11 @@ export function wrapDroidInvocation(
   platform: NodeJS.Platform = process.platform,
 ): { execPath: string; execArgs: string[] } {
   if (platform === 'win32' && /\.(cmd|bat)$/i.test(droidPath)) {
-    return { execPath: process.env.ComSpec || 'cmd.exe', execArgs: ['/c', droidPath, ...args] };
+    const commandShell = process.env.ComSpec;
+    return {
+      execPath: commandShell?.trim() ? commandShell : 'cmd.exe',
+      execArgs: ['/c', droidPath, ...args],
+    };
   }
   return { execPath: droidPath, execArgs: args };
 }
@@ -49,12 +54,9 @@ export function buildDroidInvocation(args: string[]): { execPath: string; execAr
 }
 
 function resolveOnPathSync(command: string): string | undefined {
-  const dirs = (process.env.PATH || '').split(delimiter).filter(Boolean);
+  const dirs = (process.env.PATH ?? '').split(delimiter).filter(Boolean);
   if (process.platform === 'win32') {
-    const exts = (process.env.PATHEXT || '.COM;.EXE;.BAT;.CMD')
-      .split(';')
-      .map((e) => e.trim())
-      .filter(Boolean);
+    const exts = windowsExecutableExtensions(process.env.PATHEXT);
     for (const dir of dirs) {
       for (const ext of exts) {
         const candidate = join(dir, command + ext);
@@ -70,8 +72,18 @@ function resolveOnPathSync(command: string): string | undefined {
   return undefined;
 }
 
-// Heuristic auth marker written by `droid login`.
-const AUTH_FILE = join(homedir(), '.factory', 'auth.v2.file');
+export function windowsExecutableExtensions(pathExt: string | undefined): string[] {
+  return (pathExt?.trim() ? pathExt : DEFAULT_WINDOWS_EXECUTABLE_EXTENSIONS)
+    .split(';')
+    .map((extension) => extension.trim())
+    .filter(Boolean);
+}
+
+const AUTH_MARKER_NAMES = ['auth.v2.key', 'auth.v2.loginkeychain'];
+
+export function hasCliLogin(authDir = join(homedir(), '.factory')): boolean {
+  return AUTH_MARKER_NAMES.some((name) => existsSync(join(authDir, name)));
+}
 
 export async function detectEnvironment(apiKeyConfigured: boolean): Promise<EnvironmentReport> {
   const cliPath = await resolveCliPath();
@@ -92,7 +104,7 @@ export async function detectEnvironment(apiKeyConfigured: boolean): Promise<Envi
     packageManagers,
     auth: {
       apiKeyConfigured,
-      loginPresent: existsSync(AUTH_FILE),
+      loginPresent: hasCliLogin(),
     },
     availableChannels: availableChannels(packageManagers),
   };
@@ -125,7 +137,7 @@ export function compareSemver(a: string | undefined, b: string | undefined): num
 }
 
 function parseSemver(value: string | undefined): [number, number, number] {
-  const match = String(value ?? '').match(/(\d+)\.(\d+)\.(\d+)/);
+  const match = /(\d+)\.(\d+)\.(\d+)/.exec(value ?? '');
   if (!match) return [0, 0, 0];
   return [Number(match[1]), Number(match[2]), Number(match[3])];
 }
@@ -191,7 +203,7 @@ function probeCliVersion(cliPath: string): Promise<string | undefined> {
 async function commandVersion(command: string, args: string[]): Promise<string | undefined> {
   try {
     const { stdout } = await execFileAsync(command, args, { timeout: 8000, env: process.env });
-    const match = stdout.match(/\d+\.\d+\.\d+/);
+    const match = /\d+\.\d+\.\d+/.exec(stdout);
     return match ? match[0] : stdout.trim() || undefined;
   } catch {
     return undefined;

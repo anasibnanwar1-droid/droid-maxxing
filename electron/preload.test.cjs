@@ -53,3 +53,15 @@ test('git turn baseline IPC carries appSessionId', async () => {
   assert.equal(calls[0].payload.appSessionId, 'app-1');
   assert.equal('sessionId' in calls[0].payload, false);
 });
+
+test('app icon IPC carries the selected mode', async () => {
+  const { api, calls } = loadApi();
+
+  await api.setAppIcon('dark');
+  await api.setAppIcon('system');
+
+  assert.equal(calls[0].channel, 'app-set-icon');
+  assert.equal(calls[0].payload.mode, 'dark');
+  assert.equal(calls[1].channel, 'app-set-icon');
+  assert.equal(calls[1].payload.mode, 'system');
+});

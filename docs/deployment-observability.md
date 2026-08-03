@@ -27,7 +27,6 @@ Record these values with each release candidate:
 | `DROID_UPDATE_FEED` | Update metadata endpoint used by Electron |
 | `DROID_UPDATE_HOSTS` | Allowed update hosts |
 | `SIDECAR_ENTRY` | Sidecar bundle override, if used |
-| `NODE_BIN` | Node binary override, if used |
 
 Keep real secrets out of release notes and CI logs.
 

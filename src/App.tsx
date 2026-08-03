@@ -13,7 +13,7 @@ import {
   newChildOpenRequestId,
 } from './lib/commands';
 import { isEmbedded } from './lib/embed';
-import { getApiKey } from './lib/desktop';
+import { getApiKey, setAppIcon } from './lib/desktop';
 import { performNativeBrowserRequest } from './lib/nativeBrowserAgent';
 import {
   activeSessionAfterNativeBrowserRequest,
@@ -165,6 +165,13 @@ export default function App() {
   useEffect(() => {
     applyTheme(state.theme);
   }, [state.theme]);
+
+  useEffect(() => {
+    if (embedded) return;
+    void setAppIcon(state.theme.appIconMode).catch((error: unknown) => {
+      console.error('Failed to update app icon', error);
+    });
+  }, [embedded, state.theme.appIconMode]);
 
   useEffect(() => {
     if (state.theme.mode !== 'system') return;

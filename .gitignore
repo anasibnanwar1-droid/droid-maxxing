@@ -2,6 +2,7 @@ node_modules/
 sidecar/node_modules/
 src-tauri/target/
 dist/
+release/
 .worktrees/
 benchmark-runs/
 reports/

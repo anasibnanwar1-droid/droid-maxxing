@@ -15,7 +15,6 @@ import {
   type MessageOptions,
   type PermissionHandler,
 } from '@factory/droid-sdk';
-import { spawn } from 'node:child_process';
 import { createDroidTransport } from './DroidTransport.js';
 import { buildDroidInvocation, resolveDroidPath } from './Environment.js';
 import type { Autonomy, ReasoningEffort, SessionInteractionMode } from './protocol.js';
@@ -86,7 +85,6 @@ export type FactorySession = FactorySessionMethods & {
 export interface FactoryRuntime {
   connect(apiKey?: string): void;
   status(): RuntimeStatus;
-  startCliLogin(): Promise<void>;
   createSession(options: CreateRuntimeSessionOptions): Promise<FactorySession>;
   loadSession(providerSessionId: string, handlers?: RuntimeHandlers): Promise<FactorySession>;
   readContextBreakdown(session: FactorySession): Promise<unknown>;
@@ -162,22 +160,6 @@ export class DroidRuntime implements FactoryRuntime {
       await transport.close().catch(ignoreError);
       throw err;
     }
-  }
-
-  startCliLogin(): Promise<void> {
-    // On Windows the npm-installed `droid` is a `.cmd` shim that direct spawn
-    // can't launch, so run it through a shell there.
-    const child = spawn(this.resolveDroidPath(), ['login'], {
-      env: this.env(),
-      detached: true,
-      stdio: 'ignore',
-      shell: process.platform === 'win32',
-    });
-    // A missing/non-executable CLI makes spawn emit 'error'; without a listener
-    // that would crash the sidecar, so swallow it here.
-    child.on('error', ignoreError);
-    child.unref();
-    return Promise.resolve();
   }
 
   private async createClient(

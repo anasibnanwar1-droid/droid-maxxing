@@ -1,9 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   availableChannels,
   compareSemver,
+  hasCliLogin,
   resolveDroidPath,
+  windowsExecutableExtensions,
   wrapDroidInvocation,
 } from './Environment.js';
 
@@ -84,9 +89,48 @@ test('wrapDroidInvocation routes a Windows .cmd shim through cmd.exe', () => {
   }
 });
 
+test('wrapDroidInvocation falls back when ComSpec is empty', () => {
+  const prev = process.env.ComSpec;
+  process.env.ComSpec = '';
+  try {
+    assert.deepEqual(wrapDroidInvocation('C\\\\npm\\\\droid.cmd', ['exec'], 'win32'), {
+      execPath: 'cmd.exe',
+      execArgs: ['/c', 'C\\\\npm\\\\droid.cmd', 'exec'],
+    });
+  } finally {
+    if (prev === undefined) delete process.env.ComSpec;
+    else process.env.ComSpec = prev;
+  }
+});
+
+test('windowsExecutableExtensions retains defaults for an empty PATHEXT', () => {
+  assert.deepEqual(windowsExecutableExtensions(''), ['.COM', '.EXE', '.BAT', '.CMD']);
+  assert.deepEqual(windowsExecutableExtensions('.EXE;.CMD'), ['.EXE', '.CMD']);
+});
+
 test('wrapDroidInvocation spawns the binary directly on POSIX', () => {
   assert.deepEqual(wrapDroidInvocation('/usr/local/bin/droid', ['exec'], 'darwin'), {
     execPath: '/usr/local/bin/droid',
     execArgs: ['exec'],
   });
+});
+
+test('hasCliLogin detects current Droid CLI credential markers', () => {
+  const authDir = mkdtempSync(join(tmpdir(), 'droid-auth-'));
+  try {
+    writeFileSync(join(authDir, 'auth.v2.key'), '');
+    assert.equal(hasCliLogin(authDir), true);
+  } finally {
+    rmSync(authDir, { recursive: true, force: true });
+  }
+});
+
+test('hasCliLogin ignores the retired auth.v2.file marker', () => {
+  const authDir = mkdtempSync(join(tmpdir(), 'droid-auth-'));
+  try {
+    writeFileSync(join(authDir, 'auth.v2.file'), '');
+    assert.equal(hasCliLogin(authDir), false);
+  } finally {
+    rmSync(authDir, { recursive: true, force: true });
+  }
 });

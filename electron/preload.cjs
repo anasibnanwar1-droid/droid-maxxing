@@ -51,6 +51,7 @@ contextBridge.exposeInMainWorld('droidControl', {
   checkAppUpdate: () => ipcRenderer.invoke('app-check-update'),
   downloadAppUpdate: (dmgUrl) => ipcRenderer.invoke('app-download-update', dmgUrl),
   relaunchApp: () => ipcRenderer.invoke('app-relaunch'),
+  setAppIcon: (mode) => ipcRenderer.invoke('app-set-icon', { mode }),
   openExternal: (url) => ipcRenderer.invoke('open-external', { url }),
 
   terminalCreate: (options) => ipcRenderer.invoke('terminal-create', options),

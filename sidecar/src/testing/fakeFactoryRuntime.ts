@@ -380,11 +380,6 @@ export class FakeFactoryRuntime implements FactoryRuntime {
     return { mode: 'cli_auth', droidPath: '/test/droid', apiKeyConfigured: this.apiKey.length > 0 };
   }
 
-  startCliLogin(): Promise<void> {
-    this.calls.push({ target: 'runtime', method: 'startCliLogin', args: [] });
-    return Promise.resolve();
-  }
-
   readContextBreakdown(session: FactorySession): Promise<unknown> {
     const error = this.contextBreakdownErrors.get(session.sessionId);
     if (error) return Promise.reject(error);
