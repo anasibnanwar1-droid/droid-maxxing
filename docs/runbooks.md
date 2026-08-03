@@ -62,7 +62,7 @@ These runbooks cover local development and release triage for DROIDEX.
    git tag -s v0.1.0 -m "DROIDEX v0.1.0"
    git push origin v0.1.0
    ```
-5. Approve the protected release environment and wait for every verification
+5. Push the tag and wait for every protected release-environment verification
    step to pass. Never upload locally produced unsigned artifacts.
 6. On the public repository, confirm the release is immutable and contains two
    DMGs, two ZIPs, their blockmaps, `latest-mac.yml`, and `SHA256SUMS`.

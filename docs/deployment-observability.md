@@ -31,14 +31,17 @@ Record these values with each release candidate:
 | `SENTRY_DSN` | Public client DSN embedded for crash and `/bug` reporting |
 | `DROIDEX_RELEASE_TOKEN` | Fine-grained token with Contents write and Administration read access only to the public releases repository |
 
-Configure these in the protected `macos-release` GitHub environment. Keep real
-secrets out of release notes and CI logs. The release token is exposed only to
-the final publish step.
+Configure these in the `macos-release` GitHub environment. Its deployment
+policy admits `v*` tags only and disables administrator bypass. The workflow
+also requires the tagged commit to be exactly versioned and already contained
+in `origin/main`. Keep real secrets out of release notes and CI logs. The
+release token is exposed only to the final publish step.
 
 Run `npm run release:preflight` before creating a version tag. It verifies the
-private/public repository boundary, immutable release policy, environment
-secret names (never values), local Developer ID identity, workflow syntax,
-clean branch, and expected local release artifacts. Any failure blocks tagging.
+private/public repository boundary, immutable release policy, environment tag
+protection, secret names (never values), local Developer ID identity, workflow
+syntax, exact `origin/main` commit, and fully verified local artifacts. Any
+failure blocks tagging.
 
 ## Canonical release path
 

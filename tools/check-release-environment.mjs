@@ -1,10 +1,11 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import process from 'node:process';
 
 const sourceRepository = 'anasibnanwar1-droid/droid-maxxing';
 const releaseRepository = 'anasibnanwar1-droid/droidex-releases';
 const releaseEnvironment = 'macos-release';
+const packageVersion = JSON.parse(readFileSync('package.json', 'utf8')).version;
 const requiredSecrets = [
   'APPLE_API_ISSUER',
   'APPLE_API_KEY_ID',
@@ -99,6 +100,37 @@ check('macos-release environment has every required secret', () => {
   return `${requiredSecrets.length} required secrets configured`;
 });
 
+check('macos-release environment only admits version tags', () => {
+  const environment = readJson('gh', [
+    'api',
+    '-H',
+    'X-GitHub-Api-Version: 2026-03-10',
+    `repos/${sourceRepository}/environments/${releaseEnvironment}`,
+  ]);
+  if (environment.can_admins_bypass !== false) throw new Error('administrator bypass is enabled');
+  if (
+    environment.deployment_branch_policy?.protected_branches !== false ||
+    environment.deployment_branch_policy?.custom_branch_policies !== true
+  ) {
+    throw new Error('custom deployment tag policy is disabled');
+  }
+  const policies = readJson('gh', [
+    'api',
+    '-H',
+    'X-GitHub-Api-Version: 2026-03-10',
+    `repos/${sourceRepository}/environments/${releaseEnvironment}/deployment-branch-policies`,
+  ]);
+  const configuredPolicies = policies.branch_policies ?? [];
+  if (
+    configuredPolicies.length !== 1 ||
+    configuredPolicies[0]?.name !== 'v*' ||
+    configuredPolicies[0]?.type !== 'tag'
+  ) {
+    throw new Error('deployment policy must contain only the v* tag rule');
+  }
+  return 'v* tags only; administrator bypass disabled';
+});
+
 check('local keychain has a Developer ID Application identity', () => {
   const identities = command('/usr/bin/security', ['find-identity', '-v', '-p', 'codesigning']);
   if (!identities.includes('Developer ID Application:')) {
@@ -118,18 +150,19 @@ check('release branch is clean', () => {
   return command('git', ['branch', '--show-current']);
 });
 
-check('local release artifacts exist', () => {
-  const expected = [
-    'release/droidex-arm64.dmg',
-    'release/droidex-x64.dmg',
-    'release/droidex-arm64.zip',
-    'release/droidex-x64.zip',
-    'release/latest-mac.yml',
-    'release/SHA256SUMS',
-  ];
-  const missing = expected.filter((path) => !existsSync(path));
-  if (missing.length) throw new Error(`missing: ${missing.join(', ')}`);
-  return `${expected.length} local artifacts present (not publication-authorized)`;
+check('release commit exactly matches origin/main', () => {
+  const head = command('git', ['rev-parse', 'HEAD']);
+  const originMain = command('git', ['rev-parse', 'origin/main']);
+  if (head !== originMain) {
+    throw new Error(`HEAD ${head.slice(0, 12)} != origin/main ${originMain.slice(0, 12)}`);
+  }
+  return head;
+});
+
+check('local release artifacts pass the full verifier', () => {
+  command(process.execPath, ['tools/verify-macos-release.mjs', 'release']);
+  command('/usr/bin/shasum', ['--algorithm', '256', '--check', 'release/SHA256SUMS']);
+  return `verified DROIDEX ${packageVersion} artifacts (not publication-authorized)`;
 });
 
 for (const result of checks) {
@@ -142,5 +175,5 @@ if (failures.length) {
   process.stderr.write(`\nRelease preflight failed: ${failures.length} requirement(s) unresolved.\n`);
   process.exitCode = 1;
 } else {
-  process.stdout.write('\nRelease environment is ready for the signed v0.1.0 workflow.\n');
+  process.stdout.write(`\nRelease environment is ready for the signed v${packageVersion} workflow.\n`);
 }
