@@ -479,21 +479,14 @@ function sidecarEntry() {
     : path.join(appRoot(), 'sidecar/dist/sidecar.mjs');
 }
 
-function nodeBin() {
-  if (process.env.NODE_BIN) return process.env.NODE_BIN;
-  for (const candidate of ['/opt/homebrew/bin/node', '/usr/local/bin/node']) {
-    if (fs.existsSync(candidate)) return candidate;
-  }
-  return 'node';
-}
-
 function ensureSidecar() {
   if (sidecar && sidecar.exitCode === null && sidecar.signalCode === null) return;
-  sidecar = spawn(nodeBin(), [sidecarEntry()], {
+  sidecar = spawn(process.execPath, [sidecarEntry()], {
     cwd: app.isPackaged ? process.resourcesPath : appRoot(),
     stdio: ['pipe', 'inherit', 'inherit'],
     env: {
       ...process.env,
+      ELECTRON_RUN_AS_NODE: '1',
       BRIDGE_PORT: String(bridge.port),
       BRIDGE_TOKEN: bridge.token,
       BRIDGE_EXIT_ON_STDIN_CLOSE: '1',
