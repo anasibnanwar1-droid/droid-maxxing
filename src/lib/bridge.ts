@@ -8,6 +8,8 @@ type ReconnectScheduler = (action: () => void, delayMs: number) => void;
 export class Bridge {
   private ws: WebSocket | null = null;
   private readyWs: WebSocket | null = null;
+  private bootstrapWs: WebSocket | null = null;
+  private bootstrapTail: Promise<void> | null = null;
   private listeners = new Set<Listener>();
   private openListeners = new Set<OpenListener>();
   private queue: ClientCommand[] = [];
@@ -41,7 +43,7 @@ export class Bridge {
     }
     this.ws = ws;
     ws.onopen = () => {
-      void this.handleOpen(ws);
+      this.handleOpen(ws);
     };
     ws.onmessage = (e) => {
       if (typeof e.data !== 'string') return;
@@ -76,7 +78,7 @@ export class Bridge {
     this.backoff = Math.min(this.backoff * 2, 5000);
   }
 
-  private async handleOpen(ws: WebSocket): Promise<void> {
+  private handleOpen(ws: WebSocket): void {
     if (this.ws !== ws) return;
     this.backoff = 500;
     if (this.openListeners.size === 0) {
@@ -85,21 +87,12 @@ export class Bridge {
       this.flushQueue(ws);
       return;
     }
-    try {
+    this.enqueueBootstrap(ws, async () => {
       const handshakes = await Promise.all(
         [...this.openListeners].map((listener) => Promise.resolve().then(listener)),
       );
-      if (this.ws !== ws || ws.readyState !== WebSocket.OPEN) return;
-      handshakes.flat().forEach((command) => {
-        ws.send(JSON.stringify(command));
-      });
-      this.flushNextOpenQueue(ws);
-      this.readyWs = ws;
-      this.flushQueue(ws);
-    } catch (error) {
-      console.error('[bridge] reconnect bootstrap failed:', error);
-      if (this.ws === ws) ws.close();
-    }
+      return handshakes.flat();
+    });
   }
 
   private flushQueue(ws: WebSocket): void {
@@ -143,22 +136,8 @@ export class Bridge {
   subscribeOpen(listener: OpenListener): () => void {
     this.openListeners.add(listener);
     const ws = this.ws;
-    if (ws && this.readyWs === ws && ws.readyState === WebSocket.OPEN) {
-      this.readyWs = null;
-      void Promise.resolve()
-        .then(listener)
-        .then((commands) => {
-          if (this.ws !== ws || ws.readyState !== WebSocket.OPEN) return;
-          commands.forEach((command) => {
-            ws.send(JSON.stringify(command));
-          });
-          this.readyWs = ws;
-          this.flushQueue(ws);
-        })
-        .catch((error: unknown) => {
-          console.error('[bridge] open listener failed:', error);
-          if (this.ws === ws) ws.close();
-        });
+    if (ws?.readyState === WebSocket.OPEN) {
+      this.enqueueBootstrap(ws, listener);
     }
     return () => {
       this.openListeners.delete(listener);
@@ -167,6 +146,39 @@ export class Bridge {
 
   isOpen(): boolean {
     return this.ws !== null && this.readyWs === this.ws && this.ws.readyState === WebSocket.OPEN;
+  }
+
+  private enqueueBootstrap(ws: WebSocket, loadCommands: OpenListener): void {
+    const previous = this.bootstrapWs === ws ? this.bootstrapTail : null;
+    this.bootstrapWs = ws;
+    this.readyWs = null;
+    const current = (previous ?? Promise.resolve()).then(async () => {
+      const commands = await loadCommands();
+      if (this.ws !== ws || ws.readyState !== WebSocket.OPEN) return;
+      commands.forEach((command) => {
+        ws.send(JSON.stringify(command));
+      });
+    });
+    this.bootstrapTail = current;
+    void current
+      .then(() => {
+        if (
+          this.ws !== ws ||
+          ws.readyState !== WebSocket.OPEN ||
+          this.bootstrapWs !== ws ||
+          this.bootstrapTail !== current
+        ) {
+          return;
+        }
+        this.bootstrapTail = null;
+        this.flushNextOpenQueue(ws);
+        this.readyWs = ws;
+        this.flushQueue(ws);
+      })
+      .catch((error: unknown) => {
+        console.error('[bridge] reconnect bootstrap failed:', error);
+        if (this.ws === ws) ws.close();
+      });
   }
 }
 

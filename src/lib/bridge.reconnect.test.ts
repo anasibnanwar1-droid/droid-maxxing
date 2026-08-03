@@ -32,6 +32,41 @@ class FakeWebSocket {
   }
 }
 
+test('listeners registered together on a ready socket bootstrap in order', async () => {
+  const oldWindow = globalThis.window;
+  const OldWebSocket = globalThis.WebSocket;
+  FakeWebSocket.instances = [];
+  try {
+    Object.assign(globalThis, {
+      window: {
+        droidControl: {
+          bridgeInfo: async () => ({ port: 43129, token: 'listener-token' }),
+        },
+      },
+      WebSocket: FakeWebSocket,
+    });
+    const bridge = new Bridge();
+    await bridge.start();
+    const socket = FakeWebSocket.instances[0];
+    assert.ok(socket);
+    socket.open();
+    await nextTask();
+
+    bridge.subscribeOpen(() => [{ type: 'connect', apiKey: 'first' }]);
+    bridge.subscribeOpen(() => [{ type: 'sessions.list', includePlainChats: true }]);
+    assert.equal(bridge.isOpen(), false);
+    await nextTask();
+
+    assert.equal(bridge.isOpen(), true);
+    assert.deepEqual(socket.sent.map(parseCommand), [
+      { type: 'connect', apiKey: 'first' },
+      { type: 'sessions.list', includePlainChats: true },
+    ]);
+  } finally {
+    Object.assign(globalThis, { window: oldWindow, WebSocket: OldWebSocket });
+  }
+});
+
 test('reconnect handshakes run before commands queued while disconnected', async () => {
   const oldWindow = globalThis.window;
   const OldWebSocket = globalThis.WebSocket;
