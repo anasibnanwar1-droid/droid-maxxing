@@ -448,6 +448,7 @@ export class ChildSessions {
         attempt,
         this.d.compaction.arm(
           {
+            appSessionId: parentAppSessionId,
             session: loaded,
             isCurrent: () =>
               attempt.provisionalSession === loaded &&
@@ -490,6 +491,9 @@ export class ChildSessions {
       this.persist(child);
       this.d.timeline.replayChild(parentAppSessionId, childSessionId, loaded.sessionId);
       this.publish(child);
+      // Seed the child's context meter immediately; without this it stays
+      // blank until the first turn settles.
+      void this.d.context.refresh(this.contextTarget(parent, child, runtime));
       if (requestId) this.emitReady(runtime, child, requestId);
     } catch (error) {
       const runtimeInstalled = loaded !== undefined && child.runtime?.session === loaded;

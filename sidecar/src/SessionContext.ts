@@ -52,6 +52,9 @@ interface SessionContextDependencies {
   runtime: Pick<FactoryRuntime, 'readContextBreakdown'>;
   emit: (event: ServerEvent) => void;
   maxContextTokensForSummary: (summary: SessionSummary) => number | undefined;
+  // Reports the context window the provider itself measured for a model, so
+  // compaction limits can be clamped even for models missing from the catalog.
+  noteContextWindow: (modelId: string, contextWindowTokens: number) => void;
 }
 
 interface ContextPoller {
@@ -62,7 +65,18 @@ interface ContextPoller {
 export class SessionContext {
   private readonly usageOffsets = new Map<string, UsageOffset>();
   private readonly snapshots = new Map<string, ContextStatsSnapshot>();
-  private readonly childCompactions = new Map<string, number>();
+  // Compactions recorded per context resource. The count doubles as a staleness
+  // generation: stats fetched before a compaction must never be published after
+  // it, or the meter would jump back to the pre-compaction reading.
+  private readonly compactions = new Map<string, number>();
+  // Primary resources whose post-compaction reset has not been cleared by a
+  // new turn boundary. While pending, exact usage reported by queued
+  // pre-compaction stream events must not overwrite the reset summary. The
+  // flag stays set after a provider reading confirms the reset (the poller
+  // keeps the meter accurate) and is only cleared when a new turn begins, so
+  // a late pre-compaction usage event delivered after the poll can never
+  // resurrect the old meter.
+  private readonly pendingCompactionResets = new Set<string>();
   private readonly pollers = new Map<string, ContextPoller>();
   private epoch = 0;
 
@@ -82,7 +96,13 @@ export class SessionContext {
 
     // Child turns contribute to cumulative usage, but the primary summary owns
     // the context meter. Child meters are published from their own refreshes.
-    if (sourceSessionId === stableAppSessionId) {
+    // While a compaction reset is pending, usage events that were queued before
+    // the compaction carry pre-compaction context tokens; applying them would
+    // undo the reset, so context fields wait for the next provider refresh.
+    const publishContext =
+      sourceSessionId === stableAppSessionId &&
+      !this.pendingCompactionResets.has(primaryResourceKey(stableAppSessionId));
+    if (publishContext) {
       nextSummary.contextTokens = usage.contextTokens;
       if (usage.contextTokens > 0) {
         nextSummary.contextAccuracy = 'exact';
@@ -97,7 +117,7 @@ export class SessionContext {
       this.dependencies.registry.updateSummary(stableAppSessionId, {
         tokensIn: nextSummary.tokensIn,
         tokensOut: nextSummary.tokensOut,
-        ...(sourceSessionId === stableAppSessionId
+        ...(publishContext
           ? {
               contextTokens: nextSummary.contextTokens,
               contextAccuracy: nextSummary.contextAccuracy,
@@ -142,6 +162,7 @@ export class SessionContext {
     options: { persist?: boolean } = {},
   ): Promise<void> {
     const epoch = this.epoch;
+    const generation = this.compactions.get(contextResourceKey(target)) ?? 0;
     if (!target.isCurrent()) return;
     try {
       const stats = await target.session.getContextStats();
@@ -157,6 +178,7 @@ export class SessionContext {
         target,
         contextStatsSnapshot(stats, contextBreakdownSnapshot(breakdown)),
         options,
+        generation,
       );
     } catch {
       // Context is informational and must never disrupt an active turn.
@@ -170,18 +192,29 @@ export class SessionContext {
       // captured target still keeps refreshes inert, while top-level teardown
       // clears all owned generations after blocking new notifications.
       const key = childIdentityKey(target);
-      this.childCompactions.set(key, (this.childCompactions.get(key) ?? 0) + 1);
+      this.compactions.set(key, (this.compactions.get(key) ?? 0) + 1);
       return;
     }
 
     if (!target.isCurrent()) return;
     const liveSession = this.dependencies.registry.getLive(target.appSessionId);
     if (liveSession?.session !== target.session || !target.isCurrent()) return;
+    const key = contextResourceKey(target);
+    this.compactions.set(key, (this.compactions.get(key) ?? 0) + 1);
+    this.pendingCompactionResets.add(key);
     this.dependencies.registry.updateSummary(target.appSessionId, {
       contextTokens: 0,
       contextAccuracy: undefined,
       autoCompactions: (liveSession.summary.autoCompactions ?? 0) + 1,
     });
+  }
+
+  // A new primary turn begins: pre-compaction stream events from the previous
+  // turn can no longer be delivered, so the pending-compaction guard is safe to
+  // clear. The poller's provider readings already keep the meter accurate; this
+  // just re-enables usage-event context estimates for the new turn.
+  beginTurn(appSessionId: string): void {
+    this.pendingCompactionResets.delete(primaryResourceKey(appSessionId));
   }
 
   preserveUsage(appSessionId: string, offset: UsageOffset): void {
@@ -191,7 +224,7 @@ export class SessionContext {
   forgetChild(identity: ChildIdentity): void {
     const key = childIdentityKey(identity);
     this.snapshots.delete(key);
-    this.childCompactions.delete(key);
+    this.compactions.delete(key);
   }
 
   stopSession(liveSession: LiveSession): void {
@@ -201,7 +234,10 @@ export class SessionContext {
   forgetSession(liveSession: LiveSession): void {
     const appSessionId = liveSession.summary.appSessionId;
     this.usageOffsets.delete(appSessionId);
-    this.snapshots.delete(primaryResourceKey(appSessionId));
+    const key = primaryResourceKey(appSessionId);
+    this.snapshots.delete(key);
+    this.compactions.delete(key);
+    this.pendingCompactionResets.delete(key);
   }
 
   clearAll(): void {
@@ -209,7 +245,8 @@ export class SessionContext {
     for (const poller of this.pollers.values()) clearInterval(poller.timer);
     this.pollers.clear();
     this.snapshots.clear();
-    this.childCompactions.clear();
+    this.compactions.clear();
+    this.pendingCompactionResets.clear();
     this.usageOffsets.clear();
   }
 
@@ -228,20 +265,34 @@ export class SessionContext {
     target: ContextOperationTarget,
     providerSnapshot: ContextStatsSnapshot,
     options: { persist?: boolean },
+    generation: number,
   ): void {
+    const key = contextResourceKey(target);
+    // A compaction recorded while the stats call was in flight makes this
+    // reading pre-compaction; publishing it would undo the meter reset.
+    if (generation !== (this.compactions.get(key) ?? 0)) return;
     if (!target.isCurrent()) return;
     const liveSession = this.dependencies.registry.getLive(target.appSessionId);
     if (!liveSession) return;
 
+    const windowModelId =
+      providerSnapshot.breakdown?.modelId ??
+      (isChildTarget(target) ? undefined : liveSession.summary.modelId);
+    if (windowModelId !== undefined && providerSnapshot.limit > 0)
+      this.dependencies.noteContextWindow(windowModelId, providerSnapshot.limit);
+
     const snapshot = isChildTarget(target)
       ? {
           ...providerSnapshot,
-          compactions: this.childCompactions.get(childIdentityKey(target)) ?? 0,
+          compactions: this.compactions.get(key) ?? 0,
         }
       : applyExactUsage(providerSnapshot, liveSession.summary);
 
     if (!target.isCurrent()) return;
-    this.snapshots.set(contextResourceKey(target), snapshot);
+    // Do NOT clear pendingCompactionResets here: a late pre-compaction usage
+    // event delivered after this provider reading could resurrect the old meter.
+    // The guard is cleared at the stream-settlement boundary (beginTurn) instead.
+    this.snapshots.set(key, snapshot);
     this.dependencies.emit({
       type: 'context.updated',
       appSessionId: target.appSessionId,

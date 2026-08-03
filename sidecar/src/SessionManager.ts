@@ -151,6 +151,8 @@ export class SessionManager {
   private ready = false;
   private cachedModels: ModelInfo[] | null = null;
   private modelRefresh: Promise<ModelInfo[] | null> | null = null;
+  // Context windows observed from provider stats for catalog-missing models.
+  private readonly learnedModelContextWindows = new Map<string, number>();
   private readonly runtime: FactoryRuntime;
   private readonly history: SessionHistory;
   private readonly registry: SessionRegistry<LiveSession>;
@@ -225,6 +227,9 @@ export class SessionManager {
         this.emit(event);
       },
       maxContextTokensForSummary: (summary) => this.maxContextTokensForSummary(summary),
+      noteContextWindow: (modelId, contextWindowTokens) => {
+        this.noteModelContextWindow(modelId, contextWindowTokens);
+      },
     });
     this.timeline = new SessionTimeline({
       registry: this.registry,
@@ -697,7 +702,22 @@ export class SessionManager {
 
   private maxContextTokensForModel(modelId?: string): number | undefined {
     if (!modelId) return undefined;
-    return this.cachedModels?.find((model) => model.id === modelId)?.maxContextTokens;
+    return (
+      this.cachedModels?.find((model) => model.id === modelId)?.maxContextTokens ??
+      this.learnedModelContextWindows.get(modelId)
+    );
+  }
+
+  // Custom and BYOK models are often missing from the catalog, so their
+  // compaction limits initially arm without a window ceiling. The provider's
+  // own context stats reveal the window; remember it and retune thresholds.
+  private noteModelContextWindow(modelId: string, contextWindowTokens: number): void {
+    if (!Number.isFinite(contextWindowTokens) || contextWindowTokens <= 0) return;
+    const window = Math.floor(contextWindowTokens);
+    if (this.cachedModels?.some((model) => model.id === modelId && model.maxContextTokens)) return;
+    if (this.learnedModelContextWindows.get(modelId) === window) return;
+    this.learnedModelContextWindows.set(modelId, window);
+    void this.compaction.retuneAll(this.compactionRetuneTargets());
   }
 
   // eslint-disable-next-line complexity -- Agent-setting policy is preserved as-is in this extraction.
@@ -894,6 +914,7 @@ export class SessionManager {
     const contextTarget = this.primaryContextTarget(liveSession);
     if (!this.isCurrentPrimarySession(liveSession)) return;
     this.eventFlow.beginTurn(appSessionId, appSessionId);
+    this.context.beginTurn(appSessionId);
     this.context.startPolling(contextTarget);
     try {
       await this.applyDesignToolPolicy(liveSession, isDesignPrompt(prompt));
@@ -1171,6 +1192,9 @@ export class SessionManager {
         });
       }
       this.registry.updateSummary(stableAppSessionId, { interactionMode: mode });
+      // The mode determines the default model when none is pinned, so the
+      // auto-compaction threshold must be recomputed for the new mode.
+      await this.compaction.rearmPrimary(this.primaryCompactionTarget(liveSession));
     } catch (err) {
       this.emitError({
         appSessionId: stableAppSessionId,

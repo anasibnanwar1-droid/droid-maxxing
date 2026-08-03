@@ -24,7 +24,7 @@ export interface SessionCompactionExecutionDependencies {
     SessionRegistry<LiveSession>,
     'getLive' | 'resolveSummary' | 'replaceProvider' | 'updateSummary'
   >;
-  context: Pick<SessionContext, 'refresh' | 'preserveUsage'>;
+  context: Pick<SessionContext, 'refresh' | 'preserveUsage' | 'recordCompaction'>;
   timeline: Pick<SessionTimeline, 'appendStatus'>;
   runtime: Pick<FactoryRuntime, 'loadSession'>;
   makePermissionHandler(ref: { id: string }): PermissionHandler;
@@ -83,13 +83,17 @@ export class SessionCompactionExecution {
           },
           refresh: () => {
             const current = this.dependencies.registry.getLive(appSessionId);
-            if (current) {
+            if (current?.summary.providerSessionId === preCompactSessionId) {
+              // In-place compaction: recordCompaction owns the reset so its
+              // generation bump keeps in-flight pre-compaction stats polls
+              // from re-publishing the old usage over the reset meter.
+              this.dependencies.context.recordCompaction(this.effects.primaryTarget(liveSession));
+            } else if (current) {
+              // The provider was swapped; the new session object already keeps
+              // stale polls inert, and replaceProvider owns the counters.
               this.dependencies.registry.updateSummary(appSessionId, {
                 contextTokens: 0,
                 contextAccuracy: undefined,
-                ...(current.summary.providerSessionId === preCompactSessionId
-                  ? { autoCompactions: (current.summary.autoCompactions ?? 0) + 1 }
-                  : {}),
               });
             }
             return this.dependencies.context.refresh(this.effects.primaryTarget(liveSession));

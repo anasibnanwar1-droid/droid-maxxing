@@ -73,6 +73,7 @@ export class FakeFactorySession implements FactorySession {
   initResult: FactorySession['initResult'];
 
   private readonly streamGates: DeferredStream[] = [];
+  private readonly allStreamGates = new Set<DeferredStream>();
   private readonly streamEventQueue: DroidStreamEvent[][] = [];
   private readonly promptWaiters: { count: number; resolve(): void }[] = [];
   private readonly settingsWaiters: { count: number; resolve(): void }[] = [];
@@ -275,6 +276,9 @@ export class FakeFactorySession implements FactorySession {
     const error = this.nextCloseError;
     delete this.nextCloseError;
     await gate?.promise;
+    for (const g of this.allStreamGates) g.resolve();
+    this.allStreamGates.clear();
+    this.streamGates.length = 0;
     if (error) throw error;
   }
 
@@ -301,12 +305,19 @@ export class FakeFactorySession implements FactorySession {
     unsupportedSessionMethod('listMcpTools');
 
   private defer(gates?: DeferredStream[]): DeferredStream {
-    let release = (): void => undefined;
+    let settle = (): void => undefined;
     const promise = new Promise<void>((resolve) => {
-      release = resolve;
+      settle = resolve;
     });
-    const gate = { promise, resolve: release };
+    const gate: DeferredStream = {
+      promise,
+      resolve: () => {
+        this.allStreamGates.delete(gate);
+        settle();
+      },
+    };
     gates?.push(gate);
+    this.allStreamGates.add(gate);
     return gate;
   }
 

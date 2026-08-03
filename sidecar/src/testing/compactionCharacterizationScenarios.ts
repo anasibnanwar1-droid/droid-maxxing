@@ -24,7 +24,7 @@ function daemonCompactionNotification(kind: 'started' | 'completed'): Record<str
   };
 }
 
-function notifyCompaction(
+export function notifyCompaction(
   h: SessionManagerTestContext,
   sessionId: string,
   kind: 'started' | 'completed',

@@ -100,7 +100,20 @@ function createHarness() {
   const compaction = new SessionCompaction({
     registry,
     context: {
-      recordCompaction: () => undefined,
+      recordCompaction: (target) => {
+        // Mirror SessionContext.recordCompaction for primary targets: reset
+        // context telemetry and bump the compaction counter so the sink's
+        // in-place path produces the same summary the real context would.
+        const live = registry.getLive(target.appSessionId);
+        if (target.isCurrent() && live && live.session === target.session) {
+          live.summary = {
+            ...live.summary,
+            contextTokens: 0,
+            contextAccuracy: undefined,
+            autoCompactions: (live.summary.autoCompactions ?? 0) + 1,
+          };
+        }
+      },
       refresh: (target) => {
         if (target.isCurrent()) refreshed.push(target.sourceSessionId);
         return Promise.resolve();

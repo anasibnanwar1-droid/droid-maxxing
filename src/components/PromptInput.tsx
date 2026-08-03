@@ -28,6 +28,7 @@ import { markGitTurnStart } from '../lib/git';
 import { createLocalDesignTranscriptEvent, newQueueId } from '../lib/promptQueue';
 import { composePrompt } from '../lib/composePrompt';
 import { resolveReasoningEffortDisplay } from '../lib/reasoningEffort';
+import { compactionSettingsSnapshot } from '../lib/compactionSettings';
 import { resetComposerAfterSubmit } from '../lib/composerReset';
 import {
   childRuntimeSubmitTarget,
@@ -631,8 +632,8 @@ export default function PromptInput({
         reasoningEffort: primary.reasoning,
         compactionModel:
           state.compactionModel === 'current-model' ? undefined : state.compactionModel,
-        compactionTokenLimit: state.compactionTokenLimit,
-        compactionTokenLimitPerModel: state.compactionTokenLimitPerModel,
+        // Only user-configured limits may override the daemon's model default.
+        ...compactionSettingsSnapshot(state),
         workerModel: worker.modelId,
         workerReasoning: worker.reasoning,
         validatorModel: validator.modelId,
@@ -662,8 +663,7 @@ export default function PromptInput({
         reasoningEffort: primary.reasoning,
         compactionModel:
           state.compactionModel === 'current-model' ? undefined : state.compactionModel,
-        compactionTokenLimit: state.compactionTokenLimit,
-        compactionTokenLimitPerModel: state.compactionTokenLimitPerModel,
+        ...compactionSettingsSnapshot(state),
       });
       return;
     }
