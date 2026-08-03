@@ -3,12 +3,14 @@ const { spawn } = require('node:child_process');
 
 const READY_PATTERN = /(?:^|\n)SIDECAR_READY (\d+)(?:\n|$)/;
 const DEFAULT_READY_TIMEOUT_MS = 15_000;
+const DEFAULT_SHUTDOWN_TIMEOUT_MS = 6_000;
 
 function createSidecarSupervisor(options) {
   const spawnProcess = options.spawnProcess || spawn;
   const output = options.stdout || process.stdout;
   const errorOutput = options.stderr || process.stderr;
   const readyTimeoutMs = options.readyTimeoutMs || DEFAULT_READY_TIMEOUT_MS;
+  const shutdownTimeoutMs = options.shutdownTimeoutMs || DEFAULT_SHUTDOWN_TIMEOUT_MS;
   let child = null;
   let bridgeInfo = null;
   let pendingStart = null;
@@ -38,7 +40,11 @@ function createSidecarSupervisor(options) {
       child: nextChild,
       intentionalStop: false,
       cancelStartup: null,
+      resolveExit: null,
     };
+    run.exitPromise = new Promise((resolve) => {
+      run.resolveExit = resolve;
+    });
     child = nextChild;
     activeRun = run;
 
@@ -62,6 +68,7 @@ function createSidecarSupervisor(options) {
 
       nextChild.once('error', fail);
       nextChild.once('exit', (code, signal) => {
+        run.resolveExit?.();
         if (activeRun === run) {
           activeRun = null;
           child = null;
@@ -115,9 +122,20 @@ function createSidecarSupervisor(options) {
     child = null;
     bridgeInfo = null;
     pendingStart = null;
-    if (!current || current.killed) return;
+    if (!current || current.killed) return Promise.resolve();
     current.stdin?.end();
-    current.kill();
+    current.kill('SIGTERM');
+    let timeout;
+    const forcedExit = new Promise((resolve) => {
+      timeout = setTimeout(() => {
+        if (current.exitCode === null && current.signalCode === null) current.kill('SIGKILL');
+        resolve();
+      }, shutdownTimeoutMs);
+      timeout.unref?.();
+    });
+    return Promise.race([run?.exitPromise ?? Promise.resolve(), forcedExit]).finally(() => {
+      clearTimeout(timeout);
+    });
   }
 
   return { start, getBridgeInfo: start, stop };

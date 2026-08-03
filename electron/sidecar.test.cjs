@@ -118,8 +118,28 @@ test('intentional shutdown is not reported as a crash', async () => {
   child.stdout.write('SIDECAR_READY 43001\n');
   await started;
 
-  supervisor.stop();
+  const stopped = supervisor.stop();
   child.emit('exit', null, 'SIGTERM');
+  await stopped;
 
   assert.equal(diagnostics, '');
+});
+
+test('stop resolves only after the sidecar process exits', async () => {
+  const child = fakeChild();
+  const { supervisor } = harness([child]);
+  const started = supervisor.start();
+  child.stdout.write('SIDECAR_READY 43001\n');
+  await started;
+
+  let stopped = false;
+  const stop = supervisor.stop().then(() => {
+    stopped = true;
+  });
+  await Promise.resolve();
+  assert.equal(stopped, false);
+
+  child.emit('exit', 0, null);
+  await stop;
+  assert.equal(stopped, true);
 });
