@@ -4,6 +4,7 @@ import { useSessionLive } from '../hooks/useSessionLive';
 import { useGitEnvironment } from '../hooks/useGitEnvironment';
 import { usePullRequest } from '../hooks/usePullRequest';
 import { interruptChild } from '../lib/commands';
+import { resolveReasoningEffortDisplay } from '../lib/reasoningEffort';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Hash, Loader2, ChevronRight, CornerDownRight, Square, FileText } from 'lucide-react';
 import { ModelIcon, providerOf } from './ModelIcon';
@@ -151,11 +152,12 @@ export default function RightPanel() {
   // the same way as the composer badge: the session's own pinned effort, falling
   // back to the global default. Models without reasoning support show no pill.
   const reasoningEffort = activeSession
-    ? (activeSession.reasoningEffort ?? state.agentConfig.primary.reasoning)
+    ? resolveReasoningEffortDisplay(
+        activeSession.reasoningEffort,
+        state.agentConfig.primary.reasoning,
+        modelInfo,
+      )
     : undefined;
-  const showReasoning =
-    reasoningEffort !== undefined &&
-    (!modelInfo || (modelInfo.supportedReasoningEfforts?.length ?? 0) > 0);
 
   return (
     <div
@@ -216,7 +218,7 @@ export default function RightPanel() {
                     <ModelIcon provider={providerOf(modelInfo, activeSession.modelId)} size={16} />
                   }
                   label={modelLabel}
-                  meta={showReasoning ? reasoningEffort : undefined}
+                  meta={reasoningEffort}
                 />
 
                 {/* Child sessions — collapsible, nested under the model */}

@@ -27,6 +27,7 @@ import { QueuedPrompts } from './composer/QueuedPrompts';
 import { markGitTurnStart } from '../lib/git';
 import { createLocalDesignTranscriptEvent, newQueueId } from '../lib/promptQueue';
 import { composePrompt } from '../lib/composePrompt';
+import { resolveReasoningEffortDisplay } from '../lib/reasoningEffort';
 import { resetComposerAfterSubmit } from '../lib/composerReset';
 import {
   childRuntimeSubmitTarget,
@@ -467,17 +468,17 @@ export default function PromptInput({
   // default while composing a brand-new chat that has no session yet.
   const chatScoped = !missionPreview && !!activeSession;
   const primaryModelId = chatScoped ? activeSession.modelId : state.agentConfig.primary.modelId;
-  const primaryReasoning = chatScoped
-    ? (activeSession.reasoningEffort ?? state.agentConfig.primary.reasoning)
-    : state.agentConfig.primary.reasoning;
   const selectedModel = primaryModelId
     ? state.models.find((m) => m.id === primaryModelId)
     : undefined;
   const selectedModelLabel = primaryModelId
     ? (selectedModel?.displayName ?? primaryModelId)
     : 'Default model';
-  const showReasoningBadge =
-    !selectedModel || (selectedModel.supportedReasoningEfforts?.length ?? 0) > 0;
+  const primaryReasoning = resolveReasoningEffortDisplay(
+    chatScoped ? activeSession.reasoningEffort : undefined,
+    state.agentConfig.primary.reasoning,
+    selectedModel,
+  );
 
   const replaceTrigger = (replacement: string) => {
     if (!trigger) return;
@@ -1025,7 +1026,14 @@ export default function PromptInput({
                           {item.skill.description}
                         </span>
                         {added && (
-                          <Check className="w-3.5 h-3.5 shrink-0" style={{ color: ACCENT }} />
+                          <>
+                            <Check
+                              className="w-3.5 h-3.5 shrink-0"
+                              style={{ color: ACCENT }}
+                              aria-hidden="true"
+                            />
+                            <span className="sr-only">added</span>
+                          </>
                         )}
                         <span className="shrink-0 text-[10.5px] text-droid-text-muted/60">
                           {LOCATION_LABEL[item.skill.location]}
@@ -1054,7 +1062,14 @@ export default function PromptInput({
                       {item.path}
                     </span>
                     {attachedFiles.includes(item.path) && (
-                      <Check className="w-3 h-3 shrink-0" style={{ color: ACCENT }} />
+                      <>
+                        <Check
+                          className="w-3 h-3 shrink-0"
+                          style={{ color: ACCENT }}
+                          aria-hidden="true"
+                        />
+                        <span className="sr-only">attached</span>
+                      </>
                     )}
                   </button>
                 );
@@ -1257,7 +1272,7 @@ export default function PromptInput({
                   <>
                     <ModelIcon provider={providerOf(selectedModel, primaryModelId)} size={14} />
                     <span className="truncate">{selectedModelLabel}</span>
-                    {showReasoningBadge && (
+                    {primaryReasoning && (
                       <span
                         className="shrink-0 px-1.5 py-0.5 rounded-md text-[9px] font-medium capitalize leading-none"
                         style={{
