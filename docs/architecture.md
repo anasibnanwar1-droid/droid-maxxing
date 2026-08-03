@@ -69,4 +69,8 @@ flowchart LR
 
 ## Update path
 
-Electron checks update metadata through `DROID_UPDATE_FEED` when configured. CLI downloads default to `DROID_DOWNLOAD_BASE=https://droidex.app`, with optional host allow-listing through `DROID_UPDATE_HOSTS`.
+Packaged macOS builds use `electron-updater` against the public
+`anasibnanwar1-droid/droidex-releases` repository. Each release contains signed
+DMGs for website installation plus ZIP artifacts and `latest-mac.yml` metadata
+for in-app updates. The private source repository is never used as a client
+update feed.

@@ -23,9 +23,9 @@ Record these values with each release candidate:
 
 | Variable | Why it matters |
 | --- | --- |
-| `DROID_DOWNLOAD_BASE` | Base URL used for Droid CLI downloads |
-| `DROID_UPDATE_FEED` | Update metadata endpoint used by Electron |
-| `DROID_UPDATE_HOSTS` | Allowed update hosts |
+| `DROIDEX_RELEASE_BUILD` | Enables the fail-closed signed/notarized release configuration |
+| `CSC_LINK` | Developer ID Application certificate supplied through CI secrets |
+| `APPLE_API_KEY` | App Store Connect API key used for notarization |
 | `SIDECAR_ENTRY` | Sidecar bundle override, if used |
 
 Keep real secrets out of release notes and CI logs.
@@ -38,7 +38,7 @@ After installing a candidate build:
 2. Complete onboarding or confirm existing settings load.
 3. Start a Droid session and verify sidecar connection status.
 4. Confirm CLI discovery or installation works on a clean machine.
-5. Trigger an update check when `DROID_UPDATE_FEED` is configured.
+5. Trigger an update check against the public releases repository.
 6. Inspect Electron and sidecar logs for bridge authentication, download, or update errors.
 
 ## Incident triage
@@ -46,7 +46,7 @@ After installing a candidate build:
 If a deployment causes user impact:
 
 1. Stop promotion of the current release candidate.
-2. Capture OS version, app version, `DROID_DOWNLOAD_BASE`, `DROID_UPDATE_FEED`, and bridge settings.
+2. Capture OS version, app version, CPU architecture, and the public release tag.
 3. Reproduce with `npm run electron` when possible.
 4. Run the relevant runbook in `docs/runbooks.md`.
 5. File the fix with the failing CI command and observed runtime log excerpt.

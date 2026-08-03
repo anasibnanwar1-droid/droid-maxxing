@@ -30,6 +30,8 @@ const { runWithWebContentsDebugger } = require('./nativeBrowserEmulation.cjs');
 const { attachChildView, detachChildView } = require('./nativeBrowserHost.cjs');
 const { createSidecarSupervisor } = require('./sidecar.cjs');
 const { installRendererNavigationGuard } = require('./rendererSecurity.cjs');
+const { autoUpdater } = require('electron-updater');
+const { createAppUpdater } = require('./appUpdater.cjs');
 const APP_NAME = 'Droid Control';
 const terminalManager = createTerminalManager();
 const terminalSubscriptions = createTerminalSubscriptionRegistry(terminalManager);
@@ -37,6 +39,12 @@ const filesRootAccess = files.createRootAccessRegistry();
 const sidecarSupervisor = createSidecarSupervisor({
   entryPath: sidecarEntry,
   cwd: () => (app.isPackaged ? process.resourcesPath : appRoot()),
+});
+const appUpdater = createAppUpdater({
+  app,
+  autoUpdater,
+  prepareToInstall: () => sidecarSupervisor.stop(),
+  logError: (message, error) => console.error(`[update] ${message}:`, error),
 });
 
 let mainWindow = null;
@@ -216,8 +224,14 @@ function registerIpc() {
   ipcMain.handle('onboarding-get', getOnboarding);
   ipcMain.handle('onboarding-set', (_event, { patch }) => setOnboarding(patch));
   ipcMain.handle('app-version', () => app.getVersion());
-  ipcMain.handle('app-check-update', checkAppUpdate);
-  ipcMain.handle('app-download-update', (_e, dmgUrl) => downloadAppUpdate(dmgUrl));
+  ipcMain.handle('app-check-update', (event) => {
+    assertMainRenderer(event);
+    return appUpdater.check();
+  });
+  ipcMain.handle('app-download-update', (event) => {
+    assertMainRenderer(event);
+    return appUpdater.downloadAndInstall();
+  });
   ipcMain.handle('app-relaunch', () => relaunchApp());
   ipcMain.handle('app-set-icon', (event, payload) => {
     assertMainRenderer(event);
@@ -1798,148 +1812,6 @@ function setOnboarding(patch) {
   return run;
 }
 
-// ── App self-update ─────────────────────────────────────────────────
-// Managed per-arch .dmg download against a configurable host; falls back to
-// the Squirrel autoUpdater when an update feed is configured.
-const DOWNLOAD_BASE = (process.env.DROID_DOWNLOAD_BASE || 'https://droidex.app').replace(/\/$/, '');
-const UPDATE_FEED = process.env.DROID_UPDATE_FEED || '';
-
-function macDmgName() {
-  return process.arch === 'arm64' ? 'droidex-arm64.dmg' : 'droidex-x64.dmg';
-}
-
-async function checkAppUpdate() {
-  const current = app.getVersion();
-  try {
-    const res = await fetch(`${DOWNLOAD_BASE}/downloads/latest.json`, { cache: 'no-store' });
-    if (!res.ok) throw new Error(`manifest ${res.status}`);
-    const manifest = await res.json();
-    const latest = String(manifest.version || '');
-    const dmgUrl =
-      process.platform === 'darwin'
-        ? manifest.mac?.[process.arch] || `${DOWNLOAD_BASE}/downloads/${macDmgName()}`
-        : undefined;
-    return {
-      current,
-      latest,
-      updateAvailable: latest ? compareSemverParts(latest, current) > 0 : false,
-      arch: process.arch,
-      platform: process.platform,
-      dmgUrl,
-      feedConfigured: Boolean(UPDATE_FEED),
-    };
-  } catch {
-    return {
-      current,
-      latest: '',
-      updateAvailable: false,
-      arch: process.arch,
-      platform: process.platform,
-      feedConfigured: Boolean(UPDATE_FEED),
-    };
-  }
-}
-
-async function downloadAppUpdate(dmgUrl) {
-  if (UPDATE_FEED && process.platform === 'darwin') {
-    try {
-      // Await the actual feed outcome so the renderer only reports success once
-      // the build is downloaded (or up to date), not right after kicking off
-      // the check.
-      return await runAutoUpdater();
-    } catch (err) {
-      console.warn(
-        '[update] autoUpdater failed, falling back to managed download:',
-        err?.message || err,
-      );
-      /* fall through to managed download */
-    }
-  }
-  if (process.platform !== 'darwin') {
-    await openExternal(`${DOWNLOAD_BASE}/download`);
-    return { mode: 'external' };
-  }
-  return managedMacDownload(dmgUrl);
-}
-
-// Resolves when the feed reports a downloaded update (then relaunches) or that
-// we're up to date; rejects on feed/network errors so the caller can fall back.
-function runAutoUpdater() {
-  return new Promise((resolve, reject) => {
-    const { autoUpdater } = require('electron');
-    autoUpdater.setFeedURL({ url: UPDATE_FEED });
-    autoUpdater.removeAllListeners('error');
-    autoUpdater.removeAllListeners('update-downloaded');
-    autoUpdater.removeAllListeners('update-not-available');
-    autoUpdater.once('update-downloaded', () => {
-      resolve({ mode: 'autoUpdater', status: 'downloaded' });
-      autoUpdater.quitAndInstall();
-    });
-    autoUpdater.once('update-not-available', () =>
-      resolve({ mode: 'autoUpdater', status: 'up-to-date' }),
-    );
-    autoUpdater.once('error', (err) => reject(err instanceof Error ? err : new Error(String(err))));
-    autoUpdater.checkForUpdates();
-  });
-}
-
-// The renderer relays the manifest-selected URL, so it cannot be trusted on its
-// own. Only allow HTTPS downloads from the update host(s) we control: the
-// download base, an optional autoUpdater feed, and any explicitly configured
-// CDN hosts. Anything else is rejected so a compromised renderer can't make the
-// main process fetch and launch an arbitrary payload.
-function trustedUpdateHosts() {
-  const hosts = new Set();
-  const add = (base) => {
-    try {
-      hosts.add(new URL(base).host);
-    } catch {
-      /* ignore */
-    }
-  };
-  add(DOWNLOAD_BASE);
-  if (UPDATE_FEED) add(UPDATE_FEED);
-  for (const host of (process.env.DROID_UPDATE_HOSTS || '')
-    .split(',')
-    .map((s) => s.trim())
-    .filter(Boolean)) {
-    hosts.add(host);
-  }
-  return hosts;
-}
-
-function assertTrustedDmgUrl(rawUrl) {
-  let parsed;
-  try {
-    parsed = new URL(rawUrl);
-  } catch {
-    throw new Error('refusing malformed update URL');
-  }
-  if (parsed.protocol !== 'https:') throw new Error('refusing non-HTTPS update URL');
-  if (!trustedUpdateHosts().has(parsed.host))
-    throw new Error(`refusing update from untrusted host: ${parsed.host}`);
-  return parsed;
-}
-
-async function managedMacDownload(dmgUrl) {
-  // Honor the manifest-selected artifact (versioned/CDN/arch-specific) so we
-  // never advertise one update then fetch a different default file.
-  const parsed = assertTrustedDmgUrl(dmgUrl || `${DOWNLOAD_BASE}/downloads/${macDmgName()}`);
-  const url = parsed.toString();
-  const fileName = path.basename(parsed.pathname) || macDmgName();
-  const dest = path.join(app.getPath('downloads'), fileName);
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`download failed (${res.status})`);
-  const buffer = Buffer.from(await res.arrayBuffer());
-  await fsp.writeFile(dest, buffer);
-  shell.showItemInFolder(dest);
-  // openPath resolves with a non-empty error string (it doesn't reject) when
-  // the OS can't launch the file, so treat that as a failure.
-  const openError = await shell.openPath(dest);
-  if (openError) throw new Error(`could not open downloaded update: ${openError}`);
-  return { mode: 'download', path: dest };
-}
-
 function relaunchApp() {
   app.relaunch();
   app.exit(0);
@@ -1950,17 +1822,6 @@ function openExternal(url) {
     throw new Error('Refusing to open non-http(s) URL.');
   }
   return shell.openExternal(url);
-}
-
-// Compare two dotted versions: positive when a > b.
-function compareSemverParts(a, b) {
-  const pa = String(a).match(/\d+/g)?.map(Number) ?? [];
-  const pb = String(b).match(/\d+/g)?.map(Number) ?? [];
-  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
-    const diff = (pa[i] ?? 0) - (pb[i] ?? 0);
-    if (diff) return diff;
-  }
-  return 0;
 }
 
 async function listFiles(dir) {

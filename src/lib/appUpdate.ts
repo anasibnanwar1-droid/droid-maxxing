@@ -31,18 +31,14 @@ export async function refreshAppUpdate(): Promise<AppUpdateInfo | null> {
   return next;
 }
 
-// Downloads the artifact selected by the manifest and (on the autoUpdater feed
-// path) restarts the app to finish installing.
 export async function startAppUpdate(target: AppUpdateInfo | null = info): Promise<void> {
-  if (downloading) return;
+  if (downloading || !target?.updateAvailable) return;
   downloading = true;
   emit();
   try {
-    const result = await ipcDownload(target?.dmgUrl);
-    // The feed path can resolve as already up to date (e.g. a launch probe with
-    // only a feed configured); don't show a misleading "downloading" toast then.
-    if (result?.status !== 'up-to-date') {
-      toast.info('Downloading the update. The app will restart to finish installing.');
+    const result = await ipcDownload();
+    if (result?.status === 'downloaded') {
+      toast.info('Update downloaded. Restarting DROIDEX…');
     }
   } catch {
     toast.error('Update download failed. Please try again.');
@@ -67,5 +63,11 @@ export function useAppUpdate(): {
       listeners.delete(listener);
     };
   }, []);
-  return { update: info, downloading, start: () => startAppUpdate() };
+  return {
+    update: info,
+    downloading,
+    start: async () => {
+      await startAppUpdate();
+    },
+  };
 }

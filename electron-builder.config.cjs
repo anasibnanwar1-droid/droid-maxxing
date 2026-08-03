@@ -1,24 +1,30 @@
 // electron-builder config for DROIDEX.
 //
-// Produces the per-arch DMGs the site and the in-app updater already expect
-// (droidex-arm64.dmg / droidex-x64.dmg). Signing is env-gated: with no
-// APPLE_SIGNING_IDENTITY the build is unsigned (local use); set the signing
-// env vars (see .env.example) and the same command signs and notarizes.
+// Produces website DMGs plus the ZIP/update metadata consumed by electron-updater.
+// Local builds remain unsigned; production release builds fail closed unless a
+// Developer ID certificate and notarization credentials are present.
 
 const process = require('node:process');
 
-const identity = process.env.APPLE_SIGNING_IDENTITY || null;
+const isReleaseBuild = process.env.DROIDEX_RELEASE_BUILD === '1';
+const hasSigningCredentials = Boolean(process.env.CSC_LINK || process.env.APPLE_SIGNING_IDENTITY);
+const identity = process.env.APPLE_SIGNING_IDENTITY || (process.env.CSC_LINK ? undefined : null);
 const canNotarize = Boolean(
-  identity &&
-  process.env.APPLE_ID &&
-  process.env.APPLE_APP_SPECIFIC_PASSWORD &&
-  process.env.APPLE_TEAM_ID,
+  hasSigningCredentials &&
+  ((process.env.APPLE_ID && process.env.APPLE_APP_SPECIFIC_PASSWORD && process.env.APPLE_TEAM_ID) ||
+    (process.env.APPLE_API_KEY && process.env.APPLE_API_KEY_ID && process.env.APPLE_API_ISSUER)),
 );
+if (isReleaseBuild && !canNotarize) {
+  throw new Error(
+    'DROIDEX release builds require Developer ID signing and Apple notarization credentials.',
+  );
+}
 
 /** @type {import('electron-builder').Configuration} */
 module.exports = {
   appId: 'app.droidex',
   productName: 'DROIDEX',
+  forceCodeSigning: isReleaseBuild,
   directories: {
     output: 'release',
     buildResources: 'assets/brand',
@@ -35,10 +41,11 @@ module.exports = {
     category: 'public.app-category.developer-tools',
     icon: 'electron/assets/icon.icns',
     identity,
-    hardenedRuntime: Boolean(identity),
+    hardenedRuntime: hasSigningCredentials,
     entitlements: 'assets/brand/entitlements.mac.plist',
     entitlementsInherit: 'assets/brand/entitlements.mac.plist',
-    target: [{ target: 'dmg', arch: ['x64', 'arm64'] }],
+    target: [{ target: 'dmg' }, { target: 'zip' }],
+    artifactName: `droidex-\${arch}.\${ext}`,
     notarize: canNotarize,
   },
   dmg: {
@@ -52,5 +59,10 @@ module.exports = {
     ],
     artifactName: `droidex-\${arch}.\${ext}`,
   },
-  publish: null,
+  publish: {
+    provider: 'github',
+    owner: 'anasibnanwar1-droid',
+    repo: 'droidex-releases',
+    releaseType: 'release',
+  },
 };
