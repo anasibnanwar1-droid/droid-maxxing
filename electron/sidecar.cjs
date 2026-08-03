@@ -12,6 +12,7 @@ function createSidecarSupervisor(options) {
   let child = null;
   let bridgeInfo = null;
   let pendingStart = null;
+  let activeRun = null;
 
   function start() {
     if (child && child.exitCode === null && child.signalCode === null && bridgeInfo) {
@@ -32,11 +33,16 @@ function createSidecarSupervisor(options) {
         BRIDGE_ALLOW_LOCAL_NO_TOKEN: options.isPackaged() ? '0' : '1',
       },
     });
+    const run = {
+      child: nextChild,
+      intentionalStop: false,
+      cancelStartup: null,
+    };
     child = nextChild;
+    activeRun = run;
 
-    pendingStart = new Promise((resolve, reject) => {
+    const startPromise = new Promise((resolve, reject) => {
       let stdoutBuffer = '';
-      let stderrBuffer = '';
       let settled = false;
       const timeout = setTimeout(() => {
         fail(new Error(`Sidecar did not become ready within ${readyTimeoutMs}ms.`));
@@ -48,31 +54,28 @@ function createSidecarSupervisor(options) {
         if (settled) return;
         settled = true;
         clearTimeout(timeout);
-        bridgeInfo = null;
+        if (activeRun === run) bridgeInfo = null;
         reject(error);
       }
+      run.cancelStartup = () => fail(new Error('Sidecar startup was cancelled.'));
 
       nextChild.once('error', fail);
       nextChild.once('exit', (code, signal) => {
-        if (child === nextChild) {
+        if (activeRun === run) {
+          activeRun = null;
           child = null;
           bridgeInfo = null;
         }
         if (!settled) {
-          const detail = stderrBuffer.trim();
-          fail(
-            new Error(
-              `Sidecar exited before ready (${code ?? signal ?? 'unknown'}).${detail ? ` ${detail}` : ''}`,
-            ),
-          );
-        } else if (code || signal) {
+          fail(new Error(`Sidecar exited before ready (${code ?? signal ?? 'unknown'}).`));
+        } else if (!run.intentionalStop && (code || signal)) {
           errorOutput.write(`sidecar exited: ${code ?? signal}\n`);
         }
       });
       nextChild.stdout.on('data', (chunk) => {
         const text = String(chunk);
         output.write(text);
-        if (settled) return;
+        if (settled || activeRun !== run) return;
         stdoutBuffer = `${stdoutBuffer}${text}`.slice(-512);
         const match = stdoutBuffer.match(READY_PATTERN);
         if (!match) return;
@@ -89,20 +92,28 @@ function createSidecarSupervisor(options) {
       });
       nextChild.stderr.on('data', (chunk) => {
         const text = String(chunk);
-        stderrBuffer = `${stderrBuffer}${text}`.slice(-4_096);
         errorOutput.write(text);
       });
-    }).finally(() => {
-      pendingStart = null;
     });
+    const wrappedStart = startPromise.finally(() => {
+      if (pendingStart === wrappedStart) pendingStart = null;
+    });
+    pendingStart = wrappedStart;
 
     return pendingStart;
   }
 
   function stop() {
     const current = child;
+    const run = activeRun;
+    if (run && run.child === current) {
+      run.intentionalStop = true;
+      run.cancelStartup?.();
+      activeRun = null;
+    }
     child = null;
     bridgeInfo = null;
+    pendingStart = null;
     if (!current || current.killed) return;
     current.stdin?.end();
     current.kill();
