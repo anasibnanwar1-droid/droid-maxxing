@@ -914,6 +914,7 @@ export class SessionManager {
     const contextTarget = this.primaryContextTarget(liveSession);
     if (!this.isCurrentPrimarySession(liveSession)) return;
     this.eventFlow.beginTurn(appSessionId, appSessionId);
+    this.context.beginTurn(appSessionId);
     this.context.startPolling(contextTarget);
     try {
       await this.applyDesignToolPolicy(liveSession, isDesignPrompt(prompt));

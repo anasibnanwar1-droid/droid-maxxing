@@ -334,7 +334,7 @@ test('a refresh in flight across a primary compaction never republishes stale st
   assert.equal(live.summary.contextTokens, 0);
 });
 
-test('queued pre-compaction exact usage cannot undo the reset before a fresh reading', async () => {
+test('queued pre-compaction exact usage cannot undo the reset before a new turn', async () => {
   const h = createHarness();
   const { live, session } = registerLive(h, 'app-1');
   h.context.recordCompaction(primaryTarget(h, live));
@@ -356,6 +356,18 @@ test('queued pre-compaction exact usage cannot undo the reset before a fresh rea
   assert.equal(contextEvents(h).at(-1)?.stats.used, 120);
   assert.equal(live.summary.contextTokens, 120);
 
+  // A late pre-compaction usage event must NOT resurrect the old meter, even
+  // though the provider reading has already confirmed the reset. The guard
+  // persists until the next turn boundary, so contextTokens stays at the
+  // provider reading's 120 (not the stale 800 from the usage event).
+  h.context.recordUsage('app-1', 'app-1', { tokensIn: 11, tokensOut: 6, contextTokens: 800 });
+  assert.equal(live.summary.tokensIn, 11);
+  assert.equal(live.summary.tokensOut, 6);
+  assert.equal(live.summary.contextTokens, 120);
+
+  // The new turn begins: the guard is cleared, and post-compaction usage
+  // events now apply their context fields normally.
+  h.context.beginTurn('app-1');
   h.context.recordUsage('app-1', 'app-1', { tokensIn: 12, tokensOut: 6, contextTokens: 200 });
   assert.equal(live.summary.contextTokens, 200);
 });

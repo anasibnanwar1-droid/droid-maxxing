@@ -116,10 +116,12 @@ export default function ContextMeter({
   session,
   stats,
   sessionKey,
+  isChild = false,
 }: {
   session: SessionSummary;
   stats?: ContextStatsSnapshot;
   sessionKey?: string;
+  isChild?: boolean;
 }) {
   const { dispatch } = useStore();
   const [open, setOpen] = useState(false);
@@ -325,7 +327,7 @@ export default function ContextMeter({
                 {modelWindow !== undefined && modelWindow !== max && (
                   <Row color="var(--droid-text-muted)" label="Model window" value={modelWindow} />
                 )}
-                {autoCompactLimit !== undefined && (
+                {autoCompactLimit !== undefined && !isChild && (
                   <Row
                     color="var(--droid-orange)"
                     label="Auto-compact at"
