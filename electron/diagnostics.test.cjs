@@ -48,8 +48,8 @@ test('manual bug reports carry support ids without default PII', async () => {
     },
     sentry: {
       withScope: (callback) => callback(scope),
-      captureMessage: (message, context) => {
-        events.push(['message', message, context]);
+      captureException: (error) => {
+        events.push(['exception', error.message]);
         return 'event-123';
       },
       flush: async (timeoutMs) => {
@@ -64,11 +64,10 @@ test('manual bug reports carry support ids without default PII', async () => {
     userId: 'USR-123456781234',
     eventId: 'event-123',
   });
-  assert.equal(
-    events.some(([kind, value]) => kind === 'message' && value === 'update button froze'),
-    true,
+  assert.deepEqual(
+    events.find(([kind]) => kind === 'exception'),
+    ['exception', 'update button froze'],
   );
-  assert.deepEqual(events.find(([kind]) => kind === 'message')?.[2], { level: 'error' });
   assert.deepEqual(
     events.find(([kind]) => kind === 'flush'),
     ['flush', 5_000],
@@ -87,7 +86,7 @@ test('manual bug reports fail when Sentry does not confirm delivery', async () =
     },
     sentry: {
       withScope: (callback) => callback({ setUser: () => undefined, setTags: () => undefined }),
-      captureMessage: () => 'event-123',
+      captureException: () => 'event-123',
       flush: async () => false,
     },
   });

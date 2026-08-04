@@ -38,7 +38,7 @@ function createDiagnostics(options) {
         platform: process.platform,
         arch: process.arch,
       });
-      eventId = sentry.captureMessage(normalized, { level: 'error' });
+      eventId = sentry.captureException(new Error(normalized));
     });
     if (!(await sentry.flush(5_000))) {
       throw new Error('Bug report delivery timed out. Check your connection and try again.');
