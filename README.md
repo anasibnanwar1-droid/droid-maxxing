@@ -49,6 +49,21 @@ Official macOS downloads and first-launch instructions live in the
 The permanent website links and tag-controlled publishing flow are documented
 in `docs/releasing.md`.
 
+## Privacy and diagnostics
+
+Automatic crash reports and Sentry Release Health are enabled by default in
+release builds. They use a random local profile ID and can include crash stacks,
+native crash dumps, and technical device/runtime context. Crash material can
+contain incidental sensitive data; access belongs only to the private DROIDEX
+Sentry project. DROIDEX does not intentionally attach account identity or use
+Sentry for feature analytics.
+
+Users can turn automatic diagnostics off under **Settings → Privacy &
+diagnostics**. Changing the preference restarts DROIDEX. Disabling it stops
+automatic reporting and deletes the local profile ID. `/bug` and `/feedback`
+reports are sent only when the user explicitly submits them; while automatic
+diagnostics are off, those reports use a non-persisted report-scoped ID.
+
 ## More documentation
 
 - Architecture overview: `docs/architecture.md`

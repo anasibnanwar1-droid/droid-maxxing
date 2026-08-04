@@ -280,8 +280,10 @@ export function FeedbackModal({ initialReport, onClose }: FeedbackModalProps) {
               </label>
               <div className="mt-2 flex items-start justify-between gap-5">
                 <p className="max-w-[500px] text-[11px] leading-[17px] text-droid-text-muted">
-                  Includes app version, macOS version, architecture, and runtime versions. Chats,
-                  files, browser content, keys, and credentials are never attached automatically.
+                  Includes a random pseudonymous ID (report-scoped while automatic diagnostics are
+                  off), app version, macOS version, architecture, and runtime versions. Chats,
+                  files, browser content, keys, and credentials are not attached to this manual
+                  report.
                 </p>
                 <span className="shrink-0 font-mono text-[10px] text-droid-text-muted">
                   {description.length}/2000

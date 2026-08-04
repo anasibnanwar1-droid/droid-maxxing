@@ -38,6 +38,7 @@ import { utilityTerminalCwds } from '../lib/utilityPanel';
 import { workspaceName } from '../lib/workspaces';
 import { toast } from '../lib/toast';
 import { applyTheme, paletteForMode, UI_FONTS, PRESET_THEMES } from '../lib/theme';
+import { DiagnosticsSettings } from './DiagnosticsSettings';
 
 const PRESET_ACCENTS = [
   '#ee6018',
@@ -67,6 +68,7 @@ const NAV: { group: string; items: NavItem[] }[] = [
       { label: 'Personalization' },
       { label: 'Keyboard shortcuts' },
       { label: 'Usage & billing' },
+      { label: 'Privacy & diagnostics' },
     ],
   },
   {
@@ -1487,6 +1489,9 @@ export default function SettingsPanel() {
       break;
     case 'Configuration':
       content = <ConfigurationSection />;
+      break;
+    case 'Privacy & diagnostics':
+      content = <DiagnosticsSettings />;
       break;
     default:
       content = <PlaceholderSection title={active} />;

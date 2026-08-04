@@ -12,6 +12,25 @@ These runbooks cover local development and release triage for DROIDEX.
 4. Keep report descriptions and crash attachments out of the public releases
    repository.
 
+## Release Health and profile usage
+
+1. Open the private Sentry Electron project and select Releases or Release
+   Health.
+2. Filter the environment to `production`. Development launches use the same
+   project but a separate `development` environment.
+3. Use sessions for app-launch volume, unique users for pseudonymous active local
+   profiles, and crash-free sessions for reliability. These are not counts of
+   named people, accounts, physical devices, or downloads.
+4. Group by `release` to compare observed adoption. The first release observed
+   for a `USR-…` profile is its first observed version; seeing the same profile
+   later proves only that it was active on a later version. It does not prove
+   whether Sparkle or a manual reinstall produced that transition.
+5. Do not interpret Sentry as feature analytics. DROIDEX sends no product
+   interaction events.
+6. Restrict crash-event and minidump access to incident/release operators. Apply
+   the approved Sentry retention policy and never copy crash material into the
+   public releases repository.
+
 ## App does not start in Electron development mode
 
 1. Confirm dependencies are installed:

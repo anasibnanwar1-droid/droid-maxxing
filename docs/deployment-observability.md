@@ -177,10 +177,40 @@ chats, prompts, project files or paths, browser content or history, logs,
 environment variables, API keys, GitHub credentials, network requests, or
 breadcrumbs to manual reports. The UI states this boundary before submission.
 
-Crash reporting continues to retain the exception information needed to debug
-failures while removing requests, breadcrumbs, and user fields other than the
-pseudonymous installation ID. Default PII and performance tracing remain
-disabled.
+Crash reporting retains exception messages and stacks plus the default Electron
+runtime, device, screen, GPU, module, source-context, ANR, and crashed-URL
+diagnostics needed to debug failures. Native crashes can include minidump
+attachments, whose process-memory snapshot may contain incidental sensitive
+data. Requests, breadcrumbs, and user fields other than the pseudonymous local
+profile ID are removed from JavaScript crash events. Default PII and performance
+tracing remain disabled, but those controls do not make crash artifacts free of
+incidental sensitive data. Restrict Sentry project access to release/incident
+operators and configure retention in Sentry before public distribution.
+
+Packaged app launches also create Sentry Release Health sessions. DROIDEX loads
+the stable pseudonymous installation ID before Sentry starts, so Release Health
+can report app sessions, unique active local profiles, crash-free sessions, and
+observed version adoption without intentionally collecting account identity or
+product activity. A profile is one Electron user-data directory: it can survive
+an app update or reinstall, resets when that directory is removed, and is not a
+person or physical-device count. Treat the first release observed for a profile
+as its first observed version and a later release only as that same profile being
+active on a later version. Development sessions are isolated under the
+`development` environment and must not be included in production usage counts.
+
+Automatic diagnostics are enabled by default in release builds and disclosed in
+the README and **Settings → Privacy & diagnostics**. Changing the preference
+restarts DROIDEX so the Electron SDK initializes exactly once before app
+readiness. Disabling closes the Sentry client and deletes the local profile ID.
+Explicit `/bug` and `/feedback`
+submissions remain available because they are sent only after the user reviews
+the manual-report boundary and chooses Submit; while automatic diagnostics are
+disabled, each report uses a report-scoped ID that is not persisted locally.
+
+Sentry is operational observability, not product analytics. DROIDEX does not use
+Sentry messages as analytics events and does not track clicks, prompts, commands,
+project names, file paths, browser activity, or session content. Add a dedicated
+privacy-reviewed analytics system before measuring feature funnels or retention.
 
 Connect the Sentry project to the private source repository using Sentry's
 server-side GitHub integration and an issue alert rule. No GitHub token belongs
@@ -199,4 +229,6 @@ If a deployment causes user impact:
 
 ## Missing observability
 
-If the project adds crash reporting, product analytics, or release notifications, link the dashboard and alert channel here and update `docs/runbooks.md` with escalation steps.
+Product analytics and release notifications are not configured. If either is
+added, link the private dashboard and alert channel here and update
+`docs/runbooks.md` with escalation steps.

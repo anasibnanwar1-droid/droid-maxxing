@@ -1,0 +1,52 @@
+meta:
+  product: DROIDEX
+  version: 1
+  created: 2026-08-04
+  updated: 2026-08-04
+  owner: DROIDEX engineering
+  destinations: [sentry]
+  pii_policy: no direct account identifiers; pseudonymous profile data and crash artifacts
+  internal_user_policy: exclude development environment from production views
+
+entities:
+  local_profile:
+    id_property: user_id
+    id_format: 'USR-[A-F0-9]{12}'
+    traits: []
+
+groups: []
+events: []
+
+operational_signals:
+  - name: app sessions
+    source: Sentry Release Health session
+    question: How often is the packaged app launched?
+  - name: unique active local profiles
+    source: unique pseudonymous user IDs on production Release Health sessions
+    question: How many pseudonymous local profiles are active for a selected period?
+  - name: crash-free sessions
+    source: Sentry Release Health session status
+    question: Is a release operationally healthy?
+  - name: release adoption
+    source: production sessions grouped by release
+    question: Which packaged versions are active?
+
+privacy:
+  collected:
+    - pseudonymous local profile ID
+    - app version and runtime versions
+    - operating system and CPU architecture
+    - packaged status and Sentry environment
+    - manually submitted feedback text, category, and report ID
+    - crash exception messages and stacks
+    - Sentry Electron runtime, device, screen, GPU, module, source, ANR, and crashed URL context
+    - native crash minidumps that may contain incidental sensitive process data
+  prohibited:
+    - account identity intentionally attached as structured telemetry
+    - product interaction events sent as Sentry messages
+  controls:
+    - Automatic diagnostics can be disabled in Settings.
+    - Preference changes relaunch the app so Sentry initializes once before readiness.
+    - Disabling automatic diagnostics deletes the local profile ID.
+    - Manual feedback is sent only after explicit submission and uses a report-scoped ID while opted out.
+    - Sentry access and retention must be restricted for crash artifacts.

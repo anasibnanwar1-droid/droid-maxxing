@@ -1,11 +1,30 @@
-# Current State: greenfield (no product analytics tracking detected)
+# Current State: Sentry operational telemetry; no product analytics events
 # Scanned: 2026-08-04
-# SDK: none
+# SDK: @sentry/electron
 
 events: []
 identity:
-  identify_calls: []
+  identify_calls:
+    - location: electron/diagnostics.cjs
+      entity: local_profile
+      id: stable pseudonymous USR identifier
+      timing: before the Sentry Release Health session starts
   group_calls: []
 patterns:
   naming_style: n/a
-  centralized: n/a
+  centralized: electron/diagnostics.cjs
+operational_telemetry:
+  destination: sentry
+  environments: [production, development]
+  signals:
+    - crash and crash-free sessions
+    - app sessions
+    - unique active local profiles
+    - release adoption
+  direct_account_pii: none
+  crash_data:
+    - exception messages and stacks
+    - Sentry Electron runtime and device contexts
+    - native crash minidumps that may contain incidental sensitive data
+  user_control: Settings > Privacy & diagnostics
+  product_events: none
