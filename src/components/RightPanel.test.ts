@@ -1,11 +1,18 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { readFileSync } from 'node:fs';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 
 import { initialState, StoreContext, type AppState } from '../hooks/useStore.js';
 import type { ModelInfo, ReasoningEffort, SessionSummary } from '../types/bridge.js';
 import RightPanel from './RightPanel.js';
+
+const panelSource = readFileSync(new URL('./RightPanel.tsx', import.meta.url), 'utf8');
+const prPanelSource = readFileSync(
+  new URL('./environment/PullRequestPanel.tsx', import.meta.url),
+  'utf8',
+);
 
 const session = (overrides: Partial<SessionSummary>): SessionSummary => ({
   appSessionId: 's1',
@@ -89,4 +96,11 @@ test('model row hides the pill for a known model without reasoning support', () 
 test('model row keeps the pill while the model list has not loaded', () => {
   const html = renderPanel({ reasoningEffort: 'xhigh', modelId: 'unlisted' }, []);
   assert.match(html, />xhigh</);
+});
+
+test('PR detail owns a bounded scroll region inside the context card', () => {
+  assert.match(panelSource, /view === 'pr' \? 'h-full min-h-0'/);
+  assert.match(panelSource, /className="min-h-0 flex-1 overflow-hidden"/);
+  assert.match(prPanelSource, /className="flex h-full min-h-0 flex-col overflow-hidden"/);
+  assert.match(prPanelSource, /className="min-h-0 flex-1 overflow-y-auto pb-2"/);
 });
