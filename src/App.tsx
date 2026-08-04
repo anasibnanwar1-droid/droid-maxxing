@@ -48,6 +48,7 @@ import { FilesWorkspace } from './components/files/FilesWorkspace';
 import { closeTerminalForTab } from './lib/terminal';
 import { utilityPanelForSession, type UtilityTool } from './lib/utilityPanel';
 import { isTerminalInputTarget, isTerminalTabShortcut } from './lib/keyboardShortcuts';
+import { useSessionWorkingDirectory } from './hooks/useSessionWorkingDirectory';
 
 function ContextListIcon({ className }: { className?: string }) {
   return (
@@ -86,7 +87,8 @@ export default function App() {
   const showWizard =
     !embedded && onboard.ready && (forceWizard || shouldShowOnboarding(onboard.onboarding));
   const activeSession = state.activeAppSessionId ? state.sessions[state.activeAppSessionId] : null;
-  const repoStatus = useRepoStatus(activeSession?.cwd ?? '');
+  const workingDirectory = useSessionWorkingDirectory(activeSession);
+  const repoStatus = useRepoStatus(workingDirectory);
   // Mission Control is active only for a session explicitly created for it,
   // not merely because the compose preview is open.
   const isMissionControlView = activeSession?.sessionPurpose === 'mission-control';
@@ -480,7 +482,7 @@ export default function App() {
                     }}
                     renderTab={(tab, { overlayOpen }) => {
                       if (tab.tool === 'review') {
-                        return <ReviewPanel cwd={activeSession.cwd} />;
+                        return <ReviewPanel cwd={workingDirectory} />;
                       }
                       if (tab.tool === 'browser') {
                         return (
@@ -501,7 +503,7 @@ export default function App() {
                             tabId={tab.id}
                             terminalId={tab.terminalId}
                             appSessionId={activeSession.appSessionId}
-                            cwd={activeSession.cwd}
+                            cwd={workingDirectory}
                             onCreated={(terminalId, label) => {
                               dispatch({
                                 type: 'UPDATE_UTILITY_TAB',
@@ -516,7 +518,7 @@ export default function App() {
                       }
                       return (
                         <FilesWorkspace
-                          root={activeSession.cwd}
+                          root={workingDirectory}
                           selectedPath={tab.filePath}
                           onSelectPath={(filePath) => {
                             dispatch({
@@ -579,8 +581,8 @@ export default function App() {
           data-electron-drag-region
           className="absolute top-0 right-0 h-9 z-40 flex items-center gap-1 pr-3"
         >
-          {activeSession?.cwd && (
-            <EditorOpenMenu cwd={activeSession.cwd} hasRepo={!!repoStatus} variant="toolbar" />
+          {workingDirectory && (
+            <EditorOpenMenu cwd={workingDirectory} hasRepo={!!repoStatus} variant="toolbar" />
           )}
           {canToggleContext && (
             <button

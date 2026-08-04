@@ -62,6 +62,7 @@ import { ModelIcon, providerOf } from './ModelIcon';
 import { StartInBar } from './environment/StartInBar';
 import type { Autonomy, SkillInfo } from '../types/bridge';
 import { feedbackDraftFromCommand } from '../lib/feedbackReport';
+import { useSessionWorkingDirectory } from '../hooks/useSessionWorkingDirectory';
 
 const ACCENT = 'var(--droid-accent)';
 const accentMix = (pct: number) =>
@@ -146,6 +147,7 @@ export default function PromptInput({
   });
 
   const activeSession = state.activeAppSessionId ? state.sessions[state.activeAppSessionId] : null;
+  const workingDirectory = useSessionWorkingDirectory(activeSession);
   const primaryIsLive = useSessionLive(state.activeAppSessionId);
 
   // The user's own prompts in this conversation, oldest to newest, for ArrowUp
@@ -716,11 +718,11 @@ export default function PromptInput({
     };
 
     const childRuntimeTarget = childRuntimeSubmitTarget(visibleTarget);
-    if (childRuntimeTarget && activeSession.cwd) {
+    if (childRuntimeTarget && workingDirectory) {
       await commitChildPromptAfterBaseline({
         capturedTarget: childRuntimeTarget,
         capturedComposerRevision: composerRevisionRef.current,
-        waitForBaseline: () => markGitTurnStart(activeSession.cwd, activeSession.appSessionId),
+        waitForBaseline: () => markGitTurnStart(workingDirectory, activeSession.appSessionId),
         currentTarget: () => visibleTargetRef.current,
         currentComposerRevision: () => composerRevisionRef.current,
         appendTranscript,
@@ -735,8 +737,8 @@ export default function PromptInput({
 
     // Capture the last-turn baseline before the agent can touch the tree;
     // a fire-and-forget call here races the first edit and corrupts the diff.
-    if (!childRuntimeTarget && activeSession.cwd)
-      await markGitTurnStart(activeSession.cwd, activeSession.appSessionId);
+    if (!childRuntimeTarget && workingDirectory)
+      await markGitTurnStart(workingDirectory, activeSession.appSessionId);
     sendCommand();
   };
 
@@ -753,7 +755,7 @@ export default function PromptInput({
     if (!activeSession) return;
     // Capture the Last-turn git baseline before sending ANY prompt (design
     // included) so the Review tab diffs the turn from the right starting point.
-    if (activeSession.cwd) await markGitTurnStart(activeSession.cwd, activeSession.appSessionId);
+    if (workingDirectory) await markGitTurnStart(workingDirectory, activeSession.appSessionId);
     // The queue stays editable while that runs, so deliver whatever is now at
     // the head: this honors deletes and edits (both remove the item) as well as
     // reorders, and never sends a stale prompt out of the visible order.

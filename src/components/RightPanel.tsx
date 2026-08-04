@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useStore } from '../hooks/useStore';
 import { useSessionLive } from '../hooks/useSessionLive';
 import { useGitEnvironment } from '../hooks/useGitEnvironment';
+import { useSessionWorkingDirectory } from '../hooks/useSessionWorkingDirectory';
 import { usePullRequest } from '../hooks/usePullRequest';
 import { interruptChild } from '../lib/commands';
 import { resolveReasoningEffortDisplay } from '../lib/reasoningEffort';
@@ -96,7 +97,7 @@ function ChildSessionRow({
 export default function RightPanel() {
   const { state, dispatch } = useStore();
   const activeSession = state.activeAppSessionId ? state.sessions[state.activeAppSessionId] : null;
-  const cwd = activeSession?.cwd ?? '';
+  const cwd = useSessionWorkingDirectory(activeSession);
 
   const [diffMode, setDiffMode] = useState<DiffStatMode>('worktree');
   const [view, setView] = useState<'context' | 'pr'>('context');
@@ -194,7 +195,7 @@ export default function RightPanel() {
               <div>
                 <SectionHeader label="Environment" />
                 <EnvironmentSection
-                  cwd={activeSession.cwd}
+                  cwd={cwd}
                   env={git.env}
                   branches={git.branches}
                   worktrees={git.worktrees}
