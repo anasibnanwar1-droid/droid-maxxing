@@ -163,14 +163,14 @@ test('primary refresh normalizes breakdown and persists estimated context', asyn
   );
 });
 
-test('exact primary usage wins while child usage changes totals only', async () => {
+test('plausible exact primary usage wins while child usage changes totals only', async () => {
   const h = createHarness();
   const { live, session } = registerLive(h, 'app-1');
   live.summary.maxContextTokens = 1_000;
   h.context.recordUsage('app-1', 'app-1', {
     tokensIn: 10,
     tokensOut: 3,
-    contextTokens: 1_200,
+    contextTokens: 800,
   });
   h.context.recordUsage('app-1', 'child-backend', {
     tokensIn: 20,
@@ -179,9 +179,9 @@ test('exact primary usage wins while child usage changes totals only', async () 
   });
   assert.equal(live.summary.tokensIn, 20);
   assert.equal(live.summary.tokensOut, 5);
-  assert.equal(live.summary.contextTokens, 1_200);
+  assert.equal(live.summary.contextTokens, 800);
   assert.equal(h.history.summaryPatches().get('app-1')?.tokensIn, 20);
-  assert.equal(h.history.summaryPatches().get('app-1')?.contextTokens, 1_200);
+  assert.equal(h.history.summaryPatches().get('app-1')?.contextTokens, 800);
 
   session.nextContextStats = {
     used: 100,
@@ -193,9 +193,45 @@ test('exact primary usage wins while child usage changes totals only', async () 
   await h.context.refresh(primaryTarget(h, live));
 
   const event = contextEvents(h).at(-1);
-  assert.equal(event?.stats.used, 1_000);
-  assert.equal(event?.stats.remaining, 0);
+  assert.equal(event?.stats.used, 800);
+  assert.equal(event?.stats.remaining, 200);
   assert.equal(event?.stats.accuracy, 'exact');
+});
+
+test('provider context wins over an impossible persisted exact reading', async () => {
+  const h = createHarness();
+  const { live, session } = registerLive(h, 'app-1');
+  live.summary.maxContextTokens = 1_000;
+  live.summary.contextTokens = 13_105_406;
+  live.summary.contextAccuracy = 'exact';
+  session.nextContextStats = {
+    used: 320,
+    remaining: 680,
+    limit: 1_000,
+    accuracy: ContextStatsAccuracy.Estimated,
+    updatedAt: '2026-01-01T00:00:00.000Z',
+  };
+
+  await h.context.refresh(primaryTarget(h, live));
+
+  const event = contextEvents(h).at(-1);
+  assert.equal(event?.stats.used, 320);
+  assert.equal(event?.stats.remaining, 680);
+  assert.equal(live.summary.contextTokens, 320);
+});
+
+test('usage without current-context telemetry updates totals only', () => {
+  const h = createHarness();
+  const { live } = registerLive(h, 'app-1');
+  live.summary.contextTokens = 320;
+  live.summary.contextAccuracy = 'estimated';
+
+  h.context.recordUsage('app-1', 'app-1', { tokensIn: 900, tokensOut: 40 });
+
+  assert.equal(live.summary.tokensIn, 900);
+  assert.equal(live.summary.tokensOut, 40);
+  assert.equal(live.summary.contextTokens, 320);
+  assert.equal(live.summary.contextAccuracy, 'estimated');
 });
 
 test('usage persistence failure keeps live telemetry and does not fail the turn', () => {

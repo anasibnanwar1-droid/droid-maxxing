@@ -87,7 +87,7 @@ export interface NormalizedEvent {
     prompt?: string;
     done?: boolean;
   };
-  tokens?: { tokensIn: number; tokensOut: number; contextTokens: number };
+  tokens?: { tokensIn: number; tokensOut: number; contextTokens?: number };
   done?: boolean;
 }
 
@@ -165,7 +165,11 @@ export function normalizeStreamEvent(
   if (raw.type === 'token_usage_update' || raw.type === 'session_token_usage_changed') {
     const e = raw as Record<string, Record<string, unknown> | undefined>;
     const cumulative = e.inclusiveTokenUsage ?? e.tokenUsage ?? e;
-    const context = e.lastCallTokenUsage ?? e.tokenUsage ?? e;
+    // `session_token_usage_changed.tokenUsage` is cumulative for the whole
+    // session. It is not the current context window. Some provider versions do
+    // not include `lastCallTokenUsage`; in that shape, publish cumulative totals
+    // only and let getContextStats() remain authoritative for the meter.
+    const context = e.lastCallTokenUsage ?? (raw.type === 'token_usage_update' ? e : undefined);
     const tokensIn =
       (Number(cumulative.inputTokens ?? 0) || 0) +
       (Number(cumulative.cacheReadTokens ?? 0) || 0) +
@@ -174,11 +178,18 @@ export function normalizeStreamEvent(
     // Mirror the daemon's compaction threshold count (last call's input +
     // output + cacheRead) so the meter measures with the same stick that
     // decides when auto-compaction fires.
-    const contextTokens =
-      (Number(context.inputTokens ?? 0) || 0) +
-      (Number(context.outputTokens ?? 0) || 0) +
-      (Number(context.cacheReadTokens ?? 0) || 0);
-    return { tokens: { tokensIn, tokensOut, contextTokens } };
+    const contextTokens = context
+      ? (Number(context.inputTokens ?? 0) || 0) +
+        (Number(context.outputTokens ?? 0) || 0) +
+        (Number(context.cacheReadTokens ?? 0) || 0)
+      : undefined;
+    return {
+      tokens: {
+        tokensIn,
+        tokensOut,
+        ...(contextTokens === undefined ? {} : { contextTokens }),
+      },
+    };
   }
 
   // ToolProgress events nest the spawned subagent's session id under `update`.

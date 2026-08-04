@@ -121,6 +121,29 @@ test('token usage maps context to the daemon threshold formula (in + out + cache
   });
 });
 
+test('cumulative session usage never masquerades as current context usage', () => {
+  const normalized = normalizeStreamEvent('app-session-1', 'app-session-1', 'primary', {
+    type: 'session_token_usage_changed',
+    inclusiveTokenUsage: {
+      inputTokens: 1_235_355,
+      outputTokens: 242_687,
+      cacheReadTokens: 12_864_536,
+      cacheCreationTokens: 0,
+    },
+    tokenUsage: {
+      inputTokens: 979_933,
+      outputTokens: 179_985,
+      cacheReadTokens: 11_945_488,
+      cacheCreationTokens: 0,
+    },
+  } as never);
+
+  assert.deepEqual(normalized?.tokens, {
+    tokensIn: 14_099_891,
+    tokensOut: 242_687,
+  });
+});
+
 test('classifyPermission reads the SDK toolUses shape for MCP tools', () => {
   const params = {
     options: [{ value: 'proceed_once', label: 'Allow once' }],

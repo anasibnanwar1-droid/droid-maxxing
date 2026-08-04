@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { initialState, reducer, type AppState } from './useStore';
-import type { ContextStatsSnapshot, SessionSummary } from '../types/bridge';
+import type { ContextStatsSnapshot, SessionSummary, TranscriptEvent } from '../types/bridge';
 
 const session = (autoCompactions = 0): SessionSummary => ({
   appSessionId: 'm1',
@@ -91,6 +91,47 @@ test('ordinary session updates retain the current context snapshot', () => {
   });
 
   assert.equal(next.contextStats.primary.m1?.used, 80_000);
+});
+
+test('restored compaction history advances the meter generation and clears stale usage', () => {
+  const restored = (id: string, ts: number): TranscriptEvent => ({
+    id,
+    appSessionId: 'm1',
+    sourceSessionId: 'primary',
+    role: 'primary',
+    ts,
+    kind: 'compaction',
+  });
+  const start: AppState = {
+    ...initialState,
+    sessions: { m1: session() },
+    contextStats: { primary: { m1: snapshot(100_000) }, child: {} },
+  };
+
+  const next = reducer(start, {
+    type: 'SESSION_HISTORY',
+    appSessionId: 'm1',
+    progress: [],
+    transcripts: [restored('compact-1', 1), restored('compact-2', 2)],
+    mode: 'replace',
+    olderCursor: undefined,
+    hasMore: false,
+  });
+
+  assert.equal(next.sessions.m1.autoCompactions, 2);
+  assert.equal(next.sessions.m1.contextTokens, 0);
+  assert.equal(next.contextStats.primary.m1, undefined);
+});
+
+test('a delayed session summary cannot roll back a restored compaction generation', () => {
+  const start: AppState = {
+    ...initialState,
+    sessions: { m1: session(4) },
+  };
+
+  const next = reducer(start, { type: 'SESSION_UPDATED', session: session(0) });
+
+  assert.equal(next.sessions.m1.autoCompactions, 4);
 });
 
 test('child runtime replacement clears only the prior exact-child context snapshot', () => {

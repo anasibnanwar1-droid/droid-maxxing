@@ -10,16 +10,15 @@ const EASE = [0.16, 1, 0.3, 1] as const;
 const fmt = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(n >= 100_000 ? 0 : 1)}K` : String(n));
 
 function Ring({ pct, size = 16 }: { pct: number; size?: number }) {
-  const stroke = 2;
+  const stroke = 1.5;
   const r = (size - stroke) / 2;
   const c = 2 * Math.PI * r;
   const clamped = Math.max(0, Math.min(pct, 1));
-  const hot = clamped > 0.85;
   return (
     <svg
       width={size}
       height={size}
-      className={`-rotate-90 shrink-0 transition-opacity ${hot ? '' : 'opacity-55 group-hover:opacity-90'}`}
+      className="-rotate-90 shrink-0 opacity-55 transition-opacity group-hover:opacity-80"
     >
       <circle
         cx={size / 2}
@@ -34,7 +33,7 @@ function Ring({ pct, size = 16 }: { pct: number; size?: number }) {
         cy={size / 2}
         r={r}
         fill="none"
-        stroke={hot ? 'var(--droid-orange)' : 'var(--droid-accent)'}
+        stroke="var(--droid-text-muted)"
         strokeWidth={stroke}
         strokeLinecap="round"
         strokeDasharray={c}
@@ -228,7 +227,7 @@ export default function ContextMeter({
         className="group flex items-center rounded-md p-1 transition-colors hover:bg-droid-elevated/60"
         aria-label="Context usage"
       >
-        <Ring pct={pct} size={14} />
+        <Ring pct={pct} size={12} />
       </button>
 
       {createPortal(

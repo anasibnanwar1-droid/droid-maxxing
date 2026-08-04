@@ -39,7 +39,7 @@ export type ContextOperationTarget = LiveOperationTarget | ChildOperationTarget;
 export interface NormalizedTokenUsage {
   tokensIn: number;
   tokensOut: number;
-  contextTokens: number;
+  contextTokens?: number;
 }
 
 export interface UsageOffset {
@@ -99,12 +99,13 @@ export class SessionContext {
     // While a compaction reset is pending, usage events that were queued before
     // the compaction carry pre-compaction context tokens; applying them would
     // undo the reset, so context fields wait for the next provider refresh.
-    const publishContext =
+    const canPublishContext =
       sourceSessionId === stableAppSessionId &&
       !this.pendingCompactionResets.has(primaryResourceKey(stableAppSessionId));
-    if (publishContext) {
-      nextSummary.contextTokens = usage.contextTokens;
-      if (usage.contextTokens > 0) {
+    const currentContextTokens = canPublishContext ? usage.contextTokens : undefined;
+    if (currentContextTokens !== undefined) {
+      nextSummary.contextTokens = currentContextTokens;
+      if (currentContextTokens > 0) {
         nextSummary.contextAccuracy = 'exact';
         nextSummary.contextUpdatedAt = new Date().toISOString();
       }
@@ -117,7 +118,7 @@ export class SessionContext {
       this.dependencies.registry.updateSummary(stableAppSessionId, {
         tokensIn: nextSummary.tokensIn,
         tokensOut: nextSummary.tokensOut,
-        ...(publishContext
+        ...(currentContextTokens !== undefined
           ? {
               contextTokens: nextSummary.contextTokens,
               contextAccuracy: nextSummary.contextAccuracy,
@@ -379,7 +380,9 @@ function applyExactUsage(
   summary: SessionSummary,
 ): ContextStatsSnapshot {
   const exact =
-    summary.contextAccuracy === 'exact' && summary.contextTokens > 0
+    summary.contextAccuracy === 'exact' &&
+    summary.contextTokens > 0 &&
+    summary.contextTokens <= snapshot.limit
       ? summary.contextTokens
       : undefined;
   if (exact === undefined || snapshot.limit <= 0) return snapshot;
