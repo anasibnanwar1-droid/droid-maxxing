@@ -7,7 +7,6 @@ import {
   Copy,
   Ellipsis,
   ShieldCheck,
-  Sparkles,
   ThumbsDown,
   ThumbsUp,
   X,
@@ -207,8 +206,8 @@ export function FeedbackModal({ initialReport, onClose }: FeedbackModalProps) {
           <>
             <header className="flex items-start justify-between gap-5 px-7 pb-5 pt-6">
               <div>
-                <div className="mb-2 flex items-center gap-2 text-[11px] font-medium uppercase tracking-[0.14em] text-droid-accent">
-                  <Sparkles className="h-3.5 w-3.5" /> DROIDEX feedback
+                <div className="mb-2 text-[11px] font-medium uppercase tracking-[0.14em] text-droid-accent">
+                  DROIDEX feedback
                 </div>
                 <h2
                   id="feedback-title"
