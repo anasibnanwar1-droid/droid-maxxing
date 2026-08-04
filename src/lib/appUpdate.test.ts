@@ -17,9 +17,9 @@ test('signed builds may install an available update automatically', () => {
   );
 });
 
-test('unsigned builds only surface an available manual download', () => {
+test('Sparkle builds own their verified update installation', () => {
   assert.equal(
-    shouldInstallAppUpdateAutomatically({ ...baseUpdate, installMode: 'manual' }),
+    shouldInstallAppUpdateAutomatically({ ...baseUpdate, installMode: 'sparkle' }),
     false,
   );
   assert.equal(

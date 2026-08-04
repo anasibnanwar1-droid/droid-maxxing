@@ -15,7 +15,7 @@ export interface AppUpdateInfo {
   updateAvailable: boolean;
   arch: string;
   platform: string;
-  installMode: 'automatic' | 'manual';
+  installMode: 'automatic' | 'sparkle';
 }
 
 export async function getOnboarding(): Promise<OnboardingState> {
@@ -33,17 +33,24 @@ export async function getAppVersion(): Promise<string> {
   return window.droidControl!.appVersion();
 }
 
-export async function checkAppUpdate(): Promise<AppUpdateInfo | null> {
+export interface AppUpdateCheckOptions {
+  interactive: boolean;
+  automaticChecks: boolean;
+}
+
+export async function checkAppUpdate(
+  options: AppUpdateCheckOptions,
+): Promise<AppUpdateInfo | null> {
   if (!isDesktop()) return null;
   try {
-    return await window.droidControl!.checkAppUpdate();
+    return await window.droidControl!.checkAppUpdate(options);
   } catch {
     return null;
   }
 }
 
 export interface AppUpdateResult {
-  status: 'downloaded' | 'opened';
+  status: 'downloaded' | 'presented';
 }
 
 export async function downloadAppUpdate(): Promise<AppUpdateResult | null> {

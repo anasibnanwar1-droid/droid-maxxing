@@ -9,16 +9,22 @@ function createAppUpdater(options) {
   updater.allowDowngrade = false;
   updater.allowPrerelease = false;
 
-  async function check() {
+  async function check(checkOptions = {}) {
     const current = options.app.getVersion();
     if (!options.app.isPackaged || platform !== 'darwin') {
       return updateInfo(current, current, false, platform, arch, installMode);
     }
     try {
-      const latest =
-        installMode === 'manual'
-          ? String(await options.fetchLatestVersion())
-          : String((await updater.checkForUpdates())?.updateInfo?.version || current);
+      if (installMode === 'sparkle') {
+        options
+          .sparkleUpdater()
+          .checkForUpdates(
+            checkOptions.interactive === true,
+            checkOptions.automaticChecks !== false,
+          );
+        return updateInfo(current, current, false, platform, arch, installMode);
+      }
+      const latest = String((await updater.checkForUpdates())?.updateInfo?.version || current);
       return updateInfo(
         current,
         latest,
@@ -37,9 +43,9 @@ function createAppUpdater(options) {
     if (!options.app.isPackaged || platform !== 'darwin') {
       throw new Error('Automatic updates are available only in the packaged macOS app.');
     }
-    if (installMode === 'manual') {
-      await options.openReleasePage();
-      return { status: 'opened' };
+    if (installMode === 'sparkle') {
+      options.sparkleUpdater().checkForUpdates(true, true);
+      return { status: 'presented' };
     }
     await updater.downloadUpdate();
     await options.prepareToInstall();

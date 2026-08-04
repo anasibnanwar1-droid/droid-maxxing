@@ -10,9 +10,12 @@
     "dev": "vite",
     "build": "tsc && vite build && npm run sidecar:build && npm run electron:check",
     "assets:build": "node tools/render-brand-assets.mjs",
-    "dist:mac": "npm run assets:build && npm run build && electron-builder --mac --x64 --arm64 --publish never -c electron-builder.config.cjs",
-    "dist:mac:arm64": "npm run assets:build && npm run build && electron-builder --mac --arm64 --publish never -c electron-builder.config.cjs",
+    "sparkle:prepare": "node tools/prepare-sparkle.mjs",
+    "sparkle:appcast": "node tools/generate-sparkle-appcast.mjs",
+    "dist:mac": "npm run sparkle:prepare && npm run assets:build && npm run build && electron-builder --mac --x64 --arm64 --publish never -c electron-builder.config.cjs",
+    "dist:mac:arm64": "npm run sparkle:prepare && npm run assets:build && npm run build && electron-builder --mac --arm64 --publish never -c electron-builder.config.cjs",
     "release:preflight": "node tools/check-release-environment.mjs",
+    "release:preflight:unsigned": "node tools/check-unsigned-release.mjs",
     "release:verify:mac": "node tools/verify-macos-release.mjs",
     "electron": "npm run electron:dev",
     "electron:dev": "npm run sidecar:build && node electron/dev.cjs",
@@ -69,6 +72,9 @@
     "read-excel-file": "^9.3.1",
     "remark-gfm": "^4.0.1"
   },
+  "optionalDependencies": {
+    "@droidex/sparkle-updater": "file:native/sparkle-updater"
+  },
   "devDependencies": {
     "@electron/rebuild": "^4.2.0",
     "@eslint/js": "^9.39.4",
@@ -111,6 +117,8 @@
     ]
   },
   "allowScripts": {
+    "@droidex/sparkle-updater@0.1.0": true,
+    "sparkle-updater@0.1.0": true,
     "electron@39.8.10": true,
     "esbuild@0.25.12": true,
     "node-pty@1.1.0": true,

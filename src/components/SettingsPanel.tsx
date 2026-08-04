@@ -1100,7 +1100,7 @@ function SetupSection({ onClose }: { onClose: () => void }) {
     setChecking(true);
     // Publish to the shared store so a found update also lights up the sidebar
     // pill, while keeping the full result locally for the up-to-date/error text.
-    const info = await refreshAppUpdate();
+    const info = await refreshAppUpdate({ interactive: true, automaticChecks: appAuto });
     setUpdate(info);
     setChecking(false);
   };
@@ -1195,17 +1195,17 @@ function SetupSection({ onClose }: { onClose: () => void }) {
                 }}
                 className="px-2.5 h-7 rounded-md bg-droid-accent text-droid-bg text-[12px] hover:opacity-90 transition-opacity"
               >
-                {update.installMode === 'automatic' ? 'Restart & update' : 'Download update'}
+                Restart & update
               </button>
             )}
           </div>
         </SettingRow>
         <SettingRow
-          label="Check for DROIDEX updates"
-          description="Checks for new builds on launch."
+          label="Keep DROIDEX up to date"
+          description="Checks and installs verified builds."
         >
           <Switch
-            label="Check for DROIDEX updates"
+            label="Keep DROIDEX up to date"
             checked={appAuto}
             onChange={(v) => void onboard.patch({ appAutoUpdate: v })}
           />

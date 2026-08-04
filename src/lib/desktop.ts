@@ -11,7 +11,12 @@ import type {
 } from './nativeBrowser';
 import type { EditorId, EditorTarget } from './editorOpen';
 import type { RepoStatus } from './repoEnvironment';
-import type { AppUpdateInfo, AppUpdateResult, OnboardingState } from './onboarding';
+import type {
+  AppUpdateCheckOptions,
+  AppUpdateInfo,
+  AppUpdateResult,
+  OnboardingState,
+} from './onboarding';
 import type { AppIconMode } from './appIcon';
 import type {
   CommitOptions,
@@ -167,7 +172,7 @@ interface DroidControlApi {
   getOnboarding: () => Promise<OnboardingState>;
   setOnboarding: (patch: Partial<OnboardingState>) => Promise<OnboardingState>;
   appVersion: () => Promise<string>;
-  checkAppUpdate: () => Promise<AppUpdateInfo>;
+  checkAppUpdate: (options: AppUpdateCheckOptions) => Promise<AppUpdateInfo>;
   downloadAppUpdate: () => Promise<AppUpdateResult>;
   reportBug: (description: string) => Promise<BugReportReceipt>;
   relaunchApp: () => Promise<void>;

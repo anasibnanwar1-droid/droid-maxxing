@@ -5,10 +5,15 @@
 // Developer ID certificate and notarization credentials are present.
 
 const process = require('node:process');
+const fs = require('node:fs');
 const path = require('node:path');
 
 const isReleaseBuild = process.env.DROIDEX_RELEASE_BUILD === '1';
-const sentryDsn = process.env.SENTRY_DSN || '';
+const isUnsignedReleaseBuild = process.env.DROIDEX_UNSIGNED_RELEASE_BUILD === '1';
+const sparklePublicKey = 'czgsBI/YO7amJbwhZidZSO0j7LU5A4NsU0No9fDemWU=';
+const sentryDsn = process.env.SENTRY_DSN_FILE
+  ? fs.readFileSync(process.env.SENTRY_DSN_FILE, 'utf8').trim()
+  : process.env.SENTRY_DSN || '';
 const hasSigningCredentials = Boolean(process.env.CSC_LINK || process.env.APPLE_SIGNING_IDENTITY);
 const identity = process.env.APPLE_SIGNING_IDENTITY || (process.env.CSC_LINK ? undefined : null);
 const hasApiKeyCredentials = Boolean(
@@ -28,7 +33,7 @@ if (isReleaseBuild && !canNotarize) {
     'DROIDEX release builds require Developer ID signing and Apple notarization credentials (APPLE_API_KEY must be an absolute .p8 path).',
   );
 }
-if (isReleaseBuild && !sentryDsn) {
+if ((isReleaseBuild || isUnsignedReleaseBuild) && !sentryDsn) {
   throw new Error('DROIDEX release builds require SENTRY_DSN for crash and bug reporting.');
 }
 
@@ -39,14 +44,20 @@ module.exports = {
   forceCodeSigning: isReleaseBuild,
   extraMetadata: {
     sentryDsn,
-    updateInstallMode: isReleaseBuild ? 'automatic' : 'manual',
+    updateInstallMode: isReleaseBuild ? 'automatic' : 'sparkle',
   },
   directories: {
     output: 'release',
     buildResources: 'assets/brand',
   },
   files: ['package.json', 'dist/**', 'electron/**', '!**/*.test.cjs', '!**/*.test.ts', '!**/*.map'],
-  asarUnpack: ['node_modules/node-pty/**'],
+  asarUnpack: ['node_modules/node-pty/**', 'node_modules/@droidex/sparkle-updater/**'],
+  extraFiles: [
+    {
+      from: 'vendor/sparkle/distribution/Sparkle.framework',
+      to: 'Frameworks/Sparkle.framework',
+    },
+  ],
   extraResources: [
     // The Electron host spawns the sidecar as resources/sidecar/dist/sidecar.mjs
     // (see sidecarEntry in electron/main.cjs). The bundle is self-contained.
@@ -63,6 +74,16 @@ module.exports = {
         'DROIDEX accesses Documents projects only when you choose them for an agent session.',
       NSDownloadsFolderUsageDescription:
         'DROIDEX accesses downloaded project files only when you choose them for an agent session.',
+      SUFeedURL:
+        'https://github.com/anasibnanwar1-droid/droidex-releases/releases/latest/download/appcast.xml',
+      SUPublicEDKey: sparklePublicKey,
+      SUEnableAutomaticChecks: true,
+      SUAllowsAutomaticUpdates: true,
+      SUAutomaticallyUpdate: true,
+      SUEnableSystemProfiling: false,
+      SUVerifyUpdateBeforeExtraction: true,
+      SURequireSignedFeed: true,
+      SUSignedFeedFailureExpirationInterval: 0,
     },
     identity,
     hardenedRuntime: hasSigningCredentials,

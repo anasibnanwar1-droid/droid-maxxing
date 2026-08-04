@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import {
   checkAppUpdate as ipcCheck,
   downloadAppUpdate as ipcDownload,
+  type AppUpdateCheckOptions,
   type AppUpdateInfo,
 } from './onboarding';
 import { toast } from './toast';
@@ -24,8 +25,10 @@ export function shouldInstallAppUpdateAutomatically(update: AppUpdateInfo | null
   return update?.updateAvailable === true && update.installMode === 'automatic';
 }
 
-export async function refreshAppUpdate(): Promise<AppUpdateInfo | null> {
-  const next = await ipcCheck();
+export async function refreshAppUpdate(
+  options: AppUpdateCheckOptions,
+): Promise<AppUpdateInfo | null> {
+  const next = await ipcCheck(options);
   // Only surface a positive result; failures or up-to-date checks must not
   // clobber a previously found update.
   if (next?.updateAvailable) {
@@ -43,8 +46,8 @@ export async function startAppUpdate(target: AppUpdateInfo | null = info): Promi
     const result = await ipcDownload();
     if (result?.status === 'downloaded') {
       toast.info('Update downloaded. Restarting DROIDEX…');
-    } else if (result?.status === 'opened') {
-      toast.info('Download page opened. Install the new DMG manually.');
+    } else if (result?.status === 'presented') {
+      toast.info('Sparkle opened the verified update flow.');
     }
   } catch {
     toast.error('Update download failed. Please try again.');

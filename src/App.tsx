@@ -216,7 +216,7 @@ export default function App() {
       updateCli(onboard.onboarding.installChannel);
     }
     if (onboard.onboarding.appAutoUpdate !== false) {
-      void refreshAppUpdate().then((info) => {
+      void refreshAppUpdate({ interactive: false, automaticChecks: true }).then((info) => {
         if (shouldInstallAppUpdateAutomatically(info)) void startAppUpdate(info);
       });
     }

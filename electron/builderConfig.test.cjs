@@ -1,5 +1,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { mkdtempSync, rmSync, writeFileSync } = require('node:fs');
+const { tmpdir } = require('node:os');
+const { join } = require('node:path');
 
 const configPath = require.resolve('../electron-builder.config.cjs');
 const appleEnvironmentKeys = [
@@ -12,7 +15,9 @@ const appleEnvironmentKeys = [
   'APPLE_API_ISSUER',
   'CSC_LINK',
   'DROIDEX_RELEASE_BUILD',
+  'DROIDEX_UNSIGNED_RELEASE_BUILD',
   'SENTRY_DSN',
+  'SENTRY_DSN_FILE',
 ];
 
 function loadConfig(environment) {
@@ -40,7 +45,18 @@ test('unsigned mac builds never attempt notarization', () => {
 
   assert.equal(config.mac.identity, null);
   assert.equal(config.mac.notarize, false);
-  assert.equal(config.extraMetadata.updateInstallMode, 'manual');
+  assert.equal(config.extraMetadata.updateInstallMode, 'sparkle');
+  assert.equal(config.mac.extendInfo.SUPublicEDKey, 'czgsBI/YO7amJbwhZidZSO0j7LU5A4NsU0No9fDemWU=');
+  assert.match(config.mac.extendInfo.SUFeedURL, /droidex-releases\/releases\/latest/);
+  assert.equal(config.mac.extendInfo.SURequireSignedFeed, true);
+  assert.equal(config.mac.extendInfo.SUVerifyUpdateBeforeExtraction, true);
+  assert.equal(config.mac.extendInfo.SUEnableSystemProfiling, false);
+  assert.deepEqual(config.extraFiles, [
+    {
+      from: 'vendor/sparkle/distribution/Sparkle.framework',
+      to: 'Frameworks/Sparkle.framework',
+    },
+  ]);
 });
 
 test('signed mac builds enable notarization when every credential is present', () => {
@@ -97,6 +113,23 @@ test('release builds require crash reporting configuration', () => {
       }),
     /require SENTRY_DSN/,
   );
+});
+
+test('unsigned release builds load crash reporting configuration from a protected file', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'droidex-builder-config-'));
+  const dsnPath = join(directory, 'sentry-dsn');
+  writeFileSync(dsnPath, 'https://public@example.invalid/1\n', { mode: 0o600 });
+
+  try {
+    const config = loadConfig({
+      DROIDEX_UNSIGNED_RELEASE_BUILD: '1',
+      SENTRY_DSN_FILE: dsnPath,
+    });
+    assert.equal(config.extraMetadata.sentryDsn, 'https://public@example.invalid/1');
+    assert.equal(config.extraMetadata.updateInstallMode, 'sparkle');
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 test('CI certificate and API key credentials enable notarization', () => {

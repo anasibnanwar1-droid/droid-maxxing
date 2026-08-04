@@ -24,11 +24,10 @@ function harness({
     platform: 'darwin',
     arch: 'arm64',
     installMode,
-    fetchLatestVersion: async () => {
-      calls.push('manual-check');
-      return latest;
-    },
-    openReleasePage: async () => calls.push('open-release-page'),
+    sparkleUpdater: () => ({
+      checkForUpdates: (interactive, automaticChecks) =>
+        calls.push(['sparkle-check', interactive, automaticChecks]),
+    }),
     prepareToInstall: async () => calls.push('prepare'),
     scheduleInstall: (callback) => {
       install = callback;
@@ -50,16 +49,19 @@ test('update checks report the release selected by electron-updater', async () =
   assert.deepEqual(calls, ['check']);
 });
 
-test('unsigned builds check and open the manual release page without invoking autoUpdater', async () => {
-  const { updater, calls } = harness({ installMode: 'manual' });
+test('unsigned builds delegate verified update checks and installation to Sparkle', async () => {
+  const { updater, calls } = harness({ installMode: 'sparkle' });
 
-  const result = await updater.check();
-  assert.equal(result.updateAvailable, true);
-  assert.equal(result.installMode, 'manual');
-  assert.deepEqual(calls, ['manual-check']);
+  const result = await updater.check({ interactive: false, automaticChecks: true });
+  assert.equal(result.updateAvailable, false);
+  assert.equal(result.installMode, 'sparkle');
+  assert.deepEqual(calls, [['sparkle-check', false, true]]);
 
-  assert.deepEqual(await updater.downloadAndInstall(), { status: 'opened' });
-  assert.deepEqual(calls, ['manual-check', 'open-release-page']);
+  assert.deepEqual(await updater.downloadAndInstall(), { status: 'presented' });
+  assert.deepEqual(calls, [
+    ['sparkle-check', false, true],
+    ['sparkle-check', true, true],
+  ]);
 });
 
 test('install waits for sidecar shutdown before handing control to the updater', async () => {

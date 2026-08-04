@@ -18,4 +18,7 @@ test-results/
 
 # Ignore symlinked node_modules in linked worktrees
 node_modules
+vendor/sparkle/
+native/sparkle-updater/bin/
+native/sparkle-updater/build/
 sidecar/node_modules

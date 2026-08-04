@@ -48,7 +48,7 @@ contextBridge.exposeInMainWorld('droidControl', {
   getOnboarding: () => ipcRenderer.invoke('onboarding-get'),
   setOnboarding: (patch) => ipcRenderer.invoke('onboarding-set', { patch }),
   appVersion: () => ipcRenderer.invoke('app-version'),
-  checkAppUpdate: () => ipcRenderer.invoke('app-check-update'),
+  checkAppUpdate: (options) => ipcRenderer.invoke('app-check-update', options),
   downloadAppUpdate: () => ipcRenderer.invoke('app-download-update'),
   reportBug: (description) => ipcRenderer.invoke('bug-report', { description }),
   relaunchApp: () => ipcRenderer.invoke('app-relaunch'),
