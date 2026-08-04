@@ -119,7 +119,11 @@ function verifySparkleAppcast(architecture) {
   const [, url, declaredLength, archiveSignature] = enclosure;
   const archiveName = `droidex-${architecture}.zip`;
   const archivePath = join(releaseDirectory, archiveName);
-  assert(url.endsWith(`/v${packageJson.version}/${archiveName}`), `${appcastName} URL is stale`);
+  assert(
+    url ===
+      `https://github.com/anasibnanwar1-droid/droidex-releases/releases/download/v${packageJson.version}/${archiveName}`,
+    `${appcastName} URL is stale`,
+  );
   assert(Number(declaredLength) === statSync(archivePath).size, `${appcastName} size is stale`);
   assert(
     text.includes(`<sparkle:version>${packageJson.version}</sparkle:version>`),
@@ -182,6 +186,23 @@ function verifyAdHocApp(appPath, label) {
   const signature = runWithDiagnostics('/usr/bin/codesign', ['-dvv', appPath]);
   assert(signature.includes('Signature=adhoc'), `${label} is not ad-hoc signed`);
   assert(signature.includes('TeamIdentifier=not set'), `${label} unexpectedly has an Apple team`);
+}
+
+function verifyDistributedApp(appPath, architecture, label) {
+  const executablePath = join(appPath, 'Contents', 'MacOS', 'DROIDEX');
+  const asarPath = join(appPath, 'Contents', 'Resources', 'app.asar');
+  const stagedAsarPath = join(architecture.appPath, 'Contents', 'Resources', 'app.asar');
+
+  if (requireSignedArtifacts) verifyDeveloperIdApp(appPath, label);
+  else verifyAdHocApp(appPath, label);
+  assert(
+    run('/usr/bin/file', [executablePath]).includes(architecture.executableArch),
+    `${label} has the wrong executable architecture`,
+  );
+  assert(
+    hashFile(asarPath, 'sha256', 'hex') === hashFile(stagedAsarPath, 'sha256', 'hex'),
+    `${label} does not contain the verified staged application`,
+  );
 }
 
 async function smokePackagedRuntime(architecture) {
@@ -362,6 +383,12 @@ for (const architecture of architectures) {
     packagedMetadata.updateInstallMode === (requireSignedArtifacts ? 'automatic' : 'sparkle'),
     `${name} package has the wrong update install mode`,
   );
+  if (!requireSignedArtifacts) {
+    assert(
+      typeof packagedMetadata.sentryDsn === 'string' && packagedMetadata.sentryDsn.length > 0,
+      `${name} package is missing Sentry reporting configuration`,
+    );
+  }
 
   const executableDescription = run('/usr/bin/file', [executablePath]);
   assert(
@@ -419,7 +446,6 @@ for (const architecture of architectures) await smokePackagedRuntime(architectur
 for (const architecture of architectures) {
   const dmgPath = join(releaseDirectory, `droidex-${architecture.name}.dmg`);
   run('/usr/bin/hdiutil', ['verify', dmgPath]);
-  if (!requireSignedArtifacts) continue;
 
   const extractionDirectory = mkdtempSync(join(tmpdir(), `droidex-${architecture.name}-`));
   const mountDirectory = mkdtempSync(join(tmpdir(), `droidex-${architecture.name}-mount-`));
@@ -430,7 +456,11 @@ for (const architecture of architectures) {
       join(releaseDirectory, `droidex-${architecture.name}.zip`),
       extractionDirectory,
     ]);
-    verifyDeveloperIdApp(join(extractionDirectory, appName), `${architecture.name} updater ZIP app`);
+    verifyDistributedApp(
+      join(extractionDirectory, appName),
+      architecture,
+      `${architecture.name} updater ZIP app`,
+    );
 
     run('/usr/bin/hdiutil', [
       'attach',
@@ -441,7 +471,19 @@ for (const architecture of architectures) {
       dmgPath,
     ]);
     try {
-      verifyDeveloperIdApp(join(mountDirectory, appName), `${architecture.name} DMG app`);
+      verifyDistributedApp(
+        join(mountDirectory, appName),
+        architecture,
+        `${architecture.name} DMG app`,
+      );
+      assert(
+        statSync(join(mountDirectory, '.background.tiff')).isFile(),
+        `${architecture.name} DMG installer background is missing`,
+      );
+      assert(
+        run('/usr/bin/readlink', [join(mountDirectory, 'Applications')]).trim() === '/Applications',
+        `${architecture.name} DMG Applications link is wrong`,
+      );
     } finally {
       run('/usr/bin/hdiutil', ['detach', mountDirectory]);
     }
