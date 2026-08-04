@@ -4,6 +4,7 @@ import { useStore } from '../hooks/useStore';
 import { pickDirectory } from '../lib/desktop';
 import { dismissSidebarCard, loadSidebarCardSeen } from '../lib/sidebarCards';
 import { SIDEBAR_WELCOME_CARD_ID, SidebarWelcomeCard } from './SidebarWelcomeCard';
+import { BrandMark } from './BrandMark';
 import {
   Folder,
   FolderPlus,
@@ -14,7 +15,11 @@ import {
   Loader2,
   SquarePen,
 } from 'lucide-react';
-import { buildWorkspaceSections, SIDEBAR_VISIBLE_SESSION_LIMIT } from '../lib/workspaces';
+import {
+  buildWorkspaceSections,
+  resolveNewChatCwd,
+  SIDEBAR_VISIBLE_SESSION_LIMIT,
+} from '../lib/workspaces';
 import { useSessionLive } from '../hooks/useSessionLive';
 import { useAppUpdate } from '../lib/appUpdate';
 import { formatRelativeTime } from '../lib/time';
@@ -198,11 +203,11 @@ export default function Sidebar() {
     startChat(dir);
   };
 
-  // New chat respects context: if the user is currently in a workspace session,
-  // start another chat in that workspace; otherwise start a plain no-folder chat.
+  // New chat follows the active session: workspace chats stay in that folder,
+  // folder-less Chats stay folder-less. Draft cwd is only used when nothing is
+  // selected (see resolveNewChatCwd).
   const newChat = () => {
-    const cwd = activeSession?.cwd ?? state.draftChat?.cwd ?? '';
-    startChat(cwd);
+    startChat(resolveNewChatCwd(activeSession, state.draftChat));
   };
 
   // First-run welcome card above Settings: shows on every launch until the
@@ -302,8 +307,13 @@ export default function Sidebar() {
         WebkitBackdropFilter: 'var(--sidebar-blur)',
       }}
     >
-      {/* Draggable top strip (clears macOS traffic lights) */}
+      {/* Empty titlebar strip so traffic lights never collide with chrome. */}
       <div data-electron-drag-region className="h-9 shrink-0" />
+
+      {/* Static DROIDEX wordmark under the titlebar inset. */}
+      <div className="px-3 pb-1 pt-0.5">
+        <BrandMark size={13} className="text-droid-text" />
+      </div>
 
       <div className="px-2 pb-1.5">
         <button
