@@ -641,6 +641,7 @@ function validBranchName(name) {
   // Forbidden characters per `git check-ref-format`: whitespace, the C0 control
   // characters and DEL (\x00-\x1f, \x7f), and ~ ^ : ? * [ \. Forward slashes ARE
   // allowed so hierarchical names like "feature/foo" work.
+  // eslint-disable-next-line no-control-regex -- the control-char range is the point: branch names must reject C0 controls and DEL.
   if (/[\s~^:?*[\\\x00-\x1f\x7f]/.test(name)) return false;
   // Each slash-separated component must be non-empty (no leading/trailing slash
   // or "//"), must not begin with ".", and must not end with ".lock".
@@ -1209,14 +1210,20 @@ async function scopeRange(root, scope, appSessionId) {
     const entry =
       turnBaselines.get(turnBaselineKey(root, appSessionId)) ??
       turnBaselines.get(turnBaselineKey(root, undefined));
-    const baseline = entry?.baseline || 'HEAD';
+    if (!entry) {
+      // No turn baseline for this session (app restarted, session restored
+      // from history): approximate with HEAD for tracked work only. Folding
+      // in untracked files without a turn-start snapshot would list every
+      // preexisting untracked file as a turn change.
+      return { args: ['HEAD'], base: 'HEAD', includeUntracked: false };
+    }
     return {
-      args: [baseline],
-      base: baseline,
+      args: [entry.baseline],
+      base: entry.baseline,
       includeUntracked: true,
-      priorUntracked: entry?.priorUntracked ?? null,
-      priorUntrackedTruncated: !!entry?.untrackedTruncated,
-      priorUntrackedNames: entry?.priorUntrackedNames ?? null,
+      priorUntracked: entry.priorUntracked ?? null,
+      priorUntrackedTruncated: !!entry.untrackedTruncated,
+      priorUntrackedNames: entry.priorUntrackedNames ?? null,
     };
   }
   // unstaged (working tree vs index)
