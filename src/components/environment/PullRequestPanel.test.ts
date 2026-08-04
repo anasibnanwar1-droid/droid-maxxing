@@ -23,7 +23,7 @@ const pr: PullRequest = {
   author: 'author',
 };
 
-test('PR comments expose reactions in collapsed cards with an animated detail region', () => {
+test('PR comments expose reactions in collapsed cards with a send control', () => {
   const html = renderToStaticMarkup(
     createElement(PullRequestPanel, {
       cwd: '/repo',
@@ -53,8 +53,7 @@ test('PR comments expose reactions in collapsed cards with an animated detail re
   );
 
   assert.match(html, /aria-expanded="false"/);
-  assert.match(html, /aria-hidden="true"/);
-  assert.match(html, /grid-rows-\[0fr\]/);
+  assert.match(html, /Looks good to me/);
   assert.match(html, /👍/);
   assert.match(html, /👀/);
   assert.match(html, />3</);

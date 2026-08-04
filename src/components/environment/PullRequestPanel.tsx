@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react';
+import { AnimatePresence, motion } from 'framer-motion';
 import {
   ChevronLeft,
   ChevronRight,
@@ -182,11 +183,20 @@ function CommentCard({ comment }: { comment: PrComment }) {
                 {location}
               </span>
             )}
-            {!expanded && (
-              <span className="mt-1 block text-xs leading-[1.45] text-droid-text-secondary">
-                {prCommentPreview(body)}
-              </span>
-            )}
+            <AnimatePresence initial={false}>
+              {!expanded && (
+                <motion.span
+                  key="preview"
+                  initial={{ height: 0, opacity: 0 }}
+                  animate={{ height: 'auto', opacity: 1 }}
+                  exit={{ height: 0, opacity: 0 }}
+                  transition={{ duration: 0.2, ease: [0.4, 0, 0.2, 1] }}
+                  className="mt-1 block overflow-hidden text-xs leading-[1.45] text-droid-text-secondary"
+                >
+                  {prCommentPreview(body)}
+                </motion.span>
+              )}
+            </AnimatePresence>
             {comment.reactions.length > 0 && <ReactionChips reactions={comment.reactions} />}
           </span>
         </button>
@@ -201,17 +211,22 @@ function CommentCard({ comment }: { comment: PrComment }) {
           </button>
         )}
       </div>
-      <div
-        aria-hidden={!expanded}
-        inert={!expanded}
-        className={`grid transition-[grid-template-rows,opacity] duration-200 ease-out ${expanded ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'}`}
-      >
-        <div className="min-h-0 overflow-hidden">
-          <div className="border-t border-droid-border/60 px-3 py-2.5 break-words text-xs leading-[1.5] text-droid-text-secondary [&>div]:!space-y-2 [&>div]:!text-xs [&>div]:!leading-[1.5] [&_code]:!text-[11px]">
-            {body ? <Markdown allowDiagrams={false}>{body}</Markdown> : 'No written comment.'}
-          </div>
-        </div>
-      </div>
+      <AnimatePresence initial={false}>
+        {expanded && (
+          <motion.div
+            key="comment-body"
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.2, ease: [0.4, 0, 0.2, 1] }}
+            className="overflow-hidden"
+          >
+            <div className="border-t border-droid-border/60 px-3 py-2.5 break-words text-xs leading-[1.5] text-droid-text-secondary [&>div]:!space-y-2 [&>div]:!text-xs [&>div]:!leading-[1.5] [&_code]:!text-[11px]">
+              {body ? <Markdown allowDiagrams={false}>{body}</Markdown> : 'No written comment.'}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
