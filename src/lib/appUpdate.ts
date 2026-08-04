@@ -21,10 +21,6 @@ export function getAppUpdate(): AppUpdateInfo | null {
   return info;
 }
 
-export function shouldInstallAppUpdateAutomatically(update: AppUpdateInfo | null): boolean {
-  return update?.updateAvailable === true && update.installMode === 'automatic';
-}
-
 export async function refreshAppUpdate(
   options: AppUpdateCheckOptions,
 ): Promise<AppUpdateInfo | null> {
@@ -47,7 +43,7 @@ export async function startAppUpdate(target: AppUpdateInfo | null = info): Promi
     if (result?.status === 'downloaded') {
       toast.info('Update downloaded. Restarting DROIDEX…');
     } else if (result?.status === 'presented') {
-      toast.info('Sparkle opened the verified update flow.');
+      toast.info('Update window opened. You choose when to install.');
     }
   } catch {
     toast.error('Update download failed. Please try again.');

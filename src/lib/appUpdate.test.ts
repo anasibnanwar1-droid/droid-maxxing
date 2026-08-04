@@ -1,33 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { shouldInstallAppUpdateAutomatically } from './appUpdate';
+import { readFileSync } from 'node:fs';
 
-const baseUpdate = {
-  current: '0.1.0',
-  latest: '0.2.0',
-  updateAvailable: true,
-  arch: 'arm64',
-  platform: 'darwin',
-} as const;
+const appSource = readFileSync(new URL('../App.tsx', import.meta.url), 'utf8');
 
-test('signed builds may install an available update automatically', () => {
-  assert.equal(
-    shouldInstallAppUpdateAutomatically({ ...baseUpdate, installMode: 'automatic' }),
-    true,
-  );
-});
-
-test('Sparkle builds own their verified update installation', () => {
-  assert.equal(
-    shouldInstallAppUpdateAutomatically({ ...baseUpdate, installMode: 'sparkle' }),
-    false,
-  );
-  assert.equal(
-    shouldInstallAppUpdateAutomatically({
-      ...baseUpdate,
-      updateAvailable: false,
-      installMode: 'automatic',
-    }),
-    false,
-  );
+test('launch checks can discover updates but never start installation', () => {
+  assert.match(appSource, /refreshAppUpdate\(\{ interactive: false, automaticChecks: true \}\)/);
+  assert.doesNotMatch(appSource, /startAppUpdate/);
 });

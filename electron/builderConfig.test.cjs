@@ -4,6 +4,11 @@ const { mkdtempSync, rmSync, writeFileSync } = require('node:fs');
 const { tmpdir } = require('node:os');
 const { join } = require('node:path');
 
+const sparkleBridgeSource = require('node:fs').readFileSync(
+  join(__dirname, '..', 'native', 'sparkle-updater', 'src', 'sparkle_updater.mm'),
+  'utf8',
+);
+
 const configPath = require.resolve('../electron-builder.config.cjs');
 const appleEnvironmentKeys = [
   'APPLE_SIGNING_IDENTITY',
@@ -51,6 +56,9 @@ test('free mac builds use ad-hoc signing and never attempt notarization', () => 
   assert.match(config.mac.extendInfo.SUFeedURL, /droidex-releases\/releases\/latest/);
   assert.equal(config.mac.extendInfo.SURequireSignedFeed, true);
   assert.equal(config.mac.extendInfo.SUVerifyUpdateBeforeExtraction, true);
+  assert.equal(config.mac.extendInfo.SUEnableAutomaticChecks, true);
+  assert.equal(config.mac.extendInfo.SUAllowsAutomaticUpdates, false);
+  assert.equal(config.mac.extendInfo.SUAutomaticallyUpdate, false);
   assert.equal(config.mac.extendInfo.SUEnableSystemProfiling, false);
   assert.deepEqual(config.extraFiles, [
     {
@@ -194,4 +202,13 @@ test('website DMG includes a direct Privacy & Security shortcut', () => {
       path: '/System/Library/PreferencePanes/Security.prefPane',
     },
   ]);
+});
+
+test('Sparkle checks in the background but never downloads updates automatically', () => {
+  assert.match(sparkleBridgeSource, /setAutomaticallyChecksForUpdates:"\), enableBackgroundChecks/);
+  assert.match(sparkleBridgeSource, /setAutomaticallyDownloadsUpdates:"\), NO/);
+  assert.doesNotMatch(
+    sparkleBridgeSource,
+    /setAutomaticallyDownloadsUpdates:"\), enableBackgroundChecks/,
+  );
 });

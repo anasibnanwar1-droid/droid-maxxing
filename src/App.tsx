@@ -39,11 +39,7 @@ import { useOnboarding, shouldShowOnboarding, hasSetupBlocker } from './hooks/us
 import OnboardingWizard from './components/onboarding/OnboardingWizard';
 import SetupBanner from './components/onboarding/SetupBanner';
 import { updateCli } from './lib/commands';
-import {
-  refreshAppUpdate,
-  shouldInstallAppUpdateAutomatically,
-  startAppUpdate,
-} from './lib/appUpdate';
+import { refreshAppUpdate } from './lib/appUpdate';
 import { toast } from './lib/toast';
 import { UtilityPane } from './components/utility/UtilityPane';
 import { TerminalWorkspace } from './components/terminal/TerminalWorkspace';
@@ -202,8 +198,8 @@ export default function App() {
     listSessions({ workspaceCwds: state.workspaceCwds, includePlainChats: true });
   }, [embedded, state.workspaceCwds]);
 
-  // Post-onboarding launch tasks: silent CLI update + non-blocking app update
-  // check. Runs once, only after the first-run tour is complete.
+  // Post-onboarding launch tasks: optional CLI maintenance plus a non-blocking
+  // app update check. App installation always requires an explicit user action.
   useEffect(() => {
     if (embedded || launchHandled.current) return;
     if (!onboard.ready || !onboard.onboarding?.completed) return;
@@ -216,9 +212,7 @@ export default function App() {
       updateCli(onboard.onboarding.installChannel);
     }
     if (onboard.onboarding.appAutoUpdate !== false) {
-      void refreshAppUpdate({ interactive: false, automaticChecks: true }).then((info) => {
-        if (shouldInstallAppUpdateAutomatically(info)) void startAppUpdate(info);
-      });
+      void refreshAppUpdate({ interactive: false, automaticChecks: true });
     }
   }, [embedded, onboard.ready, onboard.onboarding, onboard.env]);
 

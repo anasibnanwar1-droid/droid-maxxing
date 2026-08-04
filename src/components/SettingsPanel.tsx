@@ -1195,17 +1195,17 @@ function SetupSection({ onClose }: { onClose: () => void }) {
                 }}
                 className="px-2.5 h-7 rounded-md bg-droid-accent text-droid-bg text-[12px] hover:opacity-90 transition-opacity"
               >
-                Restart & update
+                Download update…
               </button>
             )}
           </div>
         </SettingRow>
         <SettingRow
-          label="Keep DROIDEX up to date"
-          description="Checks and installs verified builds."
+          label="Check for DROIDEX updates"
+          description="Checks automatically. Installation always requires your approval."
         >
           <Switch
-            label="Keep DROIDEX up to date"
+            label="Check for DROIDEX updates"
             checked={appAuto}
             onChange={(v) => void onboard.patch({ appAutoUpdate: v })}
           />

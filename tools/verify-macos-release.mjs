@@ -426,14 +426,18 @@ for (const architecture of architectures) {
   }
   for (const key of [
     'SUEnableAutomaticChecks',
-    'SUAllowsAutomaticUpdates',
-    'SUAutomaticallyUpdate',
     'SUVerifyUpdateBeforeExtraction',
     'SURequireSignedFeed',
   ]) {
     assert(
       run('/usr/libexec/PlistBuddy', ['-c', `Print :${key}`, infoPlist]).trim() === 'true',
       `${name} is missing secure Sparkle setting ${key}`,
+    );
+  }
+  for (const key of ['SUAllowsAutomaticUpdates', 'SUAutomaticallyUpdate']) {
+    assert(
+      run('/usr/libexec/PlistBuddy', ['-c', `Print :${key}`, infoPlist]).trim() === 'false',
+      `${name} must require explicit approval before installing updates`,
     );
   }
 

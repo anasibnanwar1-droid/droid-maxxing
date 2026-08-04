@@ -79,7 +79,9 @@ Sparkle 2.9.5 is downloaded from its pinned official release and verified by
 SHA-256 during the build. Each architecture reads only its matching HTTPS
 appcast. The appcast and enclosed ZIP are signed with DROIDEX's EdDSA key;
 release verification checks both signatures against the public key embedded in
-the app. Keep the private key only in the macOS Keychain and the protected
+the app. DROIDEX may check for updates in the background, but it never downloads
+or installs an app update without the user choosing the update action.
+Keep the private key only in the macOS Keychain and the protected
 `macos-release` GitHub environment.
 
 The future paid Developer ID path remains available as follows.
