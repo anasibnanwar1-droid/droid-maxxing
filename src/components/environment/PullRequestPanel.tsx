@@ -6,6 +6,7 @@ import { postPrComment } from '../../lib/github';
 import { openExternal } from '../../lib/onboarding';
 import { toast } from '../../lib/toast';
 import type { PrCheck, PrComment, PullRequest } from '../../types/vcs';
+import { Markdown } from '../Markdown';
 
 function relativeTime(iso: string | null): string {
   if (!iso) return '';
@@ -77,16 +78,26 @@ function ChecksBlock({
             disabled={!check.link}
             className="flex w-full items-center gap-2 rounded-lg px-1.5 py-1.5 text-left transition-colors hover:bg-droid-elevated/50 disabled:cursor-default"
           >
-            <CheckStatusIcon status={bucketToStatus(check.bucket)} size={14} />
-            <span className="min-w-0 flex-1 truncate text-[12.5px] text-droid-text">
-              {check.name}
+            <span className="self-start pt-0.5">
+              <CheckStatusIcon status={bucketToStatus(check.bucket)} size={14} />
             </span>
-            {check.workflow && (
-              <span className="shrink-0 truncate text-[10px] text-droid-text-muted/70">
-                {check.workflow}
+            <span className="min-w-0 flex-1">
+              <span className="block break-words text-[12.5px] leading-snug text-droid-text">
+                {check.name}
               </span>
+              <span className="mt-0.5 flex flex-wrap gap-x-1.5 gap-y-0.5 text-[10px] text-droid-text-muted/70">
+                {check.workflow && <span>{check.workflow}</span>}
+                <span>{check.state || check.bucket}</span>
+              </span>
+              {check.description && (
+                <span className="mt-0.5 block break-words text-[10.5px] leading-snug text-droid-text-muted">
+                  {check.description}
+                </span>
+              )}
+            </span>
+            {check.link && (
+              <ExternalLink className="h-3 w-3 shrink-0 self-start text-droid-text-muted/60" />
             )}
-            {check.link && <ExternalLink className="h-3 w-3 shrink-0 text-droid-text-muted/60" />}
           </button>
         ))
       )}
@@ -119,7 +130,12 @@ function CommentsBlock({
       ) : (
         comments.map((comment) => (
           <div key={comment.id} className="px-1.5 py-1.5">
-            <div className="flex items-center gap-1.5 text-[11px]">
+            <button
+              type="button"
+              disabled={!comment.url}
+              onClick={() => comment.url && void openExternal(comment.url)}
+              className="flex w-full items-center gap-1.5 text-left text-[11px] disabled:cursor-default"
+            >
               <span className="font-medium text-droid-text">{comment.author}</span>
               {comment.state && (
                 <span className="rounded bg-droid-elevated px-1 py-0.5 text-[9px] uppercase tracking-wide text-droid-text-muted">
@@ -127,10 +143,17 @@ function CommentsBlock({
                 </span>
               )}
               <span className="text-droid-text-muted/70">{relativeTime(comment.createdAt)}</span>
-            </div>
+              {comment.url && <ExternalLink className="h-2.5 w-2.5 text-droid-text-muted/50" />}
+            </button>
+            {comment.kind === 'inline' && comment.path && (
+              <div className="mt-0.5 break-all font-mono text-[10px] text-droid-text-muted/80">
+                {comment.path}
+                {comment.line ? `:${comment.line}` : ''}
+              </div>
+            )}
             {comment.body && (
-              <div className="mt-0.5 whitespace-pre-wrap break-words text-[12px] leading-snug text-droid-text-secondary">
-                {comment.body}
+              <div className="mt-1 break-words text-droid-text-secondary [&>div]:!space-y-1.5 [&>div]:!text-[12px] [&>div]:!leading-snug [&_code]:!text-[11px]">
+                <Markdown allowDiagrams={false}>{comment.body}</Markdown>
               </div>
             )}
           </div>
