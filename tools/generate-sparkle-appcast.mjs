@@ -8,40 +8,49 @@ const packageVersion = JSON.parse(readFileSync('package.json', 'utf8')).version;
 const releaseTag = `v${packageVersion}`;
 const account = 'droidex';
 const tool = resolve('vendor/sparkle/distribution/bin/generate_appcast');
-const stagingDirectory = mkdtempSync(join(tmpdir(), 'droidex-sparkle-appcast-'));
-const appcastPath = join(stagingDirectory, 'appcast.xml');
+const privateKey = process.env.SPARKLE_PRIVATE_KEY_FILE
+  ? readFileSync(process.env.SPARKLE_PRIVATE_KEY_FILE, 'utf8').trim()
+  : process.env.SPARKLE_PRIVATE_KEY;
 
-try {
-  for (const architecture of ['arm64', 'x64']) {
+rmSync(join(releaseDirectory, 'appcast.xml'), { force: true });
+
+for (const architecture of ['arm64', 'x64']) {
+  const stagingDirectory = mkdtempSync(join(tmpdir(), `droidex-sparkle-${architecture}-`));
+  const appcastPath = join(stagingDirectory, `appcast-${architecture}.xml`);
+  try {
     const archiveName = `droidex-${architecture}.zip`;
     copyFileSync(join(releaseDirectory, archiveName), join(stagingDirectory, archiveName));
-  }
 
-  const privateKey = process.env.SPARKLE_PRIVATE_KEY;
-  const keyArguments = privateKey ? ['--ed-key-file', '-'] : ['--account', account];
-  const result = spawnSync(
-    tool,
-    [
-      ...keyArguments,
-      '--download-url-prefix',
-      `https://github.com/anasibnanwar1-droid/droidex-releases/releases/download/${releaseTag}/`,
-      '--link',
-      'https://github.com/anasibnanwar1-droid/droidex-releases/releases/latest',
-      '-o',
-      appcastPath,
-      stagingDirectory,
-    ],
-    {
-      encoding: 'utf8',
-      input: privateKey ? `${privateKey}\n` : undefined,
-      stdio: privateKey ? ['pipe', 'pipe', 'pipe'] : ['ignore', 'pipe', 'pipe'],
-    },
-  );
-  if (result.status !== 0) {
-    throw new Error(`Sparkle appcast generation failed: ${result.stderr.trim()}`);
+    const keyArguments = privateKey ? ['--ed-key-file', '-'] : ['--account', account];
+    const result = spawnSync(
+      tool,
+      [
+        ...keyArguments,
+        '--download-url-prefix',
+        `https://github.com/anasibnanwar1-droid/droidex-releases/releases/download/${releaseTag}/`,
+        '--maximum-deltas',
+        '0',
+        '--link',
+        'https://github.com/anasibnanwar1-droid/droidex-releases/releases/latest',
+        '-o',
+        appcastPath,
+        stagingDirectory,
+      ],
+      {
+        encoding: 'utf8',
+        input: privateKey ? `${privateKey}\n` : undefined,
+        stdio: privateKey ? ['pipe', 'pipe', 'pipe'] : ['ignore', 'pipe', 'pipe'],
+      },
+    );
+    if (result.status !== 0) {
+      throw new Error(
+        `Sparkle ${architecture} appcast generation failed (status=${String(result.status)}, signal=${String(result.signal)}): ${`${result.stdout}\n${result.stderr}`.trim()}`,
+      );
+    }
+    copyFileSync(appcastPath, join(releaseDirectory, `appcast-${architecture}.xml`));
+  } finally {
+    rmSync(stagingDirectory, { recursive: true, force: true });
   }
-  copyFileSync(appcastPath, join(releaseDirectory, 'appcast.xml'));
-  process.stdout.write(`Generated EdDSA-signed Sparkle appcast for ${releaseTag}.\n`);
-} finally {
-  rmSync(stagingDirectory, { recursive: true, force: true });
 }
+
+process.stdout.write(`Generated EdDSA-signed Sparkle appcasts for ${releaseTag}.\n`);

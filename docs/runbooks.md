@@ -49,28 +49,31 @@ These runbooks cover local development and release triage for DROIDEX.
 
 ## Publish a macOS release
 
-1. Confirm the private source version is final and default-branch CI is green.
-2. Confirm the protected `macos-release` GitHub environment contains the Apple
-   signing/notarization secrets, public Sentry DSN, and fine-grained public
-   release-repository token documented in `docs/deployment-observability.md`.
-3. Run the executable release preflight and resolve every failure:
+1. Confirm the private source version is final and the release branch checks are green.
+2. Confirm the protected `macos-release` GitHub environment contains the public
+   Sentry DSN and Sparkle private key documented in
+   `docs/deployment-observability.md`.
+3. Build both architectures with `DROIDEX_UNSIGNED_RELEASE_BUILD=1`, generate
+   the two signed appcasts, and write `SHA256SUMS`.
+4. Push the exact private release branch, then run the executable unsigned
+   release preflight and resolve every failure:
    ```bash
-   npm run release:preflight
+   npm run release:preflight:unsigned
    ```
-4. Create and push a signed version tag that exactly matches `package.json`:
-   ```bash
-   git tag -s v0.1.0 -m "DROIDEX v0.1.0"
-   git push origin v0.1.0
-   ```
-5. Push the tag and wait for every protected release-environment verification
-   step to pass. Never upload locally produced unsigned artifacts.
-6. On the public repository, confirm the release is immutable and contains two
-   DMGs, two ZIPs, their blockmaps, `latest-mac.yml`, and `SHA256SUMS`.
+5. Create the public GitHub release as a draft. Upload only two DMGs, two ZIPs,
+   `appcast-arm64.xml`, `appcast-x64.xml`, and `SHA256SUMS`. Verify every remote
+   asset byte-for-byte before publishing the immutable release.
+6. On the public repository, confirm the published release contains exactly
+   those seven assets and that the website download buttons target the DMGs.
 7. Download each DMG from the public release on a clean Intel/Apple silicon Mac
    as applicable, install it, start a Droid session, submit a private `/bug`
    report, and record the result.
-8. For subsequent releases, complete the signed N-1-to-N update smoke before
+8. For subsequent releases, complete the Sparkle N-1-to-N update smoke before
    treating the release as operationally ready.
+
+The unsigned first-launch recovery is: open System Settings, choose Privacy &
+Security, find the blocked DROIDEX notice, choose Open Anyway, and confirm. Do
+not advise users to disable Gatekeeper globally.
 
 ## Local child-session index has an incompatible schema
 

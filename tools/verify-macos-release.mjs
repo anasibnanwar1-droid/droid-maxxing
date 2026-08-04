@@ -1,5 +1,5 @@
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { createHash, createPublicKey, verify } from 'node:crypto';
 import {
   mkdtempSync,
   readFileSync,
@@ -19,6 +19,7 @@ const requireSignedArtifacts = process.argv.includes('--signed');
 const writeChecksums = process.argv.includes('--write-checksums');
 const packageJson = JSON.parse(readFileSync(resolve('package.json'), 'utf8'));
 const appName = 'DROIDEX.app';
+const sparklePublicKey = 'czgsBI/YO7amJbwhZidZSO0j7LU5A4NsU0No9fDemWU=';
 
 const architectures = [
   { name: 'x64', appPath: join(releaseDirectory, 'mac', appName), executableArch: 'x86_64' },
@@ -29,17 +30,25 @@ const architectures = [
   },
 ];
 
-const releaseAssetNames = [
+const applicationAssetNames = [
   'droidex-x64.dmg',
-  'droidex-x64.dmg.blockmap',
   'droidex-x64.zip',
-  'droidex-x64.zip.blockmap',
   'droidex-arm64.dmg',
-  'droidex-arm64.dmg.blockmap',
   'droidex-arm64.zip',
-  'droidex-arm64.zip.blockmap',
-  'latest-mac.yml',
 ];
+const releaseAssetNames = requireSignedArtifacts
+  ? [
+      'droidex-x64.dmg',
+      'droidex-x64.dmg.blockmap',
+      'droidex-x64.zip',
+      'droidex-x64.zip.blockmap',
+      'droidex-arm64.dmg',
+      'droidex-arm64.dmg.blockmap',
+      'droidex-arm64.zip',
+      'droidex-arm64.zip.blockmap',
+      'latest-mac.yml',
+    ]
+  : [...applicationAssetNames, 'appcast-x64.xml', 'appcast-arm64.xml'];
 const updateAssetNames = releaseAssetNames.filter((name) => /\.(?:dmg|zip)$/.test(name));
 
 function fail(message) {
@@ -98,6 +107,54 @@ function hashFile(path, algorithm, encoding) {
   return createHash(algorithm).update(readFileSync(path)).digest(encoding);
 }
 
+function verifySparkleAppcast(architecture) {
+  const appcastName = `appcast-${architecture}.xml`;
+  const appcastPath = join(releaseDirectory, appcastName);
+  const appcast = readFileSync(appcastPath);
+  const text = appcast.toString('utf8');
+  const enclosure = text.match(
+    /<enclosure url="([^"]+)" length="(\d+)"[^>]*sparkle:edSignature="([^"]+)"/,
+  );
+  assert(enclosure, `${appcastName} is missing its signed enclosure`);
+  const [, url, declaredLength, archiveSignature] = enclosure;
+  const archiveName = `droidex-${architecture}.zip`;
+  const archivePath = join(releaseDirectory, archiveName);
+  assert(url.endsWith(`/v${packageJson.version}/${archiveName}`), `${appcastName} URL is stale`);
+  assert(Number(declaredLength) === statSync(archivePath).size, `${appcastName} size is stale`);
+  assert(
+    text.includes(`<sparkle:version>${packageJson.version}</sparkle:version>`),
+    `${appcastName} version is stale`,
+  );
+
+  const rawPublicKey = Buffer.from(sparklePublicKey, 'base64');
+  const publicKey = createPublicKey({
+    key: Buffer.concat([Buffer.from('302a300506032b6570032100', 'hex'), rawPublicKey]),
+    format: 'der',
+    type: 'spki',
+  });
+  assert(
+    verify(null, readFileSync(archivePath), publicKey, Buffer.from(archiveSignature, 'base64')),
+    `${archiveName} has an invalid EdDSA signature`,
+  );
+
+  const feedSignature = text.match(
+    /sparkle-signatures:\nedSignature: ([^\n]+)\nlength: (\d+)\n/,
+  );
+  assert(feedSignature, `${appcastName} is missing its signed-feed signature`);
+  const signedLength = Number(feedSignature[2]);
+  assert(signedLength > 0 && signedLength < appcast.length, `${appcastName} signed length is invalid`);
+  assert(
+    verify(
+      null,
+      appcast.subarray(0, signedLength),
+      publicKey,
+      Buffer.from(feedSignature[1], 'base64'),
+    ),
+    `${appcastName} has an invalid signed-feed signature`,
+  );
+  assertNoPrivateContent(text, appcastName);
+}
+
 function verifyDeveloperIdApp(appPath, label) {
   run('/usr/bin/codesign', ['--verify', '--deep', '--strict', '--verbose=2', appPath]);
   const assessment = runWithDiagnostics('/usr/sbin/spctl', [
@@ -126,6 +183,17 @@ async function smokePackagedRuntime(architecture) {
   const resourcesPath = join(appPath, 'Contents', 'Resources');
   const asarPath = join(resourcesPath, 'app.asar');
   const sidecarPath = join(resourcesPath, 'sidecar', 'dist', 'sidecar.mjs');
+  const sparkleFrameworkPath = join(appPath, 'Contents', 'Frameworks', 'Sparkle.framework');
+  const sparkleAddonPath = join(
+    resourcesPath,
+    'app.asar.unpacked',
+    'node_modules',
+    '@droidex',
+    'sparkle-updater',
+    'build',
+    'Release',
+    'sparkle_updater.node',
+  );
   const temporaryHome = mkdtempSync(join(tmpdir(), `droidex-${name}-runtime-`));
   const databasePath = join(temporaryHome, '.factory', 'droidex', 'session-index.sqlite');
   const child = spawn(executablePath, [sidecarPath], {
@@ -217,28 +285,33 @@ for (const assetName of releaseAssetNames) {
   assert(statSync(join(releaseDirectory, assetName)).isFile(), `missing ${assetName}`);
 }
 assertNoPrivateBuildFiles(releaseAssetNames, 'release assets');
-
-const metadataPath = join(releaseDirectory, 'latest-mac.yml');
-const metadataText = readFileSync(metadataPath, 'utf8');
-const metadata = parseYaml(metadataText);
-assert(metadata.version === packageJson.version, 'latest-mac.yml version is stale');
-assert(Array.isArray(metadata.files), 'latest-mac.yml files must be an array');
-assert(metadata.files.length === updateAssetNames.length, 'latest-mac.yml has unexpected files');
-assert(
-  new Set(metadata.files.map(({ url }) => url)).size === updateAssetNames.length,
-  'latest-mac.yml contains duplicate URLs',
-);
-for (const assetName of updateAssetNames) {
-  const entry = metadata.files.find(({ url }) => url === assetName);
-  assert(entry, `latest-mac.yml omits ${assetName}`);
-  const assetPath = join(releaseDirectory, assetName);
-  assert(entry.size === statSync(assetPath).size, `${assetName} size is stale`);
-  assert(entry.sha512 === hashFile(assetPath, 'sha512', 'base64'), `${assetName} SHA-512 is stale`);
+if (!requireSignedArtifacts) {
+  for (const { name } of architectures) verifySparkleAppcast(name);
 }
-const primaryEntry = metadata.files.find(({ url }) => url === metadata.path);
-assert(primaryEntry && metadata.path.endsWith('.zip'), 'latest-mac.yml primary path is not a ZIP');
-assert(metadata.sha512 === primaryEntry.sha512, 'latest-mac.yml primary SHA-512 is stale');
-assertNoPrivateContent(metadataText, 'latest-mac.yml');
+
+if (requireSignedArtifacts) {
+  const metadataPath = join(releaseDirectory, 'latest-mac.yml');
+  const metadataText = readFileSync(metadataPath, 'utf8');
+  const metadata = parseYaml(metadataText);
+  assert(metadata.version === packageJson.version, 'latest-mac.yml version is stale');
+  assert(Array.isArray(metadata.files), 'latest-mac.yml files must be an array');
+  assert(metadata.files.length === updateAssetNames.length, 'latest-mac.yml has unexpected files');
+  assert(
+    new Set(metadata.files.map(({ url }) => url)).size === updateAssetNames.length,
+    'latest-mac.yml contains duplicate URLs',
+  );
+  for (const assetName of updateAssetNames) {
+    const entry = metadata.files.find(({ url }) => url === assetName);
+    assert(entry, `latest-mac.yml omits ${assetName}`);
+    const assetPath = join(releaseDirectory, assetName);
+    assert(entry.size === statSync(assetPath).size, `${assetName} size is stale`);
+    assert(entry.sha512 === hashFile(assetPath, 'sha512', 'base64'), `${assetName} SHA-512 is stale`);
+  }
+  const primaryEntry = metadata.files.find(({ url }) => url === metadata.path);
+  assert(primaryEntry && metadata.path.endsWith('.zip'), 'latest-mac.yml primary path is not a ZIP');
+  assert(metadata.sha512 === primaryEntry.sha512, 'latest-mac.yml primary SHA-512 is stale');
+  assertNoPrivateContent(metadataText, 'latest-mac.yml');
+}
 
 for (const architecture of architectures) {
   const { appPath, executableArch, name } = architecture;
@@ -248,6 +321,17 @@ for (const architecture of architectures) {
   const asarPath = join(resourcesPath, 'app.asar');
   const sidecarPath = join(resourcesPath, 'sidecar', 'dist', 'sidecar.mjs');
   const executablePath = join(appPath, 'Contents', 'MacOS', 'DROIDEX');
+  const sparkleFrameworkPath = join(appPath, 'Contents', 'Frameworks', 'Sparkle.framework');
+  const sparkleAddonPath = join(
+    resourcesPath,
+    'app.asar.unpacked',
+    'node_modules',
+    '@droidex',
+    'sparkle-updater',
+    'build',
+    'Release',
+    'sparkle_updater.node',
+  );
   const updateConfiguration = readFileSync(join(resourcesPath, 'app-update.yml'), 'utf8');
   assert(updateConfiguration.includes('owner: anasibnanwar1-droid'), `${name} updater owner is wrong`);
   assert(updateConfiguration.includes('repo: droidex-releases'), `${name} updater repo is wrong`);
@@ -256,6 +340,9 @@ for (const architecture of architectures) {
     `${name} updater cache identity is stale`,
   );
   assert(statSync(sidecarPath).isFile(), `${name} sidecar bundle is missing`);
+  assert(statSync(sparkleFrameworkPath).isDirectory(), `${name} Sparkle framework is missing`);
+  assert(statSync(sparkleAddonPath).isFile(), `${name} Sparkle native bridge is missing`);
+  run('/usr/bin/codesign', ['--verify', '--deep', '--strict', sparkleFrameworkPath]);
 
   const asarEntries = listPackage(asarPath);
   assertNoPrivateBuildFiles(asarEntries, `${name} app.asar`);
@@ -265,7 +352,7 @@ for (const architecture of architectures) {
   assert(packagedMetadata.name === 'droidex', `${name} package identity is stale`);
   assert(packagedMetadata.version === packageJson.version, `${name} package version is stale`);
   assert(
-    packagedMetadata.updateInstallMode === (requireSignedArtifacts ? 'automatic' : 'manual'),
+    packagedMetadata.updateInstallMode === (requireSignedArtifacts ? 'automatic' : 'sparkle'),
     `${name} package has the wrong update install mode`,
   );
 
@@ -273,6 +360,10 @@ for (const architecture of architectures) {
   assert(
     executableDescription.includes(executableArch),
     `${name} app has the wrong executable architecture`,
+  );
+  assert(
+    run('/usr/bin/file', [sparkleAddonPath]).includes(executableArch),
+    `${name} Sparkle bridge has the wrong architecture`,
   );
 
   const infoPlist = join(appPath, 'Contents', 'Info.plist');
@@ -284,6 +375,31 @@ for (const architecture of architectures) {
     assert(
       run('/usr/libexec/PlistBuddy', ['-c', `Print :${key}`, infoPlist]).includes('choose'),
       `${name} is missing ${key}`,
+    );
+  }
+  assert(
+    run('/usr/libexec/PlistBuddy', ['-c', 'Print :SUPublicEDKey', infoPlist]).trim() ===
+      sparklePublicKey,
+    `${name} has the wrong Sparkle public key`,
+  );
+  if (!requireSignedArtifacts) {
+    assert(
+      run('/usr/libexec/PlistBuddy', ['-c', 'Print :SUFeedURL', infoPlist]).trim().endsWith(
+        `/droidex-releases/releases/latest/download/appcast-${name}.xml`,
+      ),
+      `${name} has the wrong Sparkle feed URL`,
+    );
+  }
+  for (const key of [
+    'SUEnableAutomaticChecks',
+    'SUAllowsAutomaticUpdates',
+    'SUAutomaticallyUpdate',
+    'SUVerifyUpdateBeforeExtraction',
+    'SURequireSignedFeed',
+  ]) {
+    assert(
+      run('/usr/libexec/PlistBuddy', ['-c', `Print :${key}`, infoPlist]).trim() === 'true',
+      `${name} is missing secure Sparkle setting ${key}`,
     );
   }
 

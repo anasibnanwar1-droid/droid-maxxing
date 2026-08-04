@@ -18,6 +18,7 @@ const appleEnvironmentKeys = [
   'DROIDEX_UNSIGNED_RELEASE_BUILD',
   'SENTRY_DSN',
   'SENTRY_DSN_FILE',
+  'SPARKLE_FEED_URL',
 ];
 
 function loadConfig(environment) {
@@ -57,6 +58,15 @@ test('unsigned mac builds never attempt notarization', () => {
       to: 'Frameworks/Sparkle.framework',
     },
   ]);
+});
+
+test('unsigned architecture builds select their matching Sparkle feed', () => {
+  const config = loadConfig({
+    SPARKLE_FEED_URL:
+      'https://github.com/anasibnanwar1-droid/droidex-releases/releases/latest/download/appcast-arm64.xml',
+  });
+
+  assert.match(config.mac.extendInfo.SUFeedURL, /appcast-arm64\.xml$/);
 });
 
 test('signed mac builds enable notarization when every credential is present', () => {

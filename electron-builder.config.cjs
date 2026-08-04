@@ -11,6 +11,9 @@ const path = require('node:path');
 const isReleaseBuild = process.env.DROIDEX_RELEASE_BUILD === '1';
 const isUnsignedReleaseBuild = process.env.DROIDEX_UNSIGNED_RELEASE_BUILD === '1';
 const sparklePublicKey = 'czgsBI/YO7amJbwhZidZSO0j7LU5A4NsU0No9fDemWU=';
+const sparkleFeedUrl =
+  process.env.SPARKLE_FEED_URL ||
+  'https://github.com/anasibnanwar1-droid/droidex-releases/releases/latest/download/appcast.xml';
 const sentryDsn = process.env.SENTRY_DSN_FILE
   ? fs.readFileSync(process.env.SENTRY_DSN_FILE, 'utf8').trim()
   : process.env.SENTRY_DSN || '';
@@ -74,8 +77,7 @@ module.exports = {
         'DROIDEX accesses Documents projects only when you choose them for an agent session.',
       NSDownloadsFolderUsageDescription:
         'DROIDEX accesses downloaded project files only when you choose them for an agent session.',
-      SUFeedURL:
-        'https://github.com/anasibnanwar1-droid/droidex-releases/releases/latest/download/appcast.xml',
+      SUFeedURL: sparkleFeedUrl,
       SUPublicEDKey: sparklePublicKey,
       SUEnableAutomaticChecks: true,
       SUAllowsAutomaticUpdates: true,

@@ -1,6 +1,6 @@
 # Deployment Observability
 
-This project observes release readiness through GitHub Actions, signed build
+This project observes release readiness through GitHub Actions, verified build
 artifacts, updater configuration, private crash intake, and local runtime logs.
 
 ## Pre-release signal checklist
@@ -24,11 +24,13 @@ Record these values with each release candidate:
 
 | Variable | Why it matters |
 | --- | --- |
+| `DROIDEX_UNSIGNED_RELEASE_BUILD` | Enables the fail-closed unsigned website release configuration |
 | `DROIDEX_RELEASE_BUILD` | Enables the fail-closed signed/notarized release configuration |
 | `CSC_LINK` | Developer ID Application certificate supplied through CI secrets |
 | `APPLE_API_KEY_P8_BASE64` | Base64-encoded App Store Connect key materialized as a temporary `.p8` file in CI |
 | `APPLE_API_KEY_ID` / `APPLE_API_ISSUER` / `APPLE_TEAM_ID` | Apple identities used for notarization and signature verification |
 | `SENTRY_DSN` | Public client DSN embedded for crash and `/bug` reporting |
+| `SPARKLE_PRIVATE_KEY` | EdDSA private key used only in protected release automation to sign unsigned-app update feeds and ZIPs |
 | `DROIDEX_RELEASE_TOKEN` | Fine-grained token with Contents write and Administration read access only to the public releases repository |
 
 Configure these in the `macos-release` GitHub environment. Its deployment
@@ -37,13 +39,45 @@ also requires the tagged commit to be exactly versioned and already contained
 in `origin/main`. Keep real secrets out of release notes and CI logs. The
 release token is exposed only to the final publish step.
 
-Run `npm run release:preflight` before creating a version tag. It verifies the
+Run `npm run release:preflight:unsigned` for the current free distribution path.
+It verifies the private/public repository boundary, immutable public releases,
+the unsigned disclosure, exact private remote commit, Sparkle configuration,
+architecture-specific signed feeds, checksums, DMGs, packaged native modules,
+and canonical SQLite schema.
+
+Run `npm run release:preflight` before a future Developer ID release. It verifies the
 private/public repository boundary, immutable release policy, environment tag
 protection, secret names (never values), local Developer ID identity, workflow
 syntax, exact `origin/main` commit, and fully verified local artifacts. Any
 failure blocks tagging.
 
 ## Canonical release path
+
+The current website release is unsigned and not notarized. It does not require
+an Apple Developer Program subscription. Build with
+`DROIDEX_UNSIGNED_RELEASE_BUILD=1`, inject `SENTRY_DSN` from protected release
+configuration, generate both Sparkle appcasts with `npm run sparkle:appcast`,
+and run the unsigned preflight. Publish only these immutable public assets:
+
+- `droidex-arm64.dmg` and `droidex-x64.dmg`
+- `droidex-arm64.zip` and `droidex-x64.zip`
+- `appcast-arm64.xml` and `appcast-x64.xml`
+- `SHA256SUMS`
+
+The website should link Apple-silicon users to the arm64 DMG and Intel users to
+the x64 DMG. Because the app is unsigned, the first launch requires the user to
+approve DROIDEX in macOS System Settings > Privacy & Security > Open Anyway.
+That friction is intentional until Developer ID signing and notarization are
+enabled.
+
+Sparkle 2.9.5 is downloaded from its pinned official release and verified by
+SHA-256 during the build. Each architecture reads only its matching HTTPS
+appcast. The appcast and enclosed ZIP are signed with DROIDEX's EdDSA key;
+release verification checks both signatures against the public key embedded in
+the app. Keep the private key only in the macOS Keychain and the protected
+`macos-release` GitHub environment.
+
+The future paid Developer ID path remains available as follows.
 
 `.github/workflows/release-macos.yml` is the only production publisher. A tag
 whose name exactly matches the private source package version, such as
@@ -76,10 +110,12 @@ After installing a candidate build:
 6. Inspect Electron and sidecar logs for bridge authentication, download, or update errors.
 
 Before promoting every update after the first release, install the previous
-signed public version on a clean test account and confirm it discovers,
-downloads, installs, and relaunches into the candidate version. This signed
-N-1-to-N test is a manual release gate because an unsigned local build cannot
-exercise Gatekeeper or the production update signature path faithfully.
+public version on a clean test account and confirm it discovers the
+architecture-matched appcast, verifies the signed ZIP, installs, and relaunches
+into the candidate version. The first release has no N-1 candidate; it instead
+requires native Sparkle-load, signed-feed, signed-archive, and packaged-runtime
+verification. A future Developer ID release additionally requires Gatekeeper,
+notarization, and stapling checks.
 
 The direct-download app is not App Sandbox–restricted. It asks macOS for access
 to Desktop, Documents, or Downloads only when the user selects a protected
