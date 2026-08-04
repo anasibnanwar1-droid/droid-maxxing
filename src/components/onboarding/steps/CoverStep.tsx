@@ -27,8 +27,7 @@ export function CoverStep({ onNext }: { onNext: () => void }) {
       <div className="droid-rise mt-10" style={{ animationDelay: '230ms' }}>
         <button
           onClick={onNext}
-          autoFocus
-          className="droid-button-primary inline-flex h-10 items-center gap-2 px-5 text-[13px]"
+          className="droid-button-primary inline-flex h-10 items-center gap-2 px-5 text-[13px] focus:outline-none focus-visible:ring-2 focus-visible:ring-droid-accent/70 focus-visible:ring-offset-2 focus-visible:ring-offset-droid-bg"
         >
           Get started <ArrowRight className="w-4 h-4" />
         </button>

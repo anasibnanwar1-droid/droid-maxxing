@@ -106,7 +106,7 @@ export function SignInStep({
         <BackButton onClick={onBack} />
         <div className="flex-1">
           {signedIn ? (
-            <PrimaryButton onClick={onNext} autoFocus>
+            <PrimaryButton onClick={onNext}>
               Continue <ArrowRight className="w-4 h-4" />
             </PrimaryButton>
           ) : (

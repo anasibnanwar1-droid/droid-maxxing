@@ -53,7 +53,7 @@ export function InstallStep({
           title="The CLI is ready."
           sub={`Detected ${detectedCli?.version ? `v${detectedCli.version}` : 'an installation'} at ${detectedCli?.path ?? 'droid'}.`}
         />
-        <PrimaryButton onClick={onNext} autoFocus>
+        <PrimaryButton onClick={onNext}>
           Continue <ArrowRight className="w-4 h-4" />
         </PrimaryButton>
       </div>
@@ -149,7 +149,6 @@ export function InstallStep({
             if (channel) install(channel);
           }}
           disabled={!channel}
-          autoFocus
         >
           <Download className="w-4 h-4" /> Install with{' '}
           {channel ? CHANNEL_LABEL[channel] : 'package manager'}

@@ -42,33 +42,22 @@ interface BtnProps {
   children: ReactNode;
   onClick: () => void;
   disabled?: boolean;
-  autoFocus?: boolean;
 }
 
 const btnLayout =
-  'w-full h-10 flex items-center justify-center gap-2 text-[13px] disabled:opacity-40 disabled:pointer-events-none';
+  'w-full h-10 flex items-center justify-center gap-2 text-[13px] disabled:opacity-40 disabled:pointer-events-none focus:outline-none focus-visible:ring-2 focus-visible:ring-droid-accent/70 focus-visible:ring-offset-2 focus-visible:ring-offset-droid-bg';
 
-export function PrimaryButton({ children, onClick, disabled, autoFocus }: BtnProps) {
+export function PrimaryButton({ children, onClick, disabled }: BtnProps) {
   return (
-    <button
-      onClick={onClick}
-      disabled={disabled}
-      autoFocus={autoFocus}
-      className={`droid-button-primary ${btnLayout}`}
-    >
+    <button onClick={onClick} disabled={disabled} className={`droid-button-primary ${btnLayout}`}>
       {children}
     </button>
   );
 }
 
-export function GhostButton({ children, onClick, disabled, autoFocus }: BtnProps) {
+export function GhostButton({ children, onClick, disabled }: BtnProps) {
   return (
-    <button
-      onClick={onClick}
-      disabled={disabled}
-      autoFocus={autoFocus}
-      className={`droid-button ${btnLayout}`}
-    >
+    <button onClick={onClick} disabled={disabled} className={`droid-button ${btnLayout}`}>
       {children}
     </button>
   );
@@ -79,7 +68,7 @@ export function BackButton({ onClick, disabled }: { onClick: () => void; disable
     <button
       onClick={onClick}
       disabled={disabled}
-      className="px-3 h-10 inline-flex items-center gap-1.5 text-[12.5px] text-droid-text-muted hover:text-droid-text transition-colors shrink-0 disabled:opacity-40 disabled:pointer-events-none"
+      className="px-3 h-10 inline-flex items-center gap-1.5 text-[12.5px] text-droid-text-muted hover:text-droid-text transition-colors shrink-0 disabled:opacity-40 disabled:pointer-events-none focus:outline-none focus-visible:ring-2 focus-visible:ring-droid-accent/70 focus-visible:ring-offset-2 focus-visible:ring-offset-droid-bg"
     >
       <ArrowLeft className="w-3.5 h-3.5" /> Back
     </button>
