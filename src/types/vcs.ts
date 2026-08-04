@@ -199,9 +199,15 @@ export interface PrComment {
   createdAt: string | null;
   url: string | null;
   state: string | null;
+  reactions: PrReaction[];
   path?: string | null;
   line?: number | null;
   diffHunk?: string | null;
+}
+
+export interface PrReaction {
+  content: string;
+  count: number;
 }
 
 export interface PrCommentsResult {

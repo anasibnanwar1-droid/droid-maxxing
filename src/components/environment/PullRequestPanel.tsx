@@ -4,8 +4,8 @@ import {
   ChevronRight,
   ExternalLink,
   Loader2,
-  MessageSquare,
   RefreshCw,
+  SendHorizontal,
 } from 'lucide-react';
 import { CheckStatusIcon, PrStateIcon } from './GithubIcons';
 import { bucketToStatus, checksSummary, prKind, prKindLabel } from '../../lib/github';
@@ -156,19 +156,19 @@ function CommentCard({ comment }: { comment: PrComment }) {
     comment.kind === 'inline' && comment.path ? `${comment.path}${lineSuffix}` : null;
 
   return (
-    <div className="overflow-hidden rounded-xl border border-droid-border/70 bg-droid-bg/30 transition-colors hover:border-droid-border-hover/70">
+    <div className="overflow-hidden rounded-xl border border-droid-border bg-droid-elevated/20 font-sans transition-colors hover:border-droid-border-hover/80">
       <div className="flex items-start">
         <button
           type="button"
           aria-expanded={expanded}
           onClick={() => setExpanded((value) => !value)}
-          className="flex min-w-0 flex-1 items-start gap-1.5 px-2 py-2 text-left"
+          className="flex min-w-0 flex-1 items-start gap-2 px-2.5 py-2.5 text-left"
         >
           <ChevronRight
-            className={`mt-0.5 h-3 w-3 shrink-0 text-droid-text-muted transition-transform ${expanded ? 'rotate-90' : ''}`}
+            className={`mt-0.5 h-3.5 w-3.5 shrink-0 text-droid-text-muted transition-transform duration-200 ease-out ${expanded ? 'rotate-90' : ''}`}
           />
           <span className="min-w-0 flex-1">
-            <span className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11px]">
+            <span className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs">
               <span className="font-medium text-droid-text">{comment.author}</span>
               {comment.state && (
                 <span className="rounded bg-droid-elevated px-1 py-0.5 text-[9px] uppercase tracking-wide text-droid-text-muted">
@@ -183,10 +183,11 @@ function CommentCard({ comment }: { comment: PrComment }) {
               </span>
             )}
             {!expanded && (
-              <span className="mt-1 block text-[11.5px] leading-snug text-droid-text-secondary">
+              <span className="mt-1 block text-xs leading-[1.45] text-droid-text-secondary">
                 {prCommentPreview(body)}
               </span>
             )}
+            {comment.reactions.length > 0 && <ReactionChips reactions={comment.reactions} />}
           </span>
         </button>
         {commentUrl && (
@@ -200,12 +201,50 @@ function CommentCard({ comment }: { comment: PrComment }) {
           </button>
         )}
       </div>
-      {expanded && (
-        <div className="border-t border-droid-border/60 px-2.5 py-2 break-words text-droid-text-secondary [&>div]:!space-y-1.5 [&>div]:!text-[12px] [&>div]:!leading-snug [&_code]:!text-[11px]">
-          {body ? <Markdown allowDiagrams={false}>{body}</Markdown> : 'No written comment.'}
+      <div
+        aria-hidden={!expanded}
+        inert={!expanded}
+        className={`grid transition-[grid-template-rows,opacity] duration-200 ease-out ${expanded ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'}`}
+      >
+        <div className="min-h-0 overflow-hidden">
+          <div className="border-t border-droid-border/60 px-3 py-2.5 break-words text-xs leading-[1.5] text-droid-text-secondary [&>div]:!space-y-2 [&>div]:!text-xs [&>div]:!leading-[1.5] [&_code]:!text-[11px]">
+            {body ? <Markdown allowDiagrams={false}>{body}</Markdown> : 'No written comment.'}
+          </div>
         </div>
-      )}
+      </div>
     </div>
+  );
+}
+
+const REACTION_DETAILS: Record<string, { emoji: string; label: string }> = {
+  THUMBS_UP: { emoji: '👍', label: 'thumbs up' },
+  THUMBS_DOWN: { emoji: '👎', label: 'thumbs down' },
+  LAUGH: { emoji: '😄', label: 'laugh' },
+  HOORAY: { emoji: '🎉', label: 'hooray' },
+  CONFUSED: { emoji: '😕', label: 'confused' },
+  HEART: { emoji: '❤️', label: 'heart' },
+  ROCKET: { emoji: '🚀', label: 'rocket' },
+  EYES: { emoji: '👀', label: 'eyes' },
+};
+
+function ReactionChips({ reactions }: { reactions: PrComment['reactions'] }) {
+  return (
+    <span className="mt-1.5 flex flex-wrap gap-1">
+      {reactions.map((reaction) => {
+        const details = REACTION_DETAILS[reaction.content];
+        if (!details) return null;
+        return (
+          <span
+            key={reaction.content}
+            title={`${reaction.count} ${details.label}`}
+            className="inline-flex items-center gap-1 rounded-full border border-droid-border/80 bg-droid-bg/50 px-1.5 py-0.5 text-[10px] leading-none text-droid-text-muted"
+          >
+            <span aria-hidden="true">{details.emoji}</span>
+            <span>{reaction.count}</span>
+          </span>
+        );
+      })}
+    </span>
   );
 }
 
@@ -344,7 +383,7 @@ export function PullRequestPanel({
             {posting ? (
               <Loader2 className="h-3.5 w-3.5 animate-spin" />
             ) : (
-              <MessageSquare className="h-3.5 w-3.5" />
+              <SendHorizontal className="h-3.5 w-3.5" />
             )}
           </button>
         </div>

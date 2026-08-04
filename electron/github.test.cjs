@@ -19,6 +19,7 @@ test('PR comments include top-level, review, and inline review threads', () => {
           body: 'Top-level **comment**',
           createdAt: '2026-08-04T10:00:00Z',
           url: 'https://example.test/comment/10',
+          reactionGroups: [{ content: 'EYES', users: { totalCount: 2 } }],
         },
       ],
       reviews: [
@@ -28,6 +29,7 @@ test('PR comments include top-level, review, and inline review threads', () => {
           body: 'Changes requested',
           submittedAt: '2026-08-04T10:01:00Z',
           state: 'CHANGES_REQUESTED',
+          reactionGroups: [{ content: 'THUMBS_UP', users: { totalCount: 1 } }],
         },
       ],
     },
@@ -41,12 +43,20 @@ test('PR comments include top-level, review, and inline review threads', () => {
         path: 'src/components/ReviewPanel.tsx',
         line: 42,
         diff_hunk: '@@ -40,2 +40,3 @@',
+        reactions: { '+1': 3, heart: 1, total_count: 4 },
       },
     ],
   );
 
   assert.deepEqual(
-    comments.map(({ kind, author, body, path, line }) => ({ kind, author, body, path, line })),
+    comments.map(({ kind, author, body, path, line, reactions }) => ({
+      kind,
+      author,
+      body,
+      path,
+      line,
+      reactions,
+    })),
     [
       {
         kind: 'comment',
@@ -54,6 +64,7 @@ test('PR comments include top-level, review, and inline review threads', () => {
         body: 'Top-level **comment**',
         path: undefined,
         line: undefined,
+        reactions: [{ content: 'EYES', count: 2 }],
       },
       {
         kind: 'review',
@@ -61,6 +72,7 @@ test('PR comments include top-level, review, and inline review threads', () => {
         body: 'Changes requested',
         path: undefined,
         line: undefined,
+        reactions: [{ content: 'THUMBS_UP', count: 1 }],
       },
       {
         kind: 'inline',
@@ -68,6 +80,10 @@ test('PR comments include top-level, review, and inline review threads', () => {
         body: 'Fix `scope` here',
         path: 'src/components/ReviewPanel.tsx',
         line: 42,
+        reactions: [
+          { content: 'THUMBS_UP', count: 3 },
+          { content: 'HEART', count: 1 },
+        ],
       },
     ],
   );

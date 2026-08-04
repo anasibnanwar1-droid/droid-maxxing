@@ -169,6 +169,31 @@ async function prChecks(dir, { prNumber } = {}) {
 }
 
 function normalizePrComments(data, inlineRows = []) {
+  const normalizeReactionGroups = (groups) => {
+    if (!Array.isArray(groups)) return [];
+    return groups
+      .map((group) => ({
+        content: String(group?.content || '').toUpperCase(),
+        count: Number(group?.users?.totalCount || 0),
+      }))
+      .filter((reaction) => reaction.content && reaction.count > 0);
+  };
+  const normalizeRestReactions = (reactions) => {
+    const contentByField = {
+      '+1': 'THUMBS_UP',
+      '-1': 'THUMBS_DOWN',
+      laugh: 'LAUGH',
+      hooray: 'HOORAY',
+      confused: 'CONFUSED',
+      heart: 'HEART',
+      rocket: 'ROCKET',
+      eyes: 'EYES',
+    };
+    if (!reactions || typeof reactions !== 'object') return [];
+    return Object.entries(contentByField)
+      .map(([field, content]) => ({ content, count: Number(reactions[field] || 0) }))
+      .filter((reaction) => reaction.count > 0);
+  };
   const comments = (Array.isArray(data?.comments) ? data.comments : []).map((c, i) => ({
     id: `comment-${String(c.databaseId || c.id || `${i}-${c.createdAt || ''}`)}`,
     kind: 'comment',
@@ -177,6 +202,7 @@ function normalizePrComments(data, inlineRows = []) {
     createdAt: c.createdAt || null,
     url: c.url || null,
     state: null,
+    reactions: normalizeReactionGroups(c.reactionGroups),
   }));
   const reviews = (Array.isArray(data?.reviews) ? data.reviews : [])
     .filter((r) => (r.body && r.body.trim()) || (r.state && r.state !== 'COMMENTED'))
@@ -188,6 +214,7 @@ function normalizePrComments(data, inlineRows = []) {
       createdAt: r.submittedAt || null,
       url: r.url || null,
       state: r.state ? String(r.state).toLowerCase() : null,
+      reactions: normalizeReactionGroups(r.reactionGroups),
     }));
   const inline = (Array.isArray(inlineRows) ? inlineRows : []).map((comment, i) => ({
     id: `inline-${String(comment.id || `${i}-${comment.created_at || ''}`)}`,
@@ -200,6 +227,7 @@ function normalizePrComments(data, inlineRows = []) {
     path: comment.path || null,
     line: comment.line ?? comment.original_line ?? null,
     diffHunk: comment.diff_hunk || null,
+    reactions: normalizeRestReactions(comment.reactions),
   }));
   return [...comments, ...reviews, ...inline].sort(
     (a, b) => new Date(a.createdAt || 0).getTime() - new Date(b.createdAt || 0).getTime(),
