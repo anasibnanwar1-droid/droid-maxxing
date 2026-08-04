@@ -38,7 +38,7 @@ function createDiagnostics(options) {
         platform: process.platform,
         arch: process.arch,
       });
-      eventId = sentry.captureMessage(normalized, { level: 'info' });
+      eventId = sentry.captureMessage(normalized, { level: 'error' });
     });
     return { reportId, userId, eventId };
   }

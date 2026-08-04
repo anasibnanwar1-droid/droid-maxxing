@@ -64,6 +64,7 @@ test('manual bug reports carry support ids without default PII', async () => {
     events.some(([kind, value]) => kind === 'message' && value === 'update button froze'),
     true,
   );
+  assert.deepEqual(events.find(([kind]) => kind === 'message')?.[2], { level: 'error' });
 });
 
 test('diagnostic payloads remove requests, breadcrumbs, and user fields except id', () => {
