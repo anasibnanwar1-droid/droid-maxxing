@@ -4,6 +4,7 @@ import type { SessionSummary } from '../types/bridge';
 import {
   addWorkspaceCwd,
   buildWorkspaceSections,
+  resolveNewChatCwd,
   SIDEBAR_VISIBLE_SESSION_LIMIT,
 } from './workspaces';
 
@@ -34,6 +35,36 @@ test('addWorkspaceCwd keeps explicit workspaces unique and ordered newest first'
     '/repo/new',
   ]);
   assert.deepEqual(addWorkspaceCwd(['/repo/old'], ''), ['/repo/old']);
+});
+
+test('resolveNewChatCwd inherits the active workspace session folder', () => {
+  assert.equal(
+    resolveNewChatCwd({ cwd: '/repo/droid-control', workspaceKind: 'folder' }, { cwd: '' }),
+    '/repo/droid-control',
+  );
+  // Active workspace wins over a stale non-empty draft path.
+  assert.equal(
+    resolveNewChatCwd(
+      { cwd: '/repo/droid-control', workspaceKind: 'folder' },
+      { cwd: '/repo/stale' },
+    ),
+    '/repo/droid-control',
+  );
+});
+
+test('resolveNewChatCwd starts folder-less when the active chat has no workspace', () => {
+  // Empty cwd must not fall through to a leftover draft workspace path.
+  assert.equal(resolveNewChatCwd({ cwd: '', workspaceKind: 'none' }, { cwd: '/repo/stale' }), '');
+  assert.equal(resolveNewChatCwd({ cwd: '', workspaceKind: 'none' }, null), '');
+  // Missing cwd on an active session still means "no workspace".
+  assert.equal(resolveNewChatCwd({ workspaceKind: 'none' }, { cwd: '/repo/stale' }), '');
+  assert.equal(resolveNewChatCwd({ cwd: null }, { cwd: '/repo/stale' }), '');
+});
+
+test('resolveNewChatCwd falls back to draft only when nothing is selected', () => {
+  assert.equal(resolveNewChatCwd(null, { cwd: '/repo/draft' }), '/repo/draft');
+  assert.equal(resolveNewChatCwd(undefined, { cwd: '' }), '');
+  assert.equal(resolveNewChatCwd(null, null), '');
 });
 
 test('buildWorkspaceSections includes every known session for explicitly added workspaces', () => {

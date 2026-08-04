@@ -13,7 +13,22 @@ export interface WorkspaceSection {
 
 export function workspaceName(cwd: string): string {
   const base = cwd.split('/').filter(Boolean).pop();
-  return base || 'Home';
+  return base ?? 'Home';
+}
+
+// Sidebar "New chat" workspace context. When a top-level session is active it
+// owns the next draft: workspace chats keep that folder, folder-less Chats
+// (workspaceKind none / empty cwd) stay folder-less even if draftChat still
+// holds a stale path. Draft cwd is only used when nothing is selected.
+export function resolveNewChatCwd(
+  activeSession: { cwd?: string | null; workspaceKind?: 'folder' | 'none' } | null | undefined,
+  draftChat: { cwd?: string | null } | null | undefined,
+): string {
+  if (activeSession) {
+    if (activeSession.workspaceKind === 'none') return '';
+    return typeof activeSession.cwd === 'string' ? activeSession.cwd.trim() : '';
+  }
+  return typeof draftChat?.cwd === 'string' ? draftChat.cwd.trim() : '';
 }
 
 export function addWorkspaceCwd(existing: string[], cwd: string): string[] {
@@ -23,7 +38,7 @@ export function addWorkspaceCwd(existing: string[], cwd: string): string[] {
 }
 
 function repositoryWorkspaceCwd(cwd: string): string {
-  const marker = cwd.match(/[\\/]\.worktrees[\\/]/);
+  const marker = /[\\/]\.worktrees[\\/]/.exec(cwd);
   return marker ? cwd.slice(0, marker.index) : cwd;
 }
 
