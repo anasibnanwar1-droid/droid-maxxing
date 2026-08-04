@@ -1,5 +1,12 @@
 import { useRef, useState } from 'react';
-import { ChevronLeft, ExternalLink, Loader2, MessageSquare, RefreshCw } from 'lucide-react';
+import {
+  ChevronLeft,
+  ChevronRight,
+  ExternalLink,
+  Loader2,
+  MessageSquare,
+  RefreshCw,
+} from 'lucide-react';
 import { CheckStatusIcon, PrStateIcon } from './GithubIcons';
 import { bucketToStatus, checksSummary, prKind, prKindLabel } from '../../lib/github';
 import { postPrComment } from '../../lib/github';
@@ -7,6 +14,7 @@ import { openExternal } from '../../lib/onboarding';
 import { toast } from '../../lib/toast';
 import type { PrCheck, PrComment, PullRequest } from '../../types/vcs';
 import { Markdown } from '../Markdown';
+import { normalizePrCommentBody, prCommentPreview } from '../../lib/prCommentPresentation';
 
 function relativeTime(iso: string | null): string {
   if (!iso) return '';
@@ -128,14 +136,39 @@ function CommentsBlock({
           <div className="px-1.5 pb-1.5 text-[12px] text-droid-text-muted">No comments yet</div>
         )
       ) : (
-        comments.map((comment) => (
-          <div key={comment.id} className="px-1.5 py-1.5">
-            <button
-              type="button"
-              disabled={!comment.url}
-              onClick={() => comment.url && void openExternal(comment.url)}
-              className="flex w-full items-center gap-1.5 text-left text-[11px] disabled:cursor-default"
-            >
+        <div className="space-y-1.5 px-1.5">
+          {comments.map((comment) => (
+            <CommentCard key={comment.id} comment={comment} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CommentCard({ comment }: { comment: PrComment }) {
+  const [expanded, setExpanded] = useState(false);
+  const body = normalizePrCommentBody(comment.body);
+  const commentUrl = comment.url;
+  const lineSuffix =
+    comment.line === null || comment.line === undefined ? '' : `:${String(comment.line)}`;
+  const location =
+    comment.kind === 'inline' && comment.path ? `${comment.path}${lineSuffix}` : null;
+
+  return (
+    <div className="overflow-hidden rounded-xl border border-droid-border/70 bg-droid-bg/30 transition-colors hover:border-droid-border-hover/70">
+      <div className="flex items-start">
+        <button
+          type="button"
+          aria-expanded={expanded}
+          onClick={() => setExpanded((value) => !value)}
+          className="flex min-w-0 flex-1 items-start gap-1.5 px-2 py-2 text-left"
+        >
+          <ChevronRight
+            className={`mt-0.5 h-3 w-3 shrink-0 text-droid-text-muted transition-transform ${expanded ? 'rotate-90' : ''}`}
+          />
+          <span className="min-w-0 flex-1">
+            <span className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11px]">
               <span className="font-medium text-droid-text">{comment.author}</span>
               {comment.state && (
                 <span className="rounded bg-droid-elevated px-1 py-0.5 text-[9px] uppercase tracking-wide text-droid-text-muted">
@@ -143,21 +176,34 @@ function CommentsBlock({
                 </span>
               )}
               <span className="text-droid-text-muted/70">{relativeTime(comment.createdAt)}</span>
-              {comment.url && <ExternalLink className="h-2.5 w-2.5 text-droid-text-muted/50" />}
-            </button>
-            {comment.kind === 'inline' && comment.path && (
-              <div className="mt-0.5 break-all font-mono text-[10px] text-droid-text-muted/80">
-                {comment.path}
-                {comment.line ? `:${comment.line}` : ''}
-              </div>
+            </span>
+            {location && (
+              <span className="mt-0.5 block truncate font-mono text-[9.5px] text-droid-text-muted/75">
+                {location}
+              </span>
             )}
-            {comment.body && (
-              <div className="mt-1 break-words text-droid-text-secondary [&>div]:!space-y-1.5 [&>div]:!text-[12px] [&>div]:!leading-snug [&_code]:!text-[11px]">
-                <Markdown allowDiagrams={false}>{comment.body}</Markdown>
-              </div>
+            {!expanded && (
+              <span className="mt-1 block text-[11.5px] leading-snug text-droid-text-secondary">
+                {prCommentPreview(body)}
+              </span>
             )}
-          </div>
-        ))
+          </span>
+        </button>
+        {commentUrl && (
+          <button
+            type="button"
+            title="Open comment on GitHub"
+            onClick={() => void openExternal(commentUrl)}
+            className="mr-1.5 mt-1.5 rounded p-1 text-droid-text-muted/50 transition-colors hover:bg-droid-elevated hover:text-droid-text-muted"
+          >
+            <ExternalLink className="h-3 w-3" />
+          </button>
+        )}
+      </div>
+      {expanded && (
+        <div className="border-t border-droid-border/60 px-2.5 py-2 break-words text-droid-text-secondary [&>div]:!space-y-1.5 [&>div]:!text-[12px] [&>div]:!leading-snug [&_code]:!text-[11px]">
+          {body ? <Markdown allowDiagrams={false}>{body}</Markdown> : 'No written comment.'}
+        </div>
       )}
     </div>
   );
