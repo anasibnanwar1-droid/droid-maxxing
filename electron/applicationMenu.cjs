@@ -102,7 +102,11 @@ function installApplicationMenu(options) {
     reload: options.reload,
     checkForUpdates: () =>
       void options.appUpdater
-        .check({ interactive: true, automaticChecks: true })
+        .check({
+          interactive: true,
+          automaticChecks: true,
+          configureAutomaticChecks: false,
+        })
         .catch((error) => options.logError(error.message)),
     openPath: (target) =>
       void options.shell

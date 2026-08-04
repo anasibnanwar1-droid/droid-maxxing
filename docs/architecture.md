@@ -69,8 +69,9 @@ flowchart LR
 
 ## Update path
 
-Packaged macOS builds use `electron-updater` against the public
-`anasibnanwar1-droid/droidex-releases` repository. Each release contains signed
-DMGs for website installation plus ZIP artifacts and `latest-mac.yml` metadata
-for in-app updates. The private source repository is never used as a client
-update feed.
+Free, ad-hoc-signed macOS builds use Sparkle against architecture-specific,
+EdDSA-signed appcasts and ZIPs in the public
+`anasibnanwar1-droid/droidex-releases` repository. DROIDEX may check for a new
+version in the background, but download and installation always require an
+explicit user action. The future Developer ID path uses `electron-updater` and
+`latest-mac.yml`. The private source repository is never a client update feed.

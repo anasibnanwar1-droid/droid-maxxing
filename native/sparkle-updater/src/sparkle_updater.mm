@@ -69,21 +69,25 @@ bool ensureUpdater(NSString **failure) {
 
 napi_value checkForUpdates(napi_env env, napi_callback_info info) {
   @autoreleasepool {
-    size_t argumentCount = 2;
-    napi_value arguments[2];
+    size_t argumentCount = 3;
+    napi_value arguments[3];
     if (napi_get_cb_info(env, info, &argumentCount, arguments, nullptr, nullptr) != napi_ok) {
       return throwError(env, @"Sparkle update options could not be read.");
     }
     const bool interactive = argumentCount > 0 ? readBoolean(env, arguments[0], false) : false;
     const bool enableBackgroundChecks =
         argumentCount > 1 ? readBoolean(env, arguments[1], true) : true;
+    const bool configureBackgroundChecks =
+        argumentCount > 2 ? readBoolean(env, arguments[2], true) : true;
 
     NSString *failure = nil;
     if (!ensureUpdater(&failure)) return throwError(env, failure);
 
     id updater = ((id (*)(id, SEL))objc_msgSend)(updaterController, sel_registerName("updater"));
-    ((void (*)(id, SEL, BOOL))objc_msgSend)(
-        updater, sel_registerName("setAutomaticallyChecksForUpdates:"), enableBackgroundChecks);
+    if (configureBackgroundChecks) {
+      ((void (*)(id, SEL, BOOL))objc_msgSend)(
+          updater, sel_registerName("setAutomaticallyChecksForUpdates:"), enableBackgroundChecks);
+    }
     ((void (*)(id, SEL, BOOL))objc_msgSend)(
         updater, sel_registerName("setAutomaticallyDownloadsUpdates:"), NO);
     ((void (*)(id, SEL))objc_msgSend)(updaterController, sel_registerName("startUpdater"));

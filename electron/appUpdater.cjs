@@ -21,6 +21,7 @@ function createAppUpdater(options) {
           .checkForUpdates(
             checkOptions.interactive === true,
             checkOptions.automaticChecks !== false,
+            checkOptions.configureAutomaticChecks !== false,
           );
         return updateInfo(current, current, false, platform, arch, installMode);
       }
@@ -41,10 +42,10 @@ function createAppUpdater(options) {
 
   async function downloadAndInstall() {
     if (!options.app.isPackaged || platform !== 'darwin') {
-      throw new Error('Automatic updates are available only in the packaged macOS app.');
+      throw new Error('App updates are available only in the packaged macOS app.');
     }
     if (installMode === 'sparkle') {
-      options.sparkleUpdater().checkForUpdates(true, true);
+      options.sparkleUpdater().checkForUpdates(true, true, false);
       return { status: 'presented' };
     }
     await updater.downloadUpdate();

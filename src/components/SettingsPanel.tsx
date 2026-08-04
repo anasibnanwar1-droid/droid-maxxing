@@ -1105,15 +1105,17 @@ function SetupSection({ onClose }: { onClose: () => void }) {
     setChecking(false);
   };
 
-  // The main process returns an empty `latest` when the manifest fetch fails;
-  // surface that as an error rather than a successful "Up to date" result.
+  // Sparkle owns its asynchronous result window. electron-updater returns the
+  // manifest version directly, including an empty value when its fetch fails.
   const updateStatus = !update
     ? `Installed v${appVersion}`
-    : update.updateAvailable
-      ? `${update.latest} available`
-      : update.latest
-        ? 'Up to date'
-        : "Couldn't check for updates";
+    : update.installMode === 'sparkle'
+      ? 'Update window opened'
+      : update.updateAvailable
+        ? `${update.latest} available`
+        : update.latest
+          ? 'Up to date'
+          : "Couldn't check for updates";
 
   return (
     <div className="max-w-2xl mx-auto">
@@ -1188,7 +1190,7 @@ function SetupSection({ onClose }: { onClose: () => void }) {
             >
               {checking ? 'Checking…' : 'Check for updates'}
             </button>
-            {update?.updateAvailable && (
+            {update?.updateAvailable && update.installMode !== 'sparkle' && (
               <button
                 onClick={() => {
                   void startAppUpdate(update);

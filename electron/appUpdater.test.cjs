@@ -25,8 +25,8 @@ function harness({
     arch: 'arm64',
     installMode,
     sparkleUpdater: () => ({
-      checkForUpdates: (interactive, automaticChecks) =>
-        calls.push(['sparkle-check', interactive, automaticChecks]),
+      checkForUpdates: (interactive, automaticChecks, configureAutomaticChecks) =>
+        calls.push(['sparkle-check', interactive, automaticChecks, configureAutomaticChecks]),
     }),
     prepareToInstall: async () => calls.push('prepare'),
     scheduleInstall: (callback) => {
@@ -55,13 +55,25 @@ test('unsigned builds delegate verified update checks and installation to Sparkl
   const result = await updater.check({ interactive: false, automaticChecks: true });
   assert.equal(result.updateAvailable, false);
   assert.equal(result.installMode, 'sparkle');
-  assert.deepEqual(calls, [['sparkle-check', false, true]]);
+  assert.deepEqual(calls, [['sparkle-check', false, true, true]]);
 
   assert.deepEqual(await updater.downloadAndInstall(), { status: 'presented' });
   assert.deepEqual(calls, [
-    ['sparkle-check', false, true],
-    ['sparkle-check', true, true],
+    ['sparkle-check', false, true, true],
+    ['sparkle-check', true, true, false],
   ]);
+});
+
+test('manual menu checks do not change the background-check preference', async () => {
+  const { updater, calls } = harness({ installMode: 'sparkle' });
+
+  await updater.check({
+    interactive: true,
+    automaticChecks: true,
+    configureAutomaticChecks: false,
+  });
+
+  assert.deepEqual(calls, [['sparkle-check', true, true, false]]);
 });
 
 test('install waits for sidecar shutdown before handing control to the updater', async () => {

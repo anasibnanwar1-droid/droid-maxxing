@@ -36,6 +36,7 @@ export async function getAppVersion(): Promise<string> {
 export interface AppUpdateCheckOptions {
   interactive: boolean;
   automaticChecks: boolean;
+  configureAutomaticChecks?: boolean;
 }
 
 export async function checkAppUpdate(

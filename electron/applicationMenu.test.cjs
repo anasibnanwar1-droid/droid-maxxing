@@ -142,7 +142,14 @@ test('installer wires native dependencies and logs failed system actions', async
   await new Promise((resolve) => setImmediate(resolve));
 
   assert.deepEqual(calls, [
-    ['update', { interactive: true, automaticChecks: true }],
+    [
+      'update',
+      {
+        interactive: true,
+        automaticChecks: true,
+        configureAutomaticChecks: false,
+      },
+    ],
     ['path', PRIVACY_SECURITY_PANE],
     ['error', `Could not open ${PRIVACY_SECURITY_PANE}: denied`],
   ]);
