@@ -484,6 +484,11 @@ for (const architecture of architectures) {
         run('/usr/bin/readlink', [join(mountDirectory, 'Applications')]).trim() === '/Applications',
         `${architecture.name} DMG Applications link is wrong`,
       );
+      assert(
+        run('/usr/bin/readlink', [join(mountDirectory, 'Open Privacy & Security')]).trim() ===
+          '/System/Library/PreferencePanes/Security.prefPane',
+        `${architecture.name} DMG Privacy & Security shortcut is wrong`,
+      );
     } finally {
       run('/usr/bin/hdiutil', ['detach', mountDirectory]);
     }

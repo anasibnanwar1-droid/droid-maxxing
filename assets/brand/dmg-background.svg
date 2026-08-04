@@ -1,12 +1,14 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="600" height="300" viewBox="0 0 600 300">
-  <!-- DROIDEX DMG installer window background (600x300, rendered @1x and @2x).
-       Finder icon positions are CENTERS: .app at (132,150), Applications link
-       at (372,150), icon size 96 (icons span x 84-180 and x 324-420).
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="330" viewBox="0 0 760 330">
+  <!-- DROIDEX DMG installer window background (760x330, rendered @1x and @2x).
+       Finder icon positions are CENTERS: .app at (180,165), Applications link
+       at (420,165), and Privacy & Security shortcut at (650,165), icon size 96.
        Pixel DROIDEX wordmark (Silkscreen-style 5-row glyphs, cell 8, X in
-       safety orange) centered up top; all-orange pixel arrow (cell 8) in the
-       free gap between the icons. No text: the arrow and Finder labels say it
-       all. -->
-  <rect width="600" height="300" fill="#F2EFE9" />
+       safety orange) anchors the installer; the existing orange arrow still
+       communicates drag-to-Applications. Finder labels explain the optional
+       Gatekeeper shortcut without adding visual noise. -->
+  <rect width="760" height="330" fill="#F2EFE9" />
+  <rect x="548" y="118" width="2" height="114" fill="#DDD8CF" />
+  <g transform="translate(60 8)">
   <rect x="148" y="42" width="8" height="8" fill="#141310" />
   <rect x="156" y="42" width="8" height="8" fill="#141310" />
   <rect x="164" y="42" width="8" height="8" fill="#141310" />
@@ -111,4 +113,5 @@
   <rect x="286" y="146" width="8" height="8" fill="#FF4D00" />
   <rect x="278" y="154" width="8" height="8" fill="#FF4D00" />
   <rect x="270" y="162" width="8" height="8" fill="#FF4D00" />
+  </g>
 </svg>

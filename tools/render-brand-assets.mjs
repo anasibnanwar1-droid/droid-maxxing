@@ -130,13 +130,13 @@ async function main() {
     await renderSvg(
       browser,
       dmgSvg,
-      { width: 600, height: 300 },
+      { width: 760, height: 330 },
       path.join(brandDir, 'dmg-background.png'),
     );
     await renderSvg(
       browser,
       dmgSvg,
-      { width: 1200, height: 600 },
+      { width: 1520, height: 660 },
       path.join(brandDir, 'dmg-background@2x.png'),
     );
   } finally {

@@ -67,6 +67,10 @@ and run the unsigned preflight. Publish only these immutable public assets:
 The website should link Apple-silicon users to the arm64 DMG and Intel users to
 the x64 DMG. Because the app is unsigned, the first launch requires the user to
 approve DROIDEX in macOS System Settings > Privacy & Security > Open Anyway.
+The DMG includes an **Open Privacy & Security** shortcut beside the Applications
+alias. After macOS blocks the first launch, users can double-click that shortcut
+to open the required settings pane directly; macOS still requires the user to
+click **Open Anyway** and authenticate.
 That friction is intentional until Developer ID signing and notarization are
 enabled.
 

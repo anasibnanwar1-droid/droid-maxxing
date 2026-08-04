@@ -98,11 +98,18 @@ module.exports = {
   dmg: {
     icon: 'electron/assets/icon.icns',
     background: 'assets/brand/dmg-background.png',
-    window: { width: 600, height: 300 },
+    window: { width: 760, height: 330 },
     iconSize: 96,
     contents: [
-      { x: 132, y: 150, type: 'file' },
-      { x: 372, y: 150, type: 'link', path: '/Applications' },
+      { x: 180, y: 165, type: 'file' },
+      { x: 420, y: 165, type: 'link', path: '/Applications' },
+      {
+        x: 650,
+        y: 165,
+        type: 'link',
+        name: 'Open Privacy & Security',
+        path: '/System/Library/PreferencePanes/Security.prefPane',
+      },
     ],
     artifactName: `droidex-\${arch}.\${ext}`,
   },

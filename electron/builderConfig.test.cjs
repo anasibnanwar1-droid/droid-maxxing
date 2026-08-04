@@ -178,3 +178,20 @@ test('macOS protected project folders have truthful permission descriptions', ()
   assert.equal(config.mac.extendInfo.NSCameraUsageDescription, undefined);
   assert.equal(config.mac.extendInfo.NSMicrophoneUsageDescription, undefined);
 });
+
+test('website DMG includes a direct Privacy & Security shortcut', () => {
+  const config = loadConfig({});
+
+  assert.deepEqual(config.dmg.window, { width: 760, height: 330 });
+  assert.deepEqual(config.dmg.contents, [
+    { x: 180, y: 165, type: 'file' },
+    { x: 420, y: 165, type: 'link', path: '/Applications' },
+    {
+      x: 650,
+      y: 165,
+      type: 'link',
+      name: 'Open Privacy & Security',
+      path: '/System/Library/PreferencePanes/Security.prefPane',
+    },
+  ]);
+});
