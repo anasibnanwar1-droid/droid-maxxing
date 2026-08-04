@@ -110,7 +110,14 @@ export interface FilePreviewPayload {
   path: { root: string; relative: string };
 }
 
-export interface BugReportReceipt {
+export type FeedbackCategory = 'bug' | 'bad_result' | 'good_result' | 'safety' | 'other';
+
+export interface FeedbackReportRequest {
+  category: FeedbackCategory;
+  description: string;
+}
+
+export interface FeedbackReportReceipt {
   reportId: string;
   userId: string;
   eventId: string;
@@ -174,7 +181,7 @@ interface DroidControlApi {
   appVersion: () => Promise<string>;
   checkAppUpdate: (options: AppUpdateCheckOptions) => Promise<AppUpdateInfo>;
   downloadAppUpdate: () => Promise<AppUpdateResult>;
-  reportBug: (description: string) => Promise<BugReportReceipt>;
+  submitFeedbackReport: (report: FeedbackReportRequest) => Promise<FeedbackReportReceipt>;
   relaunchApp: () => Promise<void>;
   setAppIcon: (mode: AppIconMode) => Promise<AppIconMode>;
   openExternal: (url: string) => Promise<void>;

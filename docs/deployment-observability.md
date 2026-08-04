@@ -143,10 +143,24 @@ state built from raw Factory session history under `~/.factory/sessions`.
 ## Crash and bug intake
 
 Sentry captures uncaught main/renderer/native crashes and sidecar exits. The
-`/bug <description>` composer command creates a sortable `BUG-…` report ID and
-a stable pseudonymous `USR-…` support ID. DROIDEX disables default PII,
-performance tracing, request capture, and breadcrumbs. User prompts, project
-files, API keys, and GitHub credentials are not attached automatically.
+`/bug` and `/feedback` composer commands open the private feedback form. A
+successful submission creates a sortable `RPT-…` report ID that remains visible
+and copyable until the user dismisses the receipt. DROIDEX shows that receipt
+only after Sentry ingestion returns HTTP 2xx; network failures, timeouts, rate
+limits, and server errors keep the form open with its entered details for retry.
+
+Manual reports use an explicit payload allowlist. They contain the details and
+category selected by the user, the report ID, a stable pseudonymous `USR-…`
+installation ID, app version, macOS version, CPU architecture,
+Electron/Chromium/Node versions, and packaged status. DROIDEX does not attach
+chats, prompts, project files or paths, browser content or history, logs,
+environment variables, API keys, GitHub credentials, network requests, or
+breadcrumbs to manual reports. The UI states this boundary before submission.
+
+Crash reporting continues to retain the exception information needed to debug
+failures while removing requests, breadcrumbs, and user fields other than the
+pseudonymous installation ID. Default PII and performance tracing remain
+disabled.
 
 Connect the Sentry project to the private source repository using Sentry's
 server-side GitHub integration and an issue alert rule. No GitHub token belongs

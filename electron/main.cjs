@@ -252,9 +252,9 @@ function registerIpc() {
     assertMainRenderer(event);
     return appUpdater.downloadAndInstall();
   });
-  ipcMain.handle('bug-report', (event, { description }) => {
+  ipcMain.handle('feedback-report', (event, report) => {
     assertMainRenderer(event);
-    return diagnostics.reportBug(description);
+    return diagnostics.reportFeedback(report);
   });
   ipcMain.handle('app-relaunch', () => relaunchApp());
   ipcMain.handle('app-set-icon', (event, payload) => {

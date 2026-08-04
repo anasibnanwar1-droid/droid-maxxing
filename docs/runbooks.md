@@ -2,11 +2,12 @@
 
 These runbooks cover local development and release triage for DROIDEX.
 
-## User bug report
+## User feedback report
 
-1. Ask the user for the `BUG-…` report ID shown after `/bug` and, when needed,
-   their `USR-…` support ID.
-2. Search the private Sentry project by `report_id` or `installation_id`.
+1. Ask the user for the copyable `RPT-…` report ID shown after `/bug` or
+   `/feedback` submission.
+2. Search the private Sentry project by `report_id`. Use `installation_id` only
+   when correlating multiple reports from the same pseudonymous installation.
 3. Link or create the corresponding issue in the private source repository.
 4. Keep report descriptions and crash attachments out of the public releases
    repository.

@@ -17,11 +17,18 @@ import {
   listSkills,
 } from '../lib/commands';
 import { browserTranscriptReferencesFromDesignReferences } from './browser/browserTranscriptReferences';
-import { pickDirectory, pickFiles, listFiles, isDesktop } from '../lib/desktop';
+import {
+  pickDirectory,
+  pickFiles,
+  listFiles,
+  isDesktop,
+  type FeedbackReportRequest,
+} from '../lib/desktop';
 import { type AttachedImage, useImageAttachments } from '../hooks/useImageAttachments';
 import { useImageFileDrop } from '../hooks/useImageFileDrop';
 import { ImageChip } from './composer/ImageChip';
 import { ImageViewerModal } from './composer/ImageViewerModal';
+import { FeedbackModal } from './FeedbackModal';
 import PlanSteps from './composer/PlanSteps';
 import { QueuedPrompts } from './composer/QueuedPrompts';
 import { markGitTurnStart } from '../lib/git';
@@ -54,8 +61,7 @@ import PlanApprovalInline from './PlanApprovalInline';
 import { ModelIcon, providerOf } from './ModelIcon';
 import { StartInBar } from './environment/StartInBar';
 import type { Autonomy, SkillInfo } from '../types/bridge';
-import { bugDescriptionFromCommand, reportBug } from '../lib/bugReport';
-import { toast } from '../lib/toast';
+import { feedbackDraftFromCommand } from '../lib/feedbackReport';
 
 const ACCENT = 'var(--droid-accent)';
 const accentMix = (pct: number) =>
@@ -124,6 +130,7 @@ export default function PromptInput({
   const imageAttachments = useImageAttachments(state.imagePasteQuality);
   const fileDrop = useImageFileDrop(imageAttachments.addBlob);
   const [viewerImageId, setViewerImageId] = useState<string | null>(null);
+  const [feedbackReport, setFeedbackReport] = useState<FeedbackReportRequest | null>(null);
   const [activeSkills, setActiveSkillsState] = useState<SkillInfo[]>([]);
   const setActiveSkills = (value: SetStateAction<SkillInfo[]>) => {
     composerRevisionRef.current += 1;
@@ -220,9 +227,14 @@ export default function PromptInput({
       cmd: '/bug',
       desc: 'Send a private bug report',
       run: () => {
-        const command = '/bug ';
-        setInput(command);
-        pendingCaret.current = command.length;
+        setFeedbackReport({ category: 'bug', description: '' });
+      },
+    },
+    {
+      cmd: '/feedback',
+      desc: 'Share private product feedback',
+      run: () => {
+        setFeedbackReport({ category: 'other', description: '' });
       },
     },
     {
@@ -277,7 +289,7 @@ export default function PromptInput({
   ];
 
   const trigger = useMemo(() => getTrigger(input, caret), [input, caret]);
-  const overlayOpen = Boolean(trigger ?? (modelsOpen || (isLive && sendHover)));
+  const overlayOpen = [trigger, modelsOpen, feedbackReport, isLive && sendHover].some(Boolean);
 
   useEffect(() => {
     if (!isLive) setSendHover(false);
@@ -557,19 +569,10 @@ export default function PromptInput({
       });
     };
 
-    const bugDescription = bugDescriptionFromCommand(text);
-    if (bugDescription !== null && activeSkills.length === 0 && allFiles.length === 0) {
-      if (!bugDescription) {
-        toast.error('Add a short description after /bug.');
-        return;
-      }
-      try {
-        const receipt = await reportBug(bugDescription);
-        toast.success(`Sent ${receipt.reportId}. Support ID: ${receipt.userId}`);
-        clearAfterSubmit();
-      } catch (error) {
-        toast.error(error instanceof Error ? error.message : 'Bug report could not be sent.');
-      }
+    const feedbackDraft = feedbackDraftFromCommand(text);
+    if (feedbackDraft !== null) {
+      setFeedbackReport(feedbackDraft);
+      if (composerRevisionRef.current === composerRevision) setInput('');
       return;
     }
 
@@ -1362,6 +1365,14 @@ export default function PromptInput({
             setViewerImageId(null);
           }}
           onCrop={imageAttachments.applyCrop}
+        />
+      )}
+      {feedbackReport && (
+        <FeedbackModal
+          initialReport={feedbackReport}
+          onClose={() => {
+            setFeedbackReport(null);
+          }}
         />
       )}
     </div>
