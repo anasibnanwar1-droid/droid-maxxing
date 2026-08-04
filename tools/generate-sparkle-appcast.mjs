@@ -27,11 +27,11 @@ for (const architecture of ['arm64', 'x64']) {
       [
         ...keyArguments,
         '--download-url-prefix',
-        `https://github.com/anasibnanwar1-droid/droidex-releases/releases/download/${releaseTag}/`,
+        `https://github.com/droidex-anas/droidex-releases/releases/download/${releaseTag}/`,
         '--maximum-deltas',
         '0',
         '--link',
-        'https://github.com/anasibnanwar1-droid/droidex-releases/releases/latest',
+        'https://github.com/droidex-anas/droidex-releases/releases/latest',
         '-o',
         appcastPath,
         stagingDirectory,

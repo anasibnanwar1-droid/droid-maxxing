@@ -71,7 +71,7 @@ flowchart LR
 
 Free, ad-hoc-signed macOS builds use Sparkle against architecture-specific,
 EdDSA-signed appcasts and ZIPs in the public
-`anasibnanwar1-droid/droidex-releases` repository. DROIDEX may check for a new
+`droidex-anas/droidex-releases` repository. DROIDEX may check for a new
 version in the background, but download and installation always require an
 explicit user action. The future Developer ID path uses `electron-updater` and
 `latest-mac.yml`. The private source repository is never a client update feed.

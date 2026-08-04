@@ -95,7 +95,7 @@ function assertNoPrivateBuildFiles(paths, label) {
 function assertNoPrivateContent(content, label) {
   const text = content.toString('utf8');
   for (const forbidden of [
-    'github.com/anasibnanwar1-droid/droid-maxxing',
+    'github.com/droidex-anas/droid-maxxing',
     '/Users/anas/',
     '.codex/worktrees/',
   ]) {
@@ -121,7 +121,7 @@ function verifySparkleAppcast(architecture) {
   const archivePath = join(releaseDirectory, archiveName);
   assert(
     url ===
-      `https://github.com/anasibnanwar1-droid/droidex-releases/releases/download/v${packageJson.version}/${archiveName}`,
+      `https://github.com/droidex-anas/droidex-releases/releases/download/v${packageJson.version}/${archiveName}`,
     `${appcastName} URL is stale`,
   );
   assert(Number(declaredLength) === statSync(archivePath).size, `${appcastName} size is stale`);
@@ -361,7 +361,7 @@ for (const architecture of architectures) {
     'sparkle_updater.node',
   );
   const updateConfiguration = readFileSync(join(resourcesPath, 'app-update.yml'), 'utf8');
-  assert(updateConfiguration.includes('owner: anasibnanwar1-droid'), `${name} updater owner is wrong`);
+  assert(updateConfiguration.includes('owner: droidex-anas'), `${name} updater owner is wrong`);
   assert(updateConfiguration.includes('repo: droidex-releases'), `${name} updater repo is wrong`);
   assert(
     updateConfiguration.includes('updaterCacheDirName: droidex-updater'),

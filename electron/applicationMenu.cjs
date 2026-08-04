@@ -1,6 +1,5 @@
-const HELP_URL = 'https://github.com/anasibnanwar1-droid/droidex-releases#readme';
-const LATEST_RELEASE_URL =
-  'https://github.com/anasibnanwar1-droid/droidex-releases/releases/latest';
+const HELP_URL = 'https://github.com/droidex-anas/droidex-releases#readme';
+const LATEST_RELEASE_URL = 'https://github.com/droidex-anas/droidex-releases/releases/latest';
 const PRIVACY_SECURITY_PANE = '/System/Library/PreferencePanes/Security.prefPane';
 
 function createApplicationMenuTemplate(options) {

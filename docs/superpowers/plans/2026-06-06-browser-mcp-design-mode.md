@@ -107,7 +107,7 @@ Out of scope for the first build:
 - `/Users/anas/Documents/droid-control` is the original checkout. The user has active frontend edits there. Do not touch it.
 - `/Users/anas/Documents/droid-control-browser-mcp` is the feature worktree.
 - Branch: `feature/browser-mcp-design-mode`.
-- Repo: `anasibnanwar1-droid/droid-maxxing`.
+- Repo: `droidex-anas/droid-maxxing`.
 - Baseline `main` has already been pushed.
 - The implementation must use one canonical current-state path. No compatibility shims for historical local states.
 

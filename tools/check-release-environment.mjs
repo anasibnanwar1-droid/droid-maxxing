@@ -2,8 +2,8 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import process from 'node:process';
 
-const sourceRepository = 'anasibnanwar1-droid/droid-maxxing';
-const releaseRepository = 'anasibnanwar1-droid/droidex-releases';
+const sourceRepository = 'droidex-anas/droid-maxxing';
+const releaseRepository = 'droidex-anas/droidex-releases';
 const releaseEnvironment = 'macos-release';
 const packageVersion = JSON.parse(readFileSync('package.json', 'utf8')).version;
 const requiredSecrets = [
