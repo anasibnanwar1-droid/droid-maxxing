@@ -71,7 +71,7 @@ These runbooks cover local development and release triage for DROIDEX.
 8. For subsequent releases, complete the Sparkle N-1-to-N update smoke before
    treating the release as operationally ready.
 
-The unsigned first-launch recovery is: open System Settings, choose Privacy &
+The ad-hoc-signed first-launch recovery is: open System Settings, choose Privacy &
 Security, find the blocked DROIDEX notice, choose Open Anyway, and confirm. Do
 not advise users to disable Gatekeeper globally.
 

@@ -37,14 +37,14 @@ function loadConfig(environment) {
   }
 }
 
-test('unsigned mac builds never attempt notarization', () => {
+test('free mac builds use ad-hoc signing and never attempt notarization', () => {
   const config = loadConfig({
     APPLE_ID: 'developer@example.com',
     APPLE_APP_SPECIFIC_PASSWORD: 'password',
     APPLE_TEAM_ID: 'TEAMID',
   });
 
-  assert.equal(config.mac.identity, null);
+  assert.equal(config.mac.identity, '-');
   assert.equal(config.mac.notarize, false);
   assert.equal(config.extraMetadata.updateInstallMode, 'sparkle');
   assert.equal(config.mac.extendInfo.SUPublicEDKey, 'czgsBI/YO7amJbwhZidZSO0j7LU5A4NsU0No9fDemWU=');

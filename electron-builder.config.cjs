@@ -18,7 +18,7 @@ const sentryDsn = process.env.SENTRY_DSN_FILE
   ? fs.readFileSync(process.env.SENTRY_DSN_FILE, 'utf8').trim()
   : process.env.SENTRY_DSN || '';
 const hasSigningCredentials = Boolean(process.env.CSC_LINK || process.env.APPLE_SIGNING_IDENTITY);
-const identity = process.env.APPLE_SIGNING_IDENTITY || (process.env.CSC_LINK ? undefined : null);
+const identity = process.env.APPLE_SIGNING_IDENTITY || (process.env.CSC_LINK ? undefined : '-');
 const hasApiKeyCredentials = Boolean(
   process.env.APPLE_API_KEY &&
   path.isAbsolute(process.env.APPLE_API_KEY) &&

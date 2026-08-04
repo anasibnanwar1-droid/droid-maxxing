@@ -53,8 +53,8 @@ failure blocks tagging.
 
 ## Canonical release path
 
-The current website release is unsigned and not notarized. It does not require
-an Apple Developer Program subscription. Build with
+The current website release is ad-hoc signed, but it has no trusted Developer ID
+signature and is not notarized. It does not require an Apple Developer Program subscription. Build with
 `DROIDEX_UNSIGNED_RELEASE_BUILD=1`, inject `SENTRY_DSN` from protected release
 configuration, generate both Sparkle appcasts with `npm run sparkle:appcast`,
 and run the unsigned preflight. Publish only these immutable public assets:

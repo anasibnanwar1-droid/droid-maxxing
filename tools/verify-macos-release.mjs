@@ -177,6 +177,13 @@ function verifyDeveloperIdApp(appPath, label) {
   );
 }
 
+function verifyAdHocApp(appPath, label) {
+  run('/usr/bin/codesign', ['--verify', '--deep', '--strict', '--verbose=2', appPath]);
+  const signature = runWithDiagnostics('/usr/bin/codesign', ['-dvv', appPath]);
+  assert(signature.includes('Signature=adhoc'), `${label} is not ad-hoc signed`);
+  assert(signature.includes('TeamIdentifier=not set'), `${label} unexpectedly has an Apple team`);
+}
+
 async function smokePackagedRuntime(architecture) {
   const { appPath, name } = architecture;
   const executablePath = join(appPath, 'Contents', 'MacOS', 'DROIDEX');
@@ -404,6 +411,7 @@ for (const architecture of architectures) {
   }
 
   if (requireSignedArtifacts) verifyDeveloperIdApp(appPath, `${name} staged app`);
+  else verifyAdHocApp(appPath, `${name} staged app`);
 }
 
 for (const architecture of architectures) await smokePackagedRuntime(architecture);

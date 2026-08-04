@@ -58,8 +58,8 @@ check('public repository contains only release documentation', () => {
   }
   const readme = readJson('gh', ['api', `repos/${releaseRepository}/contents/README.md`]);
   const readmeText = Buffer.from(readme.content, 'base64').toString('utf8');
-  if (!readmeText.includes('unsigned and not notarized')) {
-    throw new Error('public README does not disclose unsigned distribution');
+  if (!readmeText.includes('ad-hoc signed') || !readmeText.includes('not notarized')) {
+    throw new Error('public README does not disclose ad-hoc signing and missing notarization');
   }
   return names.join(', ');
 });
