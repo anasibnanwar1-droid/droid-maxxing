@@ -8,6 +8,14 @@ const sparkleBridgeSource = require('node:fs').readFileSync(
   join(__dirname, '..', 'native', 'sparkle-updater', 'src', 'sparkle_updater.mm'),
   'utf8',
 );
+const releaseWorkflowSource = require('node:fs').readFileSync(
+  join(__dirname, '..', '.github', 'workflows', 'release-macos.yml'),
+  'utf8',
+);
+const unsignedPreflightSource = require('node:fs').readFileSync(
+  join(__dirname, '..', 'tools', 'check-unsigned-release.mjs'),
+  'utf8',
+);
 
 const configPath = require.resolve('../electron-builder.config.cjs');
 const appleEnvironmentKeys = [
@@ -72,7 +80,7 @@ test('free mac builds use ad-hoc signing and never attempt notarization', () => 
 test('unsigned architecture builds select their matching Sparkle feed', () => {
   const config = loadConfig({
     SPARKLE_FEED_URL:
-      'https://github.com/anasibnanwar1-droid/droidex-releases/releases/latest/download/appcast-arm64.xml',
+      'https://github.com/droidex-anas/droidex-releases/releases/latest/download/appcast-arm64.xml',
   });
 
   assert.match(config.mac.extendInfo.SUFeedURL, /appcast-arm64\.xml$/);
@@ -115,7 +123,7 @@ test('release builds emit canonical update artifacts', () => {
   );
   assert.deepEqual(config.publish, {
     provider: 'github',
-    owner: 'anasibnanwar1-droid',
+    owner: 'droidex-anas',
     repo: 'droidex-releases',
     releaseType: 'release',
   });
@@ -213,4 +221,28 @@ test('Sparkle checks in the background but never downloads updates automatically
     sparkleBridgeSource,
     /setAutomaticallyDownloadsUpdates:"\), enableBackgroundChecks/,
   );
+});
+
+test('release automation publishes only verified unsigned Sparkle assets', () => {
+  assert.match(releaseWorkflowSource, /DROIDEX_UNSIGNED_RELEASE_BUILD: '1'/);
+  assert.match(
+    releaseWorkflowSource,
+    /SPARKLE_PRIVATE_KEY: \$\{\{ secrets\.SPARKLE_PRIVATE_KEY \}\}/,
+  );
+  assert.match(releaseWorkflowSource, /release:preflight:unsigned/);
+  assert.match(releaseWorkflowSource, /test "sha256:\$LOCAL_DIGEST" = "\$REMOTE_DIGEST"/);
+  assert.doesNotMatch(releaseWorkflowSource, /release\/latest-mac\.yml/);
+  assert.doesNotMatch(releaseWorkflowSource, /release\/.*\.blockmap/);
+});
+
+test('unsigned preflight accepts detached release tags only in CI', () => {
+  assert.match(unsignedPreflightSource, /DROIDEX_RELEASE_GH_TOKEN/);
+  assert.match(unsignedPreflightSource, /env: \{ \.\.\.process\.env, GH_TOKEN: token \}/);
+  assert.match(
+    releaseWorkflowSource,
+    /DROIDEX_RELEASE_GH_TOKEN: \$\{\{ secrets\.DROIDEX_RELEASE_TOKEN \}\}/,
+  );
+  assert.match(unsignedPreflightSource, /!branch && process\.env\.CI === 'true'/);
+  assert.match(unsignedPreflightSource, /merge-base', '--is-ancestor', head, 'origin\/main'/);
+  assert.match(unsignedPreflightSource, /detached HEAD is allowed only in release CI/);
 });

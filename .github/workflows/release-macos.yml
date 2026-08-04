@@ -15,11 +15,11 @@ permissions:
 env:
   CI: true
   NODE_VERSION: '22'
-  RELEASE_REPOSITORY: anasibnanwar1-droid/droidex-releases
+  RELEASE_REPOSITORY: droidex-anas/droidex-releases
 
 jobs:
   release:
-    name: Sign, notarize, and publish
+    name: Verify and publish macOS release
     runs-on: macos-15
     timeout-minutes: 60
     environment: macos-release
@@ -58,33 +58,32 @@ jobs:
           npm run electron:check
           npm run test
           npm --prefix sidecar run test
-          npm audit --omit=dev
-          npm audit --omit=dev --prefix sidecar
+          npm run quality:file-size
+          npm run quality:tech-debt
+          npm run quality:boundaries
+          npm run quality:deps
+          npm run quality:deadcode
+          npm run quality:duplicates
+          npm run security:audit-report
 
-      - name: Materialize notarization key
+      - name: Build ad-hoc-signed macOS artifacts
         env:
-          APPLE_API_KEY_P8_BASE64: ${{ secrets.APPLE_API_KEY_P8_BASE64 }}
-        run: |
-          test -n "$APPLE_API_KEY_P8_BASE64"
-          printf '%s' "$APPLE_API_KEY_P8_BASE64" | base64 -D > "$RUNNER_TEMP/AuthKey.p8"
-          chmod 600 "$RUNNER_TEMP/AuthKey.p8"
-
-      - name: Build signed and notarized artifacts
-        env:
-          DROIDEX_RELEASE_BUILD: '1'
-          CSC_LINK: ${{ secrets.CSC_LINK }}
-          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
-          APPLE_API_KEY: ${{ runner.temp }}/AuthKey.p8
-          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
-          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          DROIDEX_UNSIGNED_RELEASE_BUILD: '1'
           SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
         run: npm run dist:mac
 
-      - name: Verify release artifacts
+      - name: Sign Sparkle feeds and verify artifacts
         env:
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: npm run release:verify:mac -- release --signed --write-checksums
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+        run: |
+          npm run sparkle:appcast -- release
+          npm run release:verify:mac -- release --write-checksums
+
+      - name: Run unsigned release preflight
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DROIDEX_RELEASE_GH_TOKEN: ${{ secrets.DROIDEX_RELEASE_TOKEN }}
+        run: npm run release:preflight:unsigned
 
       - name: Retain verified artifacts privately
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -92,14 +91,15 @@ jobs:
           name: droidex-${{ github.ref_name }}-macos
           if-no-files-found: error
           path: |
-            release/droidex-*.dmg
-            release/droidex-*.dmg.blockmap
-            release/droidex-*.zip
-            release/droidex-*.zip.blockmap
-            release/latest-mac.yml
+            release/droidex-arm64.dmg
+            release/droidex-arm64.zip
+            release/droidex-x64.dmg
+            release/droidex-x64.zip
+            release/appcast-arm64.xml
+            release/appcast-x64.xml
             release/SHA256SUMS
 
-      - name: Publish atomic public GitHub release
+      - name: Publish immutable public GitHub release
         env:
           GH_TOKEN: ${{ secrets.DROIDEX_RELEASE_TOKEN }}
         run: |
@@ -117,27 +117,59 @@ jobs:
             --repo "$RELEASE_REPOSITORY" \
             --target main \
             --title "DROIDEX $GITHUB_REF_NAME" \
-            --notes "Signed and notarized DROIDEX macOS release for Apple silicon and Intel Macs. Download the DMG matching your Mac."
+            --notes "Ad-hoc-signed DROIDEX macOS release for Apple silicon and Intel Macs. First launch requires approval in Privacy & Security. Download the DMG matching your Mac."
+          touch "$RUNNER_TEMP/droidex-draft-created"
           gh release upload "$GITHUB_REF_NAME" \
-            release/droidex-*.dmg \
-            release/droidex-*.dmg.blockmap \
-            release/droidex-*.zip \
-            release/droidex-*.zip.blockmap \
-            release/latest-mac.yml \
+            release/droidex-arm64.dmg \
+            release/droidex-arm64.zip \
+            release/droidex-x64.dmg \
+            release/droidex-x64.zip \
+            release/appcast-arm64.xml \
+            release/appcast-x64.xml \
             release/SHA256SUMS \
             --repo "$RELEASE_REPOSITORY"
+
+          for asset in \
+            release/droidex-arm64.dmg \
+            release/droidex-arm64.zip \
+            release/droidex-x64.dmg \
+            release/droidex-x64.zip \
+            release/appcast-arm64.xml \
+            release/appcast-x64.xml \
+            release/SHA256SUMS; do
+            NAME="${asset##*/}"
+            LOCAL_DIGEST="$(shasum -a 256 "$asset" | awk '{print $1}')"
+            REMOTE_DIGEST="$(gh release view "$GITHUB_REF_NAME" \
+              --repo "$RELEASE_REPOSITORY" \
+              --json assets \
+              --jq '.assets[] | select(.name == "'"$NAME"'") | .digest')"
+            test "sha256:$LOCAL_DIGEST" = "$REMOTE_DIGEST"
+          done
+
           gh release edit "$GITHUB_REF_NAME" --repo "$RELEASE_REPOSITORY" --draft=false
           gh release verify "$GITHUB_REF_NAME" --repo "$RELEASE_REPOSITORY"
           for asset in \
-            release/droidex-*.dmg \
-            release/droidex-*.dmg.blockmap \
-            release/droidex-*.zip \
-            release/droidex-*.zip.blockmap \
-            release/latest-mac.yml \
+            release/droidex-arm64.dmg \
+            release/droidex-arm64.zip \
+            release/droidex-x64.dmg \
+            release/droidex-x64.zip \
+            release/appcast-arm64.xml \
+            release/appcast-x64.xml \
             release/SHA256SUMS; do
             gh release verify-asset "$GITHUB_REF_NAME" "$asset" --repo "$RELEASE_REPOSITORY"
           done
 
-      - name: Remove notarization key
-        if: always()
-        run: rm -f "$RUNNER_TEMP/AuthKey.p8"
+      - name: Remove an incomplete workflow-owned draft
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.DROIDEX_RELEASE_TOKEN }}
+        run: |
+          if test -f "$RUNNER_TEMP/droidex-draft-created" && \
+            test "$(gh release view "$GITHUB_REF_NAME" \
+              --repo "$RELEASE_REPOSITORY" \
+              --json isDraft --jq '.isDraft')" = "true"; then
+            gh release delete "$GITHUB_REF_NAME" \
+              --repo "$RELEASE_REPOSITORY" \
+              --cleanup-tag \
+              --yes
+          fi

@@ -3,8 +3,8 @@ import { readFileSync } from 'node:fs';
 import process from 'node:process';
 import { extractFile } from '@electron/asar';
 
-const sourceRepository = 'anasibnanwar1-droid/droid-maxxing';
-const releaseRepository = 'anasibnanwar1-droid/droidex-releases';
+const sourceRepository = 'droidex-anas/droid-maxxing';
+const releaseRepository = 'droidex-anas/droidex-releases';
 const releaseDirectory = 'release';
 const packageVersion = JSON.parse(readFileSync('package.json', 'utf8')).version;
 const releaseTag = `v${packageVersion}`;
@@ -18,8 +18,13 @@ function command(file, args, options = {}) {
   }).trim();
 }
 
-function readJson(file, args) {
-  return JSON.parse(command(file, args));
+function readJson(file, args, options = {}) {
+  return JSON.parse(command(file, args, options));
+}
+
+function releaseRepositoryOptions() {
+  const token = process.env.DROIDEX_RELEASE_GH_TOKEN;
+  return token ? { env: { ...process.env, GH_TOKEN: token } } : {};
 }
 
 function check(name, run) {
@@ -38,25 +43,39 @@ check('source repository is private', () => {
 });
 
 check('release repository is public and immutable', () => {
-  const repository = readJson('gh', ['repo', 'view', releaseRepository, '--json', 'visibility']);
+  const options = releaseRepositoryOptions();
+  const repository = readJson(
+    'gh',
+    ['repo', 'view', releaseRepository, '--json', 'visibility'],
+    options,
+  );
   if (repository.visibility !== 'PUBLIC') throw new Error(`found ${repository.visibility}`);
-  const immutable = readJson('gh', [
-    'api',
-    '-H',
-    'X-GitHub-Api-Version: 2026-03-10',
-    `repos/${releaseRepository}/immutable-releases`,
-  ]);
+  const immutable = readJson(
+    'gh',
+    [
+      'api',
+      '-H',
+      'X-GitHub-Api-Version: 2026-03-10',
+      `repos/${releaseRepository}/immutable-releases`,
+    ],
+    options,
+  );
   if (immutable.enabled !== true) throw new Error('immutable releases are disabled');
   return releaseRepository;
 });
 
 check('public repository contains only release documentation', () => {
-  const entries = readJson('gh', ['api', `repos/${releaseRepository}/contents`]);
+  const options = releaseRepositoryOptions();
+  const entries = readJson('gh', ['api', `repos/${releaseRepository}/contents`], options);
   const names = entries.map(({ name }) => name).sort();
   if (JSON.stringify(names) !== JSON.stringify(['README.md', 'SECURITY.md'])) {
     throw new Error(`unexpected default-branch files: ${names.join(', ')}`);
   }
-  const readme = readJson('gh', ['api', `repos/${releaseRepository}/contents/README.md`]);
+  const readme = readJson(
+    'gh',
+    ['api', `repos/${releaseRepository}/contents/README.md`],
+    options,
+  );
   const readmeText = Buffer.from(readme.content, 'base64').toString('utf8');
   if (!readmeText.includes('ad-hoc signed') || !readmeText.includes('not notarized')) {
     throw new Error('public README does not disclose ad-hoc signing and missing notarization');
@@ -66,7 +85,11 @@ check('public repository contains only release documentation', () => {
 
 check(`${releaseTag} does not already exist`, () => {
   try {
-    command('gh', ['release', 'view', releaseTag, '--repo', releaseRepository]);
+    command(
+      'gh',
+      ['release', 'view', releaseTag, '--repo', releaseRepository],
+      releaseRepositoryOptions(),
+    );
   } catch {
     return 'available';
   }
@@ -78,6 +101,11 @@ check('release source is clean and preserved on its private remote branch', () =
   if (status) throw new Error('working tree has uncommitted changes');
   const branch = command('git', ['branch', '--show-current']);
   const head = command('git', ['rev-parse', 'HEAD']);
+  if (!branch && process.env.CI === 'true') {
+    command('git', ['merge-base', '--is-ancestor', head, 'origin/main']);
+    return `main@${head}`;
+  }
+  if (!branch) throw new Error('detached HEAD is allowed only in release CI');
   const remoteHead = command('git', ['rev-parse', `origin/${branch}`]);
   if (head !== remoteHead) throw new Error(`origin/${branch} does not match HEAD`);
   return `${branch}@${head}`;

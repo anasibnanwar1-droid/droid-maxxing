@@ -43,12 +43,15 @@ opens Sparkle's native update window; nothing downloads or installs until the
 user approves it. You can also check manually from the DROIDEX menu.
 
 Official macOS downloads and first-launch instructions live in the
-[public releases repository](https://github.com/anasibnanwar1-droid/droidex-releases).
+[public releases repository](https://github.com/droidex-anas/droidex-releases).
+The permanent website links and tag-controlled publishing flow are documented
+in `docs/releasing.md`.
 
 ## More documentation
 
 - Architecture overview: `docs/architecture.md`
 - Command reference: `docs/generated/project-reference.md`
 - Runbooks: `docs/runbooks.md`
-- Release checklist: `docs/deployment-observability.md`
+- Team release guide: `docs/releasing.md`
+- Release controls and observability: `docs/deployment-observability.md`
 - Engineering instructions: `AGENTS.md`

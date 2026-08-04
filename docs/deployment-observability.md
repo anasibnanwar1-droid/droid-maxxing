@@ -1,5 +1,8 @@
 # Deployment Observability
 
+Start with the human release checklist in [`releasing.md`](releasing.md). This
+document records the deeper controls, trust boundaries, and operational checks.
+
 This project observes release readiness through GitHub Actions, verified build
 artifacts, updater configuration, private crash intake, and local runtime logs.
 
@@ -33,11 +36,16 @@ Record these values with each release candidate:
 | `SPARKLE_PRIVATE_KEY` | EdDSA private key used only in protected release automation to sign unsigned-app update feeds and ZIPs |
 | `DROIDEX_RELEASE_TOKEN` | Fine-grained token with Contents write and Administration read access only to the public releases repository |
 
-Configure these in the `macos-release` GitHub environment. Its deployment
-policy admits `v*` tags only and disables administrator bypass. The workflow
-also requires the tagged commit to be exactly versioned and already contained
-in `origin/main`. Keep real secrets out of release notes and CI logs. The
-release token is exposed only to the final publish step.
+The current `macos-release` GitHub environment requires `SENTRY_DSN`,
+`SPARKLE_PRIVATE_KEY`, and `DROIDEX_RELEASE_TOKEN`. Add the Apple credentials
+only when the workflow is deliberately converted to the future Developer ID
+path. The environment's deployment policy admits `v*` tags only and disables
+administrator bypass. The workflow also requires the tagged commit to be
+exactly versioned and already contained in `origin/main`. Keep real secrets out
+of release notes and CI logs. The release token is exposed only to public
+release-repository checks during preflight, the final publish step, and
+marker-gated failed-draft cleanup. Private source checks continue to use the
+source repository's scoped workflow token.
 
 Run `npm run release:preflight:unsigned` for the current free distribution path.
 It verifies the private/public repository boundary, immutable public releases,
@@ -84,21 +92,26 @@ or installs an app update without the user choosing the update action.
 Keep the private key only in the macOS Keychain and the protected
 `macos-release` GitHub environment.
 
-The future paid Developer ID path remains available as follows.
-
 `.github/workflows/release-macos.yml` is the only production publisher. A tag
-whose name exactly matches the private source package version, such as
-`v0.1.0`, runs all release gates, signs and notarizes Intel and Apple silicon
-builds, checks Gatekeeper and stapling, smoke-tests bundled `node:sqlite`, and
-generates `SHA256SUMS`.
+whose name exactly matches the private source package version and is already
+contained in `main` runs all release gates, builds the ad-hoc-signed Intel and
+Apple silicon packages, signs both Sparkle appcasts, verifies the artifacts,
+and generates `SHA256SUMS`.
 
-The workflow then publishes these files to the public
-`anasibnanwar1-droid/droidex-releases` repository in one `gh release create`
-operation. GitHub creates a draft, uploads every asset, and publishes it only
-after upload succeeds. Enable immutable releases on that public repository so
-published tags and assets cannot be replaced. The repository itself contains
-only public download documentation; its automatic source archives do not
-contain the private source repository.
+The workflow publishes these files to the public
+`droidex-anas/droidex-releases` repository in one `gh release create`
+operation. GitHub creates a draft, uploads exactly the two DMGs, two ZIPs, two
+appcasts, and `SHA256SUMS`, compares every remote digest with the local file,
+and publishes only after verification succeeds. Enable immutable releases on
+that public repository so published tags and assets cannot be replaced. The
+repository itself contains only public download documentation; its automatic
+source archives do not contain the private source repository.
+
+A future Developer ID release must deliberately convert this same workflow to
+the signed/notarized `DROIDEX_RELEASE_BUILD=1` path and run
+`npm run release:preflight`. That path uses `latest-mac.yml` and blockmaps for
+electron-updater. Do not enable the free Sparkle and paid Developer ID paths for
+the same tag.
 
 Do not attach `builder-debug.yml`, source maps, `.env` files, certificates, or
 private source archives. Electron application JavaScript shipped inside the
