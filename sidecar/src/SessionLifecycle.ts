@@ -96,6 +96,7 @@ export interface SessionLifecycleDependencies {
 }
 export class SessionLifecycle {
   private readonly deferredCloses = new WeakMap<LiveSession, DeferredClose>();
+  private readonly resumeOperations = new Map<string, Promise<boolean>>();
 
   constructor(private readonly dependencies: SessionLifecycleDependencies) {}
   async create(command: SessionCreateCommand): Promise<void> {
@@ -188,6 +189,21 @@ export class SessionLifecycle {
   }
 
   async resume(requestedAppSessionId: string): Promise<boolean> {
+    const d = this.dependencies;
+    const historical = d.registry.getCanonicalSummary(requestedAppSessionId);
+    const appSessionId = historical?.appSessionId ?? requestedAppSessionId;
+    const pending = this.resumeOperations.get(appSessionId);
+    if (pending) return pending;
+
+    const operation = this.resumeOnce(requestedAppSessionId).finally(() => {
+      if (this.resumeOperations.get(appSessionId) === operation)
+        this.resumeOperations.delete(appSessionId);
+    });
+    this.resumeOperations.set(appSessionId, operation);
+    return operation;
+  }
+
+  private async resumeOnce(requestedAppSessionId: string): Promise<boolean> {
     const d = this.dependencies;
     d.ensureConnected();
     const historical = d.registry.getCanonicalSummary(requestedAppSessionId);

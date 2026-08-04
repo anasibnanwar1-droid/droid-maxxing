@@ -546,6 +546,29 @@ test('send lazily resumes once and sends the prompt exactly once', async () => {
   assert.deepEqual(provider.prompts, ['only once']);
 });
 
+test('an eager resume and immediate send share one provider load', async () => {
+  const harness = createHarness([summary('warm-app', 'warm-provider')]);
+  const provider = queueLoad(harness, 'warm-provider');
+  let releaseLimit: (limit: number) => void = () => undefined;
+  harness.setCompactionLimit(
+    () =>
+      new Promise<number>((resolve) => {
+        releaseLimit = resolve;
+      }),
+  );
+
+  const warming = harness.lifecycle.resume('warm-app');
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  const sending = harness.lifecycle.send('warm-app', 'send while warming');
+
+  assert.equal(harness.runtime.loadCalls.length, 1);
+  releaseLimit(800);
+  assert.equal(await warming, true);
+  await sending;
+  assert.deepEqual(provider.prompts, ['send while warming']);
+  assert.equal(harness.runtime.loadCalls.length, 1);
+});
+
 test('failed lazy resume emits only the original load error', async () => {
   const harness = createHarness([summary('lazy-failure-app', 'lazy-failure-provider')]);
   harness.runtime.loadQueue.set('lazy-failure-provider', [new Error('provider load failed')]);

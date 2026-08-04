@@ -8,6 +8,7 @@ import {
   listFactoryDefaults,
   listSessions,
   loadSessionHistory,
+  resumeSession,
   sendNativeBrowserResult,
   openChild,
   newChildOpenRequestId,
@@ -287,6 +288,15 @@ export default function App() {
     dispatch({ type: 'SESSION_RESTORE_START', appSessionId: activeSession.appSessionId });
     loadSessionHistory(activeSession.appSessionId);
   }, [activeSession, embedded, state.historyLoaded, dispatch]);
+
+  useEffect(() => {
+    if (embedded || !activeSession) return;
+    if (!['paused', 'completed', 'failed'].includes(activeSession.phase)) return;
+    // Warm a historical provider session as soon as the user opens it. The
+    // history request above is sent first, so external compaction markers are
+    // restored before resume publishes its fresh live context snapshot.
+    resumeSession(activeSession.appSessionId);
+  }, [activeSession?.appSessionId, activeSession?.phase, embedded]);
 
   useEffect(() => {
     if (embedded || !activeSession) return;
