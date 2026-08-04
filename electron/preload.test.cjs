@@ -74,3 +74,14 @@ test('app update download does not accept a renderer-supplied URL', async () => 
   assert.equal(calls[0].channel, 'app-download-update');
   assert.equal(calls[0].payload, undefined);
 });
+
+test('automatic diagnostics preference uses closed IPC payloads', async () => {
+  const { api, calls } = loadApi();
+
+  await api.getAutomaticDiagnostics();
+  await api.setAutomaticDiagnostics(false);
+
+  assert.deepEqual(calls[0], { channel: 'diagnostics-preference-get', payload: undefined });
+  assert.equal(calls[1].channel, 'diagnostics-preference-set');
+  assert.equal(calls[1].payload.enabled, false);
+});

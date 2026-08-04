@@ -84,6 +84,26 @@ test('manual feedback reports require the trusted renderer', () => {
   assert.match(handler, /diagnostics\.reportFeedback\(report\)/);
 });
 
+test('diagnostics initialize before app readiness and preferences require the trusted renderer', () => {
+  const initializeAt = mainSource.indexOf(
+    'const diagnosticsInitialization = diagnostics.initialize();',
+  );
+  const readyAt = mainSource.indexOf('app.whenReady().then(async () =>');
+  assert.ok(initializeAt > 0 && initializeAt < readyAt);
+  assert.match(mainSource, /await diagnosticsInitialization;\s*installApplicationMenu/);
+
+  for (const channel of ['diagnostics-preference-get', 'diagnostics-preference-set']) {
+    const handlerStart = mainSource.indexOf(`ipcMain.handle('${channel}'`);
+    const handlerEnd = mainSource.indexOf('\n  ipcMain.handle(', handlerStart + 1);
+    assert.notEqual(handlerStart, -1);
+    assert.match(mainSource.slice(handlerStart, handlerEnd), /assertMainRenderer\(event\)/);
+  }
+  assert.match(
+    mainSource,
+    /const preference = await diagnostics\.setAutomaticDiagnosticsEnabled\(enabled\);\s*relaunchApp\(\);\s*return preference;/,
+  );
+});
+
 test('embedded websites cannot request unused system permissions', () => {
   assert.match(mainSource, /ses\.setDevicePermissionHandler\(\(\) => false\)/);
   assert.match(mainSource, /ses\.setPermissionCheckHandler\(\(\) => false\)/);

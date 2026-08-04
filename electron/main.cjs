@@ -40,7 +40,12 @@ const buildMetadata = readBuildMetadata();
 const terminalManager = createTerminalManager();
 const terminalSubscriptions = createTerminalSubscriptionRegistry(terminalManager);
 const filesRootAccess = files.createRootAccessRegistry();
-const diagnostics = createDiagnostics({ app, sentry: Sentry, dsn: buildMetadata.sentryDsn });
+const diagnostics = createDiagnostics({
+  app,
+  sentry: Sentry,
+  dsn: buildMetadata.sentryDsn,
+  logError: (message, error) => console.error('[diagnostics] %s:', message, error),
+});
 const sidecarSupervisor = createSidecarSupervisor({
   entryPath: sidecarEntry,
   cwd: () => (app.isPackaged ? process.resourcesPath : appRoot()),
@@ -80,9 +85,9 @@ app.setPath(
   'userData',
   process.env.DROIDEX_USER_DATA_DIR || path.join(app.getPath('appData'), APP_NAME),
 );
-diagnostics.initialize();
-
-app.whenReady().then(() => {
+const diagnosticsInitialization = diagnostics.initialize();
+app.whenReady().then(async () => {
+  await diagnosticsInitialization;
   installApplicationMenu({
     Menu,
     app,
@@ -256,6 +261,16 @@ function registerIpc() {
   ipcMain.handle('feedback-report', (event, report) => {
     assertMainRenderer(event);
     return diagnostics.reportFeedback(report);
+  });
+  ipcMain.handle('diagnostics-preference-get', (event) => {
+    assertMainRenderer(event);
+    return diagnostics.automaticDiagnosticsPreference();
+  });
+  ipcMain.handle('diagnostics-preference-set', async (event, { enabled }) => {
+    assertMainRenderer(event);
+    const preference = await diagnostics.setAutomaticDiagnosticsEnabled(enabled);
+    relaunchApp();
+    return preference;
   });
   ipcMain.handle('app-relaunch', () => relaunchApp());
   ipcMain.handle('app-set-icon', (event, payload) => {

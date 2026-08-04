@@ -8,15 +8,25 @@ const {
   createEventId,
   createReportId,
   createTechnicalDiagnostics,
+  loadAutomaticDiagnosticsPreference,
   loadOrCreateIdentity,
   normalizeFeedbackReport,
   scrubEvent,
 } = require('./diagnostics.cjs');
 
 const identityFs = {
-  readFile: async () => JSON.stringify({ version: 1, userId: 'USR-123456781234' }),
+  readFile: async (filePath) => {
+    if (filePath.endsWith('diagnostics-preferences.json')) {
+      const error = new Error('missing');
+      error.code = 'ENOENT';
+      throw error;
+    }
+    return JSON.stringify({ version: 1, userId: 'USR-123456781234' });
+  },
   mkdir: async () => undefined,
   writeFile: async () => undefined,
+  unlink: async () => undefined,
+  rename: async () => undefined,
 };
 
 function diagnosticsOptions(sentry, overrides = {}) {
@@ -51,6 +61,156 @@ test('diagnostics identity is stable pseudonymous local state', async () => {
 
   assert.deepEqual(first, { userId: 'USR-123456781234' });
   assert.deepEqual(second, first);
+});
+
+test('Sentry receives the stable pseudonymous profile identity before SDK integrations start', async () => {
+  let initialization;
+  const diagnostics = createDiagnostics(
+    diagnosticsOptions({
+      init: (options) => {
+        initialization = options;
+      },
+    }),
+  );
+
+  assert.equal(await diagnostics.initialize(), true);
+  assert.deepEqual(initialization.initialScope, {
+    user: { id: 'USR-123456781234' },
+  });
+  assert.equal(initialization.release, 'droidex@1.2.3');
+  assert.equal(initialization.environment, 'production');
+  assert.equal(initialization.sendDefaultPii, false);
+  assert.equal(initialization.tracesSampleRate, 0);
+});
+
+test('automatic diagnostics default on and disabling closes Sentry and resets local identity', async () => {
+  const removed = [];
+  let didClose = false;
+  let initializationCount = 0;
+  const diagnostics = createDiagnostics(
+    diagnosticsOptions(
+      {
+        init: () => {
+          initializationCount += 1;
+        },
+        close: async () => {
+          didClose = true;
+        },
+      },
+      {
+        fs: {
+          ...identityFs,
+          unlink: async (filePath) => removed.push(filePath),
+        },
+      },
+    ),
+  );
+
+  assert.deepEqual(
+    await loadAutomaticDiagnosticsPreference({
+      filePath: '/tmp/missing-preference.json',
+      fs: {
+        readFile: async () => {
+          const error = new Error('missing');
+          error.code = 'ENOENT';
+          throw error;
+        },
+      },
+    }),
+    { enabled: true },
+  );
+  assert.equal(await diagnostics.initialize(), true);
+  assert.deepEqual(await diagnostics.setAutomaticDiagnosticsEnabled(false), { enabled: false });
+  assert.equal(didClose, true);
+  assert.deepEqual(removed, ['/tmp/droidex-test/diagnostics.json']);
+  assert.deepEqual(await diagnostics.setAutomaticDiagnosticsEnabled(true), { enabled: true });
+  assert.equal(
+    initializationCount,
+    1,
+    'preference changes must relaunch instead of reinitializing',
+  );
+});
+
+test('invalid diagnostics preferences fail closed instead of silently opting back in', async () => {
+  let didInitialize = false;
+  const failures = [];
+  const diagnostics = createDiagnostics(
+    diagnosticsOptions(
+      { init: () => (didInitialize = true) },
+      {
+        fs: {
+          ...identityFs,
+          readFile: async (filePath) =>
+            filePath.endsWith('diagnostics-preferences.json') ? '{broken' : identityFs.readFile(),
+        },
+        logError: (message, error) => failures.push({ message, error }),
+      },
+    ),
+  );
+
+  assert.equal(await diagnostics.initialize(), false);
+  assert.equal(didInitialize, false);
+  assert.equal(failures.length, 1);
+});
+
+test('manual feedback uses a report-scoped identity while automatic diagnostics are disabled', async () => {
+  const writes = [];
+  const diagnostics = createDiagnostics(
+    diagnosticsOptions(
+      {},
+      {
+        fs: {
+          ...identityFs,
+          readFile: async (filePath) =>
+            filePath.endsWith('diagnostics-preferences.json')
+              ? JSON.stringify({ version: 1, enabled: false })
+              : identityFs.readFile(),
+          writeFile: async (filePath) => writes.push(filePath),
+        },
+        fetch: async () => ({ ok: true, status: 200 }),
+      },
+    ),
+  );
+
+  const receipt = await diagnostics.reportFeedback({
+    category: 'other',
+    description: 'Explicit report while opted out',
+  });
+  assert.match(receipt.userId, /^USR-[A-F0-9]{12}$/);
+  assert.deepEqual(writes, []);
+});
+
+test('diagnostics initialization failure does not block app startup or start an anonymous session', async () => {
+  const failures = [];
+  let didInitialize = false;
+  const diagnostics = createDiagnostics(
+    diagnosticsOptions(
+      { init: () => (didInitialize = true) },
+      {
+        fs: {
+          readFile: async (filePath) => {
+            if (filePath.endsWith('diagnostics-preferences.json')) {
+              const error = new Error('missing preference');
+              error.code = 'ENOENT';
+              throw error;
+            }
+            throw new Error('missing');
+          },
+          mkdir: async () => undefined,
+          writeFile: async () => {
+            throw new Error('disk unavailable');
+          },
+        },
+        logError: (message, error) => failures.push({ message, error }),
+      },
+    ),
+  );
+
+  assert.equal(await diagnostics.initialize(), false);
+  assert.equal(didInitialize, false);
+  assert.equal(failures.length, 1);
+  assert.match(failures[0].message, /initialization skipped/);
+  assert.match(failures[0].error.message, /disk unavailable/);
 });
 
 test('manual feedback carries a report id and explicit technical diagnostics', async () => {

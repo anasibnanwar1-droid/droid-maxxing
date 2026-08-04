@@ -10,6 +10,7 @@ const {
 } = require('@sentry/core');
 
 const FEEDBACK_CATEGORIES = new Set(['bug', 'bad_result', 'good_result', 'safety', 'other']);
+const AUTOMATIC_DIAGNOSTICS_DEFAULT = true;
 const MANUAL_FEEDBACK_TAGS = new Set([
   'report_kind',
   'report_id',
@@ -29,27 +30,70 @@ function createDiagnostics(options) {
   const sentry = options.sentry;
   const dsn = options.dsn || '';
   let identityPromise = null;
+  let isInitialized = false;
 
-  function initialize() {
-    if (!dsn) return false;
-    sentry.init({
-      dsn,
-      release: `droidex@${options.app.getVersion()}`,
-      environment: options.app.isPackaged ? 'production' : 'development',
-      sendDefaultPii: false,
-      maxBreadcrumbs: 0,
-      tracesSampleRate: 0,
-      beforeBreadcrumb: () => null,
-      beforeSend: scrubEvent,
-    });
-    void installationIdentity().then(({ userId }) => sentry.setUser({ id: userId }));
+  async function initialize() {
+    if (!dsn || isInitialized) return isInitialized;
+    try {
+      if (!(await automaticDiagnosticsPreference()).enabled) return false;
+      const { userId } = await installationIdentity();
+      sentry.init({
+        dsn,
+        release: `droidex@${options.app.getVersion()}`,
+        environment: options.app.isPackaged ? 'production' : 'development',
+        initialScope: { user: { id: userId } },
+        sendDefaultPii: false,
+        maxBreadcrumbs: 0,
+        tracesSampleRate: 0,
+        beforeBreadcrumb: () => null,
+        beforeSend: scrubEvent,
+      });
+      isInitialized = true;
+    } catch (error) {
+      options.logError?.('Sentry initialization skipped', error);
+      return false;
+    }
     return true;
+  }
+
+  function automaticDiagnosticsPreference() {
+    return loadAutomaticDiagnosticsPreference({
+      filePath: preferenceFilePath(),
+      fs: options.fs || fs,
+    });
+  }
+
+  async function setAutomaticDiagnosticsEnabled(enabled) {
+    if (typeof enabled !== 'boolean') throw new Error('Diagnostics preference must be boolean.');
+    const fileSystem = options.fs || fs;
+    await saveAutomaticDiagnosticsPreference({
+      filePath: preferenceFilePath(),
+      enabled,
+      fs: fileSystem,
+    });
+    if (enabled) return { enabled: true };
+
+    if (isInitialized && typeof sentry.close === 'function') {
+      try {
+        await sentry.close(2_000);
+      } catch (error) {
+        options.logError?.('Sentry shutdown failed', error);
+      }
+    }
+    isInitialized = false;
+    identityPromise = null;
+    try {
+      await fileSystem.unlink(identityFilePath());
+    } catch (error) {
+      if (error?.code !== 'ENOENT') throw error;
+    }
+    return { enabled: false };
   }
 
   async function reportFeedback(report) {
     const normalized = normalizeFeedbackReport(report);
     if (!dsn) throw new Error('Feedback reporting is not configured for this build.');
-    const { userId } = await installationIdentity();
+    const { userId } = await manualFeedbackIdentity();
     const reportId = createReportId(options.now?.() ?? new Date(), options.randomBytes);
     const technicalDiagnostics = createTechnicalDiagnostics(options);
     const eventId = createEventId(options.eventRandomBytes);
@@ -79,7 +123,7 @@ function createDiagnostics(options) {
   }
 
   function captureException(error, tags = {}) {
-    if (!dsn) return undefined;
+    if (!dsn || !isInitialized) return undefined;
     return sentry.withScope((scope) => {
       scope.setTags(tags);
       return sentry.captureException(error);
@@ -88,14 +132,74 @@ function createDiagnostics(options) {
 
   function installationIdentity() {
     identityPromise ??= loadOrCreateIdentity({
-      filePath: path.join(options.app.getPath('userData'), 'diagnostics.json'),
+      filePath: identityFilePath(),
       randomUUID: options.randomUUID || crypto.randomUUID,
       fs: options.fs || fs,
     });
     return identityPromise;
   }
 
-  return { initialize, reportFeedback, captureException, installationIdentity };
+  async function manualFeedbackIdentity() {
+    try {
+      if ((await automaticDiagnosticsPreference()).enabled) return installationIdentity();
+    } catch (error) {
+      options.logError?.(
+        'Diagnostics preference could not be read; using report-scoped identity',
+        error,
+      );
+    }
+    return { userId: createPseudonymousUserId(options.randomUUID || crypto.randomUUID) };
+  }
+
+  function identityFilePath() {
+    return path.join(options.app.getPath('userData'), 'diagnostics.json');
+  }
+
+  function preferenceFilePath() {
+    return path.join(options.app.getPath('userData'), 'diagnostics-preferences.json');
+  }
+
+  return {
+    initialize,
+    reportFeedback,
+    captureException,
+    installationIdentity,
+    automaticDiagnosticsPreference,
+    setAutomaticDiagnosticsEnabled,
+  };
+}
+
+async function loadAutomaticDiagnosticsPreference(options) {
+  try {
+    const parsed = JSON.parse(await options.fs.readFile(options.filePath, 'utf8'));
+    if (parsed?.version === 1 && typeof parsed.enabled === 'boolean') {
+      return { enabled: parsed.enabled };
+    }
+    throw new Error('Diagnostics preference is invalid. Toggle it again in Settings.');
+  } catch (error) {
+    if (error?.code === 'ENOENT') return { enabled: AUTOMATIC_DIAGNOSTICS_DEFAULT };
+    throw error;
+  }
+}
+
+async function saveAutomaticDiagnosticsPreference(options) {
+  const temporaryPath = `${options.filePath}.${crypto.randomUUID()}.tmp`;
+  await options.fs.mkdir(path.dirname(options.filePath), { recursive: true, mode: 0o700 });
+  try {
+    await options.fs.writeFile(
+      temporaryPath,
+      `${JSON.stringify({ version: 1, enabled: options.enabled }, null, 2)}\n`,
+      { mode: 0o600 },
+    );
+    await options.fs.rename(temporaryPath, options.filePath);
+  } catch (error) {
+    try {
+      await options.fs.unlink(temporaryPath);
+    } catch {
+      // The temporary file may not have been created.
+    }
+    throw error;
+  }
 }
 
 async function loadOrCreateIdentity(options) {
@@ -111,7 +215,7 @@ async function loadOrCreateIdentity(options) {
   } catch {
     // Missing or invalid derived diagnostics identity is replaced below.
   }
-  const userId = `USR-${options.randomUUID().replaceAll('-', '').slice(0, 12).toUpperCase()}`;
+  const userId = createPseudonymousUserId(options.randomUUID);
   await options.fs.mkdir(path.dirname(options.filePath), { recursive: true, mode: 0o700 });
   await options.fs.writeFile(
     options.filePath,
@@ -119,6 +223,10 @@ async function loadOrCreateIdentity(options) {
     { mode: 0o600 },
   );
   return { userId };
+}
+
+function createPseudonymousUserId(randomUUID = crypto.randomUUID) {
+  return `USR-${randomUUID().replaceAll('-', '').slice(0, 12).toUpperCase()}`;
 }
 
 function normalizeFeedbackReport(value) {
@@ -224,13 +332,17 @@ async function deliverFeedbackEvent(event, options) {
 }
 
 module.exports = {
+  AUTOMATIC_DIAGNOSTICS_DEFAULT,
   createDiagnostics,
   createEventId,
   createReportId,
   createTechnicalDiagnostics,
+  createPseudonymousUserId,
   deliverFeedbackEvent,
   loadOrCreateIdentity,
+  loadAutomaticDiagnosticsPreference,
   normalizeFeedbackReport,
   scrubEvent,
   scrubManualFeedbackEvent,
+  saveAutomaticDiagnosticsPreference,
 };

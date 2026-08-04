@@ -51,6 +51,9 @@ contextBridge.exposeInMainWorld('droidControl', {
   checkAppUpdate: (options) => ipcRenderer.invoke('app-check-update', options),
   downloadAppUpdate: () => ipcRenderer.invoke('app-download-update'),
   submitFeedbackReport: (report) => ipcRenderer.invoke('feedback-report', report),
+  getAutomaticDiagnostics: () => ipcRenderer.invoke('diagnostics-preference-get'),
+  setAutomaticDiagnostics: (enabled) =>
+    ipcRenderer.invoke('diagnostics-preference-set', { enabled }),
   relaunchApp: () => ipcRenderer.invoke('app-relaunch'),
   setAppIcon: (mode) => ipcRenderer.invoke('app-set-icon', { mode }),
   openExternal: (url) => ipcRenderer.invoke('open-external', { url }),
