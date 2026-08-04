@@ -10,6 +10,7 @@ import { toast } from './toast';
 // Shared, subscribable app-update state so the sidebar footer button, the
 // settings panel, and the launch check all read the same source of truth.
 let info: AppUpdateInfo | null = null;
+let checking = false;
 let downloading = false;
 const listeners = new Set<() => void>();
 
@@ -25,13 +26,27 @@ export async function refreshAppUpdate(
   options: AppUpdateCheckOptions,
 ): Promise<AppUpdateInfo | null> {
   const next = await ipcCheck(options);
-  // Only surface a positive result; failures or up-to-date checks must not
-  // clobber a previously found update.
-  if (next?.updateAvailable) {
+  if (next) {
     info = next;
     emit();
   }
   return next;
+}
+
+export async function checkForAppUpdate(): Promise<AppUpdateInfo | null> {
+  if (checking || downloading) return info;
+  checking = true;
+  emit();
+  try {
+    return await refreshAppUpdate({
+      interactive: true,
+      automaticChecks: true,
+      configureAutomaticChecks: false,
+    });
+  } finally {
+    checking = false;
+    emit();
+  }
 }
 
 export async function startAppUpdate(target: AppUpdateInfo | null = info): Promise<void> {
@@ -55,7 +70,9 @@ export async function startAppUpdate(target: AppUpdateInfo | null = info): Promi
 
 export function useAppUpdate(): {
   update: AppUpdateInfo | null;
+  checking: boolean;
   downloading: boolean;
+  check: () => Promise<void>;
   start: () => Promise<void>;
 } {
   const [, force] = useState(0);
@@ -70,7 +87,11 @@ export function useAppUpdate(): {
   }, []);
   return {
     update: info,
+    checking,
     downloading,
+    check: async () => {
+      await checkForAppUpdate();
+    },
     start: async () => {
       await startAppUpdate();
     },

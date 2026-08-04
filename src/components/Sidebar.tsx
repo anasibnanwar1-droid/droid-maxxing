@@ -23,27 +23,23 @@ import type { SessionSummary } from '../types/bridge';
 // Blue download glyph docked beside Settings when a newer DROIDEX build is
 // available; spins while the artifact is on its way.
 function UpdateButton() {
-  const { update, downloading, start } = useAppUpdate();
-  if (!update?.updateAvailable) return null;
-  const actionLabel =
-    update.installMode === 'automatic'
-      ? `Update to ${update.latest} and restart`
-      : `Download DROIDEX ${update.latest}`;
+  const { update, checking, downloading, check, start } = useAppUpdate();
+  const canInstall = update?.updateAvailable === true && update.installMode === 'automatic';
+  const actionLabel = canInstall
+    ? `Update to ${update.latest} and restart`
+    : 'Check for DROIDEX updates';
+  const isBusy = checking || downloading;
   return (
     <button
       onClick={() => {
-        void start();
+        void (canInstall ? start() : check());
       }}
-      disabled={downloading}
+      disabled={isBusy}
       title={actionLabel}
       aria-label={actionLabel}
       className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-blue-500 transition-colors hover:bg-droid-elevated disabled:opacity-60"
     >
-      {downloading ? (
-        <Loader2 className="w-4 h-4 animate-spin" />
-      ) : (
-        <Download className="w-4 h-4" />
-      )}
+      {isBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
     </button>
   );
 }

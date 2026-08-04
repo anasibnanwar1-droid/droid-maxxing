@@ -37,9 +37,9 @@ npm run dev
 
 ## Updates
 
-DROIDEX checks a signed Sparkle feed for new versions. When an update is
-available, the app shows an update button. Downloading and installation begin
-only after the user clicks, and installation always requires approval.
+DROIDEX checks a signed Sparkle feed for new versions. The Sidebar includes a
+**Check for updates** button that opens Sparkle's native update window. Nothing
+is downloaded or installed until the user approves it.
 
 Official macOS downloads and first-launch instructions live in the
 [public releases repository](https://github.com/anasibnanwar1-droid/droidex-releases).
