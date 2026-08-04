@@ -1,14 +1,16 @@
 import { useEffect, useMemo, useState } from 'react';
-import { motion } from 'framer-motion';
+import { AnimatePresence, motion } from 'framer-motion';
 import { useStore } from '../hooks/useStore';
 import { pickDirectory } from '../lib/desktop';
+import { dismissSidebarCard, loadSidebarCardSeen } from '../lib/sidebarCards';
+import { SIDEBAR_WELCOME_CARD_ID, SidebarWelcomeCard } from './SidebarWelcomeCard';
 import {
   Folder,
   FolderPlus,
   Plus,
   Settings,
   ChevronRight,
-  ArrowUpCircle,
+  Download,
   Loader2,
   SquarePen,
 } from 'lucide-react';
@@ -18,8 +20,9 @@ import { useAppUpdate } from '../lib/appUpdate';
 import { formatRelativeTime } from '../lib/time';
 import type { SessionSummary } from '../types/bridge';
 
-// Shown in the title-bar strip when a newer DROIDEX build is available.
-function UpdatePill() {
+// Blue download glyph docked beside Settings when a newer DROIDEX build is
+// available; spins while the artifact is on its way.
+function UpdateButton() {
   const { update, downloading, start } = useAppUpdate();
   if (!update?.updateAvailable) return null;
   return (
@@ -29,14 +32,14 @@ function UpdatePill() {
       }}
       disabled={downloading}
       title={`Update to ${update.latest} and restart`}
-      className="no-drag flex items-center gap-1.5 h-6 px-2 rounded-full bg-droid-accent text-droid-bg text-[11px] font-medium hover:opacity-90 transition-opacity disabled:opacity-60"
+      aria-label={`Update to ${update.latest}`}
+      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-blue-500 transition-colors hover:bg-droid-elevated disabled:opacity-60"
     >
       {downloading ? (
-        <Loader2 className="w-3 h-3 animate-spin" />
+        <Loader2 className="w-4 h-4 animate-spin" />
       ) : (
-        <ArrowUpCircle className="w-3 h-3" />
+        <Download className="w-4 h-4" />
       )}
-      {downloading ? 'Updating…' : 'Update'}
     </button>
   );
 }
@@ -143,31 +146,32 @@ export default function Sidebar() {
   // the window sits idle; activity already triggers its own renders.
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), 30_000);
-    return () => clearInterval(timer);
+    const timer = setInterval(() => { setNow(Date.now()); }, 30_000);
+    return () => { clearInterval(timer); };
   }, []);
 
   const toggleCollapse = (key: string) =>
-    setCollapsed((prev) => {
+    { setCollapsed((prev) => {
       const next = new Set(prev);
-      next.has(key) ? next.delete(key) : next.add(key);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
       return next;
-    });
+    }); };
 
   const visibleCountFor = (key: string) => shownCount.get(key) ?? SIDEBAR_VISIBLE_SESSION_LIMIT;
 
   const showMore = (key: string) =>
-    setShownCount((prev) => {
+    { setShownCount((prev) => {
       const cur = prev.get(key) ?? SIDEBAR_VISIBLE_SESSION_LIMIT;
       return new Map(prev).set(key, cur + SIDEBAR_VISIBLE_SESSION_LIMIT);
-    });
+    }); };
 
   const showLess = (key: string) =>
-    setShownCount((prev) => {
+    { setShownCount((prev) => {
       const next = new Map(prev);
       next.delete(key);
       return next;
-    });
+    }); };
 
   // A session reads as unread when the model has newer activity than the last
   // time the user opened it. The active session is always considered read.
@@ -175,7 +179,7 @@ export default function Sidebar() {
     m.appSessionId !== state.activeAppSessionId &&
     m.updatedAt > (state.sessionLastSeen[m.appSessionId] ?? m.updatedAt);
 
-  const startChat = (cwd: string) => dispatch({ type: 'START_CHAT', cwd });
+  const startChat = (cwd: string) => { dispatch({ type: 'START_CHAT', cwd }); };
 
   const pickAndChat = async () => {
     const dir = await pickDirectory();
@@ -191,9 +195,19 @@ export default function Sidebar() {
     startChat(cwd);
   };
 
+  // First-run welcome card above Settings: shows on every launch until the
+  // user dismisses it, then stays hidden for the profile.
+  const [welcomeVisible, setWelcomeVisible] = useState(
+    () => !loadSidebarCardSeen(SIDEBAR_WELCOME_CARD_ID),
+  );
+  const dismissWelcome = () => {
+    setWelcomeVisible(false);
+    dismissSidebarCard(SIDEBAR_WELCOME_CARD_ID);
+  };
+
   // The sidecar publishes top-level sessions only; children live in the right panel.
   const chatSessions = useMemo<SessionSummary[]>(() => {
-    return (state.sessionOrder.map((id) => state.sessions[id]).filter(Boolean) as SessionSummary[])
+    return (state.sessionOrder.map((id) => state.sessions[id]).filter(Boolean))
       .filter((m) => !m.cwd)
       .sort((a, b) => b.updatedAt - a.updatedAt);
   }, [state.sessionOrder, state.sessions]);
@@ -201,7 +215,7 @@ export default function Sidebar() {
   const workspaces = useMemo(() => {
     const sessions = state.sessionOrder
       .map((id) => state.sessions[id])
-      .filter(Boolean) as SessionSummary[];
+      .filter(Boolean);
     return buildWorkspaceSections(state.workspaceCwds, sessions);
   }, [state.sessionOrder, state.sessions, state.workspaceCwds]);
 
@@ -244,7 +258,7 @@ export default function Sidebar() {
           <div className="flex items-center gap-3 pl-3 pr-2 pt-0.5">
             {remaining > 0 && (
               <button
-                onClick={() => showMore(sectionKey)}
+                onClick={() => { showMore(sectionKey); }}
                 className="text-[12px] text-droid-text-muted hover:text-droid-text transition-colors"
               >
                 Show more
@@ -252,7 +266,7 @@ export default function Sidebar() {
             )}
             {isExpanded && (
               <button
-                onClick={() => showLess(sectionKey)}
+                onClick={() => { showLess(sectionKey); }}
                 className="text-[12px] text-droid-text-muted hover:text-droid-text transition-colors"
               >
                 Show less
@@ -275,9 +289,7 @@ export default function Sidebar() {
       }}
     >
       {/* Draggable top strip (clears macOS traffic lights) */}
-      <div data-electron-drag-region className="h-9 shrink-0 flex items-center justify-end pr-2">
-        <UpdatePill />
-      </div>
+      <div data-electron-drag-region className="h-9 shrink-0" />
 
       <div className="px-2 pb-1.5">
         <button
@@ -297,7 +309,7 @@ export default function Sidebar() {
             <div>
               <div className="group/header flex items-center gap-1 px-1 pt-1 pb-1.5">
                 <button
-                  onClick={() => toggleCollapse('__workspaces__')}
+                  onClick={() => { toggleCollapse('__workspaces__'); }}
                   className="flex items-center gap-2 min-w-0 flex-1 text-left rounded-lg px-1 py-0.5 hover:bg-droid-elevated/40 transition-colors"
                 >
                   <ChevronRight
@@ -308,7 +320,9 @@ export default function Sidebar() {
                   </span>
                 </button>
                 <button
-                  onClick={pickAndChat}
+                  onClick={() => {
+                    void pickAndChat();
+                  }}
                   title="Add workspace"
                   className="p-0.5 rounded-md text-droid-text-muted hover:text-droid-text hover:bg-droid-elevated/60 transition-colors shrink-0"
                 >
@@ -324,7 +338,7 @@ export default function Sidebar() {
                       <div key={ws.cwd}>
                         <div className="group flex items-center gap-1 px-1 py-1">
                           <button
-                            onClick={() => toggleCollapse(ws.cwd)}
+                            onClick={() => { toggleCollapse(ws.cwd); }}
                             className="flex items-center gap-2 min-w-0 flex-1 text-left rounded-lg px-1 py-0.5 hover:bg-droid-elevated/40 transition-colors"
                           >
                             <ChevronRight
@@ -336,7 +350,7 @@ export default function Sidebar() {
                             </span>
                           </button>
                           <button
-                            onClick={() => startChat(ws.cwd)}
+                            onClick={() => { startChat(ws.cwd); }}
                             title="New chat here"
                             className="p-0.5 rounded-md text-droid-text-muted/0 group-hover:text-droid-text-muted hover:text-droid-text hover:bg-droid-elevated/60 transition-colors shrink-0"
                           >
@@ -350,7 +364,9 @@ export default function Sidebar() {
 
                   {workspaces.length === 0 && (
                     <button
-                      onClick={pickAndChat}
+                      onClick={() => {
+                        void pickAndChat();
+                      }}
                       className="group w-full flex items-center gap-2.5 px-2 py-1.5 rounded-lg text-left text-droid-text-muted hover:text-droid-text hover:bg-droid-elevated/40 transition-colors"
                     >
                       <FolderPlus className="w-4 h-4 shrink-0" />
@@ -370,7 +386,7 @@ export default function Sidebar() {
             <div>
               <div className="group/header flex items-center gap-1 px-1 pt-1 pb-1.5">
                 <button
-                  onClick={() => toggleCollapse('__chats__')}
+                  onClick={() => { toggleCollapse('__chats__'); }}
                   className="flex items-center gap-2 min-w-0 flex-1 text-left rounded-lg px-1 py-0.5 hover:bg-droid-elevated/40 transition-colors"
                 >
                   <ChevronRight
@@ -396,14 +412,28 @@ export default function Sidebar() {
 
       {/* Settings */}
       <div className="px-2 py-2 border-t border-droid-border">
-        <button
-          onClick={() => dispatch({ type: 'TOGGLE_SETTINGS' })}
-          className="w-full flex items-center gap-2.5 px-2 py-2 rounded-lg text-droid-text-secondary hover:text-droid-text hover:bg-droid-elevated transition-colors text-left"
-          title="Open settings"
-        >
-          <Settings className="w-4 h-4 shrink-0" />
-          <span className="text-[13px] font-medium">Settings</span>
-        </button>
+        <AnimatePresence>
+          {welcomeVisible && (
+            <SidebarWelcomeCard
+              onStart={() => {
+                dismissWelcome();
+                newChat();
+              }}
+              onDismiss={dismissWelcome}
+            />
+          )}
+        </AnimatePresence>
+        <div className="flex items-center gap-1">
+          <button
+            onClick={() => { dispatch({ type: 'TOGGLE_SETTINGS' }); }}
+            className="flex min-w-0 flex-1 items-center gap-2.5 px-2 py-2 rounded-lg text-droid-text-secondary hover:text-droid-text hover:bg-droid-elevated transition-colors text-left"
+            title="Open settings"
+          >
+            <Settings className="w-4 h-4 shrink-0" />
+            <span className="text-[13px] font-medium">Settings</span>
+          </button>
+          <UpdateButton />
+        </div>
       </div>
     </aside>
   );
