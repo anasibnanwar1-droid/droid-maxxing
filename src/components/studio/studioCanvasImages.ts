@@ -107,3 +107,12 @@ export function fittedCanvasImageSize(
     height: Math.max(1, Math.round(safeHeight * readableScale)),
   };
 }
+
+export function canvasImageName(fileName: string, index: number): string {
+  const clean = fileName
+    .replace(/\.[^.]+$/, '')
+    .replace(/[-_]+/g, ' ')
+    .trim();
+  if (!clean || /^image(?:\s+\d+)?$/i.test(clean)) return `Inspiration ${String(index)}`;
+  return clean.slice(0, 120);
+}

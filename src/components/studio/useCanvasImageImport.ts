@@ -3,7 +3,7 @@ import { importDesignLibraryImage } from '../../lib/commands';
 import { toast } from '../../lib/toast';
 import { useStudioCanvas, type StudioCanvasImage } from './StudioCanvasContext';
 import { screenToWorld, type Point } from './studioCanvasMath';
-import { fittedCanvasImageSize } from './studioCanvasImages';
+import { canvasImageName, fittedCanvasImageSize } from './studioCanvasImages';
 
 const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
 const SUPPORTED_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
@@ -28,6 +28,7 @@ export function useCanvasImageImport(rootRef: RefObject<HTMLDivElement | null>, 
       const accepted = acceptedCanvasFiles(files, imageCountRef.current);
       if (accepted.length === 0) return;
 
+      const initialCount = imageCountRef.current;
       let placed = 0;
       for (const file of accepted) {
         try {
@@ -41,7 +42,7 @@ export function useCanvasImageImport(rootRef: RefObject<HTMLDivElement | null>, 
           };
           const worldAnchor = screenToWorld(screenAnchor, viewRef.current);
           const id = canvasImageId();
-          const name = imageName(file.name, imageCountRef.current + placed + 1);
+          const name = canvasImageName(file.name, initialCount + placed + 1);
           const offset = placed * 28;
           const image: StudioCanvasImage = {
             id,
@@ -127,15 +128,6 @@ function canvasImageId(): string {
   } catch {
     return `canvas-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
   }
-}
-
-function imageName(fileName: string, index: number): string {
-  const clean = fileName
-    .replace(/\.[^.]+$/, '')
-    .replace(/[-_]+/g, ' ')
-    .trim();
-  if (!clean || /^image(?:\s+\d+)?$/i.test(clean)) return `Inspiration ${String(index)}`;
-  return clean.slice(0, 120);
 }
 
 function readDataUrl(file: File): Promise<string> {
