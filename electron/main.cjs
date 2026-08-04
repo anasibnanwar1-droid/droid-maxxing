@@ -51,6 +51,7 @@ const appUpdater = createAppUpdater({
   app,
   autoUpdater,
   installMode: buildMetadata.updateInstallMode,
+  sparkleFeedUrl: buildMetadata.sparkleFeedUrl,
   sparkleUpdater: () => require('@droidex/sparkle-updater'),
   prepareToInstall: () => sidecarSupervisor.stop(),
   logError: (message, error) => console.error('[update] %s:', message, error),
@@ -502,16 +503,21 @@ function sidecarEntry() {
 
 function readBuildMetadata() {
   if (!app.isPackaged) {
-    return { sentryDsn: process.env.SENTRY_DSN || '', updateInstallMode: 'sparkle' };
+    return {
+      sentryDsn: process.env.SENTRY_DSN || '',
+      sparkleFeedUrl: process.env.SPARKLE_FEED_URL || '',
+      updateInstallMode: 'sparkle',
+    };
   }
   try {
     const metadata = require(path.join(app.getAppPath(), 'package.json'));
     return {
       sentryDsn: typeof metadata.sentryDsn === 'string' ? metadata.sentryDsn : '',
+      sparkleFeedUrl: typeof metadata.sparkleFeedUrl === 'string' ? metadata.sparkleFeedUrl : '',
       updateInstallMode: metadata.updateInstallMode === 'automatic' ? 'automatic' : 'sparkle',
     };
   } catch {
-    return { sentryDsn: '', updateInstallMode: 'sparkle' };
+    return { sentryDsn: '', sparkleFeedUrl: '', updateInstallMode: 'sparkle' };
   }
 }
 

@@ -1,12 +1,18 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { createAppUpdater, compareSemverParts } = require('./appUpdater.cjs');
+const {
+  createAppUpdater,
+  compareSemverParts,
+  parseSparkleVersion,
+  readBoundedText,
+} = require('./appUpdater.cjs');
 
 function harness({
   current = '1.2.3',
   latest = '1.3.0',
   packaged = true,
   installMode = 'automatic',
+  appcastVersion = latest,
 } = {}) {
   const calls = [];
   let install;
@@ -24,6 +30,11 @@ function harness({
     platform: 'darwin',
     arch: 'arm64',
     installMode,
+    sparkleFeedUrl: 'https://updates.example/appcast.xml',
+    fetchText: async (url) => {
+      calls.push(['fetch-appcast', url]);
+      return `<sparkle:shortVersionString>\n  ${appcastVersion}\n</sparkle:shortVersionString>`;
+    },
     sparkleUpdater: () => ({
       checkForUpdates: (interactive, automaticChecks, configureAutomaticChecks) =>
         calls.push(['sparkle-check', interactive, automaticChecks, configureAutomaticChecks]),
@@ -53,13 +64,14 @@ test('unsigned builds delegate verified update checks and installation to Sparkl
   const { updater, calls } = harness({ installMode: 'sparkle' });
 
   const result = await updater.check({ interactive: false, automaticChecks: true });
-  assert.equal(result.updateAvailable, false);
+  assert.equal(result.updateAvailable, true);
+  assert.equal(result.latest, '1.3.0');
   assert.equal(result.installMode, 'sparkle');
-  assert.deepEqual(calls, [['sparkle-check', false, true, true]]);
+  assert.deepEqual(calls, [['fetch-appcast', 'https://updates.example/appcast.xml']]);
 
   assert.deepEqual(await updater.downloadAndInstall(), { status: 'presented' });
   assert.deepEqual(calls, [
-    ['sparkle-check', false, true, true],
+    ['fetch-appcast', 'https://updates.example/appcast.xml'],
     ['sparkle-check', true, true, false],
   ]);
 });
@@ -73,7 +85,26 @@ test('manual menu checks do not change the background-check preference', async (
     configureAutomaticChecks: false,
   });
 
-  assert.deepEqual(calls, [['sparkle-check', true, true, false]]);
+  assert.deepEqual(calls, [
+    ['sparkle-check', true, true, false],
+    ['fetch-appcast', 'https://updates.example/appcast.xml'],
+  ]);
+});
+
+test('Sparkle checks report no update when the appcast version matches', async () => {
+  const { updater } = harness({ installMode: 'sparkle', appcastVersion: '1.2.3' });
+  const result = await updater.check({ interactive: false });
+
+  assert.equal(result.latest, '1.2.3');
+  assert.equal(result.updateAvailable, false);
+});
+
+test('Sparkle checks report no update for an older appcast', async () => {
+  const { updater } = harness({ installMode: 'sparkle', appcastVersion: '1.2.2' });
+  const result = await updater.check({ interactive: false });
+
+  assert.equal(result.latest, '1.2.2');
+  assert.equal(result.updateAvailable, false);
 });
 
 test('install waits for sidecar shutdown before handing control to the updater', async () => {
@@ -97,4 +128,24 @@ test('development builds never contact the production update feed', async () => 
 test('version comparison is numeric', () => {
   assert.equal(compareSemverParts('1.10.0', '1.9.9') > 0, true);
   assert.equal(compareSemverParts('v2.0', '2.0.0'), 0);
+});
+
+test('Sparkle appcast versions are parsed explicitly', () => {
+  assert.equal(
+    parseSparkleVersion(
+      '<item><sparkle:shortVersionString>\n  1.0.1\n</sparkle:shortVersionString></item>',
+    ),
+    '1.0.1',
+  );
+  assert.throws(() => parseSparkleVersion('<rss />'), /no valid release version/);
+  assert.throws(
+    () =>
+      parseSparkleVersion('<sparkle:shortVersionString>1.0.1-beta.1</sparkle:shortVersionString>'),
+    /no valid release version/,
+  );
+});
+
+test('Sparkle appcast reads are size bounded', async () => {
+  const response = new Response('x'.repeat(9));
+  await assert.rejects(() => readBoundedText(response, 8), /size limit/);
 });

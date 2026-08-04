@@ -52,6 +52,7 @@ test('free mac builds use ad-hoc signing and never attempt notarization', () => 
   assert.equal(config.mac.identity, '-');
   assert.equal(config.mac.notarize, false);
   assert.equal(config.extraMetadata.updateInstallMode, 'sparkle');
+  assert.equal(config.extraMetadata.sparkleFeedUrl, config.mac.extendInfo.SUFeedURL);
   assert.equal(config.mac.extendInfo.SUPublicEDKey, 'czgsBI/YO7amJbwhZidZSO0j7LU5A4NsU0No9fDemWU=');
   assert.match(config.mac.extendInfo.SUFeedURL, /droidex-releases\/releases\/latest/);
   assert.equal(config.mac.extendInfo.SURequireSignedFeed, true);
@@ -75,6 +76,7 @@ test('unsigned architecture builds select their matching Sparkle feed', () => {
   });
 
   assert.match(config.mac.extendInfo.SUFeedURL, /appcast-arm64\.xml$/);
+  assert.equal(config.extraMetadata.sparkleFeedUrl, config.mac.extendInfo.SUFeedURL);
 });
 
 test('signed mac builds enable notarization when every credential is present', () => {

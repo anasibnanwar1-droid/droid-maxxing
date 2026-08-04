@@ -47,6 +47,7 @@ module.exports = {
   forceCodeSigning: isReleaseBuild,
   extraMetadata: {
     sentryDsn,
+    sparkleFeedUrl,
     updateInstallMode: isReleaseBuild ? 'automatic' : 'sparkle',
   },
   directories: {

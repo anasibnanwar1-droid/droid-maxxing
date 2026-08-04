@@ -37,9 +37,10 @@ npm run dev
 
 ## Updates
 
-DROIDEX checks a signed Sparkle feed for new versions. The Sidebar includes a
-**Check for updates** button that opens Sparkle's native update window. Nothing
-is downloaded or installed until the user approves it.
+DROIDEX checks its signed Sparkle feed for new versions. A blue download button
+appears beside Settings only when a newer version is available. Clicking it
+opens Sparkle's native update window; nothing downloads or installs until the
+user approves it. You can also check manually from the DROIDEX menu.
 
 Official macOS downloads and first-launch instructions live in the
 [public releases repository](https://github.com/anasibnanwar1-droid/droidex-releases).
