@@ -71,12 +71,11 @@ export function DoneStep({
       </div>
       <div className="droid-rise mt-8" style={{ animationDelay: '300ms' }}>
         <button
-          autoFocus
           onClick={() => {
             void finish();
           }}
           disabled={finishing}
-          className="droid-button-primary inline-flex h-10 items-center gap-2 px-5 text-[13px]"
+          className="droid-button-primary inline-flex h-10 items-center gap-2 px-5 text-[13px] focus:outline-none focus-visible:ring-2 focus-visible:ring-droid-accent/70 focus-visible:ring-offset-2 focus-visible:ring-offset-droid-bg"
         >
           {finishing ? (
             <>

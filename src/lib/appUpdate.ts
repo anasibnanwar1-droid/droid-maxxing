@@ -6,7 +6,7 @@ import {
 } from './onboarding';
 import { toast } from './toast';
 
-// Shared, subscribable app-update state so the sidebar header button, the
+// Shared, subscribable app-update state so the sidebar footer button, the
 // settings panel, and the launch check all read the same source of truth.
 let info: AppUpdateInfo | null = null;
 let downloading = false;
@@ -59,7 +59,9 @@ export function useAppUpdate(): {
 } {
   const [, force] = useState(0);
   useEffect(() => {
-    const listener = () => force((n) => n + 1);
+    const listener = () => {
+      force((n) => n + 1);
+    };
     listeners.add(listener);
     return () => {
       listeners.delete(listener);

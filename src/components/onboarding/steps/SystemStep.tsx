@@ -64,7 +64,7 @@ export function SystemStep({
       </Panel>
 
       {ready ? (
-        <PrimaryButton onClick={onNext} autoFocus>
+        <PrimaryButton onClick={onNext}>
           Continue <ArrowRight className="w-4 h-4" />
         </PrimaryButton>
       ) : (
@@ -77,7 +77,7 @@ export function SystemStep({
             />
           </div>
           <div className="flex-1">
-            <PrimaryButton onClick={onNext} autoFocus>
+            <PrimaryButton onClick={onNext}>
               Continue <ArrowRight className="w-4 h-4" />
             </PrimaryButton>
           </div>

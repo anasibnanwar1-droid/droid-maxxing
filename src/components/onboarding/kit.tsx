@@ -1,5 +1,5 @@
 import { ArrowLeft, Check, Loader2, RefreshCw } from 'lucide-react';
-import type { ReactNode } from 'react';
+import type { ReactNode, Ref } from 'react';
 import { Switch } from '../Switch';
 
 // Shared furniture for the first-run wizard, built entirely from the app's own
@@ -42,18 +42,18 @@ interface BtnProps {
   children: ReactNode;
   onClick: () => void;
   disabled?: boolean;
-  autoFocus?: boolean;
+  buttonRef?: Ref<HTMLButtonElement>;
 }
 
 const btnLayout =
-  'w-full h-10 flex items-center justify-center gap-2 text-[13px] disabled:opacity-40 disabled:pointer-events-none';
+  'w-full h-10 flex items-center justify-center gap-2 text-[13px] disabled:opacity-40 disabled:pointer-events-none focus:outline-none focus-visible:ring-2 focus-visible:ring-droid-accent/70 focus-visible:ring-offset-2 focus-visible:ring-offset-droid-bg';
 
-export function PrimaryButton({ children, onClick, disabled, autoFocus }: BtnProps) {
+export function PrimaryButton({ children, onClick, disabled, buttonRef }: BtnProps) {
   return (
     <button
+      ref={buttonRef}
       onClick={onClick}
       disabled={disabled}
-      autoFocus={autoFocus}
       className={`droid-button-primary ${btnLayout}`}
     >
       {children}
@@ -61,12 +61,12 @@ export function PrimaryButton({ children, onClick, disabled, autoFocus }: BtnPro
   );
 }
 
-export function GhostButton({ children, onClick, disabled, autoFocus }: BtnProps) {
+export function GhostButton({ children, onClick, disabled, buttonRef }: BtnProps) {
   return (
     <button
+      ref={buttonRef}
       onClick={onClick}
       disabled={disabled}
-      autoFocus={autoFocus}
       className={`droid-button ${btnLayout}`}
     >
       {children}
@@ -79,7 +79,7 @@ export function BackButton({ onClick, disabled }: { onClick: () => void; disable
     <button
       onClick={onClick}
       disabled={disabled}
-      className="px-3 h-10 inline-flex items-center gap-1.5 text-[12.5px] text-droid-text-muted hover:text-droid-text transition-colors shrink-0 disabled:opacity-40 disabled:pointer-events-none"
+      className="px-3 h-10 inline-flex items-center gap-1.5 text-[12.5px] text-droid-text-muted hover:text-droid-text transition-colors shrink-0 disabled:opacity-40 disabled:pointer-events-none focus:outline-none focus-visible:ring-2 focus-visible:ring-droid-accent/70 focus-visible:ring-offset-2 focus-visible:ring-offset-droid-bg"
     >
       <ArrowLeft className="w-3.5 h-3.5" /> Back
     </button>

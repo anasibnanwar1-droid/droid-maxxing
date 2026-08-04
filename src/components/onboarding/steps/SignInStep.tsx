@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ArrowRight, Check, KeyRound, Loader2 } from 'lucide-react';
 
 import type { OnboardingController } from '../../../hooks/useOnboarding';
@@ -18,8 +18,18 @@ export function SignInStep({
   const [key, setKey] = useState('');
   const [saving, setSaving] = useState(false);
   const [keyError, setKeyError] = useState<string | null>(null);
+  const checkButtonRef = useRef<HTMLButtonElement>(null);
+  const continueButtonRef = useRef<HTMLButtonElement>(null);
+  const focusContinueAfterCheck = useRef(false);
 
   const signedIn = Boolean(env?.auth.loginPresent) || Boolean(env?.auth.apiKeyConfigured);
+
+  useEffect(() => {
+    if (signedIn && focusContinueAfterCheck.current) {
+      continueButtonRef.current?.focus();
+      focusContinueAfterCheck.current = false;
+    }
+  }, [signedIn]);
 
   const saveKey = async () => {
     setSaving(true);
@@ -51,9 +61,11 @@ export function SignInStep({
         <div className="space-y-2 mb-6">
           <PrimaryButton
             onClick={() => {
+              focusContinueAfterCheck.current = document.activeElement === checkButtonRef.current;
               controller.refreshEnv();
             }}
             disabled={!env?.cli.present}
+            buttonRef={checkButtonRef}
           >
             <Check className="w-4 h-4" /> Check CLI sign-in
           </PrimaryButton>
@@ -106,7 +118,7 @@ export function SignInStep({
         <BackButton onClick={onBack} />
         <div className="flex-1">
           {signedIn ? (
-            <PrimaryButton onClick={onNext} autoFocus>
+            <PrimaryButton onClick={onNext} buttonRef={continueButtonRef}>
               Continue <ArrowRight className="w-4 h-4" />
             </PrimaryButton>
           ) : (

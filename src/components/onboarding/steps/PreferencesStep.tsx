@@ -123,7 +123,6 @@ export function PreferencesStep({
               void save();
             }}
             disabled={saving}
-            autoFocus
           >
             {saving ? (
               <>
