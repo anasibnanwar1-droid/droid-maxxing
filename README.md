@@ -3,6 +3,8 @@
 DROIDEX is a macOS desktop workspace for Factory Droid. It keeps chats,
 projects, terminals, browser sessions, and agent work together in one app.
 
+Website: [droidex.vercel.app](https://droidex.vercel.app)
+
 ## Run it locally
 
 You need Node.js 22, npm, and the Factory Droid CLI. DROIDEX can install the

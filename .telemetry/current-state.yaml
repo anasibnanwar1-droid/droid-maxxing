@@ -1,0 +1,11 @@
+# Current State: greenfield (no product analytics tracking detected)
+# Scanned: 2026-08-04
+# SDK: none
+
+events: []
+identity:
+  identify_calls: []
+  group_calls: []
+patterns:
+  naming_style: n/a
+  centralized: n/a
