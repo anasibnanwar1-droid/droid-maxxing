@@ -1,8 +1,8 @@
 // electron-builder config for DROIDEX.
 //
 // Produces website DMGs plus the ZIP/update metadata consumed by electron-updater.
-// Local builds remain unsigned; production release builds fail closed unless a
-// Developer ID certificate and notarization credentials are present.
+// Free builds use an ad-hoc signature; production Developer ID releases fail
+// closed unless signing and notarization credentials are present.
 
 const process = require('node:process');
 const fs = require('node:fs');

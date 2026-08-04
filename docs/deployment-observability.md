@@ -65,8 +65,9 @@ and run the unsigned preflight. Publish only these immutable public assets:
 - `SHA256SUMS`
 
 The website should link Apple-silicon users to the arm64 DMG and Intel users to
-the x64 DMG. Because the app is unsigned, the first launch requires the user to
-approve DROIDEX in macOS System Settings > Privacy & Security > Open Anyway.
+the x64 DMG. Because the app is not Developer ID-signed or notarized, the first
+launch requires the user to approve DROIDEX in macOS System Settings > Privacy
+& Security > Open Anyway.
 The DMG includes an **Open Privacy & Security** shortcut beside the Applications
 alias. After macOS blocks the first launch, users can double-click that shortcut
 to open the required settings pane directly; macOS still requires the user to
@@ -110,8 +111,13 @@ After installing a candidate build:
 2. Complete onboarding or confirm existing settings load.
 3. Start a Droid session and verify sidecar connection status.
 4. Confirm CLI discovery or installation works on a clean machine.
-5. Trigger an update check against the public releases repository.
-6. Inspect Electron and sidecar logs for bridge authentication, download, or update errors.
+5. Confirm the macOS menu exposes Check for Updates, Privacy & Security,
+   standard Edit actions, safe Reload actions, Window actions, and Help. Packaged
+   builds must not expose Developer Tools.
+6. Trigger an update check against the public releases repository.
+7. Inspect Electron and sidecar logs for bridge authentication, download, or update errors.
+8. On the oldest supported macOS release, double-click the DMG's Privacy &
+   Security shortcut and confirm it opens the correct system pane.
 
 Before promoting every update after the first release, install the previous
 public version on a clean test account and confirm it discovers the

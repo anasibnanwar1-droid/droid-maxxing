@@ -30,6 +30,7 @@ const { runWithWebContentsDebugger } = require('./nativeBrowserEmulation.cjs');
 const { attachChildView, detachChildView } = require('./nativeBrowserHost.cjs');
 const { createSidecarSupervisor } = require('./sidecar.cjs');
 const { installRendererNavigationGuard } = require('./rendererSecurity.cjs');
+const { installApplicationMenu } = require('./applicationMenu.cjs');
 const { autoUpdater } = require('electron-updater');
 const { createAppUpdater } = require('./appUpdater.cjs');
 const Sentry = require('@sentry/electron/main');
@@ -81,7 +82,15 @@ app.setPath(
 diagnostics.initialize();
 
 app.whenReady().then(() => {
-  installApplicationMenu();
+  installApplicationMenu({
+    Menu,
+    app,
+    appName: APP_NAME,
+    appUpdater,
+    reload: reloadShell,
+    shell,
+    logError: (message) => console.error('[menu] %s', message),
+  });
   registerIpc();
   createMainWindow();
   // Repaint the icon when the OS appearance flips while 'system' is selected.
@@ -436,70 +445,6 @@ function setAppIcon(mode) {
   appIconMode = mode;
   applyAppIcon();
   return mode;
-}
-
-function installApplicationMenu() {
-  const isMac = process.platform === 'darwin';
-  const reloadItem = () => ({
-    label: `Reload ${APP_NAME}`,
-    accelerator: 'CmdOrCtrl+R',
-    click: () => reloadShell(false),
-  });
-  const forceReloadItem = () => ({
-    label: `Force Reload ${APP_NAME}`,
-    accelerator: 'CmdOrCtrl+Alt+R',
-    click: () => reloadShell(true),
-  });
-  const template = [
-    ...(isMac
-      ? [
-          {
-            label: APP_NAME,
-            submenu: [
-              { role: 'about' },
-              { type: 'separator' },
-              reloadItem(),
-              forceReloadItem(),
-              { type: 'separator' },
-              { role: 'services' },
-              { type: 'separator' },
-              { role: 'hide' },
-              { role: 'hideOthers' },
-              { role: 'unhide' },
-              { type: 'separator' },
-              { role: 'quit' },
-            ],
-          },
-        ]
-      : []),
-    {
-      label: 'File',
-      submenu: [isMac ? { role: 'close' } : { role: 'quit' }],
-    },
-    {
-      label: 'Edit',
-      submenu: [
-        { role: 'undo' },
-        { role: 'redo' },
-        { type: 'separator' },
-        { role: 'cut' },
-        { role: 'copy' },
-        { role: 'paste' },
-        { role: 'selectAll' },
-      ],
-    },
-    {
-      label: 'View',
-      submenu: [reloadItem(), forceReloadItem(), { type: 'separator' }, { role: 'toggleDevTools' }],
-    },
-    {
-      label: 'Window',
-      submenu: isMac
-        ? [{ role: 'minimize' }, { role: 'zoom' }, { type: 'separator' }, { role: 'front' }]
-        : [{ role: 'minimize' }, { role: 'close' }],
-    },
-  ];
-  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
 function reloadShell(ignoreCache) {

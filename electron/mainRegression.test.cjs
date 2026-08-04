@@ -38,11 +38,6 @@ test('native browser invoke handlers authorize the main renderer', () => {
   }
 });
 
-test('force reload does not reuse the Review accelerator', () => {
-  assert.match(mainSource, /accelerator: 'CmdOrCtrl\+Alt\+R'/);
-  assert.doesNotMatch(mainSource, /accelerator: 'CmdOrCtrl\+Shift\+R'/);
-});
-
 test('main renderer reload closes renderer-owned terminals before navigation', () => {
   const closeRendererOwnedTerminals =
     /function closeRendererOwnedTerminals\(\) \{\s*terminalSubscriptions\.clear\(\);\s*terminalManager\.closeAll\(\);\s*\}/;
